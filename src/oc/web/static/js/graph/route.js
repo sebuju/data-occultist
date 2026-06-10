@@ -185,6 +185,24 @@ export class EdgeRouter {
 
   _h(cx, cy, gx, gy) { return Math.abs(cx - gx) + Math.abs(cy - gy); }
 
+  // Reserve an already-computed polyline (a kept/cached route) in the usage grid so
+  // freshly-routed lines bundle beside it and don't draw over it. Used by incremental
+  // re-routing, where most lines are unchanged and only a few are recomputed.
+  stampPath(pts) {
+    if (!pts || pts.length < 2) return;
+    const seen = new Set(), cells = [];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const steps = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / this.cell) || 1;
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const idx = this._i(this._cx(a[0] + (b[0] - a[0]) * t), this._cy(a[1] + (b[1] - a[1]) * t));
+        if (!seen.has(idx)) { seen.add(idx); cells.push(idx); }
+      }
+    }
+    this._stamp(cells);
+  }
+
   _stamp(cells) {
     // Mark the path cells (W_USE keeps later routes off them entirely) and a MILD cost
     // on the flank cells. The flank makes parallel lines prefer a 2-cell gap, but it's

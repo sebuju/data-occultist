@@ -630,29 +630,48 @@ function zoomToNode(id) {
   applyView(); updateOverlayZoom(); savePositions();
 }
 
-function addEdge(svg, x1, y1, x2, y2, cls) {
-  if (![x1, y1, x2, y2].every(Number.isFinite)) return;
-  const dx = Math.max(30, (x2 - x1) / 2);
-  const d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;   // curved
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", d);
-  path.setAttribute("class", cls);
-  svg.appendChild(path);
+// Bezier whose tangents leave each endpoint along an outward direction (L/R/T/B) so
+// the line starts the right way. This is the LIVE line: shown while a node is being
+// dragged (follows the cursor), and the shape a routed line morphs out of on settle.
+const _OFFK = (x1, y1, x2, y2) => Math.max(30, Math.hypot(x2 - x1, y2 - y1) * 0.4);
+const _DIROFF = { L: [-1, 0], R: [1, 0], T: [0, -1], B: [0, 1] };
+function dirBezierCtrls(x1, y1, d1, x2, y2, d2) {
+  const k = _OFFK(x1, y1, x2, y2);
+  const a = _DIROFF[d1] || [0, 0], b = _DIROFF[d2] || [0, 0];
+  return [[x1 + a[0] * k, y1 + a[1] * k], [x2 + b[0] * k, y2 + b[1] * k]];
+}
+function dirBezierD(x1, y1, d1, x2, y2, d2) {
+  const [c1, c2] = dirBezierCtrls(x1, y1, d1, x2, y2, d2);
+  return `M ${x1} ${y1} C ${c1[0]} ${c1[1]}, ${c2[0]} ${c2[1]}, ${x2} ${y2}`;
+}
+function sampleDirBezier(x1, y1, d1, x2, y2, d2, n) {
+  const [c1, c2] = dirBezierCtrls(x1, y1, d1, x2, y2, d2);
+  const out = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, u = 1 - t;
+    out.push([u * u * u * x1 + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * x2,
+              u * u * u * y1 + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * y2]);
+  }
+  return out;
 }
 
-// Bezier whose tangents leave each endpoint along an outward direction
-// (L/R/T/B) so the line starts the right way and doesn't bend immediately.
-function addDirEdge(svg, x1, y1, d1, x2, y2, d2, cls) {
-  if (![x1, y1, x2, y2].every(Number.isFinite)) return;
-  const k = Math.max(30, Math.hypot(x2 - x1, y2 - y1) * 0.4);
-  const OFF = { L: [-k, 0], R: [k, 0], T: [0, -k], B: [0, k] };
-  const [ax, ay] = OFF[d1] || [0, 0], [bx, by] = OFF[d2] || [0, 0];
-  const d = `M ${x1} ${y1} C ${x1 + ax} ${y1 + ay}, ${x2 + bx} ${y2 + by}, ${x2} ${y2}`;
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", d);
-  path.setAttribute("class", cls);
-  svg.appendChild(path);
+// Resample a polyline to n+1 points spread evenly by arc length — so two shapes with
+// different vertex counts can be lerped point-for-point during a morph.
+function resamplePoly(pts, n) {
+  if (pts.length < 2) return Array.from({ length: n + 1 }, () => (pts[0] || [0, 0]).slice());
+  const seg = []; let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) { const l = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); seg.push(l); total += l; }
+  if (total === 0) return Array.from({ length: n + 1 }, () => pts[0].slice());
+  const out = []; let si = 0, acc = 0;
+  for (let i = 0; i <= n; i++) {
+    const target = (total * i) / n;
+    while (si < seg.length - 1 && acc + seg[si] < target) { acc += seg[si]; si++; }
+    const t = seg[si] ? (target - acc) / seg[si] : 0;
+    out.push([pts[si][0] + (pts[si + 1][0] - pts[si][0]) * t, pts[si][1] + (pts[si + 1][1] - pts[si][1]) * t]);
+  }
+  return out;
 }
+const straightD = (pts) => "M " + pts.map((p) => `${Math.round(p[0] * 10) / 10} ${Math.round(p[1] * 10) / 10}`).join(" L ");
 
 // Closest-facing sides of two rects (shortest centre axis): the port point and
 // outward direction (L/R/T/B) on each. Shared by the bezier draw and the router.
@@ -691,7 +710,7 @@ function boxWorldRect(winId, frac) {
 // ---- one unified link list -------------------------------------------------
 // EVERY connection in the view is the same thing: a line between two nodes (or a
 // region/anchor node to its box on an open image). They all flow through
-// buildLinks → routing → addPolyline. No bespoke per-kind drawing, no panels.
+// buildLinks → routing → drawn on a persistent per-link <path>. No bespoke per-kind drawing.
 function selClsFor(aId, bId) {
   return selectedNodeId && (aId === selectedNodeId || bId === selectedNodeId) ? " sel" : "";
 }
@@ -745,19 +764,82 @@ function computePorts(links) {
   }
 }
 
+// Persistent <path> per link (NOT rebuilt each draw) — lets a line keep its identity
+// so it can follow the cursor live, then morph into its routed shape on settle.
+const edgeEls = new Map();   // link key -> <path>
+let wireEl = null;
+let tweenRoutes = false;     // set by runRouting so the NEXT draw morphs the lines that changed
+
+function edgeEl(key, layer) {
+  let el = edgeEls.get(key);
+  if (!el) { el = document.createElementNS(SVGNS, "path"); edgeEls.set(key, el); }
+  if (el.parentNode !== layer) layer.appendChild(el);
+  return el;
+}
+function cancelMorph(el) { if (el && el._raf) { cancelAnimationFrame(el._raf); el._raf = null; } }
+function setRouted(el, pts) {
+  cancelMorph(el);
+  el._geo = pts; el._routed = true;
+  el.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
+}
+function setBezier(el, l) {
+  cancelMorph(el);
+  el._geo = sampleDirBezier(l.p1[0], l.p1[1], l.d1, l.p2[0], l.p2[1], l.d2, 24);
+  el._routed = false;
+  el.setAttribute("d", dirBezierD(l.p1[0], l.p1[1], l.d1, l.p2[0], l.p2[1], l.d2));
+}
+
+const MORPH_MS = 150, MORPH_N = 32;
+function startMorph(el, toPts) {
+  const from = resamplePoly(el._geo && el._geo.length ? el._geo : toPts, MORPH_N);
+  const to = resamplePoly(toPts, MORPH_N);
+  cancelMorph(el);
+  const t0 = performance.now();
+  const tick = (now) => {
+    let t = (now - t0) / MORPH_MS; if (t < 0) t = 0; if (t > 1) t = 1;
+    const e = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;   // easeInOutQuad
+    el.setAttribute("d", straightD(from.map((p, i) => [p[0] + (to[i][0] - p[0]) * e, p[1] + (to[i][1] - p[1]) * e])));
+    if (t < 1) el._raf = requestAnimationFrame(tick);
+    else { el._raf = null; setRouted(el, toPts); }   // land on the crisp rounded route
+  };
+  el._raf = requestAnimationFrame(tick);
+}
+// cache route still matches the link's live ports? (node not moved since it was routed)
+function routeFresh(c, l) { return c.k === `${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2}`; }
+function geoChanged(el, pts) {
+  if (!el._routed || !el._geo || el._geo.length !== pts.length) return true;
+  for (let i = 0; i < pts.length; i++)
+    if (Math.abs(el._geo[i][0] - pts[i][0]) > 0.5 || Math.abs(el._geo[i][1] - pts[i][1]) > 0.5) return true;
+  return false;
+}
+
 let drawSig = "";   // link signature for THIS draw (compared against the route cache's)
 function drawEdges() {
   const svg = $("gedges"), top = $("gedges-top");
-  svg.innerHTML = ""; top.innerHTML = "";
   const links = buildLinks();
   drawSig = ROUTE.enabled ? linksSig(links) : "";
+  const used = new Set();
   for (const l of links) {
-    const layer = l.top ? top : svg;
-    const c = routeCache.get(l.key);     // routed polyline if ready; bezier fallback otherwise
-    if (c && c.pts.length >= 2) addPolyline(layer, c.pts, l.cls);
-    else addDirEdge(layer, l.p1[0], l.p1[1], l.d1, l.p2[0], l.p2[1], l.d2, l.cls);
+    used.add(l.key);
+    const el = edgeEl(l.key, l.top ? top : svg);
+    el.setAttribute("class", l.cls);
+    const c = routeCache.get(l.key);
+    if (c && c.pts.length >= 2 && routeFresh(c, l)) {        // have a current route for this line
+      if (tweenRoutes && geoChanged(el, c.pts)) startMorph(el, c.pts);
+      else if (!el._raf && geoChanged(el, c.pts)) setRouted(el, c.pts);   // only redraw if it changed; leave morphs alone
+    } else {
+      setBezier(el, l);                                     // no/stale route → live bezier follows the drag
+    }
   }
-  if (wire) addEdge(svg, wire.x1, wire.y1, wire.x2, wire.y2, "gedge wire");
+  for (const [k, el] of edgeEls) if (!used.has(k)) { cancelMorph(el); el.remove(); edgeEls.delete(k); }
+  if (wire) {
+    if (!wireEl) wireEl = document.createElementNS(SVGNS, "path");
+    if (wireEl.parentNode !== svg) svg.appendChild(wireEl);
+    wireEl.setAttribute("class", "gedge wire");
+    const dx = Math.max(30, (wire.x2 - wire.x1) / 2);
+    wireEl.setAttribute("d", `M ${wire.x1} ${wire.y1} C ${wire.x1 + dx} ${wire.y1}, ${wire.x2 - dx} ${wire.y2}, ${wire.x2} ${wire.y2}`);
+  } else if (wireEl) { wireEl.remove(); wireEl = null; }
+  tweenRoutes = false;
   scheduleRouting();
 }
 
@@ -805,14 +887,6 @@ function linksSig(links) {
   return s;
 }
 
-function addPolyline(svg, pts, cls) {
-  if (!pts || pts.length < 2) return;
-  const path = document.createElementNS(SVGNS, "path");
-  path.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
-  path.setAttribute("class", cls);
-  svg.appendChild(path);
-}
-
 function scheduleRouting() {
   if (!ROUTE.enabled) return;
   if (drawSig === routeHash) return;   // routes already current (drawSig set in drawEdges)
@@ -820,23 +894,54 @@ function scheduleRouting() {
   routeTimer = setTimeout(runRouting, ROUTE.debounce);
 }
 
+// A link's OWN dependency signature: its endpoints + only the obstacles whose rect
+// touches the region its route can occupy (endpoints + last path, padded by the
+// clearance margin). So a node moving on the far side of the graph leaves this
+// unchanged — that link is NOT rerouted.
+function linkDeps(link, obs) {
+  const M = ROUTE.cell * (ROUTE.clearWanted + 2);
+  let minx = Math.min(link.p1[0], link.p2[0]), maxx = Math.max(link.p1[0], link.p2[0]);
+  let miny = Math.min(link.p1[1], link.p2[1]), maxy = Math.max(link.p1[1], link.p2[1]);
+  const prev = routeCache.get(link.key);
+  if (prev) for (const p of prev.pts) {
+    if (p[0] < minx) minx = p[0]; else if (p[0] > maxx) maxx = p[0];
+    if (p[1] < miny) miny = p[1]; else if (p[1] > maxy) maxy = p[1];
+  }
+  minx -= M; miny -= M; maxx += M; maxy += M;
+  let s = `${rnd(link.p1)}${link.d1}${rnd(link.p2)}${link.d2}|`;
+  for (const o of obs)
+    if (o.x < maxx && o.x + o.w > minx && o.y < maxy && o.y + o.h > miny) s += `${o.x},${o.y},${o.w},${o.h};`;
+  return s;
+}
+
 function runRouting() {
   const links = buildLinks();          // route the layout as it stands NOW
   const sig = linksSig(links);
   if (sig === routeHash) return;
+  const obs = obstacleRects();
   const t0 = performance.now();
   try {
-    const router = new EdgeRouter(obstacleRects(), { cell: ROUTE.cell, clearWanted: ROUTE.clearWanted });
-    routeCache.clear();
-    links.sort((a, b) => spanOf(a) - spanOf(b));   // shortest first: short links lock in straight
-    for (const l of links) routeCache.set(l.key, router.route(l.p1, l.d1, l.p2, l.d2));
+    // split into links whose deps are unchanged (keep their cached path) and the rest
+    const fresh = new Map(), dirty = [];
+    for (const l of links) {
+      const lsig = linkDeps(l, obs);
+      const c = routeCache.get(l.key);
+      if (c && c.sig === lsig) fresh.set(l.key, c);
+      else { l._sig = lsig; dirty.push(l); }
+    }
+    const router = new EdgeRouter(obs, { cell: ROUTE.cell, clearWanted: ROUTE.clearWanted });
+    for (const c of fresh.values()) router.stampPath(c.pts);   // reserve the kept corridors so dirty links avoid them
+    dirty.sort((a, b) => spanOf(a) - spanOf(b));               // shortest first: short links lock in straight
+    for (const l of dirty)
+      fresh.set(l.key, { pts: router.route(l.p1, l.d1, l.p2, l.d2), sig: l._sig, k: `${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2}` });
+    routeCache = fresh;                                        // also drops keys for links that vanished
+    routeHash = sig;
+    setStatus(`routed ${dirty.length}/${links.length} line${links.length === 1 ? "" : "s"} in ${fmtDur(performance.now() - t0)}`);
   } catch (err) {
     setStatus(`route failed: ${err.message}`);   // surface instead of silently using beziers
     return;
   }
-  routeHash = sig;
-  const dt = performance.now() - t0;
-  setStatus(`routed ${links.length} line${links.length === 1 ? "" : "s"} in ${fmtDur(dt)}`);
+  tweenRoutes = true;   // the freshly-routed lines morph from their live bezier into the route
   drawEdges();
 }
 
