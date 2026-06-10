@@ -120,6 +120,37 @@ def test_strip_nonalnum_and_case_dedup(tmp_path):
     assert s.present_count == 1
 
 
+def test_rekey_when_key_options_change(tmp_path):
+    # raw records stored as-is; re-opening with different key options re-keys them
+    s = DatasetStore(tmp_path, "g", "d", "name")
+    s.record_seen({"name": "Soma Prime", "n": 1})
+    s.record_seen({"name": "somaprime", "n": 2})       # distinct keys without stripping
+    assert s.present_count == 2
+    # same ledger, now strip non-alnum -> both collapse to one key on replay
+    s2 = DatasetStore(tmp_path, "g", "d", "name", strip_nonalnum=True)
+    assert s2.present_count == 1
+    # and re-key by a different field entirely
+    s3 = DatasetStore(tmp_path, "g", "d", "n")
+    assert {r["key"] for r in s3.records()} == {"1", "2"}
+
+
+def test_state_cache_skips_replay_when_fingerprint_matches(tmp_path, monkeypatch):
+    s = DatasetStore(tmp_path, "g", "d", "name")
+    s.record_seen({"name": "A"})
+    s.save()
+    import oc.store.dataset_store as mod
+    calls = {"n": 0}
+    real = mod.replay
+    def counting(*a, **k):
+        calls["n"] += 1
+        return real(*a, **k)
+    monkeypatch.setattr(mod, "replay", counting)
+    DatasetStore(tmp_path, "g", "d", "name")            # same opts -> cache hit, no replay
+    assert calls["n"] == 0
+    DatasetStore(tmp_path, "g", "d", "name", strip_nonalnum=True)  # changed -> replay
+    assert calls["n"] == 1
+
+
 def test_replay_pure_function():
     evs = [
         ChangeEvent("t1", ChangeOp.add, "x", {"name": "x", "v": 1}, id=1),

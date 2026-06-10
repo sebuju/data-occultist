@@ -715,7 +715,7 @@ function structuralEdges() {
   for (const e of model.edges()) {
     if ((e.kind === "field" || e.kind === "anchor" || e.kind === "scrollbar") && imageCanvases.has(e.from.slice(4))) continue;
     const ra = nodeRect(e.from), rb = nodeRect(e.to);
-    if (ra && rb) out.push({ id: `${e.from} ${e.to}`, ra, rb });
+    if (ra && rb) out.push({ id: `${e.from} ${e.to}`, ra, rb });
   }
   return out;
 }
@@ -741,8 +741,7 @@ function layoutSignature() {
 
 function drawNodeEdge(layer, e, cls) {
   const pts = routeCache.get(`${e.from} ${e.to}`);   // use route if cached; bezier only until first route exists
-    ? routeCache.get(`${e.from} ${e.to}`) : null;
-  if (pts) addPolyline(layer, pts, cls);
+  if (pts && pts.length >= 2) addPolyline(layer, pts, cls);
   else connectNodes(layer, e.from, e.to, cls);
 }
 

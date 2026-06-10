@@ -42,25 +42,34 @@ def norm_key(value, strip_nonalnum: bool = False, case_sensitive: bool = False) 
     return s or None
 
 
-def replay(events: list[ChangeEvent], reverted: set[int]) -> dict[str, dict]:
+def replay(events: list[ChangeEvent], reverted: set[int],
+           key_field: str = "name", strip_nonalnum: bool = False,
+           case_sensitive: bool = False) -> dict[str, dict]:
     """Rebuild the keyed state snapshot from the ledger, skipping reverted events.
 
-    Each add/update carries the full record at that time, so applying events in order
-    leaves each key at its last non-reverted value; a remove flips ``present`` off.
+    The key is recomputed from each event's raw ``values`` with the CURRENT key options
+    — the events store the record as-is, never a baked key, so changing the key field or
+    its normalisation re-keys the whole dataset on the next replay. Each add/update
+    carries the full record at that time, so applying events in order leaves each key at
+    its last non-reverted value; a remove flips ``present`` off. Events whose key value is
+    missing/empty under the current field are skipped (can't be keyed).
     """
     state: dict[str, dict] = {}
     for ev in events:
         if ev.id in reverted:
             continue
-        entry = state.get(ev.key)
+        key = norm_key(ev.values.get(key_field), strip_nonalnum, case_sensitive)
+        if key is None:
+            continue
+        entry = state.get(key)
         if ev.op is ChangeOp.remove:
             if entry is not None:
                 entry["present"] = False
                 entry["removed_at"] = ev.ts
             continue
         if entry is None:
-            state[ev.key] = {"values": dict(ev.values), "first_seen": ev.ts,
-                             "last_seen": ev.ts, "present": True}
+            state[key] = {"values": dict(ev.values), "first_seen": ev.ts,
+                          "last_seen": ev.ts, "present": True}
         else:
             entry["values"] = dict(ev.values)
             entry["last_seen"] = ev.ts
@@ -97,6 +106,16 @@ class DatasetStore:
 
     # ---- persistence -------------------------------------------------------
 
+    def _replay(self) -> dict[str, dict]:
+        return replay(self._events, self._reverted, self._key_field, self._strip, self._case)
+
+    def _meta(self) -> dict:
+        """Fingerprint of the inputs the cached state was built from. State is reused only
+        when this matches — so a key-field/option change (re-key) or a new/removed event
+        invalidates the cache and forces a replay."""
+        return {"key_field": self._key_field, "strip": self._strip, "case": self._case,
+                "n_events": len(self._events), "reverted": sorted(self._reverted)}
+
     def _load(self) -> None:
         if self._history_path.exists():
             for line in self._history_path.read_text(encoding="utf-8").splitlines():
@@ -107,12 +126,29 @@ class DatasetStore:
             self._reverted = set(json.loads(self._reverted_path.read_text(encoding="utf-8")))
         self._next_id = 1 + max((e.id for e in self._events), default=0)
         self._batch = max((e.batch for e in self._events), default=0)
-        self._state = replay(self._events, self._reverted)
+        if not self._load_cached_state():
+            self._state = self._replay()
+            self.save()
+
+    def _load_cached_state(self) -> bool:
+        """Use the cached snapshot when its fingerprint still matches the current key
+        options + ledger; otherwise we must re-key. Returns True if the cache was used."""
+        if not self._state_path.exists():
+            return False
+        try:
+            cached = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            return False
+        if not isinstance(cached, dict) or cached.get("_meta") != self._meta():
+            return False
+        self._state = cached.get("state", {})
+        return True
 
     def save(self) -> None:
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         self._state_path.write_text(
-            json.dumps(self._state, ensure_ascii=False, indent=0, sort_keys=True),
+            json.dumps({"_meta": self._meta(), "state": self._state},
+                       ensure_ascii=False, indent=0, sort_keys=True),
             encoding="utf-8",
         )
 
@@ -192,7 +228,7 @@ class DatasetStore:
 
     def _apply_reverted(self) -> None:
         self._save_reverted()
-        self._state = replay(self._events, self._reverted)
+        self._state = self._replay()
         self.save()
 
     def set_reverted(self, event_id: int, reverted: bool = True) -> None:
@@ -230,7 +266,7 @@ class DatasetStore:
         self._reverted -= ids
         self._rewrite_history()
         self._save_reverted()
-        self._state = replay(self._events, self._reverted)
+        self._state = self._replay()
         self.save()
 
     def history(self, limit: int = 50) -> list[dict]:
@@ -261,7 +297,7 @@ class DatasetStore:
                 "count": len(evs),
                 "adds": adds, "updates": updates, "removes": removes,
                 "reverted": all(e.id in self._reverted for e in evs),
-                "keys": [e.key for e in evs[:8]],
+                "keys": [norm_key(e.values.get(self._key_field), self._strip, self._case) or "·" for e in evs[:8]],
             })
         return out
 

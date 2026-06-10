@@ -40,7 +40,8 @@ def flow(game: str):
     names = sorted(used_datasets | set(inspect.list_datasets(settings.data_dir, game)))
     datasets = []
     for n in names:
-        summary = inspect.summarize(settings.data_dir, game, n)
+        strip, case = profile.key_opts(n)
+        summary = inspect.summarize(settings.data_dir, game, n, profile.key_for(n), strip, case)
         summary["key_field"] = profile.key_for(n)
         datasets.append(summary)
     return {"game": game, "windows": windows, "datasets": datasets}
