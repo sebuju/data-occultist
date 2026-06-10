@@ -76,17 +76,39 @@ async function withBusy(ids, fn) {
 // re-read loop, future long jobs — registers here. The log bar then shows a live
 // count on its far right plus a per-worker emergency kill button.
 const workers = new Map();   // id -> { label, kill }
-function registerWorker(id, label, kill) { workers.set(id, { label, kill }); renderWorkers(); }
+function registerWorker(id, label, kill) {
+  const w = workers.get(id);
+  if (w) { w.kill = kill; if (w.label === label) return; w.label = label; }   // same label -> nothing visible changed
+  else workers.set(id, { label, kill });
+  renderWorkers();
+}
 function unregisterWorker(id) { if (workers.delete(id)) renderWorkers(); }
 
+// Reconcile the indicator IN PLACE — never rebuild innerHTML (the precapture poll
+// re-registers every 700ms; rebuilding would restart the spinner animation and churn
+// the buttons every tick). Fixed spinner + count are made once; buttons are reused.
+let wkSpin = null, wkCount = null;
+const workerBtns = new Map();   // id -> <button>
 function renderWorkers() {
   const el = $("logWorkers");
   if (!el) return;
-  const n = workers.size;
-  el.hidden = n === 0;
-  if (!n) { el.innerHTML = ""; return; }
-  el.innerHTML = `<span class="lw-spin"></span><span class="lw-count">${n} worker${n > 1 ? "s" : ""}</span>` +
-    [...workers].map(([id, w]) => `<button class="lw-kill" data-kill="${esc(id)}" title="emergency stop">⨯ ${esc(w.label)}</button>`).join("");
+  el.hidden = workers.size === 0;
+  if (!wkSpin) {
+    wkSpin = document.createElement("span"); wkSpin.className = "lw-spin";
+    wkCount = document.createElement("span"); wkCount.className = "lw-count";
+    el.append(wkSpin, wkCount);
+  }
+  wkCount.textContent = `${workers.size} worker${workers.size === 1 ? "" : "s"}`;
+  for (const [id, btn] of workerBtns) if (!workers.has(id)) { btn.remove(); workerBtns.delete(id); }
+  for (const [id, w] of workers) {
+    let btn = workerBtns.get(id);
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.className = "lw-kill"; btn.dataset.kill = id; btn.title = "emergency stop";
+      el.appendChild(btn); workerBtns.set(id, btn);
+    }
+    if (btn._label !== w.label) { btn.textContent = `⨯ ${w.label}`; btn._label = w.label; }
+  }
 }
 
 // Kill a worker from the log bar (don't let the click toggle the log open).
@@ -688,29 +710,10 @@ function facingSides(ra, rb) {
 
 const nodeRect = (id) => { const p = pos.get(id); return p && { x: p.x, y: p.y, w: nw(id), h: nh(id) }; };
 
-function boxFracForNode(id) {
-  if (id.startsWith("reg:")) { const [, win, rid] = id.split(":"); const r = model.region(win, rid); return r && r.box; }
-  if (id.startsWith("anc:")) { const [, win, aid] = id.split(":"); const a = model.anchor(win, aid); return a && a.search; }
-  if (id.startsWith("sb:")) { const [, win] = id.split(":"); return model.scrollbar(win); }
-  return null;
-}
-
-// World-space centre of a fraction box inside an open image panel.
-// The image canvas lives inside the window node; its world rect is the node
-// position plus the canvas's offset within the node.
-function boxWorldRect(winId, frac) {
-  const entry = imageCanvases.get(winId);
-  const wp = pos.get(`win:${winId}`);
-  if (!entry || !wp || !entry.canvas) return null;
-  const cv = entry.canvas;
-  const cw = cv.offsetWidth, ch = cv.offsetHeight;
-  return { x: wp.x + cv.offsetLeft + frac.x * cw, y: wp.y + cv.offsetTop + frac.y * ch, w: frac.w * cw, h: frac.h * ch };
-}
-
 // ---- one unified link list -------------------------------------------------
-// EVERY connection in the view is the same thing: a line between two nodes (or a
-// region/anchor node to its box on an open image). They all flow through
-// buildLinks → routing → drawn on a persistent per-link <path>. No bespoke per-kind drawing.
+// EVERY connection in the view is the same thing: a line between two NODES — always to
+// the node rect, never to a box on the image. They all flow through buildLinks →
+// routing → drawn on a persistent per-link <path>. No bespoke per-kind drawing.
 function selClsFor(aId, bId) {
   return selectedNodeId && (aId === selectedNodeId || bId === selectedNodeId) ? " sel" : "";
 }
@@ -722,15 +725,8 @@ function buildLinks() {
   const add = (key, aId, bId, top, kind, ra, rb) => {
     if (ra && rb) links.push({ key, aId, bId, top, cls: `gedge ${kind}${selClsFor(aId, bId)}`, ra, rb });
   };
-  for (const e of model.edges()) {
-    // region/anchor/scrollbar with the image open: the line runs to the box ON the image
-    if ((e.kind === "field" || e.kind === "anchor" || e.kind === "scrollbar") && imageCanvases.has(e.from.slice(4))) {
-      const frac = boxFracForNode(e.to), rb = frac && boxWorldRect(e.from.slice(4), frac);
-      add(`box ${e.to}`, e.to, `box:${e.to}`, true, e.kind, nodeRect(e.to), rb);
-      continue;
-    }
+  for (const e of model.edges())
     add(`${e.from} ${e.to}`, e.from, e.to, !!selClsFor(e.from, e.to), e.kind, nodeRect(e.from), nodeRect(e.to));
-  }
   computePorts(links);
   return links;
 }

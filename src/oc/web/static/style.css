@@ -338,7 +338,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .lw-count { color: var(--warn); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lw-kill { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap;
   background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px;
-  padding: 1px 7px; font: var(--fs-xs)/1.4 var(--font-mono); }
+  height: 16px; padding: 0 6px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1; }
 .lw-kill:hover { filter: brightness(1.12); }
 .log-body { display: none; max-height: 38vh; overflow: auto; padding: 4px 10px 8px;
   border-top: 1px solid var(--line); overscroll-behavior: contain; }

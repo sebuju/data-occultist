@@ -55,11 +55,13 @@ def template_score(crop: np.ndarray, template: np.ndarray | None) -> float:
 
 
 def diamonds_score(crop: np.ndarray) -> float:
-    """Presence of a rank-diamond strip, 0..1: a full 5-mark strip -> 1.0. Lets a tell
-    say "this cell has rank diamonds" (an arcane) vs none (a plain item)."""
+    """Presence of a rank-diamond strip, 0..1. Saturates at 3 marks -> 1.0: arcanes cap
+    at different ranks (3-mark and 5-mark strips both exist), and the tell only asks "is
+    there a rank strip here at all" (an arcane) vs none (a plain item). Normalising by 5
+    would score a 3-mark arcane 0.6 and miss it."""
     if crop is None or crop.size == 0:
         return 0.0
-    return float(min(1.0, count_diamonds(crop) / 5.0))
+    return float(min(1.0, count_diamonds(crop) / 3.0))
 
 
 def visual_score(tell: Tell, crop: np.ndarray, template: np.ndarray | None = None) -> float:
