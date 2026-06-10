@@ -94,6 +94,14 @@ export function cutoutUrl(game, name) {
   return `/api/item/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
 
+// Revert (on=true) or restore (on=false) one dataset ledger event. Returns refreshed
+// { records, history }.
+export async function revertDatasetEvent(game, dataset, eventId, on = true) {
+  const r = await fetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/revert?event=${eventId}&on=${on}`, { method: "POST" });
+  if (!r.ok) throw new Error(`revert: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
 // Per-window stash bindings: which capture a window opens with.
 export async function getBindings(game) {
   const r = await fetch(`/api/captures/${encodeURIComponent(game)}/bindings`);

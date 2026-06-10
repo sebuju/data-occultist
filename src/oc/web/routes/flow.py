@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from ...profile import list_profiles, load_profile
 from ...store import inspect
+from ...store.dataset_store import DatasetStore
 from ..deps import get_settings
 
 router = APIRouter(prefix="/api/flow", tags=["flow"])
@@ -51,5 +52,21 @@ def dataset_detail(game: str, dataset: str, limit: int = 200, history: int = 50)
     return {
         "dataset": dataset,
         "records": inspect.records(settings.data_dir, game, dataset, limit),
-        "history": list(reversed(inspect.tail_history(settings.data_dir, game, dataset, history))),
+        "history": inspect.history(settings.data_dir, game, dataset, history),
+    }
+
+
+@router.post("/{game}/dataset/{dataset}/revert")
+def revert_event(game: str, dataset: str, event: int, on: bool = True):
+    """Revert (``on=true``) or un-revert one ledger event, falling the affected record
+    back to its previous accepted value. Returns the refreshed detail."""
+    settings = get_settings()
+    profile = load_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
+    key = profile.key_for(dataset) if profile else "name"
+    store = DatasetStore(settings.data_dir, game, dataset, key_field=key)
+    store.set_reverted(event, on)
+    return {
+        "dataset": dataset,
+        "records": store.records(limit=200),
+        "history": store.history(50),
     }

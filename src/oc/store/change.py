@@ -20,14 +20,24 @@ class ChangeEvent:
     key: str                      # the dataset key (e.g. normalised item name)
     values: dict                  # record values at the time of the event
     changed: dict = field(default_factory=dict)  # field -> [old, new] for updates
+    id: int = 0                   # stable per-dataset event id (revert target)
 
-    def to_json(self) -> str:
-        payload = {
-            "ts": self.ts,
-            "op": self.op.value,
-            "key": self.key,
-            "values": self.values,
-        }
+    def to_dict(self) -> dict:
+        payload = {"id": self.id, "ts": self.ts, "op": self.op.value, "key": self.key, "values": self.values}
         if self.changed:
             payload["changed"] = self.changed
-        return json.dumps(payload, ensure_ascii=False, default=str)
+        return payload
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False, default=str)
+
+    @staticmethod
+    def from_dict(d: dict) -> "ChangeEvent":
+        return ChangeEvent(
+            ts=d.get("ts", ""),
+            op=ChangeOp(d["op"]),
+            key=d["key"],
+            values=d.get("values", {}),
+            changed=d.get("changed", {}),
+            id=int(d.get("id", 0)),
+        )

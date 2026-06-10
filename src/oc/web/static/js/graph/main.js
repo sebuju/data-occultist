@@ -768,18 +768,32 @@ async function openDataModal(ds) {
   openModal({ title: `dataset: ${ds}`, size: "data", node });
   try {
     const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
-    const d = await r.json();
-    node.innerHTML = dataHTML(d);
+    renderData(node, ds, await r.json());
   } catch (e) {
     node.innerHTML = `<p class="muted" style="padding:12px">${esc(String(e))}</p>`;
   }
 }
 
+// Render the dataset detail + wire each ledger row's revert/restore button. Reverting
+// replays the ledger without that change, so the record falls back to its prior value.
+function renderData(node, ds, d) {
+  node.innerHTML = dataHTML(d);
+  node.querySelectorAll(".led-revert").forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true;
+    try {
+      const upd = await api.revertDatasetEvent(model.profile.name, ds, +b.dataset.event, b.dataset.on === "1");
+      renderData(node, ds, upd);
+      refreshLive();   // dataset node counts may have changed
+    } catch (e) { b.disabled = false; setStatus(String(e.message || e)); }
+  }));
+}
+
 function dataHTML(d) {
   const hist = (d.history || []).map((h) => {
     const changed = h.changed ? " " + Object.entries(h.changed).map(([k, v]) => `${esc(k)}:${esc(v[0])}→${esc(v[1])}`).join(", ") : "";
-    return `<li><span style="color:${OP_COLOR[h.op] || "#fff"};font-weight:600">${esc(h.op)}</span>
-      <span class="muted">${esc((h.ts || "").slice(11))}</span> ${esc(h.key)}${changed}</li>`;
+    const btn = `<button class="led-revert" data-event="${h.id}" data-on="${h.reverted ? "0" : "1"}" title="${h.reverted ? "restore this change" : "revert — fall back to the previous value"}">${h.reverted ? "restore" : "revert"}</button>`;
+    return `<li class="${h.reverted ? "reverted" : ""}"><span style="color:${OP_COLOR[h.op] || "#fff"};font-weight:600">${esc(h.op)}</span>
+      <span class="muted">${esc((h.ts || "").slice(11))}</span> ${esc(h.key)}${changed} ${btn}</li>`;
   }).join("") || '<li class="muted">no history yet</li>';
 
   const recs = d.records || [];
@@ -791,7 +805,7 @@ function dataHTML(d) {
     table = `<table class="grid-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   }
   return `<div class="detail-cols">
-    <div><h4>Recent changes</h4><ul class="history">${hist}</ul></div>
+    <div><h4>Ledger</h4><ul class="history">${hist}</ul></div>
     <div><h4>Records (${recs.length})</h4><div class="records">${table}</div></div>
   </div>`;
 }
