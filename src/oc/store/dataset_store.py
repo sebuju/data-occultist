@@ -210,6 +210,29 @@ class DatasetStore:
             self._reverted -= ids
         self._apply_reverted()
 
+    def clear_data(self) -> None:
+        """Empty the current records by reverting every event — KEEPS the batch ledger
+        (each batch shows reverted and stays restorable)."""
+        self._reverted = {e.id for e in self._events}
+        self._apply_reverted()
+
+    def _rewrite_history(self) -> None:
+        self._history_path.parent.mkdir(parents=True, exist_ok=True)
+        self._history_path.write_text("".join(e.to_json() + "\n" for e in self._events), encoding="utf-8")
+
+    def remove_batch(self, batch: int) -> None:
+        """Permanently delete a batch's events from the ledger (not just revert)."""
+        batch = int(batch)
+        ids = {e.id for e in self._events if e.batch == batch}
+        if not ids:
+            return
+        self._events = [e for e in self._events if e.batch != batch]
+        self._reverted -= ids
+        self._rewrite_history()
+        self._save_reverted()
+        self._state = replay(self._events, self._reverted)
+        self.save()
+
     def history(self, limit: int = 50) -> list[dict]:
         """Individual ledger events newest-first, each flagged reverted."""
         out = []

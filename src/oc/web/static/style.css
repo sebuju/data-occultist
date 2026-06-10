@@ -459,8 +459,10 @@ a.node.win:hover { border-color: var(--accent); }
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .history .op { font-weight: 600; margin-right: 6px; }
 .history li.reverted { opacity: 0.5; text-decoration: line-through; }
-.history li.reverted .led-revert { text-decoration: none; }
-.led-revert { margin-left: auto; }
+.history li.reverted .led-apply,
+.history li.reverted .led-remove { text-decoration: none; opacity: 1; }
+.led-apply { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.led-apply input { margin: 0; }
 .records { max-height: 50vh; overflow: auto; }
 .records tr.gone td { color: var(--muted); text-decoration: line-through; }
 .conf-ok { color: var(--ok); }

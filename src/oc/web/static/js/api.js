@@ -123,6 +123,13 @@ export async function revertDatasetBatch(game, dataset, batch, on = true) {
   return r.json();
 }
 
+// Permanently delete one batch from a dataset's ledger.
+export async function removeDatasetBatch(game, dataset, batch) {
+  const r = await fetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/remove-batch?batch=${batch}`, { method: "POST" });
+  if (!r.ok) throw new Error(`remove: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
 // Per-window stash bindings: which capture a window opens with.
 export async function getBindings(game) {
   const r = await fetch(`/api/captures/${encodeURIComponent(game)}/bindings`);

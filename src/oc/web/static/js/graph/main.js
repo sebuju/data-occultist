@@ -740,7 +740,7 @@ function layoutSignature() {
 }
 
 function drawNodeEdge(layer, e, cls) {
-  const pts = routeHash === drawSig && routeCache.has(`${e.from} ${e.to}`)
+  const pts = routeCache.get(`${e.from} ${e.to}`);   // use route if cached; bezier only until first route exists
     ? routeCache.get(`${e.from} ${e.to}`) : null;
   if (pts) addPolyline(layer, pts, cls);
   else connectNodes(layer, e.from, e.to, cls);
@@ -950,13 +950,22 @@ async function refreshDatasetPanel(ds) {
 // their previous accepted values (or vanish).
 function renderDatasetDetail(body, ds, d) {
   body.innerHTML = datasetDetailHTML(d);
-  body.querySelectorAll(".led-revert").forEach((b) => b.addEventListener("click", async () => {
-    b.disabled = true;
+  // checkbox checked = batch applied; unchecking reverts it (on=true means "revert").
+  body.querySelectorAll(".led-toggle").forEach((cb) => cb.addEventListener("change", async () => {
+    cb.disabled = true;
     try {
-      const upd = await api.revertDatasetBatch(model.profile.name, ds, +b.dataset.batch, b.dataset.on === "1");
+      const upd = await api.revertDatasetBatch(model.profile.name, ds, +cb.dataset.batch, !cb.checked);
       renderDatasetDetail(body, ds, upd);
       refreshLive();
-    } catch (e) { b.disabled = false; setStatus(String(e.message || e)); }
+    } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
+  }));
+  body.querySelectorAll(".led-remove").forEach((b) => b.addEventListener("click", async () => {
+    if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "sure?"; setTimeout(() => { b.dataset.armed = "0"; b.textContent = "remove"; }, 2500); return; }
+    try {
+      const upd = await api.removeDatasetBatch(model.profile.name, ds, +b.dataset.batch);
+      renderDatasetDetail(body, ds, upd);
+      refreshLive();
+    } catch (e) { setStatus(String(e.message || e)); }
   }));
 }
 
@@ -972,8 +981,9 @@ function datasetDetailHTML(d) {
   const batches = (d.batches || []).map((b) => {
     const parts = [b.adds ? `+${b.adds}` : "", b.updates ? `~${b.updates}` : "", b.removes ? `−${b.removes}` : ""].filter(Boolean).join(" ");
     const keys = (b.keys || []).slice(0, 4).join(", ") + (b.count > 4 ? " …" : "");
-    const btn = `<button class="led-revert" data-batch="${b.batch}" data-on="${b.reverted ? "0" : "1"}" title="${b.reverted ? "restore this batch" : "revert the whole batch"}">${b.reverted ? "restore" : "revert"}</button>`;
-    return `<li class="${b.reverted ? "reverted" : ""}"><span class="muted">${esc((b.ts || "").slice(11))}</span> <b>#${b.batch}</b> <span class="muted">${parts} · ${b.count} · ${esc(keys)}</span> ${btn}</li>`;
+    const app = `<label class="led-apply" title="apply this batch to the dataset (uncheck to revert it)"><input type="checkbox" class="led-toggle" data-batch="${b.batch}"${b.reverted ? "" : " checked"}> applied</label>`;
+    const rm = `<button class="led-remove danger" data-batch="${b.batch}" title="permanently delete this batch from the ledger">remove</button>`;
+    return `<li class="${b.reverted ? "reverted" : ""}"><span class="muted">${esc((b.ts || "").slice(11))}</span> <b>#${b.batch}</b> <span class="muted">${parts} · ${b.count} · ${esc(keys)}</span> ${app} ${rm}</li>`;
   }).join("") || '<li class="muted">no batches yet</li>';
   return `<div class="ds-detail">
     <div class="prev-count muted">${recs.length} records</div>
