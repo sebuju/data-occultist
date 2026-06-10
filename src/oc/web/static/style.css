@@ -272,21 +272,6 @@ legend { color: var(--muted); padding: 0 6px; }
 .ti-row.il-sel, .if-row.il-sel { outline: 1px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 .prev-count { padding: 4px 8px; font-size: var(--fs-sm); }
 
-/* in-graph preview drawing surface */
-.imgpanel {
-  position: absolute; width: 520px; min-width: 240px; height: auto;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-  overflow: hidden; z-index: 2;  /* above nodes: draggable; attach lines use #gedges-top */
-  resize: horizontal;
-}
-.prevpanel { border-radius: 8px; }   /* preview stays a standalone panel */
-.imgpanel-h { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); cursor: grab; }
-.imgpanel-h .spacer { flex: 1; }
-.imgpanel-h .tools { display: inline-flex; gap: 2px; }
-.imgpanel .canvas-wrap { overflow: hidden; border: 0; }  /* aspect-ratio set per image in JS */
-.prevpanel { width: 340px; height: 320px; resize: both; }
-.prevpanel.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.prevpanel .prev-body { overflow: auto; height: calc(100% - 34px); overscroll-behavior: contain; }
 .gnode.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); z-index: 20; }
 
 /* modals */
@@ -473,13 +458,24 @@ a.node.win:hover { border-color: var(--accent); }
 .records { max-height: 50vh; overflow: auto; }
 .records tr.gone td { color: var(--muted); text-decoration: line-through; }
 
-/* batches node: ledger list on top, selected-batch contents + preview below — all
-   inline in the node body, scrolled rather than grown. The node is freely resizable
-   and its body flexes to fill it. */
-.gnode.batches { width: 360px; height: 420px; resize: both; overflow: hidden; display: flex; flex-direction: column; min-width: 280px; min-height: 160px; }
-.gnode.batches .gn-body { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-.bat-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
-.bat-host.hidden { display: none; }
+/* content nodes — data / preview / batches: a node whose body holds a scrollable
+   table/list. Freely resizable, body flexes to fill, content host scrolls. ONE look
+   and ONE behaviour for all three (no per-kind panel code). */
+.gnode.dataset, .gnode.preview, .gnode.batches {
+  resize: both; overflow: hidden; display: flex; flex-direction: column;
+  min-width: 280px; min-height: 160px;
+}
+.gnode.dataset { width: 320px; height: 420px; }
+.gnode.preview { width: 380px; height: 360px; }
+.gnode.batches { width: 360px; height: 420px; }
+.gnode.dataset .gn-body, .gnode.preview .gn-body, .gnode.batches .gn-body {
+  flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column;
+}
+/* the scrollable content host inside such a node */
+.nodehost { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.nodehost.hidden { display: none; }
+/* batches sub-layout: ledger list on top, selected-batch contents + preview below */
+.bat-host { display: flex; flex-direction: column; gap: 8px; }
 .bat-list { max-height: 45%; overflow: auto; flex: 0 0 auto; }
 .bat-list .batrow { cursor: pointer; }
 .bat-list .batrow.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
@@ -530,8 +526,8 @@ label.inline input { width: auto; }
 .grid-table.zebra tbody tr:nth-child(even) { background: rgba(140, 165, 200, 0.06); }
 .grid-table th { text-align: left; color: var(--muted); font-weight: 400; font-size: var(--fs-sm);
   position: sticky; top: 0; background: var(--panel); }
-/* dataset panel: records table + batch ledger, in a preview-style floating panel */
-.dspanel .ds-detail { padding: 6px 8px; }
+/* dataset records, rendered inline in the dataset node */
+.ds-detail { padding: 4px 2px; }
 .ds-detail .ds-h { margin: 10px 0 4px; }
 .ds-detail .prev-count { margin-bottom: 4px; }
 .grid-table td { padding: 2px 3px; }

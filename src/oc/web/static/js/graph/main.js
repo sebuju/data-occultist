@@ -16,7 +16,7 @@ const pos = new Map();            // node id -> {x,y}
 const nodeEls = new Map();        // node id -> DOM element (built once, reused)
 const collapsed = new Set();      // collapsed node ids
 const view = { panX: 0, panY: 0, zoom: 1 };  // canvas pan/zoom
-const COLX = { game: 20, window: 300, region: 600, anchor: 600, state: 600, scrollbar: 600, dataset: 900, batches: 1180 };
+const COLX = { game: 20, window: 300, preview: 1580, region: 600, anchor: 600, state: 600, scrollbar: 600, dataset: 900, batches: 1180 };
 let live = {};                    // dataset -> {present,total,last_op,last_ts}
 const prevPresent = {};
 let timer = null;
@@ -51,15 +51,9 @@ function selectWindowBox(winId, boxId) {
   if (e) e.overlay.setActive(boxId);
   overlaySelected(`win:${winId}`, boxId);
 }
-const previewPanels = new Map();  // winId -> { wrap, body } (live OCR preview)
-// Panels are positioned like nodes: pos has `img:<win>` / `prev:<win>` entries.
-const openImages = new Set();     // winIds whose image panel is open (persisted)
-const openPreviews = new Set();   // winIds whose preview panel is open (persisted)
-const openDatasets = new Set();   // dataset ids whose data panel is open (persisted)
-const panelSizes = new Map();     // `img:<win>` / `prev:<win>` / `dsp:<ds>` -> {w,h} (persisted)
+const openImages = new Set();     // winIds whose image is loaded into the window node (persisted)
+const nodeSizes = new Map();      // node id -> {w,h} for resizable nodes (persisted)
 let pendingOpenImages = [];
-let pendingOpenPreviews = [];
-let pendingOpenDatasets = [];
 const busy = new Map();            // node id -> active-work count (drives the spinner)
 const gridPreviews = new Map();    // winId -> live-detected field boxes (dashed grid)
 const gridReads = new Map();        // winId -> per-cell read values {x,y,w,h,text,confidence}
@@ -136,9 +130,7 @@ function loadPositions() {
     }
     (raw.collapsed || []).forEach((id) => collapsed.add(id));
     pendingOpenImages = raw.openImages || [];
-    pendingOpenPreviews = raw.openPreviews || [];
-    pendingOpenDatasets = raw.openDatasets || [];
-    for (const k in (raw.panelSizes || {})) panelSizes.set(k, raw.panelSizes[k]);
+    for (const k in (raw.nodeSizes || {})) nodeSizes.set(k, raw.nodeSizes[k]);
     if (raw.view && Number.isFinite(raw.view.zoom)) Object.assign(view, raw.view);
   } catch { /* ignore */ }
 }
@@ -146,8 +138,7 @@ function savePositions() {
   try {
     localStorage.setItem(posKey(), JSON.stringify({
       positions: Object.fromEntries(pos), collapsed: [...collapsed],
-      openImages: [...openImages], openPreviews: [...openPreviews], openDatasets: [...openDatasets],
-      panelSizes: Object.fromEntries(panelSizes), view,
+      openImages: [...openImages], nodeSizes: Object.fromEntries(nodeSizes), view,
     }));
   } catch { /* ignore */ }
 }
@@ -159,9 +150,7 @@ const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text
 // ---- layout ---------------------------------------------------------------
 
 function elForPos(id) {
-  if (id.startsWith("prev:")) return previewPanels.get(id.slice(5))?.wrap;
-  if (id.startsWith("dsp:")) return datasetPanels.get(id.slice(4))?.wrap;
-  return nodeEls.get(id);   // image canvas lives inside its window node now
+  return nodeEls.get(id);   // everything is a node now (image/preview/data/batches all in-node)
 }
 
 function ensurePositions() {
@@ -386,13 +375,22 @@ function nodeParts(n) {
         <div class="gn-foot"><button class="delsb danger">remove</button></div>`,
     };
   }
+  if (n.type === "preview") {
+    // live-read node — what the current layout would read from this window. Runs OCR
+    // on demand (its own button, or the image's 👁), rendered inline.
+    return {
+      title: `<span class="gi-id">${esc(n.ref.id)} preview</span>`,
+      body: `<div class="gn-foot"><button class="prevrun">↻ read</button><button class="hosttoggle">▤ hide</button></div>
+      <div class="nodehost scrollhost prev-host"><p class="muted" style="padding:8px">↻ read to preview what this window reads</p></div>`,
+    };
+  }
   if (n.type === "batches") {
     // ledger node — shows the dataset's collection/save runs inline; pick one to see
     // its events + a preview of what applying it changes.
     return {
       title: `<span class="gi-id">${esc(n.ref)} batches</span>`,
-      body: `<div class="gn-foot"><button class="battoggle">▤ hide ledger</button></div>
-      <div class="bat-host">
+      body: `<div class="gn-foot"><button class="hosttoggle">▤ hide</button></div>
+      <div class="nodehost scrollhost bat-host">
         <ul class="history bat-list"><li class="muted">loading…</li></ul>
         <div class="bat-detail muted">select a batch to see its contents and what applying it changes</div>
       </div>`,
@@ -412,7 +410,8 @@ function nodeParts(n) {
       <label class="flab" title="field whose value identifies a row — reads with the same value merge">key <select class="dskey">${keyOpts}</select></label>
       <label class="flab" title="ignore spaces/punctuation when matching keys">strip non-alnum <input type="checkbox" class="dsstrip" ${model.datasetStrip(ds) ? "checked" : ""}></label>
       <label class="flab" title="treat keys differing only in case as distinct">case sensitive <input type="checkbox" class="dscase" ${model.datasetCase(ds) ? "checked" : ""}></label>
-      <div class="gn-foot"><button class="dsdata">▤ data</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>`,
+      <div class="gn-foot"><button class="hosttoggle">▤ hide</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
+      <div class="nodehost scrollhost data-host"><p class="muted" style="padding:8px">loading…</p></div>`,
   };
 }
 
@@ -432,6 +431,11 @@ function fillNode(div, n) {
       <button class="collapse" title="collapse/expand">${isCollapsed ? "▸" : "▾"}</button>${toggle}${parts.title}<span class="gn-spin" title="working…"></span></div>
     <div class="gn-body">${parts.body}</div>${parts.ports || ""}`;
   div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
+  // generic content-host show/hide (data / preview / batches nodes)
+  div.querySelector(".hosttoggle")?.addEventListener("click", (e) => {
+    const host = div.querySelector(".nodehost");
+    if (host) e.target.textContent = host.classList.toggle("hidden") ? "▤ show" : "▤ hide";
+  });
   div.querySelector(".gn-enable")?.addEventListener("change", (e) => {
     n.ref.enabled = e.target.checked;
     div.classList.toggle("node-disabled", !e.target.checked);
@@ -443,13 +447,26 @@ function fillNode(div, n) {
   wireNode(div, n);
 }
 
+const RESIZABLE = { item: false, dataset: true, preview: true, batches: true };   // type -> both-axes?
+
+// Make a node user-resizable; restore its saved size and persist new ones (grid-snapped
+// on release). One size system for every resizable node — no per-kind panel code.
+function makeResizable(div, id, both) {
+  const s = nodeSizes.get(id);
+  if (s) { if (s.w) div.style.width = `${s.w}px`; if (both && s.h) div.style.height = `${s.h}px`; }
+  snapResize(div, {
+    both,
+    onResize: drawEdges,
+    onSettle: () => { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight }); drawEdges(); savePositions(); },
+  });
+}
+
 function buildNode(n) {
   const div = document.createElement("div");
   div.id = `node-${n.id}`;
   div.dataset.id = n.id;
   fillNode(div, n);
-  if (n.type === "item") snapResize(div, { onResize: drawEdges });   // width-resizable → snap on release
-  if (n.type === "batches") snapResize(div, { both: true, onResize: drawEdges });   // resize the ledger node freely
+  if (n.type in RESIZABLE) makeResizable(div, n.id, RESIZABLE[n.type]);
   return div;
 }
 
@@ -497,7 +514,6 @@ function render() {
   drawEdges();
   resizeCanvas();
   applyView();
-  positionPanels();
   openMissingItemCanvases();
 }
 
@@ -559,7 +575,7 @@ function updateOverlayZoom() {
 
 function onWheel(ev) {
   // a SELECTED preview, or the batches ledger, scrolls its content; everywhere else zoom
-  if (ev.target.closest(".prevpanel.selected, .bat-host")) return;
+  if (ev.target.closest(".scrollhost")) return;
   ev.preventDefault();
   const rect = $("graph").getBoundingClientRect();
   const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
@@ -647,15 +663,9 @@ function boxWorldRect(winId, frac) {
 }
 
 // ---- one unified link list -------------------------------------------------
-// EVERY connection in the view is the same thing: a line between two rects —
-// structural node→node, a region/anchor node to its box on an open image, a window
-// to its preview panel, a dataset to its data panel. They all flow through
-// buildLinks → routing → addPolyline. No bespoke per-kind drawing.
-const PANEL_DEF = { prev: [340, 320], dsp: [320, 300] };   // fallback w,h before layout
-function panelRectOf(kind, ownerId, wrap) {
-  const p = panelPos(kind, ownerId), d = PANEL_DEF[kind];
-  return p && { x: p.x, y: p.y, w: wrap.offsetWidth || d[0], h: wrap.offsetHeight || d[1] };
-}
+// EVERY connection in the view is the same thing: a line between two nodes (or a
+// region/anchor node to its box on an open image). They all flow through
+// buildLinks → routing → addPolyline. No bespoke per-kind drawing, no panels.
 function selClsFor(aId, bId) {
   return selectedNodeId && (aId === selectedNodeId || bId === selectedNodeId) ? " sel" : "";
 }
@@ -676,10 +686,6 @@ function buildLinks() {
     }
     add(`${e.from} ${e.to}`, e.from, e.to, !!selClsFor(e.from, e.to), e.kind, nodeRect(e.from), nodeRect(e.to));
   }
-  for (const [winId, prev] of previewPanels)
-    add(`prev ${winId}`, `win:${winId}`, `prev:${winId}`, true, "img", nodeRect(`win:${winId}`), panelRectOf("prev", winId, prev.wrap));
-  for (const [ds, panel] of datasetPanels)
-    add(`dsp ${ds}`, `ds:${ds}`, `dsp:${ds}`, true, "data", nodeRect(`ds:${ds}`), panelRectOf("dsp", ds, panel.wrap));
   computePorts(links);
   return links;
 }
@@ -759,8 +765,6 @@ let routeTimer = null;
 function obstacleRects() {
   const out = [];
   for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) out.push(r); }
-  for (const [winId, prev] of previewPanels) { const r = panelRectOf("prev", winId, prev.wrap); if (r) out.push(r); }
-  for (const [ds, panel] of datasetPanels) { const r = panelRectOf("dsp", ds, panel.wrap); if (r) out.push(r); }
   return out;
 }
 
@@ -821,7 +825,7 @@ function wireNode(div, n) {
   // edges/padding/labels work, not just the header)
   div.addEventListener("mousedown", (ev) => {
     if (ev.button !== 0) return;   // only left-drag moves; right-drag pans the canvas
-    if (ev.target.closest("input,select,button,a,.port,.collapse,.canvas-wrap,[contenteditable],.bat-host")) return;  // .canvas-wrap: resize handle; .bat-host: scroll/edit the ledger
+    if (ev.target.closest("input,select,button,a,.collapse,.canvas-wrap,[contenteditable],.scrollhost")) return;  // .canvas-wrap: resize handle; .scrollhost: scroll/edit node content
     const r = div.getBoundingClientRect();   // skip the CSS resize-handle corner (resizable nodes)
     if (ev.clientX > r.right - 18 && ev.clientY > r.bottom - 18) return;
     focusNode(n.id);   // select on click / drag start (every node is focusable)
@@ -848,12 +852,12 @@ function wireNode(div, n) {
     });
   } else if (n.type === "window") {
     wireWindowControls(div, n);
-    div.querySelector(".port.out")?.addEventListener("mousedown", (ev) => startWire(n.ref.id, ev));
+  } else if (n.type === "preview") {
+    div.querySelector(".prevrun")?.addEventListener("click", () => refreshPreview(n.ref.id));
   } else if (n.type === "dataset") {
     div.querySelector(".dsrename")?.addEventListener("change", (e) => {
       if (model.renameDataset(n.ref, e.target.value)) { render(); autosave(); } else e.target.value = n.ref;
     });
-    div.querySelector(".dsdata")?.addEventListener("click", () => toggleDatasetPanel(n.ref));
     div.querySelector(".dskey")?.addEventListener("change", (e) => { model.setDatasetKey(n.ref, e.target.value); autosave(); });
     div.querySelector(".dsstrip")?.addEventListener("change", (e) => { model.setDatasetStrip(n.ref, e.target.checked); autosave(); });
     div.querySelector(".dscase")?.addEventListener("change", (e) => { model.setDatasetCase(n.ref, e.target.checked); autosave(); });
@@ -865,16 +869,11 @@ function wireNode(div, n) {
         setTimeout(() => { clearBtn.dataset.armed = "0"; clearBtn.textContent = "clear data"; }, 2500);
         return;
       }
-      try { await api.clearDataset(model.profile.name, n.ref); refreshLive(); refreshOpenDatasetPanels(); refreshAllBatchesNodes(); setStatus(`cleared ${n.ref}`); }
+      try { await api.clearDataset(model.profile.name, n.ref); refreshLive(); refreshDataNode(n.ref); refreshAllBatchesNodes(); setStatus(`cleared ${n.ref}`); }
       catch (e) { setStatus(String(e.message || e)); }
     });
+    queueMicrotask(() => refreshDataNode(n.ref));   // load records into the node body
   } else if (n.type === "batches") {
-    const host = div.querySelector(".bat-host");
-    const tgl = div.querySelector(".battoggle");
-    tgl?.addEventListener("click", () => {
-      const hidden = host.classList.toggle("hidden");
-      tgl.textContent = hidden ? "▤ show ledger" : "▤ hide ledger";
-    });
     queueMicrotask(() => loadBatchesNode(n.ref));   // nodeEls is set after buildNode returns
   } else if (n.type === "region") {
     const fld = n.field;
@@ -930,59 +929,23 @@ function wireNode(div, n) {
   }
 }
 
-// ---- dataset panel (records + batch ledger; a floating panel like the preview) ----
+// ---- dataset records (rendered inline in the dataset node body) ----
 
-const datasetPanels = new Map();   // ds -> { wrap, body }
-
-function toggleDatasetPanel(ds) {
-  if (datasetPanels.has(ds)) closeDatasetPanel(ds); else openDatasetPanel(ds);
+function dataHost(ds) {
+  const el = nodeEls.get(`ds:${ds}`);
+  return el && el.querySelector(".data-host");
 }
-
-function openDatasetPanel(ds) {
-  const open = datasetPanels.get(ds);
-  if (open) { selectPanel(open.wrap); refreshDatasetPanel(ds); return; }
-  const wrap = document.createElement("div");
-  wrap.className = "imgpanel prevpanel dspanel";
-  wrap.id = `dspanel-${ds}`;
-  wrap.innerHTML = `<div class="imgpanel-h">${esc(ds)} data
-      <span class="spacer"></span><button class="dsclose">×</button></div>
-    <div class="prev-body ds-body"><p class="muted" style="padding:8px">loading…</p></div>`;
-  $("gcanvases").appendChild(wrap);
-  datasetPanels.set(ds, { wrap, body: wrap.querySelector(".ds-body") });
-  openDatasets.add(ds);
-  savePositions();
-  wrap.addEventListener("mousedown", () => selectPanel(wrap));      // click to select (wheel scrolls it)
-  wrap.querySelector(".dsclose").addEventListener("click", () => closeDatasetPanel(ds));
-  wrap.querySelector(".imgpanel-h").addEventListener("mousedown", (ev) => startPanelDrag("dsp", ds, ev));
-  applyPanelSize(`dsp:${ds}`, wrap);
-  observePanelSize(`dsp:${ds}`, wrap);
-  positionPanels();
-  refreshDatasetPanel(ds);
+// refresh every dataset node that currently exists (after save / clear / live change)
+function refreshAllDataNodes() {
+  for (const ds of model.datasets()) if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
 }
-
-function closeDatasetPanel(ds) {
-  const e = datasetPanels.get(ds);
-  if (e) { e.wrap.remove(); datasetPanels.delete(ds); }
-  openDatasets.delete(ds);
-  savePositions();
-}
-
-// Refresh every open dataset panel — call after the data changes (precapture save, live).
-function refreshOpenDatasetPanels() {
-  for (const ds of datasetPanels.keys()) refreshDatasetPanel(ds);
-}
-
-async function refreshDatasetPanel(ds) {
-  const panel = datasetPanels.get(ds);
-  if (!panel) return;
+async function refreshDataNode(ds) {
+  const host = dataHost(ds);
+  if (!host) return;
   try {
     const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
-    renderDatasetDetail(panel.body, ds, await r.json());
-  } catch (e) { panel.body.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
-}
-
-function renderDatasetDetail(body, ds, d) {
-  body.innerHTML = datasetDetailHTML(d);
+    host.innerHTML = datasetDetailHTML(await r.json());
+  } catch (e) { host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
 }
 
 function datasetDetailHTML(d) {
@@ -1052,7 +1015,7 @@ function renderBatchesList(ds, batches) {
     cb.disabled = true;
     try {
       await api.revertDatasetBatch(model.profile.name, ds, +cb.dataset.batch, !cb.checked);
-      refreshLive(); refreshOpenDatasetPanels(); loadBatchesNode(ds);
+      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
     } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
   }));
   els.list.querySelectorAll(".led-remove").forEach((b) => b.addEventListener("click", async () => {
@@ -1060,7 +1023,7 @@ function renderBatchesList(ds, batches) {
     try {
       if (st.sel === +b.dataset.batch) { st.sel = null; els.detail.innerHTML = ""; }
       await api.removeDatasetBatch(model.profile.name, ds, +b.dataset.batch);
-      refreshLive(); refreshOpenDatasetPanels(); loadBatchesNode(ds);
+      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
     } catch (e) { setStatus(String(e.message || e)); }
   }));
   if (st.sel != null && batches.some((b) => b.batch === st.sel)) selectBatch(ds, st.sel);
@@ -1122,21 +1085,21 @@ function renderBatchDetail(ds, bd) {
     if (String(ev.values?.[field] ?? "") === val) return;     // unchanged
     try {
       await api.editDatasetEvent(model.profile.name, ds, bd.batch, id, { ...ev.values, [field]: val });
-      refreshLive(); refreshOpenDatasetPanels(); loadBatchesNode(ds);
+      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
     } catch (e) { setStatus(String(e.message || e)); }
   }));
   els.detail.querySelectorAll(".ev-apply").forEach((cb) => cb.addEventListener("change", async () => {
     cb.disabled = true;
     try {
       await api.revertDatasetEvent(model.profile.name, ds, bd.batch, +cb.dataset.id, !cb.checked);
-      refreshLive(); refreshOpenDatasetPanels(); loadBatchesNode(ds);
+      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
     } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
   }));
   els.detail.querySelectorAll(".ev-remove").forEach((b) => b.addEventListener("click", async () => {
     if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "?"; setTimeout(() => { b.dataset.armed = "0"; b.textContent = "✕"; }, 2500); return; }
     try {
       await api.removeDatasetEvent(model.profile.name, ds, bd.batch, +b.dataset.id);
-      refreshLive(); refreshOpenDatasetPanels(); loadBatchesNode(ds);
+      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
     } catch (e) { setStatus(String(e.message || e)); }
   }));
 }
@@ -1189,7 +1152,7 @@ async function openPrecaptureModal() {
     else if (a === "resume") run(() => api.precapture.pause(game, false));
     else if (a === "cancel") run(() => api.precapture.cancel(game));
     else if (a === "reset") run(() => api.precapture.reset(game));
-    else if (a === "save") run(async () => { const r = await api.precapture.save(game); refreshLive(); refreshOpenDatasetPanels(); refreshAllBatchesNodes(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
+    else if (a === "save") run(async () => { const r = await api.precapture.save(game); refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
   });
 
   await run(() => api.precapture.status(game));
@@ -1339,7 +1302,6 @@ function closeImage(winId) {
   if (e && e.host) e.host.innerHTML = "";
   imageCanvases.delete(winId);
   unregisterOverlay(`win:${winId}`);
-  closePreview(winId);
   openImages.delete(winId);
   drawEdges();
   savePositions();
@@ -1393,7 +1355,7 @@ async function openImage(winId) {
   }));
   host.querySelector(".imgclose").addEventListener("click", () => closeImage(winId));
   host.querySelector(".imgcap").addEventListener("click", () => loadImage(winId, true));
-  host.querySelector(".imgprev").addEventListener("click", () => togglePreview(winId));
+  host.querySelector(".imgprev").addEventListener("click", () => refreshPreview(winId));
   if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
   await loadImage(winId, false);
   refreshDetect(winId);
@@ -1512,45 +1474,6 @@ function refreshItemBoxes(winId, itemId) {
   ent.overlay.setBoxes(boxes);
 }
 
-function applyPanelSize(id, wrap) {
-  const s = panelSizes.get(id);
-  if (!s) return;
-  if (s.w) wrap.style.width = `${s.w}px`;
-  if (s.h && id.startsWith("prev:")) wrap.style.height = `${s.h}px`;   // image height follows aspect
-}
-let sizeT = null;
-function observePanelSize(id, wrap) {
-  // resize smoothly; snap to the grid on release (see snapResize)
-  snapResize(wrap, {
-    both: true,
-    onResize: () => {
-      panelSizes.set(id, { w: wrap.offsetWidth, h: wrap.offsetHeight });
-      drawEdges();
-      clearTimeout(sizeT); sizeT = setTimeout(savePositions, 400);
-    },
-    onSettle: () => {
-      panelSizes.set(id, { w: wrap.offsetWidth, h: wrap.offsetHeight });
-      drawEdges(); savePositions();
-    },
-  });
-}
-
-// Drag a panel (image/preview) like a node: snapped to the grid, pos-based.
-function startPanelDrag(kind, winId, ev) {
-  if (ev.target.closest("button, select, input")) return;
-  ev.stopPropagation();
-  const p = panelPos(kind, winId);
-  const s = { x: ev.clientX, y: ev.clientY, px: p.x, py: p.y };
-  const mv = (e) => {
-    p.x = snap(s.px + (e.clientX - s.x) / view.zoom);
-    p.y = snap(s.py + (e.clientY - s.y) / view.zoom);
-    positionPanels(); drawEdges();
-  };
-  const up = () => { document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up); savePositions(); };
-  document.addEventListener("mousemove", mv);
-  document.addEventListener("mouseup", up);
-}
-
 function selectRegionNode(winId, boxId) {
   const ids = [`reg:${winId}:${boxId}`, `anc:${winId}:${boxId}`, `st:${winId}:${boxId}`, `sb:${winId}:${boxId}`];
   selectedNodeId = ids.find((id) => nodeEls.has(id)) || null;
@@ -1558,13 +1481,12 @@ function selectRegionNode(winId, boxId) {
   drawEdges();   // restyle the selected node's line
 }
 
-// Focus ANY node (click or drag). Drops box/panel selection so WASD targets the node,
+// Focus ANY node (click or drag). Drops box selection so WASD targets the node,
 // highlights it + its lines. Box-backed nodes (region/anchor/scrollbar) then re-select
 // their box on the trailing click, so WASD keeps nudging the box for those.
 function focusNode(id) {
   for (const [, rec] of overlays) rec.overlay.setActive(null);
   activeOverlayKey = null;
-  document.querySelectorAll(".prevpanel.selected").forEach((p) => p.classList.remove("selected"));
   selectedNodeId = id;
   for (const [nid, el] of nodeEls) el.classList.toggle("selected", nid === id);
   drawEdges();
@@ -1572,43 +1494,9 @@ function focusNode(id) {
 
 // ---- live preview node (what the current setup would read) ------------------
 
-function togglePreview(winId) {
-  if (previewPanels.has(winId)) closePreview(winId);
-  else createPreviewPanel(winId);
-}
-function closePreview(winId) {
-  const e = previewPanels.get(winId);
-  if (e) { e.wrap.remove(); previewPanels.delete(winId); }
-  openPreviews.delete(winId);
-  savePositions();
-}
-
-// Mark a panel selected (others deselected) — a selected panel scrolls on wheel.
-function selectPanel(wrap) {
-  document.querySelectorAll(".prevpanel.selected").forEach((p) => p.classList.remove("selected"));
-  wrap.classList.add("selected");
-}
-
-function createPreviewPanel(winId) {
-  const wrap = document.createElement("div");
-  wrap.className = "imgpanel prevpanel";
-  wrap.id = `prev-${winId}`;
-  wrap.innerHTML = `<div class="imgpanel-h">${esc(winId)} preview
-      <span class="spacer"></span><button class="prevrefresh">refresh</button><button class="prevclose">×</button></div>
-    <div class="prev-body"><p class="muted" style="padding:8px">—</p></div>`;
-  $("gcanvases").appendChild(wrap);
-  const body = wrap.querySelector(".prev-body");
-  previewPanels.set(winId, { wrap, body });
-  openPreviews.add(winId);
-  savePositions();
-  wrap.addEventListener("mousedown", () => selectPanel(wrap));   // click to select (then wheel scrolls it)
-  wrap.querySelector(".prevclose").addEventListener("click", () => closePreview(winId));
-  wrap.querySelector(".prevrefresh").addEventListener("click", () => refreshPreview(winId));
-  wrap.querySelector(".imgpanel-h").addEventListener("mousedown", (ev) => startPanelDrag("prev", winId, ev));
-  applyPanelSize(`prev:${winId}`, wrap);
-  observePanelSize(`prev:${winId}`, wrap);
-  positionPanels();
-  refreshPreview(winId);
+function prevHost(winId) {
+  const el = nodeEls.get(`prev:${winId}`);
+  return el && el.querySelector(".prev-host");
 }
 
 function previewProfileFor(winId) {
@@ -1617,19 +1505,20 @@ function previewProfileFor(winId) {
 }
 
 async function refreshPreview(winId, live = false) {
-  const panel = previewPanels.get(winId);
-  if (!panel) return;
-  if (!live) panel.body.innerHTML = `<p class="muted" style="padding:8px">reading…</p>`;
+  const host = prevHost(winId);
+  if (!host) return;
+  host.dataset.ran = "1";   // marks it for live re-reads
+  if (!live) host.innerHTML = `<p class="muted" style="padding:8px">reading…</p>`;
   const done = timed(`OCR preview ${winId}`);
   try {
     const cap = live ? null : (await api.getBindings(model.profile.name))[winId];
     const res = await api.preview(previewProfileFor(winId), model.profile.name, cap);
-    panel.body.innerHTML = previewTable(res.cells);
+    host.innerHTML = previewTable(res.cells);
     setGridFromPreview(winId, res);   // same OCR pass drives the dashed grid
     done(`· ${(res.cells || []).length} cells`);
   } catch (e) {
     done(String(e.message || e), "err");
-    panel.body.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`;
+    host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`;
   }
 }
 
@@ -1733,9 +1622,13 @@ function refreshOpenDetect() {
 
 let previewT = null;
 function refreshOpenPreviews() {
-  if (!previewPanels.size) return;
   clearTimeout(previewT);
-  previewT = setTimeout(() => { for (const id of previewPanels.keys()) refreshPreview(id); }, 700);
+  previewT = setTimeout(() => {
+    for (const w of model.profile.windows || []) {
+      const host = prevHost(w.id);
+      if (host && host.dataset.ran === "1") refreshPreview(w.id, true);
+    }
+  }, 700);
 }
 
 
@@ -1768,9 +1661,9 @@ async function loadImage(winId, recapture) {
     drawEdges();
     refreshGridPreview(winId);   // draw the grid where rows actually are in this capture
     updateImageLabel(winId);     // button shows the (possibly new) filename
-    // the image changed → an OPEN data preview must re-read it (only if open, to avoid
-    // OCR work for a panel nobody's looking at)
-    if (previewPanels.has(winId)) refreshPreview(winId);
+    // the image changed → re-read it only if the preview node was already run (avoid
+    // OCR work nobody asked for)
+    if (prevHost(winId)?.dataset.ran === "1") refreshPreview(winId);
     if (recapture) refreshDetect(winId);   // fresh pixels → re-evaluate detectors too
   };
   img.onerror = () => setNodeBusy(`win:${winId}`, false);
@@ -1839,25 +1732,6 @@ function setGridFromPreview(winId, res) {
 }
 
 
-// Panels are positioned from their own pos entries (`img:<win>` / `prev:<win>`),
-// just like nodes — so they snap and persist the same way.
-// Preview panel keeps its own position (default: right of the window node).
-function panelPos(kind, ownerId) {
-  const id = `${kind}:${ownerId}`;
-  if (!pos.has(id)) {
-    const anchor = kind === "dsp" ? `ds:${ownerId}` : `win:${ownerId}`;
-    const ap = pos.get(anchor) || { x: 300, y: 20 };
-    const node = nodeEls.get(anchor);
-    pos.set(id, { x: snap(ap.x + (node?.offsetWidth || 240) + 40), y: snap(ap.y) });
-  }
-  return pos.get(id);
-}
-
-function positionPanels() {
-  for (const [winId, panel] of previewPanels) { const p = panelPos("prev", winId); panel.wrap.style.left = `${p.x}px`; panel.wrap.style.top = `${p.y}px`; }
-  for (const [ds, panel] of datasetPanels) { const p = panelPos("dsp", ds); panel.wrap.style.left = `${p.x}px`; panel.wrap.style.top = `${p.y}px`; }
-}
-
 // ---- dragging -------------------------------------------------------------
 
 const GRID = 20;
@@ -1883,8 +1757,9 @@ function snapResize(el, { both = false, onResize = null, onSettle = null } = {})
   window.addEventListener("mouseup", finish);  // …or release after the cursor left it
 }
 
-// Every node reachable by following edges OUT of `id` (its downstream subtree),
-// plus the preview panels of any window in that set. Used for shift-drag.
+// Every node reachable by following edges OUT of `id` (its downstream subtree).
+// Used for shift-drag. preview/data/batches are real nodes on edges, so they're
+// included automatically.
 function descendantsOf(id) {
   const out = new Set();
   const stack = [id];
@@ -1894,7 +1769,6 @@ function descendantsOf(id) {
       if (e.from === cur && !out.has(e.to)) { out.add(e.to); stack.push(e.to); }
     }
   }
-  for (const winId of previewPanels.keys()) if (out.has(`win:${winId}`)) out.add(`prev:${winId}`);
   out.delete(id);
   return [...out];
 }
@@ -1911,7 +1785,7 @@ function startMove(id, ev) {
     p.y = snap(start.py + dy);
     positionNode(id);
     for (const g of starts) { g.gp.x = snap(g.sx + dx); g.gp.y = snap(g.sy + dy); positionNode(g.gid); }
-    drawEdges(); positionPanels();
+    drawEdges();
   };
   const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); resizeCanvas(); savePositions(); };
   document.addEventListener("mousemove", onMove);
@@ -1956,10 +1830,10 @@ async function refreshLive() {
     const after = model.datasets();
     if (after.length !== before.size || after.some((d) => !before.has(d))) render();
     else updateDatasetNodes();
-    // an open data panel / a batches node re-reads when its dataset's count changed
+    // the data + batches nodes re-read when their dataset's count changed
     for (const ds in map) {
       if (prevPresent[ds] === undefined || prevPresent[ds] === map[ds].present) continue;
-      if (datasetPanels.has(ds)) refreshDatasetPanel(ds);
+      if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
       if (nodeEls.has(`bat:${ds}`)) loadBatchesNode(ds);
     }
   } catch { /* ignore */ }
@@ -1997,17 +1871,11 @@ async function loadGame(name) {
   nodeEls.clear();
   $("gnodes").innerHTML = "";
   for (const winId of [...imageCanvases.keys()]) closeImage(winId);
-  for (const winId of [...previewPanels.keys()]) closePreview(winId);
-  for (const ds of [...datasetPanels.keys()]) closeDatasetPanel(ds);
   batchesState.clear();   // batches render inline per node; drop stale selection state
   loadPositions();   // restore saved node positions for this game
   render();
   for (const winId of pendingOpenImages) if (model.window(winId)) openImage(winId);  // reopen saved images (canvas lives in node)
-  const reopenPreviews = pendingOpenPreviews;
-  const reopenDatasets = pendingOpenDatasets;
-  pendingOpenImages = []; pendingOpenPreviews = []; pendingOpenDatasets = [];
-  for (const winId of reopenPreviews) if (model.window(winId)) createPreviewPanel(winId);
-  for (const ds of reopenDatasets) if (model.datasets().includes(ds)) openDatasetPanel(ds);
+  pendingOpenImages = [];
   resetHistory();   // fresh undo/redo baseline for this game
   refreshLive();
   setStatus(`loaded ${name}`);
@@ -2029,8 +1897,7 @@ $("graph").addEventListener("mousedown", (ev) => {
   // their native menus still work. Don't preventDefault — a plain right click
   // must still open the context menu; only an actual drag suppresses it.
   if (ev.button === 2) { if (!ev.target.closest("input,select,textarea")) startPan(ev); return; }
-  if (ev.button === 0 && !ev.target.closest(".prevpanel")) for (const [, e] of previewPanels) e.wrap.classList.remove("selected");
-  if (ev.button === 0 && !ev.target.closest(".gnode, .imgpanel")) deselectAll();   // left-click clears selection
+  if (ev.button === 0 && !ev.target.closest(".gnode")) deselectAll();   // left-click clears selection
 });
 $("graph").addEventListener("contextmenu", (ev) => {
   if (suppressNextMenu) { ev.preventDefault(); suppressNextMenu = false; }   // a pan-drag just ended here
@@ -2056,7 +1923,7 @@ document.addEventListener("keydown", (ev) => {
     if (selectedNodeId && pos.has(selectedNodeId)) {
       const p = pos.get(selectedNodeId);
       p.x = snap(p.x + dir[0] * GRID); p.y = snap(p.y + dir[1] * GRID);
-      positionNode(selectedNodeId); positionPanels(); drawEdges(); savePositions();
+      positionNode(selectedNodeId); drawEdges(); savePositions();
       ev.preventDefault();
     }
     return;
@@ -2127,7 +1994,7 @@ async function liveTick() {
       liveFrames++;                                      // count captured frames for img/s
     } catch { /* window gone */ }
     refreshDetect(winId, true);
-    if (previewPanels.has(winId)) refreshPreview(winId, true);
+    if (prevHost(winId)?.dataset.ran === "1") refreshPreview(winId, true);
   }
   liveProcessing = false; renderLiveStats();
 }

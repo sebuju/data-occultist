@@ -205,5 +205,5 @@ windows:
 datasets:
 - id: equip
   key_field: name
-  strip_nonalnum: false
+  strip_nonalnum: true
   case_sensitive: false

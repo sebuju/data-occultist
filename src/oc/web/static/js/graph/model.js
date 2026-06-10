@@ -58,6 +58,7 @@ export class GraphModel {
     const ns = [{ id: "game", type: "game", ref: this.profile }];
     for (const w of this.profile.windows) {
       ns.push({ id: `win:${w.id}`, type: "window", ref: w });
+      ns.push({ id: `prev:${w.id}`, type: "preview", ref: w });
       for (const r of w.regions || []) ns.push({ id: `reg:${w.id}:${r.id}`, type: "region", ref: r, win: w, field: this.fieldOf(w, r) });
       for (const a of w.anchors || []) ns.push({ id: `anc:${w.id}:${a.id}`, type: "anchor", ref: a, win: w });
       if (w.scroll && w.scroll.scrollbar) ns.push({ id: `sb:${w.id}:scrollbar`, type: "scrollbar", ref: w.scroll, win: w });
@@ -74,6 +75,7 @@ export class GraphModel {
     const es = [];
     for (const w of this.profile.windows) {
       es.push({ from: "game", to: `win:${w.id}`, kind: "own" });
+      es.push({ from: `win:${w.id}`, to: `prev:${w.id}`, kind: "img" });
       for (const r of w.regions || []) es.push({ from: `win:${w.id}`, to: `reg:${w.id}:${r.id}`, kind: "field" });
       for (const a of w.anchors || []) es.push({ from: `win:${w.id}`, to: `anc:${w.id}:${a.id}`, kind: "anchor" });
       if (w.scroll && w.scroll.scrollbar) es.push({ from: `win:${w.id}`, to: `sb:${w.id}:scrollbar`, kind: "scrollbar" });
