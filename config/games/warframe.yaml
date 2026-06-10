@@ -35,7 +35,7 @@ windows:
     extract: whole
     separator: /
     empty: '1'
-    learn: false
+    learn: true
     fuzzy: 0.82
   - id: name
     type: text
@@ -65,20 +65,20 @@ windows:
   - id: detect_2
     enabled: true
     search:
-      x: 0.09759661627775759
-      y: 0.03552470926428017
-      w: 0.1306621355076155
-      h: 0.05211404851829898
+      x: 0.09868772375184379
+      y: 0.04085933584041986
+      w: 0.12602492874274893
+      h: 0.04192976141839593
     text: inventory
     threshold: 0.3
     included: true
   - id: detect_4
     enabled: true
     search:
-      x: 0.4425282457284409
-      y: 0.13881744712643226
-      w: 0.13264547229378248
-      h: 0.042268579608115114
+      x: 0.4447061041676425
+      y: 0.13236166920519268
+      w: 0.04299029987998991
+      h: 0.036458379478999554
     text: NAME
     threshold: 0.5
     included: true
@@ -86,8 +86,8 @@ windows:
     enabled: true
     search:
       x: 0.5778084179119407
-      y: 0.13172666053151366
-      w: 0.10242633070325147
+      y: 0.13189642358055376
+      w: 0.04834284612974901
       h: 0.03582122837035165
     text: search
     threshold: 0.5
@@ -187,8 +187,8 @@ windows:
   scroll:
     enabled: true
     scrollbar:
-      x: 0.6942298229506871
-      y: 0.18602817641119196
+      x: 0.6947506562840204
+      y: 0.18695410233711787
       w: 0.00921298146337702
       h: 0.7211669337141035
     scrollbar_orientation: vertical
