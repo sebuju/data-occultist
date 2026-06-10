@@ -258,10 +258,6 @@ class WindowDef(BaseModel):
     id: str
     dataset: str | None = None
     fields: list[FieldDef] = Field(default_factory=list)  # window-specific schema
-    # Identity field used to deduplicate rows (e.g. item name). ``allow_duplicates``
-    # disables dedup when the same row can legitimately appear more than once.
-    dedup_field: str = "name"
-    allow_duplicates: bool = False
     # Optional bounding box (window fractions) that constrains OCR to the data area,
     # so stray UI text elsewhere is never read.
     data_area: Box | None = None
@@ -279,9 +275,17 @@ class WindowDef(BaseModel):
     def dataset_id(self) -> str:
         return self.dataset or self.id
 
-    @property
-    def key_field(self) -> str:
-        return self.dedup_field or (self.scroll.dedup_field if self.scroll else "name")
+
+class DatasetDef(BaseModel):
+    """A logical collection of records. The dataset — not the window — owns how its
+    records are stored and de-duplicated: ``key_field`` is the field whose value
+    identifies a row (so two reads of the same item merge instead of duplicating).
+
+    Several windows can feed one dataset; they all dedup against this one key.
+    """
+
+    id: str
+    key_field: str = "name"   # field id whose value is the row's identity (dedup key)
 
 
 class GameProfile(BaseModel):
@@ -293,9 +297,19 @@ class GameProfile(BaseModel):
     window_title_hint: str | None = None
     fields: list[FieldDef] = Field(default_factory=list)
     windows: list[WindowDef] = Field(default_factory=list)
+    datasets: list[DatasetDef] = Field(default_factory=list)
 
     def window(self, window_id: str) -> WindowDef | None:
         return next((w for w in self.windows if w.id == window_id), None)
+
+    def dataset_def(self, dataset_id: str) -> DatasetDef | None:
+        return next((d for d in self.datasets if d.id == dataset_id), None)
+
+    def key_for(self, dataset_id: str) -> str:
+        """The dedup key for a dataset — its ``DatasetDef.key_field``, or ``"name"``
+        when the dataset has no explicit definition yet."""
+        d = self.dataset_def(dataset_id)
+        return d.key_field if d else "name"
 
     def fields_for(self, window: WindowDef) -> list[FieldDef]:
         """A window's schema: its own fields, or the game-level fields as fallback

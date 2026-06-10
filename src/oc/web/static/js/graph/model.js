@@ -12,10 +12,29 @@ export class GraphModel {
     this.profile = profile || blank("");
     this.profile.windows = this.profile.windows || [];
     this.profile.fields = this.profile.fields || [];
+    this.profile.datasets = this.profile.datasets || [];
   }
 
   // effective dataset id for a window (defaults to its own id)
   datasetOf(win) { return win.dataset || win.id; }
+
+  // ---- datasets own the dedup key -----------------------------------------
+  datasetDef(id) { return (this.profile.datasets || []).find((d) => d.id === id) || null; }
+  datasetKey(id) { const d = this.datasetDef(id); return d ? d.key_field : "name"; }
+  setDatasetKey(id, key) {
+    let d = this.datasetDef(id);
+    if (!d) { d = { id, key_field: key }; (this.profile.datasets = this.profile.datasets || []).push(d); }
+    else d.key_field = key;
+  }
+  // field ids available to a dataset = the fields of every window feeding it
+  datasetFields(id) {
+    const out = new Set();
+    for (const w of this.profile.windows) {
+      if (this.datasetOf(w) !== id) continue;
+      for (const f of w.fields || []) out.add(f.id);
+    }
+    return [...out];
+  }
 
   // ---- nodes / edges ------------------------------------------------------
 
@@ -288,5 +307,5 @@ export class GraphModel {
 }
 
 function blank(name) {
-  return { name, process_names: [], window_title_hint: null, fields: [], windows: [] };
+  return { name, process_names: [], window_title_hint: null, fields: [], windows: [], datasets: [] };
 }

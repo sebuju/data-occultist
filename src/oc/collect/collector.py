@@ -103,10 +103,15 @@ class Collector:
         state = next((s for s in window.states if s.id == state_id), None)
         return bool(state and state.valid_for_save)
 
+    def _dataset_key(self, window: WindowDef) -> str:
+        """The dedup key for the window's dataset — owned by the DatasetDef, not the
+        window, so windows sharing a dataset dedup against one identity field."""
+        return self._profile.key_for(window.dataset_id)
+
     def _confirmer_for(self, window: WindowDef) -> Confirmer:
         dataset = window.dataset_id
         if dataset not in self._confirmers:
-            self._confirmers[dataset] = Confirmer(window.key_field, self._tuning.confirm_frames)
+            self._confirmers[dataset] = Confirmer(self._dataset_key(window), self._tuning.confirm_frames)
         return self._confirmers[dataset]
 
     def _store_for(self, window: WindowDef) -> DatasetStore:
@@ -116,7 +121,7 @@ class Collector:
                 self._engine.settings.data_dir,
                 self._profile.name,
                 dataset,
-                window.key_field,
+                self._dataset_key(window),
             )
             self._observed.setdefault(dataset, set())
         return self._stores[dataset]
@@ -171,8 +176,9 @@ class Collector:
         else:
             store = self._store_for(window)
             observed = self._observed[dataset]
+            dataset_key = self._dataset_key(window)
             for rec in confirmed:
-                key = store.normalize_key(rec.values.get(window.key_field))
+                key = store.normalize_key(rec.values.get(dataset_key))
                 if key is not None:
                     observed.add(key)
                 if store.record_seen(rec.values) is not None:

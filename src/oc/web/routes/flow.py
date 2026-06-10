@@ -27,7 +27,6 @@ def flow(game: str):
         windows.append({
             "id": w.id,
             "dataset": w.dataset_id,
-            "key_field": w.key_field,
             "fields": sorted({r.field for r in w.regions}),
             "regions": len(w.regions),
             "anchors": len(w.anchors),
@@ -35,9 +34,14 @@ def flow(game: str):
             "save_states": [s.id for s in w.states if s.valid_for_save],
         })
 
-    # Datasets from the profile plus any already on disk.
+    # Datasets from the profile plus any already on disk. The dataset (not the window)
+    # owns the dedup key, so it's reported here.
     names = sorted(used_datasets | set(inspect.list_datasets(settings.data_dir, game)))
-    datasets = [inspect.summarize(settings.data_dir, game, n) for n in names]
+    datasets = []
+    for n in names:
+        summary = inspect.summarize(settings.data_dir, game, n)
+        summary["key_field"] = profile.key_for(n)
+        datasets.append(summary)
     return {"game": game, "windows": windows, "datasets": datasets}
 
 

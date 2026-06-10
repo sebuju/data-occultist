@@ -179,11 +179,10 @@ function ensurePositions() {
 
 // ---- render ---------------------------------------------------------------
 
-function windowControls(w, keyOpts) {
-  // rows/cols/strides are gone — item templates locate cells by content now, not a
-  // fixed grid. Only dedup config + the image/delete actions remain.
+function windowControls(w) {
+  // The dataset (not the window) owns dedup now — the key field lives on the dataset
+  // node. The window just shows where its records flow + the image/delete actions.
   return `<div class="muted">→ ${esc(model.datasetOf(w))}</div>
-    <label class="flab">key field <select class="wset" data-k="dedup">${keyOpts}</select></label>
     <div class="gn-foot"><button class="imgbtn">📷 image</button><button class="delwin danger">×</button></div>`;
 }
 
@@ -318,13 +317,6 @@ function wireWindowControls(div, n) {
   div.querySelector(".gi-id").addEventListener("change", (e) => { model.renameWindow(n.ref.id, e.target.value.trim()); render(); autosave(); });
   div.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal(n.ref.id));
   updateImageLabel(n.ref.id, div.querySelector(".imgbtn"));   // show the bound filename
-  div.querySelectorAll(".wset").forEach((inp) => inp.addEventListener("change", (e) => {
-    const k = e.target.dataset.k;
-    if (k === "dedup") n.ref.dedup_field = e.target.value;
-    autosave();
-    gridPreviews.delete(n.ref.id); gridReads.delete(n.ref.id);
-    refreshImageBoxes(n.ref.id);
-  }));
   div.querySelector(".delwin").addEventListener("click", () => { closeImage(n.ref.id); model.removeWindow(n.ref.id); pos.delete(n.id); render(); autosave(); });
 }
 
@@ -339,12 +331,9 @@ function nodeParts(n) {
   }
   if (n.type === "window") {
     const w = n.ref;
-    const fids = [...new Set([...(w.fields || []).map((f) => f.id), ...(w.regions || []).map((r) => r.field)])].filter(Boolean);
-    const key = w.dedup_field || "name";
-    const keyOpts = (fids.length ? fids : [key]).map((f) => `<option ${f === key ? "selected" : ""}>${esc(f)}</option>`).join("");
     return {
       title: `<input class="gi gi-id" data-k="winid" value="${esc(w.id)}" />`,
-      body: `<div class="win-controls">${windowControls(w, keyOpts)}</div><div class="win-img"></div>`,
+      body: `<div class="win-controls">${windowControls(w)}</div><div class="win-img"></div>`,
       ports: `<span class="port out" title="drag to a dataset"></span>`,
     };
   }
@@ -390,14 +379,19 @@ function nodeParts(n) {
         <div class="gn-foot"><button class="delsb danger">remove scrollbar</button></div>`,
     };
   }
-  // dataset
+  // dataset — owns the dedup key. Key options = the fields of every window feeding it.
   const ds = n.ref;
   const d = live[ds] || { present: 0, total: 0, last_op: null, last_ts: null };
   const pulse = prevPresent[ds] !== undefined && prevPresent[ds] !== d.present ? "pulse" : "";
+  const key = model.datasetKey(ds);
+  const fids = model.datasetFields(ds);
+  const keyOpts = (fids.includes(key) ? fids : [key, ...fids]).map((f) => `<option ${f === key ? "selected" : ""}>${esc(f)}</option>`).join("");
   return {
-    title: `🗄 ${esc(ds)}`, pulse,
+    title: `${esc(ds)}`,
     body: `<div class="big">${d.present}<span class="muted"> / ${d.total}</span></div>
-      <div class="muted">${d.last_op ? esc(d.last_op) : "—"} ${d.last_ts ? esc(d.last_ts.slice(11)) : ""}</div>`,
+      <div class="muted">${d.last_op ? esc(d.last_op) : "—"} ${d.last_ts ? esc(d.last_ts.slice(11)) : ""}</div>
+      <label class="flab" title="field whose value identifies a row — reads with the same value merge">key field <select class="dskey">${keyOpts}</select></label>
+      <div class="gn-foot"><button class="dsdata">📊 data</button></div>`,
     ports: `<span class="port in"></span>`,
   };
 }
@@ -447,11 +441,7 @@ function rebuildNode(id) {
   // whole node, so the canvas survives.
   if (n.type === "window") {
     const ctl = el.querySelector(".win-controls");
-    const w = n.ref;
-    const fids = [...new Set([...(w.fields || []).map((f) => f.id), ...(w.regions || []).map((r) => r.field)])].filter(Boolean);
-    const key = w.dedup_field || "name";
-    const keyOpts = (fids.length ? fids : [key]).map((f) => `<option ${f === key ? "selected" : ""}>${esc(f)}</option>`).join("");
-    if (ctl) { ctl.innerHTML = windowControls(w, keyOpts); wireWindowControls(el, n); }
+    if (ctl) { ctl.innerHTML = windowControls(n.ref); wireWindowControls(el, n); }
     return;
   }
   // item nodes hold a live cutout canvas — rebuild only the lists.
@@ -712,7 +702,8 @@ function wireNode(div, n) {
     wireWindowControls(div, n);
     div.querySelector(".port.out").addEventListener("mousedown", (ev) => startWire(n.ref.id, ev));
   } else if (n.type === "dataset") {
-    div.addEventListener("click", (ev) => { if (!ev.target.closest(".gn-h,.port")) openDataModal(n.ref); });
+    div.querySelector(".dsdata")?.addEventListener("click", () => openDataModal(n.ref));
+    div.querySelector(".dskey")?.addEventListener("change", (e) => { model.setDatasetKey(n.ref, e.target.value); autosave(); });
   } else if (n.type === "region") {
     const fld = n.field;
     div.addEventListener("click", (ev) => {
