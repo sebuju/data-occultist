@@ -59,6 +59,22 @@ def _sig(image: np.ndarray) -> int:
     return hash(image[::sy, ::sx].tobytes())
 
 
+_THUMB = 48          # frame thumbnail side for the perceptual diff
+_THUMB_TOL = 16      # per-cell brightness delta that counts as "changed"
+_THUMB_MIN_CELLS = 10  # below this many changed cells -> nothing real moved (cursor/noise)
+
+
+def _thumb(image: np.ndarray) -> np.ndarray:
+    """A tiny grayscale thumbnail for cheap frame-to-frame comparison."""
+    gray = image.max(axis=2) if image.ndim == 3 else image
+    return cv2.resize(gray, (_THUMB, _THUMB), interpolation=cv2.INTER_AREA)
+
+
+def _changed_cells(a: np.ndarray, b: np.ndarray) -> int:
+    """How many thumbnail cells differ — small for a cursor twitch, large for scrolling."""
+    return int((cv2.absdiff(a, b) > _THUMB_TOL).sum())
+
+
 def _anchor_boxes(profile: GameProfile) -> list[FractionBox]:
     """Every region used for window/state detection — anchors on windows and states."""
     out: list[FractionBox] = []
@@ -124,6 +140,7 @@ class PrecaptureSession:
 
     def _record_loop(self, max_frames: int, interval: float) -> None:
         eng = self._engine
+        last_thumb: np.ndarray | None = None
         try:
             while not self._stop.is_set():
                 with self._lock:
@@ -134,8 +151,17 @@ class PrecaptureSession:
                     time.sleep(0.1)
                     continue
                 frame = eng.capture.grab_window(win)
+                # drop frames where nothing real changed vs the last kept one: an idle
+                # background game (identical) or just the cursor twitching (a handful of
+                # changed thumbnail cells). Scrolling/new data changes many cells -> kept.
+                thumb = _thumb(frame.image)
+                if last_thumb is not None and _changed_cells(thumb, last_thumb) < _THUMB_MIN_CELLS:
+                    if interval:
+                        time.sleep(interval)
+                    continue
                 ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 if ok:
+                    last_thumb = thumb
                     with self._lock:
                         self._frames.append(buf.tobytes())
                         self._stamps.append(time.strftime("%H:%M:%S"))

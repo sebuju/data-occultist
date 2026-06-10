@@ -65,6 +65,20 @@ class OcrEngine(ABC):
     def read_image(self, image) -> list[OcrLine]:
         """OCR a whole BGR image. Boxes are relative to that image."""
 
+    def read_line(self, image) -> tuple[str, float]:
+        """Recognise a crop that is KNOWN to be a single text line — skipping the
+        expensive text-detection stage. Returns ``(text, confidence)``.
+
+        Detection dominates OCR cost (a full network pass), so when the caller already
+        knows the box bounds one line (a field the user drew), this is many times
+        faster. Default falls back to the full pipeline for backends without rec-only.
+        """
+        lines = self.read_image(image)
+        if not lines:
+            return "", 0.0
+        lines.sort(key=lambda ln: (round(ln.box.y / max(1, ln.box.h)), ln.box.x))
+        return " ".join(ln.text for ln in lines).strip(), sum(ln.confidence for ln in lines) / len(lines)
+
     def read_region(self, frame: Frame, box: PixelBox) -> list[OcrLine]:
         """OCR a sub-rectangle of a frame. Default crops then delegates.
 

@@ -35,6 +35,25 @@ class RapidOcrEngine(OcrEngine):
             self._engine = RapidOCR(**self._options)
         return self._engine
 
+    def read_line(self, image: np.ndarray) -> tuple[str, float]:
+        """Recognition-only: skip detection (and angle classification) for a crop the
+        caller knows is one line. Many times cheaper than ``read_image``."""
+        if image is None or image.size == 0:
+            return "", 0.0
+        engine = self._ensure_engine()
+        result, _elapsed = engine(image, use_det=False, use_cls=False, use_rec=True)
+        if not result:
+            return "", 0.0
+        # rec-only returns [(text, score), ...] (no box) — join the pieces.
+        texts, scores = [], []
+        for item in result:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                texts.append(str(item[-2]))
+                scores.append(float(item[-1]))
+        if not texts:
+            return "", 0.0
+        return " ".join(t for t in texts).strip(), sum(scores) / len(scores)
+
     def read_image(self, image: np.ndarray) -> list[OcrLine]:
         engine = self._ensure_engine()
         result, _elapsed = engine(image)

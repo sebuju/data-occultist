@@ -104,10 +104,10 @@ class RegionReader:
         return text, conf
 
     def _ocr_box(self, frame: Frame, box: PixelBox, preprocess: Preprocess | None) -> tuple[str, float]:
-        """OCR a single field box on its own. Small targets (e.g. a count badge) are
-        reliably read from a focused crop but get lost in a single pass over the whole
-        data area — and reading the box the user drew (not a larger area) is the point.
-        The crop is upscaled so small multi-character numbers don't fragment."""
+        """Read a single field box the user drew. The box bounds one text line, so this
+        runs RECOGNITION ONLY (no detection) — the dominant OCR cost — which is many
+        times faster than a full pass and is what makes batch processing viable. The
+        crop is upscaled so small multi-character numbers (a count badge) don't fragment."""
         if box.w <= 0 or box.h <= 0:
             return "", 0.0
         crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
@@ -118,13 +118,7 @@ class RegionReader:
         if crop.shape[0] < _MIN_OCR_H:                       # upscale tiny crops
             f = _MIN_OCR_H / crop.shape[0]
             crop = cv2.resize(crop, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
-        lines = self._ocr.read_image(crop)
-        if not lines:
-            return "", 0.0
-        lines.sort(key=lambda ln: (round(ln.box.y / max(1, ln.box.h)), ln.box.x))  # reading order
-        text = " ".join(ln.text for ln in lines).strip()
-        conf = sum(ln.confidence for ln in lines) / len(lines)
-        return text, conf
+        return self._ocr.read_line(crop)
 
     def _targets_from_cells(self, cells: list[Cell], frame: Frame):
         """Yield (cell_index, field_id, PixelBox) for every field of every cell."""

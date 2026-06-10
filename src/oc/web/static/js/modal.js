@@ -1,19 +1,21 @@
 // Tiny modal manager: stackable overlays with a title bar, close button,
 // backdrop-click and Esc to dismiss. Returns a handle with close().
 //
-// openModal({ title, size, node, html, onClose }) — provide either `node`
+// openModal({ title, size, node, html, onClose, canClose }) — provide either `node`
 // (an element) or `html` for the body. size: "large" | "data" | "medium".
+// `canClose` is an optional guard: when it returns false, USER dismissal (Esc /
+// backdrop / ×) is blocked. handle.close() always closes (programmatic).
 
 const stack = [];
 
-function closeTop() {
+function dismissTop() {
   const top = stack[stack.length - 1];
-  if (top) top.close();
+  if (top) top.dismiss();
 }
 
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeTop(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") dismissTop(); });
 
-export function openModal({ title = "", size = "medium", node = null, html = "", onClose = null } = {}) {
+export function openModal({ title = "", size = "medium", node = null, html = "", onClose = null, canClose = null } = {}) {
   const backdrop = document.createElement("div");
   backdrop.className = "modal-backdrop";
 
@@ -40,10 +42,17 @@ export function openModal({ title = "", size = "medium", node = null, html = "",
       backdrop.remove();
       onClose?.();
     },
+    dismiss() {                                  // user-triggered close, honours the guard
+      if (canClose && canClose() === false) {
+        modal.classList.remove("shake"); void modal.offsetWidth; modal.classList.add("shake");
+        return;
+      }
+      handle.close();
+    },
   };
 
-  backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) handle.close(); });
-  modal.querySelector(".modal-x").addEventListener("click", () => handle.close());
+  backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) handle.dismiss(); });
+  modal.querySelector(".modal-x").addEventListener("click", () => handle.dismiss());
   stack.push(handle);
   return handle;
 }

@@ -813,6 +813,7 @@ function dataHTML(d) {
 // ---- precapture modal -----------------------------------------------------
 
 let precapPoll = null;
+let precapBusy = false;   // recording/processing/paused -> modal can't be dismissed
 
 async function openPrecaptureModal() {
   const game = model.profile.name;
@@ -825,9 +826,10 @@ async function openPrecaptureModal() {
   node.innerHTML = `<p class="muted" style="padding:12px">loading…</p>`;
   const modal = openModal({
     title: `precapture: ${game}`, size: "data", node,
+    canClose: () => !precapBusy,   // can't dismiss while recording/processing — cancel first
     onClose: () => {
       if (precapPoll) { clearInterval(precapPoll); precapPoll = null; }
-      precapOpen = false; $("precapBtn").classList.remove("active");
+      precapOpen = false; precapBusy = false; $("precapBtn").classList.remove("active");
     },
   });
 
@@ -874,6 +876,10 @@ function renderPrecap(node, st) {
   const recording = phase === "recording";
   const processing = phase === "processing";
   const paused = phase === "paused";
+  precapBusy = recording || processing || paused;   // gate modal dismissal
+  // reflect on the close button so it's clear why it won't dismiss
+  const x = node.closest(".modal")?.querySelector(".modal-x");
+  if (x) { x.classList.toggle("locked", precapBusy); x.title = precapBusy ? "cancel the run to close" : "close (Esc)"; }
   const canProcess = st.frames > 0 && !recording && !processing && !paused;
   const pct = st.frames ? Math.round((100 * st.processed) / st.frames) : 0;
   const staged = (st.datasets || []).reduce((n, d) => n + d.count, 0);

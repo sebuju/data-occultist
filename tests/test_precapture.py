@@ -103,6 +103,44 @@ def test_save_commits_to_real_store(tmp_path):
     assert rows[0]["item_name"] == "Adra" and rows[0]["item_count"] == 3
 
 
+def test_recording_skips_identical_frames(tmp_path):
+    s = PrecaptureSession(_engine(tmp_path), _profile())
+    from oc.types import Frame, PixelBox
+    rng = np.random.default_rng(7)
+    a = rng.integers(0, 255, (50, 70, 3), dtype=np.uint8)
+    b = rng.integers(0, 255, (50, 70, 3), dtype=np.uint8)
+    seq = [a, a, a, b, b, a]            # kept: a, b, a -> 3 (consecutive dups dropped)
+    def grab(win):
+        if not seq:
+            s._stop.set()
+            return Frame(image=a, client=PixelBox(0, 0, 70, 50))
+        return Frame(image=seq.pop(0), client=PixelBox(0, 0, 70, 50))
+    s._engine.capture.grab_window = grab
+    s._locator = SimpleNamespace(locate=lambda profile: object())
+    s._record_loop(max_frames=100, interval=0)
+    assert len(s._frames) == 3
+
+
+def test_recording_skips_cursor_only_moves(tmp_path):
+    s = PrecaptureSession(_engine(tmp_path), _profile())
+    from oc.types import Frame, PixelBox
+    rng = np.random.default_rng(3)
+    base = rng.integers(0, 255, (480, 640, 3), dtype=np.uint8)
+    cur1 = base.copy(); cur1[10:22, 10:22] = 255       # small cursor here
+    cur2 = base.copy(); cur2[10:22, 40:52] = 255       # cursor nudged a little
+    scrolled = rng.integers(0, 255, (480, 640, 3), dtype=np.uint8)  # whole view changed
+    seq = [cur1, cur2, cur1, scrolled]
+    def grab(win):
+        if not seq:
+            s._stop.set()
+            return Frame(image=scrolled, client=PixelBox(0, 0, 640, 480))  # == last kept -> dropped
+        return Frame(image=seq.pop(0), client=PixelBox(0, 0, 640, 480))
+    s._engine.capture.grab_window = grab
+    s._locator = SimpleNamespace(locate=lambda profile: object())
+    s._record_loop(max_frames=100, interval=0)
+    assert len(s._frames) == 2   # cur1 + scrolled; cursor-only moves dropped
+
+
 def test_cancel_stops_processing(tmp_path):
     recs = [Record(values={"item_name": "Adra"}, confidence=0.9)]
     s = _session(tmp_path, recs)
