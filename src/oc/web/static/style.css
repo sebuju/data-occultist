@@ -480,7 +480,8 @@ a.node.win:hover { border-color: var(--accent); }
 /* batches sub-layout: ledger list on top, selected-batch contents + preview below */
 .bat-host { display: flex; flex-direction: column; gap: 8px; width: 360px; height: 360px; }
 .bat-list { max-height: 45%; overflow: auto; flex: 0 0 auto; }
-.bat-list .batrow { cursor: pointer; }
+.bat-list .batrow { cursor: pointer; flex-wrap: nowrap; }
+.batmeta { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bat-list .batrow.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .bat-list .batrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .bat-detail { border-top: 1px solid var(--line); padding-top: 6px; overflow: auto; flex: 1 1 auto; min-height: 0; }

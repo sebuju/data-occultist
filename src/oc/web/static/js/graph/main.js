@@ -71,6 +71,36 @@ async function withBusy(ids, fn) {
   finally { ids.forEach((id) => setNodeBusy(id, false)); }
 }
 
+// ---- background worker registry -------------------------------------------
+// Anything doing real background work — the backend precapture worker, the live
+// re-read loop, future long jobs — registers here. The log bar then shows a live
+// count on its far right plus a per-worker emergency kill button.
+const workers = new Map();   // id -> { label, kill }
+function registerWorker(id, label, kill) { workers.set(id, { label, kill }); renderWorkers(); }
+function unregisterWorker(id) { if (workers.delete(id)) renderWorkers(); }
+
+function renderWorkers() {
+  const el = $("logWorkers");
+  if (!el) return;
+  const n = workers.size;
+  el.hidden = n === 0;
+  if (!n) { el.innerHTML = ""; return; }
+  el.innerHTML = `<span class="lw-spin"></span><span class="lw-count">${n} worker${n > 1 ? "s" : ""}</span>` +
+    [...workers].map(([id, w]) => `<button class="lw-kill" data-kill="${esc(id)}" title="emergency stop">⨯ ${esc(w.label)}</button>`).join("");
+}
+
+// Kill a worker from the log bar (don't let the click toggle the log open).
+$("logWorkers").addEventListener("click", (ev) => {
+  ev.stopPropagation();
+  const b = ev.target.closest("button[data-kill]");
+  if (!b) return;
+  const w = workers.get(b.dataset.kill);
+  if (!w) return;
+  setStatus(`killing ${w.label}…`);
+  try { w.kill(); } catch (e) { setStatus(String(e.message || e)); }
+  unregisterWorker(b.dataset.kill);
+});
+
 // ---- autosave + position persistence --------------------------------------
 
 let saveT = null;
@@ -1000,7 +1030,7 @@ function renderBatchesList(ds, batches) {
     const rm = `<button class="led-remove danger" data-batch="${b.batch}" title="permanently delete this batch from the ledger">remove</button>`;
     return `<li class="batrow ${b.reverted ? "reverted" : ""}${st.sel === b.batch ? " sel" : ""}" data-batch="${b.batch}">
       <span class="muted">${esc((b.ts || "").slice(11))}</span> <b>#${b.batch}</b>
-      <span class="muted">${parts} · ${b.count} · ${esc(keys)}</span> ${app} ${rm}</li>`;
+      <span class="muted batmeta" title="${parts} · ${b.count} · ${esc(keys)}">${parts} · ${b.count} · ${esc(keys)}</span> ${app} ${rm}</li>`;
   }).join("");
   // select on row click (but not when hitting the checkbox/remove)
   els.list.querySelectorAll(".batrow").forEach((li) => li.addEventListener("click", (ev) => {
@@ -1129,6 +1159,7 @@ async function openPrecaptureModal() {
     onClose: () => {
       if (precapPoll) { clearInterval(precapPoll); precapPoll = null; }
       if (precapBusy) api.precapture.cancel(game).catch(() => {});
+      unregisterWorker("precap");
       precapOpen = false; precapBusy = false; precapStopping = false; $("precapBtn").classList.remove("active");
     },
   });
@@ -1182,6 +1213,9 @@ function renderPrecap(node, st) {
   const processing = phase === "processing";
   const paused = phase === "paused";
   precapBusy = recording || processing || paused;   // gate modal dismissal
+  // surface the backend worker in the log bar with an emergency kill
+  if (precapBusy) registerWorker("precap", `precapture ${phase}`, () => api.precapture.cancel(model.profile.name).catch(() => {}));
+  else unregisterWorker("precap");
   if (phase !== precapLastPhase) {                   // log phase transitions
     if (phase === "recording") log("precapture: recording…", "run");
     else if (phase === "recorded") log(`precapture: recorded ${st.frames} frames`, "ok");
@@ -2008,7 +2042,8 @@ function setLiveMode(on) {
   $("liveBtn").classList.toggle("active", on);
   if (timer) { clearInterval(timer); timer = null; }
   showLiveStats(on);
-  if (on) timer = setInterval(liveTick, 1200);
+  if (on) { timer = setInterval(liveTick, 1200); registerWorker("live", "live view", () => setLiveMode(false)); }
+  else unregisterWorker("live");
 }
 
 // ---- init -----------------------------------------------------------------

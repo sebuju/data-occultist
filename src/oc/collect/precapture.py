@@ -173,6 +173,8 @@ class PrecaptureSession:
         with self._lock:
             if self._phase in (Phase.recording, Phase.processing):
                 return
+        self._join_prev()   # bury any lingering worker BEFORE clearing _stop (see _join_prev)
+        with self._lock:
             self._clear_dir()
             self._reset_locked()
             self._dir.mkdir(parents=True, exist_ok=True)
@@ -233,6 +235,8 @@ class PrecaptureSession:
         with self._lock:
             if self._phase in (Phase.recording, Phase.processing) or not self._frames:
                 return
+        self._join_prev()   # bury any lingering worker BEFORE clearing _stop (see _join_prev)
+        with self._lock:
             self._phase = Phase.processing
             self._processed = 0
             self._read = 0
@@ -366,6 +370,21 @@ class PrecaptureSession:
             with self._lock:
                 if self._phase is Phase.paused:
                     self._phase = Phase.processing
+
+    def _join_prev(self) -> None:
+        """Make sure the previous worker thread is dead before a new one starts.
+
+        Without this, reset()/cancel() set ``_stop`` but the thread may still be
+        mid-frame; the next start then calls ``_stop.clear()``, un-killing the orphan,
+        and TWO loops pound the one shared OCR engine at once — processing crawls to
+        seconds per frame (looks like a CPU fallback even on GPU). Must NOT hold the
+        lock while joining: the worker grabs it every frame."""
+        t = self._thread
+        if t is not None and t.is_alive():
+            self._stop.set()
+            self._pause.clear()
+            t.join(timeout=5.0)
+        self._thread = None
 
     def cancel(self) -> None:
         self._stop.set()
