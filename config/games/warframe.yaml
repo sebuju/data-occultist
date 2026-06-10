@@ -204,4 +204,4 @@ windows:
     scale: 1.0
 datasets:
 - id: equip
-  key_field: item_name
+  key_field: name

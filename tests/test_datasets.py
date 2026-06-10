@@ -34,7 +34,7 @@ def test_warframe_profile_dataset_key(tmp_path):
     import pathlib
     games = pathlib.Path("config/games")
     p = load_profile(games, "warframe")
-    assert p.key_for("equip") == "item_name"
+    assert p.key_for("equip") == "name"
 
 
 def test_store_dedups_on_supplied_key(tmp_path):

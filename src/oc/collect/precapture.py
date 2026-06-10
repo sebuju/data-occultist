@@ -4,25 +4,27 @@ Live collection pays OCR + detection latency on every frame, so it can't keep up
 with fast scrolling. Precapture splits the cost in two:
 
   1. **record** — a worker thread grabs frames as fast as the capture backend allows
-     and stashes them JPEG-compressed in memory (no OCR). Cheap, so it keeps pace.
+     and stashes them JPEG-compressed (no OCR). Frames are written to disk too, so a
+     session survives the modal closing AND a server restart, and can be re-processed.
   2. **process** — a second worker decodes each frame and runs the real pipeline
      (classify -> read -> stage), reporting progress and the data pulled so far, and
-     honouring pause/cancel.
+     honouring pause/cancel. One bad frame is skipped, never hangs the run.
 
 Then the user **saves** the staged records into the real dataset (or discards them).
 
 Speed comes from two skips during processing: when the *anchor* regions are
 pixel-identical to the previous frame we reuse the last window/state classification,
-and when a window's *data area* is identical we reuse its last read — so a burst of
-near-duplicate frames costs almost nothing.
+and when a window's *data area* is identical we reuse its last read.
 """
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -50,6 +52,10 @@ class Phase(str, Enum):
     saved = "saved"
 
 
+def _safe(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", name)
+
+
 def _sig(image: np.ndarray) -> int:
     """Cheap downsampled pixel hash, like the reader's region signature."""
     if image is None or image.size == 0:
@@ -65,13 +71,11 @@ _THUMB_MIN_CELLS = 10  # below this many changed cells -> nothing real moved (cu
 
 
 def _thumb(image: np.ndarray) -> np.ndarray:
-    """A tiny grayscale thumbnail for cheap frame-to-frame comparison."""
     gray = image.max(axis=2) if image.ndim == 3 else image
     return cv2.resize(gray, (_THUMB, _THUMB), interpolation=cv2.INTER_AREA)
 
 
 def _changed_cells(a: np.ndarray, b: np.ndarray) -> int:
-    """How many thumbnail cells differ — small for a cursor twitch, large for scrolling."""
     return int((cv2.absdiff(a, b) > _THUMB_TOL).sum())
 
 
@@ -109,6 +113,7 @@ class PrecaptureSession:
                                  confusions=self._confusions)
         self._reader = RegionReader(engine.ocr, resolver, cutouts=_load_cutouts(engine, profile))
         self._anchor_fracs = _anchor_boxes(profile)
+        self._dir = Path(engine.settings.captures_dir) / _safe(profile.name) / "precapture"
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -116,13 +121,47 @@ class PrecaptureSession:
         self._thread: threading.Thread | None = None
 
         self._frames: list[bytes] = []        # JPEG-encoded captures
-        self._stamps: list[str] = []
         self._client: tuple[int, int] = (0, 0)
         self._staged: dict[str, _Staged] = {}
         self._phase = Phase.idle
         self._processed = 0
+        self._read = 0          # records read this run (above the confidence floor)
+        self._no_key = 0        # records dropped because they had no value under the dataset key
         self._t0 = 0.0
         self._error: str | None = None
+        self._rehydrate()
+
+    # ---- disk persistence --------------------------------------------------
+
+    def _rehydrate(self) -> None:
+        """Reload frames recorded in a previous run (survives modal close / restart)."""
+        try:
+            files = sorted(self._dir.glob("*.jpg"))
+        except OSError:
+            return
+        if not files:
+            return
+        frames = []
+        for f in files:
+            try:
+                frames.append(f.read_bytes())
+            except OSError:
+                pass
+        if not frames:
+            return
+        self._frames = frames
+        img = cv2.imdecode(np.frombuffer(frames[0], np.uint8), cv2.IMREAD_COLOR)
+        if img is not None:
+            self._client = (img.shape[1], img.shape[0])
+        self._phase = Phase.recorded
+
+    def _clear_dir(self) -> None:
+        try:
+            if self._dir.exists():
+                for f in self._dir.glob("*.jpg"):
+                    f.unlink()
+        except OSError:
+            pass
 
     # ---- recording ---------------------------------------------------------
 
@@ -130,7 +169,9 @@ class PrecaptureSession:
         with self._lock:
             if self._phase in (Phase.recording, Phase.processing):
                 return
+            self._clear_dir()
             self._reset_locked()
+            self._dir.mkdir(parents=True, exist_ok=True)
             self._phase = Phase.recording
             self._stop.clear()
             self._t0 = time.monotonic()
@@ -151,9 +192,6 @@ class PrecaptureSession:
                     time.sleep(0.1)
                     continue
                 frame = eng.capture.grab_window(win)
-                # drop frames where nothing real changed vs the last kept one: an idle
-                # background game (identical) or just the cursor twitching (a handful of
-                # changed thumbnail cells). Scrolling/new data changes many cells -> kept.
                 thumb = _thumb(frame.image)
                 if last_thumb is not None and _changed_cells(thumb, last_thumb) < _THUMB_MIN_CELLS:
                     if interval:
@@ -162,10 +200,15 @@ class PrecaptureSession:
                 ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 if ok:
                     last_thumb = thumb
+                    data = buf.tobytes()
                     with self._lock:
-                        self._frames.append(buf.tobytes())
-                        self._stamps.append(time.strftime("%H:%M:%S"))
+                        idx = len(self._frames)
+                        self._frames.append(data)
                         self._client = (frame.client.w, frame.client.h)
+                    try:
+                        (self._dir / f"{idx:05d}.jpg").write_bytes(data)
+                    except OSError:
+                        pass
                 if interval:
                     time.sleep(interval)
         except Exception as exc:  # pragma: no cover - defensive
@@ -183,11 +226,14 @@ class PrecaptureSession:
 
     def start_processing(self) -> None:
         with self._lock:
-            if self._phase is Phase.processing or not self._frames:
+            if self._phase in (Phase.recording, Phase.processing) or not self._frames:
                 return
             self._phase = Phase.processing
             self._processed = 0
+            self._read = 0
+            self._no_key = 0
             self._staged = {}
+            self._error = None
             self._stop.clear()
             self._pause.clear()
             self._t0 = time.monotonic()
@@ -203,19 +249,21 @@ class PrecaptureSession:
         last_match = None
         last_data_sig: dict[str, int] = {}
         last_records: dict[str, list] = {}
-        try:
-            for buf in frames:
-                if self._stop.is_set():
-                    with self._lock:
-                        self._phase = Phase.cancelled
-                    return
-                while self._pause.is_set() and not self._stop.is_set():
-                    time.sleep(0.05)
+        errors = 0
+        for buf in frames:
+            if self._stop.is_set():
+                with self._lock:
+                    self._phase = Phase.cancelled
+                return
+            while self._pause.is_set() and not self._stop.is_set():
+                time.sleep(0.05)
 
+            try:
                 img = cv2.imdecode(np.frombuffer(buf, np.uint8), cv2.IMREAD_COLOR)
+                if img is None:
+                    raise ValueError("undecodable frame")
                 frame = Frame(image=img, client=PixelBox(0, 0, cw or img.shape[1], ch or img.shape[0]))
 
-                # Skip classification when the anchor regions are unchanged.
                 asig = self._signature(frame, self._anchor_fracs)
                 if asig is not None and asig == last_anchor_sig:
                     match = last_match
@@ -229,15 +277,16 @@ class PrecaptureSession:
                     if window is not None and self._state_allows_save(window, state_id):
                         records = self._read_cached(frame, window, last_data_sig, last_records)
                         self._stage(window, [r for r in records if r.confidence >= floor])
-
+            except Exception as exc:   # a bad frame must never stall the whole run
+                errors += 1
                 with self._lock:
-                    self._processed += 1
+                    self._error = f"{exc} ({errors} frame(s) failed)"
+
             with self._lock:
-                self._phase = Phase.done
-        except Exception as exc:  # pragma: no cover - defensive
-            with self._lock:
-                self._error = str(exc)
-                self._phase = Phase.done
+                self._processed += 1
+
+        with self._lock:
+            self._phase = Phase.done
 
     def _read_cached(self, frame: Frame, window: WindowDef, last_sig: dict, last_recs: dict) -> list:
         sig = self._reader.region_signature(frame, window)
@@ -274,12 +323,14 @@ class PrecaptureSession:
         dataset = window.dataset_id
         key_field = self._profile.key_for(dataset)
         with self._lock:
+            self._read += len(records)
             acc = self._staged.get(dataset)
             if acc is None:
                 acc = self._staged[dataset] = _Staged(key_field)
             for rec in records:
                 key = rec.values.get(key_field)
                 if key in (None, ""):
+                    self._no_key += 1
                     continue
                 acc.rows[str(key).strip().lower()] = dict(rec.values)
 
@@ -305,13 +356,15 @@ class PrecaptureSession:
         self._stop.set()
         self._pause.clear()
         with self._lock:
+            self._clear_dir()
             self._reset_locked()
 
     def _reset_locked(self) -> None:
         self._frames = []
-        self._stamps = []
         self._staged = {}
         self._processed = 0
+        self._read = 0
+        self._no_key = 0
         self._phase = Phase.idle
         self._error = None
 
@@ -331,7 +384,6 @@ class PrecaptureSession:
                     n += 1
             store.save()
             written[dataset] = n
-        # persist anything the resolver learned while processing
         self._lexicon.save()
         self._confusions.save()
         with self._lock:
@@ -340,11 +392,20 @@ class PrecaptureSession:
 
     # ---- status ------------------------------------------------------------
 
+    def _warning(self) -> str | None:
+        """A human hint when records were read but nothing got staged — almost always a
+        dataset key that doesn't match any field."""
+        staged = sum(len(acc.rows) for acc in self._staged.values())
+        if self._read > 0 and staged == 0 and self._no_key > 0:
+            keys = ", ".join(sorted({acc.key_field for acc in self._staged.values()})) or "?"
+            return f"read {self._read} rows but none had the dataset key ({keys}) — check the key field"
+        return None
+
     def status(self) -> dict:
         with self._lock:
             total = len(self._frames)
             elapsed = max(1e-3, time.monotonic() - self._t0)
-            if self._phase in (Phase.recording,):
+            if self._phase is Phase.recording:
                 fps = total / elapsed
             elif self._phase in (Phase.processing, Phase.paused, Phase.done):
                 fps = self._processed / elapsed
@@ -353,17 +414,15 @@ class PrecaptureSession:
             datasets = []
             for ds, acc in self._staged.items():
                 rows = list(acc.rows.values())
-                datasets.append({
-                    "dataset": ds,
-                    "key_field": acc.key_field,
-                    "count": len(rows),
-                    "sample": rows[-12:],
-                })
+                datasets.append({"dataset": ds, "key_field": acc.key_field,
+                                 "count": len(rows), "sample": rows[-12:]})
             return {
                 "phase": self._phase.value,
                 "frames": total,
                 "processed": self._processed,
+                "read": self._read,
                 "fps": round(fps, 1),
                 "error": self._error,
+                "warning": self._warning(),
                 "datasets": datasets,
             }

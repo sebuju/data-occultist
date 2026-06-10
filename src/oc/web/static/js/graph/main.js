@@ -912,18 +912,19 @@ function renderPrecap(node, st) {
 
   node.querySelector(".pc-bar").innerHTML = `
     <span class="pc-phase pc-${phase}">${esc(phase)}</span>
-    <span class="muted">${st.frames} frames · ${st.processed} processed · ${st.fps} /s</span>
+    <span class="muted">${st.frames} frames · ${st.processed} processed · ${st.read || 0} read · ${st.fps} /s</span>
+    ${st.warning ? `<span class="conf-warn">⚠ ${esc(st.warning)}</span>` : ""}
     ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}`;
   node.querySelectorAll(".pc-opts input").forEach((i) => { i.disabled = recording; });
   node.querySelector(".pc-ctl").innerHTML = `
-    ${recording ? `<button data-act="recstop">⏹ stop recording</button>`
-                : `<button data-act="record">⏺ record</button>`}
-    ${processing ? `<button data-act="pause">⏸ pause</button>`
-      : paused ? `<button data-act="resume">▶ resume</button>`
-      : `<button data-act="process" ${canProcess ? "" : "disabled"}>⚙ process${st.frames ? ` ${st.frames}` : ""}</button>`}
+    ${recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>`
+                : `<button data-act="record"><span class="ic ic-rec">●</span> record</button>`}
+    ${processing ? `<button data-act="pause">‖ pause</button>`
+      : paused ? `<button data-act="resume">► resume</button>`
+      : `<button data-act="process" ${canProcess ? "" : "disabled"}>▸ process${st.frames ? ` ${st.frames}` : ""}</button>`}
     ${(processing || paused) ? `<button data-act="cancel" class="danger">cancel</button>` : ""}
     <span class="spacer"></span>
-    <button data-act="save" ${staged ? "" : "disabled"}>💾 save${staged ? ` ${staged}` : ""}</button>
+    <button data-act="save" ${staged ? "" : "disabled"}><span class="ic ic-ok">⤓</span> save${staged ? ` ${staged}` : ""}</button>
     <button data-act="reset">reset</button>`;
   node.querySelector(".pc-fill").style.width = `${pct}%`;
   node.querySelector(".pc-data").innerHTML = (st.datasets || []).map(precapTable).join("")

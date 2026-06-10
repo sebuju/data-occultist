@@ -141,6 +141,38 @@ def test_recording_skips_cursor_only_moves(tmp_path):
     assert len(s._frames) == 2   # cur1 + scrolled; cursor-only moves dropped
 
 
+def test_rehydrate_frames_from_disk(tmp_path):
+    # frames recorded in a prior run (on disk) survive a new session -> reprocessable
+    d = tmp_path / "caps" / "testgame" / "precapture"
+    d.mkdir(parents=True)
+    for i in range(3):
+        cv2.imwrite(str(d / f"{i:05d}.jpg"),
+                    np.random.default_rng(i).integers(0, 255, (40, 60, 3), dtype=np.uint8))
+    s = PrecaptureSession(_engine(tmp_path), _profile())
+    st = s.status()
+    assert st["frames"] == 3 and st["phase"] == "recorded"
+
+
+def test_missing_dataset_key_warns(tmp_path):
+    recs = [Record(values={"item_name": "Adra", "item_count": 1}, confidence=0.9)]
+    s = _session(tmp_path, recs)
+    s._profile.datasets[0].key_field = "ghost"   # key doesn't match any field
+    s._process_loop([_jpeg(1)], 80, 60)
+    st = s.status()
+    assert st["datasets"][0]["count"] == 0       # nothing staged
+    assert st["read"] == 1
+    assert st["warning"] and "key" in st["warning"]
+
+
+def test_one_bad_frame_does_not_stop_the_run(tmp_path):
+    recs = [Record(values={"item_name": "Adra"}, confidence=0.9)]
+    s = _session(tmp_path, recs)
+    s._process_loop([b"not a jpeg", _jpeg(2)], 80, 60)   # first frame undecodable
+    st = s.status()
+    assert st["phase"] == Phase.done.value and st["processed"] == 2   # finished, didn't hang
+    assert st["error"] and "failed" in st["error"]
+
+
 def test_cancel_stops_processing(tmp_path):
     recs = [Record(values={"item_name": "Adra"}, confidence=0.9)]
     s = _session(tmp_path, recs)
