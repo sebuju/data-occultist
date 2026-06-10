@@ -465,6 +465,23 @@ a.node.win:hover { border-color: var(--accent); }
 .led-apply input { margin: 0; }
 .records { max-height: 50vh; overflow: auto; }
 .records tr.gone td { color: var(--muted); text-decoration: line-through; }
+
+/* batches panel: ledger list on top, selected-batch contents + preview below */
+.bat-body { display: flex; flex-direction: column; gap: 8px; }
+.bat-list { max-height: 32vh; flex: 0 0 auto; }
+.bat-list .batrow { cursor: pointer; }
+.bat-list .batrow.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.bat-list .batrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.bat-detail { border-top: 1px solid var(--line); padding-top: 6px; overflow: auto; }
+.bat-detail .ds-h { margin: 8px 0 4px; }
+.ev-table td.ev-cell { cursor: text; }
+.ev-table td.ev-cell:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.ev-table tr.reverted td { color: var(--muted); text-decoration: line-through; }
+.ev-remove { padding: 0 6px; }
+.pv-table td:first-child { font-weight: 600; }
+.pv-add td:first-child { color: var(--ok); }
+.pv-remove td:first-child { color: var(--danger); }
+.pv-update td:first-child { color: var(--warn); }
 .conf-ok { color: var(--ok); }
 .conf-warn { color: var(--warn); }
 .conf-bad { color: var(--danger); }

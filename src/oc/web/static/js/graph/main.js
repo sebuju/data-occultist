@@ -16,7 +16,7 @@ const pos = new Map();            // node id -> {x,y}
 const nodeEls = new Map();        // node id -> DOM element (built once, reused)
 const collapsed = new Set();      // collapsed node ids
 const view = { panX: 0, panY: 0, zoom: 1 };  // canvas pan/zoom
-const COLX = { game: 20, window: 300, region: 600, anchor: 600, state: 600, scrollbar: 600, dataset: 900 };
+const COLX = { game: 20, window: 300, region: 600, anchor: 600, state: 600, scrollbar: 600, dataset: 900, batches: 1180 };
 let live = {};                    // dataset -> {present,total,last_op,last_ts}
 const prevPresent = {};
 let timer = null;
@@ -56,10 +56,12 @@ const previewPanels = new Map();  // winId -> { wrap, body } (live OCR preview)
 const openImages = new Set();     // winIds whose image panel is open (persisted)
 const openPreviews = new Set();   // winIds whose preview panel is open (persisted)
 const openDatasets = new Set();   // dataset ids whose data panel is open (persisted)
-const panelSizes = new Map();     // `img:<win>` / `prev:<win>` / `dsp:<ds>` -> {w,h} (persisted)
+const openBatches = new Set();    // dataset ids whose batches panel is open (persisted)
+const panelSizes = new Map();     // `img:<win>` / `prev:<win>` / `dsp:<ds>` / `bat:<ds>` -> {w,h} (persisted)
 let pendingOpenImages = [];
 let pendingOpenPreviews = [];
 let pendingOpenDatasets = [];
+let pendingOpenBatches = [];
 const busy = new Map();            // node id -> active-work count (drives the spinner)
 const gridPreviews = new Map();    // winId -> live-detected field boxes (dashed grid)
 const gridReads = new Map();        // winId -> per-cell read values {x,y,w,h,text,confidence}
@@ -138,6 +140,7 @@ function loadPositions() {
     pendingOpenImages = raw.openImages || [];
     pendingOpenPreviews = raw.openPreviews || [];
     pendingOpenDatasets = raw.openDatasets || [];
+    pendingOpenBatches = raw.openBatches || [];
     for (const k in (raw.panelSizes || {})) panelSizes.set(k, raw.panelSizes[k]);
     if (raw.view && Number.isFinite(raw.view.zoom)) Object.assign(view, raw.view);
   } catch { /* ignore */ }
@@ -147,6 +150,7 @@ function savePositions() {
     localStorage.setItem(posKey(), JSON.stringify({
       positions: Object.fromEntries(pos), collapsed: [...collapsed],
       openImages: [...openImages], openPreviews: [...openPreviews], openDatasets: [...openDatasets],
+      openBatches: [...openBatches],
       panelSizes: Object.fromEntries(panelSizes), view,
     }));
   } catch { /* ignore */ }
@@ -161,6 +165,7 @@ const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text
 function elForPos(id) {
   if (id.startsWith("prev:")) return previewPanels.get(id.slice(5))?.wrap;
   if (id.startsWith("dsp:")) return datasetPanels.get(id.slice(4))?.wrap;
+  if (id.startsWith("bat:")) return batchesPanels.get(id.slice(4))?.wrap;
   return nodeEls.get(id);   // image canvas lives inside its window node now
 }
 
@@ -385,6 +390,15 @@ function nodeParts(n) {
           <option ${o === "horizontal" ? "selected" : ""}>horizontal</option></select></label>
         <div class="detect-status muted">position: —</div>
         <div class="gn-foot"><button class="delsb danger">remove</button></div>`,
+    };
+  }
+  if (n.type === "batches") {
+    // ledger node — the dataset's collection/save runs, edited in a floating panel.
+    return {
+      title: `<span class="gi-id">⛃ ${esc(n.ref)} batches</span>`,
+      body: `<div class="muted">collection / save runs · toggle, edit or preview each</div>
+        <div class="gn-foot"><button class="batopen">▤ open ledger</button></div>`,
+      ports: `<span class="port in"></span>`,
     };
   }
   // dataset — owns the dedup key. Key options = the fields of every window feeding it.
@@ -614,17 +628,7 @@ function facingSides(ra, rb) {
   return { p1: [acx, ra.y], d1: "T", p2: [bcx, rb.y + rb.h], d2: "B" };
 }
 
-// Connect two rectangles on their closest-facing sides, tangents pointing outward.
-// Direct bezier — the immediate, always-responsive fallback before a route exists.
-function connectRects(svg, ra, rb, cls) {
-  const { p1, d1, p2, d2 } = facingSides(ra, rb);
-  addDirEdge(svg, p1[0], p1[1], d1, p2[0], p2[1], d2, cls);
-}
 const nodeRect = (id) => { const p = pos.get(id); return p && { x: p.x, y: p.y, w: nw(id), h: nh(id) }; };
-function connectNodes(svg, fromId, toId, cls) {
-  const ra = nodeRect(fromId), rb = nodeRect(toId);
-  if (ra && rb) connectRects(svg, ra, rb, cls);
-}
 
 function boxFracForNode(id) {
   if (id.startsWith("reg:")) { const [, win, rid] = id.split(":"); const r = model.region(win, rid); return r && r.box; }
@@ -645,40 +649,86 @@ function boxWorldRect(winId, frac) {
   return { x: wp.x + cv.offsetLeft + frac.x * cw, y: wp.y + cv.offsetTop + frac.y * ch, w: frac.w * cw, h: frac.h * ch };
 }
 
-let drawSig = "";   // layout signature for THIS draw (drawNodeEdge checks it vs the cache)
-function drawEdges() {
-  const svg = $("gedges");        // structural edges (behind nodes)
-  const top = $("gedges-top");    // attach/panel lines (over the image)
-  svg.innerHTML = ""; top.innerHTML = "";
-  drawSig = ROUTE.enabled ? layoutSignature() : "";
-  const selCls = (e) => (selectedNodeId && (e.from === selectedNodeId || e.to === selectedNodeId)) ? " sel" : "";
+// ---- one unified link list -------------------------------------------------
+// EVERY connection in the view is the same thing: a line between two rects —
+// structural node→node, a region/anchor node to its box on an open image, a window
+// to its preview panel, a dataset to its data panel. They all flow through
+// buildLinks → routing → addPolyline. No bespoke per-kind drawing.
+const PANEL_DEF = { prev: [340, 320], dsp: [320, 300], bat: [420, 360] };   // fallback w,h before layout
+function panelRectOf(kind, ownerId, wrap) {
+  const p = panelPos(kind, ownerId), d = PANEL_DEF[kind];
+  return p && { x: p.x, y: p.y, w: wrap.offsetWidth || d[0], h: wrap.offsetHeight || d[1] };
+}
+function selClsFor(aId, bId) {
+  return selectedNodeId && (aId === selectedNodeId || bId === selectedNodeId) ? " sel" : "";
+}
+
+// Build the descriptor for every line. `aId`/`bId` name each rect's owner (used to
+// fan endpoints that share a node side); `ra`/`rb` are the world rects.
+function buildLinks() {
+  const links = [];
+  const add = (key, aId, bId, top, kind, ra, rb) => {
+    if (ra && rb) links.push({ key, aId, bId, top, cls: `gedge ${kind}${selClsFor(aId, bId)}`, ra, rb });
+  };
   for (const e of model.edges()) {
-    const a = pos.get(e.from), b = pos.get(e.to);
-    // field/anchor: if the window's image is open, run the line from the REGION/
-    // ANCHOR node itself to its rectangle on the image — drawn on the TOP layer.
+    // region/anchor/scrollbar with the image open: the line runs to the box ON the image
     if ((e.kind === "field" || e.kind === "anchor" || e.kind === "scrollbar") && imageCanvases.has(e.from.slice(4))) {
-      const winId = e.from.slice(4);
-      const nrect = nodeRect(e.to);
-      const frac = boxFracForNode(e.to);
-      const rect = frac && boxWorldRect(winId, frac);
-      // closest-facing sides between the node and its rectangle on the image
-      if (nrect && rect) connectRects(top, nrect, rect, `gedge ${e.kind}${selCls(e)}`);   // colour matches the box
+      const frac = boxFracForNode(e.to), rb = frac && boxWorldRect(e.from.slice(4), frac);
+      add(`box ${e.to}`, e.to, `box:${e.to}`, true, e.kind, nodeRect(e.to), rb);
       continue;
     }
-    if (!a || !b) continue;
-    const sel = selCls(e);
-    // non-editable structural edge: pathfound route if one is cached & current,
-    // else a direct bezier (stays live while dragging; route snaps in on settle)
-    drawNodeEdge(sel ? top : svg, e, `gedge ${e.kind}${sel}`);  // sel -> top layer
+    add(`${e.from} ${e.to}`, e.from, e.to, !!selClsFor(e.from, e.to), e.kind, nodeRect(e.from), nodeRect(e.to));
   }
-  // image is part of the window node. window node -> its open preview panel
-  for (const [winId, prev] of previewPanels) {
-    const wp = pos.get(`win:${winId}`), pp = pos.get(`prev:${winId}`);
-    const node = nodeEls.get(`win:${winId}`);
-    if (!wp || !pp || !node) continue;
-    const wr = { x: wp.x, y: wp.y, w: node.offsetWidth, h: node.offsetHeight };
-    const pr = { x: pp.x, y: pp.y, w: prev.wrap.offsetWidth || 340, h: prev.wrap.offsetHeight || 320 };
-    connectRects(top, wr, pr, "gedge img");
+  for (const [winId, prev] of previewPanels)
+    add(`prev ${winId}`, `win:${winId}`, `prev:${winId}`, true, "img", nodeRect(`win:${winId}`), panelRectOf("prev", winId, prev.wrap));
+  for (const [ds, panel] of datasetPanels)
+    add(`dsp ${ds}`, `ds:${ds}`, `dsp:${ds}`, true, "data", nodeRect(`ds:${ds}`), panelRectOf("dsp", ds, panel.wrap));
+  for (const [ds, panel] of batchesPanels)
+    add(`bat ${ds}`, `bat:${ds}`, `batp:${ds}`, true, "data", nodeRect(`bat:${ds}`), panelRectOf("bat", ds, panel.wrap));
+  computePorts(links);
+  return links;
+}
+
+// Pick each line's port + side, then fan endpoints that share a node side so they sit
+// one GAP apart instead of all stacking on the side's midpoint.
+const GAP = () => ROUTE.cell;   // shared spacing: fanned endpoints AND parallel bundles
+function computePorts(links) {
+  for (const l of links) { const f = facingSides(l.ra, l.rb); l.p1 = f.p1; l.d1 = f.d1; l.p2 = f.p2; l.d2 = f.d2; }
+  const buckets = new Map();   // `${owner}|${dir}` -> endpoints on that rect side
+  const put = (owner, dir, l, end, other) => {
+    const horiz = dir === "L" || dir === "R";
+    const perp = horiz ? other.y + other.h / 2 : other.x + other.w / 2;
+    const k = `${owner}|${dir}`;
+    (buckets.get(k) || buckets.set(k, []).get(k)).push({ l, end, perp, horiz });
+  };
+  for (const l of links) { put(l.aId, l.d1, l, "a", l.rb); put(l.bId, l.d2, l, "b", l.ra); }
+  const gap = GAP();
+  for (const arr of buckets.values()) {
+    if (arr.length < 2) continue;
+    arr.sort((u, v) => u.perp - v.perp);   // order by where each other end sits → no crossing
+    const n = arr.length;
+    arr.forEach((it, i) => {
+      const rect = it.end === "a" ? it.l.ra : it.l.rb;
+      const lo = it.horiz ? rect.y : rect.x, span = it.horiz ? rect.h : rect.w;
+      const spread = Math.max(0, Math.min(span - gap, (n - 1) * gap));   // keep ports on the edge
+      const coord = lo + span / 2 - spread / 2 + (i * spread) / (n - 1);
+      const port = it.end === "a" ? it.l.p1 : it.l.p2;
+      if (it.horiz) port[1] = coord; else port[0] = coord;
+    });
+  }
+}
+
+let drawSig = "";   // link signature for THIS draw (compared against the route cache's)
+function drawEdges() {
+  const svg = $("gedges"), top = $("gedges-top");
+  svg.innerHTML = ""; top.innerHTML = "";
+  const links = buildLinks();
+  drawSig = ROUTE.enabled ? linksSig(links) : "";
+  for (const l of links) {
+    const layer = l.top ? top : svg;
+    const pts = routeCache.get(l.key);   // routed polyline if ready; bezier fallback otherwise
+    if (pts && pts.length >= 2) addPolyline(layer, pts, l.cls);
+    else addDirEdge(layer, l.p1[0], l.p1[1], l.d1, l.p2[0], l.p2[1], l.d2, l.cls);
   }
   if (wire) addEdge(svg, wire.x1, wire.y1, wire.x2, wire.y2, "gedge wire");
   scheduleRouting();
@@ -709,40 +759,26 @@ const routeCache = new Map();   // edgeId -> [ [x,y], ... ]  (polyline)
 let routeHash = "";             // layout signature the cache was built for
 let routeTimer = null;
 
-// Structural node→node edges (the ones that get routed; image-attach lines don't).
-function structuralEdges() {
-  const out = [];
-  for (const e of model.edges()) {
-    if ((e.kind === "field" || e.kind === "anchor" || e.kind === "scrollbar") && imageCanvases.has(e.from.slice(4))) continue;
-    const ra = nodeRect(e.from), rb = nodeRect(e.to);
-    if (ra && rb) out.push({ id: `${e.from} ${e.to}`, ra, rb });
-  }
-  return out;
-}
-
-// Every positioned node is an obstacle (lines weave around all of them, not just
-// the two they connect).
+// Everything physical is an obstacle: nodes AND panels. Lines weave around all of
+// them, not just the two rects they connect.
 function obstacleRects() {
   const out = [];
   for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) out.push(r); }
+  for (const [winId, prev] of previewPanels) { const r = panelRectOf("prev", winId, prev.wrap); if (r) out.push(r); }
+  for (const [ds, panel] of datasetPanels) { const r = panelRectOf("dsp", ds, panel.wrap); if (r) out.push(r); }
+  for (const [ds, panel] of batchesPanels) { const r = panelRectOf("bat", ds, panel.wrap); if (r) out.push(r); }
   return out;
 }
 
-// Signature of the whole layout: any node move/resize changes it and invalidates
-// every cached route (a moved node can reshape a route it isn't even an endpoint of).
-function layoutSignature() {
+// Signature that invalidates the route cache: the ports of every link plus every
+// obstacle rect. Any move/resize/open/close changes it (a moved node can reshape a
+// route it isn't even an endpoint of, so obstacles must be in here too).
+const rnd = (p) => `${Math.round(p[0])},${Math.round(p[1])}`;
+function linksSig(links) {
   let s = `${ROUTE.cell}:${ROUTE.clearWanted}:`;
-  for (const n of model.nodes()) {
-    const r = nodeRect(n.id);
-    if (r) s += `${n.id}${r.x},${r.y},${r.w},${r.h};`;
-  }
+  for (const l of links) s += `${l.key}@${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2};`;
+  for (const o of obstacleRects()) s += `${o.x},${o.y},${o.w},${o.h}|`;
   return s;
-}
-
-function drawNodeEdge(layer, e, cls) {
-  const pts = routeCache.get(`${e.from} ${e.to}`);   // use route if cached; bezier only until first route exists
-  if (pts && pts.length >= 2) addPolyline(layer, pts, cls);
-  else connectNodes(layer, e.from, e.to, cls);
 }
 
 function addPolyline(svg, pts, cls) {
@@ -755,39 +791,33 @@ function addPolyline(svg, pts, cls) {
 
 function scheduleRouting() {
   if (!ROUTE.enabled) return;
-  if ((drawSig || layoutSignature()) === routeHash) return;   // routes already current
+  if (drawSig === routeHash) return;   // routes already current (drawSig set in drawEdges)
   clearTimeout(routeTimer);
   routeTimer = setTimeout(runRouting, ROUTE.debounce);
 }
 
 function runRouting() {
-  const sig = layoutSignature();        // route the layout as it stands NOW (no stale abort)
+  const links = buildLinks();          // route the layout as it stands NOW
+  const sig = linksSig(links);
   if (sig === routeHash) return;
-  const items = structuralEdges();
   const t0 = performance.now();
   try {
     const router = new EdgeRouter(obstacleRects(), { cell: ROUTE.cell, clearWanted: ROUTE.clearWanted });
     routeCache.clear();
-    // shortest first: short links lock in straight, long ones detour around them
-    items.sort((a, b) => spanOf(a) - spanOf(b));
-    for (const it of items) {
-      const { p1, d1, p2, d2 } = facingSides(it.ra, it.rb);
-      routeCache.set(it.id, router.route(p1, d1, p2, d2));
-    }
+    links.sort((a, b) => spanOf(a) - spanOf(b));   // shortest first: short links lock in straight
+    for (const l of links) routeCache.set(l.key, router.route(l.p1, l.d1, l.p2, l.d2));
   } catch (err) {
     setStatus(`route failed: ${err.message}`);   // surface instead of silently using beziers
     return;
   }
   routeHash = sig;
   const dt = performance.now() - t0;
-  setStatus(`routed ${items.length} line${items.length === 1 ? "" : "s"} in ${fmtDur(dt)}`);
+  setStatus(`routed ${links.length} line${links.length === 1 ? "" : "s"} in ${fmtDur(dt)}`);
   drawEdges();
 }
 
-function spanOf(it) {
-  const ax = it.ra.x + it.ra.w / 2, ay = it.ra.y + it.ra.h / 2;
-  const bx = it.rb.x + it.rb.w / 2, by = it.rb.y + it.rb.h / 2;
-  return Math.abs(bx - ax) + Math.abs(by - ay);
+function spanOf(l) {
+  return Math.abs(l.p2[0] - l.p1[0]) + Math.abs(l.p2[1] - l.p1[1]);
 }
 
 // ---- per-node interaction -------------------------------------------------
@@ -840,9 +870,11 @@ function wireNode(div, n) {
         setTimeout(() => { clearBtn.dataset.armed = "0"; clearBtn.textContent = "clear data"; }, 2500);
         return;
       }
-      try { await api.clearDataset(model.profile.name, n.ref); refreshLive(); refreshOpenDatasetPanels(); setStatus(`cleared ${n.ref}`); }
+      try { await api.clearDataset(model.profile.name, n.ref); refreshLive(); refreshOpenDatasetPanels(); refreshOpenBatchesPanels(); setStatus(`cleared ${n.ref}`); }
       catch (e) { setStatus(String(e.message || e)); }
     });
+  } else if (n.type === "batches") {
+    div.querySelector(".batopen")?.addEventListener("click", () => openBatchesPanel(n.ref));
   } else if (n.type === "region") {
     const fld = n.field;
     div.addEventListener("click", (ev) => {
@@ -945,27 +977,8 @@ async function refreshDatasetPanel(ds) {
   } catch (e) { panel.body.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
 }
 
-// Reverting a batch replays the ledger without that run, so its records fall back to
-// their previous accepted values (or vanish).
 function renderDatasetDetail(body, ds, d) {
   body.innerHTML = datasetDetailHTML(d);
-  // checkbox checked = batch applied; unchecking reverts it (on=true means "revert").
-  body.querySelectorAll(".led-toggle").forEach((cb) => cb.addEventListener("change", async () => {
-    cb.disabled = true;
-    try {
-      const upd = await api.revertDatasetBatch(model.profile.name, ds, +cb.dataset.batch, !cb.checked);
-      renderDatasetDetail(body, ds, upd);
-      refreshLive();
-    } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
-  }));
-  body.querySelectorAll(".led-remove").forEach((b) => b.addEventListener("click", async () => {
-    if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "sure?"; setTimeout(() => { b.dataset.armed = "0"; b.textContent = "remove"; }, 2500); return; }
-    try {
-      const upd = await api.removeDatasetBatch(model.profile.name, ds, +b.dataset.batch);
-      renderDatasetDetail(body, ds, upd);
-      refreshLive();
-    } catch (e) { setStatus(String(e.message || e)); }
-  }));
 }
 
 function datasetDetailHTML(d) {
@@ -977,18 +990,176 @@ function datasetDetailHTML(d) {
     const rows = recs.map((r) => `<tr class="${r.present ? "" : "gone"}">${cols.map((c) => `<td>${esc(r[c] ?? "")}</td>`).join("")}</tr>`).join("");
     table = `<table class="grid-table zebra"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
   }
-  const batches = (d.batches || []).map((b) => {
+  return `<div class="ds-detail">
+    <div class="prev-count muted">${recs.length} records</div>
+    ${table}
+  </div>`;
+}
+
+// ---- batches panel (the ledger + per-batch contents/preview, floating) ----
+
+const batchesPanels = new Map();   // ds -> { wrap, list, detail, sel, events }
+
+function openBatchesPanel(ds) {
+  const open = batchesPanels.get(ds);
+  if (open) { selectPanel(open.wrap); refreshBatchesPanel(ds); return; }
+  const wrap = document.createElement("div");
+  wrap.className = "imgpanel prevpanel dspanel batpanel";
+  wrap.id = `batpanel-${ds}`;
+  wrap.innerHTML = `<div class="imgpanel-h">⛃ ${esc(ds)} batches
+      <span class="spacer"></span><button class="dsrefresh">refresh</button><button class="dsclose">×</button></div>
+    <div class="prev-body bat-body">
+      <ul class="history bat-list"><li class="muted">loading…</li></ul>
+      <div class="bat-detail muted">select a batch to see its contents and what applying it changes</div>
+    </div>`;
+  $("gcanvases").appendChild(wrap);
+  batchesPanels.set(ds, { wrap, list: wrap.querySelector(".bat-list"),
+                          detail: wrap.querySelector(".bat-detail"), sel: null, events: {} });
+  openBatches.add(ds);
+  savePositions();
+  wrap.addEventListener("mousedown", () => selectPanel(wrap));
+  wrap.querySelector(".dsclose").addEventListener("click", () => closeBatchesPanel(ds));
+  wrap.querySelector(".dsrefresh").addEventListener("click", () => refreshBatchesPanel(ds));
+  wrap.querySelector(".imgpanel-h").addEventListener("mousedown", (ev) => startPanelDrag("bat", ds, ev));
+  applyPanelSize(`bat:${ds}`, wrap);
+  observePanelSize(`bat:${ds}`, wrap);
+  positionPanels();
+  refreshBatchesPanel(ds);
+}
+
+function closeBatchesPanel(ds) {
+  const e = batchesPanels.get(ds);
+  if (e) { e.wrap.remove(); batchesPanels.delete(ds); }
+  openBatches.delete(ds);
+  savePositions();
+}
+
+function refreshOpenBatchesPanels() {
+  for (const ds of batchesPanels.keys()) refreshBatchesPanel(ds);
+}
+
+async function refreshBatchesPanel(ds) {
+  const panel = batchesPanels.get(ds);
+  if (!panel) return;
+  try {
+    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
+    renderBatchesList(panel, ds, (await r.json()).batches || []);
+  } catch (e) { panel.list.innerHTML = `<li class="muted">${esc(String(e))}</li>`; }
+}
+
+function renderBatchesList(panel, ds, batches) {
+  if (!batches.length) { panel.list.innerHTML = '<li class="muted">no batches yet</li>'; panel.detail.innerHTML = ""; return; }
+  panel.list.innerHTML = batches.map((b) => {
     const parts = [b.adds ? `+${b.adds}` : "", b.updates ? `~${b.updates}` : "", b.removes ? `−${b.removes}` : ""].filter(Boolean).join(" ");
     const keys = (b.keys || []).slice(0, 4).join(", ") + (b.count > 4 ? " …" : "");
     const app = `<label class="led-apply" title="apply this batch to the dataset (uncheck to revert it)"><input type="checkbox" class="led-toggle" data-batch="${b.batch}"${b.reverted ? "" : " checked"}> applied</label>`;
     const rm = `<button class="led-remove danger" data-batch="${b.batch}" title="permanently delete this batch from the ledger">remove</button>`;
-    return `<li class="${b.reverted ? "reverted" : ""}"><span class="muted">${esc((b.ts || "").slice(11))}</span> <b>#${b.batch}</b> <span class="muted">${parts} · ${b.count} · ${esc(keys)}</span> ${app} ${rm}</li>`;
-  }).join("") || '<li class="muted">no batches yet</li>';
-  return `<div class="ds-detail">
-    <div class="prev-count muted">${recs.length} records</div>
-    ${table}
-    <h4 class="ds-h">Batches</h4><ul class="history">${batches}</ul>
-  </div>`;
+    return `<li class="batrow ${b.reverted ? "reverted" : ""}${panel.sel === b.batch ? " sel" : ""}" data-batch="${b.batch}">
+      <span class="muted">${esc((b.ts || "").slice(11))}</span> <b>#${b.batch}</b>
+      <span class="muted">${parts} · ${b.count} · ${esc(keys)}</span> ${app} ${rm}</li>`;
+  }).join("");
+  // select on row click (but not when hitting the checkbox/remove)
+  panel.list.querySelectorAll(".batrow").forEach((li) => li.addEventListener("click", (ev) => {
+    if (ev.target.closest(".led-apply,.led-remove")) return;
+    selectBatch(ds, +li.dataset.batch);
+  }));
+  panel.list.querySelectorAll(".led-toggle").forEach((cb) => cb.addEventListener("change", async () => {
+    cb.disabled = true;
+    try {
+      await api.revertDatasetBatch(model.profile.name, ds, +cb.dataset.batch, !cb.checked);
+      await refreshBatchesPanel(ds); refreshLive(); refreshOpenDatasetPanels();
+    } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
+  }));
+  panel.list.querySelectorAll(".led-remove").forEach((b) => b.addEventListener("click", async () => {
+    if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "sure?"; setTimeout(() => { b.dataset.armed = "0"; b.textContent = "remove"; }, 2500); return; }
+    try {
+      if (panel.sel === +b.dataset.batch) { panel.sel = null; panel.detail.innerHTML = ""; }
+      await api.removeDatasetBatch(model.profile.name, ds, +b.dataset.batch);
+      await refreshBatchesPanel(ds); refreshLive(); refreshOpenDatasetPanels();
+    } catch (e) { setStatus(String(e.message || e)); }
+  }));
+  if (panel.sel != null && batches.some((b) => b.batch === panel.sel)) selectBatch(ds, panel.sel);
+  else if (panel.sel != null) { panel.sel = null; panel.detail.innerHTML = ""; }
+}
+
+async function selectBatch(ds, batch) {
+  const panel = batchesPanels.get(ds);
+  if (!panel) return;
+  panel.sel = batch;
+  panel.list.querySelectorAll(".batrow").forEach((li) => li.classList.toggle("sel", +li.dataset.batch === batch));
+  panel.detail.innerHTML = '<p class="muted">loading…</p>';
+  try {
+    const bd = await api.batchDetail(model.profile.name, ds, batch);
+    panel.events = Object.fromEntries((bd.events || []).map((e) => [e.id, e]));
+    renderBatchDetail(panel, ds, bd);
+  } catch (e) { panel.detail.innerHTML = `<p class="muted">${esc(String(e))}</p>`; }
+}
+
+function renderBatchDetail(panel, ds, bd) {
+  const events = bd.events || [];
+  const preview = bd.preview || [];
+  // event contents — editable value cells; per-event applied + remove
+  const cols = [...new Set(events.flatMap((e) => Object.keys(e.values || {})))];
+  const evHead = `<th>id</th><th>op</th>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}<th></th><th></th>`;
+  const evRows = events.map((e) => {
+    const cells = cols.map((c) => `<td contenteditable="true" class="ev-cell" data-id="${e.id}" data-field="${esc(c)}">${esc(e.values?.[c] ?? "")}</td>`).join("");
+    const app = `<input type="checkbox" class="ev-apply" data-id="${e.id}"${e.reverted ? "" : " checked"} title="apply this event">`;
+    const rm = `<button class="ev-remove danger" data-id="${e.id}" title="permanently delete this event">✕</button>`;
+    return `<tr class="${e.reverted ? "reverted" : ""}"><td class="muted">${e.id}</td><td>${esc(e.op)}</td>${cells}<td>${app}</td><td>${rm}</td></tr>`;
+  }).join("");
+  const evTable = events.length
+    ? `<table class="grid-table zebra ev-table"><thead><tr>${evHead}</tr></thead><tbody>${evRows}</tbody></table>`
+    : '<p class="muted">no events</p>';
+
+  // preview — what applying this batch changes in the dataset
+  const pvRows = preview.map((p) => {
+    if (p.kind === "add") return `<tr class="pv-add"><td>add</td><td>${esc(p.key)}</td><td>${esc(fmtVals(p.after))}</td></tr>`;
+    if (p.kind === "remove") return `<tr class="pv-remove"><td>remove</td><td>${esc(p.key)}</td><td>${esc(fmtVals(p.before))}</td></tr>`;
+    const diff = Object.entries(p.changed || {}).map(([f, [o, nv]]) => `${esc(f)}: ${esc(o ?? "∅")} → ${esc(nv ?? "∅")}`).join("; ");
+    return `<tr class="pv-update"><td>update</td><td>${esc(p.key)}</td><td>${diff}</td></tr>`;
+  }).join("");
+  const pvTable = preview.length
+    ? `<table class="grid-table zebra pv-table"><thead><tr><th>change</th><th>key</th><th>detail</th></tr></thead><tbody>${pvRows}</tbody></table>`
+    : '<p class="muted">applying this batch changes nothing</p>';
+
+  panel.detail.innerHTML = `<h4 class="ds-h">Batch #${bd.batch} · ${events.length} events</h4>${evTable}
+    <h4 class="ds-h">Applying this batch would…</h4>${pvTable}`;
+
+  panel.detail.querySelectorAll(".ev-cell").forEach((td) => td.addEventListener("blur", async () => {
+    const id = +td.dataset.id, field = td.dataset.field, ev = panel.events[id];
+    if (!ev) return;
+    const val = td.textContent;
+    if (String(ev.values?.[field] ?? "") === val) return;     // unchanged
+    try {
+      const upd = await api.editDatasetEvent(model.profile.name, ds, bd.batch, id, { ...ev.values, [field]: val });
+      panel.events = Object.fromEntries((upd.events || []).map((e) => [e.id, e]));
+      renderBatchDetail(panel, ds, upd);
+      refreshLive(); refreshOpenDatasetPanels(); refreshBatchesPanel(ds);
+    } catch (e) { setStatus(String(e.message || e)); }
+  }));
+  panel.detail.querySelectorAll(".ev-apply").forEach((cb) => cb.addEventListener("change", async () => {
+    cb.disabled = true;
+    try {
+      const upd = await api.revertDatasetEvent(model.profile.name, ds, bd.batch, +cb.dataset.id, !cb.checked);
+      panel.events = Object.fromEntries((upd.events || []).map((e) => [e.id, e]));
+      renderBatchDetail(panel, ds, upd);
+      refreshLive(); refreshOpenDatasetPanels(); refreshBatchesPanel(ds);
+    } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
+  }));
+  panel.detail.querySelectorAll(".ev-remove").forEach((b) => b.addEventListener("click", async () => {
+    if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "?"; setTimeout(() => { b.dataset.armed = "0"; b.textContent = "✕"; }, 2500); return; }
+    try {
+      const upd = await api.removeDatasetEvent(model.profile.name, ds, bd.batch, +b.dataset.id);
+      panel.events = Object.fromEntries((upd.events || []).map((e) => [e.id, e]));
+      renderBatchDetail(panel, ds, upd);
+      refreshLive(); refreshOpenDatasetPanels(); refreshBatchesPanel(ds);
+    } catch (e) { setStatus(String(e.message || e)); }
+  }));
+}
+
+function fmtVals(v) {
+  if (!v) return "";
+  return Object.entries(v).map(([k, val]) => `${k}=${val}`).join(", ");
 }
 
 // ---- precapture modal -----------------------------------------------------
@@ -1034,7 +1205,7 @@ async function openPrecaptureModal() {
     else if (a === "resume") run(() => api.precapture.pause(game, false));
     else if (a === "cancel") run(() => api.precapture.cancel(game));
     else if (a === "reset") run(() => api.precapture.reset(game));
-    else if (a === "save") run(async () => { const r = await api.precapture.save(game); refreshLive(); refreshOpenDatasetPanels(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
+    else if (a === "save") run(async () => { const r = await api.precapture.save(game); refreshLive(); refreshOpenDatasetPanels(); refreshOpenBatchesPanels(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
   });
 
   await run(() => api.precapture.status(game));
@@ -1678,7 +1849,7 @@ function setGridFromPreview(winId, res) {
 function panelPos(kind, ownerId) {
   const id = `${kind}:${ownerId}`;
   if (!pos.has(id)) {
-    const anchor = kind === "dsp" ? `ds:${ownerId}` : `win:${ownerId}`;
+    const anchor = kind === "dsp" ? `ds:${ownerId}` : kind === "bat" ? `bat:${ownerId}` : `win:${ownerId}`;
     const ap = pos.get(anchor) || { x: 300, y: 20 };
     const node = nodeEls.get(anchor);
     pos.set(id, { x: snap(ap.x + (node?.offsetWidth || 240) + 40), y: snap(ap.y) });
@@ -1689,6 +1860,7 @@ function panelPos(kind, ownerId) {
 function positionPanels() {
   for (const [winId, panel] of previewPanels) { const p = panelPos("prev", winId); panel.wrap.style.left = `${p.x}px`; panel.wrap.style.top = `${p.y}px`; }
   for (const [ds, panel] of datasetPanels) { const p = panelPos("dsp", ds); panel.wrap.style.left = `${p.x}px`; panel.wrap.style.top = `${p.y}px`; }
+  for (const [ds, panel] of batchesPanels) { const p = panelPos("bat", ds); panel.wrap.style.left = `${p.x}px`; panel.wrap.style.top = `${p.y}px`; }
 }
 
 // ---- dragging -------------------------------------------------------------
@@ -1789,9 +1961,11 @@ async function refreshLive() {
     const after = model.datasets();
     if (after.length !== before.size || after.some((d) => !before.has(d))) render();
     else updateDatasetNodes();
-    // an open data panel re-reads when its dataset's count changed
+    // an open data/batches panel re-reads when its dataset's count changed
     for (const ds of datasetPanels.keys())
       if (map[ds] && prevPresent[ds] !== undefined && prevPresent[ds] !== map[ds].present) refreshDatasetPanel(ds);
+    for (const ds of batchesPanels.keys())
+      if (map[ds] && prevPresent[ds] !== undefined && prevPresent[ds] !== map[ds].present) refreshBatchesPanel(ds);
   } catch { /* ignore */ }
 }
 
@@ -1829,14 +2003,17 @@ async function loadGame(name) {
   for (const winId of [...imageCanvases.keys()]) closeImage(winId);
   for (const winId of [...previewPanels.keys()]) closePreview(winId);
   for (const ds of [...datasetPanels.keys()]) closeDatasetPanel(ds);
+  for (const ds of [...batchesPanels.keys()]) closeBatchesPanel(ds);
   loadPositions();   // restore saved node positions for this game
   render();
   for (const winId of pendingOpenImages) if (model.window(winId)) openImage(winId);  // reopen saved images (canvas lives in node)
   const reopenPreviews = pendingOpenPreviews;
   const reopenDatasets = pendingOpenDatasets;
-  pendingOpenImages = []; pendingOpenPreviews = []; pendingOpenDatasets = [];
+  const reopenBatches = pendingOpenBatches;
+  pendingOpenImages = []; pendingOpenPreviews = []; pendingOpenDatasets = []; pendingOpenBatches = [];
   for (const winId of reopenPreviews) if (model.window(winId)) createPreviewPanel(winId);
   for (const ds of reopenDatasets) if (model.datasets().includes(ds)) openDatasetPanel(ds);
+  for (const ds of reopenBatches) if (model.datasets().includes(ds)) openBatchesPanel(ds);
   resetHistory();   // fresh undo/redo baseline for this game
   refreshLive();
   setStatus(`loaded ${name}`);

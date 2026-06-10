@@ -160,16 +160,10 @@ export class EdgeRouter {
   _h(cx, cy, gx, gy) { return Math.abs(cx - gx) + Math.abs(cy - gy); }
 
   _stamp(cells) {
-    // mark the path and its immediate flanks so later routes keep a one-cell gap
-    for (const i of cells) {
-      this.usage[i] += 1;
-      const cx = i % this.cols, cy = (i / this.cols) | 0;
-      for (const [dx, dy] of DIRS) {
-        const nx = cx + dx, ny = cy + dy;
-        if (nx < 0 || ny < 0 || nx >= this.cols || ny >= this.rows) continue;
-        this.usage[ny * this.cols + nx] += 0.35;
-      }
-    }
+    // Mark only the path cells. A later route pays W_USE to share a cell but nothing
+    // to sit in the cell NEXT to it — so parallel same-direction lines pack tight, one
+    // cell apart, instead of being shoved far away.
+    for (const i of cells) this.usage[i] += 1;
   }
 }
 

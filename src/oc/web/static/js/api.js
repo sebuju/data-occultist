@@ -130,6 +130,28 @@ export async function removeDatasetBatch(game, dataset, batch) {
   return r.json();
 }
 
+// One batch: its events + a preview of what applying it changes. Returns
+// { dataset, batch, events:[...], preview:[...], batches:[...] }.
+const _dsUrl = (game, dataset) => `/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}`;
+export async function batchDetail(game, dataset, batch) {
+  const r = await fetch(`${_dsUrl(game, dataset)}/batch/${batch}`);
+  if (!r.ok) throw new Error(`batch: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+async function _evt(game, dataset, batch, eventId, path, extra = "", body) {
+  const opt = { method: "POST" };
+  if (body !== undefined) { opt.headers = { "Content-Type": "application/json" }; opt.body = JSON.stringify(body); }
+  const r = await fetch(`${_dsUrl(game, dataset)}/event/${eventId}/${path}?batch=${batch}${extra}`, opt);
+  if (!r.ok) throw new Error(`event ${path}: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+export const revertDatasetEvent = (game, dataset, batch, eventId, on = true) =>
+  _evt(game, dataset, batch, eventId, "revert", `&on=${on}`);
+export const editDatasetEvent = (game, dataset, batch, eventId, values) =>
+  _evt(game, dataset, batch, eventId, "edit", "", values);
+export const removeDatasetEvent = (game, dataset, batch, eventId) =>
+  _evt(game, dataset, batch, eventId, "remove");
+
 // Per-window stash bindings: which capture a window opens with.
 export async function getBindings(game) {
   const r = await fetch(`/api/captures/${encodeURIComponent(game)}/bindings`);

@@ -110,6 +110,36 @@ def test_remove_batch_deletes_from_ledger(tmp_path):
     assert [b["batch"] for b in s2.batches()] == [2]
 
 
+def test_batch_events_and_preview(tmp_path):
+    s = _store(tmp_path)
+    s.begin_batch(); s.record_seen({"name": "A", "v": 1}); s.record_seen({"name": "B", "v": 1})
+    s.begin_batch(); s.record_seen({"name": "A", "v": 2}); s.record_seen({"name": "C", "v": 1})
+    evs = s.batch_events(2)
+    assert [e["key"] for e in evs] == ["a", "c"]
+    assert all(e["reverted"] is False for e in evs)
+    pv = {p["key"]: p for p in s.preview_batch(2)}     # what applying batch 2 changes
+    assert pv["a"]["kind"] == "update" and pv["a"]["changed"]["v"] == [1, 2]
+    assert pv["c"]["kind"] == "add" and pv["c"]["after"]["v"] == 1
+    assert "b" not in pv                                # batch 2 doesn't touch B
+
+
+def test_edit_event_rekeys_and_persists(tmp_path):
+    s = _store(tmp_path)
+    s.begin_batch(); add = s.record_seen({"name": "Srration", "v": 1})  # typo
+    s.edit_event(add.id, {"name": "Serration", "v": 1})
+    assert {r["key"] for r in s.records()} == {"serration"}
+    s2 = DatasetStore(tmp_path, "game", "mods", "name")                 # survives reload
+    assert {r["key"] for r in s2.records()} == {"serration"}
+
+
+def test_remove_event_drops_one_event(tmp_path):
+    s = _store(tmp_path)
+    s.begin_batch(); a = s.record_seen({"name": "A"}); b = s.record_seen({"name": "B"})
+    s.remove_event(a.id)
+    assert {r["key"] for r in s.records()} == {"b"}
+    assert [e["id"] for e in s.batch_events(1)] == [b.id]
+
+
 def test_strip_nonalnum_and_case_dedup(tmp_path):
     from oc.store.dataset_store import DatasetStore, norm_key
     assert norm_key("Soma Prime", strip_nonalnum=True) == "somaprime"

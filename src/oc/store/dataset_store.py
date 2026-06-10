@@ -269,6 +269,81 @@ class DatasetStore:
         self._state = self._replay()
         self.save()
 
+    def _replay_with(self, reverted: set[int]) -> dict[str, dict]:
+        return replay(self._events, reverted, self._key_field, self._strip, self._case)
+
+    def batch_events(self, batch: int) -> list[dict]:
+        """Every event of one batch in ledger order, each flagged reverted."""
+        batch = int(batch)
+        out = []
+        for ev in self._events:
+            if ev.batch != batch:
+                continue
+            d = ev.to_dict()
+            d["reverted"] = ev.id in self._reverted
+            d["key"] = norm_key(ev.values.get(self._key_field), self._strip, self._case)
+            out.append(d)
+        return out
+
+    def preview_batch(self, batch: int) -> list[dict]:
+        """What APPLYING this batch changes in the dataset, independent of whether it is
+        currently applied: diff between the dataset with the batch fully off vs fully on
+        (all other batches kept in their current reverted state). One row per affected
+        key: kind add/update/remove, with before/after values and per-field old→new."""
+        batch = int(batch)
+        bids = {e.id for e in self._events if e.batch == batch}
+        if not bids:
+            return []
+        base = self._replay_with(self._reverted | bids)    # batch off
+        after = self._replay_with(self._reverted - bids)   # batch on
+        out = []
+        for k in sorted(set(base) | set(after)):
+            b, a = base.get(k), after.get(k)
+            bp = bool(b and b.get("present"))
+            ap = bool(a and a.get("present"))
+            bv = (b or {}).get("values") or {}
+            av = (a or {}).get("values") or {}
+            if not bp and ap:
+                kind = "add"
+            elif bp and not ap:
+                kind = "remove"
+            elif bp and ap and bv != av:
+                kind = "update"
+            else:
+                continue
+            changed = {f: [bv.get(f), av.get(f)] for f in set(bv) | set(av) if bv.get(f) != av.get(f)}
+            out.append({"key": k, "kind": kind,
+                        "before": bv if bp else None, "after": av if ap else None,
+                        "changed": changed})
+        return out
+
+    def edit_event(self, event_id: int, values: dict) -> bool:
+        """Replace one event's recorded values (re-keys it if the key field changed).
+        Permanent — rewrites the ledger."""
+        eid = int(event_id)
+        for ev in self._events:
+            if ev.id == eid:
+                ev.values = dict(values)
+                self._rewrite_history()
+                self._state = self._replay()
+                self.save()
+                return True
+        return False
+
+    def remove_event(self, event_id: int) -> bool:
+        """Permanently delete one event from the ledger."""
+        eid = int(event_id)
+        kept = [e for e in self._events if e.id != eid]
+        if len(kept) == len(self._events):
+            return False
+        self._events = kept
+        self._reverted.discard(eid)
+        self._rewrite_history()
+        self._save_reverted()
+        self._state = self._replay()
+        self.save()
+        return True
+
     def history(self, limit: int = 50) -> list[dict]:
         """Individual ledger events newest-first, each flagged reverted."""
         out = []

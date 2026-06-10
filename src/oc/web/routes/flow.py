@@ -91,3 +91,40 @@ def revert_batch(game: str, dataset: str, batch: int, on: bool = True):
     store = _store(game, dataset)
     store.revert_batch(batch, on)
     return _detail(store, dataset)
+
+
+def _batch_detail(store: DatasetStore, dataset: str, batch: int) -> dict:
+    return {"dataset": dataset, "batch": int(batch),
+            "events": store.batch_events(batch), "preview": store.preview_batch(batch),
+            "batches": store.batches(80)}
+
+
+@router.get("/{game}/dataset/{dataset}/batch/{batch}")
+def batch_detail(game: str, dataset: str, batch: int):
+    """One batch: its events + a preview of what applying it changes in the dataset."""
+    return _batch_detail(_store(game, dataset), dataset, batch)
+
+
+@router.post("/{game}/dataset/{dataset}/event/{event_id}/revert")
+def revert_event(game: str, dataset: str, batch: int, event_id: int, on: bool = True):
+    """Revert/restore a single event within a batch."""
+    store = _store(game, dataset)
+    store.set_reverted(event_id, on)
+    return _batch_detail(store, dataset, batch)
+
+
+@router.post("/{game}/dataset/{dataset}/event/{event_id}/edit")
+def edit_event(game: str, dataset: str, batch: int, event_id: int, values: dict):
+    """Replace a single event's recorded values (permanent ledger rewrite)."""
+    store = _store(game, dataset)
+    if not store.edit_event(event_id, values):
+        raise HTTPException(status_code=404, detail=f"no event {event_id}")
+    return _batch_detail(store, dataset, batch)
+
+
+@router.post("/{game}/dataset/{dataset}/event/{event_id}/remove")
+def remove_event(game: str, dataset: str, batch: int, event_id: int):
+    """Permanently delete a single event from the ledger."""
+    store = _store(game, dataset)
+    store.remove_event(event_id)
+    return _batch_detail(store, dataset, batch)

@@ -63,7 +63,10 @@ export class GraphModel {
       if (w.scroll && w.scroll.scrollbar) ns.push({ id: `sb:${w.id}:scrollbar`, type: "scrollbar", ref: w.scroll, win: w });
       for (const it of w.items || []) ns.push({ id: `item:${w.id}:${it.id}`, type: "item", ref: it, win: w });
     }
-    for (const ds of this.datasets()) ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
+    for (const ds of this.datasets()) {
+      ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
+      ns.push({ id: `bat:${ds}`, type: "batches", ref: ds });
+    }
     return ns;
   }
 
@@ -77,6 +80,7 @@ export class GraphModel {
       for (const it of w.items || []) es.push({ from: `win:${w.id}`, to: `item:${w.id}:${it.id}`, kind: "item" });
       es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
     }
+    for (const ds of this.datasets()) es.push({ from: `ds:${ds}`, to: `bat:${ds}`, kind: "data" });
     return es;
   }
 
