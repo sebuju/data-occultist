@@ -38,9 +38,10 @@ def _frame_for(engine, profile, game, capture):
 
 
 def _eval_anchor(a, frame, matcher, ocr):
-    """Return {matched, read} for a detector/state anchor."""
+    """Return {matched, read, score} for a detector/state anchor."""
     if a.template:
-        return {"matched": matcher.score(a, frame) >= a.threshold, "read": "(template)"}
+        score = matcher.score(a, frame)
+        return {"matched": score >= a.threshold, "read": "(template)", "score": round(score, 2)}
     box = a.search.to_fraction().to_pixels(frame.client.w, frame.client.h)
     lines = ocr.read_region(frame, box)
     read = " ".join(ln.text for ln in lines).strip()
@@ -70,10 +71,17 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
     scrollbar = None
     sc = window.scroll
     if sc and sc.scrollbar:
-        from ...collect.scrollbar import scroll_position
+        from ...collect.scrollbar import scroll_detail
         box = sc.scrollbar.to_fraction().to_pixels(frame.client.w, frame.client.h)
         crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
-        scrollbar = scroll_position(crop, sc.scrollbar_orientation)
+        d = scroll_detail(crop, sc.scrollbar_orientation)
+        if d is not None:
+            vertical = sc.scrollbar_orientation != "horizontal"
+            scrollbar = {
+                "pos": d["pos"],
+                "px": (box.y if vertical else box.x) + d["thumb_px"],   # thumb top in window pixels
+                "conf": d["conf"],
+            }
 
     return {"anchors": anchors, "states": states, "scrollbar": scrollbar}
 

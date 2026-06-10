@@ -78,9 +78,10 @@ export class GraphModel {
   // ---- edit ops -----------------------------------------------------------
 
   addWindow(id) {
-    if (!id || this.profile.windows.some((w) => w.id === id)) return false;
+    if (!id) { let n = 1; do { id = `window_${n++}`; } while (this.profile.windows.some((w) => w.id === id)); }
+    else if (this.profile.windows.some((w) => w.id === id)) return false;
     this.profile.windows.push({ id, dataset: null, fields: [], anchors: [], states: [], regions: [] });
-    return true;
+    return id;
   }
   removeWindow(id) { this.profile.windows = this.profile.windows.filter((w) => w.id !== id); }
   window(id) { return this.profile.windows.find((w) => w.id === id); }

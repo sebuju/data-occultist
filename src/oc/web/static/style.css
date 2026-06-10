@@ -130,7 +130,7 @@ legend { color: var(--muted); padding: 0 6px; }
 #gnodes { position: absolute; top: 0; left: 0; z-index: 1; }
 #gedges-top { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 5; overflow: visible; }
 .gnode.collapsed .gn-body { display: none; }
-.gn-h .collapse { background: transparent; color: var(--muted); padding: 0 4px; font-size: 11px; }
+.gn-h .collapse { background: transparent; color: var(--muted); padding: 0 4px; font-size: 18px; }
 .gnode {
   position: absolute; width: 220px;
   background: var(--panel); border: 1px solid var(--line);
@@ -143,7 +143,10 @@ legend { color: var(--muted); padding: 0 6px; }
 .glab { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
 .glab input { margin-top: 2px; }
 .modal-body h4 { margin: 0 0 6px; color: var(--muted); font-weight: 500; font-size: 13px; }
-.gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 4px; margin-bottom: 4px; overflow: hidden; }
+.gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 4px;
+  margin: -6px -8px 6px; padding: 5px 8px; overflow: hidden;
+  background: rgba(140, 165, 200, 0.07); border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
+.gnode.collapsed .gn-h { margin: -6px -8px; border-bottom: 0; border-radius: 8px; }
 .gnode .gn-h.pulse { animation: pulse 1.2s ease-out; }
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
 .gnode input.gi { width: 100%; }
@@ -167,7 +170,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .gnode button { min-height: 26px; }
 .gn-foot { display: flex; gap: 6px; margin-top: 8px; }
 .gn-foot button { flex: 1 1 0; min-width: 0; }
-.gn-foot button.danger { flex: 0 0 auto; }
+.gn-foot button.danger { flex: 0 0 auto; margin-left: auto; }  /* remove always sits at the right */
 .gn-foot .imgbtn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gnode .delfield { width: 100%; margin-top: 8px; }
 .gnode .port {
@@ -299,6 +302,25 @@ legend { color: var(--muted); padding: 0 6px; }
   display: block; background: #000; }
 .cap-time { font-size: 11px; color: var(--muted); text-align: center; white-space: nowrap; }
 .cap-empty { padding: 16px; color: var(--muted); }
+
+/* bottom terminal log bar (fixed; overlays, never shifts layout) */
+.logbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 900;
+  background: #0a0e13; border-top: 1px solid var(--line);
+  font: 12px/1.55 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; color: #aeb8c2; }
+.log-head { display: flex; align-items: center; gap: 8px; padding: 3px 10px; cursor: pointer; user-select: none; }
+.log-prompt { color: #5aa9e6; font-weight: 600; }
+.log-latest { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-toggle { color: var(--muted); transition: transform 0.15s; }
+.logbar.open .log-toggle { transform: rotate(180deg); }
+.log-body { display: none; max-height: 38vh; overflow: auto; padding: 4px 10px 8px;
+  border-top: 1px solid var(--line); overscroll-behavior: contain; }
+.logbar.open .log-body { display: block; }
+.log-row { white-space: pre-wrap; word-break: break-word; }
+.log-ts { color: #4a5560; margin-right: 8px; }
+.lvl-run { color: #e6c25a; }
+.lvl-ok { color: #7ddc7d; }
+.lvl-warn { color: #e6c25a; }
+.lvl-err { color: #e6685a; }
 
 /* live / precapture mode buttons */
 .modebtn { padding: 4px 12px; }

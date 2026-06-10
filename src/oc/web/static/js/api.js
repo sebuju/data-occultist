@@ -87,6 +87,12 @@ export function cutoutUrl(game, name) {
   return `/api/item/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
 
+// OCR device (cpu/gpu). Returns { device, gpu_available }.
+export const ocr = {
+  getDevice: () => fetch("/api/ocr/device").then((r) => r.json()),
+  setDevice: (device) => fetch(`/api/ocr/device?device=${encodeURIComponent(device)}`, { method: "POST" }).then((r) => r.json()),
+};
+
 // Precapture: record frames fast, batch-OCR them, then save. Each call returns the
 // session status { phase, frames, processed, fps, error, datasets:[{dataset,key_field,count,sample}] }.
 const _pre = (game, path, method = "POST") =>

@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..profile import list_profiles, load_profile
 from .deps import get_locator, get_settings
-from .routes import capture, flow, lexicon, precapture, preview, profiles, suggest
+from .routes import capture, flow, lexicon, ocr, precapture, preview, profiles, suggest
 
 _STATIC = Path(__file__).parent / "static"
 
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
     app.include_router(suggest.router)
     app.include_router(lexicon.router)
     app.include_router(precapture.router)
+    app.include_router(ocr.router)
     # Serve the single-page front-end at root.
     app.mount("/", StaticFiles(directory=str(_STATIC), html=True), name="static")
     return app

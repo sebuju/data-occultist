@@ -5,10 +5,11 @@ import * as api from "../api.js";
 import { esc } from "../dom.js";
 import { openModal } from "../modal.js";
 import { Overlay } from "../overlay.js";
+import { log, timed, fmtDur } from "../log.js";
 import { GraphModel } from "./model.js";
 
 const $ = (id) => document.getElementById(id);
-const setStatus = (m) => { $("status").textContent = m; };
+const setStatus = (m) => { $("status").textContent = m; log(m); };
 const model = new GraphModel();
 const pos = new Map();            // node id -> {x,y}
 const nodeEls = new Map();        // node id -> DOM element (built once, reused)
@@ -183,7 +184,7 @@ function windowControls(w) {
   // The dataset (not the window) owns dedup now — the key field lives on the dataset
   // node. The window just shows where its records flow + the image/delete actions.
   return `<div class="muted">→ ${esc(model.datasetOf(w))}</div>
-    <div class="gn-foot"><button class="imgbtn">📷 image</button><button class="delwin danger">×</button></div>`;
+    <div class="gn-foot"><button class="imgbtn">📷 image</button><button class="delwin danger">remove</button></div>`;
 }
 
 // The tells + fields list shown under an item node's cutout canvas. Item fields
@@ -220,7 +221,7 @@ function itemLists(it, w) {
   return `<label class="flab" title="when templates overlap the same tile, higher priority wins">priority <input type="number" class="iprio" step="1" value="${it.priority || 0}"></label>
     <div class="muted il-h">tells</div>${tells || '<div class="muted">draw a tell on the cutout</div>'}
     <div class="muted il-h">fields</div>${fields || '<div class="muted">draw a field on the cutout</div>'}
-    <div class="gn-foot"><button class="delitem danger">remove item</button></div>`;
+    <div class="gn-foot"><button class="delitem danger">remove</button></div>`;
 }
 
 // Wire an item node's id + tells/fields lists (rebuildNode re-binds these,
@@ -323,11 +324,13 @@ function wireWindowControls(div, n) {
 function nodeParts(n) {
   if (n.type === "game") {
     const g = n.ref;
-    return { title: "🎮 game", body: `
-      <label class="glab">name <input class="gi" data-k="name" value="${esc(g.name)}" /></label>
-      <label class="glab">process names <input class="gi" data-k="proc" value="${esc((g.process_names || []).join(", "))}" placeholder="Warframe.x64.exe" /></label>
-      <label class="glab">window title hint <input class="gi" data-k="title" value="${esc(g.window_title_hint || "")}" placeholder="Warframe" /></label>
-      <div class="gn-row"><input class="newwin" placeholder="new window id" /><button class="addwin">+ window</button></div>` };
+    return {
+      title: `<input class="gi gi-id" data-k="name" value="${esc(g.name)}" title="game name" />`,
+      body: `
+        <label class="flab">process <input class="gi" data-k="proc" value="${esc((g.process_names || []).join(", "))}" placeholder="Warframe.x64.exe" /></label>
+        <label class="flab">title hint <input class="gi" data-k="title" value="${esc(g.window_title_hint || "")}" placeholder="Warframe" /></label>
+        <div class="gn-foot"><button class="addwin">+ window</button></div>`,
+    };
   }
   if (n.type === "window") {
     const w = n.ref;
@@ -350,7 +353,7 @@ function nodeParts(n) {
         <label class="flab">learn <input type="checkbox" class="fset" data-k="learn" ${f.learn ? "checked" : ""}/></label>
         <label class="flab">fuzzy <input type="number" class="fset" data-k="fuzzy" step="0.05" min="0" max="1" value="${f.fuzzy ?? 0.82}"/></label>
         <label class="flab">if empty <input class="fset" data-k="empty" value="${esc(f.empty || "")}" placeholder="(blank)" /></label>
-        <div class="gn-foot"><button class="delregion danger">remove region</button></div>`,
+        <div class="gn-foot"><button class="delregion danger">remove</button></div>`,
     };
   }
   if (n.type === "anchor") {
@@ -361,7 +364,7 @@ function nodeParts(n) {
         <label class="flab">read ⊆ text <input type="checkbox" class="aset" data-k="incl" ${a.included ? "checked" : ""} title="match if the read word is included in this text" /></label>
         <label class="flab">threshold <input type="number" class="aset" data-k="thr" step="0.05" min="0" max="1" value="${a.threshold ?? 0.8}" /></label>
         <div class="detect-status muted">◯ —</div>
-        <div class="gn-foot"><button class="delanchor danger">remove condition</button></div>`,
+        <div class="gn-foot"><button class="delanchor danger">remove</button></div>`,
     };
   }
   if (n.type === "item") {
@@ -376,7 +379,7 @@ function nodeParts(n) {
           <option ${o === "vertical" ? "selected" : ""}>vertical</option>
           <option ${o === "horizontal" ? "selected" : ""}>horizontal</option></select></label>
         <div class="detect-status muted">position: —</div>
-        <div class="gn-foot"><button class="delsb danger">remove scrollbar</button></div>`,
+        <div class="gn-foot"><button class="delsb danger">remove</button></div>`,
     };
   }
   // dataset — owns the dedup key. Key options = the fields of every window feeding it.
@@ -695,8 +698,7 @@ function wireNode(div, n) {
       autosave();
     }));
     div.querySelector(".addwin").addEventListener("click", () => {
-      const id = div.querySelector(".newwin").value.trim();
-      if (id && model.addWindow(id)) { render(); autosave(); }
+      if (model.addWindow()) { render(); autosave(); }   // default id; renamed in the window node
     });
   } else if (n.type === "window") {
     wireWindowControls(div, n);
@@ -814,6 +816,7 @@ function dataHTML(d) {
 
 let precapPoll = null;
 let precapBusy = false;   // recording/processing/paused -> modal can't be dismissed
+let precapLastPhase = null;
 
 async function openPrecaptureModal() {
   const game = model.profile.name;
@@ -877,6 +880,15 @@ function renderPrecap(node, st) {
   const processing = phase === "processing";
   const paused = phase === "paused";
   precapBusy = recording || processing || paused;   // gate modal dismissal
+  if (phase !== precapLastPhase) {                   // log phase transitions
+    if (phase === "recording") log("precapture: recording…", "run");
+    else if (phase === "recorded") log(`precapture: recorded ${st.frames} frames`, "ok");
+    else if (phase === "processing") log("precapture: processing…", "run");
+    else if (phase === "done") log(`precapture: processed ${st.processed}/${st.frames} frames in ~${fmtDur(1000 * st.processed / Math.max(0.1, st.fps))} · ${st.fps}/s`, "ok");
+    else if (phase === "cancelled") log("precapture: cancelled", "warn");
+    else if (phase === "saved") log("precapture: saved", "ok");
+    precapLastPhase = phase;
+  }
   // reflect on the close button so it's clear why it won't dismiss
   const x = node.closest(".modal")?.querySelector(".modal-x");
   if (x) { x.classList.toggle("locked", precapBusy); x.title = precapBusy ? "cancel the run to close" : "close (Esc)"; }
@@ -1246,12 +1258,15 @@ async function refreshPreview(winId, live = false) {
   const panel = previewPanels.get(winId);
   if (!panel) return;
   if (!live) panel.body.innerHTML = `<p class="muted" style="padding:8px">reading…</p>`;
+  const done = timed(`OCR preview ${winId}`);
   try {
     const cap = live ? null : (await api.getBindings(model.profile.name))[winId];
     const res = await api.preview(previewProfileFor(winId), model.profile.name, cap);
     panel.body.innerHTML = previewTable(res.cells);
     setGridFromPreview(winId, res);   // same OCR pass drives the dashed grid
+    done(`· ${(res.cells || []).length} cells`);
   } catch (e) {
+    done(String(e.message || e), "err");
     panel.body.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`;
   }
 }
@@ -1322,6 +1337,7 @@ async function refreshDetect(winId, live = false) {
   // spinner on every node whose value this detect refreshes
   const ids = [`win:${winId}`, ...model.anchors(winId).map((a) => `anc:${winId}:${a.id}`)];
   if (model.scrollbar(winId)) ids.push(`sb:${winId}:scrollbar`);
+  const done = timed(`detect ${winId}`);
   await withBusy(ids, async () => {
     try {
       const cap = live ? null : (await api.getBindings(model.profile.name))[winId];
@@ -1330,15 +1346,21 @@ async function refreshDetect(winId, live = false) {
       for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);
       const sbEl = nodeEls.get(`sb:${winId}:scrollbar`);
       const sbSpan = sbEl && sbEl.querySelector(".detect-status");
-      if (sbSpan) sbSpan.textContent = res.scrollbar == null ? "position: —" : `position: ${Math.round(res.scrollbar * 100)}%`;
-    } catch { /* ignore */ }
+      if (sbSpan) {
+        const sb = res.scrollbar;
+        sbSpan.textContent = sb == null ? "position: —"
+          : `position: ${Math.round(sb.pos * 100)}% · ${sb.px}px · ${Math.round(sb.conf * 100)}%`;
+      }
+      done();
+    } catch (e) { done(String(e.message || e), "err"); }
   });
 }
 function setDetectStatus(nodeId, info) {
   const el = nodeEls.get(nodeId);
   const span = el && el.querySelector(".detect-status");
   if (!span) return;
-  span.textContent = (info.matched ? "✓ true" : "✗ false") + (info.read ? ` — "${info.read}"` : "");
+  const conf = info.score != null ? ` (${Math.round(info.score * 100)}%)` : "";
+  span.textContent = (info.matched ? "✓ true" : "✗ false") + conf + (info.read ? ` — "${info.read}"` : "");
   span.className = "detect-status " + (info.matched ? "conf-ok" : "conf-bad");
 }
 let detectT = null;
@@ -1360,6 +1382,7 @@ async function loadImage(winId, recapture) {
   if (!entry) return;
   const game = model.profile.name;
   let url = null;
+  const done = timed(`${recapture ? "recapture" : "load image"} ${winId}`);
   setNodeBusy(`win:${winId}`, true);   // capturing/fetching the image
   try {
     if (!recapture) {
@@ -1371,9 +1394,10 @@ async function loadImage(winId, recapture) {
       await api.bindCapture(game, winId, c.name);
       url = c.url;
     }
-  } catch (e) { setStatus(String(e.message || e)); setNodeBusy(`win:${winId}`, false); return; }
+  } catch (e) { done(String(e.message || e), "err"); setStatus(String(e.message || e)); setNodeBusy(`win:${winId}`, false); return; }
   const img = new Image();
   img.onload = () => {
+    done();
     setNodeBusy(`win:${winId}`, false);
     // keep the canvas area at the image aspect ratio so resizing always fits
     entry.canvas.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
@@ -1595,7 +1619,9 @@ async function refreshGames(select) {
 
 async function loadGame(name) {
   if (!name) return;
+  const done = timed(`load game ${name}`);
   const profile = await api.getProfile(name);
+  done();
   model.load(profile);
   pos.clear();
   nodeEls.clear();
@@ -1734,6 +1760,24 @@ function setLiveMode(on) {
 
 // ---- init -----------------------------------------------------------------
 
+async function initOcrDevice() {
+  const sel = $("ocrDevice");
+  if (!sel) return;
+  try {
+    const st = await api.ocr.getDevice();
+    const gpuOpt = sel.querySelector('option[value="gpu"]');
+    gpuOpt.disabled = !st.gpu_available;
+    if (!st.gpu_available) gpuOpt.textContent = "GPU (n/a)";
+    sel.value = st.device;
+    sel.addEventListener("change", async () => {
+      const done = timed(`OCR device → ${sel.value}`);
+      try { const r = await api.ocr.setDevice(sel.value); sel.value = r.device; done(); }
+      catch (e) { done(String(e.message || e), "err"); }
+    });
+  } catch { /* ignore */ }
+}
+
 refreshGames().then(() => {
   if ($("gameSelect").value) loadGame($("gameSelect").value);
 });
+initOcrDevice();

@@ -14,6 +14,9 @@
     <input id="newGameName" placeholder="new game" style="width:12ch" />
     <button id="newGameBtn">New</button>
     <span class="spacer"></span>
+    <label class="inline" title="OCR device — GPU needs onnxruntime-gpu + CUDA">
+      <select id="ocrDevice"><option value="cpu">CPU</option><option value="gpu">GPU</option></select>
+    </label>
     <span id="livestats" class="livestats" hidden></span>
     <button id="liveBtn" class="modebtn" title="live view: re-read open windows continuously (no saving)">live</button>
     <button id="precapBtn" class="modebtn" title="precapture: record frames fast, OCR them in a batch, then save">precapture</button>
@@ -31,6 +34,15 @@
       </div>
     </div>
   </main>
+
+  <div id="logbar" class="logbar">
+    <div class="log-head">
+      <span class="log-prompt">&gt;_</span>
+      <span class="log-latest">ready</span>
+      <span class="log-toggle">▴</span>
+    </div>
+    <div class="log-body"></div>
+  </div>
 
   <script type="module" src="/js/graph/main.js"></script>
 </body>

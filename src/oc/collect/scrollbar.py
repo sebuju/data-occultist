@@ -10,10 +10,14 @@ from __future__ import annotations
 import numpy as np
 
 
-def scroll_position(image: np.ndarray, orientation: str = "vertical") -> float | None:
-    """0..1 position of the thumb's CENTRE along the track. Finds the thumb as the
-    contiguous block (around the strongest deviation from the track) rather than a
-    noise-sensitive weighted centroid."""
+def scroll_detail(image: np.ndarray, orientation: str = "vertical") -> dict | None:
+    """Locate the thumb and return ``{pos, thumb_px, thumb_len, conf}``:
+
+      * ``pos``       — 0..1 position of the thumb top over the reachable range
+      * ``thumb_px``  — the thumb's top offset IN PIXELS within the crop (along the axis)
+      * ``thumb_len`` — the thumb's length in pixels
+      * ``conf``      — how strongly the thumb stands out from the track (0..1)
+    """
     if image is None or image.size == 0:
         return None
     gray = image.max(axis=2).astype(np.float32)            # brightest channel
@@ -32,9 +36,14 @@ def scroll_position(image: np.ndarray, orientation: str = "vertical") -> float |
         lo -= 1
     while hi < n - 1 and dev[hi + 1] >= thr:
         hi += 1
-    # scroll fraction: thumb top over the reachable range -> 0 at top, 1 at bottom
     thumb_len = hi - lo + 1
     reach = n - thumb_len
-    if reach <= 0:
-        return 0.0
-    return round(min(max(lo / reach, 0.0), 1.0), 3)
+    pos = 0.0 if reach <= 0 else min(max(lo / reach, 0.0), 1.0)
+    return {"pos": round(pos, 3), "thumb_px": int(lo), "thumb_len": int(thumb_len),
+            "conf": round(min(1.0, float(dev[peak]) / 64.0), 2)}
+
+
+def scroll_position(image: np.ndarray, orientation: str = "vertical") -> float | None:
+    """0..1 position of the thumb top along the track (``None`` if no thumb)."""
+    d = scroll_detail(image, orientation)
+    return d["pos"] if d else None
