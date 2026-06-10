@@ -18,6 +18,13 @@ class RapidOcrEngine(OcrEngine):
     """
 
     def __init__(self, **options) -> None:
+        # convenience: `use_gpu: true` in settings.ocr.options turns on CUDA for all
+        # three sub-models (requires onnxruntime-gpu installed). Equivalent to setting
+        # det_use_cuda/rec_use_cuda/cls_use_cuda individually.
+        if options.pop("use_gpu", False):
+            options.setdefault("det_use_cuda", True)
+            options.setdefault("rec_use_cuda", True)
+            options.setdefault("cls_use_cuda", True)
         self._options = options
         self._engine = None
 
