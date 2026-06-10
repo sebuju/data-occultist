@@ -31,3 +31,21 @@ def test_extract_number_after_separator():
 def test_extract_text_before_separator():
     f = FieldDef(id="name", extract=Extract.text_before, separator="(")
     assert coerce(f, "Serration (maxed)") == "Serration"
+
+
+def test_empty_fallback_when_no_number():
+    # a count box that read junk (no digit) falls back to the empty default, not None
+    f = FieldDef(id="count", type=FieldType.number, empty="1")
+    assert coerce(f, "") == 1            # nothing read
+    assert coerce(f, "Guard") == 1       # OCR junk, no digit
+    assert coerce(f, "x 3") == 3         # a real number still wins
+
+
+def test_no_empty_no_number_is_none():
+    f = FieldDef(id="count", type=FieldType.number)   # no empty default
+    assert coerce(f, "abc") is None
+
+
+def test_text_empty_fallback():
+    f = FieldDef(id="tag", empty="—")
+    assert coerce(f, "  ") == "—"

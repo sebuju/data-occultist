@@ -41,17 +41,18 @@ def _apply_extract(field: FieldDef, text: str) -> str | None:
 
 def coerce(field: FieldDef, raw: str) -> str | float | int | None:
     text = _apply_extract(field, raw.strip())
-    if not text:
-        if field.empty is not None:   # fallback value when nothing detected
-            text = field.empty
-        else:
-            return None
 
     if field.type is FieldType.number:
-        num = _first_number(text)
+        # the empty fallback applies whenever NO number could be read — an empty box OR
+        # one that OCR'd junk with no digit (e.g. a missing count badge -> default 1)
+        num = _first_number(text) if text else None
+        if num is None and field.empty is not None:
+            num = _first_number(field.empty)
         if num is None:
             return None
         num = num.replace(",", "")
         return float(num) if "." in num else int(num)
 
+    if not text:
+        return field.empty if field.empty is not None else None
     return text.strip() or None

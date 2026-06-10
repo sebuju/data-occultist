@@ -13,10 +13,10 @@
     <label>game <select id="gameSelect"></select></label>
     <input id="newGameName" placeholder="new game" style="width:12ch" />
     <button id="newGameBtn">New</button>
-    <span class="spacer"></span>
     <label class="inline" title="OCR device — GPU needs onnxruntime-gpu + CUDA">
       <select id="ocrDevice"><option value="cpu">CPU</option><option value="gpu">GPU</option></select>
     </label>
+    <span class="spacer"></span>
     <span id="livestats" class="livestats" hidden></span>
     <button id="liveBtn" class="modebtn" title="live view: re-read open windows continuously (no saving)">live</button>
     <button id="precapBtn" class="modebtn" title="precapture: record frames fast, OCR them in a batch, then save">precapture</button>
