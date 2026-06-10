@@ -160,6 +160,13 @@ legend { color: var(--muted); padding: 0 6px; }
 #gedges-top { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 5; overflow: visible; }
 .gnode.collapsed .gn-body { display: none; }
 .gn-h .collapse { background: transparent; color: var(--muted); padding: 0 4px; font-size: var(--fs-lg); }
+/* Nothing in the node canvas is text-selectable — kills the stray highlight that
+   appears while dragging nodes around. Exceptions below: form fields (so you can
+   edit) and table cells (so you can copy dataset rows). */
+.graphcanvas { user-select: none; }
+.graphcanvas input, .graphcanvas select, .graphcanvas textarea { user-select: text; }
+.graphcanvas table, .graphcanvas table * { user-select: text; }
+
 .gnode {
   position: absolute; width: 220px;
   background: var(--panel); border: 1px solid var(--line);
@@ -203,12 +210,12 @@ legend { color: var(--muted); padding: 0 6px; }
 .gnode .delfield { width: 100%; margin-top: 8px; }
 .gnode .port {
   position: absolute; width: 12px; height: 12px; border-radius: 50%;
-  background: var(--accent); top: 10px; cursor: crosshair;
+  background: var(--accent); top: 50%; transform: translateY(-50%); cursor: crosshair;
 }
 .gnode .port.out { right: -7px; }
 .gnode .port.in { left: -7px; background: var(--line); }
 .gedge { fill: none; stroke: var(--line); stroke-width: 1.1; }
-.gedge.data { stroke: var(--accent); stroke-dasharray: 7 6; animation: flow 1.1s linear infinite; }
+.gedge.data { stroke: var(--accent); stroke-dasharray: 2 4; animation: flow 1.1s linear infinite; }
 .gedge.field { stroke: var(--accent); opacity: 0.5; }
 .gedge.anchor { stroke: var(--ok); opacity: 0.5; }
 .gedge.state { stroke: var(--warn); opacity: 0.5; }
@@ -466,9 +473,12 @@ a.node.win:hover { border-color: var(--accent); }
 .records { max-height: 50vh; overflow: auto; }
 .records tr.gone td { color: var(--muted); text-decoration: line-through; }
 
-/* batches panel: ledger list on top, selected-batch contents + preview below */
-.bat-body { display: flex; flex-direction: column; gap: 8px; }
-.bat-list { max-height: 32vh; flex: 0 0 auto; }
+/* batches node: ledger list on top, selected-batch contents + preview below — all
+   inline in the node body, scrolled rather than grown. */
+.gnode.batches { width: 360px; }
+.gnode.batches .gn-body { overflow: hidden; }
+.bat-host { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow: auto; }
+.bat-list { max-height: 200px; overflow: auto; flex: 0 0 auto; }
 .bat-list .batrow { cursor: pointer; }
 .bat-list .batrow.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .bat-list .batrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }

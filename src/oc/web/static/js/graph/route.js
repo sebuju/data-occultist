@@ -120,8 +120,34 @@ export class EdgeRouter {
     const a = alignPort(p1, d1, centers[0]);
     const b = alignPort(p2, d2, centers[centers.length - 1]);
     const pts = simplify([a, ...centers, b]);
+    this._centerJog(pts);   // near-straight lines turn in the MIDDLE, not by an endpoint
     this._stamp(cells);
     return pts;
+  }
+
+  // A single-jog (almost straight) path is [a,b,c,d] with two colinear long runs and
+  // one short perpendicular hop. Slide that hop to the midpoint so the turn sits in
+  // the centre — but only if the centred hop stays clear of nodes.
+  _centerJog(pts) {
+    if (pts.length !== 4) return;
+    const [a, b, c, d] = pts;
+    if (a[1] === b[1] && c[1] === d[1] && b[0] === c[0]) {            // horizontal runs, vertical hop
+      const mx = (a[0] + d[0]) / 2;
+      if (this._segClear(mx, a[1], mx, d[1])) { b[0] = mx; c[0] = mx; }
+    } else if (a[0] === b[0] && c[0] === d[0] && b[1] === c[1]) {     // vertical runs, horizontal hop
+      const my = (a[1] + d[1]) / 2;
+      if (this._segClear(a[0], my, d[0], my)) { b[1] = my; c[1] = my; }
+    }
+  }
+
+  _blockedAt(x, y) { return this.blocked[this._i(this._cx(x), this._cy(y))]; }
+  _segClear(x1, y1, x2, y2) {
+    const steps = Math.ceil(Math.hypot(x2 - x1, y2 - y1) / (this.cell / 2)) || 1;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      if (this._blockedAt(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)) return false;
+    }
+    return true;
   }
 
   _astar(start, goal, startDir) {
@@ -160,10 +186,19 @@ export class EdgeRouter {
   _h(cx, cy, gx, gy) { return Math.abs(cx - gx) + Math.abs(cy - gy); }
 
   _stamp(cells) {
-    // Mark only the path cells. A later route pays W_USE to share a cell but nothing
-    // to sit in the cell NEXT to it — so parallel same-direction lines pack tight, one
-    // cell apart, instead of being shoved far away.
-    for (const i of cells) this.usage[i] += 1;
+    // Mark the path cells (W_USE keeps later routes off them entirely) and a MILD cost
+    // on the flank cells. The flank makes parallel lines prefer a 2-cell gap, but it's
+    // cheap enough that a crowded line will still squeeze into the 1-cell lane BETWEEN
+    // two existing lines rather than take a long detour.
+    for (const i of cells) {
+      this.usage[i] += 1;
+      const cx = i % this.cols, cy = (i / this.cols) | 0;
+      for (const [dx, dy] of DIRS) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= this.cols || ny >= this.rows) continue;
+        this.usage[ny * this.cols + nx] += 0.5;
+      }
+    }
   }
 }
 

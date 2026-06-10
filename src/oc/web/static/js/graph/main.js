@@ -56,12 +56,10 @@ const previewPanels = new Map();  // winId -> { wrap, body } (live OCR preview)
 const openImages = new Set();     // winIds whose image panel is open (persisted)
 const openPreviews = new Set();   // winIds whose preview panel is open (persisted)
 const openDatasets = new Set();   // dataset ids whose data panel is open (persisted)
-const openBatches = new Set();    // dataset ids whose batches panel is open (persisted)
-const panelSizes = new Map();     // `img:<win>` / `prev:<win>` / `dsp:<ds>` / `bat:<ds>` -> {w,h} (persisted)
+const panelSizes = new Map();     // `img:<win>` / `prev:<win>` / `dsp:<ds>` -> {w,h} (persisted)
 let pendingOpenImages = [];
 let pendingOpenPreviews = [];
 let pendingOpenDatasets = [];
-let pendingOpenBatches = [];
 const busy = new Map();            // node id -> active-work count (drives the spinner)
 const gridPreviews = new Map();    // winId -> live-detected field boxes (dashed grid)
 const gridReads = new Map();        // winId -> per-cell read values {x,y,w,h,text,confidence}
@@ -140,7 +138,6 @@ function loadPositions() {
     pendingOpenImages = raw.openImages || [];
     pendingOpenPreviews = raw.openPreviews || [];
     pendingOpenDatasets = raw.openDatasets || [];
-    pendingOpenBatches = raw.openBatches || [];
     for (const k in (raw.panelSizes || {})) panelSizes.set(k, raw.panelSizes[k]);
     if (raw.view && Number.isFinite(raw.view.zoom)) Object.assign(view, raw.view);
   } catch { /* ignore */ }
@@ -150,7 +147,6 @@ function savePositions() {
     localStorage.setItem(posKey(), JSON.stringify({
       positions: Object.fromEntries(pos), collapsed: [...collapsed],
       openImages: [...openImages], openPreviews: [...openPreviews], openDatasets: [...openDatasets],
-      openBatches: [...openBatches],
       panelSizes: Object.fromEntries(panelSizes), view,
     }));
   } catch { /* ignore */ }
@@ -165,7 +161,6 @@ const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text
 function elForPos(id) {
   if (id.startsWith("prev:")) return previewPanels.get(id.slice(5))?.wrap;
   if (id.startsWith("dsp:")) return datasetPanels.get(id.slice(4))?.wrap;
-  if (id.startsWith("bat:")) return batchesPanels.get(id.slice(4))?.wrap;
   return nodeEls.get(id);   // image canvas lives inside its window node now
 }
 
@@ -384,7 +379,7 @@ function nodeParts(n) {
   if (n.type === "scrollbar") {
     const o = n.ref.scrollbar_orientation || "vertical";
     return {
-      title: "↕ scrollbar",
+      title: "scrollbar",
       body: `<label class="flab">orientation <select class="sbset" data-k="orient">
           <option ${o === "vertical" ? "selected" : ""}>vertical</option>
           <option ${o === "horizontal" ? "selected" : ""}>horizontal</option></select></label>
@@ -393,11 +388,14 @@ function nodeParts(n) {
     };
   }
   if (n.type === "batches") {
-    // ledger node — the dataset's collection/save runs, edited in a floating panel.
+    // ledger node — shows the dataset's collection/save runs inline; pick one to see
+    // its events + a preview of what applying it changes.
     return {
-      title: `<span class="gi-id">⛃ ${esc(n.ref)} batches</span>`,
-      body: `<div class="muted">collection / save runs · toggle, edit or preview each</div>
-        <div class="gn-foot"><button class="batopen">▤ open ledger</button></div>`,
+      title: `<span class="gi-id">${esc(n.ref)} batches</span>`,
+      body: `<div class="bat-host">
+        <ul class="history bat-list"><li class="muted">loading…</li></ul>
+        <div class="bat-detail muted">select a batch to see its contents and what applying it changes</div>
+      </div>`,
       ports: `<span class="port in"></span>`,
     };
   }
@@ -561,8 +559,8 @@ function updateOverlayZoom() {
 }
 
 function onWheel(ev) {
-  // a SELECTED preview scrolls its content on wheel; everywhere else the wheel zooms
-  if (ev.target.closest(".prevpanel.selected")) return;
+  // a SELECTED preview, or the batches ledger, scrolls its content; everywhere else zoom
+  if (ev.target.closest(".prevpanel.selected, .bat-host")) return;
   ev.preventDefault();
   const rect = $("graph").getBoundingClientRect();
   const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
@@ -654,7 +652,7 @@ function boxWorldRect(winId, frac) {
 // structural node→node, a region/anchor node to its box on an open image, a window
 // to its preview panel, a dataset to its data panel. They all flow through
 // buildLinks → routing → addPolyline. No bespoke per-kind drawing.
-const PANEL_DEF = { prev: [340, 320], dsp: [320, 300], bat: [420, 360] };   // fallback w,h before layout
+const PANEL_DEF = { prev: [340, 320], dsp: [320, 300] };   // fallback w,h before layout
 function panelRectOf(kind, ownerId, wrap) {
   const p = panelPos(kind, ownerId), d = PANEL_DEF[kind];
   return p && { x: p.x, y: p.y, w: wrap.offsetWidth || d[0], h: wrap.offsetHeight || d[1] };
@@ -683,15 +681,13 @@ function buildLinks() {
     add(`prev ${winId}`, `win:${winId}`, `prev:${winId}`, true, "img", nodeRect(`win:${winId}`), panelRectOf("prev", winId, prev.wrap));
   for (const [ds, panel] of datasetPanels)
     add(`dsp ${ds}`, `ds:${ds}`, `dsp:${ds}`, true, "data", nodeRect(`ds:${ds}`), panelRectOf("dsp", ds, panel.wrap));
-  for (const [ds, panel] of batchesPanels)
-    add(`bat ${ds}`, `bat:${ds}`, `batp:${ds}`, true, "data", nodeRect(`bat:${ds}`), panelRectOf("bat", ds, panel.wrap));
   computePorts(links);
   return links;
 }
 
 // Pick each line's port + side, then fan endpoints that share a node side so they sit
 // one GAP apart instead of all stacking on the side's midpoint.
-const GAP = () => ROUTE.cell;   // shared spacing: fanned endpoints AND parallel bundles
+const GAP = () => ROUTE.cell * 2;   // preferred spacing: fanned endpoints AND parallel bundles (a line can still squeeze to 1 cell between two)
 function computePorts(links) {
   for (const l of links) { const f = facingSides(l.ra, l.rb); l.p1 = f.p1; l.d1 = f.d1; l.p2 = f.p2; l.d2 = f.d2; }
   const buckets = new Map();   // `${owner}|${dir}` -> endpoints on that rect side
@@ -742,8 +738,8 @@ function drawEdges() {
 const ROUTE = {
   enabled: true,
   corners: "curve",   // "curve" | "square" — internal toggle (window.__route.corners)
-  cell: 18,           // grid resolution (world px)
-  clearWanted: 3,     // cells of breathing room a line prefers around nodes
+  cell: 10,           // grid resolution (world px) — fine enough to squeeze a line between two others
+  clearWanted: 5,     // cells of breathing room a line prefers around nodes
   radius: 14,         // corner rounding for "curve"
   debounce: 90,       // ms of stillness before routing
 };
@@ -766,7 +762,6 @@ function obstacleRects() {
   for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) out.push(r); }
   for (const [winId, prev] of previewPanels) { const r = panelRectOf("prev", winId, prev.wrap); if (r) out.push(r); }
   for (const [ds, panel] of datasetPanels) { const r = panelRectOf("dsp", ds, panel.wrap); if (r) out.push(r); }
-  for (const [ds, panel] of batchesPanels) { const r = panelRectOf("bat", ds, panel.wrap); if (r) out.push(r); }
   return out;
 }
 
@@ -827,9 +822,10 @@ function wireNode(div, n) {
   // edges/padding/labels work, not just the header)
   div.addEventListener("mousedown", (ev) => {
     if (ev.button !== 0) return;   // only left-drag moves; right-drag pans the canvas
-    if (ev.target.closest("input,select,button,a,.port,.collapse,.canvas-wrap")) return;  // .canvas-wrap: let its resize handle work without moving the node
+    if (ev.target.closest("input,select,button,a,.port,.collapse,.canvas-wrap,[contenteditable],.bat-host")) return;  // .canvas-wrap: resize handle; .bat-host: scroll/edit the ledger
     const r = div.getBoundingClientRect();   // skip the CSS resize-handle corner (resizable nodes)
     if (ev.clientX > r.right - 18 && ev.clientY > r.bottom - 18) return;
+    focusNode(n.id);   // select on click / drag start (every node is focusable)
     startMove(n.id, ev);
   });
 
@@ -870,11 +866,11 @@ function wireNode(div, n) {
         setTimeout(() => { clearBtn.dataset.armed = "0"; clearBtn.textContent = "clear data"; }, 2500);
         return;
       }
-      try { await api.clearDataset(model.profile.name, n.ref); refreshLive(); refreshOpenDatasetPanels(); refreshOpenBatchesPanels(); setStatus(`cleared ${n.ref}`); }
+      try { await api.clearDataset(model.profile.name, n.ref); refreshLive(); refreshOpenDatasetPanels(); refreshAllBatchesNodes(); setStatus(`cleared ${n.ref}`); }
       catch (e) { setStatus(String(e.message || e)); }
     });
   } else if (n.type === "batches") {
-    div.querySelector(".batopen")?.addEventListener("click", () => openBatchesPanel(n.ref));
+    queueMicrotask(() => loadBatchesNode(n.ref));   // nodeEls is set after buildNode returns
   } else if (n.type === "region") {
     const fld = n.field;
     div.addEventListener("click", (ev) => {
@@ -939,8 +935,8 @@ function openDatasetPanel(ds) {
   const wrap = document.createElement("div");
   wrap.className = "imgpanel prevpanel dspanel";
   wrap.id = `dspanel-${ds}`;
-  wrap.innerHTML = `<div class="imgpanel-h">◉ ${esc(ds)} data
-      <span class="spacer"></span><button class="dsrefresh">refresh</button><button class="dsclose">×</button></div>
+  wrap.innerHTML = `<div class="imgpanel-h">${esc(ds)} data
+      <span class="spacer"></span><button class="dsclose">×</button></div>
     <div class="prev-body ds-body"><p class="muted" style="padding:8px">loading…</p></div>`;
   $("gcanvases").appendChild(wrap);
   datasetPanels.set(ds, { wrap, body: wrap.querySelector(".ds-body") });
@@ -948,7 +944,6 @@ function openDatasetPanel(ds) {
   savePositions();
   wrap.addEventListener("mousedown", () => selectPanel(wrap));      // click to select (wheel scrolls it)
   wrap.querySelector(".dsclose").addEventListener("click", () => closeDatasetPanel(ds));
-  wrap.querySelector(".dsrefresh").addEventListener("click", () => refreshDatasetPanel(ds));
   wrap.querySelector(".imgpanel-h").addEventListener("mousedown", (ev) => startPanelDrag("dsp", ds, ev));
   applyPanelSize(`dsp:${ds}`, wrap);
   observePanelSize(`dsp:${ds}`, wrap);
@@ -996,106 +991,91 @@ function datasetDetailHTML(d) {
   </div>`;
 }
 
-// ---- batches panel (the ledger + per-batch contents/preview, floating) ----
+// ---- batches node (ledger + per-batch contents/preview, embedded in the node) ----
 
-const batchesPanels = new Map();   // ds -> { wrap, list, detail, sel, events }
+const batchesState = new Map();   // ds -> { sel, events } (selection + event cache per node)
 
-function openBatchesPanel(ds) {
-  const open = batchesPanels.get(ds);
-  if (open) { selectPanel(open.wrap); refreshBatchesPanel(ds); return; }
-  const wrap = document.createElement("div");
-  wrap.className = "imgpanel prevpanel dspanel batpanel";
-  wrap.id = `batpanel-${ds}`;
-  wrap.innerHTML = `<div class="imgpanel-h">⛃ ${esc(ds)} batches
-      <span class="spacer"></span><button class="dsrefresh">refresh</button><button class="dsclose">×</button></div>
-    <div class="prev-body bat-body">
-      <ul class="history bat-list"><li class="muted">loading…</li></ul>
-      <div class="bat-detail muted">select a batch to see its contents and what applying it changes</div>
-    </div>`;
-  $("gcanvases").appendChild(wrap);
-  batchesPanels.set(ds, { wrap, list: wrap.querySelector(".bat-list"),
-                          detail: wrap.querySelector(".bat-detail"), sel: null, events: {} });
-  openBatches.add(ds);
-  savePositions();
-  wrap.addEventListener("mousedown", () => selectPanel(wrap));
-  wrap.querySelector(".dsclose").addEventListener("click", () => closeBatchesPanel(ds));
-  wrap.querySelector(".dsrefresh").addEventListener("click", () => refreshBatchesPanel(ds));
-  wrap.querySelector(".imgpanel-h").addEventListener("mousedown", (ev) => startPanelDrag("bat", ds, ev));
-  applyPanelSize(`bat:${ds}`, wrap);
-  observePanelSize(`bat:${ds}`, wrap);
-  positionPanels();
-  refreshBatchesPanel(ds);
+function batEls(ds) {
+  const el = nodeEls.get(`bat:${ds}`);
+  return el && { list: el.querySelector(".bat-list"), detail: el.querySelector(".bat-detail") };
+}
+function batState(ds) {
+  if (!batchesState.has(ds)) batchesState.set(ds, { sel: null, events: {} });
+  return batchesState.get(ds);
 }
 
-function closeBatchesPanel(ds) {
-  const e = batchesPanels.get(ds);
-  if (e) { e.wrap.remove(); batchesPanels.delete(ds); }
-  openBatches.delete(ds);
-  savePositions();
-}
-
-function refreshOpenBatchesPanels() {
-  for (const ds of batchesPanels.keys()) refreshBatchesPanel(ds);
-}
-
-async function refreshBatchesPanel(ds) {
-  const panel = batchesPanels.get(ds);
-  if (!panel) return;
+// (re)fetch the ledger and paint it into the node body — called on build and whenever
+// the dataset's batches change (save / revert / edit / remove). No refresh button.
+async function loadBatchesNode(ds) {
+  const els = batEls(ds);
+  if (!els) return;
   try {
     const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
-    renderBatchesList(panel, ds, (await r.json()).batches || []);
-  } catch (e) { panel.list.innerHTML = `<li class="muted">${esc(String(e))}</li>`; }
+    renderBatchesList(ds, (await r.json()).batches || []);
+  } catch (e) { els.list.innerHTML = `<li class="muted">${esc(String(e))}</li>`; }
 }
 
-function renderBatchesList(panel, ds, batches) {
-  if (!batches.length) { panel.list.innerHTML = '<li class="muted">no batches yet</li>'; panel.detail.innerHTML = ""; return; }
-  panel.list.innerHTML = batches.map((b) => {
+// refresh every batches node that currently exists
+function refreshAllBatchesNodes() {
+  for (const ds of model.datasets()) if (nodeEls.has(`bat:${ds}`)) loadBatchesNode(ds);
+}
+
+function renderBatchesList(ds, batches) {
+  const els = batEls(ds);
+  if (!els) return;
+  const st = batState(ds);
+  if (!batches.length) { els.list.innerHTML = '<li class="muted">no batches yet</li>'; els.detail.innerHTML = ""; st.sel = null; return; }
+  els.list.innerHTML = batches.map((b) => {
     const parts = [b.adds ? `+${b.adds}` : "", b.updates ? `~${b.updates}` : "", b.removes ? `−${b.removes}` : ""].filter(Boolean).join(" ");
     const keys = (b.keys || []).slice(0, 4).join(", ") + (b.count > 4 ? " …" : "");
     const app = `<label class="led-apply" title="apply this batch to the dataset (uncheck to revert it)"><input type="checkbox" class="led-toggle" data-batch="${b.batch}"${b.reverted ? "" : " checked"}> applied</label>`;
     const rm = `<button class="led-remove danger" data-batch="${b.batch}" title="permanently delete this batch from the ledger">remove</button>`;
-    return `<li class="batrow ${b.reverted ? "reverted" : ""}${panel.sel === b.batch ? " sel" : ""}" data-batch="${b.batch}">
+    return `<li class="batrow ${b.reverted ? "reverted" : ""}${st.sel === b.batch ? " sel" : ""}" data-batch="${b.batch}">
       <span class="muted">${esc((b.ts || "").slice(11))}</span> <b>#${b.batch}</b>
       <span class="muted">${parts} · ${b.count} · ${esc(keys)}</span> ${app} ${rm}</li>`;
   }).join("");
   // select on row click (but not when hitting the checkbox/remove)
-  panel.list.querySelectorAll(".batrow").forEach((li) => li.addEventListener("click", (ev) => {
+  els.list.querySelectorAll(".batrow").forEach((li) => li.addEventListener("click", (ev) => {
     if (ev.target.closest(".led-apply,.led-remove")) return;
     selectBatch(ds, +li.dataset.batch);
   }));
-  panel.list.querySelectorAll(".led-toggle").forEach((cb) => cb.addEventListener("change", async () => {
+  els.list.querySelectorAll(".led-toggle").forEach((cb) => cb.addEventListener("change", async () => {
     cb.disabled = true;
     try {
       await api.revertDatasetBatch(model.profile.name, ds, +cb.dataset.batch, !cb.checked);
-      await refreshBatchesPanel(ds); refreshLive(); refreshOpenDatasetPanels();
+      refreshLive(); refreshOpenDatasetPanels(); loadBatchesNode(ds);
     } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
   }));
-  panel.list.querySelectorAll(".led-remove").forEach((b) => b.addEventListener("click", async () => {
+  els.list.querySelectorAll(".led-remove").forEach((b) => b.addEventListener("click", async () => {
     if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "sure?"; setTimeout(() => { b.dataset.armed = "0"; b.textContent = "remove"; }, 2500); return; }
     try {
-      if (panel.sel === +b.dataset.batch) { panel.sel = null; panel.detail.innerHTML = ""; }
+      if (st.sel === +b.dataset.batch) { st.sel = null; els.detail.innerHTML = ""; }
       await api.removeDatasetBatch(model.profile.name, ds, +b.dataset.batch);
-      await refreshBatchesPanel(ds); refreshLive(); refreshOpenDatasetPanels();
+      refreshLive(); refreshOpenDatasetPanels(); loadBatchesNode(ds);
     } catch (e) { setStatus(String(e.message || e)); }
   }));
-  if (panel.sel != null && batches.some((b) => b.batch === panel.sel)) selectBatch(ds, panel.sel);
-  else if (panel.sel != null) { panel.sel = null; panel.detail.innerHTML = ""; }
+  if (st.sel != null && batches.some((b) => b.batch === st.sel)) selectBatch(ds, st.sel);
+  else if (st.sel != null) { st.sel = null; els.detail.innerHTML = ""; }
 }
 
 async function selectBatch(ds, batch) {
-  const panel = batchesPanels.get(ds);
-  if (!panel) return;
-  panel.sel = batch;
-  panel.list.querySelectorAll(".batrow").forEach((li) => li.classList.toggle("sel", +li.dataset.batch === batch));
-  panel.detail.innerHTML = '<p class="muted">loading…</p>';
+  const els = batEls(ds);
+  if (!els) return;
+  const st = batState(ds);
+  st.sel = batch;
+  els.list.querySelectorAll(".batrow").forEach((li) => li.classList.toggle("sel", +li.dataset.batch === batch));
+  els.detail.innerHTML = '<p class="muted">loading…</p>';
   try {
     const bd = await api.batchDetail(model.profile.name, ds, batch);
-    panel.events = Object.fromEntries((bd.events || []).map((e) => [e.id, e]));
-    renderBatchDetail(panel, ds, bd);
-  } catch (e) { panel.detail.innerHTML = `<p class="muted">${esc(String(e))}</p>`; }
+    st.events = Object.fromEntries((bd.events || []).map((e) => [e.id, e]));
+    renderBatchDetail(ds, bd);
+  } catch (e) { els.detail.innerHTML = `<p class="muted">${esc(String(e))}</p>`; }
 }
 
-function renderBatchDetail(panel, ds, bd) {
+function renderBatchDetail(ds, bd) {
+  const els = batEls(ds);
+  if (!els) return;
+  const st = batState(ds);
   const events = bd.events || [];
   const preview = bd.preview || [];
   // event contents — editable value cells; per-event applied + remove
@@ -1122,37 +1102,32 @@ function renderBatchDetail(panel, ds, bd) {
     ? `<table class="grid-table zebra pv-table"><thead><tr><th>change</th><th>key</th><th>detail</th></tr></thead><tbody>${pvRows}</tbody></table>`
     : '<p class="muted">applying this batch changes nothing</p>';
 
-  panel.detail.innerHTML = `<h4 class="ds-h">Batch #${bd.batch} · ${events.length} events</h4>${evTable}
+  els.detail.innerHTML = `<h4 class="ds-h">Batch #${bd.batch} · ${events.length} events</h4>${evTable}
     <h4 class="ds-h">Applying this batch would…</h4>${pvTable}`;
 
-  panel.detail.querySelectorAll(".ev-cell").forEach((td) => td.addEventListener("blur", async () => {
-    const id = +td.dataset.id, field = td.dataset.field, ev = panel.events[id];
+  // all event mutations reload the node (which re-selects + refetches the detail)
+  els.detail.querySelectorAll(".ev-cell").forEach((td) => td.addEventListener("blur", async () => {
+    const id = +td.dataset.id, field = td.dataset.field, ev = st.events[id];
     if (!ev) return;
     const val = td.textContent;
     if (String(ev.values?.[field] ?? "") === val) return;     // unchanged
     try {
-      const upd = await api.editDatasetEvent(model.profile.name, ds, bd.batch, id, { ...ev.values, [field]: val });
-      panel.events = Object.fromEntries((upd.events || []).map((e) => [e.id, e]));
-      renderBatchDetail(panel, ds, upd);
-      refreshLive(); refreshOpenDatasetPanels(); refreshBatchesPanel(ds);
+      await api.editDatasetEvent(model.profile.name, ds, bd.batch, id, { ...ev.values, [field]: val });
+      refreshLive(); refreshOpenDatasetPanels(); loadBatchesNode(ds);
     } catch (e) { setStatus(String(e.message || e)); }
   }));
-  panel.detail.querySelectorAll(".ev-apply").forEach((cb) => cb.addEventListener("change", async () => {
+  els.detail.querySelectorAll(".ev-apply").forEach((cb) => cb.addEventListener("change", async () => {
     cb.disabled = true;
     try {
-      const upd = await api.revertDatasetEvent(model.profile.name, ds, bd.batch, +cb.dataset.id, !cb.checked);
-      panel.events = Object.fromEntries((upd.events || []).map((e) => [e.id, e]));
-      renderBatchDetail(panel, ds, upd);
-      refreshLive(); refreshOpenDatasetPanels(); refreshBatchesPanel(ds);
+      await api.revertDatasetEvent(model.profile.name, ds, bd.batch, +cb.dataset.id, !cb.checked);
+      refreshLive(); refreshOpenDatasetPanels(); loadBatchesNode(ds);
     } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
   }));
-  panel.detail.querySelectorAll(".ev-remove").forEach((b) => b.addEventListener("click", async () => {
+  els.detail.querySelectorAll(".ev-remove").forEach((b) => b.addEventListener("click", async () => {
     if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "?"; setTimeout(() => { b.dataset.armed = "0"; b.textContent = "✕"; }, 2500); return; }
     try {
-      const upd = await api.removeDatasetEvent(model.profile.name, ds, bd.batch, +b.dataset.id);
-      panel.events = Object.fromEntries((upd.events || []).map((e) => [e.id, e]));
-      renderBatchDetail(panel, ds, upd);
-      refreshLive(); refreshOpenDatasetPanels(); refreshBatchesPanel(ds);
+      await api.removeDatasetEvent(model.profile.name, ds, bd.batch, +b.dataset.id);
+      refreshLive(); refreshOpenDatasetPanels(); loadBatchesNode(ds);
     } catch (e) { setStatus(String(e.message || e)); }
   }));
 }
@@ -1205,7 +1180,7 @@ async function openPrecaptureModal() {
     else if (a === "resume") run(() => api.precapture.pause(game, false));
     else if (a === "cancel") run(() => api.precapture.cancel(game));
     else if (a === "reset") run(() => api.precapture.reset(game));
-    else if (a === "save") run(async () => { const r = await api.precapture.save(game); refreshLive(); refreshOpenDatasetPanels(); refreshOpenBatchesPanels(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
+    else if (a === "save") run(async () => { const r = await api.precapture.save(game); refreshLive(); refreshOpenDatasetPanels(); refreshAllBatchesNodes(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
   });
 
   await run(() => api.precapture.status(game));
@@ -1574,6 +1549,18 @@ function selectRegionNode(winId, boxId) {
   drawEdges();   // restyle the selected node's line
 }
 
+// Focus ANY node (click or drag). Drops box/panel selection so WASD targets the node,
+// highlights it + its lines. Box-backed nodes (region/anchor/scrollbar) then re-select
+// their box on the trailing click, so WASD keeps nudging the box for those.
+function focusNode(id) {
+  for (const [, rec] of overlays) rec.overlay.setActive(null);
+  activeOverlayKey = null;
+  document.querySelectorAll(".prevpanel.selected").forEach((p) => p.classList.remove("selected"));
+  selectedNodeId = id;
+  for (const [nid, el] of nodeEls) el.classList.toggle("selected", nid === id);
+  drawEdges();
+}
+
 // ---- live preview node (what the current setup would read) ------------------
 
 function togglePreview(winId) {
@@ -1597,7 +1584,7 @@ function createPreviewPanel(winId) {
   const wrap = document.createElement("div");
   wrap.className = "imgpanel prevpanel";
   wrap.id = `prev-${winId}`;
-  wrap.innerHTML = `<div class="imgpanel-h">👁 ${esc(winId)} preview
+  wrap.innerHTML = `<div class="imgpanel-h">${esc(winId)} preview
       <span class="spacer"></span><button class="prevrefresh">refresh</button><button class="prevclose">×</button></div>
     <div class="prev-body"><p class="muted" style="padding:8px">—</p></div>`;
   $("gcanvases").appendChild(wrap);
@@ -1849,7 +1836,7 @@ function setGridFromPreview(winId, res) {
 function panelPos(kind, ownerId) {
   const id = `${kind}:${ownerId}`;
   if (!pos.has(id)) {
-    const anchor = kind === "dsp" ? `ds:${ownerId}` : kind === "bat" ? `bat:${ownerId}` : `win:${ownerId}`;
+    const anchor = kind === "dsp" ? `ds:${ownerId}` : `win:${ownerId}`;
     const ap = pos.get(anchor) || { x: 300, y: 20 };
     const node = nodeEls.get(anchor);
     pos.set(id, { x: snap(ap.x + (node?.offsetWidth || 240) + 40), y: snap(ap.y) });
@@ -1860,7 +1847,6 @@ function panelPos(kind, ownerId) {
 function positionPanels() {
   for (const [winId, panel] of previewPanels) { const p = panelPos("prev", winId); panel.wrap.style.left = `${p.x}px`; panel.wrap.style.top = `${p.y}px`; }
   for (const [ds, panel] of datasetPanels) { const p = panelPos("dsp", ds); panel.wrap.style.left = `${p.x}px`; panel.wrap.style.top = `${p.y}px`; }
-  for (const [ds, panel] of batchesPanels) { const p = panelPos("bat", ds); panel.wrap.style.left = `${p.x}px`; panel.wrap.style.top = `${p.y}px`; }
 }
 
 // ---- dragging -------------------------------------------------------------
@@ -1961,11 +1947,12 @@ async function refreshLive() {
     const after = model.datasets();
     if (after.length !== before.size || after.some((d) => !before.has(d))) render();
     else updateDatasetNodes();
-    // an open data/batches panel re-reads when its dataset's count changed
-    for (const ds of datasetPanels.keys())
-      if (map[ds] && prevPresent[ds] !== undefined && prevPresent[ds] !== map[ds].present) refreshDatasetPanel(ds);
-    for (const ds of batchesPanels.keys())
-      if (map[ds] && prevPresent[ds] !== undefined && prevPresent[ds] !== map[ds].present) refreshBatchesPanel(ds);
+    // an open data panel / a batches node re-reads when its dataset's count changed
+    for (const ds in map) {
+      if (prevPresent[ds] === undefined || prevPresent[ds] === map[ds].present) continue;
+      if (datasetPanels.has(ds)) refreshDatasetPanel(ds);
+      if (nodeEls.has(`bat:${ds}`)) loadBatchesNode(ds);
+    }
   } catch { /* ignore */ }
 }
 
@@ -2003,17 +1990,15 @@ async function loadGame(name) {
   for (const winId of [...imageCanvases.keys()]) closeImage(winId);
   for (const winId of [...previewPanels.keys()]) closePreview(winId);
   for (const ds of [...datasetPanels.keys()]) closeDatasetPanel(ds);
-  for (const ds of [...batchesPanels.keys()]) closeBatchesPanel(ds);
+  batchesState.clear();   // batches render inline per node; drop stale selection state
   loadPositions();   // restore saved node positions for this game
   render();
   for (const winId of pendingOpenImages) if (model.window(winId)) openImage(winId);  // reopen saved images (canvas lives in node)
   const reopenPreviews = pendingOpenPreviews;
   const reopenDatasets = pendingOpenDatasets;
-  const reopenBatches = pendingOpenBatches;
-  pendingOpenImages = []; pendingOpenPreviews = []; pendingOpenDatasets = []; pendingOpenBatches = [];
+  pendingOpenImages = []; pendingOpenPreviews = []; pendingOpenDatasets = [];
   for (const winId of reopenPreviews) if (model.window(winId)) createPreviewPanel(winId);
   for (const ds of reopenDatasets) if (model.datasets().includes(ds)) openDatasetPanel(ds);
-  for (const ds of reopenBatches) if (model.datasets().includes(ds)) openBatchesPanel(ds);
   resetHistory();   // fresh undo/redo baseline for this game
   refreshLive();
   setStatus(`loaded ${name}`);
@@ -2056,9 +2041,18 @@ document.addEventListener("keydown", (ev) => {
   }
   const dir = NUDGE[ev.key.toLowerCase()];
   if (!dir) return;
-  // Operate on whichever overlay holds the live selection (window OR item OR future).
+  // No active box but a node is selected → WASD moves the NODE, one grid step.
   const rec = overlays.get(activeOverlayKey);
-  if (!rec) return;
+  if (!rec) {
+    if (selectedNodeId && pos.has(selectedNodeId)) {
+      const p = pos.get(selectedNodeId);
+      p.x = snap(p.x + dir[0] * GRID); p.y = snap(p.y + dir[1] * GRID);
+      positionNode(selectedNodeId); positionPanels(); drawEdges(); savePositions();
+      ev.preventDefault();
+    }
+    return;
+  }
+  // Otherwise operate on whichever overlay holds the live box selection (window OR item).
   const ov = rec.overlay;
   const b = ov.boxes.find((x) => x.id === ov.activeId);
   if (!b) return;
