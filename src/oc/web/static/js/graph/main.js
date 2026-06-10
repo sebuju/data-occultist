@@ -10,7 +10,7 @@ import { GraphModel } from "./model.js";
 import { EdgeRouter, polylinePath } from "./route.js";
 
 const $ = (id) => document.getElementById(id);
-const setStatus = (m) => { $("status").textContent = m; log(m); };
+const setStatus = (m) => log(m);   // #status is gone — the log bar shows messages now
 const model = new GraphModel();
 const pos = new Map();            // node id -> {x,y}
 const nodeEls = new Map();        // node id -> DOM element (built once, reused)
