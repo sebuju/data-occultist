@@ -340,6 +340,16 @@ legend { color: var(--muted); padding: 0 6px; }
   background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px;
   height: 16px; padding: 0 6px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1; }
 .lw-kill:hover { filter: brightness(1.12); }
+
+/* full-screen block when a background OCR worker refuses to die on startup */
+.startup-halt { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center;
+  justify-content: center; background: rgba(10, 14, 19, 0.88); }
+.startup-halt-box { max-width: 460px; padding: 22px 26px; text-align: center;
+  background: var(--panel); border: 1px solid var(--danger); border-radius: 10px; }
+.startup-halt-box h3 { margin: 0 0 8px; color: var(--danger); }
+.startup-halt-box p { margin: 6px 0; }
+.startup-halt-retry { margin-top: 14px; background: var(--danger); color: var(--on-danger);
+  border: 0; border-radius: 5px; padding: 6px 16px; cursor: pointer; }
 .log-body { display: none; max-height: 38vh; overflow: auto; padding: 4px 10px 8px;
   border-top: 1px solid var(--line); overscroll-behavior: contain; }
 .logbar.open .log-body { display: block; }
@@ -391,6 +401,10 @@ button {
 }
 button:hover:not(:disabled) { filter: brightness(1.18); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
+/* a button mid-async-work: keep its label, append a small spinner */
+button.reading::after { content: ""; display: inline-block; width: 9px; height: 9px; margin-left: 6px;
+  vertical-align: -1px; border: 2px solid currentColor; border-top-color: transparent;
+  border-radius: 50%; animation: spin 0.7s linear infinite; }
 button.primary, button.active { background: var(--accent); color: var(--on-accent); }
 button.danger { background: var(--danger); color: var(--on-danger); }
 /* monochrome icon glyphs inside buttons — colourable (inherit currentColor by default) */

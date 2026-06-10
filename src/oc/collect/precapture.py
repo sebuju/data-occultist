@@ -452,6 +452,20 @@ class PrecaptureSession:
             t.join(timeout=5.0)
         self._thread = None
 
+    def is_running(self) -> bool:
+        """True while a worker thread (recording or processing) is alive."""
+        t = self._thread
+        return bool(t is not None and t.is_alive())
+
+    def kill(self, timeout: float = 5.0) -> bool:
+        """Stop the worker and WAIT for it to actually exit. Returns True if it died."""
+        self._stop.set()
+        self._pause.clear()
+        t = self._thread
+        if t is not None and t.is_alive():
+            t.join(timeout)
+        return not self.is_running()
+
     def cancel(self) -> None:
         self._stop.set()
         self._pause.clear()

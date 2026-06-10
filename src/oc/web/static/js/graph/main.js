@@ -1642,10 +1642,26 @@ function previewProfileFor(winId) {
   return { ...model.profile, windows: w ? [w] : [] };
 }
 
+// Coalesce reads: at most ONE OCR request per window is ever in flight. Clicking
+// "read" again while one runs doesn't stack another (which would serialize on the OCR
+// lock and starve the server threadpool) — it just flags a single re-run with the
+// latest inputs once the current one returns. The button stays live.
+const previewBusy = new Set();        // winId -> a read is in flight
+const previewAgain = new Map();       // winId -> live flag of a queued re-run
+// disable + spin the read buttons for this window (preview node + image toolbar) while
+// an OCR read runs, so it's obvious it's working and the button can't be re-fired.
+function setReadBusy(winId, on) {
+  const pnode = nodeEls.get(`prev:${winId}`), wnode = nodeEls.get(`win:${winId}`);
+  const btns = [...(pnode?.querySelectorAll(".prevrun") || []), ...(wnode?.querySelectorAll(".imgprev") || [])];
+  for (const b of btns) { b.disabled = on; b.classList.toggle("reading", on); }
+}
 async function refreshPreview(winId, live = false) {
   const host = prevHost(winId);
   if (!host) return;
   host.dataset.ran = "1";   // marks it for live re-reads
+  if (previewBusy.has(winId)) { previewAgain.set(winId, live); return; }   // already reading → re-run once after
+  previewBusy.add(winId);
+  setReadBusy(winId, true);
   if (!live) host.innerHTML = `<p class="muted" style="padding:8px">reading…</p>`;
   const done = timed(`OCR preview ${winId}`);
   try {
@@ -1657,6 +1673,13 @@ async function refreshPreview(winId, live = false) {
   } catch (e) {
     done(String(e.message || e), "err");
     host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`;
+  } finally {
+    previewBusy.delete(winId);
+    if (previewAgain.has(winId)) {   // a click landed mid-read → run once more (button stays busy, no flicker)
+      const lv = previewAgain.get(winId); previewAgain.delete(winId); refreshPreview(winId, lv);
+    } else {
+      setReadBusy(winId, false);
+    }
   }
 }
 
@@ -2166,7 +2189,36 @@ async function initOcrDevice() {
   } catch { /* ignore */ }
 }
 
-refreshGames().then(() => {
+// Block the whole UI with an unmissable message and refuse to continue.
+function haltStartup(msg) {
+  log(msg, "err");
+  const o = document.createElement("div");
+  o.className = "startup-halt";
+  o.innerHTML = `<div class="startup-halt-box"><h3>Background OCR still running</h3>
+    <p>${esc(msg)}</p>
+    <p class="muted">Nothing was loaded. Kill the stray worker (or the python process), then retry.</p>
+    <button class="startup-halt-retry">retry</button></div>`;
+  document.body.appendChild(o);
+  o.querySelector(".startup-halt-retry").addEventListener("click", () => location.reload());
+}
+
+// On page load, kill any background OCR worker from a prior session and WAIT for it to
+// die. Do NOT load the graph until it's confirmed gone — a stray worker keeps hammering
+// the GPU/game and is the thing you'd otherwise have to hunt down in Task Manager.
+async function killStrayOcrThenBoot() {
+  try {
+    const r = await api.precapture.killAll();
+    if (r.alive && r.alive.length) {
+      haltStartup(`OCR worker for ${r.alive.join(", ")} would not stop within the timeout.`);
+      return;   // refuse to proceed
+    }
+    if (r.killed && r.killed.length) setStatus(`stopped stray OCR: ${r.killed.join(", ")}`);
+  } catch (e) {
+    haltStartup(`Could not confirm background OCR was stopped: ${e.message || e}`);
+    return;   // can't verify -> don't proceed
+  }
+  await refreshGames();
   if ($("gameSelect").value) loadGame($("gameSelect").value);
-});
-initOcrDevice();
+  initOcrDevice();
+}
+killStrayOcrThenBoot();

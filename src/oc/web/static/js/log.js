@@ -43,7 +43,7 @@ export function fmtDur(ms) {
 }
 
 export function log(msg, level = "info") {
-  const e = { ts: new Date().toLocaleTimeString(), msg: String(msg), level };
+  const e = { ts: new Date().toLocaleTimeString("en-GB", { hour12: false }), msg: String(msg), level };
   if (ensure()) append(e); else buffer.push(e);
 }
 

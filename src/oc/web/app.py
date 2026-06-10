@@ -40,6 +40,13 @@ def _warm() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # Kill any precapture OCR worker that somehow outlived a prior run before doing
+    # anything else — no stray thread should keep hammering the GPU at startup.
+    try:
+        from .routes.precapture import kill_all_sessions
+        kill_all_sessions()
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
     threading.Thread(target=_warm, daemon=True).start()
     yield
 

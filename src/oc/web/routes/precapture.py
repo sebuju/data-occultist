@@ -18,6 +18,23 @@ router = APIRouter(prefix="/api/precapture", tags=["precapture"])
 _sessions: dict[str, PrecaptureSession] = {}
 
 
+def kill_all_sessions(timeout: float = 5.0) -> dict:
+    """Stop every running precapture worker and WAIT for it to die. Returns
+    ``{"killed": [...], "alive": [...]}`` — ``alive`` are workers that refused to stop
+    within ``timeout`` (still hogging the GPU). Called on server start and whenever the
+    page loads, so a stray OCR thread can never outlive the UI that owns it."""
+    killed: list[str] = []
+    alive: list[str] = []
+    for game, s in list(_sessions.items()):
+        if not s.is_running():
+            continue
+        if s.kill(timeout):
+            killed.append(game)
+        else:
+            alive.append(game)
+    return {"killed": killed, "alive": alive}
+
+
 def _session(game: str, create: bool = False) -> PrecaptureSession:
     s = _sessions.get(game)
     if s is None:
@@ -71,6 +88,12 @@ def reset(game: str):
     if s:
         s.reset()
     return {"phase": "idle", "frames": 0, "processed": 0, "fps": 0.0, "error": None, "datasets": []}
+
+
+@router.post("/kill-all")
+def kill_all():
+    """Stop every running OCR worker and wait. ``alive`` non-empty => some refused."""
+    return kill_all_sessions()
 
 
 @router.post("/{game}/save")

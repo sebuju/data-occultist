@@ -103,6 +103,7 @@ export const precapture = {
   processStart: (game, signal) => _pre(game, "process/start", signal),
   pause: (game, on, signal) => _pre(game, `process/pause?on=${on}`, signal),
   cancel: (game, signal) => _pre(game, "cancel", signal),
+  killAll: () => fetch("/api/precapture/kill-all", { method: "POST" }).then((r) => r.json()),
   reset: (game, signal) => _pre(game, "reset", signal),
   save: (game, signal) => _pre(game, "save", signal),
   status: (game, signal) => fetch(`/api/precapture/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),

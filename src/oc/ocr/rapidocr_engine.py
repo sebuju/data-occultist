@@ -15,6 +15,10 @@ from ..types import OcrLine, PixelBox
 _CUDA_DLLS_REGISTERED = False
 _CUDA_SEARCH_PATCHED = False
 _BUILD_LOCK = threading.Lock()
+# Per-call safety net around inference. The real serialization is job-level via
+# ocr_job() (see serialize.py); this shared re-entrant lock just guarantees that even a
+# stray un-wrapped call can't run concurrently with anything else.
+from .serialize import OCR_LOCK as _INFER_LOCK
 
 
 def _patch_cuda_conv_search() -> None:
@@ -133,7 +137,8 @@ class RapidOcrEngine(OcrEngine):
         if image is None or image.size == 0:
             return "", 0.0
         engine = self._ensure_engine()
-        result, _elapsed = engine(image, use_det=False, use_cls=False, use_rec=True)
+        with _INFER_LOCK:
+            result, _elapsed = engine(image, use_det=False, use_cls=False, use_rec=True)
         if not result:
             return "", 0.0
         # rec-only returns [(text, score), ...] (no box) — join the pieces.
@@ -148,7 +153,8 @@ class RapidOcrEngine(OcrEngine):
 
     def read_image(self, image: np.ndarray) -> list[OcrLine]:
         engine = self._ensure_engine()
-        result, _elapsed = engine(image)
+        with _INFER_LOCK:
+            result, _elapsed = engine(image)
         if not result:
             return []
         lines: list[OcrLine] = []
