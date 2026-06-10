@@ -810,6 +810,102 @@ function dataHTML(d) {
   </div>`;
 }
 
+// ---- precapture modal -----------------------------------------------------
+
+let precapPoll = null;
+
+async function openPrecaptureModal() {
+  const game = model.profile.name;
+  if (!game) { setStatus("load a game first"); return; }
+  setLiveMode(false);                         // mutually exclusive with live
+  precapOpen = true;
+  $("precapBtn").classList.add("active");
+  const node = document.createElement("div");
+  node.className = "precap";
+  node.innerHTML = `<p class="muted" style="padding:12px">loading…</p>`;
+  const modal = openModal({
+    title: `precapture: ${game}`, size: "data", node,
+    onClose: () => {
+      if (precapPoll) { clearInterval(precapPoll); precapPoll = null; }
+      precapOpen = false; $("precapBtn").classList.remove("active");
+    },
+  });
+
+  const draw = (st) => renderPrecap(node, st);
+  const run = async (fn) => { try { draw(await fn()); } catch (e) { setStatus(String(e.message || e)); } };
+
+  // one delegated handler for every control button
+  node.addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-act]");
+    if (!b) return;
+    const a = b.dataset.act;
+    const mf = +node.querySelector(".pc-frames")?.value || 300;
+    const iv = +node.querySelector(".pc-interval")?.value || 0;
+    if (a === "record") run(() => api.precapture.recordStart(game, mf, iv));
+    else if (a === "recstop") run(() => api.precapture.recordStop(game));
+    else if (a === "process") run(() => api.precapture.processStart(game));
+    else if (a === "pause") run(() => api.precapture.pause(game, true));
+    else if (a === "resume") run(() => api.precapture.pause(game, false));
+    else if (a === "cancel") run(() => api.precapture.cancel(game));
+    else if (a === "reset") run(() => api.precapture.reset(game));
+    else if (a === "save") run(async () => { const r = await api.precapture.save(game); refreshLive(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
+  });
+
+  await run(() => api.precapture.status(game));
+  // poll while the modal is open so progress + staged data stay live
+  precapPoll = setInterval(async () => {
+    try { draw(await api.precapture.status(game)); } catch { /* ignore */ }
+  }, 700);
+}
+
+function precapTable(d) {
+  const rows = d.sample || [];
+  const meta = `<span class="muted">${d.count} rows · key ${esc(d.key_field)}${rows.length ? ` · last ${rows.length}` : ""}</span>`;
+  if (!rows.length) return `<div class="pc-ds"><b>${esc(d.dataset)}</b> ${meta}</div>`;
+  const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+  const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
+  const body = rows.map((r) => `<tr>${cols.map((c) => `<td>${esc(r[c] ?? "")}</td>`).join("")}</tr>`).join("");
+  return `<div class="pc-ds"><b>${esc(d.dataset)}</b> ${meta}
+    <table class="grid-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function renderPrecap(node, st) {
+  const phase = st.phase || "idle";
+  const recording = phase === "recording";
+  const processing = phase === "processing";
+  const paused = phase === "paused";
+  const canProcess = st.frames > 0 && !recording && !processing && !paused;
+  const pct = st.frames ? Math.round((100 * st.processed) / st.frames) : 0;
+  const staged = (st.datasets || []).reduce((n, d) => n + d.count, 0);
+  // preserve the option inputs the user typed across the 700ms re-renders
+  const mf = node.querySelector(".pc-frames")?.value ?? "300";
+  const iv = node.querySelector(".pc-interval")?.value ?? "0";
+  const tables = (st.datasets || []).map(precapTable).join("") || '<p class="muted" style="padding:8px">no data staged yet — record some frames, then process</p>';
+  node.innerHTML = `
+    <div class="pc-bar">
+      <span class="pc-phase pc-${phase}">${esc(phase)}</span>
+      <span class="muted">${st.frames} frames · ${st.processed} processed · ${st.fps} /s</span>
+      ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}
+    </div>
+    <div class="pc-opts">
+      <label class="flab">max frames <input type="number" class="pc-frames" value="${esc(mf)}" min="1" ${recording ? "disabled" : ""}></label>
+      <label class="flab">interval ms <input type="number" class="pc-interval" value="${esc(iv)}" min="0" ${recording ? "disabled" : ""}></label>
+    </div>
+    <div class="pc-ctl">
+      ${recording ? `<button data-act="recstop">⏹ stop recording</button>`
+                  : `<button data-act="record">⏺ record</button>`}
+      ${processing ? `<button data-act="pause">⏸ pause</button>`
+        : paused ? `<button data-act="resume">▶ resume</button>`
+        : `<button data-act="process" ${canProcess ? "" : "disabled"}>⚙ process${st.frames ? ` ${st.frames}` : ""}</button>`}
+      ${(processing || paused) ? `<button data-act="cancel" class="danger">cancel</button>` : ""}
+      <span class="spacer"></span>
+      <button data-act="save" ${staged ? "" : "disabled"}>💾 save${staged ? ` ${staged}` : ""}</button>
+      <button data-act="reset">reset</button>
+    </div>
+    <div class="pc-progress"><div class="pc-fill" style="width:${pct}%"></div></div>
+    <div class="pc-data">${tables}</div>`;
+}
+
 // Capture filenames are "YYYYMMDD-HHMMSS-ffffff.jpg" — pull the time out for display.
 function fmtCaptureTime(name) {
   const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(name);
@@ -1520,11 +1616,8 @@ $("newGameBtn").addEventListener("click", () => {
   render(); autosave();
   refreshGames(name);
 });
-$("liveToggle").addEventListener("change", () => setLive());
-$("saveToggle").addEventListener("change", (e) => {
-  if (e.target.checked && model.profile.name) api.collect(model.profile.name, true).catch(() => {});  // start fresh
-  setLive();
-});
+$("liveBtn").addEventListener("click", () => setLiveMode(!liveOn));
+$("precapBtn").addEventListener("click", () => openPrecaptureModal());
 $("graph").addEventListener("mousedown", (ev) => {
   // right-drag pans ANYWHERE (even over nodes/canvas), except form controls so
   // their native menus still work. Don't preventDefault — a plain right click
@@ -1580,9 +1673,10 @@ function persistBox(winId, b) {
   else if (b.role === "data_area") model.setDataArea(winId, box);
   else model.setRegionBox(winId, b.id, box);
 }
-// Live loop: continuously recapture open images + re-evaluate, and (if 'save' is on)
-// run a collection tick. Default off.
+// Live = re-read open windows continuously (view only, no saving). Saving is a
+// deliberate precapture step now. live and precapture are mutually exclusive.
 // ---- live processing stats (top bar) --------------------------------------
+let liveOn = false, precapOpen = false;
 let liveFrames = 0, liveT0 = 0, liveFps = 0, liveProcessing = false, liveLast = "";
 function showLiveStats(on) {
   const el = $("livestats");
@@ -1605,40 +1699,35 @@ function renderLiveStats() {
 }
 
 async function liveTick() {
-  refreshLive();   // dataset counts always
+  refreshLive();   // dataset counts
   const game = model.profile.name;
-  if (!game) { renderLiveStats(); return; }
+  if (!game || !liveOn) { renderLiveStats(); return; }
   liveProcessing = true; renderLiveStats();
-  if ($("liveToggle").checked) {
-    for (const [winId, entry] of imageCanvases) {
-      try {
-        const { url } = await api.capture(game, false);   // live frame, not stashed
-        const img = new Image();
-        img.onload = () => { entry.overlay.setImage(img); refreshImageBoxes(winId); };
-        img.src = url;
-        liveFrames++;                                      // count captured frames for img/s
-      } catch { /* window gone */ }
-      refreshDetect(winId, true);
-      if (previewPanels.has(winId)) refreshPreview(winId, true);
-    }
-  }
-  if ($("saveToggle").checked) {
-    try { const r = await api.collect(game); liveFrames++; liveLast = `${r.status} new=${r.new} total=${r.total}`; setStatus(`collect: ${liveLast}`); }
-    catch (e) { setStatus(String(e.message || e)); }
+  for (const [winId, entry] of imageCanvases) {
+    try {
+      const { url } = await api.capture(game, false);   // live frame, not stashed
+      const img = new Image();
+      img.onload = () => { entry.overlay.setImage(img); refreshImageBoxes(winId); };
+      img.src = url;
+      liveFrames++;                                      // count captured frames for img/s
+    } catch { /* window gone */ }
+    refreshDetect(winId, true);
+    if (previewPanels.has(winId)) refreshPreview(winId, true);
   }
   liveProcessing = false; renderLiveStats();
 }
 
-function setLive() {
+function setLiveMode(on) {
+  if (on && precapOpen) return;          // mutually exclusive with precapture
+  liveOn = on;
+  $("liveBtn").classList.toggle("active", on);
   if (timer) { clearInterval(timer); timer = null; }
-  const on = $("liveToggle").checked || $("saveToggle").checked;
   showLiveStats(on);
-  if (on) timer = setInterval(liveTick, 1500);
+  if (on) timer = setInterval(liveTick, 1200);
 }
 
 // ---- init -----------------------------------------------------------------
 
 refreshGames().then(() => {
   if ($("gameSelect").value) loadGame($("gameSelect").value);
-  setLive();
 });

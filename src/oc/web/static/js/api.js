@@ -37,13 +37,6 @@ export async function preview(profile, game, capture) {
   return r.json();
 }
 
-// Run one live collection tick server-side (reset rebuilds the collector).
-export async function collect(game, reset = false) {
-  const r = await fetch(`/api/collect/${encodeURIComponent(game)}?reset=${reset}`, { method: "POST" });
-  if (!r.ok) throw new Error(`collect: ${r.status}`);
-  return r.json();
-}
-
 // Returns { url, width, height, name }. stash=false skips saving (live view).
 export async function capture(game, stash = true) {
   const r = await fetch(`/api/capture?game=${encodeURIComponent(game)}&stash=${stash}`);
@@ -93,6 +86,21 @@ export async function itemCutout(game, capture, box) {
 export function cutoutUrl(game, name) {
   return `/api/item/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
+
+// Precapture: record frames fast, batch-OCR them, then save. Each call returns the
+// session status { phase, frames, processed, fps, error, datasets:[{dataset,key_field,count,sample}] }.
+const _pre = (game, path, method = "POST") =>
+  fetch(`/api/precapture/${encodeURIComponent(game)}/${path}`, { method }).then((r) => r.json());
+export const precapture = {
+  recordStart: (game, maxFrames, intervalMs) => _pre(game, `record/start?max_frames=${maxFrames}&interval_ms=${intervalMs}`),
+  recordStop: (game) => _pre(game, "record/stop"),
+  processStart: (game) => _pre(game, "process/start"),
+  pause: (game, on) => _pre(game, `process/pause?on=${on}`),
+  cancel: (game) => _pre(game, "cancel"),
+  reset: (game) => _pre(game, "reset"),
+  save: (game) => _pre(game, "save"),
+  status: (game) => fetch(`/api/precapture/${encodeURIComponent(game)}/status`).then((r) => r.json()),
+};
 
 // Revert (on=true) or restore (on=false) one dataset ledger event. Returns refreshed
 // { records, history }.

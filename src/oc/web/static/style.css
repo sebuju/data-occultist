@@ -292,6 +292,28 @@ legend { color: var(--muted); padding: 0 6px; }
   display: block; background: #000; }
 .cap-time { font-size: 11px; color: var(--muted); text-align: center; white-space: nowrap; }
 .cap-empty { padding: 16px; color: var(--muted); }
+
+/* live / precapture mode buttons */
+.modebtn { padding: 4px 12px; }
+.modebtn.active { background: var(--accent); color: #08121d; }
+
+/* precapture modal */
+.precap { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.pc-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pc-phase { padding: 1px 8px; border-radius: 10px; background: var(--line);
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.pc-phase.pc-recording { background: #e0556b; color: #fff; }
+.pc-phase.pc-processing { background: #e6c25a; color: #08121d; }
+.pc-phase.pc-paused { background: #6b7280; color: #fff; }
+.pc-phase.pc-done, .pc-phase.pc-saved { background: #2f7d4f; color: #fff; }
+.pc-opts { display: flex; gap: 14px; }
+.pc-opts .flab { display: flex; align-items: center; gap: 6px; }
+.pc-opts input { width: 8ch; }
+.pc-ctl { display: flex; align-items: center; gap: 8px; }
+.pc-progress { height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.pc-fill { height: 100%; background: var(--accent); transition: width 0.2s; }
+.pc-data { max-height: 46vh; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.pc-ds table { margin-top: 4px; }
 label { display: block; margin: 6px 0; color: var(--muted); }
 input, select {
   width: 100%;
