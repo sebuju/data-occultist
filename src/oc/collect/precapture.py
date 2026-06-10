@@ -182,35 +182,36 @@ class PrecaptureSession:
     def _record_loop(self, max_frames: int, interval: float) -> None:
         eng = self._engine
         last_thumb: np.ndarray | None = None
+        # Floor the per-iteration delay so a static screen (every frame a duplicate)
+        # can't spin the CPU and starve the web server — caps capture at ~30 fps.
+        delay = max(interval, 0.03)
         try:
             while not self._stop.is_set():
                 with self._lock:
                     if len(self._frames) >= max_frames:
                         break
                 win = self._locator.locate(self._profile)
+                if self._stop.is_set():       # locate can be slow (process scan) — bail promptly
+                    break
                 if win is None:
-                    time.sleep(0.1)
+                    time.sleep(0.3)           # no window: back off, don't hammer the scan
                     continue
                 frame = eng.capture.grab_window(win)
                 thumb = _thumb(frame.image)
-                if last_thumb is not None and _changed_cells(thumb, last_thumb) < _THUMB_MIN_CELLS:
-                    if interval:
-                        time.sleep(interval)
-                    continue
-                ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
-                if ok:
-                    last_thumb = thumb
-                    data = buf.tobytes()
-                    with self._lock:
-                        idx = len(self._frames)
-                        self._frames.append(data)
-                        self._client = (frame.client.w, frame.client.h)
-                    try:
-                        (self._dir / f"{idx:05d}.jpg").write_bytes(data)
-                    except OSError:
-                        pass
-                if interval:
-                    time.sleep(interval)
+                if last_thumb is None or _changed_cells(thumb, last_thumb) >= _THUMB_MIN_CELLS:
+                    ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                    if ok:
+                        last_thumb = thumb
+                        data = buf.tobytes()
+                        with self._lock:
+                            idx = len(self._frames)
+                            self._frames.append(data)
+                            self._client = (frame.client.w, frame.client.h)
+                        try:
+                            (self._dir / f"{idx:05d}.jpg").write_bytes(data)
+                        except OSError:
+                            pass
+                time.sleep(delay)             # always yield — no tight loop on duplicates
         except Exception as exc:  # pragma: no cover - defensive
             with self._lock:
                 self._error = str(exc)
@@ -284,6 +285,7 @@ class PrecaptureSession:
 
             with self._lock:
                 self._processed += 1
+            time.sleep(0)   # yield the GIL so the web server services status/cancel promptly
 
         with self._lock:
             self._phase = Phase.done

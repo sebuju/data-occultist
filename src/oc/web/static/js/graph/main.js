@@ -816,6 +816,7 @@ function dataHTML(d) {
 
 let precapPoll = null;
 let precapBusy = false;   // recording/processing/paused -> modal can't be dismissed
+let precapStopping = false;   // a stop/cancel was clicked, awaiting the worker to wind down
 let precapLastPhase = null;
 
 async function openPrecaptureModal() {
@@ -846,6 +847,7 @@ async function openPrecaptureModal() {
     const a = b.dataset.act;
     const mf = +node.querySelector(".pc-frames")?.value || 300;
     const iv = +node.querySelector(".pc-interval")?.value || 0;
+    if (a === "recstop" || a === "cancel") { precapStopping = true; b.disabled = true; b.textContent = "stopping…"; }
     if (a === "record") run(() => api.precapture.recordStart(game, mf, iv));
     else if (a === "recstop") run(() => api.precapture.recordStop(game));
     else if (a === "process") run(() => api.precapture.processStart(game));
@@ -915,16 +917,19 @@ function renderPrecap(node, st) {
     <span class="muted">${st.frames} frames · ${st.processed} processed · ${st.read || 0} read · ${st.fps} /s</span>
     ${st.warning ? `<span class="conf-warn">⚠ ${esc(st.warning)}</span>` : ""}
     ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}`;
+  if (!precapBusy) precapStopping = false;   // worker wound down -> clear the stopping state
   node.querySelectorAll(".pc-opts input").forEach((i) => { i.disabled = recording; });
-  node.querySelector(".pc-ctl").innerHTML = `
-    ${recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>`
-                : `<button data-act="record"><span class="ic ic-rec">●</span> record</button>`}
-    ${processing ? `<button data-act="pause">‖ pause</button>`
-      : paused ? `<button data-act="resume">► resume</button>`
-      : `<button data-act="process" ${canProcess ? "" : "disabled"}>▸ process${st.frames ? ` ${st.frames}` : ""}</button>`}
-    ${(processing || paused) ? `<button data-act="cancel" class="danger">cancel</button>` : ""}
+  const ctl = precapStopping
+    ? `<button disabled>stopping…</button>`
+    : `${recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>`
+                   : `<button data-act="record"><span class="ic ic-rec">●</span> record</button>`}
+       ${processing ? `<button data-act="pause">‖ pause</button>`
+         : paused ? `<button data-act="resume">► resume</button>`
+         : `<button data-act="process" ${canProcess ? "" : "disabled"}>▸ process${st.frames ? ` ${st.frames}` : ""}</button>`}
+       ${(processing || paused) ? `<button data-act="cancel" class="danger">cancel</button>` : ""}`;
+  node.querySelector(".pc-ctl").innerHTML = `${ctl}
     <span class="spacer"></span>
-    <button data-act="save" ${staged ? "" : "disabled"}><span class="ic ic-ok">⤓</span> save${staged ? ` ${staged}` : ""}</button>
+    <button data-act="save" ${(staged && !precapStopping) ? "" : "disabled"}><span class="ic ic-ok">⤓</span> save${staged ? ` ${staged}` : ""}</button>
     <button data-act="reset">reset</button>`;
   node.querySelector(".pc-fill").style.width = `${pct}%`;
   node.querySelector(".pc-data").innerHTML = (st.datasets || []).map(precapTable).join("")
