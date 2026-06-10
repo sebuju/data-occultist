@@ -342,7 +342,6 @@ function nodeParts(n) {
     return {
       title: `<input class="gi gi-id" data-k="winid" value="${esc(w.id)}" />`,
       body: `<div class="win-controls">${windowControls(w)}</div><div class="win-img"></div>`,
-      ports: `<span class="port out" title="drag to a dataset"></span>`,
     };
   }
   if (n.type === "region") {
@@ -392,11 +391,11 @@ function nodeParts(n) {
     // its events + a preview of what applying it changes.
     return {
       title: `<span class="gi-id">${esc(n.ref)} batches</span>`,
-      body: `<div class="bat-host">
+      body: `<div class="gn-foot"><button class="battoggle">▤ hide ledger</button></div>
+      <div class="bat-host">
         <ul class="history bat-list"><li class="muted">loading…</li></ul>
         <div class="bat-detail muted">select a batch to see its contents and what applying it changes</div>
       </div>`,
-      ports: `<span class="port in"></span>`,
     };
   }
   // dataset — owns the dedup key. Key options = the fields of every window feeding it.
@@ -414,7 +413,6 @@ function nodeParts(n) {
       <label class="flab" title="ignore spaces/punctuation when matching keys">strip non-alnum <input type="checkbox" class="dsstrip" ${model.datasetStrip(ds) ? "checked" : ""}></label>
       <label class="flab" title="treat keys differing only in case as distinct">case sensitive <input type="checkbox" class="dscase" ${model.datasetCase(ds) ? "checked" : ""}></label>
       <div class="gn-foot"><button class="dsdata">▤ data</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>`,
-    ports: `<span class="port in"></span>`,
   };
 }
 
@@ -451,6 +449,7 @@ function buildNode(n) {
   div.dataset.id = n.id;
   fillNode(div, n);
   if (n.type === "item") snapResize(div, { onResize: drawEdges });   // width-resizable → snap on release
+  if (n.type === "batches") snapResize(div, { both: true, onResize: drawEdges });   // resize the ledger node freely
   return div;
 }
 
@@ -849,12 +848,12 @@ function wireNode(div, n) {
     });
   } else if (n.type === "window") {
     wireWindowControls(div, n);
-    div.querySelector(".port.out").addEventListener("mousedown", (ev) => startWire(n.ref.id, ev));
+    div.querySelector(".port.out")?.addEventListener("mousedown", (ev) => startWire(n.ref.id, ev));
   } else if (n.type === "dataset") {
     div.querySelector(".dsrename")?.addEventListener("change", (e) => {
       if (model.renameDataset(n.ref, e.target.value)) { render(); autosave(); } else e.target.value = n.ref;
     });
-    div.querySelector(".dsdata")?.addEventListener("click", () => openDatasetPanel(n.ref));
+    div.querySelector(".dsdata")?.addEventListener("click", () => toggleDatasetPanel(n.ref));
     div.querySelector(".dskey")?.addEventListener("change", (e) => { model.setDatasetKey(n.ref, e.target.value); autosave(); });
     div.querySelector(".dsstrip")?.addEventListener("change", (e) => { model.setDatasetStrip(n.ref, e.target.checked); autosave(); });
     div.querySelector(".dscase")?.addEventListener("change", (e) => { model.setDatasetCase(n.ref, e.target.checked); autosave(); });
@@ -870,6 +869,12 @@ function wireNode(div, n) {
       catch (e) { setStatus(String(e.message || e)); }
     });
   } else if (n.type === "batches") {
+    const host = div.querySelector(".bat-host");
+    const tgl = div.querySelector(".battoggle");
+    tgl?.addEventListener("click", () => {
+      const hidden = host.classList.toggle("hidden");
+      tgl.textContent = hidden ? "▤ show ledger" : "▤ hide ledger";
+    });
     queueMicrotask(() => loadBatchesNode(n.ref));   // nodeEls is set after buildNode returns
   } else if (n.type === "region") {
     const fld = n.field;
@@ -928,6 +933,10 @@ function wireNode(div, n) {
 // ---- dataset panel (records + batch ledger; a floating panel like the preview) ----
 
 const datasetPanels = new Map();   // ds -> { wrap, body }
+
+function toggleDatasetPanel(ds) {
+  if (datasetPanels.has(ds)) closeDatasetPanel(ds); else openDatasetPanel(ds);
+}
 
 function openDatasetPanel(ds) {
   const open = datasetPanels.get(ds);

@@ -474,15 +474,17 @@ a.node.win:hover { border-color: var(--accent); }
 .records tr.gone td { color: var(--muted); text-decoration: line-through; }
 
 /* batches node: ledger list on top, selected-batch contents + preview below — all
-   inline in the node body, scrolled rather than grown. */
-.gnode.batches { width: 360px; }
-.gnode.batches .gn-body { overflow: hidden; }
-.bat-host { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow: auto; }
-.bat-list { max-height: 200px; overflow: auto; flex: 0 0 auto; }
+   inline in the node body, scrolled rather than grown. The node is freely resizable
+   and its body flexes to fill it. */
+.gnode.batches { width: 360px; height: 420px; resize: both; overflow: hidden; display: flex; flex-direction: column; min-width: 280px; min-height: 160px; }
+.gnode.batches .gn-body { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.bat-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+.bat-host.hidden { display: none; }
+.bat-list { max-height: 45%; overflow: auto; flex: 0 0 auto; }
 .bat-list .batrow { cursor: pointer; }
 .bat-list .batrow.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .bat-list .batrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.bat-detail { border-top: 1px solid var(--line); padding-top: 6px; overflow: auto; }
+.bat-detail { border-top: 1px solid var(--line); padding-top: 6px; overflow: auto; flex: 1 1 auto; min-height: 0; }
 .bat-detail .ds-h { margin: 8px 0 4px; }
 .ev-table td.ev-cell { cursor: text; }
 .ev-table td.ev-cell:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
