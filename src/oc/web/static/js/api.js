@@ -95,17 +95,17 @@ export const ocr = {
 
 // Precapture: record frames fast, batch-OCR them, then save. Each call returns the
 // session status { phase, frames, processed, fps, error, datasets:[{dataset,key_field,count,sample}] }.
-const _pre = (game, path, method = "POST") =>
-  fetch(`/api/precapture/${encodeURIComponent(game)}/${path}`, { method }).then((r) => r.json());
+const _pre = (game, path, signal, method = "POST") =>
+  fetch(`/api/precapture/${encodeURIComponent(game)}/${path}`, { method, signal }).then((r) => r.json());
 export const precapture = {
-  recordStart: (game, maxFrames, intervalMs) => _pre(game, `record/start?max_frames=${maxFrames}&interval_ms=${intervalMs}`),
-  recordStop: (game) => _pre(game, "record/stop"),
-  processStart: (game) => _pre(game, "process/start"),
-  pause: (game, on) => _pre(game, `process/pause?on=${on}`),
-  cancel: (game) => _pre(game, "cancel"),
-  reset: (game) => _pre(game, "reset"),
-  save: (game) => _pre(game, "save"),
-  status: (game) => fetch(`/api/precapture/${encodeURIComponent(game)}/status`).then((r) => r.json()),
+  recordStart: (game, maxFrames, intervalMs, signal) => _pre(game, `record/start?max_frames=${maxFrames}&interval_ms=${intervalMs}`, signal),
+  recordStop: (game, signal) => _pre(game, "record/stop", signal),
+  processStart: (game, signal) => _pre(game, "process/start", signal),
+  pause: (game, on, signal) => _pre(game, `process/pause?on=${on}`, signal),
+  cancel: (game, signal) => _pre(game, "cancel", signal),
+  reset: (game, signal) => _pre(game, "reset", signal),
+  save: (game, signal) => _pre(game, "save", signal),
+  status: (game, signal) => fetch(`/api/precapture/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
 };
 
 // Wipe a dataset's stored records + ledger.

@@ -175,7 +175,6 @@ legend { color: var(--muted); padding: 0 6px; }
 }
 .gnode, .gnode * { box-sizing: border-box; }
 .gnode input, .gnode select { user-select: text; max-width: 100%; }
-.gnode.dataset { cursor: pointer; }
 .glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
 .glab input { margin-top: 2px; }
 .modal-body h4 { margin: 0 0 6px; color: var(--muted); font-weight: 500; font-size: var(--fs-base); }
@@ -328,6 +327,19 @@ legend { color: var(--muted); padding: 0 6px; }
 .log-latest { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .log-toggle { color: var(--muted); transition: transform 0.15s; }
 .logbar.open .log-toggle { transform: rotate(180deg); }
+
+/* background-worker indicator (far right of the log head): live count + per-worker
+   emergency kill. Hidden when nothing is running. */
+.log-workers { display: inline-flex; align-items: center; gap: 6px; flex: none; cursor: default; }
+.log-workers[hidden] { display: none; }
+.lw-spin { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--warn);
+  border-top-color: transparent; animation: lw-spin 0.7s linear infinite; }
+@keyframes lw-spin { to { transform: rotate(360deg); } }
+.lw-count { color: var(--warn); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lw-kill { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap;
+  background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px;
+  padding: 1px 7px; font: var(--fs-xs)/1.4 var(--font-mono); }
+.lw-kill:hover { filter: brightness(1.12); }
 .log-body { display: none; max-height: 38vh; overflow: auto; padding: 4px 10px 8px;
   border-top: 1px solid var(--line); overscroll-behavior: contain; }
 .logbar.open .log-body { display: block; }
@@ -458,24 +470,15 @@ a.node.win:hover { border-color: var(--accent); }
 .records { max-height: 50vh; overflow: auto; }
 .records tr.gone td { color: var(--muted); text-decoration: line-through; }
 
-/* content nodes — data / preview / batches: a node whose body holds a scrollable
-   table/list. Freely resizable, body flexes to fill, content host scrolls. ONE look
-   and ONE behaviour for all three (no per-kind panel code). */
-.gnode.dataset, .gnode.preview, .gnode.batches {
-  resize: both; overflow: hidden; display: flex; flex-direction: column;
-  min-width: 280px; min-height: 160px;
-}
-.gnode.dataset { width: 320px; height: 420px; }
-.gnode.preview { width: 380px; height: 360px; }
-.gnode.batches { width: 360px; height: 420px; }
-.gnode.dataset .gn-body, .gnode.preview .gn-body, .gnode.batches .gn-body {
-  flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column;
-}
-/* the scrollable content host inside such a node */
-.nodehost { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.nodehost.hidden { display: none; }
+/* content nodes — data / preview / batches stay NORMAL nodes (identical header/body
+   to every other node). Only the inner content host is a resizable scroll box, so
+   tables never blow the node up. ONE look + ONE behaviour, no per-kind panel code. */
+.gnode.dataset, .gnode.preview, .gnode.batches { width: max-content; }
+.nodehost { margin-top: 6px; overflow: auto; resize: both; min-width: 200px; min-height: 80px;
+  width: 320px; height: 280px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+.prev-host, .data-host { width: 340px; }
 /* batches sub-layout: ledger list on top, selected-batch contents + preview below */
-.bat-host { display: flex; flex-direction: column; gap: 8px; }
+.bat-host { display: flex; flex-direction: column; gap: 8px; width: 360px; height: 360px; }
 .bat-list { max-height: 45%; overflow: auto; flex: 0 0 auto; }
 .bat-list .batrow { cursor: pointer; }
 .bat-list .batrow.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }

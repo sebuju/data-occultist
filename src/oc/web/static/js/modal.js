@@ -5,6 +5,14 @@
 // (an element) or `html` for the body. size: "large" | "data" | "medium".
 // `canClose` is an optional guard: when it returns false, USER dismissal (Esc /
 // backdrop / ×) is blocked. handle.close() always closes (programmatic).
+//
+// ABORT-ON-CLOSE (generalized): every modal owns an AbortController. `handle.signal`
+// is aborted the instant the modal closes — by ANY path (×, Esc, backdrop, or a
+// programmatic close()). Wire every long-running thing the modal starts to it:
+//   - fetches: pass `{ signal: handle.signal }` → in-flight requests cancel on close.
+//   - intervals/timers/backend jobs: tear them down in `onClose` (e.g. clearInterval,
+//     or POST a /cancel for a server-side worker). `onClose` runs AFTER the abort.
+// This stops a closed modal from leaving work running in the background.
 
 const stack = [];
 
@@ -33,14 +41,18 @@ export function openModal({ title = "", size = "medium", node = null, html = "",
   backdrop.appendChild(modal);
   document.body.appendChild(backdrop);
 
+  const aborter = new AbortController();   // cancels everything the modal started
+
   const handle = {
     el: modal,
     body,
+    signal: aborter.signal,
     close() {
       const i = stack.indexOf(handle);
       if (i >= 0) stack.splice(i, 1);
+      aborter.abort();        // kill in-flight fetches wired to handle.signal …
       backdrop.remove();
-      onClose?.();
+      onClose?.();            // … then run the modal's own teardown (intervals, backend cancel)
     },
     dismiss() {                                  // user-triggered close, honours the guard
       if (canClose && canClose() === false) {

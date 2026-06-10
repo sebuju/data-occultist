@@ -380,7 +380,7 @@ function nodeParts(n) {
     // on demand (its own button, or the image's 👁), rendered inline.
     return {
       title: `<span class="gi-id">${esc(n.ref.id)} preview</span>`,
-      body: `<div class="gn-foot"><button class="prevrun">↻ read</button><button class="hosttoggle">▤ hide</button></div>
+      body: `<div class="gn-foot"><button class="prevrun">↻ read</button></div>
       <div class="nodehost scrollhost prev-host"><p class="muted" style="padding:8px">↻ read to preview what this window reads</p></div>`,
     };
   }
@@ -389,8 +389,7 @@ function nodeParts(n) {
     // its events + a preview of what applying it changes.
     return {
       title: `<span class="gi-id">${esc(n.ref)} batches</span>`,
-      body: `<div class="gn-foot"><button class="hosttoggle">▤ hide</button></div>
-      <div class="nodehost scrollhost bat-host">
+      body: `<div class="nodehost scrollhost bat-host">
         <ul class="history bat-list"><li class="muted">loading…</li></ul>
         <div class="bat-detail muted">select a batch to see its contents and what applying it changes</div>
       </div>`,
@@ -410,7 +409,7 @@ function nodeParts(n) {
       <label class="flab" title="field whose value identifies a row — reads with the same value merge">key <select class="dskey">${keyOpts}</select></label>
       <label class="flab" title="ignore spaces/punctuation when matching keys">strip non-alnum <input type="checkbox" class="dsstrip" ${model.datasetStrip(ds) ? "checked" : ""}></label>
       <label class="flab" title="treat keys differing only in case as distinct">case sensitive <input type="checkbox" class="dscase" ${model.datasetCase(ds) ? "checked" : ""}></label>
-      <div class="gn-foot"><button class="hosttoggle">▤ hide</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
+      <div class="gn-foot"><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
       <div class="nodehost scrollhost data-host"><p class="muted" style="padding:8px">loading…</p></div>`,
   };
 }
@@ -431,11 +430,6 @@ function fillNode(div, n) {
       <button class="collapse" title="collapse/expand">${isCollapsed ? "▸" : "▾"}</button>${toggle}${parts.title}<span class="gn-spin" title="working…"></span></div>
     <div class="gn-body">${parts.body}</div>${parts.ports || ""}`;
   div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
-  // generic content-host show/hide (data / preview / batches nodes)
-  div.querySelector(".hosttoggle")?.addEventListener("click", (e) => {
-    const host = div.querySelector(".nodehost");
-    if (host) e.target.textContent = host.classList.toggle("hidden") ? "▤ show" : "▤ hide";
-  });
   div.querySelector(".gn-enable")?.addEventListener("change", (e) => {
     n.ref.enabled = e.target.checked;
     div.classList.toggle("node-disabled", !e.target.checked);
@@ -447,17 +441,18 @@ function fillNode(div, n) {
   wireNode(div, n);
 }
 
-const RESIZABLE = { item: false, dataset: true, preview: true, batches: true };   // type -> both-axes?
-
-// Make a node user-resizable; restore its saved size and persist new ones (grid-snapped
-// on release). One size system for every resizable node — no per-kind panel code.
-function makeResizable(div, id, both) {
+// Make a node's content host (`.nodehost`) user-resizable; the node itself stays a
+// normal node (header/body identical to every other node — only the scroll box
+// resizes). Restores + persists the host size, grid-snapped on release.
+function makeHostResizable(div, id) {
+  const host = div.querySelector(".nodehost");
+  if (!host) return;
   const s = nodeSizes.get(id);
-  if (s) { if (s.w) div.style.width = `${s.w}px`; if (both && s.h) div.style.height = `${s.h}px`; }
-  snapResize(div, {
-    both,
+  if (s) { if (s.w) host.style.width = `${s.w}px`; if (s.h) host.style.height = `${s.h}px`; }
+  snapResize(host, {
+    both: true,
     onResize: drawEdges,
-    onSettle: () => { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight }); drawEdges(); savePositions(); },
+    onSettle: () => { nodeSizes.set(id, { w: host.offsetWidth, h: host.offsetHeight }); drawEdges(); savePositions(); },
   });
 }
 
@@ -466,7 +461,8 @@ function buildNode(n) {
   div.id = `node-${n.id}`;
   div.dataset.id = n.id;
   fillNode(div, n);
-  if (n.type in RESIZABLE) makeResizable(div, n.id, RESIZABLE[n.type]);
+  if (n.type === "item") snapResize(div, { onResize: drawEdges });   // item node resizes by width (its cutout)
+  if (n.type === "dataset" || n.type === "preview" || n.type === "batches") makeHostResizable(div, n.id);
   return div;
 }
 
@@ -1127,15 +1123,22 @@ async function openPrecaptureModal() {
   node.innerHTML = `<p class="muted" style="padding:12px">loading…</p>`;
   const modal = openModal({
     title: `precapture: ${game}`, size: "data", node,
-    canClose: () => !precapBusy,   // can't dismiss while recording/processing — cancel first
+    // Closing ABORTS: stop polling, and tell the backend worker to cancel so it stops
+    // hammering the game in the background (the cancel POST must NOT use the now-aborted
+    // modal signal, or it'd cancel itself). No canClose guard — close always means stop.
     onClose: () => {
       if (precapPoll) { clearInterval(precapPoll); precapPoll = null; }
-      precapOpen = false; precapBusy = false; $("precapBtn").classList.remove("active");
+      if (precapBusy) api.precapture.cancel(game).catch(() => {});
+      precapOpen = false; precapBusy = false; precapStopping = false; $("precapBtn").classList.remove("active");
     },
   });
 
+  const sig = modal.signal;   // wire every fetch to it → cancelled the moment the modal closes
   const draw = (st) => renderPrecap(node, st);
-  const run = async (fn) => { try { draw(await fn()); } catch (e) { setStatus(String(e.message || e)); } };
+  const run = async (fn) => {
+    try { draw(await fn()); }
+    catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }   // ignore close-aborts
+  };
 
   // one delegated handler for every control button
   node.addEventListener("click", (ev) => {
@@ -1145,20 +1148,20 @@ async function openPrecaptureModal() {
     const mf = +node.querySelector(".pc-frames")?.value || 300;
     const iv = +node.querySelector(".pc-interval")?.value || 0;
     if (a === "recstop" || a === "cancel") { precapStopping = true; b.disabled = true; b.textContent = "stopping…"; }
-    if (a === "record") run(() => api.precapture.recordStart(game, mf, iv));
-    else if (a === "recstop") run(() => api.precapture.recordStop(game));
-    else if (a === "process") run(() => api.precapture.processStart(game));
-    else if (a === "pause") run(() => api.precapture.pause(game, true));
-    else if (a === "resume") run(() => api.precapture.pause(game, false));
-    else if (a === "cancel") run(() => api.precapture.cancel(game));
-    else if (a === "reset") run(() => api.precapture.reset(game));
-    else if (a === "save") run(async () => { const r = await api.precapture.save(game); refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
+    if (a === "record") run(() => api.precapture.recordStart(game, mf, iv, sig));
+    else if (a === "recstop") run(() => api.precapture.recordStop(game, sig));
+    else if (a === "process") run(() => api.precapture.processStart(game, sig));
+    else if (a === "pause") run(() => api.precapture.pause(game, true, sig));
+    else if (a === "resume") run(() => api.precapture.pause(game, false, sig));
+    else if (a === "cancel") run(() => api.precapture.cancel(game, sig));
+    else if (a === "reset") run(() => api.precapture.reset(game, sig));
+    else if (a === "save") run(async () => { const r = await api.precapture.save(game, sig); refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
   });
 
-  await run(() => api.precapture.status(game));
+  await run(() => api.precapture.status(game, sig));
   // poll while the modal is open so progress + staged data stay live
   precapPoll = setInterval(async () => {
-    try { draw(await api.precapture.status(game)); } catch { /* ignore */ }
+    try { draw(await api.precapture.status(game, sig)); } catch { /* ignore (incl. close-abort) */ }
   }, 700);
 }
 
@@ -1188,9 +1191,9 @@ function renderPrecap(node, st) {
     else if (phase === "saved") log("precapture: saved", "ok");
     precapLastPhase = phase;
   }
-  // reflect on the close button so it's clear why it won't dismiss
+  // closing always works now and cancels the run — say so on the button
   const x = node.closest(".modal")?.querySelector(".modal-x");
-  if (x) { x.classList.toggle("locked", precapBusy); x.title = precapBusy ? "cancel the run to close" : "close (Esc)"; }
+  if (x) x.title = precapBusy ? "close & cancel the run (Esc)" : "close (Esc)";
   const canProcess = st.frames > 0 && !recording && !processing && !paused;
   const pct = st.frames ? Math.round((100 * st.processed) / st.frames) : 0;
   const staged = (st.datasets || []).reduce((n, d) => n + d.count, 0);
