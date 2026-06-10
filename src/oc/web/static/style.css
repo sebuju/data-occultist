@@ -319,7 +319,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .cap-empty { padding: 16px; color: var(--muted); }
 
 /* bottom terminal log bar (fixed; overlays, never shifts layout) */
-.logbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 900;
+.logbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1100;
   background: var(--log-bg); border-top: 1px solid var(--line);
   font: var(--fs-sm)/1.55 var(--font-mono); color: var(--log-fg); }
 .log-head { display: flex; align-items: center; gap: 8px; padding: 3px 10px; cursor: pointer; user-select: none; }
