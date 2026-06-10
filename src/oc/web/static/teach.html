@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>oc — teach window</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="navlink" href="/">← games</a>
+    <strong id="gameLabel">—</strong>
+    <label>window <select id="windowSelect"></select></label>
+    <span class="spacer"></span>
+    <button id="captureBtn">Capture</button>
+    <label>stash <select id="captureSelect" title="reload a stashed capture"></select></label>
+    <button id="suggestBtn" title="Analyse the capture and propose a layout">Suggest</button>
+    <button id="previewBtn" title="OCR the current boxes and show what they read">Preview</button>
+    <a class="navlink" href="/dash.html">data flow →</a>
+    <span id="status" class="status"></span>
+  </header>
+
+  <main class="layout">
+    <section class="canvas-col">
+      <div class="toolbar">
+        <span class="hint">Drag to draw a box. Click to select; drag body to move, handles to resize.</span>
+        <span class="spacer"></span>
+        <label class="inline"><input type="checkbox" id="gridPreview" checked /> grid</label>
+        <label class="inline"><input type="checkbox" id="previewToggle" checked /> values</label>
+        <label class="inline"><input type="checkbox" id="detectToggle" /> detections</label>
+        <button id="zoomOutBtn" title="zoom out">−</button>
+        <button id="fitBtn" title="fit to width">Fit</button>
+        <button id="oneToOneBtn" title="100%">1:1</button>
+        <button id="zoomInBtn" title="zoom in">+</button>
+        <span id="zoomLabel" class="status"></span>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="canvas"></canvas>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <div id="panel-box"></div>
+      <div id="panel-window"></div>
+      <div id="panel-fields"></div>
+      <div id="panel-appearance"></div>
+      <div id="panel-states"></div>
+      <div id="panel-boxlist"></div>
+      <div id="panel-preview"></div>
+    </aside>
+  </main>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,206 @@
+name: warframe
+process_names:
+- Warframe.x64.exe
+window_title_hint: Warframe
+fields:
+- id: name
+  type: text
+  extract: whole
+  separator: /
+  learn: true
+  fuzzy: 0.82
+- id: count
+  type: number
+  extract: whole
+  separator: /
+  learn: false
+  fuzzy: 0.82
+- id: rank
+  type: number
+  extract: whole
+  separator: /
+  learn: false
+  fuzzy: 0.82
+windows:
+- id: equip
+  fields:
+  - id: name
+    type: text
+    extract: whole
+    separator: '['
+    learn: false
+    fuzzy: 0.5
+  - id: count
+    type: number
+    extract: whole
+    separator: /
+    empty: '1'
+    learn: false
+    fuzzy: 0.82
+  - id: name
+    type: text
+    extract: text_before
+    separator: '['
+    learn: false
+    fuzzy: 0.82
+  - id: arcane_level
+    type: diamonds
+    extract: whole
+    separator: /
+    learn: false
+    fuzzy: 0.75
+  - id: count
+    type: number
+    extract: whole
+    separator: /
+    empty: '1'
+    learn: false
+    fuzzy: 0.82
+  dedup_field: name
+  allow_duplicates: false
+  data_area:
+    x: 0.0392843423787693
+    y: 0.17411803841927975
+    w: 0.6493593537024408
+    h: 0.7292573648659971
+  anchors:
+  - id: detect_2
+    enabled: true
+    search:
+      x: 0.09759661627775759
+      y: 0.03552470926428017
+      w: 0.1306621355076155
+      h: 0.05211404851829898
+    text: inventory
+    threshold: 0.3
+    included: true
+  - id: detect_4
+    enabled: true
+    search:
+      x: 0.4414865790617742
+      y: 0.12955818786717313
+      w: 0.13264547229378248
+      h: 0.042268579608115114
+    text: NAME
+    threshold: 0.5
+    included: true
+  - id: detect_1
+    enabled: true
+    search:
+      x: 0.5778084179119407
+      y: 0.13172666053151366
+      w: 0.10242633070325147
+      h: 0.03582122837035165
+    text: search
+    threshold: 0.5
+    included: true
+  states: []
+  regions: []
+  items:
+  - id: item
+    enabled: true
+    box:
+      x: 0.2559312955630544
+      y: 0.4915660013455143
+      w: 0.1079847262492227
+      h: 0.2045250942121843
+    cutout: item-20260609-195853-149790.png
+    cutout_box:
+      x: 0.21821501387762782
+      y: 0.42295973658521346
+      w: 0.17833698482487298
+      h: 0.3201018038741048
+    align: bottom
+    priority: 0
+    fields:
+    - id: name
+      box:
+        x: 0.0008647839276872834
+        y: 0.49963703467726983
+        w: 0.9116685321352634
+        h: 0.3566060056546523
+      field: name
+      tell: true
+      tell_conf: 0.3
+      align: ''
+      enabled: true
+    - id: count
+      box:
+        x: 0.0
+        y: 0.0007938414839423913
+        w: 0.5299105936045002
+        h: 0.15434670589268576
+      field: count
+      tell: false
+      tell_conf: 0.0
+      align: ''
+      enabled: true
+    tells: []
+  - id: arcane
+    enabled: true
+    box:
+      x: 0.47210222904238824
+      y: 0.4936875861083346
+      w: 0.10819738326573768
+      h: 0.20548627306849146
+    cutout: item-20260609-224909-757925.png
+    cutout_box:
+      x: 0.45085229291538953
+      y: 0.4333247423805847
+      w: 0.1498718975200488
+      h: 0.30097729443750454
+    align: bottom
+    priority: 1
+    fields:
+    - id: name
+      box:
+        x: 0.00011645597995694553
+        y: 0.4921122085929414
+        w: 0.9116495404421442
+        h: 0.24518600148344633
+      field: name
+      tell: false
+      tell_conf: 0.3
+      align: none
+      enabled: true
+    - id: arcane_level
+      box:
+        x: 0.0
+        y: 0.7379145017444578
+        w: 0.9123235573101921
+        h: 0.11592432005792572
+      field: arcane_level
+      tell: true
+      tell_conf: 0.8
+      align: ''
+      enabled: true
+    - id: count
+      box:
+        x: 0.0
+        y: 0.0011458270119331794
+        w: 0.3500557297941114
+        h: 0.1548895564172534
+      field: count
+      tell: false
+      tell_conf: 0.0
+      align: ''
+      enabled: true
+    tells: []
+  scroll:
+    enabled: true
+    scrollbar:
+      x: 0.6942298229506871
+      y: 0.18602817641119196
+      w: 0.00921298146337702
+      h: 0.7211669337141035
+    scrollbar_orientation: vertical
+    rows: 8
+    cols: 8
+    row_stride: 0.205
+    col_stride: 0.108
+    dedup_field: name
+  preprocess:
+    mode: none
+    colors: []
+    tolerance: 60
+    scale: 1.0

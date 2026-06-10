@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Project data / captures / models
+data/
+captures/
+*.onnx
+models/
+
+# Scratch / trash
+.trash/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Untitled-*.txt
+
+# Claude / AI tooling
+.claude/
+CLAUDE.md
+.claude.json
+.cursor/
+.cursorrules
+.github/copilot-instructions.md

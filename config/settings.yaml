@@ -1,0 +1,21 @@
+# Which backend implementation to use for each pluggable subsystem.
+# Change a name here (and ensure a module registers it) to swap a backend.
+# A bare string is shorthand for {name: <str>, options: {}}.
+
+capture: printwindow  # oc.capture.*    -> grabs pixels. printwindow = window-targeted
+                      #   (works backgrounded/occluded); mss = screen-region (needs
+                      #   the window visible on top).
+window: win32       # oc.window.*       -> locates the game window (Windows)
+process: psutil     # oc.process.*      -> finds the running game
+ocr: rapidocr       # oc.ocr.*          -> reads text from regions
+classifier: anchor  # oc.detect.*       -> decides window + state
+corrector: rapidfuzz  # oc.learn.*      -> fuzzy-corrects uncertain OCR
+
+tuning:
+  accept_confidence: 0.88   # >= this: trust + learn the term
+  min_confidence: 0.50      # worst-field floor; below -> drop record
+  confirm_frames: 2         # stable frames required before saving (anti-popup)
+  require_foreground: false  # true only if using screen-region capture
+
+profiles_dir: config/games
+data_dir: data

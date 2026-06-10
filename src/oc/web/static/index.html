@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>oc — node view</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <strong>oc</strong>
+    <label>game <select id="gameSelect"></select></label>
+    <input id="newGameName" placeholder="new game" style="width:12ch" />
+    <button id="newGameBtn">New</button>
+    <span class="spacer"></span>
+    <label class="inline"><input type="checkbox" id="liveToggle" /> live</label>
+    <label class="inline"><input type="checkbox" id="saveToggle" /> save</label>
+    <span id="livestats" class="livestats" hidden></span>
+    <a class="navlink" href="/dash.html">flow ↗</a>
+    <span id="status" class="status">auto-saves</span>
+  </header>
+
+  <main class="graphwrap">
+    <div id="graph" class="graphcanvas">
+      <div id="gworld">
+        <svg id="gedges"></svg>
+        <div id="gcanvases"></div>
+        <div id="gnodes"></div>
+        <svg id="gedges-top"></svg>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="/js/graph/main.js"></script>
+</body>
+</html>
