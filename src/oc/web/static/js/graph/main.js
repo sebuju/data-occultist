@@ -895,33 +895,39 @@ function renderPrecap(node, st) {
   const canProcess = st.frames > 0 && !recording && !processing && !paused;
   const pct = st.frames ? Math.round((100 * st.processed) / st.frames) : 0;
   const staged = (st.datasets || []).reduce((n, d) => n + d.count, 0);
-  // preserve the option inputs the user typed across the 700ms re-renders
-  const mf = node.querySelector(".pc-frames")?.value ?? "300";
-  const iv = node.querySelector(".pc-interval")?.value ?? "0";
-  const tables = (st.datasets || []).map(precapTable).join("") || '<p class="muted" style="padding:8px">no data staged yet — record some frames, then process</p>';
-  node.innerHTML = `
-    <div class="pc-bar">
-      <span class="pc-phase pc-${phase}">${esc(phase)}</span>
-      <span class="muted">${st.frames} frames · ${st.processed} processed · ${st.fps} /s</span>
-      ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}
-    </div>
-    <div class="pc-opts">
-      <label class="flab">max frames <input type="number" class="pc-frames" value="${esc(mf)}" min="1" ${recording ? "disabled" : ""}></label>
-      <label class="flab">interval ms <input type="number" class="pc-interval" value="${esc(iv)}" min="0" ${recording ? "disabled" : ""}></label>
-    </div>
-    <div class="pc-ctl">
-      ${recording ? `<button data-act="recstop">⏹ stop recording</button>`
-                  : `<button data-act="record">⏺ record</button>`}
-      ${processing ? `<button data-act="pause">⏸ pause</button>`
-        : paused ? `<button data-act="resume">▶ resume</button>`
-        : `<button data-act="process" ${canProcess ? "" : "disabled"}>⚙ process${st.frames ? ` ${st.frames}` : ""}</button>`}
-      ${(processing || paused) ? `<button data-act="cancel" class="danger">cancel</button>` : ""}
-      <span class="spacer"></span>
-      <button data-act="save" ${staged ? "" : "disabled"}>💾 save${staged ? ` ${staged}` : ""}</button>
-      <button data-act="reset">reset</button>
-    </div>
-    <div class="pc-progress"><div class="pc-fill" style="width:${pct}%"></div></div>
-    <div class="pc-data">${tables}</div>`;
+
+  // Build the static skeleton ONCE — re-setting innerHTML each 700ms poll would
+  // destroy the option inputs and steal focus while the user is typing in them.
+  if (!node.querySelector(".pc-opts")) {
+    node.innerHTML = `
+      <div class="pc-bar"></div>
+      <div class="pc-opts">
+        <label class="flab">max frames <input type="number" class="pc-frames" value="300" min="1"></label>
+        <label class="flab">interval ms <input type="number" class="pc-interval" value="0" min="0"></label>
+      </div>
+      <div class="pc-ctl"></div>
+      <div class="pc-progress"><div class="pc-fill"></div></div>
+      <div class="pc-data"></div>`;
+  }
+
+  node.querySelector(".pc-bar").innerHTML = `
+    <span class="pc-phase pc-${phase}">${esc(phase)}</span>
+    <span class="muted">${st.frames} frames · ${st.processed} processed · ${st.fps} /s</span>
+    ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}`;
+  node.querySelectorAll(".pc-opts input").forEach((i) => { i.disabled = recording; });
+  node.querySelector(".pc-ctl").innerHTML = `
+    ${recording ? `<button data-act="recstop">⏹ stop recording</button>`
+                : `<button data-act="record">⏺ record</button>`}
+    ${processing ? `<button data-act="pause">⏸ pause</button>`
+      : paused ? `<button data-act="resume">▶ resume</button>`
+      : `<button data-act="process" ${canProcess ? "" : "disabled"}>⚙ process${st.frames ? ` ${st.frames}` : ""}</button>`}
+    ${(processing || paused) ? `<button data-act="cancel" class="danger">cancel</button>` : ""}
+    <span class="spacer"></span>
+    <button data-act="save" ${staged ? "" : "disabled"}>💾 save${staged ? ` ${staged}` : ""}</button>
+    <button data-act="reset">reset</button>`;
+  node.querySelector(".pc-fill").style.width = `${pct}%`;
+  node.querySelector(".pc-data").innerHTML = (st.datasets || []).map(precapTable).join("")
+    || '<p class="muted" style="padding:8px">no data staged yet — record some frames, then process</p>';
 }
 
 // Capture filenames are "YYYYMMDD-HHMMSS-ffffff.jpg" — pull the time out for display.
