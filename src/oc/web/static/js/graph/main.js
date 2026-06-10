@@ -55,9 +55,11 @@ const previewPanels = new Map();  // winId -> { wrap, body } (live OCR preview)
 // Panels are positioned like nodes: pos has `img:<win>` / `prev:<win>` entries.
 const openImages = new Set();     // winIds whose image panel is open (persisted)
 const openPreviews = new Set();   // winIds whose preview panel is open (persisted)
-const panelSizes = new Map();     // `img:<win>` / `prev:<win>` -> {w,h} (persisted)
+const openDatasets = new Set();   // dataset ids whose data panel is open (persisted)
+const panelSizes = new Map();     // `img:<win>` / `prev:<win>` / `dsp:<ds>` -> {w,h} (persisted)
 let pendingOpenImages = [];
 let pendingOpenPreviews = [];
+let pendingOpenDatasets = [];
 const busy = new Map();            // node id -> active-work count (drives the spinner)
 const gridPreviews = new Map();    // winId -> live-detected field boxes (dashed grid)
 const gridReads = new Map();        // winId -> per-cell read values {x,y,w,h,text,confidence}
@@ -135,6 +137,7 @@ function loadPositions() {
     (raw.collapsed || []).forEach((id) => collapsed.add(id));
     pendingOpenImages = raw.openImages || [];
     pendingOpenPreviews = raw.openPreviews || [];
+    pendingOpenDatasets = raw.openDatasets || [];
     for (const k in (raw.panelSizes || {})) panelSizes.set(k, raw.panelSizes[k]);
     if (raw.view && Number.isFinite(raw.view.zoom)) Object.assign(view, raw.view);
   } catch { /* ignore */ }
@@ -143,7 +146,7 @@ function savePositions() {
   try {
     localStorage.setItem(posKey(), JSON.stringify({
       positions: Object.fromEntries(pos), collapsed: [...collapsed],
-      openImages: [...openImages], openPreviews: [...openPreviews],
+      openImages: [...openImages], openPreviews: [...openPreviews], openDatasets: [...openDatasets],
       panelSizes: Object.fromEntries(panelSizes), view,
     }));
   } catch { /* ignore */ }
@@ -398,7 +401,7 @@ function nodeParts(n) {
       <label class="flab" title="field whose value identifies a row — reads with the same value merge">key <select class="dskey">${keyOpts}</select></label>
       <label class="flab" title="ignore spaces/punctuation when matching keys">strip non-alnum <input type="checkbox" class="dsstrip" ${model.datasetStrip(ds) ? "checked" : ""}></label>
       <label class="flab" title="treat keys differing only in case as distinct">case sensitive <input type="checkbox" class="dscase" ${model.datasetCase(ds) ? "checked" : ""}></label>
-      <div class="gn-foot"><button class="dsdata">▤ data</button></div>`,
+      <div class="gn-foot"><button class="dsdata">▤ data</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>`,
     ports: `<span class="port in"></span>`,
   };
 }
@@ -694,7 +697,12 @@ const ROUTE = {
   radius: 14,         // corner rounding for "curve"
   debounce: 90,       // ms of stillness before routing
 };
-if (typeof window !== "undefined") window.__route = ROUTE;   // internal tweak handle
+// internal handles: tweak ROUTE in the console, __reroute() to force a recompute
+// (e.g. after flipping __route.corners to "square").
+if (typeof window !== "undefined") {
+  window.__route = ROUTE;
+  window.__reroute = () => { routeHash = ""; drawEdges(); };
+}
 
 const SVGNS = "http://www.w3.org/2000/svg";
 const routeCache = new Map();   // edgeId -> [ [x,y], ... ]  (polyline)
@@ -748,23 +756,28 @@ function addPolyline(svg, pts, cls) {
 
 function scheduleRouting() {
   if (!ROUTE.enabled) return;
-  const sig = drawSig || layoutSignature();
-  if (sig === routeHash) return;       // routes already current
+  if ((drawSig || layoutSignature()) === routeHash) return;   // routes already current
   clearTimeout(routeTimer);
-  routeTimer = setTimeout(() => runRouting(sig), ROUTE.debounce);
+  routeTimer = setTimeout(runRouting, ROUTE.debounce);
 }
 
-function runRouting(sig) {
-  if (sig !== layoutSignature()) return;   // moved again since scheduled — newer pass will come
+function runRouting() {
+  const sig = layoutSignature();        // route the layout as it stands NOW (no stale abort)
+  if (sig === routeHash) return;
   const items = structuralEdges();
   const t0 = performance.now();
-  const router = new EdgeRouter(obstacleRects(), { cell: ROUTE.cell, clearWanted: ROUTE.clearWanted });
-  routeCache.clear();
-  // shortest first: short links lock in straight, long ones detour around them
-  items.sort((a, b) => spanOf(a) - spanOf(b));
-  for (const it of items) {
-    const { p1, d1, p2, d2 } = facingSides(it.ra, it.rb);
-    routeCache.set(it.id, router.route(p1, d1, p2, d2));
+  try {
+    const router = new EdgeRouter(obstacleRects(), { cell: ROUTE.cell, clearWanted: ROUTE.clearWanted });
+    routeCache.clear();
+    // shortest first: short links lock in straight, long ones detour around them
+    items.sort((a, b) => spanOf(a) - spanOf(b));
+    for (const it of items) {
+      const { p1, d1, p2, d2 } = facingSides(it.ra, it.rb);
+      routeCache.set(it.id, router.route(p1, d1, p2, d2));
+    }
+  } catch (err) {
+    setStatus(`route failed: ${err.message}`);   // surface instead of silently using beziers
+    return;
   }
   routeHash = sig;
   const dt = performance.now() - t0;
@@ -820,6 +833,17 @@ function wireNode(div, n) {
     div.querySelector(".dskey")?.addEventListener("change", (e) => { model.setDatasetKey(n.ref, e.target.value); autosave(); });
     div.querySelector(".dsstrip")?.addEventListener("change", (e) => { model.setDatasetStrip(n.ref, e.target.checked); autosave(); });
     div.querySelector(".dscase")?.addEventListener("change", (e) => { model.setDatasetCase(n.ref, e.target.checked); autosave(); });
+    div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(); });
+    const clearBtn = div.querySelector(".dsclear");
+    clearBtn?.addEventListener("click", async () => {
+      if (clearBtn.dataset.armed !== "1") {   // inline confirm (no blocking dialogs)
+        clearBtn.dataset.armed = "1"; clearBtn.textContent = "confirm?";
+        setTimeout(() => { clearBtn.dataset.armed = "0"; clearBtn.textContent = "clear data"; }, 2500);
+        return;
+      }
+      try { await api.clearDataset(model.profile.name, n.ref); refreshLive(); refreshOpenDatasetPanels(); setStatus(`cleared ${n.ref}`); }
+      catch (e) { setStatus(String(e.message || e)); }
+    });
   } else if (n.type === "region") {
     const fld = n.field;
     div.addEventListener("click", (ev) => {
@@ -889,6 +913,7 @@ function openDatasetPanel(ds) {
     <div class="prev-body ds-body"><p class="muted" style="padding:8px">loading…</p></div>`;
   $("gcanvases").appendChild(wrap);
   datasetPanels.set(ds, { wrap, body: wrap.querySelector(".ds-body") });
+  openDatasets.add(ds);
   savePositions();
   wrap.addEventListener("mousedown", () => selectPanel(wrap));      // click to select (wheel scrolls it)
   wrap.querySelector(".dsclose").addEventListener("click", () => closeDatasetPanel(ds));
@@ -903,7 +928,13 @@ function openDatasetPanel(ds) {
 function closeDatasetPanel(ds) {
   const e = datasetPanels.get(ds);
   if (e) { e.wrap.remove(); datasetPanels.delete(ds); }
+  openDatasets.delete(ds);
   savePositions();
+}
+
+// Refresh every open dataset panel — call after the data changes (precapture save, live).
+function refreshOpenDatasetPanels() {
+  for (const ds of datasetPanels.keys()) refreshDatasetPanel(ds);
 }
 
 async function refreshDatasetPanel(ds) {
@@ -994,7 +1025,7 @@ async function openPrecaptureModal() {
     else if (a === "resume") run(() => api.precapture.pause(game, false));
     else if (a === "cancel") run(() => api.precapture.cancel(game));
     else if (a === "reset") run(() => api.precapture.reset(game));
-    else if (a === "save") run(async () => { const r = await api.precapture.save(game); refreshLive(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
+    else if (a === "save") run(async () => { const r = await api.precapture.save(game); refreshLive(); refreshOpenDatasetPanels(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
   });
 
   await run(() => api.precapture.status(game));
@@ -1059,19 +1090,21 @@ function renderPrecap(node, st) {
     ${st.warning ? `<span class="conf-warn">⚠ ${esc(st.warning)}</span>` : ""}
     ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}`;
   if (!precapBusy) precapStopping = false;   // worker wound down -> clear the stopping state
-  node.querySelectorAll(".pc-opts input").forEach((i) => { i.disabled = recording; });
+  // while processing, ONLY pause/resume + cancel are interactable
+  const busyRun = processing || paused;
+  node.querySelectorAll(".pc-opts input").forEach((i) => { i.disabled = recording || busyRun; });
   const ctl = precapStopping
     ? `<button disabled>stopping…</button>`
     : `${recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>`
-                   : `<button data-act="record"><span class="ic ic-rec">●</span> record</button>`}
+                   : `<button data-act="record" ${busyRun ? "disabled" : ""}><span class="ic ic-rec">●</span> record</button>`}
        ${processing ? `<button data-act="pause">‖ pause</button>`
          : paused ? `<button data-act="resume">► resume</button>`
          : `<button data-act="process" ${canProcess ? "" : "disabled"}>▸ process${st.frames ? ` ${st.frames}` : ""}</button>`}
-       ${(processing || paused) ? `<button data-act="cancel" class="danger">cancel</button>` : ""}`;
+       ${busyRun ? `<button data-act="cancel" class="danger">cancel</button>` : ""}`;
   node.querySelector(".pc-ctl").innerHTML = `${ctl}
     <span class="spacer"></span>
-    <button data-act="save" ${(staged && !precapStopping) ? "" : "disabled"}><span class="ic ic-ok">⤓</span> save${staged ? ` ${staged}` : ""}</button>
-    <button data-act="reset">reset</button>`;
+    <button data-act="save" ${(staged && !precapStopping && !busyRun) ? "" : "disabled"}><span class="ic ic-ok">⤓</span> save${staged ? ` ${staged}` : ""}</button>
+    <button data-act="reset" ${busyRun ? "disabled" : ""}>reset</button>`;
   node.querySelector(".pc-fill").style.width = `${pct}%`;
   node.querySelector(".pc-data").innerHTML = (st.datasets || []).map(precapTable).join("")
     || '<p class="muted" style="padding:8px">no data staged yet — record some frames, then process</p>';
@@ -1747,6 +1780,9 @@ async function refreshLive() {
     const after = model.datasets();
     if (after.length !== before.size || after.some((d) => !before.has(d))) render();
     else updateDatasetNodes();
+    // an open data panel re-reads when its dataset's count changed
+    for (const ds of datasetPanels.keys())
+      if (map[ds] && prevPresent[ds] !== undefined && prevPresent[ds] !== map[ds].present) refreshDatasetPanel(ds);
   } catch { /* ignore */ }
 }
 
@@ -1788,8 +1824,10 @@ async function loadGame(name) {
   render();
   for (const winId of pendingOpenImages) if (model.window(winId)) openImage(winId);  // reopen saved images (canvas lives in node)
   const reopenPreviews = pendingOpenPreviews;
-  pendingOpenImages = []; pendingOpenPreviews = [];
+  const reopenDatasets = pendingOpenDatasets;
+  pendingOpenImages = []; pendingOpenPreviews = []; pendingOpenDatasets = [];
   for (const winId of reopenPreviews) if (model.window(winId)) createPreviewPanel(winId);
+  for (const ds of reopenDatasets) if (model.datasets().includes(ds)) openDatasetPanel(ds);
   resetHistory();   // fresh undo/redo baseline for this game
   refreshLive();
   setStatus(`loaded ${name}`);

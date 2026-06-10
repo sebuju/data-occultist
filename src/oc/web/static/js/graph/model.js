@@ -87,9 +87,23 @@ export class GraphModel {
 
   datasets() {
     const set = new Set(this.profile.windows.map((w) => this.datasetOf(w)));
+    (this.profile.datasets || []).forEach((d) => set.add(d.id));   // include standalone defs (clones)
     (this._extraDatasets || []).forEach((d) => set.add(d));
     return [...set];
   }
+
+  // duplicate a dataset's definition (key + options) under a fresh id; a window can
+  // then be wired to it
+  cloneDataset(id) {
+    const src = this.datasetDef(id) || { key_field: this.datasetKey(id), strip_nonalnum: false, case_sensitive: false };
+    let n = 2, newId = `${id}-copy`;
+    while (this.datasets().includes(newId)) newId = `${id}-copy${n++}`;
+    (this.profile.datasets = this.profile.datasets || []).push({
+      id: newId, key_field: src.key_field, strip_nonalnum: !!src.strip_nonalnum, case_sensitive: !!src.case_sensitive,
+    });
+    return newId;
+  }
+  removeDatasetDef(id) { this.profile.datasets = (this.profile.datasets || []).filter((d) => d.id !== id); }
 
   // ---- edit ops -----------------------------------------------------------
 

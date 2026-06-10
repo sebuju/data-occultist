@@ -115,9 +115,11 @@ export class EdgeRouter {
     const start = this._i(sx, sy), goal = this._i(gx, gy);
 
     const cells = this._astar(start, goal, sd);
-    let pts = cells.map((i) => this._center(i % this.cols, (i / this.cols) | 0));
-    pts = [p1, ...pts, p2];
-    pts = simplify(pts);
+    const centers = cells.map((i) => this._center(i % this.cols, (i / this.cols) | 0));
+    // slide each port along its own node edge so the exit/entry stub is dead straight
+    const a = alignPort(p1, d1, centers[0]);
+    const b = alignPort(p2, d2, centers[centers.length - 1]);
+    const pts = simplify([a, ...centers, b]);
     this._stamp(cells);
     return pts;
   }
@@ -169,6 +171,13 @@ export class EdgeRouter {
       }
     }
   }
+}
+
+// Keep the port on its node edge but slide it onto the first grid point's axis, so a
+// horizontal exit leaves at one y and a vertical exit at one x — no kinked stub.
+function alignPort(p, d, c) {
+  if (!c) return p;
+  return (d === "L" || d === "R") ? [p[0], c[1]] : [c[0], p[1]];
 }
 
 // Drop collinear midpoints so straight runs are single segments (neatness).

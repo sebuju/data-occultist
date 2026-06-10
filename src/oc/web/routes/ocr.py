@@ -1,13 +1,45 @@
-"""Switch the OCR engine between CPU and GPU at runtime."""
+"""Switch the OCR engine between CPU and GPU at runtime, persisted across restarts."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from fastapi import APIRouter
 
 from ...ocr.rapidocr_engine import cuda_available
-from ..deps import get_engine
+from ..deps import get_engine, get_settings
 
 router = APIRouter(prefix="/api/ocr", tags=["ocr"])
+
+
+def _device_file() -> Path:
+    return Path(get_settings().data_dir) / ".ocr_device"
+
+
+def _read_persisted() -> str | None:
+    try:
+        v = _device_file().read_text(encoding="utf-8").strip()
+        return v if v in ("cpu", "gpu") else None
+    except OSError:
+        return None
+
+
+def _write_persisted(device: str) -> None:
+    try:
+        p = _device_file()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(device, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def apply_persisted() -> None:
+    """Apply the persisted CPU/GPU choice to the engine — called at startup so the
+    selection survives reloads and restarts."""
+    dev = _read_persisted()
+    ocr = get_engine().ocr
+    if dev and hasattr(ocr, "set_device"):
+        ocr.set_device(dev == "gpu")
 
 
 def _state() -> dict:
@@ -25,4 +57,6 @@ def set_device(device: str):
     ocr = get_engine().ocr
     if hasattr(ocr, "set_device"):
         ocr.set_device(device == "gpu")
-    return _state()
+    state = _state()
+    _write_persisted(state["device"])
+    return state

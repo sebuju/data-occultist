@@ -30,7 +30,9 @@ def _warm() -> None:
         import numpy as np
 
         from .deps import get_engine
+        from .routes.ocr import apply_persisted
 
+        apply_persisted()   # restore the saved CPU/GPU choice before warming the model
         get_engine().ocr.read_image(np.zeros((32, 64, 3), dtype=np.uint8))
     except Exception:  # noqa: BLE001
         pass

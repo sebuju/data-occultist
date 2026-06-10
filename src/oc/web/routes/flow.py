@@ -66,6 +66,18 @@ def dataset_detail(game: str, dataset: str, limit: int = 200):
     return _detail(_store(game, dataset), dataset, limit)
 
 
+@router.post("/{game}/dataset/{dataset}/clear")
+def clear_dataset(game: str, dataset: str):
+    """Wipe a dataset's stored records + ledger (history/reverted/state files)."""
+    from pathlib import Path
+    base = Path(get_settings().data_dir) / game
+    for ext in ("history.jsonl", "reverted.json", "state.json"):
+        p = base / f"{dataset}.{ext}"
+        if p.exists():
+            p.unlink()
+    return {"dataset": dataset, "records": [], "batches": [], "history": []}
+
+
 @router.post("/{game}/dataset/{dataset}/revert")
 def revert_batch(game: str, dataset: str, batch: int, on: bool = True):
     """Revert (``on=true``) or restore a whole collection/save batch — every record it

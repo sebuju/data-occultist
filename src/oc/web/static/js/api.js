@@ -108,6 +108,13 @@ export const precapture = {
   status: (game) => fetch(`/api/precapture/${encodeURIComponent(game)}/status`).then((r) => r.json()),
 };
 
+// Wipe a dataset's stored records + ledger.
+export async function clearDataset(game, dataset) {
+  const r = await fetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/clear`, { method: "POST" });
+  if (!r.ok) throw new Error(`clear: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
 // Revert (on=true) or restore (on=false) a whole dataset batch. Returns refreshed
 // { records, batches }.
 export async function revertDatasetBatch(game, dataset, batch, on = true) {
