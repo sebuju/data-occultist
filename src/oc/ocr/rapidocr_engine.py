@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import glob
 import os
+import threading
 
 import numpy as np
 
@@ -12,6 +13,39 @@ from ..registry import register_ocr
 from ..types import OcrLine, PixelBox
 
 _CUDA_DLLS_REGISTERED = False
+_CUDA_SEARCH_PATCHED = False
+_BUILD_LOCK = threading.Lock()
+
+
+def _patch_cuda_conv_search() -> None:
+    """RapidOCR hard-codes the CUDA provider's ``cudnn_conv_algo_search`` to EXHAUSTIVE,
+    which benchmarks every cuDNN convolution algorithm on the first inference AND again
+    on every new input shape. OCR feeds the model many image sizes, so that's a
+    minute-plus stall up front and repeated stalls after — the GPU "is it broken?" hang.
+    Override it to HEURISTIC: it picks a good algorithm instantly, no benchmark sweep.
+
+    The option isn't exposed through RapidOCR's config, so patch the EP builder. No-op
+    if the internals move (best-effort)."""
+    global _CUDA_SEARCH_PATCHED
+    if _CUDA_SEARCH_PATCHED:
+        return
+    _CUDA_SEARCH_PATCHED = True
+    try:
+        from rapidocr_onnxruntime.utils import infer_engine as ie
+
+        orig = ie.OrtInferSession._get_ep_list
+        cuda_ep = ie.EP.CUDA_EP.value
+
+        def _get_ep_list(self):
+            eps = orig(self)
+            for name, opts in eps:
+                if name == cuda_ep and isinstance(opts, dict):
+                    opts["cudnn_conv_algo_search"] = "HEURISTIC"
+            return eps
+
+        ie.OrtInferSession._get_ep_list = _get_ep_list
+    except Exception:
+        pass
 
 
 def _register_cuda_dlls() -> None:
@@ -79,12 +113,18 @@ class RapidOcrEngine(OcrEngine):
 
     def _ensure_engine(self):
         if self._engine is None:
-            from rapidocr_onnxruntime import RapidOCR
+            # Build under a lock: the startup warmup thread and a first real request can
+            # both arrive here with _engine None and would otherwise build two CUDA
+            # sessions at once (slow contention). Double-checked so the warm path is free.
+            with _BUILD_LOCK:
+                if self._engine is None:
+                    from rapidocr_onnxruntime import RapidOCR
 
-            opts = dict(self._options)
-            if self._gpu:   # CUDA for detection, recognition and angle classification
-                opts.update(det_use_cuda=True, rec_use_cuda=True, cls_use_cuda=True)
-            self._engine = RapidOCR(**opts)
+                    opts = dict(self._options)
+                    if self._gpu:   # CUDA for detection, recognition and angle classification
+                        _patch_cuda_conv_search()   # before any CUDA session is built
+                        opts.update(det_use_cuda=True, rec_use_cuda=True, cls_use_cuda=True)
+                    self._engine = RapidOCR(**opts)
         return self._engine
 
     def read_line(self, image: np.ndarray) -> tuple[str, float]:
