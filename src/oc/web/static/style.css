@@ -475,7 +475,7 @@ a.node.win:hover { border-color: var(--accent); }
    tables never blow the node up. ONE look + ONE behaviour, no per-kind panel code. */
 .gnode.dataset, .gnode.preview, .gnode.batches { width: max-content; }
 .nodehost { margin-top: 6px; overflow: auto; resize: both; min-width: 200px; min-height: 80px;
-  width: 320px; height: 280px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  width: 320px; height: 280px; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px 4px; }
 .prev-host, .data-host { width: 340px; }
 /* batches sub-layout: ledger list on top, selected-batch contents + preview below */
 .bat-host { display: flex; flex-direction: column; gap: 8px; width: 360px; height: 360px; }

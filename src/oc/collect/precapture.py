@@ -40,6 +40,7 @@ from ..profile.models import GameProfile, WindowDef
 from ..store import DatasetStore
 from ..store.dataset_store import norm_key
 from ..types import Frame, FractionBox, PixelBox
+from ..capture.mss_backend import MssCaptureBackend
 from .collector import _load_cutouts
 from .reader import RegionReader
 
@@ -117,6 +118,11 @@ class PrecaptureSession:
         self._reader = RegionReader(engine.ocr, resolver, cutouts=_load_cutouts(engine, profile))
         self._anchor_fracs = _anchor_boxes(profile)
         self._dir = Path(engine.settings.captures_dir) / _safe(profile.name) / "precapture"
+        # Recording copies pixels straight off the composited desktop (mss) instead of
+        # the engine's window capture: PrintWindow forces the game to re-render its whole
+        # surface every grab and tanks its frame rate. mss just reads what's already on
+        # screen (WindowInfo.client is absolute screen px) — near-zero game impact.
+        self._screen = MssCaptureBackend()
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -185,12 +191,29 @@ class PrecaptureSession:
             target=self._record_loop, args=(max_frames, interval_ms / 1000.0), daemon=True)
         self._thread.start()
 
+    def _pick_grab(self, win):
+        """Choose the capture path once per run. Prefer the cheap desktop copy (mss),
+        which doesn't disturb the game; fall back to the engine's window capture
+        (PrintWindow) only if mss comes back black — exclusive-fullscreen or a fully
+        occluded window, where a desktop copy can't see the game."""
+        try:
+            f = self._screen.grab_window(win)
+            if f.image is not None and f.image.size and int(f.image.max()) > 8:
+                return self._screen.grab_window
+        except Exception:
+            pass
+        return self._engine.capture.grab_window
+
     def _record_loop(self, max_frames: int, interval: float) -> None:
-        eng = self._engine
         last_thumb: np.ndarray | None = None
-        # Floor the per-iteration delay so a static screen (every frame a duplicate)
-        # can't spin the CPU and starve the web server — caps capture at ~30 fps.
-        delay = max(interval, 0.03)
+        # Capture FAST only while the screen is actually changing (scrolling); once it's
+        # been static for a couple of grabs, back off to a gentle poll — saves needless
+        # desktop copies + diff work, and on the PrintWindow fallback path keeps it from
+        # battering the game. A user-set interval is the floor for both rates.
+        fast = max(interval, 0.03)
+        idle = max(interval, 0.5)
+        misses = 0
+        grab = None                           # chosen once, on the first located window
         try:
             while not self._stop.is_set():
                 with self._lock:
@@ -202,7 +225,9 @@ class PrecaptureSession:
                 if win is None:
                     time.sleep(0.3)           # no window: back off, don't hammer the scan
                     continue
-                frame = eng.capture.grab_window(win)
+                if grab is None:
+                    grab = self._pick_grab(win)
+                frame = grab(win)
                 thumb = _thumb(frame.image)
                 if last_thumb is None or _changed_cells(thumb, last_thumb) >= _THUMB_MIN_CELLS:
                     ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
@@ -217,7 +242,11 @@ class PrecaptureSession:
                             (self._dir / f"{idx:05d}.jpg").write_bytes(data)
                         except OSError:
                             pass
-                time.sleep(delay)             # always yield — no tight loop on duplicates
+                    misses = 0                # screen moving -> keep grabbing fast
+                else:
+                    misses += 1               # static -> ease off after a couple of dupes
+                # wait ON the stop event so cancel is instant even mid idle-poll
+                self._stop.wait(fast if misses < 2 else idle)
         except Exception as exc:  # pragma: no cover - defensive
             with self._lock:
                 self._error = str(exc)

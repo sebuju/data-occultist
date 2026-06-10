@@ -753,8 +753,8 @@ function drawEdges() {
   drawSig = ROUTE.enabled ? linksSig(links) : "";
   for (const l of links) {
     const layer = l.top ? top : svg;
-    const pts = routeCache.get(l.key);   // routed polyline if ready; bezier fallback otherwise
-    if (pts && pts.length >= 2) addPolyline(layer, pts, l.cls);
+    const c = routeCache.get(l.key);     // routed polyline if ready; bezier fallback otherwise
+    if (c && c.pts.length >= 2) addPolyline(layer, c.pts, l.cls);
     else addDirEdge(layer, l.p1[0], l.p1[1], l.d1, l.p2[0], l.p2[1], l.d2, l.cls);
   }
   if (wire) addEdge(svg, wire.x1, wire.y1, wire.x2, wire.y2, "gedge wire");
@@ -778,12 +778,12 @@ const ROUTE = {
 // (e.g. after flipping __route.corners to "square").
 if (typeof window !== "undefined") {
   window.__route = ROUTE;
-  window.__reroute = () => { routeHash = ""; drawEdges(); };
+  window.__reroute = () => { routeCache = new Map(); routeHash = ""; drawEdges(); };   // force a full recompute
 }
 
 const SVGNS = "http://www.w3.org/2000/svg";
-const routeCache = new Map();   // edgeId -> [ [x,y], ... ]  (polyline)
-let routeHash = "";             // layout signature the cache was built for
+let routeCache = new Map();     // link key -> { pts:[[x,y]…], sig } (sig = its own deps)
+let routeHash = "";             // global layout signature of the last pass (cheap change gate)
 let routeTimer = null;
 
 // Everything physical is an obstacle: nodes AND panels. Lines weave around all of
