@@ -19,10 +19,12 @@ and when a window's *data area* is identical we reuse its last read.
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
@@ -127,6 +129,7 @@ class PrecaptureSession:
         self._processed = 0
         self._read = 0          # records read this run (above the confidence floor)
         self._no_key = 0        # records dropped because they had no value under the dataset key
+        self._t_decode = self._t_classify = self._t_read = 0.0   # perf accumulators (s)
         self._t0 = 0.0
         self._error: str | None = None
         self._rehydrate()
@@ -235,6 +238,7 @@ class PrecaptureSession:
             self._no_key = 0
             self._staged = {}
             self._error = None
+            self._t_decode = self._t_classify = self._t_read = 0.0   # perf accumulators (s)
             self._stop.clear()
             self._pause.clear()
             self._t0 = time.monotonic()
@@ -259,8 +263,11 @@ class PrecaptureSession:
             while self._pause.is_set() and not self._stop.is_set():
                 time.sleep(0.05)
 
+            dt_decode = dt_classify = dt_read = 0.0
             try:
+                t = time.perf_counter()
                 img = cv2.imdecode(np.frombuffer(buf, np.uint8), cv2.IMREAD_COLOR)
+                dt_decode = time.perf_counter() - t
                 if img is None:
                     raise ValueError("undecodable frame")
                 frame = Frame(image=img, client=PixelBox(0, 0, cw or img.shape[1], ch or img.shape[0]))
@@ -269,14 +276,18 @@ class PrecaptureSession:
                 if asig is not None and asig == last_anchor_sig:
                     match = last_match
                 else:
+                    t = time.perf_counter()
                     match = eng.classifier.classify(frame, self._profile)
+                    dt_classify = time.perf_counter() - t
                     last_anchor_sig, last_match = asig, match
 
                 if match is not None:
                     window_id, state_id = match
                     window = self._profile.window(window_id)
                     if window is not None and self._state_allows_save(window, state_id):
+                        t = time.perf_counter()
                         records = self._read_cached(frame, window, last_data_sig, last_records)
+                        dt_read = time.perf_counter() - t
                         self._stage(window, [r for r in records if r.confidence >= floor])
             except Exception as exc:   # a bad frame must never stall the whole run
                 errors += 1
@@ -285,10 +296,14 @@ class PrecaptureSession:
 
             with self._lock:
                 self._processed += 1
+                self._t_decode += dt_decode
+                self._t_classify += dt_classify
+                self._t_read += dt_read
             time.sleep(0)   # yield the GIL so the web server services status/cancel promptly
 
         with self._lock:
             self._phase = Phase.done
+        self._log_perf(errors)
 
     def _read_cached(self, frame: Frame, window: WindowDef, last_sig: dict, last_recs: dict) -> list:
         sig = self._reader.region_signature(frame, window)
@@ -394,6 +409,34 @@ class PrecaptureSession:
 
     # ---- status ------------------------------------------------------------
 
+    def _timing_locked(self) -> dict:
+        """Per-frame OCR-pipeline timings (ms) + the OCR device — so the current speed
+        is visible and runs are comparable for regressions."""
+        n = max(1, self._processed)
+        return {
+            "device": getattr(self._engine.ocr, "device", "cpu"),
+            "ms_per_frame": round(1000 * (self._t_decode + self._t_classify + self._t_read) / n, 1),
+            "decode_ms": round(1000 * self._t_decode / n, 1),
+            "classify_ms": round(1000 * self._t_classify / n, 1),
+            "read_ms": round(1000 * self._t_read / n, 1),
+        }
+
+    def _log_perf(self, errors: int) -> None:
+        """Append a perf record so speed is tracked across runs (regression history)."""
+        with self._lock:
+            rec = {
+                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "frames": len(self._frames), "processed": self._processed,
+                "read": self._read, "errors": errors, **self._timing_locked(),
+            }
+        try:
+            path = Path(self._engine.settings.data_dir) / _safe(self._profile.name) / "precapture_perf.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec) + "\n")
+        except OSError:
+            pass
+
     def _warning(self) -> str | None:
         """A human hint when records were read but nothing got staged — almost always a
         dataset key that doesn't match any field."""
@@ -424,6 +467,7 @@ class PrecaptureSession:
                 "processed": self._processed,
                 "read": self._read,
                 "fps": round(fps, 1),
+                "timing": self._timing_locked(),
                 "error": self._error,
                 "warning": self._warning(),
                 "datasets": datasets,

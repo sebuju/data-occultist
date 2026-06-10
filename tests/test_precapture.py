@@ -173,6 +173,17 @@ def test_one_bad_frame_does_not_stop_the_run(tmp_path):
     assert st["error"] and "failed" in st["error"]
 
 
+def test_processing_records_timing_and_perf_log(tmp_path):
+    recs = [Record(values={"item_name": "Adra"}, confidence=0.9)]
+    s = _session(tmp_path, recs)
+    s._process_loop([_jpeg(1), _jpeg(2)], 80, 60)
+    t = s.status()["timing"]
+    assert set(t) >= {"device", "ms_per_frame", "decode_ms", "classify_ms", "read_ms"}
+    assert t["device"] == "cpu"
+    perf = tmp_path / "data" / "testgame" / "precapture_perf.jsonl"
+    assert perf.exists() and "ms_per_frame" in perf.read_text(encoding="utf-8")
+
+
 def test_cancel_stops_processing(tmp_path):
     recs = [Record(values={"item_name": "Adra"}, confidence=0.9)]
     s = _session(tmp_path, recs)

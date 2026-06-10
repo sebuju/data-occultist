@@ -886,7 +886,7 @@ function renderPrecap(node, st) {
     if (phase === "recording") log("precapture: recording…", "run");
     else if (phase === "recorded") log(`precapture: recorded ${st.frames} frames`, "ok");
     else if (phase === "processing") log("precapture: processing…", "run");
-    else if (phase === "done") log(`precapture: processed ${st.processed}/${st.frames} frames in ~${fmtDur(1000 * st.processed / Math.max(0.1, st.fps))} · ${st.fps}/s`, "ok");
+    else if (phase === "done") { const t = st.timing || {}; log(`precapture done: ${st.processed} frames · ${t.ms_per_frame || 0} ms/frame on ${t.device || "cpu"} (decode ${t.decode_ms || 0} · classify ${t.classify_ms || 0} · read ${t.read_ms || 0}) · ${st.fps}/s · ${st.read || 0} rows read`, "ok"); }
     else if (phase === "cancelled") log("precapture: cancelled", "warn");
     else if (phase === "saved") log("precapture: saved", "ok");
     precapLastPhase = phase;
@@ -912,9 +912,11 @@ function renderPrecap(node, st) {
       <div class="pc-data"></div>`;
   }
 
+  const tm = st.timing || {};
   node.querySelector(".pc-bar").innerHTML = `
     <span class="pc-phase pc-${phase}">${esc(phase)}</span>
     <span class="muted">${st.frames} frames · ${st.processed} processed · ${st.read || 0} read · ${st.fps} /s</span>
+    ${st.processed ? `<span class="muted">· ${tm.ms_per_frame || 0} ms/frame (${esc(tm.device || "cpu")})</span>` : ""}
     ${st.warning ? `<span class="conf-warn">⚠ ${esc(st.warning)}</span>` : ""}
     ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}`;
   if (!precapBusy) precapStopping = false;   // worker wound down -> clear the stopping state
