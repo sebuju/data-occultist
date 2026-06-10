@@ -6,17 +6,18 @@ Files (under ``data/<game>/``):
   * ``<dataset>.state.json``    — derived snapshot cache (current keyed records)
 
 The ledger is authoritative: the current state is the result of REPLAYING every
-non-reverted event in order. ``record_seen`` appends adds/updates live; ``reconcile``
-appends removals only when handed the keys from a *complete* pass. ``revert`` marks an
-event reverted and rebuilds the state, so the affected record falls back to its
-previous accepted value (or disappears if the reverted event was its only add).
+non-reverted event in order. Events are grouped into **batches** (one collection/save
+run), so the ledger reads as a short list of runs the user can revert wholesale, not a
+flood of per-row events.
 
-Generic by construction: the key field and record shape come from the profile.
+The dataset owns how its key is normalised for dedup (``strip_nonalnum`` /
+``case_sensitive``) — set on the DatasetDef and passed in here.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,10 +29,17 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _norm_key(value) -> str | None:
+def norm_key(value, strip_nonalnum: bool = False, case_sensitive: bool = False) -> str | None:
+    """Normalise a value into a dedup key. Always trims; optionally strips everything
+    but letters/digits and/or preserves case."""
     if value in (None, ""):
         return None
-    return str(value).strip().lower()
+    s = str(value).strip()
+    if strip_nonalnum:
+        s = re.sub(r"[^0-9A-Za-z]", "", s)
+    if not case_sensitive:
+        s = s.lower()
+    return s or None
 
 
 def replay(events: list[ChangeEvent], reverted: set[int]) -> dict[str, dict]:
@@ -68,6 +76,8 @@ class DatasetStore:
         game: str,
         dataset: str,
         key_field: str,
+        strip_nonalnum: bool = False,
+        case_sensitive: bool = False,
         clock: Callable[[], str] = _utcnow_iso,
     ) -> None:
         base = Path(data_dir) / game
@@ -75,10 +85,13 @@ class DatasetStore:
         self._reverted_path = base / f"{dataset}.reverted.json"
         self._state_path = base / f"{dataset}.state.json"
         self._key_field = key_field
+        self._strip = strip_nonalnum
+        self._case = case_sensitive
         self._clock = clock
         self._events: list[ChangeEvent] = []
         self._reverted: set[int] = set()
         self._next_id = 1
+        self._batch = 0
         self._state: dict[str, dict] = {}
         self._load()
 
@@ -93,6 +106,7 @@ class DatasetStore:
         if self._reverted_path.exists():
             self._reverted = set(json.loads(self._reverted_path.read_text(encoding="utf-8")))
         self._next_id = 1 + max((e.id for e in self._events), default=0)
+        self._batch = max((e.batch for e in self._events), default=0)
         self._state = replay(self._events, self._reverted)
 
     def save(self) -> None:
@@ -113,17 +127,23 @@ class DatasetStore:
         self._reverted_path.write_text(json.dumps(sorted(self._reverted)), encoding="utf-8")
 
     def _new_event(self, op: ChangeOp, key: str, values: dict, changed: dict | None = None) -> ChangeEvent:
-        ev = ChangeEvent(self._clock(), op, key, values, changed or {}, id=self._next_id)
+        ev = ChangeEvent(self._clock(), op, key, values, changed or {}, id=self._next_id, batch=self._batch)
         self._next_id += 1
         self._append(ev)
         return ev
+
+    def begin_batch(self) -> int:
+        """Start a new batch; subsequent ``record_seen``/``reconcile`` events belong to it.
+        One run (a precapture save, a collection pass) = one revertable batch."""
+        self._batch += 1
+        return self._batch
 
     # ---- mutation ----------------------------------------------------------
 
     def record_seen(self, values: dict) -> ChangeEvent | None:
         """Register a confirmed record. Logs an add or a field update; returns the
         event, or ``None`` if nothing changed (record already known and identical)."""
-        key = _norm_key(values.get(self._key_field))
+        key = norm_key(values.get(self._key_field), self._strip, self._case)
         if key is None:
             return None
         entry = self._state.get(key)
@@ -156,8 +176,8 @@ class DatasetStore:
     def reconcile(self, present_keys: set[str]) -> list[ChangeEvent]:
         """Mark stored keys absent from a *complete* pass as removed.
 
-        ``present_keys`` must already be normalised (lowercased/stripped). Only call
-        when confident the pass saw the whole dataset, else occlusion logs false removals.
+        ``present_keys`` must already be normalised. Only call when confident the pass
+        saw the whole dataset, else occlusion logs false removals.
         """
         events: list[ChangeEvent] = []
         for key, entry in self._state.items():
@@ -170,24 +190,56 @@ class DatasetStore:
 
     # ---- ledger / revert ---------------------------------------------------
 
-    def set_reverted(self, event_id: int, reverted: bool = True) -> None:
-        """Revert (or un-revert) one event, then rebuild the state from the ledger so
-        the affected record falls back to its previous accepted value."""
-        if reverted:
-            self._reverted.add(int(event_id))
-        else:
-            self._reverted.discard(int(event_id))
+    def _apply_reverted(self) -> None:
         self._save_reverted()
         self._state = replay(self._events, self._reverted)
         self.save()
 
+    def set_reverted(self, event_id: int, reverted: bool = True) -> None:
+        """Revert (or un-revert) a single event."""
+        self._reverted.add(int(event_id)) if reverted else self._reverted.discard(int(event_id))
+        self._apply_reverted()
+
+    def revert_batch(self, batch: int, reverted: bool = True) -> None:
+        """Revert (or restore) a whole batch — every record it added/changed falls back
+        to its previous accepted value."""
+        ids = {e.id for e in self._events if e.batch == int(batch)}
+        if reverted:
+            self._reverted |= ids
+        else:
+            self._reverted -= ids
+        self._apply_reverted()
+
     def history(self, limit: int = 50) -> list[dict]:
-        """Ledger entries newest-first, each annotated with whether it's reverted."""
+        """Individual ledger events newest-first, each flagged reverted."""
         out = []
         for ev in reversed(self._events[-limit:] if limit else self._events):
             d = ev.to_dict()
             d["reverted"] = ev.id in self._reverted
             out.append(d)
+        return out
+
+    def batches(self, limit: int = 50) -> list[dict]:
+        """The ledger as runs, newest-first: counts + a key sample, with a reverted flag
+        (true when every event in the run is reverted)."""
+        groups: dict[int, list[ChangeEvent]] = {}
+        for ev in self._events:
+            groups.setdefault(ev.batch, []).append(ev)
+        out = []
+        for batch in sorted(groups, reverse=True)[:limit]:
+            evs = groups[batch]
+            adds = sum(1 for e in evs if e.op is ChangeOp.add)
+            updates = sum(1 for e in evs if e.op is ChangeOp.update)
+            removes = sum(1 for e in evs if e.op is ChangeOp.remove)
+            out.append({
+                "batch": batch,
+                "started": evs[0].ts,
+                "ts": evs[-1].ts,
+                "count": len(evs),
+                "adds": adds, "updates": updates, "removes": removes,
+                "reverted": all(e.id in self._reverted for e in evs),
+                "keys": [e.key for e in evs[:8]],
+            })
         return out
 
     # ---- queries -----------------------------------------------------------
@@ -204,4 +256,4 @@ class DatasetStore:
         return rows[:limit]
 
     def normalize_key(self, value) -> str | None:
-        return _norm_key(value)
+        return norm_key(value, self._strip, self._case)

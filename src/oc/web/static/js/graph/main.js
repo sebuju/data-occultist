@@ -7,6 +7,7 @@ import { openModal } from "../modal.js";
 import { Overlay } from "../overlay.js";
 import { log, timed, fmtDur } from "../log.js";
 import { GraphModel } from "./model.js";
+import { EdgeRouter, polylinePath } from "./route.js";
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (m) => { $("status").textContent = m; log(m); };
@@ -156,6 +157,7 @@ const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text
 
 function elForPos(id) {
   if (id.startsWith("prev:")) return previewPanels.get(id.slice(5))?.wrap;
+  if (id.startsWith("dsp:")) return datasetPanels.get(id.slice(4))?.wrap;
   return nodeEls.get(id);   // image canvas lives inside its window node now
 }
 
@@ -390,11 +392,13 @@ function nodeParts(n) {
   const fids = model.datasetFields(ds);
   const keyOpts = (fids.includes(key) ? fids : [key, ...fids]).map((f) => `<option ${f === key ? "selected" : ""}>${esc(f)}</option>`).join("");
   return {
-    title: `${esc(ds)}`,
+    title: `<input class="gi gi-id dsrename" value="${esc(ds)}" title="dataset name" />`,
     body: `<div class="big">${d.present}<span class="muted"> / ${d.total}</span></div>
       <div class="muted">${d.last_op ? esc(d.last_op) : "—"} ${d.last_ts ? esc(d.last_ts.slice(11)) : ""}</div>
-      <label class="flab" title="field whose value identifies a row — reads with the same value merge">key field <select class="dskey">${keyOpts}</select></label>
-      <div class="gn-foot"><button class="dsdata">📊 data</button></div>`,
+      <label class="flab" title="field whose value identifies a row — reads with the same value merge">key <select class="dskey">${keyOpts}</select></label>
+      <label class="flab" title="ignore spaces/punctuation when matching keys">strip non-alnum <input type="checkbox" class="dsstrip" ${model.datasetStrip(ds) ? "checked" : ""}></label>
+      <label class="flab" title="treat keys differing only in case as distinct">case sensitive <input type="checkbox" class="dscase" ${model.datasetCase(ds) ? "checked" : ""}></label>
+      <div class="gn-foot"><button class="dsdata">▤ data</button></div>`,
     ports: `<span class="port in"></span>`,
   };
 }
@@ -594,19 +598,23 @@ function addDirEdge(svg, x1, y1, d1, x2, y2, d2, cls) {
   svg.appendChild(path);
 }
 
-// Connect two rectangles on their closest-facing sides (shortest centre axis),
-// tangents pointing outward from each side. For non-editable edges.
-function connectRects(svg, ra, rb, cls) {
+// Closest-facing sides of two rects (shortest centre axis): the port point and
+// outward direction (L/R/T/B) on each. Shared by the bezier draw and the router.
+function facingSides(ra, rb) {
   const acx = ra.x + ra.w / 2, acy = ra.y + ra.h / 2, bcx = rb.x + rb.w / 2, bcy = rb.y + rb.h / 2;
   const dx = bcx - acx, dy = bcy - acy;
-  let p1, d1, p2, d2;
   if (Math.abs(dx) >= Math.abs(dy)) {
-    if (dx >= 0) { p1 = [ra.x + ra.w, acy]; d1 = "R"; p2 = [rb.x, bcy]; d2 = "L"; }
-    else { p1 = [ra.x, acy]; d1 = "L"; p2 = [rb.x + rb.w, bcy]; d2 = "R"; }
-  } else {
-    if (dy >= 0) { p1 = [acx, ra.y + ra.h]; d1 = "B"; p2 = [bcx, rb.y]; d2 = "T"; }
-    else { p1 = [acx, ra.y]; d1 = "T"; p2 = [bcx, rb.y + rb.h]; d2 = "B"; }
+    if (dx >= 0) return { p1: [ra.x + ra.w, acy], d1: "R", p2: [rb.x, bcy], d2: "L" };
+    return { p1: [ra.x, acy], d1: "L", p2: [rb.x + rb.w, bcy], d2: "R" };
   }
+  if (dy >= 0) return { p1: [acx, ra.y + ra.h], d1: "B", p2: [bcx, rb.y], d2: "T" };
+  return { p1: [acx, ra.y], d1: "T", p2: [bcx, rb.y + rb.h], d2: "B" };
+}
+
+// Connect two rectangles on their closest-facing sides, tangents pointing outward.
+// Direct bezier — the immediate, always-responsive fallback before a route exists.
+function connectRects(svg, ra, rb, cls) {
+  const { p1, d1, p2, d2 } = facingSides(ra, rb);
   addDirEdge(svg, p1[0], p1[1], d1, p2[0], p2[1], d2, cls);
 }
 const nodeRect = (id) => { const p = pos.get(id); return p && { x: p.x, y: p.y, w: nw(id), h: nh(id) }; };
@@ -634,10 +642,12 @@ function boxWorldRect(winId, frac) {
   return { x: wp.x + cv.offsetLeft + frac.x * cw, y: wp.y + cv.offsetTop + frac.y * ch, w: frac.w * cw, h: frac.h * ch };
 }
 
+let drawSig = "";   // layout signature for THIS draw (drawNodeEdge checks it vs the cache)
 function drawEdges() {
   const svg = $("gedges");        // structural edges (behind nodes)
   const top = $("gedges-top");    // attach/panel lines (over the image)
   svg.innerHTML = ""; top.innerHTML = "";
+  drawSig = ROUTE.enabled ? layoutSignature() : "";
   const selCls = (e) => (selectedNodeId && (e.from === selectedNodeId || e.to === selectedNodeId)) ? " sel" : "";
   for (const e of model.edges()) {
     const a = pos.get(e.from), b = pos.get(e.to);
@@ -654,8 +664,9 @@ function drawEdges() {
     }
     if (!a || !b) continue;
     const sel = selCls(e);
-    // non-editable structural edge: closest-facing sides, correct start direction
-    connectNodes(sel ? top : svg, e.from, e.to, `gedge ${e.kind}${sel}`);  // sel -> top layer
+    // non-editable structural edge: pathfound route if one is cached & current,
+    // else a direct bezier (stays live while dragging; route snaps in on settle)
+    drawNodeEdge(sel ? top : svg, e, `gedge ${e.kind}${sel}`);  // sel -> top layer
   }
   // image is part of the window node. window node -> its open preview panel
   for (const [winId, prev] of previewPanels) {
@@ -667,6 +678,104 @@ function drawEdges() {
     connectRects(top, wr, pr, "gedge img");
   }
   if (wire) addEdge(svg, wire.x1, wire.y1, wire.x2, wire.y2, "gedge wire");
+  scheduleRouting();
+}
+
+// ---- deferred line routing ------------------------------------------------
+// Pathfinding runs OFF the drag loop: drawEdges() paints direct beziers instantly
+// and asks for a route; the actual A* fires once movement settles (debounced), then
+// repaints with neat routed paths. Routes are cached by layout signature, so a pass
+// where nothing moved is a no-op.
+const ROUTE = {
+  enabled: true,
+  corners: "curve",   // "curve" | "square" — internal toggle (window.__route.corners)
+  cell: 18,           // grid resolution (world px)
+  clearWanted: 3,     // cells of breathing room a line prefers around nodes
+  radius: 14,         // corner rounding for "curve"
+  debounce: 90,       // ms of stillness before routing
+};
+if (typeof window !== "undefined") window.__route = ROUTE;   // internal tweak handle
+
+const SVGNS = "http://www.w3.org/2000/svg";
+const routeCache = new Map();   // edgeId -> [ [x,y], ... ]  (polyline)
+let routeHash = "";             // layout signature the cache was built for
+let routeTimer = null;
+
+// Structural node→node edges (the ones that get routed; image-attach lines don't).
+function structuralEdges() {
+  const out = [];
+  for (const e of model.edges()) {
+    if ((e.kind === "field" || e.kind === "anchor" || e.kind === "scrollbar") && imageCanvases.has(e.from.slice(4))) continue;
+    const ra = nodeRect(e.from), rb = nodeRect(e.to);
+    if (ra && rb) out.push({ id: `${e.from} ${e.to}`, ra, rb });
+  }
+  return out;
+}
+
+// Every positioned node is an obstacle (lines weave around all of them, not just
+// the two they connect).
+function obstacleRects() {
+  const out = [];
+  for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) out.push(r); }
+  return out;
+}
+
+// Signature of the whole layout: any node move/resize changes it and invalidates
+// every cached route (a moved node can reshape a route it isn't even an endpoint of).
+function layoutSignature() {
+  let s = `${ROUTE.cell}:${ROUTE.clearWanted}:`;
+  for (const n of model.nodes()) {
+    const r = nodeRect(n.id);
+    if (r) s += `${n.id}${r.x},${r.y},${r.w},${r.h};`;
+  }
+  return s;
+}
+
+function drawNodeEdge(layer, e, cls) {
+  const pts = routeHash === drawSig && routeCache.has(`${e.from} ${e.to}`)
+    ? routeCache.get(`${e.from} ${e.to}`) : null;
+  if (pts) addPolyline(layer, pts, cls);
+  else connectNodes(layer, e.from, e.to, cls);
+}
+
+function addPolyline(svg, pts, cls) {
+  if (!pts || pts.length < 2) return;
+  const path = document.createElementNS(SVGNS, "path");
+  path.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
+  path.setAttribute("class", cls);
+  svg.appendChild(path);
+}
+
+function scheduleRouting() {
+  if (!ROUTE.enabled) return;
+  const sig = drawSig || layoutSignature();
+  if (sig === routeHash) return;       // routes already current
+  clearTimeout(routeTimer);
+  routeTimer = setTimeout(() => runRouting(sig), ROUTE.debounce);
+}
+
+function runRouting(sig) {
+  if (sig !== layoutSignature()) return;   // moved again since scheduled — newer pass will come
+  const items = structuralEdges();
+  const t0 = performance.now();
+  const router = new EdgeRouter(obstacleRects(), { cell: ROUTE.cell, clearWanted: ROUTE.clearWanted });
+  routeCache.clear();
+  // shortest first: short links lock in straight, long ones detour around them
+  items.sort((a, b) => spanOf(a) - spanOf(b));
+  for (const it of items) {
+    const { p1, d1, p2, d2 } = facingSides(it.ra, it.rb);
+    routeCache.set(it.id, router.route(p1, d1, p2, d2));
+  }
+  routeHash = sig;
+  const dt = performance.now() - t0;
+  setStatus(`routed ${items.length} line${items.length === 1 ? "" : "s"} in ${fmtDur(dt)}`);
+  drawEdges();
+}
+
+function spanOf(it) {
+  const ax = it.ra.x + it.ra.w / 2, ay = it.ra.y + it.ra.h / 2;
+  const bx = it.rb.x + it.rb.w / 2, by = it.rb.y + it.rb.h / 2;
+  return Math.abs(bx - ax) + Math.abs(by - ay);
 }
 
 // ---- per-node interaction -------------------------------------------------
@@ -704,8 +813,13 @@ function wireNode(div, n) {
     wireWindowControls(div, n);
     div.querySelector(".port.out").addEventListener("mousedown", (ev) => startWire(n.ref.id, ev));
   } else if (n.type === "dataset") {
-    div.querySelector(".dsdata")?.addEventListener("click", () => openDataModal(n.ref));
+    div.querySelector(".dsrename")?.addEventListener("change", (e) => {
+      if (model.renameDataset(n.ref, e.target.value)) { render(); autosave(); } else e.target.value = n.ref;
+    });
+    div.querySelector(".dsdata")?.addEventListener("click", () => openDatasetPanel(n.ref));
     div.querySelector(".dskey")?.addEventListener("change", (e) => { model.setDatasetKey(n.ref, e.target.value); autosave(); });
+    div.querySelector(".dsstrip")?.addEventListener("change", (e) => { model.setDatasetStrip(n.ref, e.target.checked); autosave(); });
+    div.querySelector(".dscase")?.addEventListener("change", (e) => { model.setDatasetCase(n.ref, e.target.checked); autosave(); });
   } else if (n.type === "region") {
     const fld = n.field;
     div.addEventListener("click", (ev) => {
@@ -760,55 +874,80 @@ function wireNode(div, n) {
   }
 }
 
-// ---- modals ---------------------------------------------------------------
+// ---- dataset panel (records + batch ledger; a floating panel like the preview) ----
 
-const OP_COLOR = { add: "#7ddc7d", update: "#e6c25a", remove: "#e6685a" };
+const datasetPanels = new Map();   // ds -> { wrap, body }
 
-async function openDataModal(ds) {
-  const node = document.createElement("div");
-  node.innerHTML = `<p class="muted" style="padding:12px">loading…</p>`;
-  openModal({ title: `dataset: ${ds}`, size: "data", node });
-  try {
-    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
-    renderData(node, ds, await r.json());
-  } catch (e) {
-    node.innerHTML = `<p class="muted" style="padding:12px">${esc(String(e))}</p>`;
-  }
+function openDatasetPanel(ds) {
+  const open = datasetPanels.get(ds);
+  if (open) { selectPanel(open.wrap); refreshDatasetPanel(ds); return; }
+  const wrap = document.createElement("div");
+  wrap.className = "imgpanel prevpanel dspanel";
+  wrap.id = `dspanel-${ds}`;
+  wrap.innerHTML = `<div class="imgpanel-h">◉ ${esc(ds)} data
+      <span class="spacer"></span><button class="dsrefresh">refresh</button><button class="dsclose">×</button></div>
+    <div class="prev-body ds-body"><p class="muted" style="padding:8px">loading…</p></div>`;
+  $("gcanvases").appendChild(wrap);
+  datasetPanels.set(ds, { wrap, body: wrap.querySelector(".ds-body") });
+  savePositions();
+  wrap.addEventListener("mousedown", () => selectPanel(wrap));      // click to select (wheel scrolls it)
+  wrap.querySelector(".dsclose").addEventListener("click", () => closeDatasetPanel(ds));
+  wrap.querySelector(".dsrefresh").addEventListener("click", () => refreshDatasetPanel(ds));
+  wrap.querySelector(".imgpanel-h").addEventListener("mousedown", (ev) => startPanelDrag("dsp", ds, ev));
+  applyPanelSize(`dsp:${ds}`, wrap);
+  observePanelSize(`dsp:${ds}`, wrap);
+  positionPanels();
+  refreshDatasetPanel(ds);
 }
 
-// Render the dataset detail + wire each ledger row's revert/restore button. Reverting
-// replays the ledger without that change, so the record falls back to its prior value.
-function renderData(node, ds, d) {
-  node.innerHTML = dataHTML(d);
-  node.querySelectorAll(".led-revert").forEach((b) => b.addEventListener("click", async () => {
+function closeDatasetPanel(ds) {
+  const e = datasetPanels.get(ds);
+  if (e) { e.wrap.remove(); datasetPanels.delete(ds); }
+  savePositions();
+}
+
+async function refreshDatasetPanel(ds) {
+  const panel = datasetPanels.get(ds);
+  if (!panel) return;
+  try {
+    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
+    renderDatasetDetail(panel.body, ds, await r.json());
+  } catch (e) { panel.body.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
+}
+
+// Reverting a batch replays the ledger without that run, so its records fall back to
+// their previous accepted values (or vanish).
+function renderDatasetDetail(body, ds, d) {
+  body.innerHTML = datasetDetailHTML(d);
+  body.querySelectorAll(".led-revert").forEach((b) => b.addEventListener("click", async () => {
     b.disabled = true;
     try {
-      const upd = await api.revertDatasetEvent(model.profile.name, ds, +b.dataset.event, b.dataset.on === "1");
-      renderData(node, ds, upd);
-      refreshLive();   // dataset node counts may have changed
+      const upd = await api.revertDatasetBatch(model.profile.name, ds, +b.dataset.batch, b.dataset.on === "1");
+      renderDatasetDetail(body, ds, upd);
+      refreshLive();
     } catch (e) { b.disabled = false; setStatus(String(e.message || e)); }
   }));
 }
 
-function dataHTML(d) {
-  const hist = (d.history || []).map((h) => {
-    const changed = h.changed ? " " + Object.entries(h.changed).map(([k, v]) => `${esc(k)}:${esc(v[0])}→${esc(v[1])}`).join(", ") : "";
-    const btn = `<button class="led-revert" data-event="${h.id}" data-on="${h.reverted ? "0" : "1"}" title="${h.reverted ? "restore this change" : "revert — fall back to the previous value"}">${h.reverted ? "restore" : "revert"}</button>`;
-    return `<li class="${h.reverted ? "reverted" : ""}"><span style="color:${OP_COLOR[h.op] || "#fff"};font-weight:600">${esc(h.op)}</span>
-      <span class="muted">${esc((h.ts || "").slice(11))}</span> ${esc(h.key)}${changed} ${btn}</li>`;
-  }).join("") || '<li class="muted">no history yet</li>';
-
+function datasetDetailHTML(d) {
   const recs = d.records || [];
-  let table = '<p class="muted">no records</p>';
+  let table = '<p class="muted" style="padding:8px">no records</p>';
   if (recs.length) {
     const cols = [...new Set(recs.flatMap((r) => Object.keys(r)))].filter((c) => !["present", "first_seen", "last_seen"].includes(c));
     const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
-    const body = recs.map((r) => `<tr class="${r.present ? "" : "gone"}">${cols.map((c) => `<td>${esc(r[c] ?? "")}</td>`).join("")}</tr>`).join("");
-    table = `<table class="grid-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    const rows = recs.map((r) => `<tr class="${r.present ? "" : "gone"}">${cols.map((c) => `<td>${esc(r[c] ?? "")}</td>`).join("")}</tr>`).join("");
+    table = `<table class="grid-table zebra"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
   }
-  return `<div class="detail-cols">
-    <div><h4>Ledger</h4><ul class="history">${hist}</ul></div>
-    <div><h4>Records (${recs.length})</h4><div class="records">${table}</div></div>
+  const batches = (d.batches || []).map((b) => {
+    const parts = [b.adds ? `+${b.adds}` : "", b.updates ? `~${b.updates}` : "", b.removes ? `−${b.removes}` : ""].filter(Boolean).join(" ");
+    const keys = (b.keys || []).slice(0, 4).join(", ") + (b.count > 4 ? " …" : "");
+    const btn = `<button class="led-revert" data-batch="${b.batch}" data-on="${b.reverted ? "0" : "1"}" title="${b.reverted ? "restore this batch" : "revert the whole batch"}">${b.reverted ? "restore" : "revert"}</button>`;
+    return `<li class="${b.reverted ? "reverted" : ""}"><span class="muted">${esc((b.ts || "").slice(11))}</span> <b>#${b.batch}</b> <span class="muted">${parts} · ${b.count} · ${esc(keys)}</span> ${btn}</li>`;
+  }).join("") || '<li class="muted">no batches yet</li>';
+  return `<div class="ds-detail">
+    <div class="prev-count muted">${recs.length} records</div>
+    ${table}
+    <h4 class="ds-h">Batches</h4><ul class="history">${batches}</ul>
   </div>`;
 }
 
@@ -1235,10 +1374,10 @@ function closePreview(winId) {
   savePositions();
 }
 
-// Mark a preview as selected (others deselected) — a selected preview scrolls on wheel.
-function selectPreview(winId) {
-  for (const [, e] of previewPanels) e.wrap.classList.toggle("selected", false);
-  previewPanels.get(winId)?.wrap.classList.add("selected");
+// Mark a panel selected (others deselected) — a selected panel scrolls on wheel.
+function selectPanel(wrap) {
+  document.querySelectorAll(".prevpanel.selected").forEach((p) => p.classList.remove("selected"));
+  wrap.classList.add("selected");
 }
 
 function createPreviewPanel(winId) {
@@ -1253,7 +1392,7 @@ function createPreviewPanel(winId) {
   previewPanels.set(winId, { wrap, body });
   openPreviews.add(winId);
   savePositions();
-  wrap.addEventListener("mousedown", () => selectPreview(winId));   // click to select (then wheel scrolls it)
+  wrap.addEventListener("mousedown", () => selectPanel(wrap));   // click to select (then wheel scrolls it)
   wrap.querySelector(".prevclose").addEventListener("click", () => closePreview(winId));
   wrap.querySelector(".prevrefresh").addEventListener("click", () => refreshPreview(winId));
   wrap.querySelector(".imgpanel-h").addEventListener("mousedown", (ev) => startPanelDrag("prev", winId, ev));
@@ -1494,18 +1633,20 @@ function setGridFromPreview(winId, res) {
 // Panels are positioned from their own pos entries (`img:<win>` / `prev:<win>`),
 // just like nodes — so they snap and persist the same way.
 // Preview panel keeps its own position (default: right of the window node).
-function panelPos(kind, winId) {
-  const id = `${kind}:${winId}`;
+function panelPos(kind, ownerId) {
+  const id = `${kind}:${ownerId}`;
   if (!pos.has(id)) {
-    const wp = pos.get(`win:${winId}`) || { x: 300, y: 20 };
-    const node = nodeEls.get(`win:${winId}`);
-    pos.set(id, { x: snap(wp.x + (node?.offsetWidth || 240) + 40), y: snap(wp.y) });
+    const anchor = kind === "dsp" ? `ds:${ownerId}` : `win:${ownerId}`;
+    const ap = pos.get(anchor) || { x: 300, y: 20 };
+    const node = nodeEls.get(anchor);
+    pos.set(id, { x: snap(ap.x + (node?.offsetWidth || 240) + 40), y: snap(ap.y) });
   }
   return pos.get(id);
 }
 
 function positionPanels() {
   for (const [winId, panel] of previewPanels) { const p = panelPos("prev", winId); panel.wrap.style.left = `${p.x}px`; panel.wrap.style.top = `${p.y}px`; }
+  for (const [ds, panel] of datasetPanels) { const p = panelPos("dsp", ds); panel.wrap.style.left = `${p.x}px`; panel.wrap.style.top = `${p.y}px`; }
 }
 
 // ---- dragging -------------------------------------------------------------
@@ -1642,6 +1783,7 @@ async function loadGame(name) {
   $("gnodes").innerHTML = "";
   for (const winId of [...imageCanvases.keys()]) closeImage(winId);
   for (const winId of [...previewPanels.keys()]) closePreview(winId);
+  for (const ds of [...datasetPanels.keys()]) closeDatasetPanel(ds);
   loadPositions();   // restore saved node positions for this game
   render();
   for (const winId of pendingOpenImages) if (model.window(winId)) openImage(winId);  // reopen saved images (canvas lives in node)

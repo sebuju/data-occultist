@@ -117,11 +117,14 @@ class Collector:
     def _store_for(self, window: WindowDef) -> DatasetStore:
         dataset = window.dataset_id
         if dataset not in self._stores:
+            strip, case = self._profile.key_opts(dataset)
             self._stores[dataset] = DatasetStore(
                 self._engine.settings.data_dir,
                 self._profile.name,
                 dataset,
                 self._dataset_key(window),
+                strip_nonalnum=strip,
+                case_sensitive=case,
             )
             self._observed.setdefault(dataset, set())
         return self._stores[dataset]

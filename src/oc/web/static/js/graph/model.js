@@ -20,11 +20,27 @@ export class GraphModel {
 
   // ---- datasets own the dedup key -----------------------------------------
   datasetDef(id) { return (this.profile.datasets || []).find((d) => d.id === id) || null; }
-  datasetKey(id) { const d = this.datasetDef(id); return d ? d.key_field : "name"; }
-  setDatasetKey(id, key) {
+  ensureDatasetDef(id) {
     let d = this.datasetDef(id);
-    if (!d) { d = { id, key_field: key }; (this.profile.datasets = this.profile.datasets || []).push(d); }
-    else d.key_field = key;
+    if (!d) { d = { id, key_field: "name", strip_nonalnum: false, case_sensitive: false }; (this.profile.datasets = this.profile.datasets || []).push(d); }
+    return d;
+  }
+  datasetKey(id) { const d = this.datasetDef(id); return d ? d.key_field : "name"; }
+  setDatasetKey(id, key) { this.ensureDatasetDef(id).key_field = key; }
+  datasetStrip(id) { return !!(this.datasetDef(id) || {}).strip_nonalnum; }
+  datasetCase(id) { return !!(this.datasetDef(id) || {}).case_sensitive; }
+  setDatasetStrip(id, on) { this.ensureDatasetDef(id).strip_nonalnum = !!on; }
+  setDatasetCase(id, on) { this.ensureDatasetDef(id).case_sensitive = !!on; }
+  // rename a dataset: move the def id and repoint every window that feeds it
+  renameDataset(oldId, newId) {
+    newId = (newId || "").trim();
+    if (!newId || newId === oldId || this.datasetDef(newId)) return false;
+    for (const w of this.profile.windows) {
+      if (this.datasetOf(w) === oldId) w.dataset = newId;   // explicit, even if it was the default
+    }
+    const d = this.datasetDef(oldId);
+    if (d) d.id = newId; else this.ensureDatasetDef(newId);
+    return true;
   }
   // field ids available to a dataset = the fields of every window feeding it
   datasetFields(id) {

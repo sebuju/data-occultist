@@ -67,6 +67,36 @@ def test_reverted_persists_across_reload(tmp_path):
     assert nxt.id == 3
 
 
+def test_batches_group_events_and_revert_wholesale(tmp_path):
+    s = _store(tmp_path)
+    s.begin_batch()
+    s.record_seen({"name": "A", "v": 1})
+    s.record_seen({"name": "B", "v": 1})
+    s.begin_batch()                       # second run
+    up = s.record_seen({"name": "A", "v": 2})
+    s.record_seen({"name": "C", "v": 1})
+    bs = s.batches()
+    assert [b["batch"] for b in bs] == [2, 1]          # newest first
+    assert bs[0]["count"] == 2 and bs[0]["adds"] == 1 and bs[0]["updates"] == 1
+    # revert the whole second batch -> A back to 1, C gone
+    s.revert_batch(up.batch)
+    rows = {r["key"]: r for r in s.records()}
+    assert rows["a"]["v"] == 1 and "c" not in rows
+    assert s.batches()[0]["reverted"] is True
+    s.revert_batch(up.batch, reverted=False)           # restore
+    assert s.records()[0]["v"] in (1, 2)
+
+
+def test_strip_nonalnum_and_case_dedup(tmp_path):
+    from oc.store.dataset_store import DatasetStore, norm_key
+    assert norm_key("Soma Prime", strip_nonalnum=True) == "somaprime"
+    assert norm_key("Soma Prime", case_sensitive=True) == "Soma Prime"
+    s = DatasetStore(tmp_path, "g", "d", "name", strip_nonalnum=True)
+    s.record_seen({"name": "Soma Prime", "n": 1})
+    s.record_seen({"name": "somaprime", "n": 2})       # same key after stripping
+    assert s.present_count == 1
+
+
 def test_replay_pure_function():
     evs = [
         ChangeEvent("t1", ChangeOp.add, "x", {"name": "x", "v": 1}, id=1),

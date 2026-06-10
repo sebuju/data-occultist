@@ -108,10 +108,10 @@ export const precapture = {
   status: (game) => fetch(`/api/precapture/${encodeURIComponent(game)}/status`).then((r) => r.json()),
 };
 
-// Revert (on=true) or restore (on=false) one dataset ledger event. Returns refreshed
-// { records, history }.
-export async function revertDatasetEvent(game, dataset, eventId, on = true) {
-  const r = await fetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/revert?event=${eventId}&on=${on}`, { method: "POST" });
+// Revert (on=true) or restore (on=false) a whole dataset batch. Returns refreshed
+// { records, batches }.
+export async function revertDatasetBatch(game, dataset, batch, on = true) {
+  const r = await fetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/revert?batch=${batch}&on=${on}`, { method: "POST" });
   if (!r.ok) throw new Error(`revert: ${r.status} ${await r.text()}`);
   return r.json();
 }

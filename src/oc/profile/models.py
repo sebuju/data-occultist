@@ -285,7 +285,9 @@ class DatasetDef(BaseModel):
     """
 
     id: str
-    key_field: str = "name"   # field id whose value is the row's identity (dedup key)
+    key_field: str = "name"        # field id whose value is the row's identity (dedup key)
+    strip_nonalnum: bool = False    # dedup ignoring spaces/punctuation (e.g. "Soma Prime" == "SomaPrime")
+    case_sensitive: bool = False    # dedup is case-insensitive by default
 
 
 class GameProfile(BaseModel):
@@ -306,10 +308,15 @@ class GameProfile(BaseModel):
         return next((d for d in self.datasets if d.id == dataset_id), None)
 
     def key_for(self, dataset_id: str) -> str:
-        """The dedup key for a dataset — its ``DatasetDef.key_field``, or ``"name"``
+        """The dedup key field for a dataset — its ``DatasetDef.key_field``, or ``"name"``
         when the dataset has no explicit definition yet."""
         d = self.dataset_def(dataset_id)
         return d.key_field if d else "name"
+
+    def key_opts(self, dataset_id: str) -> tuple[bool, bool]:
+        """``(strip_nonalnum, case_sensitive)`` for a dataset's key normalisation."""
+        d = self.dataset_def(dataset_id)
+        return (d.strip_nonalnum, d.case_sensitive) if d else (False, False)
 
     def fields_for(self, window: WindowDef) -> list[FieldDef]:
         """A window's schema: its own fields, or the game-level fields as fallback

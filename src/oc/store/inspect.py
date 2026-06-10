@@ -38,6 +38,10 @@ def history(data_dir: Path | str, game: str, dataset: str, n: int = 50) -> list[
     return _reader(data_dir, game, dataset).history(n)
 
 
+def batches(data_dir: Path | str, game: str, dataset: str, n: int = 50) -> list[dict]:
+    return _reader(data_dir, game, dataset).batches(n)
+
+
 def summarize(data_dir: Path | str, game: str, dataset: str) -> dict:
     store = _reader(data_dir, game, dataset)
     hist = store.history(1)

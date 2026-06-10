@@ -46,27 +46,30 @@ def flow(game: str):
     return {"game": game, "windows": windows, "datasets": datasets}
 
 
-@router.get("/{game}/dataset/{dataset}")
-def dataset_detail(game: str, dataset: str, limit: int = 200, history: int = 50):
-    settings = get_settings()
-    return {
-        "dataset": dataset,
-        "records": inspect.records(settings.data_dir, game, dataset, limit),
-        "history": inspect.history(settings.data_dir, game, dataset, history),
-    }
-
-
-@router.post("/{game}/dataset/{dataset}/revert")
-def revert_event(game: str, dataset: str, event: int, on: bool = True):
-    """Revert (``on=true``) or un-revert one ledger event, falling the affected record
-    back to its previous accepted value. Returns the refreshed detail."""
+def _store(game: str, dataset: str) -> DatasetStore:
     settings = get_settings()
     profile = load_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
     key = profile.key_for(dataset) if profile else "name"
-    store = DatasetStore(settings.data_dir, game, dataset, key_field=key)
-    store.set_reverted(event, on)
-    return {
-        "dataset": dataset,
-        "records": store.records(limit=200),
-        "history": store.history(50),
-    }
+    strip, case = profile.key_opts(dataset) if profile else (False, False)
+    return DatasetStore(settings.data_dir, game, dataset, key_field=key,
+                        strip_nonalnum=strip, case_sensitive=case)
+
+
+def _detail(store: DatasetStore, dataset: str, limit: int = 200) -> dict:
+    # `history` (per-event) kept for the legacy dashboard page; the graph uses `batches`
+    return {"dataset": dataset, "records": store.records(limit),
+            "batches": store.batches(80), "history": store.history(50)}
+
+
+@router.get("/{game}/dataset/{dataset}")
+def dataset_detail(game: str, dataset: str, limit: int = 200):
+    return _detail(_store(game, dataset), dataset, limit)
+
+
+@router.post("/{game}/dataset/{dataset}/revert")
+def revert_batch(game: str, dataset: str, batch: int, on: bool = True):
+    """Revert (``on=true``) or restore a whole collection/save batch — every record it
+    added or changed falls back to its previous accepted value. Returns refreshed detail."""
+    store = _store(game, dataset)
+    store.revert_batch(batch, on)
+    return _detail(store, dataset)

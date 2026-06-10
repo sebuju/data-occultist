@@ -496,7 +496,13 @@ label.inline input { width: auto; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
 
 .grid-table { width: 100%; border-collapse: collapse; }
-.grid-table th { text-align: left; color: var(--muted); font-weight: 400; font-size: var(--fs-sm); }
+.grid-table.zebra tbody tr:nth-child(even) { background: rgba(140, 165, 200, 0.06); }
+.grid-table th { text-align: left; color: var(--muted); font-weight: 400; font-size: var(--fs-sm);
+  position: sticky; top: 0; background: var(--panel); }
+/* dataset panel: records table + batch ledger, in a preview-style floating panel */
+.dspanel .ds-detail { padding: 6px 8px; }
+.ds-detail .ds-h { margin: 10px 0 4px; }
+.ds-detail .prev-count { margin-bottom: 4px; }
 .grid-table td { padding: 2px 3px; }
 .grid-table input, .grid-table select { padding: 3px 4px; margin: 0; }
 .grid-table select { width: auto; max-width: 100%; }

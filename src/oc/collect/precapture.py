@@ -38,6 +38,7 @@ from ..learn.resolver import FieldResolver
 from ..locate import WindowLocator
 from ..profile.models import GameProfile, WindowDef
 from ..store import DatasetStore
+from ..store.dataset_store import norm_key
 from ..types import Frame, FractionBox, PixelBox
 from .collector import _load_cutouts
 from .reader import RegionReader
@@ -339,17 +340,18 @@ class PrecaptureSession:
             return
         dataset = window.dataset_id
         key_field = self._profile.key_for(dataset)
+        strip, case = self._profile.key_opts(dataset)
         with self._lock:
             self._read += len(records)
             acc = self._staged.get(dataset)
             if acc is None:
                 acc = self._staged[dataset] = _Staged(key_field)
             for rec in records:
-                key = rec.values.get(key_field)
-                if key in (None, ""):
+                key = norm_key(rec.values.get(key_field), strip, case)   # dedup as the store will
+                if key is None:
                     self._no_key += 1
                     continue
-                acc.rows[str(key).strip().lower()] = dict(rec.values)
+                acc.rows[key] = dict(rec.values)
 
     # ---- control -----------------------------------------------------------
 
@@ -393,8 +395,11 @@ class PrecaptureSession:
             staged = {ds: dict(acc.rows) for ds, acc in self._staged.items()}
         written = {}
         for dataset, rows in staged.items():
+            strip, case = self._profile.key_opts(dataset)
             store = DatasetStore(self._engine.settings.data_dir, self._profile.name,
-                                 dataset, self._profile.key_for(dataset))
+                                 dataset, self._profile.key_for(dataset),
+                                 strip_nonalnum=strip, case_sensitive=case)
+            store.begin_batch()   # this save is one revertable batch
             n = 0
             for values in rows.values():
                 if store.record_seen(values) is not None:
