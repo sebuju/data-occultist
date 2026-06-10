@@ -24,6 +24,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -98,9 +99,44 @@ def _anchor_boxes(profile: GameProfile) -> list[FractionBox]:
 
 @dataclass
 class _Staged:
-    """Dedup accumulator for one dataset: key -> latest record values."""
+    """Dedup accumulator for one dataset: key -> latest record values, plus how many
+    frames produced each key (the frequency vote used to kill OCR-noise doubles)."""
     key_field: str
     rows: dict[str, dict] = field(default_factory=dict)
+    counts: dict[str, int] = field(default_factory=dict)
+
+
+# Two staged keys this similar are the same item read two ways — merge regardless of how
+# often each was seen. Genuinely different Warframe names (even sharing a " blueprint"
+# suffix) score below this.
+_MERGE_RATIO = 0.86
+# A looser bar that only applies to a CLEARLY RARER variant sitting next to a popular key
+# (e.g. "arnesha" seen twice beside "amesha" seen thirty times) — that asymmetry is the
+# signature of an OCR misread, so a single swapped/garbled character is enough.
+_NOISE_RATIO = 0.72
+
+
+def _consolidate(rows: dict[str, dict], counts: dict[str, int],
+                 ratio: float = _MERGE_RATIO, noise_ratio: float = _NOISE_RATIO) -> dict[str, dict]:
+    """Collapse near-duplicate keys created by OCR noise. Precapture sees each item across
+    many frames, so the true reading is frequent and a misread is rare. Walk keys most-
+    frequent first (canonicals are therefore always at least as frequent as later keys);
+    fold a later key into a kept canonical when it's near-identical, OR when it's a much
+    rarer variant that's merely similar. Drops the rarer spelling. O(n·canon)."""
+    canon: list[str] = []
+    out: dict[str, dict] = {}
+    for key in sorted(rows, key=lambda k: (counts.get(k, 0), k), reverse=True):
+        kc = counts.get(key, 0)
+        merged = False
+        for c in canon:
+            r = SequenceMatcher(None, key, c).ratio()
+            if r >= ratio or (r >= noise_ratio and kc <= max(2, 0.25 * counts.get(c, 0))):
+                merged = True
+                break
+        if not merged:
+            canon.append(key)
+            out[key] = rows[key]
+    return out
 
 
 class PrecaptureSession:
@@ -385,6 +421,7 @@ class PrecaptureSession:
                     self._no_key += 1
                     continue
                 acc.rows[key] = dict(rec.values)
+                acc.counts[key] = acc.counts.get(key, 0) + 1   # frequency vote for noise merge
 
     # ---- control -----------------------------------------------------------
 
@@ -440,9 +477,10 @@ class PrecaptureSession:
     def save(self) -> dict:
         """Commit staged records into the real per-dataset stores. Returns counts."""
         with self._lock:
-            staged = {ds: dict(acc.rows) for ds, acc in self._staged.items()}
+            staged = {ds: (dict(acc.rows), dict(acc.counts)) for ds, acc in self._staged.items()}
         written = {}
-        for dataset, rows in staged.items():
+        for dataset, (rows, counts) in staged.items():
+            rows = _consolidate(rows, counts)   # merge OCR-noise doubles before committing
             strip, case = self._profile.key_opts(dataset)
             store = DatasetStore(self._engine.settings.data_dir, self._profile.name,
                                  dataset, self._profile.key_for(dataset),
@@ -511,7 +549,9 @@ class PrecaptureSession:
                 fps = 0.0
             datasets = []
             for ds, acc in self._staged.items():
-                rows = list(acc.rows.values())
+                # while processing keep it cheap (raw); once settled show the deduped set
+                rows = list((acc.rows if self._phase is Phase.processing
+                             else _consolidate(acc.rows, acc.counts)).values())
                 datasets.append({"dataset": ds, "key_field": acc.key_field,
                                  "count": len(rows), "sample": rows[-12:]})
             return {

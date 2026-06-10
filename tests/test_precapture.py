@@ -190,3 +190,16 @@ def test_cancel_stops_processing(tmp_path):
     s.cancel()                       # stop set before processing
     s._process_loop([_jpeg(1), _jpeg(2)], 80, 60)
     assert s.status()["phase"] == Phase.cancelled.value
+
+
+def test_consolidate_merges_ocr_noise_doubles():
+    from oc.collect.precapture import _consolidate
+    rows = {k: {"name": k} for k in
+            ("amesha", "arnesha", "centaurblueprint", "centourblueprint", "latoblueprint")}
+    counts = {"amesha": 30, "arnesha": 2, "centaurblueprint": 25,
+              "centourblueprint": 1, "latoblueprint": 18}
+    out = _consolidate(rows, counts)
+    # rare misreads fold into the frequent spelling; distinct items survive
+    assert "amesha" in out and "arnesha" not in out          # 0.77 ratio, but rare vs popular
+    assert "centaurblueprint" in out and "centourblueprint" not in out   # near-identical
+    assert "latoblueprint" in out
