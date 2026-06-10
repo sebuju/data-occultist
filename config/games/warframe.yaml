@@ -2,9 +2,6 @@ name: warframe
 process_names:
 - Warframe.x64.exe
 window_title_hint: Warframe
-datasets:
-- id: equip
-  key_field: item_name
 fields:
 - id: name
   type: text
@@ -31,7 +28,7 @@ windows:
     type: text
     extract: whole
     separator: '['
-    learn: false
+    learn: true
     fuzzy: 0.5
   - id: count
     type: number
@@ -205,3 +202,6 @@ windows:
     colors: []
     tolerance: 60
     scale: 1.0
+datasets:
+- id: equip
+  key_field: item_name

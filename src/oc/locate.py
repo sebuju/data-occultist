@@ -17,11 +17,15 @@ from .types import WindowInfo
 
 
 def _scan(engine: Engine, profile: GameProfile) -> WindowInfo | None:
-    proc = engine.process.find_by_names(profile.process_names)
-    if proc is not None:
-        win = engine.window.find_for_pid(proc.pid)
-        if win is not None:
-            return win
+    # Process name is authoritative: if the profile names processes, the game must be
+    # one of them — when none is running there is NO window. The title hint is only a
+    # fallback for profiles with no process names (otherwise a loose title-substring
+    # match grabs unrelated windows, e.g. a File Explorer folder named "Warframe").
+    if profile.process_names:
+        proc = engine.process.find_by_names(profile.process_names)
+        if proc is None:
+            return None
+        return engine.window.find_for_pid(proc.pid)
     if profile.window_title_hint:
         return engine.window.find_by_title(profile.window_title_hint)
     return None

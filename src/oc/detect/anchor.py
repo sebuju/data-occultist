@@ -25,9 +25,17 @@ def _norm(s: str) -> str:
 def text_match_score(want: str, got: str, included: bool = False) -> float:
     """Fuzzy 0..1 score that ``want`` is present in OCR ``got`` (or vice versa if
     ``included``), ignoring spaces/special chars/case, so stylised or noisy OCR still
-    matches (e.g. 'INVTNTORYSELL' ~ 'INVENTORY / SELL')."""
+    matches (e.g. 'INVTNTORYSELL' ~ 'INVENTORY / SELL').
+
+    ``partial_ratio`` aligns the shorter string anywhere inside the longer one, so a
+    long OCR read that merely *contains* the target would otherwise score ~1.0. A read
+    far longer than the expected text means the box caught a paragraph (wrong screen),
+    not the landmark — so it's dismissed.
+    """
     nw, ng = _norm(want), _norm(got)
     if not nw or not ng:
+        return 0.0
+    if len(ng) > max(len(nw) * 3, len(nw) + 8):
         return 0.0
     from rapidfuzz import fuzz
     a, b = (ng, nw) if included else (nw, ng)   # look for a inside b
