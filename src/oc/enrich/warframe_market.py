@@ -38,8 +38,10 @@ def slugify(name: str) -> str:
 
 @register_enricher("warframe_market")
 class WarframeMarketEnricher(Enricher):
-    def __init__(self, name_field: str = "name", depth: int = 5, timeout: float = 6.0) -> None:
-        self._name_field = name_field
+    def __init__(self, source_field: str = "name", depth: int = 5, timeout: float = 6.0,
+                 name_field: str | None = None) -> None:
+        # ``name_field`` kept as a back-compat alias for the cli.
+        self._name_field = name_field or source_field
         self._depth = depth
         self._timeout = timeout
 

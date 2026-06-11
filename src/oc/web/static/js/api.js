@@ -153,6 +153,19 @@ export const editDatasetEvent = (game, dataset, batch, eventId, values) =>
 export const removeDatasetEvent = (game, dataset, batch, eventId) =>
   _evt(game, dataset, batch, eventId, "remove");
 
+// Subsets: a filtered/derived view over a dataset. Returns { columns, rows, enriched }.
+export async function getSubset(game, subset) {
+  const r = await fetch(`/api/flow/${encodeURIComponent(game)}/subset/${encodeURIComponent(subset)}`);
+  if (!r.ok) throw new Error(`subset: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+// Same view, but also runs the subset's enrichers (network — explicit action).
+export async function enrichSubset(game, subset) {
+  const r = await fetch(`/api/flow/${encodeURIComponent(game)}/subset/${encodeURIComponent(subset)}/enrich`, { method: "POST" });
+  if (!r.ok) throw new Error(`enrich: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
 // Per-window stash bindings: which capture a window opens with.
 export async function getBindings(game) {
   const r = await fetch(`/api/captures/${encodeURIComponent(game)}/bindings`);

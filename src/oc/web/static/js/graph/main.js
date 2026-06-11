@@ -16,7 +16,7 @@ const pos = new Map();            // node id -> {x,y}
 const nodeEls = new Map();        // node id -> DOM element (built once, reused)
 const collapsed = new Set();      // collapsed node ids
 const view = { panX: 0, panY: 0, zoom: 1 };  // canvas pan/zoom
-const COLX = { game: 20, window: 300, preview: 1580, region: 600, anchor: 600, state: 600, scrollbar: 600, dataset: 900, batches: 1180 };
+const COLX = { game: 20, window: 300, preview: 1580, region: 600, anchor: 600, state: 600, scrollbar: 600, dataset: 900, batches: 1180, subset: 1900, dictionary: 20 };
 let live = {};                    // dataset -> {present,total,last_op,last_ts}
 const prevPresent = {};
 let timer = null;
@@ -375,7 +375,7 @@ function nodeParts(n) {
       body: `
         <label class="flab">process <input class="gi" data-k="proc" value="${esc((g.process_names || []).join(", "))}" placeholder="Warframe.x64.exe" /></label>
         <label class="flab">title hint <input class="gi" data-k="title" value="${esc(g.window_title_hint || "")}" placeholder="Warframe" /></label>
-        <div class="gn-foot"><button class="addwin">+ window</button></div>`,
+        <div class="gn-foot"><button class="addwin">+ window</button><button class="adddict">+ dictionary</button></div>`,
     };
   }
   if (n.type === "window") {
@@ -447,6 +447,18 @@ function nodeParts(n) {
       </div>`,
     };
   }
+  if (n.type === "subset") return subsetParts(n.ref);
+  if (n.type === "dictionary") {
+    // a named word list. Text reads snap to the closest entry (exact, then fuzzy).
+    const dict = n.ref;
+    const count = (dict.terms || []).length;
+    return {
+      title: `<input class="gi gi-id dictname" value="${esc(dict.name || dict.id)}" title="dictionary name" />`,
+      body: `<div class="muted">${count} word${count === 1 ? "" : "s"} · text reads snap to the closest entry</div>
+        <textarea class="dictterms" rows="10" placeholder="one word per line\nNeo V11\nSoma Prime\n…">${esc((dict.terms || []).join("\n"))}</textarea>
+        <div class="gn-foot"><button class="deldict danger">remove</button></div>`,
+    };
+  }
   // dataset — owns the dedup key. Key options = the fields of every window feeding it.
   const ds = n.ref;
   const d = live[ds] || { present: 0, total: 0, last_op: null, last_ts: null };
@@ -461,12 +473,132 @@ function nodeParts(n) {
       <label class="flab" title="field whose value identifies a row — reads with the same value merge">key <select class="dskey">${keyOpts}</select></label>
       <label class="flab" title="ignore spaces/punctuation when matching keys">strip non-alnum <input type="checkbox" class="dsstrip" ${model.datasetStrip(ds) ? "checked" : ""}></label>
       <label class="flab" title="treat keys differing only in case as distinct">case sensitive <input type="checkbox" class="dscase" ${model.datasetCase(ds) ? "checked" : ""}></label>
-      <div class="gn-foot"><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
+      <div class="gn-foot"><button class="dssubset">+ subset</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
       <div class="nodehost scrollhost data-host"><p class="muted" style="padding:8px">loading…</p></div>`,
   };
 }
 
-const CAN_DISABLE = new Set(["window", "item", "region", "anchor", "scrollbar"]);
+// ---- subset node: a filtered/derived view over a dataset --------------------
+
+const SUB_OPS = ["contains", "icontains", "eq", "ne", "nonempty", "empty", "gt", "lt", "gte", "lte", "regex"];
+const SUB_ENRICHERS = ["warframe_market", "relic_contents"];
+
+function _colOpts(cols, sel) {
+  return `<option value=""${sel ? "" : " selected"}>—</option>` +
+    cols.map((c) => `<option${c === sel ? " selected" : ""}>${esc(c)}</option>`).join("");
+}
+
+function subConfigHTML(s) {
+  const cols = model.subsetColumns(s.id);
+  const filters = (s.filters || []).map((f, i) => `<div class="sub-row" data-i="${i}">
+      <select class="sf-field" data-i="${i}">${_colOpts(cols, f.field)}</select>
+      <select class="sf-op" data-i="${i}">${SUB_OPS.map((o) => `<option${o === f.op ? " selected" : ""}>${o}</option>`).join("")}</select>
+      <input class="sf-val" data-i="${i}" value="${esc(f.value || "")}" placeholder="value" />
+      <button class="sf-del danger" data-i="${i}" title="remove filter">✕</button></div>`).join("");
+  const derived = (s.derived || []).map((d, i) => `<div class="sub-row" data-i="${i}">
+      <input class="sd-name" data-i="${i}" value="${esc(d.name || "")}" placeholder="new column" />
+      <span class="muted">=</span>
+      <input class="sd-tpl" data-i="${i}" value="${esc(d.template || "")}" placeholder="{name} [{rank}]" />
+      <button class="sd-del danger" data-i="${i}" title="remove column">✕</button></div>`).join("");
+  const enrich = (s.enrich || []).map((e, i) => `<div class="sub-row" data-i="${i}">
+      <select class="se-type" data-i="${i}">${SUB_ENRICHERS.map((t) => `<option${t === e.type ? " selected" : ""}>${t}</option>`).join("")}</select>
+      <span class="muted">on</span>
+      <select class="se-src" data-i="${i}">${_colOpts(cols, e.source_field)}</select>
+      <button class="se-del danger" data-i="${i}" title="remove enricher">✕</button></div>`).join("");
+  const sortOpts = `<option value=""${s.sort_by ? "" : " selected"}>—</option>` +
+    cols.map((c) => `<option${c === s.sort_by ? " selected" : ""}>${esc(c)}</option>`).join("");
+  return `
+    <div class="sub-sec"><div class="sub-lbl">filters <span class="muted">(all must pass)</span></div>${filters || '<div class="muted sub-empty">none</div>'}</div>
+    <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">(combine with {column})</span></div>${derived || '<div class="muted sub-empty">none</div>'}</div>
+    <div class="sub-sec"><div class="sub-lbl">enrich <span class="muted">(external data)</span></div>${enrich || '<div class="muted sub-empty">none</div>'}</div>
+    <div class="sub-sec sub-sort">
+      <label class="flab">sort <select class="ss-by">${sortOpts}</select></label>
+      <label class="flab">descending <input type="checkbox" class="ss-desc" ${s.sort_desc ? "checked" : ""}></label>
+      <label class="flab">limit <input type="number" class="ss-limit" min="0" value="${s.limit || 0}"></label>
+    </div>`;
+}
+
+function subsetParts(s) {
+  return {
+    title: `<input class="gi gi-id subrename" value="${esc(s.id)}" title="subset name" /><span class="muted sub-of">⊂ ${esc(s.dataset)}</span>`,
+    body: `<div class="sub-cfg">${subConfigHTML(s)}</div>
+      <div class="gn-foot"><button class="sub-addf">+ filter</button><button class="sub-addd">+ column</button><button class="sub-adde">+ enrich</button></div>
+      <div class="gn-foot"><button class="subrun">↻ enrich</button><button class="delsub danger">remove</button></div>
+      <div class="nodehost scrollhost sub-host"><p class="muted" style="padding:8px">loading…</p></div>`,
+  };
+}
+
+function subTableHTML(r) {
+  const cols = r.columns || [], rows = r.rows || [];
+  const note = `<div class="prev-count muted">${rows.length} row${rows.length === 1 ? "" : "s"}${r.enriched ? " · enriched" : ""}</div>`;
+  if (!rows.length) return `${note}<p class="muted" style="padding:8px">no rows match</p>`;
+  const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
+  const body = rows.slice(0, 500).map((rw) => `<tr>${cols.map((c) => `<td>${esc(rw[c] ?? "")}</td>`).join("")}</tr>`).join("");
+  return `${note}<table class="grid-table zebra"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+async function refreshSubsetNode(id) {
+  const el = nodeEls.get(`sub:${id}`);
+  const host = el && el.querySelector(".sub-host");
+  if (!host) return;
+  try { host.innerHTML = subTableHTML(await api.getSubset(model.profile.name, id)); }
+  catch (e) { host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`; }
+}
+
+function refreshAllSubsetNodes() {
+  for (const s of model.profile.subsets || []) if (nodeEls.has(`sub:${s.id}`)) refreshSubsetNode(s.id);
+}
+
+function wireSubset(div, s) {
+  const recompute = () => { autosave(); refreshSubsetNode(s.id); };
+  const restructure = () => { autosave(); rebuildNode(`sub:${s.id}`); };   // rebuild this node's config
+
+  div.querySelector(".subrename")?.addEventListener("change", (e) => {
+    const oldId = s.id;
+    if (model.renameSubset(oldId, e.target.value)) { movePos(`sub:${oldId}`, `sub:${s.id}`); render(); autosave(); }
+    else e.target.value = oldId;
+  });
+  div.querySelector(".sub-addf")?.addEventListener("click", () => { model.addFilter(s.id); restructure(); });
+  div.querySelector(".sub-addd")?.addEventListener("click", () => { model.addDerived(s.id); restructure(); });
+  div.querySelector(".sub-adde")?.addEventListener("click", () => { model.addEnrich(s.id); restructure(); });
+  div.querySelector(".delsub")?.addEventListener("click", () => { model.removeSubset(s.id); render(); autosave(); });
+
+  // filters
+  div.querySelectorAll(".sf-del").forEach((b) => b.addEventListener("click", () => { model.removeFilter(s.id, +b.dataset.i); restructure(); }));
+  div.querySelectorAll(".sf-field").forEach((el) => el.addEventListener("change", (e) => { s.filters[+el.dataset.i].field = e.target.value; recompute(); }));
+  div.querySelectorAll(".sf-op").forEach((el) => el.addEventListener("change", (e) => { s.filters[+el.dataset.i].op = e.target.value; recompute(); }));
+  div.querySelectorAll(".sf-val").forEach((el) => el.addEventListener("change", (e) => { s.filters[+el.dataset.i].value = e.target.value; recompute(); }));
+
+  // derived columns — editing a name changes the available column set, so restructure
+  div.querySelectorAll(".sd-del").forEach((b) => b.addEventListener("click", () => { model.removeDerived(s.id, +b.dataset.i); restructure(); }));
+  div.querySelectorAll(".sd-name").forEach((el) => el.addEventListener("change", (e) => { s.derived[+el.dataset.i].name = e.target.value.trim(); restructure(); }));
+  div.querySelectorAll(".sd-tpl").forEach((el) => el.addEventListener("change", (e) => { s.derived[+el.dataset.i].template = e.target.value; recompute(); }));
+
+  // enrichers (only affect the explicit enrich pass; no live recompute needed)
+  div.querySelectorAll(".se-del").forEach((b) => b.addEventListener("click", () => { model.removeEnrich(s.id, +b.dataset.i); restructure(); }));
+  div.querySelectorAll(".se-type").forEach((el) => el.addEventListener("change", (e) => { s.enrich[+el.dataset.i].type = e.target.value; autosave(); }));
+  div.querySelectorAll(".se-src").forEach((el) => el.addEventListener("change", (e) => { s.enrich[+el.dataset.i].source_field = e.target.value; autosave(); }));
+
+  // sort / limit
+  div.querySelector(".ss-by")?.addEventListener("change", (e) => { s.sort_by = e.target.value; recompute(); });
+  div.querySelector(".ss-desc")?.addEventListener("change", (e) => { s.sort_desc = e.target.checked; recompute(); });
+  div.querySelector(".ss-limit")?.addEventListener("change", (e) => { s.limit = Math.max(0, +e.target.value || 0); recompute(); });
+
+  const runBtn = div.querySelector(".subrun");
+  runBtn?.addEventListener("click", async () => {
+    const host = div.querySelector(".sub-host");
+    runBtn.disabled = true;
+    if (host) host.innerHTML = '<p class="muted" style="padding:8px">enriching…</p>';
+    const done = timed(`enrich subset ${s.id}`);
+    try { if (host) host.innerHTML = subTableHTML(await api.enrichSubset(model.profile.name, s.id)); done(); }
+    catch (e) { done(String(e.message || e), "err"); if (host) host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`; }
+    finally { runBtn.disabled = false; }
+  });
+
+  queueMicrotask(() => refreshSubsetNode(s.id));
+}
+
+const CAN_DISABLE = new Set(["window", "item", "region", "anchor", "scrollbar", "dictionary"]);
 
 function fillNode(div, n) {
   const isCollapsed = collapsed.has(n.id);
@@ -514,7 +646,7 @@ function buildNode(n) {
   div.dataset.id = n.id;
   fillNode(div, n);
   if (n.type === "item") snapResize(div, { onResize: drawEdges });   // item node resizes by width (its cutout)
-  if (n.type === "dataset" || n.type === "preview" || n.type === "batches") makeHostResizable(div, n.id);
+  if (n.type === "dataset" || n.type === "preview" || n.type === "batches" || n.type === "subset") makeHostResizable(div, n.id);
   return div;
 }
 
@@ -977,6 +1109,26 @@ function wireNode(div, n) {
     div.querySelector(".addwin").addEventListener("click", () => {
       if (model.addWindow()) { render(); autosave(); }   // default id; renamed in the window node
     });
+    div.querySelector(".adddict")?.addEventListener("click", () => {
+      if (model.addDictionary()) { render(); autosave(); }
+    });
+  } else if (n.type === "dictionary") {
+    // the title doubles as both name and id (renamed in place)
+    div.querySelector(".dictname")?.addEventListener("change", (e) => {
+      const oldId = n.ref.id;
+      const newName = e.target.value.trim() || oldId;
+      n.ref.name = newName;
+      const newId = newName.replace(/[^A-Za-z0-9._-]+/g, "_");
+      if (newId !== oldId && model.renameDictionary(oldId, newId)) movePos(`dict:${oldId}`, `dict:${newId}`);
+      render(); autosave();
+    });
+    div.querySelector(".dictterms")?.addEventListener("change", (e) => {
+      n.ref.terms = e.target.value.split("\n").map((s) => s.trim()).filter(Boolean);
+      rebuildNode(n.id); autosave();   // refresh the word count
+    });
+    div.querySelector(".deldict")?.addEventListener("click", () => {
+      model.removeDictionary(n.ref.id); pos.delete(n.id); render(); autosave();
+    });
   } else if (n.type === "window") {
     wireWindowControls(div, n);
   } else if (n.type === "preview") {
@@ -989,6 +1141,7 @@ function wireNode(div, n) {
     div.querySelector(".dsstrip")?.addEventListener("change", (e) => { model.setDatasetStrip(n.ref, e.target.checked); autosave(); });
     div.querySelector(".dscase")?.addEventListener("change", (e) => { model.setDatasetCase(n.ref, e.target.checked); autosave(); });
     div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(); });
+    div.querySelector(".dssubset")?.addEventListener("click", () => { model.addSubset(n.ref); render(); autosave(); });
     const clearBtn = div.querySelector(".dsclear");
     clearBtn?.addEventListener("click", async () => {
       if (clearBtn.dataset.armed !== "1") {   // inline confirm (no blocking dialogs)
@@ -996,12 +1149,14 @@ function wireNode(div, n) {
         setTimeout(() => { clearBtn.dataset.armed = "0"; clearBtn.textContent = "clear data"; }, 2500);
         return;
       }
-      try { await api.clearDataset(model.profile.name, n.ref); refreshLive(); refreshDataNode(n.ref); refreshAllBatchesNodes(); setStatus(`cleared ${n.ref}`); }
+      try { await api.clearDataset(model.profile.name, n.ref); refreshLive(); refreshDataNode(n.ref); refreshAllBatchesNodes(); refreshAllSubsetNodes(); setStatus(`cleared ${n.ref}`); }
       catch (e) { setStatus(String(e.message || e)); }
     });
     queueMicrotask(() => refreshDataNode(n.ref));   // load records into the node body
   } else if (n.type === "batches") {
     queueMicrotask(() => loadBatchesNode(n.ref));   // nodeEls is set after buildNode returns
+  } else if (n.type === "subset") {
+    wireSubset(div, n.ref);
   } else if (n.type === "region") {
     const fld = n.field;
     div.addEventListener("click", (ev) => {
@@ -1287,7 +1442,7 @@ async function openPrecaptureModal() {
     else if (a === "resume") run(() => api.precapture.pause(game, false, sig));
     else if (a === "cancel") run(() => api.precapture.cancel(game, sig));
     else if (a === "reset") run(() => api.precapture.reset(game, sig));
-    else if (a === "save") run(async () => { const r = await api.precapture.save(game, sig); refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
+    else if (a === "save") run(async () => { const r = await api.precapture.save(game, sig); refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); refreshAllSubsetNodes(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
   });
 
   await run(() => api.precapture.status(game, sig));
@@ -1366,9 +1521,11 @@ function renderPrecap(node, st) {
          : paused ? `<button data-act="resume">► resume</button>`
          : `<button data-act="process" ${canProcess ? "" : "disabled"}>▸ process${st.frames ? ` ${st.frames}` : ""}</button>`}
        ${busyRun ? `<button data-act="cancel" class="danger">cancel</button>` : ""}`;
+  const justSaved = phase === "saved";   // stays until the next record/process/reset
   node.querySelector(".pc-ctl").innerHTML = `${ctl}
     <span class="spacer"></span>
-    <button data-act="save" ${(staged && !precapStopping && !busyRun) ? "" : "disabled"}><span class="ic ic-ok">⤓</span> save${staged ? ` ${staged}` : ""}</button>
+    <button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !busyRun && !justSaved) ? "" : "disabled"}>
+      <span class="ic ic-ok">${justSaved ? "✓" : "⤓"}</span> ${justSaved ? "saved" : `save${staged ? ` ${staged}` : ""}`}</button>
     <button data-act="reset" ${busyRun ? "disabled" : ""}>reset</button>`;
   node.querySelector(".pc-fill").style.width = `${pct}%`;
   node.querySelector(".pc-data").innerHTML = (st.datasets || []).map(precapTable).join("")
@@ -1745,27 +1902,39 @@ async function prefillAnchorText(winId, anchorId) {
   } catch { /* ignore */ }
 }
 
+// Coalesce detect the same way as preview: at most one in flight per window, with a
+// single queued re-run. Without this, live mode would enqueue a detect every round and
+// they'd stack on the OCR queue until each takes tens of seconds.
+const detectBusy = new Set();
+const detectAgain = new Map();
 async function refreshDetect(winId, live = false) {
+  if (detectBusy.has(winId)) { detectAgain.set(winId, live); return; }
+  detectBusy.add(winId);
   // spinner on every node whose value this detect refreshes
   const ids = [`win:${winId}`, ...model.anchors(winId).map((a) => `anc:${winId}:${a.id}`)];
   if (model.scrollbar(winId)) ids.push(`sb:${winId}:scrollbar`);
   const done = timed(`detect ${winId}`);
-  await withBusy(ids, async () => {
-    try {
-      const cap = live ? null : (await api.getBindings(model.profile.name))[winId];
-      const res = await api.detect(previewProfileFor(winId), model.profile.name, cap);
-      for (const [aid, info] of Object.entries(res.anchors || {})) setDetectStatus(`anc:${winId}:${aid}`, info);
-      for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);
-      const sbEl = nodeEls.get(`sb:${winId}:scrollbar`);
-      const sbSpan = sbEl && sbEl.querySelector(".detect-status");
-      if (sbSpan) {
-        const sb = res.scrollbar;
-        sbSpan.textContent = sb == null ? "position: —"
-          : `position: ${Math.round(sb.pos * 100)}% · ${sb.px}px · ${Math.round(sb.conf * 100)}%`;
-      }
-      done();
-    } catch (e) { done(String(e.message || e), "err"); }
-  });
+  try {
+    await withBusy(ids, async () => {
+      try {
+        const cap = live ? null : (await api.getBindings(model.profile.name))[winId];
+        const res = await api.detect(previewProfileFor(winId), model.profile.name, cap);
+        for (const [aid, info] of Object.entries(res.anchors || {})) setDetectStatus(`anc:${winId}:${aid}`, info);
+        for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);
+        const sbEl = nodeEls.get(`sb:${winId}:scrollbar`);
+        const sbSpan = sbEl && sbEl.querySelector(".detect-status");
+        if (sbSpan) {
+          const sb = res.scrollbar;
+          sbSpan.textContent = sb == null ? "position: —"
+            : `position: ${Math.round(sb.pos * 100)}% · ${sb.px}px · ${Math.round(sb.conf * 100)}%`;
+        }
+        done();
+      } catch (e) { done(String(e.message || e), "err"); }
+    });
+  } finally {
+    detectBusy.delete(winId);
+    if (detectAgain.has(winId)) { const lv = detectAgain.get(winId); detectAgain.delete(winId); refreshDetect(winId, lv); }
+  }
 }
 function setDetectStatus(nodeId, info) {
   const el = nodeEls.get(nodeId);
@@ -1991,11 +2160,12 @@ async function refreshLive() {
     const after = model.datasets();
     if (after.length !== before.size || after.some((d) => !before.has(d))) render();
     else updateDatasetNodes();
-    // the data + batches nodes re-read when their dataset's count changed
+    // the data + batches + subset nodes re-read when their dataset's count changed
     for (const ds in map) {
       if (prevPresent[ds] === undefined || prevPresent[ds] === map[ds].present) continue;
       if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
       if (nodeEls.has(`bat:${ds}`)) loadBatchesNode(ds);
+      for (const s of model.profile.subsets || []) if (s.dataset === ds && nodeEls.has(`sub:${s.id}`)) refreshSubsetNode(s.id);
     }
   } catch { /* ignore */ }
 }
@@ -2141,33 +2311,47 @@ function renderLiveStats() {
   el.innerHTML = `<span class="live-dot ${liveProcessing ? "on" : ""}"></span>${state} · ${liveFps.toFixed(1)} img/s${liveLast ? ` · ${esc(liveLast)}` : ""}`;
 }
 
+// Self-paced: a round AWAITS its detect+preview before the next is scheduled, so live
+// mode adapts to how fast OCR actually is and never piles requests on the OCR queue
+// (a fixed interval would stack them until each took tens of seconds).
 async function liveTick() {
+  if (!liveOn) return;
   refreshLive();   // dataset counts
   const game = model.profile.name;
-  if (!game || !liveOn) { renderLiveStats(); return; }
-  liveProcessing = true; renderLiveStats();
-  for (const [winId, entry] of imageCanvases) {
-    try {
-      const { url } = await api.capture(game, false);   // live frame, not stashed
-      const img = new Image();
-      img.onload = () => { entry.overlay.setImage(img); refreshImageBoxes(winId); };
-      img.src = url;
-      liveFrames++;                                      // count captured frames for img/s
-    } catch { /* window gone */ }
-    refreshDetect(winId, true);
-    if (prevHost(winId)?.dataset.ran === "1") refreshPreview(winId, true);
+  if (game) {
+    liveProcessing = true; renderLiveStats();
+    for (const [winId, entry] of imageCanvases) {
+      if (!liveOn) break;
+      try {
+        const { url } = await api.capture(game, false);   // live frame, not stashed
+        const img = new Image();
+        img.onload = () => { entry.overlay.setImage(img); refreshImageBoxes(winId); };
+        img.src = url;
+        liveFrames++;                                      // count captured frames for img/s
+      } catch { /* window gone */ }
+      await refreshDetect(winId, true);
+      if (prevHost(winId)?.dataset.ran === "1") await refreshPreview(winId, true);
+    }
+    liveProcessing = false; renderLiveStats();
   }
-  liveProcessing = false; renderLiveStats();
+  if (liveOn) timer = setTimeout(liveTick, 200);   // next round only AFTER this one drained
 }
 
 function setLiveMode(on) {
   if (on && precapOpen) return;          // mutually exclusive with precapture
+  if (on === liveOn) return;             // no change → don't double-start the loop or log twice
   liveOn = on;
   $("liveBtn").classList.toggle("active", on);
-  if (timer) { clearInterval(timer); timer = null; }
+  if (timer) { clearTimeout(timer); timer = null; }
   showLiveStats(on);
-  if (on) { timer = setInterval(liveTick, 1200); registerWorker("live", "live view", () => setLiveMode(false)); }
-  else unregisterWorker("live");
+  if (on) {
+    log("live mode started", "run");
+    registerWorker("live", "live view", () => setLiveMode(false));
+    liveTick();   // kick off the self-paced loop
+  } else {
+    log("live mode stopped");
+    unregisterWorker("live");
+  }
 }
 
 // ---- init -----------------------------------------------------------------

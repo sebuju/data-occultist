@@ -128,3 +128,47 @@ def remove_event(game: str, dataset: str, batch: int, event_id: int):
     store = _store(game, dataset)
     store.remove_event(event_id)
     return _batch_detail(store, dataset, batch)
+
+
+# ---- subsets: derived views over a dataset ---------------------------------
+
+def _subset(game: str, subset: str):
+    settings = get_settings()
+    if game not in list_profiles(settings.profiles_dir):
+        raise HTTPException(status_code=404, detail=f"No profile {game!r}")
+    profile = load_profile(settings.profiles_dir, game)
+    sub = profile.subset_def(subset)
+    if sub is None:
+        raise HTTPException(status_code=404, detail=f"No subset {subset!r}")
+    return profile, sub
+
+
+def _build_enricher(rule):
+    """Construct the enricher named by a rule, or None if it isn't registered."""
+    from ...registry import build_enricher
+    try:
+        return build_enricher(rule.type, source_field=rule.source_field)
+    except Exception:
+        return None
+
+
+@router.get("/{game}/subset/{subset}")
+def subset_view(game: str, subset: str):
+    """Compute a subset over its source dataset (filter + derived columns only — no
+    network). Recomputed from current records, so it tracks dataset updates."""
+    from ...enrich.subset import compute_subset
+    _, sub = _subset(game, subset)
+    records = _store(game, sub.dataset).records(100_000)
+    result = compute_subset(records, sub, run_enrich=False)
+    return {"subset": subset, "dataset": sub.dataset, **result}
+
+
+@router.post("/{game}/subset/{subset}/enrich")
+def subset_enrich(game: str, subset: str):
+    """Same as the view, but also run the subset's enrichers (warframe.market, relic
+    contents, …). Network work — explicit user action, never the live poll."""
+    from ...enrich.subset import compute_subset
+    _, sub = _subset(game, subset)
+    records = _store(game, sub.dataset).records(100_000)
+    result = compute_subset(records, sub, run_enrich=True, build=_build_enricher)
+    return {"subset": subset, "dataset": sub.dataset, **result}

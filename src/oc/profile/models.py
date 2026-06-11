@@ -290,6 +290,63 @@ class DatasetDef(BaseModel):
     case_sensitive: bool = False    # dedup is case-insensitive by default
 
 
+class DictionaryDef(BaseModel):
+    """A named, game-level word list. OCR reads of text fields snap to the closest
+    entry — exact match first, then fuzzy — an authored alternative to the (flaky)
+    self-learning lexicon for games with a known vocabulary: item/weapon/relic/arcane
+    names, factions, etc. A game can have several; they're pooled."""
+
+    id: str
+    name: str = ""
+    enabled: bool = True
+    terms: list[str] = Field(default_factory=list)
+
+
+class FilterRule(BaseModel):
+    """One row-filter on a subset's source dataset. All of a subset's rules must pass
+    (AND) for a row to be included."""
+
+    field: str = ""
+    # eq, ne, contains, icontains, empty, nonempty, gt, lt, gte, lte, regex
+    op: str = "contains"
+    value: str = ""
+
+
+class DerivedColumn(BaseModel):
+    """A column computed from other columns of a row. ``template`` is plain text with
+    ``{column}`` placeholders substituted from the row's values, e.g. an arcane's display
+    string ``"{name} [{rank}]"`` or a market slug source ``"{name}"``."""
+
+    name: str
+    template: str = ""
+
+
+class EnrichRule(BaseModel):
+    """Attach external data to each row via a registered :class:`Enricher` (e.g.
+    warframe.market prices, relic contents). The enricher reads ``source_field`` (a base
+    OR derived column) as its lookup key. Network enrichers run only on an explicit
+    enrich pass, never in the live filter/derive refresh."""
+
+    type: str                       # registered enricher name (registry._ENRICHER)
+    source_field: str = "name"      # which column feeds the enricher's lookup
+    enabled: bool = True
+
+
+class SubsetDef(BaseModel):
+    """A derived view over a dataset: filter its rows, add computed columns, and
+    optionally attach external data. Recomputed from the dataset on demand, so it always
+    reflects the latest stored records. A dataset can have several subsets."""
+
+    id: str
+    dataset: str                    # source dataset id
+    filters: list[FilterRule] = Field(default_factory=list)
+    derived: list[DerivedColumn] = Field(default_factory=list)
+    enrich: list[EnrichRule] = Field(default_factory=list)
+    sort_by: str = ""
+    sort_desc: bool = False
+    limit: int = 0                  # 0 = no limit
+
+
 class GameProfile(BaseModel):
     """Everything needed to detect a game and read its windows."""
 
@@ -300,9 +357,29 @@ class GameProfile(BaseModel):
     fields: list[FieldDef] = Field(default_factory=list)
     windows: list[WindowDef] = Field(default_factory=list)
     datasets: list[DatasetDef] = Field(default_factory=list)
+    subsets: list[SubsetDef] = Field(default_factory=list)
+    dictionaries: list[DictionaryDef] = Field(default_factory=list)
+
+    def dictionary_terms(self) -> list[str]:
+        """Every term from every ENABLED dictionary, de-duplicated (case-insensitive),
+        order preserved — the pooled vocabulary OCR text reads snap to."""
+        seen: set[str] = set()
+        out: list[str] = []
+        for d in self.dictionaries:
+            if not d.enabled:
+                continue
+            for t in d.terms:
+                t = t.strip()
+                if t and t.lower() not in seen:
+                    seen.add(t.lower())
+                    out.append(t)
+        return out
 
     def window(self, window_id: str) -> WindowDef | None:
         return next((w for w in self.windows if w.id == window_id), None)
+
+    def subset_def(self, subset_id: str) -> SubsetDef | None:
+        return next((s for s in self.subsets if s.id == subset_id), None)
 
     def dataset_def(self, dataset_id: str) -> DatasetDef | None:
         return next((d for d in self.datasets if d.id == dataset_id), None)

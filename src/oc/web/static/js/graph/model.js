@@ -13,6 +13,8 @@ export class GraphModel {
     this.profile.windows = this.profile.windows || [];
     this.profile.fields = this.profile.fields || [];
     this.profile.datasets = this.profile.datasets || [];
+    this.profile.subsets = this.profile.subsets || [];
+    this.profile.dictionaries = this.profile.dictionaries || [];
   }
 
   // effective dataset id for a window (defaults to its own id)
@@ -68,6 +70,8 @@ export class GraphModel {
       ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
       ns.push({ id: `bat:${ds}`, type: "batches", ref: ds });
     }
+    for (const s of this.profile.subsets || []) ns.push({ id: `sub:${s.id}`, type: "subset", ref: s });
+    for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
     return ns;
   }
 
@@ -83,6 +87,8 @@ export class GraphModel {
       es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
     }
     for (const ds of this.datasets()) es.push({ from: `ds:${ds}`, to: `bat:${ds}`, kind: "data" });
+    for (const s of this.profile.subsets || []) es.push({ from: `ds:${s.dataset}`, to: `sub:${s.id}`, kind: "data" });
+    for (const d of this.profile.dictionaries || []) es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
     return es;
   }
 
@@ -98,6 +104,25 @@ export class GraphModel {
     return [...set];
   }
 
+  // ---- dictionaries: game-level word lists for fuzzy OCR matching ----------
+  dictionary(id) { return (this.profile.dictionaries || []).find((d) => d.id === id) || null; }
+  addDictionary(id) {
+    this.profile.dictionaries = this.profile.dictionaries || [];
+    if (!id) { let n = 1; do { id = `dict_${n++}`; } while (this.dictionary(id)); }
+    else if (this.dictionary(id)) return false;
+    this.profile.dictionaries.push({ id, name: id, enabled: true, terms: [] });
+    return id;
+  }
+  removeDictionary(id) { this.profile.dictionaries = (this.profile.dictionaries || []).filter((d) => d.id !== id); }
+  renameDictionary(oldId, newId) {
+    newId = (newId || "").trim();
+    const d = this.dictionary(oldId);
+    if (!d || !newId || newId === oldId || this.dictionary(newId)) return false;
+    d.id = newId;
+    return true;
+  }
+  setDictionaryTerms(id, terms) { const d = this.dictionary(id); if (d) d.terms = terms; }
+
   // duplicate a dataset's definition (key + options) under a fresh id; a window can
   // then be wired to it
   cloneDataset(id) {
@@ -110,6 +135,38 @@ export class GraphModel {
     return newId;
   }
   removeDatasetDef(id) { this.profile.datasets = (this.profile.datasets || []).filter((d) => d.id !== id); }
+
+  // ---- subsets: derived views over a dataset ------------------------------
+  subsetDef(id) { return (this.profile.subsets || []).find((s) => s.id === id) || null; }
+  addSubset(ds) {
+    let n = 1, id = `${ds}_view`;
+    while (this.subsetDef(id)) id = `${ds}_view${++n}`;
+    (this.profile.subsets = this.profile.subsets || []).push({
+      id, dataset: ds, filters: [], derived: [], enrich: [], sort_by: "", sort_desc: false, limit: 0,
+    });
+    return id;
+  }
+  removeSubset(id) { this.profile.subsets = (this.profile.subsets || []).filter((s) => s.id !== id); }
+  renameSubset(oldId, newId) {
+    newId = (newId || "").trim();
+    if (!newId || newId === oldId || this.subsetDef(newId)) return false;
+    this.subsetDef(oldId).id = newId;
+    return true;
+  }
+  // columns a subset can reference: its dataset's field ids + its own derived names
+  subsetColumns(id) {
+    const s = this.subsetDef(id);
+    if (!s) return [];
+    const out = [...this.datasetFields(s.dataset)];
+    for (const d of s.derived || []) if (d.name && !out.includes(d.name)) out.push(d.name);
+    return out;
+  }
+  addFilter(id) { (this.subsetDef(id).filters ||= []).push({ field: "", op: "contains", value: "" }); }
+  removeFilter(id, i) { this.subsetDef(id).filters.splice(i, 1); }
+  addDerived(id) { (this.subsetDef(id).derived ||= []).push({ name: "", template: "" }); }
+  removeDerived(id, i) { this.subsetDef(id).derived.splice(i, 1); }
+  addEnrich(id) { (this.subsetDef(id).enrich ||= []).push({ type: "warframe_market", source_field: "name", enabled: true }); }
+  removeEnrich(id, i) { this.subsetDef(id).enrich.splice(i, 1); }
 
   // ---- edit ops -----------------------------------------------------------
 
@@ -344,5 +401,5 @@ export class GraphModel {
 }
 
 function blank(name) {
-  return { name, process_names: [], window_title_hint: null, fields: [], windows: [], datasets: [] };
+  return { name, process_names: [], window_title_hint: null, fields: [], windows: [], datasets: [], dictionaries: [] };
 }

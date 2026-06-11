@@ -338,7 +338,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .lw-count { color: var(--warn); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lw-kill { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap;
   background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px;
-  height: 16px; padding: 0 6px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1; }
+  height: 16px; min-height: 0; padding: 0 6px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1; }
 .lw-kill:hover { filter: brightness(1.12); }
 
 /* full-screen block when a background OCR worker refuses to die on startup */
@@ -375,6 +375,9 @@ legend { color: var(--muted); padding: 0 6px; }
 .pc-opts .flab { display: flex; align-items: center; gap: 6px; }
 .pc-opts input { width: 8ch; }
 .pc-ctl { display: flex; align-items: center; gap: 8px; }
+/* save button after a successful save — green, not dimmed like a normal disabled button */
+.pc-ctl button.pc-saved, .pc-ctl button.pc-saved:disabled {
+  background: var(--phase-done); color: var(--white); opacity: 1; cursor: default; }
 .pc-progress { height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .pc-fill { height: 100%; background: var(--accent); transition: width 0.2s; }
 .pc-data { max-height: 46vh; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
@@ -487,7 +490,26 @@ a.node.win:hover { border-color: var(--accent); }
 /* content nodes — data / preview / batches stay NORMAL nodes (identical header/body
    to every other node). Only the inner content host is a resizable scroll box, so
    tables never blow the node up. ONE look + ONE behaviour, no per-kind panel code. */
-.gnode.dataset, .gnode.preview, .gnode.batches { width: max-content; }
+.gnode.dataset, .gnode.preview, .gnode.batches, .gnode.subset { width: max-content; }
+.gnode.subset { min-width: 320px; }
+.gnode.dictionary { width: max-content; min-width: 260px; }
+/* subset config editors */
+.sub-of { margin-left: 6px; font-size: var(--fs-sm); }
+.sub-cfg { margin-top: 4px; }
+.sub-sec { margin-top: 6px; }
+.sub-lbl { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; }
+.sub-empty { font-size: var(--fs-sm); padding: 1px 2px; }
+.sub-row { display: flex; align-items: center; gap: 4px; margin-top: 3px; }
+.sub-row select, .sub-row input { min-width: 0; }
+.sub-row .sf-val, .sub-row .sd-tpl, .sub-row .sd-name { flex: 1 1 0; }
+.sub-row .sf-field, .sub-row .sf-op, .sub-row .se-type, .sub-row .se-src { flex: 0 0 auto; }
+.sub-row button.danger { flex: 0 0 auto; padding: 0 6px; }
+.sub-sort { display: flex; gap: 10px; flex-wrap: wrap; }
+.sub-sort .flab { display: inline-flex; align-items: center; gap: 4px; grid-template-columns: none; }
+.sub-sort .ss-limit { width: 5ch; }
+.dictterms { width: 100%; resize: vertical; min-height: 140px; margin-top: 6px; box-sizing: border-box;
+  font: var(--fs-sm)/1.4 var(--font-mono); background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
 .nodehost { margin-top: 6px; overflow: auto; resize: both; min-width: 200px; min-height: 80px;
   width: 320px; height: 280px; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px 4px; }
 .prev-host, .data-host { width: 340px; }

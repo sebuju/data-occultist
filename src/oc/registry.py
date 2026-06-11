@@ -53,6 +53,7 @@ _IMPL_MODULES = (
     "oc.learn.rapidfuzz_corrector",
     "oc.learn.difflib_corrector",
     "oc.enrich.warframe_market",
+    "oc.enrich.relic",
 )
 
 
