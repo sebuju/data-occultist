@@ -33,12 +33,13 @@ def test_extract_text_before_separator():
     assert coerce(f, "Serration (maxed)") == "Serration"
 
 
-def test_empty_fallback_only_when_truly_empty():
-    # "empty" fires only when NOTHING was detected — junk text is not empty
+def test_empty_fallback_when_no_number_present():
+    # "empty" fires when no NUMBER was detected — nothing read, or OCR junk off a
+    # marker icon sharing the box (digitless = no number was rendered)
     f = FieldDef(id="count", type=FieldType.number, empty="1")
     assert coerce(f, "") == 1            # nothing read
     assert coerce(f, "   ") == 1         # whitespace-only = nothing read
-    assert coerce(f, "Guard") is None    # junk read: NOT the empty fallback
+    assert coerce(f, "Guard") == 1       # digitless junk = no number rendered
     assert coerce(f, "x 3") == 3         # a real number still wins
 
 
@@ -72,6 +73,7 @@ def test_number_if_text_all_text_only():
     assert coerce(f, "Guard") == 0                   # all-text read substituted
     assert coerce(f, "x 3") == 3                     # contains a digit -> real read wins
     assert coerce(f, "7") == 7
+    assert coerce(f, "#") == 0                       # symbol-only junk is not a number either
 
 
 def test_number_if_text_any_letter():
@@ -85,6 +87,19 @@ def test_if_substitutions_do_not_swallow_empty():
     f = FieldDef(id="count", type=FieldType.number, empty="1", if_text="0")
     assert coerce(f, "") == 1
     assert coerce(f, "Guard") == 0
+
+
+def test_number_digitless_junk_falls_back_to_empty():
+    # a count box may hold a marker icon instead of a number; OCR junk off the icon
+    # ('人', '#') has no digits, so it means "no number rendered" -> the empty value
+    f = FieldDef(id="count", type=FieldType.number, empty="1")
+    assert coerce_rule(f, "人") == (1, "empty")
+    assert coerce_rule(f, "#") == (1, "empty")
+    assert coerce_rule(f, "@2") == (2, None)         # a digit anywhere is a real read
+    assert coerce_rule(f, "junk") == (1, "empty")
+    # without an empty value there is nothing to fall back to
+    bare = FieldDef(id="count", type=FieldType.number)
+    assert coerce_rule(bare, "#") == (None, None)
 
 
 def test_coerce_rule_reports_which_fallback_fired():

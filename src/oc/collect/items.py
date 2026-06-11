@@ -5,8 +5,10 @@ Finding items, on the fly, without a fixed grid:
   * columns are an even tiling of the data area by the cell width;
   * rows come from the *locator* tell — a cheap visual tell (filled/colour/template)
     slid down a column finds the rows with no OCR, or a text tell clusters the OCR
-    lines in its column;
-  * each (row, col) places the whole cell; fields read at cell-relative offsets.
+    lines across every column;
+  * each (row, col) places the whole cell; fields read at cell-relative offsets. A
+    text-located cell re-anchors on its OWN column's label (tile types put their
+    label at different heights, so a row-wide anchor misplaces mixed rows).
 
 A detected cell is kept only when *all* the item's tells pass (:func:`valid_cell`),
 so floating tooltips and empty slots are discarded.
@@ -121,26 +123,56 @@ def _visual_rows(frame: Frame, item: ItemDef, loc, da, templates) -> list[float]
     return _peaks(ys, scores, loc.threshold, max(step * 3, ih * 0.15))
 
 
-def _text_rows(item: ItemDef, loc, lines_frac, da) -> list[float]:
-    """Cluster the OCR lines in the locator field's column into row bands.
+def _loc_lines(item: ItemDef, loc, lines_frac, da, ncols: int, pitch: float) -> list[tuple]:
+    """The OCR lines eligible to anchor rows: letter-bearing, confident lines inside
+    the locator's x-range of ANY column (not just column 0 — a row whose first tile
+    is unreadable must still be found from its other tiles). Returns (cx, cy, h).
 
     The locator is a TEXT field (a name), so only letter-bearing, confident lines
     count. This rejects two things that otherwise sit in the same column and corrupt
     the row anchor: numeric badges (e.g. a count "6" at the tile's top-left) and OCR
     garbage off the icons (low confidence). Without this, a scrolled view clusters
     badge + garbage + name into one band and the centroid misses the name entirely."""
-    iw, ih = item.box.w, item.box.h
-    lx0 = da.x + loc.box.x * iw          # column 0 sits at the data-area's left edge
-    lx1 = lx0 + loc.box.w * iw
-    centers, heights = [], []
+    iw = item.box.w
+    x0, x1 = loc.box.x * iw, (loc.box.x + loc.box.w) * iw   # locator x-range, cell-relative
+    out = []
     for cx, cy, h, text, conf in lines_frac:
-        if not (lx0 <= cx <= lx1 and da.y <= cy <= da.y + da.h):
+        if not (da.x <= cx <= da.x + da.w and da.y <= cy <= da.y + da.h):
             continue
         if conf < _LOC_MIN_CONF or not any(ch.isalpha() for ch in text):
             continue                     # skip numeric badges and low-confidence garbage
-        centers.append(cy)
-        heights.append(h)
-    return detect_row_centers(centers, heights, ih, da.y, da.y + da.h, None, anchor=anchor_align(item))
+        k = min(ncols - 1, max(0, int((cx - da.x) // pitch)))
+        if x0 <= cx - da.x - k * pitch <= x1:
+            out.append((cx, cy, h))
+    return out
+
+
+def _text_rows(item: ItemDef, loc_lines: list[tuple], da) -> list[float]:
+    """Cluster the eligible locator lines (every column) into row bands."""
+    centers = [cy for _, cy, _ in loc_lines]
+    heights = [h for _, _, h in loc_lines]
+    return detect_row_centers(centers, heights, item.box.h, da.y, da.y + da.h, None,
+                              anchor=anchor_align(item))
+
+
+def _column_anchor(loc_lines: list[tuple], x0: float, x1: float, lc: float, ih: float,
+                   align: str) -> float | None:
+    """Re-anchor ONE cell to the locator text actually in ITS column.
+
+    A row-wide anchor assumes every tile puts its label at the same height, but tile
+    types differ (an arcane's name sits above its rank diamonds; a plain item's name
+    sits lower) — so a row anchored from one type misplaces the other's boxes and the
+    label falls outside its field box. The lines in this column within half a cell of
+    the row anchor are the cell's own label; anchor on them. None -> no text here,
+    keep the row anchor."""
+    band = [(cy, h) for cx, cy, h in loc_lines if x0 <= cx <= x1 and abs(cy - lc) <= ih * 0.5]
+    if not band:
+        return None
+    if align == "top":
+        return min(cy - h / 2 for cy, h in band)
+    if align == "bottom":
+        return max(cy for cy, _ in band)
+    return sum(cy for cy, _ in band) / len(band)
 
 
 def _cell_in_bounds(item: ItemDef, cell_x: float, cell_y: float, da) -> bool:
@@ -169,19 +201,29 @@ def _cells_for_item(frame: Frame, item: ItemDef, da, lines_frac, templates, ref:
     if loc is None or iw <= 0 or ih <= 0:
         return []
 
-    if _is_visual_loc(loc):
-        loc_anchors = _visual_rows(frame, item, loc, da, templates)
-    else:
-        loc_anchors = _text_rows(item, loc, lines_frac, da)
     # columns tile the data area EVENLY: step by the exact pitch (da.w / ncols), not
     # the drawn cell width, so a slightly-tight cell doesn't drift across columns.
     ncols = max(1, round(da.w / iw))
     pitch_x = da.w / ncols
+    loc_lines = None
+    if _is_visual_loc(loc):
+        loc_anchors = _visual_rows(frame, item, loc, da, templates)
+    else:
+        loc_lines = _loc_lines(item, loc, lines_frac, da, ncols, pitch_x)
+        loc_anchors = _text_rows(item, loc_lines, da)
+    align = anchor_align(item)
     out: list[ItemCell] = []
     for ri, lc in enumerate(loc_anchors):
-        cell_y = lc - ref * ih              # align the locator's true content to the detected row
         for c in range(ncols):
             cell_x = da.x + c * pitch_x
+            anchor_y = lc
+            if loc_lines is not None:
+                # per-cell re-anchor: this column's own label, not the row consensus
+                la = _column_anchor(loc_lines, cell_x + loc.box.x * iw,
+                                    cell_x + (loc.box.x + loc.box.w) * iw, lc, ih, align)
+                if la is not None:
+                    anchor_y = la
+            cell_y = anchor_y - ref * ih    # align the locator's true content to the detected row
             if not _cell_in_bounds(item, cell_x, cell_y, da):
                 continue                    # a box outside the data area reads stray UI text
             boxes = {

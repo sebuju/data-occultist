@@ -10,7 +10,12 @@ from ..registry import register_corrector
 
 @register_corrector("rapidfuzz")
 class RapidFuzzCorrector(Corrector):
-    def __init__(self, scorer: str = "WRatio") -> None:
+    # Default is plain ``ratio`` (normalized indel), NOT WRatio: WRatio's token_set
+    # component scores a token-subset pair ("Akarius Prime" vs "Akarius Prime Link")
+    # ~95, so a confidently-read component name snaps to its parent item and distinct
+    # records collapse into one. ratio keeps real OCR noise snapping (a dropped space
+    # or one bad character still scores >0.92) without the subset false-match.
+    def __init__(self, scorer: str = "ratio") -> None:
         self._scorer_name = scorer
 
     def _scorer(self):

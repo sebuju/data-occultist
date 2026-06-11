@@ -52,8 +52,10 @@ def coerce_rule(field: FieldDef, raw: str) -> tuple[str | float | int | None, st
     is configuration, not OCR, so callers shouldn't present it as a confident read."""
     raw = raw.strip()
 
-    # "empty" means TRULY empty: OCR detected no text and no numbers at all. A junk
-    # read does not fall back — the if_number/if_text substitutions handle mismatches.
+    # "empty" means OCR detected no text and no numbers at all. For a NUMBER field a
+    # digitless read also counts as empty (see below): icon art OCR'd as stray glyphs
+    # ('人', '#') is not text, so a box holding only an icon reads as "no number here".
+    # For a TEXT field junk does not fall back — if_number handles type mismatches.
     if not raw:
         if field.empty is None:
             return None, None
@@ -70,12 +72,18 @@ def coerce_rule(field: FieldDef, raw: str) -> tuple[str | float | int | None, st
         if has_digit if field.if_number_any else (has_digit and not has_alpha):
             return field.if_number.strip() or None, "if_number"
     if field.type is FieldType.number and field.if_text is not None:
-        if has_alpha if field.if_text_any else (has_alpha and not has_digit):
+        # default mode is "no digits at all", not "has letters": OCR junk off an icon
+        # in the box is often symbol-only ('#', '@') — still not a number
+        if has_alpha if field.if_text_any else not has_digit:
             return _to_number(_first_number(field.if_text)), "if_text"
 
     text = _apply_extract(field, raw)
 
     if field.type is FieldType.number:
+        if not has_digit and field.empty is not None:
+            # no digits anywhere = no number was rendered; whatever OCR picked up is
+            # a marker icon (built-status, equipped, ...) — same as an empty box
+            return _to_number(_first_number(field.empty)), "empty"
         return _to_number(_first_number(text) if text else None), None
 
     if not text:

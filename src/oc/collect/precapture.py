@@ -12,7 +12,7 @@ with fast scrolling. Precapture splits the cost in two:
 
 Then the user **saves** the staged records into the real dataset (or discards them).
 
-Speed comes from two skips during processing: when the *anchor* regions are
+Speed comes from two skips during processing: when the *detect* regions are
 pixel-identical to the previous frame we reuse the last window/state classification,
 and when a window's *data area* is identical we reuse its last read.
 """
@@ -86,16 +86,16 @@ def _changed_cells(a: np.ndarray, b: np.ndarray) -> int:
     return int((cv2.absdiff(a, b) > _THUMB_TOL).sum())
 
 
-def _anchor_boxes(profile: GameProfile) -> list[FractionBox]:
-    """Every region used for window/state detection — anchors on windows and states."""
+def _detect_boxes(profile: GameProfile) -> list[FractionBox]:
+    """Every region used for window/state detection — detectors on windows and states."""
     out: list[FractionBox] = []
     for w in profile.windows:
-        for a in w.anchors:
-            if a.enabled:
-                out.append(a.search.to_fraction())
+        for d in w.detect:
+            if d.enabled:
+                out.append(d.search.to_fraction())
         for s in w.states:
-            for a in s.anchors:
-                out.append(a.search.to_fraction())
+            for d in s.detect:
+                out.append(d.search.to_fraction())
     return out
 
 
@@ -155,8 +155,12 @@ class PrecaptureSession:
         resolver = FieldResolver(self._lexicon, engine.corrector, self._tuning.accept_confidence,
                                  confusions=self._confusions, dictionary=dictionary)
         self._reader = RegionReader(engine.ocr, resolver, cutouts=_load_cutouts(engine, profile))
-        self._anchor_fracs = _anchor_boxes(profile)
-        self._dir = Path(engine.settings.captures_dir) / _safe(profile.name) / "precapture"
+        self._detect_fracs = _detect_boxes(profile)
+        # Recordings are kept as named SESSIONS under precapture/<id>/ (frames +
+        # ocr_state.json + meta.json), so a set can be re-processed and re-saved without
+        # re-recording. ``_session`` selects the active one; ``_dir`` resolves to it.
+        self._base = Path(engine.settings.captures_dir) / _safe(profile.name) / "precapture"
+        self._session: str | None = None
         # Recording copies pixels straight off the composited desktop (mss) instead of
         # the engine's window capture: PrintWindow forces the game to re-render its whole
         # surface every grab and tanks its frame rate. mss just reads what's already on
@@ -177,8 +181,147 @@ class PrecaptureSession:
         self._no_key = 0        # records dropped because they had no value under the dataset key
         self._t_decode = self._t_classify = self._t_read = 0.0   # perf accumulators (s)
         self._t0 = 0.0
+        self._t_end = 0.0       # monotonic time the run finished; freezes fps once idle/done
         self._error: str | None = None
+        self._init_sessions()
+
+    # ---- sessions ----------------------------------------------------------
+
+    @property
+    def _dir(self) -> Path:
+        """Active session directory (frames + checkpoint + meta live here)."""
+        return self._base / (self._session or "_scratch")
+
+    def _new_session_id(self) -> str:
+        # microseconds so two recordings in the same second don't collide
+        return datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+
+    def _session_dirs(self) -> list[Path]:
+        try:
+            return [p for p in self._base.iterdir() if p.is_dir()]
+        except OSError:
+            return []
+
+    def _init_sessions(self) -> None:
+        """Migrate a pre-sessions flat recording into a session, then make the most
+        recent session active and load it (so the modal opens where you left off)."""
+        # legacy layout: frames sat directly in precapture/*.jpg — fold them into a session
+        try:
+            legacy = sorted(self._base.glob("*.jpg"))
+        except OSError:
+            legacy = []
+        if legacy:
+            sid = self._new_session_id()
+            dst = self._base / sid
+            try:
+                dst.mkdir(parents=True, exist_ok=True)
+                for f in legacy:
+                    f.replace(dst / f.name)
+                old_state = self._base / "ocr_state.json"
+                if old_state.exists():
+                    old_state.replace(dst / "ocr_state.json")
+                self._session = sid
+                self._write_meta(label="recovered")
+            except OSError:
+                pass
+        dirs = sorted(self._session_dirs(), key=lambda p: p.name, reverse=True)
+        if dirs:
+            self._session = dirs[0].name
+            self._rehydrate()
+
+    def _meta_path(self, d: Path) -> Path:
+        return d / "meta.json"
+
+    def _read_meta(self, d: Path) -> dict:
+        try:
+            return json.loads(self._meta_path(d).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def _write_meta(self, **fields) -> None:
+        """Merge fields into the active session's meta.json (created stamped once)."""
+        meta = self._read_meta(self._dir)
+        meta.setdefault("created", datetime.now().isoformat(timespec="seconds"))
+        for k, v in fields.items():
+            if v is not None:
+                meta[k] = v
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            self._meta_path(self._dir).write_text(json.dumps(meta), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _peek_state(self, d: Path) -> dict:
+        """Cheap read of a session's checkpoint for the listing: how far it processed and
+        how many records it holds, without loading frames."""
+        try:
+            st = json.loads((d / "ocr_state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        records = sum(len(v.get("rows", {})) for v in st.get("staged", {}).values())
+        return {"processed": int(st.get("processed", 0)), "records": records}
+
+    def list_sessions(self) -> list[dict]:
+        """Every saved session, newest first: id, label, frame count, processed/record
+        counts, and whether it's the active one."""
+        out = []
+        for p in self._session_dirs():
+            meta = self._read_meta(p)
+            try:
+                frames = len(list(p.glob("*.jpg")))
+            except OSError:
+                frames = 0
+            st = self._peek_state(p)
+            out.append({
+                "id": p.name, "label": meta.get("label", ""),
+                "created": meta.get("created"), "saved_at": meta.get("saved_at"),
+                "frames": frames, "processed": st.get("processed", 0),
+                "records": st.get("records", 0), "active": p.name == self._session,
+            })
+        out.sort(key=lambda s: s["id"], reverse=True)
+        return out
+
+    def load_session(self, sid: str) -> None:
+        """Make ``sid`` active and load its frames + checkpoint, ready to re-process/save."""
+        self._join_prev()
+        target = self._base / _safe(sid)
+        if not target.is_dir():
+            raise KeyError(sid)
+        with self._lock:
+            self._session = _safe(sid)
+            self._reset_locked()
         self._rehydrate()
+
+    def delete_session(self, sid: str) -> None:
+        """Remove a session from disk. If it was active, fall back to the newest remaining."""
+        self._join_prev()
+        target = self._base / _safe(sid)
+        try:
+            if target.is_dir():
+                for f in target.iterdir():
+                    f.unlink()
+                target.rmdir()
+        except OSError:
+            pass
+        with self._lock:
+            self._reset_locked()
+            self._session = None
+        dirs = sorted(self._session_dirs(), key=lambda p: p.name, reverse=True)
+        if dirs:
+            self._session = dirs[0].name
+            self._rehydrate()
+
+    def rename_session(self, sid: str, label: str) -> None:
+        target = self._base / _safe(sid)
+        if not target.is_dir():
+            raise KeyError(sid)
+        meta = self._read_meta(target)
+        meta.setdefault("created", datetime.now().isoformat(timespec="seconds"))
+        meta["label"] = label
+        try:
+            self._meta_path(target).write_text(json.dumps(meta), encoding="utf-8")
+        except OSError:
+            pass
 
     # ---- disk persistence --------------------------------------------------
 
@@ -255,29 +398,22 @@ class PrecaptureSession:
         if self._processed >= len(self._frames):
             self._phase = Phase.done
 
-    def _clear_dir(self) -> None:
-        try:
-            if self._dir.exists():
-                for f in self._dir.glob("*.jpg"):
-                    f.unlink()
-                self._state_file().unlink(missing_ok=True)
-        except OSError:
-            pass
-
     # ---- recording ---------------------------------------------------------
 
-    def start_recording(self, max_frames: int = 300, interval_ms: int = 0) -> None:
+    def start_recording(self, max_frames: int = 300, interval_ms: int = 0, label: str = "") -> None:
         with self._lock:
             if self._phase in (Phase.recording, Phase.processing):
                 return
         self._join_prev()   # bury any lingering worker BEFORE clearing _stop (see _join_prev)
         with self._lock:
-            self._clear_dir()
+            self._session = self._new_session_id()   # each recording is its own session
             self._reset_locked()
             self._dir.mkdir(parents=True, exist_ok=True)
             self._phase = Phase.recording
             self._stop.clear()
             self._t0 = time.monotonic()
+            self._t_end = 0.0
+        self._write_meta(label=label or "")
         self._thread = threading.Thread(
             target=self._record_loop, args=(max_frames, interval_ms / 1000.0), daemon=True)
         self._thread.start()
@@ -348,6 +484,7 @@ class PrecaptureSession:
             with self._lock:
                 if self._phase is Phase.recording:
                     self._phase = Phase.recorded
+                self._t_end = time.monotonic()   # freeze the recording clock (fps stops drifting)
 
     def stop_recording(self) -> None:
         self._stop.set()
@@ -375,6 +512,7 @@ class PrecaptureSession:
             self._stop.clear()
             self._pause.clear()
             self._t0 = time.monotonic()
+            self._t_end = 0.0
             frames = list(self._frames[self._processed:])
             cw, ch = self._client
         self._thread = threading.Thread(target=self._process_loop, args=(frames, cw, ch), daemon=True)
@@ -383,7 +521,7 @@ class PrecaptureSession:
     def _process_loop(self, frames: list[bytes], cw: int, ch: int) -> None:
         eng = self._engine
         floor = self._tuning.min_confidence
-        last_anchor_sig: int | None = None
+        last_detect_sig: int | None = None
         last_match = None
         last_data_sig: dict[str, int] = {}
         last_records: dict[str, list] = {}
@@ -393,6 +531,7 @@ class PrecaptureSession:
                 self._save_ocr_state()   # keep the work done so far restartable
                 with self._lock:
                     self._phase = Phase.cancelled
+                    self._t_end = time.monotonic()
                 return
             while self._pause.is_set() and not self._stop.is_set():
                 time.sleep(0.05)
@@ -409,14 +548,14 @@ class PrecaptureSession:
                 # one OCR job per frame: held only for this frame, then released, so a UI
                 # read/detect can take a turn between frames instead of fighting the GPU.
                 with ocr_job():
-                    asig = self._signature(frame, self._anchor_fracs)
-                    if asig is not None and asig == last_anchor_sig:
+                    asig = self._signature(frame, self._detect_fracs)
+                    if asig is not None and asig == last_detect_sig:
                         match = last_match
                     else:
                         t = time.perf_counter()
                         match = eng.classifier.classify(frame, self._profile)
                         dt_classify = time.perf_counter() - t
-                        last_anchor_sig, last_match = asig, match
+                        last_detect_sig, last_match = asig, match
 
                     if match is not None:
                         window_id, state_id = match
@@ -444,6 +583,7 @@ class PrecaptureSession:
         self._save_ocr_state()   # final checkpoint: done-but-unsaved results survive a kill
         with self._lock:
             self._phase = Phase.done
+            self._t_end = time.monotonic()
         self._log_perf(errors)
 
     def _read_cached(self, frame: Frame, window: WindowDef, last_sig: dict, last_recs: dict) -> list:
@@ -542,11 +682,14 @@ class PrecaptureSession:
         self._pause.clear()
 
     def reset(self) -> None:
-        self._stop.set()
-        self._pause.clear()
-        with self._lock:
-            self._clear_dir()
-            self._reset_locked()
+        """Discard the active session (frames + records) and fall back to the newest one."""
+        if self._session:
+            self.delete_session(self._session)
+        else:
+            self._stop.set()
+            self._pause.clear()
+            with self._lock:
+                self._reset_locked()
 
     def _reset_locked(self) -> None:
         self._frames = []
@@ -579,10 +722,11 @@ class PrecaptureSession:
             written[dataset] = n
         self._lexicon.save()
         self._confusions.save()
-        try:   # committed: drop the checkpoint so a restart doesn't re-offer these rows
-            self._state_file().unlink(missing_ok=True)
-        except OSError:
-            pass
+        # keep the checkpoint: the session retains its processed records so it can be
+        # re-saved later. Just stamp the session as saved (and remember what it wrote).
+        self._save_ocr_state()
+        self._write_meta(saved_at=datetime.now().isoformat(timespec="seconds"),
+                         saved_counts=written)
         with self._lock:
             self._phase = Phase.saved
         return written
@@ -629,7 +773,10 @@ class PrecaptureSession:
     def status(self) -> dict:
         with self._lock:
             total = len(self._frames)
-            elapsed = max(1e-3, time.monotonic() - self._t0)
+            # once the run has ended, measure against the frozen finish time so fps stops
+            # ticking down every poll (elapsed would otherwise keep growing while idle)
+            now = self._t_end or time.monotonic()
+            elapsed = max(1e-3, now - self._t0)
             if self._phase is Phase.recording:
                 fps = total / elapsed
             elif self._phase in (Phase.processing, Phase.paused, Phase.done):
@@ -643,8 +790,12 @@ class PrecaptureSession:
                              else _consolidate(acc.rows, acc.counts)).values())
                 datasets.append({"dataset": ds, "key_field": acc.key_field,
                                  "count": len(rows), "sample": rows[-12:]})
+            meta = self._read_meta(self._dir) if self._session else {}
             return {
                 "phase": self._phase.value,
+                "session": self._session,
+                "label": meta.get("label", ""),
+                "saved_at": meta.get("saved_at"),
                 "frames": total,
                 "processed": self._processed,
                 "read": self._read,

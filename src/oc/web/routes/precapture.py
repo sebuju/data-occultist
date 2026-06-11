@@ -48,10 +48,45 @@ def _session(game: str, create: bool = False) -> PrecaptureSession:
 
 
 @router.post("/{game}/record/start")
-def record_start(game: str, max_frames: int = 300, interval_ms: int = 0):
+def record_start(game: str, max_frames: int = 300, interval_ms: int = 0, label: str = ""):
     s = _session(game, create=True)
-    s.start_recording(max_frames=max_frames, interval_ms=interval_ms)
+    s.start_recording(max_frames=max_frames, interval_ms=interval_ms, label=label)
     return s.status()
+
+
+@router.get("/{game}/sessions")
+def list_sessions(game: str):
+    """Every saved recording session for this game (newest first) + the active status."""
+    s = _session(game, create=True)
+    return {"sessions": s.list_sessions(), "status": s.status()}
+
+
+@router.post("/{game}/sessions/{sid}/load")
+def load_session(game: str, sid: str):
+    """Make a saved session active and load its frames + records, ready to re-process/save."""
+    s = _session(game, create=True)
+    try:
+        s.load_session(sid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"no session {sid!r}")
+    return {"sessions": s.list_sessions(), "status": s.status()}
+
+
+@router.post("/{game}/sessions/{sid}/rename")
+def rename_session(game: str, sid: str, label: str = ""):
+    s = _session(game, create=True)
+    try:
+        s.rename_session(sid, label)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"no session {sid!r}")
+    return {"sessions": s.list_sessions(), "status": s.status()}
+
+
+@router.delete("/{game}/sessions/{sid}")
+def delete_session(game: str, sid: str):
+    s = _session(game, create=True)
+    s.delete_session(sid)
+    return {"sessions": s.list_sessions(), "status": s.status()}
 
 
 @router.post("/{game}/record/stop")
@@ -87,6 +122,7 @@ def reset(game: str):
     s = _sessions.get(game)
     if s:
         s.reset()
+        return s.status()
     return {"phase": "idle", "frames": 0, "processed": 0, "fps": 0.0, "error": None, "datasets": []}
 
 

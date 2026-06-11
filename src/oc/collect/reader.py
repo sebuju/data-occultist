@@ -16,11 +16,19 @@ from dataclasses import dataclass, field as dc_field
 import cv2
 
 from ..interfaces import OcrEngine
-from ..profile.models import FieldDef, FieldType, Preprocess, WindowDef
-from ..types import Frame, OcrLine, PixelBox
+from ..profile.models import FieldDef, FieldType, ItemDef, Preprocess, WindowDef
+from ..types import FractionBox, Frame, OcrLine, PixelBox
 from .fields import coerce, coerce_rule
 from .grid import Cell, cells_for_rows, expand_cells
-from .items import anchor_align, locate_item_cells, locator_of, resolve_overlaps, tell_report, valid_cell
+from .items import (
+    ItemCell,
+    anchor_align,
+    locate_item_cells,
+    locator_of,
+    resolve_overlaps,
+    tell_report,
+    valid_cell,
+)
 from .pips import count_filled_diamonds, count_pips
 from .preprocess import apply as apply_preprocess
 from .rows import detect_row_centers
@@ -98,8 +106,19 @@ class RegionReader:
         hits = [ln for ln in lines if _center_in(ln, box)]
         if not hits:
             return "", 0.0
-        hits.sort(key=lambda ln: ln.box.x)
-        text = " ".join(ln.text for ln in hits).strip()
+        # reading order, not bare x-order: a wrapped name's second line often starts
+        # left of the first, so sorting by x alone scrambles it ("Empowered Cascadia").
+        # Cluster into visual lines (a hit joins the current line while its centre is
+        # inside that line's vertical extent), top-to-bottom, then x within each line.
+        hits.sort(key=lambda ln: ln.box.y + ln.box.h / 2)
+        rows: list[list[OcrLine]] = [[hits[0]]]
+        for ln in hits[1:]:
+            if ln.box.y + ln.box.h / 2 <= max(h.box.bottom for h in rows[-1]):
+                rows[-1].append(ln)
+            else:
+                rows.append([ln])
+        ordered = [ln for row in rows for ln in sorted(row, key=lambda ln: ln.box.x)]
+        text = " ".join(ln.text for ln in ordered).strip()
         conf = sum(ln.confidence for ln in hits) / len(hits)
         return text, conf
 
@@ -217,11 +236,15 @@ class RegionReader:
         return cells, lines, None
 
     def _item_anchor(self, item) -> float:
-        """Cell-relative y the row anchor should align to: where the locator's TEXT
-        actually sits in the frozen cutout. The tell box is usually drawn loosely
-        around the name, so its centre is above the real text — anchoring on the
-        centre drops the cell low. OCR the cutout once to find the true position so
-        every field box lands exactly where it was defined."""
+        """Cell-relative y the row anchor should align to: where the ANCHORABLE TEXT
+        actually sits in the frozen cutout. Live row locating clusters the letter-
+        bearing OCR lines in the locator's x-range — whatever the locator IS. A
+        diamonds/pips locator (an arcane's rank) has no text of its own, so the lines
+        that anchor its rows are still the name's; calibrating against the locator
+        box's centre instead places the cell as if the name sat on the rank marks,
+        one label-height too high, and the rank box misses its marks. So: OCR the
+        whole cell area of the cutout and anchor on the same lines the live pass
+        would cluster."""
         loc = locator_of(item)
         fallback = (loc.box.y + loc.box.h / 2) if loc else 0.5
         if item.id in self._anchor_cache:
@@ -231,16 +254,20 @@ class RegionReader:
         cb, ib = item.cutout_box, item.box
         if cut is not None and cut.size and cb is not None and cb.w > 0 and cb.h > 0 and loc is not None:
             ch, cw = cut.shape[:2]
-            # locator region: cell-relative -> window -> cutout fraction -> pixels
-            wx, wy = ib.x + loc.box.x * ib.w, ib.y + loc.box.y * ib.h
-            ww, wh = loc.box.w * ib.w, loc.box.h * ib.h
-            x0, y0 = (wx - cb.x) / cb.w, (wy - cb.y) / cb.h
-            x1, y1 = x0 + ww / cb.w, y0 + wh / cb.h
+            # whole cell area: cell-relative -> window -> cutout fraction -> pixels
+            x0, y0 = (ib.x - cb.x) / cb.w, (ib.y - cb.y) / cb.h
+            x1, y1 = x0 + ib.w / cb.w, y0 + ib.h / cb.h
             px0, py0 = max(0, int(x0 * cw)), max(0, int(y0 * ch))
             px1, py1 = min(cw, int(x1 * cw)), min(ch, int(y1 * ch))
             crop = cut[py0:py1, px0:px1]
             ls = self._ocr.read_image(crop) if crop.size else []
-            ls = [ln for ln in ls if any(c.isalpha() for c in ln.text)]   # the name, not a badge
+            # the lines the live locator would cluster: letter-bearing (not a numeric
+            # badge) and inside the locator's x-range of the cell
+            lx0 = px0 + loc.box.x * ib.w / cb.w * cw
+            lx1 = lx0 + loc.box.w * ib.w / cb.w * cw
+            ls = [ln for ln in ls
+                  if any(c.isalpha() for c in ln.text)
+                  and lx0 <= px0 + ln.box.x + ln.box.w / 2 <= lx1]
             if ls:
                 # match the live row anchor: bottommost / topmost / mean line
                 align = anchor_align(item)
@@ -421,3 +448,66 @@ class RegionReader:
             for ln in lines
         ]
         return {"cells": out, "detections": detections}
+
+    def read_cutout(self, cut, window: WindowDef, item: ItemDef, fields: dict[str, FieldDef]) -> dict:
+        """Read ONE frozen item cutout as its authored cell and report what current
+        settings extract from it: per-field raw/value/confidence + per-tell pass/score
+        + overall validity. The cutout IS the cell, so fields read at their cell-relative
+        offsets (mapped through ``cutout_box``) — no row locating is needed. Boxes come
+        back in CUTOUT fractions so the item node can draw the read-outs over the crop.
+        """
+        h, w = cut.shape[:2]
+        frame = Frame(image=cut, client=PixelBox(0, 0, w, h))
+        cb, ib = item.cutout_box, item.box
+        if cb is None or cb.w <= 0 or cb.h <= 0 or ib.w <= 0 or ib.h <= 0:
+            return {"fields": {}, "tells": [], "valid": False, "cell": None}
+        # cell origin/size in CUTOUT fractions: cell-relative -> window -> cutout fraction
+        iw, ih = ib.w / cb.w, ib.h / cb.h
+        ox, oy = (ib.x - cb.x) / cb.w, (ib.y - cb.y) / cb.h
+        boxes = {
+            f.field: FractionBox(ox + f.box.x * iw, oy + f.box.y * ih, f.box.w * iw, f.box.h * ih)
+            for f in item.fields
+        }
+        ic = ItemCell(Cell(row=0, col=0, boxes=boxes), ox, oy, iw, ih, item)
+
+        # one detection pass over the field boxes, then focus-read any it missed
+        targets = [(fid, fb.to_pixels(w, h)) for fid, fb in boxes.items()]
+        text_boxes = [b for fid, b in targets if not self._is_pip(fields.get(fid))]
+        lines = self._ocr_union(frame, text_boxes, window.preprocess, None)
+        base, pending = {}, []
+        for fid, box in targets:
+            if self._is_pip(fields.get(fid)):
+                continue
+            tc = self._gather(lines, box)
+            base[fid] = tc
+            if not tc[0]:
+                pending.append((fid, box))
+        focus = self._focus_reads(frame, window, pending) if pending else {}
+
+        out_fields, vals, confs = {}, {}, {}
+        for fid, box in targets:
+            fdef = fields.get(fid)
+            fb = boxes[fid]
+            bf = {"x": fb.x, "y": fb.y, "w": fb.w, "h": fb.h}
+            if self._is_pip(fdef):
+                cnt = self._pip_value(frame, box, fdef)
+                unit = "filled" if fdef.type is FieldType.diamonds else "pips"
+                out_fields[fid] = {"raw": f"{cnt} {unit}", "value": cnt, "confidence": 0.99, "box": bf}
+                vals[fid], confs[fid] = cnt, 0.99
+                continue
+            text, conf = focus.get(fid) or base[fid]
+            if self._resolver and fdef:
+                resolved = self._resolver.resolve(fdef, text, conf)
+                value, rule = resolved.value, resolved.substituted
+            elif fdef:
+                value, rule = coerce_rule(fdef, text)
+            else:
+                value, rule = text or None, None
+            out_fields[fid] = {"raw": text, "value": value, "confidence": round(conf, 3),
+                               "substituted": rule, "box": bf}
+            vals[fid], confs[fid] = value, conf
+
+        tells = tell_report(frame, vals, ic, self._templates, confs, fields)
+        return {"fields": out_fields, "tells": tells,
+                "valid": all(t["pass"] for t in tells),
+                "cell": {"x": ox, "y": oy, "w": iw, "h": ih}}

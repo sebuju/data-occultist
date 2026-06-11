@@ -195,6 +195,21 @@ export class EdgeRouter {
     return [true, used];
   }
 
+  // Cost of routing an edge between these ports, WITHOUT building/stamping a path —
+  // just the A* g-score at the goal. Lets the caller pick the cheapest-to-route pair of
+  // node sides instead of guessing by raw distance: a side that faces a wall or forces a
+  // long detour scores worse than a slightly-farther side with a clear run. Reflects the
+  // corridors already stamped this pass, so a side is also penalised for piling onto
+  // lines already there. Infinity only if truly unreachable (soft obstacles → rare).
+  routeCost(p1, d1, p2, d2) {
+    const sd = DIR_CODE[d1] ?? 1, gd = DIR_CODE[d2] ?? 0;
+    const sx = this._cx(p1[0] + DIRS[sd][0] * this.cell), sy = this._cy(p1[1] + DIRS[sd][1] * this.cell);
+    const gx = this._cx(p2[0] + DIRS[gd][0] * this.cell), gy = this._cy(p2[1] + DIRS[gd][1] * this.cell);
+    this._astar(this._i(sx, sy), this._i(gx, gy), sd);   // fills g[]/seen[] for this gen
+    const goal = this._i(gx, gy);
+    return this.seen[goal] === this.gen ? this.g[goal] : Infinity;
+  }
+
   _astar(start, goal, startDir) {
     const { cols, rows, g, came, dir, seen } = this;
     const gen = ++this.gen;

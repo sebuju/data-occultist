@@ -1,14 +1,14 @@
-"""Precapture batch pipeline: anchor/data skips, staging dedup, save."""
+"""Precapture batch pipeline: detect/data skips, staging dedup, save."""
 
 from types import SimpleNamespace
 
 import cv2
 import numpy as np
 
-from oc.collect.precapture import PrecaptureSession, Phase, _anchor_boxes, _sig
+from oc.collect.precapture import PrecaptureSession, Phase, _detect_boxes, _sig
 from oc.collect.reader import Record
 from oc.profile.models import (
-    AnchorDef, Box, DatasetDef, FieldDef, GameProfile, RegionDef, WindowDef,
+    Box, DatasetDef, DetectDef, FieldDef, GameProfile, RegionDef, WindowDef,
 )
 from oc.settings import Settings, Tuning
 from oc.store.dataset_store import DatasetStore
@@ -19,7 +19,7 @@ def _profile():
         id="equip",
         fields=[FieldDef(id="item_name"), FieldDef(id="item_count")],
         regions=[RegionDef(id="n", box=Box(x=0, y=0.5, w=0.5, h=0.1), field="item_name")],
-        anchors=[AnchorDef(id="a", search=Box(x=0.0, y=0.0, w=0.2, h=0.1), text="inv")],
+        detect=[DetectDef(id="a", search=Box(x=0.0, y=0.0, w=0.2, h=0.1), text="inv")],
     )
     return GameProfile(name="testgame", datasets=[DatasetDef(id="equip", key_field="item_name")],
                        windows=[win])
@@ -51,8 +51,8 @@ def _jpeg(seed):
     return cv2.imencode(".jpg", img)[1].tobytes()
 
 
-def test_anchor_boxes_gathers_window_and_state_anchors():
-    boxes = _anchor_boxes(_profile())
+def test_detect_boxes_gathers_window_and_state_detectors():
+    boxes = _detect_boxes(_profile())
     assert len(boxes) == 1
 
 
@@ -198,8 +198,9 @@ def test_partial_ocr_checkpoint_resumes_not_restarts(tmp_path):
     assert names == {"Adra", "Boar"}            # pre-kill rows kept, new rows added
 
 
-def test_saved_checkpoint_not_reoffered_after_restart(tmp_path):
-    # save commits and drops the checkpoint -> a restart doesn't re-offer the same rows
+def test_saved_session_keeps_records_for_resave(tmp_path):
+    # a saved session RETAINS its processed records (checkpoint kept) so it can be loaded
+    # and saved again without re-recording — and is flagged saved in the session list
     _frames_on_disk(tmp_path)
     recs = [Record(values={"item_name": "Adra"}, confidence=0.9)]
     s1 = _session(tmp_path, recs)
@@ -207,8 +208,38 @@ def test_saved_checkpoint_not_reoffered_after_restart(tmp_path):
     s1.save()
     s2 = _session(tmp_path, recs)
     st = s2.status()
-    assert st["phase"] == Phase.recorded.value and st["processed"] == 0
-    assert st["datasets"] == []
+    assert st["phase"] == Phase.done.value and st["processed"] == 3
+    names = {r["item_name"] for ds in st["datasets"] for r in ds["sample"]}
+    assert names == {"Adra"}                       # records still there to re-save
+    sess = s2.list_sessions()
+    assert len(sess) == 1 and sess[0]["saved_at"] and sess[0]["records"] == 1
+
+
+def _session_on_disk(tmp_path, sid, n=2):
+    d = tmp_path / "caps" / "testgame" / "precapture" / sid
+    d.mkdir(parents=True)
+    for i in range(n):
+        cv2.imwrite(str(d / f"{i:05d}.jpg"),
+                    np.random.default_rng(i).integers(0, 255, (40, 60, 3), dtype=np.uint8))
+    (d / "meta.json").write_text(f'{{"label": "{sid}"}}', encoding="utf-8")
+    return d
+
+
+def test_sessions_list_load_delete(tmp_path):
+    # two recorded sessions on disk: list newest-first, the active one rehydrates, and
+    # load/delete switch between them without re-recording
+    _session_on_disk(tmp_path, "20200101-000000-000001", 2)
+    _session_on_disk(tmp_path, "20200101-000000-000002", 3)
+    recs = [Record(values={"item_name": "Adra"}, confidence=0.9)]
+    s = _session(tmp_path, recs)
+    lst = s.list_sessions()
+    assert [x["id"] for x in lst] == ["20200101-000000-000002", "20200101-000000-000001"]
+    assert s.status()["frames"] == 3                 # active = newest, already rehydrated
+    s.load_session("20200101-000000-000001")
+    assert s.status()["frames"] == 2
+    s.delete_session("20200101-000000-000001")
+    assert len(s.list_sessions()) == 1
+    assert s.status()["frames"] == 3                 # fell back to the remaining session
 
 
 def test_missing_dataset_key_warns(tmp_path):
