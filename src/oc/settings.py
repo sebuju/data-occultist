@@ -46,7 +46,7 @@ class Settings:
     window: BackendChoice = field(default_factory=lambda: BackendChoice("win32"))
     process: BackendChoice = field(default_factory=lambda: BackendChoice("psutil"))
     ocr: BackendChoice = field(default_factory=lambda: BackendChoice("rapidocr"))
-    classifier: BackendChoice = field(default_factory=lambda: BackendChoice("anchor"))
+    classifier: BackendChoice = field(default_factory=lambda: BackendChoice("detect"))
     corrector: BackendChoice = field(default_factory=lambda: BackendChoice("rapidfuzz"))
 
     tuning: Tuning = field(default_factory=Tuning)

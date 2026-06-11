@@ -137,7 +137,7 @@ class WindowClassifier(ABC):
     """Decide which profile-defined window (and state) a frame shows.
 
     Returns ``(window_id, state_id)`` or ``None`` if nothing matches. Concrete
-    classifiers may use template matching, OCR anchors, or anything else.
+    classifiers may use template matching, OCR text detectors, or anything else.
     """
 
     @abstractmethod

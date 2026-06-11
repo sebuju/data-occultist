@@ -50,7 +50,7 @@ export class EditorModel {
   }
   removeState(id) {
     this.states = this.states.filter((s) => s.id !== id);
-    this.boxes = this.boxes.filter((b) => !(b.role === "state_anchor" && b.stateId === id));
+    this.boxes = this.boxes.filter((b) => !(b.role === "state_detect" && b.stateId === id));
   }
 
   // ---- boxes --------------------------------------------------------------
@@ -76,8 +76,8 @@ export class EditorModel {
 
   toProfile() {
     const regions = [];
-    const anchors = [];
-    const statesMap = new Map(this.states.map((s) => [s.id, { ...s, anchors: [] }]));
+    const detect = [];
+    const statesMap = new Map(this.states.map((s) => [s.id, { ...s, detect: [] }]));
     let scrollbarBox = null;
 
     for (const b of this.boxes) {
@@ -86,12 +86,12 @@ export class EditorModel {
         const field = b.field || b.id;
         regions.push({ id: b.id, box, field });
         this.ensureField(field);
-      } else if (b.role === "anchor") {
-        anchors.push({ id: b.id, search: box, text: b.text || null, threshold: b.threshold ?? 0.8 });
-      } else if (b.role === "state_anchor") {
+      } else if (b.role === "detect") {
+        detect.push({ id: b.id, search: box, text: b.text || null, threshold: b.threshold ?? 0.8 });
+      } else if (b.role === "state_detect") {
         const sid = b.stateId || "state";
-        if (!statesMap.has(sid)) statesMap.set(sid, { id: sid, kind: "ordering", valid_for_save: true, anchors: [] });
-        statesMap.get(sid).anchors.push({ id: b.id, search: box, text: b.text || null, threshold: b.threshold ?? 0.8 });
+        if (!statesMap.has(sid)) statesMap.set(sid, { id: sid, kind: "ordering", valid_for_save: true, detect: [] });
+        statesMap.get(sid).detect.push({ id: b.id, search: box, text: b.text || null, threshold: b.threshold ?? 0.8 });
       } else if (b.role === "scrollbar") {
         scrollbarBox = box;
       }
@@ -106,7 +106,7 @@ export class EditorModel {
         empty: f.empty ?? null, if_number: f.if_number ?? null, if_number_any: !!f.if_number_any,
         if_text: f.if_text ?? null, if_text_any: !!f.if_text_any, dict_only: !!f.dict_only,
       })),
-      anchors,
+      detect,
       states: [...statesMap.values()],
       regions,
       preprocess: {
@@ -162,13 +162,13 @@ export class EditorModel {
       };
     }
 
-    for (const a of win.anchors || []) {
-      this.boxes.push({ id: a.id, role: "anchor", text: a.text || "", threshold: a.threshold ?? 0.8, ...a.search });
+    for (const a of win.detect || []) {
+      this.boxes.push({ id: a.id, role: "detect", text: a.text || "", threshold: a.threshold ?? 0.8, ...a.search });
     }
     for (const s of win.states || []) {
       this.states.push({ id: s.id, kind: s.kind || "ordering", valid_for_save: s.valid_for_save !== false });
-      for (const a of s.anchors || []) {
-        this.boxes.push({ id: a.id, role: "state_anchor", text: a.text || "", stateId: s.id, threshold: a.threshold ?? 0.8, ...a.search });
+      for (const a of s.detect || []) {
+        this.boxes.push({ id: a.id, role: "state_detect", text: a.text || "", stateId: s.id, threshold: a.threshold ?? 0.8, ...a.search });
       }
     }
     for (const r of win.regions || []) {

@@ -41,7 +41,7 @@ async function loadFlow() {
   $("winCol").innerHTML = `<div class="col-h">Windows</div>` + data.windows.map((w) => `
     <a class="node win" id="win-${esc(w.id)}" href="/teach.html?game=${encodeURIComponent(game)}&window=${encodeURIComponent(w.id)}" title="teach this window">
       <div class="node-h">${esc(w.id)} <span class="muted">↗</span></div>
-      <div class="muted">${w.anchors} anchors · ${w.states.length} states</div>
+      <div class="muted">${w.detect} detectors · ${w.states.length} states</div>
     </a>`).join("");
 
   $("capCol").innerHTML = `<div class="col-h">Captured</div>` + data.windows.map((w) => `

@@ -8,7 +8,7 @@ capture: printwindow  # oc.capture.*    -> grabs pixels. printwindow = window-ta
 window: win32       # oc.window.*       -> locates the game window (Windows)
 process: psutil     # oc.process.*      -> finds the running game
 ocr: rapidocr       # oc.ocr.*          -> reads text from regions
-classifier: anchor  # oc.detect.*       -> decides window + state
+classifier: detect  # oc.detect.*       -> decides window + state
 corrector: rapidfuzz  # oc.learn.*      -> fuzzy-corrects uncertain OCR
 
 tuning:

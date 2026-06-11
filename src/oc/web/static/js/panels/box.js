@@ -3,8 +3,8 @@ import { fieldset, mount, esc } from "../dom.js";
 
 const ROLES = [
   ["region", "region (data field)"],
-  ["anchor", "anchor (window detect)"],
-  ["state_anchor", "state anchor"],
+  ["detect", "detect (window detect)"],
+  ["state_detect", "state detect"],
   ["scrollbar", "scrollbar"],
   ["search", "search area (for Suggest)"],
 ];
@@ -24,8 +24,8 @@ export function renderBox(container, model, ctx) {
       <select id="b-field"><option value="">— pick / type —</option>${fieldOpts}</select>
       <input id="b-field-new" placeholder="or new field id" value="${esc(b.field)}" />
     </label>
-    <label class="r-anchor r-state">match text <input id="b-text" value="${esc(b.text)}" placeholder="EQUIPMENT" /></label>
-    <label class="r-anchor r-state">threshold <input type="number" id="b-thr" step="0.01" min="0" max="1" value="${b.threshold ?? 0.8}" /></label>
+    <label class="r-detect r-state">match text <input id="b-text" value="${esc(b.text)}" placeholder="EQUIPMENT" /></label>
+    <label class="r-detect r-state">threshold <input type="number" id="b-thr" step="0.01" min="0" max="1" value="${b.threshold ?? 0.8}" /></label>
     <label class="r-state">state
       <select id="b-state"><option value="">— pick —</option>${stateOpts}</select>
     </label>

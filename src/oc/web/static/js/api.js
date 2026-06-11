@@ -86,7 +86,7 @@ export async function suggest(game, search) {
   return r.json();
 }
 
-// Evaluate detectors/states against the image: { anchors:{id:{matched,read}}, states:{...} }.
+// Evaluate detectors/states against the image: { detect:{id:{matched,read}}, states:{...} }.
 export async function detect(profile, game, capture) {
   let url = "/api/detect";
   if (game && capture) url += `?game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}`;
@@ -115,6 +115,19 @@ export function cutoutUrl(game, name) {
   return `/api/item/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
 
+// Read one item's frozen cutout with the current settings -> { cutout:[w,h],
+// fields:{id:{raw,value,confidence,substituted,box}}, tells:[...], valid, cell }.
+export async function itemRead(profile, game, win, item) {
+  const q = `game=${encodeURIComponent(game)}&win=${encodeURIComponent(win)}&item=${encodeURIComponent(item)}`;
+  const r = await tfetch(`/api/item/read?${q}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profile),
+  }, OCR_MS);
+  if (!r.ok) throw new Error(`item read: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
 // OCR device (cpu/gpu). Returns { device, gpu_available }.
 export const ocr = {
   getDevice: () => tfetch("/api/ocr/device").then((r) => r.json()),
@@ -127,7 +140,7 @@ export const ocr = {
 const _pre = (game, path, signal, method = "POST") =>
   tfetch(`/api/precapture/${encodeURIComponent(game)}/${path}`, { method, signal }).then((r) => r.json());
 export const precapture = {
-  recordStart: (game, maxFrames, intervalMs, signal) => _pre(game, `record/start?max_frames=${maxFrames}&interval_ms=${intervalMs}`, signal),
+  recordStart: (game, maxFrames, intervalMs, label, signal) => _pre(game, `record/start?max_frames=${maxFrames}&interval_ms=${intervalMs}&label=${encodeURIComponent(label || "")}`, signal),
   recordStop: (game, signal) => _pre(game, "record/stop", signal),
   processStart: (game, signal) => _pre(game, "process/start", signal),
   pause: (game, on, signal) => _pre(game, `process/pause?on=${on}`, signal),
@@ -136,6 +149,11 @@ export const precapture = {
   reset: (game, signal) => _pre(game, "reset", signal),
   save: (game, signal) => _pre(game, "save", signal),
   status: (game, signal) => tfetch(`/api/precapture/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
+  // saved recording sessions: list / load / rename / delete. Each returns { sessions, status }.
+  sessions: (game, signal) => _pre(game, "sessions", signal, "GET"),
+  loadSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/load`, signal),
+  renameSession: (game, sid, label, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/rename?label=${encodeURIComponent(label || "")}`, signal),
+  deleteSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}`, signal, "DELETE"),
 };
 
 // Wipe a dataset's stored records + ledger.

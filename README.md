@@ -27,7 +27,7 @@ oc price warframe          # enrich collected records with warframe.market price
 ```
 
 Teaching UI runs at http://127.0.0.1:8000 — capture the live window, drag boxes,
-label each as a region / anchor / state anchor / scrollbar, and save.
+label each as a region / detector / state detector / scrollbar, and save.
 
 ## How it fits together
 

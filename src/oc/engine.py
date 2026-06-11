@@ -50,7 +50,7 @@ class Engine:
 
         set_process_dpi_aware()
         ocr = build_ocr(settings.ocr.name, **settings.ocr.options)
-        # The classifier needs the OCR engine (text anchors) and where templates live.
+        # The classifier needs the OCR engine (text detectors) and where templates live.
         classifier_opts = {
             "ocr": ocr,
             "profile_dir": str(Path(settings.profiles_dir)),

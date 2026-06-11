@@ -179,7 +179,7 @@ class ItemDef(BaseModel):
     tells: list[Tell] = Field(default_factory=list)        # what makes a cell an item
 
 
-class AnchorDef(BaseModel):
+class DetectDef(BaseModel):
     """A visual landmark used to recognise a window or state.
 
     ``template`` is a PNG path (relative to the profile dir) matched within
@@ -188,7 +188,7 @@ class AnchorDef(BaseModel):
     """
 
     id: str
-    enabled: bool = True    # disabled anchors are skipped during detection
+    enabled: bool = True    # disabled detectors are skipped during detection
     search: Box
     template: str | None = None
     text: str | None = None
@@ -215,7 +215,7 @@ class StateDef(BaseModel):
 
     id: str
     kind: StateKind = StateKind.generic
-    anchors: list[AnchorDef] = Field(default_factory=list)
+    detect: list[DetectDef] = Field(default_factory=list)
     valid_for_save: bool = True
 
 
@@ -275,7 +275,7 @@ class WindowDef(BaseModel):
     # Optional bounding box (window fractions) that constrains OCR to the data area,
     # so stray UI text elsewhere is never read.
     data_area: Box | None = None
-    anchors: list[AnchorDef] = Field(default_factory=list)
+    detect: list[DetectDef] = Field(default_factory=list)
     states: list[StateDef] = Field(default_factory=list)
     regions: list[RegionDef] = Field(default_factory=list)
     # Preferred over ``regions``+``scroll``: item templates matched across the data

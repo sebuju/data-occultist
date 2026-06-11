@@ -1,6 +1,6 @@
 // GraphModel: the editable structure behind the node view. It holds the full
 // GameProfile and exposes node/edge derivation plus edit ops. Box data
-// (regions/anchors/states/preprocess/scroll) is never touched here — it's authored
+// (regions/detect/states/preprocess/scroll) is never touched here — it's authored
 // on the canvas — so saving preserves it.
 
 let _fieldSeq = 1;
@@ -62,7 +62,7 @@ export class GraphModel {
       ns.push({ id: `win:${w.id}`, type: "window", ref: w });
       ns.push({ id: `prev:${w.id}`, type: "preview", ref: w });
       for (const r of w.regions || []) ns.push({ id: `reg:${w.id}:${r.id}`, type: "region", ref: r, win: w, field: this.fieldOf(w, r) });
-      for (const a of w.anchors || []) ns.push({ id: `anc:${w.id}:${a.id}`, type: "anchor", ref: a, win: w });
+      for (const d of w.detect || []) ns.push({ id: `det:${w.id}:${d.id}`, type: "detect", ref: d, win: w });
       if (w.scroll && w.scroll.scrollbar) ns.push({ id: `sb:${w.id}:scrollbar`, type: "scrollbar", ref: w.scroll, win: w });
       for (const it of w.items || []) ns.push({ id: `item:${w.id}:${it.id}`, type: "item", ref: it, win: w });
     }
@@ -81,7 +81,7 @@ export class GraphModel {
       es.push({ from: "game", to: `win:${w.id}`, kind: "own" });
       es.push({ from: `win:${w.id}`, to: `prev:${w.id}`, kind: "img" });
       for (const r of w.regions || []) es.push({ from: `win:${w.id}`, to: `reg:${w.id}:${r.id}`, kind: "field" });
-      for (const a of w.anchors || []) es.push({ from: `win:${w.id}`, to: `anc:${w.id}:${a.id}`, kind: "anchor" });
+      for (const d of w.detect || []) es.push({ from: `win:${w.id}`, to: `det:${w.id}:${d.id}`, kind: "detect" });
       if (w.scroll && w.scroll.scrollbar) es.push({ from: `win:${w.id}`, to: `sb:${w.id}:scrollbar`, kind: "scrollbar" });
       for (const it of w.items || []) es.push({ from: `win:${w.id}`, to: `item:${w.id}:${it.id}`, kind: "item" });
       es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
@@ -173,7 +173,7 @@ export class GraphModel {
   addWindow(id) {
     if (!id) { let n = 1; do { id = `window_${n++}`; } while (this.profile.windows.some((w) => w.id === id)); }
     else if (this.profile.windows.some((w) => w.id === id)) return false;
-    this.profile.windows.push({ id, dataset: null, fields: [], anchors: [], states: [], regions: [] });
+    this.profile.windows.push({ id, dataset: null, fields: [], detect: [], states: [], regions: [] });
     return id;
   }
   removeWindow(id) { this.profile.windows = this.profile.windows.filter((w) => w.id !== id); }
@@ -233,21 +233,21 @@ export class GraphModel {
   }
   regions(winId) { const w = this.window(winId); return (w && w.regions) || []; }
 
-  // ---- anchors (window-detect landmarks) ----------------------------------
+  // ---- detect (window-detect landmarks) -----------------------------------
 
-  addAnchor(winId, box) {
+  addDetect(winId, box) {
     const w = this.window(winId);
     if (!w) return null;
-    w.anchors = w.anchors || [];
+    w.detect = w.detect || [];
     let id = "detect_" + _fieldSeq++;
-    while (w.anchors.some((a) => a.id === id)) id = "detect_" + _fieldSeq++;
-    w.anchors.push({ id, search: { x: box.x, y: box.y, w: box.w, h: box.h }, text: "", threshold: 0.8 });
+    while (w.detect.some((d) => d.id === id)) id = "detect_" + _fieldSeq++;
+    w.detect.push({ id, search: { x: box.x, y: box.y, w: box.w, h: box.h }, text: "", threshold: 0.8 });
     return id;
   }
-  anchor(winId, id) { const w = this.window(winId); return w && (w.anchors || []).find((a) => a.id === id); }
-  setAnchorBox(winId, id, box) { const a = this.anchor(winId, id); if (a) a.search = { x: box.x, y: box.y, w: box.w, h: box.h }; }
-  removeAnchor(winId, id) { const w = this.window(winId); if (w) w.anchors = (w.anchors || []).filter((a) => a.id !== id); }
-  anchors(winId) { const w = this.window(winId); return (w && w.anchors) || []; }
+  detect(winId, id) { const w = this.window(winId); return w && (w.detect || []).find((d) => d.id === id); }
+  setDetectBox(winId, id, box) { const d = this.detect(winId, id); if (d) d.search = { x: box.x, y: box.y, w: box.w, h: box.h }; }
+  removeDetect(winId, id) { const w = this.window(winId); if (w) w.detect = (w.detect || []).filter((d) => d.id !== id); }
+  detects(winId) { const w = this.window(winId); return (w && w.detect) || []; }
 
   // ---- scrollbar (single box on the window's scroll config) ----------------
 
@@ -276,14 +276,14 @@ export class GraphModel {
     let id = "state_" + _fieldSeq++;
     while (w.states.some((s) => s.id === id)) id = "state_" + _fieldSeq++;
     w.states.push({ id, kind: "ordering", valid_for_save: true,
-      anchors: [{ id: id + "_a", search: { x: box.x, y: box.y, w: box.w, h: box.h }, text: "", threshold: 0.8 }] });
+      detect: [{ id: id + "_a", search: { x: box.x, y: box.y, w: box.w, h: box.h }, text: "", threshold: 0.8 }] });
     return id;
   }
   state(winId, id) { const w = this.window(winId); return w && (w.states || []).find((s) => s.id === id); }
   states(winId) { const w = this.window(winId); return (w && w.states) || []; }
   setStateBox(winId, id, box) {
     const s = this.state(winId, id);
-    if (s && s.anchors && s.anchors[0]) s.anchors[0].search = { x: box.x, y: box.y, w: box.w, h: box.h };
+    if (s && s.detect && s.detect[0]) s.detect[0].search = { x: box.x, y: box.y, w: box.w, h: box.h };
   }
   removeState(winId, id) { const w = this.window(winId); if (w) w.states = (w.states || []).filter((s) => s.id !== id); }
 

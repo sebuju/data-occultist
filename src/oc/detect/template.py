@@ -1,4 +1,4 @@
-"""Template matching helper (OpenCV) used by anchor-based detection."""
+"""Template matching helper (OpenCV) used by detector-based detection."""
 
 from __future__ import annotations
 

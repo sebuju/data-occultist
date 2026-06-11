@@ -1,6 +1,6 @@
 from .models import (
-    AnchorDef,
     DatasetDef,
+    DetectDef,
     FieldDef,
     GameProfile,
     RegionDef,
@@ -11,8 +11,8 @@ from .models import (
 from .loader import list_profiles, load_profile, save_profile
 
 __all__ = [
-    "AnchorDef",
     "DatasetDef",
+    "DetectDef",
     "FieldDef",
     "GameProfile",
     "RegionDef",

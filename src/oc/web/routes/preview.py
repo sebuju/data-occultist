@@ -12,7 +12,7 @@ import cv2
 from fastapi import APIRouter, HTTPException, Query
 
 from ...collect.reader import RegionReader
-from ...detect.anchor import AnchorMatcher, text_match_score
+from ...detect.matcher import DetectMatcher, text_match_score
 from ...learn.dictionary import Dictionary
 from ...learn.lexicon import Lexicon
 from ...learn.resolver import FieldResolver
@@ -41,34 +41,34 @@ def _frame_for(engine, profile, game, capture):
     return engine.capture.grab_window(win)
 
 
-def _eval_anchor(a, frame, matcher, ocr):
-    """Return {matched, read, score} for a detector/state anchor."""
-    if a.template:
-        score = matcher.score(a, frame)
-        return {"matched": score >= a.threshold, "read": "(template)", "score": round(score, 2)}
-    box = a.search.to_fraction().to_pixels(frame.client.w, frame.client.h)
+def _eval_detect(d, frame, matcher, ocr):
+    """Return {matched, read, score} for a window/state detector."""
+    if d.template:
+        score = matcher.score(d, frame)
+        return {"matched": score >= d.threshold, "read": "(template)", "score": round(score, 2)}
+    box = d.search.to_fraction().to_pixels(frame.client.w, frame.client.h)
     lines = ocr.read_region(frame, box)
     read = " ".join(ln.text for ln in lines).strip()
-    score = text_match_score((a.text or "").lower(), read.lower(), a.included)
-    return {"matched": bool(a.text) and score >= a.threshold, "read": read, "score": round(score, 2)}
+    score = text_match_score((d.text or "").lower(), read.lower(), d.included)
+    return {"matched": bool(d.text) and score >= d.threshold, "read": read, "score": round(score, 2)}
 
 
 @router.post("/detect")
 def detect(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None)):
     """Evaluate each window detector + state against the image: matched + what it read."""
     if not profile.windows:
-        return {"anchors": {}, "states": {}}
+        return {"detect": {}, "states": {}}
     engine = get_engine()
     frame = _frame_for(engine, profile, game, capture)
     window = profile.windows[0]
-    matcher = AnchorMatcher(engine.ocr, str(get_settings().profiles_dir))
+    matcher = DetectMatcher(engine.ocr, str(get_settings().profiles_dir))
 
     # one job: run the whole detect pass without interleaving with another OCR job
     with ocr_job():
-        anchors = {a.id: _eval_anchor(a, frame, matcher, engine.ocr) for a in window.anchors}
+        detect = {d.id: _eval_detect(d, frame, matcher, engine.ocr) for d in window.detect}
         states = {}
         for s in window.states:
-            evs = [_eval_anchor(a, frame, matcher, engine.ocr) for a in s.anchors]
+            evs = [_eval_detect(d, frame, matcher, engine.ocr) for d in s.detect]
             states[s.id] = {
                 "matched": bool(evs) and all(e["matched"] for e in evs),
                 "read": " | ".join(e["read"] for e in evs),
@@ -89,7 +89,7 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
                 "conf": d["conf"],
             }
 
-    return {"anchors": anchors, "states": states, "scrollbar": scrollbar}
+    return {"detect": detect, "states": states, "scrollbar": scrollbar}
 
 
 @router.post("/preview")
@@ -136,3 +136,35 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
     with ocr_job():   # one job: the whole window read runs without interleaving another
         result = reader.read_preview(frame, window, fields)
     return {"client": [frame.client.w, frame.client.h], **result}
+
+
+@router.post("/item/read")
+def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...), item: str = Query(...)):
+    """Read ONE item's frozen cutout with the current (unsaved) settings and report
+    what it extracts: per-field value/confidence + per-tell pass/score + validity. This
+    is the same read the collector runs on a located cell, scoped to the reference crop
+    so the item node shows exactly what its boxes get out of the image."""
+    window = next((w for w in profile.windows if w.id == win), None)
+    if window is None:
+        raise HTTPException(status_code=404, detail="window not found")
+    it = next((i for i in (window.items or []) if i.id == item), None)
+    if it is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    if not it.cutout:
+        raise HTTPException(status_code=400, detail="item has no cutout")
+    cp = captures_store.cutout_path(get_settings().captures_dir, game, it.cutout)
+    cut = cv2.imread(str(cp)) if cp else None
+    if cut is None:
+        raise HTTPException(status_code=404, detail="cutout not found")
+
+    engine = get_engine()
+    fields = {f.id: f for f in profile.fields_for(window)}
+    lex = Lexicon.for_game(get_settings().data_dir, profile.name)
+    dictionary = Dictionary(profile.dictionary_terms(), engine.corrector)
+    resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
+                             dictionary=dictionary, learn_enabled=False)
+    reader = RegionReader(engine.ocr, resolver)
+    with ocr_job():
+        result = reader.read_cutout(cut, window, it, fields)
+    h, w = cut.shape[:2]
+    return {"cutout": [w, h], **result}

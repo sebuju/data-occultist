@@ -8,19 +8,19 @@ const KINDS = ["ordering", "filter", "scroll", "generic"];
 export function renderStates(container, model, ctx) {
   const rows = model.states.map((s, i) => {
     const kinds = KINDS.map((k) => `<option ${k === s.kind ? "selected" : ""}>${k}</option>`).join("");
-    const nAnchors = model.boxes.filter((b) => b.role === "state_anchor" && b.stateId === s.id).length;
+    const nDetect = model.boxes.filter((b) => b.role === "state_detect" && b.stateId === s.id).length;
     return `
       <tr data-i="${i}">
         <td><input class="s-id" value="${esc(s.id)}" /></td>
         <td><select class="s-kind">${kinds}</select></td>
         <td><input type="checkbox" class="s-valid" ${s.valid_for_save ? "checked" : ""} title="save-worthy" /></td>
-        <td class="muted">${nAnchors} anchor(s)</td>
+        <td class="muted">${nDetect} detector(s)</td>
         <td><button class="s-del danger" title="remove">×</button></td>
       </tr>`;
   }).join("");
 
   const fs = fieldset("States", `
-    <p class="hint">Draw <b>state anchor</b> boxes and assign them to a state below. Records save only in save-worthy states.</p>
+    <p class="hint">Draw <b>state detect</b> boxes and assign them to a state below. Records save only in save-worthy states.</p>
     <table class="grid-table">
       <thead><tr><th>id</th><th>kind</th><th>save?</th><th></th><th></th></tr></thead>
       <tbody>${rows}</tbody>
@@ -33,8 +33,8 @@ export function renderStates(container, model, ctx) {
     const oldId = s.id;
     tr.querySelector(".s-id").addEventListener("change", (e) => {
       const nid = e.target.value.trim();
-      // keep any anchors pointing at the renamed state
-      model.boxes.forEach((b) => { if (b.role === "state_anchor" && b.stateId === oldId) b.stateId = nid; });
+      // keep any detectors pointing at the renamed state
+      model.boxes.forEach((b) => { if (b.role === "state_detect" && b.stateId === oldId) b.stateId = nid; });
       s.id = nid; ctx.refresh();
     });
     tr.querySelector(".s-kind").addEventListener("change", (e) => { s.kind = e.target.value; });

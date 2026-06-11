@@ -35,7 +35,7 @@ windows:
   fields:
   - id: name
     type: text
-    extract: whole
+    extract: text_before
     separator: '['
     if_number_any: false
     if_text_any: false
@@ -85,7 +85,7 @@ windows:
     y: 0.17411803841927975
     w: 0.6493593537024408
     h: 0.7292573648659971
-  anchors:
+  detect:
   - id: detect_2
     enabled: true
     search:
@@ -119,7 +119,7 @@ windows:
   states: []
   regions: []
   items:
-  - id: item
+  - id: normal
     enabled: true
     box:
       x: 0.2559312955630544
@@ -251,14 +251,6 @@ subsets:
     source_field: name
     enabled: true
   sort_by: arcane_level
-  sort_desc: false
-  limit: 0
-- id: equip_view2
-  dataset: equip
-  filters: []
-  derived: []
-  enrich: []
-  sort_by: ''
   sort_desc: false
   limit: 0
 dictionaries:

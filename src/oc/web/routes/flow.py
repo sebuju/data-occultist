@@ -30,7 +30,7 @@ def flow(game: str):
             "dataset": w.dataset_id,
             "fields": sorted({r.field for r in w.regions}),
             "regions": len(w.regions),
-            "anchors": len(w.anchors),
+            "detect": len(w.detect),
             "states": [s.id for s in w.states],
             "save_states": [s.id for s in w.states if s.valid_for_save],
         })

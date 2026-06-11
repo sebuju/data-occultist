@@ -49,7 +49,7 @@ _IMPL_MODULES = (
     "oc.window.win32_provider",
     "oc.process.psutil_detector",
     "oc.ocr.rapidocr_engine",
-    "oc.detect.anchor_classifier",
+    "oc.detect.classifier",
     "oc.learn.rapidfuzz_corrector",
     "oc.learn.difflib_corrector",
     "oc.enrich.warframe_market",

@@ -1,10 +1,10 @@
-"""Anchor text matching dismisses over-long reads; a window needs ALL anchors."""
+"""Detect text matching dismisses over-long reads; a window needs ALL detectors."""
 
 from types import SimpleNamespace
 
-from oc.detect.anchor import text_match_score
-from oc.detect.anchor_classifier import AnchorClassifier
-from oc.profile.models import AnchorDef, Box, GameProfile, WindowDef
+from oc.detect.matcher import text_match_score
+from oc.detect.classifier import DetectClassifier
+from oc.profile.models import Box, DetectDef, GameProfile, WindowDef
 
 
 def test_clean_match_scores_high():
@@ -30,29 +30,29 @@ def test_empty_is_zero():
 
 
 def _classifier_with(matched: dict):
-    win = WindowDef(id="equip", anchors=[
-        AnchorDef(id="a", search=Box(x=0, y=0, w=0.1, h=0.1), text="inventory"),
-        AnchorDef(id="b", search=Box(x=0.2, y=0, w=0.1, h=0.1), text="name"),
+    win = WindowDef(id="equip", detect=[
+        DetectDef(id="a", search=Box(x=0, y=0, w=0.1, h=0.1), text="inventory"),
+        DetectDef(id="b", search=Box(x=0.2, y=0, w=0.1, h=0.1), text="name"),
     ])
     profile = GameProfile(name="g", windows=[win])
-    clf = AnchorClassifier.__new__(AnchorClassifier)
-    clf._matcher = SimpleNamespace(matches=lambda anchor, frame: matched.get(anchor.id, False))
+    clf = DetectClassifier.__new__(DetectClassifier)
+    clf._matcher = SimpleNamespace(matches=lambda det, frame: matched.get(det.id, False))
     return clf, profile
 
 
-def test_window_matches_only_when_all_anchors_true():
+def test_window_matches_only_when_all_detectors_true():
     clf, profile = _classifier_with({"a": True, "b": True})
     assert clf.classify(frame=None, profile=profile) == ("equip", None)
 
 
-def test_window_rejected_when_one_anchor_false():
+def test_window_rejected_when_one_detector_false():
     clf, profile = _classifier_with({"a": True, "b": False})
     assert clf.classify(frame=None, profile=profile) is None
 
 
-def test_window_with_no_anchors_never_matches():
-    win = WindowDef(id="x")  # no anchors
+def test_window_with_no_detectors_never_matches():
+    win = WindowDef(id="x")  # no detectors
     profile = GameProfile(name="g", windows=[win])
-    clf = AnchorClassifier.__new__(AnchorClassifier)
+    clf = DetectClassifier.__new__(DetectClassifier)
     clf._matcher = SimpleNamespace(matches=lambda a, f: True)
     assert clf.classify(frame=None, profile=profile) is None

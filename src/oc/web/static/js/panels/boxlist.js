@@ -4,8 +4,8 @@ import { fieldset, mount, esc } from "../dom.js";
 export function renderBoxList(container, model, ctx) {
   const items = model.boxes.map((b) => {
     const detail = b.role === "region" ? (b.field || "?")
-      : b.role === "state_anchor" ? (b.stateId || "?")
-      : b.role === "anchor" ? (b.text || "?") : "";
+      : b.role === "state_detect" ? (b.stateId || "?")
+      : b.role === "detect" ? (b.text || "?") : "";
     const active = b.id === model.selectedId ? "active" : "";
     return `<li class="${active}" data-id="${esc(b.id)}"><span class="tag">${b.role}</span> ${esc(b.id)} <span class="muted">${esc(detail)}</span></li>`;
   }).join("");
