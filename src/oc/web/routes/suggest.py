@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from ...collect.suggest import analyze
+from ...ocr.serialize import ocr_job
 from ...profile import list_profiles, load_profile
 from ..deps import get_engine, get_locator, get_settings
 
@@ -29,4 +30,5 @@ def suggest(
     search = None
     if None not in (sx, sy, sw, sh):
         search = {"x": sx, "y": sy, "w": sw, "h": sh}
-    return analyze(frame, engine.ocr, search)
+    with ocr_job():   # one job so it doesn't interleave with a preview/detect/precapture
+        return analyze(frame, engine.ocr, search)

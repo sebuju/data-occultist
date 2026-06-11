@@ -18,7 +18,9 @@ _STATIC = Path(__file__).parent / "static"
 
 def _warm() -> None:
     """Pay the one-time slow costs in the background at startup so the user's first
-    Capture/Preview is instant: the process scan AND the OCR model load."""
+    Capture/Preview is instant: the process scan AND the OCR model load. The model stays
+    resident for the life of the process — with the lean CUDA arena options it only costs
+    a few hundred MB of GPU, so there's no reason to keep loading/unloading it."""
     try:
         settings = get_settings()
         locator = get_locator()
@@ -53,6 +55,21 @@ async def lifespan(_app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="oc teaching UI", version="0.1.0", lifespan=lifespan)
+
+    # Surface the FULL traceback of any unhandled error to the client (this is a local
+    # teaching tool) AND to the server log, so a 500 isn't an opaque "Internal Server
+    # Error" — the browser console prints the real stack.
+    import traceback as _tb
+
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(Exception)
+    async def _all_errors(_request: Request, exc: Exception):  # noqa: ANN202
+        tb = _tb.format_exc()
+        print(tb)   # server console
+        return JSONResponse(status_code=500, content={"detail": str(exc), "traceback": tb})
+
     app.include_router(capture.router)
     app.include_router(profiles.router)
     app.include_router(flow.router)

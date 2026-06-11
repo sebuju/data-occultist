@@ -34,6 +34,7 @@ import numpy as np
 
 from ..engine import Engine
 from ..learn.confusions import ConfusionMap
+from ..learn.dictionary import Dictionary
 from ..learn.lexicon import Lexicon
 from ..learn.resolver import FieldResolver
 from ..locate import WindowLocator
@@ -42,6 +43,7 @@ from ..store import DatasetStore
 from ..store.dataset_store import norm_key
 from ..types import Frame, FractionBox, PixelBox
 from ..capture.mss_backend import MssCaptureBackend
+from ..ocr.serialize import ocr_job
 from .collector import _load_cutouts
 from .reader import RegionReader
 
@@ -149,8 +151,9 @@ class PrecaptureSession:
         self._locator = WindowLocator(engine)
         self._lexicon = Lexicon.for_game(engine.settings.data_dir, profile.name)
         self._confusions = ConfusionMap.for_game(engine.settings.data_dir, profile.name)
+        dictionary = Dictionary(profile.dictionary_terms(), engine.corrector)
         resolver = FieldResolver(self._lexicon, engine.corrector, self._tuning.accept_confidence,
-                                 confusions=self._confusions)
+                                 confusions=self._confusions, dictionary=dictionary)
         self._reader = RegionReader(engine.ocr, resolver, cutouts=_load_cutouts(engine, profile))
         self._anchor_fracs = _anchor_boxes(profile)
         self._dir = Path(engine.settings.captures_dir) / _safe(profile.name) / "precapture"
@@ -200,12 +203,64 @@ class PrecaptureSession:
         if img is not None:
             self._client = (img.shape[1], img.shape[0])
         self._phase = Phase.recorded
+        self._load_ocr_state()
+
+    def _state_file(self) -> Path:
+        return self._dir / "ocr_state.json"
+
+    def _save_ocr_state(self) -> None:
+        """Checkpoint OCR progress (staged records + frame cursor) so a process kill
+        doesn't throw the work away — frames already persist to disk; this makes the
+        results persist too. Written atomically; the worker thread is the only caller."""
+        with self._lock:
+            state = {
+                "frames": len(self._frames),
+                "processed": self._processed,
+                "read": self._read,
+                "no_key": self._no_key,
+                "staged": {ds: {"key_field": acc.key_field, "rows": dict(acc.rows),
+                                "counts": dict(acc.counts)}
+                           for ds, acc in self._staged.items()},
+            }
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            tmp = self._state_file().with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(state), encoding="utf-8")
+            tmp.replace(self._state_file())
+        except OSError:
+            pass
+
+    def _load_ocr_state(self) -> None:
+        """Restore a checkpoint left by a killed process. Only valid for the exact frame
+        set it was written against; a finished run rehydrates as done (staged records
+        ready to save), a partial one as recorded with the cursor set so processing
+        resumes instead of starting over."""
+        try:
+            state = json.loads(self._state_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if state.get("frames") != len(self._frames):   # frame set changed -> stale
+            return
+        try:
+            self._staged = {ds: _Staged(d["key_field"], dict(d["rows"]),
+                                        {k: int(v) for k, v in d["counts"].items()})
+                            for ds, d in state.get("staged", {}).items()}
+            self._processed = int(state.get("processed", 0))
+            self._read = int(state.get("read", 0))
+            self._no_key = int(state.get("no_key", 0))
+        except (KeyError, TypeError, ValueError):
+            self._staged = {}
+            self._processed = self._read = self._no_key = 0
+            return
+        if self._processed >= len(self._frames):
+            self._phase = Phase.done
 
     def _clear_dir(self) -> None:
         try:
             if self._dir.exists():
                 for f in self._dir.glob("*.jpg"):
                     f.unlink()
+                self._state_file().unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -241,14 +296,16 @@ class PrecaptureSession:
         return self._engine.capture.grab_window
 
     def _record_loop(self, max_frames: int, interval: float) -> None:
-        last_thumb: np.ndarray | None = None
-        # Capture FAST only while the screen is actually changing (scrolling); once it's
-        # been static for a couple of grabs, back off to a gentle poll — saves needless
-        # desktop copies + diff work, and on the PrintWindow fallback path keeps it from
-        # battering the game. A user-set interval is the floor for both rates.
+        prev_thumb: np.ndarray | None = None   # the immediately preceding grab
+        saved_thumb: np.ndarray | None = None  # the last frame we kept
+        # Keep a frame only once the screen has SETTLED: the same frame twice in a row
+        # (small mouse movement ignored — it's below the diff threshold). Transition
+        # animations keep changing, so no two consecutive grabs match and they're all
+        # dropped; only the steady state survives. Of the matching pair, store just one.
+        # Capture FAST while anything is moving so the settle is caught promptly; once
+        # the screen is still, ease off to a gentle poll.
         fast = max(interval, 0.03)
         idle = max(interval, 0.5)
-        misses = 0
         grab = None                           # chosen once, on the first located window
         try:
             while not self._stop.is_set():
@@ -265,10 +322,12 @@ class PrecaptureSession:
                     grab = self._pick_grab(win)
                 frame = grab(win)
                 thumb = _thumb(frame.image)
-                if last_thumb is None or _changed_cells(thumb, last_thumb) >= _THUMB_MIN_CELLS:
+                settled = prev_thumb is not None and _changed_cells(thumb, prev_thumb) < _THUMB_MIN_CELLS
+                new_view = saved_thumb is None or _changed_cells(thumb, saved_thumb) >= _THUMB_MIN_CELLS
+                if settled and new_view:       # steady AND different from the last kept frame -> keep one
                     ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
                     if ok:
-                        last_thumb = thumb
+                        saved_thumb = thumb
                         data = buf.tobytes()
                         with self._lock:
                             idx = len(self._frames)
@@ -278,11 +337,10 @@ class PrecaptureSession:
                             (self._dir / f"{idx:05d}.jpg").write_bytes(data)
                         except OSError:
                             pass
-                    misses = 0                # screen moving -> keep grabbing fast
-                else:
-                    misses += 1               # static -> ease off after a couple of dupes
+                moving = not settled           # screen changing (transition) -> grab fast to catch the settle
+                prev_thumb = thumb
                 # wait ON the stop event so cancel is instant even mid idle-poll
-                self._stop.wait(fast if misses < 2 else idle)
+                self._stop.wait(fast if moving else idle)
         except Exception as exc:  # pragma: no cover - defensive
             with self._lock:
                 self._error = str(exc)
@@ -302,17 +360,22 @@ class PrecaptureSession:
                 return
         self._join_prev()   # bury any lingering worker BEFORE clearing _stop (see _join_prev)
         with self._lock:
+            # A rehydrated half-done run (the OCR checkpoint survived a process kill)
+            # resumes at the saved cursor with its staged records intact. Any other
+            # start — fresh recording, re-process after done/cancel — is from scratch.
+            resume = self._phase is Phase.recorded and 0 < self._processed < len(self._frames)
+            if not resume:
+                self._processed = 0
+                self._read = 0
+                self._no_key = 0
+                self._staged = {}
             self._phase = Phase.processing
-            self._processed = 0
-            self._read = 0
-            self._no_key = 0
-            self._staged = {}
             self._error = None
             self._t_decode = self._t_classify = self._t_read = 0.0   # perf accumulators (s)
             self._stop.clear()
             self._pause.clear()
             self._t0 = time.monotonic()
-            frames = list(self._frames)
+            frames = list(self._frames[self._processed:])
             cw, ch = self._client
         self._thread = threading.Thread(target=self._process_loop, args=(frames, cw, ch), daemon=True)
         self._thread.start()
@@ -327,6 +390,7 @@ class PrecaptureSession:
         errors = 0
         for buf in frames:
             if self._stop.is_set():
+                self._save_ocr_state()   # keep the work done so far restartable
                 with self._lock:
                     self._phase = Phase.cancelled
                 return
@@ -342,23 +406,26 @@ class PrecaptureSession:
                     raise ValueError("undecodable frame")
                 frame = Frame(image=img, client=PixelBox(0, 0, cw or img.shape[1], ch or img.shape[0]))
 
-                asig = self._signature(frame, self._anchor_fracs)
-                if asig is not None and asig == last_anchor_sig:
-                    match = last_match
-                else:
-                    t = time.perf_counter()
-                    match = eng.classifier.classify(frame, self._profile)
-                    dt_classify = time.perf_counter() - t
-                    last_anchor_sig, last_match = asig, match
-
-                if match is not None:
-                    window_id, state_id = match
-                    window = self._profile.window(window_id)
-                    if window is not None and self._state_allows_save(window, state_id):
+                # one OCR job per frame: held only for this frame, then released, so a UI
+                # read/detect can take a turn between frames instead of fighting the GPU.
+                with ocr_job():
+                    asig = self._signature(frame, self._anchor_fracs)
+                    if asig is not None and asig == last_anchor_sig:
+                        match = last_match
+                    else:
                         t = time.perf_counter()
-                        records = self._read_cached(frame, window, last_data_sig, last_records)
-                        dt_read = time.perf_counter() - t
-                        self._stage(window, [r for r in records if r.confidence >= floor])
+                        match = eng.classifier.classify(frame, self._profile)
+                        dt_classify = time.perf_counter() - t
+                        last_anchor_sig, last_match = asig, match
+
+                    if match is not None:
+                        window_id, state_id = match
+                        window = self._profile.window(window_id)
+                        if window is not None and self._state_allows_save(window, state_id):
+                            t = time.perf_counter()
+                            records = self._read_cached(frame, window, last_data_sig, last_records)
+                            dt_read = time.perf_counter() - t
+                            self._stage(window, [r for r in records if r.confidence >= floor])
             except Exception as exc:   # a bad frame must never stall the whole run
                 errors += 1
                 with self._lock:
@@ -369,8 +436,12 @@ class PrecaptureSession:
                 self._t_decode += dt_decode
                 self._t_classify += dt_classify
                 self._t_read += dt_read
+                checkpoint = self._processed % 25 == 0
+            if checkpoint:   # periodic OCR checkpoint: a process kill loses ≤25 frames of work
+                self._save_ocr_state()
             time.sleep(0)   # yield the GIL so the web server services status/cancel promptly
 
+        self._save_ocr_state()   # final checkpoint: done-but-unsaved results survive a kill
         with self._lock:
             self._phase = Phase.done
         self._log_perf(errors)
@@ -508,6 +579,10 @@ class PrecaptureSession:
             written[dataset] = n
         self._lexicon.save()
         self._confusions.save()
+        try:   # committed: drop the checkpoint so a restart doesn't re-offer these rows
+            self._state_file().unlink(missing_ok=True)
+        except OSError:
+            pass
         with self._lock:
             self._phase = Phase.saved
         return written

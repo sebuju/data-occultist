@@ -13,6 +13,10 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ...collect.reader import RegionReader
 from ...detect.anchor import AnchorMatcher, text_match_score
+from ...learn.dictionary import Dictionary
+from ...learn.lexicon import Lexicon
+from ...learn.resolver import FieldResolver
+from ...ocr.serialize import ocr_job
 from ...profile import GameProfile
 from ...types import Frame, PixelBox
 from .. import captures_store
@@ -59,14 +63,16 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
     window = profile.windows[0]
     matcher = AnchorMatcher(engine.ocr, str(get_settings().profiles_dir))
 
-    anchors = {a.id: _eval_anchor(a, frame, matcher, engine.ocr) for a in window.anchors}
-    states = {}
-    for s in window.states:
-        evs = [_eval_anchor(a, frame, matcher, engine.ocr) for a in s.anchors]
-        states[s.id] = {
-            "matched": bool(evs) and all(e["matched"] for e in evs),
-            "read": " | ".join(e["read"] for e in evs),
-        }
+    # one job: run the whole detect pass without interleaving with another OCR job
+    with ocr_job():
+        anchors = {a.id: _eval_anchor(a, frame, matcher, engine.ocr) for a in window.anchors}
+        states = {}
+        for s in window.states:
+            evs = [_eval_anchor(a, frame, matcher, engine.ocr) for a in s.anchors]
+            states[s.id] = {
+                "matched": bool(evs) and all(e["matched"] for e in evs),
+                "read": " | ".join(e["read"] for e in evs),
+            }
 
     scrollbar = None
     sc = window.scroll
@@ -120,6 +126,13 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
             ci = cv2.imread(str(cp)) if cp else None
             if ci is not None:
                 cutouts[it.id] = ci
-    reader = RegionReader(engine.ocr, cutouts=cutouts)  # no resolver: preview never mutates the dictionary
-    result = reader.read_preview(frame, window, fields)
+    # read-only resolver: applies the game's dictionaries (exact then fuzzy) so the
+    # preview shows the SAME snapped values the collector would, but never learns/mutates.
+    lex = Lexicon.for_game(get_settings().data_dir, profile.name)
+    dictionary = Dictionary(profile.dictionary_terms(), engine.corrector)
+    resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
+                             dictionary=dictionary, learn_enabled=False)
+    reader = RegionReader(engine.ocr, resolver, cutouts=cutouts)
+    with ocr_job():   # one job: the whole window read runs without interleaving another
+        result = reader.read_preview(frame, window, fields)
     return {"client": [frame.client.w, frame.client.h], **result}

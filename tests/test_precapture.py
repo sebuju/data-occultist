@@ -153,6 +153,64 @@ def test_rehydrate_frames_from_disk(tmp_path):
     assert st["frames"] == 3 and st["phase"] == "recorded"
 
 
+def _frames_on_disk(tmp_path, n=3):
+    d = tmp_path / "caps" / "testgame" / "precapture"
+    d.mkdir(parents=True)
+    for i in range(n):
+        cv2.imwrite(str(d / f"{i:05d}.jpg"),
+                    np.random.default_rng(i).integers(0, 255, (40, 60, 3), dtype=np.uint8))
+    return d
+
+
+def test_ocr_checkpoint_survives_process_kill(tmp_path):
+    # finish OCR, kill the process before saving -> a fresh session still has the results
+    _frames_on_disk(tmp_path)
+    recs = [Record(values={"item_name": "Adra", "item_count": 1}, confidence=0.9)]
+    s1 = _session(tmp_path, recs)
+    s1._process_loop(s1._frames, 60, 40)
+    assert s1.status()["phase"] == Phase.done.value
+
+    s2 = _session(tmp_path, recs)        # "restart": brand-new session, same disk
+    st = s2.status()
+    assert st["phase"] == Phase.done.value and st["processed"] == 3
+    assert st["datasets"][0]["count"] == 1 and st["datasets"][0]["sample"][-1]["item_name"] == "Adra"
+
+
+def test_partial_ocr_checkpoint_resumes_not_restarts(tmp_path):
+    # killed mid-OCR -> restart keeps the staged rows and continues at the cursor
+    _frames_on_disk(tmp_path)
+    recs1 = [Record(values={"item_name": "Adra"}, confidence=0.9)]
+    s1 = _session(tmp_path, recs1)
+    s1._process_loop(s1._frames[:1], 60, 40)   # only frame 0 done before the "kill"
+
+    seen = []
+    recs2 = [Record(values={"item_name": "Boar"}, confidence=0.9)]
+    s2 = _session(tmp_path, recs2)
+    st = s2.status()
+    assert st["phase"] == Phase.recorded.value and st["processed"] == 1
+    s2._reader.read = lambda frame, window, fields: seen.append(1) or recs2
+    s2.start_processing()
+    s2._thread.join(timeout=10)
+    st = s2.status()
+    assert st["phase"] == Phase.done.value and st["processed"] == 3
+    assert len(seen) == 2                       # only the 2 remaining frames re-OCR'd
+    names = {r["item_name"] for ds in st["datasets"] for r in ds["sample"]}
+    assert names == {"Adra", "Boar"}            # pre-kill rows kept, new rows added
+
+
+def test_saved_checkpoint_not_reoffered_after_restart(tmp_path):
+    # save commits and drops the checkpoint -> a restart doesn't re-offer the same rows
+    _frames_on_disk(tmp_path)
+    recs = [Record(values={"item_name": "Adra"}, confidence=0.9)]
+    s1 = _session(tmp_path, recs)
+    s1._process_loop(s1._frames, 60, 40)
+    s1.save()
+    s2 = _session(tmp_path, recs)
+    st = s2.status()
+    assert st["phase"] == Phase.recorded.value and st["processed"] == 0
+    assert st["datasets"] == []
+
+
 def test_missing_dataset_key_warns(tmp_path):
     recs = [Record(values={"item_name": "Adra", "item_count": 1}, confidence=0.9)]
     s = _session(tmp_path, recs)
