@@ -1,25 +1,29 @@
-# restart.ps1 — kill any uvicorn on the port and (re)start the dev server.
-# Usage:  .\restart.ps1            (foreground, default :8000)
-#         .\restart.ps1 -Port 8001
-#         .\restart.ps1 -Background  (detached; returns immediately)
-#         .\restart.ps1 -Reload     (dev only: auto-reload on code change)
+# start_server.ps1 — kill any uvicorn on the port and (re)start the dev server.
+# Usage:  .\start_server.ps1            (foreground, default :8000, auto-reload)
+#         .\start_server.ps1 -Port 8001
+#         .\start_server.ps1 -Background  (detached; returns immediately)
+#         .\start_server.ps1 -NoReload   (single process; no auto-reload)
 #
-# NOTE: -Reload is OFF by default on purpose. Under --reload uvicorn runs a
+# Auto-reload is ON by default for dev. Caveat: under --reload uvicorn runs a
 # reloader parent that OWNS the listen socket and a worker child that does the
-# work; killing the worker by hand (to free the GPU) leaves the parent holding
-# the port with nobody serving it — every request then hangs instead of being
-# refused, and nothing ever respawns the worker. Without --reload there is one
-# process: kill it and a supervisor (scripts\serve.ps1) can restart it cleanly.
+# work; killing the worker by hand leaves the parent holding the port with
+# nobody serving it — requests hang and nothing respawns the worker. Use
+# -NoReload for the single-process mode a manual-kill / supervisor
+# (scripts\serve.ps1) workflow needs.
 param(
   [int]$Port = 8000,
   [switch]$Background,
-  [switch]$Reload
+  [switch]$NoReload
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location $root
 $py = Join-Path $root '.venv\Scripts\python.exe'
+
+# remind me of the flags without opening this file
+Write-Host "flags: -Port <n> (default 8000)  -Background (detached)  -NoReload (single process)" -ForegroundColor DarkGray
+Write-Host ("active: port=$Port  reload=" + (-not $NoReload) + "  background=$Background") -ForegroundColor DarkGray
 
 # kill any running uvicorn worker(s)
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
@@ -32,7 +36,7 @@ for ($i = 0; $i -lt 25 -and (Get-NetTCPConnection -LocalPort $Port -State Listen
 }
 
 $uvArgs = @('-m', 'uvicorn', 'oc.web.app:app', '--host', '127.0.0.1', '--port', "$Port")
-if ($Reload) { $uvArgs += '--reload' }
+if (-not $NoReload) { $uvArgs += '--reload' }
 if ($Background) {
   Start-Process -FilePath $py -ArgumentList $uvArgs -WorkingDirectory $root -WindowStyle Hidden
   Write-Host "server (re)started on http://127.0.0.1:$Port (background)"
