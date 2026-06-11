@@ -188,7 +188,8 @@ legend { color: var(--muted); padding: 0 6px; }
 .gnode button, .gnode select, .gnode a, .gnode .collapse, .gnode .port, .gnode .gn-enable { cursor: pointer; }
 .gnode .scrollhost, .gnode .nodehost, .gnode .canvas-wrap, .gnode table { cursor: auto; }
 /* remove button lives in the header now: a danger-coloured icon, two-click confirm */
-.gn-del { margin-left: auto; flex: 0 0 auto; height: 18px; min-height: 0; padding: 0 7px; line-height: 1;
+.gn-del { margin-left: auto; flex: 0 0 auto; width: 22px; height: 18px; min-height: 0; padding: 0; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
   background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px; font-size: var(--fs-sm); }
 .gn-del.armed { background: var(--warn); color: var(--on-accent); }
 .glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
@@ -235,7 +236,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .gedge.data { stroke: var(--accent); stroke-dasharray: 7 6; opacity: 0.8; }
 .gedge.flow { animation: flow 1.1s linear infinite; }   /* only port-out lines flow */
 .gedge.field { stroke: var(--accent); opacity: 0.5; }
-.gedge.anchor { stroke: var(--ok); opacity: 0.5; }
+.gedge.detect { stroke: var(--ok); opacity: 0.5; }
 .gedge.state { stroke: var(--warn); opacity: 0.5; }
 .gedge.scrollbar { stroke: var(--purple); opacity: 0.5; }
 .gedge.item { stroke: var(--record); opacity: 0.6; }
@@ -267,7 +268,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .win-img { margin-top: 8px; }
 .win-img:empty { display: none; }
 .imgtools { display: flex; align-items: center; gap: 6px; padding: 4px 0; flex-wrap: wrap; }
-.imgtools .tools { display: inline-flex; gap: 2px; }
+.imgtools .tools { display: inline-flex; gap: 2px; flex-wrap: wrap; }
 .imgtools .spacer { flex: 1; }
 .imgtools .tool-div { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
 .win-img .canvas-wrap { width: 520px; max-width: 70vw; overflow: hidden;
@@ -283,6 +284,9 @@ legend { color: var(--muted); padding: 0 6px; }
 .item-img .canvas-wrap { width: 100%; overflow: hidden;
   border: 1px solid var(--line); border-radius: 4px; }
 .item-img canvas { display: block; width: 100%; image-rendering: auto; }
+.item-readout { margin-top: 6px; font-size: var(--fs-sm); line-height: 1.5; }
+.item-readout:empty { display: none; }
+.item-readout .ir-f { margin-right: 6px; white-space: nowrap; }
 .item-lists { margin-top: 6px; }
 .item-lists .il-h { margin-top: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; }
 .ti-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
@@ -417,8 +421,18 @@ legend { color: var(--muted); padding: 0 6px; }
 .pc-phase.pc-done, .pc-phase.pc-saved { background: var(--phase-done); color: var(--white); }
 .pc-opts { display: flex; gap: 14px; }
 .pc-opts .flab { display: flex; align-items: center; gap: 6px; }
-.pc-opts input { width: 8ch; }
+.pc-opts input[type="number"] { width: 8ch; }
+.pc-opts input.pc-label { width: 14ch; }
 .pc-ctl { display: flex; align-items: center; gap: 8px; }
+/* active-session chip in the status bar */
+.pc-sess-tag { padding: 1px 8px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: var(--fs-xs); }
+/* saved-session list */
+.pc-sessions { display: flex; flex-direction: column; gap: 3px; max-height: 24vh; overflow: auto; }
+.pc-sess-h { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+.pc-sess { display: flex; align-items: center; gap: 4px; }
+.pc-sess.active { outline: 1px solid var(--accent); border-radius: 4px; }
+.pc-sess .pc-sess-load { flex: 1; text-align: left; }
+.pc-sess .pc-sess-ren, .pc-sess .pc-sess-del { width: 28px; flex: none; }
 /* save button after a successful save — green, not dimmed like a normal disabled button */
 .pc-ctl button.pc-saved, .pc-ctl button.pc-saved:disabled {
   background: var(--phase-done); color: var(--white); opacity: 1; cursor: default; }
@@ -637,9 +651,9 @@ label.inline input { width: auto; }
 
 /* role-conditional fields in the selected-box panel (data-role on the panel) */
 [data-role] .r-region,
-[data-role] .r-anchor,
+[data-role] .r-detect,
 [data-role] .r-state { display: none; }
 [data-role="region"] .r-region { display: block; }
-[data-role="anchor"] .r-anchor { display: block; }
-[data-role="state_anchor"] .r-anchor,
-[data-role="state_anchor"] .r-state { display: block; }
+[data-role="detect"] .r-detect { display: block; }
+[data-role="state_detect"] .r-detect,
+[data-role="state_detect"] .r-state { display: block; }

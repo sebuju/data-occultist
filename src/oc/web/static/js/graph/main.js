@@ -16,7 +16,7 @@ const pos = new Map();            // node id -> {x,y}
 const nodeEls = new Map();        // node id -> DOM element (built once, reused)
 const collapsed = new Set();      // collapsed node ids
 const view = { panX: 0, panY: 0, zoom: 1 };  // canvas pan/zoom
-const COLX = { game: 20, window: 300, preview: 1580, region: 600, anchor: 600, state: 600, scrollbar: 600, dataset: 900, batches: 1180, subset: 1900, dictionary: 20 };
+const COLX = { game: 20, window: 300, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, dataset: 900, batches: 1180, subset: 1900, dictionary: 20 };
 let live = {};                    // dataset -> {present,total,last_op,last_ts}
 const prevPresent = {};
 let timer = null;
@@ -57,6 +57,7 @@ let pendingOpenImages = [];
 const busy = new Map();            // node id -> active-work count (drives the spinner)
 const gridPreviews = new Map();    // winId -> live-detected field boxes (dashed grid)
 const gridReads = new Map();        // winId -> per-cell read values {x,y,w,h,text,confidence}
+const itemReads = new Map();        // "winId:itemId" -> last cutout read {fields,tells,valid,cell}
 
 // Show/hide a node's spinner via a ref count, so overlapping async tasks behave.
 function setNodeBusy(nodeId, on) {
@@ -255,6 +256,7 @@ function placeNewNode(id, type) {
   const par = parentOf(id);
   const nearY = (par && pos.get(par)?.y) ?? 20;
   pos.set(id, freeSpot(COLX[type] ?? 300, nearY));
+  setStatus(`created ${type} ${id.split(":").pop()}`);
 }
 
 // ---- smooth pan to a node (cancelled by any user action) ------------------
@@ -336,6 +338,9 @@ function itemLists(it, w) {
 // preserving the live cutout canvas).
 function wireItemControls(div, n) {
   const winId = n.win.id, itemId = n.ref.id;
+  // any tell/field config edit re-reads the cutout (bubbles after the specific handler
+  // that updated the model, so the read reflects the new setting). Debounced.
+  div.addEventListener("change", () => scheduleItemRead(winId, itemId));
   div.querySelector(".gi-id").addEventListener("change", (e) => { model.renameItem(winId, itemId, e.target.value.trim()); render(); autosave(); });
   div.querySelectorAll(".iset").forEach((inp) => inp.addEventListener("change", (e) => {
     const tid = e.target.dataset.tid, k = e.target.dataset.k;
@@ -469,10 +474,10 @@ function nodeParts(n) {
         <div class="gn-foot"></div>`,
     };
   }
-  if (n.type === "anchor") {
+  if (n.type === "detect") {
     const a = n.ref;
     return {
-      title: `<input class="gi gi-id" data-k="ancid" value="${esc(a.id)}" title="condition: all must match to capture" />`,
+      title: `<input class="gi gi-id" data-k="detid" value="${esc(a.id)}" title="detector: all must match to capture" />`,
       body: `<label class="flab">text <input class="aset" data-k="text" value="${esc(a.text || "")}" placeholder="EQUIPMENT" /></label>
         <label class="flab">read ⊆ text <input type="checkbox" class="aset" data-k="incl" ${a.included ? "checked" : ""} title="match if the read word is included in this text" /></label>
         <label class="flab">threshold <input type="number" class="aset" data-k="thr" step="0.05" min="0" max="1" value="${a.threshold ?? 0.8}" /></label>
@@ -671,8 +676,8 @@ function wireSubset(div, s) {
   queueMicrotask(() => refreshSubsetNode(s.id));
 }
 
-const CAN_DISABLE = new Set(["window", "item", "region", "anchor", "scrollbar", "dictionary"]);
-const REMOVABLE = new Set(["window", "item", "region", "anchor", "scrollbar", "dictionary", "subset", "dataset"]);
+const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary"]);
+const REMOVABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "subset", "dataset"]);
 
 // One place to remove any node; each goes through render()+autosave() so undo/redo
 // records it (autosave -> pushHistory).
@@ -684,11 +689,12 @@ function removeNode(n) {
     gridPreviews.delete(winId); gridReads.delete(winId); render(); refreshImageBoxes(winId); autosave();
   }
   else if (n.type === "region") { model.removeRegion(n.win.id, n.ref.id); render(); autosave(); refreshImageBoxes(n.win.id); }
-  else if (n.type === "anchor") { model.removeAnchor(n.win.id, n.ref.id); render(); autosave(); refreshImageBoxes(n.win.id); }
+  else if (n.type === "detect") { model.removeDetect(n.win.id, n.ref.id); render(); autosave(); refreshImageBoxes(n.win.id); }
   else if (n.type === "scrollbar") { model.removeScrollbar(n.win.id); render(); autosave(); refreshImageBoxes(n.win.id); }
   else if (n.type === "dictionary") { model.removeDictionary(n.ref.id); pos.delete(n.id); render(); autosave(); }
   else if (n.type === "subset") { model.removeSubset(n.ref.id); render(); autosave(); }
   else if (n.type === "dataset") { model.removeDatasetDef(n.ref); pos.delete(n.id); render(); autosave(); }
+  setStatus(`deleted ${n.type} ${n.ref?.id ?? n.ref ?? ""}`.trimEnd());
 }
 
 // Two-click confirm on an icon button: 1st click arms it (icon -> "?"), 2nd confirms.
@@ -957,7 +963,8 @@ function resamplePoly(pts, n) {
 const straightD = (pts) => "M " + pts.map((p) => `${Math.round(p[0] * 10) / 10} ${Math.round(p[1] * 10) / 10}`).join(" L ");
 
 // Closest-facing sides of two rects (shortest centre axis): the port point and
-// outward direction (L/R/T/B) on each. Shared by the bezier draw and the router.
+// outward direction (L/R/T/B) on each. The geometric default — used for the live drag
+// bezier and as the fallback before the router has scored a better pair of sides.
 function facingSides(ra, rb) {
   const acx = ra.x + ra.w / 2, acy = ra.y + ra.h / 2, bcx = rb.x + rb.w / 2, bcy = rb.y + rb.h / 2;
   const dx = bcx - acx, dy = bcy - acy;
@@ -968,6 +975,45 @@ function facingSides(ra, rb) {
   if (dy >= 0) return { p1: [acx, ra.y + ra.h], d1: "B", p2: [bcx, rb.y], d2: "T" };
   return { p1: [acx, ra.y], d1: "T", p2: [bcx, rb.y + rb.h], d2: "B" };
 }
+
+// Centre point of one named side of a rect.
+function portOnSide(r, side) {
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+  if (side === "R") return [r.x + r.w, cy];
+  if (side === "L") return [r.x, cy];
+  if (side === "B") return [cx, r.y + r.h];
+  return [cx, r.y];   // "T"
+}
+const sidesFrom = (ra, rb, d1, d2) => ({ p1: portOnSide(ra, d1), d1, p2: portOnSide(rb, d2), d2 });
+
+// The (≤2) sides of a rect whose outward normal points toward (tx,ty): the only sides
+// worth considering for an edge heading that way (a back-facing side would U-turn).
+function sideCandidates(tx, ty) {
+  const c = [];
+  if (Math.abs(tx) >= 1) c.push(tx > 0 ? "R" : "L");
+  if (Math.abs(ty) >= 1) c.push(ty > 0 ? "B" : "T");
+  return c.length ? c : ["R"];
+}
+
+// Let the ROUTER pick the best pair of sides for a link, not raw distance: score every
+// sensible (sideA,sideB) by its actual A* route cost and take the cheapest. A faint bias
+// toward the geometric facing breaks ties so a clear straight shot isn't traded for an
+// equal-cost detour, and the choice doesn't flicker frame to frame.
+function bestSides(router, ra, rb) {
+  const dx = (rb.x + rb.w / 2) - (ra.x + ra.w / 2), dy = (rb.y + rb.h / 2) - (ra.y + ra.h / 2);
+  const aC = sideCandidates(dx, dy), bC = sideCandidates(-dx, -dy);
+  const fac = facingSides(ra, rb);
+  let best = null, bestCost = Infinity;
+  for (const d1 of aC) for (const d2 of bC) {
+    let cost = router.routeCost(portOnSide(ra, d1), d1, portOnSide(rb, d2), d2);
+    if (d1 === fac.d1 && d2 === fac.d2) cost *= 0.98;   // tie-break toward the facing pair
+    if (cost < bestCost) { bestCost = cost; best = { d1, d2 }; }
+  }
+  return best || { d1: fac.d1, d2: fac.d2 };
+}
+// Router-chosen sides per link key, persisted across passes so drawEdges() and
+// runRouting() agree on each line's ports (the route cache keys off them).
+const sidePick = new Map();
 
 const nodeRect = (id) => { const p = pos.get(id); return p && { x: p.x, y: p.y, w: nw(id), h: nh(id) }; };
 
@@ -1002,7 +1048,12 @@ function buildLinks() {
 // one GAP apart instead of all stacking on the side's midpoint.
 const GAP = () => ROUTE.cell * 2;   // preferred spacing: fanned endpoints AND parallel bundles (a line can still squeeze to 1 cell between two)
 function computePorts(links) {
-  for (const l of links) { const f = facingSides(l.ra, l.rb); l.p1 = f.p1; l.d1 = f.d1; l.p2 = f.p2; l.d2 = f.d2; }
+  for (const l of links) {
+    // use the router's chosen sides when it has scored this link, else the geometric facing
+    const pick = sidePick.get(l.key);
+    const f = pick ? sidesFrom(l.ra, l.rb, pick.d1, pick.d2) : facingSides(l.ra, l.rb);
+    l.p1 = f.p1; l.d1 = f.d1; l.p2 = f.p2; l.d2 = f.d2;
+  }
   const buckets = new Map();   // `${owner}|${dir}` -> endpoints on that rect side
   const put = (owner, dir, l, end, other) => {
     const horiz = dir === "L" || dir === "R";
@@ -1200,8 +1251,23 @@ function runRouting() {
   const links = buildLinks();          // route the layout as it stands NOW
   const sig = linksSig(links);
   if (sig === routeHash) return;
+  let routeSig = sig;
   const obs = obstacleRects();
   try {
+    const router = new EdgeRouter(obs, { cell: ROUTE.cell, clearWanted: ROUTE.clearWanted });
+    // For the links whose neighbourhood changed, let the router choose the cheapest pair
+    // of node sides (not raw distance), then re-fan the ports with the new sides. Bounded
+    // to the changed links so it costs the same order as the routing itself.
+    let sidesChanged = false;
+    for (const l of links) {
+      const c = routeCache.get(l.key);
+      if (c && c.sig === linkDeps(l, obs)) continue;           // neighbourhood unchanged → keep its side
+      const best = bestSides(router, l.ra, l.rb);
+      const prev = sidePick.get(l.key);
+      if (!prev || prev.d1 !== best.d1 || prev.d2 !== best.d2) { sidePick.set(l.key, best); sidesChanged = true; }
+    }
+    if (sidesChanged) { computePorts(links); routeSig = linksSig(links); }
+
     // split into links whose deps are unchanged (keep their cached path) and the rest
     const fresh = new Map(), dirty = [];
     for (const l of links) {
@@ -1210,13 +1276,13 @@ function runRouting() {
       if (c && c.sig === lsig) fresh.set(l.key, c);
       else { l._sig = lsig; dirty.push(l); }
     }
-    const router = new EdgeRouter(obs, { cell: ROUTE.cell, clearWanted: ROUTE.clearWanted });
     for (const c of fresh.values()) router.stampPath(c.pts);   // reserve the kept corridors so dirty links avoid them
     dirty.sort((a, b) => spanOf(a) - spanOf(b));               // shortest first: short links lock in straight
     for (const l of dirty)
       fresh.set(l.key, { pts: router.route(l.p1, l.d1, l.p2, l.d2), sig: l._sig, k: `${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2}` });
     routeCache = fresh;                                        // also drops keys for links that vanished
-    routeHash = sig;
+    for (const k of sidePick.keys()) if (!fresh.has(k)) sidePick.delete(k);   // forget vanished links
+    routeHash = routeSig;
   } catch (err) {
     setStatus(`route failed: ${err.message}`);   // surface instead of silently using beziers
     return;
@@ -1341,14 +1407,14 @@ function wireNode(div, n) {
       else if (k === "dictonly") fld.dict_only = e.target.checked;
       autosave();   // plain value edits: no DOM rebuild
     }));
-  } else if (n.type === "anchor") {
+  } else if (n.type === "detect") {
     div.addEventListener("click", (ev) => {
       if (ev.target.closest("input,select,button")) return;
       selectWindowBox(n.win.id, n.ref.id);
     });
     div.querySelector(".gi-id").addEventListener("change", (e) => {
       const oldId = n.ref.id; n.ref.id = e.target.value.trim();
-      movePos(`anc:${n.win.id}:${oldId}`, `anc:${n.win.id}:${n.ref.id}`);
+      movePos(`det:${n.win.id}:${oldId}`, `det:${n.win.id}:${n.ref.id}`);
       render(); autosave(); refreshImageBoxes(n.win.id);
     });
     div.querySelectorAll(".aset").forEach((inp) => inp.addEventListener("change", (e) => {
@@ -1555,6 +1621,7 @@ let precapPoll = null;
 let precapBusy = false;   // recording/processing/paused -> modal can't be dismissed
 let precapStopping = false;   // a stop/cancel was clicked, awaiting the worker to wind down
 let precapLastPhase = null;
+let precapSessions = [];   // saved recording sessions [{id,label,frames,processed,records,saved_at,active}]
 
 async function openPrecaptureModal() {
   const game = model.profile.name;
@@ -1584,26 +1651,44 @@ async function openPrecaptureModal() {
     try { draw(await fn()); }
     catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }   // ignore close-aborts
   };
+  // refresh the saved-session list (and the active status it returns)
+  const loadSessions = async () => {
+    try { const r = await api.precapture.sessions(game, sig); precapSessions = r.sessions || []; draw(r.status); }
+    catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }
+  };
+  // a session op returns { sessions, status } — update both at once
+  const sessAct = async (p) => {
+    try { const r = await p; precapSessions = r.sessions || precapSessions; draw(r.status); }
+    catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }
+  };
 
   // one delegated handler for every control button
   node.addEventListener("click", (ev) => {
     const b = ev.target.closest("button[data-act]");
     if (!b) return;
-    const a = b.dataset.act;
+    const a = b.dataset.act, sid = b.dataset.sid;
     const mf = +node.querySelector(".pc-frames")?.value || 300;
     const iv = +node.querySelector(".pc-interval")?.value || 0;
+    const label = node.querySelector(".pc-label")?.value || "";
     if (a === "recstop" || a === "cancel") { precapStopping = true; b.disabled = true; b.textContent = "stopping…"; }
-    if (a === "record") run(() => api.precapture.recordStart(game, mf, iv, sig));
+    if (a === "record") run(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, sig); loadSessions(); return st; });
     else if (a === "recstop") run(() => api.precapture.recordStop(game, sig));
     else if (a === "process") run(() => api.precapture.processStart(game, sig));
     else if (a === "pause") run(() => api.precapture.pause(game, true, sig));
     else if (a === "resume") run(() => api.precapture.pause(game, false, sig));
     else if (a === "cancel") run(() => api.precapture.cancel(game, sig));
-    else if (a === "reset") run(() => api.precapture.reset(game, sig));
-    else if (a === "save") run(async () => { const r = await api.precapture.save(game, sig); refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); refreshAllSubsetNodes(); setStatus(`saved ${JSON.stringify(r.written)}`); return r.status; });
+    else if (a === "reset") run(async () => { const st = await api.precapture.reset(game, sig); loadSessions(); return st; });
+    else if (a === "save") run(async () => { const r = await api.precapture.save(game, sig); refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); refreshAllSubsetNodes(); setStatus(`saved ${JSON.stringify(r.written)}`); loadSessions(); return r.status; });
+    else if (a === "loadsess") sessAct(api.precapture.loadSession(game, sid, sig));
+    else if (a === "delsess") sessAct(api.precapture.deleteSession(game, sid, sig));
+    else if (a === "rensess") {
+      const cur = precapSessions.find((s) => s.id === sid);
+      const label = prompt("session label", cur?.label || "");
+      if (label !== null) sessAct(api.precapture.renameSession(game, sid, label, sig));
+    }
   });
 
-  await run(() => api.precapture.status(game, sig));
+  await loadSessions();
   // poll while the modal is open so progress + staged data stay live
   precapPoll = setInterval(async () => {
     try { draw(await api.precapture.status(game, sig)); } catch { /* ignore (incl. close-abort) */ }
@@ -1654,15 +1739,18 @@ function renderPrecap(node, st) {
       <div class="pc-opts">
         <label class="flab">max frames <input type="number" class="pc-frames" value="300" min="1"></label>
         <label class="flab">interval ms <input type="number" class="pc-interval" value="0" min="0"></label>
+        <label class="flab">label <input type="text" class="pc-label" placeholder="(optional)"></label>
       </div>
       <div class="pc-ctl"></div>
       <div class="pc-progress"><div class="pc-fill"></div></div>
+      <div class="pc-sessions"></div>
       <div class="pc-data"></div>`;
   }
 
   const tm = st.timing || {};
   node.querySelector(".pc-bar").innerHTML = `
     <span class="pc-phase pc-${phase}">${esc(phase)}</span>
+    ${st.session ? `<span class="pc-sess-tag" title="active session">${esc(st.label || fmtCaptureTime(st.session))}</span>` : ""}
     <span class="muted">${st.frames} frames · ${st.processed} processed · ${st.read || 0} read · ${st.fps} /s</span>
     ${st.processed ? `<span class="muted">· ${tm.ms_per_frame || 0} ms/frame (${esc(tm.device || "cpu")})</span>` : ""}
     ${st.warning ? `<span class="conf-warn">⚠ ${esc(st.warning)}</span>` : ""}
@@ -1686,8 +1774,29 @@ function renderPrecap(node, st) {
       <span class="ic ic-ok">${justSaved ? "✓" : "⤓"}</span> ${justSaved ? "saved" : `save${staged ? ` ${staged}` : ""}`}</button>
     <button data-act="reset" ${busyRun ? "disabled" : ""}>reset</button>`;
   node.querySelector(".pc-fill").style.width = `${pct}%`;
+  node.querySelector(".pc-sessions").innerHTML = renderPrecapSessions(st);
   node.querySelector(".pc-data").innerHTML = (st.datasets || []).map(precapTable).join("")
     || '<p class="muted" style="padding:8px">no data staged yet — record some frames, then process</p>';
+}
+
+// The saved-session list: each row loads / renames / deletes a recording. The active
+// session is highlighted; session controls are locked while a worker is busy.
+function renderPrecapSessions(st) {
+  if (!precapSessions.length)
+    return '<div class="pc-sess-h muted">no saved sessions yet — record to create one</div>';
+  const dis = precapBusy ? "disabled" : "";
+  const rows = precapSessions.map((s) => {
+    const active = s.id === st.session;
+    const name = s.label || fmtCaptureTime(s.id);
+    const saved = s.saved_at ? ' · <span class="tc-ok">saved</span>' : "";
+    return `<div class="pc-sess ${active ? "active" : ""}">
+      <button class="pc-sess-load" data-act="loadsess" data-sid="${esc(s.id)}" ${dis} title="load this session">
+        <b>${esc(name)}</b> <span class="muted">${s.frames}f · ${s.records || 0} rec${saved}</span></button>
+      <button class="pc-sess-ren" data-act="rensess" data-sid="${esc(s.id)}" ${dis} title="rename">✎</button>
+      <button class="pc-sess-del danger" data-act="delsess" data-sid="${esc(s.id)}" ${dis} title="delete">×</button>
+    </div>`;
+  }).join("");
+  return `<div class="pc-sess-h muted">sessions</div>${rows}`;
 }
 
 // Capture filenames are "YYYYMMDD-HHMMSS-ffffff.jpg" — pull the time out for display.
@@ -1734,7 +1843,7 @@ async function chooseCapture(winId, name) {
 
 // ---- window image / region drawing (in-graph) -----------------------------
 
-const KINDS = [["item", "item", "▣"], ["data_area", "data area", "▭"], ["anchor", "condition", "◎"], ["scrollbar", "scrollbar", "↕"]];
+const KINDS = [["item", "item", "▣"], ["data_area", "data area", "▭"], ["detect", "detect", "◎"], ["scrollbar", "scrollbar", "↕"]];
 // kinds drawn INSIDE an item node (on its frozen cutout): the cell + fields + tells
 const ITEM_KINDS = [["bbox", "cell", "▣"], ["field", "field", "▦"], ["filled", "filled", "▩"], ["text", "text", "T"], ["color", "color", "◐"], ["template", "template", "⧉"], ["diamonds", "diamonds", "◆"]];
 
@@ -1775,18 +1884,18 @@ async function openImage(winId) {
     onCreate: (geom) => {
       const k = kindOf();
       if (k === "item") { createItemFromGeom(winId, geom); return; }   // freeze + spawn item node
-      let newAnchor = null;
-      if (k === "anchor") newAnchor = model.addAnchor(winId, geom);
+      let newDetect = null;
+      if (k === "detect") newDetect = model.addDetect(winId, geom);
       else if (k === "scrollbar") model.setScrollbar(winId, geom);
       else if (k === "data_area") model.setDataArea(winId, geom);
       else model.addRegion(winId, geom);
       gridPreviews.delete(winId); gridReads.delete(winId);   // layout changed → detected grid is stale
       render(); refreshImageBoxes(winId); autosave();
-      if (newAnchor) prefillAnchorText(winId, newAnchor);
+      if (newDetect) prefillDetectText(winId, newDetect);
     },
     onChange: (box) => {
       const r = box.role;
-      if (r === "anchor") model.setAnchorBox(winId, box.id, box);
+      if (r === "detect") model.setDetectBox(winId, box.id, box);
       else if (r === "scrollbar") model.setScrollbar(winId, box);
       else if (r === "data_area") model.setDataArea(winId, box);
       else if (r === "item") { model.setItemBox(winId, box.id, box); refreshItemBoxes(winId, box.id); }
@@ -1836,6 +1945,8 @@ function closeItemImage(winId, itemId) {
   const e = itemCanvases.get(key);
   if (e && e.host) e.host.innerHTML = "";
   itemCanvases.delete(key);
+  itemReads.delete(key);
+  clearTimeout(itemReadTimers.get(key)); itemReadTimers.delete(key); itemReadAgain.delete(key);
   unregisterOverlay(`item:${winId}:${itemId}`);
   drawEdges();
 }
@@ -1850,6 +1961,7 @@ function openItemImage(winId, itemId) {
   host.innerHTML = `<div class="imgtools">
       <span class="tools">${ITEM_KINDS.map(([v, label, icon]) => `${v === "filled" ? '<span class="tool-div" title="tells"></span>' : ""}<button class="tool ${v === "field" ? "active" : ""}" data-kind="${v}" title="draw ${label}">${icon} ${label}</button>`).join("")}</span>
       <span class="spacer"></span></div>
+    <div class="item-readout muted"></div>
     <div class="canvas-wrap"><canvas></canvas></div>`;
   const canvas = host.querySelector("canvas");
   const cb = it.cutout_box;
@@ -1869,6 +1981,7 @@ function openItemImage(winId, itemId) {
       else model.addItemTell(winId, itemId, k, win2rel(w));   // filled/text/color/template
       gridPreviews.delete(winId); gridReads.delete(winId);
       refreshItemBoxes(winId, itemId); refreshImageBoxes(winId); rebuildNode(`item:${winId}:${itemId}`); autosave();
+      scheduleItemRead(winId, itemId);
     },
     onChange: (box) => {                        // box in cutout fractions + role/id
       const w = cut2win(box);
@@ -1877,6 +1990,7 @@ function openItemImage(winId, itemId) {
       else model.setItemTellBox(winId, itemId, box.id, win2rel(w));
       gridPreviews.delete(winId); gridReads.delete(winId);
       refreshItemBoxes(winId, itemId); refreshImageBoxes(winId); autosave();
+      scheduleItemRead(winId, itemId);
     },
     onSelect: (id) => overlaySelected(`item:${winId}:${itemId}`, id),
   });
@@ -1888,6 +2002,7 @@ function openItemImage(winId, itemId) {
     else if (b.role === "field") model.setItemFieldBox(winId, itemId, b.id, win2rel(w));
     else model.setItemTellBox(winId, itemId, b.id, win2rel(w));
     gridPreviews.delete(winId); gridReads.delete(winId);
+    scheduleItemRead(winId, itemId);
   };
   registerOverlay(`item:${winId}:${itemId}`, { overlay, kind: "item", winId, itemId,
     persist: persistItem, refresh: () => { refreshItemBoxes(winId, itemId); refreshImageBoxes(winId); } });
@@ -1901,6 +2016,7 @@ function openItemImage(winId, itemId) {
   img.onload = () => {
     canvas.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
     overlay.setImage(img); refreshItemBoxes(winId, itemId); drawEdges();
+    scheduleItemRead(winId, itemId);   // show what current settings extract, right away
   };
   img.src = api.cutoutUrl(model.profile.name, it.cutout);
   drawEdges();
@@ -1911,31 +2027,91 @@ function refreshItemBoxes(winId, itemId) {
   const ent = itemCanvases.get(`${winId}:${itemId}`);
   const it = model.item(winId, itemId);
   if (!ent || !it) return;
+  // last read of this cutout, if any: pass/fail per tell + the extracted field values
+  const rd = itemReads.get(`${winId}:${itemId}`);
+  const tellPass = {};
+  for (const t of rd?.tells || []) tellPass[t.id] = t.pass;
+  const mark = (id) => (id in tellPass ? (tellPass[id] ? " ✓" : " ✗") : "");
   const boxes = [{ id: "__bbox", role: "bbox", ...ent.win2cut(it.box) }];   // the tiling cell
   // label fields/tells with their role so the cutout shows what each box does: a field
-  // flagged tell shows "⊙tell" + its align; a locating tell shows "loc" + align.
+  // flagged tell shows "⊙tell" + its align; a locating tell shows "loc" + align. After a
+  // read, a tell/field-tell box also shows ✓/✗ for whether it passed.
   for (const f of it.fields || []) {
     const al = f.align || it.align || "center";
-    const label = `${f.id}${f.tell ? ` ⊙tell·${al}` : ""}`;
+    const label = `${f.id}${f.tell ? ` ⊙tell·${al}${mark(f.id)}` : ""}`;
     boxes.push({ id: f.id, label, role: "field", field: f.field, ...ent.win2cut(ent.rel2win(f.box)) });
   }
   for (const t of it.tells || []) {
     const al = t.align || it.align || "center";
-    const label = `${t.id}${t.locate ? ` loc·${al}` : ""}`;
-    boxes.push({ id: t.id, label, role: t.kind === "text" ? "anchor" : "scrollbar", ...ent.win2cut(ent.rel2win(t.box)) });
+    const label = `${t.id}${t.locate ? ` loc·${al}` : ""}${mark(t.id)}`;
+    boxes.push({ id: t.id, label, role: t.kind === "text" ? "detect" : "scrollbar", ...ent.win2cut(ent.rel2win(t.box)) });
   }
   ent.overlay.setBoxes(boxes);
+  // the extracted field values, drawn over their boxes tinted by confidence (same as the
+  // window preview). The read returns boxes already in cutout fractions.
+  const reads = rd ? Object.values(rd.fields).filter((f) => f.box)
+    .map((f) => ({ ...f.box, text: f.value, confidence: f.confidence, substituted: f.substituted })) : [];
+  ent.overlay.setPreview(reads);
+}
+
+// Re-read the cutout whenever its settings change, debounced and coalesced: config
+// edits fire a burst of change events and OCR is heavy, so wait for the dust to settle
+// and never run two reads for the same item at once (queue a single re-run instead).
+const itemReadTimers = new Map();   // "winId:itemId" -> debounce timer
+const itemReadBusy = new Set();     // items with a read in flight
+const itemReadAgain = new Set();    // items whose settings changed mid-read
+function scheduleItemRead(winId, itemId, delay = 500) {
+  const key = `${winId}:${itemId}`;
+  clearTimeout(itemReadTimers.get(key));
+  itemReadTimers.set(key, setTimeout(() => { itemReadTimers.delete(key); runItemRead(winId, itemId); }, delay));
+}
+
+// Read the item's frozen cutout with the current settings and show what it extracts:
+// field values tinted on the canvas + a compact tell/validity read-out under the toolbar.
+async function runItemRead(winId, itemId) {
+  const key = `${winId}:${itemId}`;
+  if (!itemCanvases.has(key)) return;
+  if (itemReadBusy.has(key)) { itemReadAgain.add(key); return; }   // re-run once after
+  itemReadBusy.add(key);
+  const node = nodeEls.get(`item:${winId}:${itemId}`);
+  const out = node?.querySelector(".item-readout");
+  if (out && !out.innerHTML) out.innerHTML = "reading…";
+  const done = timed(`item read ${key}`);
+  try {
+    const res = await api.itemRead(previewProfileFor(winId), model.profile.name, winId, itemId);
+    itemReads.set(key, res);
+    refreshItemBoxes(winId, itemId);
+    if (out) out.innerHTML = itemReadout(res);
+    done(res.valid ? "· valid" : "· rejected");
+  } catch (e) {
+    done(String(e.message || e), "err");
+    if (out) out.innerHTML = `<span class="tc-bad">${esc(String(e.message || e))}</span>`;
+  } finally {
+    itemReadBusy.delete(key);
+    if (itemReadAgain.has(key)) { itemReadAgain.delete(key); runItemRead(winId, itemId); }
+  }
+}
+
+// Compact one-line summary of a cutout read: validity + each field's value + tell chips.
+function itemReadout(res) {
+  const status = res.valid ? '<span class="tc-ok">✓ valid</span>' : '<span class="tc-bad">✗ rejected</span>';
+  const fields = Object.entries(res.fields || {}).map(([k, v]) => {
+    const cls = v.substituted ? "conf-sub" : v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
+    return `<span class="ir-f">${esc(k)}=<b class="${cls}">${esc(String(v.value ?? "∅"))}</b></span>`;
+  }).join(" ");
+  const tells = (res.tells || []).map(tellChip).join(" ");
+  return `${status} ${fields}${tells ? " · " + tells : ""}`;
 }
 
 function selectRegionNode(winId, boxId) {
-  const ids = [`reg:${winId}:${boxId}`, `anc:${winId}:${boxId}`, `st:${winId}:${boxId}`, `sb:${winId}:${boxId}`];
+  const ids = [`reg:${winId}:${boxId}`, `det:${winId}:${boxId}`, `st:${winId}:${boxId}`, `sb:${winId}:${boxId}`];
   selectedNodeId = ids.find((id) => nodeEls.has(id)) || null;
   for (const [id, el] of nodeEls) el.classList.toggle("selected", id === selectedNodeId);
   drawEdges();   // restyle the selected node's line
 }
 
 // Focus ANY node (click or drag). Drops box selection so WASD targets the node,
-// highlights it + its lines. Box-backed nodes (region/anchor/scrollbar) then re-select
+// highlights it + its lines. Box-backed nodes (region/detect/scrollbar) then re-select
 // their box on the trailing click, so WASD keeps nudging the box for those.
 function focusNode(id) {
   for (const [, rec] of overlays) rec.overlay.setActive(null);
@@ -2050,12 +2226,12 @@ function previewTable(cells) {
     <table class="grid-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-async function prefillAnchorText(winId, anchorId) {
+async function prefillDetectText(winId, detectId) {
   try {
     const b = await api.getBindings(model.profile.name);
     const res = await api.detect(previewProfileFor(winId), model.profile.name, b[winId]);
-    const info = res.anchors?.[anchorId];
-    const a = model.anchor(winId, anchorId);
+    const info = res.detect?.[detectId];
+    const a = model.detect(winId, detectId);
     if (a && !a.text && info && info.read && info.read !== "(template)") {
       a.text = info.read;
       render(); autosave();
@@ -2072,7 +2248,7 @@ async function refreshDetect(winId, live = false) {
   if (detectBusy.has(winId)) { detectAgain.set(winId, live); return; }
   detectBusy.add(winId);
   // spinner on every node whose value this detect refreshes
-  const ids = [`win:${winId}`, ...model.anchors(winId).map((a) => `anc:${winId}:${a.id}`)];
+  const ids = [`win:${winId}`, ...model.detects(winId).map((a) => `det:${winId}:${a.id}`)];
   if (model.scrollbar(winId)) ids.push(`sb:${winId}:scrollbar`);
   const done = timed(`detect ${winId}`);
   try {
@@ -2080,7 +2256,7 @@ async function refreshDetect(winId, live = false) {
       try {
         const cap = live ? null : (await api.getBindings(model.profile.name))[winId];
         const res = await api.detect(previewProfileFor(winId), model.profile.name, cap);
-        for (const [aid, info] of Object.entries(res.anchors || {})) setDetectStatus(`anc:${winId}:${aid}`, info);
+        for (const [aid, info] of Object.entries(res.detect || {})) setDetectStatus(`det:${winId}:${aid}`, info);
         for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);
         const sbEl = nodeEls.get(`sb:${winId}:scrollbar`);
         const sbSpan = sbEl && sbEl.querySelector(".detect-status");
@@ -2177,7 +2353,7 @@ function refreshImageBoxes(winId) {
   const da = model.dataArea(winId);
   if (da) boxes.push({ id: "__data_area", role: "data_area", ...da });
   for (const r of model.regions(winId)) boxes.push({ id: r.id, role: "region", field: r.field, ...r.box });
-  for (const a of model.anchors(winId)) boxes.push({ id: a.id, role: "anchor", ...a.search });
+  for (const a of model.detects(winId)) boxes.push({ id: a.id, role: "detect", ...a.search });
   // item template box is NOT drawn here — it's the authored cell at one spot, which
   // isn't where detection actually reads; the live grid (below) shows the real cells
   const sb = model.scrollbar(winId);
@@ -2463,7 +2639,7 @@ document.addEventListener("keydown", (ev) => {
 
 function persistBox(winId, b) {
   const box = { x: b.x, y: b.y, w: b.w, h: b.h };
-  if (b.role === "anchor") model.setAnchorBox(winId, b.id, box);
+  if (b.role === "detect") model.setDetectBox(winId, b.id, box);
   else if (b.role === "scrollbar") model.setScrollbar(winId, box);
   else if (b.role === "data_area") model.setDataArea(winId, box);
   else model.setRegionBox(winId, b.id, box);
