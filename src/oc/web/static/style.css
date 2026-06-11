@@ -227,7 +227,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .gnode .delfield { width: 100%; margin-top: 8px; }
 .gnode .port {
   position: absolute; width: 12px; height: 12px; border-radius: 50%;
-  background: var(--accent); top: 50%; transform: translateY(-50%); cursor: crosshair;
+  background: var(--accent); top: 50%; transform: translateY(-50%); cursor: crosshair; z-index: 2;
 }
 .gnode .port.out { right: -7px; }
 .gnode .port.in { left: -7px; background: var(--line); }
@@ -591,6 +591,7 @@ a.node.win:hover { border-color: var(--accent); }
 .conf-ok { color: var(--ok); }
 .conf-warn { color: var(--warn); }
 .conf-bad { color: var(--danger); }
+.conf-sub { color: var(--muted); font-style: italic; }  /* value from an if-empty/if-number/if-text fallback, not a read */
 
 /* enabled/disabled nodes */
 .gn-enable { margin: 0 4px 0 0; vertical-align: middle; cursor: pointer; }

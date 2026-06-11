@@ -16,10 +16,15 @@ const DIR_CODE = { L: 0, R: 1, T: 2, B: 3 };
 // cost weights — tuned so a turn ~= 3 cells (few corners), overlapping a used cell
 // ~= a 4-cell detour (lines split apart), and entering a node only happens when
 // there is genuinely no way around (run-for-it).
-const W_BLOCK = 1000;   // entering a node rect
+const W_BLOCK = 100000; // entering a node rect — huge so a line takes ANY detour over clipping a node, yet finite so a fully-boxed-in line still completes (run-for-it)
 const W_CLEAR = 1.2;    // per cell short of the wanted breathing room
-const W_USE = 4;        // per line already crossing a cell
+const W_USE = 6;        // per line already crossing a cell — strong, so a 2nd line never sits ON another
 const W_TURN = 3;       // changing direction
+// One ring, but as costly as a full overlap. A parallel line therefore won't sit at
+// distance 1 (10px, reads as touching) — it skips to distance 2 (~20px, a clear gap).
+// Distance 2+ is FREE, so there's no outward taper to scatter the lines: the clear-field
+// pull toward gap centres bundles them and they lock at a consistent 2-cell spacing.
+const FLANK = [1.0];   // usage added at perpendicular distance 1 (== an overlap)
 const CELL_CAP = 200000;   // max grid cells — cell size grows past this
 
 export class EdgeRouter {
@@ -126,33 +131,68 @@ export class EdgeRouter {
     snapRun(centers, p2, d2, false);
     const pts = simplify([p1, ...centers, p2]);
     this._centerJog(pts);   // near-straight lines turn in the MIDDLE, not by an endpoint
-    this._stamp(cells);
+    this.stampPath(pts);    // reserve the FINAL drawn geometry (post-jog) so the next line avoids it
     return pts;
   }
 
   // A single-jog (almost straight) path is [a,b,c,d] with two colinear long runs and
-  // one short perpendicular hop. Slide that hop to the midpoint so the turn sits in
-  // the centre — but only if the centred hop stays clear of nodes.
+  // one short perpendicular hop. Slide that hop to a lane that's clear of nodes AND not
+  // already running alongside another line — centring blindly to the geometric midpoint
+  // piles every parallel line's riser onto the same x (undoing the A* separation). The
+  // hop is kept BETWEEN the two endpoints so the long runs only shorten, never extend
+  // (an extended run could be dragged through a node), and the WHOLE resulting 3-segment
+  // path is re-validated against nodes — only the hop being clear isn't enough.
   _centerJog(pts) {
     if (pts.length !== 4) return;
     const [a, b, c, d] = pts;
-    if (a[1] === b[1] && c[1] === d[1] && b[0] === c[0]) {            // horizontal runs, vertical hop
-      const mx = (a[0] + d[0]) / 2;
-      if (this._segClear(mx, a[1], mx, d[1])) { b[0] = mx; c[0] = mx; }
-    } else if (a[0] === b[0] && c[0] === d[0] && b[1] === c[1]) {     // vertical runs, horizontal hop
-      const my = (a[1] + d[1]) / 2;
-      if (this._segClear(a[0], my, d[0], my)) { b[1] = my; c[1] = my; }
+    if (a[1] === b[1] && c[1] === d[1] && b[0] === c[0]) {            // horizontal runs, vertical hop at x
+      const x = this._bestHop(a[0], d[0], (x) => [
+        this._laneScore(a[0], a[1], x, a[1]),   // run a→corner
+        this._laneScore(x, a[1], x, d[1]),       // the hop
+        this._laneScore(x, d[1], d[0], d[1]),    // run corner→d
+      ]);
+      if (x !== null) { b[0] = x; c[0] = x; }
+    } else if (a[0] === b[0] && c[0] === d[0] && b[1] === c[1]) {     // vertical runs, horizontal hop at y
+      const y = this._bestHop(a[1], d[1], (y) => [
+        this._laneScore(a[0], a[1], a[0], y),
+        this._laneScore(a[0], y, d[0], y),
+        this._laneScore(d[0], y, d[0], d[1]),
+      ]);
+      if (y !== null) { b[1] = y; c[1] = y; }
     }
   }
 
-  _blockedAt(x, y) { return this.blocked[this._i(this._cx(x), this._cy(y))]; }
-  _segClear(x1, y1, x2, y2) {
+  // Search hop coordinates from the midpoint of [lo,hi] outward, staying within the
+  // endpoint span. `segs(coord)` returns the three [clear, used] segment scores of the
+  // path that hop would produce. Reject any candidate whose path touches a node; among
+  // the node-clear ones take the nearest-to-centre with the fewest already-used cells —
+  // so parallel risers split apart, yet a lone line still turns near its middle.
+  _bestHop(lo, hi, segs) {
+    const mid = (lo + hi) / 2, loB = Math.min(lo, hi), hiB = Math.max(lo, hi);
+    let best = null, bestScore = Infinity;
+    for (let off = 0; off <= (hiB - loB) / 2 + this.cell; off += this.cell) {
+      for (const cand of (off ? [mid + off, mid - off] : [mid])) {
+        if (cand < loB || cand > hiB) continue;
+        const parts = segs(cand);
+        if (parts.some(([clear]) => !clear)) continue;   // any segment hits a node → skip
+        const score = parts.reduce((s, p) => s + p[1], 0);
+        if (score < bestScore) { bestScore = score; best = cand; if (score === 0) return best; }
+      }
+    }
+    return best;
+  }
+
+  // [node-clear?, count of already-used cells] along a straight span.
+  _laneScore(x1, y1, x2, y2) {
     const steps = Math.ceil(Math.hypot(x2 - x1, y2 - y1) / (this.cell / 2)) || 1;
+    let used = 0;
     for (let s = 0; s <= steps; s++) {
       const t = s / steps;
-      if (this._blockedAt(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)) return false;
+      const i = this._i(this._cx(x1 + (x2 - x1) * t), this._cy(y1 + (y2 - y1) * t));
+      if (this.blocked[i]) return [false, 0];
+      if (this.usage[i] > 0) used++;
     }
-    return true;
+    return [true, used];
   }
 
   _astar(start, goal, startDir) {
@@ -209,17 +249,23 @@ export class EdgeRouter {
   }
 
   _stamp(cells) {
-    // Mark the path cells (W_USE keeps later routes off them entirely) and a MILD cost
-    // on the flank cells. The flank makes parallel lines prefer a 2-cell gap, but it's
-    // cheap enough that a crowded line will still squeeze into the 1-cell lane BETWEEN
-    // two existing lines rather than take a long detour.
+    // Mark the path cells (W_USE keeps later routes off them entirely) and a TAPERING
+    // cost on a band of flank cells out to FLANK.length rings. The near ring is strong
+    // so parallel lines don't hug at 1 cell when there's open space to spread into; the
+    // outer rings taper so lines fan apart where it's free yet a boxed-in line can still
+    // pay the toll and squeeze through rather than take a long detour.
+    const R = FLANK.length;
     for (const i of cells) {
       this.usage[i] += 1;
       const cx = i % this.cols, cy = (i / this.cols) | 0;
-      for (const [dx, dy] of DIRS) {
-        const nx = cx + dx, ny = cy + dy;
-        if (nx < 0 || ny < 0 || nx >= this.cols || ny >= this.rows) continue;
-        this.usage[ny * this.cols + nx] += 0.5;
+      for (let dy = -R; dy <= R; dy++) {
+        const ny = cy + dy;
+        if (ny < 0 || ny >= this.rows) continue;
+        for (let dx = -R; dx <= R; dx++) {
+          const nx = cx + dx, d = Math.abs(dx) + Math.abs(dy);
+          if (d === 0 || d > R || nx < 0 || nx >= this.cols) continue;
+          this.usage[ny * this.cols + nx] += FLANK[d - 1];
+        }
       }
     }
   }

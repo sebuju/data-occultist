@@ -5,7 +5,7 @@ import * as api from "../api.js";
 import { esc } from "../dom.js";
 import { openModal } from "../modal.js";
 import { Overlay } from "../overlay.js";
-import { log, timed, fmtDur, setLogOpen } from "../log.js";
+import { log, timed, setLogOpen } from "../log.js";
 import { GraphModel } from "./model.js";
 import { EdgeRouter, polylinePath } from "./route.js";
 
@@ -318,7 +318,12 @@ function itemLists(it, w) {
       ${f.tell ? `<label class="flab" title="minimum OCR confidence the read must reach (0 = any)">tell conf <input type="number" class="itellconf" data-fid="${f.id}" step="0.05" min="0" max="1" value="${f.tell_conf ?? 0}"/></label>` : ""}
       ${f.tell ? `<label class="flab" title="if this field locates rows: which line of a wrapped name to anchor on">align <select class="itellalign" data-fid="${f.id}">${["none", "top", "center", "bottom"].map((v) => `<option ${(f.align || it.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>` : ""}
       <label class="flab">fuzzy <input type="number" class="ffset" data-fid="${f.id}" data-k="fuzzy" step="0.05" min="0" max="1" value="${fd.fuzzy ?? 0.82}"/></label>
-      <label class="flab">if empty <input class="ffset" data-fid="${f.id}" data-k="empty" value="${esc(fd.empty || "")}" placeholder="(blank)"/></label>
+      <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="ffset" data-fid="${f.id}" data-k="empty" value="${esc(fd.empty || "")}" placeholder="(blank)"/></label>
+      ${fd.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="ffset" data-fid="${f.id}" data-k="ifnum" value="${esc(fd.if_number ?? "")}" placeholder="(off)"/></label>
+      <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="ifnumany" ${fd.if_number_any ? "checked" : ""}/></label>
+      <label class="flab" title="value must match a dictionary term (fuzzy ok), else dropped and never learned">dict only <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="dictonly" ${fd.dict_only ? "checked" : ""}/></label>` : ""}
+      ${fd.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="ffset" data-fid="${f.id}" data-k="iftext" value="${esc(fd.if_text ?? "")}" placeholder="(off)"/></label>
+      <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="iftextany" ${fd.if_text_any ? "checked" : ""}/></label>` : ""}
     </div>`;
   }).join("");
   return `<label class="flab" title="when templates overlap the same tile, higher priority wins">priority <input type="number" class="iprio" step="1" value="${it.priority || 0}"></label>
@@ -367,6 +372,11 @@ function wireItemControls(div, n) {
     else if (k === "learn") fd.learn = e.target.checked;
     else if (k === "fuzzy") fd.fuzzy = +e.target.value;
     else if (k === "empty") fd.empty = e.target.value || null;
+    else if (k === "ifnum") fd.if_number = e.target.value || null;
+    else if (k === "ifnumany") fd.if_number_any = e.target.checked;
+    else if (k === "iftext") fd.if_text = e.target.value || null;
+    else if (k === "iftextany") fd.if_text_any = e.target.checked;
+    else if (k === "dictonly") fd.dict_only = e.target.checked;
     gridPreviews.delete(winId); gridReads.delete(winId); autosave();
   }));
   div.querySelectorAll(".if-del").forEach((b) => b.addEventListener("click", () => {
@@ -450,7 +460,12 @@ function nodeParts(n) {
         ${(!pips && NEEDS_SEP.has(f.extract)) ? `<label class="flab">separator <input class="fset" type="text" data-k="sep" value="${esc(f.separator || "/")}" /></label>` : ""}
         <label class="flab">learn <input type="checkbox" class="fset" data-k="learn" ${f.learn ? "checked" : ""}/></label>
         <label class="flab">fuzzy <input type="number" class="fset" data-k="fuzzy" step="0.05" min="0" max="1" value="${f.fuzzy ?? 0.82}"/></label>
-        <label class="flab">if empty <input class="fset" data-k="empty" value="${esc(f.empty || "")}" placeholder="(blank)" /></label>
+        <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="fset" data-k="empty" value="${esc(f.empty || "")}" placeholder="(blank)" /></label>
+        ${f.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="fset" data-k="ifnum" value="${esc(f.if_number ?? "")}" placeholder="(off)" /></label>
+        <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="fset" data-k="ifnumany" ${f.if_number_any ? "checked" : ""}/></label>
+        <label class="flab" title="value must match a dictionary term (fuzzy ok), else dropped and never learned">dict only <input type="checkbox" class="fset" data-k="dictonly" ${f.dict_only ? "checked" : ""}/></label>` : ""}
+        ${f.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="fset" data-k="iftext" value="${esc(f.if_text ?? "")}" placeholder="(off)" /></label>
+        <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="fset" data-k="iftextany" ${f.if_text_any ? "checked" : ""}/></label>` : ""}
         <div class="gn-foot"></div>`,
     };
   }
@@ -1108,18 +1123,19 @@ function drawEdges() {
   scheduleRouting();
 }
 
-// ---- deferred line routing ------------------------------------------------
-// Pathfinding runs OFF the drag loop: drawEdges() paints direct beziers instantly
-// and asks for a route; the actual A* fires once movement settles (debounced), then
-// repaints with neat routed paths. Routes are cached by layout signature, so a pass
-// where nothing moved is a no-op.
+// ---- live line routing -----------------------------------------------------
+// Pathfinding runs every animation frame, as fast as the browser will paint:
+// drawEdges() paints direct beziers instantly for any line whose route is stale and
+// requests a recompute; the A* then fires on the next rAF and repaints with neat
+// routed paths — so lines re-route LIVE under a drag, not only on settle. Routing is
+// incremental + cached (only links whose deps changed re-run) and gated by a layout
+// signature, so a frame where nothing moved is a no-op and the loop idles.
 const ROUTE = {
   enabled: true,
   corners: "curve",   // "curve" | "square" — internal toggle (window.__route.corners)
   cell: 10,           // grid resolution (world px) — fine enough to squeeze a line between two others
   clearWanted: 5,     // cells of breathing room a line prefers around nodes
   radius: 14,         // corner rounding for "curve"
-  debounce: 90,       // ms of stillness before routing
 };
 // internal handles: tweak ROUTE in the console, __reroute() to force a recompute
 // (e.g. after flipping __route.corners to "square").
@@ -1131,7 +1147,7 @@ if (typeof window !== "undefined") {
 const SVGNS = "http://www.w3.org/2000/svg";
 let routeCache = new Map();     // link key -> { pts:[[x,y]…], sig } (sig = its own deps)
 let routeHash = "";             // global layout signature of the last pass (cheap change gate)
-let routeTimer = null;
+let routeRaf = null;            // pending requestAnimationFrame handle (one in flight at a time)
 
 // Everything physical is an obstacle: nodes AND panels. Lines weave around all of
 // them, not just the two rects they connect.
@@ -1155,8 +1171,8 @@ function linksSig(links) {
 function scheduleRouting() {
   if (!ROUTE.enabled) return;
   if (drawSig === routeHash) return;   // routes already current (drawSig set in drawEdges)
-  clearTimeout(routeTimer);
-  routeTimer = setTimeout(runRouting, ROUTE.debounce);
+  if (routeRaf) return;                // one recompute already queued for the next frame
+  routeRaf = requestAnimationFrame(runRouting);
 }
 
 // A link's OWN dependency signature: its endpoints + only the obstacles whose rect
@@ -1180,11 +1196,11 @@ function linkDeps(link, obs) {
 }
 
 function runRouting() {
+  routeRaf = null;                     // this frame's pass is running; let drawEdges queue the next one
   const links = buildLinks();          // route the layout as it stands NOW
   const sig = linksSig(links);
   if (sig === routeHash) return;
   const obs = obstacleRects();
-  const t0 = performance.now();
   try {
     // split into links whose deps are unchanged (keep their cached path) and the rest
     const fresh = new Map(), dirty = [];
@@ -1201,12 +1217,12 @@ function runRouting() {
       fresh.set(l.key, { pts: router.route(l.p1, l.d1, l.p2, l.d2), sig: l._sig, k: `${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2}` });
     routeCache = fresh;                                        // also drops keys for links that vanished
     routeHash = sig;
-    setStatus(`routed ${dirty.length}/${links.length} line${links.length === 1 ? "" : "s"} in ${fmtDur(performance.now() - t0)}`);
   } catch (err) {
     setStatus(`route failed: ${err.message}`);   // surface instead of silently using beziers
     return;
   }
-  tweenRoutes = true;   // the freshly-routed lines morph from their live bezier into the route
+  // No morph: routing reruns every frame, so a dragged line's route is already current
+  // each paint — setRouted snaps it crisply. (Morph was for the old debounced settle.)
   drawEdges();
 }
 
@@ -1318,6 +1334,11 @@ function wireNode(div, n) {
       else if (k === "learn") fld.learn = e.target.checked;
       else if (k === "fuzzy") fld.fuzzy = +e.target.value;
       else if (k === "empty") fld.empty = e.target.value || null;
+      else if (k === "ifnum") fld.if_number = e.target.value || null;
+      else if (k === "ifnumany") fld.if_number_any = e.target.checked;
+      else if (k === "iftext") fld.if_text = e.target.value || null;
+      else if (k === "iftextany") fld.if_text_any = e.target.checked;
+      else if (k === "dictonly") fld.dict_only = e.target.checked;
       autosave();   // plain value edits: no DOM rebuild
     }));
   } else if (n.type === "anchor") {
@@ -1984,6 +2005,19 @@ function tellChip(t) {
   return `<span class="tell-chip ${t.pass ? "tc-ok" : "tc-bad"}"${title}>${esc(t.id)} ${t.score}${thr}</span>`;
 }
 
+// "empty" -> "if empty", "if_number" -> "if number" — the badge shown instead of a
+// confidence % when a configured fallback produced the value (config, not a read)
+const subLabel = (r) => `if ${String(r).replace(/^if_/, "").replace(/_/g, " ")}`;
+
+function previewCell(v) {
+  if (!v) return "<td>—</td>";
+  if (v.substituted) {
+    return `<td class="conf-sub" title="${esc(v.raw || "(empty)")} → ${subLabel(v.substituted)}">${esc(v.value ?? "∅")}</td>`;
+  }
+  const cls = v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
+  return `<td class="${cls}" title="${esc(v.raw || "")}">${esc(v.value ?? "∅")}</td>`;
+}
+
 function previewTable(cells) {
   const all = cells || [];
   const hasItems = all.some((c) => Array.isArray(c.tells));
@@ -1992,12 +2026,7 @@ function previewTable(cells) {
     if (!kept.length) return `<p class="muted" style="padding:8px">0 rows</p>`;
     const fieldIds = [...new Set(kept.flatMap((c) => Object.keys(c.fields)))];
     const head = fieldIds.map((f) => `<th>${esc(f)}</th>`).join("");
-    const rows = kept.slice(0, 200).map((c) => `<tr>${fieldIds.map((f) => {
-      const v = c.fields[f];
-      if (!v) return "<td>—</td>";
-      const cls = v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
-      return `<td class="${cls}" title="${esc(v.raw || "")}">${esc(v.value ?? "∅")}</td>`;
-    }).join("")}</tr>`).join("");
+    const rows = kept.slice(0, 200).map((c) => `<tr>${fieldIds.map((f) => previewCell(c.fields[f])).join("")}</tr>`).join("");
     return `<div class="prev-count muted">${kept.length} row${kept.length === 1 ? "" : "s"}</div>
       <table class="grid-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
   }
@@ -2012,12 +2041,7 @@ function previewTable(cells) {
   const rows = read.slice(0, 300).map((c) => {
     const status = c.valid ? '<span class="tc-ok">✓</span>'
       : c.tells_pass ? '<span class="tc-warn">◌</span>' : '<span class="tc-bad">✗</span>';
-    const fcols = fieldIds.map((f) => {
-      const v = c.fields[f];
-      if (!v) return "<td>—</td>";
-      const cls = v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
-      return `<td class="${cls}" title="${esc(v.raw || "")}">${esc(v.value ?? "∅")}</td>`;
-    }).join("");
+    const fcols = fieldIds.map((f) => previewCell(c.fields[f])).join("");
     const tells = (c.tells || []).map(tellChip).join(" ");
     return `<tr class="${c.valid ? "" : "prev-rej"}"><td>${status}</td><td>${esc(c.item || "")}</td>${fcols}<td>${tells}</td><td class="muted">${esc(c.reason || "")}</td></tr>`;
   }).join("");
@@ -2189,17 +2213,17 @@ function setGridFromPreview(winId, res) {
   if (!res || !res.cells) return;
   const kept = res.cells.filter(cellKept);
   const boxes = kept.flatMap((c) => Object.values(c.fields).map((f) => f.box)).filter(Boolean);
-  // when several item templates feed this window, label the cell with which one
-  // matched (the first field carries the tag), so diagnostics show the item type
-  const multi = new Set(kept.map((c) => c.item)).size > 1;
   // what each cell actually read (value + confidence) — shown on the window canvas
   const reads = kept.flatMap((c) => Object.values(c.fields)
     .filter((f) => f.box)
-    .map((f, i) => ({
+    .map((f) => ({
       ...f.box,
-      text: multi && i === 0 && c.item ? `[${c.item}] ${f.value}` : f.value,
+      text: f.value,
       confidence: f.confidence,
+      substituted: f.substituted || null,
     })));
+  // which item template matched: its id centred on each cell, white on black
+  reads.push(...kept.filter((c) => c.box && c.item).map((c) => ({ ...c.box, cell: c.box, text: c.item })));
   if (boxes.length) gridPreviews.set(winId, boxes); else gridPreviews.delete(winId);
   if (reads.length) gridReads.set(winId, reads); else gridReads.delete(winId);
   refreshImageBoxes(winId);
@@ -2253,9 +2277,16 @@ function startMove(id, ev) {
   // Shift: drag the whole subtree that flows out of this node.
   const group = ev.shiftKey ? descendantsOf(id).map((gid) => ({ gid, gp: pos.get(gid) })).filter((g) => g.gp) : [];
   const starts = group.map((g) => ({ ...g, sx: g.gp.x, sy: g.gp.y }));
-  const start = { x: ev.clientX, y: ev.clientY, px: p.x, py: p.y };
+  const start = { px: p.x, py: p.y };
+  // Track the cursor in WORLD space off the LIVE pan/zoom every move — so a pan happening
+  // at the same time as the drag shifts the world consistently and the node follows the
+  // cursor instead of drifting the wrong way (the old screen-delta math ignored the pan).
+  const rect = $("graph").getBoundingClientRect();
+  const toWorld = (e) => ({ x: (e.clientX - rect.left - view.panX) / view.zoom, y: (e.clientY - rect.top - view.panY) / view.zoom });
+  const g0 = toWorld(ev);
   const onMove = (e) => {
-    const dx = (e.clientX - start.x) / view.zoom, dy = (e.clientY - start.y) / view.zoom;
+    const w = toWorld(e);
+    const dx = w.x - g0.x, dy = w.y - g0.y;
     p.x = snap(start.px + dx);
     p.y = snap(start.py + dy);
     positionNode(id);
