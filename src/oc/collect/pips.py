@@ -52,20 +52,30 @@ def count_filled_diamonds(image: np.ndarray) -> int:
     return filled
 
 
-def _is_diamond_contour(approx: np.ndarray, w: int, h: int) -> bool:
+def _is_diamond_contour(approx: np.ndarray, w: int, h: int, area: float) -> bool:
     """A diamond is a square rotated ~45°: a convex 4-gon whose corners sit at the
     MIDPOINTS of its bounding-box edges (top, right, bottom, left), not at the corners.
     An axis-aligned square or a letter block has its 4-gon corners AT the bbox corners.
-    Testing the vertex positions is rotation-specific and rejects text fragments."""
+    Testing the vertex positions is rotation-specific and rejects text fragments.
+
+    Round glyphs (e/o/c in a name like "Receiver") defeat the vertex test alone: a
+    4-point approx of a round blob ALSO puts its vertices at the bbox edge midpoints.
+    A diamond fills ~0.5 of its bbox while a disc fills ~0.79 and a block ~1.0, so the
+    fill ratio is the discriminator that text shapes can't fake. ``area`` must be the
+    ORIGINAL contour's area — the 4-gon approx of a disc is its inscribed square,
+    whose area matches a diamond's exactly."""
     if len(approx) != 4 or not cv2.isContourConvex(approx) or w < 6 or h < 6:
         return False
     if not (0.6 <= w / h <= 1.7):
         return False
+    if not (0.32 <= area / (w * h) <= 0.56):
+        return False
     pts = approx.reshape(-1, 2).astype(float)
     cx, cy = pts[:, 0].mean(), pts[:, 1].mean()
-    # each vertex lies near a vertical or horizontal mid-line (a point of the diamond)
-    midish = sum(1 for px, py in pts if abs(px - cx) < 0.22 * w or abs(py - cy) < 0.22 * h)
-    return midish == 4
+    # two vertices on the vertical mid-line (top/bottom points), two on the horizontal
+    on_vert = sum(1 for px, _py in pts if abs(px - cx) < 0.22 * w)
+    on_horiz = sum(1 for _px, py in pts if abs(py - cy) < 0.22 * h)
+    return on_vert == 2 and on_horiz == 2
 
 
 def _diamond_boxes(image: np.ndarray, min_area: int = 20) -> list[tuple[int, int, int, int]]:
@@ -87,11 +97,12 @@ def _diamond_boxes(image: np.ndarray, min_area: int = 20) -> list[tuple[int, int
     cnts, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     boxes: list[tuple[int, int, int, int]] = []
     for c in cnts:
-        if cv2.contourArea(c) < min_area:
+        area = cv2.contourArea(c)
+        if area < min_area:
             continue
         approx = cv2.approxPolyDP(c, 0.08 * cv2.arcLength(c, True), True)
         x, y, w, h = cv2.boundingRect(approx)
-        if not _is_diamond_contour(approx, w, h):
+        if not _is_diamond_contour(approx, w, h, area):
             continue
         cx, cy = x + w / 2, y + h / 2
         if any(abs(cx - (ox + ow / 2)) < (w + ow) * 0.3 and abs(cy - (oy + oh / 2)) < h * 0.5

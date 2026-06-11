@@ -46,6 +46,22 @@ def test_count_diamonds_zero_on_plain():
     assert count_diamonds(_strip()) == 0                        # an item with no rank strip
 
 
+def test_text_is_not_diamonds():
+    # a name like "Receiver" landing in the rank-strip box: round glyphs (e/o/c)
+    # approximate to 4-gons with midpoint vertices, so only the fill-ratio test
+    # tells them from real diamond marks
+    img = np.full((40, 220, 3), 20, np.uint8)
+    cv2.putText(img, "Receiver", (4, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+    assert count_diamonds(img) == 0
+    assert count_filled_diamonds(img) == 0
+
+
+def test_disc_is_not_a_diamond():
+    img = _strip()
+    cv2.circle(img, (75, 20), 12, GOLD, -1)             # filled disc, e.g. a round glyph
+    assert count_diamonds(img) == 0
+
+
 def test_unranked_arcane_located_but_zero_filled():
     # a fully UNRANKED arcane: five hollow ◇ — the strip is detected (5 marks) yet the
     # rank reads 0. count_filled must not need a filled mark to "see" the diamonds.
