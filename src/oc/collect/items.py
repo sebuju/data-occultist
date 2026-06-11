@@ -143,6 +143,22 @@ def _text_rows(item: ItemDef, loc, lines_frac, da) -> list[float]:
     return detect_row_centers(centers, heights, ih, da.y, da.y + da.h, None, anchor=anchor_align(item))
 
 
+def _cell_in_bounds(item: ItemDef, cell_x: float, cell_y: float, da) -> bool:
+    """Every field AND tell box of the placed cell must sit inside the data area.
+    A row half-scrolled off the grid (or a misplaced anchor) pushes boxes outside,
+    where they read unrelated UI text — dismiss the whole cell instead."""
+    iw, ih = item.box.w, item.box.h
+    ex, ey = 0.02 * iw, 0.02 * ih           # authoring slack: boxes drawn to the edge
+    boxes = [f.box for f in item.fields] + [t.box for t in item.tells]
+    for b in boxes:
+        x, y = cell_x + b.x * iw, cell_y + b.y * ih
+        if (x < da.x - ex or y < da.y - ey
+                or x + b.w * iw > da.x + da.w + ex
+                or y + b.h * ih > da.y + da.h + ey):
+            return False
+    return True
+
+
 def _cells_for_item(frame: Frame, item: ItemDef, da, lines_frac, templates, ref: float) -> list[ItemCell]:
     """``ref`` is the cell-relative y the detected row anchors to — calibrated from
     where the locator's content ACTUALLY sits in the cutout (see RegionReader), not
@@ -166,6 +182,8 @@ def _cells_for_item(frame: Frame, item: ItemDef, da, lines_frac, templates, ref:
         cell_y = lc - ref * ih              # align the locator's true content to the detected row
         for c in range(ncols):
             cell_x = da.x + c * pitch_x
+            if not _cell_in_bounds(item, cell_x, cell_y, da):
+                continue                    # a box outside the data area reads stray UI text
             boxes = {
                 f.field: FractionBox(cell_x + f.box.x * iw, cell_y + f.box.y * ih,
                                      f.box.w * iw, f.box.h * ih)

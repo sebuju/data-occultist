@@ -49,6 +49,16 @@ def test_tell_keeps_only_filled_cells():
     assert kept and all(ic.cell.col == 0 for ic in kept)
 
 
+def test_cell_out_of_data_area_dismissed():
+    # last row's cell hangs past the data-area bottom (0.8 + 0.25 cell height > 1.0):
+    # its field box would read stray UI text below the grid, so the whole row is dropped
+    win = _window()
+    frame = _frame_with_icons([0.0, 0.5, 0.8])
+    cells = locate_item_cells(frame, win, [])
+    assert cells
+    assert {ic.cell.row for ic in cells} == {0, 1}
+
+
 def test_no_icons_no_rows():
     win = _window()
     frame = Frame(image=np.zeros((1000, 1000, 3), dtype=np.uint8), client=PixelBox(0, 0, 1000, 1000))
