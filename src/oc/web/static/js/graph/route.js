@@ -116,10 +116,15 @@ export class EdgeRouter {
 
     const cells = this._astar(start, goal, sd);
     const centers = cells.map((i) => this._center(i % this.cols, (i / this.cols) | 0));
-    // slide each port along its own node edge so the exit/entry stub is dead straight
-    const a = alignPort(p1, d1, centers[0]);
-    const b = alignPort(p2, d2, centers[centers.length - 1]);
-    const pts = simplify([a, ...centers, b]);
+    // Attach at the EXACT node-edge centre (p1/p2), not a grid-snapped point — otherwise a
+    // short node (e.g. collapsed) shows the line meeting it visibly off-centre. BUT the grid
+    // start/goal sit half a cell off the port's axis, so a raw join would kink diagonally
+    // right at the port. Pull the leading/trailing colinear run onto the port's axis: the
+    // stub then leaves/enters dead straight and the off-axis slack is absorbed at the first
+    // real turn instead of as a wart by the node.
+    snapRun(centers, p1, d1, true);
+    snapRun(centers, p2, d2, false);
+    const pts = simplify([p1, ...centers, p2]);
     this._centerJog(pts);   // near-straight lines turn in the MIDDLE, not by an endpoint
     this._stamp(cells);
     return pts;
@@ -220,11 +225,21 @@ export class EdgeRouter {
   }
 }
 
-// Keep the port on its node edge but slide it onto the first grid point's axis, so a
-// horizontal exit leaves at one y and a vertical exit at one x — no kinked stub.
-function alignPort(p, d, c) {
-  if (!c) return p;
-  return (d === "L" || d === "R") ? [p[0], c[1]] : [c[0], p[1]];
+// Pull the run of grid centres that's colinear with the port's exit onto the port's own
+// axis. For an L/R exit the line runs horizontally, so its leading cells share a y (the
+// grid y, half a cell off the port); rewrite that y to the port's y so the stub is
+// straight. `fromStart` does the leading run (port p1), else the trailing run (port p2).
+function snapRun(centers, p, d, fromStart) {
+  if (!centers.length) return;
+  const ax = (d === "L" || d === "R") ? 1 : 0;   // coordinate held constant along the exit
+  const v = p[ax], n = centers.length;
+  if (fromStart) {
+    const lock = centers[0][ax];
+    for (let i = 0; i < n && centers[i][ax] === lock; i++) centers[i][ax] = v;
+  } else {
+    const lock = centers[n - 1][ax];
+    for (let i = n - 1; i >= 0 && centers[i][ax] === lock; i--) centers[i][ax] = v;
+  }
 }
 
 // Drop collinear midpoints so straight runs are single segments (neatness).

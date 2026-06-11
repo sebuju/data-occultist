@@ -158,8 +158,14 @@ legend { color: var(--muted); padding: 0 6px; }
 #gedges { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 0; overflow: visible; }
 #gnodes { position: absolute; top: 0; left: 0; z-index: 1; }
 #gedges-top { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 5; overflow: visible; }
-.gnode.collapsed .gn-body { display: none; }
-.gn-h .collapse { background: transparent; color: var(--muted); padding: 0 4px; font-size: var(--fs-lg); }
+.gnode.collapsed .gn-body { display: none !important; }   /* beats the host-node `> .gn-body { display:flex }` */
+/* collapse works the SAME for every node: header only. !important overrides the inline
+   width/height a resizable host node carries, and resizing is off while collapsed. */
+.gnode.collapsed { height: auto !important; min-height: 0 !important; resize: none !important; }
+.gnode.collapsed .gn-spin { display: none; }
+.gn-h .collapse { background: transparent; color: var(--muted); padding: 0; min-height: 0; flex: 0 0 auto;
+  width: 22px; height: 22px; font-size: 22px; line-height: 1; text-align: center;
+  display: flex; align-items: center; justify-content: center; }   /* ▸/▾ stay aligned between states */
 /* Nothing in the node canvas is text-selectable — kills the stray highlight that
    appears while dragging nodes around. Exceptions below: form fields (so you can
    edit) and table cells (so you can copy dataset rows). */
@@ -175,11 +181,22 @@ legend { color: var(--muted); padding: 0 6px; }
 }
 .gnode, .gnode * { box-sizing: border-box; }
 .gnode input, .gnode select { user-select: text; max-width: 100%; }
+/* the whole node is draggable — show grab everywhere, except on the things that aren't
+   (form fields, buttons, scroll/resize areas) so the cursor always tells the truth */
+.gnode { cursor: grab; }
+.gnode input, .gnode textarea, .gnode [contenteditable="true"] { cursor: text; }
+.gnode button, .gnode select, .gnode a, .gnode .collapse, .gnode .port, .gnode .gn-enable { cursor: pointer; }
+.gnode .scrollhost, .gnode .nodehost, .gnode .canvas-wrap, .gnode table { cursor: auto; }
+/* remove button lives in the header now: a danger-coloured icon, two-click confirm */
+.gn-del { margin-left: auto; flex: 0 0 auto; height: 18px; min-height: 0; padding: 0 7px; line-height: 1;
+  background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px; font-size: var(--fs-sm); }
+.gn-del.armed { background: var(--warn); color: var(--on-accent); }
 .glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
 .glab input { margin-top: 2px; }
 .modal-body h4 { margin: 0 0 6px; color: var(--muted); font-weight: 500; font-size: var(--fs-base); }
-.gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 4px;
-  margin: -6px -8px 6px; padding: 5px 8px; overflow: hidden;
+.gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 8px;
+  flex: 0 0 auto;   /* in flex-column host nodes, the header must NOT shrink when content overflows */
+  margin: -7px -9px 6px; padding: 5px 8px; overflow: hidden;
   background: rgba(140, 165, 200, 0.07); border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
 .gnode.collapsed .gn-h { margin: -6px -8px; border-bottom: 0; border-radius: 8px; }
 .gnode .gn-h.pulse { animation: pulse 1.2s ease-out; }
@@ -203,6 +220,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .detect-status { margin-top: 4px; font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* footer separates the action row (button base owns sizing) */
 .gn-foot { display: flex; gap: 6px; margin-top: 8px; }
+.gn-foot:empty { display: none; }   /* remove moved to the header — don't leave a gap */
 .gn-foot button { flex: 1 1 0; min-width: 0; }
 .gn-foot button.danger { flex: 0 0 auto; margin-left: auto; }  /* remove always sits at the right */
 .gn-foot .imgbtn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -214,7 +232,8 @@ legend { color: var(--muted); padding: 0 6px; }
 .gnode .port.out { right: -7px; }
 .gnode .port.in { left: -7px; background: var(--line); }
 .gedge { fill: none; stroke: var(--line); stroke-width: 1.1; }
-.gedge.data { stroke: var(--muted); stroke-dasharray: 2 4; opacity: 0.7; }
+.gedge.data { stroke: var(--accent); stroke-dasharray: 7 6; opacity: 0.8; }
+.gedge.flow { animation: flow 1.1s linear infinite; }   /* only port-out lines flow */
 .gedge.field { stroke: var(--accent); opacity: 0.5; }
 .gedge.anchor { stroke: var(--ok); opacity: 0.5; }
 .gedge.state { stroke: var(--warn); opacity: 0.5; }
@@ -231,9 +250,17 @@ legend { color: var(--muted); padding: 0 6px; }
    the node's width is driven by the image canvas. */
 .gnode.window { width: max-content; min-width: 240px; max-width: 76vw; }
 .win-img { width: max-content; }
-.gn-spin { width: 12px; height: 12px; margin-left: auto; flex: 0 0 auto; display: none;
-  border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; }
-.gnode.busy .gn-spin { display: inline-block; animation: spin 0.7s linear infinite; }
+/* busy state: a scrim covers the whole node EXCEPT the header (the header sits above it
+   via z-index), with a spinner centred on it. Fades in/out so it isn't harsh. */
+.gnode .gn-h { position: relative; z-index: 2; }
+.gn-spin { position: absolute; inset: 0; z-index: 1; pointer-events: none; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 14, 19, 0.55); opacity: 0; visibility: hidden;
+  transition: opacity 0.18s ease, visibility 0.18s ease; }
+.gn-spin::after { content: ""; width: 30px; height: 30px; border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.15); border-top-color: var(--accent); }
+.gnode.busy .gn-spin { opacity: 1; visibility: visible; }
+.gnode.busy .gn-spin::after { animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* the image drawing surface lives INSIDE the window node (one DOM element) */
@@ -327,6 +354,10 @@ legend { color: var(--muted); padding: 0 6px; }
 .log-latest { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .log-toggle { color: var(--muted); transition: transform 0.15s; }
 .logbar.open .log-toggle { transform: rotate(180deg); }
+/* during boot the log floats over the veil as bare text — no chrome, no head bar */
+.logbar.boot { z-index: 3100; background: transparent; border-top: none; }
+.logbar.boot .log-head { display: none; }
+.logbar.boot .log-body { border-top: none; }
 
 /* background-worker indicator (far right of the log head): live count + per-worker
    emergency kill. Hidden when nothing is running. */
@@ -340,6 +371,19 @@ legend { color: var(--muted); padding: 0 6px; }
   background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px;
   height: 16px; min-height: 0; padding: 0 6px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1; }
 .lw-kill:hover { filter: brightness(1.12); }
+
+/* boot veil: covers everything from first paint until the boot sequence settles, so
+   the user can't poke a half-loaded, laggy UI. main.js removes it once boot quiesces
+   (and before showing a startup-halt, which sits below it). */
+#bootveil { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center;
+  justify-content: center; background: var(--bg, #0a0e13); transition: opacity .25s; }
+#bootveil.fade { opacity: 0; pointer-events: none; }
+.bootveil-box { display: flex; flex-direction: column; align-items: center; gap: 14px;
+  color: var(--muted, #8a97a5); }
+.bootveil-spin { width: 42px; height: 42px; border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.12); border-top-color: var(--accent, #5fb2ff);
+  animation: bootspin .8s linear infinite; }
+@keyframes bootspin { to { transform: rotate(360deg); } }
 
 /* full-screen block when a background OCR worker refuses to die on startup */
 .startup-halt { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center;
@@ -490,31 +534,45 @@ a.node.win:hover { border-color: var(--accent); }
 /* content nodes — data / preview / batches stay NORMAL nodes (identical header/body
    to every other node). Only the inner content host is a resizable scroll box, so
    tables never blow the node up. ONE look + ONE behaviour, no per-kind panel code. */
-.gnode.dataset, .gnode.preview, .gnode.batches, .gnode.subset { width: max-content; }
-.gnode.subset { min-width: 320px; }
-.gnode.dictionary { width: max-content; min-width: 260px; }
+/* host nodes (dataset/preview/batches/dictionary/subset): the NODE itself resizes and
+   its body + content host fill it. ONE behaviour — no separate resize handle inside. */
+.gnode.dataset, .gnode.preview, .gnode.batches, .gnode.dictionary, .gnode.subset {
+  display: flex; flex-direction: column; resize: both; overflow: hidden; min-width: 280px; }
+.gnode.dataset { width: 360px; height: 340px; }
+.gnode.preview { width: 360px; height: 320px; }
+.gnode.batches { width: 380px; height: 380px; }
+.gnode.dictionary { width: 300px; height: 360px; }
+.gnode.subset { width: 360px; height: 440px; min-width: 320px; }
+.gnode.dataset > .gn-body, .gnode.preview > .gn-body, .gnode.batches > .gn-body,
+.gnode.dictionary > .gn-body, .gnode.subset > .gn-body {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 /* subset config editors */
 .sub-of { margin-left: 6px; font-size: var(--fs-sm); }
 .sub-cfg { margin-top: 4px; }
 .sub-sec { margin-top: 6px; }
 .sub-lbl { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; }
 .sub-empty { font-size: var(--fs-sm); padding: 1px 2px; }
-.sub-row { display: flex; align-items: center; gap: 4px; margin-top: 3px; }
+.sub-cfg { width: 100%; box-sizing: border-box; }                /* bounded -> rows wrap, don't overflow */
+.sub-row { display: flex; align-items: center; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
 .sub-row select, .sub-row input { min-width: 0; }
+.sub-row select { max-width: 140px; }
 .sub-row .sf-val, .sub-row .sd-tpl, .sub-row .sd-name { flex: 1 1 0; }
 .sub-row .sf-field, .sub-row .sf-op, .sub-row .se-type, .sub-row .se-src { flex: 0 0 auto; }
 .sub-row button.danger { flex: 0 0 auto; padding: 0 6px; }
 .sub-sort { display: flex; gap: 10px; flex-wrap: wrap; }
 .sub-sort .flab { display: inline-flex; align-items: center; gap: 4px; grid-template-columns: none; }
 .sub-sort .ss-limit { width: 5ch; }
-.dictterms { width: 100%; resize: vertical; min-height: 140px; margin-top: 6px; box-sizing: border-box;
+/* the term list fills a .nodehost (resizable + wheel-scrolls); the textarea has no
+   border/resize of its own — the host owns those */
+/* the inner host just FILLS the node now (no resize handle of its own) */
+.nodehost { margin-top: 6px; overflow: auto; flex: 1 1 auto; min-height: 80px;
+  border: 1px solid var(--line); border-radius: 6px; padding: 0 6px 4px; }
+.dict-host { padding: 0; }
+.dict-host > .dictterms { width: 100%; height: 100%; resize: none; box-sizing: border-box; display: block;
   font: var(--fs-sm)/1.4 var(--font-mono); background: var(--bg); color: var(--text);
-  border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
-.nodehost { margin-top: 6px; overflow: auto; resize: both; min-width: 200px; min-height: 80px;
-  width: 320px; height: 280px; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px 4px; }
-.prev-host, .data-host { width: 340px; }
+  border: 0; border-radius: 6px; padding: 6px; }
 /* batches sub-layout: ledger list on top, selected-batch contents + preview below */
-.bat-host { display: flex; flex-direction: column; gap: 8px; width: 360px; height: 360px; }
+.bat-host { display: flex; flex-direction: column; gap: 8px; }   /* fills the node (see .nodehost) */
 .bat-list { max-height: 45%; overflow: auto; flex: 0 0 auto; }
 .bat-list .batrow { cursor: pointer; flex-wrap: nowrap; }
 .batmeta { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -536,8 +594,7 @@ a.node.win:hover { border-color: var(--accent); }
 
 /* enabled/disabled nodes */
 .gn-enable { margin: 0 4px 0 0; vertical-align: middle; cursor: pointer; }
-.gnode.node-disabled { opacity: 0.45; }
-.gnode.node-disabled .gn-enable { opacity: 1; }
+.gnode.node-disabled { filter: grayscale(1) opacity(0.5); }
 
 /* item-template preview diagnostics */
 .tc-ok { color: var(--ok); }

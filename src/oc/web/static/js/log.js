@@ -34,6 +34,14 @@ function append({ ts, msg, level }) {
   if (atBottom) body.scrollTop = body.scrollHeight;
 }
 
+// Expand/collapse the log history programmatically (boot opens it so the initial-load
+// progress is visible, then collapses it once the page is ready).
+export function setLogOpen(on) {
+  if (!ensure()) return;
+  bar.classList.toggle("open", !!on);
+  bar.classList.toggle("boot", !!on);   // boot lifts it above the boot veil (z-index)
+}
+
 export function fmtDur(ms) {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 10000) return `${(ms / 1000).toFixed(1)}s`;

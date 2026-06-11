@@ -5,7 +5,7 @@ import * as api from "../api.js";
 import { esc } from "../dom.js";
 import { openModal } from "../modal.js";
 import { Overlay } from "../overlay.js";
-import { log, timed, fmtDur } from "../log.js";
+import { log, timed, fmtDur, setLogOpen } from "../log.js";
 import { GraphModel } from "./model.js";
 import { EdgeRouter, polylinePath } from "./route.js";
 
@@ -126,16 +126,21 @@ $("logWorkers").addEventListener("click", (ev) => {
 // ---- autosave + position persistence --------------------------------------
 
 let saveT = null;
-function autosave() {
+function autosave(refresh = true) {
   if (!model.profile.name) return;
   clearTimeout(saveT);
   saveT = setTimeout(async () => {
-    try { await api.saveProfile(model.profile, false); setStatus("saved ✓"); }  // full replace (graph is complete)
-    catch (e) { setStatus(String(e.message || e)); }
+    try {
+      await api.saveProfile(model.profile, false);   // full replace (graph is complete)
+      setStatus("saved ✓");
+      refreshAllSubsetNodes();   // backend now knows new/edited subsets -> fill them (no more 404)
+    } catch (e) { setStatus(String(e.message || e)); }
   }, 400);
-  refreshOpenPreviews();   // update any open preview nodes after edits
-  refreshOpenDetect();     // update detector/state true-false after edits
-  pushHistory();           // record this change for undo/redo
+  if (refresh) {             // a disabled node's edit passes false: it changes nothing others read
+    refreshOpenPreviews();   // update any open preview nodes after edits
+    refreshOpenDetect();     // update detector/state true-false after edits
+  }
+  pushHistory();             // record this change for undo/redo
 }
 
 // ---- undo / redo (full history of the profile) -----------------------------
@@ -224,13 +229,65 @@ function ensurePositions() {
   }
 }
 
+// The node an edge points AT this one from (its logical parent), for placing a new node
+// next to where it belongs.
+function parentOf(id) { for (const e of model.edges()) if (e.to === id) return e.from; return null; }
+
+// Closest free (non-overlapping) slot in a column to `nearY`. Used to drop a brand-new
+// node beside its parent instead of at the far bottom of its column.
+function freeSpot(x, nearY, w = 240, h = 160) {
+  const GAP = 18, STEP = 20;
+  const rects = [];
+  for (const [id, p] of pos) if (Number.isFinite(p.x)) rects.push({ x: p.x, y: p.y, w: nw(id), h: nh(id) });
+  const free = (y) => !rects.some((o) =>
+    x < o.x + o.w + GAP && x + w + GAP > o.x && y < o.y + o.h + GAP && y + h + GAP > o.y);
+  for (let d = 0; d <= 8000; d += STEP) {
+    for (const y of (d ? [nearY + d, nearY - d] : [nearY])) {
+      if (y >= 0 && free(y)) return { x, y: snap(y) };
+    }
+  }
+  return { x, y: Math.max(0, snap(nearY)) };
+}
+
+// Position a just-created node at the nearest free spot to its parent. Call BEFORE
+// render() so ensurePositions() leaves it alone.
+function placeNewNode(id, type) {
+  const par = parentOf(id);
+  const nearY = (par && pos.get(par)?.y) ?? 20;
+  pos.set(id, freeSpot(COLX[type] ?? 300, nearY));
+}
+
+// ---- smooth pan to a node (cancelled by any user action) ------------------
+let panAnim = null;
+function cancelPan() { if (panAnim) { cancelAnimationFrame(panAnim); panAnim = null; } }
+function panTo(id) {
+  const p = pos.get(id), el = nodeEls.get(id);
+  if (!p || !el) return;
+  const rect = $("graph").getBoundingClientRect();
+  const z = view.zoom, ew = el.offsetWidth, eh = el.offsetHeight;
+  const left = p.x * z + view.panX, top = p.y * z + view.panY;
+  if (left >= 0 && top >= 0 && left + ew * z <= rect.width && top + eh * z <= rect.height) return;  // already on screen
+  const tx = rect.width / 2 - (p.x + ew / 2) * z;
+  const ty = rect.height / 2 - (p.y + eh / 2) * z;
+  const sx = view.panX, sy = view.panY, t0 = performance.now(), dur = 380;
+  cancelPan();
+  const step = (now) => {
+    let t = (now - t0) / dur; if (t > 1) t = 1;
+    const e = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;   // easeInOutQuad
+    view.panX = sx + (tx - sx) * e; view.panY = sy + (ty - sy) * e;
+    applyView();
+    panAnim = t < 1 ? requestAnimationFrame(step) : null;
+  };
+  panAnim = requestAnimationFrame(step);
+}
+
 // ---- render ---------------------------------------------------------------
 
 function windowControls(w) {
   // The dataset (not the window) owns dedup now — the key field lives on the dataset
   // node. The window just shows where its records flow + the image/delete actions.
   return `<div class="muted">→ ${esc(model.datasetOf(w))}</div>
-    <div class="gn-foot"><button class="imgbtn">📷 image</button><button class="delwin danger">remove</button></div>`;
+    <div class="gn-foot"><button class="imgbtn">📷 image</button></div>`;
 }
 
 // The tells + fields list shown under an item node's cutout canvas. Item fields
@@ -267,7 +324,7 @@ function itemLists(it, w) {
   return `<label class="flab" title="when templates overlap the same tile, higher priority wins">priority <input type="number" class="iprio" step="1" value="${it.priority || 0}"></label>
     <div class="muted il-h">tells</div>${tells || '<div class="muted">draw a tell on the cutout</div>'}
     <div class="muted il-h">fields</div>${fields || '<div class="muted">draw a field on the cutout</div>'}
-    <div class="gn-foot"><button class="delitem danger">remove</button></div>`;
+    `;
 }
 
 // Wire an item node's id + tells/fields lists (rebuildNode re-binds these,
@@ -334,10 +391,6 @@ function wireItemControls(div, n) {
     model.setItemPriority(winId, itemId, parseInt(e.target.value, 10) || 0);
     gridPreviews.delete(winId); gridReads.delete(winId); refreshImageBoxes(winId); autosave();
   });
-  div.querySelector(".delitem").addEventListener("click", () => {
-    closeItemImage(winId, itemId); model.removeItem(winId, itemId); pos.delete(n.id);
-    gridPreviews.delete(winId); gridReads.delete(winId); render(); refreshImageBoxes(winId); autosave();
-  });
   // Click a tell/field row to SELECT its box on the cutout — the only way to reach a
   // box that's drawn under another. Routes through the chokepoint (highlights it,
   // deselects others, enables WASD).
@@ -364,7 +417,6 @@ function wireWindowControls(div, n) {
   div.querySelector(".gi-id").addEventListener("change", (e) => { model.renameWindow(n.ref.id, e.target.value.trim()); render(); autosave(); });
   div.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal(n.ref.id));
   updateImageLabel(n.ref.id, div.querySelector(".imgbtn"));   // show the bound filename
-  div.querySelector(".delwin").addEventListener("click", () => { closeImage(n.ref.id); model.removeWindow(n.ref.id); pos.delete(n.id); render(); autosave(); });
 }
 
 function nodeParts(n) {
@@ -383,6 +435,7 @@ function nodeParts(n) {
     return {
       title: `<input class="gi gi-id" data-k="winid" value="${esc(w.id)}" />`,
       body: `<div class="win-controls">${windowControls(w)}</div><div class="win-img"></div>`,
+      ports: `<span class="port out" title="drag to a dataset to send this window's rows there"></span>`,
     };
   }
   if (n.type === "region") {
@@ -398,7 +451,7 @@ function nodeParts(n) {
         <label class="flab">learn <input type="checkbox" class="fset" data-k="learn" ${f.learn ? "checked" : ""}/></label>
         <label class="flab">fuzzy <input type="number" class="fset" data-k="fuzzy" step="0.05" min="0" max="1" value="${f.fuzzy ?? 0.82}"/></label>
         <label class="flab">if empty <input class="fset" data-k="empty" value="${esc(f.empty || "")}" placeholder="(blank)" /></label>
-        <div class="gn-foot"><button class="delregion danger">remove</button></div>`,
+        <div class="gn-foot"></div>`,
     };
   }
   if (n.type === "anchor") {
@@ -409,7 +462,7 @@ function nodeParts(n) {
         <label class="flab">read ⊆ text <input type="checkbox" class="aset" data-k="incl" ${a.included ? "checked" : ""} title="match if the read word is included in this text" /></label>
         <label class="flab">threshold <input type="number" class="aset" data-k="thr" step="0.05" min="0" max="1" value="${a.threshold ?? 0.8}" /></label>
         <div class="detect-status muted">◯ —</div>
-        <div class="gn-foot"><button class="delanchor danger">remove</button></div>`,
+        <div class="gn-foot"></div>`,
     };
   }
   if (n.type === "item") {
@@ -424,7 +477,7 @@ function nodeParts(n) {
           <option ${o === "vertical" ? "selected" : ""}>vertical</option>
           <option ${o === "horizontal" ? "selected" : ""}>horizontal</option></select></label>
         <div class="detect-status muted">position: —</div>
-        <div class="gn-foot"><button class="delsb danger">remove</button></div>`,
+        <div class="gn-foot"></div>`,
     };
   }
   if (n.type === "preview") {
@@ -455,8 +508,8 @@ function nodeParts(n) {
     return {
       title: `<input class="gi gi-id dictname" value="${esc(dict.name || dict.id)}" title="dictionary name" />`,
       body: `<div class="muted">${count} word${count === 1 ? "" : "s"} · text reads snap to the closest entry</div>
-        <textarea class="dictterms" rows="10" placeholder="one word per line\nNeo V11\nSoma Prime\n…">${esc((dict.terms || []).join("\n"))}</textarea>
-        <div class="gn-foot"><button class="deldict danger">remove</button></div>`,
+        <div class="nodehost scrollhost dict-host"><textarea class="dictterms" spellcheck="false" autocomplete="off" placeholder="one word per line\nNeo V11\nSoma Prime\n…">${esc((dict.terms || []).join("\n"))}</textarea></div>
+        <div class="gn-foot"></div>`,
     };
   }
   // dataset — owns the dedup key. Key options = the fields of every window feeding it.
@@ -520,10 +573,11 @@ function subConfigHTML(s) {
 
 function subsetParts(s) {
   return {
-    title: `<input class="gi gi-id subrename" value="${esc(s.id)}" title="subset name" /><span class="muted sub-of">⊂ ${esc(s.dataset)}</span>`,
-    body: `<div class="sub-cfg">${subConfigHTML(s)}</div>
+    title: `<input class="gi gi-id subrename" value="${esc(s.id)}" title="subset name" />`,
+    body: `<div class="muted sub-of">⊂ ${esc(s.dataset)}</div>
+      <div class="sub-cfg">${subConfigHTML(s)}</div>
       <div class="gn-foot"><button class="sub-addf">+ filter</button><button class="sub-addd">+ column</button><button class="sub-adde">+ enrich</button></div>
-      <div class="gn-foot"><button class="subrun">↻ enrich</button><button class="delsub danger">remove</button></div>
+      <div class="gn-foot"><button class="subrun">↻ enrich</button></div>
       <div class="nodehost scrollhost sub-host"><p class="muted" style="padding:8px">loading…</p></div>`,
   };
 }
@@ -542,7 +596,12 @@ async function refreshSubsetNode(id) {
   const host = el && el.querySelector(".sub-host");
   if (!host) return;
   try { host.innerHTML = subTableHTML(await api.getSubset(model.profile.name, id)); }
-  catch (e) { host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`; }
+  catch (e) {
+    // a just-added subset isn't on the backend until the profile saves (debounced) —
+    // that's a transient 404, not an error; the post-save refresh fills it in.
+    const msg = /\b404\b/.test(String(e.message || e)) ? "no data yet" : String(e.message || e);
+    host.innerHTML = `<p class="muted" style="padding:8px">${esc(msg)}</p>`;
+  }
 }
 
 function refreshAllSubsetNodes() {
@@ -561,7 +620,6 @@ function wireSubset(div, s) {
   div.querySelector(".sub-addf")?.addEventListener("click", () => { model.addFilter(s.id); restructure(); });
   div.querySelector(".sub-addd")?.addEventListener("click", () => { model.addDerived(s.id); restructure(); });
   div.querySelector(".sub-adde")?.addEventListener("click", () => { model.addEnrich(s.id); restructure(); });
-  div.querySelector(".delsub")?.addEventListener("click", () => { model.removeSubset(s.id); render(); autosave(); });
 
   // filters
   div.querySelectorAll(".sf-del").forEach((b) => b.addEventListener("click", () => { model.removeFilter(s.id, +b.dataset.i); restructure(); }));
@@ -599,6 +657,45 @@ function wireSubset(div, s) {
 }
 
 const CAN_DISABLE = new Set(["window", "item", "region", "anchor", "scrollbar", "dictionary"]);
+const REMOVABLE = new Set(["window", "item", "region", "anchor", "scrollbar", "dictionary", "subset", "dataset"]);
+
+// One place to remove any node; each goes through render()+autosave() so undo/redo
+// records it (autosave -> pushHistory).
+function removeNode(n) {
+  if (n.type === "window") { closeImage(n.ref.id); model.removeWindow(n.ref.id); pos.delete(n.id); render(); autosave(); }
+  else if (n.type === "item") {
+    const winId = n.win.id, itemId = n.ref.id;
+    closeItemImage(winId, itemId); model.removeItem(winId, itemId); pos.delete(n.id);
+    gridPreviews.delete(winId); gridReads.delete(winId); render(); refreshImageBoxes(winId); autosave();
+  }
+  else if (n.type === "region") { model.removeRegion(n.win.id, n.ref.id); render(); autosave(); refreshImageBoxes(n.win.id); }
+  else if (n.type === "anchor") { model.removeAnchor(n.win.id, n.ref.id); render(); autosave(); refreshImageBoxes(n.win.id); }
+  else if (n.type === "scrollbar") { model.removeScrollbar(n.win.id); render(); autosave(); refreshImageBoxes(n.win.id); }
+  else if (n.type === "dictionary") { model.removeDictionary(n.ref.id); pos.delete(n.id); render(); autosave(); }
+  else if (n.type === "subset") { model.removeSubset(n.ref.id); render(); autosave(); }
+  else if (n.type === "dataset") { model.removeDatasetDef(n.ref); pos.delete(n.id); render(); autosave(); }
+}
+
+// Two-click confirm on an icon button: 1st click arms it (icon -> "?"), 2nd confirms.
+// Esc or a click anywhere else cancels. Listeners are torn down on confirm/cancel so a
+// re-render (which rebuilds the button) doesn't leak them.
+function wireConfirmRemove(btn, onConfirm) {
+  let armed = false;
+  const reset = () => {
+    armed = false; btn.textContent = "✕"; btn.classList.remove("armed");
+    document.removeEventListener("mousedown", onOutside, true);
+    document.removeEventListener("keydown", onKey, true);
+  };
+  const onOutside = (e) => { if (!btn.contains(e.target)) reset(); };
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); reset(); } };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (armed) { reset(); onConfirm(); return; }
+    armed = true; btn.textContent = "?"; btn.classList.add("armed");
+    document.addEventListener("mousedown", onOutside, true);
+    document.addEventListener("keydown", onKey, true);
+  });
+}
 
 function fillNode(div, n) {
   const isCollapsed = collapsed.has(n.id);
@@ -610,16 +707,20 @@ function fillNode(div, n) {
   const toggle = canToggle
     ? `<input type="checkbox" class="gn-enable" ${enabled ? "checked" : ""} title="enabled — uncheck to skip this node during detection" />`
     : "";
+  const del = REMOVABLE.has(n.type) ? `<button class="gn-del danger" title="remove (click again to confirm)">✕</button>` : "";
   div.innerHTML = `<div class="gn-h ${parts.pulse || ""}">
-      <button class="collapse" title="collapse/expand">${isCollapsed ? "▸" : "▾"}</button>${toggle}${parts.title}<span class="gn-spin" title="working…"></span></div>
-    <div class="gn-body">${parts.body}</div>${parts.ports || ""}`;
+      <button class="collapse" title="collapse/expand">${isCollapsed ? "▸" : "▾"}</button>${toggle}${parts.title}${del}</div>
+    <div class="gn-body">${parts.body}</div>
+    <span class="gn-spin" title="working…"></span>${parts.ports || ""}`;
   div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
+  const delBtn = div.querySelector(".gn-del");
+  if (delBtn) wireConfirmRemove(delBtn, () => removeNode(n));
   div.querySelector(".gn-enable")?.addEventListener("change", (e) => {
     n.ref.enabled = e.target.checked;
     div.classList.toggle("node-disabled", !e.target.checked);
     const winId = n.type === "window" ? n.ref.id : n.win?.id;
     if (winId) { gridPreviews.delete(winId); gridReads.delete(winId); refreshImageBoxes(winId); }
-    autosave();
+    autosave(e.target.checked);   // disabling shouldn't trigger re-reads in other nodes
   });
   if (busy.get(n.id)) div.classList.add("busy");   // preserve spinner across rebuilds
   wireNode(div, n);
@@ -628,15 +729,16 @@ function fillNode(div, n) {
 // Make a node's content host (`.nodehost`) user-resizable; the node itself stays a
 // normal node (header/body identical to every other node — only the scroll box
 // resizes). Restores + persists the host size, grid-snapped on release.
-function makeHostResizable(div, id) {
-  const host = div.querySelector(".nodehost");
-  if (!host) return;
+// Resize the NODE itself (its CSS resize handle), not an inner host — its body fills it.
+function makeNodeResizable(div, id) {
   const s = nodeSizes.get(id);
-  if (s) { if (s.w) host.style.width = `${s.w}px`; if (s.h) host.style.height = `${s.h}px`; }
-  snapResize(host, {
+  // a collapsed node is header-only (CSS) — never stamp its saved w/h inline, or the hard
+  // inline size beats the collapsed CSS and the node renders full-height while "collapsed".
+  if (s && !collapsed.has(id)) { if (s.w) div.style.width = `${s.w}px`; if (s.h) div.style.height = `${s.h}px`; }
+  snapResize(div, {
     both: true,
     onResize: drawEdges,
-    onSettle: () => { nodeSizes.set(id, { w: host.offsetWidth, h: host.offsetHeight }); drawEdges(); savePositions(); },
+    onSettle: () => { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight }); drawEdges(); savePositions(); },
   });
 }
 
@@ -646,7 +748,8 @@ function buildNode(n) {
   div.dataset.id = n.id;
   fillNode(div, n);
   if (n.type === "item") snapResize(div, { onResize: drawEdges });   // item node resizes by width (its cutout)
-  if (n.type === "dataset" || n.type === "preview" || n.type === "batches" || n.type === "subset") makeHostResizable(div, n.id);
+  // every host node resizes at the NODE level (its body fills it) — one consistent behaviour
+  if (["dataset", "preview", "batches", "dictionary", "subset"].includes(n.type)) makeNodeResizable(div, n.id);
   return div;
 }
 
@@ -672,9 +775,20 @@ function rebuildNode(id) {
 }
 
 function toggleCollapse(id) {
-  if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+  const willCollapse = !collapsed.has(id);
+  if (willCollapse) collapsed.add(id); else collapsed.delete(id);
   const el = nodeEls.get(id);
-  if (el) { el.classList.toggle("collapsed"); const b = el.querySelector(".collapse"); if (b) b.textContent = collapsed.has(id) ? "▸" : "▾"; }
+  if (el) {
+    el.classList.toggle("collapsed", willCollapse);
+    const b = el.querySelector(".collapse"); if (b) b.textContent = willCollapse ? "▸" : "▾";
+    if (willCollapse) {                       // drop the hard inline w/h -> header only (CSS)
+      el.style.width = ""; el.style.height = "";
+    } else {                                  // expand: restore from the persisted size
+      const s = nodeSizes.get(id);            // (survives reload; el._size would not)
+      if (s) { if (s.w) el.style.width = `${s.w}px`; if (s.h) el.style.height = `${s.h}px`; }
+    }
+  }
+  drawEdges();   // node size changed -> reroute its lines
   savePositions();
 }
 
@@ -852,10 +966,16 @@ function selClsFor(aId, bId) {
 
 // Build the descriptor for every line. `aId`/`bId` name each rect's owner (used to
 // fan endpoints that share a node side); `ra`/`rb` are the world rects.
+// An edge "leaves a port out" when its source node draws a `.port.out` handle (window
+// nodes) and the edge is the data link that handle represents (window -> dataset). Those
+// are the only lines that start at the fixed port dot and get the animated flow.
+const fromPortOut = (aId, kind) => aId.startsWith("win:") && kind === "data";
 function buildLinks() {
   const links = [];
   const add = (key, aId, bId, top, kind, ra, rb) => {
-    if (ra && rb) links.push({ key, aId, bId, top, cls: `gedge ${kind}${selClsFor(aId, bId)}`, ra, rb });
+    if (!ra || !rb) return;
+    const port = fromPortOut(aId, kind);
+    links.push({ key, aId, bId, top, port, cls: `gedge ${kind}${port ? " flow" : ""}${selClsFor(aId, bId)}`, ra, rb });
   };
   for (const e of model.edges())
     add(`${e.from} ${e.to}`, e.from, e.to, !!selClsFor(e.from, e.to), e.kind, nodeRect(e.from), nodeRect(e.to));
@@ -889,6 +1009,22 @@ function computePorts(links) {
       const port = it.end === "a" ? it.l.p1 : it.l.p2;
       if (it.horiz) port[1] = coord; else port[0] = coord;
     });
+  }
+}
+
+// The `.port.out` dot FOLLOWS the line: routing (facingSides + fan) picks the start
+// side/coord, the dot moves onto that exact point (node-relative) so the handle sits where
+// the line actually leaves — not the other way round. Default CSS (right-middle) applies
+// until a line is computed.
+function placePortDots(links) {
+  for (const l of links) {
+    if (!l.port) continue;
+    const dot = nodeEls.get(l.aId)?.querySelector(".port.out");
+    if (!dot) continue;
+    dot.style.left = `${l.p1[0] - l.ra.x}px`;
+    dot.style.top = `${l.p1[1] - l.ra.y}px`;
+    dot.style.right = "auto";
+    dot.style.transform = "translate(-50%, -50%)";
   }
 }
 
@@ -945,6 +1081,7 @@ let drawSig = "";   // link signature for THIS draw (compared against the route 
 function drawEdges() {
   const svg = $("gedges"), top = $("gedges-top");
   const links = buildLinks();
+  placePortDots(links);   // move each out-port dot onto where its line actually starts
   drawSig = ROUTE.enabled ? linksSig(links) : "";
   const used = new Set();
   for (const l of links) {
@@ -1107,10 +1244,12 @@ function wireNode(div, n) {
       autosave();
     }));
     div.querySelector(".addwin").addEventListener("click", () => {
-      if (model.addWindow()) { render(); autosave(); }   // default id; renamed in the window node
+      const id = model.addWindow();   // default id; renamed in the window node
+      if (id) { placeNewNode(`win:${id}`, "window"); render(); autosave(); panTo(`win:${id}`); }
     });
     div.querySelector(".adddict")?.addEventListener("click", () => {
-      if (model.addDictionary()) { render(); autosave(); }
+      const id = model.addDictionary();
+      if (id) { placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
     });
   } else if (n.type === "dictionary") {
     // the title doubles as both name and id (renamed in place)
@@ -1126,11 +1265,9 @@ function wireNode(div, n) {
       n.ref.terms = e.target.value.split("\n").map((s) => s.trim()).filter(Boolean);
       rebuildNode(n.id); autosave();   // refresh the word count
     });
-    div.querySelector(".deldict")?.addEventListener("click", () => {
-      model.removeDictionary(n.ref.id); pos.delete(n.id); render(); autosave();
-    });
   } else if (n.type === "window") {
     wireWindowControls(div, n);
+    div.querySelector(".port.out")?.addEventListener("mousedown", (ev) => startWire(n.ref.id, ev));
   } else if (n.type === "preview") {
     div.querySelector(".prevrun")?.addEventListener("click", () => refreshPreview(n.ref.id));
   } else if (n.type === "dataset") {
@@ -1141,7 +1278,10 @@ function wireNode(div, n) {
     div.querySelector(".dsstrip")?.addEventListener("change", (e) => { model.setDatasetStrip(n.ref, e.target.checked); autosave(); });
     div.querySelector(".dscase")?.addEventListener("change", (e) => { model.setDatasetCase(n.ref, e.target.checked); autosave(); });
     div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(); });
-    div.querySelector(".dssubset")?.addEventListener("click", () => { model.addSubset(n.ref); render(); autosave(); });
+    div.querySelector(".dssubset")?.addEventListener("click", () => {
+      const id = model.addSubset(n.ref);
+      if (id) { placeNewNode(`sub:${id}`, "subset"); render(); autosave(); panTo(`sub:${id}`); }
+    });
     const clearBtn = div.querySelector(".dsclear");
     clearBtn?.addEventListener("click", async () => {
       if (clearBtn.dataset.armed !== "1") {   // inline confirm (no blocking dialogs)
@@ -1180,7 +1320,6 @@ function wireNode(div, n) {
       else if (k === "empty") fld.empty = e.target.value || null;
       autosave();   // plain value edits: no DOM rebuild
     }));
-    div.querySelector(".delregion").addEventListener("click", () => { model.removeRegion(n.win.id, n.ref.id); render(); autosave(); refreshImageBoxes(n.win.id); });
   } else if (n.type === "anchor") {
     div.addEventListener("click", (ev) => {
       if (ev.target.closest("input,select,button")) return;
@@ -1198,14 +1337,12 @@ function wireNode(div, n) {
       else if (k === "incl") n.ref.included = e.target.checked;
       autosave(); refreshOpenDetect();
     }));
-    div.querySelector(".delanchor").addEventListener("click", () => { model.removeAnchor(n.win.id, n.ref.id); render(); autosave(); refreshImageBoxes(n.win.id); });
   } else if (n.type === "scrollbar") {
     div.addEventListener("click", (ev) => {
       if (ev.target.closest("input,select,button")) return;
       selectWindowBox(n.win.id, "scrollbar");
     });
     div.querySelector(".sbset").addEventListener("change", (e) => { model.setScrollbarOrientation(n.win.id, e.target.value); autosave(); });
-    div.querySelector(".delsb").addEventListener("click", () => { model.removeScrollbar(n.win.id); render(); autosave(); refreshImageBoxes(n.win.id); });
   } else if (n.type === "item") {
     wireItemControls(div, n);
   }
@@ -1947,7 +2084,10 @@ function setDetectStatus(nodeId, info) {
 let detectT = null;
 function refreshOpenDetect() {
   clearTimeout(detectT);
-  detectT = setTimeout(() => { for (const winId of imageCanvases.keys()) refreshDetect(winId); }, 700);
+  detectT = setTimeout(() => {
+    for (const winId of imageCanvases.keys())
+      if (model.window(winId)?.enabled !== false) refreshDetect(winId);   // skip disabled windows
+  }, 700);
 }
 
 let previewT = null;
@@ -1955,8 +2095,12 @@ function refreshOpenPreviews() {
   clearTimeout(previewT);
   previewT = setTimeout(() => {
     for (const w of model.profile.windows || []) {
+      if (w.enabled === false) continue;   // a disabled window reads nothing — don't re-run it
       const host = prevHost(w.id);
-      if (host && host.dataset.ran === "1") refreshPreview(w.id, true);
+      // re-read the node's OWN bound image (live=false), not a fresh game grab — an edit
+      // (a box, a dictionary toggle) shouldn't need the game running, and forcing a live
+      // capture 404s "game window not found" when it isn't.
+      if (host && host.dataset.ran === "1") refreshPreview(w.id, false);
     }
   }, 700);
 }
@@ -2077,6 +2221,7 @@ function snapResize(el, { both = false, onResize = null, onSettle = null } = {})
   new ResizeObserver(() => { dirty = true; onResize && onResize(); }).observe(el);
   const finish = () => {
     if (!dirty) return;
+    if (el.classList && el.classList.contains("collapsed")) { dirty = false; return; }   // don't capture the collapsed size
     dirty = false;
     const w = snap(el.offsetWidth);
     if (Math.abs(w - el.offsetWidth) >= 1) el.style.width = `${w}px`;
@@ -2205,7 +2350,9 @@ async function loadGame(name) {
   batchesState.clear();   // batches render inline per node; drop stale selection state
   loadPositions();   // restore saved node positions for this game
   render();
-  for (const winId of pendingOpenImages) if (model.window(winId)) openImage(winId);  // reopen saved images (canvas lives in node)
+  // reopen saved images (canvas lives in node); awaited so boot can tell when the
+  // initial image loads (and the detects they fire) have actually started
+  await Promise.all(pendingOpenImages.map((winId) => (model.window(winId) ? openImage(winId) : null)));
   pendingOpenImages = [];
   resetHistory();   // fresh undo/redo baseline for this game
   refreshLive();
@@ -2234,6 +2381,10 @@ $("graph").addEventListener("contextmenu", (ev) => {
   if (suppressNextMenu) { ev.preventDefault(); suppressNextMenu = false; }   // a pan-drag just ended here
 });
 $("graph").addEventListener("wheel", onWheel, { passive: false });
+// any user action cancels an in-flight smooth pan-to-new-node
+$("graph").addEventListener("pointerdown", cancelPan, true);
+$("graph").addEventListener("wheel", cancelPan, { capture: true, passive: true });
+window.addEventListener("keydown", cancelPan, true);
 
 // WASD moves the selected rectangle; Shift+WASD resizes it (A/D width, W/S height).
 // Ignored while typing in a field.
@@ -2370,11 +2521,46 @@ async function initOcrDevice() {
       try { const r = await api.ocr.setDevice(sel.value); sel.value = r.device; done(); }
       catch (e) { done(String(e.message || e), "err"); }
     });
+    const scaleSel = $("ocrScale");
+    if (scaleSel) {
+      scaleSel.value = String(st.scale || 1);
+      scaleSel.addEventListener("change", async () => {
+        const done = timed(`OCR downscale → ${scaleSel.value}×`);
+        try { const r = await api.ocr.setScale(scaleSel.value); scaleSel.value = String(r.scale || 1); done(); }
+        catch (e) { done(String(e.message || e), "err"); }
+      });
+    }
   } catch { /* ignore */ }
+}
+
+// ---- boot veil: full-page spinner until the initial load has settled ----------
+const veil = {
+  msg(t) { const m = document.getElementById("bootveilMsg"); if (m) m.textContent = t; },
+  drop() {
+    const v = document.getElementById("bootveil");
+    if (!v) return;
+    v.classList.add("fade");
+    setTimeout(() => v.remove(), 300);
+  },
+};
+
+// Wait until the boot round of OCR work (detects/previews fired by reopening images)
+// has DRAINED — quiet for a stretch, not just momentarily empty between two reads.
+// Hard cap so a hung server can't keep the veil up forever.
+async function bootSettle(maxMs = 30000, quietMs = 600) {
+  const t0 = performance.now();
+  let quiet = 0;
+  while (performance.now() - t0 < maxMs) {
+    const busy = detectBusy.size + previewBusy.size + detectAgain.size + previewAgain.size;
+    quiet = busy ? 0 : quiet + 150;
+    if (quiet >= quietMs) return;
+    await new Promise((res) => setTimeout(res, 150));
+  }
 }
 
 // Block the whole UI with an unmissable message and refuse to continue.
 function haltStartup(msg) {
+  veil.drop();   // the halt overlay must be visible (the veil sits above it)
   log(msg, "err");
   const o = document.createElement("div");
   o.className = "startup-halt";
@@ -2390,7 +2576,9 @@ function haltStartup(msg) {
 // die. Do NOT load the graph until it's confirmed gone — a stray worker keeps hammering
 // the GPU/game and is the thing you'd otherwise have to hunt down in Task Manager.
 async function killStrayOcrThenBoot() {
+  setLogOpen(true);   // show the log history during boot so initial-load progress is visible
   try {
+    veil.msg("stopping stray OCR…");
     const r = await api.precapture.killAll();
     if (r.alive && r.alive.length) {
       haltStartup(`OCR worker for ${r.alive.join(", ")} would not stop within the timeout.`);
@@ -2401,8 +2589,17 @@ async function killStrayOcrThenBoot() {
     haltStartup(`Could not confirm background OCR was stopped: ${e.message || e}`);
     return;   // can't verify -> don't proceed
   }
-  await refreshGames();
-  if ($("gameSelect").value) loadGame($("gameSelect").value);
-  initOcrDevice();
+  try {
+    veil.msg("loading profile…");
+    await refreshGames();
+    if ($("gameSelect").value) await loadGame($("gameSelect").value);
+    initOcrDevice();
+    veil.msg("first read…");
+    await bootSettle();
+  } catch (e) {
+    log(String(e.message || e), "err");   // boot hiccup: show the page anyway
+  }
+  veil.drop();
+  setLogOpen(false);   // boot done -> collapse the log back to its one-line bar
 }
 killStrayOcrThenBoot();
