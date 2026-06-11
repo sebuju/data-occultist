@@ -7,18 +7,27 @@ fields:
   type: text
   extract: whole
   separator: /
+  if_number_any: false
+  if_text_any: false
+  dict_only: false
   learn: true
   fuzzy: 0.82
 - id: count
   type: number
   extract: whole
   separator: /
+  if_number_any: false
+  if_text_any: false
+  dict_only: false
   learn: false
   fuzzy: 0.82
 - id: rank
   type: number
   extract: whole
   separator: /
+  if_number_any: false
+  if_text_any: false
+  dict_only: false
   learn: false
   fuzzy: 0.82
 windows:
@@ -28,6 +37,9 @@ windows:
     type: text
     extract: whole
     separator: '['
+    if_number_any: false
+    if_text_any: false
+    dict_only: false
     learn: true
     fuzzy: 0.65
   - id: count
@@ -35,18 +47,27 @@ windows:
     extract: whole
     separator: /
     empty: '1'
+    if_number_any: false
+    if_text_any: true
+    dict_only: false
     learn: true
     fuzzy: 0.82
   - id: name
     type: text
     extract: text_before
     separator: '['
+    if_number_any: false
+    if_text_any: false
+    dict_only: false
     learn: false
     fuzzy: 0.82
   - id: arcane_level
     type: diamonds
     extract: whole
     separator: /
+    if_number_any: false
+    if_text_any: false
+    dict_only: false
     learn: false
     fuzzy: 0.75
   - id: count
@@ -54,6 +75,9 @@ windows:
     extract: whole
     separator: /
     empty: '1'
+    if_number_any: false
+    if_text_any: false
+    dict_only: false
     learn: false
     fuzzy: 0.82
   data_area:

@@ -298,15 +298,27 @@ export class Overlay {
       ctx.setLineDash([]);
     }
 
-    // Preview read-outs: what OCR pulled from each cell, tinted by confidence.
+    // Preview read-outs: what OCR pulled from each cell, tinted by confidence. A
+    // substituted value (an "if empty"/"if number"/"if text" fallback fired) is
+    // config, not a read — neutral tint and the rule's name instead of a %.
     for (const p of this.previewItems) {
+      if (p.cell) {
+        // a cell-level tag (the matched item template's id): centred on the cell,
+        // white on black — no confidence fill, it isn't a read
+        this._centerLabel(String(p.text ?? ""), (p.cell.x + p.cell.w / 2) * W, (p.cell.y + p.cell.h / 2) * H, labelFs);
+        continue;
+      }
       const conf = p.confidence ?? 0;
-      const tint = conf >= 0.8 ? "125,220,125" : conf >= 0.5 ? "230,194,90" : "230,104,90";
+      const tint = p.substituted ? "138,146,163"
+        : conf >= 0.8 ? "125,220,125" : conf >= 0.5 ? "230,194,90" : "230,104,90";
       const x = p.x * W, y = p.y * H, w = p.w * W, h = p.h * H;
       ctx.fillStyle = `rgba(${tint},0.18)`;
       ctx.fillRect(x, y, w, h);
       const txt = p.text === null || p.text === "" || p.text === undefined ? "∅" : String(p.text);
-      this._label(`${txt}  ${Math.round(conf * 100)}%`, x, y + h, `rgb(${tint})`, labelFs);
+      const tag = p.substituted
+        ? `if ${String(p.substituted).replace(/^if_/, "").replace(/_/g, " ")}`
+        : `${Math.round(conf * 100)}%`;
+      this._label(`${txt}  ${tag}`, x, y + h, `rgb(${tint})`, labelFs);
     }
 
     // Raw OCR detections: exactly what OCR found and where (independent of boxes).
@@ -352,6 +364,27 @@ export class Overlay {
     ctx.fillStyle = color;
     ctx.textBaseline = "bottom";
     ctx.fillText(text, x + pad, y - pad);
+  }
+
+  // Centred variant of _label: solid black plate, white text, anchored on (cx, cy) —
+  // used for cell-level read-outs (the item's name on its tile).
+  _centerLabel(text, cx, cy, fs) {
+    const ctx = this.ctx;
+    const pad = fs * 0.28;
+    ctx.font = `${fs}px system-ui`;
+    const m = ctx.measureText(text);
+    const h = fs + pad * 2;
+    const w = m.width + pad * 2;
+    ctx.fillStyle = "rgba(0,0,0,0.9)";
+    ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    // optically centre the actual glyph box (baseline maths, not the em box, which
+    // sits visibly low for short caps/digit strings like an item id)
+    ctx.fillText(text, cx, cy + (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2);
+    ctx.textAlign = "left";            // restore defaults for the other label paths
+    ctx.textBaseline = "bottom";
   }
 
   _drawHandles(b, W, H, u) {

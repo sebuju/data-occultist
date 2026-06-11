@@ -70,8 +70,22 @@ class FieldDef(BaseModel):
     # Declarative extraction strategy (replaces raw regex).
     extract: Extract = Extract.whole
     separator: str = "/"
-    # Value to use when nothing is detected (OCR found no text). None -> leave empty.
+    # Value to use when the read is TRULY empty — no text and no numbers detected
+    # (after whitespace strip). None -> leave empty.
     empty: str | None = None
+    # text fields: value substituted when the read is numeric. With ``if_number_any``
+    # it fires on a read merely CONTAINING a digit; otherwise only when the read is
+    # all-number (digits, no letters). None -> off.
+    if_number: str | None = None
+    if_number_any: bool = False
+    # number fields: value substituted when the read is text. With ``if_text_any``
+    # it fires on a read merely CONTAINING a letter; otherwise only when the read is
+    # all-text (letters, no digits). None -> off.
+    if_text: str | None = None
+    if_text_any: bool = False
+    # Require the final value to match a dictionary term (exact or fuzzy ≥ ``fuzzy``).
+    # An unmatched read resolves to None and is never learned.
+    dict_only: bool = False
     # If true, high-confidence reads teach the game dictionary and low-confidence
     # reads are fuzzy-corrected against it. Suits identity text (item names).
     learn: bool = False

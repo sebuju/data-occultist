@@ -39,20 +39,49 @@ def _apply_extract(field: FieldDef, text: str) -> str | None:
     return text
 
 
-def coerce(field: FieldDef, raw: str) -> str | float | int | None:
-    text = _apply_extract(field, raw.strip())
+def _to_number(num: str | None) -> float | int | None:
+    if num is None:
+        return None
+    num = num.replace(",", "")
+    return float(num) if "." in num else int(num)
+
+
+def coerce_rule(field: FieldDef, raw: str) -> tuple[str | float | int | None, str | None]:
+    """``(value, rule)`` — ``rule`` names the fallback that produced the value
+    ("empty" / "if_number" / "if_text"), or None for a real read. A substituted value
+    is configuration, not OCR, so callers shouldn't present it as a confident read."""
+    raw = raw.strip()
+
+    # "empty" means TRULY empty: OCR detected no text and no numbers at all. A junk
+    # read does not fall back — the if_number/if_text substitutions handle mismatches.
+    if not raw:
+        if field.empty is None:
+            return None, None
+        if field.type is FieldType.number:
+            return _to_number(_first_number(field.empty)), "empty"
+        return field.empty.strip() or None, "empty"
+
+    has_digit = any(c.isdigit() for c in raw)
+    has_alpha = any(c.isalpha() for c in raw)
+
+    # a text field that read numbers / a number field that read text substitutes its
+    # configured value; the *_any flag fires on "contains", default on "is entirely"
+    if field.type is FieldType.text and field.if_number is not None:
+        if has_digit if field.if_number_any else (has_digit and not has_alpha):
+            return field.if_number.strip() or None, "if_number"
+    if field.type is FieldType.number and field.if_text is not None:
+        if has_alpha if field.if_text_any else (has_alpha and not has_digit):
+            return _to_number(_first_number(field.if_text)), "if_text"
+
+    text = _apply_extract(field, raw)
 
     if field.type is FieldType.number:
-        # the empty fallback applies whenever NO number could be read — an empty box OR
-        # one that OCR'd junk with no digit (e.g. a missing count badge -> default 1)
-        num = _first_number(text) if text else None
-        if num is None and field.empty is not None:
-            num = _first_number(field.empty)
-        if num is None:
-            return None
-        num = num.replace(",", "")
-        return float(num) if "." in num else int(num)
+        return _to_number(_first_number(text) if text else None), None
 
     if not text:
-        return field.empty if field.empty is not None else None
-    return text.strip() or None
+        return None, None
+    return text.strip() or None, None
+
+
+def coerce(field: FieldDef, raw: str) -> str | float | int | None:
+    return coerce_rule(field, raw)[0]

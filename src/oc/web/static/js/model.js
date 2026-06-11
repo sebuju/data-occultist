@@ -103,6 +103,8 @@ export class EditorModel {
       fields: this.fields.map((f) => ({
         id: f.id, type: f.type, extract: f.extract || "whole", separator: f.separator || "/",
         learn: !!f.learn, fuzzy: f.fuzzy ?? 0.82,
+        empty: f.empty ?? null, if_number: f.if_number ?? null, if_number_any: !!f.if_number_any,
+        if_text: f.if_text ?? null, if_text_any: !!f.if_text_any, dict_only: !!f.dict_only,
       })),
       anchors,
       states: [...statesMap.values()],
@@ -146,6 +148,8 @@ export class EditorModel {
     this.fields = rawFields.map((f) => ({
       id: f.id, type: f.type || "text", extract: f.extract || "whole", separator: f.separator || "/",
       learn: !!f.learn, fuzzy: f.fuzzy ?? 0.82,
+      empty: f.empty ?? null, if_number: f.if_number ?? null, if_number_any: !!f.if_number_any,
+      if_text: f.if_text ?? null, if_text_any: !!f.if_text_any, dict_only: !!f.dict_only,
     }));
     if (!win) return;
     this.dataset = win.dataset || "";

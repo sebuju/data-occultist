@@ -18,7 +18,7 @@ import cv2
 from ..interfaces import OcrEngine
 from ..profile.models import FieldDef, FieldType, Preprocess, WindowDef
 from ..types import Frame, OcrLine, PixelBox
-from .fields import coerce
+from .fields import coerce, coerce_rule
 from .grid import Cell, cells_for_rows, expand_cells
 from .items import anchor_align, locate_item_cells, locator_of, resolve_overlaps, tell_report, valid_cell
 from .pips import count_filled_diamonds, count_pips
@@ -376,12 +376,15 @@ class RegionReader:
             # apply the resolver (dictionary snap, read-only) when one is set, so the
             # preview shows the same value the collector would; else just coerce.
             if self._resolver and fdef:
-                value = self._resolver.resolve(fdef, text, conf).value
+                resolved = self._resolver.resolve(fdef, text, conf)
+                value, rule = resolved.value, resolved.substituted
+            elif fdef:
+                value, rule = coerce_rule(fdef, text)
             else:
-                value = coerce(fdef, text) if fdef else (text or None)
+                value, rule = text or None, None
             # the box is shown where it was DEFINED (cell-relative), not snapped to data
             out[ci]["fields"][field_id] = {"raw": text, "value": value, "confidence": round(conf, 3),
-                                           "box": asfrac(box)}
+                                           "substituted": rule, "box": asfrac(box)}
 
         # mark which cells survive (tells pass AND win overlap resolution), record which
         # template matched, and attach per-tell diagnostics + the reject reason so the
@@ -390,6 +393,9 @@ class RegionReader:
             valid = []
             for ci, cell in enumerate(out):
                 cell["item"] = ics[ci].item.id
+                # the located cell's rect (window fractions) so the UI can centre
+                # cell-level labels (e.g. the item's name) on the tile
+                cell["box"] = {"x": ics[ci].ox, "y": ics[ci].oy, "w": ics[ci].iw, "h": ics[ci].ih}
                 vals = {fid: f.get("value") for fid, f in cell["fields"].items()}
                 confs = {fid: f.get("confidence") for fid, f in cell["fields"].items()}
                 rep = tell_report(frame, vals, ics[ci], self._templates, confs, fields)
