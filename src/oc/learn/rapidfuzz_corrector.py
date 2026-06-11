@@ -18,12 +18,16 @@ class RapidFuzzCorrector(Corrector):
 
         return getattr(fuzz, self._scorer_name)
 
-    def best(self, candidate: str, vocabulary: Sequence[str]) -> tuple[str, float] | None:
+    def best(self, candidate: str, vocabulary: Sequence[str],
+             cutoff: float = 0.0) -> tuple[str, float] | None:
         if not vocabulary:
             return None
         from rapidfuzz import process
 
-        match = process.extractOne(candidate, vocabulary, scorer=self._scorer())
+        # score_cutoff lets rapidfuzz abandon each comparison as soon as the term can
+        # no longer reach it — on a big vocabulary this is several times faster.
+        match = process.extractOne(candidate, vocabulary, scorer=self._scorer(),
+                                   score_cutoff=cutoff * 100)
         if match is None:
             return None
         term, score, _idx = match

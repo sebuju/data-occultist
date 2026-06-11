@@ -79,6 +79,12 @@ class OcrEngine(ABC):
         lines.sort(key=lambda ln: (round(ln.box.y / max(1, ln.box.h)), ln.box.x))
         return " ".join(ln.text for ln in lines).strip(), sum(ln.confidence for ln in lines) / len(lines)
 
+    def read_lines(self, images) -> list[tuple[str, float]]:
+        """Recognise MANY single-line crops, result aligned to input by index. Default
+        loops :meth:`read_line`; a backend that can batch the recogniser overrides this
+        to run them in one pass (far fewer GPU launches)."""
+        return [self.read_line(im) for im in images]
+
     def read_region(self, frame: Frame, box: PixelBox) -> list[OcrLine]:
         """OCR a sub-rectangle of a frame. Default crops then delegates.
 
@@ -105,11 +111,14 @@ class Corrector(ABC):
     """
 
     @abstractmethod
-    def best(self, candidate: str, vocabulary: Sequence[str]) -> tuple[str, float] | None:
-        """Return ``(term, score)`` for the closest match, or ``None`` if vocab is empty.
+    def best(self, candidate: str, vocabulary: Sequence[str],
+             cutoff: float = 0.0) -> tuple[str, float] | None:
+        """Return ``(term, score)`` for the closest match, or ``None`` if vocab is
+        empty or nothing scores >= ``cutoff``.
 
-        ``score`` is normalised 0..1 (1.0 = identical).
-        """
+        ``score`` is normalised 0..1 (1.0 = identical). Callers that will discard
+        matches below a threshold should pass it as ``cutoff`` — a backend can prune
+        the search dramatically with it (rapidfuzz short-circuits per term)."""
 
 
 class Enricher(ABC):
