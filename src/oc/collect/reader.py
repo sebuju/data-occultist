@@ -103,22 +103,37 @@ class RegionReader:
         conf = sum(ln.confidence for ln in hits) / len(hits)
         return text, conf
 
-    def _ocr_box(self, frame: Frame, box: PixelBox, preprocess: Preprocess | None) -> tuple[str, float]:
-        """Read a single field box the user drew. The box bounds one text line, so this
-        runs RECOGNITION ONLY (no detection) — the dominant OCR cost — which is many
-        times faster than a full pass and is what makes batch processing viable. The
-        crop is upscaled so small multi-character numbers (a count badge) don't fragment."""
+    def _box_crop(self, frame: Frame, box: PixelBox, preprocess: Preprocess | None):
+        """Prepared recognition input for a single field box: crop, preprocess, and
+        upscale tiny crops so small multi-character numbers (a count badge) don't
+        fragment. Returns the crop, or None if the box is empty."""
         if box.w <= 0 or box.h <= 0:
-            return "", 0.0
+            return None
         crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
         if crop.size == 0:
-            return "", 0.0
+            return None
         if preprocess is not None:
             crop = apply_preprocess(crop, preprocess)
         if crop.shape[0] < _MIN_OCR_H:                       # upscale tiny crops
             f = _MIN_OCR_H / crop.shape[0]
             crop = cv2.resize(crop, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
-        return self._ocr.read_line(crop)
+        return crop
+
+    def _focus_reads(self, frame: Frame, window: WindowDef,
+                     pending: list[tuple]) -> dict:
+        """Batch the focused box reads the detection pass missed. ``pending`` is a list
+        of (key, box); returns {key: (text, conf)}. RECOGNITION ONLY (no detection) — the
+        dominant OCR cost — and batched into ONE recogniser pass instead of a call per
+        box, so a grid full of missed badges is a handful of GPU launches, not dozens."""
+        keys, crops = [], []
+        for key, box in pending:
+            crop = self._box_crop(frame, box, window.preprocess)
+            if crop is not None:
+                keys.append(key)
+                crops.append(crop)
+        if not crops:
+            return {}
+        return dict(zip(keys, self._ocr.read_lines(crops)))
 
     def _targets_from_cells(self, cells: list[Cell], frame: Frame):
         """Yield (cell_index, field_id, PixelBox) for every field of every cell."""
@@ -266,6 +281,18 @@ class RegionReader:
         worst = [1.0] * n_cells
         saw = [False] * n_cells
 
+        # first gather every field from the single detection pass; queue the item-field
+        # boxes it missed, then read them all in ONE batched recognition pass
+        base, pending = {}, []
+        for ci, field_id, box in targets:
+            if self._is_pip(fields.get(field_id)):
+                continue
+            tc = self._gather(lines, box)
+            base[(ci, field_id)] = tc
+            if not tc[0] and ics is not None:
+                pending.append(((ci, field_id), box))
+        focus = self._focus_reads(frame, window, pending) if pending else {}
+
         for ci, field_id, box in targets:
             fdef = fields.get(field_id)
             rec = records[ci]
@@ -273,10 +300,7 @@ class RegionReader:
                 rec.values[field_id] = self._pip_value(frame, box, fdef)
                 saw[ci] = True
                 continue
-            text, conf = self._gather(lines, box)
-            # item fields the batched pass missed (small badges) -> focused box OCR
-            if not text and ics is not None:
-                text, conf = self._ocr_box(frame, box, window.preprocess)
+            text, conf = focus.get((ci, field_id)) or base[(ci, field_id)]
             if text:
                 saw[ci] = True
                 worst[ci] = min(worst[ci], conf)
@@ -328,6 +352,16 @@ class RegionReader:
         targets = self._targets_from_cells(cells, frame)
         cw, ch = frame.client.w, frame.client.h
 
+        base, pending = {}, []   # gather from the detection pass; batch what it missed
+        for ci, field_id, box in targets:
+            if self._is_pip(fields.get(field_id)):
+                continue
+            tc = self._gather(lines, box)
+            base[(ci, field_id)] = tc
+            if not tc[0] and ics is not None:
+                pending.append(((ci, field_id), box))
+        focus = self._focus_reads(frame, window, pending) if pending else {}
+
         out = [{"row": c.row, "col": c.col, "fields": {}} for c in cells]
         for ci, field_id, box in targets:
             fdef = fields.get(field_id)
@@ -338,10 +372,13 @@ class RegionReader:
                 unit = "filled" if fdef.type is FieldType.diamonds else "pips"
                 out[ci]["fields"][field_id] = {"raw": f"{cnt} {unit}", "value": cnt, "confidence": 0.99, "box": asfrac(box)}
                 continue
-            text, conf = self._gather(lines, box)
-            if not text and ics is not None:
-                text, conf = self._ocr_box(frame, box, window.preprocess)
-            value = coerce(fdef, text) if fdef else (text or None)
+            text, conf = focus.get((ci, field_id)) or base[(ci, field_id)]
+            # apply the resolver (dictionary snap, read-only) when one is set, so the
+            # preview shows the same value the collector would; else just coerce.
+            if self._resolver and fdef:
+                value = self._resolver.resolve(fdef, text, conf).value
+            else:
+                value = coerce(fdef, text) if fdef else (text or None)
             # the box is shown where it was DEFINED (cell-relative), not snapped to data
             out[ci]["fields"][field_id] = {"raw": text, "value": value, "confidence": round(conf, 3),
                                            "box": asfrac(box)}
