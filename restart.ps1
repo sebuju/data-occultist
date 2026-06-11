@@ -2,9 +2,18 @@
 # Usage:  .\restart.ps1            (foreground, default :8000)
 #         .\restart.ps1 -Port 8001
 #         .\restart.ps1 -Background  (detached; returns immediately)
+#         .\restart.ps1 -Reload     (dev only: auto-reload on code change)
+#
+# NOTE: -Reload is OFF by default on purpose. Under --reload uvicorn runs a
+# reloader parent that OWNS the listen socket and a worker child that does the
+# work; killing the worker by hand (to free the GPU) leaves the parent holding
+# the port with nobody serving it — every request then hangs instead of being
+# refused, and nothing ever respawns the worker. Without --reload there is one
+# process: kill it and a supervisor (scripts\serve.ps1) can restart it cleanly.
 param(
   [int]$Port = 8000,
-  [switch]$Background
+  [switch]$Background,
+  [switch]$Reload
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -22,7 +31,8 @@ for ($i = 0; $i -lt 25 -and (Get-NetTCPConnection -LocalPort $Port -State Listen
   Start-Sleep -Milliseconds 200
 }
 
-$uvArgs = @('-m', 'uvicorn', 'oc.web.app:app', '--host', '127.0.0.1', '--port', "$Port", '--reload')
+$uvArgs = @('-m', 'uvicorn', 'oc.web.app:app', '--host', '127.0.0.1', '--port', "$Port")
+if ($Reload) { $uvArgs += '--reload' }
 if ($Background) {
   Start-Process -FilePath $py -ArgumentList $uvArgs -WorkingDirectory $root -WindowStyle Hidden
   Write-Host "server (re)started on http://127.0.0.1:$Port (background)"
