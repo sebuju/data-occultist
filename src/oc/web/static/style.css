@@ -209,9 +209,13 @@ legend { color: var(--muted); padding: 0 6px; }
 .modal-body h4 { margin: 0 0 6px; color: var(--muted); font-weight: 500; font-size: var(--fs-base); }
 .gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 8px;
   flex: 0 0 auto;   /* in flex-column host nodes, the header must NOT shrink when content overflows */
-  margin: -7px -9px 6px; padding: 5px 8px; overflow: hidden;
+  margin: -7px -8px 6px; padding: 5px 8px; overflow: hidden;
   background: rgba(140, 165, 200, 0.07); border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
-.gnode.collapsed .gn-h { margin: -6px -8px; border-bottom: 0; border-radius: 8px; }
+/* collapsed: header IS the whole node. Keep the same top/side margins + border-bottom WIDTH
+   as expanded (so toggling never changes its height), but pull the bottom margin to -7 too
+   (matching the top) so the header covers the node's bottom padding — no empty strip below.
+   Divider colour hidden, all four corners rounded. */
+.gnode.collapsed .gn-h { margin: -7px -8px; border-bottom-color: transparent; border-radius: 8px; }
 .gnode .gn-h.pulse { animation: pulse 1.2s ease-out; }
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
 .gnode input.gi { width: 100%; }
