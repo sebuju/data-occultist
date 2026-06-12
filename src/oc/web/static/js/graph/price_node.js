@@ -84,13 +84,14 @@ export function wirePriceNode(div, game, dataset) {
   }
 
   async function poll() {
-    div._enrPoll = null;
-    if (!document.contains(div)) return;            // node gone — stop polling
+    if (!document.contains(div)) { div._enrPoll = null; return; }   // node gone — stop polling
+    div._enrPoll = true;        // mark polling for the whole round so a reentrant
+                                // reflectStatus() (via the await below) can't re-kick poll()
     let st;
     try { st = await api.prices.status(game); } catch { st = { running: false }; }
     reflectStatus(st);
     if (st.running) div._enrPoll = setTimeout(poll, 1000);
-    else { await loadSummary(); if (selectedSlug) loadItem(selectedSlug); }
+    else { div._enrPoll = null; await loadSummary(); if (selectedSlug) loadItem(selectedSlug); }
   }
 
   $(".enr-refresh").addEventListener("click", async () => {

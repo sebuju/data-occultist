@@ -2976,6 +2976,7 @@ function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: s
     el.appendChild(g);
     g.addEventListener("mousedown", (ev) => {
       ev.preventDefault(); ev.stopPropagation();
+      const allowH = typeof both === "function" ? both() : both;   // may depend on live state
       const z = zoom() || 1, sx = ev.clientX, sy = ev.clientY;
       const startW = el.offsetWidth, startH = el.offsetHeight, startL = left ? left() : 0;
       let lastW = startW, lastH = startH;
@@ -2984,10 +2985,10 @@ function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: s
         const w = Math.max(1, q(side === "left" ? startW - (e.clientX - sx) / z : startW + (e.clientX - sx) / z));
         const h = Math.max(1, q(startH + (e.clientY - sy) / z));
         // only act on a REAL size step (else snapped sub-grid moves churn resize+reroute)
-        if (w === lastW && (!both || h === lastH)) return;
+        if (w === lastW && (!allowH || h === lastH)) return;
         lastW = w; lastH = h;
         el.style.width = `${w}px`;
-        if (both) el.style.height = `${h}px`;
+        if (allowH) el.style.height = `${h}px`;
         if (side === "left") left(startL - (el.offsetWidth - startW));   // anchor right edge
         onResize && onResize();
       };
@@ -3253,15 +3254,41 @@ let nmPanel = null;
 let nmTransform = null;   // last map projection {ox,oy,s} for the viewport indicator
 // Minimap state lives in the per-device sidecar (persist.local), restored by applyLocal()
 // when a game loads. Starts hidden; applyLocal + nmApplyState reflect saved state.
-const nmState = { visible: false, x: null, y: null, w: null, h: null, mode: "map" };
+// `sizes` keeps each mode's own box: map auto-fits its height to the graph, list is freely
+// resized — toggling restores the entering mode's box instead of carrying one over the other.
+const nmState = { visible: false, x: null, y: null, w: null, h: null, mode: "map",
+  sizes: { map: { w: null, h: null }, list: { w: null, h: null } } };
 function nmSave() { persist.local(); }
+
+// Remember the panel's current box under the active mode (so a later toggle can restore it).
+function nmStashSize() {
+  if (!nmPanel || !nmState.visible || !nmPanel.offsetWidth) return;
+  nmState.sizes[nmState.mode] = { w: nmPanel.offsetWidth, h: nmPanel.offsetHeight };
+}
+// Restore the active mode's saved box onto the panel. Width always; height only in list mode
+// (map height is recomputed by nmFitPanelHeight on render). Falls back to legacy nmState.w/h.
+function nmApplySize() {
+  if (!nmPanel) return;
+  const sz = (nmState.sizes && nmState.sizes[nmState.mode]) || {};
+  // never restore a box bigger than the viewport (window may have shrunk since it was saved)
+  const top = (document.querySelector(".topbar")?.offsetHeight || 48) + 4;
+  const maxW = Math.max(180, window.innerWidth - 8);
+  const maxH = Math.max(90, window.innerHeight - top - 8);
+  let w = Number.isFinite(sz.w) ? sz.w : nmState.w;
+  if (Number.isFinite(w)) { w = Math.min(w, maxW); nmPanel.style.width = `${w}px`; nmState.w = w; }
+  if (nmState.mode === "list") {
+    let h = Number.isFinite(sz.h) ? sz.h : nmState.h;
+    if (Number.isFinite(h)) { h = Math.min(h, maxH); nmPanel.style.height = `${h}px`; nmState.h = h; }
+  }
+  // re-clamp position so the (possibly larger) box stays fully on-screen
+  if (Number.isFinite(nmState.x) && Number.isFinite(nmState.y)) nmPlace(nmState.x, nmState.y);
+}
 
 // Reflect nmState (just loaded from the sidecar) onto the panel: size, position, mode,
 // visibility. Called by applyLocal after a game loads.
 function nmApplyState() {
   if (!nmPanel) return;
-  if (Number.isFinite(nmState.w)) nmPanel.style.width = `${nmState.w}px`;
-  if (Number.isFinite(nmState.h)) nmPanel.style.height = `${nmState.h}px`;
+  nmApplySize();
   if (Number.isFinite(nmState.x) && Number.isFinite(nmState.y)) nmPlace(nmState.x, nmState.y);
   nmPanel.querySelector(".nm-mode").textContent = nmState.mode === "list" ? "▤" : "⊞";
   nmPanel.querySelector(".nm-title").textContent = nmState.mode === "list" ? "node list" : "node map";
@@ -3293,6 +3320,7 @@ function buildNodeMap() {
   new ResizeObserver(() => {
     if (!nmState.visible || !el.offsetWidth) return;   // ignore the 0×0 size when hidden
     nmState.w = el.offsetWidth; nmState.h = el.offsetHeight;
+    nmState.sizes[nmState.mode] = { w: el.offsetWidth, h: el.offsetHeight };   // per-mode box
     if (nmState.mode === "map") renderNodeMap();   // refit the map to the new size
     clearTimeout(rt); rt = setTimeout(nmSave, 300);
   }).observe(el);
@@ -3301,9 +3329,10 @@ function buildNodeMap() {
     setNodeMapMode(nmState.mode === "map" ? "list" : "map"));
   el.querySelector(".nm-close").addEventListener("click", () => setNodeMapVisible(false));
   el.querySelector(".nm-head").addEventListener("mousedown", nmDragHead);
-  // resize grips on both bottom corners (width only — height tracks the content)
+  // resize grips on both bottom corners. List mode: free width+height. Map mode: width only
+  // (height is auto-fit to the map by nmFitPanelHeight, so a height drag would just snap back).
   addResizeGrips(el, {
-    both: false,
+    both: () => nmState.mode === "list",
     left: (v) => { if (v === undefined) return el.offsetLeft; const x = Math.max(4, v); el.style.left = `${x}px`; nmState.x = x; },
     onSettle: nmSave,
   });
@@ -3351,10 +3380,13 @@ function setNodeMapVisible(on) {
   if (on) renderNodeMap();
 }
 function setNodeMapMode(mode) {
+  if (mode === nmState.mode) return;
+  nmStashSize();              // remember the leaving mode's box
   nmState.mode = mode; nmSave();
   if (nmPanel) {
     nmPanel.querySelector(".nm-mode").textContent = mode === "list" ? "▤" : "⊞";
     nmPanel.querySelector(".nm-title").textContent = mode === "list" ? "node list" : "node map";
+    nmApplySize();           // restore the entering mode's box
   }
   renderNodeMap();
 }
@@ -3554,9 +3586,12 @@ function startMarquee(ev) {
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
 }
-$("graph").addEventListener("contextmenu", (ev) => {
-  if (suppressNextMenu) { ev.preventDefault(); suppressNextMenu = false; }   // a pan-drag just ended here
-});
+// Suppress on window (capture) not #graph: a pan tracks via document mousemove, so the
+// release — and thus the native contextmenu — can land on a node panel, modal, or even
+// outside #graph, where a graph-scoped listener would never see it.
+window.addEventListener("contextmenu", (ev) => {
+  if (suppressNextMenu) { ev.preventDefault(); suppressNextMenu = false; }   // a pan-drag just ended
+}, true);
 $("graph").addEventListener("wheel", onWheel, { passive: false });
 // any user action cancels an in-flight smooth pan-to-new-node
 $("graph").addEventListener("pointerdown", cancelPan, true);
