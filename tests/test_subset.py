@@ -4,7 +4,7 @@ from oc.profile.loader import load_profile, save_profile
 from oc.profile.models import (
     DerivedColumn, EnrichRule, FilterRule, GameProfile, SubsetDef,
 )
-from oc.enrich.subset import compute_subset
+from oc.enrich.subset import compute_subset, compute_view
 
 
 def _records():
@@ -27,7 +27,6 @@ def test_filter_derive_sort_limit():
     assert len(r["rows"]) == 1                            # limit
     assert r["rows"][0]["name"] == "Bronco"              # rank 5 sorts first
     assert r["rows"][0]["display"] == "Bronco [5]"
-    assert r["enriched"] is False
 
 
 def test_text_filter_ops():
@@ -36,13 +35,19 @@ def test_text_filter_ops():
     assert keys == {"Amesha", "Vitality"}                # both contain 'a'/'A'
 
 
-def test_enrich_pass_runs_registered_enricher():
-    from oc.registry import build_enricher
-    sub = SubsetDef(id="r", dataset="d", enrich=[EnrichRule(type="relic_contents", source_field="name")])
-    out = compute_subset(_records(), sub, run_enrich=True,
-                         build=lambda rule: build_enricher(rule.type, source_field=rule.source_field))
-    assert out["enriched"] is True
-    assert "relic_contents" in out["columns"]
+def test_view_joins_datasets_on_key_with_arithmetic_derived():
+    inv = [{"name": "Acceltra Prime", "count": 2, "present": True},
+           {"name": "Junk", "count": 5, "present": True}]
+    prices = [{"name": "Acceltra Prime", "slug": "acceltra_prime_set", "price_median": 48}]
+    sub = SubsetDef(id="folio", datasets=["master", "prices"], join_field="name",
+                    derived=[DerivedColumn(name="value", template="={count}*{price_median}")],
+                    sort_by="value", sort_desc=True)
+    out = compute_view([("master", inv), ("prices", prices)], sub)
+    rows = {r["name"]: r for r in out["rows"]}
+    assert rows["Acceltra Prime"]["value"] == 96          # 2 * 48, joined from prices
+    assert rows["Junk"]["value"] == ""                    # no price -> empty arithmetic
+    assert out["rows"][0]["name"] == "Acceltra Prime"     # priced row sorts above blank on desc
+    assert "price_median" in out["columns"]               # columns unioned across datasets
 
 
 def test_subset_round_trips_through_profile(tmp_path):

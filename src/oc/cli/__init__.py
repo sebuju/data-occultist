@@ -8,6 +8,7 @@ from . import capture as capture_cmd
 from . import collect as collect_cmd
 from . import detect as detect_cmd
 from . import price as price_cmd
+from . import prices as prices_cmd
 from . import profiles as profiles_cmd
 from . import teach as teach_cmd
 
@@ -20,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     capture_cmd.register(sub)
     collect_cmd.register(sub)
     price_cmd.register(sub)
+    prices_cmd.register(sub)
     profiles_cmd.register(sub)
     teach_cmd.register(sub)
     return parser

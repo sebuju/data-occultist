@@ -1,18 +1,20 @@
-"""Compute a :class:`SubsetDef` over a dataset's records.
+"""Compute a view (:class:`SubsetDef`) over one or more datasets.
 
-A subset is a derived view: filter rows, add columns computed from other columns, sort,
-limit, and (on an explicit pass) attach external data via registered enrichers. It holds
-no state — it's recomputed from the current dataset records each call, so it always
-reflects the latest stored data.
+A view outer-joins its source datasets on a shared key (``join_field``, default
+``name``), then filters rows, adds computed columns, sorts, and limits. It holds no
+state — recomputed from the current records each call, so it always reflects the latest
+stored data. Joining inventory to a producer's price dataset (then deriving
+``value = count*price_median``) is the canonical use.
 
-The live path (``compute_subset`` with ``run_enrich=False``) does only local work
-(filter + derive + sort) and is cheap enough to run on every dataset update. Network
-enrichers run only when ``run_enrich=True`` (an explicit user action), never in the poll
-loop — see :class:`oc.interfaces.Enricher`.
+Derived columns are ``{column}`` templates. A template beginning with ``=`` is evaluated
+as ARITHMETIC over its numeric placeholders (e.g. ``={count}*{price_median}``); any
+missing/non-numeric operand yields an empty cell.
 """
 
 from __future__ import annotations
 
+import ast
+import operator
 import re
 
 from ..profile.models import DerivedColumn, FilterRule, SubsetDef
@@ -25,6 +27,24 @@ def _num(v) -> float | None:
         return float(str(v).strip())
     except (TypeError, ValueError):
         return None
+
+
+# safe arithmetic for ``=`` derived columns: + - * / ** and unary minus, numbers only
+_ARITH_OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+              ast.Div: operator.truediv, ast.Pow: operator.pow, ast.USub: operator.neg,
+              ast.UAdd: operator.pos, ast.Mod: operator.mod}
+
+
+def _eval_arith(expr: str) -> float:
+    def ev(n):
+        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)):
+            return n.value
+        if isinstance(n, ast.BinOp) and type(n.op) in _ARITH_OPS:
+            return _ARITH_OPS[type(n.op)](ev(n.left), ev(n.right))
+        if isinstance(n, ast.UnaryOp) and type(n.op) in _ARITH_OPS:
+            return _ARITH_OPS[type(n.op)](ev(n.operand))
+        raise ValueError("unsupported expression")
+    return ev(ast.parse(expr, mode="eval").body)
 
 
 def match_rule(row: dict, rule: FilterRule) -> bool:
@@ -62,73 +82,106 @@ def render_template(template: str, row: dict) -> str:
     return _PLACEHOLDER.sub(lambda m: "" if row.get(m.group(1)) is None else str(row.get(m.group(1))), template)
 
 
+def _derive_cell(template: str, row: dict):
+    """One derived value. ``=expr`` -> arithmetic over numeric placeholders (empty if any
+    operand is missing/non-numeric); otherwise plain ``{column}`` text substitution."""
+    if not template.startswith("="):
+        return render_template(template, row)
+    ok = True
+
+    def sub(m):
+        nonlocal ok
+        n = _num(row.get(m.group(1)))
+        if n is None:
+            ok = False
+            return "0"
+        return repr(n)
+
+    expr = _PLACEHOLDER.sub(sub, template[1:])
+    if not ok:
+        return ""
+    try:
+        val = _eval_arith(expr)
+    except (ValueError, SyntaxError, ZeroDivisionError):
+        return ""
+    return int(val) if isinstance(val, float) and val.is_integer() else round(val, 2)
+
+
 def apply_derived(row: dict, derived: list[DerivedColumn]) -> None:
     """Add each derived column to the row in order, so a later column can reference an
     earlier one."""
     for d in derived:
         if d.name:
-            row[d.name] = render_template(d.template, row)
+            row[d.name] = _derive_cell(d.template, row)
 
 
 # columns that the store adds for bookkeeping — hidden from a subset by default
-_HIDDEN = ("present", "first_seen", "last_seen")
+_HIDDEN = ("present", "first_seen", "last_seen", "_count")
 
 
-def compute_subset(records: list[dict], sub: SubsetDef, *, run_enrich: bool = False,
-                   build=None) -> dict:
-    """Return ``{columns, rows, enriched}`` for a subset over ``records``.
-
-    ``build(rule)`` -> an :class:`Enricher` instance (or ``None``) is only called when
-    ``run_enrich`` is set; otherwise the enrich columns are skipped entirely (the live
-    refresh stays local + fast).
-    """
-    rows: list[dict] = []
-    for rec in records:
-        if all(match_rule(rec, f) for f in sub.filters if f.field):
+def _join(inputs: list[tuple[str, list[dict]]], join_field: str) -> list[dict]:
+    """Outer-join the source datasets on ``join_field`` (case-insensitive), unioning
+    columns. A row without a join value stays standalone. Earlier inputs win column
+    collisions (their non-empty value is kept); later inputs fill gaps."""
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+    for ds_id, recs in inputs:
+        for rec in recs:
             row = {k: v for k, v in rec.items() if k not in _HIDDEN}
-            apply_derived(row, sub.derived)
-            rows.append(row)
-
-    enriched = False
-    enrich_cols: list[str] = []
-    if run_enrich and build is not None:
-        for rule in sub.enrich:
-            if not rule.enabled:
+            kv = str(row.get(join_field, "")).strip().lower()
+            if not kv:                                   # unjoinable -> its own row
+                key = f"\x00{ds_id}\x00{len(order)}"
+                merged[key] = row
+                order.append(key)
                 continue
-            enricher = build(rule)
-            if enricher is None:
-                continue
-            for row in rows:
-                extra = {}
-                try:
-                    extra = enricher.enrich(row) or {}
-                except Exception:   # an enricher must never break the view
-                    extra = {}
-                for k, v in extra.items():
-                    if k not in enrich_cols:
-                        enrich_cols.append(k)
-                    row[k] = v
-            enriched = True
+            if kv in merged:
+                base = merged[kv]
+                for k, v in row.items():
+                    if k not in base or base.get(k) in (None, ""):
+                        base[k] = v
+            else:
+                merged[kv] = row
+                order.append(kv)
+    return [merged[k] for k in order]
 
+
+def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
+    """Return ``{columns, rows}`` for a view over its joined source datasets.
+
+    ``inputs`` is ``[(dataset_id, records), ...]`` — the datasets the view joins (on
+    ``sub.join_field``). Merge -> derive -> filter -> sort -> limit, so filters and sort
+    can reference joined and derived columns alike."""
+    rows = _join(inputs, sub.join_field or "name")
+    for row in rows:
+        apply_derived(row, sub.derived)
+    rows = [r for r in rows if all(match_rule(r, f) for f in sub.filters if f.field)]
     if sub.sort_by:
         rows.sort(key=lambda r: _sort_key(r.get(sub.sort_by)), reverse=sub.sort_desc)
     if sub.limit and sub.limit > 0:
         rows = rows[: sub.limit]
 
-    # column order: base fields (first row's, minus hidden), then derived, then enrich
+    derived_names = [d.name for d in sub.derived if d.name]
     base: list[str] = []
     for row in rows:
         for k in row:
-            if k not in base and k not in [d.name for d in sub.derived] and k not in enrich_cols:
+            if k not in base and k not in derived_names:
                 base.append(k)
-    columns = base + [d.name for d in sub.derived if d.name] + enrich_cols
-    return {"columns": columns, "rows": rows, "enriched": enriched}
+    return {"columns": base + derived_names, "rows": rows}
+
+
+def compute_subset(records: list[dict], sub: SubsetDef) -> dict:
+    """Back-compat single-dataset view over already-fetched ``records``."""
+    return compute_view([(sub.dataset or "", records)], sub)
 
 
 def _sort_key(v):
-    """Sort numerically when both sides are numbers, else lexicographically. Returns a
-    (is_text, number, text) tuple so mixed columns don't raise."""
+    """Sort numerically when the value is a number, else lexicographically. Blanks rank
+    LOWEST (bucket -1) so an unpriced row sinks to the bottom on a descending sort, rather
+    than floating to the top. Returns a (bucket, number, text) tuple so mixed columns
+    don't raise."""
+    if v is None or str(v).strip() == "":
+        return (-1, 0.0, "")
     n = _num(v)
     if n is not None:
         return (0, n, "")
-    return (1, 0.0, "" if v is None else str(v).lower())
+    return (1, 0.0, str(v).lower())
