@@ -38,16 +38,36 @@
     <span id="livestats" class="livestats" hidden></span>
     <button id="liveBtn" class="modebtn" title="live view: re-read open windows continuously (no saving)">live</button>
     <button id="precapBtn" class="modebtn" title="precapture: record frames fast, OCR them in a batch, then save">precapture</button>
-    <a class="navlink" href="/dash.html">flow ↗</a>
+    <button id="nodemapBtn" class="modebtn" title="node map: overview + jump to any node">map</button>
+    <button id="backupsBtn" class="modebtn" title="backups: browse and restore saved versions of this profile">backups</button>
   </header>
+
+  <!-- Selection toolbar: fixed under the topbar, shown only while >1 node is
+       multi-selected (marquee or shift-click). Acts on the live selection. -->
+  <div id="seltoolbar" class="seltoolbar" hidden>
+    <span id="selCount" class="sel-count">0 selected</span>
+    <button id="selGroupBtn" title="group the selected nodes">⬚ group</button>
+    <button id="selClearBtn" title="clear selection">clear</button>
+  </div>
 
   <main class="graphwrap">
     <div id="graph" class="graphcanvas">
       <div id="gworld">
-        <svg id="gedges"></svg>
+        <div id="ggroups"></div>
+        <svg id="gedges">
+          <defs>
+            <marker id="flowarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="flowarrow-head" />
+            </marker>
+          </defs>
+        </svg>
         <div id="gnodes"></div>
         <svg id="gedges-top"></svg>
+        <!-- group titles ride ABOVE the nodes so they're hit-testable (drag + options);
+             the boxes themselves stay behind everything in #ggroups -->
+        <div id="ggrouptitles"></div>
       </div>
+      <div id="marquee" class="marquee" hidden></div>
     </div>
   </main>
 

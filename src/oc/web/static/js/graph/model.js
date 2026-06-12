@@ -14,7 +14,13 @@ export class GraphModel {
     this.profile.fields = this.profile.fields || [];
     this.profile.datasets = this.profile.datasets || [];
     this.profile.subsets = this.profile.subsets || [];
+    this.profile.price_nodes = this.profile.price_nodes || [];
     this.profile.dictionaries = this.profile.dictionaries || [];
+    // a view joins many datasets; fold a legacy single ``dataset`` into ``datasets``
+    for (const s of this.profile.subsets) {
+      s.datasets = s.datasets || [];
+      if (s.dataset && !s.datasets.includes(s.dataset)) { s.datasets.unshift(s.dataset); s.dataset = ""; }
+    }
   }
 
   // effective dataset id for a window (defaults to its own id)
@@ -27,6 +33,9 @@ export class GraphModel {
     if (!d) { d = { id }; (this.profile.datasets = this.profile.datasets || []).push(d); }
     return d;
   }
+  // how a key's many observations collapse to the displayed value
+  datasetAggregate(id) { const d = this.datasetDef(id); return (d && d.aggregate) || "latest"; }
+  setDatasetAggregate(id, agg) { this.ensureDatasetDef(id).aggregate = agg || "latest"; }
   // rename a dataset: move the def id and repoint every window that feeds it
   renameDataset(oldId, newId) {
     newId = (newId || "").trim();
@@ -65,6 +74,7 @@ export class GraphModel {
       ns.push({ id: `bat:${ds}`, type: "batches", ref: ds });
     }
     for (const s of this.profile.subsets || []) ns.push({ id: `sub:${s.id}`, type: "subset", ref: s });
+    for (const pn of this.profile.price_nodes || []) ns.push({ id: `price:${pn.id}`, type: "price", ref: pn });
     for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
     return ns;
   }
@@ -81,7 +91,10 @@ export class GraphModel {
       es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
     }
     for (const ds of this.datasets()) es.push({ from: `ds:${ds}`, to: `bat:${ds}`, kind: "data" });
-    for (const s of this.profile.subsets || []) es.push({ from: `ds:${s.dataset}`, to: `sub:${s.id}`, kind: "data" });
+    for (const s of this.profile.subsets || [])
+      for (const ds of this.subsetInputs(s)) es.push({ from: `ds:${ds}`, to: `sub:${s.id}`, kind: "data" });
+    // a price producer WRITES into its output dataset (producer -> dataset)
+    for (const pn of this.profile.price_nodes || []) es.push({ from: `price:${pn.id}`, to: `ds:${pn.dataset}`, kind: "data" });
     for (const d of this.profile.dictionaries || []) es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
     return es;
   }
@@ -94,17 +107,41 @@ export class GraphModel {
   datasets() {
     const set = new Set(this.profile.windows.map((w) => this.datasetOf(w)));
     (this.profile.datasets || []).forEach((d) => set.add(d.id));   // include standalone defs (clones)
+    (this.profile.price_nodes || []).forEach((pn) => set.add(pn.dataset));   // producer outputs
     (this._extraDatasets || []).forEach((d) => set.add(d));
     return [...set];
   }
 
+  // ---- price producers: write market snapshots into an output dataset ------
+  priceNode(id) { return (this.profile.price_nodes || []).find((p) => p.id === id) || null; }
+  addPriceNode(dataset = "prices") {
+    this.profile.price_nodes = this.profile.price_nodes || [];
+    let n = 1, id = "price";
+    while (this.priceNode(id)) id = `price_${++n}`;
+    this.ensureDatasetDef(dataset);
+    this.profile.price_nodes.push({ id, type: "warframe_market", dataset, throttle: 0.4, enabled: true });
+    return id;
+  }
+  removePriceNode(id) { this.profile.price_nodes = (this.profile.price_nodes || []).filter((p) => p.id !== id); }
+  setPriceDataset(id, ds) {
+    const pn = this.priceNode(id);
+    if (pn && ds) { pn.dataset = ds; this.ensureDatasetDef(ds); }
+  }
+
   // ---- dictionaries: game-level word lists for fuzzy OCR matching ----------
   dictionary(id) { return (this.profile.dictionaries || []).find((d) => d.id === id) || null; }
-  addDictionary(id) {
+  dictionaryBySource(source) { return (this.profile.dictionaries || []).find((d) => d.source === source) || null; }
+  // Add a dictionary node. `opts` may pin an existing term file (`source` + its
+  // `terms`/`name`); without one it defaults a fresh file named after the id.
+  addDictionary(opts = {}) {
     this.profile.dictionaries = this.profile.dictionaries || [];
+    let id = opts.id;
     if (!id) { let n = 1; do { id = `dict_${n++}`; } while (this.dictionary(id)); }
     else if (this.dictionary(id)) return false;
-    this.profile.dictionaries.push({ id, name: id, enabled: true, terms: [] });
+    // terms live in config/dictionaries/<source>; default the filename to the id
+    const source = opts.source || `${id}.txt`;
+    const name = opts.name || source.replace(/\.txt$/i, "") || id;
+    this.profile.dictionaries.push({ id, name, enabled: true, source, terms: opts.terms || [] });
     return id;
   }
   removeDictionary(id) { this.profile.dictionaries = (this.profile.dictionaries || []).filter((d) => d.id !== id); }
@@ -126,13 +163,16 @@ export class GraphModel {
   }
   removeDatasetDef(id) { this.profile.datasets = (this.profile.datasets || []).filter((d) => d.id !== id); }
 
-  // ---- subsets: derived views over a dataset ------------------------------
+  // ---- views: join one or more datasets, then filter/derive/sort ----------
   subsetDef(id) { return (this.profile.subsets || []).find((s) => s.id === id) || null; }
+  // a view's source datasets (joined on join_field), in order
+  subsetInputs(s) { return (s && s.datasets && s.datasets.length) ? s.datasets : (s && s.dataset ? [s.dataset] : []); }
   addSubset(ds) {
     let n = 1, id = `${ds}_view`;
     while (this.subsetDef(id)) id = `${ds}_view${++n}`;
     (this.profile.subsets = this.profile.subsets || []).push({
-      id, dataset: ds, filters: [], derived: [], enrich: [], sort_by: "", sort_desc: false, limit: 0,
+      id, dataset: "", datasets: [ds], join_field: "name",
+      filters: [], derived: [], enrich: [], sort_by: "", sort_desc: false, limit: 0,
     });
     return id;
   }
@@ -143,11 +183,30 @@ export class GraphModel {
     this.subsetDef(oldId).id = newId;
     return true;
   }
-  // columns a subset can reference: its dataset's field ids + its own derived names
+  // add/remove a source dataset to a view (the join inputs)
+  addSubsetInput(id, ds) {
+    const s = this.subsetDef(id);
+    if (!s || !ds) return false;
+    s.datasets = s.datasets || [];
+    if (s.datasets.includes(ds)) return false;
+    s.datasets.push(ds);
+    return true;
+  }
+  removeSubsetInput(id, ds) {
+    const s = this.subsetDef(id);
+    if (s) s.datasets = (s.datasets || []).filter((d) => d !== ds);
+  }
+  setJoinField(id, field) { const s = this.subsetDef(id); if (s) s.join_field = field || "name"; }
+  // columns a view can reference: the fields of every joined dataset + derived names
   subsetColumns(id) {
     const s = this.subsetDef(id);
     if (!s) return [];
-    const out = [...this.datasetFields(s.dataset)];
+    const out = [];
+    for (const ds of this.subsetInputs(s)) for (const f of this.datasetFields(ds)) if (!out.includes(f)) out.push(f);
+    // price datasets aren't fed by windows, so expose their known snapshot columns
+    for (const ds of this.subsetInputs(s))
+      if ((this.profile.price_nodes || []).some((p) => p.dataset === ds))
+        for (const c of ["name", "slug", "price_min", "price_median", "volume"]) if (!out.includes(c)) out.push(c);
     for (const d of s.derived || []) if (d.name && !out.includes(d.name)) out.push(d.name);
     return out;
   }
@@ -155,8 +214,6 @@ export class GraphModel {
   removeFilter(id, i) { this.subsetDef(id).filters.splice(i, 1); }
   addDerived(id) { (this.subsetDef(id).derived ||= []).push({ name: "", template: "" }); }
   removeDerived(id, i) { this.subsetDef(id).derived.splice(i, 1); }
-  addEnrich(id) { (this.subsetDef(id).enrich ||= []).push({ type: "warframe_market", source_field: "name", enabled: true }); }
-  removeEnrich(id, i) { this.subsetDef(id).enrich.splice(i, 1); }
 
   // ---- edit ops -----------------------------------------------------------
 

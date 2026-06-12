@@ -9,6 +9,13 @@ import { log, timed, setLogOpen } from "../log.js";
 import { GraphModel } from "./model.js";
 import { EdgeRouter, polylinePath } from "./route.js";
 import { buildKey, DEFAULT_KEY } from "../keys.js";
+import { priceParts, wirePriceNode } from "./price_node.js";
+import { openDictionaryPicker } from "./dict_picker.js";
+import { enhanceTable, setTableStore } from "./table.js";
+import { VTable } from "../vtable.js";
+import { initPersist, persist } from "./persist.js";
+import { openBackupsModal } from "./backups.js";
+import * as groups from "./groups.js";
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (m) => log(m);   // #status is gone — the log bar shows messages now
@@ -17,12 +24,13 @@ const pos = new Map();            // node id -> {x,y}
 const nodeEls = new Map();        // node id -> DOM element (built once, reused)
 const collapsed = new Set();      // collapsed node ids
 const view = { panX: 0, panY: 0, zoom: 1 };  // canvas pan/zoom
-const COLX = { game: 20, window: 300, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, dataset: 900, batches: 1180, subset: 1900, dictionary: 20 };
+const COLX = { game: 20, window: 300, price: 560, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, dataset: 900, batches: 1180, subset: 1900, dictionary: 20 };
 let live = {};                    // dataset -> {present,total,last_op,last_ts}
 const prevPresent = {};
 let timer = null;
 let wire = null;                  // active drag-wire {winId, x1,y1}
 let selectedNodeId = null;        // node whose line(s) are highlighted
+const selected = new Set();       // multi-selected node ids (marquee / shift-click)
 const imageCanvases = new Map();  // winId -> { wrap, overlay, canvas } (drawing surface)
 const itemCanvases = new Map();   // `winId:itemId` -> { host, canvas, overlay, + coord maps }
 
@@ -133,19 +141,11 @@ $("logWorkers").addEventListener("click", (ev) => {
   unregisterWorker(b.dataset.kill);
 });
 
-// ---- autosave + position persistence --------------------------------------
+// ---- autosave + layout persistence (all IO goes through persist.js) --------
 
-let saveT = null;
 function autosave(refresh = true) {
   if (!model.profile.name) return;
-  clearTimeout(saveT);
-  saveT = setTimeout(async () => {
-    try {
-      await api.saveProfile(model.profile, false);   // full replace (graph is complete)
-      setStatus("saved ✓");
-      refreshAllSubsetNodes();   // backend now knows new/edited subsets -> fill them (no more 404)
-    } catch (e) { setStatus(String(e.message || e)); }
-  }, 400);
+  persist.content();         // debounced profile save; onContentSaved fires on success
   if (refresh) {             // a disabled node's edit passes false: it changes nothing others read
     refreshOpenPreviews();   // update any open preview nodes after edits
     refreshOpenDetect();     // update detector/state true-false after edits
@@ -153,12 +153,88 @@ function autosave(refresh = true) {
   pushHistory();             // record this change for undo/redo
 }
 
+// Live node-layout state (positions/sizes/collapse/open-images) ↔ the profile. persist
+// calls collectLayout() before every profile PUT, and loadGame calls hydrateLayout()
+// after a load. Table column state is folded in by table.js via the injected store.
+function collectLayout() {
+  const L = (model.profile.layout = model.profile.layout || {});
+  const nodes = {};
+  for (const [id, p] of pos) {
+    const n = { x: p.x, y: p.y };
+    const sz = nodeSizes.get(id);
+    if (sz) { n.w = sz.w; n.h = sz.h; }
+    if (collapsed.has(id)) n.collapsed = true;
+    nodes[id] = n;
+  }
+  L.nodes = nodes;
+  L.open_images = [...openImages];
+  L.tables = L.tables || {};
+  L.groups = groups.collect();
+}
+function hydrateLayout() {
+  pos.clear(); nodeSizes.clear(); collapsed.clear();
+  const L = model.profile.layout || {};
+  for (const [id, n] of Object.entries(L.nodes || {})) {
+    if (Number.isFinite(n.x) && Number.isFinite(n.y)) pos.set(id, { x: n.x, y: n.y });
+    if (Number.isFinite(n.w) && Number.isFinite(n.h)) nodeSizes.set(id, { w: n.w, h: n.h });
+    if (n.collapsed) collapsed.add(id);
+  }
+  pendingOpenImages = [...(L.open_images || [])];
+  groups.hydrate(L.groups);
+}
+
+// Per-device viewport (canvas zoom/pan + minimap) ↔ the gitignored sidecar.
+function collectLocal() {
+  return { view: { panX: view.panX, panY: view.panY, zoom: view.zoom }, minimap: { ...nmState } };
+}
+function applyLocal(local) {
+  if (local?.view && Number.isFinite(local.view.zoom)) { Object.assign(view, local.view); applyView(); }
+  if (local?.minimap) { Object.assign(nmState, local.minimap); nmApplyState(); }
+}
+
+// table.js persists its per-table widths/sort into the profile's layout (so they travel
+// with the game), and a write schedules a layout save.
+setTableStore({
+  load: (id) => (model.profile.layout?.tables?.[id]) || {},
+  save: (id, st) => {
+    const L = (model.profile.layout = model.profile.layout || {});
+    (L.tables = L.tables || {})[id] = st;
+    persist.layout();
+  },
+});
+initPersist({
+  model,
+  collectLayout,
+  collectLocal,
+  onContentSaved: (err) => {
+    if (err) { setStatus(err); return; }
+    setStatus("saved ✓");
+    refreshAllSubsetNodes();   // backend now knows new/edited subsets -> fill them (no more 404)
+  },
+});
+
+// ---- groups (titled boxes around nodes; pure layout) -----------------------
+// Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "detect", sb: "scrollbar", item: "item", ds: "dataset", bat: "batches", sub: "subset", price: "price", dict: "dictionary" };
+function nodeTypeOf(id) { return id === "game" ? "game" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
+groups.initGroups({
+  world: () => $("ggroups"),
+  titleLayer: () => $("ggrouptitles"),
+  nodeRect: (id) => nodeRect(id),
+  nodeType: nodeTypeOf,
+  moveMembers: (ids, ev) => { const lead = ids.find((id) => pos.get(id)); if (lead) moveNodes(lead, ids.filter((x) => x !== lead), ev); },
+  persist: () => persist.layout(),
+  afterChange: () => { refreshDetachIcons(); syncMultiSelect(); },
+});
+
 // ---- undo / redo (full history of the profile) -----------------------------
+// Layout is EXCLUDED from history (snapState strips it) so undo/redo is config-only —
+// moving a node never becomes an undo step, and undo never shuffles the canvas.
 
 let history = [];
 let hIndex = -1;
 let restoring = false;
-function snapState() { return JSON.stringify(model.profile); }
+function snapState() { const { layout, ...rest } = model.profile; return JSON.stringify(rest); }
 function pushHistory() {
   if (restoring) return;
   const s = snapState();
@@ -171,10 +247,12 @@ function pushHistory() {
 function resetHistory() { history = [snapState()]; hIndex = 0; }
 function applyHistory() {
   restoring = true;
+  const layout = model.profile.layout;     // carry layout across the reload (it's not in history)
   model.load(JSON.parse(history[hIndex]));
+  model.profile.layout = layout;
   render();
   for (const winId of imageCanvases.keys()) { refreshImageBoxes(winId); refreshDetect(winId); }
-  api.saveProfile(model.profile, false).catch(() => {});
+  persist.content();
   restoring = false;
 }
 function undo() { if (hIndex > 0) { hIndex--; applyHistory(); setStatus("undo"); } }
@@ -214,29 +292,6 @@ function moveWindowPos(oldWin, newWin) {
     return WINDOW_NODE_TYPES.has(p[0]) && p[1] === oldWin
       ? [p[0], newWin, ...p.slice(2)].join(":") : null;
   });
-}
-
-function posKey() { return `oc.graph.${model.profile.name}`; }
-function loadPositions() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(posKey()) || "{}");
-    for (const k in (raw.positions || {})) {
-      const p = raw.positions[k];
-      if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) pos.set(k, p);  // skip NaN/null
-    }
-    (raw.collapsed || []).forEach((id) => collapsed.add(id));
-    pendingOpenImages = raw.openImages || [];
-    for (const k in (raw.nodeSizes || {})) nodeSizes.set(k, raw.nodeSizes[k]);
-    if (raw.view && Number.isFinite(raw.view.zoom)) Object.assign(view, raw.view);
-  } catch { /* ignore */ }
-}
-function savePositions() {
-  try {
-    localStorage.setItem(posKey(), JSON.stringify({
-      positions: Object.fromEntries(pos), collapsed: [...collapsed],
-      openImages: [...openImages], nodeSizes: Object.fromEntries(nodeSizes), view,
-    }));
-  } catch { /* ignore */ }
 }
 
 const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds (rank)"]];
@@ -324,6 +379,37 @@ function panTo(id) {
     view.panX = sx + (tx - sx) * e; view.panY = sy + (ty - sy) * e;
     applyView();
     panAnim = t < 1 ? requestAnimationFrame(step) : null;
+  };
+  panAnim = requestAnimationFrame(step);
+}
+
+// Comfortable zoom to fit a node in the viewport, with only a small margin around it
+// (tight, not lots of empty space). Shared by double-click AND the node-map jump.
+const FIT_FILL = 0.96;   // node spans this fraction of the viewport
+const FIT_MAX = 4;       // allow zooming further in for small nodes
+function fitZoom(w, h, rect) {
+  return Math.min(8, Math.max(0.15, Math.min(FIT_MAX, (rect.width * FIT_FILL) / w, (rect.height * FIT_FILL) / h)));
+}
+
+// Smoothly pan AND zoom to centre a node (the node-map jump). Same easing as panTo;
+// fit=true picks a comfortable zoom (like zoomToNode), else keeps the current zoom.
+function panZoomTo(id, { fit = true } = {}) {
+  const el = nodeEls.get(id), p = pos.get(id);
+  if (!el || !p) return;
+  const rect = $("graph").getBoundingClientRect();
+  const w = el.offsetWidth || 220, h = el.offsetHeight || 80;
+  const tz = fit ? fitZoom(w, h, rect) : view.zoom;
+  const tx = rect.width / 2 - (p.x + w / 2) * tz;
+  const ty = rect.height / 2 - (p.y + h / 2) * tz;
+  const sx = view.panX, sy = view.panY, sz = view.zoom, t0 = performance.now(), dur = 380;
+  cancelPan();
+  const step = (now) => {
+    let t = (now - t0) / dur; if (t > 1) t = 1;
+    const e = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;   // easeInOutQuad
+    view.panX = sx + (tx - sx) * e; view.panY = sy + (ty - sy) * e; view.zoom = sz + (tz - sz) * e;
+    applyView(); updateOverlayZoom();
+    panAnim = t < 1 ? requestAnimationFrame(step) : null;
+    if (!panAnim) persist.local();
   };
   panAnim = requestAnimationFrame(step);
 }
@@ -567,7 +653,7 @@ function nodeParts(n) {
       body: `
         <label class="flab">process <input class="gi" data-k="proc" value="${esc((g.process_names || []).join(", "))}" placeholder="Warframe.x64.exe" /></label>
         <label class="flab">title hint <input class="gi" data-k="title" value="${esc(g.window_title_hint || "")}" placeholder="Warframe" /></label>
-        <div class="gn-foot"><button class="addwin">+ window</button><button class="adddict">+ dictionary</button></div>`,
+        <div class="gn-foot"><button class="addwin">+ window</button><button class="addprice">+ price</button><button class="adddict">+ dictionary</button></div>`,
     };
   }
   if (n.type === "window") {
@@ -646,13 +732,17 @@ function nodeParts(n) {
     };
   }
   if (n.type === "subset") return subsetParts(n.ref);
+  if (n.type === "price") return priceParts(n.ref);
   if (n.type === "dictionary") {
-    // a named word list. Text reads snap to the closest entry (exact, then fuzzy).
+    // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The
+    // terms live in config/dictionaries/<source>; this node just references that file.
     const dict = n.ref;
     const count = (dict.terms || []).length;
+    const src = dict.source || "—";
+    const missing = !count && dict.source;   // a referenced file that resolved to nothing
     return {
       title: `<input class="gi gi-id dictname" value="${esc(dict.name || dict.id)}" title="dictionary name" />`,
-      body: `<div class="muted">${count} word${count === 1 ? "" : "s"} · text reads snap to the closest entry</div>
+      body: `<div class="muted">${count} word${count === 1 ? "" : "s"} · file <code>${esc(src)}</code>${missing ? ` <span class="warn">· file missing</span>` : ""}</div>
         <div class="nodehost scrollhost dict-host"><textarea class="dictterms" spellcheck="false" autocomplete="off" placeholder="one word per line\nNeo V11\nSoma Prime\n…">${esc((dict.terms || []).join("\n"))}</textarea></div>
         <div class="gn-foot"></div>`,
     };
@@ -661,21 +751,37 @@ function nodeParts(n) {
   // The key itself is no concern of the dataset: it's taught on the item templates
   // (or windows) that read the records.
   const ds = n.ref;
-  const d = live[ds] || { present: 0, total: 0, last_op: null, last_ts: null };
+  const d = live[ds] || { present: 0, total: 0, removed: 0, columns: [], last_ts: null };
   const pulse = prevPresent[ds] !== undefined && prevPresent[ds] !== d.present ? "pulse" : "";
+  const removed = d.removed || Math.max(0, (d.total || 0) - (d.present || 0));
+  const agg = model.datasetAggregate(ds);
+  const aggOpts = AGGREGATES.map((a) => `<option${a === agg ? " selected" : ""}>${a}</option>`).join("");
   return {
     title: `<input class="gi gi-id dsrename" value="${esc(ds)}" title="dataset name" />`,
-    body: `<div class="big">${d.present}<span class="muted"> / ${d.total}</span></div>
-      <div class="muted">${d.last_op ? esc(d.last_op) : "—"} ${d.last_ts ? esc(d.last_ts.slice(11)) : ""}</div>
-      <div class="gn-foot"><button class="dssubset">+ subset</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
+    body: `<div class="ds-head">
+        <span class="big">${d.present}</span>
+        <span class="ds-unit muted">item${d.present === 1 ? "" : "s"}${removed ? ` · ${removed} removed` : ""}</span>
+      </div>
+      <div class="muted ds-meta ds-updated">${d.last_ts ? `updated ${esc(fmtWhen(d.last_ts))}` : "not collected yet"}</div>
+      <label class="flab ds-agg" title="how each key's many observations collapse to one value">many → <select class="dsagg">${aggOpts}</select></label>
+      <div class="gn-foot"><button class="dssubset">+ view</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
       <div class="nodehost scrollhost data-host"><p class="muted" style="padding:8px">loading…</p></div>`,
   };
 }
 
-// ---- subset node: a filtered/derived view over a dataset --------------------
+// how a key's many observations collapse to one displayed value (matches the backend)
+const AGGREGATES = ["latest", "first", "sum", "mean", "max", "min"];
+
+// Friendly timestamp for a dataset's last change: clock time if today, else date.
+function fmtWhen(ts) {
+  const t = String(ts);
+  const today = new Date().toISOString().slice(0, 10);
+  return t.slice(0, 10) === today ? t.slice(11, 16) : t.slice(0, 10);
+}
+
+// ---- view node: join one or more datasets, then filter/derive/sort ----------
 
 const SUB_OPS = ["contains", "icontains", "eq", "ne", "nonempty", "empty", "gt", "lt", "gte", "lte", "regex"];
-const SUB_ENRICHERS = ["warframe_market", "relic_contents"];
 
 function _colOpts(cols, sel) {
   return `<option value=""${sel ? "" : " selected"}>—</option>` +
@@ -684,6 +790,11 @@ function _colOpts(cols, sel) {
 
 function subConfigHTML(s) {
   const cols = model.subsetColumns(s.id);
+  const inputs = model.subsetInputs(s);
+  const free = model.datasets().filter((d) => !inputs.includes(d));
+  const chips = inputs.map((d) => `<span class="sv-input">${esc(d)}<button class="sv-rmin danger" data-ds="${esc(d)}" title="remove input">✕</button></span>`).join("")
+    || '<span class="muted sub-empty">none — add a dataset to join</span>';
+  const addOpts = `<option value="">+ join dataset…</option>` + free.map((d) => `<option>${esc(d)}</option>`).join("");
   const filters = (s.filters || []).map((f, i) => `<div class="sub-row" data-i="${i}">
       <select class="sf-field" data-i="${i}">${_colOpts(cols, f.field)}</select>
       <select class="sf-op" data-i="${i}">${SUB_OPS.map((o) => `<option${o === f.op ? " selected" : ""}>${o}</option>`).join("")}</select>
@@ -692,55 +803,38 @@ function subConfigHTML(s) {
   const derived = (s.derived || []).map((d, i) => `<div class="sub-row" data-i="${i}">
       <input class="sd-name" data-i="${i}" value="${esc(d.name || "")}" placeholder="new column" />
       <span class="muted">=</span>
-      <input class="sd-tpl" data-i="${i}" value="${esc(d.template || "")}" placeholder="{name} [{rank}]" />
+      <input class="sd-tpl" data-i="${i}" value="${esc(d.template || "")}" placeholder="={count}*{price_median}" />
       <button class="sd-del danger" data-i="${i}" title="remove column">✕</button></div>`).join("");
-  const enrich = (s.enrich || []).map((e, i) => `<div class="sub-row" data-i="${i}">
-      <select class="se-type" data-i="${i}">${SUB_ENRICHERS.map((t) => `<option${t === e.type ? " selected" : ""}>${t}</option>`).join("")}</select>
-      <span class="muted">on</span>
-      <select class="se-src" data-i="${i}">${_colOpts(cols, e.source_field)}</select>
-      <button class="se-del danger" data-i="${i}" title="remove enricher">✕</button></div>`).join("");
-  const sortOpts = `<option value=""${s.sort_by ? "" : " selected"}>—</option>` +
-    cols.map((c) => `<option${c === s.sort_by ? " selected" : ""}>${esc(c)}</option>`).join("");
   return `
+    <div class="sub-sec"><div class="sub-lbl">datasets <span class="muted">(joined on key)</span></div>
+      <div class="sv-inputs">${chips}</div>
+      <div class="sub-row"><select class="sv-addin">${addOpts}</select>
+        <label class="flab">join on <input class="sv-join" value="${esc(s.join_field || "name")}" placeholder="name" /></label></div></div>
     <div class="sub-sec"><div class="sub-lbl">filters <span class="muted">(all must pass)</span></div>${filters || '<div class="muted sub-empty">none</div>'}</div>
-    <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">(combine with {column})</span></div>${derived || '<div class="muted sub-empty">none</div>'}</div>
-    <div class="sub-sec"><div class="sub-lbl">enrich <span class="muted">(external data)</span></div>${enrich || '<div class="muted sub-empty">none</div>'}</div>
-    <div class="sub-sec sub-sort">
-      <label class="flab">sort <select class="ss-by">${sortOpts}</select></label>
-      <label class="flab">descending <input type="checkbox" class="ss-desc" ${s.sort_desc ? "checked" : ""}></label>
-      <label class="flab">limit <input type="number" class="ss-limit" min="0" value="${s.limit || 0}"></label>
-    </div>`;
+    <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">({col} text, or =math)</span></div>${derived || '<div class="muted sub-empty">none</div>'}</div>`;
 }
 
 function subsetParts(s) {
   return {
-    title: `<input class="gi gi-id subrename" value="${esc(s.id)}" title="subset name" />`,
-    body: `<div class="muted sub-of">⊂ ${esc(s.dataset)}</div>
-      <div class="sub-cfg">${subConfigHTML(s)}</div>
-      <div class="gn-foot"><button class="sub-addf">+ filter</button><button class="sub-addd">+ column</button><button class="sub-adde">+ enrich</button></div>
-      <div class="gn-foot"><button class="subrun">↻ enrich</button></div>
+    title: `<input class="gi gi-id subrename" value="${esc(s.id)}" title="view name" />`,
+    body: `<div class="sub-cfg">${subConfigHTML(s)}</div>
+      <div class="gn-foot"><button class="sub-addf">+ filter</button><button class="sub-addd">+ column</button></div>
       <div class="nodehost scrollhost sub-host"><p class="muted" style="padding:8px">loading…</p></div>`,
   };
-}
-
-function subTableHTML(r) {
-  const cols = r.columns || [], rows = r.rows || [];
-  const note = `<div class="prev-count muted">${rows.length} row${rows.length === 1 ? "" : "s"}${r.enriched ? " · enriched" : ""}</div>`;
-  if (!rows.length) return `${note}<p class="muted" style="padding:8px">no rows match</p>`;
-  const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
-  const body = rows.slice(0, 500).map((rw) => `<tr>${cols.map((c) => `<td>${esc(rw[c] ?? "")}</td>`).join("")}</tr>`).join("");
-  return `${note}<table class="grid-table zebra"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 async function refreshSubsetNode(id) {
   const el = nodeEls.get(`sub:${id}`);
   const host = el && el.querySelector(".sub-host");
   if (!host) return;
-  try { host.innerHTML = subTableHTML(await api.getSubset(model.profile.name, id)); }
-  catch (e) {
+  try {
+    const r = await api.getSubset(model.profile.name, id);
+    vtableFor(`view:${id}`, host).setData(r.columns || [], r.rows || []);
+  } catch (e) {
     // a just-added subset isn't on the backend until the profile saves (debounced) —
     // that's a transient 404, not an error; the post-save refresh fills it in.
     const msg = /\b404\b/.test(String(e.message || e)) ? "no data yet" : String(e.message || e);
+    vtables.delete(`view:${id}`);
     host.innerHTML = `<p class="muted" style="padding:8px">${esc(msg)}</p>`;
   }
 }
@@ -760,7 +854,15 @@ function wireSubset(div, s) {
   });
   div.querySelector(".sub-addf")?.addEventListener("click", () => { model.addFilter(s.id); restructure(); });
   div.querySelector(".sub-addd")?.addEventListener("click", () => { model.addDerived(s.id); restructure(); });
-  div.querySelector(".sub-adde")?.addEventListener("click", () => { model.addEnrich(s.id); restructure(); });
+
+  // join inputs — adding/removing a dataset changes the wiring, so render()
+  div.querySelector(".sv-addin")?.addEventListener("change", (e) => {
+    if (model.addSubsetInput(s.id, e.target.value)) { render(); autosave(); refreshSubsetNode(s.id); }
+  });
+  div.querySelectorAll(".sv-rmin").forEach((b) => b.addEventListener("click", () => {
+    model.removeSubsetInput(s.id, b.dataset.ds); render(); autosave(); refreshSubsetNode(s.id);
+  }));
+  div.querySelector(".sv-join")?.addEventListener("change", (e) => { model.setJoinField(s.id, e.target.value.trim()); recompute(); });
 
   // filters
   div.querySelectorAll(".sf-del").forEach((b) => b.addEventListener("click", () => { model.removeFilter(s.id, +b.dataset.i); restructure(); }));
@@ -772,33 +874,21 @@ function wireSubset(div, s) {
   div.querySelectorAll(".sd-del").forEach((b) => b.addEventListener("click", () => { model.removeDerived(s.id, +b.dataset.i); restructure(); }));
   div.querySelectorAll(".sd-name").forEach((el) => el.addEventListener("change", (e) => { s.derived[+el.dataset.i].name = e.target.value.trim(); restructure(); }));
   div.querySelectorAll(".sd-tpl").forEach((el) => el.addEventListener("change", (e) => { s.derived[+el.dataset.i].template = e.target.value; recompute(); }));
-
-  // enrichers (only affect the explicit enrich pass; no live recompute needed)
-  div.querySelectorAll(".se-del").forEach((b) => b.addEventListener("click", () => { model.removeEnrich(s.id, +b.dataset.i); restructure(); }));
-  div.querySelectorAll(".se-type").forEach((el) => el.addEventListener("change", (e) => { s.enrich[+el.dataset.i].type = e.target.value; autosave(); }));
-  div.querySelectorAll(".se-src").forEach((el) => el.addEventListener("change", (e) => { s.enrich[+el.dataset.i].source_field = e.target.value; autosave(); }));
-
-  // sort / limit
-  div.querySelector(".ss-by")?.addEventListener("change", (e) => { s.sort_by = e.target.value; recompute(); });
-  div.querySelector(".ss-desc")?.addEventListener("change", (e) => { s.sort_desc = e.target.checked; recompute(); });
-  div.querySelector(".ss-limit")?.addEventListener("change", (e) => { s.limit = Math.max(0, +e.target.value || 0); recompute(); });
-
-  const runBtn = div.querySelector(".subrun");
-  runBtn?.addEventListener("click", async () => {
-    const host = div.querySelector(".sub-host");
-    runBtn.disabled = true;
-    if (host) host.innerHTML = '<p class="muted" style="padding:8px">enriching…</p>';
-    const done = timed(`enrich subset ${s.id}`);
-    try { if (host) host.innerHTML = subTableHTML(await api.enrichSubset(model.profile.name, s.id)); done(); }
-    catch (e) { done(String(e.message || e), "err"); if (host) host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`; }
-    finally { runBtn.disabled = false; }
-  });
+  // sort/limit removed — the table sorts itself (click a column header)
 
   queueMicrotask(() => refreshSubsetNode(s.id));
 }
 
-const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary"]);
-const REMOVABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "subset", "dataset"]);
+// ---- price producer node: sweeps the market into its output dataset ---------
+
+function wirePrice(div, n) {
+  // the full producer panel (sweep, stored count, movers, history chart). The out-port
+  // (drag to a dataset) is wired generically by wireOutPort.
+  wirePriceNode(div, model.profile.name, n.ref.dataset);
+}
+
+const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "price"]);
+const REMOVABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "subset", "dataset", "price"]);
 
 // One place to remove any node; each goes through render()+autosave() so undo/redo
 // records it (autosave -> pushHistory).
@@ -814,7 +904,9 @@ function removeNode(n) {
   else if (n.type === "scrollbar") { model.removeScrollbar(n.win.id); render(); autosave(); refreshImageBoxes(n.win.id); }
   else if (n.type === "dictionary") { model.removeDictionary(n.ref.id); pos.delete(n.id); render(); autosave(); }
   else if (n.type === "subset") { model.removeSubset(n.ref.id); render(); autosave(); }
+  else if (n.type === "price") { model.removePriceNode(n.ref.id); pos.delete(n.id); render(); autosave(); }
   else if (n.type === "dataset") { model.removeDatasetDef(n.ref); pos.delete(n.id); purgeDatasetData(n.ref); render(); autosave(); }
+  groups.forgetNodes(new Set([n.id]));   // drop the gone node from any group
   setStatus(`deleted ${n.type} ${n.ref?.id ?? n.ref ?? ""}`.trimEnd());
 }
 
@@ -865,11 +957,20 @@ function fillNode(div, n) {
         </svg></button>`
     : "";
   const del = REMOVABLE.has(n.type) ? `<button class="gn-del danger" title="remove (click again to confirm)">✕</button>` : "";
+  // unlock icon: detach this node from its group. Always present; shown only while the
+  // node is in a group (.in-group on the node, set by refreshDetachIcons).
+  const detach = `<button class="gn-detach" title="detach from group" aria-label="detach from group">
+      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+        <path d="M5 7V4.5a3 3 0 0 1 5.9-.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+        <rect x="3.2" y="7" width="9.6" height="6.5" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5" />
+      </svg></button>`;
   div.innerHTML = `<div class="gn-h ${parts.pulse || ""}">
-      <button class="collapse" title="collapse/expand">${isCollapsed ? "▸" : "▾"}</button>${parts.title}${toggle}${del}</div>
+      <button class="collapse" title="collapse/expand">${isCollapsed ? "▸" : "▾"}</button>${parts.title}${detach}${toggle}${del}</div>
     <div class="gn-body">${parts.body}</div>
     <span class="gn-spin" title="working…"></span>${parts.ports || ""}`;
   div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
+  div.querySelector(".gn-detach").addEventListener("click", (e) => { e.stopPropagation(); groups.detachNode(n.id); });
+  div.classList.toggle("in-group", !!groups.groupOf(n.id));
   const delBtn = div.querySelector(".gn-del");
   if (delBtn) wireConfirmRemove(delBtn, () => removeNode(n));
   const tog = div.querySelector(".gn-enable");
@@ -886,6 +987,18 @@ function fillNode(div, n) {
   });
   if (busy.get(n.id)) div.classList.add("busy");   // preserve spinner across rebuilds
   wireNode(div, n);
+  wireOutPort(div, n);   // any node with a `.port.out` drags to a dataset — one mechanism
+}
+
+// Drag a node's out-port to a dataset node to choose where it sends its rows. ONE place for
+// every producer (window, price); the only per-type bit is which model setter commits it.
+function wireOutPort(div, n) {
+  const port = div.querySelector(".port.out");
+  if (!port) return;
+  const onDrop = n.type === "price"
+    ? (ds) => { model.setPriceDataset(n.ref.id, ds); rebuildNode(n.id); }
+    : (ds) => model.setDataset(n.ref.id, ds);
+  port.addEventListener("mousedown", (ev) => startWire(n.id, ev, onDrop));
 }
 
 // Make a node's content host (`.nodehost`) user-resizable; the node itself stays a
@@ -899,8 +1012,12 @@ function makeNodeResizable(div, id) {
   if (s && !collapsed.has(id)) { if (s.w) div.style.width = `${s.w}px`; if (s.h) div.style.height = `${s.h}px`; }
   snapResize(div, {
     both: true,
-    onResize: drawEdges,
-    onSettle: () => { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight }); drawEdges(); savePositions(); },
+    zoom: () => view.zoom,
+    // left-edge accessor: the node's world x lives in `pos` (canvas-zoomed) — lets the
+    // shared bottom-left grip resize this node leftward with its right edge anchored
+    left: (v) => { const p = pos.get(id); if (v === undefined) return p ? p.x : 0; if (p) { p.x = v; positionNode(id); } },
+    onResize: () => { drawEdges(); groups.renderGroups(); },
+    onSettle: () => { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight }); drawEdges(); groups.renderGroups(); persist.layout(); },
   });
 }
 
@@ -909,9 +1026,13 @@ function buildNode(n) {
   div.id = `node-${n.id}`;
   div.dataset.id = n.id;
   fillNode(div, n);
-  if (n.type === "item") snapResize(div, { onResize: drawEdges });   // item node resizes by width (its cutout)
+  if (n.type === "item") snapResize(div, {   // item node resizes by width (its cutout)
+    onResize: () => { drawEdges(); groups.renderGroups(); }, zoom: () => view.zoom,
+    left: (v) => { const p = pos.get(n.id); if (v === undefined) return p ? p.x : 0; if (p) { p.x = v; positionNode(n.id); } },
+    onSettle: () => { persist.layout(); drawEdges(); groups.renderGroups(); },
+  });
   // every host node resizes at the NODE level (its body fills it) — one consistent behaviour
-  if (["dataset", "preview", "batches", "dictionary", "subset"].includes(n.type)) makeNodeResizable(div, n.id);
+  if (["dataset", "preview", "batches", "dictionary", "subset", "price"].includes(n.type)) makeNodeResizable(div, n.id);
   return div;
 }
 
@@ -951,7 +1072,8 @@ function toggleCollapse(id) {
     }
   }
   drawEdges();   // node size changed -> reroute its lines
-  savePositions();
+  groups.renderGroups();
+  persist.layout();
 }
 
 // Reconcile the node DOM with the model: add new, remove gone, reposition. Existing
@@ -971,6 +1093,10 @@ function render() {
   resizeCanvas();
   applyView();
   openMissingItemCanvases();
+  groups.renderGroups();
+  refreshDetachIcons();
+  syncMultiSelect();
+  renderNodeMap();
 }
 
 // Item nodes always show their frozen cutout canvas; open any that aren't yet.
@@ -983,6 +1109,7 @@ function openMissingItemCanvases() {
 
 function applyView() {
   $("gworld").style.transform = `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`;
+  nmUpdateViewport();   // keep the node-map's viewport indicator in sync with pan/zoom
 }
 
 function resizeCanvas() {
@@ -1025,7 +1152,30 @@ function deselectAll() {
   clearNodeSelections();
   selectedNodeId = null;
   activeOverlayKey = null;
+  clearMultiSelect();
   drawEdges();
+  nmSyncSelection();
+}
+
+// ---- multi-select (marquee / shift-click) ---------------------------------
+// `selected` is the live set; the .multisel class shows it and the toolbar acts on it.
+
+function setMultiSelect(ids) {
+  selected.clear();
+  for (const id of ids) if (nodeEls.has(id)) selected.add(id);
+  syncMultiSelect();
+}
+function clearMultiSelect() { if (selected.size) { selected.clear(); syncMultiSelect(); } }
+function syncMultiSelect() {
+  for (const [id, el] of nodeEls) el.classList.toggle("multisel", selected.has(id));
+  const bar = $("seltoolbar"), cnt = $("selCount");
+  if (bar) bar.hidden = selected.size < 2;
+  if (cnt) cnt.textContent = `${selected.size} selected`;
+}
+
+// Show the unlock icon only on nodes that currently belong to a group.
+function refreshDetachIcons() {
+  for (const [id, el] of nodeEls) el.classList.toggle("in-group", !!groups.groupOf(id));
 }
 
 let suppressNextMenu = false;   // set when a right-drag pan actually moved
@@ -1041,7 +1191,7 @@ function startPan(ev) {
     document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
     $("graph").classList.remove("panning");
     suppressNextMenu = moved;   // only a real drag eats the context menu; a plain click keeps it
-    if (moved) savePositions();
+    if (moved) persist.local();
   };
   document.addEventListener("mousemove", mv);
   document.addEventListener("mouseup", up);
@@ -1063,24 +1213,15 @@ function onWheel(ev) {
   view.panX = mx - (mx - view.panX) * (z / old);
   view.panY = my - (my - view.panY) * (z / old);
   view.zoom = z;
-  applyView(); updateOverlayZoom(); savePositions();
+  applyView(); updateOverlayZoom(); persist.local();
 }
 
 const nw = (id) => nodeEls.get(id)?.offsetWidth || 220;   // node width (right edge)
 const nh = (id) => nodeEls.get(id)?.offsetHeight || 80;   // node height
 
-// Double-click a node: fit it to the viewport and centre it.
-function zoomToNode(id) {
-  const el = nodeEls.get(id), p = pos.get(id);
-  if (!el || !p) return;
-  const rect = $("graph").getBoundingClientRect();
-  const w = el.offsetWidth || 220, h = el.offsetHeight || 80;
-  const z = Math.min(8, Math.max(0.15, Math.min(2, (rect.width * 0.85) / w, (rect.height * 0.85) / h)));
-  view.zoom = z;
-  view.panX = rect.width / 2 - (p.x + w / 2) * z;
-  view.panY = rect.height / 2 - (p.y + h / 2) * z;
-  applyView(); updateOverlayZoom(); savePositions();
-}
+// Double-click a node: fit it tight to the viewport and centre it (smooth, shared with
+// the node-map jump so both frame a node the same way).
+function zoomToNode(id) { panZoomTo(id, { fit: true }); }
 
 // Bezier whose tangents leave each endpoint along an outward direction (L/R/T/B) so
 // the line starts the right way. This is the LIVE line: shown while a node is being
@@ -1193,13 +1334,14 @@ function selClsFor(aId, bId) {
 // An edge "leaves a port out" when its source node draws a `.port.out` handle (window
 // nodes) and the edge is the data link that handle represents (window -> dataset). Those
 // are the only lines that start at the fixed port dot and get the animated flow.
-const fromPortOut = (aId, kind) => aId.startsWith("win:") && kind === "data";
+const fromPortOut = (aId, kind) => (aId.startsWith("win:") || aId.startsWith("price:")) && kind === "data";
 function buildLinks() {
   const links = [];
   const add = (key, aId, bId, top, kind, ra, rb) => {
     if (!ra || !rb) return;
     const port = fromPortOut(aId, kind);
-    links.push({ key, aId, bId, top, port, cls: `gedge ${kind}${port ? " flow" : ""}${selClsFor(aId, bId)}`, ra, rb });
+    const tgt = bId.startsWith("sub:") ? " toview" : bId.startsWith("bat:") ? " tobatch" : "";
+    links.push({ key, aId, bId, top, port, cls: `gedge ${kind}${port ? " flow" : ""}${tgt}${selClsFor(aId, bId)}`, ra, rb });
   };
   for (const e of model.edges())
     add(`${e.from} ${e.to}`, e.from, e.to, !!selClsFor(e.from, e.to), e.kind, nodeRect(e.from), nodeRect(e.to));
@@ -1250,10 +1392,13 @@ function placePortDots(links) {
     if (!l.port) continue;
     const dot = nodeEls.get(l.aId)?.querySelector(".port.out");
     if (!dot) continue;
-    dot.style.left = `${l.p1[0] - l.ra.x}px`;
-    dot.style.top = `${l.p1[1] - l.ra.y}px`;
+    // -1: the dot is absolutely positioned in the node's PADDING box (inside its 1px
+    // border), but l.p1/ra are border-box world coords — without it the dot sits 1px off
+    dot.style.left = `${l.p1[0] - l.ra.x - 1}px`;
+    dot.style.top = `${l.p1[1] - l.ra.y - 1}px`;
     dot.style.right = "auto";
     dot.style.transform = "translate(-50%, -50%)";
+    dot.classList.toggle("sel", l.cls.includes(" sel"));   // edge selected (either end) -> accent
   }
 }
 
@@ -1262,6 +1407,13 @@ function placePortDots(links) {
 const edgeEls = new Map();   // link key -> <path>
 let wireEl = null;
 let tweenRoutes = false;     // set by runRouting so the NEXT draw morphs the lines that changed
+let _resizing = false;       // a node is being resized — draw cheap straight lines, no A*/bezier
+let _resizeRaf = null;       // coalesces resize-driven redraws to one per frame
+let _ptrDown = false;        // is a mouse button held? (a ResizeObserver tick is only a user
+if (typeof window !== "undefined") {                          // resize when the pointer is down)
+  window.addEventListener("mousedown", () => { _ptrDown = true; }, true);
+  window.addEventListener("mouseup", () => { _ptrDown = false; }, true);
+}
 
 function edgeEl(key, layer) {
   let el = edgeEls.get(key);
@@ -1322,7 +1474,7 @@ function drawEdges() {
       if (tweenRoutes && geoChanged(el, c.pts)) startMorph(el, c.pts);
       else if (!el._raf && geoChanged(el, c.pts)) setRouted(el, c.pts);   // only redraw if it changed; leave morphs alone
     } else {
-      setBezier(el, l);                                     // no/stale route → live bezier follows the drag
+      setBezier(el, l);   // stale route (node moved/resized) → live bezier, then A* re-routes to 90°
     }
   }
   for (const [k, el] of edgeEls) if (!used.has(k)) { cancelMorph(el); el.remove(); edgeEls.delete(k); }
@@ -1334,7 +1486,7 @@ function drawEdges() {
     wireEl.setAttribute("d", `M ${wire.x1} ${wire.y1} C ${wire.x1 + dx} ${wire.y1}, ${wire.x2 - dx} ${wire.y2}, ${wire.x2} ${wire.y2}`);
   } else if (wireEl) { wireEl.remove(); wireEl = null; }
   tweenRoutes = false;
-  scheduleRouting();
+  scheduleRouting();   // always pathfind — lines stay routed (90°) during resize too
 }
 
 // ---- live line routing -----------------------------------------------------
@@ -1466,11 +1618,18 @@ function wireNode(div, n) {
   // edges/padding/labels work, not just the header)
   div.addEventListener("mousedown", (ev) => {
     if (ev.button !== 0) return;   // only left-drag moves; right-drag pans the canvas
-    if (ev.target.closest("input,select,button,a,.collapse,.canvas-wrap,[contenteditable],.scrollhost")) return;  // .canvas-wrap: resize handle; .scrollhost: scroll/edit node content
+    // the collapse caret and the title input double as drag HANDLES: a real drag moves
+    // the node, a plain click still toggles / edits (threshold-gated below).
+    const handle = ev.target.closest(".collapse, input.gi-id");
+    if (!handle && ev.target.closest("input,select,button,a,.canvas-wrap,[contenteditable],.scrollhost")) return;  // .canvas-wrap: resize handle; .scrollhost: scroll/edit node content
     const r = div.getBoundingClientRect();   // skip the CSS resize-handle corner (resizable nodes)
     if (ev.clientX > r.right - 18 && ev.clientY > r.bottom - 18) return;
+    // grabbing a node OUTSIDE the current multi-selection drops it (fresh single focus);
+    // grabbing one INSIDE keeps the set so the drag moves the whole selection.
+    if (!selected.has(n.id)) clearMultiSelect();
     focusNode(n.id);   // select on click / drag start (every node is focusable)
-    startMove(n.id, ev);
+    if (handle) dragFromHandle(n.id, ev, div, handle);   // drag past threshold, else click
+    else startMove(n.id, ev);
   });
 
   // double-click anywhere non-interactive on the node: fit + centre it
@@ -1492,9 +1651,26 @@ function wireNode(div, n) {
       const id = model.addWindow();   // default id; renamed in the window node
       if (id) { placeNewNode(`win:${id}`, "window"); render(); autosave(); panTo(`win:${id}`); }
     });
-    div.querySelector(".adddict")?.addEventListener("click", () => {
-      const id = model.addDictionary();
-      if (id) { placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
+    div.querySelector(".adddict")?.addEventListener("click", () => openDictionaryPicker({
+      used: new Set((model.profile.dictionaries || []).map((d) => d.source)),
+      // existing word file: re-use its node if already on the graph, else reference it
+      // (fetch its terms so the new node shows them straight away).
+      onPick: async (source) => {
+        const existing = model.dictionaryBySource(source);
+        if (existing) { panTo(`dict:${existing.id}`); return; }
+        let terms = [];
+        try { ({ terms } = await api.dictionaries.get(source)); } catch { /* missing file -> 0 terms */ }
+        const id = model.addDictionary({ source, terms });
+        if (id) { placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
+      },
+      onCreate: (name) => {
+        const id = model.addDictionary({ name });
+        if (id) { placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
+      },
+    }));
+    div.querySelector(".addprice")?.addEventListener("click", () => {
+      const id = model.addPriceNode();   // independent producer -> "prices" dataset
+      if (id) { placeNewNode(`price:${id}`, "price"); render(); autosave(); panTo(`price:${id}`); }
     });
   } else if (n.type === "dictionary") {
     // the title doubles as both name and id (renamed in place)
@@ -1511,8 +1687,7 @@ function wireNode(div, n) {
       rebuildNode(n.id); autosave();   // refresh the word count
     });
   } else if (n.type === "window") {
-    wireWindowControls(div, n);
-    div.querySelector(".port.out")?.addEventListener("mousedown", (ev) => startWire(n.ref.id, ev));
+    wireWindowControls(div, n);   // out-port wiring is handled generically in wireOutPort
   } else if (n.type === "preview") {
     div.querySelector(".prevrun")?.addEventListener("click", () => refreshPreview(n.ref.id));
   } else if (n.type === "dataset") {
@@ -1530,6 +1705,10 @@ function wireNode(div, n) {
         render(); return;
       }
       await refreshLive();   // re-reads the dataset list (now under the new name) and re-renders
+    });
+    div.querySelector(".dsagg")?.addEventListener("change", (e) => {
+      model.setDatasetAggregate(n.ref, e.target.value);   // how the 'many' collapses
+      autosave(); refreshDataNode(n.ref);                 // server recomputes values under the new policy
     });
     div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(); });
     div.querySelector(".dssubset")?.addEventListener("click", () => {
@@ -1551,6 +1730,8 @@ function wireNode(div, n) {
     queueMicrotask(() => loadBatchesNode(n.ref));   // nodeEls is set after buildNode returns
   } else if (n.type === "subset") {
     wireSubset(div, n.ref);
+  } else if (n.type === "price") {
+    wirePrice(div, n);
   } else if (n.type === "region") {
     const fld = n.field;
     div.addEventListener("click", (ev) => {
@@ -1618,28 +1799,47 @@ function dataHost(ds) {
 function refreshAllDataNodes() {
   for (const ds of model.datasets()) if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
 }
+// One VTable per data/subset node host (virtualized + searchable). Recreated if the host
+// element was rebuilt by a node re-render.
+const vtables = new Map();
+function vtableFor(key, host) {
+  let vt = vtables.get(key);
+  if (vt && vt.host === host) return vt;
+  if (vt) vt.destroy();
+  host.innerHTML = "";
+  vt = new VTable(host);
+  vtables.set(key, vt);
+  return vt;
+}
+
+const VT_META = ["present", "first_seen", "last_seen", "key", "_count"];   // not shown as columns
+
 async function refreshDataNode(ds) {
   const host = dataHost(ds);
   if (!host) return;
   try {
     const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
-    host.innerHTML = datasetDetailHTML(await r.json());
-  } catch (e) { host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
+    const recs = (await r.json()).records || [];
+    const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
+    vtableFor(`ds:${ds}`, host).setData(cols, recs, {
+      rowClass: (row) => (row.present ? "" : "gone"),
+      onRowClick: (row) => row && showRecordMany(ds, row.key, row._count),   // open its observations
+    });
+  } catch (e) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
 }
 
-function datasetDetailHTML(d) {
-  const recs = d.records || [];
-  let table = '<p class="muted" style="padding:8px">no records</p>';
-  if (recs.length) {
-    const cols = [...new Set(recs.flatMap((r) => Object.keys(r)))].filter((c) => !["present", "first_seen", "last_seen"].includes(c));
-    const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
-    const rows = recs.map((r) => `<tr class="${r.present ? "" : "gone"}">${cols.map((c) => `<td>${esc(r[c] ?? "")}</td>`).join("")}</tr>`).join("");
-    table = `<table class="grid-table zebra"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
-  }
-  return `<div class="ds-detail">
-    <div class="prev-count muted">${recs.length} records</div>
-    ${table}
-  </div>`;
+// A dataset record aggregates "many" observations under its key — open them in a modal.
+async function showRecordMany(ds, key, count) {
+  if (!key) return;
+  const node = document.createElement("div");
+  node.className = "vt-modal-host";
+  openModal({ title: `${ds}: ${key}${count ? ` · ${count} observations` : ""}`, size: "data", node });
+  try {
+    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}/observations?key=${encodeURIComponent(key)}`);
+    const obs = (await r.json()).observations || [];
+    const cols = [...new Set(obs.flatMap((o) => Object.keys(o)))];
+    new VTable(node).setData(cols, obs);
+  } catch (e) { node.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
 }
 
 // ---- batches node (ledger + per-batch contents/preview, embedded in the node) ----
@@ -1893,7 +2093,7 @@ async function openPrecaptureModal() {
         try {
           const r = await api.precapture.save(game, sig);
           refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); refreshAllSubsetNodes();
-          setStatus(`saved ${JSON.stringify(r.written)}`); loadSessions(); draw(r.status);
+          setStatus(`committed ${JSON.stringify(r.written)}`); loadSessions(); draw(r.status);
         } catch (e) {
           if (e.name !== "AbortError") { setStatus(String(e.message || e)); if (precapLast) draw(precapLast); }   // redraw clears the spinner
         }
@@ -1925,7 +2125,7 @@ async function openPrecaptureModal() {
 
 function precapTable(d) {
   const rows = d.sample || [];
-  const meta = `<span class="muted">${d.count} rows${rows.length ? ` · last ${rows.length}` : ""}</span>`;
+  const meta = `<span class="muted">${d.count} rows</span>`;
   if (!rows.length) return `<div class="pc-ds"><b>${esc(d.dataset)}</b> ${meta}</div>`;
   const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
   const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
@@ -1949,7 +2149,7 @@ function renderPrecap(node, st) {
     else if (phase === "processing") log("precapture: processing…", "run");
     else if (phase === "done") { const t = st.timing || {}; log(`precapture done: ${st.processed} frames · ${t.ms_per_frame || 0} ms/frame on ${t.device || "cpu"} (decode ${t.decode_ms || 0} · classify ${t.classify_ms || 0} · read ${t.read_ms || 0}) · ${st.fps}/s · ${st.read || 0} rows read`, "ok"); }
     else if (phase === "cancelled") log("precapture: cancelled", "warn");
-    else if (phase === "saved") log("precapture: saved", "ok");
+    else if (phase === "saved") log("precapture: committed", "ok");
     // recording just finished -> flip the right pane to the loaded session's controls
     // (process / save / delete) so the just-recorded frames are ready to work with
     if (precapLastPhase === "recording" && phase !== "recording") precapView = "loaded";
@@ -2046,7 +2246,7 @@ function renderPrecap(node, st) {
       : `<button data-act="process" ${canProcess ? "" : "disabled"}>▸ process${st.frames ? ` ${st.frames}` : ""}</button>`;
     const cancel = busyRun && !precapStopping ? `<button data-act="cancel" class="danger">cancel</button>` : "";
     const save = `<button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !anyRun && !justSaved) ? "" : "disabled"}>
-      <span class="ic ic-ok">${justSaved ? "✓" : "⤓"}</span> ${justSaved ? "saved" : `save${staged ? ` ${staged}` : ""}`}</button>`;
+      <span class="ic ic-ok">${justSaved ? "✓" : "⤓"}</span> ${justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`}</button>`;
     const del = `<button data-act="delsess" data-sid="${esc(st.session || "")}" class="danger pc-del" ${anyRun || !st.session ? "disabled" : ""}>× delete</button>`;
     ctl = `${proc}${cancel}${save}${del}`;
   }
@@ -2104,7 +2304,7 @@ function renderPrecapLeft(left, st) {
       const nm = s.label || fmtCaptureTime(s.id);
       if (r.name.textContent !== nm) r.name.textContent = nm;
     }
-    const meta = `${s.frames}f · ${s.records || 0} rec${s.saved_at ? ' · <span class="tc-ok">saved</span>' : ""}`;
+    const meta = `${s.frames}f · ${s.records || 0} rec${s.saved_at ? ' · <span class="tc-ok">committed</span>' : ""}`;
     if (r.meta._html !== meta) { r.meta.innerHTML = meta; r.meta._html = meta; }   // touch DOM only on change
     r.ren.disabled = precapBusy;
   }
@@ -2177,7 +2377,7 @@ function closeImage(winId) {
   unregisterOverlay(`win:${winId}`);
   openImages.delete(winId);
   drawEdges();
-  savePositions();
+  persist.layout();
 }
 
 // The image surface lives INSIDE the window node's `.win-img` host — one node.
@@ -2221,7 +2421,7 @@ async function openImage(winId) {
     persist: (b) => persistBox(winId, b), refresh: () => refreshImageBoxes(winId) });
   overlay.setWorldZoom(view.zoom);
   openImages.add(winId);
-  savePositions();
+  persist.layout();
   host.querySelectorAll(".tool").forEach((btn) => btn.addEventListener("click", () => {
     host.querySelectorAll(".tool").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
@@ -2433,6 +2633,7 @@ function focusNode(id) {
   clearNodeSelections(id);   // drop any other node's inner selection
   for (const [nid, el] of nodeEls) el.classList.toggle("selected", nid === id);
   drawEdges();
+  nmSyncSelection();   // mirror the selection in the node map
 }
 
 // ---- live preview node (what the current setup would read) ------------------
@@ -2729,21 +2930,74 @@ const snap = (v) => Math.round(v / GRID) * GRID;
 // resizing (snapping mid-drag fights the smooth native resize). The observer just flags
 // that a resize happened and runs ``onResize`` live (e.g. redraw edges); the snap fires
 // on mouseup. Idempotent, so it never loops.
-function snapResize(el, { both = false, onResize = null, onSettle = null } = {}) {
+function snapResize(el, opts = {}) {
+  const { both = false, onResize = null, onSettle = null } = opts;
   if (typeof ResizeObserver === "undefined") return;
   let dirty = false;
-  new ResizeObserver(() => { dirty = true; onResize && onResize(); }).observe(el);
-  const finish = () => {
-    if (!dirty) return;
-    if (el.classList && el.classList.contains("collapsed")) { dirty = false; return; }   // don't capture the collapsed size
-    dirty = false;
+  // Step the size to the grid LIVE so the node never shows smooth in-between sizes.
+  // Guarded (only writes when it actually changes) so it doesn't loop the observer.
+  const liveSnap = () => {
     const w = snap(el.offsetWidth);
     if (Math.abs(w - el.offsetWidth) >= 1) el.style.width = `${w}px`;
     if (both) { const h = snap(el.offsetHeight); if (Math.abs(h - el.offsetHeight) >= 1) el.style.height = `${h}px`; }
-    onSettle && onSettle();
+  };
+  new ResizeObserver(() => {
+    if (el.classList && el.classList.contains("collapsed")) return;   // ignore the collapsed size
+    dirty = true;
+    if (_ptrDown) { _resizing = true; liveSnap(); }   // user drag → live grid-snap + cheap lines
+    // one redraw per frame, not per resize event — kills the per-pixel edge-redraw lag
+    if (!_resizeRaf) _resizeRaf = requestAnimationFrame(() => { _resizeRaf = null; onResize && onResize(); });
+  }).observe(el);
+  const finish = () => {
+    if (!dirty) return;
+    dirty = false; _resizing = false;
+    if (_resizeRaf) { cancelAnimationFrame(_resizeRaf); _resizeRaf = null; }
+    liveSnap();
+    onSettle && onSettle();    // persists size + a final routed (non-straight) redraw
   };
   el.addEventListener("mouseup", finish);     // release on the element's resize handle
   window.addEventListener("mouseup", finish);  // …or release after the cursor left it
+  addResizeGrips(el, { ...opts, snap: true }); // custom grips on BOTH bottom corners, grid-stepped
+}
+
+// Custom resize grips on BOTH bottom corners. Native CSS resize is disabled on these
+// elements (its OS-drawn bottom-right handle can't be matched by CSS), so both corners are
+// our own identical, mirrored grips. The LEFT grip anchors the right edge (it moves the
+// element left via `opts.left`); the RIGHT grip anchors the left edge. `both` also resizes
+// height; `zoom` accounts for canvas zoom; `left` reads/writes the left edge (pos.x for
+// graph nodes, style.left for floating panels).
+function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onSettle = null } = {}) {
+  if (el.querySelector(":scope > .rz-grip")) return;   // once only
+  const q = (v) => (snapGrid ? snap(v) : v);   // grid-step nodes; panels resize smoothly
+  for (const side of ["left", "right"]) {
+    if (side === "left" && !left) continue;            // left grip needs a left-edge accessor
+    const g = document.createElement("div");
+    g.className = `rz-grip rz-${side[0]}grip`; g.title = "resize";
+    el.appendChild(g);
+    g.addEventListener("mousedown", (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      const z = zoom() || 1, sx = ev.clientX, sy = ev.clientY;
+      const startW = el.offsetWidth, startH = el.offsetHeight, startL = left ? left() : 0;
+      let lastW = startW, lastH = startH;
+      document.body.style.cursor = side === "left" ? "nesw-resize" : "nwse-resize";
+      const mv = (e) => {
+        const w = Math.max(1, q(side === "left" ? startW - (e.clientX - sx) / z : startW + (e.clientX - sx) / z));
+        const h = Math.max(1, q(startH + (e.clientY - sy) / z));
+        // only act on a REAL size step (else snapped sub-grid moves churn resize+reroute)
+        if (w === lastW && (!both || h === lastH)) return;
+        lastW = w; lastH = h;
+        el.style.width = `${w}px`;
+        if (both) el.style.height = `${h}px`;
+        if (side === "left") left(startL - (el.offsetWidth - startW));   // anchor right edge
+        onResize && onResize();
+      };
+      const up = () => {
+        document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
+        document.body.style.cursor = ""; onSettle && onSettle();
+      };
+      document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
+    });
+  }
 }
 
 // Every node reachable by following edges OUT of `id` (its downstream subtree).
@@ -2763,9 +3017,22 @@ function descendantsOf(id) {
 }
 
 function startMove(id, ev) {
+  // Which other nodes ride along with the lead:
+  //   • part of a multi-selection -> the whole selection
+  //   • else Shift -> the subtree flowing out of this node
+  let extra;
+  if (selected.size > 1 && selected.has(id)) extra = [...selected].filter((x) => x !== id);
+  else if (ev.shiftKey) extra = descendantsOf(id);
+  else extra = [];
+  moveNodes(id, extra, ev);
+}
+
+// Drag `id` (the lead, follows the cursor) plus every node in `extra` by the same world
+// delta. Used by single drag, shift-subtree drag, multi-select drag, and group-title drag.
+function moveNodes(id, extra, ev) {
   const p = pos.get(id);
-  // Shift: drag the whole subtree that flows out of this node.
-  const group = ev.shiftKey ? descendantsOf(id).map((gid) => ({ gid, gp: pos.get(gid) })).filter((g) => g.gp) : [];
+  if (!p) return;
+  const group = extra.map((gid) => ({ gid, gp: pos.get(gid) })).filter((g) => g.gp && g.gid !== id);
   const starts = group.map((g) => ({ ...g, sx: g.gp.x, sy: g.gp.y }));
   const start = { px: p.x, py: p.y };
   // Track the cursor in WORLD space off the LIVE pan/zoom every move — so a pan happening
@@ -2782,25 +3049,58 @@ function startMove(id, ev) {
     positionNode(id);
     for (const g of starts) { g.gp.x = snap(g.sx + dx); g.gp.y = snap(g.sy + dy); positionNode(g.gid); }
     drawEdges();
+    groups.renderGroups();   // group boxes hug their members live
   };
-  const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); resizeCanvas(); savePositions(); };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
+    groups.absorb([id, ...extra.filter((x) => x !== id)]);   // dropped inside a group box -> join it
+    resizeCanvas(); groups.renderGroups(); persist.layout(); renderNodeMap();
+  };
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
 }
+// Drag a node by a control that ALSO has a click action (collapse caret, title input):
+// only begin moving once the cursor passes a small threshold; a plain click (no move)
+// falls through to the control's own handler (toggle / focus-to-rename).
+function dragFromHandle(id, ev, div, handle) {
+  const start = { x: ev.clientX, y: ev.clientY };
+  let dragging = false;
+  const onMove = (e) => {
+    if (dragging) return;
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 4) return;
+    dragging = true;
+    cleanup();
+    if (handle.tagName === "INPUT") { handle.blur(); window.getSelection()?.removeAllRanges(); }
+    // a drag must NOT also fire the control's click (collapse toggle / input focus). The
+    // trailing click fires synchronously on mouseup — catch it, then drop the guard on the
+    // next tick so a later genuine click isn't eaten.
+    const suppress = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
+    div.addEventListener("click", suppress, true);
+    setTimeout(() => div.removeEventListener("click", suppress, true), 0);
+    startMove(id, ev);
+  };
+  function cleanup() { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", cleanup); }
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", cleanup);
+}
 function positionNode(id) { const el = nodeEls.get(id); const p = pos.get(id); if (el && p) { el.style.left = `${p.x}px`; el.style.top = `${p.y}px`; } }
 
-function startWire(winId, ev) {
+// Drag a wire out of a node's `.port.out` to a dataset node. ``srcId`` is the source node
+// id (win:… / price:…); ``onDrop(ds)`` commits the chosen target dataset.
+function startWire(srcId, ev, onDrop) {
   ev.preventDefault();
   ev.stopPropagation();
   const rect = $("graph").getBoundingClientRect();
-  const p = pos.get(`win:${winId}`);
-  wire = { winId, x1: p.x + 210, y1: p.y + 28, x2: p.x + 210, y2: p.y + 28 };
+  const p = pos.get(srcId);
+  if (!p) return;
+  const rx = nw(srcId);   // right edge — where the out-port sits
+  wire = { x1: p.x + rx, y1: p.y + 28, x2: p.x + rx, y2: p.y + 28 };
   const toWorld = (e) => ({ x: (e.clientX - rect.left - view.panX) / view.zoom, y: (e.clientY - rect.top - view.panY) / view.zoom });
   const onMove = (e) => { const w = toWorld(e); wire.x2 = w.x; wire.y2 = w.y; drawEdges(); };
   const onUp = (e) => {
     document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
     const target = document.elementFromPoint(e.clientX, e.clientY)?.closest(".gnode.dataset");
-    if (target) { model.setDataset(winId, target.dataset.ds); autosave(); }
+    if (target) { onDrop(target.dataset.ds); autosave(); }
     wire = null; render();
   };
   document.addEventListener("mousemove", onMove);
@@ -2840,11 +3140,14 @@ function updateDatasetNodes() {
   for (const ds of model.datasets()) {
     const el = document.getElementById(`node-ds:${ds}`);
     if (!el) continue;
-    const d = live[ds] || { present: 0, total: 0, last_op: null, last_ts: null };
+    const d = live[ds] || { present: 0, total: 0, removed: 0, last_op: null, last_ts: null };
+    const removed = d.removed ?? Math.max(0, (d.total || 0) - (d.present || 0));
     const big = el.querySelector(".big");
-    if (big) big.innerHTML = `${d.present}<span class="muted"> / ${d.total}</span>`;
-    const last = el.querySelectorAll(".gn-body .muted")[0];
-    if (last) last.textContent = `${d.last_op || "—"} ${d.last_ts ? d.last_ts.slice(11) : ""}`;
+    if (big) big.textContent = `${d.present}`;
+    const unit = el.querySelector(".ds-unit");
+    if (unit) unit.textContent = `item${d.present === 1 ? "" : "s"}${removed ? ` · ${removed} removed` : ""}`;
+    const upd = el.querySelector(".ds-updated");
+    if (upd) upd.textContent = d.last_ts ? `updated ${fmtWhen(d.last_ts)}` : "not collected yet";
     const header = el.querySelector(".gn-h");
     if (header && prevPresent[ds] !== undefined && prevPresent[ds] !== d.present) {
       header.classList.remove("pulse"); void header.offsetWidth; header.classList.add("pulse");
@@ -2860,22 +3163,25 @@ async function refreshGames(select) {
 
 async function loadGame(name) {
   if (!name) return;
+  await persist.flush();   // commit any pending save before switching games
   const done = timed(`load game ${name}`);
-  const profile = await api.getProfile(name);
+  const { profile, local, migrated } = await persist.open(name);
   done();
   model.load(profile);
-  pos.clear();
   nodeEls.clear();
   $("gnodes").innerHTML = "";
   for (const winId of [...imageCanvases.keys()]) closeImage(winId);
   batchesState.clear();   // batches render inline per node; drop stale selection state
-  loadPositions();   // restore saved node positions for this game
+  selected.clear();       // drop any multi-selection from the previous game
+  hydrateLayout();        // restore node positions/sizes/collapse/open-images from the profile
+  applyLocal(local);      // restore canvas zoom/pan + minimap from the per-device sidecar
   render();
   // reopen saved images (canvas lives in node); awaited so boot can tell when the
   // initial image loads (and the detects they fire) have actually started
   await Promise.all(pendingOpenImages.map((winId) => (model.window(winId) ? openImage(winId) : null)));
   pendingOpenImages = [];
   resetHistory();   // fresh undo/redo baseline for this game
+  if (migrated) persist.layout();   // lock in node layout imported from legacy localStorage
   refreshLive();
   setStatus(`loaded ${name}`);
 }
@@ -2889,15 +3195,365 @@ $("newGameBtn").addEventListener("click", () => {
   render(); autosave();
   refreshGames(name);
 });
+// ---- node map (fixed overview / jump-to) ----------------------------------
+// A draggable, fixed-to-screen panel that mirrors the graph two ways: a scaled MINI-MAP
+// (nodes + connection lines + a viewport box) or a TEXT LIST built by walking the edges.
+// Clicking any node in either view smoothly pans+zooms to it. Visibility, position and
+// mode persist (global UI pref, not per-game).
+
+const NM_TYPE = { win: "window", prev: "preview", reg: "region", det: "detect",
+  sb: "scrollbar", item: "item", ds: "dataset", bat: "batches", sub: "subset",
+  price: "price", dict: "dictionary" };
+const NM_COLOR = { game: "#7aa2f7", window: "#9ece6a", preview: "#56b6c2", region: "#e0af68",
+  detect: "#bb9af7", scrollbar: "#f7768e", item: "#7dcfff", dataset: "#e5c07b",
+  batches: "#c0caf5", subset: "#73daca", price: "#ff9e64", dictionary: "#a9b1d6" };
+const nmTypeOf = (id) => (id === "game" ? "game" : NM_TYPE[id.split(":")[0]] || "node");
+const nmColor = (id) => NM_COLOR[nmTypeOf(id)] || "#9aa5ce";
+
+function nodeLabel(n) {
+  switch (n.type) {
+    case "game": return n.ref.name || "game";
+    case "window": return n.ref.id;
+    case "preview": return `${n.ref.id} ▸ preview`;
+    case "region": return n.ref.id + (n.field ? ` → ${n.field.id}` : "");
+    case "detect": return `detect: ${n.ref.id}`;
+    case "scrollbar": return "scrollbar";
+    case "item": return n.ref.id;
+    case "dataset": return n.ref;
+    case "batches": return `${n.ref} ▸ batches`;
+    case "subset": return n.ref.id;
+    case "price": return n.ref.id;
+    case "dictionary": return n.ref.name || n.ref.id;
+    default: return n.id;
+  }
+}
+
+// Compact id for a map box (no decorations — the box is tiny).
+function nodeShort(n) {
+  switch (n.type) {
+    case "game": return n.ref.name || "game";
+    case "preview": return "preview";
+    case "scrollbar": return "scroll";
+    case "batches": return "batch";
+    case "dataset": return n.ref;
+    default: return n.ref?.id ?? n.id;
+  }
+}
+
+// Largest font that fits ``label`` in a ``bw``×``bh`` box, trying both orientations and
+// picking whichever is bigger (so a tall box gets vertical text). ~0.58em per char.
+function nmFit(label, bw, bh) {
+  const n = Math.max(1, label.length), CW = 0.58, PAD = 0.86;
+  const fh = Math.min(bh * PAD, (bw * PAD) / (n * CW));   // horizontal
+  const fv = Math.min(bw * PAD, (bh * PAD) / (n * CW));   // rotated 90°
+  return { fs: Math.min(11, Math.max(fh, fv)), vertical: fv > fh };
+}
+
+let nmPanel = null;
+let nmTransform = null;   // last map projection {ox,oy,s} for the viewport indicator
+// Minimap state lives in the per-device sidecar (persist.local), restored by applyLocal()
+// when a game loads. Starts hidden; applyLocal + nmApplyState reflect saved state.
+const nmState = { visible: false, x: null, y: null, w: null, h: null, mode: "map" };
+function nmSave() { persist.local(); }
+
+// Reflect nmState (just loaded from the sidecar) onto the panel: size, position, mode,
+// visibility. Called by applyLocal after a game loads.
+function nmApplyState() {
+  if (!nmPanel) return;
+  if (Number.isFinite(nmState.w)) nmPanel.style.width = `${nmState.w}px`;
+  if (Number.isFinite(nmState.h)) nmPanel.style.height = `${nmState.h}px`;
+  if (Number.isFinite(nmState.x) && Number.isFinite(nmState.y)) nmPlace(nmState.x, nmState.y);
+  nmPanel.querySelector(".nm-mode").textContent = nmState.mode === "list" ? "▤" : "⊞";
+  nmPanel.querySelector(".nm-title").textContent = nmState.mode === "list" ? "node list" : "node map";
+  nmPanel.hidden = !nmState.visible;
+  $("nodemapBtn")?.classList.toggle("active", nmState.visible);
+  if (nmState.visible) renderNodeMap();
+}
+
+function buildNodeMap() {
+  if (nmPanel) return;
+  const el = document.createElement("div");
+  el.id = "nodemap"; el.className = "nodemap"; el.hidden = !nmState.visible;
+  el.innerHTML = `<div class="nm-head">
+      <span class="nm-title">${nmState.mode === "list" ? "node list" : "node map"}</span>
+      <button class="nm-mode" title="toggle map / list view">${nmState.mode === "list" ? "▤" : "⊞"}</button>
+      <button class="nm-close" title="close">✕</button>
+    </div>
+    <div class="nm-body"></div>`;
+  document.body.appendChild(el);
+  nmPanel = el;
+  if (Number.isFinite(nmState.w)) el.style.width = `${nmState.w}px`;
+  if (Number.isFinite(nmState.h)) el.style.height = `${nmState.h}px`;
+  // place: saved position, else top-right under the topbar — clamped on-screen
+  nmPlace(Number.isFinite(nmState.x) ? nmState.x : window.innerWidth - 288,
+          Number.isFinite(nmState.y) ? nmState.y : 56);
+
+  // persist size (CSS resize handle) + re-fit the map to the new body, debounced
+  let rt = null;
+  new ResizeObserver(() => {
+    if (!nmState.visible || !el.offsetWidth) return;   // ignore the 0×0 size when hidden
+    nmState.w = el.offsetWidth; nmState.h = el.offsetHeight;
+    if (nmState.mode === "map") renderNodeMap();   // refit the map to the new size
+    clearTimeout(rt); rt = setTimeout(nmSave, 300);
+  }).observe(el);
+
+  el.querySelector(".nm-mode").addEventListener("click", () =>
+    setNodeMapMode(nmState.mode === "map" ? "list" : "map"));
+  el.querySelector(".nm-close").addEventListener("click", () => setNodeMapVisible(false));
+  el.querySelector(".nm-head").addEventListener("mousedown", nmDragHead);
+  // resize grips on both bottom corners (width only — height tracks the content)
+  addResizeGrips(el, {
+    both: false,
+    left: (v) => { if (v === undefined) return el.offsetLeft; const x = Math.max(4, v); el.style.left = `${x}px`; nmState.x = x; },
+    onSettle: nmSave,
+  });
+  // jump-to: click a node in either view -> select + smooth pan/zoom
+  el.querySelector(".nm-body").addEventListener("click", (ev) => {
+    const t = ev.target.closest("[data-id]");
+    if (!t) return;
+    const id = t.dataset.id;
+    if (!nodeEls.has(id)) return;
+    focusNode(id); panZoomTo(id); nmSyncSelection();
+  });
+}
+
+// Keep the panel fully on-screen and below the topbar (never draggable over it / off-screen).
+function nmClamp(x, y, w, h) {
+  const top = (document.querySelector(".topbar")?.offsetHeight || 48) + 4;
+  const maxX = Math.max(4, window.innerWidth - w - 4);
+  const maxY = Math.max(top, window.innerHeight - h - 4);
+  return [Math.max(4, Math.min(maxX, x)), Math.max(top, Math.min(maxY, y))];
+}
+function nmPlace(x, y) {
+  const [cx, cy] = nmClamp(x, y, nmPanel.offsetWidth, nmPanel.offsetHeight);
+  nmPanel.style.left = `${cx}px`; nmPanel.style.top = `${cy}px`;
+  nmState.x = cx; nmState.y = cy;
+}
+
+function nmDragHead(ev) {
+  if (ev.target.closest("button")) return;   // mode/close clicks aren't drags
+  ev.preventDefault();
+  const r = nmPanel.getBoundingClientRect();
+  const dx = ev.clientX - r.left, dy = ev.clientY - r.top;
+  document.body.style.cursor = "grabbing";
+  const mv = (e) => nmPlace(e.clientX - dx, e.clientY - dy);
+  const up = () => {
+    document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
+    document.body.style.cursor = ""; nmSave();
+  };
+  document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
+}
+
+function setNodeMapVisible(on) {
+  nmState.visible = on; nmSave();
+  if (nmPanel) nmPanel.hidden = !on;
+  $("nodemapBtn")?.classList.toggle("active", on);
+  if (on) renderNodeMap();
+}
+function setNodeMapMode(mode) {
+  nmState.mode = mode; nmSave();
+  if (nmPanel) {
+    nmPanel.querySelector(".nm-mode").textContent = mode === "list" ? "▤" : "⊞";
+    nmPanel.querySelector(".nm-title").textContent = mode === "list" ? "node list" : "node map";
+  }
+  renderNodeMap();
+}
+
+function nmSyncSelection() {
+  if (!nmPanel) return;
+  nmPanel.querySelectorAll("[data-id]").forEach((e) => e.classList.toggle("sel", e.dataset.id === selectedNodeId));
+}
+
+function renderNodeMap() {
+  if (!nmPanel || !nmState.visible) return;
+  const body = nmPanel.querySelector(".nm-body");
+  body.classList.toggle("nm-bmap", nmState.mode === "map");   // centre the wrapped svg
+  if (nmState.mode === "list") nmRenderList(body); else nmRenderMap(body);
+}
+
+function nmRenderMap(body) {
+  const ids = [...pos.keys()].filter((id) => nodeEls.has(id) && Number.isFinite(pos.get(id).x));
+  if (!ids.length) { body.innerHTML = `<div class="nm-empty">no nodes</div>`; nmTransform = null; return; }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const rects = ids.map((id) => {
+    const p = pos.get(id), w = nw(id), h = nh(id);
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x + w); maxY = Math.max(maxY, p.y + h);
+    return { id, x: p.x, y: p.y, w, h };
+  });
+  // Resizing drives WIDTH only; the panel height is then locked to the content's aspect
+  // (nmFitPanelHeight) so the map always fills the panel exactly — no empty space.
+  const availW = Math.max(120, (body.clientWidth || 276) - 12), PAD = 8;
+  const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
+  const s = (availW - 2 * PAD) / spanX;        // fit to width; height follows
+  const W = availW, H = spanY * s + 2 * PAD;   // svg wraps content tightly
+  const ox = PAD - minX * s, oy = PAD - minY * s;
+  nmTransform = { ox, oy, s };
+  const X = (v) => ox + v * s, Y = (v) => oy + v * s;
+  const labels = new Map(model.nodes().map((n) => [n.id, nodeShort(n)]));
+  // Build edges from the ROUTED geometry (orthogonal polylines), never the live DOM paths
+  // which can be mid-bezier during a morph. Uncached links fall back to a straight segment —
+  // still never a bezier. World coords, reprojected by one group transform (same as X/Y).
+  const edgePaths = buildLinks().map((l) => {
+    const c = routeCache.get(l.key);
+    const pts = (c && c.pts && c.pts.length >= 2) ? c.pts : [l.p1, l.p2];
+    const d = polylinePath(pts, ROUTE.corners, ROUTE.radius);
+    return d && !d.includes("NaN") ? `<path d="${d}" />` : "";
+  }).join("");
+  const node = (r) => {
+    const bw = Math.max(2, r.w * s), bh = Math.max(2, r.h * s);
+    const x = X(r.x), y = Y(r.y), cx = x + bw / 2, cy = y + bh / 2;
+    const lbl = labels.get(r.id) || r.id;
+    const rect = `<rect class="nm-n${r.id === selectedNodeId ? " sel" : ""}" data-id="${esc(r.id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${nmColor(r.id)}"><title>${esc(lbl)}</title></rect>`;
+    // size the label to fit; rotate it 90° when that lets it be bigger; hide if it'd be unreadable
+    const f = nmFit(lbl, bw, bh);
+    const text = f.fs >= 3
+      ? `<text class="nm-lbl" x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" font-size="${f.fs.toFixed(1)}"${f.vertical ? ` transform="rotate(90 ${cx.toFixed(1)} ${cy.toFixed(1)})"` : ""}>${esc(lbl)}</text>`
+      : "";
+    return rect + text;
+  };
+  // The viewport indicator is a plain DIV moved with a CSS transform (compositor-only) — it
+  // must NOT be an SVG element whose geometry attributes are rewritten each pan frame, since
+  // that forces a layout, and with this huge DOM each layout is ~3ms (the pan lag).
+  body.innerHTML = `<div class="nm-wrap" style="width:${W.toFixed(1)}px;height:${H.toFixed(1)}px;">
+    <svg class="nm-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+      <g class="nm-edges" transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})">${edgePaths}</g>
+      <g class="nm-nodes">${rects.map(node).join("")}</g></svg>
+    <div class="nm-vp"></div>
+  </div>`;
+  nmUpdateViewport();
+  nmFitPanelHeight(H);   // shrink/grow the panel height to the content -> no empty space
+}
+
+// Lock the panel height to the map content (map mode) so resizing width never leaves a
+// vertical gap. Height-only write: the next ResizeObserver tick re-renders with the same
+// width and converges (no loop).
+function nmFitPanelHeight(svgH) {
+  if (!nmPanel || nmState.mode !== "map") return;
+  const headerH = nmPanel.querySelector(".nm-head")?.offsetHeight || 28;
+  const targetH = Math.round(svgH + 12 + headerH + 2);   // body padding + header + borders
+  if (Math.abs(nmPanel.offsetHeight - targetH) > 1) {
+    nmPanel.style.height = `${targetH}px`; nmState.h = targetH;
+  }
+}
+
+function nmRenderList(body) {
+  const nodes = model.nodes();
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const kids = new Map(), indeg = new Map(nodes.map((n) => [n.id, 0]));
+  for (const e of model.edges()) {
+    if (!byId.has(e.from) || !byId.has(e.to)) continue;
+    if (!kids.has(e.from)) kids.set(e.from, []);
+    kids.get(e.from).push(e.to);
+    indeg.set(e.to, (indeg.get(e.to) || 0) + 1);
+  }
+  const seen = new Set(), rows = [];
+  const walk = (id, depth) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const n = byId.get(id); if (!n) return;
+    rows.push({ id, depth, label: nodeLabel(n), type: n.type });
+    for (const c of (kids.get(id) || [])) walk(c, depth + 1);
+  };
+  for (const n of nodes) if ((indeg.get(n.id) || 0) === 0) walk(n.id, 0);   // roots first
+  for (const n of nodes) walk(n.id, 0);                                      // any orphans left
+  body.innerHTML = `<div class="nm-list">${rows.map((r) =>
+    `<div class="nm-row${r.id === selectedNodeId ? " sel" : ""}" data-id="${esc(r.id)}" style="padding-left:${6 + r.depth * 14}px">
+       <span class="nm-dot" style="background:${NM_COLOR[r.type] || "#9aa5ce"}"></span>${esc(r.label)}</div>`).join("")
+    || `<div class="nm-empty">no nodes</div>`}</div>`;
+}
+
+// Cache the graph viewport box — nmUpdateViewport runs every pan FRAME, and reading
+// getBoundingClientRect right after applyView writes the transform forces a sync layout
+// (the pan lag). The box only changes on resize, so cache and invalidate there.
+let _graphBox = null;
+function graphBox() { return _graphBox || (_graphBox = $("graph").getBoundingClientRect()); }
+window.addEventListener("resize", () => { _graphBox = null; });
+
+function nmUpdateViewport() {
+  if (!nmPanel || !nmState.visible || nmState.mode !== "map" || !nmTransform) return;
+  const vp = nmPanel.querySelector(".nm-vp"); if (!vp) return;
+  const rect = graphBox();
+  const { ox, oy, s } = nmTransform;
+  const x = ox + (-view.panX / view.zoom) * s, y = oy + (-view.panY / view.zoom) * s;
+  const w = Math.max(0, (rect.width / view.zoom) * s), h = Math.max(0, (rect.height / view.zoom) * s);
+  // width/height only change on ZOOM (not pan) — set them rarely; the per-frame pan update
+  // is a pure transform (no layout/paint of the box)
+  if (vp._w !== w || vp._h !== h) { vp.style.width = `${w.toFixed(1)}px`; vp.style.height = `${h.toFixed(1)}px`; vp._w = w; vp._h = h; }
+  vp.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+}
+
+buildNodeMap();
+$("nodemapBtn")?.classList.toggle("active", nmState.visible);
+$("nodemapBtn")?.addEventListener("click", () => setNodeMapVisible(!nmState.visible));
+window.addEventListener("resize", () => {
+  if (!nmPanel || !nmState.visible) return;
+  nmPlace(nmPanel.offsetLeft, nmPanel.offsetTop);   // pull back in-bounds if the window shrank
+  renderNodeMap();
+});
+
 $("liveBtn").addEventListener("click", () => setLiveMode(!liveOn));
 $("precapBtn").addEventListener("click", () => openPrecaptureModal());
+$("selGroupBtn").addEventListener("click", () => {
+  if (selected.size < 1) return;
+  const g = groups.createGroup([...selected]);
+  if (g) { setStatus(`grouped ${g.members.length} nodes`); clearMultiSelect(); }
+});
+$("selClearBtn").addEventListener("click", () => deselectAll());
+$("backupsBtn").addEventListener("click", () => {
+  const name = model.profile.name;
+  if (!name) return setStatus("load a game first");
+  // restoring re-saves the backup live (server snapshots current first) -> reload it fresh
+  openBackupsModal(name, () => { loadGame(name); setStatus("restored backup"); });
+});
 $("graph").addEventListener("mousedown", (ev) => {
   // right-drag pans ANYWHERE (even over nodes/canvas), except form controls so
   // their native menus still work. Don't preventDefault — a plain right click
   // must still open the context menu; only an actual drag suppresses it.
   if (ev.button === 2) { if (!ev.target.closest("input,select,textarea")) startPan(ev); return; }
-  if (ev.button === 0 && !ev.target.closest(".gnode")) deselectAll();   // left-click clears selection
+  // left-drag on empty canvas: rubber-band multi-select (a plain click clears).
+  if (ev.button === 0 && !ev.target.closest(".gnode, .ggroup")) startMarquee(ev);
 });
+
+// Rubber-band selection: drag a rectangle on empty canvas to select every node it
+// touches. Highlights live; commits on release. A press with no drag clears selection.
+function startMarquee(ev) {
+  const box = $("graph").getBoundingClientRect();
+  const el = $("marquee");
+  const s = { x: ev.clientX, y: ev.clientY };
+  // screen point -> world (matches moveNodes' toWorld)
+  const toWorld = (cx, cy) => ({ x: (cx - box.left - view.panX) / view.zoom, y: (cy - box.top - view.panY) / view.zoom });
+  let moved = false;
+  const caught = () => {
+    const a = toWorld(s.x, s.y), b = toWorld(_mx, _my);
+    const x1 = Math.min(a.x, b.x), y1 = Math.min(a.y, b.y), x2 = Math.max(a.x, b.x), y2 = Math.max(a.y, b.y);
+    const hit = [];
+    for (const [id] of nodeEls) {
+      const r = nodeRect(id);
+      if (r && r.x < x2 && r.x + r.w > x1 && r.y < y2 && r.y + r.h > y1) hit.push(id);
+    }
+    return hit;
+  };
+  let _mx = s.x, _my = s.y;
+  const onMove = (e) => {
+    _mx = e.clientX; _my = e.clientY;
+    if (!moved && Math.hypot(_mx - s.x, _my - s.y) < 4) return;
+    if (!moved) { moved = true; el.hidden = false; deselectAll(); }
+    const left = Math.min(s.x, _mx) - box.left, top = Math.min(s.y, _my) - box.top;
+    el.style.left = `${left}px`; el.style.top = `${top}px`;
+    el.style.width = `${Math.abs(_mx - s.x)}px`; el.style.height = `${Math.abs(_my - s.y)}px`;
+    const hit = new Set(caught());
+    for (const [id, nel] of nodeEls) nel.classList.toggle("multisel", hit.has(id));
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
+    el.hidden = true;
+    if (moved) setMultiSelect(caught());
+    else deselectAll();
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
 $("graph").addEventListener("contextmenu", (ev) => {
   if (suppressNextMenu) { ev.preventDefault(); suppressNextMenu = false; }   // a pan-drag just ended here
 });
@@ -2926,7 +3582,7 @@ document.addEventListener("keydown", (ev) => {
     if (selectedNodeId && pos.has(selectedNodeId)) {
       const p = pos.get(selectedNodeId);
       p.x = snap(p.x + dir[0] * GRID); p.y = snap(p.y + dir[1] * GRID);
-      positionNode(selectedNodeId); drawEdges(); savePositions();
+      positionNode(selectedNodeId); drawEdges(); persist.layout();
       ev.preventDefault();
     }
     return;

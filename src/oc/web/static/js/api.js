@@ -4,7 +4,7 @@
 // parent still holds the port) leaves connections hanging forever instead of refusing
 // them — without a timeout the whole UI just silently stalls. Light endpoints fail
 // fast; OCR endpoints get longer since they queue behind the one GPU lock.
-const LIGHT_MS = 10_000;
+const LIGHT_MS = 30_000;
 const OCR_MS = 60_000;
 function tfetch(url, opts = {}, ms = LIGHT_MS) {
   const deadline = AbortSignal.timeout(ms);
@@ -50,6 +50,23 @@ export async function saveProfile(profile, merge = true) {
   if (!r.ok) throw new Error(`save: ${r.status} ${await r.text()}`);
   return r.json();
 }
+
+// Per-device graph viewport (zoom/pan + minimap), a gitignored sidecar — NOT part of
+// the profile. Node layout itself lives in the profile. Used only by persist.js.
+export const graphLocal = {
+  get: (name) => tfetch(`/api/profiles/${encodeURIComponent(name)}/graphlocal`).then((r) => (r.ok ? r.json() : {})).catch(() => ({})),
+  put: (name, state) => tfetch(`/api/profiles/${encodeURIComponent(name)}/graphlocal`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state),
+  }).then((r) => r.json()).catch(() => {}),
+};
+
+// Versioned profile backups: list snapshots (meta only), fetch one's full profile,
+// or restore one (which re-saves it live and snapshots the current state first).
+export const backups = {
+  list: (name) => tfetch(`/api/profiles/${encodeURIComponent(name)}/backups`).then((r) => (r.ok ? r.json() : [])),
+  get: (name, stamp) => tfetch(`/api/profiles/${encodeURIComponent(name)}/backups/${encodeURIComponent(stamp)}`).then((r) => ok(r, "backup").then((x) => x.json())),
+  restore: (name, stamp) => tfetch(`/api/profiles/${encodeURIComponent(name)}/backups/${encodeURIComponent(stamp)}/restore`, { method: "POST" }).then((r) => ok(r, "restore").then((x) => x.json())),
+};
 
 // OCR the current layout. Pass game+capture to read that stashed image (the one
 // shown in the image node) instead of capturing the live window.
@@ -151,7 +168,7 @@ export const precapture = {
   save: (game, signal) => _pre(game, "save", signal, "POST", 180_000),   // commit can be slow; allow 3 min
   status: (game, signal) => tfetch(`/api/precapture/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
   // saved recording sessions: list / load / rename / delete. Each returns { sessions, status }.
-  sessions: (game, signal) => _pre(game, "sessions", signal, "GET", 30_000),   // first call may warm the dedup cache
+  sessions: (game, signal) => _pre(game, "sessions", signal, "GET"),
   loadSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/load`, signal),
   renameSession: (game, sid, label, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/rename?label=${encodeURIComponent(label || "")}`, signal),
   deleteSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}`, signal, "DELETE"),
@@ -217,16 +234,33 @@ export const editDatasetEvent = (game, dataset, batch, eventId, values) =>
 export const removeDatasetEvent = (game, dataset, batch, eventId) =>
   _evt(game, dataset, batch, eventId, "remove");
 
-// Subsets: a filtered/derived view over a dataset. Returns { columns, rows, enriched }.
+// Prices: warframe.market price history / portfolio for a dataset, plus the throttled
+// background sweep. Reads come straight off the stored price file; refresh drives the
+// sweep and status polls its progress.
+const _pg = (game) => encodeURIComponent(game);
+export const prices = {
+  summary: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/summary?dataset=${encodeURIComponent(dataset)}`).then((r) => ok(r, "price summary").then((x) => x.json())),
+  portfolio: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/portfolio?dataset=${encodeURIComponent(dataset)}`).then((r) => ok(r, "portfolio").then((x) => x.json())),
+  item: (game, slug) => tfetch(`/api/prices/${_pg(game)}/item/${encodeURIComponent(slug)}`).then((r) => ok(r, "price item").then((x) => x.json())),
+  movers: (game, days = 7, threshold = 0.15) => tfetch(`/api/prices/${_pg(game)}/movers?days=${days}&threshold=${threshold}`).then((r) => ok(r, "movers").then((x) => x.json())),
+  refresh: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/refresh?dataset=${encodeURIComponent(dataset)}`, { method: "POST" }, 30_000).then((r) => ok(r, "price refresh").then((x) => x.json())),
+  cancel: (game) => tfetch(`/api/prices/${_pg(game)}/cancel`, { method: "POST" }).then((r) => r.json()),
+  status: (game) => tfetch(`/api/prices/${_pg(game)}/status`).then((r) => r.json()),
+};
+
+// Dictionaries: the shared term files under config/dictionaries/. The picker lists
+// what's available (source + word count); get() fetches one file's terms so a newly
+// referenced dictionary node shows them at once.
+export const dictionaries = {
+  list: () => tfetch("/api/dictionaries").then((r) => (r.ok ? r.json() : [])),
+  get: (source) => tfetch(`/api/dictionaries/${encodeURIComponent(source)}`).then((r) => ok(r, "dictionary").then((x) => x.json())),
+};
+
+// Views: outer-join the source datasets on the shared key, then filter/derive/sort.
+// Returns { subset, datasets, columns, rows }.
 export async function getSubset(game, subset) {
   const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/subset/${encodeURIComponent(subset)}`);
   if (!r.ok) throw new Error(`subset: ${r.status} ${await r.text()}`);
-  return r.json();
-}
-// Same view, but also runs the subset's enrichers (network — explicit action).
-export async function enrichSubset(game, subset) {
-  const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/subset/${encodeURIComponent(subset)}/enrich`, { method: "POST" });
-  if (!r.ok) throw new Error(`enrich: ${r.status} ${await r.text()}`);
   return r.json();
 }
 

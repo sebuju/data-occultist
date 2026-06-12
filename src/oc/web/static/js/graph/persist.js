@@ -1,0 +1,132 @@
+// The single owner of graph persistence. Nothing else in the front-end touches
+// localStorage or the profile/graphlocal endpoints — every save/load funnels through
+// here. It knows WHERE each piece of state lives:
+//
+//   • node CONFIG (positions, sizes, collapse, table widths, open images) → the
+//     profile YAML, via the normal profile PUT. Travels with the game.
+//   • per-device VIEWPORT (canvas zoom/pan, minimap) → a gitignored JSON sidecar.
+//
+// main.js stays the owner of the live state containers; it hands persist four small
+// callbacks (collect/apply for each side) so this module never reaches into them.
+//
+// Saves are debounced. content() vs layout() both PUT the whole profile (which now
+// carries `layout`); they differ only in whether the content-side callback fires —
+// so a node drag never enters undo/redo or triggers a preview re-read.
+
+import * as api from "../api.js";
+
+let M = null;                 // the GraphModel
+let collectLayout = null;     // () => write live node state into model.profile.layout
+let collectLocal = null;      // () => ({ view, minimap }) for the sidecar
+let onContentSaved = null;    // () => UI refresh after a real content save
+
+let tProfile = null, tLocal = null;
+let pendingContent = false;
+const DEBOUNCE = 400;
+
+export function initPersist(opts) {
+  M = opts.model;
+  collectLayout = opts.collectLayout;
+  collectLocal = opts.collectLocal;
+  onContentSaved = opts.onContentSaved;
+}
+
+async function flushProfile() {
+  tProfile = null;
+  if (!M?.profile?.name) return;
+  collectLayout();                 // fold live node layout into the profile first
+  const wasContent = pendingContent;
+  pendingContent = false;
+  try {
+    await api.saveProfile(M.profile, false);   // full replace — the graph is complete
+    if (wasContent) onContentSaved?.();
+  } catch (e) {
+    if (onContentSaved) onContentSaved(String(e.message || e));   // surface the error
+  }
+}
+
+function scheduleProfile(isContent) {
+  if (isContent) pendingContent = true;
+  clearTimeout(tProfile);
+  tProfile = setTimeout(flushProfile, DEBOUNCE);
+}
+
+async function flushLocal() {
+  tLocal = null;
+  if (!M?.profile?.name) return;
+  try { await api.graphLocal.put(M.profile.name, collectLocal()); } catch { /* sidecar is best-effort */ }
+}
+
+export const persist = {
+  // A configuration edit: debounced profile save; fires onContentSaved on success.
+  content() { scheduleProfile(true); },
+  // A pure layout move (drag/resize/collapse/open-image): saved, but no UI side effects.
+  layout() { scheduleProfile(false); },
+  // Viewport/minimap change: debounced sidecar save.
+  local() { clearTimeout(tLocal); tLocal = setTimeout(flushLocal, DEBOUNCE); },
+
+  // Force any pending saves out immediately (e.g. before switching games).
+  async flush() {
+    if (tProfile) { clearTimeout(tProfile); await flushProfile(); }
+    if (tLocal) { clearTimeout(tLocal); await flushLocal(); }
+  },
+
+  // Load a game's profile + viewport sidecar, migrating any legacy localStorage once.
+  // Returns { profile, local, migrated }; main.js does model.load + hydrate.
+  async open(name) {
+    const [profile, local] = await Promise.all([api.getProfile(name), api.graphLocal.get(name)]);
+    const migrated = migrateLegacy(name, profile, local);
+    return { profile, local, migrated };
+  },
+};
+
+// ---- one-time migration off the old browser-localStorage scheme ------------------
+// Old keys: `oc.graph.<name>` (positions/sizes/collapsed/openImages/view), `oc.nodemap`
+// (minimap), `octbl:<id>` (table column state). Import into profile.layout + sidecar,
+// then delete them. Runs only while the profile has no layout yet, so it never clobbers
+// authored layout. Returns true if anything was imported (so main can persist it).
+function migrateLegacy(name, profile, local) {
+  let migrated = false;
+  const hasLayout = profile.layout?.nodes && Object.keys(profile.layout.nodes).length;
+  const rawStr = localStorage.getItem(`oc.graph.${name}`);
+  if (rawStr && !hasLayout) {
+    try {
+      const raw = JSON.parse(rawStr);
+      const L = (profile.layout = profile.layout || {});
+      const nodes = (L.nodes = {});
+      for (const [id, p] of Object.entries(raw.positions || {})) {
+        if (Number.isFinite(p?.x) && Number.isFinite(p?.y)) nodes[id] = { x: p.x, y: p.y };
+      }
+      for (const [id, s] of Object.entries(raw.nodeSizes || {})) {
+        nodes[id] = { ...(nodes[id] || { x: 0, y: 0 }), w: s.w, h: s.h };
+      }
+      for (const id of raw.collapsed || []) {
+        nodes[id] = { ...(nodes[id] || { x: 0, y: 0 }), collapsed: true };
+      }
+      L.open_images = raw.openImages || [];
+      L.tables = L.tables || {};
+      for (const lk of localStorageKeys("octbl:")) {
+        try { L.tables[lk.slice(6)] = JSON.parse(localStorage.getItem(lk)); } catch { /* skip */ }
+      }
+      if (raw.view) local.view = raw.view;
+      migrated = true;
+    } catch { /* corrupt legacy blob — ignore */ }
+  }
+  const nm = localStorage.getItem("oc.nodemap");
+  if (nm && !local.minimap) { try { local.minimap = JSON.parse(nm); migrated = true; } catch { /* ignore */ } }
+
+  // wipe the legacy keys regardless, so the app never reads localStorage again
+  localStorage.removeItem(`oc.graph.${name}`);
+  localStorage.removeItem("oc.nodemap");
+  for (const lk of localStorageKeys("octbl:")) localStorage.removeItem(lk);
+  return migrated;
+}
+
+function localStorageKeys(prefix) {
+  const out = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(prefix)) out.push(k);
+  }
+  return out;
+}
