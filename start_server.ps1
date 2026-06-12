@@ -36,7 +36,15 @@ for ($i = 0; $i -lt 25 -and (Get-NetTCPConnection -LocalPort $Port -State Listen
 }
 
 $uvArgs = @('-m', 'uvicorn', 'oc.web.app:app', '--host', '127.0.0.1', '--port', "$Port")
-if (-not $NoReload) { $uvArgs += '--reload' }
+if (-not $NoReload) {
+  # auto-reload, but never restart on edits under scripts/ or tests/ (not served code).
+  # reload-exclude globs are fnmatch-matched against the full path, so wrap in * and cover
+  # both path separators for Windows.
+  $uvArgs += '--reload'
+  foreach ($d in 'scripts', 'tests') {
+    $uvArgs += @('--reload-exclude', "*/$d/*", '--reload-exclude', "*\$d\*")
+  }
+}
 if ($Background) {
   Start-Process -FilePath $py -ArgumentList $uvArgs -WorkingDirectory $root -WindowStyle Hidden
   Write-Host "server (re)started on http://127.0.0.1:$Port (background)"
