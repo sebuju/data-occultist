@@ -20,19 +20,13 @@ export class GraphModel {
   // effective dataset id for a window (defaults to its own id)
   datasetOf(win) { return win.dataset || win.id; }
 
-  // ---- datasets own the dedup key -----------------------------------------
+  // ---- datasets just receive/store rows; keys live on the items/windows ----
   datasetDef(id) { return (this.profile.datasets || []).find((d) => d.id === id) || null; }
   ensureDatasetDef(id) {
     let d = this.datasetDef(id);
-    if (!d) { d = { id, key_field: "name", strip_nonalnum: false, case_sensitive: false }; (this.profile.datasets = this.profile.datasets || []).push(d); }
+    if (!d) { d = { id }; (this.profile.datasets = this.profile.datasets || []).push(d); }
     return d;
   }
-  datasetKey(id) { const d = this.datasetDef(id); return d ? d.key_field : "name"; }
-  setDatasetKey(id, key) { this.ensureDatasetDef(id).key_field = key; }
-  datasetStrip(id) { return !!(this.datasetDef(id) || {}).strip_nonalnum; }
-  datasetCase(id) { return !!(this.datasetDef(id) || {}).case_sensitive; }
-  setDatasetStrip(id, on) { this.ensureDatasetDef(id).strip_nonalnum = !!on; }
-  setDatasetCase(id, on) { this.ensureDatasetDef(id).case_sensitive = !!on; }
   // rename a dataset: move the def id and repoint every window that feeds it
   renameDataset(oldId, newId) {
     newId = (newId || "").trim();
@@ -123,15 +117,11 @@ export class GraphModel {
   }
   setDictionaryTerms(id, terms) { const d = this.dictionary(id); if (d) d.terms = terms; }
 
-  // duplicate a dataset's definition (key + options) under a fresh id; a window can
-  // then be wired to it
+  // duplicate a dataset's definition under a fresh id; a window can then be wired to it
   cloneDataset(id) {
-    const src = this.datasetDef(id) || { key_field: this.datasetKey(id), strip_nonalnum: false, case_sensitive: false };
     let n = 2, newId = `${id}-copy`;
     while (this.datasets().includes(newId)) newId = `${id}-copy${n++}`;
-    (this.profile.datasets = this.profile.datasets || []).push({
-      id: newId, key_field: src.key_field, strip_nonalnum: !!src.strip_nonalnum, case_sensitive: !!src.case_sensitive,
-    });
+    (this.profile.datasets = this.profile.datasets || []).push({ id: newId });
     return newId;
   }
   removeDatasetDef(id) { this.profile.datasets = (this.profile.datasets || []).filter((d) => d.id !== id); }
@@ -181,7 +171,9 @@ export class GraphModel {
 
   renameWindow(oldId, newId) {
     const w = this.window(oldId);
-    if (w && newId && !this.profile.windows.some((x) => x.id === newId)) w.id = newId;
+    if (!w || !newId || this.profile.windows.some((x) => x.id === newId)) return false;
+    w.id = newId;
+    return true;
   }
 
   addField(winId, id) {
@@ -226,10 +218,11 @@ export class GraphModel {
   renameRegion(winId, regId, newId) {
     const w = this.window(winId);
     const r = this.region(winId, regId);
-    if (!w || !r || !newId || w.regions.some((x) => x.id === newId)) return;
+    if (!w || !r || !newId || w.regions.some((x) => x.id === newId)) return false;
     const fld = this.fieldOf(w, r);
     if (fld && fld.id === r.field) { fld.id = newId; r.field = newId; }
     r.id = newId;
+    return true;
   }
   regions(winId) { const w = this.window(winId); return (w && w.regions) || []; }
 
@@ -247,6 +240,13 @@ export class GraphModel {
   detect(winId, id) { const w = this.window(winId); return w && (w.detect || []).find((d) => d.id === id); }
   setDetectBox(winId, id, box) { const d = this.detect(winId, id); if (d) d.search = { x: box.x, y: box.y, w: box.w, h: box.h }; }
   removeDetect(winId, id) { const w = this.window(winId); if (w) w.detect = (w.detect || []).filter((d) => d.id !== id); }
+  renameDetect(winId, id, newId) {
+    const w = this.window(winId);
+    const d = this.detect(winId, id);
+    if (!w || !d || !newId || (w.detect || []).some((x) => x.id === newId)) return false;
+    d.id = newId;
+    return true;
+  }
   detects(winId) { const w = this.window(winId); return (w && w.detect) || []; }
 
   // ---- scrollbar (single box on the window's scroll config) ----------------
@@ -254,10 +254,9 @@ export class GraphModel {
   setScrollbar(winId, box) {
     const w = this.window(winId);
     if (!w) return;
-    w.scroll = w.scroll || { rows: 1, cols: 1, dedup_field: this.keyOf(w) };
+    w.scroll = w.scroll || { rows: 1, cols: 1 };
     w.scroll.scrollbar = { x: box.x, y: box.y, w: box.w, h: box.h };
   }
-  keyOf(w) { return (w.scroll && w.scroll.dedup_field) || "name"; }
   scrollbar(winId) { const w = this.window(winId); return w && w.scroll && w.scroll.scrollbar; }
   setScrollbarOrientation(winId, o) { const w = this.window(winId); if (w && w.scroll) w.scroll.scrollbar_orientation = o; }
   removeScrollbar(winId) { const w = this.window(winId); if (w && w.scroll) delete w.scroll.scrollbar; }
@@ -318,7 +317,9 @@ export class GraphModel {
   renameItem(winId, id, newId) {
     const w = this.window(winId);
     const it = this.item(winId, id);
-    if (w && it && newId && !w.items.some((x) => x.id === newId)) it.id = newId;
+    if (!w || !it || !newId || w.items.some((x) => x.id === newId)) return false;
+    it.id = newId;
+    return true;
   }
   setItemBox(winId, id, box) { const it = this.item(winId, id); if (it) it.box = { x: box.x, y: box.y, w: box.w, h: box.h }; }
 
@@ -348,6 +349,11 @@ export class GraphModel {
     if (it) it.fields = (it.fields || []).filter((x) => x.id !== fid);
     const w = this.window(winId);
     if (f && w && !this._fieldUsed(w, f.field)) w.fields = (w.fields || []).filter((x) => x.id !== f.field);
+    // a key part pointing at a dead field would drop every record — prune it
+    if (f && it && it.key) {
+      it.key.fields = (it.key.fields || []).filter((x) => x !== f.field);
+      if (!it.key.fields.length) it.key.fields = [(it.fields[0] && it.fields[0].field) || "name"];
+    }
   }
   renameItemField(winId, itemId, fid, newId) {
     const it = this.item(winId, itemId);
@@ -360,8 +366,31 @@ export class GraphModel {
     // repoint tells that validate/locate on this field, else they reference a dead id
     // and silently reject every cell (the item stops detecting entirely)
     for (const t of it.tells || []) if (t.field === old) t.field = newId;
+    // same for the record key — a stale part would silently drop every record
+    if (it.key) it.key.fields = (it.key.fields || []).map((x) => (x === old ? newId : x));
     f.field = newId; f.id = newId;
   }
+
+  // ---- record key (dedup identity) per item template -----------------------
+  // null = inherit (window key, else default {fields:["name"]}). The KeyDef shape
+  // mirrors the server: {fields:[...], sep, case_sensitive}.
+
+  itemKey(winId, itemId) { const it = this.item(winId, itemId); return (it && it.key) || null; }
+  // the key the item EFFECTIVELY uses (own -> window -> default), for display/preview
+  effectiveItemKey(winId, itemId) {
+    const w = this.window(winId);
+    return this.itemKey(winId, itemId) || (w && w.key) || { fields: ["name"], sep: "|", case_sensitive: false };
+  }
+  ensureItemKey(winId, itemId) {
+    const it = this.item(winId, itemId);
+    if (!it) return null;
+    if (!it.key) {
+      const eff = this.effectiveItemKey(winId, itemId);
+      it.key = { fields: [...(eff.fields || ["name"])], sep: eff.sep ?? "|", case_sensitive: !!eff.case_sensitive };
+    }
+    return it.key;
+  }
+  clearItemKey(winId, itemId) { const it = this.item(winId, itemId); if (it) delete it.key; }
 
   // tells inside an item (cell-relative box). kind: filled|text|color|template.
   addItemTell(winId, itemId, kind, box) {

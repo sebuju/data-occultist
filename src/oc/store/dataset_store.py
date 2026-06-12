@@ -10,66 +10,87 @@ non-reverted event in order. Events are grouped into **batches** (one collection
 run), so the ledger reads as a short list of runs the user can revert wholesale, not a
 flood of per-row events.
 
-The dataset owns how its key is normalised for dedup (``strip_nonalnum`` /
-``case_sensitive``) — set on the DatasetDef and passed in here.
+How rows are keyed (which fields, joined how) is taught on the window/item that
+reads them; the resolved :class:`KeySpec`/:class:`KeyMap` is passed in here.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .change import ChangeEvent, ChangeOp
+from .keys import KeyMap, KeySpec
 
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def norm_key(value, strip_nonalnum: bool = False, case_sensitive: bool = False) -> str | None:
-    """Normalise a value into a dedup key. Always trims; optionally strips everything
-    but letters/digits and/or preserves case."""
-    if value in (None, ""):
-        return None
-    s = str(value).strip()
-    if strip_nonalnum:
-        s = re.sub(r"[^0-9A-Za-z]", "", s)
-    if not case_sensitive:
-        s = s.lower()
-    return s or None
+# the three files that make up one dataset on disk (see module docstring)
+_DATASET_SUFFIXES = (".history.jsonl", ".reverted.json", ".state.json")
+
+
+def rename_dataset(data_dir: Path | str, game: str, old: str, new: str) -> bool:
+    """Move a dataset's on-disk files from ``old`` to ``new`` so its collected records
+    follow a rename in the profile. Returns True if anything was moved. Refuses (raises
+    ``FileExistsError``) if any destination file already exists — merging two ledgers
+    would collide event ids."""
+    base = Path(data_dir) / game
+    pairs = [(base / f"{old}{suf}", base / f"{new}{suf}") for suf in _DATASET_SUFFIXES]
+    present = [(src, dst) for src, dst in pairs if src.exists()]
+    for _, dst in present:
+        if dst.exists():
+            raise FileExistsError(f"dataset {new!r} already has data")
+    for src, dst in present:
+        src.rename(dst)
+    return bool(present)
+
+
+def delete_dataset(data_dir: Path | str, game: str, dataset: str) -> bool:
+    """Permanently delete a dataset's on-disk files (ledger + reverted + state cache).
+    Returns True if anything was deleted. Unlike ``clear_data`` (which reverts every
+    event but keeps the ledger), this removes the dataset entirely from disk."""
+    base = Path(data_dir) / game
+    removed = False
+    for suf in _DATASET_SUFFIXES:
+        path = base / f"{dataset}{suf}"
+        if path.exists():
+            path.unlink()
+            removed = True
+    return removed
 
 
 def replay(events: list[ChangeEvent], reverted: set[int],
-           key_field: str = "name", strip_nonalnum: bool = False,
-           case_sensitive: bool = False) -> dict[str, dict]:
+           key: KeyMap | KeySpec = KeySpec()) -> dict[str, dict]:
     """Rebuild the keyed state snapshot from the ledger, skipping reverted events.
 
-    The key is recomputed from each event's raw ``values`` with the CURRENT key options
-    — the events store the record as-is, never a baked key, so changing the key field or
-    its normalisation re-keys the whole dataset on the next replay. Each add/update
-    carries the full record at that time, so applying events in order leaves each key at
-    its last non-reverted value; a remove flips ``present`` off. Events whose key value is
-    missing/empty under the current field are skipped (can't be keyed).
+    The key is recomputed from each event's raw ``values`` with the CURRENT key spec
+    — the events store the record as-is, never a baked key, so changing the key
+    (e.g. adding ``level`` to an arcane's key) re-keys the whole dataset on the next
+    replay. Each add/update carries the full record at that time, so applying events
+    in order leaves each key at its last non-reverted value; a remove flips
+    ``present`` off. Events that can't be keyed under the current spec (a key part
+    missing/empty) are skipped.
     """
     state: dict[str, dict] = {}
     for ev in events:
         if ev.id in reverted:
             continue
-        key = norm_key(ev.values.get(key_field), strip_nonalnum, case_sensitive)
-        if key is None:
+        k = key.build(ev.values)
+        if k is None:
             continue
-        entry = state.get(key)
+        entry = state.get(k)
         if ev.op is ChangeOp.remove:
             if entry is not None:
                 entry["present"] = False
                 entry["removed_at"] = ev.ts
             continue
         if entry is None:
-            state[key] = {"values": dict(ev.values), "first_seen": ev.ts,
-                          "last_seen": ev.ts, "present": True}
+            state[k] = {"values": dict(ev.values), "first_seen": ev.ts,
+                        "last_seen": ev.ts, "present": True}
         else:
             entry["values"] = dict(ev.values)
             entry["last_seen"] = ev.ts
@@ -84,18 +105,14 @@ class DatasetStore:
         data_dir: Path | str,
         game: str,
         dataset: str,
-        key_field: str,
-        strip_nonalnum: bool = False,
-        case_sensitive: bool = False,
+        key: KeyMap | KeySpec = KeySpec(),
         clock: Callable[[], str] = _utcnow_iso,
     ) -> None:
         base = Path(data_dir) / game
         self._history_path = base / f"{dataset}.history.jsonl"
         self._reverted_path = base / f"{dataset}.reverted.json"
         self._state_path = base / f"{dataset}.state.json"
-        self._key_field = key_field
-        self._strip = strip_nonalnum
-        self._case = case_sensitive
+        self._key = key
         self._clock = clock
         self._events: list[ChangeEvent] = []
         self._reverted: set[int] = set()
@@ -107,17 +124,18 @@ class DatasetStore:
     # ---- persistence -------------------------------------------------------
 
     def _replay(self) -> dict[str, dict]:
-        return replay(self._events, self._reverted, self._key_field, self._strip, self._case)
+        return replay(self._events, self._reverted, self._key)
 
     def _meta(self) -> dict:
         """Fingerprint of the inputs the cached state was built from. State is reused only
-        when this matches — so a key-field/option change (re-key) or a new/removed event
-        invalidates the cache and forces a replay."""
-        return {"key_field": self._key_field, "strip": self._strip, "case": self._case,
+        when this matches — so a key change (re-key) or a new/removed event invalidates
+        the cache and forces a replay."""
+        return {"key": self._key.meta(),
                 "n_events": len(self._events), "reverted": sorted(self._reverted)}
 
     def _load(self) -> None:
-        if self._history_path.exists():
+        history_existed = self._history_path.exists()
+        if history_existed:
             for line in self._history_path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if line:
@@ -128,7 +146,12 @@ class DatasetStore:
         self._batch = max((e.batch for e in self._events), default=0)
         if not self._load_cached_state():
             self._state = self._replay()
-            self.save()
+            # Only persist the state cache for a dataset that actually has a ledger.
+            # Merely READING a nonexistent/renamed dataset must not write a phantom
+            # ``<name>.state.json`` — list_datasets globs those, so it would resurface
+            # the dataset (e.g. the old name after a rename) as a blank duplicate.
+            if history_existed:
+                self.save()
 
     def _load_cached_state(self) -> bool:
         """Use the cached snapshot when its fingerprint still matches the current key
@@ -179,7 +202,7 @@ class DatasetStore:
     def record_seen(self, values: dict) -> ChangeEvent | None:
         """Register a confirmed record. Logs an add or a field update; returns the
         event, or ``None`` if nothing changed (record already known and identical)."""
-        key = norm_key(values.get(self._key_field), self._strip, self._case)
+        key = self._key.build(values)
         if key is None:
             return None
         entry = self._state.get(key)
@@ -270,7 +293,7 @@ class DatasetStore:
         self.save()
 
     def _replay_with(self, reverted: set[int]) -> dict[str, dict]:
-        return replay(self._events, reverted, self._key_field, self._strip, self._case)
+        return replay(self._events, reverted, self._key)
 
     def batch_events(self, batch: int) -> list[dict]:
         """Every event of one batch in ledger order, each flagged reverted."""
@@ -281,7 +304,7 @@ class DatasetStore:
                 continue
             d = ev.to_dict()
             d["reverted"] = ev.id in self._reverted
-            d["key"] = norm_key(ev.values.get(self._key_field), self._strip, self._case)
+            d["key"] = self._key.build(ev.values)
             out.append(d)
         return out
 
@@ -372,7 +395,7 @@ class DatasetStore:
                 "count": len(evs),
                 "adds": adds, "updates": updates, "removes": removes,
                 "reverted": all(e.id in self._reverted for e in evs),
-                "keys": [norm_key(e.values.get(self._key_field), self._strip, self._case) or "·" for e in evs[:8]],
+                "keys": [self._key.build(e.values) or "·" for e in evs[:8]],
             })
         return out
 
@@ -389,5 +412,6 @@ class DatasetStore:
         rows.sort(key=lambda r: (not r["present"], r["key"]))
         return rows[:limit]
 
-    def normalize_key(self, value) -> str | None:
-        return norm_key(value, self._strip, self._case)
+    def key_of(self, values: dict) -> str | None:
+        """The record's dedup key under this store's spec, or ``None`` if unkeyable."""
+        return self._key.build(values)

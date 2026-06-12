@@ -10,5 +10,6 @@ occluded view must never be mistaken for "everything sold".
 from . import inspect
 from .change import ChangeEvent, ChangeOp
 from .dataset_store import DatasetStore
+from .keys import KeyMap, KeySpec
 
-__all__ = ["ChangeEvent", "ChangeOp", "DatasetStore", "inspect"]
+__all__ = ["ChangeEvent", "ChangeOp", "DatasetStore", "KeyMap", "KeySpec", "inspect"]

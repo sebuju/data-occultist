@@ -25,10 +25,26 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
     for w in incoming.windows:
         windows[w.id] = w  # upsert by id; other windows preserved
 
+    # Datasets/subsets/dictionaries are game-level, not window-scoped, so a single-window
+    # save carries none of them — preserving existing is essential (dropping them silently
+    # lost standalone dataset defs, subsets and OCR dictionaries on every teach-page save).
+    datasets = {d.id: d for d in existing.datasets}
+    for d in incoming.datasets:
+        datasets[d.id] = d
+    subsets = {s.id: s for s in existing.subsets}
+    for s in incoming.subsets:
+        subsets[s.id] = s
+    dictionaries = {d.id: d for d in existing.dictionaries}
+    for d in incoming.dictionaries:
+        dictionaries[d.id] = d
+
     return GameProfile(
         name=name,
         process_names=process_names,
         window_title_hint=title,
         fields=list(fields.values()),
         windows=list(windows.values()),
+        datasets=list(datasets.values()),
+        subsets=list(subsets.values()),
+        dictionaries=list(dictionaries.values()),
     )

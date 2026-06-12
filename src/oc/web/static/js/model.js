@@ -18,7 +18,9 @@ export class EditorModel {
 
     this.windowId = windowId;
     this.dataset = "";          // blank => defaults to windowId on save
-    this.keyField = "name";
+    // record key (dedup identity): ordered field ids joined by sep — e.g. arcanes
+    // key on name+level so each level is its own record
+    this.key = { fields: ["name"], sep: "|", case_sensitive: false };
 
     this.fields = [];           // {id, type, pattern, learn, fuzzy}
     this.states = [];           // {id, kind, valid_for_save}
@@ -38,7 +40,9 @@ export class EditorModel {
   }
   removeField(id) {
     this.fields = this.fields.filter((f) => f.id !== id);
-    if (this.keyField === id) this.keyField = this.fields[0]?.id || "name";
+    // a key part pointing at a dead field would drop every record — prune it
+    this.key.fields = this.key.fields.filter((f) => f !== id);
+    if (!this.key.fields.length) this.key.fields = [this.fields[0]?.id || "name"];
   }
 
   // ---- states -------------------------------------------------------------
@@ -100,11 +104,12 @@ export class EditorModel {
     const window = {
       id: this.windowId,
       dataset: this.dataset || null,
+      key: { fields: [...this.key.fields], sep: this.key.sep || "|", case_sensitive: !!this.key.case_sensitive },
       fields: this.fields.map((f) => ({
         id: f.id, type: f.type, extract: f.extract || "whole", separator: f.separator || "/",
         learn: !!f.learn, fuzzy: f.fuzzy ?? 0.82,
         empty: f.empty ?? null, if_number: f.if_number ?? null, if_number_any: !!f.if_number_any,
-        if_text: f.if_text ?? null, if_text_any: !!f.if_text_any, dict_only: !!f.dict_only,
+        if_text: f.if_text ?? null, if_text_any: !!f.if_text_any, dict_mode: f.dict_mode || "correct",
       })),
       detect,
       states: [...statesMap.values()],
@@ -123,7 +128,6 @@ export class EditorModel {
         rows: this.grid.rows, cols: this.grid.cols,
         row_stride: this.grid.rowStride, col_stride: this.grid.colStride,
         cell: first ? { x: first.x, y: first.y, w: first.w, h: first.h } : null,
-        dedup_field: this.keyField,
       };
     }
 
@@ -145,14 +149,25 @@ export class EditorModel {
     const win = (profile.windows || []).find((w) => w.id === windowId);
     // window fields, falling back to game-level fields for older profiles
     const rawFields = (win && win.fields && win.fields.length) ? win.fields : (profile.fields || []);
-    this.fields = rawFields.map((f) => ({
+    // drop stale duplicate ids (first def wins — the one the server resolves too),
+    // so a dirty profile heals on its next save instead of re-persisting the dup
+    const seenIds = new Set();
+    this.fields = rawFields.filter((f) => !seenIds.has(f.id) && seenIds.add(f.id)).map((f) => ({
       id: f.id, type: f.type || "text", extract: f.extract || "whole", separator: f.separator || "/",
       learn: !!f.learn, fuzzy: f.fuzzy ?? 0.82,
       empty: f.empty ?? null, if_number: f.if_number ?? null, if_number_any: !!f.if_number_any,
-      if_text: f.if_text ?? null, if_text_any: !!f.if_text_any, dict_only: !!f.dict_only,
+      if_text: f.if_text ?? null, if_text_any: !!f.if_text_any,
+      // legacy profiles carry dict_only: true meant "correct AND drop unmatched"
+      dict_mode: f.dict_mode || (f.dict_only ? "correct_drop" : "correct"),
     }));
     if (!win) return;
     this.dataset = win.dataset || "";
+    if (win.key) {
+      this.key = { fields: [...(win.key.fields || ["name"])], sep: win.key.sep ?? "|",
+                   case_sensitive: !!win.key.case_sensitive };
+    } else if (win.scroll && win.scroll.dedup_field) {
+      this.key = { fields: [win.scroll.dedup_field], sep: "|", case_sensitive: false };  // legacy shape
+    }
     if (win.preprocess) {
       this.preprocess = {
         mode: win.preprocess.mode || "none",
@@ -175,7 +190,6 @@ export class EditorModel {
       this.boxes.push({ id: r.id, role: "region", field: r.field, ...r.box });
     }
     if (win.scroll) {
-      this.keyField = win.scroll.dedup_field || "name";
       this.grid = {
         enabled: (win.scroll.rows || 1) > 1 || (win.scroll.cols || 1) > 1,
         rows: win.scroll.rows || 1, cols: win.scroll.cols || 1,

@@ -12,8 +12,9 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from ..store.keys import KeyMap, KeySpec
 from ..types import FractionBox
 
 
@@ -62,6 +63,22 @@ class Extract(str, Enum):
     text_after = "text_after"        # the text right of the separator
 
 
+class DictMode(str, Enum):
+    """How a text field uses the game dictionary.
+
+    * ``off`` — the dictionary is not consulted (the self-learning lexicon still is).
+    * ``correct`` — word-per-word correction; an unmatched word passes through.
+    * ``drop`` — validation only: every word must already be a dictionary word or
+      the read resolves to None. Nothing is rewritten.
+    * ``correct_drop`` — correct what it can, drop a read with an unmatchable word.
+    """
+
+    off = "off"
+    correct = "correct"
+    drop = "drop"
+    correct_drop = "correct_drop"
+
+
 class FieldDef(BaseModel):
     """One column in a game's data schema, read from a region."""
 
@@ -83,14 +100,23 @@ class FieldDef(BaseModel):
     # all-text (letters, no digits). None -> off.
     if_text: str | None = None
     if_text_any: bool = False
-    # Require the final value to match a dictionary term (exact or fuzzy ≥ ``fuzzy``).
-    # An unmatched read resolves to None and is never learned.
-    dict_only: bool = False
+    # How the game dictionary participates in this field's reads (see DictMode).
+    dict_mode: DictMode = DictMode.correct
     # If true, high-confidence reads teach the game dictionary and low-confidence
     # reads are fuzzy-corrected against it. Suits identity text (item names).
     learn: bool = False
     # Similarity (0..1) an uncertain read must reach to be snapped to a known term.
     fuzzy: float = 0.82
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_dict_only(cls, data):
+        # legacy bool: dict_only true meant "correct AND drop unmatched"
+        if isinstance(data, dict) and "dict_mode" not in data:
+            legacy = data.pop("dict_only", None)
+            if legacy is not None:
+                data["dict_mode"] = "correct_drop" if legacy else "correct"
+        return data
 
 
 class RegionDef(BaseModel):
@@ -146,6 +172,21 @@ class Tell(BaseModel):
     align: str = ""
 
 
+class KeyDef(BaseModel):
+    """How a record's identity (dedup key) is built: ordered field ids joined with
+    ``sep``. Most data keys on one field (a name); some needs more — "Arcane Aegis"
+    level 5 vs level 3 are different records, so arcanes key on ``name`` + ``level``.
+    A record with any key part unread is dropped (never guessed). Authored per item
+    template in the teaching UI, with a live preview from the frozen cutout."""
+
+    fields: list[str] = Field(default_factory=lambda: ["name"])
+    sep: str = "|"
+    case_sensitive: bool = False
+
+    def spec(self) -> KeySpec:
+        return KeySpec(tuple(self.fields) or ("name",), self.sep, self.case_sensitive)
+
+
 class ItemDef(BaseModel):
     """A teachable *item template*: one cell of a repeating list, defined once and
     found across the data area.
@@ -177,6 +218,10 @@ class ItemDef(BaseModel):
     priority: int = 0
     fields: list[RegionDef] = Field(default_factory=list)  # boxes are cell-relative (0..1)
     tells: list[Tell] = Field(default_factory=list)        # what makes a cell an item
+    # How this template's records are keyed/deduped. None -> the window's key, else
+    # the default (``name``). Per-template because templates sharing a window can
+    # need different identities (an arcane keys on name+level, a plain item on name).
+    key: KeyDef | None = None
 
 
 class DetectDef(BaseModel):
@@ -222,8 +267,8 @@ class StateDef(BaseModel):
 class ScrollDef(BaseModel):
     """Describes a scrollable grid so rows can be stitched across scrolls.
 
-    The dedup key is a field id (usually a unique item name): rows already seen
-    by key are not re-emitted, which makes stitching robust to scroll overlap.
+    Rows already seen (by the window's record key) are not re-emitted, which makes
+    stitching robust to scroll overlap.
     """
 
     enabled: bool = True              # disabled -> scroll/stitching is ignored
@@ -234,7 +279,6 @@ class ScrollDef(BaseModel):
     cell: Box | None = None            # first cell's box; grid tiles from here
     row_stride: float = 0.0            # fractional y-gap between row origins
     col_stride: float = 0.0            # fractional x-gap between col origins
-    dedup_field: str = "name"          # FieldDef.id used to deduplicate rows
 
 
 class PreprocessMode(str, Enum):
@@ -271,6 +315,9 @@ class WindowDef(BaseModel):
 
     id: str
     dataset: str | None = None
+    # Default record key for this window's records — used by the grid/regions read
+    # path and by item templates that don't define their own ``key``.
+    key: KeyDef | None = None
     fields: list[FieldDef] = Field(default_factory=list)  # window-specific schema
     # Optional bounding box (window fractions) that constrains OCR to the data area,
     # so stray UI text elsewhere is never read.
@@ -291,17 +338,12 @@ class WindowDef(BaseModel):
 
 
 class DatasetDef(BaseModel):
-    """A logical collection of records. The dataset — not the window — owns how its
-    records are stored and de-duplicated: ``key_field`` is the field whose value
-    identifies a row (so two reads of the same item merge instead of duplicating).
-
-    Several windows can feed one dataset; they all dedup against this one key.
-    """
+    """A logical collection of records. Datasets just receive, store, and serve
+    rows — HOW a row is keyed/deduped is defined where the rows are read: the
+    :class:`KeyDef` on the item template (or window) that produces them. Several
+    windows can feed one dataset; their keys should agree."""
 
     id: str
-    key_field: str = "name"        # field id whose value is the row's identity (dedup key)
-    strip_nonalnum: bool = False    # dedup ignoring spaces/punctuation (e.g. "Soma Prime" == "SomaPrime")
-    case_sensitive: bool = False    # dedup is case-insensitive by default
 
 
 class DictionaryDef(BaseModel):
@@ -398,18 +440,51 @@ class GameProfile(BaseModel):
     def dataset_def(self, dataset_id: str) -> DatasetDef | None:
         return next((d for d in self.datasets if d.id == dataset_id), None)
 
-    def key_for(self, dataset_id: str) -> str:
-        """The dedup key field for a dataset — its ``DatasetDef.key_field``, or ``"name"``
-        when the dataset has no explicit definition yet."""
-        d = self.dataset_def(dataset_id)
-        return d.key_field if d else "name"
+    def _key_defaults(self, dataset_id: str) -> list[KeySpec]:
+        """Candidate DEFAULT specs (for records not tagged with an item template), one
+        per window feeding the dataset that expresses a key, in window order: the
+        window's own ``key``, else its single item template's ``key``. Multi-template
+        windows tag every record, so their item keys never act as defaults."""
+        out: list[KeySpec] = []
+        for w in self.windows:
+            if w.dataset_id != dataset_id:
+                continue
+            if w.key is not None:
+                out.append(w.key.spec())
+            elif len(w.items) == 1 and w.items[0].key is not None:
+                out.append(w.items[0].key.spec())
+        return out
 
-    def key_opts(self, dataset_id: str) -> tuple[bool, bool]:
-        """``(strip_nonalnum, case_sensitive)`` for a dataset's key normalisation."""
-        d = self.dataset_def(dataset_id)
-        return (d.strip_nonalnum, d.case_sensitive) if d else (False, False)
+    def key_map_for(self, dataset_id: str) -> KeyMap:
+        """How records of a dataset are keyed: each item template's own spec (records
+        carry ``_item`` when a window has several templates), with the first window
+        default as fallback. Falls back to keying on ``name`` when nothing is taught."""
+        by_item: dict[str, KeySpec] = {}
+        for w in self.windows:
+            if w.dataset_id != dataset_id:
+                continue
+            for it in w.items:
+                if it.key is not None:
+                    by_item.setdefault(it.id, it.key.spec())
+                elif w.key is not None:
+                    by_item.setdefault(it.id, w.key.spec())
+        defaults = self._key_defaults(dataset_id)
+        return KeyMap(defaults[0] if defaults else KeySpec(), by_item)
+
+    def key_conflict(self, dataset_id: str) -> bool:
+        """True when windows feeding the dataset disagree on the default key — their
+        records would dedup inconsistently; the collector warns once per dataset."""
+        return len(set(self._key_defaults(dataset_id))) > 1
 
     def fields_for(self, window: WindowDef) -> list[FieldDef]:
         """A window's schema: its own fields, or the game-level fields as fallback
-        (keeps older profiles that defined fields at the game level working)."""
-        return window.fields or self.fields
+        (keeps older profiles that defined fields at the game level working).
+        Duplicate ids (stale merge leftovers in a saved profile) resolve to the
+        FIRST definition; consumers index these by id, and without the dedup a
+        later stale shadow silently wins over the def the user actually edits."""
+        out, seen = [], set()
+        for f in window.fields or self.fields:
+            if f.id not in seen:
+                seen.add(f.id)
+                out.append(f)
+        return out

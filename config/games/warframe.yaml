@@ -9,7 +9,7 @@ fields:
   separator: /
   if_number_any: false
   if_text_any: false
-  dict_only: false
+  dict_mode: correct
   learn: true
   fuzzy: 0.82
 - id: count
@@ -18,7 +18,7 @@ fields:
   separator: /
   if_number_any: false
   if_text_any: false
-  dict_only: false
+  dict_mode: correct
   learn: false
   fuzzy: 0.82
 - id: rank
@@ -27,11 +27,12 @@ fields:
   separator: /
   if_number_any: false
   if_text_any: false
-  dict_only: false
+  dict_mode: correct
   learn: false
   fuzzy: 0.82
 windows:
 - id: equip
+  dataset: master
   fields:
   - id: name
     type: text
@@ -39,9 +40,9 @@ windows:
     separator: '['
     if_number_any: false
     if_text_any: false
-    dict_only: false
-    learn: true
-    fuzzy: 0.65
+    dict_mode: correct
+    learn: false
+    fuzzy: 0.82
   - id: count
     type: number
     extract: whole
@@ -49,16 +50,7 @@ windows:
     empty: '1'
     if_number_any: false
     if_text_any: true
-    dict_only: false
-    learn: true
-    fuzzy: 0.82
-  - id: name
-    type: text
-    extract: text_before
-    separator: '['
-    if_number_any: false
-    if_text_any: false
-    dict_only: false
+    dict_mode: correct
     learn: false
     fuzzy: 0.82
   - id: arcane_level
@@ -67,24 +59,14 @@ windows:
     separator: /
     if_number_any: false
     if_text_any: false
-    dict_only: false
+    dict_mode: correct
     learn: false
     fuzzy: 0.75
-  - id: count
-    type: number
-    extract: whole
-    separator: /
-    empty: '1'
-    if_number_any: false
-    if_text_any: false
-    dict_only: false
-    learn: false
-    fuzzy: 0.82
   data_area:
     x: 0.0392843423787693
     y: 0.17411803841927975
     w: 0.6493593537024408
-    h: 0.7292573648659971
+    h: 0.6190721796808167
   detect:
   - id: detect_2
     enabled: true
@@ -150,7 +132,7 @@ windows:
       box:
         x: 0.0
         y: 0.0007938414839423913
-        w: 0.5299105936045002
+        w: 0.6963926439460314
         h: 0.15434670589268576
       field: count
       tell: false
@@ -158,6 +140,11 @@ windows:
       align: ''
       enabled: true
     tells: []
+    key:
+      fields:
+      - name
+      sep: '|'
+      case_sensitive: false
   - id: arcane
     enabled: true
     box:
@@ -208,6 +195,12 @@ windows:
       align: ''
       enabled: true
     tells: []
+    key:
+      fields:
+      - name
+      - arcane_level
+      sep: '|'
+      case_sensitive: false
   scroll:
     enabled: true
     scrollbar:
@@ -220,37 +213,20 @@ windows:
     cols: 8
     row_stride: 0.205
     col_stride: 0.108
-    dedup_field: name
   preprocess:
     mode: none
     colors: []
     tolerance: 60
     scale: 1.0
 datasets:
-- id: equip
-  key_field: name
-  strip_nonalnum: true
-  case_sensitive: false
+- id: master
 subsets:
-- id: equip_view
-  dataset: equip
-  filters:
-  - field: ''
-    op: contains
-    value: ''
-  derived:
-  - name: ''
-    template: ''
-  - name: ''
-    template: ''
-  enrich:
-  - type: relic_contents
-    source_field: name
-    enabled: true
-  - type: warframe_market
-    source_field: name
-    enabled: true
-  sort_by: arcane_level
+- id: master_view
+  dataset: master
+  filters: []
+  derived: []
+  enrich: []
+  sort_by: ''
   sort_desc: false
   limit: 0
 dictionaries:
