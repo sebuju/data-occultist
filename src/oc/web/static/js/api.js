@@ -136,21 +136,22 @@ export const ocr = {
 };
 
 // Precapture: record frames fast, batch-OCR them, then save. Each call returns the
-// session status { phase, frames, processed, fps, error, datasets:[{dataset,key_field,count,sample}] }.
-const _pre = (game, path, signal, method = "POST") =>
-  tfetch(`/api/precapture/${encodeURIComponent(game)}/${path}`, { method, signal }).then((r) => r.json());
+// session status { phase, frames, processed, fps, error, datasets:[{dataset,count,sample}] }.
+const _pre = (game, path, signal, method = "POST", ms) =>
+  tfetch(`/api/precapture/${encodeURIComponent(game)}/${path}`, { method, signal }, ms).then((r) => r.json());
 export const precapture = {
-  recordStart: (game, maxFrames, intervalMs, label, signal) => _pre(game, `record/start?max_frames=${maxFrames}&interval_ms=${intervalMs}&label=${encodeURIComponent(label || "")}`, signal),
+  recordStart: (game, maxFrames, intervalMs, label, autoscroll, clicks, signal) => _pre(game, `record/start?max_frames=${maxFrames}&interval_ms=${intervalMs}&label=${encodeURIComponent(label || "")}&autoscroll=${autoscroll ? 1 : 0}&clicks=${clicks || 1}`, signal),
   recordStop: (game, signal) => _pre(game, "record/stop", signal),
+  setAutoscroll: (game, on, clicks, signal) => _pre(game, `record/autoscroll?on=${on ? 1 : 0}${clicks != null ? `&clicks=${clicks}` : ""}`, signal),
   processStart: (game, signal) => _pre(game, "process/start", signal),
   pause: (game, on, signal) => _pre(game, `process/pause?on=${on}`, signal),
   cancel: (game, signal) => _pre(game, "cancel", signal),
   killAll: () => tfetch("/api/precapture/kill-all", { method: "POST" }, 15_000).then((r) => r.json()),   // server waits up to 5s per worker
   reset: (game, signal) => _pre(game, "reset", signal),
-  save: (game, signal) => _pre(game, "save", signal),
+  save: (game, signal) => _pre(game, "save", signal, "POST", 180_000),   // commit can be slow; allow 3 min
   status: (game, signal) => tfetch(`/api/precapture/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
   // saved recording sessions: list / load / rename / delete. Each returns { sessions, status }.
-  sessions: (game, signal) => _pre(game, "sessions", signal, "GET"),
+  sessions: (game, signal) => _pre(game, "sessions", signal, "GET", 30_000),   // first call may warm the dedup cache
   loadSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/load`, signal),
   renameSession: (game, sid, label, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/rename?label=${encodeURIComponent(label || "")}`, signal),
   deleteSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}`, signal, "DELETE"),
@@ -160,6 +161,22 @@ export const precapture = {
 export async function clearDataset(game, dataset) {
   const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/clear`, { method: "POST" });
   if (!r.ok) throw new Error(`clear: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
+// Permanently delete a dataset's stored files, so removing its node doesn't leave the
+// dataset re-spawning from disk on the next live refresh.
+export async function deleteDataset(game, dataset) {
+  const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/delete`, { method: "POST" });
+  if (!r.ok) throw new Error(`delete: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
+// Move a dataset's stored records to a new name (so a profile rename doesn't orphan
+// the old data and re-spawn it in the graph). 409 if the target name already has data.
+export async function renameDataset(game, dataset, to) {
+  const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/rename?to=${encodeURIComponent(to)}`, { method: "POST" });
+  if (!r.ok) throw new Error(`rename: ${r.status} ${await r.text()}`);
   return r.json();
 }
 
@@ -213,11 +230,26 @@ export async function enrichSubset(game, subset) {
   return r.json();
 }
 
-// Per-window stash bindings: which capture a window opens with.
-export async function getBindings(game) {
-  const r = await tfetch(`/api/captures/${encodeURIComponent(game)}/bindings`);
-  return r.ok ? r.json() : {};
+// Per-window stash bindings: which capture a window opens with. The whole map is fetched
+// then indexed per window by many callers (image open, preview, detect, …), so on a graph
+// load several windows would each refetch the identical map. Cache the in-flight promise
+// per game — concurrent boot reads share one request, later reads reuse it — and drop it
+// only when a bind mutates it (the sole writer). A failed fetch isn't cached.
+const _bindingsCache = new Map();   // game -> Promise<{window_id: capture_name}>
+export function getBindings(game) {
+  let p = _bindingsCache.get(game);
+  if (!p) {
+    p = tfetch(`/api/captures/${encodeURIComponent(game)}/bindings`)
+      .then((r) => (r.ok ? r.json() : {}))
+      .catch((e) => { _bindingsCache.delete(game); throw e; });
+    _bindingsCache.set(game, p);
+  }
+  return p;
+}
+export function invalidateBindings(game) {
+  if (game === undefined) _bindingsCache.clear(); else _bindingsCache.delete(game);
 }
 export async function bindCapture(game, window, name) {
   await tfetch(`/api/captures/${encodeURIComponent(game)}/bind?window=${encodeURIComponent(window)}&name=${encodeURIComponent(name)}`, { method: "POST" });
+  invalidateBindings(game);   // next read re-fetches the updated map
 }

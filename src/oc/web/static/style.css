@@ -15,6 +15,7 @@
 
   /* semantic / status */
   --accent: #5aa9e6;        /* selection, primary actions, regions (blue) */
+  --accent-bg: #5aa9e615;   /* selection, primary actions, regions (blue) */
   --danger: #e6685a;        /* destructive, errors (red) */
   --ok: #7ddc7d;            /* success / high confidence (green) */
   --warn: #e6c25a;          /* caution / medium confidence (amber) */
@@ -184,13 +185,13 @@ legend { color: var(--muted); padding: 0 6px; }
 /* the whole node is draggable — show grab everywhere, except on the things that aren't
    (form fields, buttons, scroll/resize areas) so the cursor always tells the truth */
 .gnode { cursor: grab; }
-.gnode input, .gnode textarea, .gnode [contenteditable="true"] { cursor: text; }
-.gnode button, .gnode select, .gnode a, .gnode .collapse, .gnode .port, .gnode .gn-enable { cursor: pointer; }
+.gnode input:not([type="checkbox"]), .gnode textarea, .gnode [contenteditable="true"] { cursor: text; }
+.gnode button, .gnode select, .gnode a, .gnode .collapse, .gnode .port, .gnode .gn-enable, input[type="checkbox"] { cursor: pointer; }
 .gnode .scrollhost, .gnode .nodehost, .gnode .canvas-wrap, .gnode table { cursor: auto; }
 /* remove button lives in the header now: a danger-coloured icon, two-click confirm */
 .gn-del { margin-left: auto; flex: 0 0 auto; width: 22px; height: 18px; min-height: 0; padding: 0; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px; font-size: var(--fs-sm); }
+  background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px; font-size: var(--fs-sm); font-weight: bold; }
 .gn-del.armed { background: var(--warn); color: var(--on-accent); }
 .glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
 .glab input { margin-top: 2px; }
@@ -203,7 +204,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .gnode .gn-h.pulse { animation: pulse 1.2s ease-out; }
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
 .gnode input.gi { width: 100%; }
-.gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; }
+.gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; border: unset; background: transparent;  }
 .gnode .big { font-size: var(--fs-xl); }
 /* labelled field controls — label + input in a 2-col grid so every input
    lines up and shares one width */
@@ -213,7 +214,7 @@ legend { color: var(--muted); padding: 0 6px; }
 /* a checkbox must never be stretched by the global width:100%; sit it at the start of
    its column (toward the label) instead of floating/centred */
 .gnode input[type="checkbox"] { width: auto; }
-.flab input[type="checkbox"] { justify-self: start; }
+.flab input[type="checkbox"] { justify-self: start; margin-left: 0; margin-right: 0; }
 .glab { display: block; white-space: nowrap; overflow: hidden; }
 .gnode input.gi { width: 100%; }
 .gnode .gn-row { flex-wrap: nowrap; }
@@ -234,7 +235,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .gnode .port.in { left: -7px; background: var(--line); }
 .gedge { fill: none; stroke: var(--line); stroke-width: 1.1; }
 .gedge.data { stroke: var(--accent); stroke-dasharray: 7 6; opacity: 0.8; }
-.gedge.flow { animation: flow 1.1s linear infinite; }   /* only port-out lines flow */
+.gedge.flow { /* animation: flow 1.1s linear infinite; */ }   /* TEMP: flow anim disabled (constant repaint) — only port-out lines flow */
 .gedge.field { stroke: var(--accent); opacity: 0.5; }
 .gedge.detect { stroke: var(--ok); opacity: 0.5; }
 .gedge.state { stroke: var(--warn); opacity: 0.5; }
@@ -288,18 +289,27 @@ legend { color: var(--muted); padding: 0 6px; }
 .item-readout:empty { display: none; }
 .item-readout .ir-f { margin-right: 6px; white-space: nowrap; }
 .item-lists { margin-top: 6px; }
-.item-lists .il-h { margin-top: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; }
+.item-lists .il-h { margin-top: 20px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--muted); }
 .ti-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
 .ti-row .ti-kind { min-width: 52px; color: var(--muted); }
 .ti-row input[type="number"] { width: 52px; }
 .ti-row .ti-loc { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); }
 /* each field is a block of controls (type/extract/learn/fuzzy/empty), divided */
-.if-row { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.if-row { margin: 6px -8px 0px -8px; padding: 6px 8px 0px 8px; border-top: 1px solid var(--line); }
 .if-head { display: flex; align-items: center; gap: 4px; }
 .if-head input { flex: 1 1 0; min-width: 0; font-weight: 600; }
 .ti-del, .if-del { flex: 0 0 auto; }
 .ti-row, .if-row { cursor: pointer; }
-.ti-row.il-sel, .if-row.il-sel { outline: 1px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.ti-row.il-sel, .if-row.il-sel { background: var(--accent-bg); }
+/* record key (dedup identity) config: ordered field parts + live key preview */
+.key-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
+.key-row select { flex: 1 1 0; min-width: 0; }
+.key-row .ksep { width: 34px; flex: 0 0 auto; }
+.key-row .kmv, .key-row .kdel { flex: 0 0 auto; padding: 0 5px; }
+.key-row .flab { display: inline-flex; gap: 4px; }
+.key-prev { margin-top: 4px; font-size: var(--fs-sm); word-break: break-all; }
+.key-prev:empty { display: none; }
+.key-sec { margin: 6px 0; }
 .prev-count { padding: 4px 8px; font-size: var(--fs-sm); }
 
 .gnode.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); z-index: 20; }
@@ -317,6 +327,8 @@ legend { color: var(--muted); padding: 0 6px; }
 }
 .modal.large { width: 95vw; height: 92vh; }
 .modal.data { width: 760px; max-width: 92vw; max-height: 82vh; }
+/* precapture: fixed size so the centred modal never shifts as panes swap content */
+.modal.pc-modal { height: 82vh; width: 880px; }
 .modal.medium { width: 520px; max-width: 92vw; max-height: 82vh; }
 .modal-h {
   display: flex; align-items: center; justify-content: space-between;
@@ -411,28 +423,32 @@ legend { color: var(--muted); padding: 0 6px; }
 /* live / precapture mode buttons */
 
 /* precapture modal */
-.precap { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.precap { padding: 12px; display: flex; flex-direction: column; gap: 10px; height: 100%; }
 .pc-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.pc-phase { padding: 1px 8px; border-radius: 10px; background: var(--line);
-  font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: 0.04em; }
-.pc-phase.pc-recording { background: var(--record); color: var(--white); }
-.pc-phase.pc-processing { background: var(--warn); color: var(--on-accent); }
-.pc-phase.pc-paused { background: var(--neutral); color: var(--white); }
-.pc-phase.pc-done, .pc-phase.pc-saved { background: var(--phase-done); color: var(--white); }
-.pc-opts { display: flex; gap: 14px; }
+/* two-pane layout: left = session list, right = the selected pane */
+.pc-main { display: flex; gap: 12px; align-items: stretch; flex: 1; min-height: 0; }
+.pc-left { width: 300px; flex: none; display: flex; flex-direction: column; gap: 3px;
+  overflow: auto; padding-right: 10px; border-right: 1px solid var(--line); }
+.pc-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+.pc-sess-new { text-align: left; margin-bottom: 4px; }
+.pc-sess-new.active { outline: 1px solid var(--accent); border-radius: 4px; }
+.pc-opts { display: flex; flex-wrap: wrap; gap: 14px; }
 .pc-opts .flab { display: flex; align-items: center; gap: 6px; }
 .pc-opts input[type="number"] { width: 8ch; }
 .pc-opts input.pc-label { width: 14ch; }
 .pc-ctl { display: flex; align-items: center; gap: 8px; }
+.pc-ctl .pc-del { margin-left: auto; }   /* delete pinned to the right edge */
 /* active-session chip in the status bar */
-.pc-sess-tag { padding: 1px 8px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: var(--fs-xs); }
+.pc-sess-tag { font-size: var(--fs-xs); }
 /* saved-session list */
-.pc-sessions { display: flex; flex-direction: column; gap: 3px; max-height: 24vh; overflow: auto; }
 .pc-sess-h { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
-.pc-sess { display: flex; align-items: center; gap: 4px; }
-.pc-sess.active { outline: 1px solid var(--accent); border-radius: 4px; }
-.pc-sess .pc-sess-load { flex: 1; text-align: left; }
-.pc-sess .pc-sess-ren, .pc-sess .pc-sess-del { width: 28px; flex: none; }
+.pc-sess { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+.pc-sess:hover { background: var(--line); }
+.pc-sess.active { outline: 1px solid var(--accent); outline-offset: -1px; }
+.pc-sess-name { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-sess-meta { flex: none; font-size: var(--fs-xs); }
+.pc-sess-rename { flex: 1; min-width: 0; }
+.pc-sess-ren { width: 26px; flex: none; }
 /* save button after a successful save — green, not dimmed like a normal disabled button */
 .pc-ctl button.pc-saved, .pc-ctl button.pc-saved:disabled {
   background: var(--phase-done); color: var(--white); opacity: 1; cursor: default; }
@@ -505,7 +521,7 @@ button.danger { background: var(--danger); color: var(--on-danger); }
 .edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
 .edge {
   fill: none; stroke: var(--line); stroke-width: 2;
-  stroke-dasharray: 7 6; animation: flow 1.1s linear infinite;
+  stroke-dasharray: 7 6; /* TEMP: animation: flow 1.1s linear infinite; — constant repaint */
 }
 .edge.active { stroke: var(--accent); stroke-width: 3; }
 @keyframes flow { to { stroke-dashoffset: -13; } }
@@ -607,8 +623,17 @@ a.node.win:hover { border-color: var(--accent); }
 .conf-bad { color: var(--danger); }
 .conf-sub { color: var(--muted); font-style: italic; }  /* value from an if-empty/if-number/if-text fallback, not a read */
 
-/* enabled/disabled nodes */
-.gn-enable { margin: 0 4px 0 0; vertical-align: middle; cursor: pointer; }
+/* enabled/disabled nodes — SVG slide toggle, styled to the node palette. Sits on the
+   right beside the remove button (margin-left:auto pushes the pair; flex `gap` spaces). */
+.gn-h .gn-enable { margin: 0; margin-left: auto; flex: 0 0 auto; padding: 0; border: 0;
+  background: transparent; display: inline-flex; align-items: center; cursor: pointer; }
+.gn-h .gn-enable ~ .gn-del { margin-left: 0; }   /* don't double-push; the flex gap spaces it */
+.gn-enable svg { display: block; }
+/* track + thumb take the node's own colours: --line off, --accent on */
+.gn-enable .gt-track { fill: var(--line); stroke: var(--line); transition: fill .18s ease, stroke .18s ease; }
+.gn-enable .gt-thumb { fill: var(--muted); transition: transform .18s ease, fill .18s ease; }
+.gn-enable.on .gt-track { fill: color-mix(in srgb, var(--accent) 35%, transparent); stroke: var(--accent); }
+.gn-enable.on .gt-thumb { fill: var(--accent); transform: translateX(12px); }   /* slide right */
 .gnode.node-disabled { filter: grayscale(1) opacity(0.5); }
 
 /* item-template preview diagnostics */

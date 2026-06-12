@@ -8,21 +8,22 @@ import numpy as np
 from oc.collect.precapture import PrecaptureSession, Phase, _detect_boxes, _sig
 from oc.collect.reader import Record
 from oc.profile.models import (
-    Box, DatasetDef, DetectDef, FieldDef, GameProfile, RegionDef, WindowDef,
+    Box, DetectDef, FieldDef, GameProfile, KeyDef, RegionDef, WindowDef,
 )
 from oc.settings import Settings, Tuning
 from oc.store.dataset_store import DatasetStore
+from oc.store.keys import KeySpec
 
 
 def _profile():
     win = WindowDef(
         id="equip",
+        key=KeyDef(fields=["item_name"]),
         fields=[FieldDef(id="item_name"), FieldDef(id="item_count")],
         regions=[RegionDef(id="n", box=Box(x=0, y=0.5, w=0.5, h=0.1), field="item_name")],
         detect=[DetectDef(id="a", search=Box(x=0.0, y=0.0, w=0.2, h=0.1), text="inv")],
     )
-    return GameProfile(name="testgame", datasets=[DatasetDef(id="equip", key_field="item_name")],
-                       windows=[win])
+    return GameProfile(name="testgame", windows=[win])
 
 
 def _engine(tmp_path):
@@ -98,7 +99,7 @@ def test_save_commits_to_real_store(tmp_path):
     written = s.save()
     assert written == {"equip": 1}
     assert s.status()["phase"] == Phase.saved.value
-    store = DatasetStore(tmp_path / "data", "testgame", "equip", "item_name")
+    store = DatasetStore(tmp_path / "data", "testgame", "equip", key=KeySpec(("item_name",)))
     rows = store.records()
     assert rows[0]["item_name"] == "Adra" and rows[0]["item_count"] == 3
 
@@ -242,10 +243,10 @@ def test_sessions_list_load_delete(tmp_path):
     assert s.status()["frames"] == 3                 # fell back to the remaining session
 
 
-def test_missing_dataset_key_warns(tmp_path):
+def test_missing_key_part_warns(tmp_path):
     recs = [Record(values={"item_name": "Adra", "item_count": 1}, confidence=0.9)]
     s = _session(tmp_path, recs)
-    s._profile.datasets[0].key_field = "ghost"   # key doesn't match any field
+    s._profile.windows[0].key = KeyDef(fields=["ghost"])   # key doesn't match any field
     s._process_loop([_jpeg(1)], 80, 60)
     st = s.status()
     assert st["datasets"][0]["count"] == 0       # nothing staged
@@ -292,3 +293,16 @@ def test_consolidate_merges_ocr_noise_doubles():
     assert "amesha" in out and "arnesha" not in out          # 0.77 ratio, but rare vs popular
     assert "centaurblueprint" in out and "centourblueprint" not in out   # near-identical
     assert "latoblueprint" in out
+
+
+def test_consolidate_composite_keys_compare_per_part():
+    # "arcane aegis|5" vs "arcane aegis|3" are 93% alike as strings but differ entirely
+    # in the level part — they must never merge. Name-part OCR noise still folds.
+    from oc.collect.precapture import _consolidate
+    rows = {k: {} for k in ("arcane aegis|5", "arcane aegis|3", "amesha|0", "arnesha|0")}
+    counts = {"arcane aegis|5": 20, "arcane aegis|3": 15, "amesha|0": 30, "arnesha|0": 2}
+    parts = {"arcane aegis|5": ["arcane aegis", "5"], "arcane aegis|3": ["arcane aegis", "3"],
+             "amesha|0": ["amesha", "0"], "arnesha|0": ["arnesha", "0"]}
+    out = _consolidate(rows, counts, parts)
+    assert "arcane aegis|5" in out and "arcane aegis|3" in out   # levels never merge
+    assert "amesha|0" in out and "arnesha|0" not in out          # noise still folds

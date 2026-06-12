@@ -23,6 +23,7 @@ import json
 import re
 import threading
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from datetime import datetime, timezone
@@ -39,11 +40,11 @@ from ..learn.lexicon import Lexicon
 from ..learn.resolver import FieldResolver
 from ..locate import WindowLocator
 from ..profile.models import GameProfile, WindowDef
-from ..store import DatasetStore
-from ..store.dataset_store import norm_key
+from ..store import DatasetStore, KeyMap
 from ..types import Frame, FractionBox, PixelBox
 from ..capture.mss_backend import MssCaptureBackend
 from ..ocr.serialize import ocr_job
+from ..window.input import scroll_window
 from .collector import _load_cutouts
 from .reader import RegionReader
 
@@ -76,6 +77,19 @@ _THUMB = 48          # frame thumbnail side for the perceptual diff
 _THUMB_TOL = 16      # per-cell brightness delta that counts as "changed"
 _THUMB_MIN_CELLS = 10  # below this many changed cells -> nothing real moved (cursor/noise)
 
+# Auto-scroll: while recording, nudge the game's list down once the view settles so the
+# user needn't scroll by hand. A kept frame means the last nudge surfaced new content; a
+# settled view with nothing new means the nudge did nothing. Give up after this many
+# BARREN nudges in a row (end of list, or the game ignores wheel input) by UNCHECKING the
+# flag — recording continues, and the user can re-enable it if it stopped too early.
+_AUTOSCROLL_CLICKS = 1       # wheel notches per nudge (small step keeps cross-scroll overlap)
+_AUTOSCROLL_GIVE_UP = 3      # barren nudges in a row -> pause recording (list end reached)
+
+# Drop the bottom strip before the staleness diff: the game's perf/FPS overlay lives there
+# and ticks every frame, which would defeat the "two identical grabs" settle test. Only the
+# thumbnail is cropped — the SAVED frame stays full so region fractions are unaffected.
+_STALE_CROP_PX = 50
+
 
 def _thumb(image: np.ndarray) -> np.ndarray:
     gray = image.max(axis=2) if image.ndim == 3 else image
@@ -102,10 +116,12 @@ def _detect_boxes(profile: GameProfile) -> list[FractionBox]:
 @dataclass
 class _Staged:
     """Dedup accumulator for one dataset: key -> latest record values, plus how many
-    frames produced each key (the frequency vote used to kill OCR-noise doubles)."""
-    key_field: str
+    frames produced each key (the frequency vote used to kill OCR-noise doubles) and
+    the key's parts (so composite keys consolidate per part, never across them)."""
+    key_fields: list[str]
     rows: dict[str, dict] = field(default_factory=dict)
     counts: dict[str, int] = field(default_factory=dict)
+    parts: dict[str, list[str]] = field(default_factory=dict)
 
 
 # Two staged keys this similar are the same item read two ways — merge regardless of how
@@ -119,19 +135,61 @@ _NOISE_RATIO = 0.72
 
 
 def _consolidate(rows: dict[str, dict], counts: dict[str, int],
+                 parts: dict[str, list[str]] | None = None,
                  ratio: float = _MERGE_RATIO, noise_ratio: float = _NOISE_RATIO) -> dict[str, dict]:
     """Collapse near-duplicate keys created by OCR noise. Precapture sees each item across
     many frames, so the true reading is frequent and a misread is rare. Walk keys most-
     frequent first (canonicals are therefore always at least as frequent as later keys);
     fold a later key into a kept canonical when it's near-identical, OR when it's a much
-    rarer variant that's merely similar. Drops the rarer spelling. O(n·canon)."""
+    rarer variant that's merely similar. Drops the rarer spelling. O(n·canon).
+
+    Composite keys compare PER PART (similarity = the worst part) — never on the joined
+    string, where "arcane aegis|5" vs "arcane aegis|3" would look 93% alike and two
+    genuinely different levels would merge. A name part still folds its OCR doubles.
+
+    Hot loop is O(n·canon) SequenceMatcher.ratio(), which blows up past ~1-2k keys, so each
+    pair is first pruned by a SAFE upper bound (length + shared-character count). Any merge
+    needs ratio >= ``noise_ratio``; when the upper bound is below it the real ratio can't
+    reach it either, so the costly compute is skipped and 0.0 returned — same decision."""
+    pmap = parts or {}
+    _counts: dict[str, Counter] = {}
+
+    def _cc(s: str) -> Counter:
+        c = _counts.get(s)
+        if c is None:
+            c = _counts[s] = Counter(s)
+        return c
+
+    def _can_reach(a: str, b: str) -> bool:
+        # real_quick_ratio: 2*|shared chars| / (len a + len b), an upper bound on .ratio()
+        la, lb = len(a), len(b)
+        tot = la + lb
+        if tot == 0:
+            return True
+        if 2.0 * min(la, lb) < noise_ratio * tot:     # length alone caps it — cheap reject
+            return False
+        shared = sum((_cc(a) & _cc(b)).values())
+        return 2.0 * shared >= noise_ratio * tot
+
+    def _sim(a: str, b: str) -> float:
+        pa, pb = pmap.get(a), pmap.get(b)
+        if pa is not None and pb is not None:
+            if len(pa) != len(pb):
+                return 0.0
+            if any(not _can_reach(x, y) for x, y in zip(pa, pb)):
+                return 0.0                            # a part can't reach the bar -> min can't
+            return min(SequenceMatcher(None, x, y).ratio() for x, y in zip(pa, pb))
+        if not _can_reach(a, b):
+            return 0.0
+        return SequenceMatcher(None, a, b).ratio()
+
     canon: list[str] = []
     out: dict[str, dict] = {}
     for key in sorted(rows, key=lambda k: (counts.get(k, 0), k), reverse=True):
         kc = counts.get(key, 0)
         merged = False
         for c in canon:
-            r = SequenceMatcher(None, key, c).ratio()
+            r = _sim(key, c)
             if r >= ratio or (r >= noise_ratio and kc <= max(2, 0.25 * counts.get(c, 0))):
                 merged = True
                 break
@@ -156,6 +214,7 @@ class PrecaptureSession:
                                  confusions=self._confusions, dictionary=dictionary)
         self._reader = RegionReader(engine.ocr, resolver, cutouts=_load_cutouts(engine, profile))
         self._detect_fracs = _detect_boxes(profile)
+        self._key_maps: dict[str, KeyMap] = {}
         # Recordings are kept as named SESSIONS under precapture/<id>/ (frames +
         # ocr_state.json + meta.json), so a set can be re-processed and re-saved without
         # re-recording. ``_session`` selects the active one; ``_dir`` resolves to it.
@@ -170,11 +229,15 @@ class PrecaptureSession:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._pause = threading.Event()
+        self._autoscroll = threading.Event()   # live-toggled; drives the record loop's scroll
+        self._scroll_clicks = _AUTOSCROLL_CLICKS   # wheel notches per nudge (live-adjustable)
+        self._worker_kind: str | None = None   # "recording" | "processing" — restores phase on resume
         self._thread: threading.Thread | None = None
 
         self._frames: list[bytes] = []        # JPEG-encoded captures
         self._client: tuple[int, int] = (0, 0)
         self._staged: dict[str, _Staged] = {}
+        self._consolidated: dict[str, dict] | None = None   # cached dedup view; None = stale
         self._phase = Phase.idle
         self._processed = 0
         self._read = 0          # records read this run (above the confidence floor)
@@ -361,8 +424,8 @@ class PrecaptureSession:
                 "processed": self._processed,
                 "read": self._read,
                 "no_key": self._no_key,
-                "staged": {ds: {"key_field": acc.key_field, "rows": dict(acc.rows),
-                                "counts": dict(acc.counts)}
+                "staged": {ds: {"key_fields": list(acc.key_fields), "rows": dict(acc.rows),
+                                "counts": dict(acc.counts), "parts": dict(acc.parts)}
                            for ds, acc in self._staged.items()},
             }
         try:
@@ -385,12 +448,14 @@ class PrecaptureSession:
         if state.get("frames") != len(self._frames):   # frame set changed -> stale
             return
         try:
-            self._staged = {ds: _Staged(d["key_field"], dict(d["rows"]),
-                                        {k: int(v) for k, v in d["counts"].items()})
+            self._staged = {ds: _Staged(list(d["key_fields"]), dict(d["rows"]),
+                                        {k: int(v) for k, v in d["counts"].items()},
+                                        {k: list(v) for k, v in d["parts"].items()})
                             for ds, d in state.get("staged", {}).items()}
             self._processed = int(state.get("processed", 0))
             self._read = int(state.get("read", 0))
             self._no_key = int(state.get("no_key", 0))
+            self._consolidated = None   # fresh staged set -> recompute dedup on demand
         except (KeyError, TypeError, ValueError):
             self._staged = {}
             self._processed = self._read = self._no_key = 0
@@ -400,16 +465,19 @@ class PrecaptureSession:
 
     # ---- recording ---------------------------------------------------------
 
-    def start_recording(self, max_frames: int = 300, interval_ms: int = 0, label: str = "") -> None:
+    def start_recording(self, max_frames: int = 300, interval_ms: int = 0, label: str = "",
+                        autoscroll: bool = False, clicks: int = _AUTOSCROLL_CLICKS) -> None:
         with self._lock:
             if self._phase in (Phase.recording, Phase.processing):
                 return
         self._join_prev()   # bury any lingering worker BEFORE clearing _stop (see _join_prev)
+        self.set_autoscroll(autoscroll, clicks)
         with self._lock:
             self._session = self._new_session_id()   # each recording is its own session
             self._reset_locked()
             self._dir.mkdir(parents=True, exist_ok=True)
             self._phase = Phase.recording
+            self._worker_kind = "recording"
             self._stop.clear()
             self._t0 = time.monotonic()
             self._t_end = 0.0
@@ -418,18 +486,23 @@ class PrecaptureSession:
             target=self._record_loop, args=(max_frames, interval_ms / 1000.0), daemon=True)
         self._thread.start()
 
-    def _pick_grab(self, win):
-        """Choose the capture path once per run. Prefer the cheap desktop copy (mss),
-        which doesn't disturb the game; fall back to the engine's window capture
-        (PrintWindow) only if mss comes back black — exclusive-fullscreen or a fully
-        occluded window, where a desktop copy can't see the game."""
-        try:
-            f = self._screen.grab_window(win)
-            if f.image is not None and f.image.size and int(f.image.max()) > 8:
-                return self._screen.grab_window
-        except Exception:
-            pass
-        return self._engine.capture.grab_window
+    def _grab_frame(self, win, foreground: bool):
+        """Capture the game, picking the path PER FRAME by whether it's on top.
+
+        mss copies the desktop at the window's screen rect — cheap and doesn't disturb the
+        game, but it sees whatever is *in front* of those pixels, so an occluded/background
+        window grabs the wrong app (the browser, the editor). Only trust mss when the game
+        is foreground (on top). Otherwise — and as a fallback if mss comes back black
+        (exclusive-fullscreen) — use the engine's window capture (PrintWindow), which reads
+        the window's OWN surface even when occluded or backgrounded."""
+        if foreground:
+            try:
+                f = self._screen.grab_window(win)
+                if f.image is not None and f.image.size and int(f.image.max()) > 8:
+                    return f
+            except Exception:
+                pass
+        return self._engine.capture.grab_window(win)
 
     def _record_loop(self, max_frames: int, interval: float) -> None:
         prev_thumb: np.ndarray | None = None   # the immediately preceding grab
@@ -442,27 +515,46 @@ class PrecaptureSession:
         # the screen is still, ease off to a gentle poll.
         fast = max(interval, 0.03)
         idle = max(interval, 0.5)
-        grab = None                           # chosen once, on the first located window
+        barren = 0                            # consecutive auto-scrolls that surfaced nothing new
+        pending_scroll = False                # a scroll was sent, awaiting its result
         try:
             while not self._stop.is_set():
                 with self._lock:
                     if len(self._frames) >= max_frames:
                         break
+                if self._pause.is_set():        # paused (e.g. auto-scroll hit the list end)
+                    while self._pause.is_set() and not self._stop.is_set():
+                        self._stop.wait(0.05)
+                    if self._stop.is_set():
+                        break
+                    barren = 0                  # resumed -> retry scrolling from here
+                    pending_scroll = False
                 win = self._locator.locate(self._profile)
                 if self._stop.is_set():       # locate can be slow (process scan) — bail promptly
                     break
                 if win is None:
                     time.sleep(0.3)           # no window: back off, don't hammer the scan
                     continue
-                if grab is None:
-                    grab = self._pick_grab(win)
-                frame = grab(win)
-                thumb = _thumb(frame.image)
+                try:
+                    fg = self._engine.window.is_foreground(win)
+                except Exception:
+                    fg = True   # provider can't say -> assume on top (mss path self-falls-back)
+                frame = self._grab_frame(win, fg)   # mss when on top, else PrintWindow's own surface
+                img = frame.image
+                # crop the perf-overlay strip off the bottom for the staleness diff only
+                stale_src = img[: img.shape[0] - _STALE_CROP_PX] if img.shape[0] > _STALE_CROP_PX else img
+                thumb = _thumb(stale_src)
                 settled = prev_thumb is not None and _changed_cells(thumb, prev_thumb) < _THUMB_MIN_CELLS
                 new_view = saved_thumb is None or _changed_cells(thumb, saved_thumb) >= _THUMB_MIN_CELLS
-                if settled and new_view:       # steady AND different from the last kept frame -> keep one
+                # Auto-scroll drives capture and can only scroll a focused window, so while
+                # it's on only save frames the user is actively scrolling (foreground). Manual
+                # recording keeps backgrounded capture (now the real surface via PrintWindow).
+                auto = self._autoscroll.is_set()
+                kept = False
+                if settled and new_view and (fg or not auto):   # steady, new, and focused if auto
                     ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
                     if ok:
+                        kept = True
                         saved_thumb = thumb
                         data = buf.tobytes()
                         with self._lock:
@@ -473,18 +565,58 @@ class PrecaptureSession:
                             (self._dir / f"{idx:05d}.jpg").write_bytes(data)
                         except OSError:
                             pass
+
+                # ---- auto-scroll driver --------------------------------------
+                # Nudge the list down ONLY as a consequence of saving a good frame, and
+                # only when the view has SETTLED (never mid-animation) and the game is
+                # frontmost. A kept frame -> advance once. If a nudge then yields no new
+                # good frame the list may just be slow, so RETRY a few times; after that
+                # many barren nudges the list has ended -> PAUSE the recording (keep
+                # auto-scroll armed) so resuming retries from wherever the user left off.
+                scrolled = False
+                if auto:
+                    if settled and fg:
+                        if kept:                       # good frame saved -> advance
+                            barren = 0
+                            scrolled = scroll_window(win, self._scroll_clicks)
+                            pending_scroll = scrolled
+                        elif pending_scroll:           # nudged, but nothing new settled yet
+                            barren += 1
+                            if barren >= _AUTOSCROLL_GIVE_UP:
+                                barren = 0
+                                pending_scroll = False
+                                self.pause(True)       # list end reached -> pause, don't uncheck
+                            else:
+                                scrolled = scroll_window(win, self._scroll_clicks)   # retry
+                else:
+                    barren = 0
+                    pending_scroll = False
+
                 moving = not settled           # screen changing (transition) -> grab fast to catch the settle
                 prev_thumb = thumb
-                # wait ON the stop event so cancel is instant even mid idle-poll
-                self._stop.wait(fast if moving else idle)
+                # wait ON the stop event so cancel is instant even mid idle-poll. A just-sent
+                # scroll is about to animate the view, so poll fast to catch its settle too.
+                self._stop.wait(fast if (moving or scrolled) else idle)
         except Exception as exc:  # pragma: no cover - defensive
             with self._lock:
                 self._error = str(exc)
         finally:
+            self._pause.clear()
             with self._lock:
-                if self._phase is Phase.recording:
+                if self._phase in (Phase.recording, Phase.paused):
                     self._phase = Phase.recorded
                 self._t_end = time.monotonic()   # freeze the recording clock (fps stops drifting)
+
+    def set_autoscroll(self, on: bool, clicks: int | None = None) -> None:
+        """Live-toggle auto-scroll (and optionally its wheel-notch step). Unchecking mid-
+        record stops it at once; rechecking resumes — the record loop re-reads both the
+        flag and the step every grab."""
+        if clicks is not None:
+            self._scroll_clicks = max(1, int(clicks))
+        if on:
+            self._autoscroll.set()
+        else:
+            self._autoscroll.clear()
 
     def stop_recording(self) -> None:
         self._stop.set()
@@ -507,6 +639,7 @@ class PrecaptureSession:
                 self._no_key = 0
                 self._staged = {}
             self._phase = Phase.processing
+            self._worker_kind = "processing"
             self._error = None
             self._t_decode = self._t_classify = self._t_read = 0.0   # perf accumulators (s)
             self._stop.clear()
@@ -584,6 +717,7 @@ class PrecaptureSession:
         with self._lock:
             self._phase = Phase.done
             self._t_end = time.monotonic()
+        self._consolidated_view()   # warm the dedup cache here, off the status-poll path
         self._log_perf(errors)
 
     def _read_cached(self, frame: Frame, window: WindowDef, last_sig: dict, last_recs: dict) -> list:
@@ -615,24 +749,32 @@ class PrecaptureSession:
         state = next((s for s in window.states if s.id == state_id), None)
         return bool(state and state.valid_for_save)
 
+    def _key_map(self, dataset: str) -> KeyMap:
+        if dataset not in self._key_maps:
+            self._key_maps[dataset] = self._profile.key_map_for(dataset)
+        return self._key_maps[dataset]
+
     def _stage(self, window: WindowDef, records: list) -> None:
         if not records:
             return
         dataset = window.dataset_id
-        key_field = self._profile.key_for(dataset)
-        strip, case = self._profile.key_opts(dataset)
+        km = self._key_map(dataset)
         with self._lock:
             self._read += len(records)
             acc = self._staged.get(dataset)
             if acc is None:
-                acc = self._staged[dataset] = _Staged(key_field)
+                acc = self._staged[dataset] = _Staged(km.fields_used())
             for rec in records:
-                key = norm_key(rec.values.get(key_field), strip, case)   # dedup as the store will
-                if key is None:
+                spec = km.spec_for(rec.values)
+                parts = spec.parts(rec.values)     # dedup as the store will
+                if parts is None:
                     self._no_key += 1
                     continue
+                key = spec.sep.join(parts)
                 acc.rows[key] = dict(rec.values)
                 acc.counts[key] = acc.counts.get(key, 0) + 1   # frequency vote for noise merge
+                acc.parts[key] = parts
+            self._consolidated = None   # staged changed -> cached dedup view is stale
 
     # ---- control -----------------------------------------------------------
 
@@ -640,13 +782,15 @@ class PrecaptureSession:
         if on:
             self._pause.set()
             with self._lock:
-                if self._phase is Phase.processing:
+                if self._phase in (Phase.processing, Phase.recording):
                     self._phase = Phase.paused
         else:
             self._pause.clear()
             with self._lock:
                 if self._phase is Phase.paused:
-                    self._phase = Phase.processing
+                    # resume into whichever worker is running (recording vs processing)
+                    self._phase = (Phase.recording if self._worker_kind == "recording"
+                                   else Phase.processing)
 
     def _join_prev(self) -> None:
         """Make sure the previous worker thread is dead before a new one starts.
@@ -694,6 +838,7 @@ class PrecaptureSession:
     def _reset_locked(self) -> None:
         self._frames = []
         self._staged = {}
+        self._consolidated = None
         self._processed = 0
         self._read = 0
         self._no_key = 0
@@ -702,17 +847,29 @@ class PrecaptureSession:
 
     # ---- save --------------------------------------------------------------
 
+    def _consolidated_view(self) -> dict[str, dict]:
+        """Deduped staged rows per dataset, CACHED. The merge is O(n·canon) and seconds-slow
+        past a couple thousand keys, so it must NOT run on every status poll. Computed once
+        off the lock from a snapshot; the cache is invalidated by the next stage/reset."""
+        with self._lock:
+            cached = self._consolidated
+            snap = None if cached is not None else {
+                ds: (dict(a.rows), dict(a.counts), dict(a.parts)) for ds, a in self._staged.items()}
+        if cached is not None:
+            return cached
+        view = {ds: _consolidate(r, c, p) for ds, (r, c, p) in snap.items()}
+        with self._lock:
+            if self._consolidated is None:   # nothing invalidated it while we computed
+                self._consolidated = view
+            return self._consolidated
+
     def save(self) -> dict:
         """Commit staged records into the real per-dataset stores. Returns counts."""
-        with self._lock:
-            staged = {ds: (dict(acc.rows), dict(acc.counts)) for ds, acc in self._staged.items()}
+        view = self._consolidated_view()   # merge OCR-noise doubles before committing (cached)
         written = {}
-        for dataset, (rows, counts) in staged.items():
-            rows = _consolidate(rows, counts)   # merge OCR-noise doubles before committing
-            strip, case = self._profile.key_opts(dataset)
+        for dataset, rows in view.items():
             store = DatasetStore(self._engine.settings.data_dir, self._profile.name,
-                                 dataset, self._profile.key_for(dataset),
-                                 strip_nonalnum=strip, case_sensitive=case)
+                                 dataset, key=self._key_map(dataset))
             store.begin_batch()   # this save is one revertable batch
             n = 0
             for values in rows.values():
@@ -766,11 +923,18 @@ class PrecaptureSession:
         dataset key that doesn't match any field."""
         staged = sum(len(acc.rows) for acc in self._staged.values())
         if self._read > 0 and staged == 0 and self._no_key > 0:
-            keys = ", ".join(sorted({acc.key_field for acc in self._staged.values()})) or "?"
-            return f"read {self._read} rows but none had the dataset key ({keys}) — check the key field"
+            keys = ", ".join(sorted({f for acc in self._staged.values()
+                                     for f in acc.key_fields})) or "?"
+            return (f"read {self._read} rows but none had a complete key ({keys}) — "
+                    "check the item's key fields")
         return None
 
     def status(self) -> dict:
+        with self._lock:
+            processing = self._phase is Phase.processing
+        # while processing keep it cheap (raw, ever-changing); once settled show the cached
+        # deduped set — computed off the lock so a big merge never stalls the status poll
+        cview = None if processing else self._consolidated_view()
         with self._lock:
             total = len(self._frames)
             # once the run has ended, measure against the frozen finish time so fps stops
@@ -785,15 +949,16 @@ class PrecaptureSession:
                 fps = 0.0
             datasets = []
             for ds, acc in self._staged.items():
-                # while processing keep it cheap (raw); once settled show the deduped set
-                rows = list((acc.rows if self._phase is Phase.processing
-                             else _consolidate(acc.rows, acc.counts)).values())
-                datasets.append({"dataset": ds, "key_field": acc.key_field,
-                                 "count": len(rows), "sample": rows[-12:]})
+                src = cview.get(ds, acc.rows) if cview is not None else acc.rows
+                rows = list(src.values())
+                datasets.append({"dataset": ds, "count": len(rows), "sample": rows[-12:]})
             meta = self._read_meta(self._dir) if self._session else {}
             return {
                 "phase": self._phase.value,
                 "session": self._session,
+                "autoscroll": self._autoscroll.is_set(),
+                "scroll_clicks": self._scroll_clicks,
+                "kind": self._worker_kind,
                 "label": meta.get("label", ""),
                 "saved_at": meta.get("saved_at"),
                 "frames": total,

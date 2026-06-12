@@ -8,6 +8,7 @@ import { Overlay } from "../overlay.js";
 import { log, timed, setLogOpen } from "../log.js";
 import { GraphModel } from "./model.js";
 import { EdgeRouter, polylinePath } from "./route.js";
+import { buildKey, DEFAULT_KEY } from "../keys.js";
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (m) => log(m);   // #status is gone — the log bar shows messages now
@@ -112,6 +113,14 @@ function renderWorkers() {
   }
 }
 
+// `.flab` rows are <label>s for layout/a11y only — a click on the label chrome
+// (text/gaps) must NOT activate the control (toggle a checkbox, focus an input).
+// Cancel the label's default activation unless the click landed on the control.
+document.addEventListener("click", (e) => {
+  const lab = e.target.closest("label.flab");
+  if (lab && !e.target.closest("input, select, textarea, button")) e.preventDefault();
+}, true);
+
 // Kill a worker from the log bar (don't let the click toggle the log open).
 $("logWorkers").addEventListener("click", (ev) => {
   ev.stopPropagation();
@@ -170,12 +179,41 @@ function applyHistory() {
 }
 function undo() { if (hIndex > 0) { hIndex--; applyHistory(); setStatus("undo"); } }
 function redo() { if (hIndex < history.length - 1) { hIndex++; applyHistory(); setStatus("redo"); } }
-// Carry a node's position (and collapse state) to its new id after a rename, so
-// it doesn't jump to a fresh slot.
+// All per-node UI state (position, size, collapse) is keyed by node id, so any rename
+// that changes a node id must remap every one of those maps in lockstep — otherwise the
+// node loses its saved slot and jumps. `remapNodeState` is the single place that does
+// that; the two helpers below are the only entry points (exact id, or window-prefix).
+function remapNodeState(mapId) {
+  for (const store of [pos, nodeSizes]) {        // Maps: id -> {x,y} / {w,h}
+    for (const id of [...store.keys()]) {
+      const to = mapId(id);
+      if (to && to !== id) { store.set(to, store.get(id)); store.delete(id); }
+    }
+  }
+  for (const id of [...collapsed]) {              // Set of collapsed ids
+    const to = mapId(id);
+    if (to && to !== id) { collapsed.delete(id); collapsed.add(to); }
+  }
+}
+
+// Carry one node's saved state to its new id after a rename, so it doesn't jump.
 function movePos(oldId, newId) {
   if (oldId === newId) return;
-  if (pos.has(oldId)) { pos.set(newId, pos.get(oldId)); pos.delete(oldId); }
-  if (collapsed.has(oldId)) { collapsed.delete(oldId); collapsed.add(newId); }
+  remapNodeState((id) => (id === oldId ? newId : null));
+}
+
+// Renaming a window changes the id embedded in ALL its child nodes, so carry every node
+// whose window segment matches — one rename, the whole subtree stays put. Limited to the
+// window-owned node types so it can't grab a same-named dataset node (those carry
+// separately in the handler, since their stored data moves too).
+const WINDOW_NODE_TYPES = new Set(["win", "prev", "reg", "det", "item", "sb"]);
+function moveWindowPos(oldWin, newWin) {
+  if (oldWin === newWin) return;
+  remapNodeState((id) => {
+    const p = id.split(":");
+    return WINDOW_NODE_TYPES.has(p[0]) && p[1] === oldWin
+      ? [p[0], newWin, ...p.slice(2)].join(":") : null;
+  });
 }
 
 function posKey() { return `oc.graph.${model.profile.name}`; }
@@ -204,6 +242,13 @@ function savePositions() {
 const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds (rank)"]];
 const EXTRACTS = ["whole", "number", "number_before", "number_after", "text_before", "text_after"];
 const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text_after"]);
+// how the game dictionary participates in a text field's reads (FieldDef.dict_mode)
+const DICT_MODES = [
+  ["off", "off"],
+  ["correct", "correct"],
+  ["drop", "drop"],
+  ["correct_drop", "correct + drop"],
+];
 
 // ---- layout ---------------------------------------------------------------
 
@@ -286,10 +331,10 @@ function panTo(id) {
 // ---- render ---------------------------------------------------------------
 
 function windowControls(w) {
-  // The dataset (not the window) owns dedup now — the key field lives on the dataset
-  // node. The window just shows where its records flow + the image/delete actions.
-  return `<div class="muted">→ ${esc(model.datasetOf(w))}</div>
-    <div class="gn-foot"><button class="imgbtn">📷 image</button></div>`;
+  // The record key is taught per item template (key section in the item node; the
+  // teach page covers grid windows). Where records flow is shown by the wire to the
+  // dataset node, so the window node itself only carries the image/delete actions.
+  return `<div class="gn-foot"><button class="imgbtn">📷 image</button></div>`;
 }
 
 // The tells + fields list shown under an item node's cutout canvas. Item fields
@@ -323,7 +368,7 @@ function itemLists(it, w) {
       <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="ffset" data-fid="${f.id}" data-k="empty" value="${esc(fd.empty || "")}" placeholder="(blank)"/></label>
       ${fd.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="ffset" data-fid="${f.id}" data-k="ifnum" value="${esc(fd.if_number ?? "")}" placeholder="(off)"/></label>
       <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="ifnumany" ${fd.if_number_any ? "checked" : ""}/></label>
-      <label class="flab" title="value must match a dictionary term (fuzzy ok), else dropped and never learned">dict only <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="dictonly" ${fd.dict_only ? "checked" : ""}/></label>` : ""}
+      <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="ffset" data-fid="${f.id}" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(fd.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>` : ""}
       ${fd.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="ffset" data-fid="${f.id}" data-k="iftext" value="${esc(fd.if_text ?? "")}" placeholder="(off)"/></label>
       <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="iftextany" ${fd.if_text_any ? "checked" : ""}/></label>` : ""}
     </div>`;
@@ -331,7 +376,51 @@ function itemLists(it, w) {
   return `<label class="flab" title="when templates overlap the same tile, higher priority wins">priority <input type="number" class="iprio" step="1" value="${it.priority || 0}"></label>
     <div class="muted il-h">tells</div>${tells || '<div class="muted">draw a tell on the cutout</div>'}
     <div class="muted il-h">fields</div>${fields || '<div class="muted">draw a field on the cutout</div>'}
+    ${keySection(it, w)}
     `;
+}
+
+// The item's record key (dedup identity): which fields identify a record, in what
+// order, joined how. Live preview = the key the LAST cutout read would store under,
+// recomputed instantly on every config edit (client mirror of the server's KeySpec);
+// the server's own key shows in the read-out after the next read.
+function keySection(it, w) {
+  const eff = it.key || w.key || DEFAULT_KEY;
+  const used = eff.fields && eff.fields.length ? eff.fields : ["name"];
+  const fids = [...new Set((it.fields || []).map((f) => f.field))];
+  const rows = used.map((fid, i) => `<div class="key-row" data-i="${i}">
+      <select class="kfield" data-i="${i}">${(fids.includes(fid) ? fids : [fid, ...fids])
+        .map((f) => `<option ${f === fid ? "selected" : ""}>${esc(f)}</option>`).join("")}</select>
+      <button class="kmv" data-i="${i}" data-d="-1" ${i === 0 ? "disabled" : ""} title="earlier in the key">▲</button>
+      <button class="kmv" data-i="${i}" data-d="1" ${i === used.length - 1 ? "disabled" : ""} title="later in the key">▼</button>
+      <button class="kdel danger" data-i="${i}" ${used.length <= 1 ? "disabled" : ""} title="remove from the key">✕</button>
+    </div>`).join("");
+  const addable = fids.filter((f) => !used.includes(f));
+  return `<div class="muted il-h" title="which fields identify a record — reads with the same key merge; a different key (e.g. another level) is its own record. A record missing any key part is dropped.">key</div>
+    ${rows}
+    <div class="key-row">
+      ${addable.length ? `<select class="kadd"><option value="">+ field…</option>${addable.map((f) => `<option>${esc(f)}</option>`).join("")}</select>` : ""}
+      <label class="flab" title="joins the parts in the stored key">sep <input class="ksep" value="${esc(eff.sep ?? "|")}" size="2"/></label>
+      <label class="flab" title="treat keys differing only in case as distinct">case <input type="checkbox" class="kcase" ${eff.case_sensitive ? "checked" : ""}/></label>
+    </div>
+    <div class="key-prev" title="the key the last read would store under">${keyPrevHTML(w.id, it.id)}</div>`;
+}
+
+// The key the LAST cutout read would store under — recomputed instantly from the
+// cached read on every key-config edit (client mirror of the server's KeySpec),
+// refreshed again when the automatic cutout read lands. Empty until a read exists.
+function keyPrevHTML(winId, itemId) {
+  const it = model.item(winId, itemId), w = model.window(winId);
+  const rd = itemReads.get(`${winId}:${itemId}`);
+  if (!it || !w || !rd) return "";
+  const eff = it.key || w.key || DEFAULT_KEY;
+  const vals = {};
+  for (const [k, v] of Object.entries(rd.fields || {})) vals[k] = v.value;
+  const key = buildKey(vals, eff);
+  if (key !== null) return `→ <b class="conf-ok">${esc(key)}</b>`;
+  const used = eff.fields && eff.fields.length ? eff.fields : ["name"];
+  const miss = used.find((f) => vals[f] === null || vals[f] === undefined || vals[f] === "");
+  return `<span class="tc-bad">∅ no key${miss ? ` — ${esc(miss)} read empty` : ""}</span> <span class="muted">(record dropped)</span>`;
 }
 
 // Wire an item node's id + tells/fields lists (rebuildNode re-binds these,
@@ -341,7 +430,12 @@ function wireItemControls(div, n) {
   // any tell/field config edit re-reads the cutout (bubbles after the specific handler
   // that updated the model, so the read reflects the new setting). Debounced.
   div.addEventListener("change", () => scheduleItemRead(winId, itemId));
-  div.querySelector(".gi-id").addEventListener("change", (e) => { model.renameItem(winId, itemId, e.target.value.trim()); render(); autosave(); });
+  div.querySelector(".gi-id").addEventListener("change", (e) => {
+    const newId = e.target.value.trim();
+    if (!model.renameItem(winId, itemId, newId)) { e.target.value = itemId; return; }
+    movePos(`item:${winId}:${itemId}`, `item:${winId}:${newId}`);
+    render(); autosave();
+  });
   div.querySelectorAll(".iset").forEach((inp) => inp.addEventListener("change", (e) => {
     const tid = e.target.dataset.tid, k = e.target.dataset.k;
     let v = e.target.value;
@@ -381,7 +475,7 @@ function wireItemControls(div, n) {
     else if (k === "ifnumany") fd.if_number_any = e.target.checked;
     else if (k === "iftext") fd.if_text = e.target.value || null;
     else if (k === "iftextany") fd.if_text_any = e.target.checked;
-    else if (k === "dictonly") fd.dict_only = e.target.checked;
+    else if (k === "dictmode") fd.dict_mode = e.target.value;
     gridPreviews.delete(winId); gridReads.delete(winId); autosave();
   }));
   div.querySelectorAll(".if-del").forEach((b) => b.addEventListener("click", () => {
@@ -406,6 +500,29 @@ function wireItemControls(div, n) {
     model.setItemPriority(winId, itemId, parseInt(e.target.value, 10) || 0);
     gridPreviews.delete(winId); gridReads.delete(winId); refreshImageBoxes(winId); autosave();
   });
+  // record-key config: mutate the item's own KeyDef (created from the effective one on
+  // first edit) and rebuild the node — the key preview recomputes instantly from the
+  // cached read; no OCR needed.
+  const keyEdit = (fn) => {
+    const k = model.ensureItemKey(winId, itemId);
+    if (!k) return;
+    fn(k);
+    rebuildNode(n.id); autosave();
+  };
+  div.querySelectorAll(".kfield").forEach((s) => s.addEventListener("change", (e) =>
+    keyEdit((k) => { k.fields[+e.target.dataset.i] = e.target.value; })));
+  div.querySelectorAll(".kmv").forEach((b) => b.addEventListener("click", () => keyEdit((k) => {
+    const i = +b.dataset.i, j = i + (+b.dataset.d);
+    if (j < 0 || j >= k.fields.length) return;
+    [k.fields[i], k.fields[j]] = [k.fields[j], k.fields[i]];
+  })));
+  div.querySelectorAll(".kdel").forEach((b) => b.addEventListener("click", () =>
+    keyEdit((k) => { if (k.fields.length > 1) k.fields.splice(+b.dataset.i, 1); })));
+  div.querySelector(".kadd")?.addEventListener("change", (e) => {
+    if (e.target.value) keyEdit((k) => { k.fields.push(e.target.value); });
+  });
+  div.querySelector(".ksep")?.addEventListener("change", (e) => keyEdit((k) => { k.sep = e.target.value || "|"; }));
+  div.querySelector(".kcase")?.addEventListener("change", (e) => keyEdit((k) => { k.case_sensitive = e.target.checked; }));
   // Click a tell/field row to SELECT its box on the cutout — the only way to reach a
   // box that's drawn under another. Routes through the chokepoint (highlights it,
   // deselects others, enables WASD).
@@ -429,7 +546,15 @@ function wireItemControls(div, n) {
 // Wire the window node's controls (extracted so rebuildNode can re-bind them
 // without recreating the node — which would destroy the embedded image canvas).
 function wireWindowControls(div, n) {
-  div.querySelector(".gi-id").addEventListener("change", (e) => { model.renameWindow(n.ref.id, e.target.value.trim()); render(); autosave(); });
+  div.querySelector(".gi-id").addEventListener("change", (e) => {
+    const oldId = n.ref.id, newId = e.target.value.trim();
+    const oldDs = model.datasetOf(n.ref);   // a default dataset (id == window id) renames with it
+    if (!model.renameWindow(oldId, newId)) { e.target.value = oldId; return; }
+    moveWindowPos(oldId, newId);            // win + all child nodes
+    const newDs = model.datasetOf(n.ref);
+    if (newDs !== oldDs) { movePos(`ds:${oldDs}`, `ds:${newDs}`); movePos(`bat:${oldDs}`, `bat:${newDs}`); }
+    render(); autosave();
+  });
   div.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal(n.ref.id));
   updateImageLabel(n.ref.id, div.querySelector(".imgbtn"));   // show the bound filename
 }
@@ -468,7 +593,7 @@ function nodeParts(n) {
         <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="fset" data-k="empty" value="${esc(f.empty || "")}" placeholder="(blank)" /></label>
         ${f.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="fset" data-k="ifnum" value="${esc(f.if_number ?? "")}" placeholder="(off)" /></label>
         <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="fset" data-k="ifnumany" ${f.if_number_any ? "checked" : ""}/></label>
-        <label class="flab" title="value must match a dictionary term (fuzzy ok), else dropped and never learned">dict only <input type="checkbox" class="fset" data-k="dictonly" ${f.dict_only ? "checked" : ""}/></label>` : ""}
+        <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="fset" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(f.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>` : ""}
         ${f.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="fset" data-k="iftext" value="${esc(f.if_text ?? "")}" placeholder="(off)" /></label>
         <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="fset" data-k="iftextany" ${f.if_text_any ? "checked" : ""}/></label>` : ""}
         <div class="gn-foot"></div>`,
@@ -532,20 +657,16 @@ function nodeParts(n) {
         <div class="gn-foot"></div>`,
     };
   }
-  // dataset — owns the dedup key. Key options = the fields of every window feeding it.
+  // dataset — receives/stores rows, deduped by the keys the records arrive with.
+  // The key itself is no concern of the dataset: it's taught on the item templates
+  // (or windows) that read the records.
   const ds = n.ref;
   const d = live[ds] || { present: 0, total: 0, last_op: null, last_ts: null };
   const pulse = prevPresent[ds] !== undefined && prevPresent[ds] !== d.present ? "pulse" : "";
-  const key = model.datasetKey(ds);
-  const fids = model.datasetFields(ds);
-  const keyOpts = (fids.includes(key) ? fids : [key, ...fids]).map((f) => `<option ${f === key ? "selected" : ""}>${esc(f)}</option>`).join("");
   return {
     title: `<input class="gi gi-id dsrename" value="${esc(ds)}" title="dataset name" />`,
     body: `<div class="big">${d.present}<span class="muted"> / ${d.total}</span></div>
       <div class="muted">${d.last_op ? esc(d.last_op) : "—"} ${d.last_ts ? esc(d.last_ts.slice(11)) : ""}</div>
-      <label class="flab" title="field whose value identifies a row — reads with the same value merge">key <select class="dskey">${keyOpts}</select></label>
-      <label class="flab" title="ignore spaces/punctuation when matching keys">strip non-alnum <input type="checkbox" class="dsstrip" ${model.datasetStrip(ds) ? "checked" : ""}></label>
-      <label class="flab" title="treat keys differing only in case as distinct">case sensitive <input type="checkbox" class="dscase" ${model.datasetCase(ds) ? "checked" : ""}></label>
       <div class="gn-foot"><button class="dssubset">+ subset</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
       <div class="nodehost scrollhost data-host"><p class="muted" style="padding:8px">loading…</p></div>`,
   };
@@ -693,8 +814,19 @@ function removeNode(n) {
   else if (n.type === "scrollbar") { model.removeScrollbar(n.win.id); render(); autosave(); refreshImageBoxes(n.win.id); }
   else if (n.type === "dictionary") { model.removeDictionary(n.ref.id); pos.delete(n.id); render(); autosave(); }
   else if (n.type === "subset") { model.removeSubset(n.ref.id); render(); autosave(); }
-  else if (n.type === "dataset") { model.removeDatasetDef(n.ref); pos.delete(n.id); render(); autosave(); }
+  else if (n.type === "dataset") { model.removeDatasetDef(n.ref); pos.delete(n.id); purgeDatasetData(n.ref); render(); autosave(); }
   setStatus(`deleted ${n.type} ${n.ref?.id ?? n.ref ?? ""}`.trimEnd());
+}
+
+// Purge a dataset's stored files so removing its node doesn't leave it re-spawning from
+// disk on the next live refresh. A dataset node is standalone (not owned by anything) but
+// is re-derived from any window still wired to it — such a node reappears (empty) until
+// that window is rewired/removed.
+async function purgeDatasetData(ds) {
+  delete live[ds];
+  try { await api.deleteDataset(model.profile.name, ds); }
+  catch (e) { setStatus(`delete failed: ${e.message}`); return; }
+  await refreshLive();   // re-reads the dataset list (the purged name is gone from disk)
 }
 
 // Two-click confirm on an icon button: 1st click arms it (icon -> "?"), 2nd confirms.
@@ -726,22 +858,31 @@ function fillNode(div, n) {
   if (n.type === "dataset") div.dataset.ds = n.ref;
   const parts = nodeParts(n);
   const toggle = canToggle
-    ? `<input type="checkbox" class="gn-enable" ${enabled ? "checked" : ""} title="enabled — uncheck to skip this node during detection" />`
+    ? `<button type="button" class="gn-enable${enabled ? " on" : ""}" role="switch" aria-checked="${enabled}" title="enabled — turn off to skip this node during detection">
+        <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
+          <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
+          <circle class="gt-thumb" cx="8" cy="8" r="5" />
+        </svg></button>`
     : "";
   const del = REMOVABLE.has(n.type) ? `<button class="gn-del danger" title="remove (click again to confirm)">✕</button>` : "";
   div.innerHTML = `<div class="gn-h ${parts.pulse || ""}">
-      <button class="collapse" title="collapse/expand">${isCollapsed ? "▸" : "▾"}</button>${toggle}${parts.title}${del}</div>
+      <button class="collapse" title="collapse/expand">${isCollapsed ? "▸" : "▾"}</button>${parts.title}${toggle}${del}</div>
     <div class="gn-body">${parts.body}</div>
     <span class="gn-spin" title="working…"></span>${parts.ports || ""}`;
   div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
   const delBtn = div.querySelector(".gn-del");
   if (delBtn) wireConfirmRemove(delBtn, () => removeNode(n));
-  div.querySelector(".gn-enable")?.addEventListener("change", (e) => {
-    n.ref.enabled = e.target.checked;
-    div.classList.toggle("node-disabled", !e.target.checked);
+  const tog = div.querySelector(".gn-enable");
+  tog?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const on = tog.getAttribute("aria-checked") !== "true";   // flip current state
+    tog.setAttribute("aria-checked", on);
+    tog.classList.toggle("on", on);
+    n.ref.enabled = on;
+    div.classList.toggle("node-disabled", !on);
     const winId = n.type === "window" ? n.ref.id : n.win?.id;
     if (winId) { gridPreviews.delete(winId); gridReads.delete(winId); refreshImageBoxes(winId); }
-    autosave(e.target.checked);   // disabling shouldn't trigger re-reads in other nodes
+    autosave(on);   // disabling shouldn't trigger re-reads in other nodes
   });
   if (busy.get(n.id)) div.classList.add("busy");   // preserve spinner across rebuilds
   wireNode(div, n);
@@ -857,9 +998,31 @@ function resizeCanvas() {
 
 // ---- pan + zoom -----------------------------------------------------------
 
+// Clear selections that live INSIDE node bodies (item-list rows, a batches node's
+// picked batch) for every node that isn't `keepId` — so a node's inner selection
+// doesn't linger after focus moves off it.
+function clearNodeSelections(keepId = null) {
+  for (const [nid, el] of nodeEls) {
+    if (nid === keepId) continue;
+    el.querySelectorAll(".il-sel").forEach((r) => r.classList.remove("il-sel"));
+  }
+  for (const ds of batchesState.keys()) {
+    if (`bat:${ds}` === keepId) continue;
+    const st = batchesState.get(ds);
+    if (st.sel == null) continue;
+    st.sel = null;
+    const els = batEls(ds);
+    if (els) {
+      els.detail.innerHTML = "";
+      els.list.querySelectorAll(".batrow.sel").forEach((li) => li.classList.remove("sel"));
+    }
+  }
+}
+
 function deselectAll() {
   for (const [, rec] of overlays) rec.overlay.setActive(null);   // every overlay, centrally
   for (const [, el] of nodeEls) el.classList.remove("selected");
+  clearNodeSelections();
   selectedNodeId = null;
   activeOverlayKey = null;
   drawEdges();
@@ -1353,12 +1516,21 @@ function wireNode(div, n) {
   } else if (n.type === "preview") {
     div.querySelector(".prevrun")?.addEventListener("click", () => refreshPreview(n.ref.id));
   } else if (n.type === "dataset") {
-    div.querySelector(".dsrename")?.addEventListener("change", (e) => {
-      if (model.renameDataset(n.ref, e.target.value)) { render(); autosave(); } else e.target.value = n.ref;
+    div.querySelector(".dsrename")?.addEventListener("change", async (e) => {
+      const oldId = n.ref, newId = (e.target.value || "").trim();
+      if (!model.renameDataset(oldId, newId)) { e.target.value = oldId; return; }
+      movePos(`ds:${oldId}`, `ds:${newId}`); movePos(`bat:${oldId}`, `bat:${newId}`);
+      autosave();
+      try {
+        await api.renameDataset(model.profile.name, oldId, newId);   // carry the stored data over
+      } catch (err) {
+        model.renameDataset(newId, oldId);   // roll back the profile rename; data didn't move
+        movePos(`ds:${newId}`, `ds:${oldId}`); movePos(`bat:${newId}`, `bat:${oldId}`);
+        e.target.value = oldId; setStatus(String(err.message || err)); autosave();
+        render(); return;
+      }
+      await refreshLive();   // re-reads the dataset list (now under the new name) and re-renders
     });
-    div.querySelector(".dskey")?.addEventListener("change", (e) => { model.setDatasetKey(n.ref, e.target.value); autosave(); });
-    div.querySelector(".dsstrip")?.addEventListener("change", (e) => { model.setDatasetStrip(n.ref, e.target.checked); autosave(); });
-    div.querySelector(".dscase")?.addEventListener("change", (e) => { model.setDatasetCase(n.ref, e.target.checked); autosave(); });
     div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(); });
     div.querySelector(".dssubset")?.addEventListener("click", () => {
       const id = model.addSubset(n.ref);
@@ -1387,7 +1559,7 @@ function wireNode(div, n) {
     });
     div.querySelector(".gi-id").addEventListener("change", (e) => {
       const oldId = n.ref.id, newId = e.target.value.trim();
-      model.renameRegion(n.win.id, oldId, newId);
+      if (!model.renameRegion(n.win.id, oldId, newId)) { e.target.value = oldId; return; }
       movePos(`reg:${n.win.id}:${oldId}`, `reg:${n.win.id}:${n.ref.id}`);
       render(); autosave(); refreshImageBoxes(n.win.id);
     });
@@ -1404,7 +1576,7 @@ function wireNode(div, n) {
       else if (k === "ifnumany") fld.if_number_any = e.target.checked;
       else if (k === "iftext") fld.if_text = e.target.value || null;
       else if (k === "iftextany") fld.if_text_any = e.target.checked;
-      else if (k === "dictonly") fld.dict_only = e.target.checked;
+      else if (k === "dictmode") fld.dict_mode = e.target.value;
       autosave();   // plain value edits: no DOM rebuild
     }));
   } else if (n.type === "detect") {
@@ -1413,7 +1585,8 @@ function wireNode(div, n) {
       selectWindowBox(n.win.id, n.ref.id);
     });
     div.querySelector(".gi-id").addEventListener("change", (e) => {
-      const oldId = n.ref.id; n.ref.id = e.target.value.trim();
+      const oldId = n.ref.id, newId = e.target.value.trim();
+      if (!model.renameDetect(n.win.id, oldId, newId)) { e.target.value = oldId; return; }
       movePos(`det:${n.win.id}:${oldId}`, `det:${n.win.id}:${n.ref.id}`);
       render(); autosave(); refreshImageBoxes(n.win.id);
     });
@@ -1622,6 +1795,7 @@ let precapBusy = false;   // recording/processing/paused -> modal can't be dismi
 let precapStopping = false;   // a stop/cancel was clicked, awaiting the worker to wind down
 let precapLastPhase = null;
 let precapSessions = [];   // saved recording sessions [{id,label,frames,processed,records,saved_at,active}]
+let precapView = null;     // which left item is selected: "new" (record inputs) or "loaded" (a session)
 
 async function openPrecaptureModal() {
   const game = model.profile.name;
@@ -1641,12 +1815,14 @@ async function openPrecaptureModal() {
       if (precapPoll) { clearInterval(precapPoll); precapPoll = null; }
       if (precapBusy) api.precapture.cancel(game).catch(() => {});
       unregisterWorker("precap");
-      precapOpen = false; precapBusy = false; precapStopping = false; $("precapBtn").classList.remove("active");
+      precapOpen = false; precapBusy = false; precapStopping = false; precapView = null; $("precapBtn").classList.remove("active");
     },
   });
+  modal.el.classList.add("pc-modal");   // fixed height -> centred modal never shifts as panes change
 
   const sig = modal.signal;   // wire every fetch to it → cancelled the moment the modal closes
-  const draw = (st) => renderPrecap(node, st);
+  let precapLast = null;      // last status drawn — so view switches can redraw without a fetch
+  const draw = (st) => { precapLast = st; renderPrecap(node, st); };
   const run = async (fn) => {
     try { draw(await fn()); }
     catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }   // ignore close-aborts
@@ -1662,42 +1838,94 @@ async function openPrecaptureModal() {
     catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }
   };
 
-  // one delegated handler for every control button
+  // Inline rename: swap the session's name span for an <input>, commit on Enter/blur,
+  // cancel on Escape — no blocking prompt(). Restores the span so reconcile resumes.
+  const beginRename = (row, sid) => {
+    const nameEl = row.querySelector(".pc-sess-name");
+    if (!nameEl || row._editing) return;
+    row._editing = true;
+    const input = document.createElement("input");
+    input.className = "pc-sess-rename"; input.value = row.dataset.label || "";
+    nameEl.replaceWith(input);
+    input.focus(); input.select();
+    let done = false;
+    const finish = (commit) => {
+      if (done) return; done = true;
+      row._editing = false;
+      input.replaceWith(nameEl);   // reconcile refreshes the span's text on the next draw
+      const label = input.value.trim();
+      if (commit && label !== (row.dataset.label || ""))
+        sessAct(api.precapture.renameSession(game, sid, label, sig));
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); finish(true); }
+      else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
+  };
+
+  // one delegated handler for every control (buttons AND the clickable session rows)
   node.addEventListener("click", (ev) => {
-    const b = ev.target.closest("button[data-act]");
+    if (ev.target.closest("input, textarea")) return;   // never let a field click trigger an action
+    const b = ev.target.closest("[data-act]");
     if (!b) return;
     const a = b.dataset.act, sid = b.dataset.sid;
+    // session-list actions are locked while a worker runs
+    if (precapBusy && (a === "newsess" || a === "loadsess" || a === "rensess" || a === "delsess")) return;
     const mf = +node.querySelector(".pc-frames")?.value || 300;
     const iv = +node.querySelector(".pc-interval")?.value || 0;
     const label = node.querySelector(".pc-label")?.value || "";
+    const as = !!node.querySelector(".pc-autoscroll")?.checked;
+    const clk = +node.querySelector(".pc-clicks")?.value || 1;
     if (a === "recstop" || a === "cancel") { precapStopping = true; b.disabled = true; b.textContent = "stopping…"; }
-    if (a === "record") run(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, sig); loadSessions(); return st; });
+    if (a === "newsess") { precapView = "new"; if (precapLast) draw(precapLast); }
+    // recordStart creates+persists a new session server-side, so leave the "new" pane at
+    // once and show it as the active loaded session (its row appears via loadSessions)
+    else if (a === "record") { precapView = "loaded"; run(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, as, clk, sig); loadSessions(); return st; }); }
     else if (a === "recstop") run(() => api.precapture.recordStop(game, sig));
     else if (a === "process") run(() => api.precapture.processStart(game, sig));
     else if (a === "pause") run(() => api.precapture.pause(game, true, sig));
     else if (a === "resume") run(() => api.precapture.pause(game, false, sig));
     else if (a === "cancel") run(() => api.precapture.cancel(game, sig));
-    else if (a === "reset") run(async () => { const st = await api.precapture.reset(game, sig); loadSessions(); return st; });
-    else if (a === "save") run(async () => { const r = await api.precapture.save(game, sig); refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); refreshAllSubsetNodes(); setStatus(`saved ${JSON.stringify(r.written)}`); loadSessions(); return r.status; });
-    else if (a === "loadsess") sessAct(api.precapture.loadSession(game, sid, sig));
-    else if (a === "delsess") sessAct(api.precapture.deleteSession(game, sid, sig));
-    else if (a === "rensess") {
-      const cur = precapSessions.find((s) => s.id === sid);
-      const label = prompt("session label", cur?.label || "");
-      if (label !== null) sessAct(api.precapture.renameSession(game, sid, label, sig));
+    else if (a === "save") {
+      b.classList.add("reading"); b.disabled = true;   // spinner until the commit returns
+      (async () => {
+        try {
+          const r = await api.precapture.save(game, sig);
+          refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); refreshAllSubsetNodes();
+          setStatus(`saved ${JSON.stringify(r.written)}`); loadSessions(); draw(r.status);
+        } catch (e) {
+          if (e.name !== "AbortError") { setStatus(String(e.message || e)); if (precapLast) draw(precapLast); }   // redraw clears the spinner
+        }
+      })();
     }
+    else if (a === "loadsess") { precapView = "loaded"; sessAct(api.precapture.loadSession(game, sid, sig)); }
+    else if (a === "delsess") sessAct(api.precapture.deleteSession(game, sid, sig));
+    else if (a === "rensess") beginRename(b.closest(".pc-sess"), sid);
+  });
+
+  // live auto-scroll toggle (checkbox shown while recording) — server is the source of
+  // truth; each poll re-reflects st.autoscroll, so a give-up server-side unchecks it here.
+  node.addEventListener("change", (ev) => {
+    if (!ev.target.closest(".pc-autoscroll-live, .pc-clicks-live")) return;
+    const on = !!node.querySelector(".pc-autoscroll-live")?.checked;
+    const clicks = +node.querySelector(".pc-clicks-live")?.value || 1;
+    run(() => api.precapture.setAutoscroll(game, on, clicks, sig));
   });
 
   await loadSessions();
-  // poll while the modal is open so progress + staged data stay live
+  // poll ONLY while a worker is actually running (recording/processing/paused) — when
+  // idle/recorded/done/saved nothing changes server-side except via user actions, which
+  // already redraw, so hitting status every 700ms then just pounds the server for nothing.
   precapPoll = setInterval(async () => {
+    if (!precapBusy) return;
     try { draw(await api.precapture.status(game, sig)); } catch { /* ignore (incl. close-abort) */ }
   }, 700);
 }
 
 function precapTable(d) {
   const rows = d.sample || [];
-  const meta = `<span class="muted">${d.count} rows · key ${esc(d.key_field)}${rows.length ? ` · last ${rows.length}` : ""}</span>`;
+  const meta = `<span class="muted">${d.count} rows${rows.length ? ` · last ${rows.length}` : ""}</span>`;
   if (!rows.length) return `<div class="pc-ds"><b>${esc(d.dataset)}</b> ${meta}</div>`;
   const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
   const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
@@ -1722,81 +1950,164 @@ function renderPrecap(node, st) {
     else if (phase === "done") { const t = st.timing || {}; log(`precapture done: ${st.processed} frames · ${t.ms_per_frame || 0} ms/frame on ${t.device || "cpu"} (decode ${t.decode_ms || 0} · classify ${t.classify_ms || 0} · read ${t.read_ms || 0}) · ${st.fps}/s · ${st.read || 0} rows read`, "ok"); }
     else if (phase === "cancelled") log("precapture: cancelled", "warn");
     else if (phase === "saved") log("precapture: saved", "ok");
+    // recording just finished -> flip the right pane to the loaded session's controls
+    // (process / save / delete) so the just-recorded frames are ready to work with
+    if (precapLastPhase === "recording" && phase !== "recording") precapView = "loaded";
     precapLastPhase = phase;
   }
+  // first paint: pick the pane from what's on disk — a session with frames opens loaded,
+  // otherwise the new-recording pane
+  if (precapView === null) precapView = (st.session && st.frames) ? "loaded" : "new";
+  // a loaded session that vanished (deleted, none left) falls back to the new pane
+  if (precapView === "loaded" && !st.session) precapView = "new";
+
   // closing always works now and cancels the run — say so on the button
   const x = node.closest(".modal")?.querySelector(".modal-x");
   if (x) x.title = precapBusy ? "close & cancel the run (Esc)" : "close (Esc)";
-  const canProcess = st.frames > 0 && !recording && !processing && !paused;
+  if (!precapBusy) precapStopping = false;   // worker wound down -> clear the stopping state
   const pct = st.frames ? Math.round((100 * st.processed) / st.frames) : 0;
   const staged = (st.datasets || []).reduce((n, d) => n + d.count, 0);
+  const busyRun = processing || paused;
+  const canProcess = st.frames > 0 && !recording && !processing && !paused;
 
-  // Build the static skeleton ONCE — re-setting innerHTML each 700ms poll would
-  // destroy the option inputs and steal focus while the user is typing in them.
-  if (!node.querySelector(".pc-opts")) {
-    node.innerHTML = `
-      <div class="pc-bar"></div>
-      <div class="pc-opts">
-        <label class="flab">max frames <input type="number" class="pc-frames" value="300" min="1"></label>
-        <label class="flab">interval ms <input type="number" class="pc-interval" value="0" min="0"></label>
-        <label class="flab">label <input type="text" class="pc-label" placeholder="(optional)"></label>
-      </div>
-      <div class="pc-ctl"></div>
-      <div class="pc-progress"><div class="pc-fill"></div></div>
-      <div class="pc-sessions"></div>
-      <div class="pc-data"></div>`;
+  // Two-pane skeleton built ONCE — left = session list, right = the selected pane.
+  if (!node.querySelector(".pc-main")) {
+    node.innerHTML = `<div class="pc-main"><div class="pc-left"></div><div class="pc-right"></div></div>`;
+  }
+  renderPrecapLeft(node.querySelector(".pc-left"), st);
+
+  // The right pane's STRUCTURE depends only on which pane is shown and whether a worker
+  // is running. Rebuild its innerHTML only when that shape changes — otherwise the 700ms
+  // poll would clobber the record inputs and steal focus while the user types in them.
+  const right = node.querySelector(".pc-right");
+  const shape = `${precapView}|${recording}|${busyRun}`;
+  if (right.dataset.shape !== shape) {
+    right.dataset.shape = shape;
+    right.innerHTML = precapView === "new"
+      ? `<div class="pc-opts">
+           <label class="flab">max frames <input type="number" class="pc-frames" value="300" min="1"></label>
+           <label class="flab">interval ms <input type="number" class="pc-interval" value="0" min="0"></label>
+           <label class="flab">label <input type="text" class="pc-label" placeholder="(optional)"></label>
+           <label class="flab pc-as-lab" title="scroll the game's list automatically after each captured frame; stops & unchecks itself at the end of the list">auto-scroll <input type="checkbox" class="pc-autoscroll"></label>
+           <label class="flab" title="wheel notches sent per scroll">clicks <input type="number" class="pc-clicks" value="1" min="1"></label>
+         </div>
+         <div class="pc-ctl"></div>`
+      : `<div class="pc-bar"></div>
+         <div class="pc-ctl"></div>
+         <div class="pc-progress"><div class="pc-fill"></div></div>
+         <div class="pc-data"></div>`;
   }
 
   const tm = st.timing || {};
-  node.querySelector(".pc-bar").innerHTML = `
-    <span class="pc-phase pc-${phase}">${esc(phase)}</span>
-    ${st.session ? `<span class="pc-sess-tag" title="active session">${esc(st.label || fmtCaptureTime(st.session))}</span>` : ""}
-    <span class="muted">${st.frames} frames · ${st.processed} processed · ${st.read || 0} read · ${st.fps} /s</span>
-    ${st.processed ? `<span class="muted">· ${tm.ms_per_frame || 0} ms/frame (${esc(tm.device || "cpu")})</span>` : ""}
+  // A paused worker can be EITHER a recording (auto-scroll hit the list end) or a
+  // processing run; st.kind disambiguates so the right counters/controls show.
+  const recPaused = paused && st.kind === "recording";   // recording, auto-paused at list end
+  const procLive = processing || (paused && st.kind === "processing");
+  const recLive = recording || recPaused;
+  // Live counters ONLY — show numbers while a worker is actually moving them. A recording
+  // shows its frame count; a processing run shows processed/read/fps + timing. An
+  // idle/done/just-loaded session shows nothing (static text is just noise).
+  const stats = [];
+  if (recLive || procLive) stats.push(`${st.frames} frames`);
+  if (procLive) stats.push(`${st.processed} processed`, `${st.read || 0} read`, `${st.fps} /s`);
+  const bar = right.querySelector(".pc-bar");   // absent in the new-session pane
+  if (bar) bar.innerHTML = `
+    ${precapView === "loaded" && st.session ? `<span class="pc-sess-tag" title="active session">${esc(st.label || fmtCaptureTime(st.session))}</span>` : ""}
+    ${stats.length ? `<span class="muted">${stats.join(" · ")}</span>` : ""}
+    ${procLive ? `<span class="muted">· ${tm.ms_per_frame || 0} ms/frame (${esc(tm.device || "cpu")})</span>` : ""}
+    ${recPaused ? `<span class="conf-warn">⏸ auto-scroll reached the list end — resume to retry, or uncheck it</span>` : ""}
     ${st.warning ? `<span class="conf-warn">⚠ ${esc(st.warning)}</span>` : ""}
     ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}`;
-  if (!precapBusy) precapStopping = false;   // worker wound down -> clear the stopping state
-  // while processing, ONLY pause/resume + cancel are interactable
-  const busyRun = processing || paused;
-  node.querySelectorAll(".pc-opts input").forEach((i) => { i.disabled = recording || busyRun; });
-  const ctl = precapStopping
-    ? `<button disabled>stopping…</button>`
-    : `${recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>`
-                   : `<button data-act="record" ${busyRun ? "disabled" : ""}><span class="ic ic-rec">●</span> record</button>`}
-       ${processing ? `<button data-act="pause">‖ pause</button>`
-         : paused ? `<button data-act="resume">► resume</button>`
-         : `<button data-act="process" ${canProcess ? "" : "disabled"}>▸ process${st.frames ? ` ${st.frames}` : ""}</button>`}
-       ${busyRun ? `<button data-act="cancel" class="danger">cancel</button>` : ""}`;
-  const justSaved = phase === "saved";   // stays until the next record/process/reset
-  node.querySelector(".pc-ctl").innerHTML = `${ctl}
-    <span class="spacer"></span>
-    <button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !busyRun && !justSaved) ? "" : "disabled"}>
-      <span class="ic ic-ok">${justSaved ? "✓" : "⤓"}</span> ${justSaved ? "saved" : `save${staged ? ` ${staged}` : ""}`}</button>
-    <button data-act="reset" ${busyRun ? "disabled" : ""}>reset</button>`;
-  node.querySelector(".pc-fill").style.width = `${pct}%`;
-  node.querySelector(".pc-sessions").innerHTML = renderPrecapSessions(st);
-  node.querySelector(".pc-data").innerHTML = (st.datasets || []).map(precapTable).join("")
-    || '<p class="muted" style="padding:8px">no data staged yet — record some frames, then process</p>';
+  // progress bar matters only WHILE processing — gone once done so it doesn't linger
+  const prog = right.querySelector(".pc-progress");
+  if (prog) {
+    prog.hidden = !procLive;
+    right.querySelector(".pc-fill").style.width = `${pct}%`;
+  }
+
+  // the record inputs are only present (and only editable) in the new-session pane
+  right.querySelectorAll(".pc-opts input").forEach((i) => { i.disabled = recording; });
+
+  // live auto-scroll controls — shown both while recording and while auto-paused, so the
+  // user can toggle/adjust or just resume from the list end
+  const asCtl = `<label class="flab pc-as-lab" title="toggle auto-scroll live; reaching the list end pauses the recording">auto-scroll <input type="checkbox" class="pc-autoscroll-live" ${st.autoscroll ? "checked" : ""}></label><label class="flab" title="wheel notches sent per scroll (live)">clicks <input type="number" class="pc-clicks-live" value="${st.scroll_clicks || 1}" min="1"></label>`;
+
+  const justSaved = phase === "saved";
+  const anyRun = recording || busyRun;   // any worker running -> save/delete locked
+  let ctl;
+  if (precapView === "new") {
+    // recording immediately flips to the loaded pane, so the new pane is just the trigger
+    ctl = `<button data-act="record"><span class="ic ic-rec">●</span> record</button>`;
+  } else {
+    const proc = precapStopping ? `<button disabled>stopping…</button>`
+      : recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>${asCtl}`
+      : processing ? `<button data-act="pause">‖ pause</button>`
+      : paused ? `<button data-act="resume">► resume</button>${recPaused ? asCtl : ""}`
+      : `<button data-act="process" ${canProcess ? "" : "disabled"}>▸ process${st.frames ? ` ${st.frames}` : ""}</button>`;
+    const cancel = busyRun && !precapStopping ? `<button data-act="cancel" class="danger">cancel</button>` : "";
+    const save = `<button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !anyRun && !justSaved) ? "" : "disabled"}>
+      <span class="ic ic-ok">${justSaved ? "✓" : "⤓"}</span> ${justSaved ? "saved" : `save${staged ? ` ${staged}` : ""}`}</button>`;
+    const del = `<button data-act="delsess" data-sid="${esc(st.session || "")}" class="danger pc-del" ${anyRun || !st.session ? "disabled" : ""}>× delete</button>`;
+    ctl = `${proc}${cancel}${save}${del}`;
+  }
+  const ctlEl = right.querySelector(".pc-ctl");
+  // don't clobber a live INPUT the user is editing (the clicks field) on a poll tick;
+  // a focused button must NOT block the rebuild (else post-save state wouldn't render)
+  const editing = ctlEl.contains(document.activeElement) && document.activeElement.matches("input");
+  if (!editing) ctlEl.innerHTML = ctl;
+
+  const data = right.querySelector(".pc-data");
+  if (data) data.innerHTML = (st.datasets || []).map(precapTable).join("")
+    || '<p class="muted" style="padding:8px">no data staged yet — process the frames to read them</p>';
 }
 
-// The saved-session list: each row loads / renames / deletes a recording. The active
-// session is highlighted; session controls are locked while a worker is busy.
-function renderPrecapSessions(st) {
-  if (!precapSessions.length)
-    return '<div class="pc-sess-h muted">no saved sessions yet — record to create one</div>';
-  const dis = precapBusy ? "disabled" : "";
-  const rows = precapSessions.map((s) => {
-    const active = s.id === st.session;
-    const name = s.label || fmtCaptureTime(s.id);
-    const saved = s.saved_at ? ' · <span class="tc-ok">saved</span>' : "";
-    return `<div class="pc-sess ${active ? "active" : ""}">
-      <button class="pc-sess-load" data-act="loadsess" data-sid="${esc(s.id)}" ${dis} title="load this session">
-        <b>${esc(name)}</b> <span class="muted">${s.frames}f · ${s.records || 0} rec${saved}</span></button>
-      <button class="pc-sess-ren" data-act="rensess" data-sid="${esc(s.id)}" ${dis} title="rename">✎</button>
-      <button class="pc-sess-del danger" data-act="delsess" data-sid="${esc(s.id)}" ${dis} title="delete">×</button>
-    </div>`;
-  }).join("");
-  return `<div class="pc-sess-h muted">sessions</div>${rows}`;
+// The left pane: "＋ new session" (the record-inputs pane) on top, then every saved
+// recording, newest first. The selected item is highlighted; switching is locked while a
+// worker is busy. Loading is whole-row; ✎ renames. Delete lives in the right pane.
+//
+// Reconciled IN PLACE — never rebuild innerHTML (like renderWorkers). The poll redraws on
+// every busy tick; wiping the list would churn buttons and steal focus each tick. The new
+// button + header are made once; rows are a keyed map, reused/reordered/updated in place.
+function renderPrecapLeft(left, st) {
+  if (!left._rows) {
+    left._new = document.createElement("button");
+    left._new.className = "pc-sess-new"; left._new.dataset.act = "newsess";
+    left._new.title = "record a new session"; left._new.textContent = "＋ new session";
+    const h = document.createElement("div");
+    h.className = "pc-sess-h muted"; h.textContent = "sessions";
+    left.append(left._new, h);
+    left._rows = new Map();   // sid -> { row, load, ren }
+  }
+  left._new.classList.toggle("active", precapView === "new");
+  left._new.disabled = precapBusy;
+
+  // drop rows whose session is gone
+  const want = new Set(precapSessions.map((s) => s.id));
+  for (const [sid, r] of left._rows) if (!want.has(sid)) { r.row.remove(); left._rows.delete(sid); }
+
+  for (const s of precapSessions) {
+    let r = left._rows.get(s.id);
+    if (!r) {
+      const row = document.createElement("div");
+      row.className = "pc-sess"; row.dataset.act = "loadsess"; row.dataset.sid = s.id; row.title = "load this session";
+      const name = document.createElement("span"); name.className = "pc-sess-name";
+      const meta = document.createElement("span"); meta.className = "muted pc-sess-meta";
+      const ren = document.createElement("button");
+      ren.className = "pc-sess-ren"; ren.dataset.act = "rensess"; ren.dataset.sid = s.id; ren.title = "rename"; ren.textContent = "✎";
+      row.append(name, meta, ren);
+      r = { row, name, meta, ren }; left._rows.set(s.id, r);
+    }
+    left.appendChild(r.row);   // (re)append in list order -> DOM order tracks newest-first
+    r.row.dataset.label = s.label || "";   // source of truth for the rename input
+    r.row.classList.toggle("active", precapView === "loaded" && s.id === st.session);
+    if (!r.row._editing) {     // don't clobber the rename input mid-edit
+      const nm = s.label || fmtCaptureTime(s.id);
+      if (r.name.textContent !== nm) r.name.textContent = nm;
+    }
+    const meta = `${s.frames}f · ${s.records || 0} rec${s.saved_at ? ' · <span class="tc-ok">saved</span>' : ""}`;
+    if (r.meta._html !== meta) { r.meta.innerHTML = meta; r.meta._html = meta; }   // touch DOM only on change
+    r.ren.disabled = precapBusy;
+  }
 }
 
 // Capture filenames are "YYYYMMDD-HHMMSS-ffffff.jpg" — pull the time out for display.
@@ -2082,6 +2393,8 @@ async function runItemRead(winId, itemId) {
     itemReads.set(key, res);
     refreshItemBoxes(winId, itemId);
     if (out) out.innerHTML = itemReadout(res);
+    const kp = node?.querySelector(".key-prev");   // key section's preview tracks the new read
+    if (kp) kp.innerHTML = keyPrevHTML(winId, itemId);
     done(res.valid ? "· valid" : "· rejected");
   } catch (e) {
     done(String(e.message || e), "err");
@@ -2117,6 +2430,7 @@ function focusNode(id) {
   for (const [, rec] of overlays) rec.overlay.setActive(null);
   activeOverlayKey = null;
   selectedNodeId = id;
+  clearNodeSelections(id);   // drop any other node's inner selection
   for (const [nid, el] of nodeEls) el.classList.toggle("selected", nid === id);
   drawEdges();
 }
