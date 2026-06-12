@@ -40,10 +40,11 @@ if (-not $NoReload) {
   # auto-reload, but never restart on edits under scripts/ or tests/ (not served code).
   # reload-exclude globs are fnmatch-matched against the full path, so wrap in * and cover
   # both path separators for Windows.
-  $uvArgs += '--reload'
-  foreach ($d in 'scripts', 'tests') {
-    $uvArgs += @('--reload-exclude', "*/$d/*", '--reload-exclude', "*\$d\*")
-  }
+  # Watch ONLY the served source. With a bare --reload uvicorn watches the whole cwd —
+  # which includes config/ and data/, so every teach save (the app writing a profile)
+  # both restarts the server AND has the watcher lock the file mid-write (WinError 5 on
+  # the atomic replace). Scoping to src/oc means data writes never trigger a reload.
+  $uvArgs += @('--reload', '--reload-dir', (Join-Path $root 'src\oc'))
 }
 if ($Background) {
   Start-Process -FilePath $py -ArgumentList $uvArgs -WorkingDirectory $root -WindowStyle Hidden

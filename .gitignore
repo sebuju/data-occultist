@@ -20,6 +20,10 @@ captures/
 *.onnx
 models/
 
+# Teach-UI local state: profile backups + per-device graph viewport (config/dictionaries IS tracked)
+config/games/.backups/
+config/games/.local/
+
 # Scratch / trash
 .trash/
 scripts/*.csv
