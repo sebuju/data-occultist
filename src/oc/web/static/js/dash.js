@@ -46,7 +46,7 @@ async function loadFlow() {
 
   $("capCol").innerHTML = `<div class="col-h">Captured</div>` + data.windows.map((w) => `
     <div class="node cap" id="cap-${esc(w.id)}">
-      <div class="muted">key: ${esc(w.key_field)}</div>
+      <div class="muted">key: ${esc((w.key_fields || ["name"]).join(" + "))}</div>
       <div class="chips">${(w.fields.length ? w.fields : ["—"]).map((f) => `<span class="fchip">${esc(f)}</span>`).join("")}</div>
     </div>`).join("");
 

@@ -17,7 +17,7 @@ from ...learn.dictionary import Dictionary
 from ...learn.lexicon import Lexicon
 from ...learn.resolver import FieldResolver
 from ...ocr.serialize import ocr_job
-from ...profile import GameProfile
+from ...profile import GameProfile, KeyDef
 from ...types import Frame, PixelBox
 from .. import captures_store
 from ..deps import get_engine, get_locator, get_settings
@@ -135,6 +135,14 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
     reader = RegionReader(engine.ocr, resolver, cutouts=cutouts)
     with ocr_job():   # one job: the whole window read runs without interleaving another
         result = reader.read_preview(frame, window, fields)
+    # the dedup key each cell would store under — same spec the collector resolves,
+    # so the teaching UI previews record identity live
+    km = profile.key_map_for(window.dataset_id)
+    for cell in result["cells"]:
+        vals = {fid: f.get("value") for fid, f in cell["fields"].items()}
+        if cell.get("item"):
+            vals["_item"] = cell["item"]
+        cell["key"] = km.build(vals)
     return {"client": [frame.client.w, frame.client.h], **result}
 
 
@@ -167,4 +175,7 @@ def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...
     with ocr_job():
         result = reader.read_cutout(cut, window, it, fields)
     h, w = cut.shape[:2]
-    return {"cutout": [w, h], **result}
+    # the dedup key this read would store under (None = unkeyable, e.g. a part empty)
+    spec = (it.key or window.key or KeyDef()).spec()
+    vals = {fid: f.get("value") for fid, f in result["fields"].items()}
+    return {"cutout": [w, h], "key": spec.build(vals), "key_fields": list(spec.fields), **result}

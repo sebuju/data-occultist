@@ -18,7 +18,7 @@ const params = new URLSearchParams(location.search);
 const game = params.get("game") || "";
 const model = new EditorModel();
 let profile = null;                       // full profile (kept so save merges cleanly)
-let lastPreview = { items: [], detections: [] };
+let lastPreview = { items: [], detections: [], cells: [] };   // cells feed the live key preview
 const setStatus = (m) => { $("status").textContent = m; };
 
 $("gameLabel").textContent = game || "(no game)";
@@ -56,6 +56,7 @@ const ctx = {
   refreshOverlay: () => { overlay.setBoxes(model.boxes); overlay.setGridPreview(gridCells()); },
   refreshList: () => renderBoxList($("panel-boxlist"), model, ctx),
   pickColor: () => { overlay.setPick(true); setStatus("click the text colour in the image"); },
+  previewCells: () => lastPreview.cells || [],   // last preview's per-cell reads (key preview)
 };
 
 function refresh() {
@@ -92,7 +93,7 @@ function showImage(url, status) {
   const img = new Image();
   img.onload = () => {
     overlay.setImage(img); overlay.setGridPreview(gridCells());
-    lastPreview = { items: [], detections: [] };
+    lastPreview = { items: [], detections: [], cells: [] };
     overlay.setPreview([]); overlay.setDetections([]);
     $("panel-preview").replaceChildren();
     setStatus(status);
@@ -149,7 +150,7 @@ function applySuggestion(s) {
   model.ensureField("name");
   const nf = model.fields.find((f) => f.id === "name");
   if (nf) nf.learn = true;
-  model.keyField = "name";
+  model.key = { fields: ["name"], sep: "|", case_sensitive: false };
   model.boxes = model.boxes.filter((b) => b.role !== "region");
   const nameBox = model.addBox({ ...s.region }, "region");
   nameBox.field = "name";
@@ -170,7 +171,7 @@ $("suggestBtn").addEventListener("click", async () => {
     const s = await api.suggest(game, sb ? { x: sb.x, y: sb.y, w: sb.w, h: sb.h } : null);
     if (!s.ok) { setStatus(`suggest: ${s.reason || "nothing found"}`); return; }
     applySuggestion(s);
-    lastPreview = { items: [], detections: s.detections || [] };
+    lastPreview = { items: [], detections: s.detections || [], cells: [] };
     $("detectToggle").checked = true;
     refresh();
     applyPreviewLayers();
@@ -184,10 +185,11 @@ $("previewBtn").addEventListener("click", async () => {
   setStatus("reading…");
   try {
     const res = await api.preview(model.toProfile());
-    lastPreview = { items: previewItems(res.cells), detections: res.detections || [] };
+    lastPreview = { items: previewItems(res.cells), detections: res.detections || [], cells: res.cells };
     applyPreviewLayers();
     const fieldIds = [...new Set(model.regionBoxes().map((b) => b.field).filter(Boolean))];
     renderPreview($("panel-preview"), res.cells, fieldIds);
+    renderWindow($("panel-window"), model, ctx);   // refresh the live key preview
     const low = res.cells.reduce((n, c) => n + Object.values(c.fields).filter((f) => f.confidence < 0.5).length, 0);
     setStatus(`preview: ${res.cells.length} cells, ${low} low-conf`);
   } catch (e) { setStatus(String(e.message || e)); }

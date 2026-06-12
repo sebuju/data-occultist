@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ...profile import list_profiles, load_profile
-from ...store import inspect
+from ...store import KeySpec, inspect
 from ...store.dataset_store import DatasetStore
 from ..deps import get_settings
 
@@ -28,6 +28,7 @@ def flow(game: str):
         windows.append({
             "id": w.id,
             "dataset": w.dataset_id,
+            "key_fields": profile.key_map_for(w.dataset_id).fields_used(),
             "fields": sorted({r.field for r in w.regions}),
             "regions": len(w.regions),
             "detect": len(w.detect),
@@ -35,25 +36,20 @@ def flow(game: str):
             "save_states": [s.id for s in w.states if s.valid_for_save],
         })
 
-    # Datasets from the profile plus any already on disk. The dataset (not the window)
-    # owns the dedup key, so it's reported here.
+    # Datasets from the profile plus any already on disk. The resolved key map is
+    # only needed to OPEN the store (replay re-keys from raw values) — the dataset
+    # itself reports nothing about keys; they're taught on the windows/items.
     names = sorted(used_datasets | set(inspect.list_datasets(settings.data_dir, game)))
-    datasets = []
-    for n in names:
-        strip, case = profile.key_opts(n)
-        summary = inspect.summarize(settings.data_dir, game, n, profile.key_for(n), strip, case)
-        summary["key_field"] = profile.key_for(n)
-        datasets.append(summary)
+    datasets = [inspect.summarize(settings.data_dir, game, n, profile.key_map_for(n))
+                for n in names]
     return {"game": game, "windows": windows, "datasets": datasets}
 
 
 def _store(game: str, dataset: str) -> DatasetStore:
     settings = get_settings()
     profile = load_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
-    key = profile.key_for(dataset) if profile else "name"
-    strip, case = profile.key_opts(dataset) if profile else (False, False)
-    return DatasetStore(settings.data_dir, game, dataset, key_field=key,
-                        strip_nonalnum=strip, case_sensitive=case)
+    key = profile.key_map_for(dataset) if profile else KeySpec()
+    return DatasetStore(settings.data_dir, game, dataset, key=key)
 
 
 def _detail(store: DatasetStore, dataset: str, limit: int = 200) -> dict:
@@ -67,6 +63,22 @@ def dataset_detail(game: str, dataset: str, limit: int = 200):
     return _detail(_store(game, dataset), dataset, limit)
 
 
+@router.post("/{game}/dataset/{dataset}/rename")
+def rename_dataset_route(game: str, dataset: str, to: str):
+    """Move a dataset's stored records to a new name (the profile rename is saved
+    separately by the UI). Keeps the live dataset list from re-spawning the old name."""
+    from ...store.dataset_store import rename_dataset
+    to = to.strip()
+    if not to:
+        raise HTTPException(status_code=400, detail="empty dataset name")
+    settings = get_settings()
+    try:
+        rename_dataset(settings.data_dir, game, dataset, to)
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"dataset": to}
+
+
 @router.post("/{game}/dataset/{dataset}/clear")
 def clear_dataset(game: str, dataset: str):
     """Empty the records by reverting every batch — the batch ledger is kept (each
@@ -74,6 +86,16 @@ def clear_dataset(game: str, dataset: str):
     store = _store(game, dataset)
     store.clear_data()
     return _detail(store, dataset)
+
+
+@router.post("/{game}/dataset/{dataset}/delete")
+def delete_dataset_route(game: str, dataset: str):
+    """Permanently delete a dataset's stored files (ledger + state). The profile def is
+    removed separately by the UI; this stops the dataset re-spawning from disk."""
+    from ...store.dataset_store import delete_dataset
+    settings = get_settings()
+    removed = delete_dataset(settings.data_dir, game, dataset)
+    return {"dataset": dataset, "removed": removed}
 
 
 @router.post("/{game}/dataset/{dataset}/remove-batch")
