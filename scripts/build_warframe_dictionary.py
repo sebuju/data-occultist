@@ -88,9 +88,15 @@ def collect(include_cosmetic: bool = False) -> list[str]:
 def write_profile(path: Path, dict_id: str, terms: list[str]) -> None:
     import yaml
 
+    # Terms live in config/dictionaries/<id>.txt; the profile only references the file.
+    source = f"{dict_id}.txt"
+    term_dir = path.parent.parent / "dictionaries"   # config/games/.. -> config/dictionaries
+    term_dir.mkdir(parents=True, exist_ok=True)
+    (term_dir / source).write_text("\n".join(terms) + "\n", encoding="utf-8")
+
     prof = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     dicts = [d for d in prof.get("dictionaries", []) if d.get("id") != dict_id]
-    dicts.append({"id": dict_id, "name": dict_id, "enabled": True, "terms": terms})
+    dicts.append({"id": dict_id, "name": dict_id, "enabled": True, "source": source})
     prof["dictionaries"] = dicts
     path.write_text(yaml.safe_dump(prof, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
