@@ -11,6 +11,7 @@ learned along the way is flushed on shutdown.
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -26,7 +27,7 @@ from ..learn.lexicon import Lexicon
 from ..learn.resolver import FieldResolver
 from ..locate import WindowLocator
 from ..profile.models import GameProfile, WindowDef
-from ..store import DatasetStore
+from ..store import DatasetStore, KeyMap
 from .reader import Record, RegionReader
 from .sink import RecordSink
 from .stability import Confirmer
@@ -90,6 +91,7 @@ class Collector:
         self._explicit_sink = sink
         self._confirmers: dict[str, Confirmer] = {}
         self._stores: dict[str, DatasetStore] = {}
+        self._key_maps: dict[str, KeyMap] = {}
         self._observed: dict[str, set[str]] = {}
         # Per-window cache of (region signature, last read records) so an unchanged
         # view re-feeds the confirmer without paying for OCR again.
@@ -105,28 +107,30 @@ class Collector:
         state = next((s for s in window.states if s.id == state_id), None)
         return bool(state and state.valid_for_save)
 
-    def _dataset_key(self, window: WindowDef) -> str:
-        """The dedup key for the window's dataset — owned by the DatasetDef, not the
-        window, so windows sharing a dataset dedup against one identity field."""
-        return self._profile.key_for(window.dataset_id)
+    def _key_map(self, dataset: str) -> KeyMap:
+        """The dataset's resolved key (taught on the item templates/windows that read
+        it). Cached; warns once when windows feeding the dataset disagree."""
+        if dataset not in self._key_maps:
+            if self._profile.key_conflict(dataset):
+                logging.getLogger(__name__).warning(
+                    "dataset %r: windows disagree on the record key; using the first", dataset)
+            self._key_maps[dataset] = self._profile.key_map_for(dataset)
+        return self._key_maps[dataset]
 
     def _confirmer_for(self, window: WindowDef) -> Confirmer:
         dataset = window.dataset_id
         if dataset not in self._confirmers:
-            self._confirmers[dataset] = Confirmer(self._dataset_key(window), self._tuning.confirm_frames)
+            self._confirmers[dataset] = Confirmer(self._key_map(dataset).build, self._tuning.confirm_frames)
         return self._confirmers[dataset]
 
     def _store_for(self, window: WindowDef) -> DatasetStore:
         dataset = window.dataset_id
         if dataset not in self._stores:
-            strip, case = self._profile.key_opts(dataset)
             self._stores[dataset] = DatasetStore(
                 self._engine.settings.data_dir,
                 self._profile.name,
                 dataset,
-                self._dataset_key(window),
-                strip_nonalnum=strip,
-                case_sensitive=case,
+                key=self._key_map(dataset),
             )
             self._observed.setdefault(dataset, set())
         return self._stores[dataset]
@@ -181,9 +185,8 @@ class Collector:
         else:
             store = self._store_for(window)
             observed = self._observed[dataset]
-            dataset_key = self._dataset_key(window)
             for rec in confirmed:
-                key = store.normalize_key(rec.values.get(dataset_key))
+                key = store.key_of(rec.values)
                 if key is not None:
                     observed.add(key)
                 if store.record_seen(rec.values) is not None:

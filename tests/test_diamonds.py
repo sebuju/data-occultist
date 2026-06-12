@@ -15,6 +15,35 @@ def _strip():
 GOLD = (40, 120, 180)   # BGR: warm (r > b), like a Warframe rank diamond
 
 
+def test_scattered_blobs_are_not_a_strip():
+    # icon artwork can contain 1-2 diamond-ish blobs at unrelated heights (the
+    # "sigil read as arcane" bug) — without >=3 aligned marks there is no strip
+    img = _strip()
+    cv2.fillPoly(img, [_diamond(30, 10, 8)], GOLD)
+    cv2.fillPoly(img, [_diamond(120, 30, 8)], GOLD)
+    assert count_diamonds(img) == 0
+    assert count_filled_diamonds(img) == 0
+
+
+def test_misaligned_diamonds_are_not_a_strip():
+    # three marks but zig-zagging vertically: art, not a rank row
+    img = np.full((60, 150, 3), 20, np.uint8)
+    cv2.fillPoly(img, [_diamond(25, 12, 10)], GOLD)
+    cv2.fillPoly(img, [_diamond(75, 45, 10)], GOLD)
+    cv2.fillPoly(img, [_diamond(125, 12, 10)], GOLD)
+    assert count_diamonds(img) == 0
+
+
+def test_stray_blob_outside_row_is_dropped():
+    # a real 3-mark strip plus one stray blob well above it: strip still counts,
+    # stray must not inflate the total (it used to read as a 4th mark)
+    img = np.full((80, 200, 3), 20, np.uint8)
+    cv2.fillPoly(img, [_diamond(20, 12, 6)], GOLD)               # stray art blob
+    for cx in (50, 100, 150):
+        cv2.polylines(img, [_diamond(cx, 55, 12)], True, GOLD, 1)
+    assert count_diamonds(img) == 3
+
+
 def test_counts_only_filled_diamonds():
     img = _strip()
     cv2.fillPoly(img, [_diamond(25, 20, 14)], GOLD)     # filled (solid ~0.5 fill)

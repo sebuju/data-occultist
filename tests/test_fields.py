@@ -110,3 +110,20 @@ def test_coerce_rule_reports_which_fallback_fired():
     t = FieldDef(id="name", if_number="unknown")
     assert coerce_rule(t, "1234") == ("unknown", "if_number")
     assert coerce_rule(t, "Soma") == ("Soma", None)
+
+
+def test_fields_for_dedupes_stale_duplicate_ids():
+    # a dirty saved profile can carry the same field id twice (old merge leftovers);
+    # consumers index fields by id, so the FIRST def — the one the UI edits — must
+    # win, not whichever happens to be serialized last
+    from oc.profile.models import GameProfile, WindowDef
+
+    win = WindowDef(id="w", fields=[
+        FieldDef(id="name", fuzzy=0.65, learn=True),
+        FieldDef(id="count"),
+        FieldDef(id="name", fuzzy=0.82),          # stale shadow
+    ])
+    prof = GameProfile(name="g", windows=[win])
+    out = prof.fields_for(win)
+    assert [f.id for f in out] == ["name", "count"]
+    assert out[0].learn is True and out[0].fuzzy == 0.65

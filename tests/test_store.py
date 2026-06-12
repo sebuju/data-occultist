@@ -1,5 +1,7 @@
+import pytest
+
 from oc.store import ChangeOp
-from oc.store.dataset_store import DatasetStore
+from oc.store.dataset_store import DatasetStore, delete_dataset, rename_dataset
 
 
 def _store(tmp_path, clock=None):
@@ -7,7 +9,7 @@ def _store(tmp_path, clock=None):
     def tick():
         seq["n"] += 1
         return f"t{seq['n']}"
-    return DatasetStore(tmp_path, "game", "mods", "name", clock=clock or tick)
+    return DatasetStore(tmp_path, "game", "mods", clock=clock or tick)
 
 
 def test_add_then_no_change(tmp_path):
@@ -42,6 +44,59 @@ def test_readd_after_removal(tmp_path):
     ev = s.record_seen({"name": "Serration"})  # seen again -> add
     assert ev.op is ChangeOp.add
     assert s.present_count == 1
+
+
+def test_rename_dataset_moves_files(tmp_path):
+    s = _store(tmp_path)            # dataset "mods"
+    s.record_seen({"name": "Serration", "rank": 1})
+    s.save()
+    g = tmp_path / "game"
+    assert rename_dataset(tmp_path, "game", "mods", "arsenal") is True
+    assert not (g / "mods.history.jsonl").exists()
+    assert (g / "arsenal.history.jsonl").exists()
+    # records carry over under the new name
+    assert DatasetStore(tmp_path, "game", "arsenal").present_count == 1
+
+
+def test_rename_dataset_refuses_existing_target(tmp_path):
+    _store(tmp_path).record_seen({"name": "Serration"})   # "mods" on disk
+    DatasetStore(tmp_path, "game", "arsenal").record_seen({"name": "Vitality"})  # target exists
+    DatasetStore(tmp_path, "game", "mods").save()
+    DatasetStore(tmp_path, "game", "arsenal").save()
+    with pytest.raises(FileExistsError):
+        rename_dataset(tmp_path, "game", "mods", "arsenal")
+    assert (tmp_path / "game" / "mods.history.jsonl").exists()  # untouched
+
+
+def test_rename_dataset_missing_is_noop(tmp_path):
+    assert rename_dataset(tmp_path, "game", "nope", "other") is False
+
+
+def test_delete_dataset_removes_files(tmp_path):
+    s = _store(tmp_path)            # dataset "mods"
+    s.record_seen({"name": "Serration", "rank": 1})
+    s.save()
+    g = tmp_path / "game"
+    assert (g / "mods.history.jsonl").exists()
+    assert delete_dataset(tmp_path, "game", "mods") is True
+    for suf in (".history.jsonl", ".reverted.json", ".state.json"):
+        assert not (g / f"mods{suf}").exists()
+
+
+def test_delete_dataset_missing_is_noop(tmp_path):
+    assert delete_dataset(tmp_path, "game", "nope") is False
+
+
+def test_reading_missing_dataset_writes_no_files(tmp_path):
+    # Merely opening a nonexistent dataset must not materialize a state cache — else
+    # list_datasets resurfaces it (e.g. an old name after a rename) as a blank phantom.
+    s = DatasetStore(tmp_path, "game", "ghost")
+    assert s.present_count == 0
+    g = tmp_path / "game"
+    for suf in (".history.jsonl", ".reverted.json", ".state.json"):
+        assert not (g / f"ghost{suf}").exists()
+    from oc.store import inspect
+    assert "ghost" not in inspect.list_datasets(tmp_path, "game")
 
 
 def test_history_persists(tmp_path):

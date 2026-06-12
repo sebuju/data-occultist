@@ -2,6 +2,7 @@
 
 from oc.store.dataset_store import DatasetStore, replay
 from oc.store.change import ChangeEvent, ChangeOp
+from oc.store.keys import KeySpec
 
 
 def _store(tmp_path):
@@ -9,7 +10,7 @@ def _store(tmp_path):
     def tick():
         seq["n"] += 1
         return f"t{seq['n']}"
-    return DatasetStore(tmp_path, "game", "mods", "name", clock=tick)
+    return DatasetStore(tmp_path, "game", "mods", clock=tick)
 
 
 def test_events_get_monotonic_ids(tmp_path):
@@ -60,7 +61,7 @@ def test_reverted_persists_across_reload(tmp_path):
           s.record_seen({"name": "Serration", "rank": 2}))[1]
     s.set_reverted(up.id)
     # a fresh store over the same files must replay to the same reverted state
-    s2 = DatasetStore(tmp_path, "game", "mods", "name")
+    s2 = DatasetStore(tmp_path, "game", "mods")
     assert s2.records()[0]["rank"] == 1
     # and a new id continues past the reverted one
     nxt = s2.record_seen({"name": "Vitality"})
@@ -106,7 +107,7 @@ def test_remove_batch_deletes_from_ledger(tmp_path):
     assert [b["batch"] for b in s.batches()] == [2]     # batch 1 gone from the ledger
     assert {r["key"] for r in s.records()} == {"b"}     # only batch 2's record remains
     # and it's truly gone from disk: a reload doesn't bring it back
-    s2 = DatasetStore(tmp_path, "game", "mods", "name")
+    s2 = DatasetStore(tmp_path, "game", "mods")
     assert [b["batch"] for b in s2.batches()] == [2]
 
 
@@ -128,7 +129,7 @@ def test_edit_event_rekeys_and_persists(tmp_path):
     s.begin_batch(); add = s.record_seen({"name": "Srration", "v": 1})  # typo
     s.edit_event(add.id, {"name": "Serration", "v": 1})
     assert {r["key"] for r in s.records()} == {"serration"}
-    s2 = DatasetStore(tmp_path, "game", "mods", "name")                 # survives reload
+    s2 = DatasetStore(tmp_path, "game", "mods")                         # survives reload
     assert {r["key"] for r in s2.records()} == {"serration"}
 
 
@@ -140,32 +141,30 @@ def test_remove_event_drops_one_event(tmp_path):
     assert [e["id"] for e in s.batch_events(1)] == [b.id]
 
 
-def test_strip_nonalnum_and_case_dedup(tmp_path):
-    from oc.store.dataset_store import DatasetStore, norm_key
-    assert norm_key("Soma Prime", strip_nonalnum=True) == "somaprime"
-    assert norm_key("Soma Prime", case_sensitive=True) == "Soma Prime"
-    s = DatasetStore(tmp_path, "g", "d", "name", strip_nonalnum=True)
+def test_case_sensitive_key_keeps_case_variants_apart(tmp_path):
+    s = DatasetStore(tmp_path, "g", "d", key=KeySpec(case_sensitive=True))
     s.record_seen({"name": "Soma Prime", "n": 1})
-    s.record_seen({"name": "somaprime", "n": 2})       # same key after stripping
-    assert s.present_count == 1
-
-
-def test_rekey_when_key_options_change(tmp_path):
-    # raw records stored as-is; re-opening with different key options re-keys them
-    s = DatasetStore(tmp_path, "g", "d", "name")
-    s.record_seen({"name": "Soma Prime", "n": 1})
-    s.record_seen({"name": "somaprime", "n": 2})       # distinct keys without stripping
+    s.record_seen({"name": "soma prime", "n": 2})
     assert s.present_count == 2
-    # same ledger, now strip non-alnum -> both collapse to one key on replay
-    s2 = DatasetStore(tmp_path, "g", "d", "name", strip_nonalnum=True)
-    assert s2.present_count == 1
+
+
+def test_rekey_when_key_config_changes(tmp_path):
+    # raw records stored as-is; re-opening with a different key re-keys the ledger.
+    # The arcane scenario: data collected keyed on name alone, then `level` is
+    # added to the key -> the merged record splits per level on replay.
+    s = DatasetStore(tmp_path, "g", "d")
+    s.record_seen({"name": "Arcane Aegis", "level": 5, "n": 1})
+    s.record_seen({"name": "Arcane Aegis", "level": 3, "n": 2})   # same key -> merged
+    assert s.present_count == 1
+    s2 = DatasetStore(tmp_path, "g", "d", key=KeySpec(("name", "level")))
+    assert {r["key"] for r in s2.records()} == {"arcane_aegis|5", "arcane_aegis|3"}
     # and re-key by a different field entirely
-    s3 = DatasetStore(tmp_path, "g", "d", "n")
+    s3 = DatasetStore(tmp_path, "g", "d", key=KeySpec(("n",)))
     assert {r["key"] for r in s3.records()} == {"1", "2"}
 
 
 def test_state_cache_skips_replay_when_fingerprint_matches(tmp_path, monkeypatch):
-    s = DatasetStore(tmp_path, "g", "d", "name")
+    s = DatasetStore(tmp_path, "g", "d")
     s.record_seen({"name": "A"})
     s.save()
     import oc.store.dataset_store as mod
@@ -175,9 +174,9 @@ def test_state_cache_skips_replay_when_fingerprint_matches(tmp_path, monkeypatch
         calls["n"] += 1
         return real(*a, **k)
     monkeypatch.setattr(mod, "replay", counting)
-    DatasetStore(tmp_path, "g", "d", "name")            # same opts -> cache hit, no replay
+    DatasetStore(tmp_path, "g", "d")                              # same key -> cache hit, no replay
     assert calls["n"] == 0
-    DatasetStore(tmp_path, "g", "d", "name", strip_nonalnum=True)  # changed -> replay
+    DatasetStore(tmp_path, "g", "d", key=KeySpec(("name", "x")))  # changed -> replay (re-key)
     assert calls["n"] == 1
 
 

@@ -224,6 +224,12 @@ def _cells_for_item(frame: Frame, item: ItemDef, da, lines_frac, templates, ref:
                 if la is not None:
                     anchor_y = la
             cell_y = anchor_y - ref * ih    # align the locator's true content to the detected row
+            if anchor_y != lc and not _cell_in_bounds(item, cell_x, cell_y, da):
+                # The column re-anchor only sees letter-bearing lines, so a label whose
+                # BOTTOM line is letter-less (e.g. "Akbronco Prime" over "[30]") anchors
+                # one line high and pushes the cell out of bounds. The row consensus
+                # still has it right — retry there before dismissing the tile.
+                cell_y = lc - ref * ih
             if not _cell_in_bounds(item, cell_x, cell_y, da):
                 continue                    # a box outside the data area reads stray UI text
             boxes = {

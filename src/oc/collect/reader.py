@@ -18,7 +18,7 @@ import cv2
 from ..interfaces import OcrEngine
 from ..profile.models import FieldDef, FieldType, ItemDef, Preprocess, WindowDef
 from ..types import FractionBox, Frame, OcrLine, PixelBox
-from .fields import coerce, coerce_rule
+from .fields import coerce_rule
 from .grid import Cell, cells_for_rows, expand_cells
 from .items import (
     ItemCell,
@@ -328,16 +328,24 @@ class RegionReader:
                 saw[ci] = True
                 continue
             text, conf = focus.get((ci, field_id)) or base[(ci, field_id)]
-            if text:
-                saw[ci] = True
-                worst[ci] = min(worst[ci], conf)
+            substituted = False
             if self._resolver and fdef:
                 resolved = self._resolver.resolve(fdef, text, conf)
                 rec.values[field_id] = resolved.value
+                substituted = resolved.substituted is not None
                 if resolved.corrected:
                     rec.corrected.append(field_id)
+            elif fdef:
+                rec.values[field_id], rule = coerce_rule(fdef, text)
+                substituted = rule is not None
             else:
-                rec.values[field_id] = coerce(fdef, text) if fdef else (text or None)
+                rec.values[field_id] = text or None
+            if text:
+                saw[ci] = True
+                if not substituted:
+                    # a fired fallback's value is authored config, not this read — the
+                    # garbage OCR that triggered it must not sink the whole record
+                    worst[ci] = min(worst[ci], conf)
 
         for ci, rec in enumerate(records):
             rec.confidence = worst[ci] if saw[ci] else 0.0

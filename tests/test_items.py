@@ -65,6 +65,40 @@ def test_no_icons_no_rows():
     assert locate_item_cells(frame, win, []) == []
 
 
+def _text_window():
+    """Text-located grid: the name field doubles as the locator (tell=True)."""
+    item = ItemDef(
+        id="it",
+        box=Box(x=0.0, y=0.0, w=0.2, h=0.25),
+        align="bottom",
+        fields=[RegionDef(id="name", box=Box(x=0.05, y=0.6, w=0.9, h=0.3),
+                          field="name", tell=True),
+                RegionDef(id="count", box=Box(x=0.0, y=0.0, w=0.5, h=0.15),
+                          field="count")],
+    )
+    return WindowDef(id="w", fields=[FieldDef(id="name"), FieldDef(id="count")],
+                     data_area=Box(x=0.0, y=0.0, w=1.0, h=1.0), items=[item])
+
+
+def test_column_anchor_out_of_bounds_falls_back_to_row_consensus():
+    # ref = locator centre = 0.75 of the cell, so a row anchored at 0.1875 puts the
+    # cell top at exactly 0.0. Column 1's only letter-bearing line sits one line
+    # higher (its bottom label line is letter-less, e.g. "[30]") — anchoring on it
+    # pushes the cell above the data area. The cell must fall back to the row
+    # consensus instead of vanishing.
+    win = _text_window()
+    lines = [
+        (0.10, 0.1875, 0.02, "Alpha", 0.95),
+        (0.30, 0.1375, 0.02, "Bravo", 0.95),    # label one line high
+        (0.50, 0.1875, 0.02, "Charlie", 0.95),
+    ]
+    frame = Frame(image=np.zeros((1000, 1000, 3), dtype=np.uint8), client=PixelBox(0, 0, 1000, 1000))
+    cells = locate_item_cells(frame, win, lines)
+    by_col = {ic.cell.col: ic for ic in cells}
+    assert 1 in by_col                               # not dismissed
+    assert abs(by_col[1].oy - by_col[0].oy) < 1e-6   # placed on the row consensus
+
+
 def _ic(prio, ntells, ox=0.0):
     item = ItemDef(id=f"p{prio}", box=Box(x=0, y=0, w=0.2, h=0.2), priority=prio,
                    tells=[Tell(id=f"t{i}", box=Box(x=0, y=0, w=0.1, h=0.1)) for i in range(ntells)])

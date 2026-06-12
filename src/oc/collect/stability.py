@@ -13,6 +13,7 @@ scrolls still accumulates confirmations, as long as its values stay consistent.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from .reader import Record
 
@@ -22,18 +23,17 @@ def _signature(rec: Record) -> str:
 
 
 class Confirmer:
-    def __init__(self, key_field: str, confirm_frames: int = 2) -> None:
-        self._key_field = key_field
+    def __init__(self, key_fn: Callable[[dict], str | None], confirm_frames: int = 2) -> None:
+        # ``key_fn`` maps a record's values to its dedup key (the dataset's resolved
+        # KeyMap.build) — the SAME key the store uses, so confirm and store agree.
+        self._key_fn = key_fn
         self._need = max(1, confirm_frames)
         # key -> {"sig": str, "count": int, "rec": Record}
         self._pending: dict[str, dict] = {}
         self._confirmed_keys: set[str] = set()
 
     def _key(self, rec: Record) -> str | None:
-        val = rec.values.get(self._key_field)
-        if val in (None, ""):
-            return None
-        return str(val).strip().lower()
+        return self._key_fn(rec.values)
 
     def observe(self, records: list[Record]) -> list[Record]:
         """Feed one frame's records; return those that just became confirmed."""

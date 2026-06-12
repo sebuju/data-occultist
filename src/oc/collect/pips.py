@@ -78,6 +78,34 @@ def _is_diamond_contour(approx: np.ndarray, w: int, h: int, area: float) -> bool
     return on_vert == 2 and on_horiz == 2
 
 
+def _rank_row(boxes: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
+    """Keep only the marks that form a rank ROW — ≥3 diamonds whose centres sit on one
+    horizontal line at a near-uniform pitch. An arcane always shows its FULL strip
+    (3 or 5 marks, filled or hollow), never a lone mark — so isolated diamond-ish blobs
+    in icon art or glyph fragments (e.g. a sigil's emblem) that pass the contour test
+    one-by-one still don't line up, and without this filter two strays were enough to
+    call a plain item an arcane.
+
+    A filled mark's contour hugs its lit core while a hollow mark's traces the outer
+    ring, so sizes differ WITHIN one real strip — alignment uses centres, and the size
+    gate is a loose band around the row's median height."""
+    best: list[tuple[int, int, int, int]] = []
+    for _x, y, _w, h in boxes:
+        cy = y + h / 2
+        row = [b for b in boxes if abs(b[1] + b[3] / 2 - cy) <= 0.5 * max(h, b[3])]
+        med = sorted(b[3] for b in row)[len(row) // 2]
+        row = [b for b in row if 0.4 * med <= b[3] <= 2.5 * med]
+        if len(row) > len(best):
+            best = row
+    if len(best) < 3:
+        return []
+    xs = sorted(b[0] + b[2] / 2 for b in best)
+    gaps = [b - a for a, b in zip(xs, xs[1:])]
+    if max(gaps) > 2.2 * min(gaps):
+        return []                                        # scattered, not a strip
+    return best
+
+
 def _diamond_boxes(image: np.ndarray, min_area: int = 20) -> list[tuple[int, int, int, int]]:
     """Locate every diamond MARK in a rank strip — filled OR hollow, ranked OR not —
     returning each as a bounding box ``(x, y, w, h)``.
@@ -86,7 +114,8 @@ def _diamond_boxes(image: np.ndarray, min_area: int = 20) -> list[tuple[int, int
     above the dark backdrop — so we can't threshold on brightness or colour. Mark pixels
     brighter than their LOCAL surroundings (a high-pass), trace contours, and keep only
     rotated-square 4-gons (see :func:`_is_diamond_contour`). Nested ring contours
-    (outer+inner of a hollow mark) are de-duplicated by centre."""
+    (outer+inner of a hollow mark) are de-duplicated by centre, and the survivors
+    must line up as a rank row (see :func:`_rank_row`) or none are returned."""
     if image is None or image.size == 0:
         return []
     gray = image.max(axis=2)
@@ -109,7 +138,7 @@ def _diamond_boxes(image: np.ndarray, min_area: int = 20) -> list[tuple[int, int
                for ox, oy, ow, oh in boxes):
             continue                                     # same mark's other ring edge
         boxes.append((x, y, w, h))
-    return boxes
+    return _rank_row(boxes)
 
 
 def count_diamonds(image: np.ndarray) -> int:
