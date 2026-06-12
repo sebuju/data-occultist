@@ -219,7 +219,6 @@ const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "d
 function nodeTypeOf(id) { return id === "game" ? "game" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
   world: () => $("ggroups"),
-  titleLayer: () => $("ggrouptitles"),
   nodeRect: (id) => nodeRect(id),
   nodeType: nodeTypeOf,
   moveMembers: (ids, ev) => { const lead = ids.find((id) => pos.get(id)); if (lead) moveNodes(lead, ids.filter((x) => x !== lead), ev); },
@@ -3444,11 +3443,20 @@ function nmRenderMap(body) {
       : "";
     return rect + text;
   };
+  // Group boxes (behind everything), hugging their members just like the live layer.
+  const groupSvg = groups.groupBoxes().map((gp) => {
+    const x = X(gp.box.x), y = Y(gp.box.y), w = gp.box.w * s, h = gp.box.h * s;
+    const style = gp.outline.style;
+    const stroke = style === "none" ? "none" : gp.outline.color;
+    const dash = style === "dashed" ? ` stroke-dasharray="4 3"` : style === "dotted" ? ` stroke-dasharray="1 3"` : "";
+    return `<rect class="nm-group" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${gp.bg}" stroke="${stroke}"${dash}><title>${esc(gp.title)}</title></rect>`;
+  }).join("");
   // The viewport indicator is a plain DIV moved with a CSS transform (compositor-only) — it
   // must NOT be an SVG element whose geometry attributes are rewritten each pan frame, since
   // that forces a layout, and with this huge DOM each layout is ~3ms (the pan lag).
   body.innerHTML = `<div class="nm-wrap" style="width:${W.toFixed(1)}px;height:${H.toFixed(1)}px;">
     <svg class="nm-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+      <g class="nm-groups">${groupSvg}</g>
       <g class="nm-edges" transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})">${edgePaths}</g>
       <g class="nm-nodes">${rects.map(node).join("")}</g></svg>
     <div class="nm-vp"></div>

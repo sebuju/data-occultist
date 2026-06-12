@@ -160,15 +160,16 @@ legend { color: var(--muted); padding: 0 6px; }
 /* skip hit-testing the whole graph subtree during a pan drag — pointer events aren't
    needed mid-pan and testing every node/edge each move was a big cost */
 .graphcanvas.panning #gworld { pointer-events: none; }
-/* stacking inside #gworld: group boxes (0) < edges (1) < nodes (2) < selected-edges (5)
-   < group titles (6). Edges/nodes deliberately sit ABOVE the group border so a wire
-   never disappears under a group outline. */
+/* stacking inside #gworld: group boxes + their title bands (0) < edges (1) < nodes (2) <
+   selected-edges (5). Edges/nodes deliberately sit ABOVE the group box so a wire never
+   disappears under a group outline; the title band (a child of the box) is below nodes too,
+   so a node is never obscured by a title. */
 #gedges { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; overflow: visible; }
-#gnodes { position: absolute; top: 0; left: 0; z-index: 2; }
+/* The nodes layer is sized to the full canvas (see resizeCanvas), so it must NOT capture
+   pointer events itself — otherwise it would swallow presses meant for the title band that
+   sits below it (band z0, this z2). Only the node CARDS take events (.gnode below). */
+#gnodes { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; }
 #gedges-top { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 5; overflow: visible; }
-/* titles ride above the nodes so they stay clickable/draggable; the layer itself lets
-   clicks through (pointer-events:none) — only the title pills capture. */
-#ggrouptitles { position: absolute; top: 0; left: 0; z-index: 6; pointer-events: none; }
 .gnode.collapsed .gn-body { display: none !important; }   /* beats the host-node `> .gn-body { display:flex }` */
 /* collapse works the SAME for every node: header only. !important overrides the inline
    width/height a resizable host node carries, and resizing is off while collapsed. */
@@ -185,7 +186,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .graphcanvas table, .graphcanvas table * { user-select: text; }
 
 .gnode {
-  position: absolute; width: 220px;
+  position: absolute; width: 220px; pointer-events: auto;   /* re-enable on the card (the #gnodes layer is none) */
   background: var(--panel); border: 1px solid var(--line);
   border-radius: 8px; padding: 6px 8px; font-size: var(--fs-base);
   user-select: none;            /* don't select text while dragging */
@@ -350,23 +351,31 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 
 /* ---- groups layer (behind nodes + edges) ---- */
 #ggroups { position: absolute; top: 0; left: 0; z-index: 0; }
-.ggroup { position: absolute; border-radius: 10px; box-sizing: border-box; pointer-events: none; }
-.ggroup-title { position: absolute; box-sizing: border-box; display: inline-flex; align-items: center; padding: 4px 14px;
+/* overflow:hidden makes the box CLIP the title band to its rounded inner rect — so the band
+   hugs the border on all sides with no manual inset math, never covers the outline, and has
+   no corner gap, at any border width. */
+.ggroup { position: absolute; border-radius: 10px; box-sizing: border-box; pointer-events: none; overflow: hidden; }
+/* The title is a child of the box, pinned to the top edge (left/right:0). The box clips it,
+   so it needs no border/radius of its own — just a bottom divider. pointer-events:auto so it
+   stays draggable even though the box layer (z0) is below the nodes. */
+.ggroup-title { position: absolute; top: 0; left: 0; right: 0; box-sizing: border-box;
+  display: flex; align-items: center; padding: 9px 15px;
   font-family: var(--font-mono); font-size: var(--fs-base); font-weight: 700; letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--text); cursor: grab; pointer-events: auto;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* tl band: a full-width header rectangle across the top of the group */
-.ggroup-title.band { justify-content: flex-start; border-radius: 8px 8px 0 0; }
+  background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ggroup-title.band { box-shadow: inset 0 -1px 0 var(--line); }
 .ggroup-title:active { cursor: grabbing; }
 
 /* group options popover (screen-fixed, like the topbar dropdowns) */
 .ggroup-pop { position: fixed; z-index: 200; min-width: 220px; display: flex; flex-direction: column; gap: 6px;
-  padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,.4); }
 .ggroup-pop .flab { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
-.ggroup-pop input[type="text"], .ggroup-pop .gp-title { flex: 1; min-width: 0; }
-.ggroup-pop input[type="color"] { width: 28px; height: 22px; padding: 0; border: 1px solid var(--line); background: none; }
+/* fixed-width leader so every row's control starts at the same x (labels + inputs line up) */
+.ggroup-pop .gp-lab { flex: 0 0 auto; width: 72px; }
+.ggroup-pop input[type="text"], .ggroup-pop .gp-title, .ggroup-pop select { flex: 1; min-width: 0; }
+.ggroup-pop input[type="range"] { flex: 1; min-width: 0; }
+.ggroup-pop input[type="color"] { flex: 0 0 auto; width: 28px; height: 22px; padding: 0; border: 1px solid var(--line); background: none; }
 .ggroup-pop .gp-disband { margin-top: 4px; }
 
 /* ---- detach (unlock) icon: only on grouped nodes ---- */
@@ -876,6 +885,7 @@ label.inline input { width: auto; }
   background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='13' y1='9' x2='9' y2='13'/><line x1='13' y1='4' x2='4' y2='13'/></g></svg>"); }
 .rz-lgrip { left: 1px; cursor: nesw-resize;
   background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='1' y1='9' x2='5' y2='13'/><line x1='1' y1='4' x2='10' y2='13'/></g></svg>"); }
+.nm-group { stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 .nm-edges path { fill: none; stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .nm-n { stroke: #0006; stroke-width: 0.5; cursor: pointer; opacity: 0.9; }
 .nm-n:hover { opacity: 1; stroke: var(--white); stroke-width: 1; }

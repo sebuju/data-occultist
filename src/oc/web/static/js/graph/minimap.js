@@ -68,6 +68,25 @@ export function renderMiniMap(container, profile) {
       return `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" />`;
     }).join("");
 
+  // Group boxes behind the nodes. Read from layout data (no live DOM) and hug members with
+  // the same PAD/TITLE_H geometry groups.js uses, so the preview matches the live map.
+  const GPAD = 16, GTITLE_H = 24;
+  const rectById = new Map(rects.map((r) => [r.id, r]));
+  const groupSvg = ((profile?.layout?.groups) || []).map((g) => {
+    let nx = Infinity, ny = Infinity, mx = -Infinity, my = -Infinity;
+    for (const id of (g.members || [])) {
+      const r = rectById.get(id); if (!r) continue;
+      nx = Math.min(nx, r.x); ny = Math.min(ny, r.y); mx = Math.max(mx, r.x + r.w); my = Math.max(my, r.y + r.h);
+    }
+    if (!Number.isFinite(nx)) return "";
+    const bx = nx - GPAD, by = ny - GPAD - GTITLE_H, bw = (mx - nx) + GPAD * 2, bh = (my - ny) + GPAD * 2 + GTITLE_H;
+    const x = X(bx), y = Y(by), w = bw * s, h = bh * s;
+    const style = g.outline?.style || "solid";
+    const stroke = style === "none" ? "none" : (g.outline?.color || "#333333");
+    const dash = style === "dashed" ? ` stroke-dasharray="4 3"` : style === "dotted" ? ` stroke-dasharray="1 3"` : "";
+    return `<rect class="nm-group" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${g.bg || "#1c1e231f"}" stroke="${stroke}"${dash}><title>${esc(g.title || g.id)}</title></rect>`;
+  }).join("");
+
   const nodeSvg = rects.map((r) => {
     const bw = Math.max(2, r.w * s), bh = Math.max(2, r.h * s);
     const x = X(r.x), y = Y(r.y), cx = x + bw / 2, cy = y + bh / 2;
@@ -79,5 +98,5 @@ export function renderMiniMap(container, profile) {
   }).join("");
 
   container.innerHTML = `<svg class="nm-svg" width="${availW}" height="${availH}" viewBox="0 0 ${availW} ${availH}" preserveAspectRatio="xMidYMid meet">
-    <g class="nm-edges">${edges}</g><g class="nm-nodes">${nodeSvg}</g></svg>`;
+    <g class="nm-groups">${groupSvg}</g><g class="nm-edges">${edges}</g><g class="nm-nodes">${nodeSvg}</g></svg>`;
 }

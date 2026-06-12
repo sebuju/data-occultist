@@ -13,12 +13,13 @@
 // Geometry recomputes from live member rects every render, so a group box always hugs
 // its nodes — dragging a member (or the whole group) just re-renders.
 
-const PAD = 16;          // gap between member bounding box and the group outline
-const TITLE_H = 24;      // title bar height (world px)
+const PAD = 16;          // uniform gap between members and the group outline (all 4 sides,
+                         // incl. between the title band's bottom and the first node)
+const TITLE_H = 24;      // fallback title height until the real one is measured (world px)
 const DRAG_THRESH = 4;   // px before a title press becomes a move (else it's a click)
 
 let ctx = null;
-let groups = [];         // [{ id, title, members[], outline{color,style,width}, bg, titlePos }]
+let groups = [];         // [{ id, title, members[], outline{color,style,width}, bg, titleAlign }]
 let seq = 0;             // group_N counter (per load)
 let openPopover = null;  // {groupId, el} of the currently open options popover
 
@@ -28,18 +29,26 @@ const byId = (id) => groups.find((g) => g.id === id);
 export function groupOf(nodeId) { return groups.find((g) => g.members.includes(nodeId)) || null; }
 export function allGroups() { return groups; }
 
+// World-space box of every group (members hugged the same way the live layer does), for
+// external renderers like the node map. Skips groups whose members aren't laid out yet.
+export function groupBoxes() {
+  return groups
+    .map((g) => ({ id: g.id, title: g.title, outline: { ...g.outline }, bg: g.bg, box: groupBox(g) }))
+    .filter((x) => x.box);
+}
+
 // ---- persistence ----------------------------------------------------------
 
 export function collect() {
   return groups.map((g) => ({
     id: g.id, title: g.title, members: [...g.members],
-    outline: { ...g.outline }, bg: g.bg, titlePos: g.titlePos,
+    outline: { ...g.outline }, bg: g.bg, titleAlign: g.titleAlign,
   }));
 }
 // Default group look — a MUTED grey, distinct from the accent blue used for the live
 // multi-selection (an accent outline made every group look perpetually selected).
-const DEF_OUTLINE = "#8a93a3";
-const DEF_BG = "#8a93a31f";
+const DEF_OUTLINE = "#333333";
+const DEF_BG = "#1c1e231f";
 
 export function hydrate(arr) {
   closePopover();
@@ -49,7 +58,9 @@ export function hydrate(arr) {
     members: Array.isArray(g.members) ? [...g.members] : [],
     outline: { color: g.outline?.color || DEF_OUTLINE, style: g.outline?.style || "solid", width: g.outline?.width || 2 },
     bg: g.bg || DEF_BG,
-    titlePos: g.titlePos || "tl",
+    // title is always a full-width band now; titleAlign just sets its text alignment.
+    // Back-compat: map the old titlePos positions onto an alignment.
+    titleAlign: g.titleAlign || ({ tl: "left", tc: "center", tr: "right", in: "left" }[g.titlePos]) || "left",
   })).filter((g) => g.members.length);
   // keep group_N counter past any already-used numbers
   seq = groups.reduce((m, g) => { const n = /^group_(\d+)$/.exec(g.id); return n ? Math.max(m, +n[1]) : m; }, 0);
@@ -74,7 +85,7 @@ export function createGroup(memberIds) {
   const gid = `group_${++seq}`;
   const g = {
     id: gid, title: defaultTitle(ids) || gid, members: ids,
-    outline: { color: DEF_OUTLINE, style: "solid", width: 2 }, bg: DEF_BG, titlePos: "tl",
+    outline: { color: DEF_OUTLINE, style: "solid", width: 2 }, bg: DEF_BG, titleAlign: "left",
   };
   groups.push(g);
   pruneEmpty();
@@ -135,7 +146,7 @@ export function forgetNodes(idsGone) {
 
 // World bounding box that hugs a group's member nodes, plus a uniform pad and room
 // for the title bar above it. Returns null if no member has a live rect yet.
-function groupBox(g) {
+function groupBox(g, titleH = g._titleH || TITLE_H) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const id of g.members) {
     const r = ctx.nodeRect(id);
@@ -144,47 +155,46 @@ function groupBox(g) {
     maxX = Math.max(maxX, r.x + r.w); maxY = Math.max(maxY, r.y + r.h);
   }
   if (!Number.isFinite(minX)) return null;
-  return { x: minX - PAD, y: minY - PAD - TITLE_H, w: (maxX - minX) + PAD * 2, h: (maxY - minY) + PAD * 2 + TITLE_H };
+  // top reserves the real title height PLUS one PAD, so the band's bottom sits exactly PAD
+  // above the first node — the same PAD used on the other three sides.
+  return { x: minX - PAD, y: minY - PAD - titleH, w: (maxX - minX) + PAD * 2, h: (maxY - minY) + PAD * 2 + titleH };
 }
 
-// Place the title (a separate top-layer element) in WORLD coords from the box, per
-// g.titlePos. tl is a full-width band across the group; the rest are pills.
-function placeTitle(tel, box, pos) {
-  tel.style.position = "absolute";
-  tel.style.right = "auto";
-  tel.classList.toggle("band", pos === "tl");
-  if (pos === "tc") { tel.style.left = `${box.x + box.w / 2}px`; tel.style.top = `${box.y}px`; tel.style.width = ""; tel.style.transform = "translateX(-50%)"; }
-  else if (pos === "tr") { tel.style.left = `${box.x + box.w}px`; tel.style.top = `${box.y}px`; tel.style.width = ""; tel.style.transform = "translateX(-100%)"; }
-  else if (pos === "in") { tel.style.left = `${box.x + 8}px`; tel.style.top = `${box.y + TITLE_H + 8}px`; tel.style.width = ""; tel.style.transform = "none"; }
-  else { tel.style.left = `${box.x}px`; tel.style.top = `${box.y}px`; tel.style.width = `${box.w}px`; tel.style.transform = "none"; }   // tl band
+// The title is a child of the box (CSS pins it to the top + the box clips it), so all that's
+// left here is its TEXT alignment: left/center/right per g.titleAlign.
+function placeTitle(tel, align) {
+  tel.classList.add("band");
+  tel.style.justifyContent = align === "center" ? "center" : align === "right" ? "flex-end" : "flex-start";
 }
 
 // ---- rendering ------------------------------------------------------------
-// Boxes live in #ggroups (behind nodes); titles live in a top layer (#ggrouptitles,
-// above nodes) so they stay hit-testable for drag + the options popover.
+// Boxes live in #ggroups (behind nodes); each box owns its title band as a CHILD, so the box
+// clips the band flush and it stays hit-testable for drag + the options popover.
 
 export function renderGroups() {
   const boxLayer = ctx.world();
-  const titleLayer = ctx.titleLayer ? ctx.titleLayer() : boxLayer;
-  if (!boxLayer || !titleLayer) return;
+  if (!boxLayer) return;
   const live = new Set(groups.map((g) => g.id));
-  for (const el of [...boxLayer.children]) if (!live.has(el.dataset.gid)) el.remove();
-  for (const el of [...titleLayer.children]) if (el.dataset.gid && !live.has(el.dataset.gid)) el.remove();
+  for (const el of [...boxLayer.children]) if (!live.has(el.dataset.gid)) el.remove();   // box removal takes its title child with it
   for (const g of groups) {
-    const box = groupBox(g);
     let bel = boxLayer.querySelector(`.ggroup[data-gid="${g.id}"]`);
-    let tel = titleLayer.querySelector(`.ggroup-title[data-gid="${g.id}"]`);
-    if (!box) { bel?.remove(); tel?.remove(); continue; }
     if (!bel) { bel = buildBoxEl(g); boxLayer.appendChild(bel); }
-    if (!tel) { tel = buildTitleEl(g); titleLayer.appendChild(tel); }
+    let tel = bel.querySelector(".ggroup-title");
+    if (!tel) { tel = buildTitleEl(g); bel.appendChild(tel); }   // title lives INSIDE the box so the box clips it flush
+    // Label + measure the title BEFORE sizing the box, so the box reserves the band's REAL
+    // height (offsetHeight is single-line — white-space:nowrap — so it's stable before layout).
+    tel.querySelector(".ggt-label").textContent = g.title;
+    const th = g._titleH = tel.offsetHeight || TITLE_H;
+    const box = groupBox(g, th);
+    if (!box) { bel.remove(); continue; }
     bel.style.left = `${box.x}px`; bel.style.top = `${box.y}px`;
     bel.style.width = `${box.w}px`; bel.style.height = `${box.h}px`;
+    const bw = g.outline.style === "none" ? 0 : g.outline.width;
     bel.style.background = g.bg;
     bel.style.borderColor = g.outline.color;
     bel.style.borderStyle = g.outline.style;
-    bel.style.borderWidth = `${g.outline.width}px`;
-    placeTitle(tel, box, g.titlePos);
-    tel.querySelector(".ggt-label").textContent = g.title;
+    bel.style.borderWidth = `${bw}px`;
+    placeTitle(tel, g.titleAlign);
   }
 }
 
@@ -241,18 +251,19 @@ function togglePopover(gid, ev) {
   const pop = document.createElement("div");
   pop.className = "ggroup-pop";
   pop.innerHTML = `
-    <label class="flab">title <input class="gp-title" value="${escAttr(g.title)}" /></label>
-    <label class="flab">outline
+    <label class="flab"><span class="gp-lab">title</span><input class="gp-title" value="${escAttr(g.title)}" /></label>
+    <label class="flab"><span class="gp-lab">outline</span>
       <select class="gp-style">
-        ${["solid", "dashed", "dotted"].map((s) => `<option value="${s}" ${g.outline.style === s ? "selected" : ""}>${s}</option>`).join("")}
+        ${["solid", "dashed", "dotted", "none"].map((s) => `<option value="${s}" ${g.outline.style === s ? "selected" : ""}>${s}</option>`).join("")}
       </select>
       <input type="color" class="gp-ocolor" value="${hex6(g.outline.color)}" title="outline color" />
     </label>
-    <label class="flab">background <input type="color" class="gp-bg" value="${hex6(g.bg)}" title="fill color" />
-      <input type="range" class="gp-bga" min="0" max="60" value="${alphaPct(g.bg)}" title="fill opacity" /></label>
-    <label class="flab">title at
+    <label class="flab"><span class="gp-lab">background</span>
+      <input type="range" class="gp-bga" min="0" max="60" value="${alphaPct(g.bg)}" title="fill opacity" />
+      <input type="color" class="gp-bg" value="${hex6(g.bg)}" title="fill color" /></label>
+    <label class="flab"><span class="gp-lab">align</span>
       <select class="gp-pos">
-        ${[["tl", "top-left"], ["tc", "top-center"], ["tr", "top-right"], ["in", "inside"]].map(([v, t]) => `<option value="${v}" ${g.titlePos === v ? "selected" : ""}>${t}</option>`).join("")}
+        ${["left", "center", "right"].map((v) => `<option value="${v}" ${g.titleAlign === v ? "selected" : ""}>${v}</option>`).join("")}
       </select>
     </label>
     <button class="gp-disband danger">disband group</button>`;
@@ -268,7 +279,7 @@ function togglePopover(gid, ev) {
   const applyBg = () => { g.bg = withAlpha(pop.querySelector(".gp-bg").value, +pop.querySelector(".gp-bga").value); commit(); };
   pop.querySelector(".gp-bg").addEventListener("input", applyBg);
   pop.querySelector(".gp-bga").addEventListener("input", applyBg);
-  pop.querySelector(".gp-pos").addEventListener("change", (e) => { g.titlePos = e.target.value; commit(); });
+  pop.querySelector(".gp-pos").addEventListener("change", (e) => { g.titleAlign = e.target.value; commit(); });
   pop.querySelector(".gp-disband").addEventListener("click", () => disband(gid));
 
   setTimeout(() => document.addEventListener("mousedown", onOutside, true), 0);
