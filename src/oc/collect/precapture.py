@@ -234,10 +234,10 @@ class PrecaptureSession:
         self._worker_kind: str | None = None   # "recording" | "processing" — restores phase on resume
         self._thread: threading.Thread | None = None
 
-        self._frames: list[bytes] = []        # JPEG-encoded captures
+        self._frames: list[bytes] = []        # JPEG-encoded captures held in RAM (live recording)
+        self._frame_paths: list[Path] = []    # on-disk frames of a loaded session (read lazily)
         self._client: tuple[int, int] = (0, 0)
         self._staged: dict[str, _Staged] = {}
-        self._consolidated: dict[str, dict] | None = None   # cached dedup view; None = stale
         self._phase = Phase.idle
         self._processed = 0
         self._read = 0          # records read this run (above the confidence floor)
@@ -389,27 +389,31 @@ class PrecaptureSession:
     # ---- disk persistence --------------------------------------------------
 
     def _rehydrate(self) -> None:
-        """Reload frames recorded in a previous run (survives modal close / restart)."""
+        """Make a previous run's frames available WITHOUT reading them — loading a session
+        only needs the staged records (to review/save); the frame pixels are read lazily,
+        one at a time, when processing actually runs. So just enumerate the files and peek
+        the first for the client dimensions."""
         try:
             files = sorted(self._dir.glob("*.jpg"))
         except OSError:
             return
         if not files:
             return
-        frames = []
-        for f in files:
-            try:
-                frames.append(f.read_bytes())
-            except OSError:
-                pass
-        if not frames:
-            return
-        self._frames = frames
-        img = cv2.imdecode(np.frombuffer(frames[0], np.uint8), cv2.IMREAD_COLOR)
-        if img is not None:
-            self._client = (img.shape[1], img.shape[0])
+        self._frame_paths = files
+        self._frames = []
+        try:
+            img = cv2.imdecode(np.frombuffer(files[0].read_bytes(), np.uint8), cv2.IMREAD_COLOR)
+            if img is not None:
+                self._client = (img.shape[1], img.shape[0])
+        except OSError:
+            pass
         self._phase = Phase.recorded
         self._load_ocr_state()
+
+    def _frame_count(self) -> int:
+        """Total frames in the active session — in-RAM ones (a live recording) or, for a
+        loaded session, the files on disk (not yet read)."""
+        return len(self._frames) if self._frames else len(self._frame_paths)
 
     def _state_file(self) -> Path:
         return self._dir / "ocr_state.json"
@@ -420,7 +424,7 @@ class PrecaptureSession:
         results persist too. Written atomically; the worker thread is the only caller."""
         with self._lock:
             state = {
-                "frames": len(self._frames),
+                "frames": self._frame_count(),
                 "processed": self._processed,
                 "read": self._read,
                 "no_key": self._no_key,
@@ -445,7 +449,7 @@ class PrecaptureSession:
             state = json.loads(self._state_file().read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
-        if state.get("frames") != len(self._frames):   # frame set changed -> stale
+        if state.get("frames") != self._frame_count():   # frame set changed -> stale
             return
         try:
             self._staged = {ds: _Staged(list(d["key_fields"]), dict(d["rows"]),
@@ -455,12 +459,11 @@ class PrecaptureSession:
             self._processed = int(state.get("processed", 0))
             self._read = int(state.get("read", 0))
             self._no_key = int(state.get("no_key", 0))
-            self._consolidated = None   # fresh staged set -> recompute dedup on demand
         except (KeyError, TypeError, ValueError):
             self._staged = {}
             self._processed = self._read = self._no_key = 0
             return
-        if self._processed >= len(self._frames):
+        if self._processed >= self._frame_count():
             self._phase = Phase.done
 
     # ---- recording ---------------------------------------------------------
@@ -625,14 +628,14 @@ class PrecaptureSession:
 
     def start_processing(self) -> None:
         with self._lock:
-            if self._phase in (Phase.recording, Phase.processing) or not self._frames:
+            if self._phase in (Phase.recording, Phase.processing) or not self._frame_count():
                 return
         self._join_prev()   # bury any lingering worker BEFORE clearing _stop (see _join_prev)
         with self._lock:
             # A rehydrated half-done run (the OCR checkpoint survived a process kill)
             # resumes at the saved cursor with its staged records intact. Any other
             # start — fresh recording, re-process after done/cancel — is from scratch.
-            resume = self._phase is Phase.recorded and 0 < self._processed < len(self._frames)
+            resume = self._phase is Phase.recorded and 0 < self._processed < self._frame_count()
             if not resume:
                 self._processed = 0
                 self._read = 0
@@ -646,12 +649,14 @@ class PrecaptureSession:
             self._pause.clear()
             self._t0 = time.monotonic()
             self._t_end = 0.0
-            frames = list(self._frames[self._processed:])
+            # frame SOURCES from the cursor on: in-RAM bytes (live recording) or disk paths
+            # (loaded session) read lazily in the loop so loading never paid for the pixels
+            sources = list((self._frames or self._frame_paths)[self._processed:])
             cw, ch = self._client
-        self._thread = threading.Thread(target=self._process_loop, args=(frames, cw, ch), daemon=True)
+        self._thread = threading.Thread(target=self._process_loop, args=(sources, cw, ch), daemon=True)
         self._thread.start()
 
-    def _process_loop(self, frames: list[bytes], cw: int, ch: int) -> None:
+    def _process_loop(self, sources: list, cw: int, ch: int) -> None:
         eng = self._engine
         floor = self._tuning.min_confidence
         last_detect_sig: int | None = None
@@ -659,7 +664,7 @@ class PrecaptureSession:
         last_data_sig: dict[str, int] = {}
         last_records: dict[str, list] = {}
         errors = 0
-        for buf in frames:
+        for src in sources:
             if self._stop.is_set():
                 self._save_ocr_state()   # keep the work done so far restartable
                 with self._lock:
@@ -671,6 +676,8 @@ class PrecaptureSession:
 
             dt_decode = dt_classify = dt_read = 0.0
             try:
+                # lazy: in-RAM bytes (live recording) or read the frame file now (loaded session)
+                buf = src if isinstance(src, (bytes, bytearray)) else src.read_bytes()
                 t = time.perf_counter()
                 img = cv2.imdecode(np.frombuffer(buf, np.uint8), cv2.IMREAD_COLOR)
                 dt_decode = time.perf_counter() - t
@@ -717,7 +724,6 @@ class PrecaptureSession:
         with self._lock:
             self._phase = Phase.done
             self._t_end = time.monotonic()
-        self._consolidated_view()   # warm the dedup cache here, off the status-poll path
         self._log_perf(errors)
 
     def _read_cached(self, frame: Frame, window: WindowDef, last_sig: dict, last_recs: dict) -> list:
@@ -774,7 +780,6 @@ class PrecaptureSession:
                 acc.rows[key] = dict(rec.values)
                 acc.counts[key] = acc.counts.get(key, 0) + 1   # frequency vote for noise merge
                 acc.parts[key] = parts
-            self._consolidated = None   # staged changed -> cached dedup view is stale
 
     # ---- control -----------------------------------------------------------
 
@@ -837,6 +842,7 @@ class PrecaptureSession:
 
     def _reset_locked(self) -> None:
         self._frames = []
+        self._frame_paths = []
         self._staged = {}
         self._consolidated = None
         self._processed = 0
@@ -847,27 +853,18 @@ class PrecaptureSession:
 
     # ---- save --------------------------------------------------------------
 
-    def _consolidated_view(self) -> dict[str, dict]:
-        """Deduped staged rows per dataset, CACHED. The merge is O(n·canon) and seconds-slow
-        past a couple thousand keys, so it must NOT run on every status poll. Computed once
-        off the lock from a snapshot; the cache is invalidated by the next stage/reset."""
-        with self._lock:
-            cached = self._consolidated
-            snap = None if cached is not None else {
-                ds: (dict(a.rows), dict(a.counts), dict(a.parts)) for ds, a in self._staged.items()}
-        if cached is not None:
-            return cached
-        view = {ds: _consolidate(r, c, p) for ds, (r, c, p) in snap.items()}
-        with self._lock:
-            if self._consolidated is None:   # nothing invalidated it while we computed
-                self._consolidated = view
-            return self._consolidated
-
     def save(self) -> dict:
-        """Commit staged records into the real per-dataset stores. Returns counts."""
-        view = self._consolidated_view()   # merge OCR-noise doubles before committing (cached)
+        """Commit staged records into the real per-dataset stores. Returns counts.
+
+        Fuzzy consolidation runs HERE, once, and only here: the staging dedup keeps exact
+        keys distinct, but OCR misreads land as *different* keys the store can't unify, so
+        they're folded by frequency just before commit (the UI shows raw counts until then)."""
+        with self._lock:
+            staged = {ds: (dict(acc.rows), dict(acc.counts), dict(acc.parts))
+                      for ds, acc in self._staged.items()}
         written = {}
-        for dataset, rows in view.items():
+        for dataset, (rows, counts, parts) in staged.items():
+            rows = _consolidate(rows, counts, parts)   # merge OCR-noise doubles before committing
             store = DatasetStore(self._engine.settings.data_dir, self._profile.name,
                                  dataset, key=self._key_map(dataset))
             store.begin_batch()   # this save is one revertable batch
@@ -907,7 +904,7 @@ class PrecaptureSession:
         with self._lock:
             rec = {
                 "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "frames": len(self._frames), "processed": self._processed,
+                "frames": self._frame_count(), "processed": self._processed,
                 "read": self._read, "errors": errors, **self._timing_locked(),
             }
         try:
@@ -931,12 +928,7 @@ class PrecaptureSession:
 
     def status(self) -> dict:
         with self._lock:
-            processing = self._phase is Phase.processing
-        # while processing keep it cheap (raw, ever-changing); once settled show the cached
-        # deduped set — computed off the lock so a big merge never stalls the status poll
-        cview = None if processing else self._consolidated_view()
-        with self._lock:
-            total = len(self._frames)
+            total = self._frame_count()
             # once the run has ended, measure against the frozen finish time so fps stops
             # ticking down every poll (elapsed would otherwise keep growing while idle)
             now = self._t_end or time.monotonic()
@@ -949,9 +941,10 @@ class PrecaptureSession:
                 fps = 0.0
             datasets = []
             for ds, acc in self._staged.items():
-                src = cview.get(ds, acc.rows) if cview is not None else acc.rows
-                rows = list(src.values())
-                datasets.append({"dataset": ds, "count": len(rows), "sample": rows[-12:]})
+                # raw staged counts — fuzzy noise-merge happens only at save (cheap here)
+                rows = list(acc.rows.values())
+                # send every staged row (no cap) — the UI caps height + scrolls
+                datasets.append({"dataset": ds, "count": len(rows), "sample": rows})
             meta = self._read_meta(self._dir) if self._session else {}
             return {
                 "phase": self._phase.value,

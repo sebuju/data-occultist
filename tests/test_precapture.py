@@ -168,7 +168,7 @@ def test_ocr_checkpoint_survives_process_kill(tmp_path):
     _frames_on_disk(tmp_path)
     recs = [Record(values={"item_name": "Adra", "item_count": 1}, confidence=0.9)]
     s1 = _session(tmp_path, recs)
-    s1._process_loop(s1._frames, 60, 40)
+    s1._process_loop(s1._frame_paths, 60, 40)   # loaded session -> frames read lazily from disk
     assert s1.status()["phase"] == Phase.done.value
 
     s2 = _session(tmp_path, recs)        # "restart": brand-new session, same disk
@@ -182,7 +182,7 @@ def test_partial_ocr_checkpoint_resumes_not_restarts(tmp_path):
     _frames_on_disk(tmp_path)
     recs1 = [Record(values={"item_name": "Adra"}, confidence=0.9)]
     s1 = _session(tmp_path, recs1)
-    s1._process_loop(s1._frames[:1], 60, 40)   # only frame 0 done before the "kill"
+    s1._process_loop(s1._frame_paths[:1], 60, 40)   # only frame 0 done before the "kill"
 
     seen = []
     recs2 = [Record(values={"item_name": "Boar"}, confidence=0.9)]
@@ -205,7 +205,7 @@ def test_saved_session_keeps_records_for_resave(tmp_path):
     _frames_on_disk(tmp_path)
     recs = [Record(values={"item_name": "Adra"}, confidence=0.9)]
     s1 = _session(tmp_path, recs)
-    s1._process_loop(s1._frames, 60, 40)
+    s1._process_loop(s1._frame_paths, 60, 40)
     s1.save()
     s2 = _session(tmp_path, recs)
     st = s2.status()
