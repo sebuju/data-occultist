@@ -21,8 +21,8 @@ def _game_dir(data_dir: Path | str, game: str) -> Path:
 
 
 def _reader(data_dir: Path | str, game: str, dataset: str,
-            key: KeyMap | KeySpec = KeySpec()) -> DatasetStore:
-    return DatasetStore(data_dir, game, dataset, key=key)
+            key: KeyMap | KeySpec = KeySpec(), aggregate: str = "latest") -> DatasetStore:
+    return DatasetStore(data_dir, game, dataset, key=key, aggregate=aggregate)
 
 
 def list_datasets(data_dir: Path | str, game: str) -> list[str]:
@@ -34,7 +34,7 @@ def list_datasets(data_dir: Path | str, game: str) -> list[str]:
     return sorted(names)
 
 
-def records(data_dir: Path | str, game: str, dataset: str, limit: int = 200) -> list[dict]:
+def records(data_dir: Path | str, game: str, dataset: str, limit: int = 0) -> list[dict]:
     return _reader(data_dir, game, dataset).records(limit)
 
 
@@ -46,15 +46,29 @@ def batches(data_dir: Path | str, game: str, dataset: str, n: int = 50) -> list[
     return _reader(data_dir, game, dataset).batches(n)
 
 
+_SUMMARY_HIDDEN = {"key", "present", "first_seen", "last_seen", "removed_at", "_count"}
+
+
 def summarize(data_dir: Path | str, game: str, dataset: str,
-              key: KeyMap | KeySpec = KeySpec()) -> dict:
-    store = _reader(data_dir, game, dataset, key)
+              key: KeyMap | KeySpec = KeySpec(), aggregate: str = "latest") -> dict:
+    store = _reader(data_dir, game, dataset, key, aggregate)
     hist = store.history(1)
     last = hist[0] if hist else None
+    recs = store.records()
+    present = store.present_count
+    # data field names, from the union over a few rows (so the node can show what a
+    # dataset actually holds instead of a meaningless dash)
+    cols: list[str] = []
+    for r in recs[:20]:
+        for k in r:
+            if k not in _SUMMARY_HIDDEN and k not in cols:
+                cols.append(k)
     return {
         "dataset": dataset,
-        "present": store.present_count,
-        "total": len(store.records(10_000_000)),
+        "present": present,
+        "total": len(recs),
+        "removed": len(recs) - present,
+        "columns": cols,
         "last_ts": last["ts"] if last else None,
         "last_op": last["op"] if last else None,
     }

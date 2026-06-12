@@ -40,7 +40,8 @@ def flow(game: str):
     # only needed to OPEN the store (replay re-keys from raw values) — the dataset
     # itself reports nothing about keys; they're taught on the windows/items.
     names = sorted(used_datasets | set(inspect.list_datasets(settings.data_dir, game)))
-    datasets = [inspect.summarize(settings.data_dir, game, n, profile.key_map_for(n))
+    datasets = [inspect.summarize(settings.data_dir, game, n, profile.key_map_for(n),
+                                  profile.aggregate_for(n))
                 for n in names]
     return {"game": game, "windows": windows, "datasets": datasets}
 
@@ -49,18 +50,25 @@ def _store(game: str, dataset: str) -> DatasetStore:
     settings = get_settings()
     profile = load_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
     key = profile.key_map_for(dataset) if profile else KeySpec()
-    return DatasetStore(settings.data_dir, game, dataset, key=key)
+    agg = profile.aggregate_for(dataset) if profile else "latest"
+    return DatasetStore(settings.data_dir, game, dataset, key=key, aggregate=agg)
 
 
-def _detail(store: DatasetStore, dataset: str, limit: int = 200) -> dict:
+def _detail(store: DatasetStore, dataset: str, limit: int = 0) -> dict:
     # `history` (per-event) kept for the legacy dashboard page; the graph uses `batches`
     return {"dataset": dataset, "records": store.records(limit),
             "batches": store.batches(80), "history": store.history(50)}
 
 
 @router.get("/{game}/dataset/{dataset}")
-def dataset_detail(game: str, dataset: str, limit: int = 200):
+def dataset_detail(game: str, dataset: str, limit: int = 0):
     return _detail(_store(game, dataset), dataset, limit)
+
+
+@router.get("/{game}/dataset/{dataset}/observations")
+def record_observations(game: str, dataset: str, key: str):
+    """The 'many' under one record key: every observation that aggregated into it."""
+    return {"key": key, "observations": _store(game, dataset).observations(key)}
 
 
 @router.post("/{game}/dataset/{dataset}/rename")
@@ -165,32 +173,12 @@ def _subset(game: str, subset: str):
     return profile, sub
 
 
-def _build_enricher(rule):
-    """Construct the enricher named by a rule, or None if it isn't registered."""
-    from ...registry import build_enricher
-    try:
-        return build_enricher(rule.type, source_field=rule.source_field)
-    except Exception:
-        return None
-
-
 @router.get("/{game}/subset/{subset}")
 def subset_view(game: str, subset: str):
-    """Compute a subset over its source dataset (filter + derived columns only — no
-    network). Recomputed from current records, so it tracks dataset updates."""
-    from ...enrich.subset import compute_subset
+    """Compute a view: outer-join its source datasets on the shared key, then filter +
+    derive + sort. Recomputed from current records, so it tracks dataset updates."""
+    from ...enrich.subset import compute_view
     _, sub = _subset(game, subset)
-    records = _store(game, sub.dataset).records(100_000)
-    result = compute_subset(records, sub, run_enrich=False)
-    return {"subset": subset, "dataset": sub.dataset, **result}
-
-
-@router.post("/{game}/subset/{subset}/enrich")
-def subset_enrich(game: str, subset: str):
-    """Same as the view, but also run the subset's enrichers (warframe.market, relic
-    contents, …). Network work — explicit user action, never the live poll."""
-    from ...enrich.subset import compute_subset
-    _, sub = _subset(game, subset)
-    records = _store(game, sub.dataset).records(100_000)
-    result = compute_subset(records, sub, run_enrich=True, build=_build_enricher)
-    return {"subset": subset, "dataset": sub.dataset, **result}
+    inputs = [(ds, _store(game, ds).records()) for ds in sub.inputs()]
+    result = compute_view(inputs, sub)
+    return {"subset": subset, "datasets": sub.inputs(), **result}

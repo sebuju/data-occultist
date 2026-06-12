@@ -20,6 +20,42 @@ def test_add_then_no_change(tmp_path):
     assert s.present_count == 1
 
 
+def test_observations_accumulate_on_change(tmp_path):
+    s = _store(tmp_path)
+    s.record_seen({"name": "Serration", "rank": 1})
+    assert s.record_seen({"name": "Serration", "rank": 1}) is None   # identical → no new obs
+    s.record_seen({"name": "Serration", "rank": 2})
+    s.record_seen({"name": "Serration", "rank": 3})
+    row = s.records()[0]
+    assert s.present_count == 1            # still one key
+    assert row["rank"] == 3                # latest aggregate (default policy)
+    assert row["_count"] == 3              # three distinct observations under the key
+    assert [o["rank"] for o in s.observations("serration")] == [1, 2, 3]
+
+
+def test_aggregate_policies(tmp_path):
+    def feed(store):
+        for c in (10, 20, 30):
+            store.record_seen({"name": "X", "count": c})
+    s = DatasetStore(tmp_path, "game", "agg", aggregate="sum"); feed(s)
+    assert s.records()[0]["count"] == 60
+    # same ledger, reopened under a different policy → recomputed from observations
+    assert DatasetStore(tmp_path, "game", "agg", aggregate="mean").records()[0]["count"] == 20
+    assert DatasetStore(tmp_path, "game", "agg", aggregate="max").records()[0]["count"] == 30
+    assert DatasetStore(tmp_path, "game", "agg", aggregate="min").records()[0]["count"] == 10
+    assert DatasetStore(tmp_path, "game", "agg", aggregate="first").records()[0]["count"] == 10
+    assert DatasetStore(tmp_path, "game", "agg", aggregate="latest").records()[0]["count"] == 30
+
+
+def test_observations_persist_across_reopen(tmp_path):
+    s = _store(tmp_path)
+    s.record_seen({"name": "A", "v": 1})
+    s.record_seen({"name": "A", "v": 2})
+    s2 = DatasetStore(tmp_path, "game", "mods")     # reload from ledger/cache
+    row = s2.records()[0]
+    assert row["_count"] == 2 and row["v"] == 2
+
+
 def test_update_field_logs_change(tmp_path):
     s = _store(tmp_path)
     s.record_seen({"name": "Serration", "rank": 5})

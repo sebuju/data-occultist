@@ -37,6 +37,13 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
     dictionaries = {d.id: d for d in existing.dictionaries}
     for d in incoming.dictionaries:
         dictionaries[d.id] = d
+    price_nodes = {p.id: p for p in existing.price_nodes}
+    for p in incoming.price_nodes:
+        price_nodes[p.id] = p
+
+    # Layout is also game-level UI data a single-window save doesn't carry — keep the
+    # existing layout unless the incoming edit actually brought one (has nodes).
+    layout = incoming.layout if incoming.layout.nodes else existing.layout
 
     return GameProfile(
         name=name,
@@ -47,4 +54,6 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
         datasets=list(datasets.values()),
         subsets=list(subsets.values()),
         dictionaries=list(dictionaries.values()),
+        price_nodes=list(price_nodes.values()),
+        layout=layout,
     )

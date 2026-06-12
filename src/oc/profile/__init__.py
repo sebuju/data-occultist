@@ -9,7 +9,20 @@ from .models import (
     StateDef,
     WindowDef,
 )
-from .loader import list_profiles, load_profile, save_profile
+from .loader import (
+    backup_meta,
+    backup_path,
+    list_backups,
+    list_dictionaries,
+    list_profiles,
+    load_graph_local,
+    load_profile,
+    read_backup,
+    read_dictionary,
+    restore_backup,
+    save_graph_local,
+    save_profile,
+)
 
 __all__ = [
     "DatasetDef",
@@ -21,7 +34,16 @@ __all__ = [
     "ScrollDef",
     "StateDef",
     "WindowDef",
+    "backup_meta",
+    "backup_path",
+    "list_backups",
+    "list_dictionaries",
     "list_profiles",
+    "load_graph_local",
     "load_profile",
+    "read_backup",
+    "read_dictionary",
+    "restore_backup",
+    "save_graph_local",
     "save_profile",
 ]

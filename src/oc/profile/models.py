@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..store.keys import KeyMap, KeySpec
 from ..types import FractionBox
@@ -341,20 +341,36 @@ class DatasetDef(BaseModel):
     """A logical collection of records. Datasets just receive, store, and serve
     rows — HOW a row is keyed/deduped is defined where the rows are read: the
     :class:`KeyDef` on the item template (or window) that produces them. Several
-    windows can feed one dataset; their keys should agree."""
+    windows can feed one dataset; their keys should agree.
+
+    A key keeps ALL its observations (it accumulates a history rather than overwriting);
+    ``aggregate`` chooses how that 'many' side collapses to the one displayed value:
+    ``latest`` (default), ``first``, or per-numeric-field ``sum``/``mean``/``max``/``min``."""
 
     id: str
+    aggregate: str = "latest"
 
 
 class DictionaryDef(BaseModel):
     """A named, game-level word list. OCR reads of text fields snap to the closest
     entry — exact match first, then fuzzy — an authored alternative to the (flaky)
     self-learning lexicon for games with a known vocabulary: item/weapon/relic/arcane
-    names, factions, etc. A game can have several; they're pooled."""
+    names, factions, etc. A game can have several; they're pooled.
+
+    The term list lives in its own file under ``config/dictionaries/`` (named by
+    ``source``) so the profile YAML stays small — a 7000-word dictionary doesn't
+    belong inline. ``terms`` is RUNTIME-ONLY: the loader fills it from the ``source``
+    file on load and writes it back on save, but it is never serialised into the
+    profile YAML. A missing ``source`` file resolves to zero terms and the node
+    survives (it is just a reference)."""
 
     id: str
     name: str = ""
     enabled: bool = True
+    # Filename under config/dictionaries/ holding the term list (newline-delimited).
+    source: str = ""
+    # Resolved at load time from ``source`` and returned to the teach UI; the loader
+    # strips it from the on-disk profile YAML (it persists to the ``source`` file).
     terms: list[str] = Field(default_factory=list)
 
 
@@ -383,24 +399,91 @@ class EnrichRule(BaseModel):
     OR derived column) as its lookup key. Network enrichers run only on an explicit
     enrich pass, never in the live filter/derive refresh."""
 
+    id: str = ""                    # stable id so the teach UI can node-ify each rule
     type: str                       # registered enricher name (registry._ENRICHER)
     source_field: str = "name"      # which column feeds the enricher's lookup
     enabled: bool = True
 
 
-class SubsetDef(BaseModel):
-    """A derived view over a dataset: filter its rows, add computed columns, and
-    optionally attach external data. Recomputed from the dataset on demand, so it always
-    reflects the latest stored records. A dataset can have several subsets."""
+class PriceNodeDef(BaseModel):
+    """A standalone price *producer*: it sweeps a market source and pushes one current
+    snapshot record per item into its output ``dataset`` (so prices live in a dataset
+    like any other data, joinable by a view). Time-series history stays in the price
+    store. The only game-specific, pluggable producer — Warframe's allowed exception."""
 
     id: str
-    dataset: str                    # source dataset id
+    type: str = "warframe_market"   # registered price source
+    dataset: str = "prices"         # output dataset the snapshots are written to
+    throttle: float = 0.4           # seconds between requests during a sweep
+    enabled: bool = True
+
+
+class SubsetDef(BaseModel):
+    """A derived VIEW over one or more datasets: outer-join them on a shared key, filter
+    rows, add computed columns, sort, limit. Recomputed on demand, so it always reflects
+    the latest stored records."""
+
+    id: str
+    dataset: str = ""               # legacy single source (kept; folds into ``datasets``)
+    datasets: list[str] = Field(default_factory=list)   # sources to join (on ``join_field``)
+    join_field: str = "name"        # field the datasets are joined on
     filters: list[FilterRule] = Field(default_factory=list)
     derived: list[DerivedColumn] = Field(default_factory=list)
-    enrich: list[EnrichRule] = Field(default_factory=list)
+    enrich: list[EnrichRule] = Field(default_factory=list)   # legacy; price is a producer now
     sort_by: str = ""
     sort_desc: bool = False
     limit: int = 0                  # 0 = no limit
+
+    def inputs(self) -> list[str]:
+        """Source datasets to join, de-duplicated in order. Folds the legacy single
+        ``dataset`` in so old profiles keep working."""
+        out: list[str] = []
+        for d in ([self.dataset] if self.dataset else []) + list(self.datasets):
+            if d and d not in out:
+                out.append(d)
+        return out
+
+
+class NodeLayout(BaseModel):
+    """Where one graph node sits on the teach-UI canvas. Pure UI data that rides in
+    the profile so node layout travels with the game (no browser localStorage).
+    Permissive — UI state must never 422 a save."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    x: float = 0.0
+    y: float = 0.0
+    w: float | None = None
+    h: float | None = None
+    collapsed: bool = False
+
+
+class GroupLayout(BaseModel):
+    """A titled box drawn around a set of nodes on the teach-UI canvas. Pure UI
+    arrangement (the collector ignores it); members are node ids. Permissive."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    title: str = ""
+    members: list[str] = Field(default_factory=list)
+    outline: dict = Field(default_factory=dict)   # {color, style, width}, opaque to the backend
+    bg: str = ""
+    titlePos: str = "tl"
+
+
+class GraphLayout(BaseModel):
+    """Teach-UI graph layout for a profile: per-node positions/sizes/collapse, table
+    column state, and which window nodes show their capture. Node *configuration*
+    that belongs with the profile; the per-device viewport (zoom/pan) and minimap
+    live in a separate gitignored local file instead."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    nodes: dict[str, NodeLayout] = Field(default_factory=dict)
+    tables: dict[str, dict] = Field(default_factory=dict)   # per-table widths/sort, opaque
+    open_images: list[str] = Field(default_factory=list)    # window ids showing their capture
+    groups: list[GroupLayout] = Field(default_factory=list)  # titled boxes around node sets
 
 
 class GameProfile(BaseModel):
@@ -414,7 +497,11 @@ class GameProfile(BaseModel):
     windows: list[WindowDef] = Field(default_factory=list)
     datasets: list[DatasetDef] = Field(default_factory=list)
     subsets: list[SubsetDef] = Field(default_factory=list)
+    price_nodes: list[PriceNodeDef] = Field(default_factory=list)
     dictionaries: list[DictionaryDef] = Field(default_factory=list)
+    # Teach-UI node layout (positions/sizes/collapse/tables/open-images). Pure UI
+    # data; the collector ignores it. Lives here so layout travels with the profile.
+    layout: GraphLayout = Field(default_factory=GraphLayout)
 
     def dictionary_terms(self) -> list[str]:
         """Every term from every ENABLED dictionary, de-duplicated (case-insensitive),
@@ -439,6 +526,11 @@ class GameProfile(BaseModel):
 
     def dataset_def(self, dataset_id: str) -> DatasetDef | None:
         return next((d for d in self.datasets if d.id == dataset_id), None)
+
+    def aggregate_for(self, dataset_id: str) -> str:
+        """How the dataset collapses each key's many observations (``latest`` default)."""
+        d = self.dataset_def(dataset_id)
+        return (d.aggregate if d and d.aggregate else "latest")
 
     def _key_defaults(self, dataset_id: str) -> list[KeySpec]:
         """Candidate DEFAULT specs (for records not tagged with an item template), one

@@ -32,6 +32,48 @@ def _utcnow_iso() -> str:
 # the three files that make up one dataset on disk (see module docstring)
 _DATASET_SUFFIXES = (".history.jsonl", ".reverted.json", ".state.json")
 
+# how a key's MANY observations collapse to one displayed value (per-dataset choice)
+AGGREGATES = ("latest", "first", "sum", "mean", "max", "min")
+
+
+def _num(v):
+    try:
+        return float(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def aggregate_records(records: list[dict], policy: str = "latest") -> dict:
+    """Collapse a key's observation list (each ``{"values":{...}, "ts":...}``, oldest→
+    newest) to one row of values per the dataset's ``policy``.
+
+    ``latest``/``first`` take that observation's values wholesale. ``sum``/``mean``/
+    ``max``/``min`` apply per field over the NUMERIC observations; a field with no numeric
+    values (e.g. ``name``) falls back to its latest value, so key fields are preserved.
+    """
+    if not records:
+        return {}
+    latest = records[-1].get("values", {})
+    if policy == "first":
+        return dict(records[0].get("values", {}))
+    if policy not in ("sum", "mean", "max", "min"):
+        return dict(latest)                       # "latest" / unknown
+    fields: list[str] = []
+    for r in records:
+        for k in r.get("values", {}):
+            if k not in fields:
+                fields.append(k)
+    fns = {"sum": sum, "mean": lambda ns: sum(ns) / len(ns), "max": max, "min": min}
+    out: dict = {}
+    for k in fields:
+        nums = [n for n in (_num(r.get("values", {}).get(k)) for r in records) if n is not None]
+        if nums:
+            v = fns[policy](nums)
+            out[k] = int(v) if float(v).is_integer() else round(v, 2)
+        else:
+            out[k] = latest.get(k)
+    return out
+
 
 def rename_dataset(data_dir: Path | str, game: str, old: str, new: str) -> bool:
     """Move a dataset's on-disk files from ``old`` to ``new`` so its collected records
@@ -64,16 +106,15 @@ def delete_dataset(data_dir: Path | str, game: str, dataset: str) -> bool:
 
 
 def replay(events: list[ChangeEvent], reverted: set[int],
-           key: KeyMap | KeySpec = KeySpec()) -> dict[str, dict]:
-    """Rebuild the keyed state snapshot from the ledger, skipping reverted events.
+           key: KeyMap | KeySpec = KeySpec(), aggregate: str = "latest") -> dict[str, dict]:
+    """Rebuild the keyed state from the ledger, skipping reverted events.
 
-    The key is recomputed from each event's raw ``values`` with the CURRENT key spec
-    — the events store the record as-is, never a baked key, so changing the key
-    (e.g. adding ``level`` to an arcane's key) re-keys the whole dataset on the next
-    replay. Each add/update carries the full record at that time, so applying events
-    in order leaves each key at its last non-reverted value; a remove flips
-    ``present`` off. Events that can't be keyed under the current spec (a key part
-    missing/empty) are skipped.
+    A key holds MANY observations now: each non-reverted add/update appends the record it
+    carried (so the whole history of a key is kept, not just its last value), and the
+    dataset's ``aggregate`` policy collapses that list into the displayed ``values``. The
+    key is recomputed from each event's raw ``values`` with the CURRENT key spec, so a key
+    change re-keys the dataset on the next replay; a remove flips ``present`` off. Events
+    unkeyable under the current spec (a key part missing/empty) are skipped.
     """
     state: dict[str, dict] = {}
     for ev in events:
@@ -88,14 +129,16 @@ def replay(events: list[ChangeEvent], reverted: set[int],
                 entry["present"] = False
                 entry["removed_at"] = ev.ts
             continue
+        obs = {"values": dict(ev.values), "ts": ev.ts}
         if entry is None:
-            state[k] = {"values": dict(ev.values), "first_seen": ev.ts,
-                        "last_seen": ev.ts, "present": True}
+            state[k] = {"records": [obs], "first_seen": ev.ts, "last_seen": ev.ts, "present": True}
         else:
-            entry["values"] = dict(ev.values)
+            entry["records"].append(obs)
             entry["last_seen"] = ev.ts
             entry["present"] = True
             entry.pop("removed_at", None)
+    for entry in state.values():
+        entry["values"] = aggregate_records(entry["records"], aggregate)
     return state
 
 
@@ -107,12 +150,14 @@ class DatasetStore:
         dataset: str,
         key: KeyMap | KeySpec = KeySpec(),
         clock: Callable[[], str] = _utcnow_iso,
+        aggregate: str = "latest",
     ) -> None:
         base = Path(data_dir) / game
         self._history_path = base / f"{dataset}.history.jsonl"
         self._reverted_path = base / f"{dataset}.reverted.json"
         self._state_path = base / f"{dataset}.state.json"
         self._key = key
+        self._agg = aggregate or "latest"
         self._clock = clock
         self._events: list[ChangeEvent] = []
         self._reverted: set[int] = set()
@@ -124,13 +169,20 @@ class DatasetStore:
     # ---- persistence -------------------------------------------------------
 
     def _replay(self) -> dict[str, dict]:
-        return replay(self._events, self._reverted, self._key)
+        return replay(self._events, self._reverted, self._key, self._agg)
+
+    def _apply_agg(self, entry: dict) -> None:
+        entry["values"] = aggregate_records(entry.get("records", []), self._agg)
 
     def _meta(self) -> dict:
         """Fingerprint of the inputs the cached state was built from. State is reused only
         when this matches — so a key change (re-key) or a new/removed event invalidates
         the cache and forces a replay."""
-        return {"key": self._key.meta(),
+        # ``v`` is the on-disk state SHAPE version — bump it to invalidate caches written
+        # by an older shape (v2 = per-key observation lists). Aggregate policy is NOT in
+        # the fingerprint: the displayed ``values`` are recomputed per-open from the stored
+        # observations, so changing the policy needs no replay and won't thrash the cache.
+        return {"v": 2, "key": self._key.meta(),
                 "n_events": len(self._events), "reverted": sorted(self._reverted)}
 
     def _load(self) -> None:
@@ -165,6 +217,10 @@ class DatasetStore:
         if not isinstance(cached, dict) or cached.get("_meta") != self._meta():
             return False
         self._state = cached.get("state", {})
+        # the cache stores observations; recompute the displayed values under THIS store's
+        # aggregate policy (it may differ from whatever policy last wrote the cache).
+        for entry in self._state.values():
+            self._apply_agg(entry)
         return True
 
     def save(self) -> None:
@@ -200,8 +256,10 @@ class DatasetStore:
     # ---- mutation ----------------------------------------------------------
 
     def record_seen(self, values: dict) -> ChangeEvent | None:
-        """Register a confirmed record. Logs an add or a field update; returns the
-        event, or ``None`` if nothing changed (record already known and identical)."""
+        """Register a confirmed record. A NEW key starts an observation list; an existing
+        key APPENDS a fresh observation when the merged record differs from its latest
+        (so the key accumulates a history instead of overwriting). Returns the event, or
+        ``None`` when the read is identical to the current latest (nothing to track)."""
         key = self._key.build(values)
         if key is None:
             return None
@@ -209,27 +267,27 @@ class DatasetStore:
 
         if entry is None:
             ev = self._new_event(ChangeOp.add, key, dict(values))
-            self._state[key] = {"values": dict(values), "first_seen": ev.ts,
-                                "last_seen": ev.ts, "present": True}
+            self._state[key] = {"records": [{"values": dict(values), "ts": ev.ts}],
+                                "first_seen": ev.ts, "last_seen": ev.ts, "present": True,
+                                "values": dict(values)}
+            self._apply_agg(self._state[key])
             return ev
 
-        changed = {}
-        merged = dict(entry["values"])
-        for fld, new in values.items():
-            old = entry["values"].get(fld)
-            if old != new:
-                changed[fld] = [old, new]
-                merged[fld] = new
+        records = entry.setdefault("records", [])
+        latest = records[-1]["values"] if records else {}
+        merged = {**latest, **values}              # observation = full record state now
+        changed = {f: [latest.get(f), merged.get(f)] for f in merged if latest.get(f) != merged.get(f)}
         was_absent = not entry.get("present", True)
         if not changed and not was_absent:
-            return None
+            return None                            # identical to latest → nothing to add
 
         op = ChangeOp.add if was_absent else ChangeOp.update
-        ev = self._new_event(op, key, merged, changed)
-        entry["values"] = merged
+        ev = self._new_event(op, key, dict(merged), changed)
+        records.append({"values": dict(merged), "ts": ev.ts})
         entry["last_seen"] = ev.ts
         entry["present"] = True
         entry.pop("removed_at", None)
+        self._apply_agg(entry)                     # refresh the displayed (aggregated) value
         return ev
 
     def reconcile(self, present_keys: set[str]) -> list[ChangeEvent]:
@@ -293,7 +351,7 @@ class DatasetStore:
         self.save()
 
     def _replay_with(self, reverted: set[int]) -> dict[str, dict]:
-        return replay(self._events, reverted, self._key)
+        return replay(self._events, reverted, self._key, self._agg)
 
     def batch_events(self, batch: int) -> list[dict]:
         """Every event of one batch in ledger order, each flagged reverted."""
@@ -405,13 +463,22 @@ class DatasetStore:
     def present_count(self) -> int:
         return sum(1 for e in self._state.values() if e.get("present", True))
 
-    def records(self, limit: int = 200) -> list[dict]:
+    def records(self, limit: int = 0) -> list[dict]:
+        """All current records, present first then by key. ``limit<=0`` means no cap
+        (the default) — a dataset is served whole; callers don't truncate records."""
         rows = [{"key": k, "present": e.get("present", True),
                  "first_seen": e.get("first_seen"), "last_seen": e.get("last_seen"),
+                 "_count": len(e.get("records", [])),
                  **e.get("values", {})} for k, e in self._state.items()]
         rows.sort(key=lambda r: (not r["present"], r["key"]))
-        return rows[:limit]
+        return rows[:limit] if limit and limit > 0 else rows
 
     def key_of(self, values: dict) -> str | None:
         """The record's dedup key under this store's spec, or ``None`` if unkeyable."""
         return self._key.build(values)
+
+    def observations(self, key: str) -> list[dict]:
+        """The full observation history under one key, oldest→newest (each row carries its
+        ``ts``). This is the 'many' side a view's aggregate collapses."""
+        entry = self._state.get(key)
+        return [{"ts": o.get("ts"), **o.get("values", {})} for o in (entry.get("records", []) if entry else [])]
