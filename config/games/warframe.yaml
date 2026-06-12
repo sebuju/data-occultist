@@ -491,8 +491,8 @@ layout:
       h: 720.0
       collapsed: false
     bat:prices:
-      x: 1960.0
-      y: 1080.0
+      x: 2020.0
+      y: 1060.0
       w: 780.0
       h: 420.0
       collapsed: false
@@ -509,10 +509,10 @@ layout:
       h: 800.0
       collapsed: false
     price:price:
-      x: 920.0
-      y: 1360.0
-      w: 900.0
-      h: 860.0
+      x: 1020.0
+      y: 1060.0
+      w: 920.0
+      h: 880.0
       collapsed: false
     enr:master_view:enr_2:
       x: 0.0

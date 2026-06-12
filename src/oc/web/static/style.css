@@ -927,7 +927,7 @@ label.inline input { width: auto; }
 .vt-host { overflow: auto; }
 .vt-modal-host { display: flex; flex-direction: column; height: 62vh; min-height: 240px; }
 .vt { display: flex; flex-direction: column; height: 100%; min-height: 0; font-size: var(--fs-sm); }
-.vt-bar { display: flex; align-items: center; gap: 4px; flex: none; margin: 6px 0px 9px 0px; }
+.vt-bar { display: flex; align-items: center; gap: 9px; flex: none; margin: 6px 0px 9px 0px; }
 .vt-search { flex: 1; min-width: 0; padding: 3px 6px; }
 .vt-clear { flex: none; width: 22px; height: 22px; min-height: 0; padding: 0; line-height: 1;
   border: 1px solid var(--line); background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; }
