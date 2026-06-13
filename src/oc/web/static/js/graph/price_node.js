@@ -33,7 +33,7 @@ export function priceParts(pn) {
       ${srcs}
       <div class="gn-foot">
         <button class="enr-refresh">↻ sweep prices</button>
-        <button class="enr-cancel danger" hidden>cancel</button>
+        <button class="enr-cancel warn" hidden>cancel</button>
         <span class="enr-prog livestats"></span>
       </div>`;
   const charts = mode === "orders"

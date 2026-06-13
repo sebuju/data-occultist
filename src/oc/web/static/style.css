@@ -206,7 +206,8 @@ legend { color: var(--muted); padding: 0 6px; }
 /* remove button lives in the header now: a danger-coloured icon, two-click confirm */
 .gn-del { margin-left: auto; flex: 0 0 auto; width: 22px; height: 18px; min-height: 0; padding: 0; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px; font-size: var(--fs-sm); font-weight: bold; }
+  background: transparent; color: var(--muted); border: 0; border-radius: 4px; font-size: var(--fs-sm); font-weight: bold; }
+.gn-del:hover { color: var(--danger); }
 .gn-del.armed { background: var(--warn); color: var(--on-accent); }
 .gn-del svg { display: block; margin: auto; }
 .glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
@@ -570,6 +571,7 @@ button.reading::after { content: ""; display: inline-block; width: 9px; height: 
   border-radius: 50%; animation: spin 0.7s linear infinite; }
 button.primary, button.active { background: var(--accent); color: var(--on-accent); }
 button.danger { background: var(--danger); color: var(--on-danger); }
+button.warn { background: var(--warn); color: var(--on-accent); }   /* cancel/abort (non-destructive) */
 /* monochrome icon glyphs inside buttons — colourable (inherit currentColor by default) */
 .ic { font-size: var(--fs-sm); line-height: 1; }
 .ic-rec { color: var(--record); }

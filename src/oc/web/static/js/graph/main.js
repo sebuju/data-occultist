@@ -2735,7 +2735,7 @@ function renderPrecap(node, st) {
       : processing ? `<button data-act="pause">‖ pause</button>`
       : paused ? `<button data-act="resume">► resume</button>${recPaused ? asCtl : ""}`
       : `<button data-act="process" ${canProcess ? "" : "disabled"}>process${st.frames ? ` ${st.frames}` : ""}</button>`;
-    const cancel = busyRun && !precapStopping ? `<button data-act="cancel" class="danger">cancel</button>` : "";
+    const cancel = busyRun && !precapStopping ? `<button data-act="cancel" class="warn">cancel</button>` : "";
     const save = `<button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !anyRun && !justSaved) ? "" : "disabled"}>${justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`}</button>`;
     ctl = `${proc}${cancel}${save}`;
   }
@@ -3936,11 +3936,11 @@ $("nodemapBtn")?.addEventListener("click", () => setNodeMapVisible(!nmState.visi
 
 // ---- activity panel (live sweeps + precapture) ----------------------------
 // A floating window listing every running background job for the current game — price
-// sweeps and the precapture worker — fetched from /api/activity while it's open. The
-// network fetch runs every 1s while the window is focused, every 60s when it's backgrounded
-// (plus right after an action that changes state); a 1s local ticker re-renders the cached
-// payload in between so countdowns stay live without hammering the server. Rows reconcile in
-// place (keyed map) so neither churns the DOM.
+// sweeps and the precapture worker — fetched from /api/activity while it's open. Network
+// fetch cadence: 60s when the window is backgrounded; while focused, 0.5s if a job is running
+// and 1s otherwise (plus right after a state-changing action / on focus / when a countdown
+// elapses). A 500ms local ticker re-renders the cached payload in between so countdowns stay
+// live without hammering the server. Rows reconcile in place (keyed map) so neither churns the DOM.
 const actState = { visible: false, x: null, y: null, w: null, h: null };
 let act = null;
 let actTick = null;          // 1s local ticker
@@ -3974,9 +3974,9 @@ function buildActivity() {
     }
     const f = ev.target.closest("button[data-fire]");
     if (f && !f.disabled) {
-      f.disabled = true; f.textContent = "firing…";
+      f.disabled = true; f.classList.add("loading");   // spinner overlay, label stays put (no resize/flicker)
       api.triggers.fire(game, f.dataset.fire).catch(() => {})
-        .finally(() => { f.disabled = false; f.textContent = "fire"; pollActivity(); });   // refresh next-fire time
+        .finally(() => { f.disabled = false; f.classList.remove("loading"); pollActivity(); });   // refresh next-fire time
     }
   });
 }
@@ -4006,9 +4006,15 @@ async function pollActivity() {
 }
 
 // any interval trigger whose countdown has just hit zero since the last fetch -> it fired,
-// so the server state changed and a refresh is due (don't wait out the 10s)
+// so the server state changed and a refresh is due (don't wait out the cadence)
 function actDueForRefresh(elapsed) {
   return (actData?.triggers || []).some((t) => t.kind === "interval" && (t.next_in || 0) > 0 && (t.next_in - elapsed) <= 0);
+}
+
+// is a job actively working right now? (a live sweep / the precapture worker / a firing trigger)
+function actHasRunning() {
+  const d = actData; if (!d) return false;
+  return (d.sweeps?.length > 0) || !!d.precapture || (d.triggers || []).some((t) => (t.targets || []).some((x) => x.running));
 }
 
 function startActivityPoll() {
@@ -4017,13 +4023,13 @@ function startActivityPoll() {
   actTick = setInterval(() => {
     if (!actState.visible) return;
     const elapsed = (Date.now() - actAt) / 1000;
-    // network refresh cadence: 1s while the window is focused, 60s when it's in the
-    // background. Also refresh as soon as a countdown elapses. Otherwise just re-render the
-    // cached payload so the "fires in …" times keep ticking down locally (no server hit).
-    const every = document.hasFocus() ? 1 : 60;
+    // network cadence: 60s backgrounded; while focused 0.5s when a job is running, else 1s.
+    // Also refresh as soon as a countdown elapses. Otherwise just re-render the cached payload
+    // so the "fires in …" times keep ticking down locally (no server hit).
+    const every = !document.hasFocus() ? 60 : (actHasRunning() ? 0.5 : 1);
     if (elapsed >= every || (elapsed >= 1.5 && actDueForRefresh(elapsed))) pollActivity();
     else if (actData) renderActivity(actData, elapsed);
-  }, 1000);
+  }, 500);
 }
 
 // Map a raw status object to display row specs. Each job: { key, title, prog, cls?, action? }
