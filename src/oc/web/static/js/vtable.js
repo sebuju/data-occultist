@@ -19,9 +19,19 @@
 const ROW_H = 22;        // fixed row height (px) — virtualization needs a known height
 const BUFFER = 6;        // extra rows rendered above/below the viewport
 
+// Per-table column widths persist (by table id) so they travel with the profile, mirroring
+// table.js. Until wired by the host app, an in-memory fallback keeps resizing working.
+let _store = (() => {
+  const mem = new Map();
+  return { load: (id) => mem.get(id) || {}, save: (id, st) => mem.set(id, st) };
+})();
+export function setVTableStore(store) { _store = store; }
+
 export class VTable {
-  constructor(host) {
+  constructor(host, id = null) {
     this.host = host;
+    this.id = id;
+    this.widths = (id ? _store.load(id).widths : null) || {};   // colName -> px (else flex)
     this.columns = [];
     this.rows = [];          // [{ values:object, text:string(lowercased) }]
     this.filtered = [];      // subset of this.rows after search
@@ -32,6 +42,10 @@ export class VTable {
     this.rowClass = null;
     this.sortCol = null;     // sorted column index, or null
     this.sortDir = 1;        // 1 asc, -1 desc
+    this.expander = null;    // async fn(values) -> detail node; when set, a row click expands inline
+    this.expandedRow = null; // the row record (in this.rows) whose detail is open, or null
+    this.expandEl = null;    // the inline detail element, or null
+    this.expandH = 0;        // measured detail height (px), folded into the layout
     this._raf = null;
     this._build();
   }
@@ -47,7 +61,7 @@ export class VTable {
     this.search = document.createElement("input");
     this.search.className = "vt-search";
     this.search.type = "text";
-    this.search.placeholder = "filter…  (AND OR NOT, *, ?)";
+    this.search.placeholder = "search…  (AND OR NOT, *, ?)";
     this.search.spellcheck = false;
     this.clearBtn = document.createElement("button");
     this.clearBtn.className = "vt-clear";
@@ -87,10 +101,17 @@ export class VTable {
     el.append(bar, this.head, main);
     this.host.appendChild(el);
 
-    this.head.addEventListener("click", (e) => { const th = e.target.closest(".vt-th"); if (th) this._onHeader(+th.dataset.c); });
+    this.head.addEventListener("click", (e) => {
+      if (e.target.classList.contains("vt-grip")) return;       // a grip click isn't a sort
+      if (this._resized) { this._resized = false; return; }     // drag ended over the header
+      const th = e.target.closest(".vt-th"); if (th) this._onHeader(+th.dataset.c);
+    });
     this.rowsEl.addEventListener("click", (e) => {
+      if (e.target.closest(".vt-detail")) return;        // clicks inside the drill-down aren't row clicks
       const row = e.target.closest(".vt-row");
-      if (row && row._idx != null && this.onRowClick) this.onRowClick(this.filtered[row._idx]?.values);
+      if (!row || row._idx == null) return;
+      if (this.expander) this._toggleExpand(row._idx);
+      else if (this.onRowClick) this.onRowClick(this.filtered[row._idx]?.values);
     });
     this.search.addEventListener("input", () => this._onSearch());
     this.clearBtn.addEventListener("click", () => { this.search.value = ""; this._onSearch(); this.search.focus(); });
@@ -108,8 +129,10 @@ export class VTable {
     this.columns = columns || [];
     this.rowClass = opts.rowClass || null;
     this.onRowClick = opts.onRowClick || null;
+    this.expander = opts.expander || null;   // async fn(values) -> detail node (inline row drill-down)
     const cell = opts.cell || ((row, c) => { const v = row[c]; return v == null ? "" : String(v); });
     this._cell = cell;
+    this._collapse();         // new data invalidates any open detail
     this.rows = (rows || []).map((row) => ({
       values: row,
       text: this.columns.map((c) => cell(row, c)).join("  ").toLowerCase(),
@@ -131,8 +154,74 @@ export class VTable {
         s.textContent = this.sortDir === 1 ? " ▲" : " ▼";
         h.appendChild(s);
       }
+      const grip = document.createElement("span");
+      grip.className = "vt-grip";
+      grip.title = "drag to resize";
+      grip.addEventListener("mousedown", (e) => this._startResize(e, i));
+      h.appendChild(grip);
       this.head.appendChild(h);
     });
+    this._applyWidths();
+  }
+
+  // Apply per-column widths to the header + every pooled body cell. A column with a stored
+  // width is fixed (flex:0 0 w); the rest stay flexible (flex:1 1 0) and share the slack.
+  _applyWidths() {
+    const css = (el, w) => { el.style.flex = w ? `0 0 ${w}px` : ""; el.style.width = w ? `${w}px` : ""; };
+    this.columns.forEach((c, i) => { const h = this.head.children[i]; if (h) css(h, this.widths[c]); });
+    for (const row of this.pool) row._cells.forEach((cell, i) => css(cell, this.widths[this.columns[i]]));
+  }
+
+  _startResize(e, i) {
+    e.preventDefault();
+    e.stopPropagation();
+    const name = this.columns[i];
+    const th = this.head.children[i];
+    const startX = e.clientX, startW = this.widths[name] || th.offsetWidth || 80;
+    const move = (ev) => {
+      if (Math.abs(ev.clientX - startX) > 2) this._resized = true;   // suppress the trailing sort click
+      this.widths[name] = Math.max(36, Math.round(startW + (ev.clientX - startX)));
+      this._applyWidths();
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      if (this.id) _store.save(this.id, { ...(_store.load(this.id)), widths: this.widths });
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  }
+
+  // ---- inline drill-down (one expanded row at a time) ----
+  // Toggle the detail panel under filtered row `idx`. The opened row is tracked by record
+  // identity so it survives re-sort/re-filter; the panel folds into the virtualized layout
+  // (rows below it shift down by its height).
+  async _toggleExpand(idx) {
+    const rec = this.filtered[idx];
+    if (!rec) return;
+    if (this.expandedRow === rec) { this._collapse(); this._render(); return; }
+    this._collapse();
+    this.expandedRow = rec;
+    this.expandEl = document.createElement("div");
+    this.expandEl.className = "vt-detail";
+    this.expandEl.innerHTML = `<div class="vt-detail-inner"><p class="muted" style="padding:6px">loading…</p></div>`;
+    this.rowsEl.appendChild(this.expandEl);
+    this._measureExpand();
+    this._render();
+    if (this.expander) {
+      let node;
+      try { node = await this.expander(rec.values); }
+      catch (e) { node = document.createElement("div"); node.className = "vt-detail-inner"; node.textContent = String(e?.message || e); }
+      if (this.expandedRow !== rec || !this.expandEl) return;   // collapsed/changed while awaiting
+      this.expandEl.replaceChildren(node);
+      this._measureExpand();
+      this._render();
+    }
+  }
+  _measureExpand() { this.expandH = this.expandEl ? this.expandEl.offsetHeight : 0; }
+  _collapse() {
+    if (this.expandEl) this.expandEl.remove();
+    this.expandEl = null; this.expandedRow = null; this.expandH = 0;
   }
 
   // click a header: asc -> desc -> unsorted
@@ -161,6 +250,7 @@ export class VTable {
   _filter() {
     this.filtered = this.pred ? this.rows.filter((r) => { try { return this.pred(r.text); } catch { return true; } }) : this.rows;
     this._sortView();
+    if (this.expandedRow && !this.filtered.includes(this.expandedRow)) this._collapse();   // opened row filtered out
     const total = this.rows.length, shown = this.filtered.length;
     this.count.textContent = shown === total ? `${total} rows` : `${shown} / ${total}`;
     this.scroll.scrollTop = 0;
@@ -188,14 +278,28 @@ export class VTable {
   // ---- the virtualization core ----
   _render() {
     const total = this.filtered.length;
-    const contentH = total * ROW_H;
+    // an open detail panel adds `extra` px directly below its row; everything under it shifts down
+    const eIdx = this.expandedRow ? this.filtered.indexOf(this.expandedRow) : -1;
+    const extra = eIdx >= 0 ? this.expandH : 0;
+    const detailTop = eIdx >= 0 ? (eIdx + 1) * ROW_H : 0;
+    const yOf = (idx) => idx * ROW_H + (eIdx >= 0 && idx > eIdx ? extra : 0);
+    const contentH = total * ROW_H + extra;
     this.spacer.style.height = `${contentH}px`;
     const viewH = this.scroll.clientHeight || 0;
     const scrollTop = this.scroll.scrollTop;
-    const visible = Math.ceil(viewH / ROW_H) + BUFFER;
-    let start = Math.floor(scrollTop / ROW_H) - (BUFFER >> 1);
+    const visible = Math.ceil(viewH / ROW_H) + BUFFER + Math.ceil(extra / ROW_H);
+    // invert yOf: undo the detail shift for the region scrolled past the panel
+    let top = scrollTop;
+    if (eIdx >= 0 && scrollTop > detailTop) top -= Math.min(extra, scrollTop - detailTop);
+    let start = Math.floor(top / ROW_H) - (BUFFER >> 1);
     start = Math.max(0, Math.min(start, Math.max(0, total - visible)));   // never render past the end
     const end = Math.min(total, start + visible);
+    // park the detail panel under its row (or hide it when its row is off the current view)
+    if (this.expandEl) {
+      const on = eIdx >= 0;
+      this.expandEl.style.display = on ? "" : "none";
+      if (on) this.expandEl.style.transform = `translateY(${detailTop}px)`;
+    }
 
     // (re)build the pool when the row's cell layout changes (column count) or it grows
     const need = end - start;
@@ -213,6 +317,7 @@ export class VTable {
       this.rowsEl.appendChild(row);
       this.pool.push(row);
     }
+    this._applyWidths();    // newly built rows (and any post-resize) get current column widths
     // assign data to pooled rows; recycle by index
     for (let i = 0; i < this.pool.length; i++) {
       const row = this.pool[i];
@@ -221,8 +326,8 @@ export class VTable {
       const rec = this.filtered[idx];
       row._idx = idx;
       row.style.display = "";
-      row.style.transform = `translateY(${idx * ROW_H}px)`;
-      row.className = "vt-row" + (this.rowClass ? " " + (this.rowClass(rec.values) || "") : "") + ((idx & 1) ? " odd" : "");
+      row.style.transform = `translateY(${yOf(idx)}px)`;
+      row.className = "vt-row" + (this.rowClass ? " " + (this.rowClass(rec.values) || "") : "") + ((idx & 1) ? " odd" : "") + (idx === eIdx ? " vt-open" : "");
       for (let c = 0; c < this.cellCount; c++) row._cells[c].textContent = this._cell(rec.values, this.columns[c]);
     }
     this._syncScrollbar(viewH, contentH, scrollTop);
@@ -243,7 +348,7 @@ export class VTable {
     const onDown = (ev) => {
       ev.preventDefault();
       const startY = ev.clientY, startTop = this.scroll.scrollTop;
-      const viewH = this.scroll.clientHeight, contentH = this.filtered.length * ROW_H;
+      const viewH = this.scroll.clientHeight, contentH = this.filtered.length * ROW_H + (this.expandedRow ? this.expandH : 0);
       const thumbH = Math.max(18, viewH * viewH / contentH);
       const maxTop = viewH - thumbH, maxScroll = contentH - viewH;
       document.body.style.cursor = "default";

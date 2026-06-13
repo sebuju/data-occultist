@@ -48,7 +48,7 @@ export function collect() {
 // Default group look — a MUTED grey, distinct from the accent blue used for the live
 // multi-selection (an accent outline made every group look perpetually selected).
 const DEF_OUTLINE = "#333333";
-const DEF_BG = "#1c1e231f";
+const DEF_BG = "#191c21ff";
 
 export function hydrate(arr) {
   closePopover();
@@ -85,7 +85,7 @@ export function createGroup(memberIds) {
   const gid = `group_${++seq}`;
   const g = {
     id: gid, title: defaultTitle(ids) || gid, members: ids,
-    outline: { color: DEF_OUTLINE, style: "solid", width: 2 }, bg: DEF_BG, titleAlign: "left",
+    outline: { color: DEF_OUTLINE, style: "none", width: 2 }, bg: DEF_BG, titleAlign: "left",
   };
   groups.push(g);
   pruneEmpty();
@@ -163,7 +163,6 @@ function groupBox(g, titleH = g._titleH || TITLE_H) {
 // The title is a child of the box (CSS pins it to the top + the box clips it), so all that's
 // left here is its TEXT alignment: left/center/right per g.titleAlign.
 function placeTitle(tel, align) {
-  tel.classList.add("band");
   tel.style.justifyContent = align === "center" ? "center" : align === "right" ? "flex-end" : "flex-start";
 }
 
@@ -189,7 +188,7 @@ export function renderGroups() {
     if (!box) { bel.remove(); continue; }
     bel.style.left = `${box.x}px`; bel.style.top = `${box.y}px`;
     bel.style.width = `${box.w}px`; bel.style.height = `${box.h}px`;
-    const bw = g.outline.style === "none" ? 0 : g.outline.width;
+    const bw = g.outline.style === "none" ? 0 : 1;
     bel.style.background = g.bg;
     bel.style.borderColor = g.outline.color;
     bel.style.borderStyle = g.outline.style;
@@ -259,7 +258,7 @@ function togglePopover(gid, ev) {
       <input type="color" class="gp-ocolor" value="${hex6(g.outline.color)}" title="outline color" />
     </label>
     <label class="flab"><span class="gp-lab">background</span>
-      <input type="range" class="gp-bga" min="0" max="60" value="${alphaPct(g.bg)}" title="fill opacity" />
+      <input type="range" class="gp-bga" min="0" max="100" value="${alphaPct(g.bg)}" title="fill opacity" />
       <input type="color" class="gp-bg" value="${hex6(g.bg)}" title="fill color" /></label>
     <label class="flab"><span class="gp-lab">align</span>
       <select class="gp-pos">

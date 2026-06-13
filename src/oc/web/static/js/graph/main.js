@@ -12,7 +12,7 @@ import { buildKey, DEFAULT_KEY } from "../keys.js";
 import { priceParts, wirePriceNode } from "./price_node.js";
 import { openDictionaryPicker } from "./dict_picker.js";
 import { enhanceTable, setTableStore } from "./table.js";
-import { VTable } from "../vtable.js";
+import { VTable, setVTableStore } from "../vtable.js";
 import { initPersist, persist } from "./persist.js";
 import { openBackupsModal } from "./backups.js";
 import * as groups from "./groups.js";
@@ -194,14 +194,16 @@ function applyLocal(local) {
 
 // table.js persists its per-table widths/sort into the profile's layout (so they travel
 // with the game), and a write schedules a layout save.
-setTableStore({
+const _tableStore = {
   load: (id) => (model.profile.layout?.tables?.[id]) || {},
   save: (id, st) => {
     const L = (model.profile.layout = model.profile.layout || {});
     (L.tables = L.tables || {})[id] = st;
     persist.layout();
   },
-});
+};
+setTableStore(_tableStore);
+setVTableStore(_tableStore);   // VTable persists its column widths the same way
 initPersist({
   model,
   collectLayout,
@@ -804,20 +806,34 @@ function subConfigHTML(s) {
       <span class="muted">=</span>
       <input class="sd-tpl" data-i="${i}" value="${esc(d.template || "")}" placeholder="={count}*{price_median}" />
       <button class="sd-del danger" data-i="${i}" title="remove column">✕</button></div>`).join("");
+  const hidden = new Set(s.hidden_columns || []);
+  const toggles = cols.map((c) => `<button class="sv-hide${hidden.has(c) ? " off" : ""}" data-col="${esc(c)}"
+      title="${hidden.has(c) ? "show" : "hide"} column">${esc(c)}</button>`).join("");
   return `
     <div class="sub-sec"><div class="sub-lbl">datasets <span class="muted">(joined on key)</span></div>
       <div class="sv-inputs">${chips}</div>
       <div class="sub-row"><select class="sv-addin">${addOpts}</select>
         <label class="flab">join on <input class="sv-join" value="${esc(s.join_field || "name")}" placeholder="name" /></label></div></div>
-    <div class="sub-sec"><div class="sub-lbl">filters <span class="muted">(all must pass)</span></div>${filters || '<div class="muted sub-empty">none</div>'}</div>
-    <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">({col} text, or =math)</span></div>${derived || '<div class="muted sub-empty">none</div>'}</div>`;
+    <div class="sub-sec"><div class="sub-lbl">filters <span class="muted">(all must pass)</span></div>${filters}
+      <button class="sub-addf">+ filter</button></div>
+    <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">({col} text, or =math)</span></div>${derived}
+      <button class="sub-addd">+ column</button></div>
+    <div class="sub-sec"><div class="sub-lbl">visible <span class="muted">(click to hide/show)</span></div>
+      <div class="sv-hides">${toggles || '<span class="muted sub-empty">no columns yet</span>'}</div></div>`;
 }
 
+// view ids whose config block is collapsed — transient UI state, survives restructure
+const collapsedCfgs = new Set();
+
 function subsetParts(s) {
+  const off = collapsedCfgs.has(s.id);
   return {
     title: `<input class="gi gi-id subrename" value="${esc(s.id)}" title="view name" />`,
-    body: `<div class="sub-cfg">${subConfigHTML(s)}</div>
-      <div class="gn-foot"><button class="sub-addf">+ filter</button><button class="sub-addd">+ column</button></div>
+    head: `<button class="sub-cfg-tog gn-cog${off ? "" : " on"}" title="config" aria-label="toggle config">
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+          <path fill="currentColor" d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/>
+        </svg></button>`,
+    body: `<div class="sub-cfg${off ? " collapsed" : ""}">${subConfigHTML(s)}</div>
       <div class="nodehost scrollhost sub-host"><p class="muted" style="padding:8px">loading…</p></div>`,
   };
 }
@@ -846,6 +862,11 @@ function wireSubset(div, s) {
   const recompute = () => { autosave(); refreshSubsetNode(s.id); };
   const restructure = () => { autosave(); rebuildNode(`sub:${s.id}`); };   // rebuild this node's config
 
+  div.querySelector(".sub-cfg-tog")?.addEventListener("click", (e) => {
+    const off = collapsedCfgs.has(s.id) ? (collapsedCfgs.delete(s.id), false) : (collapsedCfgs.add(s.id), true);
+    div.querySelector(".sub-cfg")?.classList.toggle("collapsed", off);
+    e.currentTarget.classList.toggle("on", !off);
+  });
   div.querySelector(".subrename")?.addEventListener("change", (e) => {
     const oldId = s.id;
     if (model.renameSubset(oldId, e.target.value)) { movePos(`sub:${oldId}`, `sub:${s.id}`); render(); autosave(); }
@@ -873,6 +894,9 @@ function wireSubset(div, s) {
   div.querySelectorAll(".sd-del").forEach((b) => b.addEventListener("click", () => { model.removeDerived(s.id, +b.dataset.i); restructure(); }));
   div.querySelectorAll(".sd-name").forEach((el) => el.addEventListener("change", (e) => { s.derived[+el.dataset.i].name = e.target.value.trim(); restructure(); }));
   div.querySelectorAll(".sd-tpl").forEach((el) => el.addEventListener("change", (e) => { s.derived[+el.dataset.i].template = e.target.value; recompute(); }));
+
+  // hide/show result columns — toggling changes the column set, so restructure
+  div.querySelectorAll(".sv-hide").forEach((b) => b.addEventListener("click", () => { model.toggleHiddenColumn(s.id, b.dataset.col); restructure(); }));
   // sort/limit removed — the table sorts itself (click a column header)
 
   queueMicrotask(() => refreshSubsetNode(s.id));
@@ -883,7 +907,11 @@ function wireSubset(div, s) {
 function wirePrice(div, n) {
   // the full producer panel (sweep, stored count, movers, history chart). The out-port
   // (drag to a dataset) is wired generically by wireOutPort.
-  wirePriceNode(div, model.profile.name, n.ref.dataset);
+  wirePriceNode(div, model.profile.name, n.ref.dataset, n.ref.mode || "statistics");
+  // source toggle: statistics (history) vs live orders (now). Mode swaps the body, so rebuild.
+  div.querySelector(".enr-mode")?.addEventListener("change", (e) => {
+    model.setPriceMode(n.ref.id, e.target.value); rebuildNode(n.id); autosave();
+  });
 }
 
 const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "price"]);
@@ -964,7 +992,7 @@ function fillNode(div, n) {
         <rect x="3.2" y="7" width="9.6" height="6.5" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5" />
       </svg></button>`;
   div.innerHTML = `<div class="gn-h ${parts.pulse || ""}">
-      <button class="collapse" title="collapse/expand">${isCollapsed ? "▸" : "▾"}</button>${parts.title}${detach}${toggle}${del}</div>
+      <button class="collapse" title="collapse/expand">${isCollapsed ? "▸" : "▾"}</button>${parts.title}${parts.head || ""}${detach}${toggle}${del}</div>
     <div class="gn-body">${parts.body}</div>
     <span class="gn-spin" title="working…"></span>${parts.ports || ""}`;
   div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
@@ -1806,7 +1834,7 @@ function vtableFor(key, host) {
   if (vt && vt.host === host) return vt;
   if (vt) vt.destroy();
   host.innerHTML = "";
-  vt = new VTable(host);
+  vt = new VTable(host, key);
   vtables.set(key, vt);
   return vt;
 }
@@ -1822,12 +1850,32 @@ async function refreshDataNode(ds) {
     const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
     vtableFor(`ds:${ds}`, host).setData(cols, recs, {
       rowClass: (row) => (row.present ? "" : "gone"),
-      onRowClick: (row) => row && showRecordMany(ds, row.key, row._count),   // open its observations
+      expander: (row) => expandObservations(ds, row),   // drill into its observations inline
     });
   } catch (e) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
 }
 
+// Inline drill-down: a dataset record aggregates "many" observations under its key — fetch
+// them and return a detail node the VTable parks under the clicked row.
+async function expandObservations(ds, row) {
+  const node = document.createElement("div");
+  node.className = "vt-detail-inner";
+  const key = row && row.key;
+  if (!key) { node.innerHTML = `<p class="muted">no key</p>`; return node; }
+  try {
+    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}/observations?key=${encodeURIComponent(key)}`);
+    const obs = (await r.json()).observations || [];
+    const cols = [...new Set(obs.flatMap((o) => Object.keys(o)))];
+    const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
+    const rows = obs.map((o) => `<tr>${cols.map((c) => `<td>${esc(o[c] == null ? "" : String(o[c]))}</td>`).join("")}</tr>`).join("");
+    node.innerHTML = `<div class="vt-detail-lbl">${obs.length} observation${obs.length === 1 ? "" : "s"} · ${esc(key)}</div>
+      <table class="grid-table zebra vt-detail-tbl"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) { node.innerHTML = `<p class="muted">${esc(String(e.message || e))}</p>`; }
+  return node;
+}
+
 // A dataset record aggregates "many" observations under its key — open them in a modal.
+// (kept as an alternative to the inline drill-down above; not currently wired)
 async function showRecordMany(ds, key, count) {
   if (!key) return;
   const node = document.createElement("div");

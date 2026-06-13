@@ -119,13 +119,17 @@ export class GraphModel {
     let n = 1, id = "price";
     while (this.priceNode(id)) id = `price_${++n}`;
     this.ensureDatasetDef(dataset);
-    this.profile.price_nodes.push({ id, type: "warframe_market", dataset, throttle: 0.4, enabled: true });
+    this.profile.price_nodes.push({ id, type: "warframe_market", mode: "statistics", dataset, throttle: 0.4, enabled: true });
     return id;
   }
   removePriceNode(id) { this.profile.price_nodes = (this.profile.price_nodes || []).filter((p) => p.id !== id); }
   setPriceDataset(id, ds) {
     const pn = this.priceNode(id);
     if (pn && ds) { pn.dataset = ds; this.ensureDatasetDef(ds); }
+  }
+  setPriceMode(id, mode) {
+    const pn = this.priceNode(id);
+    if (pn && (mode === "statistics" || mode === "orders")) pn.mode = mode;
   }
 
   // ---- dictionaries: game-level word lists for fuzzy OCR matching ----------
@@ -172,7 +176,7 @@ export class GraphModel {
     while (this.subsetDef(id)) id = `${ds}_view${++n}`;
     (this.profile.subsets = this.profile.subsets || []).push({
       id, dataset: "", datasets: [ds], join_field: "name",
-      filters: [], derived: [], enrich: [], sort_by: "", sort_desc: false, limit: 0,
+      filters: [], derived: [], hidden_columns: [], enrich: [], sort_by: "", sort_desc: false, limit: 0,
     });
     return id;
   }
@@ -206,7 +210,7 @@ export class GraphModel {
     // price datasets aren't fed by windows, so expose their known snapshot columns
     for (const ds of this.subsetInputs(s))
       if ((this.profile.price_nodes || []).some((p) => p.dataset === ds))
-        for (const c of ["name", "slug", "price_min", "price_median", "volume"]) if (!out.includes(c)) out.push(c);
+        for (const c of ["name", "slug", "price_min", "price_median", "volume", "live_ask", "live_median", "live_sellers"]) if (!out.includes(c)) out.push(c);
     for (const d of s.derived || []) if (d.name && !out.includes(d.name)) out.push(d.name);
     return out;
   }
@@ -214,6 +218,13 @@ export class GraphModel {
   removeFilter(id, i) { this.subsetDef(id).filters.splice(i, 1); }
   addDerived(id) { (this.subsetDef(id).derived ||= []).push({ name: "", template: "" }); }
   removeDerived(id, i) { this.subsetDef(id).derived.splice(i, 1); }
+  // hide/show a result column (toggle membership of hidden_columns)
+  toggleHiddenColumn(id, col) {
+    const s = this.subsetDef(id); if (!s) return;
+    s.hidden_columns ||= [];
+    const i = s.hidden_columns.indexOf(col);
+    if (i >= 0) s.hidden_columns.splice(i, 1); else s.hidden_columns.push(col);
+  }
 
   // ---- edit ops -----------------------------------------------------------
 

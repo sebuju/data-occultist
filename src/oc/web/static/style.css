@@ -354,7 +354,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* overflow:hidden makes the box CLIP the title band to its rounded inner rect — so the band
    hugs the border on all sides with no manual inset math, never covers the outline, and has
    no corner gap, at any border width. */
-.ggroup { position: absolute; border-radius: 10px; box-sizing: border-box; pointer-events: none; overflow: hidden; }
+.ggroup { position: absolute; box-sizing: border-box; pointer-events: none; overflow: hidden; }
 /* The title is a child of the box, pinned to the top edge (left/right:0). The box clips it,
    so it needs no border/radius of its own — just a bottom divider. pointer-events:auto so it
    stays draggable even though the box layer (z0) is below the nodes. */
@@ -363,7 +363,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
   font-family: var(--font-mono); font-size: var(--fs-base); font-weight: 700; letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--text); cursor: grab; pointer-events: auto;
   background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ggroup-title.band { box-shadow: inset 0 -1px 0 var(--line); }
 .ggroup-title:active { cursor: grabbing; }
 
 /* group options popover (screen-fixed, like the topbar dropdowns) */
@@ -665,9 +664,23 @@ a.node.win:hover { border-color: var(--accent); }
 /* subset config editors */
 .sub-of { margin-left: 6px; font-size: var(--fs-sm); }
 .sub-cfg { margin-top: 4px; }
+.sub-cfg.collapsed { display: none; }
+.sub-cfg.collapsed + .sub-host { margin-top: 0; }
+.gn-cog { margin-left: auto; flex: 0 0 auto; width: 20px; height: 18px; min-height: 0; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; color: var(--muted); line-height: 0; cursor: pointer; }
+.gn-cog svg { display: block; margin: auto; }
+.gn-cog:hover { color: var(--fg); }
+.gn-cog.on { color: var(--accent); }
+.gn-cog ~ .gn-del { margin-left: 0; }   /* cog takes the auto; del sits right beside it */
 .sub-sec { margin-top: 6px; }
+.sub-cfg > .sub-sec:first-child { margin-top: 0; }
 .sub-lbl { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; }
 .sub-empty { font-size: var(--fs-sm); padding: 1px 2px; }
+.sub-addf, .sub-addd { margin-top: 4px; }
+.sv-hides { display: flex; flex-wrap: wrap; gap: 4px; }
+.sv-hide { font-size: var(--fs-sm); padding: 1px 6px; }
+.sv-hide.off { opacity: 0.5; text-decoration: line-through; }
 .sub-cfg { width: 100%; box-sizing: border-box; }                /* bounded -> rows wrap, don't overflow */
 .sub-row { display: flex; align-items: center; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
 .sub-row select, .sub-row input { min-width: 0; }
@@ -797,6 +810,9 @@ label.inline input { width: auto; }
 /* one-line, ellipsised — a long line must never wrap and shove the chart/table down */
 .enr-sum { font-size: var(--fs-sm); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
 .enr-sum strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.enr-src { display: flex; align-items: center; gap: 6px; margin: 4px 0; flex: none; }
+.enr-src select { flex: 1 1 auto; min-width: 0; }
+.enr-orders { margin-top: 6px; padding: 6px; border: 1px dashed var(--line); border-radius: 4px; font-size: var(--fs-sm); flex: none; }
 .gnode.price .gn-foot { flex-wrap: nowrap; align-items: center; flex: none; }
 .gnode.price .enr-chart { flex: none; }   /* fixed bits don't squish when the node shrinks */
 .gnode.price .enr-refresh { flex: 0 0 auto; }   /* don't stretch the sweep button to full width */
@@ -942,7 +958,7 @@ label.inline input { width: auto; }
 .vt-modal-host { display: flex; flex-direction: column; height: 62vh; min-height: 240px; }
 .vt { display: flex; flex-direction: column; height: 100%; min-height: 0; font-size: var(--fs-sm); }
 .vt-bar { display: flex; align-items: center; gap: 9px; flex: none; margin: 6px 0px 9px 0px; }
-.vt-search { flex: 1; min-width: 0; padding: 3px 6px; }
+.vt-search { flex: 1; min-width: 0; padding: 3px 6px; font-size: var(--fs-sm); }
 .vt-clear { flex: none; width: 22px; height: 22px; min-height: 0; padding: 0; line-height: 1;
   border: 1px solid var(--line); background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; }
 .vt-clear:hover { background: var(--danger); color: var(--on-danger); }
@@ -950,9 +966,12 @@ label.inline input { width: auto; }
 .vt-count { flex: none; white-space: nowrap; }
 
 .vt-head { display: flex; flex: none; padding-right: 9px; border-bottom: 1px solid var(--line); }
-.vt-th { color: var(--muted); font-weight: 400; cursor: pointer; user-select: none; }
+.vt-th { position: relative; color: var(--muted); font-weight: 400; cursor: pointer; user-select: none; }
 .vt-th:hover { color: var(--text); }
 .vt-sort { color: var(--accent); }
+.vt-grip { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 1; }
+.vt-grip::after { content: ""; position: absolute; top: 0; right: 3px; width: 1px; height: 100%; background: var(--line); }
+.vt-grip:hover::after { width: 2px; background: var(--accent); }
 
 .vt-main { flex: 1 1 auto; min-height: 0; position: relative; }
 .vt-scroll { position: absolute; inset: 0; overflow-y: scroll; overflow-x: hidden; }
@@ -965,6 +984,15 @@ label.inline input { width: auto; }
 .vt-row:hover { background: var(--accent-bg); cursor: pointer; }
 .vt-row.gone { opacity: 0.5; text-decoration: line-through; }
 .vt-cell { flex: 1 1 0; min-width: 0; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* inline row drill-down: parked under the clicked row, set apart from the data rows */
+.vt-detail { position: absolute; left: 0; right: 0; z-index: 2; box-sizing: border-box;
+  border: 1px solid var(--accent);
+  border-left-width: 6px; cursor: default; }
+.vt-detail-inner { padding: 6px 8px; overflow-x: auto; }
+.vt-detail-lbl { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 4px; }
+.vt-detail-tbl { width: 100%; }
+.vt-row.vt-open { background: var(--accent-bg); }
 
 /* custom scrollbar — matches the app's native look (thumb = --line, hover --muted) */
 .vt-sb { position: absolute; top: 1px; right: 1px; bottom: 1px; width: 8px; }
