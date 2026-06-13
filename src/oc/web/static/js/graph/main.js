@@ -3960,6 +3960,8 @@ function buildActivity() {
   });
   act.body.innerHTML = `<div class="act-list"></div>`;
   actEmpty = document.createElement("div"); actEmpty.className = "act-empty"; actEmpty.textContent = "nothing active";
+  // regaining focus -> the background (60s) cadence is stale; refresh right away
+  window.addEventListener("focus", () => { if (actState.visible) pollActivity(); });
   // one delegated handler for every row's button (cancel a job, or fire a trigger now)
   act.body.addEventListener("click", (ev) => {
     const game = model.profile.name; if (!game) return;
