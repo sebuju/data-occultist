@@ -72,9 +72,7 @@ class SweepState:
     finished: str = ""
 
     def public(self) -> dict:
-        d = asdict(self)
-        d.pop("cancel", None)
-        return d
+        return asdict(self)   # ``cancel`` included so the UI can show a "cancelling…" state
 
 
 @dataclass

@@ -816,6 +816,9 @@ label.inline input { width: auto; }
 .gnode.price .gn-foot { flex-wrap: nowrap; align-items: center; flex: none; }
 .gnode.price .enr-chart { flex: none; }   /* fixed bits don't squish when the node shrinks */
 .gnode.price .enr-refresh { flex: 0 0 auto; }   /* don't stretch the sweep button to full width */
+.enr-cancel.busy { display: inline-flex; align-items: center; gap: 6px; }
+.enr-cancel.busy::before { content: ""; width: 11px; height: 11px; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent; animation: spin 0.7s linear infinite; }
 .enr-prog { font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
 .enr-movers-wrap { margin-top: 6px; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .enr-movers { flex: 1 1 auto; min-height: 0; overflow: auto; }

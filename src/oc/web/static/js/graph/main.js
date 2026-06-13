@@ -905,7 +905,10 @@ function wireSubset(div, s) {
 function wirePrice(div, n) {
   // the full producer panel (sweep, stored count, movers, history chart). The out-port
   // (drag to a dataset) is wired generically by wireOutPort.
-  wirePriceNode(div, model.profile.name, n.ref.dataset, n.ref.mode || "statistics");
+  // when a sweep ends (or is cancelled), refresh the dataset it feeds so its new batch shows
+  wirePriceNode(div, model.profile.name, n.ref.dataset, n.ref.mode || "statistics", () => {
+    refreshLive(); refreshDataNode(n.ref.dataset); loadBatchesNode(n.ref.dataset);
+  });
   // source toggle: statistics (history) vs live orders (now). Mode swaps the body, so rebuild.
   div.querySelector(".enr-mode")?.addEventListener("change", (e) => {
     model.setPriceMode(n.ref.id, e.target.value); rebuildNode(n.id); autosave();
