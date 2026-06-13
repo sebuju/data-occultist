@@ -3734,8 +3734,10 @@ function buildNodeMap() {
   });
   nm.el.querySelector(".nm-mode").addEventListener("click", () =>
     setNodeMapMode(nmState.mode === "map" ? "list" : "map"));
-  // jump-to: click a node in either view -> select + smooth pan/zoom
+  // jump-to: click a node in either view -> select + smooth pan/zoom; a group row -> frame it
   nm.body.addEventListener("click", (ev) => {
+    const g = ev.target.closest("[data-gid]");
+    if (g) { const gb = groups.groupBoxes().find((b) => b.id === g.dataset.gid); if (gb) panZoomToRect(gb.box); return; }
     const t = ev.target.closest("[data-id]");
     if (!t) return;
     const id = t.dataset.id;
@@ -3855,26 +3857,46 @@ function nmFitPanelHeight(svgH) {
 function nmRenderList(body) {
   const nodes = model.nodes();
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const kids = new Map(), indeg = new Map(nodes.map((n) => [n.id, 0]));
+  const kids = new Map();
   for (const e of model.edges()) {
     if (!byId.has(e.from) || !byId.has(e.to)) continue;
     if (!kids.has(e.from)) kids.set(e.from, []);
     kids.get(e.from).push(e.to);
-    indeg.set(e.to, (indeg.get(e.to) || 0) + 1);
   }
-  const seen = new Set(), rows = [];
-  const walk = (id, depth) => {
-    if (seen.has(id)) return;
-    seen.add(id);
-    const n = byId.get(id); if (!n) return;
-    rows.push({ id, depth, label: nodeLabel(n), type: n.type });
-    for (const c of (kids.get(id) || [])) walk(c, depth + 1);
+  // edge-tree walk over a node SUBSET: local roots (no in-subset parent) first, then leftovers
+  const orderWalk = (subset) => {
+    const indeg = new Map(); for (const id of subset) indeg.set(id, 0);
+    for (const e of model.edges()) if (subset.has(e.from) && subset.has(e.to)) indeg.set(e.to, (indeg.get(e.to) || 0) + 1);
+    const seen = new Set(), out = [];
+    const walk = (id, depth) => {
+      if (seen.has(id) || !subset.has(id)) return;
+      seen.add(id);
+      const n = byId.get(id); if (!n) return;
+      out.push({ id, depth, label: nodeLabel(n), type: n.type });
+      for (const c of (kids.get(id) || [])) walk(c, depth + 1);
+    };
+    for (const id of subset) if ((indeg.get(id) || 0) === 0) walk(id, 0);
+    for (const id of subset) walk(id, 0);
+    return out;
   };
-  for (const n of nodes) if ((indeg.get(n.id) || 0) === 0) walk(n.id, 0);   // roots first
-  for (const n of nodes) walk(n.id, 0);                                      // any orphans left
-  body.innerHTML = `<div class="nm-list">${rows.map((r) =>
-    `<div class="nm-row${r.id === selectedNodeId ? " sel" : ""}" data-id="${esc(r.id)}" style="padding-left:${6 + r.depth * 14}px">
-       <span class="nm-dot" style="background:${NM_COLOR[r.type] || "#9aa5ce"}"></span>${esc(r.label)}</div>`).join("")
+
+  // groups first (header + their members, indented one level), then everything ungrouped
+  const rows = [], grouped = new Set();
+  for (const g of groups.allGroups()) {
+    const sub = new Set(g.members.filter((id) => byId.has(id)));
+    if (!sub.size) continue;
+    for (const id of sub) grouped.add(id);
+    rows.push({ group: true, gid: g.id, label: g.title || g.id, color: g.outline?.color });
+    for (const r of orderWalk(sub)) rows.push({ ...r, depth: r.depth + 1 });
+  }
+  const ungrouped = new Set(nodes.map((n) => n.id).filter((id) => !grouped.has(id)));
+  for (const r of orderWalk(ungrouped)) rows.push(r);
+
+  body.innerHTML = `<div class="nm-list">${rows.map((r) => r.group
+    ? `<div class="nm-row nm-grp" data-gid="${esc(r.gid)}" title="zoom to group">
+         <span class="nm-gswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${esc(r.label)}</div>`
+    : `<div class="nm-row${r.id === selectedNodeId ? " sel" : ""}" data-id="${esc(r.id)}" style="padding-left:${6 + r.depth * 14}px">
+         <span class="nm-dot" style="background:${NM_COLOR[r.type] || "#9aa5ce"}"></span>${esc(r.label)}</div>`).join("")
     || `<div class="nm-empty">no nodes</div>`}</div>`;
 }
 

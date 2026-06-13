@@ -67,6 +67,9 @@
 .nm-row:hover { background: var(--line); }
 .nm-row.sel { background: var(--accent-bg); color: var(--accent); }
 .nm-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+/* group header row in the node list: a hollow swatch (outline colour) + bold title */
+.nm-grp { font-weight: 600; color: var(--text); margin-top: 2px; }
+.nm-gswatch { width: 9px; height: 9px; border: 2px solid; border-radius: 2px; background: transparent; flex: none; box-sizing: border-box; }
 
 /* ---- activity panel -------------------------------------------------------- */
 .act-list { display: flex; flex-direction: column; gap: 4px; min-height: 100%; }
