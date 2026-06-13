@@ -9,23 +9,17 @@ mover list. Joining prices to inventory is a *view*'s job now, not an endpoint h
 
 from __future__ import annotations
 
-import threading
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter
 
-from ...enrich.price_collector import sweep_catalogue
+from ...enrich.price_runner import cancel_sweep, start_sweep, sweep_status
 from ...profile import list_profiles, load_profile
+from ...profile.models import PriceNodeDef
 from ...store import PriceStore
 from ..deps import get_settings
 
 router = APIRouter(prefix="/api/prices", tags=["prices"])
-
-
-def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 # Read-side cache: parsing the (large) price store on every chart click / movers poll is
@@ -44,124 +38,50 @@ def _price_store(game: str) -> PriceStore:
     return store
 
 
-def _dataset_key(game: str, dataset: str):
+def _profile(game: str):
     settings = get_settings()
     if game in list_profiles(settings.profiles_dir):
-        return load_profile(settings.profiles_dir, game).key_map_for(dataset)
+        return load_profile(settings.profiles_dir, game)
     return None
 
 
-# ---- background sweep -------------------------------------------------------
-
-@dataclass
-class SweepState:
-    game: str
-    dataset: str
-    mode: str = "statistics"
-    total: int = 0
-    done: int = 0
-    fetched: int = 0
-    failed: int = 0
-    running: bool = False
-    cancel: bool = False
-    # set when a sweep was refused because another node in the same game is sweeping
-    # (fetching is serialised per game for the rate limit + shared price store).
-    blocked: bool = False
-    last: str = ""
-    started: str = ""
-    finished: str = ""
-
-    def public(self) -> dict:
-        return asdict(self)   # ``cancel`` included so the UI can show a "cancelling…" state
+def _price_node(profile, dataset: str, mode: str, throttle: float) -> PriceNodeDef:
+    """The configured price node feeding ``dataset`` (its ``sources`` decide what gets
+    priced), or an ephemeral whole-catalogue node when none is taught — preserving the
+    original behaviour for a dataset with no price node."""
+    if profile is not None:
+        for pn in profile.price_nodes:
+            if pn.dataset == dataset:
+                return pn
+    return PriceNodeDef(id=dataset, dataset=dataset, mode=mode, throttle=throttle)
 
 
-@dataclass
-class _Runner:
-    state: SweepState | None = None
-    thread: threading.Thread | None = field(default=None)
-
-
-# Runner state is per (game, dataset) so each price node tracks its own sweep
-# independently. Fetching, though, is serialised PER GAME by _game_gate: two concurrent
-# sweeps would blow past warframe.market's rate ceiling and clobber the shared
-# price_store.json (and are throughput-neutral under the cap anyway).
-_runners: dict[tuple[str, str], _Runner] = {}
-_game_gate: dict[str, threading.Lock] = {}
-_gate_guard = threading.Lock()
-
-
-def _runner(game: str, dataset: str) -> _Runner:
-    return _runners.setdefault((game, dataset), _Runner())
-
-
-def _gate(game: str) -> threading.Lock:
-    with _gate_guard:
-        return _game_gate.setdefault(game, threading.Lock())
-
-
-def _run_sweep(game: str, dataset: str, mode: str, throttle: float, timeout: float,
-               limit: int, workers: int, gate: threading.Lock) -> None:
-    state = _runner(game, dataset).state
-    settings = get_settings()
-
-    def on_item(done, total, slug, name, ok):
-        state.total = total
-        state.done = done
-        state.last = name
-        if ok:
-            state.fetched += 1
-        else:
-            state.failed += 1
-
-    try:
-        sweep_catalogue(settings.data_dir, game, dataset, key=_dataset_key(game, dataset),
-                        throttle=throttle, timeout=timeout, limit=limit, workers=workers,
-                        mode=mode, on_item=on_item, should_stop=lambda: state.cancel)
-    finally:
-        state.running = False
-        state.finished = _utcnow_iso()
-        gate.release()
-
+# ---- background sweep (orchestrated in enrich.price_runner) -----------------
 
 @router.post("/{game}/refresh")
 def refresh(game: str, dataset: str = "prices", mode: str = "statistics", throttle: float = 0.4,
             timeout: float = 30.0, limit: int = 0, workers: int = 6):
     """Start a background producer sweep of ``dataset`` (``mode`` = statistics | orders).
-    A second call while this node is running is a no-op; if a DIFFERENT node in the same
-    game is sweeping, returns a ``blocked`` status instead of starting (one sweep/game)."""
-    runner = _runner(game, dataset)
-    if runner.state and runner.state.running:
-        return runner.state.public()
-    gate = _gate(game)
-    if not gate.acquire(blocking=False):
-        return SweepState(game=game, dataset=dataset, mode=mode, blocked=True).public()
-    runner.state = SweepState(game=game, dataset=dataset, mode=mode, running=True,
-                              started=_utcnow_iso())
-    runner.thread = threading.Thread(
-        target=_run_sweep,
-        args=(game, dataset, mode, throttle, timeout, limit, workers, gate), daemon=True)
-    try:
-        runner.thread.start()
-    except RuntimeError:           # thread couldn't start — don't strand the gate
-        runner.state.running = False
-        gate.release()
-        raise
-    return runner.state.public()
+    The node's ``sources`` decide what's priced (owned gear, relic rewards, …); with no
+    sources it sweeps the whole catalogue. A second call while this node is running is a
+    no-op; if a DIFFERENT node in the same game (or process) is sweeping, returns
+    ``blocked`` instead of starting (one sweep/game)."""
+    profile = _profile(game)
+    pn = _price_node(profile, dataset, mode, throttle)
+    state = start_sweep(get_settings().data_dir, game, pn, profile=profile,
+                        timeout=timeout, limit=limit, workers=workers)
+    return state.public()
 
 
 @router.post("/{game}/cancel")
 def cancel(game: str, dataset: str = "prices"):
     """Ask this node's running sweep to stop after the current item."""
-    runner = _runner(game, dataset)
-    if runner.state and runner.state.running:
-        runner.state.cancel = True
-    return runner.state.public() if runner.state else {"running": False}
+    return cancel_sweep(game, dataset)
 
 
 @router.get("/{game}/status")
 def status(game: str, dataset: str = "prices"):
-    runner = _runner(game, dataset)
-    return runner.state.public() if runner.state else {"running": False, "total": 0, "done": 0}
+    return sweep_status(game, dataset)
 
 
 # ---- reads ------------------------------------------------------------------
@@ -190,10 +110,9 @@ def summary(game: str, dataset: str = "prices"):
     the tiny index sidecar (never parses the full candle store), so it stays fast even
     mid-sweep with a huge catalogue."""
     idx = PriceStore.read_index(get_settings().data_dir, game)
-    runner = _runner(game, dataset)
     return {
         "game": game, "dataset": dataset,
         "slugs": idx.get("slugs", 0),
         "movers": idx.get("movers", []),
-        "status": runner.state.public() if runner.state else {"running": False},
+        "status": sweep_status(game, dataset),
     }

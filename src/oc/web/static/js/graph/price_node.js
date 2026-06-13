@@ -23,10 +23,14 @@ const elapsed = (start, end) => {
 export function priceParts(pn) {
   const mode = pn.mode === "orders" ? "orders" : "statistics";
   const opt = (v, label) => `<option value="${v}"${v === mode ? " selected" : ""}>${label}</option>`;
+  const srcs = (pn.sources || []).length
+    ? `<div class="pr-srcs">prices: ${pn.sources.map((s) => `<span class="pr-src" data-ds="${esc(s)}">${esc(s)} <button class="pr-rmsrc" data-ds="${esc(s)}" title="stop pricing this source">✕</button></span>`).join("")}</div>`
+    : `<div class="pr-srcs muted">prices: whole catalogue — drag a dataset/view here to price only those items</div>`;
   const head = `<div class="enr-sum muted">↻ sweep to price the market</div>
       <label class="enr-src flab">source
         <select class="enr-mode">${opt("statistics", "statistics (history)")}${opt("orders", "live orders (now)")}</select>
       </label>
+      ${srcs}
       <div class="gn-foot">
         <button class="enr-refresh">↻ sweep prices</button>
         <button class="enr-cancel danger" hidden>cancel</button>
