@@ -4447,7 +4447,6 @@ async function initOcrDevice() {
 
 // ---- boot veil: full-page spinner until the initial load has settled ----------
 const veil = {
-  msg(t) { const m = document.getElementById("bootveilMsg"); if (m) m.textContent = t; },
   drop() {
     const v = document.getElementById("bootveil");
     if (!v) return;
@@ -4490,7 +4489,7 @@ function haltStartup(msg) {
 async function killStrayOcrThenBoot() {
   setLogOpen(true);   // show the log history during boot so initial-load progress is visible
   try {
-    veil.msg("stopping stray OCR…");
+    log("stopping stray OCR…");
     const r = await api.precapture.killAll();
     if (r.alive && r.alive.length) {
       haltStartup(`OCR worker for ${r.alive.join(", ")} would not stop within the timeout.`);
@@ -4502,11 +4501,11 @@ async function killStrayOcrThenBoot() {
     return;   // can't verify -> don't proceed
   }
   try {
-    veil.msg("loading profile…");
+    log("loading profile…");
     await refreshGames();
     if ($("gameSelect").value) await loadGame($("gameSelect").value);
     initOcrDevice();
-    veil.msg("first read…");
+    log("first read…");
     await bootSettle();
   } catch (e) {
     log(String(e.message || e), "err");   // boot hiccup: show the page anyway

@@ -567,7 +567,7 @@ button.reading::after { content: ""; display: inline-block; width: 9px; height: 
   border-radius: 50%; animation: spin 0.7s linear infinite; }
 /* first-load screen loader (boot veil): a thick green ring with an orange dot riding the
    inside edge clockwise. Big — 75dvh — since it owns the full-screen loading view. */
-.loader-orbit { position: relative; height: 75dvh; aspect-ratio: 1; max-width: 90vw;
+.loader-orbit { position: relative; height: 50dvh; aspect-ratio: 1; max-width: 90vw;
   border-radius: 50%; border: 25px solid var(--ok); }
 .loader-orbit .arm { position: absolute; inset: 0; animation: spin 5s linear infinite; }   /* clockwise */
 .loader-orbit .dot { position: absolute; top: 1.5%; left: 50%; width: 9%; height: 9%; margin-left: -4.5%;
