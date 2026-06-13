@@ -505,10 +505,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 #bootveil.fade { opacity: 0; pointer-events: none; }
 .bootveil-box { display: flex; flex-direction: column; align-items: center; gap: 14px;
   color: var(--muted, #8a97a5); }
-.bootveil-spin { width: 42px; height: 42px; border-radius: 50%;
-  border: 3px solid rgba(255, 255, 255, 0.12); border-top-color: var(--accent, #5fb2ff);
-  animation: bootspin .8s linear infinite; }
-@keyframes bootspin { to { transform: rotate(360deg); } }
 
 /* full-screen block when a background OCR worker refuses to die on startup */
 .startup-halt { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center;
@@ -569,10 +565,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 button.reading::after { content: ""; display: inline-block; width: 9px; height: 9px; margin-left: 6px;
   vertical-align: -1px; border: 2px solid currentColor; border-top-color: transparent;
   border-radius: 50%; animation: spin 0.7s linear infinite; }
-/* big async loader for content areas (preview pane while OCR reads): a thick green ring with
-   an orange dot riding the inside edge clockwise. Sized to fill its host, capped at 75dvh. */
-.loader-host { display: flex; align-items: center; justify-content: center; height: 100%; min-height: 140px; padding: 12px; }
-.loader-orbit { position: relative; height: min(75dvh, 100%); aspect-ratio: 1; max-width: 100%;
+/* first-load screen loader (boot veil): a thick green ring with an orange dot riding the
+   inside edge clockwise. Big — 75dvh — since it owns the full-screen loading view. */
+.loader-orbit { position: relative; height: 75dvh; aspect-ratio: 1; max-width: 90vw;
   border-radius: 50%; border: 25px solid var(--ok); }
 .loader-orbit .arm { position: absolute; inset: 0; animation: spin 5s linear infinite; }   /* clockwise */
 .loader-orbit .dot { position: absolute; top: 1.5%; left: 50%; width: 9%; height: 9%; margin-left: -4.5%;
