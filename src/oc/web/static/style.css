@@ -3,6 +3,9 @@
   --bg: #15171c;            /* app background */
   --panel: #1d2027;         /* nodes, panels, top bar */
   --line: #2c313c;          /* borders, neutral button fill */
+  --float-panel: #232936;   /* floating windows — cooler/bluer than nodes */
+  --float-head: #2b3343;    /* float-window header bar */
+  --float-line: #3a4253;    /* float-window borders */
   --log-bg: #0a0e13;        /* terminal log bar */
 
   /* text */
@@ -52,7 +55,7 @@
 html, body { height: 100%; }
 body {
   margin: 0;
-  font: var(--fs-md)/1.4 var(--font-sans);
+  font: var(--fs-md)/1.4 var(--font-mono);
   background: var(--bg);
   color: var(--text);
   display: flex;
@@ -228,6 +231,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .flab { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 6px;
   margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
 .flab select, .flab input[type="number"], .flab input[type="text"] { width: 100%; min-width: 0; }
+/* input + its unit suffix share ONE grid cell (else the "s" wraps to the next grid row) */
+.tg-secs { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.tg-secs input { width: 100%; }
 /* a checkbox must never be stretched by the global width:100%; sit it at the start of
    its column (toward the label) instead of floating/centred */
 .gnode input[type="checkbox"] { width: auto; }
@@ -266,15 +272,19 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gedge.attach { stroke: var(--accent); opacity: 0.85; }
 .gedge.img { stroke: var(--muted); stroke-dasharray: 2 4; opacity: 0.7; }
 .gedge.usedict { stroke: var(--muted); stroke-dasharray: 2 4; opacity: 0.45; }   /* field -> the dictionary it snaps to */
+.gedge.trigger { stroke: var(--warn); opacity: 0.9; }                  /* trigger -> the price node it fires */
+.gedge.watch { stroke: var(--warn); stroke-dasharray: 4 4; opacity: 0.55; }   /* watched dataset -> on_change trigger */
 .gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; }
 .gedge.sel { stroke: var(--accent) !important; stroke-width: 2.2; opacity: 1 !important; }
 
-/* window node grows to fit its embedded image; spinner sits in the header.
-   max-content (not auto) because #gnodes has no width, so auto would collapse
-   the node to min-content and squish the image. Controls keep a fixed width so
-   the node's width is driven by the image canvas. */
-.gnode.window { width: max-content; min-width: 240px; max-width: 76vw; }
-.win-img { width: max-content; }
+/* window node: fixed default width, resized by WIDTH (its grips) like the item node —
+   the embedded image canvas fills the node and its height follows the image aspect.
+   overflow:hidden keeps the canvas + controls clipped to the card; spinner in header. */
+.gnode.window { width: 520px; min-width: 240px; max-width: 76vw; }
+/* node overflow stays visible so the right-edge out-port isn't clipped (like price/dataset/
+   subset below); the BODY clips instead, keeping the canvas + controls inside the card. */
+.gnode.window > .gn-body { overflow: hidden; }
+.win-img { width: auto; }
 /* busy state: a scrim covers the whole node EXCEPT the header (the header sits above it
    via z-index), with a spinner centred on it. Fades in/out so it isn't harsh. */
 .gnode .gn-h { position: relative; z-index: 2; }
@@ -295,8 +305,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .imgtools .tools { display: inline-flex; gap: 2px; flex-wrap: wrap; }
 .imgtools .spacer { flex: 1; }
 .imgtools .tool-div { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
-.win-img .canvas-wrap { width: 520px; max-width: 70vw; overflow: hidden;
-  border: 1px solid var(--line); border-radius: 4px; resize: horizontal; }  /* aspect-ratio set per image in JS */
+.win-img .canvas-wrap { width: 100%; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 4px; }  /* fills the node; node grips resize it. aspect-ratio set per image in JS */
 .win-img canvas { display: block; width: 100%; }
 
 /* item node: frozen cutout canvas + tells/fields lists.
@@ -426,8 +436,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 }
 .modal.large { width: 95vw; height: 92vh; }
 .modal.data { width: 760px; max-width: 92vw; max-height: 82vh; }
-/* precapture: fixed size so the centred modal never shifts as panes swap content */
-.modal.pc-modal { height: 82vh; width: 880px; }
 .modal.medium { width: 520px; max-width: 92vw; max-height: 82vh; }
 .modal-h {
   display: flex; align-items: center; justify-content: space-between;
@@ -519,43 +527,14 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .lvl-warn { color: var(--warn); }
 .lvl-err { color: var(--danger); }
 
-/* live / precapture mode buttons */
-
-/* precapture modal */
-.precap { padding: 12px; display: flex; flex-direction: column; gap: 10px; height: 100%; }
-.pc-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-/* two-pane layout: left = session list, right = the selected pane */
-.pc-main { display: flex; gap: 12px; align-items: stretch; flex: 1; min-height: 0; }
-.pc-left { width: 300px; flex: none; display: flex; flex-direction: column; gap: 3px;
-  overflow: auto; padding-right: 10px; border-right: 1px solid var(--line); }
-.pc-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
-.pc-sess-new { text-align: left; margin-bottom: 4px; }
-.pc-sess-new.active { outline: 1px solid var(--accent); border-radius: 4px; }
-.pc-opts { display: flex; flex-wrap: wrap; gap: 14px; }
-.pc-opts .flab { display: flex; align-items: center; gap: 6px; }
-.pc-opts input[type="number"] { width: 8ch; }
-.pc-opts input.pc-label { width: 14ch; }
-.pc-ctl { display: flex; align-items: center; gap: 8px; }
-.pc-ctl .pc-del { margin-left: auto; }   /* delete pinned to the right edge */
-/* active-session chip in the status bar */
-.pc-sess-tag { font-size: var(--fs-xs); }
-/* saved-session list */
-.pc-sess-h { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
-.pc-sess { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
-.pc-sess:hover { background: var(--line); }
-.pc-sess.active { outline: 1px solid var(--accent); outline-offset: -1px; }
-.pc-sess-name { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pc-sess-meta { flex: none; font-size: var(--fs-xs); }
-.pc-sess-rename { flex: 1; min-width: 0; }
-.pc-sess-ren { width: 26px; flex: none; }
-/* save button after a successful save — green, not dimmed like a normal disabled button */
-.pc-ctl button.pc-saved, .pc-ctl button.pc-saved:disabled {
-  background: var(--phase-done); color: var(--white); opacity: 1; cursor: default; }
-.pc-progress { height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
-.pc-fill { height: 100%; background: var(--accent); transition: width 0.2s; }
-.pc-data { max-height: 46vh; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
-.pc-ds table { margin-top: 4px; }
+/* precapture styling moved to floatwin.css (it's a floating panel now, not a modal) */
 label { display: block; margin: 6px 0; color: var(--muted); }
+/* Every form control inherits the page font-family — buttons, inputs, selects, textareas,
+   and anything added later. UA styles otherwise reset these to a system font. Specific
+   font-SIZE rules (e.g. buttons use --fs-sm) still apply on top of the inherited family. */
+button, input, select, textarea, optgroup, option {
+  font-family: inherit;
+}
 input, select, textarea {
   font: inherit;
 }
@@ -578,7 +557,7 @@ input, select {
 button {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px;
   padding: 4px 10px; min-height: 26px; line-height: 1;
-  font-family: var(--font-sans); font-size: var(--fs-sm);
+  font-family: inherit; font-size: var(--fs-sm);   /* inherit the page font (body = --font-mono) */
   background: var(--line); color: var(--text);
   border: 0; border-radius: 4px; cursor: pointer; white-space: nowrap;
 }
@@ -675,6 +654,16 @@ a.node.win:hover { border-color: var(--accent); }
    its body + content host fill it. ONE behaviour — no separate resize handle inside. */
 .gnode.dataset, .gnode.preview, .gnode.dictionary, .gnode.subset, .gnode.price {
   display: flex; flex-direction: column; resize: none; overflow: hidden; min-width: 280px; }
+/* trigger node: compact, fixed; out-port must show so it can be wired to a price node */
+.gnode.trigger { width: 280px; overflow: visible; }
+.tg-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0; }
+.tg-chip, .pr-src { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-size: var(--fs-sm); }
+.tg-chip button, .pr-src button { border: none; background: none; color: var(--muted); cursor: pointer; padding: 0; line-height: 1; }
+.tg-chip button:hover, .pr-src button:hover { color: var(--warn); }
+.tg-watch, .tg-targets { margin: 6px 0; }
+.tg-prog:empty { display: none; }   /* no progress text -> take no space */
+.pr-srcs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 4px 0; font-size: var(--fs-sm); }
 .gnode.dataset { width: 360px; height: 380px; }
 .gnode.preview { width: 360px; height: 320px; }
 .gnode.dictionary { width: 300px; height: 360px; }
@@ -769,6 +758,7 @@ a.node.win:hover { border-color: var(--accent); }
 .conf-ok { color: var(--ok); }
 .conf-warn { color: var(--warn); }
 .conf-bad { color: var(--danger); }
+.conf-good { color: var(--ok); }
 .conf-sub { color: var(--muted); font-style: italic; }  /* value from an if-empty/if-number/if-text fallback, not a read */
 
 /* enabled/disabled nodes — SVG slide toggle, styled to the node palette. Sits on the
@@ -908,55 +898,20 @@ label.inline input { width: auto; }
 .mover.up .mpct { color: var(--ok); }
 .mover.down .mpct { color: var(--danger); }
 
-/* ---- node map (fixed overview / jump-to) -------------------------------- */
-.nodemap {
-  position: fixed; z-index: 40; width: 280px; height: 232px;
-  min-width: 180px; min-height: 90px; overflow: hidden;
-  display: flex; flex-direction: column;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-  box-shadow: 0 6px 24px #0008; font-size: var(--fs-sm); user-select: none;
-}
-.nodemap[hidden] { display: none; }
-.nm-head {
-  display: flex; align-items: center; gap: 6px; padding: 5px 8px; flex: none;
-  border-bottom: 1px solid var(--line); cursor: grab;
-}
-.nm-head:active { cursor: grabbing; }
-.nm-title { flex: 1; color: var(--muted); font-weight: 600; }
-.nm-head button {
-  width: 22px; height: 20px; padding: 0; border: 1px solid var(--line);
-  background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; line-height: 1;
-}
-.nm-head button:hover { background: var(--accent); color: var(--on-accent); }
-.nm-body { padding: 6px; flex: 1; min-height: 0; overflow: auto; }
-/* map mode: centre the tightly-wrapped SVG so leftover space is panel-coloured (no bars) */
-.nm-body.nm-bmap { display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.nm-empty { color: var(--muted); padding: 12px; text-align: center; }
-
-.nm-wrap { position: relative; }
-.nm-svg { display: block; max-width: 100%; max-height: 100%; background: var(--bg); border-radius: 4px; }
-/* viewport indicator: a div moved by CSS transform (no per-frame layout) */
-.nm-vp { position: absolute; left: 0; top: 0; box-sizing: border-box; pointer-events: none;
-  background: var(--accent-bg); border: 1px solid var(--accent); will-change: transform; }
+/* node map + precapture float styling lives in floatwin.css (built by createFloatWin) */
 
 /* custom resize grips on BOTH bottom corners — identical mirrored look (native CSS resize
-   is disabled on these elements so the two corners match). Used on nodemap + graph nodes. */
+   is disabled on these elements so the two corners match). Used on graph nodes + floats. */
 /* two diagonal lines (short + long) right at the corner: "/" on the right, "\" mirror on
    the left — the classic resize grip */
 .rz-grip { position: absolute; bottom: 1px; width: 14px; height: 14px; z-index: 3;
-  opacity: 0.5; background-repeat: no-repeat; }
+  opacity: 0; background-repeat: no-repeat; transition: opacity 0.12s; }
+:hover > .rz-grip { opacity: 0.5; }   /* reveal only while hovering the node / panel */
 .rz-grip:hover { opacity: 1; }
 .rz-rgrip { right: 1px; cursor: nwse-resize;
   background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='13' y1='9' x2='9' y2='13'/><line x1='13' y1='4' x2='4' y2='13'/></g></svg>"); }
 .rz-lgrip { left: 1px; cursor: nesw-resize;
   background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='1' y1='9' x2='5' y2='13'/><line x1='1' y1='4' x2='10' y2='13'/></g></svg>"); }
-.nm-group { stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
-.nm-edges path { fill: none; stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.nm-n { stroke: #0006; stroke-width: 0.5; cursor: pointer; opacity: 0.9; }
-.nm-n:hover { opacity: 1; stroke: var(--white); stroke-width: 1; }
-.nm-n.sel { stroke: var(--accent); stroke-width: 1.5; opacity: 1; }
-.nm-lbl { fill: #0b0e14; font-family: var(--font-mono); font-weight: 700; text-anchor: middle;
-  dominant-baseline: central; pointer-events: none; }
 
 /* ---- backups browser modal -------------------------------------------------- */
 .backups { display: flex; height: 100%; min-height: 0; }
@@ -992,15 +947,6 @@ label.inline input { width: auto; }
 .dpk-src { font-family: var(--mono, monospace); }
 .dpk-meta { font-size: var(--fs-xs); }
 .dpk-used { color: var(--accent); }
-
-.nm-list { overflow: auto; }
-.nm-row {
-  display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px;
-  cursor: pointer; white-space: nowrap; color: var(--text);
-}
-.nm-row:hover { background: var(--line); }
-.nm-row.sel { background: var(--accent-bg); color: var(--accent); }
-.nm-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 
 /* ---- VTable: virtualized, searchable data table ------------------------- */
 .vt-host { overflow: auto; }

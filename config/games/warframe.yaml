@@ -231,6 +231,10 @@ datasets:
   aggregate: latest
 - id: prices_live
   aggregate: latest
+- id: relic_rewards
+  aggregate: latest
+- id: prices_relic_live
+  aggregate: latest
 subsets:
 - id: statistic_prices_joined
   dataset: ''
@@ -283,6 +287,23 @@ subsets:
   sort_by: ''
   sort_desc: false
   limit: 0
+  config_collapsed: false
+- id: relic_rewards_live
+  dataset: ''
+  datasets:
+  - relic_rewards
+  - prices_relic_live
+  join_field: name
+  filters: []
+  derived: []
+  hidden_columns:
+  - slug
+  - updated
+  - live_ask
+  enrich: []
+  sort_by: price_median
+  sort_desc: true
+  limit: 0
   config_collapsed: true
 price_nodes:
 - id: price
@@ -291,11 +312,38 @@ price_nodes:
   dataset: prices_statistics
   throttle: 0.4
   enabled: true
+  sources: []
 - id: wf_market_live
   type: warframe_market
   mode: orders
   dataset: prices_live
   throttle: 0.4
+  enabled: true
+  sources:
+  - master
+- id: relic_live
+  type: warframe_market
+  mode: orders
+  dataset: prices_relic_live
+  throttle: 0.4
+  enabled: true
+  sources:
+  - relic_rewards
+triggers:
+- id: owned_refresh
+  kind: interval
+  interval_s: 1800.0
+  watch: []
+  targets:
+  - wf_market_live
+  enabled: true
+- id: relic_watch
+  kind: on_change
+  interval_s: 300.0
+  watch:
+  - relic_rewards
+  targets:
+  - relic_live
   enabled: true
 dictionaries:
 - id: wiki
@@ -307,6 +355,8 @@ layout:
     game:
       x: -820.0
       y: -500.0
+      w: 340.0
+      h: 120.0
       collapsed: false
     fld:equipment:field_1:
       x: 680.0
@@ -411,6 +461,8 @@ layout:
     win:equip:
       x: 400.0
       y: 340.0
+      w: 320.0
+      h: 80.0
       collapsed: false
     anc:equip:detect_2:
       x: 1220.0
@@ -419,6 +471,8 @@ layout:
     sb:equip:scrollbar:
       x: 1120.0
       y: 880.0
+      w: 220.0
+      h: 100.0
       collapsed: false
     prev:equip:
       x: 400.0
@@ -495,14 +549,20 @@ layout:
     det:equip:detect_2:
       x: 1120.0
       y: 340.0
+      w: 220.0
+      h: 160.0
       collapsed: false
     det:equip:detect_4:
       x: 1120.0
       y: 520.0
+      w: 220.0
+      h: 160.0
       collapsed: false
     det:equip:detect_1:
       x: 1120.0
       y: 700.0
+      w: 220.0
+      h: 160.0
       collapsed: false
     item:equip:normal1:
       x: 300.0
@@ -568,6 +628,42 @@ layout:
       w: 340.0
       h: 420.0
       collapsed: false
+    ds:relic_rewards:
+      x: 500.0
+      y: 1560.0
+      w: 360.0
+      h: 380.0
+      collapsed: false
+    ds:prices_relic_live:
+      x: 1420.0
+      y: 1560.0
+      w: 440.0
+      h: 740.0
+      collapsed: false
+    sub:relic_rewards_live:
+      x: 1920.0
+      y: 1560.0
+      w: 580.0
+      h: 740.0
+      collapsed: false
+    price:relic_live:
+      x: 920.0
+      y: 1560.0
+      w: 440.0
+      h: 740.0
+      collapsed: false
+    trigger:owned_refresh:
+      x: 1640.0
+      y: 1120.0
+      w: 280.0
+      h: 260.0
+      collapsed: false
+    trigger:relic_watch:
+      x: 540.0
+      y: 2000.0
+      w: 280.0
+      h: 300.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -621,11 +717,11 @@ layout:
     - det:equip:detect_2
     - sb:equip:scrollbar
     outline:
-      color: '#7ddc7d'
-      style: solid
+      color: '#5ae6c2'
+      style: none
       width: 2
-    bg: '#7ddc7d18'
-    titleBg: '#7ddc7d'
+    bg: '#5ae6c218'
+    titleBg: '#5ae6c2'
     titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
@@ -637,7 +733,7 @@ layout:
     - sub:statistic_prices_joined
     outline:
       color: '#e6c25a'
-      style: solid
+      style: none
       width: 2
     bg: '#e6c25a18'
     titleBg: '#e6c25a'
@@ -651,9 +747,10 @@ layout:
     - sub:live_prices_joined
     - price:price_2
     - price:wf_market_live
+    - trigger:owned_refresh
     outline:
       color: '#e6c25a'
-      style: solid
+      style: none
       width: 2
     bg: '#e6c25a18'
     titleBg: '#e6c25a'
@@ -680,12 +777,12 @@ layout:
     - item:equip:normal
     - item:equip:arcane
     outline:
-      color: '#e0556b'
-      style: solid
+      color: '#e6685a'
+      style: none
       width: 2
-    bg: '#e0556b18'
-    titleBg: '#e0556b'
-    titleColor: '#1a0a0e'
+    bg: '#e6685a18'
+    titleBg: '#e6685a'
+    titleColor: '#1a0a08'
     titleAlign: left
     titlePos: tl
   - id: group_9
@@ -702,3 +799,48 @@ layout:
     titleColor: ''
     titleAlign: left
     titlePos: tl
+  float_windows:
+    nodemap:
+      visible: true
+      x: 1243
+      y: 90
+      w: 274
+      h: 220
+      mode: list
+      sizes:
+        map:
+          w: 279
+          h: 272
+        list:
+          w: 274
+          h: 220
+      collapsed: false
+      dock: null
+    activity:
+      visible: true
+      x: 1243
+      y: 318
+      w: 274
+      h: 189
+      collapsed: false
+      dock:
+        to: nodemap
+        dx: 0
+    toolbox:
+      visible: false
+      x: 1239
+      y: 64
+      w: null
+      h: null
+      collapsed: false
+      dock: null
+    precap:
+      visible: true
+      x: 1243
+      y: 515
+      w: 274
+      h: 457
+      collapsed: false
+      dock:
+        to: activity
+        dx: 0

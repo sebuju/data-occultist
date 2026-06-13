@@ -15,12 +15,15 @@ export class GraphModel {
     this.profile.datasets = this.profile.datasets || [];
     this.profile.subsets = this.profile.subsets || [];
     this.profile.price_nodes = this.profile.price_nodes || [];
+    this.profile.triggers = this.profile.triggers || [];
     this.profile.dictionaries = this.profile.dictionaries || [];
     // a view joins many datasets; fold a legacy single ``dataset`` into ``datasets``
     for (const s of this.profile.subsets) {
       s.datasets = s.datasets || [];
       if (s.dataset && !s.datasets.includes(s.dataset)) { s.datasets.unshift(s.dataset); s.dataset = ""; }
     }
+    for (const pn of this.profile.price_nodes) pn.sources = pn.sources || [];   // items the node prices (empty = catalogue)
+    for (const t of this.profile.triggers) { t.watch = t.watch || []; t.targets = t.targets || []; }
   }
 
   // effective dataset id for a window (defaults to its own id)
@@ -48,13 +51,19 @@ export class GraphModel {
       sites.push({ decl: true, get: () => this.datasetOf(w), set: (v) => { w.dataset = v; } });
     for (const d of this.profile.datasets || [])
       sites.push({ decl: true, get: () => d.id, set: (v) => { d.id = v; } });
-    for (const pn of this.profile.price_nodes || [])
+    for (const pn of this.profile.price_nodes || []) {
       sites.push({ decl: true, get: () => pn.dataset, set: (v) => { pn.dataset = v; } });
+      (pn.sources || []).forEach((_, i) =>                            // priced-item sources are REFs
+        sites.push({ decl: false, get: () => pn.sources[i], set: (v) => { pn.sources[i] = v; } }));
+    }
     for (const s of this.profile.subsets || []) {                     // view inputs are REFs
       sites.push({ decl: false, get: () => s.dataset, set: (v) => { s.dataset = v; } });   // legacy single
       (s.datasets || []).forEach((_, i) =>
         sites.push({ decl: false, get: () => s.datasets[i], set: (v) => { s.datasets[i] = v; } }));
     }
+    for (const t of this.profile.triggers || [])                      // on_change watch are REFs
+      (t.watch || []).forEach((_, i) =>
+        sites.push({ decl: false, get: () => t.watch[i], set: (v) => { t.watch[i] = v; } }));
     return sites;
   }
 
@@ -100,6 +109,7 @@ export class GraphModel {
     for (const ds of this.datasets()) ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
     for (const s of this.profile.subsets || []) ns.push({ id: `sub:${s.id}`, type: "subset", ref: s });
     for (const pn of this.profile.price_nodes || []) ns.push({ id: `price:${pn.id}`, type: "price", ref: pn });
+    for (const t of this.profile.triggers || []) ns.push({ id: `trigger:${t.id}`, type: "trigger", ref: t });
     for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
     return ns;
   }
@@ -139,8 +149,26 @@ export class GraphModel {
         const from = this.subsetDef(inp) ? `sub:${inp}` : `ds:${inp}`;
         es.push({ from, to: `sub:${s.id}`, kind: "data" });
       }
-    // a price producer WRITES into its output dataset (producer -> dataset)
-    for (const pn of this.profile.price_nodes || []) es.push({ from: `price:${pn.id}`, to: `ds:${pn.dataset}`, kind: "data" });
+    // a price producer WRITES into its output dataset (producer -> dataset), and READS its
+    // item list from any wired source dataset/view (source -> producer); empty = whole catalogue.
+    for (const pn of this.profile.price_nodes || []) {
+      es.push({ from: `price:${pn.id}`, to: `ds:${pn.dataset}`, kind: "data" });
+      for (const src of pn.sources || []) {
+        if (src === pn.dataset) continue;   // never wire a node to its own output
+        const from = this.subsetDef(src) ? `sub:${src}` : `ds:${src}`;
+        es.push({ from, to: `price:${pn.id}`, kind: "data" });
+      }
+    }
+    // a trigger FIRES its target price nodes (trigger -> price); an on_change trigger also
+    // WATCHES datasets (watched -> trigger) so the line shows what wakes it.
+    for (const t of this.profile.triggers || []) {
+      for (const pid of t.targets || []) if (this.priceNode(pid)) es.push({ from: `trigger:${t.id}`, to: `price:${pid}`, kind: "trigger" });
+      if (t.kind === "on_change")
+        for (const w of t.watch || []) {
+          const from = this.subsetDef(w) ? `sub:${w}` : `ds:${w}`;
+          es.push({ from, to: `trigger:${t.id}`, kind: "watch" });
+        }
+    }
     for (const d of this.profile.dictionaries || []) es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
     return es;
   }
@@ -182,6 +210,54 @@ export class GraphModel {
     const pn = this.priceNode(id);
     if (pn && (mode === "statistics" || mode === "orders")) pn.mode = mode;
   }
+  // a node's priced-item sources (datasets/views). Empty = the whole catalogue. A node may
+  // not source its own output dataset (a self-loop). Returns true when the wire was added.
+  addPriceSource(id, ds) {
+    const pn = this.priceNode(id);
+    if (!pn || !ds || ds === pn.dataset) return false;
+    pn.sources = pn.sources || [];
+    if (pn.sources.includes(ds)) return false;
+    pn.sources.push(ds);
+    return true;
+  }
+  removePriceSource(id, ds) { const pn = this.priceNode(id); if (pn) pn.sources = (pn.sources || []).filter((d) => d !== ds); }
+
+  // ---- triggers: fire price-node sweeps on a condition ---------------------
+  trigger(id) { return (this.profile.triggers || []).find((t) => t.id === id) || null; }
+  addTrigger(kind = "interval") {
+    this.profile.triggers = this.profile.triggers || [];
+    let n = 1, id = "trigger";
+    while (this.trigger(id)) id = `trigger_${++n}`;
+    this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true });
+    return id;
+  }
+  removeTrigger(id) { this.profile.triggers = (this.profile.triggers || []).filter((t) => t.id !== id); }
+  renameTrigger(oldId, newId) {
+    newId = (newId || "").trim();
+    if (!newId || newId === oldId || this.trigger(newId)) return false;
+    this.trigger(oldId).id = newId;
+    return true;
+  }
+  setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "on_change", "manual"].includes(kind)) t.kind = kind; }
+  setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
+  addTriggerTarget(id, pid) {
+    const t = this.trigger(id);
+    if (!t || !pid || !this.priceNode(pid)) return false;
+    t.targets = t.targets || [];
+    if (t.targets.includes(pid)) return false;
+    t.targets.push(pid);
+    return true;
+  }
+  removeTriggerTarget(id, pid) { const t = this.trigger(id); if (t) t.targets = (t.targets || []).filter((p) => p !== pid); }
+  addTriggerWatch(id, ds) {
+    const t = this.trigger(id);
+    if (!t || !ds) return false;
+    t.watch = t.watch || [];
+    if (t.watch.includes(ds)) return false;
+    t.watch.push(ds);
+    return true;
+  }
+  removeTriggerWatch(id, ds) { const t = this.trigger(id); if (t) t.watch = (t.watch || []).filter((d) => d !== ds); }
 
   // ---- dictionaries: game-level word lists for fuzzy OCR matching ----------
   dictionary(id) { return (this.profile.dictionaries || []).find((d) => d.id === id) || null; }

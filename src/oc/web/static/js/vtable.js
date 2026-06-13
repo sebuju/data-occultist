@@ -367,7 +367,9 @@ export class VTable {
     this._sortView();
     if (this.expandedRow && !this.filtered.includes(this.expandedRow)) this._collapse();   // opened row filtered out
     const total = this.rows.length, shown = this.filtered.length;
-    this.count.textContent = shown === total ? `${total} rows` : `${shown} / ${total}`;
+    // count is a search result — only meaningful while filtering; hide it when nothing's searched
+    this.count.hidden = !this.pred;
+    this.count.textContent = this.pred ? `${shown} / ${total}` : "";
     this.scroll.scrollTop = 0;
     this._applyHeight();
   }

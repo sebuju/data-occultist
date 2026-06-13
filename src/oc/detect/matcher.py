@@ -46,6 +46,28 @@ class DetectMatcher:
     def __init__(self, ocr: OcrEngine, profile_dir: Path | str) -> None:
         self._ocr = ocr
         self._dir = Path(profile_dir)
+        # Per-frame OCR memo: classify() tests every window, and many windows reuse
+        # the SAME landmark box (the title bar 'INVENTORY'/'NAME'), so without this a
+        # frame OCRs the same pixels a dozen times. Keyed by box; reset when the frame
+        # object changes (a held reference keeps identity stable while it's cached).
+        self._memo: dict[tuple[int, int, int, int], tuple[str, float]] = {}
+        self._memo_frame: Frame | None = None
+
+    def _read_text_box(self, frame: Frame, box) -> tuple[str, float]:
+        """Recognition-only read of one landmark box, memoised per frame. ``read_line``
+        skips text DETECTION (the dominant OCR cost) — a detect box bounds one label, so
+        the caller already knows it's a single line. Many times cheaper than the full
+        ``read_region``/``read_image`` pass used before."""
+        if frame is not self._memo_frame:
+            self._memo = {}
+            self._memo_frame = frame
+        key = (box.x, box.y, box.w, box.h)
+        cached = self._memo.get(key)
+        if cached is None:
+            crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
+            cached = self._ocr.read_line(crop) if crop.size else ("", 0.0)
+            self._memo[key] = cached
+        return cached
 
     def score(self, det: DetectDef, frame: Frame) -> float:
         """Return a 0..1 confidence that this detector is present."""
@@ -55,9 +77,8 @@ class DetectMatcher:
             crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
             return best_match(crop, tmpl)
         if det.text:
-            lines = self._ocr.read_region(frame, box)
-            joined = " ".join(ln.text for ln in lines).strip().lower()
-            return text_match_score(det.text.lower(), joined, det.included)
+            text, _conf = self._read_text_box(frame, box)
+            return text_match_score(det.text.lower(), text.strip().lower(), det.included)
         return 0.0
 
     def matches(self, det: DetectDef, frame: Frame) -> bool:

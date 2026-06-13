@@ -22,6 +22,17 @@ const W_USE = 12;       // per line already on a cell — high, so a line takes 
                         // cells + a couple of turns) rather than needlessly crossing/overlapping
                         // another; it still crosses when genuinely boxed in (detour costs more)
 const W_TURN = 3;       // changing direction
+// A CORNER landing on a cell another line already occupies is the worst for readability — you
+// can't tell which line turns where. Make it very costly (but finite, so a boxed-in line still
+// completes): the router gives up clearance/breathing-room (cheap, W_CLEAR) long before it
+// puts a turn on top of another line. A straight crossing is still only W_USE.
+const W_TURN_ON_USED = 80;
+// A line must enter a port (and especially an ARROWHEAD) dead-straight from behind — a turn
+// right at the port reads as the line stabbing the arrow's SIDE. The router reserves this many
+// cells of straight run leaving the out-port and entering the arrow (see route()/_portCell):
+// A* starts/ends that far out on each normal, so any turn it makes is pushed at least this far
+// back from the port. Clamped IN toward a port that's boxed in, so such a line still completes.
+const STUB_CELLS = 3;
 // One ring, but as costly as a full overlap. A parallel line therefore won't sit at
 // distance 1 (10px, reads as touching) — it skips to distance 2 (~20px, a clear gap).
 // Distance 2+ is FREE, so there's no outward taper to scatter the lines: the clear-field
@@ -119,10 +130,12 @@ export class EdgeRouter {
   // BETWEEN grouped nodes. Node rects stay hard obstacles (W_BLOCK), so it never draws over one.
   route(p1, d1, p2, d2, relax = false) {
     const sd = DIR_CODE[d1] ?? 1, gd = DIR_CODE[d2] ?? 0;
-    // start/goal one cell outside the ports, in open space away from their own nodes
-    const sx = this._cx(p1[0] + DIRS[sd][0] * this.cell), sy = this._cy(p1[1] + DIRS[sd][1] * this.cell);
-    const gx = this._cx(p2[0] + DIRS[gd][0] * this.cell), gy = this._cy(p2[1] + DIRS[gd][1] * this.cell);
-    const start = this._i(sx, sy), goal = this._i(gx, gy);
+    // Start/goal sit STUB_CELLS out from the ports along their normals (clamped in toward the
+    // port by anything in the way). A* routes between those, and p1/p2 are then appended — so
+    // the segment touching each port is a guaranteed straight run of that many cells. The LINE
+    // therefore always leaves the out-port and enters the arrow dead-straight from behind; any
+    // turn A* makes is pushed at least STUB_CELLS back from the port, never onto the arrowhead.
+    const start = this._portCell(p1, sd, STUB_CELLS), goal = this._portCell(p2, gd, STUB_CELLS);
 
     const cells = this._astar(start, goal, sd, relax);
     const centers = cells.map((i) => this._center(i % this.cols, (i / this.cols) | 0));
@@ -132,10 +145,15 @@ export class EdgeRouter {
     // right at the port. Pull the leading/trailing colinear run onto the port's axis: the
     // stub then leaves/enters dead straight and the off-axis slack is absorbed at the first
     // real turn instead of as a wart by the node.
-    snapRun(centers, p1, d1, true);
-    snapRun(centers, p2, d2, false);
+    snapStubs(centers, p1, d1, p2, d2);
     const pts = simplify([p1, ...centers, p2]);
     this._centerJog(pts);   // near-straight lines turn in the MIDDLE, not by an endpoint
+    // Hard rule: the segment touching a port must run dead-straight along that port's normal.
+    // The arrowhead is auto-oriented to the final segment's tangent, so a diagonal final
+    // segment rotates it and the line looks like it stabs the arrow's SIDE instead of entering
+    // its flat back. Snap the endpoint's neighbour onto the port axis to force a square entry.
+    straightenStub(pts, d1, true);
+    straightenStub(pts, d2, false);
     this.stampPath(pts);    // reserve the FINAL drawn geometry (post-jog) so the next line avoids it
     return pts;
   }
@@ -195,14 +213,21 @@ export class EdgeRouter {
     return best;
   }
 
-  // [node-clear?, count of already-used cells] along a straight span.
+  // [node-clear?, count of already-used cells] along a straight span. The two ENDPOINT
+  // cells are exempt from the node-hit test: a span fed by _centerJog starts/ends at a PORT,
+  // which sits on its own node's rim cell and so always reads as blocked — counting it would
+  // reject every candidate lane and the jog could never re-centre off an endpoint. Exempting
+  // the whole rim cell (not just the exact sample) is needed because the port is mid-cell, so
+  // samples within half a cell of it map to the same blocked cell. A span that truly crosses
+  // a node still blocks INTERIOR cells, so this can't miss a real intrusion.
   _laneScore(x1, y1, x2, y2) {
     const steps = Math.ceil(Math.hypot(x2 - x1, y2 - y1) / (this.cell / 2)) || 1;
+    const c0 = this._i(this._cx(x1), this._cy(y1)), c1 = this._i(this._cx(x2), this._cy(y2));
     let used = 0;
     for (let s = 0; s <= steps; s++) {
       const t = s / steps;
       const i = this._i(this._cx(x1 + (x2 - x1) * t), this._cy(y1 + (y2 - y1) * t));
-      if (this.blocked[i]) return [false, 0];
+      if (this.blocked[i] && i !== c0 && i !== c1) return [false, 0];
       if (this.usage[i] > 0) used++;
     }
     return [true, used];
@@ -216,11 +241,24 @@ export class EdgeRouter {
   // lines already there. Infinity only if truly unreachable (soft obstacles → rare).
   routeCost(p1, d1, p2, d2, relax = false) {
     const sd = DIR_CODE[d1] ?? 1, gd = DIR_CODE[d2] ?? 0;
-    const sx = this._cx(p1[0] + DIRS[sd][0] * this.cell), sy = this._cy(p1[1] + DIRS[sd][1] * this.cell);
-    const gx = this._cx(p2[0] + DIRS[gd][0] * this.cell), gy = this._cy(p2[1] + DIRS[gd][1] * this.cell);
-    this._astar(this._i(sx, sy), this._i(gx, gy), sd, relax);   // fills g[]/seen[] for this gen
-    const goal = this._i(gx, gy);
+    const goal = this._portCell(p2, gd, STUB_CELLS);
+    this._astar(this._portCell(p1, sd, STUB_CELLS), goal, sd, relax);   // fills g[]/seen[] for this gen
     return this.seen[goal] === this.gen ? this.g[goal] : Infinity;
+  }
+
+  // The grid cell `k` cells out from port `p` along outward direction `di`, clamped IN toward
+  // the port so the straight run from the port to that cell never crosses a node (stop one
+  // cell before the first blocked/out-of-range cell). Floor of 1 cell (the old behaviour).
+  _portCell(p, di, k) {
+    const dx = DIRS[di][0], dy = DIRS[di][1];
+    let cell = this._i(this._cx(p[0] + dx * this.cell), this._cy(p[1] + dy * this.cell));
+    for (let kk = 2; kk <= k; kk++) {
+      const cx = this._cx(p[0] + dx * this.cell * kk), cy = this._cy(p[1] + dy * this.cell * kk);
+      const i = this._i(cx, cy);
+      if (this.blocked[i]) break;
+      cell = i;
+    }
+    return cell;
   }
 
   _astar(start, goal, startDir, relax = false) {
@@ -243,7 +281,9 @@ export class EdgeRouter {
         // usage (other lines) and W_BLOCK (node rects) still apply — never draw over a node.
         let step = 1 + (relax ? 0 : this.clearCost[ni]) + this.usage[ni] * W_USE;
         if (this.blocked[ni]) step += W_BLOCK;
-        if (cd !== m) step += W_TURN;
+        // a turn corners at `cur`; never put that corner on top of another line if avoidable.
+        // (Straight port/arrow stubs are guaranteed geometrically by _portCell, not here.)
+        if (cd !== m) step += W_TURN + (this.usage[cur] > 0 ? W_TURN_ON_USED : 0);
         const ng = gc + step;
         if (seen[ni] !== gen || ng < g[ni]) {
           seen[ni] = gen; g[ni] = ng; came[ni] = cur; dir[ni] = m;
@@ -301,21 +341,50 @@ export class EdgeRouter {
   }
 }
 
-// Pull the run of grid centres that's colinear with the port's exit onto the port's own
-// axis. For an L/R exit the line runs horizontally, so its leading cells share a y (the
-// grid y, half a cell off the port); rewrite that y to the port's y so the stub is
-// straight. `fromStart` does the leading run (port p1), else the trailing run (port p2).
-function snapRun(centers, p, d, fromStart) {
-  if (!centers.length) return;
-  const ax = (d === "L" || d === "R") ? 1 : 0;   // coordinate held constant along the exit
-  const v = p[ax], n = centers.length;
-  if (fromStart) {
-    const lock = centers[0][ax];
-    for (let i = 0; i < n && centers[i][ax] === lock; i++) centers[i][ax] = v;
-  } else {
-    const lock = centers[n - 1][ax];
-    for (let i = n - 1; i >= 0 && centers[i][ax] === lock; i--) centers[i][ax] = v;
+// Pull the grid centres that run colinear with each port's exit onto that port's own axis,
+// so the stub leaves/enters dead straight (the grid centres sit half a cell off the port
+// axis). For an L/R exit the line runs horizontally, so its leading cells share a y; rewrite
+// that y to the port's y. The leading run is snapped to p1, the trailing run to p2.
+//
+// The two ports are snapped TOGETHER (not by two independent passes) because of one
+// degenerate case: when both ports exit the SAME orientation but at different perpendicular
+// coords, A* returns a single straight corridor that IS both the leading and the trailing
+// run. Snapping it to p1 then to p2 just makes the second win — the path leaves one port on a
+// diagonal (the line feeds the port/arrow from the side). Detect that overlap and split the
+// run at its midpoint instead: each half takes its own port's coord and the step between them
+// becomes a clean mid-run jog (later re-centred by _centerJog).
+function snapStubs(centers, p1, d1, p2, d2) {
+  const n = centers.length;
+  if (!n) return;
+  const ax1 = (d1 === "L" || d1 === "R") ? 1 : 0;
+  const ax2 = (d2 === "L" || d2 === "R") ? 1 : 0;
+  let lead = 1;  while (lead < n && centers[lead][ax1] === centers[0][ax1]) lead++;
+  let trail = 1; while (trail < n && centers[n - 1 - trail][ax2] === centers[n - 1][ax2]) trail++;
+  if (ax1 === ax2 && lead + trail > n) {            // one straight run shared by both ports
+    const mid = n >> 1, mv = ax1 ^ 1;               // mv: axis the run travels along
+    for (let i = 0; i < mid; i++) centers[i][ax1] = p1[ax1];
+    for (let i = mid; i < n; i++) centers[i][ax2] = p2[ax2];
+    if (mid > 0) centers[mid][mv] = centers[mid - 1][mv];   // square the jog (shared travel coord) so it's a clean step, not a diagonal
+    return;
   }
+  for (let i = 0; i < lead; i++) centers[i][ax1] = p1[ax1];
+  for (let i = n - trail; i < n; i++) centers[i][ax2] = p2[ax2];
+}
+
+// Force the segment touching a port to run dead-straight along the port normal, so the
+// auto-oriented arrowhead's flat back faces the line (a diagonal final segment rotates the
+// marker and looks like the line stabs the arrow's side). ONLY the endpoint's inward neighbour
+// is snapped onto the port axis — no geometry is pushed outward (that ran blind into other
+// lines). A clear straight lead-in comes from the router's collision-aware approach instead.
+function straightenStub(pts, d, fromStart) {
+  const n = pts.length;
+  if (n < 2) return;
+  const ax = (d === "L" || d === "R") ? 1 : 0;   // coordinate held constant along the normal
+  const e = fromStart ? pts[0] : pts[n - 1];
+  const nb = fromStart ? pts[1] : pts[n - 2];
+  const prev = nb[ax];
+  nb[ax] = e[ax];
+  if (nb[0] === e[0] && nb[1] === e[1]) nb[ax] = prev;   // don't create a zero-length stub
 }
 
 // Drop collinear midpoints so straight runs are single segments (neatness).

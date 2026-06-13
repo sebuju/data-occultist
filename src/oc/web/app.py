@@ -1,4 +1,4 @@
-"""FastAPI application factory for the teaching UI."""
+"""FastAPI application factory for the data-rig web UI."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from ..profile import list_profiles, load_profile
 from .deps import get_locator, get_settings
 from .routes import (
+    activity,
     capture,
     dictionaries,
     flow,
@@ -22,6 +23,7 @@ from .routes import (
     prices,
     profiles,
     suggest,
+    triggers,
 )
 
 _STATIC = Path(__file__).parent / "static"
@@ -61,11 +63,18 @@ async def lifespan(_app: FastAPI):
     except Exception:  # noqa: BLE001 - best-effort
         pass
     threading.Thread(target=_warm, daemon=True).start()
+    # keep interval triggers firing (+ feed the Activity panel's countdown) while only the
+    # teach UI is up; safe — firing is guarded and cross-process file-locked.
+    try:
+        from .trigger_sched import start as _start_triggers
+        _start_triggers(get_settings())
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
     yield
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="oc teaching UI", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="data-rig", version="0.1.0", lifespan=lifespan)
 
     # Surface the FULL traceback of any unhandled error to the client (this is a local
     # teaching tool) AND to the server log, so a 500 isn't an opaque "Internal Server
@@ -90,6 +99,8 @@ def create_app() -> FastAPI:
     app.include_router(precapture.router)
     app.include_router(ocr.router)
     app.include_router(prices.router)
+    app.include_router(activity.router)
+    app.include_router(triggers.router)
     app.include_router(dictionaries.router)
     # Serve the single-page front-end at root.
     app.mount("/", StaticFiles(directory=str(_STATIC), html=True), name="static")

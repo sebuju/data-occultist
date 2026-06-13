@@ -242,6 +242,11 @@ class PrecaptureSession:
         self._processed = 0
         self._read = 0          # records read this run (above the confidence floor)
         self._no_key = 0        # records dropped because they had no value under the dataset key
+        # recognition during processing: the just-classified window/state, plus a per-frame
+        # tally keyed "window/state" ("" = a miss, i.e. classify matched no window).
+        self._cur_window: str | None = None
+        self._cur_state: str | None = None
+        self._recog: dict[str, int] = {}
         self._t_decode = self._t_classify = self._t_read = 0.0   # perf accumulators (s)
         self._t0 = 0.0
         self._t_end = 0.0       # monotonic time the run finished; freezes fps once idle/done
@@ -641,6 +646,8 @@ class PrecaptureSession:
                 self._read = 0
                 self._no_key = 0
                 self._staged = {}
+                self._recog = {}
+            self._cur_window = self._cur_state = None
             self._phase = Phase.processing
             self._worker_kind = "processing"
             self._error = None
@@ -675,6 +682,8 @@ class PrecaptureSession:
                 time.sleep(0.05)
 
             dt_decode = dt_classify = dt_read = 0.0
+            cur_window: str | None = None   # window/state this frame classified to (None = miss)
+            cur_state: str | None = None
             try:
                 # lazy: in-RAM bytes (live recording) or read the frame file now (loaded session)
                 buf = src if isinstance(src, (bytes, bytearray)) else src.read_bytes()
@@ -699,6 +708,7 @@ class PrecaptureSession:
 
                     if match is not None:
                         window_id, state_id = match
+                        cur_window, cur_state = window_id, state_id
                         window = self._profile.window(window_id)
                         if window is not None and self._state_allows_save(window, state_id):
                             t = time.perf_counter()
@@ -715,6 +725,9 @@ class PrecaptureSession:
                 self._t_decode += dt_decode
                 self._t_classify += dt_classify
                 self._t_read += dt_read
+                self._cur_window, self._cur_state = cur_window, cur_state
+                key = f"{cur_window}/{cur_state}" if cur_window is not None else ""
+                self._recog[key] = self._recog.get(key, 0) + 1
                 checkpoint = self._processed % 25 == 0
             if checkpoint:   # periodic OCR checkpoint: a process kill loses ≤25 frames of work
                 self._save_ocr_state()
@@ -959,6 +972,13 @@ class PrecaptureSession:
                 "read": self._read,
                 "fps": round(fps, 1),
                 "timing": self._timing_locked(),
+                # recognition: the current frame's window/state, plus a per-frame tally
+                # (count-desc; the "" key — a miss, classified to no window — flagged for the UI)
+                "window": self._cur_window,
+                "state": self._cur_state,
+                "recognized": [{"key": k, "count": n, "miss": k == ""}
+                               for k, n in sorted(self._recog.items(),
+                                                  key=lambda kv: kv[1], reverse=True)],
                 "error": self._error,
                 "warning": self._warning(),
                 "datasets": datasets,

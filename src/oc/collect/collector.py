@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
@@ -31,6 +31,22 @@ from ..store import DatasetStore, KeyMap
 from .reader import Record, RegionReader
 from .sink import RecordSink
 from .stability import Confirmer
+
+
+def _detect_search_fracs(profile: GameProfile) -> list:
+    """Every window/state detector's search region (as fractions). The window+state a
+    frame classifies to depends ONLY on these regions, so hashing them lets the live
+    loop skip re-classifying an unchanged screen (precapture caches the same way)."""
+    out = []
+    for w in profile.windows:
+        for d in w.detect:
+            if d.enabled:
+                out.append(d.search.to_fraction())
+        for s in w.states:
+            for d in s.detect:
+                if d.enabled:
+                    out.append(d.search.to_fraction())
+    return out
 
 
 def _load_cutouts(engine: Engine, profile: GameProfile) -> dict:
@@ -64,6 +80,8 @@ class TickResult:
     kept: int = 0       # passed the confidence floor
     new: int = 0        # newly confirmed + written
     total: int = 0      # distinct records confirmed so far
+    dataset: str | None = None              # the dataset records were written to
+    changed: list[dict] = field(default_factory=list)  # values added/updated this tick (for triggers)
 
 
 class Collector:
@@ -96,6 +114,11 @@ class Collector:
         # Per-window cache of (region signature, last read records) so an unchanged
         # view re-feeds the confirmer without paying for OCR again.
         self._frame_cache: dict[str, tuple[int, list[Record]]] = {}
+        # Detector-region signature -> last classification, so an unchanged screen skips
+        # the classify pass (which runs an OCR read per text detector across every
+        # window). Single slot: ticks see one screen at a time.
+        self._detect_fracs = _detect_search_fracs(profile)
+        self._classify_cache: tuple[int | None, tuple[str, str | None] | None] = (None, None)
 
     # ---- save-gating -------------------------------------------------------
 
@@ -139,6 +162,33 @@ class Collector:
         floor = self._tuning.min_confidence
         return [r for r in records if r.confidence >= floor]
 
+    def _detect_signature(self, frame) -> int | None:
+        """Cheap downsampled hash of the detector search regions. Identical regions ->
+        identical classification, so the classify pass can be skipped."""
+        img = frame.image
+        if img is None or img.size == 0 or not self._detect_fracs:
+            return None
+        cw, ch = frame.client.w, frame.client.h
+        h = 0
+        for fb in self._detect_fracs:
+            pb = fb.to_pixels(cw, ch)
+            crop = img[pb.y : pb.y + pb.h, pb.x : pb.x + pb.w]
+            if crop.size:
+                sy = max(1, crop.shape[0] // 16)
+                sx = max(1, crop.shape[1] // 16)
+                h ^= hash(crop[::sy, ::sx].tobytes())
+        return h
+
+    def _classify(self, frame):
+        """Classify, reusing the last result while the detector regions are unchanged."""
+        sig = self._detect_signature(frame)
+        csig, cres = self._classify_cache
+        if sig is not None and sig == csig:
+            return cres
+        match = self._engine.classifier.classify(frame, self._profile)
+        self._classify_cache = (sig, match)
+        return match
+
     # ---- pipeline ----------------------------------------------------------
 
     def tick(self) -> TickResult:
@@ -150,7 +200,7 @@ class Collector:
             return TickResult(TickStatus.not_foreground)
 
         frame = eng.capture.grab_window(win)
-        match = eng.classifier.classify(frame, self._profile)
+        match = self._classify(frame)
         if match is None:
             return TickResult(TickStatus.unrecognised)
 
@@ -178,6 +228,7 @@ class Collector:
 
         dataset = window.dataset_id
         new = 0
+        changed: list[dict] = []
         if self._explicit_sink is not None:
             for rec in confirmed:
                 self._explicit_sink.write(rec)
@@ -191,6 +242,7 @@ class Collector:
                     observed.add(key)
                 if store.record_seen(rec.values) is not None:
                     new += 1
+                    changed.append(dict(rec.values))   # added/updated -> triggers may price it
 
         return TickResult(
             TickStatus.saved,
@@ -200,15 +252,34 @@ class Collector:
             kept=len(kept),
             new=new,
             total=confirmer.count,
+            dataset=dataset,
+            changed=changed,
         )
 
+    def _build_triggers(self):
+        """A :class:`TriggerRunner` when the profile declares any trigger, else None.
+        Imported lazily so a collector with no triggers pays nothing for the price stack."""
+        if not self._profile.triggers:
+            return None
+        from .triggers import TriggerRunner
+        return TriggerRunner(self._profile, self._engine.settings.data_dir)
+
     def run(self, interval: float = 1.0, on_tick=None) -> None:
-        """Loop ticks until interrupted. ``on_tick(TickResult)`` is called each pass."""
+        """Loop ticks until interrupted. ``on_tick(TickResult)`` is called each pass.
+
+        After each tick, triggers are evaluated: ``on_change`` triggers fire for records
+        this tick added/updated (pricing only those keys), and ``interval`` triggers fire
+        when due. Sweeps run in their own background threads, so capture never blocks."""
+        triggers = self._build_triggers()
         try:
             while True:
                 result = self.tick()
                 if on_tick:
                     on_tick(result)
+                if triggers is not None:
+                    if result.status is TickStatus.saved and result.changed:
+                        triggers.on_change(result.dataset, result.changed)
+                    triggers.tick()
                 time.sleep(interval)
         except KeyboardInterrupt:
             pass

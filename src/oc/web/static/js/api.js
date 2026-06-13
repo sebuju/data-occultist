@@ -248,6 +248,20 @@ export const prices = {
   status: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/status?dataset=${encodeURIComponent(dataset)}`).then((r) => r.json()),
 };
 
+// Triggers: fire a price-node sweep on a condition. `list` shows wiring + per-target status;
+// `fire` runs a trigger's sweeps now (for testing outside the collector loop).
+export const triggers = {
+  list: (game) => tfetch(`/api/triggers/${_pg(game)}`).then((r) => ok(r, "triggers").then((x) => x.json())),
+  fire: (game, id) => tfetch(`/api/triggers/${_pg(game)}/${encodeURIComponent(id)}/fire`, { method: "POST" }, 30_000).then((r) => ok(r, "fire trigger").then((x) => x.json())),
+};
+
+// Activity: one poll for the floating Activity panel — every running price sweep, the
+// precapture worker (when busy), and the enabled triggers + their next-fire countdown.
+// Returns { sweeps:[...], precapture: status|null, triggers:[...] }.
+export const activity = {
+  get: (game, signal) => tfetch(`/api/activity/${_pg(game)}`, { signal }).then((r) => r.json()),
+};
+
 // Dictionaries: the shared term files under config/dictionaries/. The picker lists
 // what's available (source + word count); get() fetches one file's terms so a newly
 // referenced dictionary node shows them at once.

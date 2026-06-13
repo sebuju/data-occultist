@@ -13,6 +13,8 @@
 // Geometry recomputes from live member rects every render, so a group box always hugs
 // its nodes — dragging a member (or the whole group) just re-renders.
 
+import { beginDrag } from "./dragresize.js";   // shared drag-loop primitive
+
 const PAD = 20;          // uniform gap between members and the group outline (all 4 sides,
                          // incl. between the title band's bottom and the first node) — one GRID
                          // step, so the outline lands on the canvas grid like the nodes do
@@ -63,18 +65,18 @@ export function collect() {
 // CSS defaults (panel / text). Colored schemes pair a saturated band with dark on-accent text.
 export const SCHEMES = [
   { name: "slate", bg: "#191c21cc", style: "none", outline: "#2c313c", titleBg: "", titleColor: "" },
-  { name: "blue", bg: "#5aa9e618", style: "solid", outline: "#5aa9e6", titleBg: "#5aa9e6", titleColor: "#08121d" },
-  { name: "cyan", bg: "#5ad7e618", style: "solid", outline: "#5ad7e6", titleBg: "#5ad7e6", titleColor: "#08121d" },
-  { name: "teal", bg: "#5ae6c218", style: "solid", outline: "#5ae6c2", titleBg: "#5ae6c2", titleColor: "#08121d" },
-  { name: "green", bg: "#7ddc7d18", style: "solid", outline: "#7ddc7d", titleBg: "#7ddc7d", titleColor: "#08121d" },
-  { name: "lime", bg: "#b6e65a18", style: "solid", outline: "#b6e65a", titleBg: "#b6e65a", titleColor: "#0e1408" },
-  { name: "amber", bg: "#e6c25a18", style: "solid", outline: "#e6c25a", titleBg: "#e6c25a", titleColor: "#08121d" },
-  { name: "orange", bg: "#e69a5a18", style: "solid", outline: "#e69a5a", titleBg: "#e69a5a", titleColor: "#1a0e08" },
-  { name: "red", bg: "#e6685a18", style: "solid", outline: "#e6685a", titleBg: "#e6685a", titleColor: "#1a0a08" },
-  { name: "pink", bg: "#e0556b18", style: "solid", outline: "#e0556b", titleBg: "#e0556b", titleColor: "#1a0a0e" },
-  { name: "magenta", bg: "#e65ac218", style: "solid", outline: "#e65ac2", titleBg: "#e65ac2", titleColor: "#1a081a" },
-  { name: "purple", bg: "#c98ae618", style: "solid", outline: "#c98ae6", titleBg: "#c98ae6", titleColor: "#08121d" },
-  { name: "indigo", bg: "#8a9ae618", style: "solid", outline: "#8a9ae6", titleBg: "#8a9ae6", titleColor: "#08121d" },
+  { name: "blue", bg: "#5aa9e618", style: "none", outline: "#5aa9e6", titleBg: "#5aa9e6", titleColor: "#08121d" },
+  { name: "cyan", bg: "#5ad7e618", style: "none", outline: "#5ad7e6", titleBg: "#5ad7e6", titleColor: "#08121d" },
+  { name: "teal", bg: "#5ae6c218", style: "none", outline: "#5ae6c2", titleBg: "#5ae6c2", titleColor: "#08121d" },
+  { name: "green", bg: "#7ddc7d18", style: "none", outline: "#7ddc7d", titleBg: "#7ddc7d", titleColor: "#08121d" },
+  { name: "lime", bg: "#b6e65a18", style: "none", outline: "#b6e65a", titleBg: "#b6e65a", titleColor: "#0e1408" },
+  { name: "amber", bg: "#e6c25a18", style: "none", outline: "#e6c25a", titleBg: "#e6c25a", titleColor: "#08121d" },
+  { name: "orange", bg: "#e69a5a18", style: "none", outline: "#e69a5a", titleBg: "#e69a5a", titleColor: "#1a0e08" },
+  { name: "red", bg: "#e6685a18", style: "none", outline: "#e6685a", titleBg: "#e6685a", titleColor: "#1a0a08" },
+  { name: "pink", bg: "#e0556b18", style: "none", outline: "#e0556b", titleBg: "#e0556b", titleColor: "#1a0a0e" },
+  { name: "magenta", bg: "#e65ac218", style: "none", outline: "#e65ac2", titleBg: "#e65ac2", titleColor: "#1a081a" },
+  { name: "purple", bg: "#c98ae618", style: "none", outline: "#c98ae6", titleBg: "#c98ae6", titleColor: "#08121d" },
+  { name: "indigo", bg: "#8a9ae618", style: "none", outline: "#8a9ae6", titleBg: "#8a9ae6", titleColor: "#08121d" },
 ];
 // Default group look — a MUTED grey, distinct from the accent blue used for the live
 // multi-selection (an accent outline made every group look perpetually selected).
@@ -290,19 +292,13 @@ function onTitlePress(gid, ev) {
   ev.stopPropagation();   // don't start a marquee / deselect on the canvas
   const g = byId(gid);
   if (!g) return;
-  const start = { x: ev.clientX, y: ev.clientY };
-  let moved = false;
-  const onMove = (e) => {
-    if (moved) return;
-    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < DRAG_THRESH) return;
-    moved = true;
-    cleanup();
-    ctx.moveMembers(g.members, ev);   // hand the drag to main's multi-move
-  };
-  const onUp = () => { cleanup(); };   // plain click does nothing — settings open via the cog only
-  function cleanup() { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }
-  document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", onUp);
+  // shared drag loop with a threshold gate; once crossed, hand the drag to main's
+  // multi-move (which runs its own beginDrag loop). A plain click does nothing — group
+  // settings open via the cog only.
+  const stop = beginDrag(ev, {
+    threshold: DRAG_THRESH,
+    onStart: () => { stop(); ctx.moveMembers(g.members, ev); },
+  });
 }
 
 // ---- options popover ------------------------------------------------------

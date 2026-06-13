@@ -10,6 +10,9 @@ import { GraphModel } from "./model.js";
 import { EdgeRouter, polylinePath } from "./route.js";
 import { buildKey, DEFAULT_KEY } from "../keys.js";
 import { priceParts, wirePriceNode } from "./price_node.js";
+import { GRID, snap, showSizeHud, hideSizeHud, addResizeGrips, beginDrag } from "./dragresize.js";
+import { createFloatWin, floatWins } from "./floatwin.js";
+import { triggerParts } from "./trigger_node.js";
 import { openDictionaryPicker } from "./dict_picker.js";
 import { enhanceTable, setTableStore } from "./table.js";
 import { VTable, setVTableStore } from "../vtable.js";
@@ -24,9 +27,10 @@ const pos = new Map();            // node id -> {x,y}
 const nodeEls = new Map();        // node id -> DOM element (built once, reused)
 const collapsed = new Set();      // collapsed node ids
 const view = { panX: 0, panY: 0, zoom: 1 };  // canvas pan/zoom
-const COLX = { game: 20, window: 300, price: 560, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, dataset: 900, subset: 1900, dictionary: 20 };
+const COLX = { game: 20, window: 300, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, dataset: 900, subset: 1900, dictionary: 20 };
 let live = {};                    // dataset -> {present,total,last_op,last_ts}
 const prevPresent = {};
+const prevLastTs = {};            // dataset -> last ledger event ts (changes on ANY batch)
 const dsTab = new Map();          // dataset -> "data" | "history" (which tab the merged node shows)
 let timer = null;
 let wire = null;                  // active drag-wire {winId, x1,y1}
@@ -171,6 +175,10 @@ function collectLayout() {
   L.open_images = [...openImages];
   L.tables = L.tables || {};
   L.groups = groups.collect();
+  // floating panels (node map / activity / precapture) travel with the profile
+  const fw = {};
+  for (const [id, w] of floatWins()) fw[id] = w.collect();
+  L.float_windows = fw;
 }
 function hydrateLayout() {
   pos.clear(); nodeSizes.clear(); collapsed.clear();
@@ -182,15 +190,17 @@ function hydrateLayout() {
   }
   pendingOpenImages = [...(L.open_images || [])];
   groups.hydrate(L.groups);
+  const fw = L.float_windows || {};
+  for (const [id, w] of floatWins()) w.hydrate(fw[id]);   // resets to defaults when absent
 }
 
-// Per-device viewport (canvas zoom/pan + minimap) ↔ the gitignored sidecar.
+// Per-device viewport (canvas zoom/pan) ↔ the gitignored sidecar. Floating panels used to
+// live here too; they're in the profile YAML now (layout.float_windows), via floatWins().
 function collectLocal() {
-  return { view: { panX: view.panX, panY: view.panY, zoom: view.zoom }, minimap: { ...nmState } };
+  return { view: { panX: view.panX, panY: view.panY, zoom: view.zoom } };
 }
 function applyLocal(local) {
   if (local?.view && Number.isFinite(local.view.zoom)) { Object.assign(view, local.view); applyView(); }
-  if (local?.minimap) { Object.assign(nmState, local.minimap); nmApplyState(); }
 }
 
 // table.js persists its per-table widths/sort into the profile's layout (so they travel
@@ -435,25 +445,7 @@ function panZoomTo(id, opts = {}) {
   panZoomToRect({ x: p.x, y: p.y, w: el.offsetWidth || 220, h: el.offsetHeight || 80 }, opts);
 }
 
-// ---- floating W×H readout shown while resizing a node (or group) -----------
-let _sizeHud = null;
-// Closest integer aspect ratio "(N:1)" / "(1:N)". Exactness is an INTEGER divisibility test
-// (a % b === 0) — no float compare, so a true ratio never reads as "~" from precision noise.
-function aspectLabel(w, h) {
-  if (!w || !h) return "";
-  const a = Math.max(w, h), b = Math.min(w, h);
-  const n = Math.max(1, Math.round(a / b));
-  const tilde = a % b === 0 ? "" : "~";
-  return ` (${tilde}${w >= h ? `${n}:1` : `1:${n}`})`;
-}
-function showSizeHud(w, h, clientX, clientY) {
-  if (!_sizeHud) { _sizeHud = document.createElement("div"); _sizeHud.className = "size-hud"; document.body.appendChild(_sizeHud); }
-  const rw = Math.round(w), rh = Math.round(h);
-  _sizeHud.textContent = `${rw} × ${rh}${aspectLabel(rw, rh)}`;
-  _sizeHud.style.left = `${clientX + 16}px`; _sizeHud.style.top = `${clientY + 16}px`;
-  _sizeHud.style.display = "";
-}
-function hideSizeHud() { if (_sizeHud) _sizeHud.style.display = "none"; }
+// (size-HUD readout + aspectLabel now live in dragresize.js, shared with panels)
 
 // ---- group resize: scale members, keep their gaps intact -------------------
 function memberBBox(snap) {
@@ -481,8 +473,8 @@ function applyGroupScale(snap, s) {
   const grow = new Map();   // id -> { dw, dh } actual growth after CSS clamping (0 if it can't resize)
   for (const n of snap) {
     const el = nodeEls.get(n.id), type = nodeTypeOf(n.id);
-    const free = !collapsed.has(n.id) && HOST_RESIZABLE.has(type);   // resizes width AND height
-    const widthOnly = !collapsed.has(n.id) && type === "item";       // item: width only; height follows its aspect
+    const free = !collapsed.has(n.id) && type !== "item";   // every node resizes width AND height…
+    const widthOnly = !collapsed.has(n.id) && type === "item";       // …except item: width only, height follows its aspect
     if (!el || (!free && !widthOnly)) { grow.set(n.id, { dw: 0, dh: 0 }); continue; }
     el.style.width = `${Math.max(GRID, G(n.w * s))}px`;              // CSS min/max-width clamps this
     if (free) el.style.height = `${Math.max(GRID, G(n.h * s))}px`;
@@ -768,8 +760,7 @@ function nodeParts(n) {
       title: `<input class="gi gi-id" data-k="name" value="${esc(g.name)}" title="game name" />`,
       body: `
         <label class="flab">process <input class="gi" data-k="proc" value="${esc((g.process_names || []).join(", "))}" placeholder="Warframe.x64.exe" /></label>
-        <label class="flab">title hint <input class="gi" data-k="title" value="${esc(g.window_title_hint || "")}" placeholder="Warframe" /></label>
-        <div class="gn-foot"><button class="addwin">+ window</button><button class="addprice">+ price</button><button class="adddict">+ dictionary</button></div>`,
+        <label class="flab">title hint <input class="gi" data-k="title" value="${esc(g.window_title_hint || "")}" placeholder="Warframe" /></label>`,
     };
   }
   if (n.type === "window") {
@@ -839,6 +830,7 @@ function nodeParts(n) {
   }
   if (n.type === "subset") return subsetParts(n.ref);
   if (n.type === "price") return priceParts(n.ref);
+  if (n.type === "trigger") return triggerParts(n.ref, model);
   if (n.type === "dictionary") {
     // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The
     // terms live in config/dictionaries/<source>; this node just references that file.
@@ -1092,10 +1084,41 @@ function wirePrice(div, n) {
     if (!model.renamePriceNode(oldId, newId)) { e.target.value = oldId; return; }
     movePos(`price:${oldId}`, `price:${newId}`); render(); autosave();
   });
+  // unwire a priced-item source (the dataset/view it prices) — removes the input edge
+  div.querySelectorAll(".pr-rmsrc").forEach((b) => b.addEventListener("click", () => {
+    model.removePriceSource(n.ref.id, b.dataset.ds); render(); autosave();
+  }));
 }
 
-const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "price"]);
-const REMOVABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "subset", "dataset", "price"]);
+// ---- trigger node: fires price-node sweeps on a condition -------------------
+
+function wireTrigger(div, n) {
+  const t = n.ref;
+  div.querySelector(".tgrename")?.addEventListener("change", (e) => {
+    const oldId = t.id, newId = (e.target.value || "").trim();
+    if (!model.renameTrigger(oldId, newId)) { e.target.value = oldId; return; }
+    movePos(`trigger:${oldId}`, `trigger:${t.id}`); render(); autosave();
+  });
+  // kind swaps the body (interval/watch blocks) AND the edges, so rebuild this node then re-render
+  div.querySelector(".tg-kind")?.addEventListener("change", (e) => {
+    model.setTriggerKind(t.id, e.target.value); rebuildNode(n.id); render(); autosave();
+  });
+  div.querySelector(".tg-interval")?.addEventListener("change", (e) => { model.setTriggerInterval(t.id, e.target.value); autosave(); });
+  // rebuildNode (not render) re-renders THIS node's chips — render() only builds NEW nodes,
+  // so an in-place chip add/remove wouldn't show. drawEdges() drops/adds the trigger→price line.
+  div.querySelector(".tg-addwatch")?.addEventListener("change", (e) => { if (model.addTriggerWatch(t.id, e.target.value)) { rebuildNode(t.id); autosave(); } });
+  div.querySelectorAll(".tg-rmwatch").forEach((b) => b.addEventListener("click", () => { model.removeTriggerWatch(t.id, b.dataset.ds); rebuildNode(t.id); autosave(); }));
+  div.querySelectorAll(".tg-rmtarget").forEach((b) => b.addEventListener("click", () => { model.removeTriggerTarget(t.id, b.dataset.p); rebuildNode(t.id); drawEdges(); autosave(); }));
+  div.querySelector(".tg-fire")?.addEventListener("click", async () => {
+    const prog = div.querySelector(".tg-prog");
+    prog.textContent = "firing…";
+    try { const r = await api.triggers.fire(model.profile.name, t.id); prog.textContent = `fired ${(r.started || []).length} sweep(s)`; refreshLive(); }
+    catch (err) { prog.textContent = String(err.message || err); }
+  });
+}
+
+const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "price", "trigger"]);
+const REMOVABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "subset", "dataset", "price", "trigger"]);
 
 // One place to remove any node; each goes through render()+autosave() so undo/redo
 // records it (autosave -> pushHistory).
@@ -1112,6 +1135,7 @@ function removeNode(n) {
   else if (n.type === "dictionary") { model.removeDictionary(n.ref.id); pos.delete(n.id); render(); autosave(); }
   else if (n.type === "subset") { model.removeSubset(n.ref.id); render(); autosave(); }
   else if (n.type === "price") { model.removePriceNode(n.ref.id); pos.delete(n.id); render(); autosave(); }
+  else if (n.type === "trigger") { model.removeTrigger(n.ref.id); pos.delete(n.id); render(); autosave(); }
   else if (n.type === "dataset") { model.removeDatasetDef(n.ref); pos.delete(n.id); purgeDatasetData(n.ref); render(); autosave(); }
   groups.forgetNodes(new Set([n.id]));   // drop the gone node from any group
   setStatus(`deleted ${n.type} ${n.ref?.id ?? n.ref ?? ""}`.trimEnd());
@@ -1215,15 +1239,27 @@ function outPortSpec(n) {
       onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setPriceDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
     };
     case "dataset": return {
-      target: "subset",
-      onDrop: (sub) => { if (model.addSubsetInput(sub, n.ref)) refreshSubsetNode(sub); },
+      // a dataset feeds a VIEW (join) or a PRICE node (price only these items)
+      target: ["subset", "price"],
+      onDrop: (id, ttype) => {
+        if (ttype === "price") { if (model.addPriceSource(id, n.ref)) rebuildNode(`price:${id}`); }
+        else if (model.addSubsetInput(id, n.ref)) refreshSubsetNode(id);
+      },
       onEmpty: (pt) => { const id = model.addSubset(n.ref); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
     };
     case "subset": return {
-      target: "subset",
+      // a view feeds another VIEW or a PRICE node (price only the rows it returns, e.g. count>0)
+      target: ["subset", "price"],
       selfId: n.ref.id,
-      onDrop: (sub) => { if (model.addSubsetInput(sub, n.ref.id)) refreshSubsetNode(sub); },
+      onDrop: (id, ttype) => {
+        if (ttype === "price") { if (model.addPriceSource(id, n.ref.id)) rebuildNode(`price:${id}`); }
+        else if (model.addSubsetInput(id, n.ref.id)) refreshSubsetNode(id);
+      },
       onEmpty: (pt) => { const id = model.addSubset(n.ref.id); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
+    };
+    case "trigger": return {
+      target: "price",
+      onDrop: (pid) => { if (model.addTriggerTarget(n.ref.id, pid)) rebuildNode(n.id); },
     };
     default: return null;
   }
@@ -1234,20 +1270,23 @@ function wireOutPort(div, n) {
   if (!port) return;
   const spec = outPortSpec(n);
   if (!spec) return;
+  div._outSpec = spec; div._outId = n.id;   // reused by placePortDots to wire per-line dots
   port.addEventListener("mousedown", (ev) => startWire(n.id, ev, spec));
 }
 
 // place a (new) node at a world-space point, grid-snapped
 function placeAt(id, pt) { pos.set(id, { x: snap(pt.x), y: snap(pt.y) }); }
 
-// the source id a drop target commits to: a dataset node's name, or a subset node's bare id
+// the source id a drop target commits to: a dataset node's name, or a node's bare id
+// (subset/price/trigger carry a prefixed node id in data-id).
 function targetIdOf(el, target) {
-  return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^sub:/, "");
+  return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|price|trigger):/, "");
 }
 
 // Host node types that resize at the NODE level (their body fills them) — one consistent
 // behaviour. Used by the initial build AND by rebuildNode to re-attach grips.
-const HOST_RESIZABLE = new Set(["dataset", "preview", "dictionary", "subset", "price"]);
+// Every node is freely resizable (width + height) EXCEPT item, which resizes width-only
+// (its height follows the cutout aspect). item is special-cased in buildNode.
 
 // Resize-handle opts shared by the initial build and every in-place rebuild. The grips live
 // in the node's innerHTML, so a rebuildNode() (which rewrites innerHTML via fillNode) WIPES
@@ -1281,13 +1320,16 @@ function buildNode(n) {
   div.id = `node-${n.id}`;
   div.dataset.id = n.id;
   fillNode(div, n);
-  if (n.type === "item") snapResize(div, {   // item node resizes by width (its cutout)
+  // item + window nodes wrap a FIXED-ASPECT canvas (cutout / captured image): resize by
+  // WIDTH only — height follows the image aspect (a free height would clip the canvas or
+  // leave a gap). Both-axis node resize is wrong for them; the rest get it below.
+  if (n.type === "item" || n.type === "window") snapResize(div, {
     onResize: () => { drawEdges(); groups.renderGroups(); }, zoom: () => view.zoom,
     left: (v) => { const p = pos.get(n.id); if (v === undefined) return p ? p.x : 0; if (p) { p.x = v; positionNode(n.id); } },
     onSettle: () => { persist.layout(); drawEdges(); groups.renderGroups(); },
   });
-  // every host node resizes at the NODE level (its body fills it) — one consistent behaviour
-  if (HOST_RESIZABLE.has(n.type)) makeNodeResizable(div, n.id);
+  // every other node resizes at the NODE level (its body fills it) — one consistent behaviour
+  else makeNodeResizable(div, n.id);
   return div;
 }
 
@@ -1313,7 +1355,8 @@ function rebuildNode(id) {
   // fillNode rewrote innerHTML, wiping the resize grips — re-add them. The ResizeObserver +
   // mouseup listeners from the initial snapResize stay bound to `el` (reused across rebuild);
   // only the grip DOM needs restoring, with grid snap (matching snapResize's `{...opts,snap:true}`).
-  if (HOST_RESIZABLE.has(n.type)) addResizeGrips(el, { ...nodeResizeOpts(el, n.id), snap: true });
+  // (window + item already returned above; every remaining node type is freely resizable.)
+  addResizeGrips(el, { ...nodeResizeOpts(el, n.id), snap: true });
 }
 
 function toggleCollapse(id) {
@@ -1594,7 +1637,10 @@ function selClsFor(aId, bId) {
 // one — window, price, dataset, view (subset) — anchors its data line at the port dot and
 // gets the animated flow. (Keep this prefix set in sync with `outPortSpec`.)
 const PORT_OUT_SRC = ["win:", "price:", "ds:", "sub:"];
-const fromPortOut = (aId, kind) => kind === "data" && PORT_OUT_SRC.some((p) => aId.startsWith(p));
+// a data edge leaves its source's out-port; a trigger's control edge leaves the trigger's out-port too
+const fromPortOut = (aId, kind) =>
+  (kind === "data" && PORT_OUT_SRC.some((p) => aId.startsWith(p))) ||
+  (kind === "trigger" && aId.startsWith("trigger:"));
 function buildLinks() {
   const links = [];
   const add = (key, aId, bId, top, kind, ra, rb) => {
@@ -1688,22 +1734,56 @@ function computePorts(links) {
   }
 }
 
-// The `.port.out` dot FOLLOWS the line: routing (facingSides + fan) picks the start
-// side/coord, the dot moves onto that exact point (node-relative) so the handle sits where
-// the line actually leaves — not the other way round. Default CSS (right-middle) applies
-// until a line is computed.
+// Per-line out-ports: EVERY data line leaving a node gets its OWN dot at its start, so a node
+// that fans out N lines shows N dots (one per line) instead of all lines sharing a single dot.
+// The base `.port.out` is dot #0 (and the drag handle); extra dots are cloned + wired the same
+// way. Each dot FOLLOWS its line — routing (facingSides + fan) picks the start coord, the dot
+// moves onto that exact node-relative point. A node with no outgoing line keeps its default dot.
+function ensurePortDots(node, count) {
+  const base = node.querySelector(".port.out");
+  if (!base) return [];
+  let extras = [...node.querySelectorAll(".port.out.port-extra")];
+  while (extras.length < count - 1) {                 // grow the pool
+    const d = base.cloneNode(false);                  // listeners aren't cloned — wire below
+    d.classList.add("port-extra");
+    if (node._outSpec && node._outId) d.addEventListener("mousedown", (ev) => startWire(node._outId, ev, node._outSpec));
+    node.appendChild(d); extras.push(d);
+  }
+  for (let i = count - 1; i < extras.length; i++) extras[i].remove();   // shrink the pool
+  return [base, ...extras.slice(0, Math.max(0, count - 1))];
+}
+
 function placePortDots(links) {
+  const bySrc = new Map();   // source node id -> its outgoing port-lines
   for (const l of links) {
     if (!l.port) continue;
-    const dot = nodeEls.get(l.aId)?.querySelector(".port.out");
-    if (!dot) continue;
-    // -1: the dot is absolutely positioned in the node's PADDING box (inside its 1px
-    // border), but l.p1/ra are border-box world coords — without it the dot sits 1px off
-    dot.style.left = `${l.p1[0] - l.ra.x - 1}px`;
-    dot.style.top = `${l.p1[1] - l.ra.y - 1}px`;
-    dot.style.right = "auto";
-    dot.style.transform = "translate(-50%, -50%)";
-    dot.classList.toggle("sel", l.cls.includes(" sel"));   // edge selected (either end) -> accent
+    (bySrc.get(l.aId) || bySrc.set(l.aId, []).get(l.aId)).push(l);
+  }
+  // source nodes with NO outgoing line: drop extras + reset the base dot to its CSS default
+  for (const [id, node] of nodeEls) {
+    if (bySrc.has(id)) continue;
+    node.querySelectorAll(".port.out.port-extra").forEach((d) => d.remove());
+    const base = node.querySelector(".port.out");
+    if (base && base.style.left) { base.style.cssText = ""; base.classList.remove("sel"); }
+  }
+  for (const [aId, ls] of bySrc) {
+    const node = nodeEls.get(aId);
+    if (!node) continue;
+    const dots = ensurePortDots(node, ls.length);
+    ls.forEach((l, i) => {
+      const dot = dots[i]; if (!dot) return;
+      // -1: the dot is absolutely positioned in the node's PADDING box (inside its 1px
+      // border), but l.p1/ra are border-box world coords — without it the dot sits 1px off
+      dot.style.left = `${l.p1[0] - l.ra.x - 1}px`;
+      dot.style.top = `${l.p1[1] - l.ra.y - 1}px`;
+      dot.style.right = "auto";
+      dot.style.transform = "translate(-50%, -50%)";
+      const sel = l.cls.includes(" sel");
+      dot.classList.toggle("sel", sel);   // edge selected (either end) -> accent (CSS)
+      // match the dot to the colour of the line leaving it (clear inline when selected so the
+      // .sel accent rule wins): data lines are orange, trigger control lines are the warn hue
+      dot.style.background = sel ? "" : (l.cls.includes("trigger") ? "var(--warn)" : "#ff8c2b");
+    });
   }
 }
 
@@ -1953,31 +2033,7 @@ function wireNode(div, n) {
       else if (k === "title") model.profile.window_title_hint = v.trim() || null;
       autosave();
     }));
-    div.querySelector(".addwin").addEventListener("click", () => {
-      const id = model.addWindow();   // default id; renamed in the window node
-      if (id) { placeNewNode(`win:${id}`, "window"); render(); autosave(); panTo(`win:${id}`); }
-    });
-    div.querySelector(".adddict")?.addEventListener("click", () => openDictionaryPicker({
-      used: new Set((model.profile.dictionaries || []).map((d) => d.source)),
-      // existing word file: re-use its node if already on the graph, else reference it
-      // (fetch its terms so the new node shows them straight away).
-      onPick: async (source) => {
-        const existing = model.dictionaryBySource(source);
-        if (existing) { panTo(`dict:${existing.id}`); return; }
-        let terms = [];
-        try { ({ terms } = await api.dictionaries.get(source)); } catch { /* missing file -> 0 terms */ }
-        const id = model.addDictionary({ source, terms });
-        if (id) { placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
-      },
-      onCreate: (name) => {
-        const id = model.addDictionary({ name });
-        if (id) { placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
-      },
-    }));
-    div.querySelector(".addprice")?.addEventListener("click", () => {
-      const id = model.addPriceNode();   // independent producer -> "prices" dataset
-      if (id) { placeNewNode(`price:${id}`, "price"); render(); autosave(); panTo(`price:${id}`); }
-    });
+    // node creation moved to the floating "create" toolbox (see buildToolbox)
   } else if (n.type === "dictionary") {
     // the title doubles as both name and id (renamed in place)
     div.querySelector(".dictname")?.addEventListener("change", (e) => {
@@ -2050,6 +2106,8 @@ function wireNode(div, n) {
     wireSubset(div, n.ref);
   } else if (n.type === "price") {
     wirePrice(div, n);
+  } else if (n.type === "trigger") {
+    wireTrigger(div, n);
   } else if (n.type === "region") {
     const fld = n.field;
     div.addEventListener("click", (ev) => {
@@ -2303,59 +2361,57 @@ function fmtVals(v) {
   return Object.entries(v).map(([k, val]) => `${k}=${val}`).join(", ");
 }
 
-// ---- precapture modal -----------------------------------------------------
+// ---- precapture floating window -------------------------------------------
+// A floating panel (built like the node map) rather than a modal, so it can be moved and
+// left open while you work the game. Hiding it does NOT stop the worker — it keeps running
+// in the background and is tracked/cancellable from the Activity panel; reopening rehydrates.
 
+let pc = null;             // the createFloatWin instance (built once)
+let pcNode = null;         // the .precap body element handlers operate on
+let pcSig = null;          // current AbortController signal (new each show → aborts on hide)
+let pcCtl = null;          // current AbortController
+let precapLast = null;     // last status drawn — so view switches can redraw without a fetch
 let precapPoll = null;
-let precapBusy = false;   // recording/processing/paused -> modal can't be dismissed
+let precapBusy = false;   // recording/processing/paused
 let precapStopping = false;   // a stop/cancel was clicked, awaiting the worker to wind down
 let precapLastPhase = null;
 let precapSessions = [];   // saved recording sessions [{id,label,frames,processed,records,saved_at,active}]
-let precapView = null;     // which left item is selected: "new" (record inputs) or "loaded" (a session)
+let precapView = null;     // which item is selected: "new" (record inputs) or "loaded" (a session)
+let precapPage = null;     // which page is shown: "list" (session list) or "detail" (the selected pane)
+const pcState = { visible: false, x: null, y: null, w: null, h: null };
 
-async function openPrecaptureModal() {
-  const game = model.profile.name;
-  if (!game) { setStatus("load a game first"); return; }
-  setLiveMode(false);                         // mutually exclusive with live
-  precapOpen = true;
-  $("precapBtn").classList.add("active");
-  const node = document.createElement("div");
-  node.className = "precap";
-  node.innerHTML = `<p class="muted" style="padding:12px">loading…</p>`;
-  const modal = openModal({
-    title: `precapture: ${game}`, size: "data", node,
-    // Closing ABORTS: stop polling, and tell the backend worker to cancel so it stops
-    // hammering the game in the background (the cancel POST must NOT use the now-aborted
-    // modal signal, or it'd cancel itself). No canClose guard — close always means stop.
-    onClose: () => {
-      if (precapPoll) { clearInterval(precapPoll); precapPoll = null; }
-      if (precapBusy) api.precapture.cancel(game).catch(() => {});
-      unregisterWorker("precap");
-      precapOpen = false; precapBusy = false; precapStopping = false; precapView = null; $("precapBtn").classList.remove("active");
-    },
+const _pcDraw = (st) => { precapLast = st; renderPrecap(pcNode, st); };
+const _pcRun = async (fn) => {
+  try { _pcDraw(await fn()); }
+  catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }   // ignore hide-aborts
+};
+// refresh the saved-session list (and the active status it returns)
+const _pcLoadSessions = async () => {
+  const game = model.profile.name; if (!game) return;
+  try { const r = await api.precapture.sessions(game, pcSig); precapSessions = r.sessions || []; _pcDraw(r.status); }
+  catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }
+};
+// a session op returns { sessions, status } — update both at once
+const _pcSessAct = async (p) => {
+  try { const r = await p; precapSessions = r.sessions || precapSessions; _pcDraw(r.status); }
+  catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }
+};
+
+function buildPrecap() {
+  if (pc) return;
+  pcNode = document.createElement("div");
+  pcNode.className = "precap";
+  pcNode.innerHTML = `<p class="muted" style="padding:12px">loading…</p>`;
+  pc = createFloatWin({
+    id: "precap", title: "precapture", state: pcState, bothAxes: true,
+    onShow: showPrecap, onHide: hidePrecap, onPersist: () => persist.layout(),
   });
-  modal.el.classList.add("pc-modal");   // fixed height -> centred modal never shifts as panes change
-
-  const sig = modal.signal;   // wire every fetch to it → cancelled the moment the modal closes
-  let precapLast = null;      // last status drawn — so view switches can redraw without a fetch
-  const draw = (st) => { precapLast = st; renderPrecap(node, st); };
-  const run = async (fn) => {
-    try { draw(await fn()); }
-    catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }   // ignore close-aborts
-  };
-  // refresh the saved-session list (and the active status it returns)
-  const loadSessions = async () => {
-    try { const r = await api.precapture.sessions(game, sig); precapSessions = r.sessions || []; draw(r.status); }
-    catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }
-  };
-  // a session op returns { sessions, status } — update both at once
-  const sessAct = async (p) => {
-    try { const r = await p; precapSessions = r.sessions || precapSessions; draw(r.status); }
-    catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }
-  };
+  pc.body.appendChild(pcNode);
 
   // Inline rename: swap the session's name span for an <input>, commit on Enter/blur,
   // cancel on Escape — no blocking prompt(). Restores the span so reconcile resumes.
   const beginRename = (row, sid) => {
+    const game = model.profile.name;
     const nameEl = row.querySelector(".pc-sess-name");
     if (!nameEl || row._editing) return;
     row._editing = true;
@@ -2370,7 +2426,7 @@ async function openPrecaptureModal() {
       input.replaceWith(nameEl);   // reconcile refreshes the span's text on the next draw
       const label = input.value.trim();
       if (commit && label !== (row.dataset.label || ""))
-        sessAct(api.precapture.renameSession(game, sid, label, sig));
+        _pcSessAct(api.precapture.renameSession(game, sid, label, pcSig));
     };
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); finish(true); }
@@ -2380,73 +2436,130 @@ async function openPrecaptureModal() {
   };
 
   // one delegated handler for every control (buttons AND the clickable session rows)
-  node.addEventListener("click", (ev) => {
+  pcNode.addEventListener("click", (ev) => {
     if (ev.target.closest("input, textarea")) return;   // never let a field click trigger an action
     const b = ev.target.closest("[data-act]");
     if (!b) return;
+    const game = model.profile.name; if (!game) return;
     const a = b.dataset.act, sid = b.dataset.sid;
     // session-list actions are locked while a worker runs
     if (precapBusy && (a === "newsess" || a === "loadsess" || a === "rensess" || a === "delsess")) return;
-    const mf = +node.querySelector(".pc-frames")?.value || 300;
-    const iv = +node.querySelector(".pc-interval")?.value || 0;
-    const label = node.querySelector(".pc-label")?.value || "";
-    const as = !!node.querySelector(".pc-autoscroll")?.checked;
-    const clk = +node.querySelector(".pc-clicks")?.value || 1;
+    const mf = +pcNode.querySelector(".pc-frames")?.value || 300;
+    const iv = +pcNode.querySelector(".pc-interval")?.value || 0;
+    const label = pcNode.querySelector(".pc-label")?.value || "";
+    const as = !!pcNode.querySelector(".pc-autoscroll")?.checked;
+    const clk = +pcNode.querySelector(".pc-clicks")?.value || 1;
     if (a === "recstop" || a === "cancel") { precapStopping = true; b.disabled = true; b.textContent = "stopping…"; }
-    if (a === "newsess") { precapView = "new"; if (precapLast) draw(precapLast); }
+    if (a === "back") { precapPage = "list"; if (precapLast) _pcDraw(precapLast); }
+    else if (a === "newsess") { precapView = "new"; precapPage = "detail"; if (precapLast) _pcDraw(precapLast); }
     // recordStart creates+persists a new session server-side, so leave the "new" pane at
     // once and show it as the active loaded session (its row appears via loadSessions)
-    else if (a === "record") { precapView = "loaded"; run(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, as, clk, sig); loadSessions(); return st; }); }
-    else if (a === "recstop") run(() => api.precapture.recordStop(game, sig));
-    else if (a === "process") run(() => api.precapture.processStart(game, sig));
-    else if (a === "pause") run(() => api.precapture.pause(game, true, sig));
-    else if (a === "resume") run(() => api.precapture.pause(game, false, sig));
-    else if (a === "cancel") run(() => api.precapture.cancel(game, sig));
+    else if (a === "record") { precapView = "loaded"; _pcRun(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, as, clk, pcSig); _pcLoadSessions(); return st; }); }
+    else if (a === "recstop") _pcRun(() => api.precapture.recordStop(game, pcSig));
+    else if (a === "process") _pcRun(() => api.precapture.processStart(game, pcSig));
+    else if (a === "pause") _pcRun(() => api.precapture.pause(game, true, pcSig));
+    else if (a === "resume") _pcRun(() => api.precapture.pause(game, false, pcSig));
+    else if (a === "cancel") _pcRun(() => api.precapture.cancel(game, pcSig));
     else if (a === "save") {
       b.classList.add("reading"); b.disabled = true;   // spinner until the commit returns
       (async () => {
         try {
-          const r = await api.precapture.save(game, sig);
+          const r = await api.precapture.save(game, pcSig);
           refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); refreshAllSubsetNodes();
-          setStatus(`committed ${JSON.stringify(r.written)}`); loadSessions(); draw(r.status);
+          setStatus(`committed ${JSON.stringify(r.written)}`); _pcLoadSessions(); _pcDraw(r.status);
         } catch (e) {
-          if (e.name !== "AbortError") { setStatus(String(e.message || e)); if (precapLast) draw(precapLast); }   // redraw clears the spinner
+          if (e.name !== "AbortError") { setStatus(String(e.message || e)); if (precapLast) _pcDraw(precapLast); }   // redraw clears the spinner
         }
       })();
     }
-    else if (a === "loadsess") { precapView = "loaded"; sessAct(api.precapture.loadSession(game, sid, sig)); }
-    else if (a === "delsess") sessAct(api.precapture.deleteSession(game, sid, sig));
+    else if (a === "loadsess") { precapView = "loaded"; precapPage = "detail"; _pcSessAct(api.precapture.loadSession(game, sid, pcSig)); }
+    else if (a === "delsess") _pcSessAct(api.precapture.deleteSession(game, sid, pcSig));
     else if (a === "rensess") beginRename(b.closest(".pc-sess"), sid);
   });
 
   // live auto-scroll toggle (checkbox shown while recording) — server is the source of
   // truth; each poll re-reflects st.autoscroll, so a give-up server-side unchecks it here.
-  node.addEventListener("change", (ev) => {
+  pcNode.addEventListener("change", (ev) => {
+    const game = model.profile.name; if (!game) return;
     if (!ev.target.closest(".pc-autoscroll-live, .pc-clicks-live")) return;
-    const on = !!node.querySelector(".pc-autoscroll-live")?.checked;
-    const clicks = +node.querySelector(".pc-clicks-live")?.value || 1;
-    run(() => api.precapture.setAutoscroll(game, on, clicks, sig));
+    const on = !!pcNode.querySelector(".pc-autoscroll-live")?.checked;
+    const clicks = +pcNode.querySelector(".pc-clicks-live")?.value || 1;
+    _pcRun(() => api.precapture.setAutoscroll(game, on, clicks, pcSig));
   });
+}
 
-  await loadSessions();
+async function showPrecap() {
+  const game = model.profile.name;
+  if (!game) { setStatus("load a game first"); pc.setVisible(false); return; }
+  setLiveMode(false);                         // mutually exclusive with live
+  precapOpen = true;
+  precapStopping = false; precapView = null; precapPage = null;
+  $("precapBtn").classList.add("active");
+  pc.el.querySelector(".fw-title").textContent = `precapture: ${game}`;
+  pcCtl = new AbortController(); pcSig = pcCtl.signal;
+  await _pcLoadSessions();
   // poll ONLY while a worker is actually running (recording/processing/paused) — when
   // idle/recorded/done/saved nothing changes server-side except via user actions, which
   // already redraw, so hitting status every 700ms then just pounds the server for nothing.
+  if (precapPoll) clearInterval(precapPoll);
   precapPoll = setInterval(async () => {
     if (!precapBusy) return;
-    try { draw(await api.precapture.status(game, sig)); } catch { /* ignore (incl. close-abort) */ }
+    try { _pcDraw(await api.precapture.status(model.profile.name, pcSig)); } catch { /* ignore */ }
   }, 700);
 }
 
-function precapTable(d) {
-  const rows = d.sample || [];
-  const meta = `<span class="muted">${d.count} rows</span>`;
-  if (!rows.length) return `<div class="pc-ds"><b>${esc(d.dataset)}</b> ${meta}</div>`;
-  const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
-  const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
-  const body = rows.map((r) => `<tr>${cols.map((c) => `<td>${esc(r[c] ?? "")}</td>`).join("")}</tr>`).join("");
-  return `<div class="pc-ds"><b>${esc(d.dataset)}</b> ${meta}
-    <table class="grid-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+// Hiding the panel does NOT cancel the worker (the Activity panel monitors/cancels it).
+// Just stop polling and abort in-flight fetches; reopening rehydrates from the server.
+function hidePrecap() {
+  if (precapPoll) { clearInterval(precapPoll); precapPoll = null; }
+  if (pcCtl) { pcCtl.abort(); pcCtl = null; }
+  unregisterWorker("precap");
+  precapOpen = false; precapStopping = false;
+  $("precapBtn").classList.remove("active");
+}
+
+// Staged-data preview: one VTable per dataset (virtualized + searchable), reconciled IN
+// PLACE so the 700ms poll doesn't churn the tables or reset scroll/search — each dataset's
+// section + host is reused; setData only fires when its sample actually changes.
+function renderPrecapData(dataEl, datasets) {
+  datasets = datasets || [];
+  if (!dataEl._ds) {
+    dataEl._ds = new Map();   // dataset -> { section, label, host, _sig }
+    dataEl._empty = document.createElement("p");
+    dataEl._empty.className = "muted"; dataEl._empty.style.padding = "8px";
+    dataEl._empty.textContent = "no data staged yet — process the frames to read them";
+  }
+  if (!datasets.length) {
+    for (const [k, e] of dataEl._ds) { vtables.get(`pc:${k}`)?.destroy(); vtables.delete(`pc:${k}`); e.section.remove(); dataEl._ds.delete(k); }
+    if (!dataEl.contains(dataEl._empty)) dataEl.appendChild(dataEl._empty);
+    return;
+  }
+  if (dataEl.contains(dataEl._empty)) dataEl._empty.remove();
+  // drop sections whose dataset is gone
+  const want = new Set(datasets.map((d) => d.dataset));
+  for (const [k, e] of dataEl._ds) if (!want.has(k)) { vtables.get(`pc:${k}`)?.destroy(); vtables.delete(`pc:${k}`); e.section.remove(); dataEl._ds.delete(k); }
+
+  for (const d of datasets) {
+    let e = dataEl._ds.get(d.dataset);
+    if (!e) {
+      const section = document.createElement("div"); section.className = "pc-ds";
+      const label = document.createElement("div"); label.className = "pc-ds-h";
+      const host = document.createElement("div"); host.className = "pc-ds-vt";
+      section.append(label, host);
+      e = { section, label, host, _sig: null }; dataEl._ds.set(d.dataset, e);
+    }
+    dataEl.appendChild(e.section);   // (re)append in server order
+    const meta = `${d.count} row${d.count === 1 ? "" : "s"}`;
+    if (e.label._meta !== meta) { e.label.innerHTML = `<b>${esc(d.dataset)}</b> <span class="muted">${esc(meta)}</span>`; e.label._meta = meta; }
+    const rows = d.sample || [];
+    const sig = `${d.count}|${JSON.stringify(rows)}`;   // skip setData when nothing changed (poll churn)
+    if (e._sig === sig) continue;
+    e._sig = sig;
+    const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+    const vt = vtableFor(`pc:${d.dataset}`, e.host);
+    vt.pinned = Math.min(Math.max(rows.length, 1), 12);   // height = up to 12 rows, then scroll
+    vt.setData(cols, rows);
+  }
 }
 
 function renderPrecap(node, st) {
@@ -2465,9 +2578,9 @@ function renderPrecap(node, st) {
     else if (phase === "done") { const t = st.timing || {}; log(`precapture done: ${st.processed} frames · ${t.ms_per_frame || 0} ms/frame on ${t.device || "cpu"} (decode ${t.decode_ms || 0} · classify ${t.classify_ms || 0} · read ${t.read_ms || 0}) · ${st.fps}/s · ${st.read || 0} rows read`, "ok"); }
     else if (phase === "cancelled") log("precapture: cancelled", "warn");
     else if (phase === "saved") log("precapture: committed", "ok");
-    // recording just finished -> flip the right pane to the loaded session's controls
-    // (process / save / delete) so the just-recorded frames are ready to work with
-    if (precapLastPhase === "recording" && phase !== "recording") precapView = "loaded";
+    // recording just finished -> flip to the loaded session's controls (process / save /
+    // delete) so the just-recorded frames are ready to work with, on the detail page
+    if (precapLastPhase === "recording" && phase !== "recording") { precapView = "loaded"; precapPage = "detail"; }
     precapLastPhase = phase;
   }
   // first paint: pick the pane from what's on disk — a session with frames opens loaded,
@@ -2475,6 +2588,8 @@ function renderPrecap(node, st) {
   if (precapView === null) precapView = (st.session && st.frames) ? "loaded" : "new";
   // a loaded session that vanished (deleted, none left) falls back to the new pane
   if (precapView === "loaded" && !st.session) precapView = "new";
+  // first paint: a running worker opens straight to the detail page, otherwise the list
+  if (precapPage === null) precapPage = precapBusy ? "detail" : "list";
 
   // closing always works now and cancels the run — say so on the button
   const x = node.closest(".modal")?.querySelector(".modal-x");
@@ -2485,11 +2600,32 @@ function renderPrecap(node, st) {
   const busyRun = processing || paused;
   const canProcess = st.frames > 0 && !recording && !processing && !paused;
 
-  // Two-pane skeleton built ONCE — left = session list, right = the selected pane.
+  // Paged skeleton built ONCE — list page = session list; detail page = back bar + the
+  // selected pane. One page is shown at a time (precapPage); the back button returns to list.
   if (!node.querySelector(".pc-main")) {
-    node.innerHTML = `<div class="pc-main"><div class="pc-left"></div><div class="pc-right"></div></div>`;
+    node.innerHTML = `<div class="pc-main">
+        <div class="pc-page pc-page-list"><div class="pc-left"></div></div>
+        <div class="pc-page pc-page-detail">
+          <div class="pc-detail-head"><button class="pc-back" data-act="back" title="back to sessions">←</button><span class="pc-detail-title"></span><button class="pc-detail-del danger" data-act="delsess" title="delete session" hidden>×</button></div>
+          <div class="pc-right"></div>
+        </div>
+      </div>`;
   }
+  const onList = precapPage === "list";
+  node.querySelector(".pc-page-list").hidden = !onList;
+  node.querySelector(".pc-page-detail").hidden = onList;
   renderPrecapLeft(node.querySelector(".pc-left"), st);
+  // detail-page heading reflects the selected pane
+  const dTitle = node.querySelector(".pc-detail-title");
+  if (dTitle) dTitle.textContent = precapView === "new" ? "new session"
+    : (st.session ? (st.label || fmtCaptureTime(st.session)) : "session");
+  // delete (×) lives in the detail head — only for a loaded session, locked while busy
+  const dDel = node.querySelector(".pc-detail-del");
+  if (dDel) {
+    dDel.hidden = precapView !== "loaded" || !st.session;
+    dDel.dataset.sid = st.session || "";
+    dDel.disabled = (recording || busyRun) || !st.session;
+  }
 
   // The right pane's STRUCTURE depends only on which pane is shown and whether a worker
   // is running. Rebuild its innerHTML only when that shape changes — otherwise the 700ms
@@ -2510,6 +2646,7 @@ function renderPrecap(node, st) {
       : `<div class="pc-bar"></div>
          <div class="pc-ctl"></div>
          <div class="pc-progress"><div class="pc-fill"></div></div>
+         <div class="pc-recog"></div>
          <div class="pc-data"></div>`;
   }
 
@@ -2527,12 +2664,19 @@ function renderPrecap(node, st) {
   if (procLive) stats.push(`${st.processed} processed`, `${st.read || 0} read`, `${st.fps} /s`);
   const bar = right.querySelector(".pc-bar");   // absent in the new-session pane
   if (bar) bar.innerHTML = `
-    ${precapView === "loaded" && st.session ? `<span class="pc-sess-tag" title="active session">${esc(st.label || fmtCaptureTime(st.session))}</span>` : ""}
     ${stats.length ? `<span class="muted">${stats.join(" · ")}</span>` : ""}
     ${procLive ? `<span class="muted">· ${tm.ms_per_frame || 0} ms/frame (${esc(tm.device || "cpu")})</span>` : ""}
+    ${procLive && st.window ? `<span class="conf-good" title="window/state recognised this frame">· ${esc(st.window)}/${esc(st.state)}</span>` : ""}
     ${recPaused ? `<span class="conf-warn">⏸ auto-scroll reached the list end — resume to retry, or uncheck it</span>` : ""}
     ${st.warning ? `<span class="conf-warn">⚠ ${esc(st.warning)}</span>` : ""}
     ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}`;
+  // recognition tally: per-window/state frame counts (the "" key is a miss — no window matched)
+  const recogEl = right.querySelector(".pc-recog");
+  if (recogEl) {
+    const rec = st.recognized || [];
+    recogEl.innerHTML = rec.map((r) =>
+      `<span class="pc-recog-chip${r.miss ? " miss" : ""}">${r.miss ? "no match" : esc(r.key)} · ${r.count}</span>`).join("");
+  }
   // progress bar matters only WHILE processing — gone once done so it doesn't linger
   const prog = right.querySelector(".pc-progress");
   if (prog) {
@@ -2558,12 +2702,10 @@ function renderPrecap(node, st) {
       : recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>${asCtl}`
       : processing ? `<button data-act="pause">‖ pause</button>`
       : paused ? `<button data-act="resume">► resume</button>${recPaused ? asCtl : ""}`
-      : `<button data-act="process" ${canProcess ? "" : "disabled"}>▸ process${st.frames ? ` ${st.frames}` : ""}</button>`;
+      : `<button data-act="process" ${canProcess ? "" : "disabled"}>process${st.frames ? ` ${st.frames}` : ""}</button>`;
     const cancel = busyRun && !precapStopping ? `<button data-act="cancel" class="danger">cancel</button>` : "";
-    const save = `<button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !anyRun && !justSaved) ? "" : "disabled"}>
-      <span class="ic ic-ok">${justSaved ? "✓" : "⤓"}</span> ${justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`}</button>`;
-    const del = `<button data-act="delsess" data-sid="${esc(st.session || "")}" class="danger pc-del" ${anyRun || !st.session ? "disabled" : ""}>× delete</button>`;
-    ctl = `${proc}${cancel}${save}${del}`;
+    const save = `<button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !anyRun && !justSaved) ? "" : "disabled"}>${justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`}</button>`;
+    ctl = `${proc}${cancel}${save}`;
   }
   const ctlEl = right.querySelector(".pc-ctl");
   // don't clobber a live INPUT the user is editing (the clicks field) on a poll tick;
@@ -2572,8 +2714,7 @@ function renderPrecap(node, st) {
   if (!editing) ctlEl.innerHTML = ctl;
 
   const data = right.querySelector(".pc-data");
-  if (data) data.innerHTML = (st.datasets || []).map(precapTable).join("")
-    || '<p class="muted" style="padding:8px">no data staged yet — process the frames to read them</p>';
+  if (data) renderPrecapData(data, st.datasets);
 }
 
 // The left pane: "＋ new session" (the record-inputs pane) on top, then every saved
@@ -3237,9 +3378,8 @@ function setGridFromPreview(winId, res) {
 
 
 // ---- dragging -------------------------------------------------------------
-
-const GRID = 20;
-const snap = (v) => Math.round(v / GRID) * GRID;
+// GRID, snap, addResizeGrips, beginDrag and makeDraggable are imported from dragresize.js
+// — the same primitives the floating panels use.
 
 // Snap a resizable element to the grid — but only when the drag is RELEASED, not while
 // resizing (snapping mid-drag fights the smooth native resize). The observer just flags
@@ -3273,48 +3413,6 @@ function snapResize(el, opts = {}) {
   el.addEventListener("mouseup", finish);     // release on the element's resize handle
   window.addEventListener("mouseup", finish);  // …or release after the cursor left it
   addResizeGrips(el, { ...opts, snap: true }); // custom grips on BOTH bottom corners, grid-stepped
-}
-
-// Custom resize grips on BOTH bottom corners. Native CSS resize is disabled on these
-// elements (its OS-drawn bottom-right handle can't be matched by CSS), so both corners are
-// our own identical, mirrored grips. The LEFT grip anchors the right edge (it moves the
-// element left via `opts.left`); the RIGHT grip anchors the left edge. `both` also resizes
-// height; `zoom` accounts for canvas zoom; `left` reads/writes the left edge (pos.x for
-// graph nodes, style.left for floating panels).
-function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onSettle = null } = {}) {
-  if (el.querySelector(":scope > .rz-grip")) return;   // once only
-  const q = (v) => (snapGrid ? snap(v) : v);   // grid-step nodes; panels resize smoothly
-  for (const side of ["left", "right"]) {
-    if (side === "left" && !left) continue;            // left grip needs a left-edge accessor
-    const g = document.createElement("div");
-    g.className = `rz-grip rz-${side[0]}grip`; g.title = "resize";
-    el.appendChild(g);
-    g.addEventListener("mousedown", (ev) => {
-      ev.preventDefault(); ev.stopPropagation();
-      const allowH = typeof both === "function" ? both() : both;   // may depend on live state
-      const z = zoom() || 1, sx = ev.clientX, sy = ev.clientY;
-      const startW = el.offsetWidth, startH = el.offsetHeight, startL = left ? left() : 0;
-      let lastW = startW, lastH = startH;
-      document.body.style.cursor = side === "left" ? "nesw-resize" : "nwse-resize";
-      const mv = (e) => {
-        const w = Math.max(1, q(side === "left" ? startW - (e.clientX - sx) / z : startW + (e.clientX - sx) / z));
-        const h = Math.max(1, q(startH + (e.clientY - sy) / z));
-        // only act on a REAL size step (else snapped sub-grid moves churn resize+reroute)
-        if (w === lastW && (!allowH || h === lastH)) return;
-        lastW = w; lastH = h;
-        el.style.width = `${w}px`;
-        if (allowH) el.style.height = `${h}px`;
-        if (side === "left") left(startL - (el.offsetWidth - startW));   // anchor right edge
-        showSizeHud(el.offsetWidth, el.offsetHeight, e.clientX, e.clientY);   // live W×H readout
-        onResize && onResize();
-      };
-      const up = () => {
-        document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
-        document.body.style.cursor = ""; hideSizeHud(); onSettle && onSettle();
-      };
-      document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
-    });
-  }
 }
 
 // Every node reachable by following edges OUT of `id` (its downstream subtree).
@@ -3358,47 +3456,43 @@ function moveNodes(id, extra, ev) {
   const rect = $("graph").getBoundingClientRect();
   const toWorld = (e) => ({ x: (e.clientX - rect.left - view.panX) / view.zoom, y: (e.clientY - rect.top - view.panY) / view.zoom });
   const g0 = toWorld(ev);
-  const onMove = (e) => {
-    const w = toWorld(e);
-    const dx = w.x - g0.x, dy = w.y - g0.y;
-    p.x = snap(start.px + dx);
-    p.y = snap(start.py + dy);
-    positionNode(id);
-    for (const g of starts) { g.gp.x = snap(g.sx + dx); g.gp.y = snap(g.sy + dy); positionNode(g.gid); }
-    drawEdges();
-    groups.renderGroups();   // group boxes hug their members live
-  };
-  const onUp = () => {
-    document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
-    groups.absorb([id, ...extra.filter((x) => x !== id)]);   // dropped inside a group box -> join it
-    resizeCanvas(); groups.renderGroups(); persist.layout(); renderNodeMap();
-  };
-  document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", onUp);
+  // shared drag loop (dragresize.js) — onMove does the world-space + grid-snap work
+  beginDrag(ev, {
+    onMove: (e) => {
+      const w = toWorld(e);
+      const dx = w.x - g0.x, dy = w.y - g0.y;
+      p.x = snap(start.px + dx);
+      p.y = snap(start.py + dy);
+      positionNode(id);
+      for (const g of starts) { g.gp.x = snap(g.sx + dx); g.gp.y = snap(g.sy + dy); positionNode(g.gid); }
+      drawEdges();
+      groups.renderGroups();   // group boxes hug their members live
+    },
+    onSettle: () => {
+      groups.absorb([id, ...extra.filter((x) => x !== id)]);   // dropped inside a group box -> join it
+      resizeCanvas(); groups.renderGroups(); persist.layout(); renderNodeMap();
+    },
+  });
 }
 // Drag a node by a control that ALSO has a click action (collapse caret, title input):
 // only begin moving once the cursor passes a small threshold; a plain click (no move)
 // falls through to the control's own handler (toggle / focus-to-rename).
 function dragFromHandle(id, ev, div, handle) {
-  const start = { x: ev.clientX, y: ev.clientY };
-  let dragging = false;
-  const onMove = (e) => {
-    if (dragging) return;
-    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 4) return;
-    dragging = true;
-    cleanup();
-    if (handle.tagName === "INPUT") { handle.blur(); window.getSelection()?.removeAllRanges(); }
-    // a drag must NOT also fire the control's click (collapse toggle / input focus). The
-    // trailing click fires synchronously on mouseup — catch it, then drop the guard on the
-    // next tick so a later genuine click isn't eaten.
-    const suppress = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
-    div.addEventListener("click", suppress, true);
-    setTimeout(() => div.removeEventListener("click", suppress, true), 0);
-    startMove(id, ev);
-  };
-  function cleanup() { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", cleanup); }
-  document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", cleanup);
+  // shared drag loop with a 4px gate; once crossed, hand off to the real node-move loop
+  const stop = beginDrag(ev, {
+    threshold: 4,
+    onStart: () => {
+      stop();   // drop this gate loop; startMove begins its own drag loop from the same ev
+      if (handle.tagName === "INPUT") { handle.blur(); window.getSelection()?.removeAllRanges(); }
+      // a drag must NOT also fire the control's click (collapse toggle / input focus). The
+      // trailing click fires synchronously on mouseup — catch it, then drop the guard on the
+      // next tick so a later genuine click isn't eaten.
+      const suppress = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
+      div.addEventListener("click", suppress, true);
+      setTimeout(() => div.removeEventListener("click", suppress, true), 0);
+      startMove(id, ev);
+    },
+  });
 }
 function positionNode(id) { const el = nodeEls.get(id); const p = pos.get(id); if (el && p) { el.style.left = `${p.x}px`; el.style.top = `${p.y}px`; } }
 
@@ -3413,7 +3507,9 @@ function startWire(srcId, ev, spec) {
   if (!p) return;
   const rx = nw(srcId);   // right edge — where the out-port sits
   wire = { x1: p.x + rx, y1: p.y + 28, x2: p.x + rx, y2: p.y + 28 };
-  const sel = `.gnode.${spec.target}`;
+  // a spec may accept ONE target type ("subset") or SEVERAL (["subset","price"]) — match any.
+  const targets = Array.isArray(spec.target) ? spec.target : [spec.target];
+  const sel = targets.map((t) => `.gnode.${t}`).join(",");
   const toWorld = (e) => ({ x: (e.clientX - rect.left - view.panX) / view.zoom, y: (e.clientY - rect.top - view.panY) / view.zoom });
   const onMove = (e) => { const w = toWorld(e); wire.x2 = w.x; wire.y2 = w.y; drawEdges(); };
   const onUp = (e) => {
@@ -3423,8 +3519,9 @@ function startWire(srcId, ev, spec) {
     const dragged = Math.hypot(e.clientX - ev.clientX, e.clientY - ev.clientY) > 6;
     wire = null;   // drop the temp drag line on EVERY path before any redraw (else it ghosts)
     if (target) {
-      const tid = targetIdOf(target, spec.target);
-      if (tid != null && tid !== spec.selfId) { spec.onDrop(tid); render(); autosave(); return; }
+      const ttype = targets.find((t) => target.matches(`.gnode.${t}`));
+      const tid = targetIdOf(target, ttype);
+      if (tid != null && tid !== spec.selfId) { spec.onDrop(tid, ttype); render(); autosave(); return; }
     } else if (dragged && !overNode && spec.onEmpty) {   // empty canvas (not over another node) -> mint a node
       const newId = spec.onEmpty(toWorld(e));
       render(); autosave(); if (newId) panTo(newId);
@@ -3446,7 +3543,7 @@ async function refreshLive() {
     const data = await r.json();
     const map = {};
     for (const d of data.datasets) map[d.dataset] = d;
-    for (const k in map) { if (live[k]) prevPresent[k] = live[k].present; }
+    for (const k in map) { if (live[k]) { prevPresent[k] = live[k].present; prevLastTs[k] = live[k].last_ts; } }
     live = map;
     // Only re-render the whole graph if the set of datasets changed; otherwise
     // just update the existing dataset nodes' counts in place (no churn/flicker).
@@ -3455,9 +3552,12 @@ async function refreshLive() {
     const after = model.datasets();
     if (after.length !== before.size || after.some((d) => !before.has(d))) render();
     else updateDatasetNodes();
-    // the data + batches + subset nodes re-read when their dataset's count changed
+    // the data + batches + subset nodes re-read when the dataset's LEDGER changed — keyed on
+    // last_ts (every add/update/remove writes a history event), not present count alone: an
+    // update batch grows the ledger without changing present, so the batches badge would
+    // otherwise stay stale until the tab was clicked.
     for (const ds in map) {
-      if (prevPresent[ds] === undefined || prevPresent[ds] === map[ds].present) continue;
+      if (prevLastTs[ds] === undefined || prevLastTs[ds] === map[ds].last_ts) continue;
       if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
       if (nodeEls.has(`ds:${ds}`)) loadBatchesNode(ds);
       // refresh every view that reads this dataset — directly OR through an upstream view
@@ -3571,94 +3671,48 @@ function nmFit(label, bw, bh) {
   return { fs: Math.min(11, Math.max(fh, fv)), vertical: fv > fh };
 }
 
-let nmPanel = null;
+let nm = null;            // the createFloatWin instance (built once at startup)
 let nmTransform = null;   // last map projection {ox,oy,s} for the viewport indicator
-// Minimap state lives in the per-device sidecar (persist.local), restored by applyLocal()
-// when a game loads. Starts hidden; applyLocal + nmApplyState reflect saved state.
-// `sizes` keeps each mode's own box: map auto-fits its height to the graph, list is freely
-// resized — toggling restores the entering mode's box instead of carrying one over the other.
+// Node-map panel state. Persisted in the profile YAML (layout.float_windows.nodemap) via
+// the shared float-window machinery — hydrateLayout feeds it in, collectLayout writes it
+// back. `mode` + `sizes` are nodemap's own extras carried in the same blob: `sizes` keeps
+// each mode's box (map auto-fits its height to the graph, list is freely resized) so
+// toggling restores the entering mode's box instead of carrying one over the other.
 const nmState = { visible: false, x: null, y: null, w: null, h: null, mode: "map",
   sizes: { map: { w: null, h: null }, list: { w: null, h: null } } };
-function nmSave() { persist.local(); }
 
-// Remember the panel's current box under the active mode (so a later toggle can restore it).
-function nmStashSize() {
-  if (!nmPanel || !nmState.visible || !nmPanel.offsetWidth) return;
-  nmState.sizes[nmState.mode] = { w: nmPanel.offsetWidth, h: nmPanel.offsetHeight };
-}
-// Restore the active mode's saved box onto the panel. Width always; height only in list mode
-// (map height is recomputed by nmFitPanelHeight on render). Falls back to legacy nmState.w/h.
-function nmApplySize() {
-  if (!nmPanel) return;
+// Restore the active mode's saved box into nmState.w/h, then apply. Width always; height
+// only in list mode (map height is recomputed by nmFitPanelHeight on render).
+function applyNmModeSize() {
   const sz = (nmState.sizes && nmState.sizes[nmState.mode]) || {};
-  // never restore a box bigger than the viewport (window may have shrunk since it was saved)
-  const top = (document.querySelector(".topbar")?.offsetHeight || 48) + 4;
-  const maxW = Math.max(180, window.innerWidth - 8);
-  const maxH = Math.max(90, window.innerHeight - top - 8);
-  let w = Number.isFinite(sz.w) ? sz.w : nmState.w;
-  if (Number.isFinite(w)) { w = Math.min(w, maxW); nmPanel.style.width = `${w}px`; nmState.w = w; }
-  if (nmState.mode === "list") {
-    let h = Number.isFinite(sz.h) ? sz.h : nmState.h;
-    if (Number.isFinite(h)) { h = Math.min(h, maxH); nmPanel.style.height = `${h}px`; nmState.h = h; }
-  }
-  // re-clamp position so the (possibly larger) box stays fully on-screen
-  if (Number.isFinite(nmState.x) && Number.isFinite(nmState.y)) nmPlace(nmState.x, nmState.y);
-}
-
-// Reflect nmState (just loaded from the sidecar) onto the panel: size, position, mode,
-// visibility. Called by applyLocal after a game loads.
-function nmApplyState() {
-  if (!nmPanel) return;
-  nmApplySize();
-  if (Number.isFinite(nmState.x) && Number.isFinite(nmState.y)) nmPlace(nmState.x, nmState.y);
-  nmPanel.querySelector(".nm-mode").textContent = nmState.mode === "list" ? "▤" : "⊞";
-  nmPanel.querySelector(".nm-title").textContent = nmState.mode === "list" ? "node list" : "node map";
-  nmPanel.hidden = !nmState.visible;
-  $("nodemapBtn")?.classList.toggle("active", nmState.visible);
-  if (nmState.visible) renderNodeMap();
+  if (Number.isFinite(sz.w)) nmState.w = sz.w;
+  // map mode: drop the height so applySize leaves it to nmFitPanelHeight (auto-fit)
+  nmState.h = (nmState.mode === "list" && Number.isFinite(sz.h)) ? sz.h
+    : (nmState.mode === "list" ? nmState.h : null);
+  nm.applySize();
 }
 
 function buildNodeMap() {
-  if (nmPanel) return;
-  const el = document.createElement("div");
-  el.id = "nodemap"; el.className = "nodemap"; el.hidden = !nmState.visible;
-  el.innerHTML = `<div class="nm-head">
-      <span class="nm-title">${nmState.mode === "list" ? "node list" : "node map"}</span>
-      <button class="nm-mode" title="toggle map / list view">${nmState.mode === "list" ? "▤" : "⊞"}</button>
-      <button class="nm-close" title="close">✕</button>
-    </div>
-    <div class="nm-body"></div>`;
-  document.body.appendChild(el);
-  nmPanel = el;
-  if (Number.isFinite(nmState.w)) el.style.width = `${nmState.w}px`;
-  if (Number.isFinite(nmState.h)) el.style.height = `${nmState.h}px`;
-  // place: saved position, else top-right under the topbar — clamped on-screen
-  nmPlace(Number.isFinite(nmState.x) ? nmState.x : window.innerWidth - 288,
-          Number.isFinite(nmState.y) ? nmState.y : 56);
-
-  // persist size (CSS resize handle) + re-fit the map to the new body, debounced
-  let rt = null;
-  new ResizeObserver(() => {
-    if (!nmState.visible || !el.offsetWidth) return;   // ignore the 0×0 size when hidden
-    nmState.w = el.offsetWidth; nmState.h = el.offsetHeight;
-    nmState.sizes[nmState.mode] = { w: el.offsetWidth, h: el.offsetHeight };   // per-mode box
-    if (nmState.mode === "map") renderNodeMap();   // refit the map to the new size
-    clearTimeout(rt); rt = setTimeout(nmSave, 300);
-  }).observe(el);
-
-  el.querySelector(".nm-mode").addEventListener("click", () =>
-    setNodeMapMode(nmState.mode === "map" ? "list" : "map"));
-  el.querySelector(".nm-close").addEventListener("click", () => setNodeMapVisible(false));
-  el.querySelector(".nm-head").addEventListener("mousedown", nmDragHead);
-  // resize grips on both bottom corners. List mode: free width+height. Map mode: width only
-  // (height is auto-fit to the map by nmFitPanelHeight, so a height drag would just snap back).
-  addResizeGrips(el, {
-    both: () => nmState.mode === "list",
-    left: (v) => { if (v === undefined) return el.offsetLeft; const x = Math.max(4, v); el.style.left = `${x}px`; nmState.x = x; },
-    onSettle: nmSave,
+  if (nm) return;
+  nm = createFloatWin({
+    id: "nodemap",
+    title: nmState.mode === "list" ? "node list" : "node map",
+    headerExtra: `<button class="nm-mode" title="toggle map / list view">${nmState.mode === "list" ? "▤" : "⊞"}</button>`,
+    state: nmState,
+    bothAxes: () => nmState.mode === "list",   // list: free width+height; map: width only
+    onResize: () => {
+      if (!nmState.visible || !nm.el.offsetWidth) return;
+      nmState.sizes[nmState.mode] = { w: nm.el.offsetWidth, h: nm.el.offsetHeight };   // per-mode box
+      renderNodeMap();   // map: refit to new size; list: cheap re-render
+    },
+    onShow: () => { $("nodemapBtn")?.classList.toggle("active", true); nmSyncHeader(); applyNmModeSize(); renderNodeMap(); },
+    onHide: () => { $("nodemapBtn")?.classList.toggle("active", false); },
+    onPersist: () => persist.layout(),
   });
+  nm.el.querySelector(".nm-mode").addEventListener("click", () =>
+    setNodeMapMode(nmState.mode === "map" ? "list" : "map"));
   // jump-to: click a node in either view -> select + smooth pan/zoom
-  el.querySelector(".nm-body").addEventListener("click", (ev) => {
+  nm.body.addEventListener("click", (ev) => {
     const t = ev.target.closest("[data-id]");
     if (!t) return;
     const id = t.dataset.id;
@@ -3667,59 +3721,35 @@ function buildNodeMap() {
   });
 }
 
-// Keep the panel fully on-screen and below the topbar (never draggable over it / off-screen).
-function nmClamp(x, y, w, h) {
-  const top = (document.querySelector(".topbar")?.offsetHeight || 48) + 4;
-  const maxX = Math.max(4, window.innerWidth - w - 4);
-  const maxY = Math.max(top, window.innerHeight - h - 4);
-  return [Math.max(4, Math.min(maxX, x)), Math.max(top, Math.min(maxY, y))];
-}
-function nmPlace(x, y) {
-  const [cx, cy] = nmClamp(x, y, nmPanel.offsetWidth, nmPanel.offsetHeight);
-  nmPanel.style.left = `${cx}px`; nmPanel.style.top = `${cy}px`;
-  nmState.x = cx; nmState.y = cy;
-}
-
-function nmDragHead(ev) {
-  if (ev.target.closest("button")) return;   // mode/close clicks aren't drags
-  ev.preventDefault();
-  const r = nmPanel.getBoundingClientRect();
-  const dx = ev.clientX - r.left, dy = ev.clientY - r.top;
-  document.body.style.cursor = "grabbing";
-  const mv = (e) => nmPlace(e.clientX - dx, e.clientY - dy);
-  const up = () => {
-    document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
-    document.body.style.cursor = ""; nmSave();
-  };
-  document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
+// Reflect the current mode on the header (title text + toggle glyph).
+function nmSyncHeader() {
+  nm.el.querySelector(".nm-mode").textContent = nmState.mode === "list" ? "▤" : "⊞";
+  nm.el.querySelector(".fw-title").textContent = nmState.mode === "list" ? "node list" : "node map";
 }
 
 function setNodeMapVisible(on) {
-  nmState.visible = on; nmSave();
-  if (nmPanel) nmPanel.hidden = !on;
-  $("nodemapBtn")?.classList.toggle("active", on);
-  if (on) renderNodeMap();
+  nm.setVisible(on);   // toggles the button + renders via onShow/onHide
 }
 function setNodeMapMode(mode) {
   if (mode === nmState.mode) return;
-  nmStashSize();              // remember the leaving mode's box
-  nmState.mode = mode; nmSave();
-  if (nmPanel) {
-    nmPanel.querySelector(".nm-mode").textContent = mode === "list" ? "▤" : "⊞";
-    nmPanel.querySelector(".nm-title").textContent = mode === "list" ? "node list" : "node map";
-    nmApplySize();           // restore the entering mode's box
-  }
+  const right = nm.el.offsetLeft + nm.el.offsetWidth;   // pin right edge so the toggle button stays put
+  if (nm.el.offsetWidth) nmState.sizes[nmState.mode] = { w: nm.el.offsetWidth, h: nm.el.offsetHeight };  // stash leaving box
+  nmState.mode = mode;
+  nmSyncHeader();
+  applyNmModeSize();           // restore the entering mode's box
   renderNodeMap();
+  nm.place(right - nm.el.offsetWidth, nm.el.offsetTop);   // re-anchor by the right edge
+  persist.layout();
 }
 
 function nmSyncSelection() {
-  if (!nmPanel) return;
-  nmPanel.querySelectorAll("[data-id]").forEach((e) => e.classList.toggle("sel", e.dataset.id === selectedNodeId));
+  if (!nm) return;
+  nm.el.querySelectorAll("[data-id]").forEach((e) => e.classList.toggle("sel", e.dataset.id === selectedNodeId));
 }
 
 function renderNodeMap() {
-  if (!nmPanel || !nmState.visible) return;
-  const body = nmPanel.querySelector(".nm-body");
+  if (!nm || !nmState.visible) return;
+  const body = nm.body;
   body.classList.toggle("nm-bmap", nmState.mode === "map");   // centre the wrapped svg
   if (nmState.mode === "list") nmRenderList(body); else nmRenderMap(body);
 }
@@ -3791,11 +3821,11 @@ function nmRenderMap(body) {
 // vertical gap. Height-only write: the next ResizeObserver tick re-renders with the same
 // width and converges (no loop).
 function nmFitPanelHeight(svgH) {
-  if (!nmPanel || nmState.mode !== "map") return;
-  const headerH = nmPanel.querySelector(".nm-head")?.offsetHeight || 28;
+  if (!nm || nmState.mode !== "map" || nmState.collapsed) return;   // collapsed owns its height
+  const headerH = nm.el.querySelector(".fw-head")?.offsetHeight || 28;
   const targetH = Math.round(svgH + 12 + headerH + 2);   // body padding + header + borders
-  if (Math.abs(nmPanel.offsetHeight - targetH) > 1) {
-    nmPanel.style.height = `${targetH}px`; nmState.h = targetH;
+  if (Math.abs(nm.el.offsetHeight - targetH) > 1) {
+    nm.el.style.height = `${targetH}px`; nmState.h = targetH;
   }
 }
 
@@ -3833,8 +3863,8 @@ function graphBox() { return _graphBox || (_graphBox = $("graph").getBoundingCli
 window.addEventListener("resize", () => { _graphBox = null; });
 
 function nmUpdateViewport() {
-  if (!nmPanel || !nmState.visible || nmState.mode !== "map" || !nmTransform) return;
-  const vp = nmPanel.querySelector(".nm-vp"); if (!vp) return;
+  if (!nm || !nmState.visible || nmState.mode !== "map" || !nmTransform) return;
+  const vp = nm.el.querySelector(".nm-vp"); if (!vp) return;
   const rect = graphBox();
   const { ox, oy, s } = nmTransform;
   const x = ox + (-view.panX / view.zoom) * s, y = oy + (-view.panY / view.zoom) * s;
@@ -3848,14 +3878,219 @@ function nmUpdateViewport() {
 buildNodeMap();
 $("nodemapBtn")?.classList.toggle("active", nmState.visible);
 $("nodemapBtn")?.addEventListener("click", () => setNodeMapVisible(!nmState.visible));
-window.addEventListener("resize", () => {
-  if (!nmPanel || !nmState.visible) return;
-  nmPlace(nmPanel.offsetLeft, nmPanel.offsetTop);   // pull back in-bounds if the window shrank
-  renderNodeMap();
-});
+// (on-screen re-clamp + re-render on window resize is handled inside createFloatWin)
 
+// ---- activity panel (live sweeps + precapture) ----------------------------
+// A floating window listing every running background job for the current game — price
+// sweeps and the precapture worker — polled from /api/activity while it's open. Rows
+// reconcile in place (keyed map) so the 1s poll never churns the DOM or the cancel buttons.
+const actState = { visible: false, x: null, y: null, w: null, h: null };
+let act = null;
+let actPoll = null;
+const actRows = new Map();   // job key -> { row, title, prog }
+
+function buildActivity() {
+  if (act) return;
+  act = createFloatWin({
+    id: "activity", title: "activity", state: actState, bothAxes: true,
+    onShow: () => { $("activityBtn")?.classList.toggle("active", true); startActivityPoll(); },
+    onHide: () => { $("activityBtn")?.classList.toggle("active", false); stopActivityPoll(); },
+    onPersist: () => persist.layout(),
+  });
+  act.body.innerHTML = `<div class="act-list"></div>`;
+  // one delegated handler for every row's button (cancel a job, or fire a trigger now)
+  act.body.addEventListener("click", (ev) => {
+    const game = model.profile.name; if (!game) return;
+    const c = ev.target.closest("button[data-cancel]");
+    if (c && !c.disabled) {
+      c.disabled = true; c.textContent = "cancelling…";
+      if (c.dataset.cancel === "sweep") api.prices.cancel(game, c.dataset.ds).catch(() => {});
+      else if (c.dataset.cancel === "precap") api.precapture.cancel(game).catch(() => {});
+      return;
+    }
+    const f = ev.target.closest("button[data-fire]");
+    if (f && !f.disabled) {
+      f.disabled = true; f.textContent = "firing…";
+      api.triggers.fire(game, f.dataset.fire).catch(() => {})
+        .finally(() => { f.disabled = false; f.textContent = "fire"; });
+    }
+  });
+}
+
+// Human-readable duration: 45s / 5m / 5m 30s / 2h 10m.
+function fmtDur(s) {
+  s = Math.max(0, Math.round(s || 0));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), rs = s % 60;
+  if (m < 60) return rs ? `${m}m ${rs}s` : `${m}m`;
+  const h = Math.floor(m / 60), rm = m % 60;
+  return rm ? `${h}h ${rm}m` : `${h}h`;
+}
+
+function stopActivityPoll() { if (actPoll) { clearInterval(actPoll); actPoll = null; } }
+function startActivityPoll() {
+  stopActivityPoll();
+  const tick = async () => {
+    if (!actState.visible) return;
+    const game = model.profile.name;
+    if (!game) { renderActivity({ sweeps: [], precapture: null }); return; }
+    try { renderActivity(await api.activity.get(game)); } catch { /* ignore transient errors */ }
+  };
+  tick();
+  actPoll = setInterval(tick, 1000);
+}
+
+// Map a raw status object to display row specs. Each job: { key, title, prog, cls?, action? }
+// where action is {type:"cancel",kind,ds?} | {type:"fire",id} | null.
+function activityJobs(data) {
+  const jobs = [];
+  for (const s of (data.sweeps || [])) {
+    jobs.push({
+      key: `sweep:${s.dataset}`, action: { type: "cancel", kind: "sweep", ds: s.dataset },
+      title: `sweep · ${s.dataset}`,
+      prog: `${s.done}/${s.total || "…"} · ${s.fetched} ok${s.failed ? ` · ${s.failed} failed` : ""}${s.cancel ? " · cancelling…" : ""}${s.last ? ` · ${s.last}` : ""}`,
+    });
+  }
+  const p = data.precapture;
+  if (p) {
+    const recog = p.window ? ` · ${p.window}/${p.state}` : "";
+    const prog = p.phase === "recording" ? `${p.frames} frames`
+      : `${p.processed}/${p.frames} · ${p.read || 0} read · ${p.fps}/s${recog}`;
+    jobs.push({ key: "precap", action: { type: "cancel", kind: "precap" }, title: `precapture · ${p.phase}`, prog });
+  }
+  for (const t of (data.triggers || [])) {
+    const running = (t.targets || []).some((x) => x.running);
+    let prog;
+    if (t.kind === "interval") {
+      prog = running ? "firing now…" : `fires in ${fmtDur(t.next_in)} · every ${fmtDur(t.interval_s)}`;
+    } else if (t.kind === "on_change") {
+      prog = `on change: ${(t.watch || []).join(", ") || "—"}${running ? " · firing now…" : ""}`;
+    } else { prog = t.kind; }
+    jobs.push({ key: `trigger:${t.id}`, cls: "act-trigger", action: { type: "fire", id: t.id },
+      title: `trigger · ${t.id}`, prog });
+  }
+  return jobs;
+}
+
+function renderActivity(data) {
+  if (!act) return;
+  const list = act.body.querySelector(".act-list");
+  const jobs = activityJobs(data);
+  const want = new Set(jobs.map((j) => j.key));
+  for (const [key, r] of actRows) if (!want.has(key)) { r.row.remove(); actRows.delete(key); }
+  if (!jobs.length) {
+    if (!list.querySelector(".act-empty")) list.innerHTML = `<div class="act-empty">nothing active</div>`;
+    return;
+  }
+  const empty = list.querySelector(".act-empty"); if (empty) empty.remove();
+  for (const j of jobs) {
+    let r = actRows.get(j.key);
+    if (!r) {
+      const row = document.createElement("div"); row.className = `act-row${j.cls ? ` ${j.cls}` : ""}`;
+      const body = document.createElement("div"); body.className = "act-body";
+      const title = document.createElement("div"); title.className = "act-title";
+      const prog = document.createElement("div"); prog.className = "act-prog";
+      body.append(title, prog);
+      row.append(body);
+      // button is stable per key (sweep/precap → cancel, trigger → fire)
+      if (j.action?.type === "cancel") {
+        const btn = document.createElement("button");
+        btn.className = "act-cancel"; btn.textContent = "cancel";
+        btn.dataset.cancel = j.action.kind; if (j.action.ds) btn.dataset.ds = j.action.ds;
+        row.append(btn);
+      } else if (j.action?.type === "fire") {
+        const btn = document.createElement("button");
+        btn.className = "act-fire"; btn.textContent = "fire";
+        btn.dataset.fire = j.action.id;
+        row.append(btn);
+      }
+      r = { row, title, prog }; actRows.set(j.key, r);
+    }
+    list.appendChild(r.row);   // (re)append in job order
+    if (r.title.textContent !== j.title) r.title.textContent = j.title;
+    if (r.prog.textContent !== j.prog) r.prog.textContent = j.prog;
+  }
+}
+
+buildActivity();
+$("activityBtn")?.classList.toggle("active", actState.visible);
+$("activityBtn")?.addEventListener("click", () => act.setVisible(!actState.visible));
+
+// ---- node-creation toolbox ------------------------------------------------
+// Top-level node creation (window / price / trigger / dictionary) lives in this floating
+// panel instead of cluttering the game node. Each button mints a node, drops it in a free
+// spot, and pans to it. Contextual creation (datasets/views via wire-drag, regions/items by
+// drawing on a window image) stays where the context is.
+const tbState = { visible: false, x: null, y: null, w: null, h: null };
+let tb = null;
+
+function createWindowNode() {
+  const id = model.addWindow();   // default id; renamed in the window node
+  if (id) { placeNewNode(`win:${id}`, "window"); render(); autosave(); panTo(`win:${id}`); }
+}
+function createPriceNode() {
+  const id = model.addPriceNode();   // independent producer -> "prices" dataset
+  if (id) { placeNewNode(`price:${id}`, "price"); render(); autosave(); panTo(`price:${id}`); }
+}
+function createTriggerNode() {
+  const id = model.addTrigger();   // fires price-node sweeps on a condition
+  if (id) { placeNewNode(`trigger:${id}`, "trigger"); render(); autosave(); panTo(`trigger:${id}`); }
+}
+function createDictionaryNode() {
+  openDictionaryPicker({
+    used: new Set((model.profile.dictionaries || []).map((d) => d.source)),
+    // existing word file: re-use its node if already on the graph, else reference it
+    // (fetch its terms so the new node shows them straight away).
+    onPick: async (source) => {
+      const existing = model.dictionaryBySource(source);
+      if (existing) { panTo(`dict:${existing.id}`); return; }
+      let terms = [];
+      try { ({ terms } = await api.dictionaries.get(source)); } catch { /* missing file -> 0 terms */ }
+      const id = model.addDictionary({ source, terms });
+      if (id) { placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
+    },
+    onCreate: (name) => {
+      const id = model.addDictionary({ name });
+      if (id) { placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
+    },
+  });
+}
+
+function buildToolbox() {
+  if (tb) return;
+  tb = createFloatWin({
+    id: "toolbox", title: "create", state: tbState, bothAxes: true,
+    onShow: () => $("createBtn")?.classList.toggle("active", true),
+    onHide: () => $("createBtn")?.classList.toggle("active", false),
+    onPersist: () => persist.layout(),
+  });
+  tb.body.innerHTML = `<div class="tb-list">
+    <button class="tb-btn" data-create="window">+ window</button>
+    <button class="tb-btn" data-create="price">+ price node</button>
+    <button class="tb-btn" data-create="trigger">+ trigger</button>
+    <button class="tb-btn" data-create="dictionary">+ dictionary</button>
+  </div>`;
+  tb.body.addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-create]");
+    if (!b) return;
+    if (!model.profile.name) { setStatus("load a game first"); return; }
+    const k = b.dataset.create;
+    if (k === "window") createWindowNode();
+    else if (k === "price") createPriceNode();
+    else if (k === "trigger") createTriggerNode();
+    else if (k === "dictionary") createDictionaryNode();
+  });
+}
+buildToolbox();
+$("createBtn")?.classList.toggle("active", tbState.visible);
+$("createBtn")?.addEventListener("click", () => tb.setVisible(!tbState.visible));
+
+buildPrecap();
 $("liveBtn").addEventListener("click", () => setLiveMode(!liveOn));
-$("precapBtn").addEventListener("click", () => openPrecaptureModal());
+$("precapBtn").addEventListener("click", () => {
+  if (!pcState.visible && !model.profile.name) { setStatus("load a game first"); return; }
+  pc.setVisible(!pcState.visible);
+});
 $("selGroupBtn").addEventListener("click", () => groupShortcut());
 
 // The current selection the group action operates on: the multi-select set if any,

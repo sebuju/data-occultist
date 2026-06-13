@@ -27,3 +27,16 @@ def test_merge_upserts_defs_by_id():
     incoming = GameProfile(name="g", windows=[], datasets=[{"id": "arsenal"}])
     m = merge_profiles(existing, incoming)
     assert {d.id for d in m.datasets} == {"mods", "arsenal"}
+
+
+def test_merge_preserves_triggers_and_price_sources():
+    existing = GameProfile(
+        name="g", windows=[],
+        price_nodes=[{"id": "live", "dataset": "prices", "mode": "orders", "sources": ["master"]}],
+        triggers=[{"id": "t", "kind": "on_change", "watch": ["relic_rewards"], "targets": ["live"]}],
+    )
+    incoming = GameProfile(name="g", windows=[_WIN])   # single-window save carries no game-level defs
+    m = merge_profiles(existing, incoming)
+    assert m.price_nodes[0].sources == ["master"]
+    assert [t.id for t in m.triggers] == ["t"]
+    assert m.triggers[0].watch == ["relic_rewards"] and m.triggers[0].targets == ["live"]

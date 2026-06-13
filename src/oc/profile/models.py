@@ -424,6 +424,32 @@ class PriceNodeDef(BaseModel):
     dataset: str = "prices"         # output dataset the snapshots are written to
     throttle: float = 0.4           # seconds between requests during a sweep
     enabled: bool = True
+    # Which items to price. EMPTY = the whole market catalogue (the original producer
+    # behaviour). When set, the node prices only the names found in these source
+    # datasets/views (e.g. wire an inventory dataset in to price just owned gear, or a
+    # relic-reward dataset to price just this run's rewards). Wired in the graph UI as
+    # input edges; resolved to slugs via the catalogue resolver before a sweep.
+    sources: list[str] = Field(default_factory=list)
+
+
+class TriggerDef(BaseModel):
+    """A generic *trigger*: it fires one or more price nodes' sweeps on a condition,
+    so pricing can run automatically instead of only on a manual button. Pure config —
+    the runner that evaluates triggers lives in the collector / web app, never in the
+    capture loop. Three kinds:
+
+    * ``interval``   — fire every ``interval_s`` seconds (periodic refresh).
+    * ``on_change``  — fire when a dataset in ``watch`` gains new/changed records, pricing
+      only those changed keys (real-time, e.g. relic-reward items the moment they're read).
+    * ``manual``     — never auto-fires; just declares the wiring (the sweep button drives it).
+    """
+
+    id: str
+    kind: str = "interval"                  # interval | on_change | manual
+    interval_s: float = 300.0               # for kind="interval": seconds between fires
+    watch: list[str] = Field(default_factory=list)    # for kind="on_change": datasets to watch
+    targets: list[str] = Field(default_factory=list)  # price-node ids this trigger fires
+    enabled: bool = True
 
 
 class SubsetDef(BaseModel):
@@ -502,6 +528,10 @@ class GraphLayout(BaseModel):
     tables: dict[str, dict] = Field(default_factory=dict)   # per-table widths/sort, opaque
     open_images: list[str] = Field(default_factory=list)    # window ids showing their capture
     groups: list[GroupLayout] = Field(default_factory=list)  # titled boxes around node sets
+    # Floating panels (nodemap / activity / precapture): per-window {visible,x,y,w,h,…},
+    # opaque to the backend. Persisted here (not the per-device local file) so panel
+    # placement travels with the profile.
+    float_windows: dict[str, dict] = Field(default_factory=dict)
 
 
 class GameProfile(BaseModel):
@@ -516,6 +546,7 @@ class GameProfile(BaseModel):
     datasets: list[DatasetDef] = Field(default_factory=list)
     subsets: list[SubsetDef] = Field(default_factory=list)
     price_nodes: list[PriceNodeDef] = Field(default_factory=list)
+    triggers: list[TriggerDef] = Field(default_factory=list)
     dictionaries: list[DictionaryDef] = Field(default_factory=list)
     # Teach-UI node layout (positions/sizes/collapse/tables/open-images). Pure UI
     # data; the collector ignores it. Lives here so layout travels with the profile.
