@@ -9,7 +9,7 @@ import { GraphModel } from "./model.js";
 const NM_COLOR = {
   game: "#7aa2f7", window: "#9ece6a", preview: "#56b6c2", region: "#e0af68",
   detect: "#bb9af7", scrollbar: "#f7768e", item: "#7dcfff", dataset: "#e5c07b",
-  batches: "#c0caf5", subset: "#73daca", price: "#ff9e64", dictionary: "#a9b1d6",
+  subset: "#73daca", price: "#ff9e64", dictionary: "#a9b1d6",
 };
 const DEFAULT_W = 160, DEFAULT_H = 70;   // size for nodes whose layout didn't store one
 
@@ -17,7 +17,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 
 function shortLabel(n) {
   if (n.type === "game") return n.ref?.name || "game";
-  if (typeof n.ref === "string") return n.ref;          // dataset/batches carry their id as a string
+  if (typeof n.ref === "string") return n.ref;          // dataset carries its id as a string
   return n.ref?.name || n.ref?.id || n.id;
 }
 

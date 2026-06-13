@@ -254,7 +254,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gedge { fill: none; stroke: var(--line); stroke-width: 1.1; }
 .gedge.data { stroke: #ff8c2b; opacity: 1; }   /* data flow: solid bright orange */
 .gedge.toview { marker-end: url(#flowarrow); }                     /* dataset -> view: solid + arrow */
-.gedge.tobatch { stroke: var(--muted); stroke-dasharray: 1 4; stroke-linecap: round; opacity: 0.8; }   /* dataset -> batch: grey dotted */
 /* producer → dataset (a node pushing data OUT): emphasised + an arrowhead so the flow
    direction reads at a glance. No animation (constant repaint is too costly). */
 .gedge.flow { stroke-width: 1.8; opacity: 1; marker-end: url(#flowarrow); }
@@ -646,11 +645,10 @@ a.node.win:hover { border-color: var(--accent); }
    tables never blow the node up. ONE look + ONE behaviour, no per-kind panel code. */
 /* host nodes (dataset/preview/batches/dictionary/subset): the NODE itself resizes and
    its body + content host fill it. ONE behaviour — no separate resize handle inside. */
-.gnode.dataset, .gnode.preview, .gnode.batches, .gnode.dictionary, .gnode.subset, .gnode.price {
+.gnode.dataset, .gnode.preview, .gnode.dictionary, .gnode.subset, .gnode.price {
   display: flex; flex-direction: column; resize: none; overflow: hidden; min-width: 280px; }
-.gnode.dataset { width: 360px; height: 340px; }
+.gnode.dataset { width: 360px; height: 380px; }
 .gnode.preview { width: 360px; height: 320px; }
-.gnode.batches { width: 380px; height: 380px; }
 .gnode.dictionary { width: 300px; height: 360px; }
 .gnode.subset { width: 360px; height: 440px; min-width: 320px; }
 .gnode.price { width: 460px; height: 560px; }
@@ -658,9 +656,21 @@ a.node.win:hover { border-color: var(--accent); }
    half, so clip the BODY instead and let the node (hence the port) overflow */
 .gnode.price { overflow: visible; }
 .gnode.price > .gn-body { overflow: auto; }   /* scroll when too small instead of squishing/clipping */
-.gnode.dataset > .gn-body, .gnode.preview > .gn-body, .gnode.batches > .gn-body,
+.gnode.dataset > .gn-body, .gnode.preview > .gn-body,
 .gnode.dictionary > .gn-body, .gnode.subset > .gn-body, .gnode.price > .gn-body {
   flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* dataset node: [data | history] tabs swap which host fills the body */
+.ds-tabs { display: flex; gap: 4px; margin-top: 6px; flex: 0 0 auto; }
+.ds-tab { flex: 1 1 0; padding: 2px 0; font-size: var(--fs-sm); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; color: var(--muted); cursor: pointer; }
+.ds-tab:hover { color: var(--fg); }
+.ds-tab.on { background: var(--accent-bg); border-color: var(--accent); color: var(--fg); }
+.gnode.dataset[data-tab="data"] .bat-host { display: none; }
+.gnode.dataset[data-tab="batches"] .data-host { display: none; }
+/* keep the dataset controls compact — don't stretch the agg select / buttons full width */
+.gnode.dataset .ds-agg { display: flex; align-items: center; gap: 6px; }
+.gnode.dataset .ds-agg select { flex: 0 0 auto; width: auto; }
+.gnode.dataset .gn-foot button { flex: 0 0 auto; }
 /* subset config editors */
 .sub-of { margin-left: 6px; font-size: var(--fs-sm); }
 .sub-cfg { margin-top: 4px; }
@@ -711,11 +721,13 @@ a.node.win:hover { border-color: var(--accent); }
 .bat-list .batrow.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .bat-list .batrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .bat-detail { border-top: 1px solid var(--line); padding-top: 6px; overflow: auto; flex: 1 1 auto; min-height: 0; }
+.bat-detail:empty { border-top: 0; padding-top: 0; }   /* no stray divider when nothing is selected */
 .bat-detail .ds-h { margin: 8px 0 4px; }
-.ev-table td.ev-cell { cursor: text; }
-.ev-table td.ev-cell:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
-.ev-table tr.reverted td { color: var(--muted); text-decoration: line-through; }
-.ev-remove { padding: 0 6px; }
+/* no batches yet: don't render a tall empty bordered box (its side borders read as two lines) */
+.bat-host.bat-empty { border: 0; min-height: 0; padding: 0; }
+/* per-batch events render as a read-only VTable; give it a bounded viewport */
+.bat-ev-host { height: 200px; }
+.bat-ev-host .vt-row.reverted { color: var(--muted); text-decoration: line-through; }
 .pv-table td:first-child { font-weight: 600; }
 .pv-add td:first-child { color: var(--ok); }
 .pv-remove td:first-child { color: var(--danger); }

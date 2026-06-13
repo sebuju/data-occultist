@@ -223,6 +223,8 @@ datasets:
   aggregate: latest
 - id: prices
   aggregate: latest
+- id: dataset
+  aggregate: latest
 subsets:
 - id: master_view
   dataset: ''
@@ -247,11 +249,32 @@ subsets:
   sort_by: ''
   sort_desc: false
   limit: 0
+  config_collapsed: true
+- id: master_view2
+  dataset: ''
+  datasets:
+  - master
+  - dataset
+  join_field: name
+  filters: []
+  derived: []
+  hidden_columns: []
+  enrich: []
+  sort_by: ''
+  sort_desc: false
+  limit: 0
+  config_collapsed: false
 price_nodes:
 - id: price
   type: warframe_market
   mode: statistics
   dataset: prices
+  throttle: 0.4
+  enabled: true
+- id: price_2
+  type: warframe_market
+  mode: orders
+  dataset: dataset
   throttle: 0.4
   enabled: true
 dictionaries:
@@ -378,10 +401,10 @@ layout:
       y: 160.0
       collapsed: false
     prev:equip:
-      x: 320.0
-      y: 740.0
-      w: 360.0
-      h: 320.0
+      x: 280.0
+      y: 660.0
+      w: 640.0
+      h: 480.0
       collapsed: false
     anc:equip:detect_4:
       x: 1220.0
@@ -461,12 +484,6 @@ layout:
       x: 1060.0
       y: 700.0
       collapsed: false
-    bat:master:
-      x: 1040.0
-      y: -1100.0
-      w: 840.0
-      h: 380.0
-      collapsed: false
     item:equip:normal1:
       x: 300.0
       y: 20.0
@@ -474,14 +491,8 @@ layout:
     ds:master:
       x: 120.0
       y: -760.0
-      w: 880.0
-      h: 780.0
-      collapsed: false
-    bat:equip:
-      x: 1180.0
-      y: 20.0
-      w: 0.0
-      h: 0.0
+      w: 500.0
+      h: 760.0
       collapsed: false
     ds:equip:
       x: 900.0
@@ -495,12 +506,6 @@ layout:
       w: 1080.0
       h: 720.0
       collapsed: false
-    bat:prices:
-      x: 2020.0
-      y: 1060.0
-      w: 780.0
-      h: 420.0
-      collapsed: false
     enr:master_view:enr_1:
       x: 2460.0
       y: -200.0
@@ -510,8 +515,8 @@ layout:
     ds:prices:
       x: 1800.0
       y: 200.0
-      w: 1240.0
-      h: 800.0
+      w: 500.0
+      h: 680.0
       collapsed: false
     price:price:
       x: 1020.0
@@ -524,6 +529,24 @@ layout:
       y: 0.0
       w: 0.0
       h: 0.0
+      collapsed: false
+    price:price_2:
+      x: 1980.0
+      y: 1260.0
+      w: 460.0
+      h: 560.0
+      collapsed: false
+    ds:dataset:
+      x: 2520.0
+      y: 1280.0
+      w: 920.0
+      h: 660.0
+      collapsed: false
+    sub:master_view2:
+      x: 2740.0
+      y: 500.0
+      w: 900.0
+      h: 660.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -544,6 +567,12 @@ layout:
     ds:prices:
       widths:
         name: 218
+    ds:master:
+      widths:
+        name: 203
+        arcane_level: 67
+        count: 60
+        _item: 62
   open_images:
   - equip
   groups:

@@ -69,10 +69,7 @@ export class GraphModel {
       if (w.scroll && w.scroll.scrollbar) ns.push({ id: `sb:${w.id}:scrollbar`, type: "scrollbar", ref: w.scroll, win: w });
       for (const it of w.items || []) ns.push({ id: `item:${w.id}:${it.id}`, type: "item", ref: it, win: w });
     }
-    for (const ds of this.datasets()) {
-      ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
-      ns.push({ id: `bat:${ds}`, type: "batches", ref: ds });
-    }
+    for (const ds of this.datasets()) ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
     for (const s of this.profile.subsets || []) ns.push({ id: `sub:${s.id}`, type: "subset", ref: s });
     for (const pn of this.profile.price_nodes || []) ns.push({ id: `price:${pn.id}`, type: "price", ref: pn });
     for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
@@ -90,7 +87,6 @@ export class GraphModel {
       for (const it of w.items || []) es.push({ from: `win:${w.id}`, to: `item:${w.id}:${it.id}`, kind: "item" });
       es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
     }
-    for (const ds of this.datasets()) es.push({ from: `ds:${ds}`, to: `bat:${ds}`, kind: "data" });
     for (const s of this.profile.subsets || [])
       for (const ds of this.subsetInputs(s)) es.push({ from: `ds:${ds}`, to: `sub:${s.id}`, kind: "data" });
     // a price producer WRITES into its output dataset (producer -> dataset)

@@ -24,9 +24,10 @@ const pos = new Map();            // node id -> {x,y}
 const nodeEls = new Map();        // node id -> DOM element (built once, reused)
 const collapsed = new Set();      // collapsed node ids
 const view = { panX: 0, panY: 0, zoom: 1 };  // canvas pan/zoom
-const COLX = { game: 20, window: 300, price: 560, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, dataset: 900, batches: 1180, subset: 1900, dictionary: 20 };
+const COLX = { game: 20, window: 300, price: 560, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, dataset: 900, subset: 1900, dictionary: 20 };
 let live = {};                    // dataset -> {present,total,last_op,last_ts}
 const prevPresent = {};
+const dsTab = new Map();          // dataset -> "data" | "history" (which tab the merged node shows)
 let timer = null;
 let wire = null;                  // active drag-wire {winId, x1,y1}
 let selectedNodeId = null;        // node whose line(s) are highlighted
@@ -217,7 +218,7 @@ initPersist({
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "detect", sb: "scrollbar", item: "item", ds: "dataset", bat: "batches", sub: "subset", price: "price", dict: "dictionary" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "detect", sb: "scrollbar", item: "item", ds: "dataset", sub: "subset", price: "price", dict: "dictionary" };
 function nodeTypeOf(id) { return id === "game" ? "game" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
   world: () => $("ggroups"),
@@ -639,7 +640,7 @@ function wireWindowControls(div, n) {
     if (!model.renameWindow(oldId, newId)) { e.target.value = oldId; return; }
     moveWindowPos(oldId, newId);            // win + all child nodes
     const newDs = model.datasetOf(n.ref);
-    if (newDs !== oldDs) { movePos(`ds:${oldDs}`, `ds:${newDs}`); movePos(`bat:${oldDs}`, `bat:${newDs}`); }
+    if (newDs !== oldDs) movePos(`ds:${oldDs}`, `ds:${newDs}`);
     render(); autosave();
   });
   div.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal(n.ref.id));
@@ -721,17 +722,6 @@ function nodeParts(n) {
       <div class="nodehost scrollhost prev-host"><p class="muted" style="padding:8px">↻ read to preview what this window reads</p></div>`,
     };
   }
-  if (n.type === "batches") {
-    // ledger node — shows the dataset's collection/save runs inline; pick one to see
-    // its events + a preview of what applying it changes.
-    return {
-      title: `<span class="gi-id">${esc(n.ref)} batches</span>`,
-      body: `<div class="nodehost scrollhost bat-host">
-        <ul class="history bat-list"><li class="muted">loading…</li></ul>
-        <div class="bat-detail muted">select a batch to see its contents and what applying it changes</div>
-      </div>`,
-    };
-  }
   if (n.type === "subset") return subsetParts(n.ref);
   if (n.type === "price") return priceParts(n.ref);
   if (n.type === "dictionary") {
@@ -766,7 +756,15 @@ function nodeParts(n) {
       <div class="muted ds-meta ds-updated">${d.last_ts ? `updated ${esc(fmtWhen(d.last_ts))}` : "not collected yet"}</div>
       <label class="flab ds-agg" title="how each key's many observations collapse to one value">many → <select class="dsagg">${aggOpts}</select></label>
       <div class="gn-foot"><button class="dssubset">+ view</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
-      <div class="nodehost scrollhost data-host"><p class="muted" style="padding:8px">loading…</p></div>`,
+      <div class="ds-tabs" role="tablist">
+        <button class="ds-tab on" data-tab="data" role="tab">data</button>
+        <button class="ds-tab" data-tab="batches" role="tab" title="this dataset's collection/save runs">batches</button>
+      </div>
+      <div class="nodehost scrollhost data-host"><p class="muted" style="padding:8px">loading…</p></div>
+      <div class="nodehost scrollhost bat-host">
+        <ul class="history bat-list"><li class="muted">loading…</li></ul>
+        <div class="bat-detail muted">select a batch to see its events and what applying it changes</div>
+      </div>`,
   };
 }
 
@@ -975,7 +973,7 @@ function fillNode(div, n) {
   const canToggle = CAN_DISABLE.has(n.type);
   const enabled = !(canToggle && n.ref && n.ref.enabled === false);
   div.className = `gnode ${n.type}${isCollapsed ? " collapsed" : ""}${enabled ? "" : " node-disabled"}`;
-  if (n.type === "dataset") div.dataset.ds = n.ref;
+  if (n.type === "dataset") { div.dataset.ds = n.ref; div.dataset.tab = dsTab.get(n.ref) || "data"; }
   const parts = nodeParts(n);
   const toggle = canToggle
     ? `<button type="button" class="gn-enable${enabled ? " on" : ""}" role="switch" aria-checked="${enabled}" title="enabled — turn off to skip this node during detection">
@@ -1060,7 +1058,7 @@ function buildNode(n) {
     onSettle: () => { persist.layout(); drawEdges(); groups.renderGroups(); },
   });
   // every host node resizes at the NODE level (its body fills it) — one consistent behaviour
-  if (["dataset", "preview", "batches", "dictionary", "subset", "price"].includes(n.type)) makeNodeResizable(div, n.id);
+  if (["dataset", "preview", "dictionary", "subset", "price"].includes(n.type)) makeNodeResizable(div, n.id);
   return div;
 }
 
@@ -1162,7 +1160,7 @@ function clearNodeSelections(keepId = null) {
     el.querySelectorAll(".il-sel").forEach((r) => r.classList.remove("il-sel"));
   }
   for (const ds of batchesState.keys()) {
-    if (`bat:${ds}` === keepId) continue;
+    if (`ds:${ds}` === keepId) continue;
     const st = batchesState.get(ds);
     if (st.sel == null) continue;
     st.sel = null;
@@ -1368,7 +1366,7 @@ function buildLinks() {
   const add = (key, aId, bId, top, kind, ra, rb) => {
     if (!ra || !rb) return;
     const port = fromPortOut(aId, kind);
-    const tgt = bId.startsWith("sub:") ? " toview" : bId.startsWith("bat:") ? " tobatch" : "";
+    const tgt = bId.startsWith("sub:") ? " toview" : "";
     links.push({ key, aId, bId, top, port, cls: `gedge ${kind}${port ? " flow" : ""}${tgt}${selClsFor(aId, bId)}`, ra, rb });
   };
   for (const e of model.edges())
@@ -1722,13 +1720,13 @@ function wireNode(div, n) {
     div.querySelector(".dsrename")?.addEventListener("change", async (e) => {
       const oldId = n.ref, newId = (e.target.value || "").trim();
       if (!model.renameDataset(oldId, newId)) { e.target.value = oldId; return; }
-      movePos(`ds:${oldId}`, `ds:${newId}`); movePos(`bat:${oldId}`, `bat:${newId}`);
+      movePos(`ds:${oldId}`, `ds:${newId}`);
       autosave();
       try {
         await api.renameDataset(model.profile.name, oldId, newId);   // carry the stored data over
       } catch (err) {
         model.renameDataset(newId, oldId);   // roll back the profile rename; data didn't move
-        movePos(`ds:${newId}`, `ds:${oldId}`); movePos(`bat:${newId}`, `bat:${oldId}`);
+        movePos(`ds:${newId}`, `ds:${oldId}`);
         e.target.value = oldId; setStatus(String(err.message || err)); autosave();
         render(); return;
       }
@@ -1753,9 +1751,18 @@ function wireNode(div, n) {
       try { await api.clearDataset(model.profile.name, n.ref); refreshLive(); refreshDataNode(n.ref); refreshAllBatchesNodes(); refreshAllSubsetNodes(); setStatus(`cleared ${n.ref}`); }
       catch (e) { setStatus(String(e.message || e)); }
     });
-    queueMicrotask(() => refreshDataNode(n.ref));   // load records into the node body
-  } else if (n.type === "batches") {
-    queueMicrotask(() => loadBatchesNode(n.ref));   // nodeEls is set after buildNode returns
+    // data | history tabs: swap the visible host; the ledger loads lazily on first open
+    div.querySelectorAll(".ds-tab").forEach((tab) => tab.addEventListener("click", () => {
+      const which = tab.dataset.tab;
+      dsTab.set(n.ref, which);
+      div.dataset.tab = which;
+      div.querySelectorAll(".ds-tab").forEach((t) => t.classList.toggle("on", t === tab));
+      if (which === "batches") loadBatchesNode(n.ref);   // (re)fetch the ledger when shown
+    }));
+    queueMicrotask(() => {
+      refreshDataNode(n.ref);                              // load records into the data tab
+      if (dsTab.get(n.ref) === "batches") loadBatchesNode(n.ref);   // restore an open batches tab
+    });
   } else if (n.type === "subset") {
     wireSubset(div, n.ref);
   } else if (n.type === "price") {
@@ -1895,7 +1902,7 @@ async function showRecordMany(ds, key, count) {
 const batchesState = new Map();   // ds -> { sel, events } (selection + event cache per node)
 
 function batEls(ds) {
-  const el = nodeEls.get(`bat:${ds}`);
+  const el = nodeEls.get(`ds:${ds}`);   // batches live in the merged dataset node's history tab
   return el && { list: el.querySelector(".bat-list"), detail: el.querySelector(".bat-detail") };
 }
 function batState(ds) {
@@ -1916,13 +1923,14 @@ async function loadBatchesNode(ds) {
 
 // refresh every batches node that currently exists
 function refreshAllBatchesNodes() {
-  for (const ds of model.datasets()) if (nodeEls.has(`bat:${ds}`)) loadBatchesNode(ds);
+  for (const ds of model.datasets()) if (nodeEls.has(`ds:${ds}`)) loadBatchesNode(ds);
 }
 
 function renderBatchesList(ds, batches) {
   const els = batEls(ds);
   if (!els) return;
   const st = batState(ds);
+  els.list.parentElement?.classList.toggle("bat-empty", !batches.length);   // drop the box framing when empty
   if (!batches.length) { els.list.innerHTML = '<li class="muted">no batches yet</li>'; els.detail.innerHTML = ""; st.sel = null; return; }
   els.list.innerHTML = batches.map((b) => {
     const parts = [b.adds ? `+${b.adds}` : "", b.updates ? `~${b.updates}` : "", b.removes ? `−${b.removes}` : ""].filter(Boolean).join(" ");
@@ -1965,32 +1973,17 @@ async function selectBatch(ds, batch) {
   els.list.querySelectorAll(".batrow").forEach((li) => li.classList.toggle("sel", +li.dataset.batch === batch));
   els.detail.innerHTML = '<p class="muted">loading…</p>';
   try {
-    const bd = await api.batchDetail(model.profile.name, ds, batch);
-    st.events = Object.fromEntries((bd.events || []).map((e) => [e.id, e]));
-    renderBatchDetail(ds, bd);
+    renderBatchDetail(ds, await api.batchDetail(model.profile.name, ds, batch));
   } catch (e) { els.detail.innerHTML = `<p class="muted">${esc(String(e))}</p>`; }
 }
 
 function renderBatchDetail(ds, bd) {
   const els = batEls(ds);
   if (!els) return;
-  const st = batState(ds);
   const events = bd.events || [];
   const preview = bd.preview || [];
-  // event contents — editable value cells; per-event applied + remove
-  const cols = [...new Set(events.flatMap((e) => Object.keys(e.values || {})))];
-  const evHead = `<th>id</th><th>op</th>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}<th></th><th></th>`;
-  const evRows = events.map((e) => {
-    const cells = cols.map((c) => `<td contenteditable="true" class="ev-cell" data-id="${e.id}" data-field="${esc(c)}">${esc(e.values?.[c] ?? "")}</td>`).join("");
-    const app = `<input type="checkbox" class="ev-apply" data-id="${e.id}"${e.reverted ? "" : " checked"} title="apply this event">`;
-    const rm = `<button class="ev-remove danger" data-id="${e.id}" title="permanently delete this event">✕</button>`;
-    return `<tr class="${e.reverted ? "reverted" : ""}"><td class="muted">${e.id}</td><td>${esc(e.op)}</td>${cells}<td>${app}</td><td>${rm}</td></tr>`;
-  }).join("");
-  const evTable = events.length
-    ? `<table class="grid-table zebra ev-table"><thead><tr>${evHead}</tr></thead><tbody>${evRows}</tbody></table>`
-    : '<p class="muted">no events</p>';
 
-  // preview — what applying this batch changes in the dataset
+  // preview — what applying this batch changes in the dataset (read-only diff table)
   const pvRows = preview.map((p) => {
     if (p.kind === "add") return `<tr class="pv-add"><td>add</td><td>${esc(p.key)}</td><td>${esc(fmtVals(p.after))}</td></tr>`;
     if (p.kind === "remove") return `<tr class="pv-remove"><td>remove</td><td>${esc(p.key)}</td><td>${esc(fmtVals(p.before))}</td></tr>`;
@@ -2001,34 +1994,15 @@ function renderBatchDetail(ds, bd) {
     ? `<table class="grid-table zebra pv-table"><thead><tr><th>change</th><th>key</th><th>detail</th></tr></thead><tbody>${pvRows}</tbody></table>`
     : '<p class="muted">applying this batch changes nothing</p>';
 
-  els.detail.innerHTML = `<h4 class="ds-h">Batch #${bd.batch} · ${events.length} events</h4>${evTable}
+  // event contents — read-only VTable (search/sort/resize), no editing
+  els.detail.innerHTML = `<h4 class="ds-h">Batch #${bd.batch} · ${events.length} events</h4>
+    <div class="bat-ev-host"></div>
     <h4 class="ds-h">Applying this batch would…</h4>${pvTable}`;
-
-  // all event mutations reload the node (which re-selects + refetches the detail)
-  els.detail.querySelectorAll(".ev-cell").forEach((td) => td.addEventListener("blur", async () => {
-    const id = +td.dataset.id, field = td.dataset.field, ev = st.events[id];
-    if (!ev) return;
-    const val = td.textContent;
-    if (String(ev.values?.[field] ?? "") === val) return;     // unchanged
-    try {
-      await api.editDatasetEvent(model.profile.name, ds, bd.batch, id, { ...ev.values, [field]: val });
-      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
-    } catch (e) { setStatus(String(e.message || e)); }
-  }));
-  els.detail.querySelectorAll(".ev-apply").forEach((cb) => cb.addEventListener("change", async () => {
-    cb.disabled = true;
-    try {
-      await api.revertDatasetEvent(model.profile.name, ds, bd.batch, +cb.dataset.id, !cb.checked);
-      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
-    } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
-  }));
-  els.detail.querySelectorAll(".ev-remove").forEach((b) => b.addEventListener("click", async () => {
-    if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "?"; setTimeout(() => { b.dataset.armed = "0"; b.textContent = "✕"; }, 2500); return; }
-    try {
-      await api.removeDatasetEvent(model.profile.name, ds, bd.batch, +b.dataset.id);
-      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
-    } catch (e) { setStatus(String(e.message || e)); }
-  }));
+  const evHost = els.detail.querySelector(".bat-ev-host");
+  if (!events.length) { evHost.innerHTML = '<p class="muted" style="padding:8px">no events</p>'; return; }
+  const cols = ["id", "op", ...new Set(events.flatMap((e) => Object.keys(e.values || {})))];
+  const rows = events.map((e) => ({ id: e.id, op: e.op, reverted: e.reverted, ...(e.values || {}) }));
+  vtableFor(`bat:${ds}`, evHost).setData(cols, rows, { rowClass: (row) => (row.reverted ? "reverted" : "") });
 }
 
 function fmtVals(v) {
@@ -3188,7 +3162,7 @@ async function refreshLive() {
     for (const ds in map) {
       if (prevPresent[ds] === undefined || prevPresent[ds] === map[ds].present) continue;
       if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
-      if (nodeEls.has(`bat:${ds}`)) loadBatchesNode(ds);
+      if (nodeEls.has(`ds:${ds}`)) loadBatchesNode(ds);
       for (const s of model.profile.subsets || []) if (s.dataset === ds && nodeEls.has(`sub:${s.id}`)) refreshSubsetNode(s.id);
     }
   } catch { /* ignore */ }
@@ -3260,11 +3234,11 @@ $("newGameBtn").addEventListener("click", () => {
 // mode persist (global UI pref, not per-game).
 
 const NM_TYPE = { win: "window", prev: "preview", reg: "region", det: "detect",
-  sb: "scrollbar", item: "item", ds: "dataset", bat: "batches", sub: "subset",
+  sb: "scrollbar", item: "item", ds: "dataset", sub: "subset",
   price: "price", dict: "dictionary" };
 const NM_COLOR = { game: "#7aa2f7", window: "#9ece6a", preview: "#56b6c2", region: "#e0af68",
   detect: "#bb9af7", scrollbar: "#f7768e", item: "#7dcfff", dataset: "#e5c07b",
-  batches: "#c0caf5", subset: "#73daca", price: "#ff9e64", dictionary: "#a9b1d6" };
+  subset: "#73daca", price: "#ff9e64", dictionary: "#a9b1d6" };
 const nmTypeOf = (id) => (id === "game" ? "game" : NM_TYPE[id.split(":")[0]] || "node");
 const nmColor = (id) => NM_COLOR[nmTypeOf(id)] || "#9aa5ce";
 
@@ -3278,7 +3252,6 @@ function nodeLabel(n) {
     case "scrollbar": return "scrollbar";
     case "item": return n.ref.id;
     case "dataset": return n.ref;
-    case "batches": return `${n.ref} ▸ batches`;
     case "subset": return n.ref.id;
     case "price": return n.ref.id;
     case "dictionary": return n.ref.name || n.ref.id;
@@ -3292,7 +3265,6 @@ function nodeShort(n) {
     case "game": return n.ref.name || "game";
     case "preview": return "preview";
     case "scrollbar": return "scroll";
-    case "batches": return "batch";
     case "dataset": return n.ref;
     default: return n.ref?.id ?? n.id;
   }
