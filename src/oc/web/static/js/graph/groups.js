@@ -13,8 +13,9 @@
 // Geometry recomputes from live member rects every render, so a group box always hugs
 // its nodes — dragging a member (or the whole group) just re-renders.
 
-const PAD = 16;          // uniform gap between members and the group outline (all 4 sides,
-                         // incl. between the title band's bottom and the first node)
+const PAD = 20;          // uniform gap between members and the group outline (all 4 sides,
+                         // incl. between the title band's bottom and the first node) — one GRID
+                         // step, so the outline lands on the canvas grid like the nodes do
 const TITLE_H = 24;      // fallback title height until the real one is measured (world px)
 const DRAG_THRESH = 4;   // px before a title press becomes a move (else it's a click)
 
@@ -37,14 +38,44 @@ export function groupBoxes() {
     .filter((x) => x.box);
 }
 
+// World rects of each group's TITLE band, fed to the router as (soft) obstacles so node
+// lines prefer not to run across a group title. Skips groups not yet laid out.
+export function titleRects() {
+  const out = [];
+  for (const g of groups) {
+    const th = g._titleH || TITLE_H;
+    const box = groupBox(g, th);
+    if (box) out.push({ x: box.x, y: box.y, w: box.w, h: th });
+  }
+  return out;
+}
+
 // ---- persistence ----------------------------------------------------------
 
 export function collect() {
   return groups.map((g) => ({
     id: g.id, title: g.title, members: [...g.members],
     outline: { ...g.outline }, bg: g.bg, titleAlign: g.titleAlign,
+    titleBg: g.titleBg, titleColor: g.titleColor,
   }));
 }
+// Premade colour schemes that fit the app theme. titleBg/titleColor "" = fall back to the
+// CSS defaults (panel / text). Colored schemes pair a saturated band with dark on-accent text.
+export const SCHEMES = [
+  { name: "slate", bg: "#191c21cc", style: "none", outline: "#2c313c", titleBg: "", titleColor: "" },
+  { name: "blue", bg: "#5aa9e618", style: "solid", outline: "#5aa9e6", titleBg: "#5aa9e6", titleColor: "#08121d" },
+  { name: "cyan", bg: "#5ad7e618", style: "solid", outline: "#5ad7e6", titleBg: "#5ad7e6", titleColor: "#08121d" },
+  { name: "teal", bg: "#5ae6c218", style: "solid", outline: "#5ae6c2", titleBg: "#5ae6c2", titleColor: "#08121d" },
+  { name: "green", bg: "#7ddc7d18", style: "solid", outline: "#7ddc7d", titleBg: "#7ddc7d", titleColor: "#08121d" },
+  { name: "lime", bg: "#b6e65a18", style: "solid", outline: "#b6e65a", titleBg: "#b6e65a", titleColor: "#0e1408" },
+  { name: "amber", bg: "#e6c25a18", style: "solid", outline: "#e6c25a", titleBg: "#e6c25a", titleColor: "#08121d" },
+  { name: "orange", bg: "#e69a5a18", style: "solid", outline: "#e69a5a", titleBg: "#e69a5a", titleColor: "#1a0e08" },
+  { name: "red", bg: "#e6685a18", style: "solid", outline: "#e6685a", titleBg: "#e6685a", titleColor: "#1a0a08" },
+  { name: "pink", bg: "#e0556b18", style: "solid", outline: "#e0556b", titleBg: "#e0556b", titleColor: "#1a0a0e" },
+  { name: "magenta", bg: "#e65ac218", style: "solid", outline: "#e65ac2", titleBg: "#e65ac2", titleColor: "#1a081a" },
+  { name: "purple", bg: "#c98ae618", style: "solid", outline: "#c98ae6", titleBg: "#c98ae6", titleColor: "#08121d" },
+  { name: "indigo", bg: "#8a9ae618", style: "solid", outline: "#8a9ae6", titleBg: "#8a9ae6", titleColor: "#08121d" },
+];
 // Default group look — a MUTED grey, distinct from the accent blue used for the live
 // multi-selection (an accent outline made every group look perpetually selected).
 const DEF_OUTLINE = "#333333";
@@ -58,6 +89,8 @@ export function hydrate(arr) {
     members: Array.isArray(g.members) ? [...g.members] : [],
     outline: { color: g.outline?.color || DEF_OUTLINE, style: g.outline?.style || "solid", width: g.outline?.width || 2 },
     bg: g.bg || DEF_BG,
+    titleBg: g.titleBg || "",      // "" = CSS default (var(--panel))
+    titleColor: g.titleColor || "",// "" = CSS default (var(--text))
     // title is always a full-width band now; titleAlign just sets its text alignment.
     // Back-compat: map the old titlePos positions onto an alignment.
     titleAlign: g.titleAlign || ({ tl: "left", tc: "center", tr: "right", in: "left" }[g.titlePos]) || "left",
@@ -86,6 +119,7 @@ export function createGroup(memberIds) {
   const g = {
     id: gid, title: defaultTitle(ids) || gid, members: ids,
     outline: { color: DEF_OUTLINE, style: "none", width: 2 }, bg: DEF_BG, titleAlign: "left",
+    titleBg: "", titleColor: "",
   };
   groups.push(g);
   pruneEmpty();
@@ -99,12 +133,29 @@ export function disband(groupId) {
   renderGroups(); ctx.persist(); ctx.afterChange();
 }
 
-export function detachNode(nodeId) {
-  const g = groupOf(nodeId);
+export function detachNode(nodeId) { detachNodes([nodeId]); }
+
+// Pull every given node out of whatever group holds it. Backs the per-node detach
+// icon (one id) and the group hotkey's "ungroup everything" (the whole selection).
+export function detachNodes(nodeIds) {
+  let changed = false;
+  for (const id of nodeIds) {
+    const g = groupOf(id);
+    if (g) { g.members = g.members.filter((m) => m !== id); changed = true; }
+  }
+  if (changed) { pruneEmpty(); renderGroups(); ctx.persist(); ctx.afterChange(); }
+}
+
+// Add nodes to an existing group, pulling each out of any prior group first (a node
+// belongs to at most one group).
+export function addToGroup(groupId, nodeIds) {
+  const g = byId(groupId);
   if (!g) return;
-  g.members = g.members.filter((m) => m !== nodeId);
-  pruneEmpty();
-  renderGroups(); ctx.persist(); ctx.afterChange();
+  const add = [...new Set(nodeIds)].filter((id) => ctx.nodeRect(id) && !g.members.includes(id));
+  if (!add.length) return;
+  for (const id of add) { const p = groupOf(id); if (p) p.members = p.members.filter((m) => m !== id); }
+  g.members.push(...add);
+  pruneEmpty(); renderGroups(); ctx.persist(); ctx.afterChange();
 }
 
 // After a node drag, attach any dragged node whose centre landed inside a group's box
@@ -193,6 +244,8 @@ export function renderGroups() {
     bel.style.borderColor = g.outline.color;
     bel.style.borderStyle = g.outline.style;
     bel.style.borderWidth = `${bw}px`;
+    tel.style.background = g.titleBg || "";    // "" -> CSS default (var(--panel))
+    tel.style.color = g.titleColor || "";      // "" -> CSS default (var(--text))
     placeTitle(tel, g.titleAlign);
   }
 }
@@ -201,6 +254,15 @@ function buildBoxEl(g) {
   const el = document.createElement("div");
   el.className = "ggroup";
   el.dataset.gid = g.id;
+  // double-click the group title → pan/zoom to frame it (the box itself is pointer-events:none
+  // so canvas interactions pass through; the title is the group's handle and bubbles here)
+  el.addEventListener("dblclick", (ev) => { ev.stopPropagation(); closePopover(); ctx.zoomToGroup?.(g.id); });
+  // bottom-right grip: drag to resize the group — scales its members, keeping gaps intact
+  const grip = document.createElement("div");
+  grip.className = "ggroup-grip";
+  grip.title = "resize group";
+  grip.addEventListener("mousedown", (ev) => { if (ev.button === 0) ctx.startGroupResize?.(g.id, ev); });
+  el.appendChild(grip);
   return el;
 }
 
@@ -208,9 +270,16 @@ function buildTitleEl(g) {
   const tel = document.createElement("div");
   tel.className = "ggroup-title";
   tel.dataset.gid = g.id;
-  tel.innerHTML = `<span class="ggt-label"></span>`;
-  // press the title: a real drag moves the whole group; a plain click opens options
+  tel.innerHTML = `<span class="ggt-label"></span>
+    <button class="ggt-cog" title="group settings" aria-label="group settings">
+      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>
+    </button>`;
+  // press the title: a real drag moves the whole group (click alone does nothing now —
+  // settings live behind the cog so a stray click can't pop the options panel)
   tel.addEventListener("mousedown", (ev) => onTitlePress(g.id, ev));
+  const cog = tel.querySelector(".ggt-cog");
+  cog.addEventListener("mousedown", (ev) => ev.stopPropagation());           // don't start a group drag
+  cog.addEventListener("click", (ev) => { ev.stopPropagation(); togglePopover(g.id, ev); });
   return tel;
 }
 
@@ -230,7 +299,7 @@ function onTitlePress(gid, ev) {
     cleanup();
     ctx.moveMembers(g.members, ev);   // hand the drag to main's multi-move
   };
-  const onUp = () => { cleanup(); if (!moved) togglePopover(gid, ev); };
+  const onUp = () => { cleanup(); };   // plain click does nothing — settings open via the cog only
   function cleanup() { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
@@ -251,6 +320,9 @@ function togglePopover(gid, ev) {
   pop.className = "ggroup-pop";
   pop.innerHTML = `
     <label class="flab"><span class="gp-lab">title</span><input class="gp-title" value="${escAttr(g.title)}" /></label>
+    <div class="flab"><span class="gp-lab">scheme</span>
+      <div class="gp-schemes">${SCHEMES.map((s, i) => `<button class="gp-scheme" data-i="${i}" title="${s.name}" style="background:${s.titleBg || s.bg};border-color:${s.outline === "#2c313c" ? "#4a515f" : s.outline}"></button>`).join("")}</div>
+    </div>
     <label class="flab"><span class="gp-lab">outline</span>
       <select class="gp-style">
         ${["solid", "dashed", "dotted", "none"].map((s) => `<option value="${s}" ${g.outline.style === s ? "selected" : ""}>${s}</option>`).join("")}
@@ -260,15 +332,23 @@ function togglePopover(gid, ev) {
     <label class="flab"><span class="gp-lab">background</span>
       <input type="range" class="gp-bga" min="0" max="100" value="${alphaPct(g.bg)}" title="fill opacity" />
       <input type="color" class="gp-bg" value="${hex6(g.bg)}" title="fill color" /></label>
+    <label class="flab"><span class="gp-lab">title bg</span>
+      <input type="color" class="gp-tbg" value="${hex6(g.titleBg || "#1d2027")}" title="title background" /></label>
+    <label class="flab"><span class="gp-lab">title text</span>
+      <input type="color" class="gp-tcolor" value="${hex6(g.titleColor || "#d7dbe2")}" title="title text color" /></label>
     <label class="flab"><span class="gp-lab">align</span>
       <select class="gp-pos">
         ${["left", "center", "right"].map((v) => `<option value="${v}" ${g.titleAlign === v ? "selected" : ""}>${v}</option>`).join("")}
       </select>
     </label>
     <button class="gp-disband danger">disband group</button>`;
-  // anchor near the click, in screen space (it's a fixed-position popover)
+  // anchor near the click (screen space — it's fixed-position), then clamp fully on-screen so
+  // no part spills out of bounds (measured after it's in the DOM).
   pop.style.left = `${ev.clientX}px`; pop.style.top = `${ev.clientY + 8}px`;
   document.body.appendChild(pop);
+  const M = 8, r = pop.getBoundingClientRect();
+  pop.style.left = `${Math.max(M, Math.min(ev.clientX, window.innerWidth - r.width - M))}px`;
+  pop.style.top = `${Math.max(M, Math.min(ev.clientY + 8, window.innerHeight - r.height - M))}px`;
   openPopover = { groupId: gid, el: pop };
 
   const commit = () => { renderGroups(); ctx.persist(); };
@@ -278,7 +358,18 @@ function togglePopover(gid, ev) {
   const applyBg = () => { g.bg = withAlpha(pop.querySelector(".gp-bg").value, +pop.querySelector(".gp-bga").value); commit(); };
   pop.querySelector(".gp-bg").addEventListener("input", applyBg);
   pop.querySelector(".gp-bga").addEventListener("input", applyBg);
+  pop.querySelector(".gp-tbg").addEventListener("input", (e) => { g.titleBg = e.target.value; commit(); });
+  pop.querySelector(".gp-tcolor").addEventListener("input", (e) => { g.titleColor = e.target.value; commit(); });
   pop.querySelector(".gp-pos").addEventListener("change", (e) => { g.titleAlign = e.target.value; commit(); });
+  // a premade scheme sets fill + outline + title colours at once, and syncs the pickers
+  pop.querySelectorAll(".gp-scheme").forEach((b) => b.addEventListener("click", () => {
+    const s = SCHEMES[+b.dataset.i];
+    g.bg = s.bg; g.outline.color = s.outline; g.outline.style = s.style; g.titleBg = s.titleBg; g.titleColor = s.titleColor;
+    pop.querySelector(".gp-bg").value = hex6(s.bg); pop.querySelector(".gp-bga").value = alphaPct(s.bg);
+    pop.querySelector(".gp-ocolor").value = hex6(s.outline); pop.querySelector(".gp-style").value = s.style;
+    pop.querySelector(".gp-tbg").value = hex6(s.titleBg || "#1d2027"); pop.querySelector(".gp-tcolor").value = hex6(s.titleColor || "#d7dbe2");
+    commit();
+  }));
   pop.querySelector(".gp-disband").addEventListener("click", () => disband(gid));
 
   setTimeout(() => document.addEventListener("mousedown", onOutside, true), 0);

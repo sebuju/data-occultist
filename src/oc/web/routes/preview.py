@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ...collect.reader import RegionReader
 from ...detect.matcher import DetectMatcher, text_match_score
-from ...learn.dictionary import Dictionary
+from ...learn.dictionary import build_dictionaries
 from ...learn.lexicon import Lexicon
 from ...learn.resolver import FieldResolver
 from ...ocr.serialize import ocr_job
@@ -129,9 +129,9 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
     # read-only resolver: applies the game's dictionaries (exact then fuzzy) so the
     # preview shows the SAME snapped values the collector would, but never learns/mutates.
     lex = Lexicon.for_game(get_settings().data_dir, profile.name)
-    dictionary = Dictionary(profile.dictionary_terms(), engine.corrector)
+    pooled, dict_map = build_dictionaries(profile, engine.corrector)
     resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
-                             dictionary=dictionary, learn_enabled=False)
+                             dictionary=pooled, dictionaries=dict_map, learn_enabled=False)
     reader = RegionReader(engine.ocr, resolver, cutouts=cutouts)
     with ocr_job():   # one job: the whole window read runs without interleaving another
         result = reader.read_preview(frame, window, fields)
@@ -168,9 +168,9 @@ def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...
     engine = get_engine()
     fields = {f.id: f for f in profile.fields_for(window)}
     lex = Lexicon.for_game(get_settings().data_dir, profile.name)
-    dictionary = Dictionary(profile.dictionary_terms(), engine.corrector)
+    pooled, dict_map = build_dictionaries(profile, engine.corrector)
     resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
-                             dictionary=dictionary, learn_enabled=False)
+                             dictionary=pooled, dictionaries=dict_map, learn_enabled=False)
     reader = RegionReader(engine.ocr, resolver)
     with ocr_job():
         result = reader.read_cutout(cut, window, it, fields)

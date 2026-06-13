@@ -251,7 +251,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gnode .port.out { right: -7px; background: #ff8c2b; }   /* match the data-line orange */
 .gnode .port.out.sel { background: var(--accent); }   /* edge selected (either end) -> accent */
 .gnode .port.in { left: -7px; background: var(--line); }
-.gedge { fill: none; stroke: var(--line); stroke-width: 1.1; }
+.gedge { fill: none; stroke: var(--line); stroke-width: 1.8; }
 .gedge.data { stroke: #ff8c2b; opacity: 1; }   /* data flow: solid bright orange */
 .gedge.toview { marker-end: url(#flowarrow); }                     /* dataset -> view: solid + arrow */
 /* producer → dataset (a node pushing data OUT): emphasised + an arrowhead so the flow
@@ -261,10 +261,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gedge.field { stroke: var(--accent); opacity: 0.5; }
 .gedge.detect { stroke: var(--ok); opacity: 0.5; }
 .gedge.state { stroke: var(--warn); opacity: 0.5; }
-.gedge.scrollbar { stroke: var(--purple); opacity: 0.5; }
+.gedge.scrollbar { stroke: var(--ok); opacity: 0.5; }
 .gedge.item { stroke: var(--record); opacity: 0.6; }
 .gedge.attach { stroke: var(--accent); opacity: 0.85; }
 .gedge.img { stroke: var(--muted); stroke-dasharray: 2 4; opacity: 0.7; }
+.gedge.usedict { stroke: var(--muted); stroke-dasharray: 2 4; opacity: 0.45; }   /* field -> the dictionary it snaps to */
 .gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; }
 .gedge.sel { stroke: var(--accent) !important; stroke-width: 2.2; opacity: 1 !important; }
 
@@ -359,10 +360,29 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    stays draggable even though the box layer (z0) is below the nodes. */
 .ggroup-title { position: absolute; top: 0; left: 0; right: 0; box-sizing: border-box;
   display: flex; align-items: center; padding: 9px 15px;
-  font-family: var(--font-mono); font-size: var(--fs-base); font-weight: 700; letter-spacing: 0.14em;
+  font-family: var(--font-mono); font-size: var(--fs-xl); font-weight: 700; letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--text); cursor: grab; pointer-events: auto;
   background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ggroup-title:active { cursor: grabbing; }
+/* group settings cog — ABSOLUTE at the title's right edge so it's out of the flex flow: it
+   never affects the title's padding or fights its text alignment (justify-content). */
+.ggt-cog { position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  width: 22px; height: 20px; padding: 0; min-height: 0;
+  display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+  background: transparent; border: 0; color: inherit; cursor: pointer; pointer-events: auto;
+  opacity: 0; transition: opacity .12s; }
+.ggroup-title:hover .ggt-cog { opacity: 0.7; }   /* inherits the title's text colour → tracks the scheme */
+.ggroup-title:hover .ggt-cog:hover { opacity: 1; }
+/* bottom-right resize grip — same look/size as node resize grips (.rz-grip).
+   pointer-events:auto because the box layer itself is none. */
+.ggroup-grip { position: absolute; right: 1px; bottom: 1px; width: 14px; height: 14px; z-index: 1;
+  cursor: nwse-resize; pointer-events: auto; opacity: 0.5; background-repeat: no-repeat;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='13' y1='9' x2='9' y2='13'/><line x1='13' y1='4' x2='4' y2='13'/></g></svg>"); }
+.ggroup-grip:hover { opacity: 1; }
+/* floating W×H readout shown while resizing a node or group */
+.size-hud { position: fixed; z-index: 300; pointer-events: none; padding: 2px 7px; border-radius: 5px;
+  font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text);
+  background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 8px #0008; white-space: nowrap; }
 
 /* group options popover (screen-fixed, like the topbar dropdowns) */
 .ggroup-pop { position: fixed; z-index: 200; min-width: 220px; display: flex; flex-direction: column; gap: 6px;
@@ -375,6 +395,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .ggroup-pop input[type="range"] { flex: 1; min-width: 0; }
 .ggroup-pop input[type="color"] { flex: 0 0 auto; width: 28px; height: 22px; padding: 0; border: 1px solid var(--line); background: none; }
 .ggroup-pop .gp-disband { margin-top: 4px; }
+/* premade scheme swatches */
+.gp-schemes { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
+.gp-scheme { width: 22px; height: 22px; padding: 0; border-radius: 5px; border: 1.5px solid var(--line);
+  cursor: pointer; flex: 0 0 auto; }
+.gp-scheme:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
 
 /* ---- detach (unlock) icon: only on grouped nodes ---- */
 .gn-detach { display: none; flex: 0 0 auto; width: 20px; height: 18px; min-height: 0; padding: 0;
@@ -531,6 +556,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .pc-data { max-height: 46vh; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
 .pc-ds table { margin-top: 4px; }
 label { display: block; margin: 6px 0; color: var(--muted); }
+input, select, textarea {
+  font: inherit;
+}
 input, select {
   width: 100%;
   padding: 6px 8px;
@@ -652,10 +680,10 @@ a.node.win:hover { border-color: var(--accent); }
 .gnode.dictionary { width: 300px; height: 360px; }
 .gnode.subset { width: 360px; height: 440px; min-width: 320px; }
 .gnode.price { width: 460px; height: 560px; }
-/* the price node has an out-port dot at its right edge; node-level clipping would cut it in
-   half, so clip the BODY instead and let the node (hence the port) overflow */
-.gnode.price { overflow: visible; }
-.gnode.price > .gn-body { overflow: auto; }   /* scroll when too small instead of squishing/clipping */
+/* nodes with an out-port dot at their right edge (price, dataset, view): node-level clipping
+   would cut the port in half, so clip the BODY instead and let the node (hence the port) overflow */
+.gnode.price, .gnode.dataset, .gnode.subset { overflow: visible; }
+.gnode.price > .gn-body, .gnode.dataset > .gn-body, .gnode.subset > .gn-body { overflow: auto; }   /* scroll when too small instead of squishing/clipping */
 .gnode.dataset > .gn-body, .gnode.preview > .gn-body,
 .gnode.dictionary > .gn-body, .gnode.subset > .gn-body, .gnode.price > .gn-body {
   flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -665,6 +693,8 @@ a.node.win:hover { border-color: var(--accent); }
   border: 1px solid var(--line); border-radius: 6px; color: var(--muted); cursor: pointer; }
 .ds-tab:hover { color: var(--fg); }
 .ds-tab.on { background: var(--accent-bg); border-color: var(--accent); color: var(--fg); }
+.ds-tab-n { margin-left: 2px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ds-tab-n:empty { display: none; }
 .gnode.dataset[data-tab="data"] .bat-host { display: none; }
 .gnode.dataset[data-tab="batches"] .data-host { display: none; }
 /* keep the dataset controls compact — don't stretch the agg select / buttons full width */
@@ -683,6 +713,10 @@ a.node.win:hover { border-color: var(--accent); }
 .gn-cog:hover { color: var(--fg); }
 .gn-cog.on { color: var(--accent); }
 .gn-cog ~ .gn-del { margin-left: 0; }   /* cog takes the auto; del sits right beside it */
+/* header controls (cog, enable toggle, group-detach) appear only on node hover — the header
+   reads clean at rest; layout space is reserved so nothing shifts when they fade in. */
+.gn-cog, .gn-enable, .gnode.in-group .gn-detach { opacity: 0; transition: opacity .12s; }
+.gnode:hover .gn-cog, .gnode:hover .gn-enable, .gnode:hover.in-group .gn-detach { opacity: 1; }
 .sub-sec { margin-top: 6px; }
 .sub-cfg > .sub-sec:first-child { margin-top: 0; }
 .sub-lbl { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; }
@@ -987,6 +1021,13 @@ label.inline input { width: auto; }
 .vt-grip { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 1; }
 .vt-grip::after { content: ""; position: absolute; top: 0; right: 3px; width: 1px; height: 100%; background: var(--line); }
 .vt-grip:hover::after { width: 2px; background: var(--accent); }
+/* column reorder: drag a header. The head goes relative so the insertion marker positions
+   against it; the grabbed column dims while dragging. */
+.vt-head.vt-reordering { position: relative; cursor: grabbing; }
+.vt-head.vt-reordering .vt-th { cursor: grabbing; }
+.vt-dragcol { opacity: 0.4; }
+.vt-col-marker { position: absolute; top: 0; height: 100%; width: 2px; background: var(--accent);
+  pointer-events: none; z-index: 2; }
 
 .vt-main { flex: 1 1 auto; min-height: 0; position: relative; }
 .vt-scroll { position: absolute; inset: 0; overflow-y: scroll; overflow-x: hidden; }

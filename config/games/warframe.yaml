@@ -10,6 +10,7 @@ fields:
   if_number_any: false
   if_text_any: false
   dict_mode: correct
+  dictionary: ''
   learn: true
   fuzzy: 0.82
 - id: count
@@ -19,6 +20,7 @@ fields:
   if_number_any: false
   if_text_any: false
   dict_mode: correct
+  dictionary: ''
   learn: false
   fuzzy: 0.82
 - id: rank
@@ -28,6 +30,7 @@ fields:
   if_number_any: false
   if_text_any: false
   dict_mode: correct
+  dictionary: ''
   learn: false
   fuzzy: 0.82
 windows:
@@ -41,6 +44,7 @@ windows:
     if_number_any: false
     if_text_any: false
     dict_mode: correct
+    dictionary: wiki
     learn: false
     fuzzy: 0.82
   - id: count
@@ -51,6 +55,7 @@ windows:
     if_number_any: false
     if_text_any: true
     dict_mode: correct
+    dictionary: ''
     learn: false
     fuzzy: 0.82
   - id: arcane_level
@@ -60,6 +65,7 @@ windows:
     if_number_any: false
     if_text_any: false
     dict_mode: correct
+    dictionary: ''
     learn: false
     fuzzy: 0.75
   data_area:
@@ -221,16 +227,16 @@ windows:
 datasets:
 - id: master
   aggregate: latest
-- id: prices
+- id: prices_statistics
   aggregate: latest
-- id: dataset
+- id: prices_live
   aggregate: latest
 subsets:
-- id: master_view
+- id: statistic_prices_joined
   dataset: ''
   datasets:
   - master
-  - prices
+  - prices_statistics
   join_field: name
   filters:
   - field: slug
@@ -250,31 +256,45 @@ subsets:
   sort_desc: false
   limit: 0
   config_collapsed: true
-- id: master_view2
+- id: live_prices_joined
   dataset: ''
   datasets:
   - master
-  - dataset
+  - prices_live
   join_field: name
-  filters: []
-  derived: []
-  hidden_columns: []
+  filters:
+  - field: slug
+    op: nonempty
+    value: ''
+  - field: count
+    op: gt
+    value: '0'
+  derived:
+  - name: total
+    template: '{=count*price_median} platinum'
+  hidden_columns:
+  - slug
+  - arcane_level
+  - key
+  - _item
+  - updated
+  - live_ask
   enrich: []
   sort_by: ''
   sort_desc: false
   limit: 0
-  config_collapsed: false
+  config_collapsed: true
 price_nodes:
 - id: price
   type: warframe_market
   mode: statistics
-  dataset: prices
+  dataset: prices_statistics
   throttle: 0.4
   enabled: true
-- id: price_2
+- id: wf_market_live
   type: warframe_market
   mode: orders
-  dataset: dataset
+  dataset: prices_live
   throttle: 0.4
   enabled: true
 dictionaries:
@@ -389,22 +409,22 @@ layout:
       y: 380.0
       collapsed: false
     win:equip:
-      x: 380.0
-      y: 180.0
+      x: 400.0
+      y: 340.0
       collapsed: false
     anc:equip:detect_2:
       x: 1220.0
       y: 440.0
       collapsed: false
     sb:equip:scrollbar:
-      x: 1060.0
-      y: 160.0
+      x: 1120.0
+      y: 880.0
       collapsed: false
     prev:equip:
-      x: 280.0
-      y: 660.0
-      w: 640.0
-      h: 480.0
+      x: 400.0
+      y: 780.0
+      w: 540.0
+      h: 420.0
       collapsed: false
     anc:equip:detect_4:
       x: 1220.0
@@ -431,8 +451,8 @@ layout:
       y: 220.0
       collapsed: false
     item:equip:arcane:
-      x: -120.0
-      y: 260.0
+      x: -300.0
+      y: 380.0
       w: 380.0
       h: 1374.0
       collapsed: false
@@ -469,19 +489,19 @@ layout:
       h: 0.0
       collapsed: false
     item:equip:normal:
-      x: -540.0
-      y: 260.0
+      x: -720.0
+      y: 380.0
       collapsed: false
     det:equip:detect_2:
-      x: 1060.0
+      x: 1120.0
       y: 340.0
       collapsed: false
     det:equip:detect_4:
-      x: 1060.0
+      x: 1120.0
       y: 520.0
       collapsed: false
     det:equip:detect_1:
-      x: 1060.0
+      x: 1120.0
       y: 700.0
       collapsed: false
     item:equip:normal1:
@@ -489,10 +509,10 @@ layout:
       y: 20.0
       collapsed: false
     ds:master:
-      x: 120.0
-      y: -760.0
-      w: 500.0
-      h: 760.0
+      x: 400.0
+      y: -920.0
+      w: 560.0
+      h: 940.0
       collapsed: false
     ds:equip:
       x: 900.0
@@ -500,29 +520,17 @@ layout:
       w: 0.0
       h: 0.0
       collapsed: false
-    sub:master_view:
-      x: 1800.0
-      y: -680.0
-      w: 1080.0
-      h: 720.0
-      collapsed: false
     enr:master_view:enr_1:
       x: 2460.0
       y: -200.0
       w: 860.0
       h: 760.0
       collapsed: false
-    ds:prices:
-      x: 1800.0
-      y: 200.0
-      w: 500.0
-      h: 680.0
-      collapsed: false
     price:price:
-      x: 1020.0
-      y: 1060.0
-      w: 920.0
-      h: 880.0
+      x: 1640.0
+      y: -400.0
+      w: 340.0
+      h: 460.0
       collapsed: false
     enr:master_view:enr_2:
       x: 0.0
@@ -530,23 +538,35 @@ layout:
       w: 0.0
       h: 0.0
       collapsed: false
-    price:price_2:
-      x: 1980.0
-      y: 1260.0
-      w: 460.0
-      h: 560.0
+    ds:prices_live:
+      x: 1640.0
+      y: 200.0
+      w: 340.0
+      h: 400.0
       collapsed: false
-    ds:dataset:
-      x: 2520.0
-      y: 1280.0
-      w: 920.0
-      h: 660.0
+    ds:prices_statistics:
+      x: 1640.0
+      y: -940.0
+      w: 340.0
+      h: 460.0
       collapsed: false
-    sub:master_view2:
-      x: 2740.0
-      y: 500.0
-      w: 900.0
-      h: 660.0
+    sub:live_prices_joined:
+      x: 2040.0
+      y: 200.0
+      w: 1080.0
+      h: 880.0
+      collapsed: false
+    sub:statistic_prices_joined:
+      x: 2040.0
+      y: -940.0
+      w: 1080.0
+      h: 1000.0
+      collapsed: false
+    price:wf_market_live:
+      x: 1640.0
+      y: 660.0
+      w: 340.0
+      h: 420.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -573,6 +593,23 @@ layout:
         arcane_level: 67
         count: 60
         _item: 62
+    view:master_view2:
+      order:
+      - name
+      - count
+      - price_median
+      - live_sellers
+      - live_median
+      - price_min
+      - volume
+      - test
+      widths:
+        price_min: 62
+        count: 40
+        live_median: 75
+        live_sellers: 69
+        price_median: 86
+        volume: 53
   open_images:
   - equip
   groups:
@@ -582,9 +619,86 @@ layout:
     - det:equip:detect_4
     - det:equip:detect_1
     - det:equip:detect_2
+    - sb:equip:scrollbar
     outline:
-      color: '#303030'
+      color: '#7ddc7d'
+      style: solid
+      width: 2
+    bg: '#7ddc7d18'
+    titleBg: '#7ddc7d'
+    titleColor: '#08121d'
+    titleAlign: left
+    titlePos: tl
+  - id: group_5
+    title: 'price: statistics'
+    members:
+    - ds:prices_statistics
+    - price:price
+    - sub:statistic_prices_joined
+    outline:
+      color: '#e6c25a'
+      style: solid
+      width: 2
+    bg: '#e6c25a18'
+    titleBg: '#e6c25a'
+    titleColor: '#08121d'
+    titleAlign: left
+    titlePos: tl
+  - id: group_6
+    title: 'price: live'
+    members:
+    - ds:prices_live
+    - sub:live_prices_joined
+    - price:price_2
+    - price:wf_market_live
+    outline:
+      color: '#e6c25a'
+      style: solid
+      width: 2
+    bg: '#e6c25a18'
+    titleBg: '#e6c25a'
+    titleColor: '#08121d'
+    titleAlign: left
+    titlePos: tl
+  - id: group_7
+    title: 'state: equipment'
+    members:
+    - win:equip
+    - prev:equip
+    outline:
+      color: '#333333'
       style: none
       width: 2
-    bg: '#1d1f2599'
+    bg: '#191c21ff'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+    titlePos: tl
+  - id: group_8
+    title: items
+    members:
+    - item:equip:normal
+    - item:equip:arcane
+    outline:
+      color: '#e0556b'
+      style: solid
+      width: 2
+    bg: '#e0556b18'
+    titleBg: '#e0556b'
+    titleColor: '#1a0a0e'
+    titleAlign: left
+    titlePos: tl
+  - id: group_9
+    title: warframe
+    members:
+    - game
+    - dict:wiki
+    outline:
+      color: '#2c313c'
+      style: none
+      width: 2
+    bg: '#191c21cc'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
     titlePos: tl

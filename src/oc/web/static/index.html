@@ -7,7 +7,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/style.css" />
 </head>
-<body>
+<body spellcheck="false">
   <!-- Full-page veil shown from FIRST PAINT: the boot sequence (stop stray OCR,
        load profile, reopen images, first detect/preview round) makes the page laggy
        and half-interactive — block everything until it has settled. Removed by
@@ -46,7 +46,7 @@
        multi-selected (marquee or shift-click). Acts on the live selection. -->
   <div id="seltoolbar" class="seltoolbar" hidden>
     <span id="selCount" class="sel-count">0 selected</span>
-    <button id="selGroupBtn" title="group the selected nodes">⬚ group</button>
+    <button id="selGroupBtn" title="group / ungroup the selection (hotkey: g)">⬚ group</button>
     <button id="selClearBtn" title="clear selection">clear</button>
   </div>
 

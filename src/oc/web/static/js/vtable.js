@@ -19,6 +19,13 @@
 const ROW_H = 22;        // fixed row height (px) — virtualization needs a known height
 const BUFFER = 6;        // extra rows rendered above/below the viewport
 
+// CSS font shorthand for canvas text measurement (built from parts — the `font` shorthand
+// is often empty when set via separate CSS properties).
+function fontOf(el) {
+  const s = getComputedStyle(el);
+  return `${s.fontStyle} ${s.fontWeight} ${s.fontSize}/${s.lineHeight} ${s.fontFamily}`;
+}
+
 // Per-table column widths persist (by table id) so they travel with the profile, mirroring
 // table.js. Until wired by the host app, an in-memory fallback keeps resizing working.
 let _store = (() => {
@@ -104,6 +111,7 @@ export class VTable {
     this.head.addEventListener("click", (e) => {
       if (e.target.classList.contains("vt-grip")) return;       // a grip click isn't a sort
       if (this._resized) { this._resized = false; return; }     // drag ended over the header
+      if (this._reordered) { this._reordered = false; return; } // a column drag isn't a sort
       const th = e.target.closest(".vt-th"); if (th) this._onHeader(+th.dataset.c);
     });
     this.rowsEl.addEventListener("click", (e) => {
@@ -126,7 +134,7 @@ export class VTable {
 
   // ---- data ----
   setData(columns, rows, opts = {}) {
-    this.columns = columns || [];
+    this.columns = this._applyOrder(columns || []);
     this.rowClass = opts.rowClass || null;
     this.onRowClick = opts.onRowClick || null;
     this.expander = opts.expander || null;   // async fn(values) -> detail node (inline row drill-down)
@@ -148,6 +156,10 @@ export class VTable {
       h.className = "vt-cell vt-th";
       h.dataset.c = i;
       h.textContent = c;
+      h.addEventListener("mousedown", (e) => {   // drag the header to reorder columns
+        if (e.button !== 0 || e.target.classList.contains("vt-grip")) return;
+        this._startReorder(e, i);
+      });
       if (this.sortCol === i) {
         const s = document.createElement("span");
         s.className = "vt-sort";
@@ -156,8 +168,9 @@ export class VTable {
       }
       const grip = document.createElement("span");
       grip.className = "vt-grip";
-      grip.title = "drag to resize";
+      grip.title = "drag to resize · double-click to fit";
       grip.addEventListener("mousedown", (e) => this._startResize(e, i));
+      grip.addEventListener("dblclick", (e) => { e.preventDefault(); e.stopPropagation(); this._autofit(i); });
       h.appendChild(grip);
       this.head.appendChild(h);
     });
@@ -172,21 +185,123 @@ export class VTable {
     for (const row of this.pool) row._cells.forEach((cell, i) => css(cell, this.widths[this.columns[i]]));
   }
 
+  // CSS scale this table is rendered at (graph nodes live inside a `scale(zoom)` transform).
+  // Measured from the header itself so VTable needn't know the graph's zoom: rect width is
+  // post-scale, offsetWidth is the local layout width, so their ratio is the scale factor.
+  // Mouse deltas are in SCREEN px; ÷ scale converts them to the head's local coordinate space.
+  _scale() { const w = this.head.offsetWidth; return w ? this.head.getBoundingClientRect().width / w : 1; }
+
   _startResize(e, i) {
     e.preventDefault();
     e.stopPropagation();
     const name = this.columns[i];
     const th = this.head.children[i];
     const startX = e.clientX, startW = this.widths[name] || th.offsetWidth || 80;
+    const scale = this._scale();   // constant during the drag
     const move = (ev) => {
       if (Math.abs(ev.clientX - startX) > 2) this._resized = true;   // suppress the trailing sort click
-      this.widths[name] = Math.max(36, Math.round(startW + (ev.clientX - startX)));
+      this.widths[name] = Math.max(36, Math.round(startW + (ev.clientX - startX) / scale));
       this._applyWidths();
     };
     const up = () => {
       document.removeEventListener("mousemove", move);
       document.removeEventListener("mouseup", up);
       if (this.id) _store.save(this.id, { ...(_store.load(this.id)), widths: this.widths });
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  }
+
+  // Double-click the grip: size the column to fit its header + every cell's text.
+  _autofit(i) {
+    const name = this.columns[i];
+    this.widths[name] = this._measureCol(name);
+    this._applyWidths();
+    if (this.id) _store.save(this.id, { ...(_store.load(this.id)), widths: this.widths });
+  }
+
+  // Natural width that fits column `name`: the widest of its header and all (filtered) cell
+  // values, measured via canvas so it's independent of the table's current fixed layout.
+  // Clamped; header gets extra room for the sort-icon/grip overlay.
+  _measureCol(name) {
+    const cv = VTable._cv || (VTable._cv = document.createElement("canvas"));
+    const ctx = cv.getContext("2d");
+    const th = this.head.children[this.columns.indexOf(name)];
+    const bodyCell = this.pool.find((r) => r.style.display !== "none")?._cells[0];
+    ctx.font = fontOf(th || this.head);
+    let max = ctx.measureText(name).width + 18;        // header text + icon/grip overlay room
+    ctx.font = fontOf(bodyCell || th || this.head);
+    for (const rec of this.rows) {
+      const w = ctx.measureText(this._cell(rec.values, name)).width;
+      if (w > max) max = w;
+    }
+    return Math.min(600, Math.max(36, Math.ceil(max) + 12));   // cell padding/slack, clamped
+  }
+
+  // ---- column reorder (drag a header) ----
+  // Saved order is a column-name list (by name, not index, so it survives column add/remove)
+  // persisted in the same per-table store as widths/sorts, so it travels with the profile.
+  _savedOrder() { return (this.id ? _store.load(this.id).order : null) || null; }
+  _saveOrder() { if (this.id) _store.save(this.id, { ...(_store.load(this.id)), order: this.columns.slice() }); }
+
+  // Reorder incoming columns to the saved order; columns not in the saved list (new ones)
+  // keep their server order and append at the end. No saved order → leave as-is.
+  _applyOrder(cols) {
+    const ord = this._savedOrder();
+    if (!ord || !ord.length) return cols;
+    const have = new Set(cols);
+    const out = ord.filter((c) => have.has(c));
+    const seen = new Set(out);
+    for (const c of cols) if (!seen.has(c)) out.push(c);
+    return out;
+  }
+
+  _startReorder(e, from) {
+    const startX = e.clientX;
+    const scale = this._scale();   // marker.left is in the head's local (pre-zoom) space
+    let dragging = false, to = from;
+    const marker = document.createElement("div");
+    marker.className = "vt-col-marker";
+    const ths = () => [...this.head.children].filter((c) => c.classList.contains("vt-th"));
+    const move = (ev) => {
+      if (!dragging) {
+        if (Math.abs(ev.clientX - startX) < 4) return;   // threshold: a small move is still a click
+        dragging = true;
+        this.head.classList.add("vt-reordering");
+        this.head.appendChild(marker);
+        ths()[from]?.classList.add("vt-dragcol");
+      }
+      const cells = ths();
+      to = cells.length;
+      for (let k = 0; k < cells.length; k++) {
+        const r = cells[k].getBoundingClientRect();
+        if (ev.clientX < r.left + r.width / 2) { to = k; break; }
+      }
+      const headRect = this.head.getBoundingClientRect();
+      const ref = cells[to];
+      const x = ref ? ref.getBoundingClientRect().left : (cells[cells.length - 1]?.getBoundingClientRect().right ?? headRect.left);
+      marker.style.left = `${(x - headRect.left) / scale + this.head.scrollLeft}px`;
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      this.head.classList.remove("vt-reordering");
+      marker.remove();
+      ths()[from]?.classList.remove("vt-dragcol");
+      if (!dragging) return;
+      this._reordered = true;                       // suppress the trailing sort click
+      let dest = to > from ? to - 1 : to;           // removing `from` shifts later indices left
+      if (dest === from || dest < 0) return;
+      const sortName = this.sortCol != null ? this.columns[this.sortCol] : null;
+      const cols = this.columns.slice();
+      const [c] = cols.splice(from, 1);
+      cols.splice(dest, 0, c);
+      this.columns = cols;
+      this.sortCol = sortName != null ? this.columns.indexOf(sortName) : null;   // keep sort on its column
+      this._saveOrder();
+      this._renderHead();   // re-applies widths by name; body cells re-map to new order on render
+      this._render();
+      this.onReorder && this.onReorder(this.columns.slice());   // host (e.g. hide-toggle row) follows
     };
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);

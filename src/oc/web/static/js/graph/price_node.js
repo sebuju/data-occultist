@@ -41,7 +41,7 @@ export function priceParts(pn) {
       <div class="enr-movers-wrap"><div class="sub-lbl">movers <span class="muted">(7d ≥15%) — click to chart</span></div>
         <ul class="movers enr-movers nodehost scrollhost"><li class="muted">—</li></ul></div>`;
   return {
-    title: `<span class="gi-id">💲 ${esc(pn.type)}</span>`,
+    title: `<input class="gi gi-id prrename" value="${esc(pn.id)}" title="rename price node" />`,
     body: head + charts,
     ports: `<span class="port out" title="drag to a dataset to push prices there"></span>`,
   };

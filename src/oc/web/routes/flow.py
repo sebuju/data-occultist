@@ -173,12 +173,39 @@ def _subset(game: str, subset: str):
     return profile, sub
 
 
+def _input_rows(profile, game: str, input_id: str, stack: frozenset, cache: dict) -> list[dict]:
+    """Rows for one view input. A dataset input -> its stored records; a VIEW input -> that
+    view computed first (recursively), so its derived columns are available to the consumer.
+    `stack` holds the views currently being computed -> a cycle resolves to no rows instead
+    of recursing forever. `cache` memoises so a shared upstream view computes once."""
+    if input_id in cache:
+        return cache[input_id]
+    sub = profile.subset_def(input_id)
+    if sub is None:                                   # a plain dataset
+        rows = _store(game, input_id).records()
+    elif input_id in stack:                           # cycle -> stop
+        rows = []
+    else:
+        rows = _compute_subset_rows(profile, game, sub, stack | {input_id}, cache)
+    cache[input_id] = rows
+    return rows
+
+
+def _compute_subset_rows(profile, game: str, sub, stack: frozenset, cache: dict) -> list[dict]:
+    from ...enrich.subset import compute_view
+    inputs = [(i, _input_rows(profile, game, i, stack, cache)) for i in sub.inputs()]
+    return compute_view(inputs, sub)["rows"]
+
+
 @router.get("/{game}/subset/{subset}")
 def subset_view(game: str, subset: str):
-    """Compute a view: outer-join its source datasets on the shared key, then filter +
-    derive + sort. Recomputed from current records, so it tracks dataset updates."""
+    """Compute a view: outer-join its sources (datasets OR other views) on the shared key,
+    then filter + derive + sort. View inputs are computed first (dependency order), so an
+    upstream view's derived columns feed downstream. Recomputed from current records, so it
+    tracks updates. Input cycles resolve to empty rather than looping."""
     from ...enrich.subset import compute_view
-    _, sub = _subset(game, subset)
-    inputs = [(ds, _store(game, ds).records()) for ds in sub.inputs()]
+    profile, sub = _subset(game, subset)
+    cache: dict = {}
+    inputs = [(i, _input_rows(profile, game, i, frozenset({subset}), cache)) for i in sub.inputs()]
     result = compute_view(inputs, sub)
     return {"subset": subset, "datasets": sub.inputs(), **result}

@@ -18,7 +18,9 @@ const DIR_CODE = { L: 0, R: 1, T: 2, B: 3 };
 // there is genuinely no way around (run-for-it).
 const W_BLOCK = 100000; // entering a node rect — huge so a line takes ANY detour over clipping a node, yet finite so a fully-boxed-in line still completes (run-for-it)
 const W_CLEAR = 1.2;    // per cell short of the wanted breathing room
-const W_USE = 6;        // per line already crossing a cell — strong, so a 2nd line never sits ON another
+const W_USE = 12;       // per line already on a cell — high, so a line takes a short detour (a few
+                        // cells + a couple of turns) rather than needlessly crossing/overlapping
+                        // another; it still crosses when genuinely boxed in (detour costs more)
 const W_TURN = 3;       // changing direction
 // One ring, but as costly as a full overlap. A parallel line therefore won't sit at
 // distance 1 (10px, reads as touching) — it skips to distance 2 (~20px, a clear gap).
@@ -112,14 +114,17 @@ export class EdgeRouter {
   // Route one edge. p1/p2 are world port points on the node rims, d1/d2 the outward
   // sides ("L"/"R"/"T"/"B"). Returns a simplified world polyline and stamps the path
   // into the usage grid so the next route gives it a wide berth.
-  route(p1, d1, p2, d2) {
+  // `relax`: drop the clearance (breathing-room) penalty so the line takes the direct path
+  // and runs close to neighbours instead of detouring to hug open space — used for lines
+  // BETWEEN grouped nodes. Node rects stay hard obstacles (W_BLOCK), so it never draws over one.
+  route(p1, d1, p2, d2, relax = false) {
     const sd = DIR_CODE[d1] ?? 1, gd = DIR_CODE[d2] ?? 0;
     // start/goal one cell outside the ports, in open space away from their own nodes
     const sx = this._cx(p1[0] + DIRS[sd][0] * this.cell), sy = this._cy(p1[1] + DIRS[sd][1] * this.cell);
     const gx = this._cx(p2[0] + DIRS[gd][0] * this.cell), gy = this._cy(p2[1] + DIRS[gd][1] * this.cell);
     const start = this._i(sx, sy), goal = this._i(gx, gy);
 
-    const cells = this._astar(start, goal, sd);
+    const cells = this._astar(start, goal, sd, relax);
     const centers = cells.map((i) => this._center(i % this.cols, (i / this.cols) | 0));
     // Attach at the EXACT node-edge centre (p1/p2), not a grid-snapped point — otherwise a
     // short node (e.g. collapsed) shows the line meeting it visibly off-centre. BUT the grid
@@ -145,15 +150,23 @@ export class EdgeRouter {
   _centerJog(pts) {
     if (pts.length !== 4) return;
     const [a, b, c, d] = pts;
+    // Keep the hop at least STUB away from BOTH ports so the line runs dead-straight into the
+    // out-port and into the arrowhead. A turn right at an endpoint leaves the arrow looking
+    // detached from its line (and the start dot off its stub). Fall back to the full span only
+    // if no margined lane is clear, so we never route worse than before.
+    const STUB = this.cell * 1.5;
+    const band = (lo, hi) => { const a2 = Math.min(lo, hi) + STUB, b2 = Math.max(lo, hi) - STUB; return a2 <= b2 ? [a2, b2] : [lo, hi]; };
     if (a[1] === b[1] && c[1] === d[1] && b[0] === c[0]) {            // horizontal runs, vertical hop at x
-      const x = this._bestHop(a[0], d[0], (x) => [
+      const [lo, hi] = band(a[0], d[0]);
+      const x = this._bestHop(lo, hi, (x) => [
         this._laneScore(a[0], a[1], x, a[1]),   // run a→corner
         this._laneScore(x, a[1], x, d[1]),       // the hop
         this._laneScore(x, d[1], d[0], d[1]),    // run corner→d
       ]);
       if (x !== null) { b[0] = x; c[0] = x; }
     } else if (a[0] === b[0] && c[0] === d[0] && b[1] === c[1]) {     // vertical runs, horizontal hop at y
-      const y = this._bestHop(a[1], d[1], (y) => [
+      const [lo, hi] = band(a[1], d[1]);
+      const y = this._bestHop(lo, hi, (y) => [
         this._laneScore(a[0], a[1], a[0], y),
         this._laneScore(a[0], y, d[0], y),
         this._laneScore(d[0], y, d[0], d[1]),
@@ -201,16 +214,16 @@ export class EdgeRouter {
   // long detour scores worse than a slightly-farther side with a clear run. Reflects the
   // corridors already stamped this pass, so a side is also penalised for piling onto
   // lines already there. Infinity only if truly unreachable (soft obstacles → rare).
-  routeCost(p1, d1, p2, d2) {
+  routeCost(p1, d1, p2, d2, relax = false) {
     const sd = DIR_CODE[d1] ?? 1, gd = DIR_CODE[d2] ?? 0;
     const sx = this._cx(p1[0] + DIRS[sd][0] * this.cell), sy = this._cy(p1[1] + DIRS[sd][1] * this.cell);
     const gx = this._cx(p2[0] + DIRS[gd][0] * this.cell), gy = this._cy(p2[1] + DIRS[gd][1] * this.cell);
-    this._astar(this._i(sx, sy), this._i(gx, gy), sd);   // fills g[]/seen[] for this gen
+    this._astar(this._i(sx, sy), this._i(gx, gy), sd, relax);   // fills g[]/seen[] for this gen
     const goal = this._i(gx, gy);
     return this.seen[goal] === this.gen ? this.g[goal] : Infinity;
   }
 
-  _astar(start, goal, startDir) {
+  _astar(start, goal, startDir, relax = false) {
     const { cols, rows, g, came, dir, seen } = this;
     const gen = ++this.gen;
     const gxc = goal % cols, gyc = (goal / cols) | 0;
@@ -226,7 +239,9 @@ export class EdgeRouter {
         const nx = cx + DIRS[m][0], ny = cy + DIRS[m][1];
         if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
         const ni = ny * cols + nx;
-        let step = 1 + this.clearCost[ni] + this.usage[ni] * W_USE;
+        // `relax` drops the clearance term so grouped lines don't pay to hug open space;
+        // usage (other lines) and W_BLOCK (node rects) still apply — never draw over a node.
+        let step = 1 + (relax ? 0 : this.clearCost[ni]) + this.usage[ni] * W_USE;
         if (this.blocked[ni]) step += W_BLOCK;
         if (cd !== m) step += W_TURN;
         const ng = gc + step;

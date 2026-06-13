@@ -50,6 +50,41 @@ def test_view_joins_datasets_on_key_with_arithmetic_derived():
     assert "price_median" in out["columns"]               # columns unioned across datasets
 
 
+def test_inline_math_mixes_static_text():
+    inv = [{"name": "Acceltra Prime", "count": 2, "present": True},
+           {"name": "Junk", "count": 5, "present": True}]
+    prices = [{"name": "Acceltra Prime", "slug": "acceltra_prime_set", "price_median": 48}]
+    sub = SubsetDef(id="folio", datasets=["master", "prices"], join_field="name",
+                    derived=[DerivedColumn(name="worth", template="{=count*price_median} plat")])
+    rows = {r["name"]: r for r in compute_view([("master", inv), ("prices", prices)], sub)["rows"]}
+    assert rows["Acceltra Prime"]["worth"] == "96 plat"   # math evaluated, literal text kept
+    assert rows["Junk"]["worth"] == " plat"               # missing operand -> empty math, text stays
+
+
+def test_leading_equals_still_pure_math():
+    inv = [{"name": "X", "count": 2, "present": True}]
+    prices = [{"name": "X", "price_median": 48}]
+    sub = SubsetDef(id="v", datasets=["m", "p"], join_field="name",
+                    derived=[DerivedColumn(name="value", template="={count}*{price_median}")])
+    rows = compute_view([("m", inv), ("p", prices)], sub)["rows"]
+    assert rows[0]["value"] == 96                         # back-compat: numeric, not a string
+
+
+def test_view_feeding_view_chains_derived_columns():
+    # upstream view computes `value`; downstream view consumes its ROWS and derives from it,
+    # mirroring how flow.py resolves a view input before the view that joins it (calc order).
+    inv = [{"name": "A", "count": 3, "present": True}]
+    prices = [{"name": "A", "price_median": 10}]
+    up = SubsetDef(id="up", datasets=["inv", "prices"], join_field="name",
+                   derived=[DerivedColumn(name="value", template="={count}*{price_median}")])
+    up_rows = compute_view([("inv", inv), ("prices", prices)], up)["rows"]
+    down = SubsetDef(id="down", datasets=["up"], join_field="name",
+                     derived=[DerivedColumn(name="label", template="{=value*2} pl")])
+    out = compute_view([("up", up_rows)], down)
+    row = out["rows"][0]
+    assert row["value"] == 30 and row["label"] == "60 pl"   # upstream derived feeds downstream
+
+
 def test_subset_round_trips_through_profile(tmp_path):
     p = GameProfile(name="g", subsets=[SubsetDef(
         id="arc", dataset="equip",

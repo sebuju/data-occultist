@@ -51,32 +51,45 @@ def _unmerge(wmap: dict[str, str], key: str) -> str | None:
 
 class FieldResolver:
     def __init__(self, lexicon: Lexicon, corrector: Corrector, accept_confidence: float = 0.88,
-                 confusions=None, dictionary=None, learn_enabled: bool = True):
+                 confusions=None, dictionary=None, dictionaries=None, learn_enabled: bool = True):
         self._lex = lexicon
         self._corrector = corrector
         self._accept = accept_confidence
         self._confusions = confusions   # optional ConfusionMap
-        self._dict = dictionary          # optional Dictionary (authored vocabulary)
+        self._dict = dictionary          # pooled Dictionary, used when a field pins none
+        self._dict_map = dictionaries or {}   # id -> Dictionary, a field pins one via FieldDef.dictionary
         self._learn = learn_enabled      # False => read-only (e.g. teaching preview): never mutate
         # field id -> (lexicon term count, word map, lowercase word list). The
         # dictionary is fixed and the lexicon only grows, so a stale entry is detected
         # by the count alone — without this every resolve rebuilds a thousand-word map.
         self._word_cache: dict[str, tuple[int, dict[str, str], list[str]]] = {}
-        self._dict_words: tuple[dict[str, str], list[str]] | None = None
+        # cache the non-learning word vocabulary per Dictionary object (fields may use
+        # different ones now), keyed by object id since each dictionary is fixed.
+        self._dict_words: dict[int, tuple[dict[str, str], list[str]]] = {}
+
+    def _dict_for(self, field: FieldDef):
+        """The Dictionary this field reads against: its pinned one
+        (``FieldDef.dictionary``) when set and known, else the pooled default."""
+        if field.dictionary and field.dictionary in self._dict_map:
+            return self._dict_map[field.dictionary]
+        return self._dict
 
     def _words(self, field: FieldDef) -> tuple[dict[str, str], list[str]]:
         """The field's word vocabulary: ``norm -> canonical`` plus a lowercase list
         for fuzzy matching — the dictionary's words (unless the field's dict mode is
         off), joined by the words of the field's learned terms (when it learns).
         Cached."""
-        use_dict = self._dict and field.dict_mode is not DictMode.off
-        dmap = self._dict.word_map if use_dict else {}
+        d = self._dict_for(field)
+        use_dict = d and field.dict_mode is not DictMode.off
+        dmap = d.word_map if use_dict else {}
         if not field.learn:
             if not use_dict:
                 return {}, []
-            if self._dict_words is None:
-                self._dict_words = (dmap, [w.lower() for w in dmap.values()])
-            return self._dict_words
+            cached = self._dict_words.get(id(d))
+            if cached is None:
+                cached = (dmap, [w.lower() for w in dmap.values()])
+                self._dict_words[id(d)] = cached
+            return cached
         lterms = self._lex.terms(field.id)
         cached = self._word_cache.get(field.id)
         if cached is not None and cached[0] == len(lterms):
@@ -150,8 +163,9 @@ class FieldResolver:
         # 1) Exact dictionary hit wins outright — handles a correct read plus OCR noise
         #    like case/spacing/punctuation ('neo v11' -> 'Neo V11'). No fuzzy needed.
         #    Only when the dictionary may rewrite the read (the correcting modes).
-        if self._dict and mode in (DictMode.correct, DictMode.correct_drop):
-            hit = self._dict.exact(text)
+        d = self._dict_for(field)
+        if d and mode in (DictMode.correct, DictMode.correct_drop):
+            hit = d.exact(text)
             if hit is not None:
                 return ResolvedField(hit, corrected=(hit != text), score=1.0)
 

@@ -36,15 +36,43 @@ export class GraphModel {
   // how a key's many observations collapse to the displayed value
   datasetAggregate(id) { const d = this.datasetDef(id); return (d && d.aggregate) || "latest"; }
   setDatasetAggregate(id, agg) { this.ensureDatasetDef(id).aggregate = agg || "latest"; }
-  // rename a dataset: move the def id and repoint every window that feeds it
+  // SINGLE SOURCE OF TRUTH for every place a dataset id is stored, as live get/set accessors.
+  // `decl: true` sites DECLARE a dataset's existence (a node literally IS this dataset);
+  // ref sites merely point at one (a consumer). EVERYTHING that lists or renames datasets
+  // derives from this one list — `datasets()`, `renameDataset()`, collision checks — so a
+  // dataset can never desync into a duplicate. Adding a new node type that touches datasets
+  // means adding ONE loop here; rename/listing then work automatically, no audit needed.
+  _datasetSites() {
+    const sites = [];
+    for (const w of this.profile.windows)
+      sites.push({ decl: true, get: () => this.datasetOf(w), set: (v) => { w.dataset = v; } });
+    for (const d of this.profile.datasets || [])
+      sites.push({ decl: true, get: () => d.id, set: (v) => { d.id = v; } });
+    for (const pn of this.profile.price_nodes || [])
+      sites.push({ decl: true, get: () => pn.dataset, set: (v) => { pn.dataset = v; } });
+    for (const s of this.profile.subsets || []) {                     // view inputs are REFs
+      sites.push({ decl: false, get: () => s.dataset, set: (v) => { s.dataset = v; } });   // legacy single
+      (s.datasets || []).forEach((_, i) =>
+        sites.push({ decl: false, get: () => s.datasets[i], set: (v) => { s.datasets[i] = v; } }));
+    }
+    return sites;
+  }
+
+  // Repoint every reference site (consumers, not declarations) from oldId -> newId. Shared by
+  // dataset AND subset renames: a subset.datasets entry can name either, and the ref site is
+  // the same either way, so one helper keeps both rename paths complete.
+  _repointRefs(oldId, newId) {
+    for (const st of this._datasetSites()) if (!st.decl && st.get() === oldId) st.set(newId);
+  }
+
+  // Rename a dataset: repoint EVERY site (declarations + references) holding the old id, so
+  // the old name cannot linger and resurface as a duplicate node.
   renameDataset(oldId, newId) {
     newId = (newId || "").trim();
-    if (!newId || newId === oldId || this.datasetDef(newId)) return false;
-    for (const w of this.profile.windows) {
-      if (this.datasetOf(w) === oldId) w.dataset = newId;   // explicit, even if it was the default
-    }
-    const d = this.datasetDef(oldId);
-    if (d) d.id = newId; else this.ensureDatasetDef(newId);
+    if (!newId || newId === oldId || this.datasets().includes(newId)) return false;   // collision incl. disk/price/window
+    for (const st of this._datasetSites()) if (st.get() === oldId) st.set(newId);
+    if (!this.datasetDef(newId)) this.ensureDatasetDef(newId);   // a def must exist for the new name
+    if (this._extraDatasets) this._extraDatasets = this._extraDatasets.filter((x) => x !== oldId);   // drop stale disk entry
     return true;
   }
   // field ids available to a dataset = the fields of every window feeding it
@@ -78,17 +106,39 @@ export class GraphModel {
 
   edges() {
     const es = [];
+    // a muted node->dictionary link for every field that pins a specific dictionary
+    // (FieldDef.dictionary). De-duped per (node, dict) so an item with two fields on
+    // the same dictionary draws one line.
+    const dictSeen = new Set();
+    const linkDict = (fromNode, w, fid) => {
+      const fd = (w.fields || []).find((f) => f.id === fid);
+      if (!fd || !fd.dictionary || !this.dictionary(fd.dictionary)) return;
+      const k = `${fromNode}|${fd.dictionary}`;
+      if (dictSeen.has(k)) return;
+      dictSeen.add(k);
+      es.push({ from: fromNode, to: `dict:${fd.dictionary}`, kind: "usedict" });
+    };
     for (const w of this.profile.windows) {
       es.push({ from: "game", to: `win:${w.id}`, kind: "own" });
       es.push({ from: `win:${w.id}`, to: `prev:${w.id}`, kind: "img" });
-      for (const r of w.regions || []) es.push({ from: `win:${w.id}`, to: `reg:${w.id}:${r.id}`, kind: "field" });
+      for (const r of w.regions || []) {
+        es.push({ from: `win:${w.id}`, to: `reg:${w.id}:${r.id}`, kind: "field" });
+        linkDict(`reg:${w.id}:${r.id}`, w, r.field);
+      }
       for (const d of w.detect || []) es.push({ from: `win:${w.id}`, to: `det:${w.id}:${d.id}`, kind: "detect" });
       if (w.scroll && w.scroll.scrollbar) es.push({ from: `win:${w.id}`, to: `sb:${w.id}:scrollbar`, kind: "scrollbar" });
-      for (const it of w.items || []) es.push({ from: `win:${w.id}`, to: `item:${w.id}:${it.id}`, kind: "item" });
+      for (const it of w.items || []) {
+        es.push({ from: `win:${w.id}`, to: `item:${w.id}:${it.id}`, kind: "item" });
+        for (const f of it.fields || []) linkDict(`item:${w.id}:${it.id}`, w, f.field);
+      }
       es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
     }
     for (const s of this.profile.subsets || [])
-      for (const ds of this.subsetInputs(s)) es.push({ from: `ds:${ds}`, to: `sub:${s.id}`, kind: "data" });
+      for (const inp of this.subsetInputs(s)) {
+        // an input can be a dataset OR another view (subset) — pick the right source node
+        const from = this.subsetDef(inp) ? `sub:${inp}` : `ds:${inp}`;
+        es.push({ from, to: `sub:${s.id}`, kind: "data" });
+      }
     // a price producer WRITES into its output dataset (producer -> dataset)
     for (const pn of this.profile.price_nodes || []) es.push({ from: `price:${pn.id}`, to: `ds:${pn.dataset}`, kind: "data" });
     for (const d of this.profile.dictionaries || []) es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
@@ -101,10 +151,9 @@ export class GraphModel {
   }
 
   datasets() {
-    const set = new Set(this.profile.windows.map((w) => this.datasetOf(w)));
-    (this.profile.datasets || []).forEach((d) => set.add(d.id));   // include standalone defs (clones)
-    (this.profile.price_nodes || []).forEach((pn) => set.add(pn.dataset));   // producer outputs
-    (this._extraDatasets || []).forEach((d) => set.add(d));
+    const set = new Set();
+    for (const st of this._datasetSites()) if (st.decl) { const v = st.get(); if (v) set.add(v); }   // declaration sites only
+    (this._extraDatasets || []).forEach((d) => set.add(d));   // names found on disk
     return [...set];
   }
 
@@ -119,6 +168,12 @@ export class GraphModel {
     return id;
   }
   removePriceNode(id) { this.profile.price_nodes = (this.profile.price_nodes || []).filter((p) => p.id !== id); }
+  renamePriceNode(oldId, newId) {
+    newId = (newId || "").trim();
+    if (!newId || newId === oldId || this.priceNode(newId)) return false;
+    this.priceNode(oldId).id = newId;
+    return true;
+  }
   setPriceDataset(id, ds) {
     const pn = this.priceNode(id);
     if (pn && ds) { pn.dataset = ds; this.ensureDatasetDef(ds); }
@@ -189,12 +244,29 @@ export class GraphModel {
     newId = (newId || "").trim();
     if (!newId || newId === oldId || this.subsetDef(newId)) return false;
     this.subsetDef(oldId).id = newId;
+    this._repointRefs(oldId, newId);   // a view can feed another view — repoint those inputs too
     return true;
   }
-  // add/remove a source dataset to a view (the join inputs)
+  // does view `fromId` use `targetId` as a (transitive) input? Used to refuse cycles.
+  subsetReaches(fromId, targetId) {
+    const seen = new Set();
+    const stack = [fromId];
+    while (stack.length) {
+      const cur = stack.pop();
+      if (cur === targetId) return true;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      const sd = this.subsetDef(cur);
+      if (sd) for (const inp of this.subsetInputs(sd)) stack.push(inp);
+    }
+    return false;
+  }
+  // add/remove a source (dataset OR another view) to a view's join inputs. Refuses self-
+  // reference and any cycle (would loop forever when computing the view).
   addSubsetInput(id, ds) {
     const s = this.subsetDef(id);
-    if (!s || !ds) return false;
+    if (!s || !ds || ds === id) return false;
+    if (this.subsetDef(ds) && this.subsetReaches(ds, id)) return false;   // ds already depends on id -> cycle
     s.datasets = s.datasets || [];
     if (s.datasets.includes(ds)) return false;
     s.datasets.push(ds);
@@ -205,17 +277,36 @@ export class GraphModel {
     if (s) s.datasets = (s.datasets || []).filter((d) => d !== ds);
   }
   setJoinField(id, field) { const s = this.subsetDef(id); if (s) s.join_field = field || "name"; }
-  // columns a view can reference: the fields of every joined dataset + derived names
-  subsetColumns(id) {
+  // columns a view can reference: every input's columns + this view's derived names. A
+  // dataset input contributes its window fields (+ known price columns); a VIEW input
+  // contributes its own output columns (recursively, so an upstream view's derived columns
+  // are visible downstream). `_seen` guards against an input cycle.
+  subsetColumns(id, _seen) {
     const s = this.subsetDef(id);
     if (!s) return [];
+    _seen = _seen || new Set();
+    if (_seen.has(id)) return [];
+    _seen.add(id);
     const out = [];
-    for (const ds of this.subsetInputs(s)) for (const f of this.datasetFields(ds)) if (!out.includes(f)) out.push(f);
-    // price datasets aren't fed by windows, so expose their known snapshot columns
-    for (const ds of this.subsetInputs(s))
-      if ((this.profile.price_nodes || []).some((p) => p.dataset === ds))
-        for (const c of ["name", "slug", "price_min", "price_median", "volume", "live_ask", "live_median", "live_sellers"]) if (!out.includes(c)) out.push(c);
-    for (const d of s.derived || []) if (d.name && !out.includes(d.name)) out.push(d.name);
+    const add = (c) => { if (c && !out.includes(c)) out.push(c); };
+    for (const inp of this.subsetInputs(s)) {
+      if (this.subsetDef(inp)) { this.subsetColumns(inp, _seen).forEach(add); continue; }   // view input
+      this.datasetFields(inp).forEach(add);
+      // price datasets aren't fed by windows, so expose their known snapshot columns
+      if ((this.profile.price_nodes || []).some((p) => p.dataset === inp))
+        ["name", "slug", "price_min", "price_median", "volume", "live_ask", "live_median", "live_sellers"].forEach(add);
+    }
+    for (const d of s.derived || []) if (d.name) add(d.name);
+    return out;
+  }
+  // sources a view can still add as an input: datasets + OTHER views, minus its current
+  // inputs, itself, and any view that already depends on it (would form a cycle).
+  joinableInputs(s) {
+    const inputs = this.subsetInputs(s);
+    const out = [];
+    for (const d of this.datasets()) if (!inputs.includes(d)) out.push(d);
+    for (const o of this.profile.subsets || [])
+      if (o.id !== s.id && !inputs.includes(o.id) && !this.subsetReaches(o.id, s.id)) out.push(o.id);
     return out;
   }
   addFilter(id) { (this.subsetDef(id).filters ||= []).push({ field: "", op: "contains", value: "" }); }

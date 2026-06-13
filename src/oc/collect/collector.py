@@ -22,7 +22,7 @@ import cv2
 
 from ..engine import Engine
 from ..learn.confusions import ConfusionMap
-from ..learn.dictionary import Dictionary
+from ..learn.dictionary import build_dictionaries
 from ..learn.lexicon import Lexicon
 from ..learn.resolver import FieldResolver
 from ..locate import WindowLocator
@@ -80,9 +80,9 @@ class Collector:
 
         self._lexicon = Lexicon.for_game(engine.settings.data_dir, profile.name)
         self._confusions = ConfusionMap.for_game(engine.settings.data_dir, profile.name)
-        dictionary = Dictionary(profile.dictionary_terms(), engine.corrector)
+        pooled, dict_map = build_dictionaries(profile, engine.corrector)
         resolver = FieldResolver(self._lexicon, engine.corrector, self._tuning.accept_confidence,
-                                 confusions=self._confusions, dictionary=dictionary)
+                                 confusions=self._confusions, dictionary=pooled, dictionaries=dict_map)
         self._reader = RegionReader(engine.ocr, resolver, cutouts=_load_cutouts(engine, profile))
 
         # Confirmers, stores, and observed-key sets are keyed by DATASET, not

@@ -102,6 +102,10 @@ class FieldDef(BaseModel):
     if_text_any: bool = False
     # How the game dictionary participates in this field's reads (see DictMode).
     dict_mode: DictMode = DictMode.correct
+    # Which authored dictionary this field snaps to (a DictionaryDef.id). Empty ->
+    # the pooled vocabulary (every enabled dictionary). Lets one field key off relic
+    # names while another keys off arcane names, instead of one shared word soup.
+    dictionary: str = ""
     # If true, high-confidence reads teach the game dictionary and low-confidence
     # reads are fuzzy-corrected against it. Suits identity text (item names).
     learn: bool = False
@@ -453,9 +457,10 @@ class SubsetDef(BaseModel):
 class NodeLayout(BaseModel):
     """Where one graph node sits on the teach-UI canvas. Pure UI data that rides in
     the profile so node layout travels with the game (no browser localStorage).
-    Permissive — UI state must never 422 a save."""
+    ``extra="allow"`` so any new UI-only field the front-end adds round-trips
+    untouched — UI state must never 422 a save NOR be silently dropped."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="allow")
 
     x: float = 0.0
     y: float = 0.0
@@ -466,25 +471,32 @@ class NodeLayout(BaseModel):
 
 class GroupLayout(BaseModel):
     """A titled box drawn around a set of nodes on the teach-UI canvas. Pure UI
-    arrangement (the collector ignores it); members are node ids. Permissive."""
+    arrangement, opaque to the backend (the collector ignores it). ``extra="allow"``
+    so the front-end is the single source of truth for a group's look: every field it
+    sends (colours, alignment, and anything added later) persists without a model
+    edit. The fields below are declared only for defaults/documentation."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="allow")
 
     id: str
     title: str = ""
     members: list[str] = Field(default_factory=list)
     outline: dict = Field(default_factory=dict)   # {color, style, width}, opaque to the backend
     bg: str = ""
-    titlePos: str = "tl"
+    titleBg: str = ""        # title band background ("" = UI theme default)
+    titleColor: str = ""     # title text colour ("" = UI theme default)
+    titleAlign: str = "left" # title text alignment: left | center | right
+    titlePos: str = "tl"     # legacy; front-end maps it onto titleAlign for old profiles
 
 
 class GraphLayout(BaseModel):
     """Teach-UI graph layout for a profile: per-node positions/sizes/collapse, table
     column state, and which window nodes show their capture. Node *configuration*
     that belongs with the profile; the per-device viewport (zoom/pan) and minimap
-    live in a separate gitignored local file instead."""
+    live in a separate gitignored local file instead. ``extra="allow"`` — this is all
+    UI-authored state, so any new layout field round-trips instead of being dropped."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="allow")
 
     nodes: dict[str, NodeLayout] = Field(default_factory=dict)
     tables: dict[str, dict] = Field(default_factory=dict)   # per-table widths/sort, opaque
@@ -522,6 +534,24 @@ class GameProfile(BaseModel):
                 if t and t.lower() not in seen:
                     seen.add(t.lower())
                     out.append(t)
+        return out
+
+    def dictionary_terms_for(self, dict_id: str) -> list[str]:
+        """Terms of ONE dictionary by id, de-duplicated (case-insensitive), order
+        preserved — the vocabulary a field that pins ``dict_id`` snaps to. Empty id
+        -> the pooled vocabulary (:meth:`dictionary_terms`). Unknown id -> empty."""
+        if not dict_id:
+            return self.dictionary_terms()
+        d = next((x for x in self.dictionaries if x.id == dict_id), None)
+        if d is None:
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        for t in d.terms:
+            t = t.strip()
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                out.append(t)
         return out
 
     def window(self, window_id: str) -> WindowDef | None:

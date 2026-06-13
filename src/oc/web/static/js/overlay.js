@@ -14,7 +14,7 @@ const ROLE_COLOR = {
   detect: "#7ddc7d",
   state_detect: "#e6c25a",
   state: "#e6c25a",
-  scrollbar: "#c98ae6",
+  scrollbar: "#7ddc7d",   // same green as detect boxes
   search: "#e89a4c",
   data_area: "#e89a4c",
 };

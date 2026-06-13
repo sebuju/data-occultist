@@ -46,3 +46,14 @@ class Dictionary:
     def exact(self, text: str) -> str | None:
         """Canonical term for an exact match (case/space/punctuation-insensitive)."""
         return self._exact.get(_norm(text))
+
+
+def build_dictionaries(profile, corrector: Corrector):
+    """Return ``(pooled, by_id)`` Dictionary objects for a profile. ``pooled`` is
+    every ENABLED dictionary merged (the default a field uses when it pins none);
+    ``by_id`` maps each ``DictionaryDef.id`` to a single-list Dictionary so a field
+    can snap to just one vocabulary via :attr:`FieldDef.dictionary`."""
+    pooled = Dictionary(profile.dictionary_terms(), corrector)
+    by_id = {d.id: Dictionary(profile.dictionary_terms_for(d.id), corrector)
+             for d in profile.dictionaries}
+    return pooled, by_id

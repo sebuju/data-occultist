@@ -227,6 +227,10 @@ groups.initGroups({
   moveMembers: (ids, ev) => { const lead = ids.find((id) => pos.get(id)); if (lead) moveNodes(lead, ids.filter((x) => x !== lead), ev); },
   persist: () => persist.layout(),
   afterChange: () => { refreshDetachIcons(); syncMultiSelect(); },
+  // double-click a group → frame its bounding box (reuses groupBoxes() geometry)
+  zoomToGroup: (gid) => { const gb = groups.groupBoxes().find((b) => b.id === gid); if (gb) panZoomToRect(gb.box); },
+  // drag the group's resize grip → scale its members, gaps intact
+  startGroupResize: (gid, ev) => startGroupResize(gid, ev),
 });
 
 // ---- undo / redo (full history of the profile) -----------------------------
@@ -306,6 +310,15 @@ const DICT_MODES = [
   ["drop", "drop"],
   ["correct_drop", "correct + drop"],
 ];
+
+// <option>s for a field's dictionary picker: "all" (every enabled dictionary pooled)
+// + each named dictionary. `sel` is the field's pinned DictionaryDef.id ("" = pooled).
+function dictOptions(sel) {
+  const opts = [`<option value="" ${!sel ? "selected" : ""}>all</option>`];
+  for (const d of model.profile.dictionaries || [])
+    opts.push(`<option value="${esc(d.id)}" ${sel === d.id ? "selected" : ""}>${esc(d.name || d.id)}</option>`);
+  return opts.join("");
+}
 
 // ---- layout ---------------------------------------------------------------
 
@@ -393,16 +406,15 @@ function fitZoom(w, h, rect) {
   return Math.min(8, Math.max(0.15, Math.min(FIT_MAX, (rect.width * FIT_FILL) / w, (rect.height * FIT_FILL) / h)));
 }
 
-// Smoothly pan AND zoom to centre a node (the node-map jump). Same easing as panTo;
-// fit=true picks a comfortable zoom (like zoomToNode), else keeps the current zoom.
-function panZoomTo(id, { fit = true } = {}) {
-  const el = nodeEls.get(id), p = pos.get(id);
-  if (!el || !p) return;
+// Smoothly pan AND zoom to centre a WORLD rect {x,y,w,h}. fit=true picks a comfortable zoom
+// to frame it, else keeps the current zoom. The shared core of panZoomTo (node) and the
+// group double-click jump.
+function panZoomToRect(box, { fit = true } = {}) {
+  if (!box || !box.w || !box.h) return;
   const rect = $("graph").getBoundingClientRect();
-  const w = el.offsetWidth || 220, h = el.offsetHeight || 80;
-  const tz = fit ? fitZoom(w, h, rect) : view.zoom;
-  const tx = rect.width / 2 - (p.x + w / 2) * tz;
-  const ty = rect.height / 2 - (p.y + h / 2) * tz;
+  const tz = fit ? fitZoom(box.w, box.h, rect) : view.zoom;
+  const tx = rect.width / 2 - (box.x + box.w / 2) * tz;
+  const ty = rect.height / 2 - (box.y + box.h / 2) * tz;
   const sx = view.panX, sy = view.panY, sz = view.zoom, t0 = performance.now(), dur = 380;
   cancelPan();
   const step = (now) => {
@@ -414,6 +426,106 @@ function panZoomTo(id, { fit = true } = {}) {
     if (!panAnim) persist.local();
   };
   panAnim = requestAnimationFrame(step);
+}
+
+// Smoothly pan AND zoom to centre a node (the node-map jump).
+function panZoomTo(id, opts = {}) {
+  const el = nodeEls.get(id), p = pos.get(id);
+  if (!el || !p) return;
+  panZoomToRect({ x: p.x, y: p.y, w: el.offsetWidth || 220, h: el.offsetHeight || 80 }, opts);
+}
+
+// ---- floating W×H readout shown while resizing a node (or group) -----------
+let _sizeHud = null;
+// Closest integer aspect ratio "(N:1)" / "(1:N)". Exactness is an INTEGER divisibility test
+// (a % b === 0) — no float compare, so a true ratio never reads as "~" from precision noise.
+function aspectLabel(w, h) {
+  if (!w || !h) return "";
+  const a = Math.max(w, h), b = Math.min(w, h);
+  const n = Math.max(1, Math.round(a / b));
+  const tilde = a % b === 0 ? "" : "~";
+  return ` (${tilde}${w >= h ? `${n}:1` : `1:${n}`})`;
+}
+function showSizeHud(w, h, clientX, clientY) {
+  if (!_sizeHud) { _sizeHud = document.createElement("div"); _sizeHud.className = "size-hud"; document.body.appendChild(_sizeHud); }
+  const rw = Math.round(w), rh = Math.round(h);
+  _sizeHud.textContent = `${rw} × ${rh}${aspectLabel(rw, rh)}`;
+  _sizeHud.style.left = `${clientX + 16}px`; _sizeHud.style.top = `${clientY + 16}px`;
+  _sizeHud.style.display = "";
+}
+function hideSizeHud() { if (_sizeHud) _sizeHud.style.display = "none"; }
+
+// ---- group resize: scale members, keep their gaps intact -------------------
+function memberBBox(snap) {
+  let x = Infinity, y = Infinity, r = -Infinity, b = -Infinity;
+  for (const n of snap) { x = Math.min(x, n.x); y = Math.min(y, n.y); r = Math.max(r, n.x + n.w); b = Math.max(b, n.y + n.h); }
+  return { x, y, w: r - x, h: b - y };
+}
+// Scale members' SIZE by s and reposition so inter-node GAPS stay EXACTLY constant (not
+// scaled). A node shifts by the ACTUAL size-growth of the nodes that are both fully before it
+// on an axis AND overlap it on the other axis (same row for x, same column for y) — so only a
+// genuine left/up neighbour pushes it, growth isn't double-counted across rows, and a node
+// that doesn't resize (non-host) contributes zero so the gap around it is untouched. Anchored
+// at the leftmost/topmost node; computed from the original snapshot each tick (no drift).
+const overlapY = (a, b) => a.y < b.y + b.h && a.y + a.h > b.y;   // share vertical extent → same row
+const overlapX = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x;   // share horizontal extent → same column
+// SIZES are GRID-stepped (clean steps, like the node grips); POSITIONS are NOT re-snapped —
+// each node moves by the EXACT cumulative growth of the nodes packed before it, so a gap (the
+// difference of two shifted edges that share those growth terms) stays byte-for-byte the same.
+// (Grid-snapping each position independently was the bug: two roundings on one gap drifted it.)
+// Each target size is written to the DOM and read back via offsetWidth/Height, so the browser
+// applies that node's own CSS constraints (min/max-width, item width-only + cutout aspect); the
+// post-clamp growth (dw/dh) is what shifts later nodes, so gaps hold even when a node hits a limit.
+const G = (v) => Math.round(v / GRID) * GRID;
+function applyGroupScale(snap, s) {
+  const grow = new Map();   // id -> { dw, dh } actual growth after CSS clamping (0 if it can't resize)
+  for (const n of snap) {
+    const el = nodeEls.get(n.id), type = nodeTypeOf(n.id);
+    const free = !collapsed.has(n.id) && HOST_RESIZABLE.has(type);   // resizes width AND height
+    const widthOnly = !collapsed.has(n.id) && type === "item";       // item: width only; height follows its aspect
+    if (!el || (!free && !widthOnly)) { grow.set(n.id, { dw: 0, dh: 0 }); continue; }
+    el.style.width = `${Math.max(GRID, G(n.w * s))}px`;              // CSS min/max-width clamps this
+    if (free) el.style.height = `${Math.max(GRID, G(n.h * s))}px`;
+    const aw = el.offsetWidth, ah = el.offsetHeight;                 // size AFTER the node's own constraints
+    if (free) nodeSizes.set(n.id, { w: aw, h: ah });
+    grow.set(n.id, { dw: aw - n.w, dh: ah - n.h });
+  }
+  for (const n of snap) {
+    let shiftX = 0, shiftY = 0;
+    for (const o of snap) {
+      if (o === n) continue;
+      if (o.x + o.w <= n.x + 0.5 && overlapY(o, n)) shiftX += grow.get(o.id).dw;   // fully left, same row
+      if (o.y + o.h <= n.y + 0.5 && overlapX(o, n)) shiftY += grow.get(o.id).dh;   // fully above, same column
+    }
+    pos.set(n.id, { x: Math.round(n.x + shiftX), y: Math.round(n.y + shiftY) });   // exact chain, no re-snap
+    positionNode(n.id);
+  }
+}
+
+function startGroupResize(gid, ev) {
+  ev.preventDefault(); ev.stopPropagation();
+  const g = groups.allGroups().find((x) => x.id === gid);
+  if (!g) return;
+  const snap = g.members.filter((id) => pos.get(id) && nodeEls.get(id))
+    .map((id) => { const p = pos.get(id), el = nodeEls.get(id); return { id, x: p.x, y: p.y, w: el.offsetWidth, h: el.offsetHeight }; });
+  if (!snap.length) return;
+  const mb = memberBBox(snap), z = view.zoom, start = { x: ev.clientX, y: ev.clientY };
+  const oldD = Math.hypot(mb.w, mb.h) || 1;
+  cancelPan();
+  let lastS = 1;
+  const onMove = (e) => {
+    const dx = (e.clientX - start.x) / z, dy = (e.clientY - start.y) / z;   // drag the bottom-right outward
+    lastS = Math.max(0.25, Math.hypot(mb.w + dx, mb.h + dy) / oldD);
+    applyGroupScale(snap, lastS);   // grid-stepped each tick
+    drawEdges(); groups.renderGroups(); renderNodeMap();
+    showSizeHud(mb.w * lastS, mb.h * lastS, e.clientX, e.clientY);
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
+    hideSizeHud(); persist.layout(); pushHistory();
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
 }
 
 // ---- render ---------------------------------------------------------------
@@ -456,7 +568,8 @@ function itemLists(it, w) {
       <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="ffset" data-fid="${f.id}" data-k="empty" value="${esc(fd.empty || "")}" placeholder="(blank)"/></label>
       ${fd.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="ffset" data-fid="${f.id}" data-k="ifnum" value="${esc(fd.if_number ?? "")}" placeholder="(off)"/></label>
       <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="ifnumany" ${fd.if_number_any ? "checked" : ""}/></label>
-      <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="ffset" data-fid="${f.id}" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(fd.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>` : ""}
+      <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="ffset" data-fid="${f.id}" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(fd.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+      ${(model.profile.dictionaries || []).length ? `<label class="flab" title="which authored dictionary this field snaps to (all = every enabled one pooled)">use dict <select class="ffset" data-fid="${f.id}" data-k="usedict">${dictOptions(fd.dictionary)}</select></label>` : ""}` : ""}
       ${fd.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="ffset" data-fid="${f.id}" data-k="iftext" value="${esc(fd.if_text ?? "")}" placeholder="(off)"/></label>
       <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="iftextany" ${fd.if_text_any ? "checked" : ""}/></label>` : ""}
     </div>`;
@@ -564,6 +677,7 @@ function wireItemControls(div, n) {
     else if (k === "iftext") fd.if_text = e.target.value || null;
     else if (k === "iftextany") fd.if_text_any = e.target.checked;
     else if (k === "dictmode") fd.dict_mode = e.target.value;
+    else if (k === "usedict") { fd.dictionary = e.target.value || ""; render(); }   // redraw the muted dict link
     gridPreviews.delete(winId); gridReads.delete(winId); autosave();
   }));
   div.querySelectorAll(".if-del").forEach((b) => b.addEventListener("click", () => {
@@ -681,7 +795,8 @@ function nodeParts(n) {
         <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="fset" data-k="empty" value="${esc(f.empty || "")}" placeholder="(blank)" /></label>
         ${f.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="fset" data-k="ifnum" value="${esc(f.if_number ?? "")}" placeholder="(off)" /></label>
         <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="fset" data-k="ifnumany" ${f.if_number_any ? "checked" : ""}/></label>
-        <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="fset" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(f.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>` : ""}
+        <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="fset" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(f.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+        ${(model.profile.dictionaries || []).length ? `<label class="flab" title="which authored dictionary this field snaps to (all = every enabled one pooled)">use dict <select class="fset" data-k="usedict">${dictOptions(f.dictionary)}</select></label>` : ""}` : ""}
         ${f.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="fset" data-k="iftext" value="${esc(f.if_text ?? "")}" placeholder="(off)" /></label>
         <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="fset" data-k="iftextany" ${f.if_text_any ? "checked" : ""}/></label>` : ""}
         <div class="gn-foot"></div>`,
@@ -742,29 +857,22 @@ function nodeParts(n) {
   // The key itself is no concern of the dataset: it's taught on the item templates
   // (or windows) that read the records.
   const ds = n.ref;
-  const d = live[ds] || { present: 0, total: 0, removed: 0, columns: [], last_ts: null };
-  const pulse = prevPresent[ds] !== undefined && prevPresent[ds] !== d.present ? "pulse" : "";
-  const removed = d.removed || Math.max(0, (d.total || 0) - (d.present || 0));
   const agg = model.datasetAggregate(ds);
   const aggOpts = AGGREGATES.map((a) => `<option${a === agg ? " selected" : ""}>${a}</option>`).join("");
   return {
     title: `<input class="gi gi-id dsrename" value="${esc(ds)}" title="dataset name" />`,
-    body: `<div class="ds-head">
-        <span class="big">${d.present}</span>
-        <span class="ds-unit muted">item${d.present === 1 ? "" : "s"}${removed ? ` · ${removed} removed` : ""}</span>
-      </div>
-      <div class="muted ds-meta ds-updated">${d.last_ts ? `updated ${esc(fmtWhen(d.last_ts))}` : "not collected yet"}</div>
-      <label class="flab ds-agg" title="how each key's many observations collapse to one value">many → <select class="dsagg">${aggOpts}</select></label>
+    body: `<label class="flab ds-agg" title="how each key's many observations collapse to one value">many → <select class="dsagg">${aggOpts}</select></label>
       <div class="gn-foot"><button class="dssubset">+ view</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
       <div class="ds-tabs" role="tablist">
-        <button class="ds-tab on" data-tab="data" role="tab">data</button>
-        <button class="ds-tab" data-tab="batches" role="tab" title="this dataset's collection/save runs">batches</button>
+        <button class="ds-tab on" data-tab="data" role="tab">data <span class="ds-tab-n data-n"></span></button>
+        <button class="ds-tab" data-tab="batches" role="tab" title="this dataset's collection/save runs">batches <span class="ds-tab-n bat-n"></span></button>
       </div>
       <div class="nodehost scrollhost data-host"><p class="muted" style="padding:8px">loading…</p></div>
       <div class="nodehost scrollhost bat-host">
         <ul class="history bat-list"><li class="muted">loading…</li></ul>
         <div class="bat-detail muted">select a batch to see its events and what applying it changes</div>
       </div>`,
+    ports: `<span class="port out" title="drag to a view to feed it this dataset"></span>`,
   };
 }
 
@@ -777,6 +885,8 @@ function fmtWhen(ts) {
   const today = new Date().toISOString().slice(0, 10);
   return t.slice(0, 10) === today ? t.slice(11, 16) : t.slice(0, 10);
 }
+// HH:MM:SS from an ISO timestamp — drops fractional seconds AND the timezone suffix (+00:00).
+function clockTime(ts) { const m = /T(\d{2}:\d{2}:\d{2})/.exec(String(ts || "")); return m ? m[1] : ""; }
 
 // ---- view node: join one or more datasets, then filter/derive/sort ----------
 
@@ -787,13 +897,72 @@ function _colOpts(cols, sel) {
     cols.map((c) => `<option${c === sel ? " selected" : ""}>${esc(c)}</option>`).join("");
 }
 
+// Last live column set a view's join actually returned (set by refreshSubsetNode). The static
+// schema (model.subsetColumns) only knows columns declared on windows — orders/enrich columns
+// and other dataset-fed fields aren't in it, so the config must also offer what the join shows.
+const subsetLiveCols = new Map();
+
+// Every column a view's config should list: static schema ∪ live result columns ∪ hidden
+// columns. Hidden columns are STRIPPED from the live result by the backend, so without the
+// last union they'd vanish from the toggle list and could never be turned back on.
+function viewColumns(s) {
+  const out = [];
+  const add = (c) => { if (c && !out.includes(c)) out.push(c); };
+  model.subsetColumns(s.id).forEach(add);
+  (subsetLiveCols.get(s.id) || []).forEach(add);
+  (s.hidden_columns || []).forEach(add);
+  return out;
+}
+
+// Order the visible/hide toggles to MATCH the table: the vtable's live column order (which
+// honours the user's column drag-reorder) first, then hidden columns (not in the table, so
+// they have no table position), then any schema columns not yet seen — so the buttons read
+// left-to-right exactly as the columns sit in the table.
+function viewDisplayColumns(s) {
+  const out = [];
+  const add = (c) => { if (c && !out.includes(c)) out.push(c); };
+  (vtables.get(`view:${s.id}`)?.columns || subsetLiveCols.get(s.id) || []).forEach(add);
+  (s.hidden_columns || []).forEach(add);
+  viewColumns(s).forEach(add);
+  return out;
+}
+
+function hideTogglesHTML(s) {
+  const hidden = new Set(s.hidden_columns || []);
+  const toggles = viewDisplayColumns(s).map((c) => `<button class="sv-hide${hidden.has(c) ? " off" : ""}" data-col="${esc(c)}"
+      title="${hidden.has(c) ? "show" : "hide"} column">${esc(c)}</button>`).join("");
+  return toggles || '<span class="muted sub-empty">no columns yet</span>';
+}
+
+// Repaint + re-wire a view's visible/hide toggle row in place (no node rebuild).
+function renderHideToggles(el, s) {
+  const hides = el && el.querySelector(".sv-hides");
+  if (hides) { hides.innerHTML = hideTogglesHTML(s); wireHideToggles(el, s); }
+}
+
+// Wire the visible/hide toggles. Standalone (not closed over wireSubset) so refreshSubsetNode
+// can re-render + re-wire just this block when the live column set arrives/changes.
+// Toggling does NOT rebuild the whole node (that wiped the vtable → "loading…" flash); it flips
+// the button in place and re-fetches the subset, whose columns honour hidden_columns — the
+// vtable then updates its columns in place and refreshSubsetNode repaints the toggles.
+function wireHideToggles(host, s) {
+  host.querySelectorAll(".sv-hide").forEach((b) => b.addEventListener("click", () => {
+    model.toggleHiddenColumn(s.id, b.dataset.col);
+    const nowHidden = (s.hidden_columns || []).includes(b.dataset.col);
+    b.classList.toggle("off", nowHidden);                       // instant feedback, no node rebuild
+    b.title = nowHidden ? "show column" : "hide column";
+    autosave();
+    refreshSubsetNode(s.id);
+  }));
+}
+
 function subConfigHTML(s) {
-  const cols = model.subsetColumns(s.id);
+  const cols = viewColumns(s);
   const inputs = model.subsetInputs(s);
-  const free = model.datasets().filter((d) => !inputs.includes(d));
+  const free = model.joinableInputs(s);   // datasets + other views (cycle-free)
   const chips = inputs.map((d) => `<span class="sv-input">${esc(d)}<button class="sv-rmin danger" data-ds="${esc(d)}" title="remove input">✕</button></span>`).join("")
-    || '<span class="muted sub-empty">none — add a dataset to join</span>';
-  const addOpts = `<option value="">+ join dataset…</option>` + free.map((d) => `<option>${esc(d)}</option>`).join("");
+    || '<span class="muted sub-empty">none — add a source to join</span>';
+  const addOpts = `<option value="">+ join source…</option>` + free.map((d) => `<option>${esc(d)}</option>`).join("");
   const filters = (s.filters || []).map((f, i) => `<div class="sub-row" data-i="${i}">
       <select class="sf-field" data-i="${i}">${_colOpts(cols, f.field)}</select>
       <select class="sf-op" data-i="${i}">${SUB_OPS.map((o) => `<option${o === f.op ? " selected" : ""}>${o}</option>`).join("")}</select>
@@ -802,22 +971,19 @@ function subConfigHTML(s) {
   const derived = (s.derived || []).map((d, i) => `<div class="sub-row" data-i="${i}">
       <input class="sd-name" data-i="${i}" value="${esc(d.name || "")}" placeholder="new column" />
       <span class="muted">=</span>
-      <input class="sd-tpl" data-i="${i}" value="${esc(d.template || "")}" placeholder="={count}*{price_median}" />
+      <input class="sd-tpl" data-i="${i}" value="${esc(d.template || "")}" placeholder="{=count*price_median} plat" />
       <button class="sd-del danger" data-i="${i}" title="remove column">✕</button></div>`).join("");
-  const hidden = new Set(s.hidden_columns || []);
-  const toggles = cols.map((c) => `<button class="sv-hide${hidden.has(c) ? " off" : ""}" data-col="${esc(c)}"
-      title="${hidden.has(c) ? "show" : "hide"} column">${esc(c)}</button>`).join("");
   return `
-    <div class="sub-sec"><div class="sub-lbl">datasets <span class="muted">(joined on key)</span></div>
+    <div class="sub-sec"><div class="sub-lbl">sources <span class="muted">(datasets or views, joined on key)</span></div>
       <div class="sv-inputs">${chips}</div>
       <div class="sub-row"><select class="sv-addin">${addOpts}</select>
         <label class="flab">join on <input class="sv-join" value="${esc(s.join_field || "name")}" placeholder="name" /></label></div></div>
     <div class="sub-sec"><div class="sub-lbl">filters <span class="muted">(all must pass)</span></div>${filters}
       <button class="sub-addf">+ filter</button></div>
-    <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">({col} text, or =math)</span></div>${derived}
+    <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">({col} text · {=expr} math · mix freely)</span></div>${derived}
       <button class="sub-addd">+ column</button></div>
     <div class="sub-sec"><div class="sub-lbl">visible <span class="muted">(click to hide/show)</span></div>
-      <div class="sv-hides">${toggles || '<span class="muted sub-empty">no columns yet</span>'}</div></div>`;
+      <div class="sv-hides">${hideTogglesHTML(s)}</div></div>`;
 }
 
 function subsetParts(s) {
@@ -830,6 +996,7 @@ function subsetParts(s) {
         </svg></button>`,
     body: `<div class="sub-cfg${off ? " collapsed" : ""}">${subConfigHTML(s)}</div>
       <div class="nodehost scrollhost sub-host"><p class="muted" style="padding:8px">loading…</p></div>`,
+    ports: `<span class="port out" title="drag to another view to feed it this view's rows"></span>`,
   };
 }
 
@@ -839,7 +1006,15 @@ async function refreshSubsetNode(id) {
   if (!host) return;
   try {
     const r = await api.getSubset(model.profile.name, id);
-    vtableFor(`view:${id}`, host).setData(r.columns || [], r.rows || []);
+    const vt = vtableFor(`view:${id}`, host);
+    const s = model.subsetDef(id);
+    // dragging a column in the table re-orders the visible/hide buttons to match, live
+    vt.onReorder = () => renderHideToggles(nodeEls.get(`sub:${id}`), s);
+    vt.setData(r.columns || [], r.rows || []);
+    // the live join may expose columns the static schema can't know (orders/enrich fields) —
+    // cache them and re-render the visible/hide toggles so every actual column is listed.
+    subsetLiveCols.set(id, r.columns || []);
+    if (s) renderHideToggles(el, s);
   } catch (e) {
     // a just-added subset isn't on the backend until the profile saves (debounced) —
     // that's a transient 404, not an error; the post-save refresh fills it in.
@@ -892,7 +1067,7 @@ function wireSubset(div, s) {
   div.querySelectorAll(".sd-tpl").forEach((el) => el.addEventListener("change", (e) => { s.derived[+el.dataset.i].template = e.target.value; recompute(); }));
 
   // hide/show result columns — toggling changes the column set, so restructure
-  div.querySelectorAll(".sv-hide").forEach((b) => b.addEventListener("click", () => { model.toggleHiddenColumn(s.id, b.dataset.col); restructure(); }));
+  wireHideToggles(div, s);
   // sort/limit removed — the table sorts itself (click a column header)
 
   queueMicrotask(() => refreshSubsetNode(s.id));
@@ -910,6 +1085,12 @@ function wirePrice(div, n) {
   // source toggle: statistics (history) vs live orders (now). Mode swaps the body, so rebuild.
   div.querySelector(".enr-mode")?.addEventListener("change", (e) => {
     model.setPriceMode(n.ref.id, e.target.value); rebuildNode(n.id); autosave();
+  });
+  // rename the price node (its id) — carry its saved layout slot to the new id, then re-render
+  div.querySelector(".prrename")?.addEventListener("change", (e) => {
+    const oldId = n.ref.id, newId = (e.target.value || "").trim();
+    if (!model.renamePriceNode(oldId, newId)) { e.target.value = oldId; return; }
+    movePos(`price:${oldId}`, `price:${newId}`); render(); autosave();
   });
 }
 
@@ -1016,15 +1197,71 @@ function fillNode(div, n) {
   wireOutPort(div, n);   // any node with a `.port.out` drags to a dataset — one mechanism
 }
 
-// Drag a node's out-port to a dataset node to choose where it sends its rows. ONE place for
-// every producer (window, price); the only per-type bit is which model setter commits it.
+// Drag a node's out-port to wire its data somewhere. ONE mechanism for every source type;
+// each type contributes a `spec` describing what kind of node it drops onto (`target`),
+// what committing the drop does (`onDrop(targetId)`), and what an empty-canvas drop mints
+// (`onEmpty(worldPt) -> newNodeId`). Producers (window/price) feed a DATASET; datasets and
+// views feed a VIEW (subset). `selfId` blocks dropping a node onto itself.
+function outPortSpec(n) {
+  switch (n.type) {
+    case "window": return {
+      target: "dataset",
+      onDrop: (ds) => model.setDataset(n.ref.id, ds),
+      onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setDataset(n.ref.id, ds); return `ds:${ds}`; },
+    };
+    case "price": return {
+      target: "dataset",
+      onDrop: (ds) => { model.setPriceDataset(n.ref.id, ds); rebuildNode(n.id); },
+      onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setPriceDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
+    };
+    case "dataset": return {
+      target: "subset",
+      onDrop: (sub) => { if (model.addSubsetInput(sub, n.ref)) refreshSubsetNode(sub); },
+      onEmpty: (pt) => { const id = model.addSubset(n.ref); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
+    };
+    case "subset": return {
+      target: "subset",
+      selfId: n.ref.id,
+      onDrop: (sub) => { if (model.addSubsetInput(sub, n.ref.id)) refreshSubsetNode(sub); },
+      onEmpty: (pt) => { const id = model.addSubset(n.ref.id); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
+    };
+    default: return null;
+  }
+}
+
 function wireOutPort(div, n) {
   const port = div.querySelector(".port.out");
   if (!port) return;
-  const onDrop = n.type === "price"
-    ? (ds) => { model.setPriceDataset(n.ref.id, ds); rebuildNode(n.id); }
-    : (ds) => model.setDataset(n.ref.id, ds);
-  port.addEventListener("mousedown", (ev) => startWire(n.id, ev, onDrop));
+  const spec = outPortSpec(n);
+  if (!spec) return;
+  port.addEventListener("mousedown", (ev) => startWire(n.id, ev, spec));
+}
+
+// place a (new) node at a world-space point, grid-snapped
+function placeAt(id, pt) { pos.set(id, { x: snap(pt.x), y: snap(pt.y) }); }
+
+// the source id a drop target commits to: a dataset node's name, or a subset node's bare id
+function targetIdOf(el, target) {
+  return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^sub:/, "");
+}
+
+// Host node types that resize at the NODE level (their body fills them) — one consistent
+// behaviour. Used by the initial build AND by rebuildNode to re-attach grips.
+const HOST_RESIZABLE = new Set(["dataset", "preview", "dictionary", "subset", "price"]);
+
+// Resize-handle opts shared by the initial build and every in-place rebuild. The grips live
+// in the node's innerHTML, so a rebuildNode() (which rewrites innerHTML via fillNode) WIPES
+// them — they must be re-added with these same opts or the node stops resizing.
+function nodeResizeOpts(div, id) {
+  return {
+    both: true,
+    zoom: () => view.zoom,
+    // left-edge accessor: the node's world x lives in `pos` (canvas-zoomed) — lets the
+    // shared bottom-left grip resize this node leftward with its right edge anchored
+    left: (v) => { const p = pos.get(id); if (v === undefined) return p ? p.x : 0; if (p) { p.x = v; positionNode(id); } },
+    onResize: () => { drawEdges(); groups.renderGroups(); },
+    onSettle: () => { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight }); drawEdges(); groups.renderGroups(); persist.layout(); },
+  };
 }
 
 // Make a node's content host (`.nodehost`) user-resizable; the node itself stays a
@@ -1036,15 +1273,7 @@ function makeNodeResizable(div, id) {
   // a collapsed node is header-only (CSS) — never stamp its saved w/h inline, or the hard
   // inline size beats the collapsed CSS and the node renders full-height while "collapsed".
   if (s && !collapsed.has(id)) { if (s.w) div.style.width = `${s.w}px`; if (s.h) div.style.height = `${s.h}px`; }
-  snapResize(div, {
-    both: true,
-    zoom: () => view.zoom,
-    // left-edge accessor: the node's world x lives in `pos` (canvas-zoomed) — lets the
-    // shared bottom-left grip resize this node leftward with its right edge anchored
-    left: (v) => { const p = pos.get(id); if (v === undefined) return p ? p.x : 0; if (p) { p.x = v; positionNode(id); } },
-    onResize: () => { drawEdges(); groups.renderGroups(); },
-    onSettle: () => { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight }); drawEdges(); groups.renderGroups(); persist.layout(); },
-  });
+  snapResize(div, nodeResizeOpts(div, id));
 }
 
 function buildNode(n) {
@@ -1058,7 +1287,7 @@ function buildNode(n) {
     onSettle: () => { persist.layout(); drawEdges(); groups.renderGroups(); },
   });
   // every host node resizes at the NODE level (its body fills it) — one consistent behaviour
-  if (["dataset", "preview", "dictionary", "subset", "price"].includes(n.type)) makeNodeResizable(div, n.id);
+  if (HOST_RESIZABLE.has(n.type)) makeNodeResizable(div, n.id);
   return div;
 }
 
@@ -1081,6 +1310,10 @@ function rebuildNode(id) {
     return;
   }
   fillNode(el, n);
+  // fillNode rewrote innerHTML, wiping the resize grips — re-add them. The ResizeObserver +
+  // mouseup listeners from the initial snapResize stay bound to `el` (reused across rebuild);
+  // only the grip DOM needs restoring, with grid snap (matching snapResize's `{...opts,snap:true}`).
+  if (HOST_RESIZABLE.has(n.type)) addResizeGrips(el, { ...nodeResizeOpts(el, n.id), snap: true });
 }
 
 function toggleCollapse(id) {
@@ -1329,13 +1562,13 @@ function sideCandidates(tx, ty) {
 // sensible (sideA,sideB) by its actual A* route cost and take the cheapest. A faint bias
 // toward the geometric facing breaks ties so a clear straight shot isn't traded for an
 // equal-cost detour, and the choice doesn't flicker frame to frame.
-function bestSides(router, ra, rb) {
+function bestSides(router, ra, rb, relax = false) {
   const dx = (rb.x + rb.w / 2) - (ra.x + ra.w / 2), dy = (rb.y + rb.h / 2) - (ra.y + ra.h / 2);
   const aC = sideCandidates(dx, dy), bC = sideCandidates(-dx, -dy);
   const fac = facingSides(ra, rb);
   let best = null, bestCost = Infinity;
   for (const d1 of aC) for (const d2 of bC) {
-    let cost = router.routeCost(portOnSide(ra, d1), d1, portOnSide(rb, d2), d2);
+    let cost = router.routeCost(portOnSide(ra, d1), d1, portOnSide(rb, d2), d2, relax);
     if (d1 === fac.d1 && d2 === fac.d2) cost *= 0.98;   // tie-break toward the facing pair
     if (cost < bestCost) { bestCost = cost; best = { d1, d2 }; }
   }
@@ -1357,10 +1590,11 @@ function selClsFor(aId, bId) {
 
 // Build the descriptor for every line. `aId`/`bId` name each rect's owner (used to
 // fan endpoints that share a node side); `ra`/`rb` are the world rects.
-// An edge "leaves a port out" when its source node draws a `.port.out` handle (window
-// nodes) and the edge is the data link that handle represents (window -> dataset). Those
-// are the only lines that start at the fixed port dot and get the animated flow.
-const fromPortOut = (aId, kind) => (aId.startsWith("win:") || aId.startsWith("price:")) && kind === "data";
+// A data edge always leaves its source node's `.port.out` handle. Every source that draws
+// one — window, price, dataset, view (subset) — anchors its data line at the port dot and
+// gets the animated flow. (Keep this prefix set in sync with `outPortSpec`.)
+const PORT_OUT_SRC = ["win:", "price:", "ds:", "sub:"];
+const fromPortOut = (aId, kind) => kind === "data" && PORT_OUT_SRC.some((p) => aId.startsWith(p));
 function buildLinks() {
   const links = [];
   const add = (key, aId, bId, top, kind, ra, rb) => {
@@ -1378,12 +1612,34 @@ function buildLinks() {
 // Pick each line's port + side, then fan endpoints that share a node side so they sit
 // one GAP apart instead of all stacking on the side's midpoint.
 const GAP = () => ROUTE.cell * 2;   // preferred spacing: fanned endpoints AND parallel bundles (a line can still squeeze to 1 cell between two)
+// both node ids belong to the same (non-null) group
+function sameGroup(aId, bId) { const g = groups.groupOf(aId); return !!g && g === groups.groupOf(bId); }
 function computePorts(links) {
   for (const l of links) {
     // use the router's chosen sides when it has scored this link, else the geometric facing
     const pick = sidePick.get(l.key);
     const f = pick ? sidesFrom(l.ra, l.rb, pick.d1, pick.d2) : facingSides(l.ra, l.rb);
     l.p1 = f.p1; l.d1 = f.d1; l.p2 = f.p2; l.d2 = f.d2;
+    l.align = false;
+    l.relax = sameGroup(l.aId, l.bId);   // grouped lines route with relaxed clearance
+  }
+  // Grouped nodes read as a single unit, so the "ports sit at the edge centre" rule is relaxed
+  // for lines BETWEEN members of the same group: if their facing sides share an axis, slide
+  // both ports to a common coordinate inside the rects' overlap → the connector runs dead
+  // straight instead of doglegging to two centres. Aligned ports skip the fan below.
+  for (const l of links) {
+    if (!sameGroup(l.aId, l.bId)) continue;
+    const horiz = (l.d1 === "L" || l.d1 === "R") && (l.d2 === "L" || l.d2 === "R");
+    const vert = (l.d1 === "T" || l.d1 === "B") && (l.d2 === "T" || l.d2 === "B");
+    if (!horiz && !vert) continue;
+    const ax = horiz ? 1 : 0;   // perpendicular axis to align on
+    const aLo = ax ? l.ra.y : l.ra.x, aHi = aLo + (ax ? l.ra.h : l.ra.w);
+    const bLo = ax ? l.rb.y : l.rb.x, bHi = bLo + (ax ? l.rb.h : l.rb.w);
+    const lo = Math.max(aLo, bLo), hi = Math.min(aHi, bHi);
+    if (lo > hi) continue;      // no overlap → can't straighten, keep the centred ports
+    const c = (lo + hi) / 2;
+    l.p1[ax] = c; l.p2[ax] = c;
+    l.align = true;
   }
   const buckets = new Map();   // `${owner}|${dir}` -> endpoints on that rect side
   const put = (owner, dir, l, end, other) => {
@@ -1392,7 +1648,10 @@ function computePorts(links) {
     const k = `${owner}|${dir}`;
     (buckets.get(k) || buckets.set(k, []).get(k)).push({ l, end, perp, horiz });
   };
-  for (const l of links) { put(l.aId, l.d1, l, "a", l.rb); put(l.bId, l.d2, l, "b", l.ra); }
+  for (const l of links) {
+    if (l.align) continue;   // grouped straight lines keep their off-centre ports — don't fan them
+    put(l.aId, l.d1, l, "a", l.rb); put(l.bId, l.d2, l, "b", l.ra);
+  }
   const gap = GAP();
   for (const arr of buckets.values()) {
     if (arr.length < 2) continue;
@@ -1406,6 +1665,26 @@ function computePorts(links) {
       const port = it.end === "a" ? it.l.p1 : it.l.p2;
       if (it.horiz) port[1] = coord; else port[0] = coord;
     });
+  }
+  // A line may share an EDGE with a node's out-port, but must not END directly OVER the out-port
+  // dot. The dot sits where the node's outgoing line starts (its p1). Nudge any incoming end that
+  // landed on the same side AND ~same coord as that dot just clear of it (kept on the edge).
+  const outDot = new Map();   // nodeId -> { dir, coord } of its out-port dot
+  for (const l of links) {
+    if (outDot.has(l.aId)) continue;
+    const horiz = l.d1 === "L" || l.d1 === "R";
+    outDot.set(l.aId, { dir: l.d1, coord: horiz ? l.p1[1] : l.p1[0] });
+  }
+  for (const l of links) {
+    const od = outDot.get(l.bId);
+    if (!od || od.dir !== l.d2) continue;            // different edge → no conflict
+    const horiz = l.d2 === "L" || l.d2 === "R";
+    const cur = horiz ? l.p2[1] : l.p2[0];
+    if (Math.abs(cur - od.coord) >= gap * 0.5) continue;   // already clear of the dot
+    const lo = horiz ? l.rb.y : l.rb.x, hi = lo + (horiz ? l.rb.h : l.rb.w);
+    const want = od.coord + (cur >= od.coord ? gap : -gap);
+    const v = Math.max(lo + 4, Math.min(hi - 4, want));
+    if (horiz) l.p2[1] = v; else l.p2[0] = v;
   }
 }
 
@@ -1546,6 +1825,7 @@ let routeRaf = null;            // pending requestAnimationFrame handle (one in 
 function obstacleRects() {
   const out = [];
   for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) out.push(r); }
+  for (const t of groups.titleRects()) out.push(t);   // lines prefer not to cross a group title
   return out;
 }
 
@@ -1603,7 +1883,7 @@ function runRouting() {
     for (const l of links) {
       const c = routeCache.get(l.key);
       if (c && c.sig === linkDeps(l, obs)) continue;           // neighbourhood unchanged → keep its side
-      const best = bestSides(router, l.ra, l.rb);
+      const best = bestSides(router, l.ra, l.rb, sameGroup(l.aId, l.bId));
       const prev = sidePick.get(l.key);
       if (!prev || prev.d1 !== best.d1 || prev.d2 !== best.d2) { sidePick.set(l.key, best); sidesChanged = true; }
     }
@@ -1620,7 +1900,7 @@ function runRouting() {
     for (const c of fresh.values()) router.stampPath(c.pts);   // reserve the kept corridors so dirty links avoid them
     dirty.sort((a, b) => spanOf(a) - spanOf(b));               // shortest first: short links lock in straight
     for (const l of dirty)
-      fresh.set(l.key, { pts: router.route(l.p1, l.d1, l.p2, l.d2), sig: l._sig, k: `${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2}` });
+      fresh.set(l.key, { pts: router.route(l.p1, l.d1, l.p2, l.d2, l.relax), sig: l._sig, k: `${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2}` });
     routeCache = fresh;                                        // also drops keys for links that vanished
     for (const k of sidePick.keys()) if (!fresh.has(k)) sidePick.delete(k);   // forget vanished links
     routeHash = routeSig;
@@ -1721,6 +2001,9 @@ function wireNode(div, n) {
       const oldId = n.ref, newId = (e.target.value || "").trim();
       if (!model.renameDataset(oldId, newId)) { e.target.value = oldId; return; }
       movePos(`ds:${oldId}`, `ds:${newId}`);
+      render();   // migrate the live DOM node to the new id NOW (its drag wiring binds the new
+                  // id) — refreshLive below skips render when the dataset SET is unchanged, which
+                  // it is after an in-place rename, so the node would otherwise keep the old id
       autosave();
       try {
         await api.renameDataset(model.profile.name, oldId, newId);   // carry the stored data over
@@ -1793,6 +2076,7 @@ function wireNode(div, n) {
       else if (k === "iftext") fld.if_text = e.target.value || null;
       else if (k === "iftextany") fld.if_text_any = e.target.checked;
       else if (k === "dictmode") fld.dict_mode = e.target.value;
+      else if (k === "usedict") { fld.dictionary = e.target.value || ""; render(); }   // redraw the muted dict link
       autosave();   // plain value edits: no DOM rebuild
     }));
   } else if (n.type === "detect") {
@@ -1849,6 +2133,12 @@ function vtableFor(key, host) {
 
 const VT_META = ["present", "first_seen", "last_seen", "key", "_count"];   // not shown as columns
 
+// Show a count badge on a dataset node's tab (data → item count, batches → batch count).
+function setTabCount(ds, sel, n) {
+  const el = nodeEls.get(`ds:${ds}`)?.querySelector(sel);
+  if (el) el.textContent = n != null ? `${n}` : "";
+}
+
 async function refreshDataNode(ds) {
   const host = dataHost(ds);
   if (!host) return;
@@ -1860,6 +2150,7 @@ async function refreshDataNode(ds) {
       rowClass: (row) => (row.present ? "" : "gone"),
       expander: (row) => expandObservations(ds, row),   // drill into its observations inline
     });
+    setTabCount(ds, ".data-n", recs.length);   // item count on the data tab
   } catch (e) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
 }
 
@@ -1917,7 +2208,9 @@ async function loadBatchesNode(ds) {
   if (!els) return;
   try {
     const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
-    renderBatchesList(ds, (await r.json()).batches || []);
+    const batches = (await r.json()).batches || [];
+    renderBatchesList(ds, batches);
+    setTabCount(ds, ".bat-n", batches.length);   // batch count on the batches tab
   } catch (e) { els.list.innerHTML = `<li class="muted">${esc(String(e))}</li>`; }
 }
 
@@ -1938,7 +2231,7 @@ function renderBatchesList(ds, batches) {
     const app = `<label class="led-apply" title="apply this batch to the dataset (uncheck to revert it)"><input type="checkbox" class="led-toggle" data-batch="${b.batch}"${b.reverted ? "" : " checked"}> applied</label>`;
     const rm = `<button class="led-remove danger" data-batch="${b.batch}" title="permanently delete this batch from the ledger">remove</button>`;
     return `<li class="batrow ${b.reverted ? "reverted" : ""}${st.sel === b.batch ? " sel" : ""}" data-batch="${b.batch}">
-      <span class="muted">${esc((b.ts || "").slice(11))}</span> <b>#${b.batch}</b>
+      <span class="muted">${esc(clockTime(b.ts))}</span> <b>#${b.batch}</b>
       <span class="muted batmeta" title="${parts} · ${b.count} · ${esc(keys)}">${parts} · ${b.count} · ${esc(keys)}</span> ${app} ${rm}</li>`;
   }).join("");
   // select on row click (but not when hitting the checkbox/remove)
@@ -3012,11 +3305,12 @@ function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: s
         el.style.width = `${w}px`;
         if (allowH) el.style.height = `${h}px`;
         if (side === "left") left(startL - (el.offsetWidth - startW));   // anchor right edge
+        showSizeHud(el.offsetWidth, el.offsetHeight, e.clientX, e.clientY);   // live W×H readout
         onResize && onResize();
       };
       const up = () => {
         document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
-        document.body.style.cursor = ""; onSettle && onSettle();
+        document.body.style.cursor = ""; hideSizeHud(); onSettle && onSettle();
       };
       document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
     });
@@ -3111,7 +3405,7 @@ function positionNode(id) { const el = nodeEls.get(id); const p = pos.get(id); i
 // Drag a wire out of a node's `.port.out`. Drop on a dataset node to wire to it, or on
 // empty canvas to mint a fresh dataset there and wire to that. ``srcId`` is the source
 // node id (win:… / price:…); ``onDrop(ds)`` commits the chosen target dataset.
-function startWire(srcId, ev, onDrop) {
+function startWire(srcId, ev, spec) {
   ev.preventDefault();
   ev.stopPropagation();
   const rect = $("graph").getBoundingClientRect();
@@ -3119,21 +3413,24 @@ function startWire(srcId, ev, onDrop) {
   if (!p) return;
   const rx = nw(srcId);   // right edge — where the out-port sits
   wire = { x1: p.x + rx, y1: p.y + 28, x2: p.x + rx, y2: p.y + 28 };
+  const sel = `.gnode.${spec.target}`;
   const toWorld = (e) => ({ x: (e.clientX - rect.left - view.panX) / view.zoom, y: (e.clientY - rect.top - view.panY) / view.zoom });
   const onMove = (e) => { const w = toWorld(e); wire.x2 = w.x; wire.y2 = w.y; drawEdges(); };
   const onUp = (e) => {
     document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
-    const target = document.elementFromPoint(e.clientX, e.clientY)?.closest(".gnode.dataset");
+    const overNode = document.elementFromPoint(e.clientX, e.clientY)?.closest(".gnode");
+    const target = overNode && overNode.matches(sel) ? overNode : null;
     const dragged = Math.hypot(e.clientX - ev.clientX, e.clientY - ev.clientY) > 6;
-    if (target) { onDrop(target.dataset.ds); autosave(); }
-    else if (dragged) {                       // dropped on empty canvas -> new dataset at the drop point
-      const ds = model.addDataset();
-      const w = toWorld(e);
-      pos.set(`ds:${ds}`, { x: snap(w.x), y: snap(w.y) });
-      onDrop(ds); wire = null; render(); autosave(); panTo(`ds:${ds}`);
+    wire = null;   // drop the temp drag line on EVERY path before any redraw (else it ghosts)
+    if (target) {
+      const tid = targetIdOf(target, spec.target);
+      if (tid != null && tid !== spec.selfId) { spec.onDrop(tid); render(); autosave(); return; }
+    } else if (dragged && !overNode && spec.onEmpty) {   // empty canvas (not over another node) -> mint a node
+      const newId = spec.onEmpty(toWorld(e));
+      render(); autosave(); if (newId) panTo(newId);
       return;
     }
-    wire = null; render();
+    render();
   };
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
@@ -3163,7 +3460,9 @@ async function refreshLive() {
       if (prevPresent[ds] === undefined || prevPresent[ds] === map[ds].present) continue;
       if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
       if (nodeEls.has(`ds:${ds}`)) loadBatchesNode(ds);
-      for (const s of model.profile.subsets || []) if (s.dataset === ds && nodeEls.has(`sub:${s.id}`)) refreshSubsetNode(s.id);
+      // refresh every view that reads this dataset — directly OR through an upstream view
+      for (const s of model.profile.subsets || [])
+        if (nodeEls.has(`sub:${s.id}`) && model.subsetReaches(s.id, ds)) refreshSubsetNode(s.id);
     }
   } catch { /* ignore */ }
 }
@@ -3172,15 +3471,8 @@ function updateDatasetNodes() {
   for (const ds of model.datasets()) {
     const el = document.getElementById(`node-ds:${ds}`);
     if (!el) continue;
-    const d = live[ds] || { present: 0, total: 0, removed: 0, last_op: null, last_ts: null };
-    const removed = d.removed ?? Math.max(0, (d.total || 0) - (d.present || 0));
-    const big = el.querySelector(".big");
-    if (big) big.textContent = `${d.present}`;
-    const unit = el.querySelector(".ds-unit");
-    if (unit) unit.textContent = `item${d.present === 1 ? "" : "s"}${removed ? ` · ${removed} removed` : ""}`;
-    const upd = el.querySelector(".ds-updated");
-    if (upd) upd.textContent = d.last_ts ? `updated ${fmtWhen(d.last_ts)}` : "not collected yet";
-    const header = el.querySelector(".gn-h");
+    const d = live[ds] || { present: 0, last_ts: null };
+    const header = el.querySelector(".gn-h");   // pulse the header when the stored count changed
     if (header && prevPresent[ds] !== undefined && prevPresent[ds] !== d.present) {
       header.classList.remove("pulse"); void header.offsetWidth; header.classList.add("pulse");
     }
@@ -3564,11 +3856,40 @@ window.addEventListener("resize", () => {
 
 $("liveBtn").addEventListener("click", () => setLiveMode(!liveOn));
 $("precapBtn").addEventListener("click", () => openPrecaptureModal());
-$("selGroupBtn").addEventListener("click", () => {
-  if (selected.size < 1) return;
-  const g = groups.createGroup([...selected]);
-  if (g) { setStatus(`grouped ${g.members.length} nodes`); clearMultiSelect(); }
-});
+$("selGroupBtn").addEventListener("click", () => groupShortcut());
+
+// The current selection the group action operates on: the multi-select set if any,
+// else the single focused node.
+function selectionIds() {
+  if (selected.size) return [...selected].filter((id) => nodeEls.has(id));
+  if (selectedNodeId && nodeEls.has(selectedNodeId)) return [selectedNodeId];
+  return [];
+}
+
+// Group/ungroup the selection. SHARED by the toolbar button and the `g` hotkey so both
+// behave identically:
+//   • 1 node, grouped            -> detach it
+//   • 2+, all share ONE group, some ungrouped -> add the ungrouped ones to that group
+//   • 2+, all share ONE group, none ungrouped -> ungroup everything
+//   • 2+, otherwise (no group / many groups)   -> form a new group out of them
+function groupShortcut() {
+  const ids = selectionIds();
+  if (!ids.length) return;
+  if (ids.length === 1) {
+    if (groups.groupOf(ids[0])) { groups.detachNode(ids[0]); setStatus("detached from group"); }
+    return;
+  }
+  const gset = new Set(ids.map((id) => groups.groupOf(id)).filter(Boolean));   // distinct groups in the selection
+  const ungrouped = ids.filter((id) => !groups.groupOf(id));
+  if (gset.size === 1) {
+    const g = [...gset][0];
+    if (ungrouped.length) { groups.addToGroup(g.id, ungrouped); setStatus(`added ${ungrouped.length} to group`); }
+    else { groups.detachNodes(ids); setStatus("ungrouped"); clearMultiSelect(); }
+  } else {
+    const g = groups.createGroup(ids);   // pulls members out of any prior group
+    if (g) { setStatus(`grouped ${g.members.length} nodes`); clearMultiSelect(); }
+  }
+}
 $("selClearBtn").addEventListener("click", () => deselectAll());
 $("backupsBtn").addEventListener("click", () => {
   const name = model.profile.name;
@@ -3646,6 +3967,10 @@ document.addEventListener("keydown", (ev) => {
     const k = ev.key.toLowerCase();
     if (k === "z" && !ev.shiftKey) { ev.preventDefault(); undo(); return; }
     if (k === "y" || (k === "z" && ev.shiftKey)) { ev.preventDefault(); redo(); return; }
+  }
+  // g: group / ungroup the selection (same logic as the toolbar button)
+  if (ev.key.toLowerCase() === "g" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    groupShortcut(); ev.preventDefault(); return;
   }
   const dir = NUDGE[ev.key.toLowerCase()];
   if (!dir) return;
