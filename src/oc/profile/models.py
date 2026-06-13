@@ -438,6 +438,7 @@ class SubsetDef(BaseModel):
     sort_by: str = ""
     sort_desc: bool = False
     limit: int = 0                  # 0 = no limit
+    config_collapsed: bool = False  # UI: the view's config block is folded away (persists per game)
 
     def inputs(self) -> list[str]:
         """Source datasets to join, de-duplicated in order. Folds the legacy single

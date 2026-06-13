@@ -822,11 +822,8 @@ function subConfigHTML(s) {
       <div class="sv-hides">${toggles || '<span class="muted sub-empty">no columns yet</span>'}</div></div>`;
 }
 
-// view ids whose config block is collapsed — transient UI state, survives restructure
-const collapsedCfgs = new Set();
-
 function subsetParts(s) {
-  const off = collapsedCfgs.has(s.id);
+  const off = !!s.config_collapsed;   // persisted on the view def (rides the profile yaml)
   return {
     title: `<input class="gi gi-id subrename" value="${esc(s.id)}" title="view name" />`,
     head: `<button class="sub-cfg-tog gn-cog${off ? "" : " on"}" title="config" aria-label="toggle config">
@@ -863,9 +860,10 @@ function wireSubset(div, s) {
   const restructure = () => { autosave(); rebuildNode(`sub:${s.id}`); };   // rebuild this node's config
 
   div.querySelector(".sub-cfg-tog")?.addEventListener("click", (e) => {
-    const off = collapsedCfgs.has(s.id) ? (collapsedCfgs.delete(s.id), false) : (collapsedCfgs.add(s.id), true);
+    const off = s.config_collapsed = !s.config_collapsed;
     div.querySelector(".sub-cfg")?.classList.toggle("collapsed", off);
     e.currentTarget.classList.toggle("on", !off);
+    autosave();   // persist the fold state in the profile
   });
   div.querySelector(".subrename")?.addEventListener("change", (e) => {
     const oldId = s.id;
