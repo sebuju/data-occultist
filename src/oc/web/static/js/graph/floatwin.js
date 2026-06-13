@@ -84,20 +84,36 @@ function _wouldCycle(selfId, parentId) {
 
 // re-place every panel docked (directly or transitively) below `id`. `seen` guards cycles
 // and stops the place()→reflow→place() recursion from looping.
-function reflowDock(id, seen) {
+//
+// Alignment is detected DYNAMICALLY: `oldL`/`oldR` are the parent's left/right edge *before*
+// the change that triggered this reflow. A child whose right edge matched the parent's old
+// right edge keeps tracking the right edge (so collapse/resize never breaks a right-aligned
+// stack); otherwise it holds its left-edge offset. When the caller can't supply the old edges
+// (load/show), fall back to the stored `ar`/`dx` anchor. The chosen anchor is written back so
+// it persists and feeds the next fallback.
+function reflowDock(id, seen, oldL, oldR) {
   seen = seen || new Set();
   if (seen.has(id)) return;
   seen.add(id);
   const p = _wins.get(id);
   if (!p || p.el.hidden) return;
   const pl = p.el.offsetLeft, pr = pl + p.el.offsetWidth, pb = p.el.offsetTop + p.el.offsetHeight;
+  const known = oldL != null;
   for (const [, w] of _wins) {
     const d = w.state.dock;
     if (!d || d.to !== id || w.el.hidden) continue;
-    // ar = right edges were aligned at dock time -> keep them aligned (track parent's right);
-    // otherwise hold the left-edge offset dx
-    const x = d.ar ? (pr - w.el.offsetWidth) : (pl + (d.dx || 0));
-    w.place(x, pb + GAP, seen);   // place() recurses into reflowDock
+    const cw = w.el.offsetWidth;
+    let rightAligned, leftOff;
+    if (known) {
+      const cl = w.el.offsetLeft;
+      rightAligned = Math.abs((cl + cw) - oldR) <= SNAP;   // was its right edge on the parent's old right?
+      leftOff = cl - oldL;
+    } else {
+      rightAligned = !!d.ar; leftOff = d.dx || 0;
+    }
+    const x = rightAligned ? (pr - cw) : (pl + leftOff);
+    d.ar = rightAligned; d.dx = x - pl;   // refresh anchor (persist + fallback)
+    w.place(x, pb + GAP, seen);           // place() recurses into reflowDock
   }
 }
 
@@ -170,11 +186,16 @@ export function createFloatWin({
     const maxY = Math.max(top, window.innerHeight - h - 4);
     return [Math.max(4, Math.min(maxX, x)), Math.max(top, Math.min(maxY, y))];
   }
-  function place(x, y, seen) {
+  // prevL/prevR = my left/right edge as of the last placement — fed to reflowDock as the
+  // "before" edges so docked children can tell if they were right-aligned to me.
+  let prevL = null, prevR = null;
+  function place(x, y, seen, oldL, oldR) {
+    if (oldL == null) { oldL = prevL != null ? prevL : el.offsetLeft; oldR = prevR != null ? prevR : oldL + el.offsetWidth; }
     const [cx, cy] = clamp(x, y, el.offsetWidth, el.offsetHeight);
     el.style.left = `${cx}px`; el.style.top = `${cy}px`;
     state.x = cx; state.y = cy;
-    reflowDock(id, seen);   // drag anything docked below me along (chains too)
+    prevL = cx; prevR = cx + el.offsetWidth;
+    reflowDock(id, seen, oldL, oldR);   // drag anything docked below me along (chains too)
   }
   // initial placement: saved, else top-right under the topbar
   place(Number.isFinite(state.x) ? state.x : window.innerWidth - (state.w || 288) - 8,
@@ -229,7 +250,8 @@ export function createFloatWin({
   new ResizeObserver(() => {
     if (el.hidden || state.collapsed || !el.offsetWidth) return;
     stashSize();
-    reflowDock(id);   // my height/width changed (resize or content) -> slide docked panels along
+    reflowDock(id, null, prevL, prevR);   // height/width changed -> slide docked panels (using my pre-resize edges)
+    prevL = el.offsetLeft; prevR = prevL + el.offsetWidth;
     onResize && onResize();
     clearTimeout(rt); rt = setTimeout(save, 300);
   }).observe(el);
@@ -247,11 +269,13 @@ export function createFloatWin({
     }
   }
   function toggleCollapsed() {
-    const right = el.offsetLeft + el.offsetWidth;   // pin this edge so the collapse button stays put
+    const oldL = el.offsetLeft, oldR = oldL + el.offsetWidth;   // edges before folding (pin the right one)
     if (!state.collapsed) stashSize();   // capture the expanded box before folding
     state.collapsed = !state.collapsed;
     applyCollapsed();
-    place(right - el.offsetWidth, el.offsetTop);     // re-anchor by the right edge (expand → restores left)
+    // re-anchor by the right edge (expand → restores left); pass the OLD edges so a docked
+    // child that was right-aligned to me stays right-aligned after the width change
+    place(oldR - el.offsetWidth, el.offsetTop, null, oldL, oldR);
     if (!state.collapsed) onResize && onResize();   // re-render the freshly shown body
     save();
   }
