@@ -22,6 +22,7 @@ item against [warframe.market](https://warframe.market).
 - [Requirements](#requirements)
 - [Install](#install)
 - [Quickstart](#quickstart)
+- [Desktop app](#desktop-app)
 - [Tutorial: teach your first window](#tutorial-teach-your-first-window)
 - [CLI reference](#cli-reference)
 - [How it works](#how-it-works)
@@ -69,17 +70,43 @@ as plain config, so adding a game (or a new panel) never touches Python.
 - **Windows** (the window/capture backends use win32; pure-logic code and tests
   run anywhere).
 - **Python 3.11+**
-- A GPU is optional — OCR runs on CPU by default (see [GPU OCR](#gpu-ocr-optional)).
+- **Edge WebView2 Runtime** — only for the [desktop app](#desktop-app). Preinstalled
+  on Windows 11; `install.ps1` sets it up on Windows 10. The browser UI (`oc teach`)
+  needs nothing extra.
+- An **NVIDIA GPU** is recommended — `install.ps1` sets up CUDA OCR automatically when
+  it finds one (CPU is a slow fallback; see [GPU OCR](#gpu-ocr-optional)).
 
 ## Install
+
+**One-stop (recommended).** Double-click **`install.bat`**, or run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1
+powershell -ExecutionPolicy Bypass -File install.ps1 -Cpu   # force CPU OCR (skip CUDA)
+```
+
+It checks for Python 3.11+ and the WebView2 runtime and offers to install anything
+missing via winget; creates `.venv` and installs the package; **downloads the GPU OCR
+stack** (onnxruntime-gpu + CUDA wheels) when an NVIDIA card is present; and drops an
+**`oc` shortcut** on your Desktop / Start menu. It never reinstalls what you already
+have, and exits with a summary if a prerequisite is still missing.
+
+> `.ps1` files open in Notepad on double-click (Windows blocks run-on-click), so
+> `install.bat` is the double-click entry — it calls `install.ps1` with the execution
+> policy bypassed. It runs as the **normal user** (so the venv and shortcuts are yours);
+> only the winget system-installs (Python / WebView2) elevate, via their own UAC prompt.
+
+**Manual.** If you'd rather wire it up yourself:
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
+pip install -e ".[dev,desktop]"   # drop ",desktop" if you only want the browser UI
+pip uninstall -y onnxruntime; pip install -e ".[gpu]"   # NVIDIA CUDA OCR (optional)
 ```
 
-This installs `oc` as a console script plus the dev tools (`pytest`, `ruff`).
+This installs `oc` as a console script plus the dev tools (`pytest`, `ruff`) and the
+optional `desktop` extra (`pywebview`) for the native window.
 
 ## Quickstart
 
@@ -99,6 +126,34 @@ For day-to-day UI work, use the dev server script (auto-reloads on code change):
 .\start_server.ps1 -Background     # detached
 .\start_server.ps1 -NoReload       # single process (no reloader)
 ```
+
+---
+
+## Desktop app
+
+The same UI can run in a **native window** instead of a browser tab, via
+[`pywebview`](https://pywebview.flowlib.org/) (it renders through the Edge WebView2
+runtime on Windows — no Electron, no bundled browser). There are three launchers, and
+which one you pick decides **who owns the server**:
+
+| launcher | starts a server? | closing the window stops the server? | terminal window? |
+| --- | --- | --- | --- |
+| **`oc` shortcut** / `oc app` | yes | **yes** — one process owns both | none (shortcut) |
+| `oc view` | no — attaches to a running one | no | n/a |
+| `oc teach` | yes | n/a (no window — it's the browser UI) | yes |
+
+- **`oc` shortcut** — the double-click app `install.ps1` puts on your Desktop / Start
+  menu. It runs `pythonw -m oc.desktop_main` from the venv (no console window, custom
+  icon), so it uses the GPU OCR stack the installer set up — no giant standalone bundle
+  to ship. Starts the server, opens the window, and stops the server when you close it.
+- **`oc app`** — the same release behaviour from a terminal (handy for testing).
+- **`oc view [--host H] [--port N]`** — attach a window to a server you already
+  started with `oc teach` (default `127.0.0.1:8000`). Closing it leaves that server
+  running.
+
+> Why a shortcut and not a packaged `.exe`? A standalone exe would have to bundle the
+> CUDA OCR runtime (multiple GB). The shortcut reuses the installed venv instead, so
+> GPU OCR works and there's nothing huge to commit or download twice.
 
 ---
 
@@ -217,11 +272,14 @@ platinum.
 
 ```text
 oc detect                                   list running known games
-oc teach [--host H] [--port N] [--reload]   launch the web teaching UI
+oc teach [--host H] [--port N] [--reload]   launch the web teaching UI (browser)
+oc view  [--host H] [--port N]              native window onto a RUNNING server
+oc app                                      release: server + native window, stop on close
 oc capture <game> [--out capture.png]       save one screenshot of the window
 oc collect <game> [--once] [--interval 1.0] run the capture -> OCR -> record loop
 oc price   <game> [--window equipment]      warframe.market enrichment
            [--source warframe_market] [--name-field name]
+oc prices  <game> [--dataset master]        sweep market price history into a store
 oc profiles                                 list game profiles
 ```
 
@@ -336,7 +394,8 @@ Dev server (auto-reload on by default):
 
 ```text
 src/oc/
-  cli/            console subcommands (detect, capture, collect, price, teach, profiles)
+  cli/            console subcommands (detect, capture, collect, price, prices, teach, view, app, profiles)
+  desktop_main.py release-mode entry: server + native window (PyInstaller targets this)
   interfaces.py   the ABCs (one per pluggable backend kind)
   registry.py     name -> implementation registry; lists modules to import
   settings.py     parses config/settings.yaml
@@ -353,10 +412,15 @@ src/oc/
   enrich/         post-capture enrichers (warframe.market, relics)
   profile/        pydantic profile models + YAML loader/merger
   web/            FastAPI app + static ES-module front-end (teach UI, dashboard)
+  web/desktop.py  native-window helpers (open_window, serve_in_thread, free_port)
 config/
   settings.yaml   backend choices + tuning
   games/*.yaml    per-game profiles (authored in the UI)
 data/             collected records, history, lexicon, enrichment output
+packaging/        app icon generator (make_icon.py)
+assets/oc.ico     app icon for the desktop shortcut
+install.ps1       one-stop Windows setup (winget GPU OCR + desktop shortcut)
+install.bat       double-click wrapper for install.ps1
 ```
 
 ## Design principles

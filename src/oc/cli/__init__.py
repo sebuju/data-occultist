@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from . import app as app_cmd
 from . import capture as capture_cmd
 from . import collect as collect_cmd
 from . import detect as detect_cmd
@@ -11,6 +12,7 @@ from . import price as price_cmd
 from . import prices as prices_cmd
 from . import profiles as profiles_cmd
 from . import teach as teach_cmd
+from . import view as view_cmd
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     prices_cmd.register(sub)
     profiles_cmd.register(sub)
     teach_cmd.register(sub)
+    view_cmd.register(sub)
+    app_cmd.register(sub)
     return parser
 
 
