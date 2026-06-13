@@ -42,4 +42,6 @@ CLAUDE.md
 .cursor/
 .cursorrules
 .github/copilot-instructions.md
-.DONE
+
+# Cross-terminal done signal (root only)
+/DONE
