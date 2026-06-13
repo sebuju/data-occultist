@@ -1326,6 +1326,12 @@ function nodeResizeOpts(div, id) {
     left: (v) => { const p = pos.get(id); if (v === undefined) return p ? p.x : 0; if (p) { p.x = v; positionNode(id); } },
     onResize: () => { drawEdges(); groups.renderGroups(); },
     onSettle: () => { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight }); drawEdges(); groups.renderGroups(); persist.layout(); },
+    // reset dot: drop the user's size back to the node's natural CSS size
+    onReset: () => {
+      nodeSizes.delete(id);
+      div.style.width = ""; div.style.height = "";
+      drawEdges(); groups.renderGroups(); persist.layout();
+    },
   };
 }
 
@@ -3930,11 +3936,16 @@ $("nodemapBtn")?.addEventListener("click", () => setNodeMapVisible(!nmState.visi
 
 // ---- activity panel (live sweeps + precapture) ----------------------------
 // A floating window listing every running background job for the current game — price
-// sweeps and the precapture worker — polled from /api/activity while it's open. Rows
-// reconcile in place (keyed map) so the 1s poll never churns the DOM or the cancel buttons.
+// sweeps and the precapture worker — fetched from /api/activity while it's open. The
+// network fetch runs only every 10s (plus right after an action that changes state); a 1s
+// local ticker re-renders the cached payload in between so countdowns stay live without
+// hammering the server. Rows reconcile in place (keyed map) so neither churns the DOM.
 const actState = { visible: false, x: null, y: null, w: null, h: null };
 let act = null;
-let actPoll = null;
+let actTick = null;          // 1s local ticker
+let actData = null;          // last fetched payload (re-rendered locally between fetches)
+let actAt = 0;               // Date.now() of that fetch, used to age the countdowns
+let actPolling = false;      // in-flight fetch guard
 const actRows = new Map();   // job key -> { row, title, prog }
 let actEmpty = null;         // the reused "nothing active" placeholder (never innerHTML)
 
@@ -3954,15 +3965,15 @@ function buildActivity() {
     const c = ev.target.closest("button[data-cancel]");
     if (c && !c.disabled) {
       c.disabled = true; c.textContent = "cancelling…";
-      if (c.dataset.cancel === "sweep") api.prices.cancel(game, c.dataset.ds).catch(() => {});
-      else if (c.dataset.cancel === "precap") api.precapture.cancel(game).catch(() => {});
+      const p = c.dataset.cancel === "sweep" ? api.prices.cancel(game, c.dataset.ds) : api.precapture.cancel(game);
+      p.catch(() => {}).finally(() => setTimeout(pollActivity, 300));   // state changed -> refresh
       return;
     }
     const f = ev.target.closest("button[data-fire]");
     if (f && !f.disabled) {
       f.disabled = true; f.textContent = "firing…";
       api.triggers.fire(game, f.dataset.fire).catch(() => {})
-        .finally(() => { f.disabled = false; f.textContent = "fire"; });
+        .finally(() => { f.disabled = false; f.textContent = "fire"; pollActivity(); });   // refresh next-fire time
     }
   });
 }
@@ -3977,22 +3988,42 @@ function fmtDur(s) {
   return rm ? `${h}h ${rm}m` : `${h}h`;
 }
 
-function stopActivityPoll() { if (actPoll) { clearInterval(actPoll); actPoll = null; } }
+function stopActivityPoll() { if (actTick) { clearInterval(actTick); actTick = null; } }
+
+// Fetch from the server and render fresh. Cheap-guarded so overlapping calls (a 10s tick
+// landing on an action-triggered refresh) don't stack.
+async function pollActivity() {
+  if (actPolling || !actState.visible) return;
+  const game = model.profile.name;
+  if (!game) { actData = { sweeps: [], precapture: null }; actAt = Date.now(); renderActivity(actData, 0); return; }
+  actPolling = true;
+  try { actData = await api.activity.get(game); actAt = Date.now(); renderActivity(actData, 0); }
+  catch { /* ignore transient errors */ }
+  finally { actPolling = false; }
+}
+
+// any interval trigger whose countdown has just hit zero since the last fetch -> it fired,
+// so the server state changed and a refresh is due (don't wait out the 10s)
+function actDueForRefresh(elapsed) {
+  return (actData?.triggers || []).some((t) => t.kind === "interval" && (t.next_in || 0) > 0 && (t.next_in - elapsed) <= 0);
+}
+
 function startActivityPoll() {
   stopActivityPoll();
-  const tick = async () => {
+  pollActivity();   // immediate fetch on open
+  actTick = setInterval(() => {
     if (!actState.visible) return;
-    const game = model.profile.name;
-    if (!game) { renderActivity({ sweeps: [], precapture: null }); return; }
-    try { renderActivity(await api.activity.get(game)); } catch { /* ignore transient errors */ }
-  };
-  tick();
-  actPoll = setInterval(tick, 1000);
+    const elapsed = (Date.now() - actAt) / 1000;
+    // network refresh every 10s, or as soon as a countdown elapses; otherwise just re-render
+    // the cached payload so the "fires in …" times tick down locally (no server hit)
+    if (elapsed >= 10 || (elapsed >= 1.5 && actDueForRefresh(elapsed))) pollActivity();
+    else if (actData) renderActivity(actData, elapsed);
+  }, 1000);
 }
 
 // Map a raw status object to display row specs. Each job: { key, title, prog, cls?, action? }
 // where action is {type:"cancel",kind,ds?} | {type:"fire",id} | null.
-function activityJobs(data) {
+function activityJobs(data, elapsed = 0) {
   const jobs = [];
   for (const s of (data.sweeps || [])) {
     jobs.push({
@@ -4012,7 +4043,10 @@ function activityJobs(data) {
     const running = (t.targets || []).some((x) => x.running);
     let prog;
     if (t.kind === "interval") {
-      prog = running ? "firing now…" : `fires in ${fmtDur(t.next_in)} · every ${fmtDur(t.interval_s)}`;
+      const remaining = Math.max(0, (t.next_in || 0) - elapsed);   // age locally between fetches
+      prog = running ? "firing now…"
+        : remaining <= 0 ? `due… · every ${fmtDur(t.interval_s)}`
+        : `fires in ${fmtDur(remaining)} · every ${fmtDur(t.interval_s)}`;
     } else if (t.kind === "on_change") {
       prog = `on change: ${(t.watch || []).join(", ") || "—"}${running ? " · firing now…" : ""}`;
     } else { prog = t.kind; }
@@ -4022,10 +4056,10 @@ function activityJobs(data) {
   return jobs;
 }
 
-function renderActivity(data) {
+function renderActivity(data, elapsed = 0) {
   if (!act) return;
   const list = act.body.querySelector(".act-list");
-  const jobs = activityJobs(data);
+  const jobs = activityJobs(data, elapsed);
   const want = new Set(jobs.map((j) => j.key));
   for (const [key, r] of actRows) if (!want.has(key)) { r.row.remove(); actRows.delete(key); }
   if (!jobs.length) {
@@ -4033,6 +4067,7 @@ function renderActivity(data) {
     return;
   }
   if (actEmpty.isConnected) actEmpty.remove();
+  let i = 0;
   for (const j of jobs) {
     let r = actRows.get(j.key);
     if (!r) {
@@ -4056,7 +4091,11 @@ function renderActivity(data) {
       }
       r = { row, title, prog }; actRows.set(j.key, r);
     }
-    list.appendChild(r.row);   // (re)append in job order
+    // place at slot i ONLY if it isn't already there — no needless detach/reattach (which
+    // flashes as a "recreate" in devtools + thrashes layout every tick)
+    const at = list.children[i];
+    if (at !== r.row) list.insertBefore(r.row, at || null);
+    i++;
     if (r.title.textContent !== j.title) r.title.textContent = j.title;
     if (r.prog.textContent !== j.prog) r.prog.textContent = j.prog;
   }
