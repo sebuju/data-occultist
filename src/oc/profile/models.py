@@ -413,6 +413,10 @@ class PriceNodeDef(BaseModel):
 
     id: str
     type: str = "warframe_market"   # registered price source
+    # What this producer fetches per item: ``statistics`` (daily candles -> history,
+    # movers, 48h live median) or ``orders`` (live lowest online SELL right now, no
+    # history). Pick per node; run two nodes (two datasets) for both, joined in a view.
+    mode: str = "statistics"        # "statistics" | "orders"
     dataset: str = "prices"         # output dataset the snapshots are written to
     throttle: float = 0.4           # seconds between requests during a sweep
     enabled: bool = True
@@ -429,6 +433,7 @@ class SubsetDef(BaseModel):
     join_field: str = "name"        # field the datasets are joined on
     filters: list[FilterRule] = Field(default_factory=list)
     derived: list[DerivedColumn] = Field(default_factory=list)
+    hidden_columns: list[str] = Field(default_factory=list)  # result columns to omit from the view
     enrich: list[EnrichRule] = Field(default_factory=list)   # legacy; price is a producer now
     sort_by: str = ""
     sort_desc: bool = False

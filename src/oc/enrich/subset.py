@@ -166,7 +166,9 @@ def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
         for k in row:
             if k not in base and k not in derived_names:
                 base.append(k)
-    return {"columns": base + derived_names, "rows": rows}
+    hidden = set(sub.hidden_columns or ())
+    columns = [c for c in base + derived_names if c not in hidden]
+    return {"columns": columns, "rows": rows}
 
 
 def compute_subset(records: list[dict], sub: SubsetDef) -> dict:

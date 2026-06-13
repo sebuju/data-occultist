@@ -32,6 +32,21 @@ def _stats(closed=(), live=(), buys=()):
             "statistics_live": {"90days": [], "48hours": live_rows}}
 
 
+# ---- orders payload helper --------------------------------------------------
+
+def _order(platinum, order_type="sell", status="online"):
+    return {"platinum": platinum, "order_type": order_type, "user": {"status": status}}
+
+
+def _orders(*specs):
+    """Build an orders list. Each spec is ``platinum`` (online sell) or a
+    ``(platinum, order_type, status)`` tuple for buys / offline users."""
+    out = []
+    for s in specs:
+        out.append(_order(*s) if isinstance(s, tuple) else _order(s))
+    return out
+
+
 # ---- PriceStore: ingest + candles ------------------------------------------
 
 def test_ingest_parses_and_dedups_candles(tmp_path):
@@ -83,6 +98,62 @@ def test_snapshot_row(tmp_path):
                     "price_min": 47, "price_median": 48, "volume": 10,
                     "updated": snap["updated"]}
     assert PriceStore(tmp_path, "g").snapshot("missing") is None
+
+
+# ---- live orders (right-now lowest sell) ------------------------------------
+
+def test_online_sell_prices_filters_and_sorts():
+    orders = _orders(50, 30, (10, "buy", "online"), (5, "sell", "offline"), 40)
+    # only online SELL orders, ascending: 30, 40, 50
+    assert wm_client.online_sell_prices(orders) == [30, 40, 50]
+
+
+def test_ingest_orders_min_median_sellers(tmp_path):
+    s = PriceStore(tmp_path, "g")
+    n = s.ingest_orders("soma_prime", "Soma Prime", _orders(60, 30, 40, 50, 70, 35))
+    assert n == 6                                   # six online sellers
+    lo = s._slugs["soma_prime"]["live_orders"]
+    # min = cheapest; median = median of the lowest 5 (30,35,40,50,60) = 40
+    assert lo["min"] == 30 and lo["median"] == 40 and lo["sellers"] == 6
+
+
+def test_ingest_orders_no_online_sellers(tmp_path):
+    s = PriceStore(tmp_path, "g")
+    s.ingest_orders("x", "X", _orders((10, "sell", "offline"), (5, "buy", "online")))
+    lo = s._slugs["x"]["live_orders"]
+    assert lo == {"min": None, "median": None, "sellers": 0, "ts": lo["ts"]}
+
+
+def test_snapshot_live_fields_conditional(tmp_path):
+    s = PriceStore(tmp_path, "g")
+    # orders-only slug: live_* present, price_* absent (no candles)
+    s.ingest_orders("a", "A", _orders(20, 30))
+    snap = s.snapshot("a")
+    assert snap["live_ask"] == 20 and snap["live_median"] == 25 and snap["live_sellers"] == 2
+    assert "price_median" not in snap and "price_min" not in snap and "volume" not in snap
+    # stats-only slug: price_* present, live_* absent
+    s.ingest_statistics("b", "B", _stats(closed=[("2026-06-08", 48)]))
+    snap_b = s.snapshot("b")
+    assert snap_b["price_median"] == 48 and "live_ask" not in snap_b
+    # both: a slug swept by both modes carries both column sets
+    s.ingest_orders("b", "B", _orders(45))
+    both = s.snapshot("b")
+    assert both["price_median"] == 48 and both["live_ask"] == 45
+
+
+def test_sweep_catalogue_orders_mode(tmp_path, monkeypatch):
+    def fake_orders(slug, timeout=30.0):
+        return _orders(99, 47, 60)
+    monkeypatch.setattr(price_collector, "fetch_orders", fake_orders)
+
+    items = [("soma_prime", "Soma Prime")]
+    res = sweep_catalogue(tmp_path, "g", "live", throttle=0, mode="orders", items=items)
+    assert res["fetched"] == 1
+
+    ds = DatasetStore(tmp_path, "g", "live", key=KeySpec(fields=("name",)))
+    row = next(r for r in ds.records() if r["name"] == "Soma Prime")
+    assert row["live_ask"] == 47 and row["live_sellers"] == 3
+    assert "price_median" not in row                # orders mode writes no candle columns
 
 
 # ---- catalogue producer sweep ----------------------------------------------
@@ -301,19 +372,19 @@ def test_inventory_slugs_default_slugify():
 
 # ---- URL building (the unicode crash regression) ----------------------------
 
-def test_item_url_percent_encodes_non_ascii():
-    url = wm_client._item_url("aölsim")
-    assert "ö" not in url and "%C3%B6" in url
-    assert url.startswith("https://api.warframe.market/v1/items/")
+def test_item_path_percent_encodes_non_ascii():
+    path = wm_client._item_path("aölsim")
+    assert "ö" not in path and "%C3%B6" in path
+    assert path.startswith("/v1/items/")
 
 
 def test_fetch_statistics_builds_encoded_url(monkeypatch):
     seen = {}
 
-    def fake_get(url, timeout):
-        seen["url"] = url
+    def fake_get(path, timeout):
+        seen["path"] = path
         return {"payload": {"statistics_closed": {"90days": []}}}
 
     monkeypatch.setattr(wm_client, "_get", fake_get)
     wm_client.fetch_statistics("höfn")
-    assert seen["url"] == "https://api.warframe.market/v1/items/h%C3%B6fn/statistics"
+    assert seen["path"] == "/v1/items/h%C3%B6fn/statistics"

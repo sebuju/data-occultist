@@ -15,9 +15,7 @@ import statistics
 
 from ..interfaces import Enricher
 from ..registry import register_enricher
-from .wm_client import NET_ERRORS, fetch_orders, slugify
-
-_ONLINE = {"ingame", "online"}
+from .wm_client import NET_ERRORS, fetch_orders, online_sell_prices, slugify
 
 __all__ = ["WarframeMarketEnricher", "slugify"]
 
@@ -41,11 +39,7 @@ class WarframeMarketEnricher(Enricher):
         except NET_ERRORS:
             return {}
 
-        prices = sorted(
-            o["platinum"]
-            for o in orders
-            if o.get("order_type") == "sell" and o.get("user", {}).get("status") in _ONLINE
-        )
+        prices = online_sell_prices(orders)
         if not prices:
             return {"wm_slug": slug, "wm_price": None}
         low = prices[: self._depth]

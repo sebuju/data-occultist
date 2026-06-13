@@ -32,9 +32,12 @@ from __future__ import annotations
 
 import json
 import os
+import statistics
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from ..enrich.wm_client import online_sell_prices
 
 
 def _utcnow_iso() -> str:
@@ -180,6 +183,26 @@ class PriceStore:
         entry["live"] = _live_snapshot(payload)
         return len(candles)
 
+    def ingest_orders(self, slug: str, name: str, orders: list[dict], depth: int = 5) -> int:
+        """Merge a live ``/orders`` fetch for ``slug``: store the current lowest online
+        SELL (``min``) and the median of the lowest ``depth`` (resists a lone lowball) as
+        an instantaneous ``live_orders`` snapshot. Orders are point-in-time with no date,
+        so this is NOT a candle — it overwrites the slug's single live snapshot each sweep.
+        Returns the number of online sellers found. Does NOT save — caller batches."""
+        entry = self._slugs.setdefault(slug, {"name": name, "candles": {}})
+        entry["name"] = name or entry.get("name") or slug
+        entry["updated"] = _utcnow_iso()
+        self._misses.pop(slug, None)   # a prior 404 recovered
+        prices = online_sell_prices(orders)
+        low = prices[:depth]
+        entry["live_orders"] = {
+            "min": _num(low[0]) if low else None,
+            "median": round(statistics.median(low), 1) if low else None,
+            "sellers": len(prices),
+            "ts": _utcnow_iso(),
+        }
+        return len(prices)
+
     # ---- queries -----------------------------------------------------------
 
     def slugs(self) -> list[str]:
@@ -232,19 +255,28 @@ class PriceStore:
 
     def snapshot(self, slug: str) -> dict | None:
         """The current price row a producer pushes into its output dataset: keyed by
-        ``name`` so a view can join it to inventory. None if the slug isn't stored."""
+        ``name`` so a view can join it to inventory. None if the slug isn't stored.
+
+        Fields are conditional so the two producer modes never null out each other's
+        columns when they feed the SAME dataset (records merge by name): the
+        statistics-derived ``price_*``/``volume`` appear only when there's candle/live-stat
+        data, and the live-orders ``live_*`` only when an orders sweep stored them."""
         entry = self._slugs.get(slug)
         if not entry:
             return None
-        latest = self.latest_candle(slug) or {}
-        return {
-            "name": entry.get("name", slug),
-            "slug": slug,
-            "price_min": latest.get("min"),
-            "price_median": self.price(slug),
-            "volume": latest.get("volume"),
-            "updated": entry.get("updated"),
-        }
+        snap = {"name": entry.get("name", slug), "slug": slug, "updated": entry.get("updated")}
+        price = self.price(slug)
+        if price is not None:
+            latest = self.latest_candle(slug) or {}
+            snap["price_min"] = latest.get("min")
+            snap["price_median"] = price
+            snap["volume"] = latest.get("volume")
+        lo = entry.get("live_orders")
+        if lo:
+            snap["live_ask"] = lo.get("min")
+            snap["live_median"] = lo.get("median")
+            snap["live_sellers"] = lo.get("sellers")
+        return snap
 
     def movers(self, days: int = 7, threshold: float = 0.15, limit: int = 50) -> list[dict]:
         """Items whose current median moved >= ``threshold`` (fraction) vs ``days`` ago.

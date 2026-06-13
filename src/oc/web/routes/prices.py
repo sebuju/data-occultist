@@ -57,12 +57,16 @@ def _dataset_key(game: str, dataset: str):
 class SweepState:
     game: str
     dataset: str
+    mode: str = "statistics"
     total: int = 0
     done: int = 0
     fetched: int = 0
     failed: int = 0
     running: bool = False
     cancel: bool = False
+    # set when a sweep was refused because another node in the same game is sweeping
+    # (fetching is serialised per game for the rate limit + shared price store).
+    blocked: bool = False
     last: str = ""
     started: str = ""
     finished: str = ""
@@ -79,21 +83,32 @@ class _Runner:
     thread: threading.Thread | None = field(default=None)
 
 
-_runners: dict[str, _Runner] = {}
+# Runner state is per (game, dataset) so each price node tracks its own sweep
+# independently. Fetching, though, is serialised PER GAME by _game_gate: two concurrent
+# sweeps would blow past warframe.market's rate ceiling and clobber the shared
+# price_store.json (and are throughput-neutral under the cap anyway).
+_runners: dict[tuple[str, str], _Runner] = {}
+_game_gate: dict[str, threading.Lock] = {}
+_gate_guard = threading.Lock()
 
 
-def _runner(game: str) -> _Runner:
-    return _runners.setdefault(game, _Runner())
+def _runner(game: str, dataset: str) -> _Runner:
+    return _runners.setdefault((game, dataset), _Runner())
 
 
-def _run_sweep(game: str, dataset: str, throttle: float, timeout: float, limit: int) -> None:
-    runner = _runner(game)
-    state = runner.state
+def _gate(game: str) -> threading.Lock:
+    with _gate_guard:
+        return _game_gate.setdefault(game, threading.Lock())
+
+
+def _run_sweep(game: str, dataset: str, mode: str, throttle: float, timeout: float,
+               limit: int, workers: int, gate: threading.Lock) -> None:
+    state = _runner(game, dataset).state
     settings = get_settings()
 
-    def on_item(idx, total, slug, name, ok):
+    def on_item(done, total, slug, name, ok):
         state.total = total
-        state.done = idx
+        state.done = done
         state.last = name
         if ok:
             state.fetched += 1
@@ -102,40 +117,52 @@ def _run_sweep(game: str, dataset: str, throttle: float, timeout: float, limit: 
 
     try:
         sweep_catalogue(settings.data_dir, game, dataset, key=_dataset_key(game, dataset),
-                        throttle=throttle, timeout=timeout, limit=limit,
-                        on_item=on_item, should_stop=lambda: state.cancel)
+                        throttle=throttle, timeout=timeout, limit=limit, workers=workers,
+                        mode=mode, on_item=on_item, should_stop=lambda: state.cancel)
     finally:
         state.running = False
         state.finished = _utcnow_iso()
+        gate.release()
 
 
 @router.post("/{game}/refresh")
-def refresh(game: str, dataset: str = "prices", throttle: float = 0.4,
-            timeout: float = 30.0, limit: int = 0):
-    """Start a background producer sweep: price the whole market catalogue into
-    ``dataset``. Returns the initial status; a second call while running is a no-op."""
-    runner = _runner(game)
+def refresh(game: str, dataset: str = "prices", mode: str = "statistics", throttle: float = 0.4,
+            timeout: float = 30.0, limit: int = 0, workers: int = 6):
+    """Start a background producer sweep of ``dataset`` (``mode`` = statistics | orders).
+    A second call while this node is running is a no-op; if a DIFFERENT node in the same
+    game is sweeping, returns a ``blocked`` status instead of starting (one sweep/game)."""
+    runner = _runner(game, dataset)
     if runner.state and runner.state.running:
         return runner.state.public()
-    runner.state = SweepState(game=game, dataset=dataset, running=True, started=_utcnow_iso())
+    gate = _gate(game)
+    if not gate.acquire(blocking=False):
+        return SweepState(game=game, dataset=dataset, mode=mode, blocked=True).public()
+    runner.state = SweepState(game=game, dataset=dataset, mode=mode, running=True,
+                              started=_utcnow_iso())
     runner.thread = threading.Thread(
-        target=_run_sweep, args=(game, dataset, throttle, timeout, limit), daemon=True)
-    runner.thread.start()
+        target=_run_sweep,
+        args=(game, dataset, mode, throttle, timeout, limit, workers, gate), daemon=True)
+    try:
+        runner.thread.start()
+    except RuntimeError:           # thread couldn't start — don't strand the gate
+        runner.state.running = False
+        gate.release()
+        raise
     return runner.state.public()
 
 
 @router.post("/{game}/cancel")
-def cancel(game: str):
-    """Ask a running sweep to stop after the current item."""
-    runner = _runner(game)
+def cancel(game: str, dataset: str = "prices"):
+    """Ask this node's running sweep to stop after the current item."""
+    runner = _runner(game, dataset)
     if runner.state and runner.state.running:
         runner.state.cancel = True
     return runner.state.public() if runner.state else {"running": False}
 
 
 @router.get("/{game}/status")
-def status(game: str):
-    runner = _runner(game)
+def status(game: str, dataset: str = "prices"):
+    runner = _runner(game, dataset)
     return runner.state.public() if runner.state else {"running": False, "total": 0, "done": 0}
 
 
@@ -165,7 +192,7 @@ def summary(game: str, dataset: str = "prices"):
     the tiny index sidecar (never parses the full candle store), so it stays fast even
     mid-sweep with a huge catalogue."""
     idx = PriceStore.read_index(get_settings().data_dir, game)
-    runner = _runner(game)
+    runner = _runner(game, dataset)
     return {
         "game": game, "dataset": dataset,
         "slugs": idx.get("slugs", 0),

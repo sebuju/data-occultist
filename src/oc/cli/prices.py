@@ -22,6 +22,9 @@ def register(sub) -> None:
     p.add_argument("--throttle", type=float, default=0.4, help="seconds between requests")
     p.add_argument("--timeout", type=float, default=30.0, help="per-request timeout")
     p.add_argument("--limit", type=int, default=0, help="cap distinct items fetched (0=all)")
+    p.add_argument("--workers", type=int, default=6, help="concurrent fetch threads")
+    p.add_argument("--mode", choices=("statistics", "orders"), default="statistics",
+                   help="statistics=daily candle history; orders=live lowest online sell")
     p.add_argument("--name-field", default="name", help="record field holding the item name")
     p.add_argument("--refresh-catalogue", action="store_true",
                    help="re-fetch the market item catalogue before resolving names")
@@ -52,7 +55,8 @@ def run(args) -> int:
     result = sweep_dataset(
         settings.data_dir, args.game, args.dataset, key=key,
         throttle=args.throttle, timeout=args.timeout, limit=args.limit,
-        name_field=args.name_field, resolve=resolve, on_item=_row,
+        workers=args.workers, mode=args.mode, name_field=args.name_field,
+        resolve=resolve, on_item=_row,
     )
     print(f"Swept {result['fetched']}/{result['total']} items "
           f"({result['failed']} failed) -> {result['slugs']} slugs stored")
