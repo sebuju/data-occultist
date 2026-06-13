@@ -3937,9 +3937,10 @@ $("nodemapBtn")?.addEventListener("click", () => setNodeMapVisible(!nmState.visi
 // ---- activity panel (live sweeps + precapture) ----------------------------
 // A floating window listing every running background job for the current game — price
 // sweeps and the precapture worker — fetched from /api/activity while it's open. The
-// network fetch runs only every 10s (plus right after an action that changes state); a 1s
-// local ticker re-renders the cached payload in between so countdowns stay live without
-// hammering the server. Rows reconcile in place (keyed map) so neither churns the DOM.
+// network fetch runs every 1s while the window is focused, every 60s when it's backgrounded
+// (plus right after an action that changes state); a 1s local ticker re-renders the cached
+// payload in between so countdowns stay live without hammering the server. Rows reconcile in
+// place (keyed map) so neither churns the DOM.
 const actState = { visible: false, x: null, y: null, w: null, h: null };
 let act = null;
 let actTick = null;          // 1s local ticker
@@ -4014,9 +4015,11 @@ function startActivityPoll() {
   actTick = setInterval(() => {
     if (!actState.visible) return;
     const elapsed = (Date.now() - actAt) / 1000;
-    // network refresh every 10s, or as soon as a countdown elapses; otherwise just re-render
-    // the cached payload so the "fires in …" times tick down locally (no server hit)
-    if (elapsed >= 10 || (elapsed >= 1.5 && actDueForRefresh(elapsed))) pollActivity();
+    // network refresh cadence: 1s while the window is focused, 60s when it's in the
+    // background. Also refresh as soon as a countdown elapses. Otherwise just re-render the
+    // cached payload so the "fires in …" times keep ticking down locally (no server hit).
+    const every = document.hasFocus() ? 1 : 60;
+    if (elapsed >= every || (elapsed >= 1.5 && actDueForRefresh(elapsed))) pollActivity();
     else if (actData) renderActivity(actData, elapsed);
   }, 1000);
 }
