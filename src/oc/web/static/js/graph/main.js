@@ -3937,7 +3937,7 @@ const actRows = new Map();   // job key -> { row, title, prog }
 function buildActivity() {
   if (act) return;
   act = createFloatWin({
-    id: "activity", title: "activity", state: actState, bothAxes: true,
+    id: "activity", title: "tasks", state: actState, bothAxes: true,
     onShow: () => { $("activityBtn")?.classList.toggle("active", true); startActivityPoll(); },
     onHide: () => { $("activityBtn")?.classList.toggle("active", false); stopActivityPoll(); },
     onPersist: () => persist.layout(),
