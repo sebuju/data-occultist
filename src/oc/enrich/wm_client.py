@@ -7,8 +7,8 @@ parse failures raise the small set of errors in :data:`NET_ERRORS` for callers t
 swallow, so external outages never compromise capture.
 
 Two endpoints are used:
-  * ``/items/{slug}/orders``      — live buy/sell orders (lowest current sell).
-  * ``/items/{slug}/statistics``  — daily price candles (90 days) + 48h live.
+  * ``/v2/orders/item/{slug}``      — live buy/sell orders (lowest current sell).
+  * ``/v1/items/{slug}/statistics`` — daily price candles (90 days) + 48h live.
 
 The statistics endpoint is the workhorse: one request returns ~90 daily candles
 (volume, min/max/avg/median/weighted-avg/moving-avg), i.e. an item's whole recent
@@ -123,10 +123,17 @@ def _item_path(slug: str) -> str:
     return _ITEM_PATH.format(slug=urllib.parse.quote(slug, safe=""))
 
 
+_ORDERS_PATH = "/v2/orders/item/{slug}"
+
+
 def fetch_orders(slug: str, timeout: float = 30.0) -> list[dict]:
-    """Live buy/sell orders for ``slug``. Raises on network/parse failure."""
-    payload = _get(_item_path(slug) + "/orders", timeout)
-    return payload.get("payload", {}).get("orders", [])
+    """Live buy/sell orders for ``slug``. Raises on network/parse failure.
+
+    Uses the **v2** orders endpoint: v1's ``/items/{slug}/orders`` now returns 403
+    (the same way v1's ``/items`` catalogue was retired). v2 returns ``{data: [...]}``
+    and renames each order's ``order_type`` field to ``type``."""
+    payload = _get(_ORDERS_PATH.format(slug=urllib.parse.quote(slug, safe="")), timeout)
+    return payload.get("data") or []
 
 
 # A user is reachable for a trade only when online or in-game (not offline).
@@ -140,7 +147,7 @@ def online_sell_prices(orders: list[dict]) -> list[float]:
     return sorted(
         o["platinum"]
         for o in orders
-        if o.get("order_type") == "sell" and (o.get("user") or {}).get("status") in _ONLINE
+        if o.get("type") == "sell" and (o.get("user") or {}).get("status") in _ONLINE
     )
 
 
