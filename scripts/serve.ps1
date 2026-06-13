@@ -1,5 +1,5 @@
 <#
-  Keep the teaching UI (and its OCR) alive.
+  Keep the data-rig web UI (and its OCR) alive.
 
   Run this once and leave it open. It starts the server if it isn't already running,
   and restarts it whenever it exits - including when you KILL the python process by hand
@@ -16,7 +16,7 @@ param(
 
 $ErrorActionPreference = "SilentlyContinue"
 $root = Split-Path -Parent $PSScriptRoot           # repo root (parent of scripts\)
-$oc = Join-Path $root ".venv\Scripts\oc.exe"       # the `oc` console script (has `teach`)
+$oc = Join-Path $root ".venv\Scripts\data-rig.exe" # the `data-rig` console script (has `rig`)
 $py = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) { $py = "python" }
 
@@ -46,9 +46,9 @@ function Stop-WedgedListener {
 
 function Start-Server {
     if (Test-Path $oc) {
-        & $oc teach --host $BindHost --port $Port
+        & $oc rig --host $BindHost --port $Port
     } else {
-        & $py -m oc teach --host $BindHost --port $Port
+        & $py -m oc rig --host $BindHost --port $Port
     }
 }
 
@@ -58,7 +58,7 @@ while ($true) {
     if (Test-ServerUp) { Start-Sleep -Seconds 3; $fails = 0; continue }   # already running -> watch
 
     Stop-WedgedListener   # free the port if something dead/hung still holds it
-    Write-Host ("[serve] {0} starting teaching UI..." -f (Get-Date -Format HH:mm:ss))
+    Write-Host ("[serve] {0} starting data-rig web UI..." -f (Get-Date -Format HH:mm:ss))
     Push-Location $root
     Start-Server
     Pop-Location

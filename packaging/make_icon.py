@@ -1,4 +1,4 @@
-"""Generate assets/oc.ico from the favicon glyph (rounded panel + 3 wired nodes).
+"""Generate assets/data-rig.ico from the favicon glyph (rounded panel + 3 wired nodes).
 
 Re-renders the same design as src/oc/web/static/favicon.svg with Pillow at multiple
 sizes and writes a multi-resolution .ico. Run: ``python packaging/make_icon.py``.
@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 _ROOT = Path(__file__).resolve().parent.parent
-_OUT = _ROOT / "assets" / "oc.ico"
+_OUT = _ROOT / "assets" / "data-rig.ico"
 
 # Design in the 32-unit space of favicon.svg, rendered up to a big master bitmap.
 BG = (0x15, 0x17, 0x1C, 255)

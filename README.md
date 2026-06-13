@@ -1,11 +1,11 @@
-# oc — on-screen reader
+# data-rig
 
 > Collect clean, structured data from games by reading the screen — capture the
 > game window, recognise which in-game panel is showing, OCR the labelled
 > regions, and write deduplicated records. No game-specific code: everything is
 > taught through a web UI and stored as per-game config.
 
-`oc` watches a game window, figures out **which** window/state is on screen,
+`data-rig` watches a game window, figures out **which** window/state is on screen,
 reads the data regions you taught it, fuzzy-corrects noisy OCR against a
 self-learning per-game dictionary, and writes stable records with full change
 history. It is robust to pop-ups, tooltips, occlusion, and scrolling.
@@ -38,7 +38,7 @@ item against [warframe.market](https://warframe.market).
 ## Why
 
 Games rarely expose their inventory/stats as data. Screen-scraping them usually
-means brittle, hard-coded pixel math per game. `oc` flips that: the program
+means brittle, hard-coded pixel math per game. `data-rig` flips that: the program
 knows **nothing** about any game. You teach it — visually — what a window looks
 like, where the data sits, and what each region means. That knowledge is saved
 as plain config, so adding a game (or a new panel) never touches Python.
@@ -71,7 +71,7 @@ as plain config, so adding a game (or a new panel) never touches Python.
   run anywhere).
 - **Python 3.11+**
 - **Edge WebView2 Runtime** — only for the [desktop app](#desktop-app). Preinstalled
-  on Windows 11; `install.ps1` sets it up on Windows 10. The browser UI (`oc teach`)
+  on Windows 11; `install.ps1` sets it up on Windows 10. The browser UI (`data-rig rig`)
   needs nothing extra.
 - An **NVIDIA GPU** is recommended — `install.ps1` sets up CUDA OCR automatically when
   it finds one (CPU is a slow fallback; see [GPU OCR](#gpu-ocr-optional)).
@@ -88,7 +88,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Cpu   # force CPU OCR (ski
 It checks for Python 3.11+ and the WebView2 runtime and offers to install anything
 missing via winget; creates `.venv` and installs the package; **downloads the GPU OCR
 stack** (onnxruntime-gpu + CUDA wheels) when an NVIDIA card is present; and drops an
-**`oc` shortcut** on your Desktop / Start menu. It never reinstalls what you already
+**`data-rig` shortcut** on your Desktop / Start menu. It never reinstalls what you already
 have, and exits with a summary if a prerequisite is still missing.
 
 > `.ps1` files open in Notepad on double-click (Windows blocks run-on-click), so
@@ -105,17 +105,17 @@ pip install -e ".[dev,desktop]"   # drop ",desktop" if you only want the browser
 pip uninstall -y onnxruntime; pip install -e ".[gpu]"   # NVIDIA CUDA OCR (optional)
 ```
 
-This installs `oc` as a console script plus the dev tools (`pytest`, `ruff`) and the
+This installs `data-rig` as a console script plus the dev tools (`pytest`, `ruff`) and the
 optional `desktop` extra (`pywebview`) for the native window.
 
 ## Quickstart
 
 ```powershell
-oc detect                 # which known games are running right now
-oc teach                  # open the teaching UI at http://127.0.0.1:8000
-oc capture warframe --out shot.png   # save one screenshot of the game window
-oc collect warframe       # run the capture -> OCR -> record loop
-oc price warframe         # enrich collected records with warframe.market prices
+data-rig detect                 # which known games are running right now
+data-rig rig                  # open the web UI at http://127.0.0.1:8000
+data-rig capture warframe --out shot.png   # save one screenshot of the game window
+data-rig collect warframe       # run the capture -> OCR -> record loop
+data-rig price warframe         # enrich collected records with warframe.market prices
 ```
 
 For day-to-day UI work, use the dev server script (auto-reloads on code change):
@@ -138,17 +138,17 @@ which one you pick decides **who owns the server**:
 
 | launcher | starts a server? | closing the window stops the server? | terminal window? |
 | --- | --- | --- | --- |
-| **`oc` shortcut** / `oc app` | yes | **yes** — one process owns both | none (shortcut) |
-| `oc view` | no — attaches to a running one | no | n/a |
-| `oc teach` | yes | n/a (no window — it's the browser UI) | yes |
+| **`data-rig` shortcut** / `data-rig app` | yes | **yes** — one process owns both | none (shortcut) |
+| `data-rig view` | no — attaches to a running one | no | n/a |
+| `data-rig rig` | yes | n/a (no window — it's the browser UI) | yes |
 
-- **`oc` shortcut** — the double-click app `install.ps1` puts on your Desktop / Start
+- **`data-rig` shortcut** — the double-click app `install.ps1` puts on your Desktop / Start
   menu. It runs `pythonw -m oc.desktop_main` from the venv (no console window, custom
   icon), so it uses the GPU OCR stack the installer set up — no giant standalone bundle
   to ship. Starts the server, opens the window, and stops the server when you close it.
-- **`oc app`** — the same release behaviour from a terminal (handy for testing).
-- **`oc view [--host H] [--port N]`** — attach a window to a server you already
-  started with `oc teach` (default `127.0.0.1:8000`). Closing it leaves that server
+- **`data-rig app`** — the same release behaviour from a terminal (handy for testing).
+- **`data-rig view [--host H] [--port N]`** — attach a window to a server you already
+  started with `data-rig rig` (default `127.0.0.1:8000`). Closing it leaves that server
   running.
 
 > Why a shortcut and not a packaged `.exe`? A standalone exe would have to bundle the
@@ -159,13 +159,13 @@ which one you pick decides **who owns the server**:
 
 ## Tutorial: teach your first window
 
-This walks through teaching `oc` to read a game panel from scratch. We'll use
+This walks through teaching `data-rig` to read a game panel from scratch. We'll use
 Warframe's inventory, but the steps are identical for any game.
 
 ### 0. Start the game and the UI
 
 Launch the game and open the panel you want to read (e.g. the Equipment /
-Inventory screen). Then start the teaching UI:
+Inventory screen). Then start the web UI:
 
 ```powershell
 .\start_server.ps1
@@ -179,13 +179,13 @@ with windows, regions, detectors, datasets, and subsets branching off it.
 - Add a game profile (name it, e.g. `warframe`) — this becomes
   `config/games/warframe.yaml`.
 - Add a **window** node. A window is one recognisable panel of the game.
-- Open the window's **image** node and click **recapture** — `oc` grabs the live
+- Open the window's **image** node and click **recapture** — `data-rig` grabs the live
   game window and shows its client area. Because the picture *is* the client
   area, any box you draw ÷ image size **is** the fraction coordinate stored.
 
-### 2. Draw a detector so `oc` recognises the panel
+### 2. Draw a detector so `data-rig` recognises the panel
 
-`oc` must know it's actually looking at this panel before it reads anything.
+`data-rig` must know it's actually looking at this panel before it reads anything.
 
 - Pick the **detect** tool and draw a box around a stable label that only appears
   on this screen — e.g. the `EQUIPMENT` / `INVENTORY` heading.
@@ -194,7 +194,7 @@ with windows, regions, detectors, datasets, and subsets branching off it.
 - A window matches only when **all** its enabled detectors match. The detector
   node shows a live ✓/✗ as you tweak it — recapture and watch it light up.
 
-> A window with no detectors never matches — by design. That's how `oc` avoids
+> A window with no detectors never matches — by design. That's how `data-rig` avoids
 > reading the wrong screen.
 
 ### 3. (Optional) Teach states
@@ -208,7 +208,7 @@ state, so you never catalogue data in the wrong order.
 
 - Draw a **data area** box to constrain OCR to the list region (stray UI text
   elsewhere is then never read).
-- Draw an **item** box around a single list cell. `oc` freezes that cutout and
+- Draw an **item** box around a single list cell. `data-rig` freezes that cutout and
   spawns an *item template* node. Inside it you define, **relative to the cell**:
   - **fields** — the regions to OCR (e.g. `name`, `count`), each mapped to a
     field with a type (`text`, `number`, `pips`, `diamonds`) and extraction rule.
@@ -242,10 +242,10 @@ For each field you can set:
   live loop:
 
 ```powershell
-oc collect warframe
+data-rig collect warframe
 ```
 
-Scroll the in-game list while it runs — `oc` stitches rows across scrolls,
+Scroll the in-game list while it runs — `data-rig` stitches rows across scrolls,
 dedupes by key, and writes records once they stabilise. Inspect results under
 `data/warframe/` (see [Where data lives](#where-data-lives)) or on the dashboard
 at <http://127.0.0.1:8000/dash.html>.
@@ -253,7 +253,7 @@ at <http://127.0.0.1:8000/dash.html>.
 ### 7. Price it (Warframe)
 
 ```powershell
-oc price warframe --window equipment
+data-rig price warframe --window equipment
 ```
 
 This reads the collected records, maps each item name to its warframe.market
@@ -271,16 +271,16 @@ platinum.
 ## CLI reference
 
 ```text
-oc detect                                   list running known games
-oc teach [--host H] [--port N] [--reload]   launch the web teaching UI (browser)
-oc view  [--host H] [--port N]              native window onto a RUNNING server
-oc app                                      release: server + native window, stop on close
-oc capture <game> [--out capture.png]       save one screenshot of the window
-oc collect <game> [--once] [--interval 1.0] run the capture -> OCR -> record loop
-oc price   <game> [--window equipment]      warframe.market enrichment
+data-rig detect                                   list running known games
+data-rig rig [--host H] [--port N] [--reload]   launch the web UI (browser)
+data-rig view  [--host H] [--port N]              native window onto a RUNNING server
+data-rig app                                      release: server + native window, stop on close
+data-rig capture <game> [--out capture.png]       save one screenshot of the window
+data-rig collect <game> [--once] [--interval 1.0] run the capture -> OCR -> record loop
+data-rig price   <game> [--window equipment]      warframe.market enrichment
            [--source warframe_market] [--name-field name]
-oc prices  <game> [--dataset master]        sweep market price history into a store
-oc profiles                                 list game profiles
+data-rig prices  <game> [--dataset master]        sweep market price history into a store
+data-rig profiles                                 list game profiles
 ```
 
 ## How it works
@@ -411,7 +411,7 @@ src/oc/
   store/          stateful dataset store + change history + batches
   enrich/         post-capture enrichers (warframe.market, relics)
   profile/        pydantic profile models + YAML loader/merger
-  web/            FastAPI app + static ES-module front-end (teach UI, dashboard)
+  web/            FastAPI app + static ES-module front-end (web UI, dashboard)
   web/desktop.py  native-window helpers (open_window, serve_in_thread, free_port)
 config/
   settings.yaml   backend choices + tuning
@@ -426,7 +426,7 @@ install.bat       double-click wrapper for install.ps1
 ## Design principles
 
 - **Zero game knowledge in Python.** If a capability would otherwise be
-  hard-coded per game, it belongs in the profile model + teach UI instead.
+  hard-coded per game, it belongs in the profile model + web UI instead.
 - **Backends never import each other** — only `interfaces`/`types`. Cross-backend
   wiring happens only in `engine.py`.
 - **Many small, single-concern files**; refactor wide for coherence.

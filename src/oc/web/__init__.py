@@ -1,1 +1,1 @@
-"""Web teaching UI: draw region boxes on a live capture and write profiles."""
+"""data-rig web UI: draw region boxes on a live capture and write profiles."""

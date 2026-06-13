@@ -1,7 +1,7 @@
 [project]
-name = "oc"
+name = "data-rig"
 version = "0.1.0"
-description = "On-screen reader: collect structured data from games via screen capture + OCR"
+description = "data-rig: collect structured data from games via screen capture + OCR"
 requires-python = ">=3.11"
 dependencies = [
     "mss>=9.0",
@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-oc = "oc.cli:main"
+data-rig = "oc.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.4"]
