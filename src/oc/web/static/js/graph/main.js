@@ -1181,7 +1181,7 @@ async function purgeDatasetData(ds) {
 function wireConfirmRemove(btn, onConfirm) {
   let armed = false;
   const reset = () => {
-    armed = false; btn.textContent = "✕"; btn.classList.remove("armed");
+    armed = false; btn.classList.remove("armed"); btn.title = "remove (click again to confirm)";
     document.removeEventListener("mousedown", onOutside, true);
     document.removeEventListener("keydown", onKey, true);
   };
@@ -1190,7 +1190,7 @@ function wireConfirmRemove(btn, onConfirm) {
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (armed) { reset(); onConfirm(); return; }
-    armed = true; btn.textContent = "?"; btn.classList.add("armed");
+    armed = true; btn.classList.add("armed"); btn.title = "click again to confirm remove";
     document.addEventListener("mousedown", onOutside, true);
     document.addEventListener("keydown", onKey, true);
   });
@@ -1210,7 +1210,10 @@ function fillNode(div, n) {
           <circle class="gt-thumb" cx="8" cy="8" r="5" />
         </svg></button>`
     : "";
-  const del = REMOVABLE.has(n.type) ? `<button class="gn-del danger" title="remove (click again to confirm)">✕</button>` : "";
+  const del = REMOVABLE.has(n.type) ? `<button class="gn-del danger" title="remove (click again to confirm)" aria-label="remove">
+      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+        <path d="M3 4.5h10M6.4 4V2.8a.8.8 0 0 1 .8-.8h1.6a.8.8 0 0 1 .8.8V4M4.8 4.5l.5 8a1 1 0 0 0 1 .95h3.4a1 1 0 0 0 1-.95l.5-8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+      </svg></button>` : "";
   // unlock icon: detach this node from its group. Always present; shown only while the
   // node is in a group (.in-group on the node, set by refreshDetachIcons).
   const detach = `<button class="gn-detach" title="detach from group" aria-label="detach from group">

@@ -208,6 +208,7 @@ legend { color: var(--muted); padding: 0 6px; }
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px; font-size: var(--fs-sm); font-weight: bold; }
 .gn-del.armed { background: var(--warn); color: var(--on-accent); }
+.gn-del svg { display: block; margin: auto; }
 .glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
 .glab input { margin-top: 2px; }
 .modal-body h4 { margin: 0 0 6px; color: var(--muted); font-weight: 500; font-size: var(--fs-base); }
@@ -702,10 +703,10 @@ a.node.win:hover { border-color: var(--accent); }
 .gn-cog:hover { color: var(--fg); }
 .gn-cog.on { color: var(--accent); }
 .gn-cog ~ .gn-del { margin-left: 0; }   /* cog takes the auto; del sits right beside it */
-/* header controls (cog, enable toggle, group-detach) appear only on node hover — the header
-   reads clean at rest; layout space is reserved so nothing shifts when they fade in. */
-.gn-cog, .gn-enable, .gnode.in-group .gn-detach { opacity: 0; transition: opacity .12s; }
-.gnode:hover .gn-cog, .gnode:hover .gn-enable, .gnode:hover.in-group .gn-detach { opacity: 1; }
+/* every header control (collapse, cog, enable toggle, group-detach, remove) appears only on
+   node hover — the header reads clean at rest; layout space is reserved so nothing shifts. */
+.gn-h button { opacity: 0; transition: opacity .12s; }
+.gnode:hover .gn-h button { opacity: 1; }
 .sub-sec { margin-top: 6px; }
 .sub-cfg > .sub-sec:first-child { margin-top: 0; }
 .sub-lbl { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; }
@@ -912,6 +913,12 @@ label.inline input { width: auto; }
   background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='13' y1='9' x2='9' y2='13'/><line x1='13' y1='4' x2='4' y2='13'/></g></svg>"); }
 .rz-lgrip { left: 1px; cursor: nesw-resize;
   background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='1' y1='9' x2='5' y2='13'/><line x1='1' y1='4' x2='10' y2='13'/></g></svg>"); }
+/* reset-size dot, centred between the two grips — hover-revealed like them */
+.rz-reset { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
+  width: 6px; height: 6px; border-radius: 50%; background: #8a93a3; z-index: 3;
+  opacity: 0; cursor: pointer; transition: opacity 0.12s; }
+:hover > .rz-reset { opacity: 0.5; }   /* reveal only while hovering the node / panel */
+.rz-reset:hover { opacity: 1; }
 
 /* ---- backups browser modal -------------------------------------------------- */
 .backups { display: flex; height: 100%; min-height: 0; }
