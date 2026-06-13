@@ -1,0 +1,146 @@
+/* Floating windows: one shell for the node map, activity panel, and precapture, built by
+   createFloatWin (graph/floatwin.js). Pulled out of style.css so all float styling lives in
+   one place. The shared .rz-grip resize-grip rules stay in style.css (graph nodes use them
+   too). */
+
+/* ---- generic shell --------------------------------------------------------- */
+.floatwin {
+  position: fixed; z-index: 40;
+  min-width: 180px; min-height: 90px; overflow: hidden;
+  display: flex; flex-direction: column;
+  background: var(--float-panel); border: 1px solid var(--float-line); 
+  box-shadow: 0 6px 24px #0008; font-size: var(--fs-sm); user-select: none;
+}
+.floatwin[hidden] { display: none; }
+.fw-head {
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px; flex: none;
+  background: var(--float-head); border-bottom: 1px solid var(--float-line); cursor: grab;
+}
+.fw-head:active { cursor: grabbing; }
+.fw-title { flex: 1; color: var(--muted); font-weight: 600; font-size: var(--fs-base); }
+.fw-head button {
+  width: 26px; height: 26px; padding: 0; border: 1px solid var(--float-line);
+  background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; line-height: 1;
+}
+.fw-head button:hover { background: var(--accent); color: var(--on-accent); }
+.fw-body { padding: 6px; flex: 1; min-height: 0; overflow: auto; }
+
+/* collapsed: shrunk to the header bar (visibility itself is the topbar button's job).
+   Width collapses too — bar is only as wide as title + controls. */
+.floatwin.collapsed { min-height: 0; height: auto !important; min-width: 0; width: auto !important; }
+.floatwin.collapsed .fw-head { border-bottom: none; }
+.floatwin.collapsed .fw-head button:not(.fw-collapse) { display: none; }
+.floatwin.collapsed .fw-body { display: none; }
+.floatwin.collapsed .rz-grip { display: none; }
+
+/* per-panel default sizes (overridden by the inline size once the user resizes) */
+#nodemap { width: 280px; height: 232px; }
+#activity { width: 360px; height: 260px; }
+#precap { width: 900px; height: 80vh; }
+#toolbox { width: 200px; height: 184px; }
+
+/* ---- node-creation toolbox ------------------------------------------------- */
+.tb-list { display: flex; flex-direction: column; gap: 6px; }
+.tb-btn { text-align: left; width: 100%; }
+
+/* ---- node map content ------------------------------------------------------ */
+/* map mode: centre the tightly-wrapped SVG so leftover space is panel-coloured (no bars) */
+.nm-body.nm-bmap, .fw-body.nm-bmap { display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.nm-empty { color: var(--muted); padding: 12px; text-align: center; }
+.nm-wrap { position: relative; }
+.nm-svg { display: block; max-width: 100%; max-height: 100%; background: var(--bg); border-radius: 4px; }
+/* viewport indicator: a div moved by CSS transform (no per-frame layout) */
+.nm-vp { position: absolute; left: 0; top: 0; box-sizing: border-box; pointer-events: none;
+  background: var(--accent-bg); border: 1px solid var(--accent); will-change: transform; }
+.nm-group { stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+.nm-edges path { fill: none; stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.nm-n { stroke: #0006; stroke-width: 0.5; cursor: pointer; opacity: 0.9; }
+.nm-n:hover { opacity: 1; stroke: var(--white); stroke-width: 1; }
+.nm-n.sel { stroke: var(--accent); stroke-width: 1.5; opacity: 1; }
+.nm-lbl { fill: #0b0e14; font-family: var(--font-mono); font-weight: 700; text-anchor: middle;
+  dominant-baseline: central; pointer-events: none; }
+.nm-list { overflow: auto; }
+.nm-row {
+  display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px;
+  cursor: pointer; white-space: nowrap; color: var(--text);
+}
+.nm-row:hover { background: var(--line); }
+.nm-row.sel { background: var(--accent-bg); color: var(--accent); }
+.nm-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+
+/* ---- activity panel -------------------------------------------------------- */
+.act-list { display: flex; flex-direction: column; gap: 4px; min-height: 100%; }
+/* empty state fills the panel and centres both axes */
+.act-empty { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--muted); }
+.act-row {
+  display: flex; align-items: center; gap: 8px; padding: 7px 9px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+}
+.act-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.act-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act-prog { font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.act-recog { font-size: var(--fs-xs); color: var(--accent); }
+.act-cancel, .act-fire {
+  flex: none; align-self: center; border: 0; border-radius: 4px; padding: 3px 9px;
+  cursor: pointer; font-size: var(--fs-xs);
+}
+.act-cancel { background: var(--danger); color: var(--on-danger); }
+.act-fire { background: var(--accent); color: var(--on-accent); }
+.act-cancel:hover, .act-fire:hover { filter: brightness(1.12); }
+.act-cancel:disabled, .act-fire:disabled { opacity: 0.5; cursor: default; }
+.act-trigger .act-prog { color: var(--accent); }
+
+/* ---- precapture (now floating, was a centred modal) ------------------------ */
+#precap .fw-body { padding: 0; }
+.precap { padding: 12px; display: flex; flex-direction: column; gap: 10px; height: 100%; }
+.pc-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* paged layout: list page = session list; detail page = back bar + the selected pane.
+   one page is shown at a time (the other carries [hidden]) */
+.pc-main { display: flex; flex: 1; min-height: 0; }
+.pc-page { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.pc-left { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 3px; overflow: auto; }
+.pc-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+/* detail-page header: back-to-list button + the selected pane's title */
+.pc-detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex: none; }
+.pc-back { width: 28px; height: 24px; padding: 0; flex: none; border: 1px solid var(--float-line);
+  background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; line-height: 1; }
+.pc-back:hover { background: var(--accent); color: var(--on-accent); }
+.pc-detail-title { flex: 1; font-weight: 600; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* delete (×) pinned to the right of the detail header */
+.pc-detail-del { width: 28px; height: 24px; padding: 0; flex: none; border: 0; line-height: 1;
+  background: var(--danger); color: var(--on-danger); border-radius: 4px; cursor: pointer; }
+.pc-detail-del:hover { filter: brightness(1.12); }
+.pc-detail-del[disabled] { opacity: 0.5; cursor: default; }
+.pc-sess-new { text-align: left; margin-bottom: 4px; }
+.pc-sess-new.active { outline: 1px solid var(--accent); border-radius: 4px; }
+.pc-opts { display: flex; flex-wrap: wrap; gap: 14px; }
+.pc-opts .flab { display: flex; align-items: center; gap: 6px; }
+.pc-opts input[type="number"] { width: 8ch; }
+.pc-opts input.pc-label { width: 14ch; }
+/* controls stack one per row */
+.pc-ctl { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+/* recognised window/state during processing + a tally with a distinct misses row */
+.pc-recog { display: flex; flex-wrap: wrap; gap: 6px; }
+.pc-recog-chip { font-size: var(--fs-xs); padding: 1px 7px; border-radius: 10px;
+  background: var(--bg); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.pc-recog-chip.miss { color: var(--warn); border-color: var(--warn); }
+/* saved-session list */
+.pc-sess-h { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+.pc-sess { display: grid; grid-template-columns: 1fr auto; column-gap: 6px; align-items: center; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+.pc-sess:hover { background: var(--line); }
+.pc-sess.active { outline: 1px solid var(--accent); outline-offset: -1px; }
+.pc-sess-name { grid-row: 1; grid-column: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-sess-meta { grid-row: 2; grid-column: 1; font-size: var(--fs-xs); }
+.pc-sess-rename { min-width: 0; grid-column: 2; }
+.pc-sess-ren { width: 26px; grid-row: 1 / span 2; }
+/* save button after a successful save — green, not dimmed like a normal disabled button */
+.pc-ctl button.pc-saved, .pc-ctl button.pc-saved:disabled {
+  background: var(--phase-done); color: var(--white); opacity: 1; cursor: default; }
+.pc-progress { height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.pc-fill { height: 100%; background: var(--accent); transition: width 0.2s; }
+.pc-data { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+/* one VTable per staged dataset: a label row + the (self-sizing) table host */
+.pc-ds { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.pc-ds-h { font-size: var(--fs-sm); }
+.pc-ds-vt { display: flex; min-height: 0; }
+.pc-ds-vt .vt { flex: 1; }

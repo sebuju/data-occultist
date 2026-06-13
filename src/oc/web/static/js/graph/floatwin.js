@@ -1,0 +1,293 @@
+// One constructor for every floating panel — node map, activity, precapture. Built on the
+// shared drag/resize primitives (dragresize.js), so a panel drags and resizes exactly the
+// way a graph node does. Per-panel behaviour (extra header buttons, body rendering, size
+// quirks) comes in as callbacks; this owns the shell, header drag, resize, clamping, and
+// the bookkeeping that lets layout persistence collect/hydrate panels generically.
+
+import { makeDraggable, addResizeGrips } from "./dragresize.js";
+
+// Registry of live panels by id, so collectLayout/hydrateLayout can round-trip them all
+// to profile.layout.float_windows without knowing which panels exist.
+const _wins = new Map();
+export function floatWins() { return _wins; }
+
+const _topGap = () => (document.querySelector(".topbar")?.offsetHeight || 48) + 4;
+
+const SNAP = 9;   // px proximity at which an edge snaps
+const GAP = 8;    // exact padding left between two windows when their edges abut
+
+// Rects of the OTHER visible panels (the things to snap against).
+function _otherRects(id) {
+  const out = [];
+  for (const [k, w] of _wins) {
+    if (k === id || w.el.hidden) continue;
+    const l = w.el.offsetLeft, t = w.el.offsetTop, ww = w.el.offsetWidth, hh = w.el.offsetHeight;
+    out.push({ left: l, top: t, w: ww, h: hh, right: l + ww, bottom: t + hh });
+  }
+  return out;
+}
+
+// Snap a proposed top-left (x,y) for a w×h box so it lines up with nearby panels and the
+// screen. Each axis snaps independently to the closest candidate within SNAP px:
+//   • EDGE-ALIGN — share a left/right/top/bottom edge or centre with another panel (same line)
+//   • ABUT — sit exactly GAP px from another panel's facing edge (clean padding)
+//   • SCREEN — hug the viewport edges (below the topbar)
+function snapBox(id, x, y, w, h) {
+  const W = window.innerWidth, H = window.innerHeight, top = _topGap();
+  const xc = [4, W - 4 - w];                 // screen left / right
+  const yc = [top, H - 4 - h];               // screen top / bottom
+  for (const o of _otherRects(id)) {
+    xc.push(o.left, o.right - w, o.left + o.w / 2 - w / 2,   // left / right / centre align
+            o.right + GAP, o.left - GAP - w);                // abut to its right / left
+    yc.push(o.top, o.bottom - h, o.top + o.h / 2 - h / 2,    // top / bottom / centre align
+            o.bottom + GAP, o.top - GAP - h);                // abut below / above
+  }
+  const nearest = (v, cands) => {
+    let best = v, bd = SNAP;
+    for (const c of cands) { const d = Math.abs(c - v); if (d < bd) { bd = d; best = c; } }
+    return best;
+  };
+  return [nearest(x, xc), nearest(y, yc)];
+}
+
+// Snap a single moving edge (resize) to a nearby panel edge (align) / GAP-offset (abut) /
+// screen edge. axis "x" → a left|right edge value; "y" → a top|bottom edge value.
+function snapEdgeVal(id, axis, v) {
+  const W = window.innerWidth, H = window.innerHeight, top = _topGap();
+  const cands = axis === "x" ? [4, W - 4] : [top, H - 4];
+  for (const o of _otherRects(id)) {
+    if (axis === "x") cands.push(o.left, o.right, o.left - GAP, o.right + GAP);
+    else cands.push(o.top, o.bottom, o.top - GAP, o.bottom + GAP);
+  }
+  let best = v, bd = SNAP;
+  for (const c of cands) { const d = Math.abs(c - v); if (d < bd) { bd = d; best = c; } }
+  return best;
+}
+
+// ---- light docking ---------------------------------------------------------
+// A panel may be "docked" below another (state.dock = { to, dx }): it sits GAP px under the
+// parent's bottom edge, offset dx px from the parent's left. When the parent moves/resizes/
+// collapses, reflowDock re-places every descendant so the stack stays glued. Chains work —
+// each docked child reflows its own children in turn. Dragging a panel out of snap range at
+// settle clears its dock (dismantles that link).
+
+// would docking `selfId` under `parentId` form a cycle? (parentId already below selfId)
+function _wouldCycle(selfId, parentId) {
+  let cur = parentId, guard = 0;
+  while (cur && guard++ < 64) {
+    if (cur === selfId) return true;
+    const w = _wins.get(cur);
+    cur = w && w.state.dock ? w.state.dock.to : null;
+  }
+  return false;
+}
+
+// re-place every panel docked (directly or transitively) below `id`. `seen` guards cycles
+// and stops the place()→reflow→place() recursion from looping.
+function reflowDock(id, seen) {
+  seen = seen || new Set();
+  if (seen.has(id)) return;
+  seen.add(id);
+  const p = _wins.get(id);
+  if (!p || p.el.hidden) return;
+  const pl = p.el.offsetLeft, pr = pl + p.el.offsetWidth, pb = p.el.offsetTop + p.el.offsetHeight;
+  for (const [, w] of _wins) {
+    const d = w.state.dock;
+    if (!d || d.to !== id || w.el.hidden) continue;
+    // ar = right edges were aligned at dock time -> keep them aligned (track parent's right);
+    // otherwise hold the left-edge offset dx
+    const x = d.ar ? (pr - w.el.offsetWidth) : (pl + (d.dx || 0));
+    w.place(x, pb + GAP, seen);   // place() recurses into reflowDock
+  }
+}
+
+// find a panel whose bottom edge `id` is currently resting on (for dock-on-settle)
+function findDockParent(id) {
+  const self = _wins.get(id);
+  if (!self) return null;
+  const sl = self.el.offsetLeft, st = self.el.offsetTop, sr = sl + self.el.offsetWidth;
+  for (const [k, w] of _wins) {
+    if (k === id || w.el.hidden) continue;
+    const al = w.el.offsetLeft, pr = al + w.el.offsetWidth, ab = w.el.offsetTop + w.el.offsetHeight;
+    const horiz = sl < pr && sr > al;                 // overlap horizontally
+    const vert = Math.abs(st - (ab + GAP)) <= SNAP;   // resting just below its bottom
+    if (horiz && vert && !_wouldCycle(id, k)) return { to: k, dx: sl - al, ar: Math.abs(sr - pr) <= SNAP };
+  }
+  return null;
+}
+
+// find an UNDOCKED panel now resting directly below `id` (it was dropped above one) so the
+// upper one adopts it. Won't steal a panel already in a chain.
+function findDockChild(id) {
+  const self = _wins.get(id);
+  if (!self) return null;
+  const sl = self.el.offsetLeft, sr = sl + self.el.offsetWidth, sb = self.el.offsetTop + self.el.offsetHeight;
+  for (const [k, w] of _wins) {
+    if (k === id || w.el.hidden || w.state.dock) continue;
+    const al = w.el.offsetLeft, cr = al + w.el.offsetWidth, at = w.el.offsetTop;
+    const horiz = sl < cr && sr > al;
+    const vert = Math.abs(at - (sb + GAP)) <= SNAP;
+    if (horiz && vert && !_wouldCycle(k, id)) { w.state.dock = { to: id, dx: al - sl, ar: Math.abs(cr - sr) <= SNAP }; return w; }
+  }
+  return null;
+}
+
+// opts:
+//   id, title           — element id + header text
+//   headerExtra         — extra header HTML (e.g. a mode-toggle button), wired by the caller
+//   state               — the persistent {visible,x,y,w,h,…} object (the panel owns it)
+//   bothAxes            — resize height too? boolean or () => boolean (false = width only)
+//   onResize            — called live during resize and on relevant size changes
+//   onShow / onHide     — visibility transitions (e.g. start/stop polling, render)
+//   onPersist           — schedule a save of state (main passes () => persist.layout())
+export function createFloatWin({
+  id, title = "", headerExtra = "", state,
+  bothAxes = false, onResize = null, onShow = null, onHide = null, onPersist = null,
+}) {
+  state.collapsed = !!state.collapsed;   // ensure the key exists so it round-trips + resets
+  if (state.dock === undefined) state.dock = null;   // { to, dx } when docked below another panel
+  const el = document.createElement("div");
+  el.id = id; el.className = "floatwin"; el.hidden = !state.visible;
+  el.innerHTML = `<div class="fw-head">
+      <span class="fw-title">${title}</span>
+      ${headerExtra}
+      <button class="fw-collapse" title="collapse / expand">▴</button>
+    </div>
+    <div class="fw-body"></div>`;
+  document.body.appendChild(el);
+  const head = el.querySelector(".fw-head");
+  const body = el.querySelector(".fw-body");
+
+  if (Number.isFinite(state.w)) el.style.width = `${state.w}px`;
+  if (Number.isFinite(state.h)) el.style.height = `${state.h}px`;
+
+  const save = () => onPersist && onPersist();
+
+  // Keep the panel fully on-screen and below the topbar (never off-screen / over the bar).
+  function clamp(x, y, w, h) {
+    const top = _topGap();
+    const maxX = Math.max(4, window.innerWidth - w - 4);
+    const maxY = Math.max(top, window.innerHeight - h - 4);
+    return [Math.max(4, Math.min(maxX, x)), Math.max(top, Math.min(maxY, y))];
+  }
+  function place(x, y, seen) {
+    const [cx, cy] = clamp(x, y, el.offsetWidth, el.offsetHeight);
+    el.style.left = `${cx}px`; el.style.top = `${cy}px`;
+    state.x = cx; state.y = cy;
+    reflowDock(id, seen);   // drag anything docked below me along (chains too)
+  }
+  // initial placement: saved, else top-right under the topbar
+  place(Number.isFinite(state.x) ? state.x : window.innerWidth - (state.w || 288) - 8,
+        Number.isFinite(state.y) ? state.y : 56);
+
+  // record the panel's current box into state (skip the 0×0 hidden size + the short
+  // collapsed height, which would otherwise overwrite the real expanded box)
+  function stashSize() {
+    if (el.hidden || state.collapsed || !el.offsetWidth) return;
+    state.w = el.offsetWidth; state.h = el.offsetHeight;
+  }
+
+  // never restore a box bigger than the viewport (the window may have shrunk since saving)
+  function applySize() {
+    const maxW = Math.max(180, window.innerWidth - 8);
+    const maxH = Math.max(90, window.innerHeight - _topGap() - 8);
+    if (Number.isFinite(state.w)) { const w = Math.min(state.w, maxW); el.style.width = `${w}px`; state.w = w; }
+    // height only when expanded — collapsed height is owned by applyCollapsed (auto = header)
+    if (!state.collapsed && Number.isFinite(state.h)) { const h = Math.min(state.h, maxH); el.style.height = `${h}px`; state.h = h; }
+    if (Number.isFinite(state.x) && Number.isFinite(state.y)) place(state.x, state.y);
+  }
+
+  // header drag — the SAME loop graph nodes use; clicks on header buttons aren't drags
+  let gdx = 0, gdy = 0;
+  makeDraggable(el, {
+    handle: head, cursor: "grabbing", ignore: "button",
+    // user grabbed it -> detach from its own parent (re-evaluated on settle); children stay
+    onStart: (ev) => { state.dock = null; const r = el.getBoundingClientRect(); gdx = ev.clientX - r.left; gdy = ev.clientY - r.top; },
+    onMove: (e) => {
+      let x = e.clientX - gdx, y = e.clientY - gdy;
+      // snap to nearby panels (shared edge / centre line) + screen edges — hold Alt to bypass
+      if (!e.altKey) [x, y] = snapBox(id, x, y, el.offsetWidth, el.offsetHeight);
+      place(x, y);
+    },
+    // dock under whatever panel we came to rest on (null if dragged clear -> dismantled);
+    // also adopt a panel we were dropped directly on top of, then reflow the stack
+    onSettle: () => { state.dock = findDockParent(id); findDockChild(id); reflowDock(id); save(); },
+  });
+
+  // resize grips on both bottom corners — the SAME grips nodes use (smooth, no grid-snap).
+  // The live `onResize` refit comes from the ResizeObserver below (the grip just writes the
+  // style; the observer fires), so grips only need to persist on settle.
+  addResizeGrips(el, {
+    both: bothAxes,
+    left: (v) => { if (v === undefined) return el.offsetLeft; const x = Math.max(4, v); el.style.left = `${x}px`; state.x = x; },
+    snapEdge: (axis, v) => snapEdgeVal(id, axis, v),   // align resize edges to other panels
+    onSettle: () => { stashSize(); save(); },
+  });
+
+  // CSS-resize / programmatic size changes: re-fit + persist (debounced)
+  let rt = null;
+  new ResizeObserver(() => {
+    if (el.hidden || state.collapsed || !el.offsetWidth) return;
+    stashSize();
+    reflowDock(id);   // my height/width changed (resize or content) -> slide docked panels along
+    onResize && onResize();
+    clearTimeout(rt); rt = setTimeout(save, 300);
+  }).observe(el);
+
+  // collapse/expand: shrink to just the header buttons (visibility is the topbar button's
+  // job; this is a shade roll-up in BOTH axes). Collapsed state persists with the panel.
+  function applyCollapsed() {
+    el.classList.toggle("collapsed", state.collapsed);
+    const btn = el.querySelector(".fw-collapse");
+    if (btn) btn.textContent = state.collapsed ? "▾" : "▴";   // collapsed → roll down; expanded → roll up
+    if (state.collapsed) { el.style.height = ""; el.style.width = ""; }     // shrink to the header buttons
+    else {                                                                  // restore the box
+      if (Number.isFinite(state.w)) el.style.width = `${state.w}px`;
+      if (Number.isFinite(state.h)) el.style.height = `${state.h}px`;
+    }
+  }
+  function toggleCollapsed() {
+    const right = el.offsetLeft + el.offsetWidth;   // pin this edge so the collapse button stays put
+    if (!state.collapsed) stashSize();   // capture the expanded box before folding
+    state.collapsed = !state.collapsed;
+    applyCollapsed();
+    place(right - el.offsetWidth, el.offsetTop);     // re-anchor by the right edge (expand → restores left)
+    if (!state.collapsed) onResize && onResize();   // re-render the freshly shown body
+    save();
+  }
+  el.querySelector(".fw-collapse").addEventListener("click", toggleCollapsed);
+
+  // pull back in-bounds if the window shrank under the panel
+  window.addEventListener("resize", () => {
+    if (el.hidden) return;
+    place(el.offsetLeft, el.offsetTop);
+    onResize && onResize();
+  });
+
+  function setVisible(on) {
+    state.visible = on;
+    el.hidden = !on;
+    if (on) { applySize(); applyCollapsed(); if (state.dock) reflowDock(state.dock.to); onShow && onShow(); } else onHide && onHide();
+    save();
+  }
+  // reflect state (just loaded from YAML) onto the panel
+  function applyState() {
+    applySize();
+    applyCollapsed();
+    el.hidden = !state.visible;
+    if (state.dock && state.visible) reflowDock(state.dock.to);   // snap under my parent
+    if (state.visible) onShow && onShow(); else onHide && onHide();
+  }
+  function collect() { stashSize(); return { ...state }; }
+  // Restore to defaults, then overlay the saved blob — so switching to a profile that never
+  // saved this panel resets it (e.g. back to hidden) instead of leaking the last profile's box.
+  const _default = JSON.parse(JSON.stringify(state));
+  function hydrate(blob) {
+    Object.assign(state, JSON.parse(JSON.stringify(_default)), blob || {});
+    applyState();
+  }
+
+  const inst = { el, body, head, state, setVisible, applyState, place, stashSize, applySize, collect, hydrate };
+  _wins.set(id, inst);
+  return inst;
+}
