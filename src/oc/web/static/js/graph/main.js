@@ -390,12 +390,12 @@ function cancelPan() { if (panAnim) { cancelAnimationFrame(panAnim); panAnim = n
 function panTo(id) {
   const p = pos.get(id), el = nodeEls.get(id);
   if (!p || !el) return;
-  const rect = $("graph").getBoundingClientRect();
+  const u = usableViewport();   // clear of floating panels
   const z = view.zoom, ew = el.offsetWidth, eh = el.offsetHeight;
   const left = p.x * z + view.panX, top = p.y * z + view.panY;
-  if (left >= 0 && top >= 0 && left + ew * z <= rect.width && top + eh * z <= rect.height) return;  // already on screen
-  const tx = rect.width / 2 - (p.x + ew / 2) * z;
-  const ty = rect.height / 2 - (p.y + eh / 2) * z;
+  if (left >= u.left && top >= u.top && left + ew * z <= u.left + u.w && top + eh * z <= u.top + u.h) return;  // already in the clear
+  const tx = (u.left + u.w / 2) - (p.x + ew / 2) * z;
+  const ty = (u.top + u.h / 2) - (p.y + eh / 2) * z;
   const sx = view.panX, sy = view.panY, t0 = performance.now(), dur = 380;
   cancelPan();
   const step = (now) => {
@@ -416,15 +416,38 @@ function fitZoom(w, h, rect) {
   return Math.min(8, Math.max(0.15, Math.min(FIT_MAX, (rect.width * FIT_FILL) / w, (rect.height * FIT_FILL) / h)));
 }
 
+// The part of the graph viewport NOT covered by any visible, uncollapsed floating window —
+// so pan/zoom centres a node in clear space instead of behind a panel. Each panel clips the
+// usable box on whichever side it intrudes least (panels hug an edge, so this carves them
+// off cleanly); chained/overlapping panels just clip in turn. Returns graph-local coords.
+function usableViewport() {
+  const rect = $("graph").getBoundingClientRect();
+  let L = 0, T = 0, R = rect.width, B = rect.height;
+  for (const [, w] of floatWins()) {
+    if (w.el.hidden || w.state.collapsed) continue;
+    const r = w.el.getBoundingClientRect();
+    const l = Math.max(r.left - rect.left, L), t = Math.max(r.top - rect.top, T);
+    const rr = Math.min(r.right - rect.left, R), bb = Math.min(r.bottom - rect.top, B);
+    if (rr <= l || bb <= t) continue;   // no overlap with the current usable box
+    const fromL = rr - L, fromR = R - l, fromT = bb - T, fromB = B - t;
+    const m = Math.min(fromL, fromR, fromT, fromB);
+    if (m === fromL) L = rr; else if (m === fromR) R = l; else if (m === fromT) T = bb; else B = t;
+  }
+  // ignore the inset if it leaves no room (panels cover the viewport) — fall back to full rect
+  if (R - L < 80) { L = 0; R = rect.width; }
+  if (B - T < 80) { T = 0; B = rect.height; }
+  return { left: L, top: T, w: R - L, h: B - T };
+}
+
 // Smoothly pan AND zoom to centre a WORLD rect {x,y,w,h}. fit=true picks a comfortable zoom
 // to frame it, else keeps the current zoom. The shared core of panZoomTo (node) and the
 // group double-click jump.
 function panZoomToRect(box, { fit = true } = {}) {
   if (!box || !box.w || !box.h) return;
-  const rect = $("graph").getBoundingClientRect();
-  const tz = fit ? fitZoom(box.w, box.h, rect) : view.zoom;
-  const tx = rect.width / 2 - (box.x + box.w / 2) * tz;
-  const ty = rect.height / 2 - (box.y + box.h / 2) * tz;
+  const u = usableViewport();   // centre in the area clear of floating panels
+  const tz = fit ? fitZoom(box.w, box.h, { width: u.w, height: u.h }) : view.zoom;
+  const tx = (u.left + u.w / 2) - (box.x + box.w / 2) * tz;
+  const ty = (u.top + u.h / 2) - (box.y + box.h / 2) * tz;
   const sx = view.panX, sy = view.panY, sz = view.zoom, t0 = performance.now(), dur = 380;
   cancelPan();
   const step = (now) => {
