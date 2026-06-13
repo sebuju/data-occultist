@@ -234,7 +234,11 @@ subsets:
   - field: slug
     op: nonempty
     value: ''
+  - field: count
+    op: gt
+    value: '0'
   derived: []
+  hidden_columns: []
   enrich:
   - id: enr_1
     type: warframe_market
@@ -246,6 +250,7 @@ subsets:
 price_nodes:
 - id: price
   type: warframe_market
+  mode: statistics
   dataset: prices
   throttle: 0.4
   enabled: true
@@ -485,8 +490,8 @@ layout:
       h: 0.0
       collapsed: false
     sub:master_view:
-      x: 1940.0
-      y: -620.0
+      x: 1800.0
+      y: -680.0
       w: 1080.0
       h: 720.0
       collapsed: false
@@ -536,6 +541,9 @@ layout:
         count: 226
         key: 249
         volume: 41
+    ds:prices:
+      widths:
+        name: 218
   open_images:
   - equip
   groups:
@@ -546,8 +554,8 @@ layout:
     - det:equip:detect_1
     - det:equip:detect_2
     outline:
-      color: '#333333'
-      style: solid
+      color: '#303030'
+      style: none
       width: 2
-    bg: '#1c1e231f'
+    bg: '#1d1f2599'
     titlePos: tl
