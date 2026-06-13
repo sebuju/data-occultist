@@ -167,6 +167,14 @@ export class GraphModel {
   }
   removeDatasetDef(id) { this.profile.datasets = (this.profile.datasets || []).filter((d) => d.id !== id); }
 
+  // mint a fresh empty dataset (e.g. dragging a producer's wire onto empty canvas)
+  addDataset(base = "dataset") {
+    let n = 1, id = base;
+    while (this.datasets().includes(id)) id = `${base}_${++n}`;
+    this.ensureDatasetDef(id);
+    return id;
+  }
+
   // ---- views: join one or more datasets, then filter/derive/sort ----------
   subsetDef(id) { return (this.profile.subsets || []).find((s) => s.id === id) || null; }
   // a view's source datasets (joined on join_field), in order

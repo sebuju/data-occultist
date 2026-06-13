@@ -3131,8 +3131,9 @@ function dragFromHandle(id, ev, div, handle) {
 }
 function positionNode(id) { const el = nodeEls.get(id); const p = pos.get(id); if (el && p) { el.style.left = `${p.x}px`; el.style.top = `${p.y}px`; } }
 
-// Drag a wire out of a node's `.port.out` to a dataset node. ``srcId`` is the source node
-// id (win:… / price:…); ``onDrop(ds)`` commits the chosen target dataset.
+// Drag a wire out of a node's `.port.out`. Drop on a dataset node to wire to it, or on
+// empty canvas to mint a fresh dataset there and wire to that. ``srcId`` is the source
+// node id (win:… / price:…); ``onDrop(ds)`` commits the chosen target dataset.
 function startWire(srcId, ev, onDrop) {
   ev.preventDefault();
   ev.stopPropagation();
@@ -3146,7 +3147,15 @@ function startWire(srcId, ev, onDrop) {
   const onUp = (e) => {
     document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
     const target = document.elementFromPoint(e.clientX, e.clientY)?.closest(".gnode.dataset");
+    const dragged = Math.hypot(e.clientX - ev.clientX, e.clientY - ev.clientY) > 6;
     if (target) { onDrop(target.dataset.ds); autosave(); }
+    else if (dragged) {                       // dropped on empty canvas -> new dataset at the drop point
+      const ds = model.addDataset();
+      const w = toWorld(e);
+      pos.set(`ds:${ds}`, { x: snap(w.x), y: snap(w.y) });
+      onDrop(ds); wire = null; render(); autosave(); panTo(`ds:${ds}`);
+      return;
+    }
     wire = null; render();
   };
   document.addEventListener("mousemove", onMove);
