@@ -2580,7 +2580,7 @@ function renderPrecapData(dataEl, datasets) {
     e._sig = sig;
     const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
     const vt = vtableFor(`pc:${d.dataset}`, e.host);
-    vt.pinned = Math.min(Math.max(rows.length, 1), 12);   // height = up to 12 rows, then scroll
+    vt.pinned = null;   // fit the container height (datasets share pc-data, then scroll)
     vt.setData(cols, rows);
   }
 }

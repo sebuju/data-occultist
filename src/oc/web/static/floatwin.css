@@ -139,8 +139,9 @@
 .pc-progress { height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .pc-fill { height: 100%; background: var(--accent); transition: width 0.2s; }
 .pc-data { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
-/* one VTable per staged dataset: a label row + the (self-sizing) table host */
-.pc-ds { display: flex; flex-direction: column; gap: 4px; flex: none; }
-.pc-ds-h { font-size: var(--fs-sm); }
-.pc-ds-vt { display: flex; min-height: 0; }
-.pc-ds-vt .vt { flex: 1; }
+/* one VTable per staged dataset: a label row + a table host that fills the height.
+   datasets share pc-data's height (each keeps a min so many datasets scroll the column) */
+.pc-ds { display: flex; flex-direction: column; gap: 4px; flex: 1 1 0; min-height: 160px; }
+.pc-ds-h { font-size: var(--fs-sm); flex: none; }
+.pc-ds-vt { display: flex; flex: 1; min-height: 0; }
+.pc-ds-vt .vt { flex: 1; min-height: 0; }
