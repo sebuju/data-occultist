@@ -3158,7 +3158,7 @@ async function refreshPreview(winId, live = false) {
   if (previewBusy.has(winId)) { previewAgain.set(winId, live); return; }   // already reading → re-run once after
   previewBusy.add(winId);
   setReadBusy(winId, true);
-  if (!live) host.innerHTML = `<p class="muted" style="padding:8px">reading…</p>`;
+  if (!live) host.innerHTML = `<div class="loader-host"><div class="loader-orbit"><div class="arm"><div class="dot"></div></div></div></div>`;
   const done = timed(`OCR preview ${winId}`);
   try {
     const cap = live ? null : (await api.getBindings(model.profile.name))[winId];
