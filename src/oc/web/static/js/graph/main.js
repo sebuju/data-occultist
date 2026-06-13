@@ -3933,6 +3933,7 @@ const actState = { visible: false, x: null, y: null, w: null, h: null };
 let act = null;
 let actPoll = null;
 const actRows = new Map();   // job key -> { row, title, prog }
+let actEmpty = null;         // the reused "nothing active" placeholder (never innerHTML)
 
 function buildActivity() {
   if (act) return;
@@ -3943,6 +3944,7 @@ function buildActivity() {
     onPersist: () => persist.layout(),
   });
   act.body.innerHTML = `<div class="act-list"></div>`;
+  actEmpty = document.createElement("div"); actEmpty.className = "act-empty"; actEmpty.textContent = "nothing active";
   // one delegated handler for every row's button (cancel a job, or fire a trigger now)
   act.body.addEventListener("click", (ev) => {
     const game = model.profile.name; if (!game) return;
@@ -4024,10 +4026,10 @@ function renderActivity(data) {
   const want = new Set(jobs.map((j) => j.key));
   for (const [key, r] of actRows) if (!want.has(key)) { r.row.remove(); actRows.delete(key); }
   if (!jobs.length) {
-    if (!list.querySelector(".act-empty")) list.innerHTML = `<div class="act-empty">nothing active</div>`;
+    if (!actEmpty.isConnected) list.appendChild(actEmpty);   // reuse the placeholder, no innerHTML
     return;
   }
-  const empty = list.querySelector(".act-empty"); if (empty) empty.remove();
+  if (actEmpty.isConnected) actEmpty.remove();
   for (const j of jobs) {
     let r = actRows.get(j.key);
     if (!r) {
