@@ -39,7 +39,9 @@ export function hideSizeHud() { if (_sizeHud) _sizeHud.style.display = "none"; }
 // graph nodes, style.left for floating panels).
 // `snapEdge(axis, value)` (optional) snaps a moving edge to nearby alignment lines — floating
 // panels pass it so resize lines up with other panels; graph nodes leave it null.
-export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onSettle = null, snapEdge = null } = {}) {
+// `onReset` (optional) adds a small dot centred between the two grips that restores the
+// element's default size on click — revealed, like the grips, only while hovering the element.
+export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onSettle = null, snapEdge = null, onReset = null } = {}) {
   if (el.querySelector(":scope > .rz-grip")) return;   // once only
   const q = (v) => (snapGrid ? snap(v) : v);   // grid-step nodes; panels resize smoothly
   for (const side of ["left", "right"]) {
@@ -79,6 +81,14 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
       };
       document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
     });
+  }
+  // reset-size dot, centred between the grips (hover-revealed via CSS like the grips)
+  if (onReset) {
+    const r = document.createElement("div");
+    r.className = "rz-reset"; r.title = "reset size";
+    el.appendChild(r);
+    r.addEventListener("mousedown", (ev) => { ev.preventDefault(); ev.stopPropagation(); });   // don't start a drag/resize
+    r.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); onReset(); });
   }
 }
 

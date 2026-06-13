@@ -243,6 +243,14 @@ export function createFloatWin({
     left: (v) => { if (v === undefined) return el.offsetLeft; const x = Math.max(4, v); el.style.left = `${x}px`; state.x = x; },
     snapEdge: (axis, v) => snapEdgeVal(id, axis, v),   // align resize edges to other panels
     onSettle: () => { stashSize(); save(); },
+    // reset dot: drop the user's size back to the panel's default box
+    onReset: () => {
+      state.w = _default.w; state.h = _default.h;
+      el.style.width = ""; el.style.height = "";   // undefined default → natural CSS size
+      applySize();
+      onResize && onResize();
+      save();
+    },
   });
 
   // CSS-resize / programmatic size changes: re-fit + persist (debounced)
