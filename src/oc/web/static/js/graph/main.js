@@ -1096,7 +1096,7 @@ function wirePrice(div, n) {
   // when a sweep ends (or is cancelled), refresh the dataset it feeds so its new batch shows
   wirePriceNode(div, model.profile.name, n.ref.dataset, n.ref.mode || "statistics", () => {
     refreshLive(); refreshDataNode(n.ref.dataset); loadBatchesNode(n.ref.dataset);
-  });
+  }, pollActivity);   // sweep start/cancel -> refresh the tasks panel right away
   // source toggle: statistics (history) vs live orders (now). Mode swaps the body, so rebuild.
   div.querySelector(".enr-mode")?.addEventListener("change", (e) => {
     model.setPriceMode(n.ref.id, e.target.value); rebuildNode(n.id); autosave();
@@ -1210,7 +1210,7 @@ function fillNode(div, n) {
           <circle class="gt-thumb" cx="8" cy="8" r="5" />
         </svg></button>`
     : "";
-  const del = REMOVABLE.has(n.type) ? `<button class="gn-del danger" title="remove (click again to confirm)" aria-label="remove">
+  const del = REMOVABLE.has(n.type) ? `<button class="gn-del" title="remove (click again to confirm)" aria-label="remove">
       <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
         <path d="M3 4.5h10M6.4 4V2.8a.8.8 0 0 1 .8-.8h1.6a.8.8 0 0 1 .8.8V4M4.8 4.5l.5 8a1 1 0 0 0 1 .95h3.4a1 1 0 0 0 1-.95l.5-8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
       </svg></button>` : "";
@@ -2507,6 +2507,8 @@ function buildPrecap() {
     else if (a === "loadsess") { precapView = "loaded"; precapPage = "detail"; _pcSessAct(api.precapture.loadSession(game, sid, pcSig)); }
     else if (a === "delsess") _pcSessAct(api.precapture.deleteSession(game, sid, pcSig));
     else if (a === "rensess") beginRename(b.closest(".pc-sess"), sid);
+    // worker state just changed -> refresh the tasks panel without waiting out its cadence
+    if (["record", "recstop", "process", "pause", "resume", "cancel"].includes(a)) pollActivity();
   });
 
   // live auto-scroll toggle (checkbox shown while recording) — server is the source of

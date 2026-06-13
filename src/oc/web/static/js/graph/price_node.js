@@ -54,7 +54,7 @@ export function priceParts(pn) {
 // Wire the producer panel: load summary, drive the sweep, chart items on click.
 // Self-cleaning — polling stops once the node leaves the DOM. ``onDone`` fires when a
 // sweep finishes (or is cancelled) so the wired-up output dataset can refresh.
-export function wirePriceNode(div, game, dataset, mode = "statistics", onDone = null) {
+export function wirePriceNode(div, game, dataset, mode = "statistics", onDone = null, onChange = null) {
   const $ = (sel) => div.querySelector(sel);
   let selectedSlug = null;
 
@@ -133,7 +133,7 @@ export function wirePriceNode(div, game, dataset, mode = "statistics", onDone = 
   }
 
   $(".enr-refresh").addEventListener("click", async () => {
-    try { await api.prices.refresh(game, dataset, mode); poll(); }
+    try { await api.prices.refresh(game, dataset, mode); poll(); onChange?.(); }   // sweep started -> notify
     catch (e) { $(".enr-prog").textContent = String(e.message || e); }
   });
   $(".enr-cancel").addEventListener("click", () => {
@@ -141,6 +141,7 @@ export function wirePriceNode(div, game, dataset, mode = "statistics", onDone = 
     b.disabled = true; b.classList.add("busy"); b.textContent = "cancelling…";
     api.prices.cancel(game, dataset).catch(() => {});
     if (!div._enrPoll) poll();                         // make sure we keep polling until it stops
+    onChange?.();                                      // state changed -> notify
   });
 
   queueMicrotask(loadSummary);
