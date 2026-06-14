@@ -584,7 +584,7 @@ input, select {
   border-radius: 4px;
 }
 .topbar input, .topbar select { width: auto; }
-:is(select, input, textarea):not(.sv-add):focus-visible {
+:is(select, input, textarea):not(.sv-addin):focus-visible {
   outline: 1px solid #bababa;
   outline-offset: -1px;
 }
@@ -814,14 +814,16 @@ a.node.win:hover { border-color: var(--accent); }
 .sv-srcrow .sv-addin { width: auto; }
 .sub-row button.danger { flex: 0 0 auto; padding: 0 6px; }
 .sv-inputs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
-.sv-input { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 7px;
+.sv-input { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 7px; box-sizing: border-box;
+  min-height: 22px;   /* pin chip + add-select to one height so the select's UA min never makes them differ */
   background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 10px; font-size: var(--fs-sm); }
 .sv-input .sv-rmin { padding: 0 3px; min-height: 0; background: transparent; color: var(--danger); }
 /* the "+ join source" add control is a pill like the source pills; the select inside is
    borderless/transparent so the pill (.sv-input) supplies the look */
 .sv-add { padding: 0; overflow: hidden; }
 .sv-add .sv-addin { max-width: 150px; border: 0; background: transparent; color: var(--text);
-  font-size: var(--fs-sm); padding: 1px 7px; cursor: pointer; }
+  font-size: var(--fs-sm); padding: 1px 7px; cursor: pointer;
+  align-self: stretch; min-height: 0; box-sizing: border-box; }   /* fill the pill, drop the select UA min-height */
 /* the dropdown popup inherits the select's bg — transparent renders white, so set the
    options to the panel colour so they stay readable when opened */
 .sv-add .sv-addin option { background: var(--panel); color: var(--text); }
