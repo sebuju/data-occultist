@@ -859,6 +859,15 @@ a.node.win:hover { border-color: var(--accent); }
 .conf-warn { color: var(--warn); }
 .conf-bad { color: var(--danger); }
 .conf-good { color: var(--ok); }
+
+/* window-collision report (toolbox -> check collisions) */
+.cc-wrap { padding: 12px; }
+.cc-list { display: flex; flex-direction: column; gap: 6px; }
+.cc-row { padding: 6px 8px; border: 1px solid var(--border, #2c313c); border-radius: 6px; }
+.cc-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cc-cap { font-size: var(--fs-sm); margin-left: auto; }
+.cc-off { margin: 4px 0 0 14px; font-size: var(--fs-sm); }
+.cc-det { display: inline-block; margin-right: 6px; white-space: nowrap; }
 .conf-sub { color: var(--muted); font-style: italic; }  /* value from an if-empty/if-number/if-text fallback, not a read */
 
 /* enabled/disabled nodes — SVG slide toggle, styled to the node palette. Sits on the

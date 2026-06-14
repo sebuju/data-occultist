@@ -125,6 +125,14 @@ export async function detect(profile, game, capture) {
   return r.json();
 }
 
+// Cross-check every window against every other using bound reference images:
+// { windows:[{window,capture,verdict,winner,collides_with,matches:[{window,matched,detectors}]}] }
+export async function detectCollisions(game, signal) {
+  const r = await tfetch(`/api/detect/collisions/${encodeURIComponent(game)}`, { signal }, OCR_MS);
+  if (!r.ok) throw new Error(`collisions: ${r.status}`);
+  return r.json();
+}
+
 // Stashed captures for a game (newest first), and the URL to load one.
 export async function listCaptures(game) {
   const r = await tfetch(`/api/captures/${encodeURIComponent(game)}`);
@@ -216,6 +224,14 @@ export const precapture = {
   loadSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/load`, signal),
   renameSession: (game, sid, label, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/rename?label=${encodeURIComponent(label || "")}`, signal),
   deleteSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}`, signal, "DELETE"),
+};
+
+// Live collection: run the real collector pipeline server-side, writing to datasets.
+// Status { running, frames, written, fps, window, state, recognized:[{key,count,miss}] }.
+export const live = {
+  start: (game, interval, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/start?interval=${interval || 1}`, { method: "POST", signal }).then((r) => r.json()),
+  stop: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/stop`, { method: "POST", signal }).then((r) => r.json()),
+  status: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
 };
 
 // Wipe a dataset's stored records + ledger.

@@ -38,7 +38,7 @@
 #activity { width: 360px; height: 260px; }
 #live { width: 300px; height: 220px; }
 #precap { width: 900px; height: 80vh; }
-#toolbox { width: 200px; height: 184px; }
+#toolbox { width: 200px; height: auto; }   /* content-height: always shows every button */
 #testing { width: 280px; height: 232px; }
 
 /* ---- node-creation toolbox ------------------------------------------------- */

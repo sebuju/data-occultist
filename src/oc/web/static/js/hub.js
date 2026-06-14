@@ -42,6 +42,7 @@ export function subscribe(fn) {
 function busy(s) {
   if (!s) return false;
   if (s.precapture) return true;
+  if (s.live) return true;
   if (s.sweeps && s.sweeps.length) return true;
   if (s.triggers && s.triggers.some((t) => (t.targets || []).some((x) => x.running))) return true;
   return false;

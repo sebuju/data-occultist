@@ -12,12 +12,12 @@ import cv2
 from fastapi import APIRouter, HTTPException, Query
 
 from ...collect.reader import RegionReader
-from ...detect.matcher import DetectMatcher, text_match_score
+from ...detect.matcher import DetectMatcher
 from ...learn.dictionary import build_dictionaries
 from ...learn.lexicon import Lexicon
 from ...learn.resolver import FieldResolver
 from ...ocr.serialize import ocr_job
-from ...profile import GameProfile, KeyDef
+from ...profile import GameProfile, KeyDef, list_profiles, load_profile
 from ...types import Frame, PixelBox
 from .. import captures_store
 from ..deps import get_engine, get_locator, get_settings
@@ -53,18 +53,6 @@ def _frame_for(engine, profile, game, capture):
     return engine.capture.grab_window(win)
 
 
-def _eval_detect(d, frame, matcher, ocr):
-    """Return {matched, read, score} for a window/state detector."""
-    if d.template:
-        score = matcher.score(d, frame)
-        return {"matched": score >= d.threshold, "read": "(template)", "score": round(score, 2)}
-    box = d.search.to_fraction().to_pixels(frame.client.w, frame.client.h)
-    lines = ocr.read_region(frame, box)
-    read = " ".join(ln.text for ln in lines).strip()
-    score = text_match_score((d.text or "").lower(), read.lower(), d.included)
-    return {"matched": bool(d.text) and score >= d.threshold, "read": read, "score": round(score, 2)}
-
-
 @router.post("/detect")
 def detect(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None)):
     """Evaluate each window detector + state against the image: matched + what it read."""
@@ -77,10 +65,10 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
 
     # one job: run the whole detect pass without interleaving with another OCR job
     with ocr_job():
-        detect = {d.id: _eval_detect(d, frame, matcher, engine.ocr) for d in window.detect}
+        detect = {d.id: matcher.evaluate(d, frame) for d in window.detect}
         states = {}
         for s in window.states:
-            evs = [_eval_detect(d, frame, matcher, engine.ocr) for d in s.detect]
+            evs = [matcher.evaluate(d, frame) for d in s.detect]
             states[s.id] = {
                 "matched": bool(evs) and all(e["matched"] for e in evs),
                 "read": " | ".join(e["read"] for e in evs),
@@ -103,6 +91,76 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
 
     return {"detect": detect, "states": states, "scrollbar": scrollbar,
             "device": getattr(engine.ocr, "device", "cpu")}
+
+
+def _window_match(matcher, win, frame):
+    """Evaluate a window's ENABLED detectors against a frame. Returns (matched, evs).
+    Mirrors the classifier: a window matches when it has >=1 enabled detector and ALL pass."""
+    dets = [d for d in win.detect if d.enabled]
+    evs = [{"id": d.id, **matcher.evaluate(d, frame)} for d in dets]
+    matched = bool(evs) and all(e["matched"] for e in evs)
+    return matched, evs
+
+
+@router.get("/detect/collisions/{game}")
+def detect_collisions(game: str):
+    """Cross-check every window against every other. For each window that has a bound
+    reference capture, run that image through ALL windows' detectors and report when a
+    window other than the owner also matches (ambiguous) or wins the classify tie-break
+    (misclassification). This is what catches one window's loose detectors false-matching
+    another's screen (e.g. a relic detector firing on the equipment window).
+
+    Per-window verdict:
+      ok            — only the owner matched
+      collision     — another window also fully matched (ambiguous on this image)
+      misclassified — another window WINS (more detectors) -> classify picks the wrong one
+      self_no_match — the owner's own image doesn't match the owner (detectors too strict)
+      no_image      — no bound capture to test against
+    """
+    settings = get_settings()
+    if game not in list_profiles(settings.profiles_dir):
+        raise HTTPException(status_code=404, detail=f"no profile {game!r}")
+    profile = load_profile(settings.profiles_dir, game)
+    engine = get_engine()
+    matcher = DetectMatcher(engine.ocr, str(settings.profiles_dir))
+    bindings = captures_store.get_bindings(settings.captures_dir, game)
+
+    out = []
+    for w in profile.windows:
+        cap = bindings.get(w.id)
+        if not cap:
+            out.append({"window": w.id, "capture": None, "verdict": "no_image",
+                        "winner": None, "collides_with": [], "matches": []})
+            continue
+        try:
+            frame = _frame_for(engine, profile, game, cap)
+        except HTTPException:
+            out.append({"window": w.id, "capture": cap, "verdict": "no_image",
+                        "winner": None, "collides_with": [], "matches": []})
+            continue
+        matches = []
+        with ocr_job():   # one OCR job for the whole cross-check of this image
+            for v in profile.windows:
+                matched, evs = _window_match(matcher, v, frame)
+                if matched or v.id == w.id:   # always include the owner so self-miss shows
+                    matches.append({"window": v.id, "matched": matched,
+                                    "ndet": len([d for d in v.detect if d.enabled]),
+                                    "detectors": evs})
+        matched_ids = [m["window"] for m in matches if m["matched"]]
+        winner = max((m for m in matches if m["matched"]), key=lambda m: m["ndet"], default=None)
+        winner_id = winner["window"] if winner else None
+        collides = [i for i in matched_ids if i != w.id]
+        if w.id not in matched_ids:
+            verdict = "self_no_match"
+        elif winner_id != w.id:
+            verdict = "misclassified"
+        elif collides:
+            verdict = "collision"
+        else:
+            verdict = "ok"
+        out.append({"window": w.id, "capture": cap, "winner": winner_id,
+                    "collides_with": collides, "verdict": verdict, "matches": matches})
+    return {"windows": out}
 
 
 @router.post("/preview")

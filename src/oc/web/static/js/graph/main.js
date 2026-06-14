@@ -2756,7 +2756,18 @@ function renderPrecap(node, st) {
     if (phase === "recording") log("precapture: recording…", "run");
     else if (phase === "recorded") log(`precapture: recorded ${st.frames} frames`, "ok");
     else if (phase === "processing") log("precapture: processing…", "run");
-    else if (phase === "done") { const t = st.timing || {}; log(`precapture done: ${st.processed} frames · ${t.ms_per_frame || 0} ms/frame on ${t.device || "cpu"} (decode ${t.decode_ms || 0} · classify ${t.classify_ms || 0} · read ${t.read_ms || 0}) · ${st.fps}/s · ${st.read || 0} rows read`, "ok"); }
+    else if (phase === "done") {
+      const t = st.timing || {};
+      log(`precapture done: ${st.processed} frames · ${t.ms_per_frame || 0} ms/frame on ${t.device || "cpu"} (decode ${t.decode_ms || 0} · classify ${t.classify_ms || 0} · read ${t.read_ms || 0}) · ${st.fps}/s`, "ok");
+      // recognition breakdown: which window/state each frame classified to (no-match = no window)
+      const rec = st.recognized || [];
+      const recStr = rec.map((r) => `${r.miss ? "no-match" : r.key} ${r.count}`).join(" · ");
+      if (recStr) log(`  recognized: ${recStr}`, rec.some((r) => !r.miss) ? "ok" : "warn");
+      // staging: rows read vs dropped for an incomplete key, and what landed per dataset
+      const ds = (st.datasets || []).map((d) => `${d.dataset} ${d.count}`).join(" · ") || "none";
+      const nothingStaged = (st.read || 0) > 0 && !(st.datasets || []).length;
+      log(`  staged: ${st.read || 0} read · ${st.no_key || 0} dropped (no key) · datasets: ${ds}`, nothingStaged ? "warn" : "ok");
+    }
     else if (phase === "cancelled") log("precapture: cancelled", "warn");
     else if (phase === "saved") log("precapture: committed", "ok");
     // recording just finished -> flip to the loaded session's controls (process / save /
@@ -2882,10 +2893,13 @@ function renderPrecap(node, st) {
     const proc = precapStopping ? `<button disabled>stopping…</button>`
       : recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>${asCtl}`
       : processing ? `<button data-act="pause">‖ pause</button>`
-      : paused ? `<button data-act="resume">► resume</button>${recPaused ? asCtl : ""}`
+      : paused ? `<button data-act="resume">► resume</button>${recPaused ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>${asCtl}` : ""}`
       : `<button data-act="process" ${canProcess ? "" : "disabled"}>process${st.frames ? ` ${st.frames}` : ""}</button>`;
-    const cancel = busyRun && !precapStopping ? `<button data-act="cancel" class="warn">cancel</button>` : "";
-    const save = `<button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !anyRun && !justSaved) ? "" : "disabled"}>${justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`}</button>`;
+    // auto-scroll hit the list end -> the recording is done; offer stop, not discard
+    const cancel = busyRun && !precapStopping && !recPaused ? `<button data-act="cancel" class="warn">cancel</button>` : "";
+    // commit only makes sense when nothing's running — hide it entirely while a worker is active
+    const save = anyRun ? ""
+      : `<button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !justSaved) ? "" : "disabled"}>${justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`}</button>`;
     ctl = `${proc}${cancel}${save}`;
   }
   const ctlEl = right.querySelector(".pc-ctl");
@@ -3038,7 +3052,7 @@ async function openImage(winId) {
   const host = node && node.querySelector(".win-img");
   if (!host) return;
   host.innerHTML = `<div class="imgtools">
-      <span class="tools">${KINDS.map(([v, label, icon], i) => `<button class="tool ${i === 0 ? "active" : ""}" data-kind="${v}" title="draw ${label}">${icon} ${label}</button>`).join("")}</span>
+      <span class="tools">${KINDS.map(([v, label, icon]) => `<button class="tool" data-kind="${v}" title="draw ${label}">${icon} ${label}</button>`).join("")}</span>
       <span class="spacer"></span><button class="imgprev">👁</button><button class="imgcap">recapture</button><button class="imgclose">×</button></div>
     <div class="canvas-wrap"><canvas></canvas></div>`;
   const canvas = host.querySelector("canvas");
@@ -3082,8 +3096,7 @@ async function openImage(winId) {
   host.querySelector(".imgcap").addEventListener("click", () => loadImage(winId, true));
   host.querySelector(".imgprev").addEventListener("click", () => refreshPreview(winId));
   if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
-  await loadImage(winId, false);
-  refreshDetect(winId);
+  await loadImage(winId, false);   // its onload now refreshes detect once the pixels are in
   drawEdges();
 }
 
@@ -3451,7 +3464,9 @@ function setDetectStatus(nodeId, info) {
   const el = nodeEls.get(nodeId);
   const span = el && el.querySelector(".detect-status");
   if (!span) return;
-  const conf = info.score != null ? ` (${Math.round(info.score * 100)}%)` : "";
+  const conf = info.score != null
+    ? ` (${Math.round(info.score * 100)}%${info.threshold != null ? `/${Math.round(info.threshold * 100)}%` : ""})`
+    : "";
   span.textContent = (info.matched ? "✓ true" : "✗ false") + conf + (info.read ? ` — "${info.read}"` : "");
   span.className = "detect-status " + (info.matched ? "conf-ok" : "conf-bad");
 }
@@ -3512,7 +3527,7 @@ async function loadImage(winId, recapture) {
     // the image changed → re-read it only if the preview node was already run (avoid
     // OCR work nobody asked for)
     if (prevHost(winId)?.dataset.ran === "1") refreshPreview(winId);
-    if (recapture) refreshDetect(winId);   // fresh pixels → re-evaluate detectors too
+    refreshDetect(winId);   // image changed (recapture OR a different bound capture) → re-evaluate detectors
   };
   img.onerror = () => setNodeBusy(`win:${winId}`, false);
   img.src = url;
@@ -4577,7 +4592,7 @@ function createDictionaryNode() {
 function buildToolbox() {
   if (tb) return;
   tb = createFloatWin({
-    id: "toolbox", title: "create", state: tbState, bothAxes: true,
+    id: "toolbox", title: "toolbox", state: tbState, bothAxes: true,
     onShow: () => $("createBtn")?.classList.toggle("active", true),
     onHide: () => $("createBtn")?.classList.toggle("active", false),
     onPersist: () => persist.layout(),
@@ -4587,7 +4602,7 @@ function buildToolbox() {
     <button class="tb-btn" data-create="price">+ price node</button>
     <button class="tb-btn" data-create="trigger">+ trigger</button>
     <button class="tb-btn" data-create="dictionary">+ dictionary</button>
-    <button class="tb-btn tb-group" data-create="group" title="group the selected nodes — or super-group the ctrl-selected groups (hotkey: g)">⬚ group / super-group (g)</button>
+    <button class="tb-btn" data-create="collisions" title="run each window's bound image through every window's detectors — report which windows false-match each other">⚠ check window collisions</button>
   </div>`;
   tb.body.addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-create]");
@@ -4598,8 +4613,59 @@ function buildToolbox() {
     else if (k === "price") createPriceNode();
     else if (k === "trigger") createTriggerNode();
     else if (k === "dictionary") createDictionaryNode();
-    else if (k === "group") groupShortcut();   // nodes -> group; ctrl-selected groups -> super-group
+    else if (k === "collisions") runCollisionCheck();
   });
+}
+
+// Verdict copy + class for the collision report. One source of truth for both.
+const COLLIDE_VERDICTS = {
+  ok:            ["✓ ok",            "conf-ok",   "only this window matched its image"],
+  collision:     ["⚠ collision",     "conf-warn", "another window also fully matched — ambiguous"],
+  misclassified: ["✗ misclassified", "conf-bad",  "another window WINS the tie-break — classify picks the wrong one"],
+  self_no_match: ["✗ self no-match",  "conf-bad",  "this window's own image doesn't match it — detectors too strict/disabled"],
+  no_image:      ["– no image",       "muted",     "no bound capture to test — open the window node and bind one"],
+};
+
+function collisionReportHTML(data) {
+  const wins = data.windows || [];
+  if (!wins.length) return `<p class="muted" style="padding:12px">no windows to check</p>`;
+  const bad = wins.filter((w) => w.verdict !== "ok" && w.verdict !== "no_image").length;
+  const head = bad
+    ? `<p class="conf-warn" style="margin:0 0 8px">${bad} window(s) collide — a frame could classify to the wrong window.</p>`
+    : `<p class="conf-ok" style="margin:0 0 8px">no collisions — every window matches only its own image.</p>`;
+  const rows = wins.map((w) => {
+    const [label, cls, tip] = COLLIDE_VERDICTS[w.verdict] || ["?", "muted", ""];
+    // for a colliding/misclassified window, show WHICH windows also matched + their detector scores
+    const offenders = (w.matches || []).filter((m) => m.matched && m.window !== w.window);
+    const detail = offenders.map((m) => {
+      const dets = (m.detectors || []).map((d) =>
+        `<span class="cc-det ${d.matched ? "conf-ok" : "conf-bad"}">${esc(d.id)} ${Math.round((d.score || 0) * 100)}%/${Math.round((d.threshold || 0) * 100)}%${d.read ? ` "${esc(d.read)}"` : ""}</span>`).join(" ");
+      return `<div class="cc-off">↳ also matched <b>${esc(m.window)}</b> ${dets}</div>`;
+    }).join("");
+    const win = w.winner && w.winner !== w.window ? ` <span class="muted">→ classifies as ${esc(w.winner)}</span>` : "";
+    return `<div class="cc-row">
+      <div class="cc-head"><span class="${cls}" title="${esc(tip)}">${label}</span> <b>${esc(w.window)}</b>${win}
+        ${w.capture ? `<span class="muted cc-cap">${esc(w.capture)}</span>` : ""}</div>
+      ${detail}</div>`;
+  }).join("");
+  return `<div class="cc-wrap">${head}<div class="cc-list">${rows}</div></div>`;
+}
+
+async function runCollisionCheck() {
+  if (!model.profile.name) { setStatus("load a game first"); return; }
+  const m = openModal({ title: "window collisions", size: "medium",
+    html: `<p class="muted" style="padding:12px">checking…</p>` });
+  const body = m.body || m.el?.querySelector(".modal-body");
+  const done = timed("collision check");
+  try {
+    const data = await api.detectCollisions(model.profile.name, m.signal);   // GET; whole-profile cross-check
+    done();
+    if (body) body.innerHTML = collisionReportHTML(data);
+  } catch (e) {
+    if (e.name === "AbortError") return;   // modal closed mid-fetch
+    done(String(e.message || e), "err");
+    if (body) body.innerHTML = `<p class="conf-bad" style="padding:12px">${esc(String(e.message || e))}</p>`;
+  }
 }
 buildToolbox();
 $("createBtn")?.classList.toggle("active", tbState.visible);
@@ -4870,7 +4936,13 @@ function persistBox(winId, b) {
 // deliberate precapture step now. live and precapture are mutually exclusive. The control
 // surface is the LIVE floating panel (toggle + stats + per-window detection), built below.
 let liveOn = false, precapOpen = false;
-let liveFrames = 0, liveT0 = 0, liveFps = 0, liveProcessing = false, liveLast = "";
+let liveFrames = 0, liveT0 = 0, liveFps = 0;
+// "save to datasets" arm (default ON): when live + armed, a SERVER-SIDE collector runs the
+// real pipeline (confirm_frames -> dedup -> store -> triggers). When live + disarmed, only
+// the read-only client detect/preview loop runs (tuning, no writes).
+let liveSave = true;
+let liveColStatus = null;   // latest server collector status (from the heartbeat) while collecting
+let liveColUnsub = null;    // hub subscription active while the server collector runs
 
 // ---- live floating panel --------------------------------------------------
 // Styled like the tasks panel: a master live toggle, live stats, and a list of every
@@ -4892,10 +4964,16 @@ function buildLiveWindow() {
           <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
           <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
       </button><span class="live-switch-lbl">live mode</span></label>
+    <label class="live-toggle"><button class="act-enable live-save" role="switch" aria-checked="true" title="save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)">
+        <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
+          <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
+          <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
+      </button><span class="live-save-lbl">save to datasets</span></label>
     <div class="live-stats muted"></div>
     <div class="live-wins"></div>`;
   liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
   liveWin.body.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
+  liveWin.body.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
   renderLiveWindow();
 }
 
@@ -4903,11 +4981,18 @@ function renderLiveWindow() {
   if (!liveWin || !liveWinState.visible) return;
   const sw = liveWin.body.querySelector(".live-switch");
   if (sw && sw.getAttribute("aria-checked") !== String(liveOn)) { sw.setAttribute("aria-checked", liveOn); sw.classList.toggle("on", liveOn); }
+  const sv = liveWin.body.querySelector(".live-save");
+  if (sv && sv.getAttribute("aria-checked") !== String(liveSave)) { sv.setAttribute("aria-checked", liveSave); sv.classList.toggle("on", liveSave); }
   const lbl = liveWin.body.querySelector(".live-switch-lbl");
   const lblTxt = liveOn ? "live mode · enabled" : "live mode · disabled";
   if (lbl && lbl.textContent !== lblTxt) lbl.textContent = lblTxt;
   const st = liveWin.body.querySelector(".live-stats");
-  const stTxt = liveOn ? `${liveProcessing ? "processing" : "idle"} · ${liveFps.toFixed(1)} img/s` : "off";
+  // collecting (armed): show what the server collector saved; tuning (disarmed): client fps.
+  // no processing/idle flip — it toggled every round (OCR vs the 200ms gap) and just flickered
+  const collecting = liveOn && liveSave;
+  const stTxt = !liveOn ? "off"
+    : collecting ? `${liveColStatus?.written ?? 0} saved · ${(liveColStatus?.fps ?? 0).toFixed(1)}/s`
+    : `${liveFps.toFixed(1)} img/s`;
   if (st && st.textContent !== stTxt) st.textContent = stTxt;
   renderLiveWinList();
   fitLivePanelHeight();
@@ -4948,13 +5033,17 @@ function renderLiveWinList() {
 function fitLivePanelHeight() {
   if (!liveWin || !liveWinState.visible || liveWinState.collapsed || liveWinState.userSized) return;
   const headerH = liveWin.el.querySelector(".fw-head")?.offsetHeight || 28;
-  const target = Math.round(Math.min(window.innerHeight - 60, headerH + liveWin.body.scrollHeight + 14));
+  // Measure CONTENT, not body.scrollHeight: the body is flex:1 so its scrollHeight is at
+  // least its own clientHeight — feeding that back grew the panel ~14px every tick. The body's
+  // children are block-flow, so their intrinsic offsetHeight sums to the true content height.
+  const bs = getComputedStyle(liveWin.body);
+  const padV = parseFloat(bs.paddingTop) + parseFloat(bs.paddingBottom);
+  const content = [...liveWin.body.children].reduce((h, c) => h + c.offsetHeight, 0);
+  const target = Math.round(Math.min(window.innerHeight - 60, headerH + content + padV));
   if (Math.abs(liveWin.el.offsetHeight - target) > 1) { liveWin.el.style.height = `${target}px`; liveWinState.h = target; }
 }
 
 function showLiveStats(on) {
-  const el = $("livestats");
-  if (el) { el.hidden = !on; if (!on) el.textContent = ""; }
   liveFrames = 0; liveT0 = on ? performance.now() : 0; liveFps = 0;
   renderLiveStats();
 }
@@ -4964,12 +5053,7 @@ function renderLiveStats() {
     liveFps = (liveFrames * 1000) / (now - liveT0);
     liveFrames = 0; liveT0 = now;
   }
-  const el = $("livestats");
-  if (el && !el.hidden) {
-    const state = liveProcessing ? "processing" : "idle";
-    el.innerHTML = `<span class="live-dot ${liveProcessing ? "on" : ""}"></span>${state} · ${liveFps.toFixed(1)} img/s${liveLast ? ` · ${esc(liveLast)}` : ""}`;
-  }
-  renderLiveWindow();   // mirror the stats + detection dots in the live panel
+  renderLiveWindow();   // stats + detection dots now live only in the live panel
 }
 
 // Self-paced: a round AWAITS its detect+preview before the next is scheduled, so live
@@ -4977,39 +5061,84 @@ function renderLiveStats() {
 // (a fixed interval would stack them until each took tens of seconds). Iterates every
 // LIVE-ENABLED window (not just the ones with an open image) — detect captures its own frame.
 async function liveTick() {
-  if (!liveOn) return;
+  if (!liveOn || liveSave) return;   // client tuning loop only runs in read-only (disarmed) mode
   refreshLive();   // dataset counts
   const game = model.profile.name;
   if (game) {
-    liveProcessing = true; renderLiveStats();
     for (const w of model.profile.windows || []) {
-      if (!liveOn) break;
+      if (!liveOn || liveSave) break;
       if (w.live === false || w.enabled === false) continue;   // skip windows opted out of live
       await refreshDetect(w.id, true);   // sets liveRecog + refreshes the panel
       liveFrames++;
       if (prevHost(w.id)?.dataset.ran === "1") await refreshPreview(w.id, true);
     }
-    liveProcessing = false; renderLiveStats();
+    renderLiveStats();   // recompute fps + refresh the panel after the round
   }
-  if (liveOn) timer = setTimeout(liveTick, 200);   // next round only AFTER this one drained
+  if (liveOn && !liveSave) timer = setTimeout(liveTick, 200);   // next round only AFTER this one drained
+}
+
+// Server-side collector (the real pipeline): started when live + save are both on. The
+// heartbeat carries its status; we mirror recognized windows into liveRecog for the dots.
+function startServerCollect() {
+  const game = model.profile.name;
+  if (!game) return;
+  liveColStatus = null;
+  api.live.start(game).catch((e) => setStatus(String(e.message || e)));
+  if (!liveColUnsub) liveColUnsub = hub.subscribe((s) => {
+    if (!liveOn || !liveSave) return;
+    liveColStatus = s.live || null;
+    liveRecog.clear();
+    for (const r of (liveColStatus?.recognized || [])) {   // cumulative tally → "seen this run" dots
+      if (!r.miss && r.key.includes("/")) liveRecog.set(r.key.split("/")[0], true);
+    }
+    renderLiveWindow();
+  });
+  hub.kick();   // beat now so collection status shows immediately
+}
+function stopServerCollect() {
+  const game = model.profile.name;
+  if (liveColUnsub) { liveColUnsub(); liveColUnsub = null; }
+  if (game) api.live.stop(game).catch(() => {});
+  liveColStatus = null;
+  hub.kick();
 }
 
 function setLiveMode(on) {
-  if (on && precapOpen) return;          // mutually exclusive with precapture
-  if (on === liveOn) return;             // no change → don't double-start the loop or log twice
+  // Mutually exclusive with precapture, but only the WORKER actually competes for OCR — a
+  // merely-open (idle) precap panel doesn't. Block live while precap is busy; otherwise just
+  // close the idle precap panel and proceed (don't silently no-op like before).
+  if (on && precapBusy) { setStatus("precapture is running — stop it before live mode"); renderLiveWindow(); return; }
+  if (on && precapOpen) pc.setVisible(false);   // idle precap panel open → close it (one OCR consumer at a time)
+  if (on === liveOn) { renderLiveWindow(); return; }   // no change → don't double-start; keep the switch in sync
   liveOn = on;
   if (timer) { clearTimeout(timer); timer = null; }
   if (!on) liveRecog.clear();            // drop stale detection dots
   showLiveStats(on);
   if (on) {
-    log("live mode started", "run");
-    registerWorker("live", "live view", () => setLiveMode(false));
-    liveTick();   // kick off the self-paced loop
+    log(liveSave ? "live collection started" : "live mode started (read-only)", "run");
+    registerWorker("live", liveSave ? "live collection" : "live view", () => setLiveMode(false));
+    if (liveSave) startServerCollect(); else liveTick();   // armed → server collector; else client tuning loop
   } else {
     log("live mode stopped");
     unregisterWorker("live");
+    stopServerCollect();   // harmless if not running
   }
   renderLiveWindow();   // reflect the toggle + cleared dots
+}
+
+// Arm/disarm saving. While live is on, this swaps between the server collector (armed) and
+// the client tuning loop (disarmed) without leaving live mode.
+function setLiveSave(on) {
+  if (on === liveSave) return;
+  liveSave = on;
+  if (liveOn) {
+    if (timer) { clearTimeout(timer); timer = null; }   // stop the client loop either way
+    if (on) { stopServerCollect(); startServerCollect(); }   // (re)start the collector
+    else { stopServerCollect(); liveTick(); }                // back to read-only tuning
+    registerWorker("live", on ? "live collection" : "live view", () => setLiveMode(false));
+    log(on ? "live saving armed" : "live saving disarmed", on ? "run" : undefined);
+  }
+  renderLiveWindow();
 }
 
 // ---- init -----------------------------------------------------------------
