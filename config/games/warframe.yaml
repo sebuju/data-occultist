@@ -410,9 +410,7 @@ subsets:
   derived: []
   hidden_columns: []
   enrich: []
-  sort:
-  - field: total
-    desc: true
+  sort: []
   sort_by: ''
   sort_desc: false
   limit: 4
@@ -744,20 +742,20 @@ layout:
       h: 420.0
       collapsed: false
     ds:prices_relic_live:
-      x: 2160.0
-      y: 2440.0
+      x: 2280.0
+      y: 2660.0
       w: 440.0
       h: 740.0
       collapsed: false
     sub:relic_rewards_live:
-      x: 1860.0
-      y: 1600.0
+      x: 1980.0
+      y: 1820.0
       w: 540.0
       h: 720.0
       collapsed: false
     price:relic_live:
-      x: 1700.0
-      y: 2440.0
+      x: 1820.0
+      y: 2660.0
       w: 440.0
       h: 740.0
       collapsed: false
@@ -768,8 +766,8 @@ layout:
       h: 260.0
       collapsed: false
     trigger:relic_watch:
-      x: 960.0
-      y: 2020.0
+      x: 1080.0
+      y: 2240.0
       w: 280.0
       h: 260.0
       collapsed: false
@@ -780,34 +778,34 @@ layout:
       h: 0.0
       collapsed: false
     win:relic_window:
-      x: 300.0
-      y: 1600.0
+      x: 420.0
+      y: 1820.0
       collapsed: false
     prev:relic_window:
-      x: 300.0
-      y: 2020.0
+      x: 420.0
+      y: 2240.0
       w: 520.0
       h: 240.0
       collapsed: false
     det:relic_window:detect_1:
-      x: 860.0
-      y: 1600.0
+      x: 980.0
+      y: 1820.0
       w: 220.0
       h: 180.0
       collapsed: false
     item:relic_window:item_3:
-      x: 320.0
-      y: 2300.0
+      x: 440.0
+      y: 2520.0
       collapsed: false
     sub:relic_rewards_limit:
-      x: 1260.0
-      y: 2020.0
+      x: 1380.0
+      y: 2240.0
       w: 360.0
       h: 740.0
       collapsed: false
     ds:relics_offered:
-      x: 1260.0
-      y: 1600.0
+      x: 1380.0
+      y: 1820.0
       w: 360.0
       h: 380.0
       collapsed: false
@@ -820,8 +818,8 @@ layout:
     sub:live_prices_joined_view:
       x: 3260.0
       y: 100.0
-      w: 620.0
-      h: 600.0
+      w: 480.0
+      h: 660.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -995,6 +993,7 @@ layout:
     - item:relic_window:item_3
     - sub:relic_rewards_view
     - sub:relic_rewards_limit
+    - ds:relics_offered
     outline:
       color: '#8a9ae6'
       style: none
@@ -1010,12 +1009,12 @@ layout:
       x: 1164
       y: 73
       w: 361
-      h: 306
+      h: 325
       mode: map
       sizes:
         map:
           w: 361
-          h: 306
+          h: 325
         list:
           w: 360
           h: 231
@@ -1024,7 +1023,7 @@ layout:
     activity:
       visible: true
       x: 1164
-      y: 387
+      y: 406
       w: 360
       h: 155
       collapsed: false
@@ -1044,7 +1043,7 @@ layout:
     toolbox:
       visible: true
       x: 1164
-      y: 962
+      y: 981
       w: 180
       h: 189
       collapsed: true
@@ -1056,7 +1055,7 @@ layout:
     precap:
       visible: true
       x: 1164
-      y: 550
+      y: 569
       w: 361
       h: 358
       collapsed: false
@@ -1068,7 +1067,7 @@ layout:
     live:
       visible: true
       x: 1164
-      y: 916
+      y: 935
       w: 300
       h: 220
       collapsed: true
