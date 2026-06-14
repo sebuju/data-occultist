@@ -14,6 +14,7 @@ from fastapi import APIRouter
 from ...enrich.price_runner import active_sweeps
 from ..deps import get_settings
 from ..trigger_sched import schedule as trigger_schedule
+from .live import _sessions as _live_sessions
 from .ocr import ocr_state
 from .precapture import _sessions
 
@@ -33,5 +34,11 @@ def activity(game: str) -> dict:
         st = s.status()
         if st.get("phase") in _BUSY:
             precap = st
-    return {"sweeps": active_sweeps(game), "precapture": precap,
+    live = None
+    ls = _live_sessions.get(game)
+    if ls is not None:
+        lst = ls.status()
+        if lst.get("running"):
+            live = lst
+    return {"sweeps": active_sweeps(game), "precapture": precap, "live": live,
             "triggers": trigger_schedule(game, get_settings()), "ocr": ocr_state()}

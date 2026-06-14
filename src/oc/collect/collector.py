@@ -264,15 +264,19 @@ class Collector:
         from .triggers import TriggerRunner
         return TriggerRunner(self._profile, self._engine.settings.data_dir)
 
-    def run(self, interval: float = 1.0, on_tick=None) -> None:
+    def run(self, interval: float = 1.0, on_tick=None, should_stop=None) -> None:
         """Loop ticks until interrupted. ``on_tick(TickResult)`` is called each pass.
+
+        ``should_stop`` — optional predicate checked before every tick AND in place of the
+        plain ``sleep``, so a worker thread can end the loop promptly (the CLI relies on
+        ``KeyboardInterrupt`` instead). Either way ``close()`` flushes on the way out.
 
         After each tick, triggers are evaluated: ``on_change`` triggers fire for records
         this tick added/updated (pricing only those keys), and ``interval`` triggers fire
         when due. Sweeps run in their own background threads, so capture never blocks."""
         triggers = self._build_triggers()
         try:
-            while True:
+            while not (should_stop and should_stop()):
                 result = self.tick()
                 if on_tick:
                     on_tick(result)
@@ -280,7 +284,14 @@ class Collector:
                     if result.status is TickStatus.saved and result.changed:
                         triggers.on_change(result.dataset, result.changed)
                     triggers.tick()
-                time.sleep(interval)
+                # interruptible wait: poll should_stop so cancel doesn't wait out the interval
+                if should_stop is not None:
+                    slept = 0.0
+                    while slept < interval and not should_stop():
+                        time.sleep(min(0.1, interval - slept))
+                        slept += 0.1
+                else:
+                    time.sleep(interval)
         except KeyboardInterrupt:
             pass
         finally:

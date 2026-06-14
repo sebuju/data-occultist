@@ -18,6 +18,7 @@ from .routes import (
     dictionaries,
     flow,
     lexicon,
+    live,
     ocr,
     precapture,
     preview,
@@ -75,6 +76,11 @@ async def lifespan(_app: FastAPI):
         kill_all_sessions()
     except Exception:  # noqa: BLE001 - best-effort
         pass
+    try:
+        from .routes.live import kill_all_sessions as kill_live
+        kill_live()
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
     threading.Thread(target=_warm, daemon=True).start()
     # keep interval triggers firing (+ feed the Activity panel's countdown) while only the
     # teach UI is up; safe — firing is guarded and cross-process file-locked.
@@ -110,6 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(suggest.router)
     app.include_router(lexicon.router)
     app.include_router(precapture.router)
+    app.include_router(live.router)
     app.include_router(ocr.router)
     app.include_router(prices.router)
     app.include_router(activity.router)
