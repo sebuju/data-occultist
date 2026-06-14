@@ -25,6 +25,7 @@ config/games/.backups/
 config/games/.local/
 
 # Scratch / trash
+playground/
 .trash/
 scripts/*.csv
 

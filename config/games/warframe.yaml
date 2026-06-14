@@ -85,7 +85,7 @@ windows:
     threshold: 0.3
     included: true
   - id: detect_4
-    enabled: true
+    enabled: false
     search:
       x: 0.4447061041676425
       y: 0.13236166920519268
@@ -224,7 +224,7 @@ windows:
     colors: []
     tolerance: 60
     scale: 1.0
-  live: true
+  live: false
 - id: relic_window
   dataset: relics_offered
   fields:
@@ -251,9 +251,9 @@ windows:
       y: 0.03962771664223333
       w: 0.10778812069524779
       h: 0.04570913054918618
-    text: reward
+    text: rewards
     threshold: 0.8
-    included: true
+    included: false
   states: []
   regions: []
   items:
@@ -712,8 +712,8 @@ layout:
       h: 0.0
       collapsed: false
     ds:prices_live:
-      x: 1600.0
-      y: 260.0
+      x: 1640.0
+      y: 220.0
       w: 340.0
       h: 400.0
       collapsed: false
@@ -724,8 +724,8 @@ layout:
       h: 460.0
       collapsed: false
     sub:live_prices_joined:
-      x: 1960.0
-      y: 260.0
+      x: 2000.0
+      y: 220.0
       w: 1100.0
       h: 1160.0
       collapsed: false
@@ -736,8 +736,8 @@ layout:
       h: 1000.0
       collapsed: false
     price:wf_market_live:
-      x: 1600.0
-      y: 720.0
+      x: 1640.0
+      y: 680.0
       w: 340.0
       h: 420.0
       collapsed: false
@@ -760,8 +760,8 @@ layout:
       h: 740.0
       collapsed: false
     trigger:owned_refresh:
-      x: 1600.0
-      y: 1180.0
+      x: 1640.0
+      y: 1140.0
       w: 280.0
       h: 260.0
       collapsed: false
@@ -934,7 +934,7 @@ layout:
     titleAlign: left
     titlePos: tl
   - id: group_7
-    title: 'state: equipment'
+    title: 'window: equipment'
     members:
     - win:equip
     - prev:equip
@@ -977,7 +977,7 @@ layout:
     titleAlign: left
     titlePos: tl
   - id: group_11
-    title: RELIC
+    title: 'window: relic rewards'
     members:
     - ds:prices_relic_live
     - sub:relic_rewards_live
@@ -1042,40 +1042,37 @@ layout:
       userSized: true
     toolbox:
       visible: true
-      x: 1164
-      y: 981
-      w: 180
-      h: 189
-      collapsed: true
-      dock:
-        to: live
-        dx: 0
-        ar: true
-      userSized: true
+      x: 1212
+      y: 1009
+      w: 200
+      h: 204
+      collapsed: false
+      dock: null
+      userSized: false
     precap:
-      visible: true
+      visible: false
       x: 1164
-      y: 569
-      w: 361
-      h: 358
+      y: 1015
+      w: 755
+      h: 587
       collapsed: false
       dock:
-        to: activity
+        to: toolbox
         dx: 0
         ar: true
       userSized: true
     live:
       visible: true
       x: 1164
-      y: 935
+      y: 569
       w: 300
-      h: 220
-      collapsed: true
+      h: 180
+      collapsed: false
       dock:
-        to: precap
+        to: activity
         dx: 0
         ar: true
-      userSized: false
+      userSized: true
   super_groups:
   - id: sgroup_2
     title: supagroup
