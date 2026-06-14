@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from . import app as app_cmd
+from . import bench as bench_cmd
 from . import capture as capture_cmd
 from . import collect as collect_cmd
 from . import detect as detect_cmd
@@ -21,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     detect_cmd.register(sub)
     capture_cmd.register(sub)
+    bench_cmd.register(sub)
     collect_cmd.register(sub)
     price_cmd.register(sub)
     prices_cmd.register(sub)

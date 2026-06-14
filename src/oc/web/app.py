@@ -13,6 +13,7 @@ from ..profile import list_profiles, load_profile
 from .deps import get_locator, get_settings
 from .routes import (
     activity,
+    bench,
     capture,
     dictionaries,
     flow,
@@ -24,9 +25,21 @@ from .routes import (
     profiles,
     suggest,
     triggers,
+    video,
 )
 
 _STATIC = Path(__file__).parent / "static"
+
+
+class _NoCacheStatic(StaticFiles):
+    """Serve the front-end with caching disabled. This is a local, frequently-edited
+    teaching tool — a browser holding an old .js/.css after an edit causes confusing
+    version skew. Tiny files on local disk, so re-fetching every load costs nothing."""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
 
 
 def _warm() -> None:
@@ -102,8 +115,10 @@ def create_app() -> FastAPI:
     app.include_router(activity.router)
     app.include_router(triggers.router)
     app.include_router(dictionaries.router)
+    app.include_router(video.router)
+    app.include_router(bench.router)
     # Serve the single-page front-end at root.
-    app.mount("/", StaticFiles(directory=str(_STATIC), html=True), name="static")
+    app.mount("/", _NoCacheStatic(directory=str(_STATIC), html=True), name="static")
     return app
 
 

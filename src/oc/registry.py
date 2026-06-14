@@ -46,6 +46,7 @@ _ENRICHER: dict[str, type[Enricher]] = {}
 _IMPL_MODULES = (
     "oc.capture.mss_backend",
     "oc.capture.printwindow_backend",
+    "oc.capture.wgc_backend",
     "oc.window.win32_provider",
     "oc.process.psutil_detector",
     "oc.ocr.rapidocr_engine",
@@ -122,6 +123,13 @@ def _build(table: dict[str, type[T]], kind: str, name: str, **opts) -> T:
 
 def build_capture(name: str, **opts) -> CaptureBackend:
     return _build(_CAPTURE, "capture", name, **opts)
+
+
+def capture_names() -> list[str]:
+    """Registered capture-backend names (after discovery). A backend whose module
+    fails to import — e.g. ``wgc`` without ``windows-capture`` — simply won't appear."""
+    _ensure_loaded()
+    return sorted(_CAPTURE)
 
 
 def build_window(name: str, **opts) -> WindowProvider:

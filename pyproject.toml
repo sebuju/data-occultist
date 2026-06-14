@@ -29,6 +29,10 @@ dev = ["pytest>=8.0", "ruff>=0.4"]
 # The shortcut runs `pythonw -m oc.desktop_main` from this venv, so the GPU OCR stack
 # the installer put here is used directly — no giant standalone bundle.
 desktop = ["pywebview>=5.0"]
+# Windows.Graphics.Capture backend (capture: wgc in settings.yaml). Reads DWM's
+# already-composited frame, so it never forces the game to re-render the way
+# PrintWindow does -> no per-grab stutter. Rust-backed WGC wheel; Win10 1803+.
+wgc = ["windows-capture>=1.5,<2"]
 # GPU OCR (Windows + NVIDIA CUDA 12 / cuDNN 9). Install with:
 #   pip uninstall -y onnxruntime && pip install -e ".[gpu]"
 # onnxruntime-gpu replaces onnxruntime; the nvidia-*-cu12 wheels ship the CUDA DLLs
