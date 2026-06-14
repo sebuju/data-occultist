@@ -85,35 +85,25 @@ function _wouldCycle(selfId, parentId) {
 // re-place every panel docked (directly or transitively) below `id`. `seen` guards cycles
 // and stops the place()→reflow→place() recursion from looping.
 //
-// Alignment is detected DYNAMICALLY: `oldL`/`oldR` are the parent's left/right edge *before*
-// the change that triggered this reflow. A child whose right edge matched the parent's old
-// right edge keeps tracking the right edge (so collapse/resize never breaks a right-aligned
-// stack); otherwise it holds its left-edge offset. When the caller can't supply the old edges
-// (load/show), fall back to the stored `ar`/`dx` anchor. The chosen anchor is written back so
-// it persists and feeds the next fallback.
-function reflowDock(id, seen, oldL, oldR) {
+// A docked child shares the parent's WIDTH and left-aligns under it, so the whole stack is
+// one column of equal-width panels. (`oldL`/`oldR` are accepted for call-site compatibility
+// but no longer used now that width tracks the parent instead of a per-child edge anchor.)
+function reflowDock(id, seen, oldL, oldR) {   // eslint-disable-line no-unused-vars
   seen = seen || new Set();
   if (seen.has(id)) return;
   seen.add(id);
   const p = _wins.get(id);
   if (!p || p.el.hidden) return;
-  const pl = p.el.offsetLeft, pr = pl + p.el.offsetWidth, pb = p.el.offsetTop + p.el.offsetHeight;
-  const known = oldL != null;
+  const pl = p.el.offsetLeft, pw = p.el.offsetWidth, pb = p.el.offsetTop + p.el.offsetHeight;
   for (const [, w] of _wins) {
     const d = w.state.dock;
     if (!d || d.to !== id || w.el.hidden) continue;
-    const cw = w.el.offsetWidth;
-    let rightAligned, leftOff;
-    if (known) {
-      const cl = w.el.offsetLeft;
-      rightAligned = Math.abs((cl + cw) - oldR) <= SNAP;   // was its right edge on the parent's old right?
-      leftOff = cl - oldL;
-    } else {
-      rightAligned = !!d.ar; leftOff = d.dx || 0;
-    }
-    const x = rightAligned ? (pr - cw) : (pl + leftOff);
-    d.ar = rightAligned; d.dx = x - pl;   // refresh anchor (persist + fallback)
-    w.place(x, pb + GAP, seen);           // place() recurses into reflowDock
+    // a docked child takes the parent's width and left-aligns under it — the whole stack
+    // shares one width. Collapsed needs !important to beat the collapsed shrink-to-header CSS.
+    if (w.state.collapsed) w.el.style.setProperty("width", `${pw}px`, "important");
+    else w.el.style.width = `${pw}px`;
+    d.ar = true; d.dx = 0;
+    w.place(pl, pb + GAP, seen);   // place() recurses into reflowDock
   }
 }
 
@@ -205,7 +195,8 @@ export function createFloatWin({
   // collapsed height, which would otherwise overwrite the real expanded box)
   function stashSize() {
     if (el.hidden || state.collapsed || !el.offsetWidth) return;
-    state.w = el.offsetWidth; state.h = el.offsetHeight;
+    if (!state.dock) state.w = el.offsetWidth;   // docked width is parent-driven; keep my own
+    state.h = el.offsetHeight;
   }
 
   // never restore a box bigger than the viewport (the window may have shrunk since saving)
@@ -232,7 +223,14 @@ export function createFloatWin({
     },
     // dock under whatever panel we came to rest on (null if dragged clear -> dismantled);
     // also adopt a panel we were dropped directly on top of, then reflow the stack
-    onSettle: () => { state.dock = findDockParent(id); findDockChild(id); reflowDock(id); save(); },
+    onSettle: () => { state.dock = findDockParent(id); findDockChild(id);
+      // undocked -> drop the parent-matched width and go back to my own size
+      if (!state.dock) {
+        el.style.removeProperty("width");
+        if (!state.collapsed && Number.isFinite(state.w)) el.style.width = `${state.w}px`;
+      }
+      if (state.dock) reflowDock(state.dock.to);   // parent reflows me (width-matches the stack)
+      reflowDock(id); save(); },
   });
 
   // resize grips on both bottom corners — the SAME grips nodes use (smooth, no grid-snap).
@@ -242,16 +240,20 @@ export function createFloatWin({
     both: bothAxes,
     left: (v) => { if (v === undefined) return el.offsetLeft; const x = Math.max(4, v); el.style.left = `${x}px`; state.x = x; },
     snapEdge: (axis, v) => snapEdgeVal(id, axis, v),   // align resize edges to other panels
-    onSettle: () => { stashSize(); save(); },
+    onSettle: () => { state.userSized = true; markSized(); stashSize(); save(); },   // manual resize -> stop auto-fitting
     // reset dot: drop the user's size back to the panel's default box
     onReset: () => {
+      state.userSized = false;   // resume any auto-fit
       state.w = _default.w; state.h = _default.h;
       el.style.width = ""; el.style.height = "";   // undefined default → natural CSS size
-      applySize();
+      applySize(); markSized();
       onResize && onResize();
       save();
     },
   });
+  // reset dot is shown only once the panel carries a user-set size (CSS gates on .fw-sized)
+  function markSized() { el.classList.toggle("fw-sized", !!state.userSized); }
+  markSized();
 
   // CSS-resize / programmatic size changes: re-fit + persist (debounced)
   let rt = null;
@@ -270,9 +272,18 @@ export function createFloatWin({
     el.classList.toggle("collapsed", state.collapsed);
     const btn = el.querySelector(".fw-collapse");
     if (btn) btn.textContent = state.collapsed ? "▾" : "▴";   // collapsed → roll down; expanded → roll up
-    if (state.collapsed) { el.style.height = ""; el.style.width = ""; }     // shrink to the header buttons
-    else {                                                                  // restore the box
-      if (Number.isFinite(state.w)) el.style.width = `${state.w}px`;
+    if (state.collapsed) {
+      el.style.height = "";
+      // docked + collapsed → match the dock parent's width; else shrink to the header
+      const p = state.dock && _wins.get(state.dock.to);
+      if (p && !p.el.hidden) el.style.setProperty("width", `${p.el.offsetWidth}px`, "important");
+      else el.style.width = "";
+    } else {                                                                // restore the box
+      el.style.removeProperty("width");   // drop any docked-collapsed !important width
+      // docked + expanded → match the dock parent's width; else use my own saved width
+      const p = state.dock && _wins.get(state.dock.to);
+      if (p && !p.el.hidden) el.style.width = `${p.el.offsetWidth}px`;
+      else if (Number.isFinite(state.w)) el.style.width = `${state.w}px`;
       if (Number.isFinite(state.h)) el.style.height = `${state.h}px`;
     }
   }
@@ -306,6 +317,7 @@ export function createFloatWin({
   function applyState() {
     applySize();
     applyCollapsed();
+    markSized();   // reflect the loaded user-sized flag onto the reset-dot gate
     el.hidden = !state.visible;
     if (state.dock && state.visible) reflowDock(state.dock.to);   // snap under my parent
     if (state.visible) onShow && onShow(); else onHide && onHide();

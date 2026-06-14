@@ -36,8 +36,10 @@
 /* per-panel default sizes (overridden by the inline size once the user resizes) */
 #nodemap { width: 280px; height: 232px; }
 #activity { width: 360px; height: 260px; }
+#live { width: 300px; height: 220px; }
 #precap { width: 900px; height: 80vh; }
 #toolbox { width: 200px; height: 184px; }
+#testing { width: 280px; height: 232px; }
 
 /* ---- node-creation toolbox ------------------------------------------------- */
 .tb-list { display: flex; flex-direction: column; gap: 6px; }
@@ -53,6 +55,10 @@
 .nm-vp { position: absolute; left: 0; top: 0; box-sizing: border-box; pointer-events: none;
   background: var(--accent-bg); border: 1px solid var(--accent); will-change: transform; }
 .nm-group { stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+.nm-super { stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: auto; cursor: pointer; }
+/* super-group header row in the node list */
+.nm-super-row { font-weight: 700; margin-top: 2px; }
+.nm-sswatch { border-style: dashed; }
 .nm-edges path { fill: none; stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .nm-n { stroke: #0006; stroke-width: 0.5; cursor: pointer; opacity: 0.9; }
 .nm-n:hover { opacity: 1; stroke: var(--white); stroke-width: 1; }
@@ -91,6 +97,15 @@
 .act-fire { background: var(--ok); color: var(--on-accent); }
 .act-cancel:hover, .act-fire:hover { filter: brightness(1.12); }
 .act-cancel:disabled, .act-fire:disabled { opacity: 0.5; cursor: default; }
+/* a disabled trigger's whole row dims (still actionable via its toggle/fire) */
+.act-row.act-off { opacity: 0.55; }
+/* enable/disable toggle — the same pill switch the node header uses */
+.act-enable { flex: none; align-self: center; padding: 0; border: 0; background: transparent; cursor: pointer; line-height: 0; }
+.act-enable svg { display: block; }
+.act-enable .gt-track { fill: var(--line); stroke: var(--line); transition: fill .18s ease, stroke .18s ease; }
+.act-enable .gt-thumb { fill: var(--muted); transition: transform .18s ease, fill .18s ease; }
+.act-enable.on .gt-track { fill: color-mix(in srgb, var(--accent) 35%, transparent); stroke: var(--accent); }
+.act-enable.on .gt-thumb { fill: var(--accent); transform: translateX(12px); }
 /* awaiting the server: keep the label (transparent) so the button never resizes, overlay a
    centred spinner. No text swap = no fumble. */
 .act-fire.loading { position: relative; color: transparent; opacity: 1; }
@@ -98,6 +113,35 @@
   width: 10px; height: 10px; border: 2px solid var(--on-accent); border-top-color: transparent;
   border-radius: 50%; animation: spin 0.7s linear infinite; }
 .act-trigger .act-prog { color: var(--accent); }
+
+/* ---- live panel ------------------------------------------------------------ */
+.live-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.live-switch-lbl { font-weight: 600; color: var(--text); }
+.live-stats { font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; margin: 6px 0; }
+.live-wins { display: flex; flex-direction: column; gap: 4px; }
+.live-win .act-title { font-weight: 500; }
+/* detection dot: grey = not detected, green (glow) = currently on screen */
+.live-wdot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--line); transition: background .15s; }
+.live-wdot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+
+/* ---- testing harness (video -> live OCR) ----------------------------------- */
+.test-panel { display: flex; flex-direction: column; gap: 8px; }
+.test-file { width: 100%; font-size: var(--fs-xs); }
+.test-name { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.test-bar { display: flex; gap: 6px; }
+.test-bar button { flex: 1; }
+.test-seek { width: 100%; }
+.test-frame { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; text-align: center; }
+.test-feed { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text); }
+.test-feed-cb { flex: none; width: auto; margin: 0; }
+.test-hint { color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; }
+.test-ctl:disabled { opacity: 0.45; cursor: not-allowed; }
+.test-sep { border-top: 1px solid var(--border); margin: 2px 0; }
+.test-cap { display: flex; flex-direction: column; gap: 6px; }
+.test-cap-head { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: var(--fs-xs); }
+.test-cap-be { flex: 1; min-width: 0; }
+.test-cap-out { color: var(--text); font-size: var(--fs-xs); line-height: 1.5; font-variant-numeric: tabular-nums;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
 
 /* ---- precapture (now floating, was a centred modal) ------------------------ */
 #precap .fw-body { padding: 0; }
@@ -120,6 +164,9 @@
   background: var(--danger); color: var(--on-danger); border-radius: 4px; cursor: pointer; }
 .pc-detail-del:hover { filter: brightness(1.12); }
 .pc-detail-del[disabled] { opacity: 0.5; cursor: default; }
+/* armed (first click): widen for the "delete?" label + warn colour until the 2nd click */
+.pc-detail-del.armed { width: auto; padding: 0 8px; font-size: var(--fs-xs);
+  background: var(--warn); color: var(--on-accent); }
 .pc-sess-new { text-align: left; margin-bottom: 4px; }
 .pc-sess-new.active { outline: 1px solid var(--accent); border-radius: 4px; }
 .pc-opts { display: flex; flex-wrap: wrap; gap: 14px; }

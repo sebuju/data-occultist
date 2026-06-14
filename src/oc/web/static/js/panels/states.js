@@ -1,7 +1,7 @@
 // States panel: distinguishable modes of the window (e.g. sort orders). Each
 // carries valid_for_save — records are only collected while in a save-worthy
 // state, which is how "don't catalogue at the wrong order" is taught.
-import { fieldset, mount, esc } from "../dom.js";
+import { fieldset, mount, esc, TRASH } from "../dom.js";
 
 const KINDS = ["ordering", "filter", "scroll", "generic"];
 
@@ -15,7 +15,7 @@ export function renderStates(container, model, ctx) {
         <td><select class="s-kind">${kinds}</select></td>
         <td><input type="checkbox" class="s-valid" ${s.valid_for_save ? "checked" : ""} title="save-worthy" /></td>
         <td class="muted">${nDetect} detector(s)</td>
-        <td><button class="s-del danger" title="remove">×</button></td>
+        <td><button class="s-del danger" title="remove">${TRASH}</button></td>
       </tr>`;
   }).join("");
 

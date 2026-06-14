@@ -23,3 +23,12 @@ export function mount(container, el) { container.replaceChildren(el); }
 
 export const esc = (s) =>
   String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// The ONE delete/remove glyph. Every "remove this row / chip / source / session" button
+// drops this in instead of an ad-hoc ×/✕ so they never drift apart again. `currentColor`
+// fill = it takes the button's own colour (danger red, chip grey, …); `.ic-trash` (style.css)
+// sizes it to 1em so it scales with the button's font. Swap the path here and all change.
+export const TRASH =
+  '<svg class="ic-trash" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+  '<path fill="currentColor" d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/>' +
+  "</svg>";

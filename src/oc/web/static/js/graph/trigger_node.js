@@ -3,12 +3,12 @@
 // `manual` never auto-fires (the sweep button drives it). All config persists in the
 // profile YAML. Targets are wired by dragging the out-port to a price node; watch datasets
 // and targets can also be added from the dropdowns here. Rendering only — wiring is in main.js.
-import { esc } from "../dom.js";
+import { esc, TRASH } from "../dom.js";
 
 const KINDS = [["interval", "interval (periodic)"], ["on_change", "on change (live)"], ["manual", "manual only"]];
 
 const chip = (val, attr, cls) =>
-  `<span class="tg-chip" ${attr}="${esc(val)}">${esc(val)} <button class="${cls}" ${attr}="${esc(val)}" title="remove">✕</button></span>`;
+  `<span class="tg-chip" ${attr}="${esc(val)}">${esc(val)} <button class="${cls}" ${attr}="${esc(val)}" title="remove">${TRASH}</button></span>`;
 
 export function triggerParts(t, model) {
   const kind = KINDS.some(([v]) => v === t.kind) ? t.kind : "interval";
@@ -21,10 +21,11 @@ export function triggerParts(t, model) {
   let watch = "";
   if (kind === "on_change") {
     const have = new Set(t.watch || []);
-    const opts = model.datasets().filter((d) => !have.has(d)).map((d) => `<option>${esc(d)}</option>`).join("");
+    // watch datasets OR views (a view fires when any of its source datasets gains rows)
+    const sources = [...model.datasets(), ...(model.profile.subsets || []).map((s) => s.id)];
+    const opts = sources.filter((d) => !have.has(d)).map((d) => `<option>${esc(d)}</option>`).join("");
     watch = `<div class="tg-watch"><div class="sub-lbl">watch <span class="muted">(fires on new rows)</span></div>
-      <div class="tg-chips">${(t.watch || []).map((w) => chip(w, "data-ds", "tg-rmwatch")).join("") || `<span class="muted">none — add a dataset</span>`}</div>
-      <select class="tg-addwatch"><option value="">+ watch dataset…</option>${opts}</select></div>`;
+      <div class="tg-chips">${(t.watch || []).map((w) => chip(w, "data-ds", "tg-rmwatch")).join("")}<select class="tg-addwatch"><option value="">+ watch source…</option>${opts}</select></div></div>`;
   }
 
   // targets are wired by dragging the out-port to a price node — no add dropdown (redundant)

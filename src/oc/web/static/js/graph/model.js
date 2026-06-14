@@ -21,6 +21,9 @@ export class GraphModel {
     for (const s of this.profile.subsets) {
       s.datasets = s.datasets || [];
       if (s.dataset && !s.datasets.includes(s.dataset)) { s.datasets.unshift(s.dataset); s.dataset = ""; }
+      s.sort = s.sort || [];
+      // fold a legacy single-column sort into the multi-column list
+      if (!s.sort.length && s.sort_by) { s.sort = [{ field: s.sort_by, desc: !!s.sort_desc }]; s.sort_by = ""; }
     }
     for (const pn of this.profile.price_nodes) pn.sources = pn.sources || [];   // items the node prices (empty = catalogue)
     for (const t of this.profile.triggers) { t.watch = t.watch || []; t.targets = t.targets || []; }
@@ -221,6 +224,18 @@ export class GraphModel {
     return true;
   }
   removePriceSource(id, ds) { const pn = this.priceNode(id); if (pn) pn.sources = (pn.sources || []).filter((d) => d !== ds); }
+  // which source column names the item to price (resolved to a market slug). Default "name".
+  setPriceSourceField(id, f) { const pn = this.priceNode(id); if (pn) pn.source_field = f || "name"; }
+  // columns available across a price node's source datasets/views (for the name-field picker)
+  priceSourceColumns(pn) {
+    const out = [];
+    const add = (c) => { if (c && !out.includes(c)) out.push(c); };
+    for (const src of (pn.sources || [])) {
+      if (this.subsetDef(src)) this.subsetColumns(src).forEach(add);
+      else this.datasetFields(src).forEach(add);
+    }
+    return out;
+  }
 
   // ---- triggers: fire price-node sweeps on a condition ---------------------
   trigger(id) { return (this.profile.triggers || []).find((t) => t.id === id) || null; }
@@ -311,7 +326,7 @@ export class GraphModel {
     while (this.subsetDef(id)) id = `${ds}_view${++n}`;
     (this.profile.subsets = this.profile.subsets || []).push({
       id, dataset: "", datasets: [ds], join_field: "name",
-      filters: [], derived: [], hidden_columns: [], enrich: [], sort_by: "", sort_desc: false, limit: 0,
+      filters: [], derived: [], hidden_columns: [], enrich: [], sort: [], sort_by: "", sort_desc: false, limit: 0,
     });
     return id;
   }
@@ -353,6 +368,23 @@ export class GraphModel {
     if (s) s.datasets = (s.datasets || []).filter((d) => d !== ds);
   }
   setJoinField(id, field) { const s = this.subsetDef(id); if (s) s.join_field = field || "name"; }
+  // how a dataset input's MANY observations collapse to one value when THIS view reads it
+  subsetAggregate(id) { const s = this.subsetDef(id); return (s && s.aggregate) || "latest"; }
+  setSubsetAggregate(id, agg) { const s = this.subsetDef(id); if (s) s.aggregate = agg || "latest"; }
+  // cap the number of result rows (0 = no limit)
+  setSubsetLimit(id, n) { const s = this.subsetDef(id); if (s) s.limit = Math.max(0, Math.floor(+n || 0)); }
+  // swap one of a view's source inputs for another (the row-select edit), preserving order
+  replaceSubsetInput(id, oldDs, newDs) {
+    const s = this.subsetDef(id);
+    if (!s || oldDs === newDs) return false;
+    if (!this.addSubsetInput(id, newDs)) return false;   // refuses cycles/dupes/self
+    // addSubsetInput appended newDs; drop oldDs and move newDs into oldDs's slot
+    s.datasets = s.datasets || [];
+    const i = s.datasets.indexOf(oldDs);
+    s.datasets = s.datasets.filter((d) => d !== oldDs && d !== newDs);
+    if (i >= 0) s.datasets.splice(i, 0, newDs); else s.datasets.push(newDs);
+    return true;
+  }
   // columns a view can reference: every input's columns + this view's derived names. A
   // dataset input contributes its window fields (+ known price columns); a VIEW input
   // contributes its own output columns (recursively, so an upstream view's derived columns
@@ -387,6 +419,9 @@ export class GraphModel {
   }
   addFilter(id) { (this.subsetDef(id).filters ||= []).push({ field: "", op: "contains", value: "" }); }
   removeFilter(id, i) { this.subsetDef(id).filters.splice(i, 1); }
+  // multi-column sort (primary first), applied before limit
+  addSort(id) { (this.subsetDef(id).sort ||= []).push({ field: "", desc: false }); }
+  removeSort(id, i) { const s = this.subsetDef(id); if (s && s.sort) s.sort.splice(i, 1); }
   addDerived(id) { (this.subsetDef(id).derived ||= []).push({ name: "", template: "" }); }
   removeDerived(id, i) { this.subsetDef(id).derived.splice(i, 1); }
   // hide/show a result column (toggle membership of hidden_columns)
@@ -407,6 +442,8 @@ export class GraphModel {
   }
   removeWindow(id) { this.profile.windows = this.profile.windows.filter((w) => w.id !== id); }
   window(id) { return this.profile.windows.find((w) => w.id === id); }
+  // whether the live view attempts this window (default true)
+  setWindowLive(id, on) { const w = this.window(id); if (w) w.live = !!on; }
 
   renameWindow(oldId, newId) {
     const w = this.window(oldId);

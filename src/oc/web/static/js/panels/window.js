@@ -5,7 +5,7 @@
 // exactly what key the first cell would store under.
 // Grid strides are numbers you tune while the live grid preview on the canvas
 // shows exactly where each field will be read.
-import { fieldset, mount, esc } from "../dom.js";
+import { fieldset, mount, esc, TRASH } from "../dom.js";
 import { buildKey } from "../keys.js";
 
 export function renderWindow(container, model, ctx) {
@@ -45,7 +45,7 @@ function keySection(model, ctx) {
         .map((f) => `<option ${f === fid ? "selected" : ""}>${esc(f)}</option>`).join("")}</select>
       <button class="kmv" data-i="${i}" data-d="-1" ${i === 0 ? "disabled" : ""} title="earlier in the key">▲</button>
       <button class="kmv" data-i="${i}" data-d="1" ${i === key.fields.length - 1 ? "disabled" : ""} title="later in the key">▼</button>
-      <button class="kdel danger" data-i="${i}" ${key.fields.length <= 1 ? "disabled" : ""} title="remove from the key">✕</button>
+      <button class="kdel danger" data-i="${i}" ${key.fields.length <= 1 ? "disabled" : ""} title="remove from the key">${TRASH}</button>
     </div>`).join("");
   const addable = fids.filter((f) => !key.fields.includes(f));
   return `<div class="key-sec" title="which fields identify a record — reads with the same key merge; a different key (e.g. another level) is its own record. A record missing any key part is dropped.">

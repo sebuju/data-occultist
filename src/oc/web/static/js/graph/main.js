@@ -2,7 +2,8 @@
 // Datasets), drag to arrange, drag-wire a window to a dataset, edit inline, and
 // watch live dataset counts. Box drawing stays on the canvas (teach.html link).
 import * as api from "../api.js";
-import { esc } from "../dom.js";
+import * as conn from "../conn.js";
+import { esc, TRASH } from "../dom.js";
 import { openModal } from "../modal.js";
 import { Overlay } from "../overlay.js";
 import { log, timed, setLogOpen } from "../log.js";
@@ -17,7 +18,7 @@ import { openDictionaryPicker } from "./dict_picker.js";
 import { enhanceTable, setTableStore } from "./table.js";
 import { VTable, setVTableStore } from "../vtable.js";
 import { initPersist, persist } from "./persist.js";
-import { openBackupsModal } from "./backups.js";
+import { buildBackups } from "./backups.js";
 import * as groups from "./groups.js";
 
 const $ = (id) => document.getElementById(id);
@@ -78,6 +79,20 @@ function setNodeBusy(nodeId, on) {
   const n = (busy.get(nodeId) || 0) + (on ? 1 : -1);
   if (n <= 0) busy.delete(nodeId); else busy.set(nodeId, n);
   nodeEls.get(nodeId)?.classList.toggle("busy", (busy.get(nodeId) || 0) > 0);
+  if (on) freezeRouting();   // OCR shouldn't make the node lines re-route — freeze them
+}
+
+// Freeze edge re-routing while OCR runs. The image/cutout canvases redraw every read and
+// fire their ResizeObservers -> drawEdges -> A* reroute, so the lines visibly wiggle during
+// OCR (and continuously in live mode). While frozen, drawEdges keeps each line's current path
+// and scheduleRouting skips the A*. Each OCR tick refreshes the timer, so a continuous live
+// loop stays frozen; ~300ms after the last read it unfreezes and settles the routes once.
+let routingFrozen = false;
+let _routeFreezeTimer = null;
+function freezeRouting() {
+  routingFrozen = true;
+  clearTimeout(_routeFreezeTimer);
+  _routeFreezeTimer = setTimeout(() => { routingFrozen = false; drawEdges(); }, 300);
 }
 // Run an async task while showing spinners on the given node ids.
 async function withBusy(ids, fn) {
@@ -175,6 +190,7 @@ function collectLayout() {
   L.open_images = [...openImages];
   L.tables = L.tables || {};
   L.groups = groups.collect();
+  L.super_groups = groups.collectSuper();   // groups-of-groups travel with the profile too
   // floating panels (node map / activity / precapture) travel with the profile
   const fw = {};
   for (const [id, w] of floatWins()) fw[id] = w.collect();
@@ -190,6 +206,7 @@ function hydrateLayout() {
   }
   pendingOpenImages = [...(L.open_images || [])];
   groups.hydrate(L.groups);
+  groups.hydrateSuper(L.super_groups);   // after groups (super groups reference group ids)
   const fw = L.float_windows || {};
   for (const [id, w] of floatWins()) w.hydrate(fw[id]);   // resets to defaults when absent
 }
@@ -232,6 +249,7 @@ const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "d
 function nodeTypeOf(id) { return id === "game" ? "game" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
   world: () => $("ggroups"),
+  superWorld: () => $("sgroups"),
   nodeRect: (id) => nodeRect(id),
   nodeType: nodeTypeOf,
   moveMembers: (ids, ev) => { const lead = ids.find((id) => pos.get(id)); if (lead) moveNodes(lead, ids.filter((x) => x !== lead), ev); },
@@ -549,7 +567,9 @@ function windowControls(w) {
   // The record key is taught per item template (key section in the item node; the
   // teach page covers grid windows). Where records flow is shown by the wire to the
   // dataset node, so the window node itself only carries the image/delete actions.
-  return `<div class="gn-foot"><button class="imgbtn">📷 image</button></div>`;
+  // The "live" checkbox controls whether the live view attempts this window.
+  return `<div class="gn-foot"><button class="imgbtn">📷 image</button>
+    <label class="win-live" title="attempt this window in live view"><input type="checkbox" class="winlive" ${w.live !== false ? "checked" : ""}/> live</label></div>`;
 }
 
 // The tells + fields list shown under an item node's cutout canvas. Item fields
@@ -564,14 +584,14 @@ function itemLists(it, w) {
       ${t.kind === "color" ? `<input type="color" class="iset" data-k="color" data-tid="${t.id}" value="${t.color || "#ffcc00"}"/>` : ""}
       ${t.locate ? `<select class="iset" data-k="align" data-tid="${t.id}" title="anchor on this line of a wrapped name">${["none", "top", "center", "bottom"].map((v) => `<option ${(t.align || it.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select>` : ""}
       <input type="number" class="iset" data-k="threshold" data-tid="${t.id}" step="0.05" min="0" max="1" value="${t.threshold ?? 0.5}" title="threshold"/>
-      <button class="ti-del danger" data-tid="${t.id}">×</button></div>`).join("");
+      <button class="ti-del danger" data-tid="${t.id}" title="remove">${TRASH}</button></div>`).join("");
   const fields = (it.fields || []).map((f) => {
     const fd = fieldDef(f.field);
     const types = TYPES.map(([v, t]) => `<option value="${v}" ${fd.type === v ? "selected" : ""}>${t}</option>`).join("");
     const exs = EXTRACTS.map((v) => `<option ${(fd.extract || "whole") === v ? "selected" : ""}>${v}</option>`).join("");
     const pips = fd.type === "pips" || fd.type === "diamonds";
     return `<div class="if-row" data-fid="${f.id}">
-      <div class="if-head"><input class="iset-fid" data-fid="${f.id}" value="${esc(f.id)}"/><button class="if-del danger" data-fid="${f.id}">×</button></div>
+      <div class="if-head"><input class="iset-fid" data-fid="${f.id}" value="${esc(f.id)}"/><button class="if-del danger" data-fid="${f.id}" title="remove">${TRASH}</button></div>
       <label class="flab">type <select class="ffset" data-fid="${f.id}" data-k="type">${types}</select></label>
       ${pips ? "" : `<label class="flab">extract <select class="ffset" data-fid="${f.id}" data-k="extract">${exs}</select></label>`}
       ${(!pips && NEEDS_SEP.has(fd.extract)) ? `<label class="flab">separator <input class="ffset" type="text" data-fid="${f.id}" data-k="sep" value="${esc(fd.separator || "/")}"/></label>` : ""}
@@ -609,7 +629,7 @@ function keySection(it, w) {
         .map((f) => `<option ${f === fid ? "selected" : ""}>${esc(f)}</option>`).join("")}</select>
       <button class="kmv" data-i="${i}" data-d="-1" ${i === 0 ? "disabled" : ""} title="earlier in the key">▲</button>
       <button class="kmv" data-i="${i}" data-d="1" ${i === used.length - 1 ? "disabled" : ""} title="later in the key">▼</button>
-      <button class="kdel danger" data-i="${i}" ${used.length <= 1 ? "disabled" : ""} title="remove from the key">✕</button>
+      <button class="kdel danger" data-i="${i}" ${used.length <= 1 ? "disabled" : ""} title="remove from the key">${TRASH}</button>
     </div>`).join("");
   const addable = fids.filter((f) => !used.includes(f));
   return `<div class="muted il-h" title="which fields identify a record — reads with the same key merge; a different key (e.g. another level) is its own record. A record missing any key part is dropped.">key</div>
@@ -774,6 +794,11 @@ function wireWindowControls(div, n) {
   });
   div.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal(n.ref.id));
   updateImageLabel(n.ref.id, div.querySelector(".imgbtn"));   // show the bound filename
+  div.querySelector(".winlive")?.addEventListener("change", (e) => {
+    model.setWindowLive(n.ref.id, e.target.checked);
+    autosave(false);          // a live-view flag changes nothing other nodes re-read
+    renderLiveWindow();       // reflect in the live panel's window list
+  });
 }
 
 function nodeParts(n) {
@@ -852,7 +877,7 @@ function nodeParts(n) {
     };
   }
   if (n.type === "subset") return subsetParts(n.ref);
-  if (n.type === "price") return priceParts(n.ref);
+  if (n.type === "price") return priceParts(n.ref, model.priceSourceColumns(n.ref));
   if (n.type === "trigger") return triggerParts(n.ref, model);
   if (n.type === "dictionary") {
     // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The
@@ -872,12 +897,9 @@ function nodeParts(n) {
   // The key itself is no concern of the dataset: it's taught on the item templates
   // (or windows) that read the records.
   const ds = n.ref;
-  const agg = model.datasetAggregate(ds);
-  const aggOpts = AGGREGATES.map((a) => `<option${a === agg ? " selected" : ""}>${a}</option>`).join("");
   return {
     title: `<input class="gi gi-id dsrename" value="${esc(ds)}" title="dataset name" />`,
-    body: `<label class="flab ds-agg" title="how each key's many observations collapse to one value">many → <select class="dsagg">${aggOpts}</select></label>
-      <div class="gn-foot"><button class="dssubset">+ view</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
+    body: `<div class="gn-foot"><button class="dssubset">+ view</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
       <div class="ds-tabs" role="tablist">
         <button class="ds-tab on" data-tab="data" role="tab">data <span class="ds-tab-n data-n"></span></button>
         <button class="ds-tab" data-tab="batches" role="tab" title="this dataset's collection/save runs">batches <span class="ds-tab-n bat-n"></span></button>
@@ -975,28 +997,42 @@ function subConfigHTML(s) {
   const cols = viewColumns(s);
   const inputs = model.subsetInputs(s);
   const free = model.joinableInputs(s);   // datasets + other views (cycle-free)
-  const chips = inputs.map((d) => `<span class="sv-input">${esc(d)}<button class="sv-rmin danger" data-ds="${esc(d)}" title="remove input">✕</button></span>`).join("")
-    || '<span class="muted sub-empty">none — add a source to join</span>';
+  // sources are removable pills; the "+ join source" select sits on the SAME row as them
+  const chips = inputs.map((d) => `<span class="sv-input">${esc(d)}<button class="sv-rmin danger" data-ds="${esc(d)}" title="remove input">${TRASH}</button></span>`).join("");
   const addOpts = `<option value="">+ join source…</option>` + free.map((d) => `<option>${esc(d)}</option>`).join("");
+  // join-on is a COLUMN dropdown, populated from the joined sources' columns once a source is
+  // added (so you pick a real shared field, not a free-typed guess). Current value kept even
+  // if not in the live column set yet.
+  const jf = s.join_field || "name";
+  const joinOpts = [...new Set([jf, ...cols])].map((c) => `<option${c === jf ? " selected" : ""}>${esc(c)}</option>`).join("");
+  const aggOpts = AGGREGATES.map((a) => `<option${a === model.subsetAggregate(s.id) ? " selected" : ""}>${a}</option>`).join("");
   const filters = (s.filters || []).map((f, i) => `<div class="sub-row" data-i="${i}">
       <select class="sf-field" data-i="${i}">${_colOpts(cols, f.field)}</select>
       <select class="sf-op" data-i="${i}">${SUB_OPS.map((o) => `<option${o === f.op ? " selected" : ""}>${o}</option>`).join("")}</select>
       <input class="sf-val" data-i="${i}" value="${esc(f.value || "")}" placeholder="value" />
-      <button class="sf-del danger" data-i="${i}" title="remove filter">✕</button></div>`).join("");
+      <button class="sf-del danger" data-i="${i}" title="remove filter">${TRASH}</button></div>`).join("");
   const derived = (s.derived || []).map((d, i) => `<div class="sub-row" data-i="${i}">
       <input class="sd-name" data-i="${i}" value="${esc(d.name || "")}" placeholder="new column" />
       <span class="muted">=</span>
       <input class="sd-tpl" data-i="${i}" value="${esc(d.template || "")}" placeholder="{=count*price_median} plat" />
-      <button class="sd-del danger" data-i="${i}" title="remove column">✕</button></div>`).join("");
+      <button class="sd-del danger" data-i="${i}" title="remove column">${TRASH}</button></div>`).join("");
+  // multi-column sort: primary row first, each a column + direction; applied before limit
+  const sortRows = (s.sort || []).map((so, i) => `<div class="sub-row" data-i="${i}">
+      <select class="ss-field" data-i="${i}">${_colOpts(cols, so.field)}</select>
+      <select class="ss-dir" data-i="${i}"><option value="asc"${so.desc ? "" : " selected"}>asc</option><option value="desc"${so.desc ? " selected" : ""}>desc</option></select>
+      <button class="ss-del danger" data-i="${i}" title="remove sort">${TRASH}</button></div>`).join("");
   return `
-    <div class="sub-sec"><div class="sub-lbl">sources <span class="muted">(datasets or views, joined on key)</span></div>
-      <div class="sv-inputs">${chips}</div>
-      <div class="sub-row"><select class="sv-addin">${addOpts}</select>
-        <label class="flab">join on <input class="sv-join" value="${esc(s.join_field || "name")}" placeholder="name" /></label></div></div>
+    <div class="sub-sec">
+      <div class="sub-row"><div class="flab sv-srcrow" title="datasets or views, joined on a shared field">sources<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="sv-addin">${addOpts}</select></span></div></div></div>
+      <div class="sub-row"><label class="flab">join on <select class="sv-join">${joinOpts}</select></label></div>
+      <div class="sub-row"><label class="flab" title="cap the number of result rows (0 = no limit)">limit <input type="number" class="sv-limit" min="0" step="1" value="${s.limit || 0}" placeholder="0" /></label></div>
+      <div class="sub-row"><label class="flab" title="how each key's many observations collapse to one value">many → <select class="sv-agg">${aggOpts}</select></label></div></div>
     <div class="sub-sec"><div class="sub-lbl">filters <span class="muted">(all must pass)</span></div>${filters}
       <button class="sub-addf">+ filter</button></div>
     <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">({col} text · {=expr} math · mix freely)</span></div>${derived}
       <button class="sub-addd">+ column</button></div>
+    <div class="sub-sec"><div class="sub-lbl">sort <span class="muted">(primary first; applied before limit)</span></div>${sortRows}
+      <button class="sub-adds">+ sort</button></div>
     <div class="sub-sec"><div class="sub-lbl">visible <span class="muted">(click to hide/show)</span></div>
       <div class="sv-hides">${hideTogglesHTML(s)}</div></div>`;
 }
@@ -1025,7 +1061,8 @@ async function refreshSubsetNode(id) {
     const s = model.subsetDef(id);
     // dragging a column in the table re-orders the visible/hide buttons to match, live
     vt.onReorder = () => renderHideToggles(nodeEls.get(`sub:${id}`), s);
-    vt.setData(r.columns || [], r.rows || []);
+    // click a row to drill into the source rows that joined to produce it (one per input)
+    vt.setData(r.columns || [], r.rows || [], { expander: (row) => expandSubsetRow(id, row) });
     // the live join may expose columns the static schema can't know (orders/enrich fields) —
     // cache them and re-render the visible/hide toggles so every actual column is listed.
     subsetLiveCols.set(id, r.columns || []);
@@ -1060,15 +1097,19 @@ function wireSubset(div, s) {
   });
   div.querySelector(".sub-addf")?.addEventListener("click", () => { model.addFilter(s.id); restructure(); });
   div.querySelector(".sub-addd")?.addEventListener("click", () => { model.addDerived(s.id); restructure(); });
+  div.querySelector(".sub-adds")?.addEventListener("click", () => { model.addSort(s.id); restructure(); });
 
-  // join inputs — adding/removing a dataset changes the wiring, so render()
+  // join inputs — adding/removing/swapping a source changes the wiring AND this config's own
+  // source rows + join-on column list, so render() (edges) THEN restructure() (rebuild node)
   div.querySelector(".sv-addin")?.addEventListener("change", (e) => {
-    if (model.addSubsetInput(s.id, e.target.value)) { render(); autosave(); refreshSubsetNode(s.id); }
+    if (model.addSubsetInput(s.id, e.target.value)) { render(); restructure(); }
   });
   div.querySelectorAll(".sv-rmin").forEach((b) => b.addEventListener("click", () => {
-    model.removeSubsetInput(s.id, b.dataset.ds); render(); autosave(); refreshSubsetNode(s.id);
+    model.removeSubsetInput(s.id, b.dataset.ds); render(); restructure();
   }));
   div.querySelector(".sv-join")?.addEventListener("change", (e) => { model.setJoinField(s.id, e.target.value.trim()); recompute(); });
+  div.querySelector(".sv-agg")?.addEventListener("change", (e) => { model.setSubsetAggregate(s.id, e.target.value); recompute(); });
+  div.querySelector(".sv-limit")?.addEventListener("change", (e) => { model.setSubsetLimit(s.id, e.target.value); e.target.value = s.limit || 0; recompute(); });
 
   // filters
   div.querySelectorAll(".sf-del").forEach((b) => b.addEventListener("click", () => { model.removeFilter(s.id, +b.dataset.i); restructure(); }));
@@ -1080,6 +1121,11 @@ function wireSubset(div, s) {
   div.querySelectorAll(".sd-del").forEach((b) => b.addEventListener("click", () => { model.removeDerived(s.id, +b.dataset.i); restructure(); }));
   div.querySelectorAll(".sd-name").forEach((el) => el.addEventListener("change", (e) => { s.derived[+el.dataset.i].name = e.target.value.trim(); restructure(); }));
   div.querySelectorAll(".sd-tpl").forEach((el) => el.addEventListener("change", (e) => { s.derived[+el.dataset.i].template = e.target.value; recompute(); }));
+
+  // sort — removing a row restructures (indices shift); field/dir just recompute
+  div.querySelectorAll(".ss-del").forEach((b) => b.addEventListener("click", () => { model.removeSort(s.id, +b.dataset.i); restructure(); }));
+  div.querySelectorAll(".ss-field").forEach((el) => el.addEventListener("change", (e) => { s.sort[+el.dataset.i].field = e.target.value; recompute(); }));
+  div.querySelectorAll(".ss-dir").forEach((el) => el.addEventListener("change", (e) => { s.sort[+el.dataset.i].desc = e.target.value === "desc"; recompute(); }));
 
   // hide/show result columns — toggling changes the column set, so restructure
   wireHideToggles(div, s);
@@ -1100,6 +1146,10 @@ function wirePrice(div, n) {
   // source toggle: statistics (history) vs live orders (now). Mode swaps the body, so rebuild.
   div.querySelector(".enr-mode")?.addEventListener("change", (e) => {
     model.setPriceMode(n.ref.id, e.target.value); rebuildNode(n.id); autosave();
+  });
+  // which source column names the item to price (next sweep uses it — no rebuild)
+  div.querySelector(".enr-keyfld-sel")?.addEventListener("change", (e) => {
+    model.setPriceSourceField(n.ref.id, e.target.value); autosave();
   });
   // rename the price node (its id) — carry its saved layout slot to the new id, then re-render
   div.querySelector(".prrename")?.addEventListener("change", (e) => {
@@ -1325,10 +1375,11 @@ function nodeResizeOpts(div, id) {
     // shared bottom-left grip resize this node leftward with its right edge anchored
     left: (v) => { const p = pos.get(id); if (v === undefined) return p ? p.x : 0; if (p) { p.x = v; positionNode(id); } },
     onResize: () => { drawEdges(); groups.renderGroups(); },
-    onSettle: () => { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight }); drawEdges(); groups.renderGroups(); persist.layout(); },
-    // reset dot: drop the user's size back to the node's natural CSS size
+    onSettle: () => { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight }); div.classList.add("has-size"); drawEdges(); groups.renderGroups(); persist.layout(); },
+    // reset dot: drop the user's size back to the node's natural CSS size (dot then hides)
     onReset: () => {
       nodeSizes.delete(id);
+      div.classList.remove("has-size");
       div.style.width = ""; div.style.height = "";
       drawEdges(); groups.renderGroups(); persist.layout();
     },
@@ -1404,6 +1455,7 @@ function toggleCollapse(id) {
       const s = nodeSizes.get(id);            // (survives reload; el._size would not)
       if (s) { if (s.w) el.style.width = `${s.w}px`; if (s.h) el.style.height = `${s.h}px`; }
     }
+    el.classList.toggle("has-size", nodeSizes.has(id) && !willCollapse);   // reset dot hidden while collapsed
   }
   drawEdges();   // node size changed -> reroute its lines
   groups.renderGroups();
@@ -1487,6 +1539,7 @@ function deselectAll() {
   selectedNodeId = null;
   activeOverlayKey = null;
   clearMultiSelect();
+  groups.clearGroupSelection();   // also drop any ctrl-selected groups
   drawEdges();
   nmSyncSelection();
 }
@@ -1502,9 +1555,13 @@ function setMultiSelect(ids) {
 function clearMultiSelect() { if (selected.size) { selected.clear(); syncMultiSelect(); } }
 function syncMultiSelect() {
   for (const [id, el] of nodeEls) el.classList.toggle("multisel", selected.has(id));
-  const bar = $("seltoolbar"), cnt = $("selCount");
-  if (bar) bar.hidden = selected.size < 2;
-  if (cnt) cnt.textContent = `${selected.size} selected`;
+  const bar = $("seltoolbar"), cnt = $("selCount"), gbtn = $("selGroupBtn");
+  const ng = groups.selectedGroupIds().length;   // ctrl-selected GROUPS (for super-grouping)
+  if (bar) bar.hidden = !(selected.size >= 2 || ng >= 1);
+  if (cnt) cnt.textContent = ng >= 1 ? `${ng} group${ng === 1 ? "" : "s"} selected` : `${selected.size} selected`;
+  // the group button super-groups when groups are selected, else groups nodes
+  if (gbtn) { gbtn.textContent = ng >= 1 ? "⬚ super-group" : "⬚ group";
+    gbtn.title = ng >= 1 ? "super-group / ungroup the selected groups (hotkey: g)" : "group / ungroup the selection (hotkey: g)"; }
 }
 
 // Show the unlock icon only on nodes that currently belong to a group.
@@ -1557,29 +1614,22 @@ const nh = (id) => nodeEls.get(id)?.offsetHeight || 80;   // node height
 // the node-map jump so both frame a node the same way).
 function zoomToNode(id) { panZoomTo(id, { fit: true }); }
 
-// Bezier whose tangents leave each endpoint along an outward direction (L/R/T/B) so
-// the line starts the right way. This is the LIVE line: shown while a node is being
-// dragged (follows the cursor), and the shape a routed line morphs out of on settle.
-const _OFFK = (x1, y1, x2, y2) => Math.max(30, Math.hypot(x2 - x1, y2 - y1) * 0.4);
+// Port exit directions (L/R/T/B) -> unit vector, used to stub a line out of a port the
+// right way before it turns. Lines are ALWAYS orthogonal — no bezier fallback exists.
 const _DIROFF = { L: [-1, 0], R: [1, 0], T: [0, -1], B: [0, 1] };
-function dirBezierCtrls(x1, y1, d1, x2, y2, d2) {
-  const k = _OFFK(x1, y1, x2, y2);
+
+// Orthogonal elbow between two ports — the instant fallback shown until A* routes the line.
+// Replaces the old direct bezier so a curved line is NEVER drawn: a short stub leaves each
+// port along its facing direction, then one right-angle connects the stubs. Same point list
+// the router emits, so polylinePath renders it in the identical (rounded-corner) 90° style.
+function dirElbowPts(x1, y1, d1, x2, y2, d2) {
+  const k = 16;
   const a = _DIROFF[d1] || [0, 0], b = _DIROFF[d2] || [0, 0];
-  return [[x1 + a[0] * k, y1 + a[1] * k], [x2 + b[0] * k, y2 + b[1] * k]];
-}
-function dirBezierD(x1, y1, d1, x2, y2, d2) {
-  const [c1, c2] = dirBezierCtrls(x1, y1, d1, x2, y2, d2);
-  return `M ${x1} ${y1} C ${c1[0]} ${c1[1]}, ${c2[0]} ${c2[1]}, ${x2} ${y2}`;
-}
-function sampleDirBezier(x1, y1, d1, x2, y2, d2, n) {
-  const [c1, c2] = dirBezierCtrls(x1, y1, d1, x2, y2, d2);
-  const out = [];
-  for (let i = 0; i <= n; i++) {
-    const t = i / n, u = 1 - t;
-    out.push([u * u * u * x1 + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * x2,
-              u * u * u * y1 + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * y2]);
-  }
-  return out;
+  const s1 = [x1 + a[0] * k, y1 + a[1] * k];   // stub out of the source port
+  const s2 = [x2 + b[0] * k, y2 + b[1] * k];   // stub into the target port
+  // turn axis: if the source exits horizontally, run horizontal-then-vertical, else the reverse
+  const corner = a[0] !== 0 ? [s2[0], s1[1]] : [s1[0], s2[1]];
+  return [[x1, y1], s1, corner, s2, [x2, y2]];
 }
 
 // Resample a polyline to n+1 points spread evenly by arc length — so two shapes with
@@ -1844,11 +1894,12 @@ function setRouted(el, pts) {
   el._geo = pts; el._routed = true;
   el.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
 }
-function setBezier(el, l) {
+function setBezier(el, l) {   // name kept (one caller); draws an ORTHOGONAL elbow, never a curve
   cancelMorph(el);
-  el._geo = sampleDirBezier(l.p1[0], l.p1[1], l.d1, l.p2[0], l.p2[1], l.d2, 24);
+  const pts = dirElbowPts(l.p1[0], l.p1[1], l.d1, l.p2[0], l.p2[1], l.d2);
+  el._geo = pts;
   el._routed = false;
-  el.setAttribute("d", dirBezierD(l.p1[0], l.p1[1], l.d1, l.p2[0], l.p2[1], l.d2));
+  el.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
 }
 
 const MORPH_MS = 150, MORPH_N = 32;
@@ -1876,22 +1927,34 @@ function geoChanged(el, pts) {
 }
 
 let drawSig = "";   // link signature for THIS draw (compared against the route cache's)
+// True while a node is being dragged. The line MODE never changes (always the A* 90° route);
+// this only makes routing run SYNCHRONOUSLY each frame instead of one rAF later, so the route
+// is recomputed and painted in the same frame the node moves — the line stays glued to the
+// node (smooth) instead of trailing it by a frame. Per-frame routing cost is accepted.
+let draggingNodes = false;
 function drawEdges() {
   const svg = $("gedges"), top = $("gedges-top");
   const links = buildLinks();
   placePortDots(links);   // move each out-port dot onto where its line actually starts
   drawSig = ROUTE.enabled ? linksSig(links) : "";
   const used = new Set();
+  // node ids that are turned off — any line touching one is greyed (carries no live data)
+  const disSet = new Set();
+  for (const n of model.nodes()) if (CAN_DISABLE.has(n.type) && n.ref && n.ref.enabled === false) disSet.add(n.id);
   for (const l of links) {
     used.add(l.key);
     const el = edgeEl(l.key, l.top ? top : svg);
-    el.setAttribute("class", l.cls);
+    el.setAttribute("class", l.cls + (disSet.has(l.aId) || disSet.has(l.bId) ? " dis-edge" : ""));
     const c = routeCache.get(l.key);
     if (c && c.pts.length >= 2 && routeFresh(c, l)) {        // have a current route for this line
       if (tweenRoutes && geoChanged(el, c.pts)) startMorph(el, c.pts);
       else if (!el._raf && geoChanged(el, c.pts)) setRouted(el, c.pts);   // only redraw if it changed; leave morphs alone
-    } else {
-      setBezier(el, l);   // stale route (node moved/resized) → live bezier, then A* re-routes to 90°
+    } else if (!el.getAttribute("d")) {
+      // BRAND-NEW line only (no path yet): give it an initial orthogonal elbow so it isn't
+      // invisible until the router runs. A line that already has a path keeps it — we never
+      // repaint a provisional stage over a routed line, so nothing flashes; the A* below
+      // updates it straight to the next FINISHED route.
+      setBezier(el, l);
     }
   }
   for (const [k, el] of edgeEls) if (!used.has(k)) { cancelMorph(el); el.remove(); edgeEls.delete(k); }
@@ -1903,7 +1966,26 @@ function drawEdges() {
     wireEl.setAttribute("d", `M ${wire.x1} ${wire.y1} C ${wire.x1 + dx} ${wire.y1}, ${wire.x2 - dx} ${wire.y2}, ${wire.x2} ${wire.y2}`);
   } else if (wireEl) { wireEl.remove(); wireEl = null; }
   tweenRoutes = false;
-  scheduleRouting();   // always pathfind — lines stay routed (90°) during resize too
+  scheduleRouting();   // pathfind to the 90° route; lines only ever paint a FINISHED route
+}
+
+// Coalesce edge redraws under a drag: each requestEdges() queues at most ONE redraw per
+// animation frame, so the many mousemove events in a frame collapse to a single drawEdges()
+// that paints the LATEST node positions (pos is mutated in place before this is called). The
+// pending rAF IS the request — newer calls ride it instead of stacking a stale one behind it.
+let _edgeRaf = 0;
+function requestEdges() {
+  if (_edgeRaf) return;   // a redraw is already queued; it'll read the newest positions when it runs
+  _edgeRaf = requestAnimationFrame(() => {
+    _edgeRaf = 0;
+    // While dragging, route IN this frame (runRouting computes the route then paints) so the
+    // line is current the same frame the node moves. Otherwise just paint + defer routing to rAF.
+    if (draggingNodes) runRouting(); else drawEdges();
+  });
+}
+function flushEdges() {   // force the final frame now (drop on settle) — cancels any pending rAF
+  if (_edgeRaf) { cancelAnimationFrame(_edgeRaf); _edgeRaf = 0; }
+  drawEdges();
 }
 
 // ---- live line routing -----------------------------------------------------
@@ -1954,6 +2036,7 @@ function linksSig(links) {
 
 function scheduleRouting() {
   if (!ROUTE.enabled) return;
+  if (routingFrozen) return;           // OCR in progress -> don't re-route (lines would wiggle)
   if (drawSig === routeHash) return;   // routes already current (drawSig set in drawEdges)
   if (routeRaf) return;                // one recompute already queued for the next frame
   routeRaf = requestAnimationFrame(runRouting);
@@ -2032,14 +2115,14 @@ function spanOf(l) {
 // ---- per-node interaction -------------------------------------------------
 
 function wireNode(div, n) {
-  // drag-move from anywhere on the node except interactive controls (so all
-  // edges/padding/labels work, not just the header)
+  // drag-move from the node header / frame, NOT the body — so interacting with body content
+  // (selects, chips, tables) never drags the node. The header + outer padding stay grab zones.
   div.addEventListener("mousedown", (ev) => {
     if (ev.button !== 0) return;   // only left-drag moves; right-drag pans the canvas
     // the collapse caret and the title input double as drag HANDLES: a real drag moves
     // the node, a plain click still toggles / edits (threshold-gated below).
     const handle = ev.target.closest(".collapse, input.gi-id");
-    if (!handle && ev.target.closest("input,select,button,a,.canvas-wrap,[contenteditable],.scrollhost")) return;  // .canvas-wrap: resize handle; .scrollhost: scroll/edit node content
+    if (!handle && ev.target.closest(".gn-body,input,select,button,a,.canvas-wrap,[contenteditable],.scrollhost")) return;  // .gn-body: node content isn't a drag zone; .canvas-wrap: resize handle; .scrollhost: scroll/edit node content
     const r = div.getBoundingClientRect();   // skip the CSS resize-handle corner (resizable nodes)
     if (ev.clientX > r.right - 18 && ev.clientY > r.bottom - 18) return;
     // grabbing a node OUTSIDE the current multi-selection drops it (fresh single focus);
@@ -2093,19 +2176,21 @@ function wireNode(div, n) {
                   // id) — refreshLive below skips render when the dataset SET is unchanged, which
                   // it is after an in-place rename, so the node would otherwise keep the old id
       autosave();
+      // CRITICAL: commit the renamed profile to disk BEFORE the server rename + refreshLive.
+      // autosave() is debounced, so without this flush /api/flow reads the STALE profile that
+      // still declares oldId -> noteDatasets re-adds it to _extraDatasets -> a ghost dataset
+      // node spawns. (This is the recurring "rename spawns a duplicate" bug.)
+      await persist.flush();
       try {
         await api.renameDataset(model.profile.name, oldId, newId);   // carry the stored data over
       } catch (err) {
         model.renameDataset(newId, oldId);   // roll back the profile rename; data didn't move
         movePos(`ds:${newId}`, `ds:${oldId}`);
         e.target.value = oldId; setStatus(String(err.message || err)); autosave();
+        await persist.flush();   // commit the rollback too, so refreshLive doesn't resurrect newId
         render(); return;
       }
       await refreshLive();   // re-reads the dataset list (now under the new name) and re-renders
-    });
-    div.querySelector(".dsagg")?.addEventListener("change", (e) => {
-      model.setDatasetAggregate(n.ref, e.target.value);   // how the 'many' collapses
-      autosave(); refreshDataNode(n.ref);                 // server recomputes values under the new policy
     });
     div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(); });
     div.querySelector(".dssubset")?.addEventListener("click", () => {
@@ -2132,7 +2217,7 @@ function wireNode(div, n) {
     }));
     queueMicrotask(() => {
       refreshDataNode(n.ref);                              // load records into the data tab
-      if (dsTab.get(n.ref) === "batches") loadBatchesNode(n.ref);   // restore an open batches tab
+      loadBatchesNode(n.ref);                              // load batches now so the count + list are ready before the tab is opened
     });
   } else if (n.type === "subset") {
     wireSubset(div, n.ref);
@@ -2260,6 +2345,56 @@ async function expandObservations(ds, row) {
     node.innerHTML = `<div class="vt-detail-lbl">${obs.length} observation${obs.length === 1 ? "" : "s"} · ${esc(key)}</div>
       <table class="grid-table zebra vt-detail-tbl"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
   } catch (e) { node.innerHTML = `<p class="muted">${esc(String(e.message || e))}</p>`; }
+  return node;
+}
+
+// One source block in a view-row drill-down: a labelled table of `rows` (label is already
+// escaped). Columns = union of keys minus the store's bookkeeping fields.
+function srcBlock(label, rows) {
+  if (!rows.length) return `<div class="vt-src-h muted">${label} — no rows</div>`;
+  const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((c) => !VT_META.includes(c));
+  const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
+  const body = rows.map((r) => `<tr>${cols.map((c) => `<td>${esc(r[c] == null ? "" : String(r[c]))}</td>`).join("")}</tr>`).join("");
+  return `<div class="vt-src-h">${label}</div>
+    <table class="grid-table zebra vt-detail-tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+// Inline drill-down for a VIEW row: per joined input, the RAW observations (the 'many' that
+// the view's aggregate collapsed) behind this row's join key — so you see the actual multiple
+// values, not the one aggregated record. A dataset source drills its observations; a view
+// source has none, so it shows its matching computed row(s).
+async function expandSubsetRow(sid, row) {
+  const node = document.createElement("div");
+  node.className = "vt-detail-inner";
+  const s = model.subsetDef(sid);
+  const jf = (s && s.join_field) || "name";
+  const jv = String(row[jf] ?? "").trim().toLowerCase();
+  if (!jv) { node.innerHTML = `<p class="muted">no <code>${esc(jf)}</code> value to trace</p>`; return node; }
+  const inputs = model.subsetInputs(s);
+  const game = encodeURIComponent(model.profile.name);
+  const matchJv = (r) => String(r[jf] ?? "").trim().toLowerCase() === jv;
+  const blocks = await Promise.all(inputs.map(async (inp) => {
+    const isView = !!model.subsetDef(inp);
+    try {
+      if (isView) {   // views have no observations — show the matching computed row(s)
+        const data = await (await fetch(`/api/flow/${game}/subset/${encodeURIComponent(inp)}`)).json();
+        return srcBlock(`${esc(inp)} (view)`, (data.rows || []).filter(matchJv));
+      }
+      // dataset: find the matching record(s), then drill each one's observations (the 'many')
+      const data = await (await fetch(`/api/flow/${game}/dataset/${encodeURIComponent(inp)}`)).json();
+      const match = (data.records || []).filter(matchJv);
+      if (!match.length) return `<div class="vt-src-h muted">${esc(inp)} — no matching record</div>`;
+      const obs = [];
+      for (const rec of match) {
+        if (rec.key == null) continue;
+        const od = await (await fetch(`/api/flow/${game}/dataset/${encodeURIComponent(inp)}/observations?key=${encodeURIComponent(rec.key)}`)).json();
+        obs.push(...(od.observations || []));
+      }
+      const seen = obs.length ? obs : match;   // fall back to the record itself if it has no key
+      return srcBlock(`${esc(inp)} · ${obs.length} observation${obs.length === 1 ? "" : "s"}`, seen);
+    } catch (e) { return `<div class="vt-src-h muted">${esc(inp)} — ${esc(String(e.message || e))}</div>`; }
+  }));
+  node.innerHTML = blocks.join("") || `<p class="muted">no sources</p>`;
   return node;
 }
 
@@ -2407,7 +2542,7 @@ let precapPoll = null;
 let precapBusy = false;   // recording/processing/paused
 let precapStopping = false;   // a stop/cancel was clicked, awaiting the worker to wind down
 let precapLastPhase = null;
-let precapSessions = [];   // saved recording sessions [{id,label,frames,processed,records,saved_at,active}]
+let precapSessions = [];   // saved recording sessions [{id,label,frames,bytes,processed,records,saved_at,active}]
 let precapView = null;     // which item is selected: "new" (record inputs) or "loaded" (a session)
 let precapPage = null;     // which page is shown: "list" (session list) or "detail" (the selected pane)
 const pcState = { visible: false, x: null, y: null, w: null, h: null };
@@ -2505,7 +2640,15 @@ function buildPrecap() {
       })();
     }
     else if (a === "loadsess") { precapView = "loaded"; precapPage = "detail"; _pcSessAct(api.precapture.loadSession(game, sid, pcSig)); }
-    else if (a === "delsess") _pcSessAct(api.precapture.deleteSession(game, sid, pcSig));
+    else if (a === "delsess") {
+      if (b.dataset.armed !== "1") {   // inline confirm — no blocking dialog (armed two-click)
+        b.dataset.armed = "1"; b.textContent = "delete?"; b.classList.add("armed");
+        setTimeout(() => { b.dataset.armed = "0"; b.innerHTML = TRASH; b.classList.remove("armed"); }, 2500);
+        return;
+      }
+      b.dataset.armed = "0";
+      _pcSessAct(api.precapture.deleteSession(game, sid, pcSig));
+    }
     else if (a === "rensess") beginRename(b.closest(".pc-sess"), sid);
     // worker state just changed -> refresh the tasks panel without waiting out its cadence
     if (["record", "recstop", "process", "pause", "resume", "cancel"].includes(a)) pollActivity();
@@ -2537,7 +2680,7 @@ async function showPrecap() {
   // already redraw, so hitting status every 700ms then just pounds the server for nothing.
   if (precapPoll) clearInterval(precapPoll);
   precapPoll = setInterval(async () => {
-    if (!precapBusy) return;
+    if (!conn.isOnline() || !precapBusy) return;   // backend down -> halt polling
     try { _pcDraw(await api.precapture.status(model.profile.name, pcSig)); } catch { /* ignore */ }
   }, 700);
 }
@@ -2640,7 +2783,7 @@ function renderPrecap(node, st) {
     node.innerHTML = `<div class="pc-main">
         <div class="pc-page pc-page-list"><div class="pc-left"></div></div>
         <div class="pc-page pc-page-detail">
-          <div class="pc-detail-head"><button class="pc-back" data-act="back" title="back to sessions">←</button><span class="pc-detail-title"></span><button class="pc-detail-del danger" data-act="delsess" title="delete session" hidden>×</button></div>
+          <div class="pc-detail-head"><button class="pc-back" data-act="back" title="back to sessions">←</button><span class="pc-detail-title"></span><button class="pc-detail-del danger" data-act="delsess" title="delete session" hidden>${TRASH}</button></div>
           <div class="pc-right"></div>
         </div>
       </div>`;
@@ -2653,7 +2796,7 @@ function renderPrecap(node, st) {
   const dTitle = node.querySelector(".pc-detail-title");
   if (dTitle) dTitle.textContent = precapView === "new" ? "new session"
     : (st.session ? (st.label || fmtCaptureTime(st.session)) : "session");
-  // delete (×) lives in the detail head — only for a loaded session, locked while busy
+  // delete (trash) lives in the detail head — only for a loaded session, locked while busy
   const dDel = node.querySelector(".pc-detail-del");
   if (dDel) {
     dDel.hidden = precapView !== "loaded" || !st.session;
@@ -2766,6 +2909,7 @@ function renderPrecapLeft(left, st) {
     const h = document.createElement("div");
     h.className = "pc-sess-h muted"; h.textContent = "sessions";
     left.append(left._new, h);
+    left._head = h;           // header carries the all-sessions total image size
     left._rows = new Map();   // sid -> { row, load, ren }
   }
   left._new.classList.toggle("active", precapView === "new");
@@ -2794,10 +2938,24 @@ function renderPrecapLeft(left, st) {
       const nm = s.label || fmtCaptureTime(s.id);
       if (r.name.textContent !== nm) r.name.textContent = nm;
     }
-    const meta = `${s.frames}f · ${s.records || 0} rec${s.saved_at ? ' · <span class="tc-ok">committed</span>' : ""}`;
+    const meta = `${s.frames}f · ${fmtBytes(s.bytes || 0)} · ${s.records || 0} rec${s.saved_at ? ' · <span class="tc-ok">committed</span>' : ""}`;
     if (r.meta._html !== meta) { r.meta.innerHTML = meta; r.meta._html = meta; }   // touch DOM only on change
     r.ren.disabled = precapBusy;
   }
+  // header shows the total image size across every session (touch DOM only on change)
+  const total = precapSessions.reduce((a, s) => a + (s.bytes || 0), 0);
+  const htxt = precapSessions.length ? `sessions · ${fmtBytes(total)}` : "sessions";
+  if (left._head.textContent !== htxt) left._head.textContent = htxt;
+}
+
+// Human-readable byte size (1 KB = 1024 B). Whole numbers for B and >=100;
+// one decimal otherwise — so "47f · 12.3 MB" reads cleanly in the session list.
+function fmtBytes(n) {
+  if (!n) return "0 B";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let v = n, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${i === 0 || v >= 100 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
 }
 
 // Capture filenames are "YYYYMMDD-HHMMSS-ffffff.jpg" — pull the time out for display.
@@ -3263,6 +3421,13 @@ async function refreshDetect(winId, live = false) {
         const res = await api.detect(previewProfileFor(winId), model.profile.name, cap);
         for (const [aid, info] of Object.entries(res.detect || {})) setDetectStatus(`det:${winId}:${aid}`, info);
         for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);
+        if (live) {   // is this window currently recognised on screen? (drives the live panel dot)
+          const dvals = Object.values(res.detect || {}), svals = Object.values(res.states || {});
+          const recognized = svals.length ? svals.some((s) => s.matched)
+            : (dvals.length ? dvals.every((d) => d.matched) : false);
+          liveRecog.set(winId, recognized);
+          renderLiveWindow();
+        }
         const sbEl = nodeEls.get(`sb:${winId}:scrollbar`);
         const sbSpan = sbEl && sbEl.querySelector(".detect-status");
         if (sbSpan) {
@@ -3490,6 +3655,7 @@ function moveNodes(id, extra, ev) {
   const rect = $("graph").getBoundingClientRect();
   const toWorld = (e) => ({ x: (e.clientX - rect.left - view.panX) / view.zoom, y: (e.clientY - rect.top - view.panY) / view.zoom });
   const g0 = toWorld(ev);
+  draggingNodes = true;   // route synchronously each frame so lines track the node smoothly
   // shared drag loop (dragresize.js) — onMove does the world-space + grid-snap work
   beginDrag(ev, {
     onMove: (e) => {
@@ -3499,10 +3665,12 @@ function moveNodes(id, extra, ev) {
       p.y = snap(start.py + dy);
       positionNode(id);
       for (const g of starts) { g.gp.x = snap(g.sx + dx); g.gp.y = snap(g.sy + dy); positionNode(g.gid); }
-      drawEdges();
+      requestEdges();   // one edge redraw per frame, coalescing this move with others
       groups.renderGroups();   // group boxes hug their members live
     },
     onSettle: () => {
+      draggingNodes = false;
+      flushEdges();   // paint the final positions now, dropping any pending coalesced frame
       groups.absorb([id, ...extra.filter((x) => x !== id)]);   // dropped inside a group box -> join it
       resizeCanvas(); groups.renderGroups(); persist.layout(); renderNodeMap();
     },
@@ -3528,7 +3696,7 @@ function dragFromHandle(id, ev, div, handle) {
     },
   });
 }
-function positionNode(id) { const el = nodeEls.get(id); const p = pos.get(id); if (el && p) { el.style.left = `${p.x}px`; el.style.top = `${p.y}px`; } }
+function positionNode(id) { const el = nodeEls.get(id); const p = pos.get(id); if (el && p) { el.style.left = `${p.x}px`; el.style.top = `${p.y}px`; el.classList.toggle("has-size", nodeSizes.has(id) && !collapsed.has(id)); } }
 
 // Drag a wire out of a node's `.port.out`. Drop on a dataset node to wire to it, or on
 // empty canvas to mint a fresh dataset there and wire to that. ``srcId`` is the source
@@ -3645,14 +3813,16 @@ async function loadGame(name) {
 }
 
 $("gameSelect").addEventListener("change", (e) => loadGame(e.target.value));
-$("newGameBtn").addEventListener("click", () => {
-  const name = $("newGameName").value.trim();
-  if (!name) return setStatus("enter a name");
+// Mint a blank game profile. Called from the settings modal's "new game" section.
+function createGame(name) {
+  name = (name || "").trim();
+  if (!name) { setStatus("enter a name"); return false; }
   model.load({ name, process_names: [], window_title_hint: null, fields: [], windows: [] });
   pos.clear(); nodeEls.clear(); $("gnodes").innerHTML = "";
   render(); autosave();
   refreshGames(name);
-});
+  return true;
+}
 // ---- node map (fixed overview / jump-to) ----------------------------------
 // A draggable, fixed-to-screen panel that mirrors the graph two ways: a scaled MINI-MAP
 // (nodes + connection lines + a viewport box) or a TEXT LIST built by walking the edges.
@@ -3747,6 +3917,8 @@ function buildNodeMap() {
     setNodeMapMode(nmState.mode === "map" ? "list" : "map"));
   // jump-to: click a node in either view -> select + smooth pan/zoom; a group row -> frame it
   nm.body.addEventListener("click", (ev) => {
+    const sg = ev.target.closest("[data-sgid]");
+    if (sg) { const sb = groups.superGroupBoxes().find((b) => b.id === sg.dataset.sgid); if (sb) panZoomToRect(sb.box); return; }
     const g = ev.target.closest("[data-gid]");
     if (g) { const gb = groups.groupBoxes().find((b) => b.id === g.dataset.gid); if (gb) panZoomToRect(gb.box); return; }
     const t = ev.target.closest("[data-id]");
@@ -3831,19 +4003,22 @@ function nmRenderMap(body) {
       : "";
     return rect + text;
   };
-  // Group boxes (behind everything), hugging their members just like the live layer.
-  const groupSvg = groups.groupBoxes().map((gp) => {
-    const x = X(gp.box.x), y = Y(gp.box.y), w = gp.box.w * s, h = gp.box.h * s;
-    const style = gp.outline.style;
-    const stroke = style === "none" ? "none" : gp.outline.color;
+  // Group + super-group boxes (behind everything), hugging their members like the live layer.
+  const boxSvg = (b, cls) => {
+    const x = X(b.box.x), y = Y(b.box.y), w = b.box.w * s, h = b.box.h * s;
+    const style = b.outline.style;
+    const stroke = style === "none" ? "none" : b.outline.color;
     const dash = style === "dashed" ? ` stroke-dasharray="4 3"` : style === "dotted" ? ` stroke-dasharray="1 3"` : "";
-    return `<rect class="nm-group" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${gp.bg}" stroke="${stroke}"${dash}><title>${esc(gp.title)}</title></rect>`;
-  }).join("");
+    return `<rect class="${cls}" data-${cls === "nm-super" ? "sgid" : "gid"}="${esc(b.id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${b.bg}" stroke="${stroke}"${dash}><title>${esc(b.title)}</title></rect>`;
+  };
+  const superSvg = groups.superGroupBoxes().map((sp) => boxSvg(sp, "nm-super")).join("");
+  const groupSvg = groups.groupBoxes().map((gp) => boxSvg(gp, "nm-group")).join("");
   // The viewport indicator is a plain DIV moved with a CSS transform (compositor-only) — it
   // must NOT be an SVG element whose geometry attributes are rewritten each pan frame, since
   // that forces a layout, and with this huge DOM each layout is ~3ms (the pan lag).
   body.innerHTML = `<div class="nm-wrap" style="width:${W.toFixed(1)}px;height:${H.toFixed(1)}px;">
     <svg class="nm-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+      <g class="nm-supers">${superSvg}</g>
       <g class="nm-groups">${groupSvg}</g>
       <g class="nm-edges" transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})">${edgePaths}</g>
       <g class="nm-nodes">${rects.map(node).join("")}</g></svg>
@@ -3891,24 +4066,36 @@ function nmRenderList(body) {
     return out;
   };
 
-  // groups first (header + their members, indented one level), then everything ungrouped
-  const rows = [], grouped = new Set();
-  for (const g of groups.allGroups()) {
+  // super groups (header → their groups → members), then loose groups, then ungrouped nodes
+  const rows = [], grouped = new Set(), placedGroups = new Set();
+  const emitGroup = (g, depth) => {
+    placedGroups.add(g.id);
     const sub = new Set(g.members.filter((id) => byId.has(id)));
-    if (!sub.size) continue;
+    if (!sub.size) return;
     for (const id of sub) grouped.add(id);
-    rows.push({ group: true, gid: g.id, label: g.title || g.id, color: g.outline?.color });
-    for (const r of orderWalk(sub)) rows.push({ ...r, depth: r.depth + 1 });
+    rows.push({ kind: "group", gid: g.id, label: g.title || g.id, color: g.outline?.color, depth });
+    for (const r of orderWalk(sub)) rows.push({ kind: "node", ...r, depth: r.depth + depth + 1 });
+  };
+  for (const sg of groups.allSuperGroups()) {
+    const memberGroups = sg.groups.map((id) => groups.allGroups().find((g) => g.id === id)).filter(Boolean);
+    if (!memberGroups.length) continue;
+    rows.push({ kind: "super", sgid: sg.id, label: sg.title || sg.id, color: sg.outline?.color, depth: 0 });
+    for (const g of memberGroups) emitGroup(g, 1);
   }
+  for (const g of groups.allGroups()) if (!placedGroups.has(g.id)) emitGroup(g, 0);
   const ungrouped = new Set(nodes.map((n) => n.id).filter((id) => !grouped.has(id)));
-  for (const r of orderWalk(ungrouped)) rows.push(r);
+  for (const r of orderWalk(ungrouped)) rows.push({ kind: "node", ...r });
 
-  body.innerHTML = `<div class="nm-list">${rows.map((r) => r.group
-    ? `<div class="nm-row nm-grp" data-gid="${esc(r.gid)}" title="zoom to group">
-         <span class="nm-gswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${esc(r.label)}</div>`
-    : `<div class="nm-row${r.id === selectedNodeId ? " sel" : ""}" data-id="${esc(r.id)}" style="padding-left:${6 + r.depth * 14}px">
-         <span class="nm-dot" style="background:${NM_COLOR[r.type] || "#9aa5ce"}"></span>${esc(r.label)}</div>`).join("")
-    || `<div class="nm-empty">no nodes</div>`}</div>`;
+  const rowHTML = (r) => {
+    const pad = 6 + (r.depth || 0) * 14;
+    if (r.kind === "super") return `<div class="nm-row nm-super-row" data-sgid="${esc(r.sgid)}" title="zoom to super group" style="padding-left:${pad}px">
+        <span class="nm-gswatch nm-sswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${esc(r.label)}</div>`;
+    if (r.kind === "group") return `<div class="nm-row nm-grp" data-gid="${esc(r.gid)}" title="zoom to group" style="padding-left:${pad}px">
+        <span class="nm-gswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${esc(r.label)}</div>`;
+    return `<div class="nm-row${r.id === selectedNodeId ? " sel" : ""}" data-id="${esc(r.id)}" style="padding-left:${pad}px">
+        <span class="nm-dot" style="background:${NM_COLOR[r.type] || "#9aa5ce"}"></span>${esc(r.label)}</div>`;
+  };
+  body.innerHTML = `<div class="nm-list">${rows.map(rowHTML).join("") || `<div class="nm-empty">no nodes</div>`}</div>`;
 }
 
 // Cache the graph viewport box — nmUpdateViewport runs every pan FRAME, and reading
@@ -3950,6 +4137,7 @@ let actData = null;          // last fetched payload (re-rendered locally betwee
 let actAt = 0;               // Date.now() of that fetch, used to age the countdowns
 let actPolling = false;      // in-flight fetch guard
 const actRows = new Map();   // job key -> { row, title, prog }
+const actPending = new Set();   // trigger ids whose enable toggle is mid-flight (debounce until the next update)
 let actEmpty = null;         // the reused "nothing active" placeholder (never innerHTML)
 
 function buildActivity() {
@@ -3979,6 +4167,29 @@ function buildActivity() {
       f.disabled = true; f.classList.add("loading");   // spinner overlay, label stays put (no resize/flicker)
       api.triggers.fire(game, f.dataset.fire).catch(() => {})
         .finally(() => { f.disabled = false; f.classList.remove("loading"); pollActivity(); });   // refresh next-fire time
+      return;
+    }
+    // enable/disable a trigger: flip it in the profile + save; the row reflects it on the
+    // next render (optimistically patched so it's instant), the server reads it after save
+    const en = ev.target.closest("button[data-enable]");
+    if (en) {
+      const id = en.dataset.enable;
+      if (actPending.has(id)) return;   // debounce: ignore further clicks until this update lands
+      const t = model.trigger(id);
+      if (!t) return;
+      actPending.add(id);
+      t.enabled = !(t.enabled !== false);
+      const live = (actData?.triggers || []).find((x) => x.id === t.id);
+      if (live) live.enabled = t.enabled;
+      autosave(false);                 // persist; a disabled toggle changes nothing others re-read
+      if (actData) renderActivity(actData, 0);
+      // poll ONLY after the save has actually landed (flush the debounce), so the server's
+      // schedule already reflects the new enabled state — no stale flip-back. Clearing the
+      // pending guard re-enables the toggle on the next render.
+      persist.flush().then(pollActivity).catch(() => pollActivity()).finally(() => {
+        actPending.delete(id);
+        if (actData) renderActivity(actData, 0);
+      });
     }
   });
 }
@@ -3998,7 +4209,7 @@ function stopActivityPoll() { if (actTick) { clearInterval(actTick); actTick = n
 // Fetch from the server and render fresh. Cheap-guarded so overlapping calls (a 10s tick
 // landing on an action-triggered refresh) don't stack.
 async function pollActivity() {
-  if (actPolling || !actState.visible) return;
+  if (actPolling || !actState.visible || !conn.isOnline()) return;   // backend down -> halt
   const game = model.profile.name;
   if (!game) { actData = { sweeps: [], precapture: null }; actAt = Date.now(); renderActivity(actData, 0); return; }
   actPolling = true;
@@ -4023,7 +4234,7 @@ function startActivityPoll() {
   stopActivityPoll();
   pollActivity();   // immediate fetch on open
   actTick = setInterval(() => {
-    if (!actState.visible) return;
+    if (!actState.visible || !conn.isOnline()) return;   // backend down -> halt polls + countdowns
     const elapsed = (Date.now() - actAt) / 1000;
     // network cadence: 60s backgrounded; while focused 0.5s when a job is running, else 1s.
     // Also refresh as soon as a countdown elapses. Otherwise just re-render the cached payload
@@ -4053,9 +4264,14 @@ function activityJobs(data, elapsed = 0) {
     jobs.push({ key: "precap", action: { type: "cancel", kind: "precap" }, title: `precapture · ${p.phase}`, prog });
   }
   for (const t of (data.triggers || [])) {
+    const enabled = t.enabled !== false;
     const running = (t.targets || []).some((x) => x.running);
     let prog;
-    if (t.kind === "interval") {
+    if (!enabled) {
+      prog = t.kind === "interval" ? `disabled · every ${fmtDur(t.interval_s)}`
+        : t.kind === "on_change" ? `disabled · on change: ${(t.watch || []).join(", ") || "—"}`
+        : "disabled";
+    } else if (t.kind === "interval") {
       const remaining = Math.max(0, (t.next_in || 0) - elapsed);   // age locally between fetches
       prog = running ? "firing now…"
         : remaining <= 0 ? `due… · every ${fmtDur(t.interval_s)}`
@@ -4063,7 +4279,8 @@ function activityJobs(data, elapsed = 0) {
     } else if (t.kind === "on_change") {
       prog = `on change: ${(t.watch || []).join(", ") || "—"}${running ? " · firing now…" : ""}`;
     } else { prog = t.kind; }
-    jobs.push({ key: `trigger:${t.id}`, cls: "act-trigger", action: { type: "fire", id: t.id },
+    jobs.push({ key: `trigger:${t.id}`, cls: `act-trigger${enabled ? "" : " act-off"}`,
+      action: { type: "fire", id: t.id }, enable: { id: t.id, enabled },
       title: `trigger · ${t.id}`, prog });
   }
   return jobs;
@@ -4090,6 +4307,18 @@ function renderActivity(data, elapsed = 0) {
       const prog = document.createElement("div"); prog.className = "act-prog";
       body.append(title, prog);
       row.append(body);
+      // enable/disable toggle (triggers only) sits just before the action button
+      let enableBtn = null;
+      if (j.enable) {
+        enableBtn = document.createElement("button");
+        enableBtn.className = "act-enable"; enableBtn.setAttribute("role", "switch");
+        enableBtn.dataset.enable = j.enable.id;
+        enableBtn.title = "enable / disable this trigger";
+        enableBtn.innerHTML = `<svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
+          <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
+          <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>`;
+        row.append(enableBtn);
+      }
       // button is stable per key (sweep/precap → cancel, trigger → fire)
       if (j.action?.type === "cancel") {
         const btn = document.createElement("button");
@@ -4102,21 +4331,210 @@ function renderActivity(data, elapsed = 0) {
         btn.dataset.fire = j.action.id;
         row.append(btn);
       }
-      r = { row, title, prog }; actRows.set(j.key, r);
+      r = { row, title, prog, enableBtn, cls: j.cls || "" }; actRows.set(j.key, r);
     }
     // place at slot i ONLY if it isn't already there — no needless detach/reattach (which
     // flashes as a "recreate" in devtools + thrashes layout every tick)
     const at = list.children[i];
     if (at !== r.row) list.insertBefore(r.row, at || null);
     i++;
+    if (r.cls !== (j.cls || "")) { r.row.className = `act-row${j.cls ? ` ${j.cls}` : ""}`; r.cls = j.cls || ""; }
+    if (r.enableBtn) {
+      const on = j.enable?.enabled !== false;
+      if (r.enableBtn.getAttribute("aria-checked") !== String(on)) {
+        r.enableBtn.setAttribute("aria-checked", on);
+        r.enableBtn.classList.toggle("on", on);
+      }
+      const dis = actPending.has(j.enable?.id);   // disabled while a toggle is mid-flight (debounce)
+      if (r.enableBtn.disabled !== dis) r.enableBtn.disabled = dis;
+    }
     if (r.title.textContent !== j.title) r.title.textContent = j.title;
     if (r.prog.textContent !== j.prog) r.prog.textContent = j.prog;
   }
+  fitActivityHeight();   // grow/shrink the panel to its contents (unless the user resized it)
+}
+
+// Fit the activity panel's height to its rows (like the node map auto-fits) so a couple of
+// tasks don't leave a tall empty panel. Skipped once the user manually resizes it (a real
+// size write only happens when the target actually differs, so a steady tick mutates nothing).
+function fitActivityHeight() {
+  if (!act || !actState.visible || actState.collapsed || actState.userSized) return;
+  const list = act.body.querySelector(".act-list");
+  if (!list) return;
+  const kids = [...list.children];
+  let content = 0;
+  for (const k of kids) content += k.offsetHeight;
+  content += Math.max(0, kids.length - 1) * 4;   // the .act-list row gap
+  const headerH = act.el.querySelector(".fw-head")?.offsetHeight || 28;
+  const maxH = window.innerHeight - 60;
+  const target = Math.round(Math.min(maxH, headerH + content + 14));   // body padding + borders
+  if (Math.abs(act.el.offsetHeight - target) > 1) { act.el.style.height = `${target}px`; actState.h = target; }
 }
 
 buildActivity();
 $("activityBtn")?.classList.toggle("active", actState.visible);
 $("activityBtn")?.addEventListener("click", () => act.setVisible(!actState.visible));
+
+// ---- testing harness: play a recorded video through the live OCR pipeline ----
+// Import a screen-capture clip and step/play it as the live frame source so live
+// mode's detect + OCR can be exercised with no game running. The frame source +
+// playback position live server-side (one VideoSource); this panel just drives it
+// and mirrors the returned status. Playback is browser-paced (a timer that steps
+// one frame per tick); live mode reads whichever frame is current, independently.
+const testState = { visible: false, x: null, y: null, w: null, h: null };
+let testWin = null, testInfo = null, testTimer = null;
+
+function testRender(info) {
+  if (!testWin) return;
+  if (info) testInfo = info;
+  const i = testInfo || { loaded: false, count: 0, index: 0, enabled: false, name: "" };
+  const b = testWin.body;
+  const loaded = !!i.loaded;
+  b.querySelector(".test-name").textContent =
+    loaded ? `${i.name}  (${i.width}×${i.height}, ${i.fps || "?"}fps)` : "no video loaded";
+  const seek = b.querySelector(".test-seek");
+  seek.max = String(Math.max(0, (i.count || 1) - 1));
+  if (document.activeElement !== seek) seek.value = String(i.index || 0);
+  b.querySelector(".test-frame").textContent =
+    loaded ? `${(i.index || 0) + 1} / ${i.count || "?"}` : "– / –";
+  b.querySelector(".test-feed-cb").checked = !!i.enabled;
+  b.querySelector(".test-play").textContent = testTimer ? "pause" : "▶ play";
+  for (const el of b.querySelectorAll(".test-ctl")) el.disabled = !loaded;
+}
+
+function testStopPlay() {
+  if (testTimer) { clearInterval(testTimer); testTimer = null; }
+  testRender();
+}
+
+function testStartPlay() {
+  if (testTimer || !testInfo?.loaded) return;
+  const fps = testInfo.fps || 30;
+  const ms = Math.max(100, Math.round(1000 / fps));   // cap pace so reads can keep up
+  testTimer = setInterval(async () => {
+    if (!conn.isOnline()) return;   // backend down -> halt playback stepping
+    try {
+      const info = await api.video.step(1);
+      testRender(info);
+      if (info.count && info.index >= info.count - 1) testStopPlay();   // hit the end
+    } catch (e) { testStopPlay(); log(String(e.message || e), "err"); }
+  }, ms);
+  testRender();
+}
+
+function buildTesting() {
+  if (testWin) return;
+  testWin = createFloatWin({
+    id: "testing", title: "testing", state: testState, bothAxes: true,
+    onShow: () => { $("testingBtn")?.classList.toggle("active", true);
+      api.video.status().then(testRender).catch(() => {}); },
+    onHide: () => { $("testingBtn")?.classList.toggle("active", false); testStopPlay(); },
+    onPersist: () => persist.layout(),
+  });
+  testWin.body.innerHTML = `<div class="test-panel">
+    <input type="file" class="test-file" accept="video/*" />
+    <div class="test-name">no video loaded</div>
+    <div class="test-bar">
+      <button class="test-ctl test-back" title="step back one frame">◀</button>
+      <button class="test-ctl test-play" title="play / pause">▶ play</button>
+      <button class="test-ctl test-fwd" title="step forward one frame">▶</button>
+    </div>
+    <input type="range" class="test-ctl test-seek" min="0" max="0" value="0" />
+    <div class="test-frame">– / –</div>
+    <label class="test-feed"><input type="checkbox" class="test-ctl test-feed-cb" /> feed live mode from video</label>
+    <div class="test-hint">enable feed, open a window, then turn on <b>live</b> to OCR each frame.</div>
+    <div class="test-sep"></div>
+    <div class="test-cap">
+      <div class="test-cap-head">capture rate
+        <select class="test-cap-be" title="capture backend to measure"></select>
+        <button class="test-cap-run">measure</button>
+      </div>
+      <div class="test-cap-out">– not measured –</div>
+      <div class="test-hint"><b>grabs/s</b> = how fast capture returns. <b>frames/s</b> = real new frames
+        (WGC is capped at the monitor refresh; a static screen yields ~0). PrintWindow forces a game
+        re-render per grab — WGC does not.</div>
+    </div>
+  </div>`;
+  const b = testWin.body;
+  b.querySelector(".test-file").addEventListener("change", async (ev) => {
+    const f = ev.target.files?.[0];
+    if (!f) return;
+    const done = timed(`load video ${f.name}`);
+    testStopPlay();
+    try { testRender(await api.video.upload(f)); done(); }
+    catch (e) { done(String(e.message || e), "err"); }
+  });
+  b.querySelector(".test-back").addEventListener("click", async () => {
+    testStopPlay();
+    try { testRender(await api.video.step(-1)); } catch (e) { log(String(e.message || e), "err"); }
+  });
+  b.querySelector(".test-fwd").addEventListener("click", async () => {
+    testStopPlay();
+    try { testRender(await api.video.step(1)); } catch (e) { log(String(e.message || e), "err"); }
+  });
+  b.querySelector(".test-play").addEventListener("click", () => {
+    if (testTimer) testStopPlay(); else testStartPlay();
+  });
+  const seek = b.querySelector(".test-seek");
+  seek.addEventListener("input", () => {   // live label while dragging, no server call
+    b.querySelector(".test-frame").textContent = `${Number(seek.value) + 1} / ${testInfo?.count || "?"}`;
+  });
+  seek.addEventListener("change", async () => {
+    testStopPlay();
+    try { testRender(await api.video.seek(Number(seek.value))); } catch (e) { log(String(e.message || e), "err"); }
+  });
+  b.querySelector(".test-feed-cb").addEventListener("change", async (ev) => {
+    try { testRender(await api.video.enable(ev.target.checked)); } catch (e) { log(String(e.message || e), "err"); }
+  });
+  wireCaptureBench(b);
+  testRender();
+}
+
+// Capture-rate tester (lives in the testing panel). Populates the backend dropdown
+// once from /api/bench/backends (so wgc only shows when windows-capture is installed),
+// then "measure" runs a short server-side grab benchmark and prints the rate. All
+// click-driven — no poll — so a plain innerHTML write of the small result is fine.
+let benchBackendsLoaded = false;
+function wireCaptureBench(b) {
+  const sel = b.querySelector(".test-cap-be");
+  const out = b.querySelector(".test-cap-out");
+  const run = b.querySelector(".test-cap-run");
+  const loadBackends = async () => {
+    if (benchBackendsLoaded) return;
+    try {
+      const { backends, default: def } = await api.bench.backends();
+      sel.replaceChildren(...backends.map((n) => {
+        const o = document.createElement("option");
+        o.value = n; o.textContent = n === def ? `${n} (default)` : n;
+        if (n === def) o.selected = true;
+        return o;
+      }));
+      benchBackendsLoaded = true;
+    } catch (e) { log(String(e.message || e), "err"); }
+  };
+  loadBackends();
+  run.addEventListener("click", async () => {
+    const game = model.profile.name;
+    if (!game) { out.textContent = "load a game first"; return; }
+    run.disabled = true; out.textContent = `measuring ${sel.value}…`;
+    const done = timed(`bench ${sel.value}`);
+    try {
+      const r = await api.bench.run(game, sel.value, 3);
+      const cap = r.captured ? `${r.captured[0]}×${r.captured[1]}` : "?";
+      const fps = r.frames_per_s == null
+        ? `frames/s = grabs/s (fresh frame per grab)`
+        : `frames/s = <b>${r.frames_per_s}</b> (${r.frames} distinct${r.frames_per_s < 1 ? " — static screen" : ""})`;
+      out.innerHTML = `<b>${r.backend}</b> @ ${cap}<br>`
+        + `grabs/s = <b>${r.grabs_per_s}</b> (${r.ms_per_grab} ms/grab)<br>${fps}`;
+      done();
+    } catch (e) { out.textContent = String(e.message || e); done(String(e.message || e), "err"); }
+    finally { run.disabled = false; }
+  });
+}
+
+buildTesting();
+$("testingBtn")?.classList.toggle("active", testState.visible);
+$("testingBtn")?.addEventListener("click", () => testWin.setVisible(!testState.visible));
 
 // ---- node-creation toolbox ------------------------------------------------
 // Top-level node creation (window / price / trigger / dictionary) lives in this floating
@@ -4171,6 +4589,7 @@ function buildToolbox() {
     <button class="tb-btn" data-create="price">+ price node</button>
     <button class="tb-btn" data-create="trigger">+ trigger</button>
     <button class="tb-btn" data-create="dictionary">+ dictionary</button>
+    <button class="tb-btn tb-group" data-create="group" title="group the selected nodes — or super-group the ctrl-selected groups (hotkey: g)">⬚ group / super-group (g)</button>
   </div>`;
   tb.body.addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-create]");
@@ -4181,6 +4600,7 @@ function buildToolbox() {
     else if (k === "price") createPriceNode();
     else if (k === "trigger") createTriggerNode();
     else if (k === "dictionary") createDictionaryNode();
+    else if (k === "group") groupShortcut();   // nodes -> group; ctrl-selected groups -> super-group
   });
 }
 buildToolbox();
@@ -4188,7 +4608,16 @@ $("createBtn")?.classList.toggle("active", tbState.visible);
 $("createBtn")?.addEventListener("click", () => tb.setVisible(!tbState.visible));
 
 buildPrecap();
-$("liveBtn").addEventListener("click", () => setLiveMode(!liveOn));
+// live floating panel state — declared BEFORE buildLiveWindow() runs at module-eval
+// (it reads liveWin/liveWinState), else a `let` TDZ throws and aborts the whole script.
+const liveWinState = { visible: false, x: null, y: null, w: null, h: null };
+let liveWin = null;
+let liveEmpty = null;
+const liveRows = new Map();    // winId -> { row, dot, name }
+const liveRecog = new Map();   // winId -> recognized in the last live detect round?
+buildLiveWindow();
+$("liveBtn").classList.toggle("active", liveWinState.visible);
+$("liveBtn").addEventListener("click", () => liveWin.setVisible(!liveWinState.visible));   // the panel's toggle drives live mode
 $("precapBtn").addEventListener("click", () => {
   if (!pcState.visible && !model.profile.name) { setStatus("load a game first"); return; }
   pc.setVisible(!pcState.visible);
@@ -4209,7 +4638,35 @@ function selectionIds() {
 //   • 2+, all share ONE group, some ungrouped -> add the ungrouped ones to that group
 //   • 2+, all share ONE group, none ungrouped -> ungroup everything
 //   • 2+, otherwise (no group / many groups)   -> form a new group out of them
+// Super-group the ctrl-selected GROUPS, with the SAME ruleset groups use for nodes:
+//   • 1 group, in a super group        -> detach it
+//   • 2+, all in ONE super group, some out -> add the loose ones
+//   • 2+, all in ONE super group, none out -> dissolve the super group
+//   • 2+, otherwise                     -> form a new super group
+function superGroupShortcut() {
+  const gids = groups.selectedGroupIds();
+  if (!gids.length) return false;
+  if (gids.length === 1) {
+    if (groups.superGroupOf(gids[0])) { groups.detachGroups(gids); setStatus("removed from super group"); }
+    groups.clearGroupSelection();
+    return true;
+  }
+  const sset = new Set(gids.map((id) => groups.superGroupOf(id)).filter(Boolean));
+  const loose = gids.filter((id) => !groups.superGroupOf(id));
+  if (sset.size === 1) {
+    const sg = [...sset][0];
+    if (loose.length) { groups.addToSuper(sg.id, loose); setStatus(`added ${loose.length} to super group`); }
+    else { groups.detachGroups(gids); setStatus("super group dissolved"); }
+  } else {
+    const sg = groups.createSuperGroup(gids);
+    if (sg) setStatus(`super-grouped ${sg.groups.length} groups`);
+  }
+  groups.clearGroupSelection();
+  return true;
+}
+
 function groupShortcut() {
+  if (groups.selectedGroupIds().length) { superGroupShortcut(); return; }   // groups selected -> super-group them
   const ids = selectionIds();
   if (!ids.length) return;
   if (ids.length === 1) {
@@ -4228,11 +4685,58 @@ function groupShortcut() {
   }
 }
 $("selClearBtn").addEventListener("click", () => deselectAll());
-$("backupsBtn").addEventListener("click", () => {
+// Settings modal (cog): new-game creation, OCR controls, and a backups section — all
+// built fresh per-open and wired here (no persistent holder; the modal owns its DOM).
+$("settingsBtn")?.addEventListener("click", () => {
+  const wrap = document.createElement("div");
+  wrap.className = "settings";
+  wrap.innerHTML = `
+    <section class="set-sec">
+      <h4>general</h4>
+      <div class="set-row">
+        <input id="newGameName" placeholder="new game name" />
+        <button id="newGameBtn">create</button>
+      </div>
+    </section>
+    <section class="set-sec">
+      <h4>OCR</h4>
+      <label class="set-row" title="OCR device — GPU needs onnxruntime-gpu + CUDA">
+        <span>device</span>
+        <select id="ocrDevice"><option value="cpu">CPU</option><option value="gpu">GPU</option></select>
+      </label>
+      <label class="set-row" title="downscale big frames before OCR — faster + far less GPU memory">
+        <span>downscale</span>
+        <select id="ocrScale">
+          <option value="1">1× full</option>
+          <option value="2">½ (¼ pixels)</option>
+          <option value="4">¼ (1/16 pixels)</option>
+        </select>
+      </label>
+    </section>
+    <section class="set-sec set-backups"><h4>backups</h4><div></div></section>`;
+
   const name = model.profile.name;
-  if (!name) return setStatus("load a game first");
-  // restoring re-saves the backup live (server snapshots current first) -> reload it fresh
-  openBackupsModal(name, () => { loadGame(name); setStatus("restored backup"); });
+  const handle = openModal({ title: "settings", size: "medium", node: wrap });
+
+  // new game
+  const ngName = wrap.querySelector("#newGameName");
+  const submitGame = () => { if (createGame(ngName.value)) handle.close(); };
+  wrap.querySelector("#newGameBtn").addEventListener("click", submitGame);
+  ngName.addEventListener("keydown", (e) => { if (e.key === "Enter") submitGame(); });
+
+  // OCR device + downscale
+  wireOcrControls(wrap);
+
+  // backups (restoring re-saves the backup live -> reload it fresh)
+  const bkHost = wrap.querySelector(".set-backups > div");
+  if (name) {
+    buildBackups(bkHost, name, {
+      onRestored: () => { loadGame(name); setStatus("restored backup"); },
+      signal: handle.signal, close: handle.close,
+    });
+  } else {
+    bkHost.innerHTML = `<div class="muted bk-pad">load a game to see its backups</div>`;
+  }
 });
 $("graph").addEventListener("mousedown", (ev) => {
   // right-drag pans ANYWHERE (even over nodes/canvas), except form controls so
@@ -4241,6 +4745,21 @@ $("graph").addEventListener("mousedown", (ev) => {
   if (ev.button === 2) { if (!ev.target.closest("input,select,textarea")) startPan(ev); return; }
   // left-drag on empty canvas: rubber-band multi-select (a plain click clears).
   if (ev.button === 0 && !ev.target.closest(".gnode, .ggroup")) startMarquee(ev);
+});
+// double-click a group's BACKGROUND (or a super group's) → frame it. The group box is
+// pointer-events:none so single clicks/drags fall through to the canvas (pan/marquee); we
+// hit-test the dblclick against the world rects instead. Innermost (smallest) wins, so a
+// group inside a super group frames the group. Node dblclick is handled on the node itself.
+$("graph").addEventListener("dblclick", (ev) => {
+  if (ev.target.closest(".gnode")) return;
+  const box = $("graph").getBoundingClientRect();
+  const wx = (ev.clientX - box.left - view.panX) / view.zoom;
+  const wy = (ev.clientY - box.top - view.panY) / view.zoom;
+  const inside = (b) => wx >= b.x && wx <= b.x + b.w && wy >= b.y && wy <= b.y + b.h;
+  let hit = null;
+  for (const gb of [...(groups.superGroupBoxes?.() || []), ...groups.groupBoxes()])
+    if (inside(gb.box) && (!hit || gb.box.w * gb.box.h < hit.box.w * hit.box.h)) hit = gb;
+  if (hit) panZoomToRect(hit.box);
 });
 
 // Rubber-band selection: drag a rectangle on empty canvas to select every node it
@@ -4349,18 +4868,97 @@ function persistBox(winId, b) {
   else if (b.role === "data_area") model.setDataArea(winId, box);
   else model.setRegionBox(winId, b.id, box);
 }
-// Live = re-read open windows continuously (view only, no saving). Saving is a
-// deliberate precapture step now. live and precapture are mutually exclusive.
-// ---- live processing stats (top bar) --------------------------------------
+// Live = re-read live-enabled windows continuously (view only, no saving). Saving is a
+// deliberate precapture step now. live and precapture are mutually exclusive. The control
+// surface is the LIVE floating panel (toggle + stats + per-window detection), built below.
 let liveOn = false, precapOpen = false;
 let liveFrames = 0, liveT0 = 0, liveFps = 0, liveProcessing = false, liveLast = "";
+
+// ---- live floating panel --------------------------------------------------
+// Styled like the tasks panel: a master live toggle, live stats, and a list of every
+// live-enabled window with a dot showing whether it's currently detected on screen.
+// (State — liveWinState/liveWin/liveRows/… — is declared up by the buildLiveWindow()
+// call site so it's initialized before that call runs at module-eval.)
+
+function buildLiveWindow() {
+  if (liveWin) return;
+  liveWin = createFloatWin({
+    id: "live", title: "live", state: liveWinState, bothAxes: true,
+    onShow: () => { $("liveBtn")?.classList.toggle("active", true); renderLiveWindow(); },
+    onHide: () => { $("liveBtn")?.classList.toggle("active", false); },
+    onPersist: () => persist.layout(),
+  });
+  liveWin.body.innerHTML = `
+    <label class="live-toggle"><button class="act-enable live-switch" role="switch" aria-checked="false" title="enable / disable live mode">
+        <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
+          <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
+          <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
+      </button><span class="live-switch-lbl">live mode</span></label>
+    <div class="live-stats muted"></div>
+    <div class="live-wins"></div>`;
+  liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
+  liveWin.body.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
+  renderLiveWindow();
+}
+
+function renderLiveWindow() {
+  if (!liveWin || !liveWinState.visible) return;
+  const sw = liveWin.body.querySelector(".live-switch");
+  if (sw && sw.getAttribute("aria-checked") !== String(liveOn)) { sw.setAttribute("aria-checked", liveOn); sw.classList.toggle("on", liveOn); }
+  const lbl = liveWin.body.querySelector(".live-switch-lbl");
+  const lblTxt = liveOn ? "live mode · enabled" : "live mode · disabled";
+  if (lbl && lbl.textContent !== lblTxt) lbl.textContent = lblTxt;
+  const st = liveWin.body.querySelector(".live-stats");
+  const stTxt = liveOn ? `${liveProcessing ? "processing" : "idle"} · ${liveFps.toFixed(1)} img/s` : "off";
+  if (st && st.textContent !== stTxt) st.textContent = stTxt;
+  renderLiveWinList();
+  fitLivePanelHeight();
+}
+
+// Reconcile the live-enabled window list in place (keyed Map, no innerHTML per tick).
+function renderLiveWinList() {
+  const list = liveWin.body.querySelector(".live-wins");
+  if (!list) return;
+  const wins = (model.profile.windows || []).filter((w) => w.live !== false);
+  const want = new Set(wins.map((w) => w.id));
+  for (const [id, r] of liveRows) if (!want.has(id)) { r.row.remove(); liveRows.delete(id); }
+  if (!wins.length) { if (!liveEmpty.isConnected) list.appendChild(liveEmpty); return; }
+  if (liveEmpty.isConnected) liveEmpty.remove();
+  let i = 0;
+  for (const w of wins) {
+    let r = liveRows.get(w.id);
+    if (!r) {
+      const row = document.createElement("div"); row.className = "act-row live-win";
+      const dot = document.createElement("span"); dot.className = "live-wdot";
+      const name = document.createElement("div"); name.className = "act-title";
+      row.append(dot, name);
+      r = { row, dot, name }; liveRows.set(w.id, r);
+    }
+    const at = list.children[i];
+    if (at !== r.row) list.insertBefore(r.row, at || null);
+    i++;
+    if (r.name.textContent !== w.id) r.name.textContent = w.id;
+    const det = liveOn && !!liveRecog.get(w.id);
+    if (r.dot.classList.contains("on") !== det) r.dot.classList.toggle("on", det);
+    const dt = det ? "detected" : (liveOn ? "not detected yet" : "live off");
+    if (r.dot.title !== dt) r.dot.title = dt;
+  }
+}
+
+// Auto-fit the panel height to its contents until the user resizes it (a size write only
+// happens when the target actually differs, so a steady tick mutates nothing).
+function fitLivePanelHeight() {
+  if (!liveWin || !liveWinState.visible || liveWinState.collapsed || liveWinState.userSized) return;
+  const headerH = liveWin.el.querySelector(".fw-head")?.offsetHeight || 28;
+  const target = Math.round(Math.min(window.innerHeight - 60, headerH + liveWin.body.scrollHeight + 14));
+  if (Math.abs(liveWin.el.offsetHeight - target) > 1) { liveWin.el.style.height = `${target}px`; liveWinState.h = target; }
+}
+
 function showLiveStats(on) {
   const el = $("livestats");
-  if (!el) return;
-  el.hidden = !on;
+  if (el) { el.hidden = !on; if (!on) el.textContent = ""; }
   liveFrames = 0; liveT0 = on ? performance.now() : 0; liveFps = 0;
-  if (!on) el.textContent = "";
-  else renderLiveStats();
+  renderLiveStats();
 }
 function renderLiveStats() {
   const now = performance.now();
@@ -4369,31 +4967,29 @@ function renderLiveStats() {
     liveFrames = 0; liveT0 = now;
   }
   const el = $("livestats");
-  if (!el || el.hidden) return;
-  const state = liveProcessing ? "processing" : "idle";
-  el.innerHTML = `<span class="live-dot ${liveProcessing ? "on" : ""}"></span>${state} · ${liveFps.toFixed(1)} img/s${liveLast ? ` · ${esc(liveLast)}` : ""}`;
+  if (el && !el.hidden) {
+    const state = liveProcessing ? "processing" : "idle";
+    el.innerHTML = `<span class="live-dot ${liveProcessing ? "on" : ""}"></span>${state} · ${liveFps.toFixed(1)} img/s${liveLast ? ` · ${esc(liveLast)}` : ""}`;
+  }
+  renderLiveWindow();   // mirror the stats + detection dots in the live panel
 }
 
 // Self-paced: a round AWAITS its detect+preview before the next is scheduled, so live
 // mode adapts to how fast OCR actually is and never piles requests on the OCR queue
-// (a fixed interval would stack them until each took tens of seconds).
+// (a fixed interval would stack them until each took tens of seconds). Iterates every
+// LIVE-ENABLED window (not just the ones with an open image) — detect captures its own frame.
 async function liveTick() {
   if (!liveOn) return;
   refreshLive();   // dataset counts
   const game = model.profile.name;
   if (game) {
     liveProcessing = true; renderLiveStats();
-    for (const [winId, entry] of imageCanvases) {
+    for (const w of model.profile.windows || []) {
       if (!liveOn) break;
-      try {
-        const { url } = await api.capture(game, false);   // live frame, not stashed
-        const img = new Image();
-        img.onload = () => { entry.overlay.setImage(img); refreshImageBoxes(winId); };
-        img.src = url;
-        liveFrames++;                                      // count captured frames for img/s
-      } catch { /* window gone */ }
-      await refreshDetect(winId, true);
-      if (prevHost(winId)?.dataset.ran === "1") await refreshPreview(winId, true);
+      if (w.live === false || w.enabled === false) continue;   // skip windows opted out of live
+      await refreshDetect(w.id, true);   // sets liveRecog + refreshes the panel
+      liveFrames++;
+      if (prevHost(w.id)?.dataset.ran === "1") await refreshPreview(w.id, true);
     }
     liveProcessing = false; renderLiveStats();
   }
@@ -4404,8 +5000,8 @@ function setLiveMode(on) {
   if (on && precapOpen) return;          // mutually exclusive with precapture
   if (on === liveOn) return;             // no change → don't double-start the loop or log twice
   liveOn = on;
-  $("liveBtn").classList.toggle("active", on);
   if (timer) { clearTimeout(timer); timer = null; }
+  if (!on) liveRecog.clear();            // drop stale detection dots
   showLiveStats(on);
   if (on) {
     log("live mode started", "run");
@@ -4415,12 +5011,34 @@ function setLiveMode(on) {
     log("live mode stopped");
     unregisterWorker("live");
   }
+  renderLiveWindow();   // reflect the toggle + cleared dots
 }
 
 // ---- init -----------------------------------------------------------------
 
-async function initOcrDevice() {
-  const sel = $("ocrDevice");
+// Show the topbar kill-GPU button only when the GPU is the active device — on CPU there's
+// nothing holding VRAM. (The select lives in the settings modal, so visibility is driven
+// here from the device state, independent of the modal being open.)
+function syncKillGpu(device) { const k = $("killGpuBtn"); if (k) k.hidden = device !== "gpu"; }
+
+// Wire the persistent topbar kill-GPU button once at startup, and seed its visibility.
+async function initKillGpu() {
+  const killBtn = $("killGpuBtn");
+  if (!killBtn) return;
+  killBtn.addEventListener("click", async () => {
+    const done = timed("kill GPU OCR");
+    killBtn.disabled = true;
+    killBtn.classList.add("reading");
+    try { const r = await api.ocr.releaseGpu(); syncKillGpu(r.device); done("freed; reloads on next use"); }
+    catch (e) { done(String(e.message || e), "err"); }
+    finally { killBtn.classList.remove("reading"); killBtn.disabled = false; }
+  });
+  try { syncKillGpu((await api.ocr.getDevice()).device); } catch { /* ignore */ }
+}
+
+// Wire the OCR device + downscale selects inside a freshly-built settings modal.
+async function wireOcrControls(root) {
+  const sel = root.querySelector("#ocrDevice");
   if (!sel) return;
   try {
     const st = await api.ocr.getDevice();
@@ -4428,12 +5046,13 @@ async function initOcrDevice() {
     gpuOpt.disabled = !st.gpu_available;
     if (!st.gpu_available) gpuOpt.textContent = "GPU (n/a)";
     sel.value = st.device;
+    syncKillGpu(st.device);
     sel.addEventListener("change", async () => {
       const done = timed(`OCR device → ${sel.value}`);
-      try { const r = await api.ocr.setDevice(sel.value); sel.value = r.device; done(); }
+      try { const r = await api.ocr.setDevice(sel.value); sel.value = r.device; syncKillGpu(r.device); done(); }
       catch (e) { done(String(e.message || e), "err"); }
     });
-    const scaleSel = $("ocrScale");
+    const scaleSel = root.querySelector("#ocrScale");
     if (scaleSel) {
       scaleSel.value = String(st.scale || 1);
       scaleSel.addEventListener("change", async () => {
@@ -4497,6 +5116,10 @@ async function killStrayOcrThenBoot() {
     }
     if (r.killed && r.killed.length) setStatus(`stopped stray OCR: ${r.killed.join(", ")}`);
   } catch (e) {
+    if (!conn.isOnline()) {           // server unreachable, not an OCR problem
+      veil.drop();                    // conn shows its own offline overlay; reconnect reloads
+      return;
+    }
     haltStartup(`Could not confirm background OCR was stopped: ${e.message || e}`);
     return;   // can't verify -> don't proceed
   }
@@ -4504,13 +5127,22 @@ async function killStrayOcrThenBoot() {
     log("loading profile…");
     await refreshGames();
     if ($("gameSelect").value) await loadGame($("gameSelect").value);
-    initOcrDevice();
+    initKillGpu();
     log("first read…");
     await bootSettle();
   } catch (e) {
+    if (!conn.isOnline()) { veil.drop(); return; }   // dropped mid-boot -> offline overlay handles it
     log(String(e.message || e), "err");   // boot hiccup: show the page anyway
   }
+  booted = true;
   veil.drop();
   setLogOpen(false);   // boot done -> collapse the log back to its one-line bar
 }
+
+// Until the initial load completes, a reconnect can't just "resume" — the graph was
+// never loaded. Reload to run boot cleanly. After boot, a reconnect simply lets the
+// gated pollers pick back up (conn.js hides the overlay), no reload needed.
+let booted = false;
+conn.onChange((up) => { if (up && !booted) location.reload(); });
+
 killStrayOcrThenBoot();

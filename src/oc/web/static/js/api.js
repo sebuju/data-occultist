@@ -1,4 +1,5 @@
 // Thin wrapper around the backend HTTP API.
+import * as conn from "./conn.js";
 
 // Every request gets a DEADLINE: a wedged server (e.g. a dead --reload worker whose
 // parent still holds the port) leaves connections hanging forever instead of refusing
@@ -9,9 +10,18 @@ const OCR_MS = 60_000;
 function tfetch(url, opts = {}, ms = LIGHT_MS) {
   const deadline = AbortSignal.timeout(ms);
   const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
-  return fetch(url, { ...opts, signal }).catch((e) => {
-    if (e.name === "TimeoutError")
+  return fetch(url, { ...opts, signal }).then((r) => {
+    conn.reportReachable();   // got a response (even an error status) -> backend is up
+    return r;
+  }).catch((e) => {
+    // A caller-driven abort (panel closed, navigation) is not a connectivity signal.
+    const userAborted = opts.signal && opts.signal.aborted;
+    if (e.name === "TimeoutError") {
+      if (!userAborted) conn.reportUnreachable();   // hung/restarting server == unreachable
       throw new Error(`${url.split("?")[0]} timed out after ${ms / 1000}s — server hung or restarting?`);
+    }
+    // A bare fetch rejection (TypeError) == connection refused/dropped/DNS == backend down.
+    if (!userAborted && e.name === "TypeError") conn.reportUnreachable();
     throw e;
   });
 }
@@ -63,7 +73,10 @@ export const graphLocal = {
 // Versioned profile backups: list snapshots (meta only), fetch one's full profile,
 // or restore one (which re-saves it live and snapshots the current state first).
 export const backups = {
-  list: (name) => tfetch(`/api/profiles/${encodeURIComponent(name)}/backups`).then((r) => (r.ok ? r.json() : [])),
+  // a page of snapshots, newest first -> { total, items }. Only this page is parsed server-side.
+  list: (name, limit = 10, offset = 0) =>
+    tfetch(`/api/profiles/${encodeURIComponent(name)}/backups?limit=${limit}&offset=${offset}`)
+      .then((r) => (r.ok ? r.json() : { total: 0, items: [] })),
   get: (name, stamp) => tfetch(`/api/profiles/${encodeURIComponent(name)}/backups/${encodeURIComponent(stamp)}`).then((r) => ok(r, "backup").then((x) => x.json())),
   restore: (name, stamp) => tfetch(`/api/profiles/${encodeURIComponent(name)}/backups/${encodeURIComponent(stamp)}/restore`, { method: "POST" }).then((r) => ok(r, "restore").then((x) => x.json())),
 };
@@ -150,6 +163,37 @@ export const ocr = {
   getDevice: () => tfetch("/api/ocr/device").then((r) => r.json()),
   setDevice: (device) => tfetch(`/api/ocr/device?device=${encodeURIComponent(device)}`, { method: "POST" }).then((r) => r.json()),
   setScale: (n) => tfetch(`/api/ocr/scale?scale=${encodeURIComponent(n)}`, { method: "POST" }).then((r) => r.json()),
+  releaseGpu: () => tfetch("/api/ocr/release", { method: "POST" }).then((r) => r.json()),
+};
+
+// Testing harness: a recorded video as a stand-in for the live game window.
+// status/seek/step/enable/close return the same status blob:
+// { loaded, name, index, count, fps, enabled, width, height }.
+export const video = {
+  upload: (file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    // big file + decode on the server: give it a generous deadline.
+    return tfetch("/api/video/upload", { method: "POST", body: fd }, 120_000)
+      .then((r) => ok(r, "video upload")).then((r) => r.json());
+  },
+  status: () => tfetch("/api/video/status").then((r) => r.json()),
+  seek: (index) => tfetch(`/api/video/seek?index=${index}`, { method: "POST" }).then((r) => r.json()),
+  step: (n = 1) => tfetch(`/api/video/step?n=${n}`, { method: "POST" }).then((r) => r.json()),
+  enable: (on) => tfetch(`/api/video/enable?on=${on ? "true" : "false"}`, { method: "POST" }).then((r) => r.json()),
+  close: () => tfetch("/api/video/close", { method: "POST" }).then((r) => r.json()),
+};
+
+// Capture benchmark: measure raw grab throughput (no OCR) for the live window, and
+// list which capture backends this machine has (wgc only if windows-capture is
+// installed). run() blocks ~`seconds` server-side, so give it a long deadline.
+export const bench = {
+  backends: () => tfetch("/api/bench/backends").then((r) => r.json()),
+  run: (game, capture, seconds = 3) => {
+    let url = `/api/bench?game=${encodeURIComponent(game)}&seconds=${seconds}`;
+    if (capture) url += `&capture=${encodeURIComponent(capture)}`;
+    return tfetch(url, {}, 60_000).then((r) => ok(r, "bench").then((x) => x.json()));
+  },
 };
 
 // Precapture: record frames fast, batch-OCR them, then save. Each call returns the

@@ -3,7 +3,8 @@
 // price -> dataset). The node itself shows the sweep control, stored-slug count, market
 // movers, and a per-item history chart; joining prices to inventory is a view's job.
 import * as api from "../api.js";
-import { esc } from "../dom.js";
+import { isOnline } from "../conn.js";
+import { esc, TRASH } from "../dom.js";
 
 const plat = (n) => (n == null ? "—" : Number.isInteger(n) ? `${n}` : n.toFixed(1));
 const pctTxt = (f) => `${f > 0 ? "+" : ""}${(f * 100).toFixed(1)}%`;
@@ -20,17 +21,26 @@ const elapsed = (start, end) => {
 // Node title + body for a price producer. ``statistics`` mode shows the history chart +
 // movers; ``orders`` mode is a live lowest-sell snapshot (no candle history) so those are
 // omitted. The source <select> and sweep controls are common to both.
-export function priceParts(pn) {
+export function priceParts(pn, cols = []) {
   const mode = pn.mode === "orders" ? "orders" : "statistics";
   const opt = (v, label) => `<option value="${v}"${v === mode ? " selected" : ""}>${label}</option>`;
-  const srcs = (pn.sources || []).length
-    ? `<div class="pr-srcs">prices: ${pn.sources.map((s) => `<span class="pr-src" data-ds="${esc(s)}">${esc(s)} <button class="pr-rmsrc" data-ds="${esc(s)}" title="stop pricing this source">✕</button></span>`).join("")}</div>`
+  const hasSrc = (pn.sources || []).length;
+  const srcs = hasSrc
+    ? `<div class="pr-srcs">prices: ${pn.sources.map((s) => `<span class="pr-src" data-ds="${esc(s)}">${esc(s)} <button class="pr-rmsrc" data-ds="${esc(s)}" title="stop pricing this source">${TRASH}</button></span>`).join("")}</div>`
     : `<div class="pr-srcs muted">prices: whole catalogue — drag a dataset/view here to price only those items</div>`;
+  // which source column names the item to price (resolved to a market slug). Only relevant
+  // when sourcing from datasets/views (the whole-catalogue sweep needs no key).
+  const nf = pn.source_field || "name";
+  const nfOpts = [...new Set([nf, ...cols])].map((c) => `<option${c === nf ? " selected" : ""}>${esc(c)}</option>`).join("");
+  const keyFld = hasSrc
+    ? `<label class="enr-keyfld flab" title="which source column names the item to price (it's resolved to a market slug)">price by <select class="enr-keyfld-sel">${nfOpts}</select></label>`
+    : "";
   const head = `<div class="enr-sum muted">↻ sweep to price the market</div>
       <label class="enr-src flab">source
         <select class="enr-mode">${opt("statistics", "statistics (history)")}${opt("orders", "live orders (now)")}</select>
       </label>
       ${srcs}
+      ${keyFld}
       <div class="gn-foot">
         <button class="enr-refresh">↻ sweep prices</button>
         <button class="enr-cancel warn" hidden>cancel</button>
@@ -123,6 +133,7 @@ export function wirePriceNode(div, game, dataset, mode = "statistics", onDone = 
 
   async function poll() {
     if (!document.contains(div)) { div._enrPoll = null; return; }   // node gone — stop polling
+    if (!isOnline()) { div._enrPoll = setTimeout(poll, 1000); return; }   // backend down -> idle, keep alive
     div._enrPoll = true;        // mark polling for the whole round so a reentrant
                                 // reflectStatus() (via the await below) can't re-kick poll()
     let st;

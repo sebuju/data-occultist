@@ -7,27 +7,59 @@ import * as api from "../api.js";
 import { openModal } from "../modal.js";
 import { esc } from "../dom.js";
 import { renderMiniMap } from "./minimap.js";
+import { fmtDateTime, since } from "../datefmt.js";
 
-const fmtDate = (iso) => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
 const fmtSize = (n) => (n >= 1024 ? `${(n / 1024).toFixed(1)} kB` : `${n || 0} B`);
 
-export function openBackupsModal(name, onRestored) {
-  const node = document.createElement("div");
-  node.className = "backups";
-  node.innerHTML = `
+// Render the backups browser INTO a host element. `signal` (e.g. a modal's
+// AbortController signal) drops stale async work when the host goes away; `close`
+// is invoked after a successful restore so the embedding surface can dismiss
+// itself. Used both standalone (openBackupsModal) and as a settings-modal section.
+export function buildBackups(host, name, { onRestored = null, signal = null, close = null } = {}) {
+  host.classList.add("backups");
+  host.innerHTML = `
     <div class="bk-list"><div class="muted bk-pad">loading…</div></div>
     <div class="bk-detail"><div class="muted bk-pad">select a backup to preview</div></div>`;
-  const handle = openModal({ title: `backups · ${esc(name)}`, size: "large", node });
-  const listEl = node.querySelector(".bk-list");
-  const detailEl = node.querySelector(".bk-detail");
+  const listEl = host.querySelector(".bk-list");
+  const detailEl = host.querySelector(".bk-detail");
 
-  api.backups.list(name).then((items) => {
-    if (handle.signal.aborted) return;
-    if (!items.length) { listEl.innerHTML = `<div class="muted bk-pad">no backups yet</div>`; return; }
-    listEl.innerHTML = items.map(rowHtml).join("");
-    listEl.querySelectorAll("[data-stamp]").forEach((el) =>
-      el.addEventListener("click", () => select(el.dataset.stamp, el)));
-  }).catch((e) => { listEl.innerHTML = `<div class="warn bk-pad">${esc(String(e.message || e))}</div>`; });
+  // Lazy list: the server PARSES only the page it returns (counts need a YAML load), so
+  // we fetch 10 newest on open and pull the next 10 as the user scrolls near the bottom.
+  // A profile with hundreds of backups opens instantly instead of parsing them all.
+  const PAGE = 10;
+  let total = 0, loaded = 0, busy = false, end = false;
+  function appendRows(items) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = items.map(rowHtml).join("");
+    for (const row of [...tmp.children]) {
+      row.addEventListener("click", () => select(row.dataset.stamp, row));
+      listEl.appendChild(row);
+    }
+  }
+  async function loadMore() {
+    if (busy || end) return;
+    busy = true;
+    try {
+      const res = await api.backups.list(name, PAGE, loaded);
+      if (signal?.aborted) return;
+      // tolerate both the paged shape {total, items} and a bare array (older server)
+      const items = Array.isArray(res) ? res.slice(loaded, loaded + PAGE) : (res.items || []);
+      total = Array.isArray(res) ? res.length : (res.total || 0);
+      if (loaded === 0) {
+        if (!items.length) { listEl.innerHTML = `<div class="muted bk-pad">no backups yet</div>`; end = true; return; }
+        listEl.innerHTML = "";
+      }
+      appendRows(items);
+      loaded += items.length;
+      if (!items.length || loaded >= total) end = true;
+    } catch (e) {
+      if (loaded === 0) listEl.innerHTML = `<div class="warn bk-pad">${esc(String(e.message || e))}</div>`;
+    } finally { busy = false; }
+  }
+  listEl.addEventListener("scroll", () => {
+    if (listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 48) loadMore();
+  });
+  loadMore();
 
   let armed = null;   // stamp currently armed for restore (needs a 2nd click)
 
@@ -38,13 +70,19 @@ export function openBackupsModal(name, onRestored) {
     let profile;
     try { profile = await api.backups.get(name, stamp); }
     catch (e) { detailEl.innerHTML = `<div class="warn bk-pad">${esc(String(e.message || e))}</div>`; return; }
-    if (handle.signal.aborted) return;
+    if (signal?.aborted) return;
 
     detailEl.innerHTML = `
       <div class="bk-preview"></div>
       <div class="bk-info">${infoHtml(profile)}</div>
       <div class="bk-foot"><button class="bk-restore">restore this version</button></div>`;
-    renderMiniMap(detailEl.querySelector(".bk-preview"), profile);
+    // defer one frame so the freshly-inserted preview box has a measured size
+    // (renderMiniMap reads getBoundingClientRect) before drawing into it.
+    requestAnimationFrame(() => {
+      if (signal?.aborted) return;
+      const host = detailEl.querySelector(".bk-preview");
+      if (host) renderMiniMap(host, profile);
+    });
 
     const btn = detailEl.querySelector(".bk-restore");
     btn.addEventListener("click", async () => {
@@ -58,14 +96,20 @@ export function openBackupsModal(name, onRestored) {
       try {
         const restored = await api.backups.restore(name, stamp);
         onRestored?.(restored);
-        handle.close();
+        close?.();
       } catch (e) {
         btn.disabled = false; btn.classList.remove("armed"); armed = null;
         btn.textContent = `restore failed: ${String(e.message || e)}`;
       }
     });
   }
+}
 
+// Standalone backups modal — thin wrapper over buildBackups.
+export function openBackupsModal(name, onRestored) {
+  const node = document.createElement("div");
+  const handle = openModal({ title: `backups · ${esc(name)}`, size: "large", node });
+  buildBackups(node, name, { onRestored, signal: handle.signal, close: handle.close });
   return handle;
 }
 
@@ -77,8 +121,8 @@ function rowHtml(m) {
     c.subsets ? `${c.subsets} view` : null,
   ].filter(Boolean).join(" · ");
   return `<div class="bk-row" data-stamp="${esc(m.stamp)}">
-    <div class="bk-when">${esc(fmtDate(m.iso))}</div>
-    <div class="bk-meta muted">${c.nodes || 0} nodes${summ ? ` · ${esc(summ)}` : ""} · ${fmtSize(m.size)}</div>
+    <div class="bk-when" title="${esc(fmtDateTime(m.iso))}">${esc(since(m.iso))}</div>
+    <div class="bk-meta muted">${esc(fmtDateTime(m.iso))} · ${c.nodes || 0} nodes${summ ? ` · ${esc(summ)}` : ""} · ${fmtSize(m.size)}</div>
   </div>`;
 }
 

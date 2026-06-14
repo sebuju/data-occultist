@@ -1,6 +1,6 @@
 // Fields panel (window-specific schema). Each field: text / number / pips, a
 // declarative extract strategy (no regex), and dictionary learning + fuzzy.
-import { fieldset, mount, esc } from "../dom.js";
+import { fieldset, mount, esc, TRASH } from "../dom.js";
 
 const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips (dots)"]];
 const EXTRACTS = [
@@ -27,7 +27,7 @@ export function renderFields(container, model, ctx) {
       <td><input type="checkbox" class="f-learn" ${f.learn ? "checked" : ""} title="learn the dictionary from confident reads" /></td>
       <td><input type="number" class="f-fz" step="0.05" min="0" max="1" value="${f.fuzzy ?? 0.82}"
             title="similarity (0-1) to snap a noisy read to a known word; higher = stricter" /></td>
-      <td><button class="f-del danger">×</button></td></tr>`;
+      <td><button class="f-del danger" title="remove">${TRASH}</button></td></tr>`;
   }).join("");
 
   const fs = fieldset("Fields (this window)", `

@@ -72,6 +72,15 @@ body {
   border-bottom: 1px solid var(--line);
 }
 .topbar .spacer { flex: 1; }
+/* floating-window toggles, the whole group pinned to the right edge of the topbar.
+   testing is the leftmost button, separated from the rest by a fixed gap. */
+.topbar-tools { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.topbar-tools .spacer {   /* vertical divider rule between testing and the rest */
+  flex: 0 0 1px;
+  height: 0.75em;
+  background-color: var(--accent);
+  margin: 0 6px;
+}
 .status { color: var(--muted); min-width: 12ch; }
 .livestats { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm);
   color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -204,7 +213,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .gnode button, .gnode select, .gnode a, .gnode .collapse, .gnode .port, .gnode .gn-enable, input[type="checkbox"] { cursor: pointer; }
 .gnode .scrollhost, .gnode .nodehost, .gnode .canvas-wrap, .gnode table { cursor: auto; }
 /* remove button lives in the header now: a danger-coloured icon, two-click confirm */
-.gn-del { margin-left: auto; flex: 0 0 auto; width: 22px; height: 18px; min-height: 0; padding: 0; line-height: 1;
+.gn-del { margin-left: auto; flex: 0 0 auto; width: 22px; height: 22px; min-height: 0; padding: 0; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;
   background: transparent; color: var(--muted); border: 0; border-radius: 4px; font-size: var(--fs-sm); font-weight: bold; }
 .gn-del:hover { color: var(--danger); }
@@ -212,7 +221,8 @@ legend { color: var(--muted); padding: 0 6px; }
 .gn-del svg { display: block; margin: auto; }
 .glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
 .glab input { margin-top: 2px; }
-.modal-body h4 { margin: 0 0 6px; color: var(--muted); font-weight: 500; font-size: var(--fs-base); }
+.modal-body h4 { margin: 0; color: var(--muted); font-weight: 500; font-size: var(--fs-base); text-transform: uppercase; letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--muted);  }
 .gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 8px;
   flex: 0 0 auto;   /* in flex-column host nodes, the header must NOT shrink when content overflows */
   margin: -7px -8px 6px; padding: 5px 8px; overflow: hidden;
@@ -251,6 +261,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gn-foot button { flex: 1 1 0; min-width: 0; }
 .gn-foot button.danger { flex: 0 0 auto; margin-left: auto; }  /* remove always sits at the right */
 .gn-foot .imgbtn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* per-window "live" checkbox in the window footer — doesn't stretch like the buttons */
+.win-live { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; cursor: pointer; }
+.win-live input { width: auto; margin: 0; }
 .gnode .delfield { width: 100%; margin-top: 8px; }
 .gnode .port {
   position: absolute; width: 12px; height: 12px; border-radius: 50%;
@@ -278,6 +291,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gedge.watch { stroke: var(--warn); stroke-dasharray: 4 4; opacity: 0.55; }   /* watched dataset -> on_change trigger */
 .gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; }
 .gedge.sel { stroke: var(--accent) !important; stroke-width: 2.2; opacity: 1 !important; }
+/* a line touching a disabled node is greyed (it carries no live data) */
+.gedge.dis-edge { filter: grayscale(1); opacity: 0.4; }
 
 /* window node: fixed default width, resized by WIDTH (its grips) like the item node —
    the embedded image canvas fills the node and its height follows the image aspect.
@@ -413,8 +428,27 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
   cursor: pointer; flex: 0 0 auto; }
 .gp-scheme:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
 
+/* ---- super-group layer (a group OF groups; sits behind the group layer) ---- */
+#sgroups { position: absolute; top: 0; left: 0; z-index: 0; }
+.sgroup { position: absolute; box-sizing: border-box; pointer-events: none; border-radius: 16px; }
+/* bottom-left: a small cog + a ridiculously large, faint watermark label — each absolutely
+   pinned so the giant label can never push the cog out of place */
+.sgroup-label { position: absolute; left: 40px; bottom: 25px;    /* clear the cog */
+  pointer-events: auto; cursor: grab; user-select: none;
+  font-family: var(--font-mono); font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase;
+  font-size: 88px; line-height: 0.8; color: var(--text); opacity: 0.13; white-space: nowrap; }
+.sgroup-label:active { cursor: grabbing; }
+.sgroup-cog { position: absolute; left: 5px; bottom: 5px; z-index: 1;
+  pointer-events: auto; width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+  background: transparent; border: 0; color: var(--text); cursor: pointer; opacity: 0; transition: opacity .12s; }
+.sgroup:hover .sgroup-cog { opacity: 0.55; }
+.sgroup-cog:hover { opacity: 1 !important; }
+/* ctrl-selected group (armed for super-grouping) */
+.ggroup.gsel { outline: 2px dashed var(--accent); outline-offset: 2px; }
+
 /* ---- detach (unlock) icon: only on grouped nodes ---- */
-.gn-detach { display: none; flex: 0 0 auto; width: 20px; height: 18px; min-height: 0; padding: 0;
+.gn-detach { display: none; flex: 0 0 auto; width: 22px; height: 22px; min-height: 0; padding: 0;
   background: transparent; border: 0; color: var(--muted); line-height: 0; }
 .gn-detach:hover { color: var(--accent); }
 .gn-detach svg { display: block; margin: auto; }
@@ -452,7 +486,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
   20%, 60% { transform: translateX(-6px); }
   40%, 80% { transform: translateX(6px); }
 }
-.modal-body { flex: 1; min-height: 0; overflow: auto; }
+.modal-body { flex: 1; min-height: 0; overflow: auto; font-size: var(--fs-sm); }
 .modal.large .modal-body { overflow: hidden; }
 .teach-frame { width: 100%; height: 100%; border: 0; display: block; }
 .modal-body .detail-cols { padding: 12px; }
@@ -515,6 +549,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .startup-halt-box p { margin: 6px 0; }
 .startup-halt-retry { margin-top: 14px; background: var(--danger); color: var(--on-danger);
   border: 0; border-radius: 5px; padding: 6px 16px; cursor: pointer; }
+.startup-halt-retry:disabled { opacity: .6; cursor: default; }
+/* backend-offline overlay: sits ABOVE everything (boot veil, floating panels) so the
+   whole UI is blocked while we can't reach the server; auto-dismissed by conn.js. */
+.offline-overlay { z-index: 4000; }
+.offline-overlay[hidden] { display: none; }
 .log-body { display: none; max-height: 38vh; overflow: auto; padding: 4px 10px 8px;
   border-top: 1px solid var(--line); overscroll-behavior: contain; }
 .logbar.open .log-body { display: block; }
@@ -545,7 +584,7 @@ input, select {
   border-radius: 4px;
 }
 .topbar input, .topbar select { width: auto; }
-:is(select, input, textarea):focus-visible {
+:is(select, input, textarea):not(.sv-add):focus-visible {
   outline: 1px solid #bababa;
   outline-offset: -1px;
 }
@@ -574,7 +613,39 @@ button.reading::after { content: ""; display: inline-block; width: 9px; height: 
   border-radius: 50%; background: #ff8c2b; }
 button.primary, button.active { background: var(--accent); color: var(--on-accent); }
 button.danger { background: var(--danger); color: var(--on-danger); }
+/* the one delete/remove glyph (dom.js TRASH). Sized to the button's font, inherits its
+   colour via currentColor; pointer-events:none so a click's target is always the button
+   (delegated handlers read the button, never the svg path). */
+.ic-trash { width: 1em; height: 1em; display: inline-block; vertical-align: -0.14em; pointer-events: none; }
 button.warn { background: var(--warn); color: var(--on-accent); }   /* cancel/abort (non-destructive) */
+/* kill-gpu: an ACTION button, not a floating-window toggle like .modebtn. Styled as a
+   hollow danger outline so it reads as distinct from the solid mode buttons + dropdowns;
+   fills red on hover/while-working. */
+.killbtn { background: transparent; color: var(--danger);
+  box-shadow: inset 0 0 0 1px var(--danger); }
+.killbtn:hover:not(:disabled) { background: var(--danger); color: var(--on-danger); filter: none; }
+.killbtn svg { width: 13px; height: 13px; flex: none; }
+
+/* settings cog: a bare icon button in the topbar (replaces the old "oc" wordmark) */
+.cogbtn { background: transparent; color: var(--muted); padding: 4px 6px; }
+.cogbtn:hover:not(:disabled) { background: transparent; color: var(--text); filter: none; }
+.cogbtn svg { width: 17px; height: 17px; display: block; }
+
+/* settings modal: stacked sections (new game, OCR, backups) */
+.settings { display: flex; flex-direction: column; gap: 18px; padding: 16px; }
+.set-sec { display: flex; flex-direction: column; gap: 8px; }
+.set-row { display: flex; align-items: center; gap: 8px; margin: 0; }
+.set-row > span { min-width: 9ch; color: var(--muted); }
+.set-row #newGameName { flex: 1; }
+/* backups section: list/detail layout is in .backups; narrower list to fit the modal.
+   Explicit height so the flex chain gives the preview a real, non-zero box to measure. */
+.set-backups .backups { height: 360px; }
+.set-backups .bk-list { width: 200px; }
+/* shorter preview floor + scrollable detail so the info + restore foot always fit */
+.set-backups .bk-preview { min-height: 120px; }
+.set-backups .bk-detail { overflow: auto; }
+/* the preview is a static thumbnail — no interactive node hover/highlight */
+.bk-preview svg { pointer-events: none; }
 /* monochrome icon glyphs inside buttons — colourable (inherit currentColor by default) */
 .ic { font-size: var(--fs-sm); line-height: 1; }
 .ic-rec { color: var(--record); }
@@ -701,7 +772,7 @@ a.node.win:hover { border-color: var(--accent); }
 .sub-cfg { margin-top: 4px; }
 .sub-cfg.collapsed { display: none; }
 .sub-cfg.collapsed + .sub-host { margin-top: 0; }
-.gn-cog { margin-left: auto; flex: 0 0 auto; width: 20px; height: 18px; min-height: 0; padding: 0;
+.gn-cog { margin-left: auto; flex: 0 0 auto; width: 22px; height: 22px; min-height: 0; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   background: transparent; border: 0; color: var(--muted); line-height: 0; cursor: pointer; }
 .gn-cog svg { display: block; margin: auto; }
@@ -712,27 +783,48 @@ a.node.win:hover { border-color: var(--accent); }
    node hover — the header reads clean at rest; layout space is reserved so nothing shifts. */
 .gn-h button { opacity: 0; transition: opacity .12s; }
 .gnode:hover .gn-h button { opacity: 1; }
+.gn-h .collapse { opacity: 1; }   /* collapse caret stays visible at rest — it's a primary toggle, not a hover-only action */
 .sub-sec { margin-top: 6px; }
 .sub-cfg > .sub-sec:first-child { margin-top: 0; }
 .sub-lbl { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; }
 .sub-empty { font-size: var(--fs-sm); padding: 1px 2px; }
-.sub-addf, .sub-addd { margin-top: 4px; }
+.sub-addf, .sub-addd, .sub-adds { margin-top: 4px; }
 .sv-hides { display: flex; flex-wrap: wrap; gap: 4px; }
 .sv-hide { font-size: var(--fs-sm); padding: 1px 6px; }
 .sv-hide.off { opacity: 0.5; text-decoration: line-through; }
 .sub-cfg { width: 100%; box-sizing: border-box; }                /* bounded -> rows wrap, don't overflow */
 .sub-row { display: flex; align-items: center; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+.sub-row:hover { filter: brightness(1.25); background-color: #ffffff12; }
 .sub-row select, .sub-row input { min-width: 0; }
 .sub-row select { max-width: 140px; }
 .sub-row .sf-val, .sub-row .sd-tpl, .sub-row .sd-name { flex: 1 1 0; }
 .sub-row .sf-field, .sub-row .sf-op, .sub-row .se-type, .sub-row .se-src { flex: 0 0 auto; }
+/* sort row has no free-text input to grow, so the column select fills instead — the row
+   spans the full node width (asc/desc + trash stay fixed at the right). */
+.sub-row .ss-field { flex: 1 1 0; max-width: none; }
+/* single-label config rows (join on / limit / many →): stretch the .flab to the full node
+   width and lift the 140px select cap so all three line up at the same width. */
+.sub-row .flab { flex: 1 1 0; }
+.sub-row .flab select, .sub-row .flab input { max-width: none; }
+/* sources row: same .flab grid as join/limit/many so its "sources" label lines up in the
+   first 1fr column. Chips live in the second column; keep label top-aligned when they wrap,
+   drop the inputs' standalone margin, and undo .flab's select:100% so chips+add stay inline. */
+.sub-row .flab.sv-srcrow { align-items: start; }
+.sv-srcrow .sv-inputs { margin: 0; }
+.sv-srcrow .sv-addin { width: auto; }
 .sub-row button.danger { flex: 0 0 auto; padding: 0 6px; }
 .sv-inputs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
 .sv-input { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 7px;
   background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 10px; font-size: var(--fs-sm); }
 .sv-input .sv-rmin { padding: 0 3px; min-height: 0; background: transparent; color: var(--danger); }
-.sv-addin { max-width: 150px; }
-.sv-join { width: 9ch; }
+/* the "+ join source" add control is a pill like the source pills; the select inside is
+   borderless/transparent so the pill (.sv-input) supplies the look */
+.sv-add { padding: 0; overflow: hidden; }
+.sv-add .sv-addin { max-width: 150px; border: 0; background: transparent; color: var(--text);
+  font-size: var(--fs-sm); padding: 1px 7px; cursor: pointer; }
+/* the dropdown popup inherits the select's bg — transparent renders white, so set the
+   options to the panel colour so they stay readable when opened */
+.sv-add .sv-addin option { background: var(--panel); color: var(--text); }
 /* the term list fills a .nodehost (resizable + wheel-scrolls); the textarea has no
    border/resize of its own — the host owns those */
 /* the inner host just FILLS the node now (no resize handle of its own) */
@@ -778,7 +870,7 @@ a.node.win:hover { border-color: var(--accent); }
 .gn-enable .gt-thumb { fill: var(--muted); transition: transform .18s ease, fill .18s ease; }
 .gn-enable.on .gt-track { fill: color-mix(in srgb, var(--accent) 35%, transparent); stroke: var(--accent); }
 .gn-enable.on .gt-thumb { fill: var(--accent); transform: translateX(12px); }   /* slide right */
-.gnode.node-disabled { filter: grayscale(1) opacity(0.5); }
+.gnode.node-disabled { filter: grayscale(1); }
 
 /* item-template preview diagnostics */
 .tc-ok { color: var(--ok); }
@@ -921,8 +1013,10 @@ label.inline input { width: auto; }
 /* reset-size dot, centred between the two grips — hover-revealed like them */
 .rz-reset { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
   width: 6px; height: 6px; border-radius: 50%; background: #8a93a3; z-index: 3;
-  opacity: 0; cursor: pointer; transition: opacity 0.12s; }
-:hover > .rz-reset { opacity: 0.5; }   /* reveal only while hovering the node / panel */
+  opacity: 0; cursor: pointer; transition: opacity 0.12s; display: none; }
+/* the reset dot only exists once a custom size has been set (a node carries .has-size, a
+   panel .fw-sized) — there's nothing to reset back to before then. */
+.gnode.has-size:hover > .rz-reset, .floatwin.fw-sized:not(.collapsed):hover > .rz-reset { display: block; opacity: 0.5; }
 .rz-reset:hover { opacity: 1; }
 
 /* ---- backups browser modal -------------------------------------------------- */
@@ -930,17 +1024,21 @@ label.inline input { width: auto; }
 .bk-pad { padding: 12px; }
 .bk-list { width: 300px; flex: none; overflow: auto; border-right: 1px solid var(--line); }
 .bk-row { padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
-.bk-row:hover { background: var(--hover, #ffffff0d); }
+/* subtle zebra — both shades sit above the modal bg so no row looks unpainted */
+.bk-row:nth-child(odd) { background: #ffffff05; }
+.bk-row:nth-child(even) { background: #ffffff0d; }
+.bk-row:hover { background: var(--hover, #ffffff1a); }
 .bk-row.sel { background: var(--accent-bg); }
 .bk-when { font-size: var(--fs-sm); }
 .bk-meta { font-size: var(--fs-xs); margin-top: 2px; }
-.bk-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 12px; gap: 10px; }
+.bk-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 12px 0 12px 12px; gap: 10px; }
 .bk-preview { flex: 1; min-height: 200px; display: flex; }
 .bk-preview .nm-svg { width: 100%; height: 100%; }
 .bk-preview .nm-edges line { stroke: var(--line); stroke-width: 1; }
 .bk-info-tbl { border-collapse: collapse; font-size: var(--fs-sm); }
 .bk-info-tbl td { padding: 1px 14px 1px 0; }
 .bk-foot { display: flex; justify-content: flex-end; }
+.bk-restore { width: 100%; }
 .bk-restore.armed { background: #e0af68; color: #0b0e14; }
 
 /* dictionary picker modal */
@@ -1000,13 +1098,15 @@ label.inline input { width: auto; }
 .vt-cell { flex: 1 1 0; min-width: 0; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* inline row drill-down: parked under the clicked row, set apart from the data rows */
-.vt-detail { position: absolute; left: 0; right: 0; z-index: 2; box-sizing: border-box;
-  border: 1px solid var(--accent);
-  border-left-width: 6px; cursor: default; }
+.vt-detail { position: absolute; left: 0px; right: 0px; z-index: 2; box-sizing: border-box; background: var(--black);
+  cursor: default; }
 .vt-detail-inner { padding: 6px 8px; overflow-x: auto; }
 .vt-detail-lbl { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 4px; }
 .vt-detail-tbl { width: 100%; }
-.vt-row.vt-open { background: var(--accent-bg); }
+/* per-source header in a view row's drill-down (one block per joined input) */
+.vt-src-h { font-size: var(--fs-sm); color: var(--muted); margin: 6px 0 3px; font-weight: 600; }
+.vt-src-h:first-child { margin-top: 0; }
+.vt-row.vt-open { background: var(--neutral); }
 
 /* custom scrollbar — matches the app's native look (thumb = --line, hover --muted) */
 .vt-sb { position: absolute; top: 1px; right: 1px; bottom: 1px; width: 8px; }

@@ -20,28 +20,25 @@
     </div>
   </div>
   <header class="topbar">
-    <strong>oc</strong>
-    <label>game <select id="gameSelect"></select></label>
-    <input id="newGameName" placeholder="new game" style="width:12ch" />
-    <button id="newGameBtn">New</button>
-    <label class="inline" title="OCR device — GPU needs onnxruntime-gpu + CUDA">
-      <select id="ocrDevice"><option value="cpu">CPU</option><option value="gpu">GPU</option></select>
-    </label>
-    <label class="inline" title="downscale big frames before OCR — faster + far less GPU memory">
-      <select id="ocrScale">
-        <option value="1">1× full</option>
-        <option value="2">½ (¼ pixels)</option>
-        <option value="4">¼ (1/16 pixels)</option>
-      </select>
-    </label>
-    <span class="spacer"></span>
-    <span id="livestats" class="livestats" hidden></span>
-    <button id="liveBtn" class="modebtn" title="live view: re-read open windows continuously (no saving)">live</button>
-    <button id="precapBtn" class="modebtn" title="precapture: record frames fast, OCR them in a batch, then save">precapture</button>
-    <button id="createBtn" class="modebtn" title="create: add window / price / trigger / dictionary nodes">create</button>
-    <button id="nodemapBtn" class="modebtn" title="node map: overview + jump to any node">map</button>
-    <button id="activityBtn" class="modebtn" title="tasks: live price sweeps + precapture progress">tasks</button>
-    <button id="backupsBtn" class="modebtn" title="backups: browse and restore saved versions of this profile">backups</button>
+    <button id="settingsBtn" class="cogbtn" title="settings: new game, OCR device + downscale">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+    <label><select id="gameSelect"></select></label>
+    <button id="killGpuBtn" class="killbtn" title="kill GPU OCR: drop the model and free VRAM (reverts to CPU)" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+      kill gpu
+    </button>
+    <!-- floating-window toggles. testing sits leftmost; a spacer pushes the rest right. -->
+    <div class="topbar-tools">
+      <button id="testingBtn" class="modebtn" title="testing: feed a recorded video through live OCR (no game needed)">testing</button>
+      <span class="spacer"></span>
+      <span id="livestats" class="livestats" hidden></span>
+      <button id="liveBtn" class="modebtn" title="live panel: toggle live view + per-window detection (no saving)">live</button>
+      <button id="precapBtn" class="modebtn" title="precapture: record frames fast, OCR them in a batch, then save">precapture</button>
+      <button id="createBtn" class="modebtn" title="create: add window / price / trigger / dictionary nodes">create</button>
+      <button id="nodemapBtn" class="modebtn" title="node map: overview + jump to any node">map</button>
+      <button id="activityBtn" class="modebtn" title="tasks: live price sweeps + precapture progress">tasks</button>
+    </div>
   </header>
 
   <!-- Selection toolbar: fixed under the topbar, shown only while >1 node is
@@ -55,6 +52,7 @@
   <main class="graphwrap">
     <div id="graph" class="graphcanvas">
       <div id="gworld">
+        <div id="sgroups"></div>
         <div id="ggroups"></div>
         <svg id="gedges">
           <defs>

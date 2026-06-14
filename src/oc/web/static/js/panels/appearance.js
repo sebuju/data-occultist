@@ -1,7 +1,7 @@
 // Text appearance panel: teach how the region's text looks so OCR can clean it.
 // `color` masks the taught text colour(s) (pick with the eyedropper) to crisp
 // black-on-white; threshold/invert/scale cover the rest. Hit Preview to see the effect.
-import { fieldset, mount, esc } from "../dom.js";
+import { fieldset, mount, esc, TRASH } from "../dom.js";
 
 const MODES = [
   ["none", "none"],
@@ -16,7 +16,7 @@ export function renderAppearance(container, model, ctx) {
   const chips = pp.colors.map((c, i) => `
     <span class="chip" style="border-color:${esc(c)}">
       <span class="sw" style="background:${esc(c)}"></span>${esc(c)}
-      <button class="chip-x" data-i="${i}" title="remove">×</button>
+      <button class="chip-x" data-i="${i}" title="remove">${TRASH}</button>
     </span>`).join("") || `<span class="muted">no colours yet</span>`;
 
   const showColor = pp.mode === "color" ? "" : "hidden";
