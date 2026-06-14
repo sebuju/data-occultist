@@ -66,10 +66,14 @@ def put_graphlocal(name: str, state: dict = Body(...)):
 # ---- versioned backups -----------------------------------------------------------
 
 @router.get("/{name}/backups")
-def get_backups(name: str):
-    """Snapshots for a profile, newest first, each with date + node/structural counts."""
-    paths = list_backups(get_settings().profiles_dir, name)
-    return [backup_meta(p) for p in reversed(paths)]
+def get_backups(name: str, limit: int = 10, offset: int = 0):
+    """A PAGE of snapshots, newest first, each with date + node/structural counts.
+    Only the returned page is parsed (counts need a YAML load) — listing is a cheap
+    glob, so a profile with hundreds of backups still opens instantly. ``limit<=0``
+    returns the rest from ``offset``. Returns ``{total, items}`` for the lazy list."""
+    paths = list(reversed(list_backups(get_settings().profiles_dir, name)))   # newest first
+    page = paths[offset:] if limit <= 0 else paths[offset:offset + limit]
+    return {"total": len(paths), "items": [backup_meta(p) for p in page]}
 
 
 @router.get("/{name}/backups/{stamp}")
