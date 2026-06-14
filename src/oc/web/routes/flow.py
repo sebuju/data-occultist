@@ -46,11 +46,13 @@ def flow(game: str):
     return {"game": game, "windows": windows, "datasets": datasets}
 
 
-def _store(game: str, dataset: str) -> DatasetStore:
+def _store(game: str, dataset: str, aggregate: str | None = None) -> DatasetStore:
     settings = get_settings()
     profile = load_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
     key = profile.key_map_for(dataset) if profile else KeySpec()
-    agg = profile.aggregate_for(dataset) if profile else "latest"
+    # a view passes its OWN aggregate (the 'many → one' is the view's call); a bare
+    # dataset read falls back to the dataset default (or "latest").
+    agg = aggregate if aggregate is not None else (profile.aggregate_for(dataset) if profile else "latest")
     return DatasetStore(settings.data_dir, game, dataset, key=key, aggregate=agg)
 
 
@@ -173,27 +175,32 @@ def _subset(game: str, subset: str):
     return profile, sub
 
 
-def _input_rows(profile, game: str, input_id: str, stack: frozenset, cache: dict) -> list[dict]:
-    """Rows for one view input. A dataset input -> its stored records; a VIEW input -> that
-    view computed first (recursively), so its derived columns are available to the consumer.
+def _input_rows(profile, game: str, input_id: str, stack: frozenset, cache: dict,
+                aggregate: str = "latest") -> list[dict]:
+    """Rows for one view input. A dataset input -> its stored records aggregated by the
+    CONSUMING view's ``aggregate`` policy; a VIEW input -> that view computed first
+    (recursively, with ITS own aggregate), so its derived columns are available here.
     `stack` holds the views currently being computed -> a cycle resolves to no rows instead
-    of recursing forever. `cache` memoises so a shared upstream view computes once."""
-    if input_id in cache:
-        return cache[input_id]
+    of recursing forever. `cache` memoises by (input, aggregate) so a shared upstream
+    computes once per policy."""
+    ck = (input_id, aggregate)
+    if ck in cache:
+        return cache[ck]
     sub = profile.subset_def(input_id)
     if sub is None:                                   # a plain dataset
-        rows = _store(game, input_id).records()
+        rows = _store(game, input_id, aggregate).records()
     elif input_id in stack:                           # cycle -> stop
         rows = []
     else:
         rows = _compute_subset_rows(profile, game, sub, stack | {input_id}, cache)
-    cache[input_id] = rows
+    cache[ck] = rows
     return rows
 
 
 def _compute_subset_rows(profile, game: str, sub, stack: frozenset, cache: dict) -> list[dict]:
     from ...enrich.subset import compute_view
-    inputs = [(i, _input_rows(profile, game, i, stack, cache)) for i in sub.inputs()]
+    agg = getattr(sub, "aggregate", "latest") or "latest"
+    inputs = [(i, _input_rows(profile, game, i, stack, cache, agg)) for i in sub.inputs()]
     return compute_view(inputs, sub)["rows"]
 
 
@@ -206,6 +213,7 @@ def subset_view(game: str, subset: str):
     from ...enrich.subset import compute_view
     profile, sub = _subset(game, subset)
     cache: dict = {}
-    inputs = [(i, _input_rows(profile, game, i, frozenset({subset}), cache)) for i in sub.inputs()]
+    agg = getattr(sub, "aggregate", "latest") or "latest"
+    inputs = [(i, _input_rows(profile, game, i, frozenset({subset}), cache, agg)) for i in sub.inputs()]
     result = compute_view(inputs, sub)
     return {"subset": subset, "datasets": sub.inputs(), **result}

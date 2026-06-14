@@ -22,7 +22,7 @@ import ast
 import operator
 import re
 
-from ..profile.models import DerivedColumn, FilterRule, SubsetDef
+from ..profile.models import DerivedColumn, FilterRule, SortRule, SubsetDef
 
 _PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 _INLINE_MATH = re.compile(r"\{=([^{}]+)\}")   # an inline arithmetic block within a text template
@@ -179,8 +179,15 @@ def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
     for row in rows:
         apply_derived(row, sub.derived)
     rows = [r for r in rows if all(match_rule(r, f) for f in sub.filters if f.field)]
-    if sub.sort_by:
-        rows.sort(key=lambda r: _sort_key(r.get(sub.sort_by)), reverse=sub.sort_desc)
+    # multi-column sort (primary first), applied BEFORE limit. Folds the legacy single
+    # sort_by/sort_desc in when no `sort` list is set. A stable sort applied from the LAST
+    # rule to the FIRST makes earlier rules dominate while later ones break ties.
+    sort_rules = list(getattr(sub, "sort", None) or [])
+    if not sort_rules and sub.sort_by:
+        sort_rules = [SortRule(field=sub.sort_by, desc=sub.sort_desc)]
+    for rule in reversed(sort_rules):
+        if rule.field:
+            rows.sort(key=lambda r, f=rule.field: _sort_key(r.get(f)), reverse=rule.desc)
     if sub.limit and sub.limit > 0:
         rows = rows[: sub.limit]
 

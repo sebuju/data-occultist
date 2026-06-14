@@ -161,15 +161,16 @@ def _resolver(data_dir, game: str, resolve):
 
 
 def gather_source_items(data_dir, game: str, profile, sources: list[str],
-                        resolve=None) -> list[tuple[str, str]]:
+                        resolve=None, name_field: str = "name") -> list[tuple[str, str]]:
     """``(slug, name)`` pairs for every item across a node's ``sources`` (datasets/views),
-    de-duped by slug. Names that don't resolve to a market slug are dropped."""
+    de-duped by slug. ``name_field`` is the column holding the item name (selectable per
+    price node). Names that don't resolve to a market slug are dropped."""
     resolve = _resolver(data_dir, game, resolve)
     rows: list[dict] = []
     cache: dict = {}
     for s in sources:
         rows.extend(_source_rows(data_dir, game, profile, s, frozenset(), cache))
-    return inventory_slugs(rows, "name", resolve)
+    return inventory_slugs(rows, name_field or "name", resolve)
 
 
 # ---- the sweep --------------------------------------------------------------
@@ -193,7 +194,8 @@ def _run_sweep(data_dir, game: str, price_node, *, profile, key, resolve, items,
         # Item source: explicit `items` (e.g. on_change changed keys) > the node's
         # `sources` datasets/views > the whole catalogue (items stays None).
         if items is None and getattr(price_node, "sources", None):
-            items = gather_source_items(data_dir, game, profile, price_node.sources, resolve)
+            items = gather_source_items(data_dir, game, profile, price_node.sources, resolve,
+                                        name_field=getattr(price_node, "source_field", "name"))
         sweep_catalogue(
             data_dir, game, dataset, key=key, throttle=price_node.throttle, timeout=timeout,
             limit=limit, workers=workers, mode=price_node.mode, on_item=on_item,

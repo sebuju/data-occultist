@@ -66,7 +66,7 @@ class TriggerRunner:
         fired: list[str] = []
         items = None
         for t in self._profile.triggers:
-            if not t.enabled or t.kind != "on_change" or dataset not in t.watch:
+            if not t.enabled or t.kind != "on_change" or not self._watches(t, dataset):
                 continue
             if items is None:
                 items = self._items_for(changed_records)
@@ -75,6 +75,28 @@ class TriggerRunner:
         return fired
 
     # ---- helpers -----------------------------------------------------------
+
+    def _watches(self, trigger, dataset: str) -> bool:
+        """Does ``trigger`` watch ``dataset`` — directly, or via a watched VIEW that reads it
+        (a view can be wired into a trigger's watch, so a change to any of its source datasets
+        should fire it)."""
+        for w in trigger.watch:
+            if w == dataset or self._subset_reaches(w, dataset, set()):
+                return True
+        return False
+
+    def _subset_reaches(self, sid: str, dataset: str, seen: set) -> bool:
+        """Does view ``sid`` read ``dataset`` through its (transitive) inputs?"""
+        if sid in seen:
+            return False
+        seen.add(sid)
+        sub = self._profile.subset_def(sid)
+        if sub is None:
+            return False
+        for inp in sub.inputs():
+            if inp == dataset or self._subset_reaches(inp, dataset, seen):
+                return True
+        return False
 
     def _items_for(self, records: list[dict]) -> list[tuple[str, str]]:
         if self._resolve is None:

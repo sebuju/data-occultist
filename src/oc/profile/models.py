@@ -335,6 +335,9 @@ class WindowDef(BaseModel):
     items: list[ItemDef] = Field(default_factory=list)
     scroll: ScrollDef | None = None
     preprocess: Preprocess = Field(default_factory=Preprocess)
+    # whether this window is attempted in live view (the graph UI's continuous re-read).
+    # Off = skipped by the live loop; pure UI control, the collector ignores it.
+    live: bool = True
 
     @property
     def dataset_id(self) -> str:
@@ -397,6 +400,14 @@ class DerivedColumn(BaseModel):
     template: str = ""
 
 
+class SortRule(BaseModel):
+    """One sort key for a view. Multiple rules sort by the first as primary, the next as
+    tie-breaker, and so on. Applied AFTER filter/derive and BEFORE limit."""
+
+    field: str = ""
+    desc: bool = False
+
+
 class EnrichRule(BaseModel):
     """Attach external data to each row via a registered :class:`Enricher` (e.g.
     warframe.market prices, relic contents). The enricher reads ``source_field`` (a base
@@ -430,6 +441,10 @@ class PriceNodeDef(BaseModel):
     # relic-reward dataset to price just this run's rewards). Wired in the graph UI as
     # input edges; resolved to slugs via the catalogue resolver before a sweep.
     sources: list[str] = Field(default_factory=list)
+    # Which column on the source rows names the item to price (resolved to a market
+    # slug). Default ``name``; selectable in the UI when a source's item names live
+    # under a different column.
+    source_field: str = "name"
 
 
 class TriggerDef(BaseModel):
@@ -461,11 +476,16 @@ class SubsetDef(BaseModel):
     dataset: str = ""               # legacy single source (kept; folds into ``datasets``)
     datasets: list[str] = Field(default_factory=list)   # sources to join (on ``join_field``)
     join_field: str = "name"        # field the datasets are joined on
+    # How each dataset input's MANY observations per key collapse to one value when this
+    # view reads them — the view's call, not the dataset's (one dataset can feed two views
+    # that want latest vs sum). ``latest|first|sum|mean|max|min``.
+    aggregate: str = "latest"
     filters: list[FilterRule] = Field(default_factory=list)
     derived: list[DerivedColumn] = Field(default_factory=list)
     hidden_columns: list[str] = Field(default_factory=list)  # result columns to omit from the view
     enrich: list[EnrichRule] = Field(default_factory=list)   # legacy; price is a producer now
-    sort_by: str = ""
+    sort: list[SortRule] = Field(default_factory=list)   # multi-column sort (primary first)
+    sort_by: str = ""               # legacy single-column sort (folded into ``sort``)
     sort_desc: bool = False
     limit: int = 0                  # 0 = no limit
     config_collapsed: bool = False  # UI: the view's config block is folded away (persists per game)

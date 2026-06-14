@@ -79,8 +79,10 @@ def start(settings) -> None:
 
 
 def schedule(game: str, settings) -> list[dict]:
-    """Live trigger view for ``game``: each enabled trigger, its target sweep status, and —
-    for interval triggers — seconds until the next fire. Pulled by /api/activity."""
+    """Live trigger view for ``game``: every trigger (``enabled`` flagged), its target
+    sweep status, and — for enabled interval triggers — seconds until the next fire.
+    Disabled triggers are included so the Activity panel can show + re-enable them.
+    Pulled by /api/activity."""
     with _lock:
         try:
             runner, profile = _runner_for(game, settings)
@@ -90,16 +92,15 @@ def schedule(game: str, settings) -> list[dict]:
         by_id = {p.id: p for p in profile.price_nodes}
         out: list[dict] = []
         for t in profile.triggers:
-            if not t.enabled:
-                continue
             targets = [{"id": pid, "dataset": by_id[pid].dataset,
                         "running": bool(sweep_status(game, by_id[pid].dataset).get("running"))}
                        for pid in t.targets if pid in by_id]
-            item = {"id": t.id, "kind": t.kind, "targets": targets}
+            item = {"id": t.id, "kind": t.kind, "targets": targets, "enabled": bool(t.enabled)}
             if t.kind == "interval":
-                nxt = runner._last.get(t.id, now) + t.interval_s
                 item["interval_s"] = t.interval_s
-                item["next_in"] = max(0, round(nxt - now))
+                if t.enabled:   # a disabled trigger never fires -> no countdown
+                    nxt = runner._last.get(t.id, now) + t.interval_s
+                    item["next_in"] = max(0, round(nxt - now))
             elif t.kind == "on_change":
                 item["watch"] = list(t.watch)
             out.append(item)
