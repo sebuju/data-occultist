@@ -28,14 +28,20 @@ def text_match_score(want: str, got: str, included: bool = False) -> float:
     matches (e.g. 'INVTNTORYSELL' ~ 'INVENTORY / SELL').
 
     ``partial_ratio`` aligns the shorter string anywhere inside the longer one, so a
-    long OCR read that merely *contains* the target would otherwise score ~1.0. A read
-    far longer than the expected text means the box caught a paragraph (wrong screen),
-    not the landmark — so it's dismissed.
+    read that merely *contains* (or is contained by) the target would otherwise score
+    ~1.0. Two guards reject that:
+    - Too LONG: a read far longer than the target means the box caught a paragraph
+      (wrong screen), not the landmark.
+    - Too SHORT: a read far shorter than the target is a fragment/noise — e.g. a 3-char
+      blob "war" sits inside "reward" and would score 1.0, so a near-empty box would
+      false-match. Require the read to cover most of the target's length.
     """
     nw, ng = _norm(want), _norm(got)
     if not nw or not ng:
         return 0.0
     if len(ng) > max(len(nw) * 3, len(nw) + 8):
+        return 0.0
+    if len(ng) < 0.75 * len(nw):   # fragment, not the landmark
         return 0.0
     from rapidfuzz import fuzz
     a, b = (ng, nw) if included else (nw, ng)   # look for a inside b
@@ -69,17 +75,38 @@ class DetectMatcher:
             self._memo[key] = cached
         return cached
 
+    def _text_score(self, det: DetectDef, frame: Frame) -> tuple[str, float]:
+        """(read text, 0..1 score) for a text detector — the ONE runtime read path
+        (``read_line``, recognition-only). Both ``score`` and ``evaluate`` go through here
+        so the editor preview can never read a detect box differently than classify() will."""
+        box = det.search.to_fraction().to_pixels(frame.client.w, frame.client.h)
+        text, _conf = self._read_text_box(frame, box)
+        read = text.strip()
+        return read, text_match_score((det.text or "").lower(), read.lower(), det.included)
+
     def score(self, det: DetectDef, frame: Frame) -> float:
         """Return a 0..1 confidence that this detector is present."""
-        box = det.search.to_fraction().to_pixels(frame.client.w, frame.client.h)
         if det.template:
+            box = det.search.to_fraction().to_pixels(frame.client.w, frame.client.h)
             tmpl = load_template(self._dir / det.template)
             crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
             return best_match(crop, tmpl)
         if det.text:
-            text, _conf = self._read_text_box(frame, box)
-            return text_match_score(det.text.lower(), text.strip().lower(), det.included)
+            return self._text_score(det, frame)[1]
         return 0.0
 
     def matches(self, det: DetectDef, frame: Frame) -> bool:
         return self.score(det, frame) >= det.threshold
+
+    def evaluate(self, det: DetectDef, frame: Frame) -> dict:
+        """{matched, read, score, threshold} for the editor preview — using the EXACT
+        runtime path (``score``/``_text_score``), so what the UI shows is what classify()
+        does. (The old preview used ``read_region`` — full detection — and silently
+        disagreed with the recognition-only runtime read.)"""
+        if det.template:
+            s = self.score(det, frame)
+            return {"matched": s >= det.threshold, "read": "(template)",
+                    "score": round(s, 2), "threshold": det.threshold}
+        read, s = self._text_score(det, frame)
+        return {"matched": bool(det.text) and s >= det.threshold, "read": read,
+                "score": round(s, 2), "threshold": det.threshold}

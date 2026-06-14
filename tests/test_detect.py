@@ -24,6 +24,14 @@ def test_short_fragment_still_matches():
     assert text_match_score("search", "searchbar") >= 0.8
 
 
+def test_tiny_substring_is_dismissed():
+    # a near-empty box reads a 2-3 char blob that happens to sit inside the target;
+    # partial_ratio would score it ~1.0, so the too-short guard must reject it
+    assert text_match_score("reward", "war") == 0.0
+    assert text_match_score("reward", "re", included=True) == 0.0
+    assert text_match_score("inventory", "in") == 0.0
+
+
 def test_empty_is_zero():
     assert text_match_score("x", "") == 0.0
     assert text_match_score("", "y") == 0.0
