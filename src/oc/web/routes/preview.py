@@ -21,11 +21,23 @@ from ...profile import GameProfile, KeyDef
 from ...types import Frame, PixelBox
 from .. import captures_store
 from ..deps import get_engine, get_locator, get_settings
+from ..video_source import get_video_source
 
 router = APIRouter(prefix="/api", tags=["preview"])
 
 
 def _frame_for(engine, profile, game, capture):
+    # Testing harness: when a video is loaded AND enabled, the live-grab path
+    # (capture=None) reads the current decoded video frame instead of the window,
+    # so live mode runs with no game open. An explicit stashed capture still wins.
+    if not (game and capture):
+        vs = get_video_source()
+        if vs.enabled:
+            img = vs.current_image()
+            if img is None:
+                raise HTTPException(status_code=409, detail="test video has no frame")
+            h, w = img.shape[:2]
+            return Frame(image=img, client=PixelBox(0, 0, w, h))
     if game and capture:
         path = captures_store.path_for(get_settings().captures_dir, game, capture)
         if path is None:
