@@ -335,15 +335,18 @@ class PrecaptureSession:
         out = []
         for p in self._session_dirs():
             meta = self._read_meta(p)
+            frames, nbytes = 0, 0
             try:
-                frames = len(list(p.glob("*.jpg")))
+                for f in p.glob("*.jpg"):
+                    frames += 1
+                    nbytes += f.stat().st_size
             except OSError:
-                frames = 0
+                pass
             st = self._peek_state(p)
             out.append({
                 "id": p.name, "label": meta.get("label", ""),
                 "created": meta.get("created"), "saved_at": meta.get("saved_at"),
-                "frames": frames, "processed": st.get("processed", 0),
+                "frames": frames, "bytes": nbytes, "processed": st.get("processed", 0),
                 "records": st.get("records", 0), "active": p.name == self._session,
             })
         out.sort(key=lambda s: s["id"], reverse=True)
