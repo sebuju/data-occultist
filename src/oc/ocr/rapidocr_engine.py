@@ -220,6 +220,15 @@ class RapidOcrEngine(OcrEngine):
             _register_cuda_dlls()
         self._engine = None   # force re-init with the new providers
 
+    def release(self) -> None:
+        """Drop the loaded model so its ONNX CUDA session is destroyed, freeing the GPU
+        arena / VRAM it was squatting on. The device selection is left untouched: the
+        next read rebuilds the engine lazily (on GPU if still selected)."""
+        import gc
+
+        self._engine = None   # last ref to the RapidOCR/ORT sessions -> dtor frees CUDA
+        gc.collect()
+
     def _ensure_engine(self):
         if self._engine is None:
             # Build under a lock: the startup warmup thread and a first real request can

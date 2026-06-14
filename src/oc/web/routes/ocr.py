@@ -76,6 +76,16 @@ def set_device(device: str):
     return state
 
 
+@router.post("/release")
+def release_gpu():
+    """Kill the GPU OCR session to release VRAM. The model is dropped and rebuilt lazily
+    on the next read; the device selection is left as-is."""
+    ocr = get_engine().ocr
+    if hasattr(ocr, "release"):
+        ocr.release()
+    return _state()
+
+
 @router.post("/scale")
 def set_scale(scale: int):
     ocr = get_engine().ocr

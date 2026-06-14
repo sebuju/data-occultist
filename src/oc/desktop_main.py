@@ -16,6 +16,19 @@ import os
 
 
 def run_release() -> int:
+    import sys
+
+    # Under pythonw (the desktop shortcut / #app.bat / app.ps1 -> no console) Python sets
+    # sys.stdout/stderr to None. uvicorn's logging and pywebview write to them, which
+    # raises and the window never opens (the process dies with exit 1). Point the missing
+    # streams at the null device so that library output is harmlessly dropped.
+    if sys.stdout is None or sys.stderr is None:
+        devnull = open(os.devnull, "w")  # noqa: SIM115 - lives for the whole process
+        if sys.stdout is None:
+            sys.stdout = devnull
+        if sys.stderr is None:
+            sys.stderr = devnull
+
     # Absolute import so this works both as `data-rig app` (installed package) and as
     # `pythonw -m oc.desktop_main` (the install.ps1 shortcut), regardless of __main__.
     from oc.web.desktop import free_port, open_window, serve_in_thread
