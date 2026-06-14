@@ -16,19 +16,29 @@ def _device_file() -> Path:
     return Path(get_settings().data_dir) / ".ocr_device"
 
 
-def _read_persisted() -> str | None:
+# The OCR device MODE: "cpu" / "gpu" / "auto". "auto" runs OCR on CPU for the snappy
+# interactive work (authoring nodes, preview, detect — sparse small reads where CUDA
+# init + per-call overhead lose) and flips to GPU only for the precapture BATCH (many
+# frames at once, where GPU batching wins), then frees the GPU again. Default = "auto".
+_MODES = ("cpu", "gpu", "auto")
+DEFAULT_MODE = "auto"
+
+
+def read_mode() -> str:
+    """The persisted device MODE, defaulting to ``auto``. Tolerates the legacy file that
+    stored a bare ``cpu``/``gpu``."""
     try:
         v = _device_file().read_text(encoding="utf-8").strip()
-        return v if v in ("cpu", "gpu") else None
+        return v if v in _MODES else DEFAULT_MODE
     except OSError:
-        return None
+        return DEFAULT_MODE
 
 
-def _write_persisted(device: str) -> None:
+def _write_mode(mode: str) -> None:
     try:
         p = _device_file()
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(device, encoding="utf-8")
+        p.write_text(mode, encoding="utf-8")
     except OSError:
         pass
 
@@ -45,20 +55,27 @@ def _read_scale() -> int:
 
 
 def apply_persisted() -> None:
-    """Apply the persisted CPU/GPU choice AND downscale factor to the engine — called at
-    startup so the selection survives reloads and restarts."""
+    """Apply the persisted device MODE AND downscale factor to the engine — called at
+    startup so the selection survives reloads and restarts. ``auto``/``cpu`` baseline the
+    engine on CPU (auto bursts to GPU per precapture batch); ``gpu`` pins it to GPU."""
     ocr = get_engine().ocr
-    dev = _read_persisted()
-    if dev and hasattr(ocr, "set_device"):
-        ocr.set_device(dev == "gpu")
+    if hasattr(ocr, "set_device"):
+        ocr.set_device(read_mode() == "gpu")
     if hasattr(ocr, "set_scale"):
         ocr.set_scale(_read_scale())
 
 
 def _state() -> dict:
     ocr = get_engine().ocr
-    return {"device": getattr(ocr, "device", "cpu"), "gpu_available": cuda_available(),
+    return {"device": getattr(ocr, "device", "cpu"), "mode": read_mode(),
+            "gpu_available": cuda_available(),
+            "gpu_active": bool(getattr(ocr, "gpu_active", False)),
             "scale": getattr(ocr, "scale", 1)}
+
+
+def ocr_state() -> dict:
+    """Public OCR device snapshot for the activity heartbeat (one poll feeds everything)."""
+    return _state()
 
 
 @router.get("/device")
@@ -68,12 +85,14 @@ def get_device():
 
 @router.post("/device")
 def set_device(device: str):
+    """Set the device MODE (``cpu`` / ``gpu`` / ``auto``). ``gpu`` pins the engine to GPU;
+    ``cpu`` and ``auto`` baseline it on CPU (auto bursts to GPU per precapture batch)."""
+    mode = device if device in _MODES else DEFAULT_MODE
     ocr = get_engine().ocr
     if hasattr(ocr, "set_device"):
-        ocr.set_device(device == "gpu")
-    state = _state()
-    _write_persisted(state["device"])
-    return state
+        ocr.set_device(mode == "gpu")
+    _write_mode(mode)
+    return _state()
 
 
 @router.post("/release")

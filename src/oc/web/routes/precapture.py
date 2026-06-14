@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from ...collect.precapture import PrecaptureSession
 from ...profile import list_profiles, load_profile
 from ..deps import get_engine, get_settings
+from .ocr import read_mode
 
 router = APIRouter(prefix="/api/precapture", tags=["precapture"])
 
@@ -109,6 +110,8 @@ def record_stop(game: str):
 @router.post("/{game}/process/start")
 def process_start(game: str):
     s = _session(game)
+    # auto-mode runs the batch on GPU (then frees it); cpu/gpu leave the device as-is
+    s.batch_device = "gpu" if read_mode() == "auto" else None
     s.start_processing()
     return s.status()
 

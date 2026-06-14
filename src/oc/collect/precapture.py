@@ -233,6 +233,10 @@ class PrecaptureSession:
         self._scroll_clicks = _AUTOSCROLL_CLICKS   # wheel notches per nudge (live-adjustable)
         self._worker_kind: str | None = None   # "recording" | "processing" — restores phase on resume
         self._thread: threading.Thread | None = None
+        # "auto" device policy: set to "gpu" by the web layer to run the PROCESSING batch on
+        # GPU (many frames -> GPU batching wins), then restore the baseline device (which
+        # frees the GPU). None = use whatever device the engine is already on.
+        self.batch_device: str | None = None
 
         self._frames: list[bytes] = []        # JPEG-encoded captures held in RAM (live recording)
         self._frame_paths: list[Path] = []    # on-disk frames of a loaded session (read lazily)
@@ -666,7 +670,38 @@ class PrecaptureSession:
         self._thread = threading.Thread(target=self._process_loop, args=(sources, cw, ch), daemon=True)
         self._thread.start()
 
+    def _enter_batch_device(self) -> str | None:
+        """Auto-mode: flip the shared OCR engine to ``batch_device`` for the processing
+        batch. Returns the device to restore afterwards (or None when no switch happened)."""
+        want = self.batch_device
+        ocr = getattr(self._engine, "ocr", None)
+        if not want or ocr is None or not hasattr(ocr, "set_device"):
+            return None
+        if getattr(ocr, "device", None) == want:
+            return None
+        if want == "gpu":
+            from ..ocr.rapidocr_engine import cuda_available
+            if not cuda_available():
+                return None
+        prev = ocr.device
+        ocr.set_device(want == "gpu")
+        return prev
+
+    def _exit_batch_device(self, prev: str | None) -> None:
+        """Restore the pre-batch device. Going back to CPU drops the CUDA session, so the
+        GPU's VRAM is freed the moment the batch ends."""
+        ocr = getattr(self._engine, "ocr", None)
+        if prev is not None and ocr is not None and hasattr(ocr, "set_device"):
+            ocr.set_device(prev == "gpu")
+
     def _process_loop(self, sources: list, cw: int, ch: int) -> None:
+        restore = self._enter_batch_device()
+        try:
+            self._process_batch(sources, cw, ch)
+        finally:
+            self._exit_batch_device(restore)
+
+    def _process_batch(self, sources: list, cw: int, ch: int) -> None:
         eng = self._engine
         floor = self._tuning.min_confidence
         last_detect_sig: int | None = None

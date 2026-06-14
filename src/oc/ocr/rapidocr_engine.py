@@ -178,7 +178,10 @@ class RapidOcrEngine(OcrEngine):
     """
 
     def __init__(self, **options) -> None:
-        self._gpu = bool(options.pop("use_gpu", False))   # settings.ocr.options.use_gpu
+        # Baseline CPU. The web UI's device MODE (cpu/gpu/auto) drives runtime switching;
+        # CLI use opts in via settings.ocr.options.use_gpu. GPU for small interactive reads
+        # rarely pays (CUDA init + per-call overhead) — auto-mode reserves it for batches.
+        self._gpu = bool(options.pop("use_gpu", False))
         self._options = options
         self._engine = None
         self._scale = 1   # integer downscale factor for big frames (1 = off; 2 -> quarter area)
@@ -209,6 +212,13 @@ class RapidOcrEngine(OcrEngine):
     @property
     def device(self) -> str:
         return "gpu" if self._gpu else "cpu"
+
+    @property
+    def gpu_active(self) -> bool:
+        """True iff a GPU OCR session is currently LOADED (holding VRAM) — drives the web
+        UI's kill-GPU affordance. False after ``release()`` until the next read rebuilds
+        the engine, and always False on CPU."""
+        return self._engine is not None and self._gpu
 
     def set_device(self, gpu: bool) -> None:
         """Switch CPU<->GPU at runtime. Rebuilds the model on next use."""
@@ -252,10 +262,14 @@ class RapidOcrEngine(OcrEngine):
                         # but this RapidOCR ignores the configured limit for anything
                         # except 'min' — TextDetector.get_preprocess overrides it.)
                         opts.update(det_limit_type="min", det_limit_side_len=320)
+                    # Force the providers BOTH ways. With onnxruntime-gpu installed
+                    # RapidOCR auto-selects CUDA even when we never asked for it, so an
+                    # unset flag means "cpu" silently runs on the GPU and the reported
+                    # device lies. Setting it explicitly makes the selection authoritative.
+                    opts.update(det_use_cuda=self._gpu, rec_use_cuda=self._gpu)
                     if self._gpu:   # CUDA for detection and recognition
                         _patch_cuda_conv_search()   # before any CUDA session is built
                         _patch_arena_shrinkage()    # free dead arena chunks after each run
-                        opts.update(det_use_cuda=True, rec_use_cuda=True)
                     self._engine = RapidOCR(**opts)
         return self._engine
 
