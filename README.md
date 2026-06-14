@@ -1,84 +1,52 @@
 # data-rig
 
-> Collect clean, structured data from games by reading the screen — capture the
-> game window, recognise which in-game panel is showing, OCR the labelled
-> regions, and write deduplicated records. No game-specific code: everything is
-> taught through a web UI and stored as per-game config.
+Reads structured data off game screens via OCR. Captures the game window,
+identifies which panel is on screen, OCRs the regions you marked, and writes
+deduplicated records with change history. The pipeline drops frames it can't read
+cleanly (pop-ups, tooltips, occlusion, mid-scroll), so it only records stable
+reads.
 
-`data-rig` watches a game window, figures out **which** window/state is on screen,
-reads the data regions you taught it, fuzzy-corrects noisy OCR against a
-self-learning per-game dictionary, and writes stable records with full change
-history. It is robust to pop-ups, tooltips, occlusion, and scrolling.
+No game-specific code: what to read and where is per-game config, authored in a
+web UI and stored as YAML.
 
-**First target:** catalogue the **Warframe** equipment window, then price every
-item against [warframe.market](https://warframe.market).
+The example profile catalogues the Warframe equipment window and prices items
+against [warframe.market](https://warframe.market).
 
 ---
 
 ## Table of contents
 
-- [Why](#why)
-- [Highlights](#highlights)
 - [Requirements](#requirements)
 - [Install](#install)
-- [Quickstart](#quickstart)
+- [Run it](#run-it)
 - [Desktop app](#desktop-app)
-- [Tutorial: teach your first window](#tutorial-teach-your-first-window)
+- [Tutorial: your first window](#tutorial-your-first-window)
 - [CLI reference](#cli-reference)
 - [How it works](#how-it-works)
 - [Profiles: the per-game config](#profiles-the-per-game-config)
 - [Where data lives](#where-data-lives)
-- [GPU OCR (optional)](#gpu-ocr-optional)
+- [GPU OCR](#gpu-ocr)
 - [Development](#development)
 - [Project layout](#project-layout)
-- [Design principles](#design-principles)
+- [Design notes](#design-notes)
 
 ---
 
-## Why
-
-Games rarely expose their inventory/stats as data. Screen-scraping them usually
-means brittle, hard-coded pixel math per game. `data-rig` flips that: the program
-knows **nothing** about any game. You teach it — visually — what a window looks
-like, where the data sits, and what each region means. That knowledge is saved
-as plain config, so adding a game (or a new panel) never touches Python.
-
-## Highlights
-
-- **Teach, don't code.** A web UI lets you draw boxes on a live capture and
-  label them. Items, ranks, counts, sort orders, scroll grids — all taught.
-- **Resolution-independent.** Every box is stored as a fraction (0..1) of the
-  window client area, so a profile authored at 1080p works at 4K.
-- **Reads backgrounded windows.** Default capture uses `PrintWindow`, grabbing a
-  specific window's surface even when it's unfocused, occluded, or borderless.
-- **Robust by construction.** A record is only written after it reads identically
-  for N consecutive frames, so transient tooltips and pop-ups never get saved.
-- **Self-correcting OCR.** Confident reads teach a per-game dictionary;
-  low-confidence reads snap to the nearest known term via fuzzy matching.
-- **Stateful storage with history.** Each dataset keeps a current snapshot plus
-  an append-only change log (item added, rank 5→6, …), grouped into revertible
-  batches.
-- **Pluggable everything.** Capture, OCR, window provider, process detector,
-  classifier, corrector, enricher — all backends behind ABCs, chosen by name in
-  one settings file.
-- **Optional enrichment.** A Warframe-market enricher maps item names to market
-  slugs and reports min/median platinum prices (run after capture, never in the
-  hot loop).
-
 ## Requirements
 
-- **Windows** (the window/capture backends use win32; pure-logic code and tests
-  run anywhere).
+- **Windows** — the window/capture backends use win32. (Pure-logic code and tests
+  run anywhere.)
 - **Python 3.11+**
-- **Edge WebView2 Runtime** — only for the [desktop app](#desktop-app). Preinstalled
-  on Windows 11; `install.ps1` sets it up on Windows 10. The browser UI (`data-rig rig`)
-  needs nothing extra.
-- An **NVIDIA GPU** is recommended — `install.ps1` sets up CUDA OCR automatically when
-  it finds one (CPU is a slow fallback; see [GPU OCR](#gpu-ocr-optional)).
+- **NVIDIA GPU with CUDA** — effectively required. OCR on CPU works but is slow
+  enough to be impractical for real collection; treat it as a fallback only.
+  `install.ps1` sets up the CUDA OCR stack automatically when it finds a card.
+- **Edge WebView2 Runtime** — only for the [desktop app](#desktop-app).
+  Preinstalled on Windows 11; `install.ps1` sets it up on Windows 10. The browser
+  UI needs nothing extra.
 
 ## Install
 
-**One-stop (recommended).** Double-click **`#install.bat`**, or run:
+**Scripted.** Double-click **`#install.bat`**, or run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
@@ -86,39 +54,32 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Cpu   # force CPU 
 ```
 
 It checks for Python 3.11+ and the WebView2 runtime and offers to install anything
-missing via winget; creates `.venv` and installs the package; **downloads the GPU OCR
-stack** (onnxruntime-gpu + CUDA wheels) when an NVIDIA card is present; and drops an
-**`data-rig` shortcut** on your Desktop / Start menu. It never reinstalls what you already
-have, and exits with a summary if a prerequisite is still missing.
+missing via winget; creates `.venv` and installs the package; downloads the GPU
+OCR stack (onnxruntime-gpu + CUDA wheels) when an NVIDIA card is present; and drops
+a `data-rig` shortcut on the Desktop / Start menu. It skips anything already
+present and prints a summary of what's still missing.
 
 > `.ps1` files open in Notepad on double-click (Windows blocks run-on-click), so
-> `#install.bat` is the double-click entry — it calls `scripts\install.ps1` with the execution
-> policy bypassed. It runs as the **normal user** (so the venv and shortcuts are yours);
-> only the winget system-installs (Python / WebView2) elevate, via their own UAC prompt.
+> `#install.bat` is the double-click entry — it calls `scripts\install.ps1` with the
+> execution policy bypassed. It runs as the **normal user** (so the venv and
+> shortcuts are yours); only the winget system-installs (Python / WebView2) elevate,
+> via their own UAC prompt.
 
-**Manual.** If you'd rather wire it up yourself:
+**Manual.**
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,desktop]"   # drop ",desktop" if you only want the browser UI
-pip uninstall -y onnxruntime; pip install -e ".[gpu]"   # NVIDIA CUDA OCR (optional)
+pip uninstall -y onnxruntime; pip install -e ".[gpu]"   # NVIDIA CUDA OCR
 ```
 
-This installs `data-rig` as a console script plus the dev tools (`pytest`, `ruff`) and the
-optional `desktop` extra (`pywebview`) for the native window.
+This installs the dev tools (`pytest`, `ruff`) and the optional `desktop` extra
+(`pywebview`) for the native window.
 
-## Quickstart
+## Run it
 
-```powershell
-data-rig detect                 # which known games are running right now
-data-rig rig                  # open the web UI at http://127.0.0.1:8000
-data-rig capture warframe --out shot.png   # save one screenshot of the game window
-data-rig collect warframe       # run the capture -> OCR -> record loop
-data-rig price warframe         # enrich collected records with warframe.market prices
-```
-
-For day-to-day UI work, use the dev server script (auto-reloads on code change):
+Start the dev server (auto-reloads on code change) and open the UI:
 
 ```powershell
 .\scripts\start_server.ps1                 # http://127.0.0.1:8000, hot-reload on
@@ -127,42 +88,35 @@ For day-to-day UI work, use the dev server script (auto-reloads on code change):
 .\scripts\start_server.ps1 -NoReload       # single process (no reloader)
 ```
 
+Or double-click `#serve.bat` for a supervised server that restarts on crash or
+manual kill. Then open <http://127.0.0.1:8000>.
+
 ---
 
 ## Desktop app
 
-The same UI can run in a **native window** instead of a browser tab, via
-[`pywebview`](https://pywebview.flowlib.org/) (it renders through the Edge WebView2
-runtime on Windows — no Electron, no bundled browser). There are three launchers, and
-which one you pick decides **who owns the server**:
+The same UI can run in a native window instead of a browser tab, via
+[`pywebview`](https://pywebview.flowlib.org/), which renders through the Edge
+WebView2 runtime on Windows (no Electron, no bundled browser).
 
-| launcher | starts a server? | closing the window stops the server? | terminal window? |
-| --- | --- | --- | --- |
-| **`data-rig` shortcut** / `data-rig app` | yes | **yes** — one process owns both | none (shortcut) |
-| `data-rig view` | no — attaches to a running one | no | n/a |
-| `data-rig rig` | yes | n/a (no window — it's the browser UI) | yes |
+- **`data-rig` shortcut** — the shortcut `install.ps1` puts on the Desktop / Start
+  menu. Runs `pythonw -m oc.desktop_main` from the venv (no console window, custom
+  icon), so it uses the venv's GPU OCR stack. Starts the server, opens the window,
+  and stops the server on close.
+- **`#app.bat`** — repo-root double-click wrapper for the same thing; calls
+  `scripts\app.ps1`, which launches `pythonw -m oc.desktop_main` detached.
 
-- **`data-rig` shortcut** — the double-click app `install.ps1` puts on your Desktop / Start
-  menu. It runs `pythonw -m oc.desktop_main` from the venv (no console window, custom
-  icon), so it uses the GPU OCR stack the installer set up — no giant standalone bundle
-  to ship. Starts the server, opens the window, and stops the server when you close it.
-- **`data-rig app`** — the same release behaviour from a terminal (handy for testing).
-- **`#app.bat`** — double-click wrapper at the repo root for the same thing; calls
-  `scripts\app.ps1`, which launches `pythonw -m oc.desktop_main` detached (no console).
-- **`data-rig view [--host H] [--port N]`** — attach a window to a server you already
-  started with `data-rig rig` (default `127.0.0.1:8000`). Closing it leaves that server
-  running.
+The shortcut reuses the installed venv rather than bundling a packaged `.exe`,
+which would have to ship the multi-GB CUDA OCR runtime.
 
-> Why a shortcut and not a packaged `.exe`? A standalone exe would have to bundle the
-> CUDA OCR runtime (multiple GB). The shortcut reuses the installed venv instead, so
-> GPU OCR works and there's nothing huge to commit or download twice.
+The CLI launchers (`app`, `view`, `rig`) are in the [CLI reference](#cli-reference).
 
 ---
 
-## Tutorial: teach your first window
+## Tutorial: your first window
 
-This walks through teaching `data-rig` to read a game panel from scratch. We'll use
-Warframe's inventory, but the steps are identical for any game.
+This walks through configuring `data-rig` to read a game panel from scratch. We'll
+use Warframe's inventory, but the steps are identical for any game.
 
 ### 0. Start the game and the UI
 
@@ -181,8 +135,8 @@ with windows, regions, detectors, datasets, and subsets branching off it.
 - Add a game profile (name it, e.g. `warframe`) — this becomes
   `config/games/warframe.yaml`.
 - Add a **window** node. A window is one recognisable panel of the game.
-- Open the window's **image** node and click **recapture** — `data-rig` grabs the live
-  game window and shows its client area. Because the picture *is* the client
+- Open the window's **image** node and click **recapture** — `data-rig` grabs the
+  live game window and shows its client area. Because the picture *is* the client
   area, any box you draw ÷ image size **is** the fraction coordinate stored.
 
 ### 2. Draw a detector so `data-rig` recognises the panel
@@ -194,19 +148,12 @@ with windows, regions, detectors, datasets, and subsets branching off it.
 - A detector matches by **OCR text** (type the expected text, e.g. `INVENTORY`)
   or by **template image**. Set a `threshold` (default 0.8).
 - A window matches only when **all** its enabled detectors match. The detector
-  node shows a live ✓/✗ as you tweak it — recapture and watch it light up.
+  node shows a live ✓/✗ as you edit it; recapture to re-evaluate.
 
-> A window with no detectors never matches — by design. That's how `data-rig` avoids
-> reading the wrong screen.
+> A window with no detectors never matches. This is what stops `data-rig` reading
+> the wrong screen.
 
-### 3. (Optional) Teach states
-
-A **state** is a distinguishable mode of the window — usually a sort order. Draw
-a state detector over the "sorted by name ▼" indicator, and mark which states are
-`valid_for_save`. Records are only written while the window is in a save-worthy
-state, so you never catalogue data in the wrong order.
-
-### 4. Mark the data area and an item template
+### 3. Mark the data area and an item template
 
 - Draw a **data area** box to constrain OCR to the list region (stray UI text
   elsewhere is then never read).
@@ -219,7 +166,7 @@ state, so you never catalogue data in the wrong order.
   - a **locator** tell/field that finds row positions, so one template reads
     every row regardless of scroll.
 
-### 5. Tune fields
+### 4. Tune fields
 
 For each field you can set:
 
@@ -227,50 +174,43 @@ For each field you can set:
   `diamonds` (count filled rank diamonds).
 - **extract** — `whole`, `number`, `number_before/after`, `text_before/after`
   (with a `separator`, e.g. a mod rank `"7 / 10"`).
-- **learn** — turn on for identity text (item names): confident reads teach the
+- **learn** — turn on for identity text (item names): confident reads feed the
   dictionary, uncertain reads are fuzzy-corrected against it.
 - **fuzzy** — the similarity (0..1) an uncertain read must reach to snap to a
   known term.
-- **dict mode** — how the authored dictionary participates, word per word:
-  `off` (not consulted), `correct` (fix words, keep unmatched), `drop`
-  (validate only — a read with an unknown word is dropped), `correct + drop`
-  (fix what matches, drop a read with an unmatchable word).
+- **dict mode** — how the dictionary participates, word per word: `off` (not
+  consulted), `correct` (fix words, keep unmatched), `drop` (validate only — a
+  read with an unknown word is dropped), `correct + drop` (fix what matches, drop
+  a read with an unmatchable word).
 
-### 6. Preview, then collect
+### 5. Preview, then collect
 
 - Hit **preview** to OCR the current layout against the captured image and see
   exactly what each field reads, with confidence.
-- When it looks right, **save** (the UI writes the profile YAML), then run the
-  live loop:
+- When it looks right, **save** (the UI writes the profile YAML) and start the
+  collect loop from the UI. Scroll the in-game list while it runs — `data-rig`
+  stitches rows across scrolls, dedupes by key, and writes records once they
+  stabilise. Inspect results under `data/warframe/` (see
+  [Where data lives](#where-data-lives)) or on the dashboard at
+  <http://127.0.0.1:8000/dash.html>.
 
-```powershell
-data-rig collect warframe
-```
+> **Tip — precapture for fast lists.** Live OCR can't keep up with fast scrolling.
+> The UI's *precapture* mode records frames as fast as the capture backend allows
+> (no OCR), then batch-OCRs them afterward and stages the results for you to review
+> and save. Recordings persist to disk, so they survive a server restart and can be
+> re-processed.
 
-Scroll the in-game list while it runs — `data-rig` stitches rows across scrolls,
-dedupes by key, and writes records once they stabilise. Inspect results under
-`data/warframe/` (see [Where data lives](#where-data-lives)) or on the dashboard
-at <http://127.0.0.1:8000/dash.html>.
-
-### 7. Price it (Warframe)
-
-```powershell
-data-rig price warframe --window equipment
-```
-
-This reads the collected records, maps each item name to its warframe.market
-slug, fetches live sell orders, and writes a `*.enriched.jsonl` with min/median
-platinum.
-
-> **Tip — precapture for fast lists.** Live OCR can't keep up with fast
-> scrolling. The UI's *precapture* mode records frames as fast as the capture
-> backend allows (no OCR), then batch-OCRs them afterward and stages the results
-> for you to review and save. Recordings persist to disk, so they survive a
-> server restart and can be re-processed.
+> **Note on states.** A window can have *states* (distinguishable modes, usually a
+> sort order) with a `valid_for_save` gate, so records are only written in a
+> save-worthy state. States exist in the profile model and pipeline but are not yet
+> exposed in the UI — set them in YAML if you need them.
 
 ---
 
 ## CLI reference
+
+The UI is the primary interface. These subcommands exist for scripting and the
+desktop launchers:
 
 ```text
 data-rig detect                                   list running known games
@@ -287,8 +227,8 @@ data-rig profiles                                 list game profiles
 
 ## How it works
 
-The collection pipeline is a chain where **every stage can reject** — that's how
-robustness is enforced:
+The collection pipeline is a chain of stages; any stage can reject the frame and
+end the tick:
 
 1. **Locate** — is the process running? Is the window found (and foreground, if
    required)? A cached window handle is revalidated each frame, never rescanned.
@@ -303,11 +243,11 @@ robustness is enforced:
 6. **Store** — survivors go to the dataset's store, keyed by dataset so windows
    that share a dataset dedupe against each other.
 
-**Enrichment** runs *after* capture (never in the loop, so network issues can't
-hurt robustness): it reads a `.jsonl` and writes a `.enriched.jsonl`.
+Enrichment runs after capture, not in the loop, so network failures can't stall
+collection: it reads a `.jsonl` and writes a `.enriched.jsonl`.
 
-The whole system is **backends behind ABCs, chosen by name**. Contracts live in
-`src/oc/interfaces.py`; implementations self-register via decorators; and
+Each pluggable kind is a backend behind an ABC, selected by name. Contracts live
+in `src/oc/interfaces.py`; implementations self-register via decorators; and
 `config/settings.yaml` picks the backend for each kind plus tuning knobs:
 
 ```yaml
@@ -325,7 +265,7 @@ tuning:
   require_foreground: false # true only for screen-region capture
 ```
 
-Swapping a backend = change one name (and make sure a module registers it).
+Swapping a backend means changing one name (and ensuring a module registers it).
 
 ## Profiles: the per-game config
 
@@ -335,14 +275,14 @@ Swapping a backend = change one name (and make sure a module registers it).
 
 - **`detect`** — detectors that recognise the window (text or template).
 - **`states`** — distinguishable modes, each with its own detectors and a
-  `valid_for_save` flag.
+  `valid_for_save` flag (config-level; not yet exposed in the UI).
 - **`regions`** / **`items`** — what to OCR and which field each feeds. Item
   templates are matched across the data area and read cell-relative.
 - **`dataset`** — the logical collection these records join (defaults to the
   window id). Several windows can share a dataset to merge overlapping data.
 - an optional **`scroll`** grid describing how rows tile and which field dedupes.
 
-You should never need to hand-edit this YAML — author it all in the UI.
+The UI writes this YAML; hand-editing isn't normally needed.
 
 ## Where data lives
 
@@ -350,7 +290,7 @@ You should never need to hand-edit this YAML — author it all in the UI.
 data/<game>/
   <dataset>.state.json      current keyed records (first/last seen)
   <dataset>.history.jsonl   one change event per line (add / update / remove)
-  lexicon.json              the self-learned per-game dictionary
+  lexicon.json              the per-game dictionary
   *.enriched.jsonl          enrichment output (e.g. market prices)
 ```
 
@@ -360,9 +300,10 @@ separate reconcile step, only run after a *complete* pass and gated behind
 `tuning.detect_removals` (off by default) — a partial/occluded view must never be
 mistaken for "sold/deleted".
 
-## GPU OCR (optional)
+## GPU OCR
 
-OCR runs on CPU by default. For NVIDIA GPUs (CUDA 12 / cuDNN 9 on Windows):
+OCR needs an NVIDIA GPU to be usable (CUDA 12 / cuDNN 9 on Windows); the installer
+sets this up for you. To wire it up manually:
 
 ```powershell
 pip uninstall -y onnxruntime
@@ -371,7 +312,8 @@ pip install -e ".[gpu]"
 
 `onnxruntime-gpu` replaces `onnxruntime`; the bundled `nvidia-*-cu12` wheels ship
 the CUDA DLLs (the OCR engine adds them to PATH at runtime). Then pick **GPU** in
-the UI's top bar.
+the UI's top bar. CPU is available as a fallback but is too slow for real
+collection.
 
 ## Development
 
@@ -427,3 +369,15 @@ assets/oc.ico     app icon for the desktop shortcut
 scripts/          install.ps1 (setup), start_server.ps1 (dev server), serve.ps1
                   (supervisor), app.ps1 (webview launcher)
 ```
+
+## Design notes
+
+- Game knowledge lives in per-game profile YAML, not Python: items, mods, ranks,
+  sort orders, grids, and dedupe keys are all profile data.
+- Each pluggable kind (capture, OCR, window provider, process detector,
+  classifier, corrector, enricher) is a backend behind an ABC, selected in one
+  settings file.
+- Boxes are stored as fractions (0..1) of the window client area, so a profile
+  authored at 1080p resolves correctly at 4K.
+- Any pipeline stage can skip a frame, and a record is written only after it reads
+  identically for N consecutive frames.
