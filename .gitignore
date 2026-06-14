@@ -45,3 +45,6 @@ CLAUDE.md
 
 # Cross-terminal done signal (root only)
 /DONE
+
+# Personal scratch todo
+.TODO

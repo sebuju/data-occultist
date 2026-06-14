@@ -1,7 +1,11 @@
-"""Generate assets/data-rig.ico from the favicon glyph (rounded panel + 3 wired nodes).
+"""Generate the data-rig .ico from the favicon glyph (rounded panel + 3 wired nodes).
 
 Re-renders the same design as src/oc/web/static/favicon.svg with Pillow at multiple
 sizes and writes a multi-resolution .ico. Run: ``python packaging/make_icon.py``.
+
+Writes two copies of the one design: assets/data-rig.ico (the desktop shortcut points
+here) and src/oc/web/static/favicon.ico (ships in the package so the native window can
+set its title-bar / taskbar icon at runtime).
 """
 
 from __future__ import annotations
@@ -11,7 +15,10 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 _ROOT = Path(__file__).resolve().parent.parent
-_OUT = _ROOT / "assets" / "data-rig.ico"
+_OUTS = [
+    _ROOT / "assets" / "data-rig.ico",
+    _ROOT / "src" / "oc" / "web" / "static" / "favicon.ico",
+]
 
 # Design in the 32-unit space of favicon.svg, rendered up to a big master bitmap.
 BG = (0x15, 0x17, 0x1C, 255)
@@ -35,11 +42,12 @@ def render(px: int) -> Image.Image:
 
 
 def main() -> None:
-    _OUT.parent.mkdir(parents=True, exist_ok=True)
     sizes = [16, 24, 32, 48, 64, 128, 256]
     master = render(256)
-    master.save(_OUT, format="ICO", sizes=[(s, s) for s in sizes])
-    print(f"wrote {_OUT}")
+    for out in _OUTS:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        master.save(out, format="ICO", sizes=[(s, s) for s in sizes])
+        print(f"wrote {out}")
 
 
 if __name__ == "__main__":

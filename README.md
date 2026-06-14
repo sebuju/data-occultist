@@ -78,11 +78,11 @@ as plain config, so adding a game (or a new panel) never touches Python.
 
 ## Install
 
-**One-stop (recommended).** Double-click **`install.bat`**, or run:
+**One-stop (recommended).** Double-click **`#install.bat`**, or run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1
-powershell -ExecutionPolicy Bypass -File install.ps1 -Cpu   # force CPU OCR (skip CUDA)
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Cpu   # force CPU OCR (skip CUDA)
 ```
 
 It checks for Python 3.11+ and the WebView2 runtime and offers to install anything
@@ -92,7 +92,7 @@ stack** (onnxruntime-gpu + CUDA wheels) when an NVIDIA card is present; and drop
 have, and exits with a summary if a prerequisite is still missing.
 
 > `.ps1` files open in Notepad on double-click (Windows blocks run-on-click), so
-> `install.bat` is the double-click entry — it calls `install.ps1` with the execution
+> `#install.bat` is the double-click entry — it calls `scripts\install.ps1` with the execution
 > policy bypassed. It runs as the **normal user** (so the venv and shortcuts are yours);
 > only the winget system-installs (Python / WebView2) elevate, via their own UAC prompt.
 
@@ -121,10 +121,10 @@ data-rig price warframe         # enrich collected records with warframe.market 
 For day-to-day UI work, use the dev server script (auto-reloads on code change):
 
 ```powershell
-.\start_server.ps1                 # http://127.0.0.1:8000, hot-reload on
-.\start_server.ps1 -Port 8001
-.\start_server.ps1 -Background     # detached
-.\start_server.ps1 -NoReload       # single process (no reloader)
+.\scripts\start_server.ps1                 # http://127.0.0.1:8000, hot-reload on
+.\scripts\start_server.ps1 -Port 8001
+.\scripts\start_server.ps1 -Background     # detached
+.\scripts\start_server.ps1 -NoReload       # single process (no reloader)
 ```
 
 ---
@@ -147,6 +147,8 @@ which one you pick decides **who owns the server**:
   icon), so it uses the GPU OCR stack the installer set up — no giant standalone bundle
   to ship. Starts the server, opens the window, and stops the server when you close it.
 - **`data-rig app`** — the same release behaviour from a terminal (handy for testing).
+- **`#app.bat`** — double-click wrapper at the repo root for the same thing; calls
+  `scripts\app.ps1`, which launches `pythonw -m oc.desktop_main` detached (no console).
 - **`data-rig view [--host H] [--port N]`** — attach a window to a server you already
   started with `data-rig rig` (default `127.0.0.1:8000`). Closing it leaves that server
   running.
@@ -168,7 +170,7 @@ Launch the game and open the panel you want to read (e.g. the Equipment /
 Inventory screen). Then start the web UI:
 
 ```powershell
-.\start_server.ps1
+.\scripts\start_server.ps1
 ```
 
 Open <http://127.0.0.1:8000>. The UI is a node graph: a `game` node on the left,
@@ -387,7 +389,7 @@ RapidOCR models or Windows.
 Dev server (auto-reload on by default):
 
 ```powershell
-.\start_server.ps1            # -Port, -Background, -NoReload available
+.\scripts\start_server.ps1            # -Port, -Background, -NoReload available
 ```
 
 ## Project layout
@@ -419,18 +421,9 @@ config/
 data/             collected records, history, lexicon, enrichment output
 packaging/        app icon generator (make_icon.py)
 assets/oc.ico     app icon for the desktop shortcut
-install.ps1       one-stop Windows setup (winget GPU OCR + desktop shortcut)
-install.bat       double-click wrapper for install.ps1
+#install.bat      double-click wrapper for scripts/install.ps1
+#serve.bat        double-click wrapper for scripts/serve.ps1 (supervisor)
+#app.bat          double-click wrapper for scripts/app.ps1 (native webview window)
+scripts/          install.ps1 (setup), start_server.ps1 (dev server), serve.ps1
+                  (supervisor), app.ps1 (webview launcher)
 ```
-
-## Design principles
-
-- **Zero game knowledge in Python.** If a capability would otherwise be
-  hard-coded per game, it belongs in the profile model + web UI instead.
-- **Backends never import each other** — only `interfaces`/`types`. Cross-backend
-  wiring happens only in `engine.py`.
-- **Many small, single-concern files**; refactor wide for coherence.
-- **Windows-first**, but non-Windows backends simply don't register, so logic and
-  tests still work everywhere.
-
-See [CLAUDE.md](CLAUDE.md) for the deeper architecture notes.
