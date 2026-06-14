@@ -6,10 +6,10 @@
     2. ask       - collect EVERY decision up front (installs, GPU vs CPU, shortcut)
     3. execute   - do it all unattended, then print a summary
 
-  Double-click install.bat, or:
-      powershell -ExecutionPolicy Bypass -File install.ps1
-      powershell -ExecutionPolicy Bypass -File install.ps1 -Cpu   # prefer CPU OCR
-      powershell -ExecutionPolicy Bypass -File install.ps1 -Yes   # accept all defaults, no prompts
+  Double-click #install.bat, or:
+      powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+      powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Cpu   # prefer CPU OCR
+      powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Yes   # accept all defaults, no prompts
 
   Nothing is reinstalled if it already exists. Only the winget sub-installs (Python /
   WebView2, when missing) may raise their own UAC prompts; everything else is user-scope.
@@ -21,7 +21,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Definition)
 $venv = Join-Path $root '.venv'
 $gaps = New-Object System.Collections.Generic.List[string]
 

@@ -6,8 +6,8 @@ rem this wrapper launches PowerShell with the policy bypassed. It runs as the NO
 rem user on purpose: the venv, pip packages and shortcuts must be user-owned and land
 rem in YOUR profile. install.ps1 elevates only the specific winget system-installs
 rem (Python / WebView2) that actually need admin, via their own UAC prompt.
-rem Pass-through args work:  install.bat -Cpu   /   install.bat -Yes
+rem Pass-through args work:  #install.bat -Cpu   /   #install.bat -Yes
 setlocal
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1" %*
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install.ps1" %*
 echo.
 pause

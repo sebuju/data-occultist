@@ -1,4 +1,4 @@
-# start_server.ps1 — kill any uvicorn on the port and (re)start the dev server.
+# start_server.ps1 - kill any uvicorn on the port and (re)start the dev server.
 # Usage:  .\start_server.ps1            (foreground, default :8000, auto-reload)
 #         .\start_server.ps1 -Port 8001
 #         .\start_server.ps1 -Background  (detached; returns immediately)
@@ -7,7 +7,7 @@
 # Auto-reload is ON by default for dev. Caveat: under --reload uvicorn runs a
 # reloader parent that OWNS the listen socket and a worker child that does the
 # work; killing the worker by hand leaves the parent holding the port with
-# nobody serving it — requests hang and nothing respawns the worker. Use
+# nobody serving it - requests hang and nothing respawns the worker. Use
 # -NoReload for the single-process mode a manual-kill / supervisor
 # (scripts\serve.ps1) workflow needs.
 param(
@@ -17,7 +17,8 @@ param(
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
-$root = Split-Path -Parent $MyInvocation.MyCommand.Definition
+. (Join-Path $PSScriptRoot '_console.ps1'); Enable-AnsiColors   # render uvicorn's ANSI colors
+$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Definition)
 Set-Location $root
 $py = Join-Path $root '.venv\Scripts\python.exe'
 
@@ -40,7 +41,7 @@ if (-not $NoReload) {
   # auto-reload, but never restart on edits under scripts/ or tests/ (not served code).
   # reload-exclude globs are fnmatch-matched against the full path, so wrap in * and cover
   # both path separators for Windows.
-  # Watch ONLY the served source. With a bare --reload uvicorn watches the whole cwd —
+  # Watch ONLY the served source. With a bare --reload uvicorn watches the whole cwd -
   # which includes config/ and data/, so every teach save (the app writing a profile)
   # both restarts the server AND has the watcher lock the file mid-write (WinError 5 on
   # the atomic replace). Scoping to src/oc means data writes never trigger a reload.

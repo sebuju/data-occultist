@@ -15,6 +15,7 @@ param(
 )
 
 $ErrorActionPreference = "SilentlyContinue"
+. (Join-Path $PSScriptRoot '_console.ps1'); Enable-AnsiColors   # render uvicorn's ANSI colors
 $root = Split-Path -Parent $PSScriptRoot           # repo root (parent of scripts\)
 $oc = Join-Path $root ".venv\Scripts\data-rig.exe" # the `data-rig` console script (has `rig`)
 $py = Join-Path $root ".venv\Scripts\python.exe"
@@ -22,7 +23,7 @@ if (-not (Test-Path $py)) { $py = "python" }
 
 function Test-ServerUp {
     # An HTTP probe, NOT a port check: a uvicorn --reload parent whose worker was
-    # killed still LISTENS on the port while serving nothing — a port check would
+    # killed still LISTENS on the port while serving nothing - a port check would
     # call that "up" forever and never restart it.
     try {
         $r = Invoke-WebRequest -Uri ("http://{0}:{1}/api/ocr/device" -f $BindHost, $Port) `
