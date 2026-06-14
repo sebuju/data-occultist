@@ -48,10 +48,19 @@ def _session(game: str, create: bool = False) -> PrecaptureSession:
     return s
 
 
+def _refresh_profile(game: str, s: PrecaptureSession) -> None:
+    """Push the on-disk profile into the long-lived session before a run, so UI edits to
+    detect/region boxes since the session was created actually take effect (no-op mid-run)."""
+    settings = get_settings()
+    if game in list_profiles(settings.profiles_dir):
+        s.update_profile(load_profile(settings.profiles_dir, game))
+
+
 @router.post("/{game}/record/start")
 def record_start(game: str, max_frames: int = 300, interval_ms: int = 0, label: str = "",
                  autoscroll: bool = False, clicks: int = 1):
     s = _session(game, create=True)
+    _refresh_profile(game, s)
     s.start_recording(max_frames=max_frames, interval_ms=interval_ms, label=label,
                       autoscroll=autoscroll, clicks=clicks)
     return s.status()
@@ -110,6 +119,7 @@ def record_stop(game: str):
 @router.post("/{game}/process/start")
 def process_start(game: str):
     s = _session(game)
+    _refresh_profile(game, s)   # classify/read use the profile — pick up edits made since recording
     # auto-mode runs the batch on GPU (then frees it); cpu/gpu leave the device as-is
     s.batch_device = "gpu" if read_mode() == "auto" else None
     s.start_processing()

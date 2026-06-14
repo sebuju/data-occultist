@@ -204,17 +204,14 @@ class PrecaptureSession:
 
     def __init__(self, engine: Engine, profile: GameProfile) -> None:
         self._engine = engine
-        self._profile = profile
         self._tuning = engine.settings.tuning
         self._locator = WindowLocator(engine)
         self._lexicon = Lexicon.for_game(engine.settings.data_dir, profile.name)
         self._confusions = ConfusionMap.for_game(engine.settings.data_dir, profile.name)
-        pooled, dict_map = build_dictionaries(profile, engine.corrector)
-        resolver = FieldResolver(self._lexicon, engine.corrector, self._tuning.accept_confidence,
-                                 confusions=self._confusions, dictionary=pooled, dictionaries=dict_map)
-        self._reader = RegionReader(engine.ocr, resolver, cutouts=_load_cutouts(engine, profile))
-        self._detect_fracs = _detect_boxes(profile)
         self._key_maps: dict[str, KeyMap] = {}
+        # profile-derived state (reader, detect boxes, key cache) — rebuilt by _apply_profile
+        # so a UI edit between recording and processing actually reaches classify/read.
+        self._apply_profile(profile)
         # Recordings are kept as named SESSIONS under precapture/<id>/ (frames +
         # ocr_state.json + meta.json), so a set can be re-processed and re-saved without
         # re-recording. ``_session`` selects the active one; ``_dir`` resolves to it.
@@ -256,6 +253,31 @@ class PrecaptureSession:
         self._t_end = 0.0       # monotonic time the run finished; freezes fps once idle/done
         self._error: str | None = None
         self._init_sessions()
+
+    # ---- profile -----------------------------------------------------------
+
+    def _apply_profile(self, profile: GameProfile) -> None:
+        """(Re)build everything that depends on the profile: the resolver/reader, the
+        detect-box list used for the staleness signature, and the key-map cache. The
+        session is created ONCE per game and cached for the server's life, so without
+        this a detect/region edit made in the UI would never reach precapture's
+        classify/read — the editor would pass and precapture would still fail."""
+        eng = self._engine
+        self._profile = profile
+        pooled, dict_map = build_dictionaries(profile, eng.corrector)
+        resolver = FieldResolver(self._lexicon, eng.corrector, self._tuning.accept_confidence,
+                                 confusions=self._confusions, dictionary=pooled, dictionaries=dict_map)
+        self._reader = RegionReader(eng.ocr, resolver, cutouts=_load_cutouts(eng, profile))
+        self._detect_fracs = _detect_boxes(profile)
+        self._key_maps = {}
+
+    def update_profile(self, profile: GameProfile) -> None:
+        """Swap in a freshly-loaded profile — but NEVER mid-run (a worker reads these
+        every frame). A no-op while recording/processing; the next idle start picks it up."""
+        with self._lock:
+            if self.is_running():
+                return
+            self._apply_profile(profile)
 
     # ---- sessions ----------------------------------------------------------
 
@@ -1008,6 +1030,7 @@ class PrecaptureSession:
                 "frames": total,
                 "processed": self._processed,
                 "read": self._read,
+                "no_key": self._no_key,   # rows read but dropped (no complete dataset key)
                 "fps": round(fps, 1),
                 "timing": self._timing_locked(),
                 # recognition: the current frame's window/state, plus a per-frame tally
