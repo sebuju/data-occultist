@@ -3,6 +3,7 @@
 // watch live dataset counts. Box drawing stays on the canvas (teach.html link).
 import * as api from "../api.js";
 import * as conn from "../conn.js";
+import * as hub from "../hub.js";
 import { esc, TRASH } from "../dom.js";
 import { openModal } from "../modal.js";
 import { Overlay } from "../overlay.js";
@@ -1142,7 +1143,7 @@ function wirePrice(div, n) {
   // when a sweep ends (or is cancelled), refresh the dataset it feeds so its new batch shows
   wirePriceNode(div, model.profile.name, n.ref.dataset, n.ref.mode || "statistics", () => {
     refreshLive(); refreshDataNode(n.ref.dataset); loadBatchesNode(n.ref.dataset);
-  }, pollActivity);   // sweep start/cancel -> refresh the tasks panel right away
+  }, hub.kick);   // sweep start/cancel -> beat the hub so the tasks panel refreshes now
   // source toggle: statistics (history) vs live orders (now). Mode swaps the body, so rebuild.
   div.querySelector(".enr-mode")?.addEventListener("change", (e) => {
     model.setPriceMode(n.ref.id, e.target.value); rebuildNode(n.id); autosave();
@@ -2538,7 +2539,7 @@ let pcNode = null;         // the .precap body element handlers operate on
 let pcSig = null;          // current AbortController signal (new each show → aborts on hide)
 let pcCtl = null;          // current AbortController
 let precapLast = null;     // last status drawn — so view switches can redraw without a fetch
-let precapPoll = null;
+let precapUnsub = null;   // heartbeat-hub subscription while the panel is open
 let precapBusy = false;   // recording/processing/paused
 let precapStopping = false;   // a stop/cancel was clicked, awaiting the worker to wind down
 let precapLastPhase = null;
@@ -2650,8 +2651,9 @@ function buildPrecap() {
       _pcSessAct(api.precapture.deleteSession(game, sid, pcSig));
     }
     else if (a === "rensess") beginRename(b.closest(".pc-sess"), sid);
-    // worker state just changed -> refresh the tasks panel without waiting out its cadence
-    if (["record", "recstop", "process", "pause", "resume", "cancel"].includes(a)) pollActivity();
+    // worker state just changed -> beat the hub now so the tasks panel + precap indicator
+    // reflect it without waiting out the cadence
+    if (["record", "recstop", "process", "pause", "resume", "cancel"].includes(a)) hub.kick();
   });
 
   // live auto-scroll toggle (checkbox shown while recording) — server is the source of
@@ -2675,20 +2677,22 @@ async function showPrecap() {
   pc.el.querySelector(".fw-title").textContent = `precapture: ${game}`;
   pcCtl = new AbortController(); pcSig = pcCtl.signal;
   await _pcLoadSessions();
-  // poll ONLY while a worker is actually running (recording/processing/paused) — when
-  // idle/recorded/done/saved nothing changes server-side except via user actions, which
-  // already redraw, so hitting status every 700ms then just pounds the server for nothing.
-  if (precapPoll) clearInterval(precapPoll);
-  precapPoll = setInterval(async () => {
-    if (!conn.isOnline() || !precapBusy) return;   // backend down -> halt polling
-    try { _pcDraw(await api.precapture.status(model.profile.name, pcSig)); } catch { /* ignore */ }
-  }, 700);
+  // The heartbeat hub already carries the precapture worker's status (only while it's
+  // busy), so subscribe instead of running our own status poll. When the worker finishes
+  // the hub stops carrying it — that falling edge (busy was true, now absent) is the one
+  // moment we fetch directly, to pull the final "done"/idle state the hub won't push.
+  precapUnsub = hub.subscribe((s) => {
+    if (!precapOpen) return;
+    if (s.precapture) _pcDraw(s.precapture);
+    else if (precapBusy) _pcRun(() => api.precapture.status(model.profile.name, pcSig));
+  });
+  hub.kick();   // beat now so a busy worker shows immediately on open
 }
 
 // Hiding the panel does NOT cancel the worker (the Activity panel monitors/cancels it).
 // Just stop polling and abort in-flight fetches; reopening rehydrates from the server.
 function hidePrecap() {
-  if (precapPoll) { clearInterval(precapPoll); precapPoll = null; }
+  if (precapUnsub) { precapUnsub(); precapUnsub = null; }
   if (pcCtl) { pcCtl.abort(); pcCtl = null; }
   unregisterWorker("precap");
   precapOpen = false; precapStopping = false;
@@ -3243,7 +3247,7 @@ async function runItemRead(winId, itemId) {
     if (out) out.innerHTML = itemReadout(res);
     const kp = node?.querySelector(".key-prev");   // key section's preview tracks the new read
     if (kp) kp.innerHTML = keyPrevHTML(winId, itemId);
-    done(res.valid ? "· valid" : "· rejected");
+    done(`· ${res.device || "?"} · ${res.valid ? "valid" : "rejected"}`);
   } catch (e) {
     done(String(e.message || e), "err");
     if (out) out.innerHTML = `<span class="tc-bad">${esc(String(e.message || e))}</span>`;
@@ -3323,7 +3327,7 @@ async function refreshPreview(winId, live = false) {
     const res = await api.preview(previewProfileFor(winId), model.profile.name, cap);
     host.innerHTML = previewTable(res.cells);
     setGridFromPreview(winId, res);   // same OCR pass drives the dashed grid
-    done(`· ${(res.cells || []).length} cells`);
+    done(`· ${res.device || "?"} · ${(res.cells || []).length} cells`);
   } catch (e) {
     done(String(e.message || e), "err");
     host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`;
@@ -3435,7 +3439,7 @@ async function refreshDetect(winId, live = false) {
           sbSpan.textContent = sb == null ? "position: —"
             : `position: ${Math.round(sb.pos * 100)}% · ${sb.px}px · ${Math.round(sb.conf * 100)}%`;
         }
-        done();
+        done(`· ${res.device || "?"}`);
       } catch (e) { done(String(e.message || e), "err"); }
     });
   } finally {
@@ -3809,6 +3813,7 @@ async function loadGame(name) {
   resetHistory();   // fresh undo/redo baseline for this game
   if (migrated) persist.layout();   // lock in node layout imported from legacy localStorage
   refreshLive();
+  hub.kick();   // new game -> beat the hub so every panel re-reflects its state now
   setStatus(`loaded ${name}`);
 }
 
@@ -4126,16 +4131,17 @@ $("nodemapBtn")?.addEventListener("click", () => setNodeMapVisible(!nmState.visi
 // ---- activity panel (live sweeps + precapture) ----------------------------
 // A floating window listing every running background job for the current game — price
 // sweeps and the precapture worker — fetched from /api/activity while it's open. Network
-// fetch cadence: 60s when the window is backgrounded; while focused, 0.5s if a job is running
-// and 1s otherwise (plus right after a state-changing action / on focus / when a countdown
-// elapses). A 500ms local ticker re-renders the cached payload in between so countdowns stay
-// live without hammering the server. Rows reconcile in place (keyed map) so neither churns the DOM.
+// Data comes from the shared heartbeat hub (one poll feeds every panel); the hub sets the
+// network cadence (fast while a job runs, slow when idle/backgrounded). A 500ms LOCAL ticker
+// re-renders the cached snapshot in between so "fires in …" countdowns stay live without any
+// server hit, and beats the hub the instant a countdown elapses. Rows reconcile in place
+// (keyed map) so neither the beats nor the local ticker churn the DOM.
 const actState = { visible: false, x: null, y: null, w: null, h: null };
 let act = null;
-let actTick = null;          // 1s local ticker
-let actData = null;          // last fetched payload (re-rendered locally between fetches)
-let actAt = 0;               // Date.now() of that fetch, used to age the countdowns
-let actPolling = false;      // in-flight fetch guard
+let actTick = null;          // local ticker for live countdowns (no server hit)
+let actUnsub = null;         // heartbeat-hub subscription while the panel is open
+let actData = null;          // last hub snapshot (re-rendered locally between beats)
+let actAt = 0;               // Date.now() of the last snapshot, used to age the countdowns
 const actRows = new Map();   // job key -> { row, title, prog }
 const actPending = new Set();   // trigger ids whose enable toggle is mid-flight (debounce until the next update)
 let actEmpty = null;         // the reused "nothing active" placeholder (never innerHTML)
@@ -4150,8 +4156,8 @@ function buildActivity() {
   });
   act.body.innerHTML = `<div class="act-list"></div>`;
   actEmpty = document.createElement("div"); actEmpty.className = "act-empty"; actEmpty.textContent = "nothing active";
-  // regaining focus -> the background (60s) cadence is stale; refresh right away
-  window.addEventListener("focus", () => { if (actState.visible) pollActivity(); });
+  // regaining focus -> the backgrounded cadence is stale; beat the hub right away
+  window.addEventListener("focus", () => { if (actState.visible) hub.kick(); });
   // one delegated handler for every row's button (cancel a job, or fire a trigger now)
   act.body.addEventListener("click", (ev) => {
     const game = model.profile.name; if (!game) return;
@@ -4159,14 +4165,14 @@ function buildActivity() {
     if (c && !c.disabled) {
       c.disabled = true; c.textContent = "cancelling…";
       const p = c.dataset.cancel === "sweep" ? api.prices.cancel(game, c.dataset.ds) : api.precapture.cancel(game);
-      p.catch(() => {}).finally(() => setTimeout(pollActivity, 300));   // state changed -> refresh
+      p.catch(() => {}).finally(() => setTimeout(hub.kick, 300));   // state changed -> beat the hub
       return;
     }
     const f = ev.target.closest("button[data-fire]");
     if (f && !f.disabled) {
       f.disabled = true; f.classList.add("loading");   // spinner overlay, label stays put (no resize/flicker)
       api.triggers.fire(game, f.dataset.fire).catch(() => {})
-        .finally(() => { f.disabled = false; f.classList.remove("loading"); pollActivity(); });   // refresh next-fire time
+        .finally(() => { f.disabled = false; f.classList.remove("loading"); hub.kick(); });   // refresh next-fire time
       return;
     }
     // enable/disable a trigger: flip it in the profile + save; the row reflects it on the
@@ -4186,7 +4192,7 @@ function buildActivity() {
       // poll ONLY after the save has actually landed (flush the debounce), so the server's
       // schedule already reflects the new enabled state — no stale flip-back. Clearing the
       // pending guard re-enables the toggle on the next render.
-      persist.flush().then(pollActivity).catch(() => pollActivity()).finally(() => {
+      persist.flush().then(hub.kick).catch(() => hub.kick()).finally(() => {
         actPending.delete(id);
         if (actData) renderActivity(actData, 0);
       });
@@ -4204,18 +4210,9 @@ function fmtDur(s) {
   return rm ? `${h}h ${rm}m` : `${h}h`;
 }
 
-function stopActivityPoll() { if (actTick) { clearInterval(actTick); actTick = null; } }
-
-// Fetch from the server and render fresh. Cheap-guarded so overlapping calls (a 10s tick
-// landing on an action-triggered refresh) don't stack.
-async function pollActivity() {
-  if (actPolling || !actState.visible || !conn.isOnline()) return;   // backend down -> halt
-  const game = model.profile.name;
-  if (!game) { actData = { sweeps: [], precapture: null }; actAt = Date.now(); renderActivity(actData, 0); return; }
-  actPolling = true;
-  try { actData = await api.activity.get(game); actAt = Date.now(); renderActivity(actData, 0); }
-  catch { /* ignore transient errors */ }
-  finally { actPolling = false; }
+function stopActivityPoll() {
+  if (actTick) { clearInterval(actTick); actTick = null; }
+  if (actUnsub) { actUnsub(); actUnsub = null; }
 }
 
 // any interval trigger whose countdown has just hit zero since the last fetch -> it fired,
@@ -4224,23 +4221,24 @@ function actDueForRefresh(elapsed) {
   return (actData?.triggers || []).some((t) => t.kind === "interval" && (t.next_in || 0) > 0 && (t.next_in - elapsed) <= 0);
 }
 
-// is a job actively working right now? (a live sweep / the precapture worker / a firing trigger)
-function actHasRunning() {
-  const d = actData; if (!d) return false;
-  return (d.sweeps?.length > 0) || !!d.precapture || (d.triggers || []).some((t) => (t.targets || []).some((x) => x.running));
-}
-
 function startActivityPoll() {
   stopActivityPoll();
-  pollActivity();   // immediate fetch on open
+  const game = model.profile.name;
+  if (!game) { actData = { sweeps: [], precapture: null }; actAt = Date.now(); renderActivity(actData, 0); }
+  // Data arrives from the heartbeat hub (one poll feeds every panel); this panel just
+  // renders its slice of each snapshot.
+  actUnsub = hub.subscribe((s) => {
+    if (!actState.visible) return;
+    actData = s; actAt = Date.now(); renderActivity(actData, 0);
+  });
+  hub.kick();   // immediate beat on open
+  // Local ticker: re-render the cached payload so the "fires in …" countdowns keep ticking
+  // between beats (no server hit), and beat the hub the instant a countdown elapses so the
+  // fired trigger's new schedule lands promptly.
   actTick = setInterval(() => {
-    if (!actState.visible || !conn.isOnline()) return;   // backend down -> halt polls + countdowns
+    if (!actState.visible || !conn.isOnline()) return;   // backend down -> halt countdowns
     const elapsed = (Date.now() - actAt) / 1000;
-    // network cadence: 60s backgrounded; while focused 0.5s when a job is running, else 1s.
-    // Also refresh as soon as a countdown elapses. Otherwise just re-render the cached payload
-    // so the "fires in …" times keep ticking down locally (no server hit).
-    const every = !document.hasFocus() ? 60 : (actHasRunning() ? 0.5 : 1);
-    if (elapsed >= every || (elapsed >= 1.5 && actDueForRefresh(elapsed))) pollActivity();
+    if (elapsed >= 1.5 && actDueForRefresh(elapsed)) hub.kick();
     else if (actData) renderActivity(actData, elapsed);
   }, 500);
 }
@@ -4700,9 +4698,9 @@ $("settingsBtn")?.addEventListener("click", () => {
     </section>
     <section class="set-sec">
       <h4>OCR</h4>
-      <label class="set-row" title="OCR device — GPU needs onnxruntime-gpu + CUDA">
+      <label class="set-row" title="OCR device — GPU needs onnxruntime-gpu + CUDA. Auto: CPU for editing, GPU for the precapture batch.">
         <span>device</span>
-        <select id="ocrDevice"><option value="cpu">CPU</option><option value="gpu">GPU</option></select>
+        <select id="ocrDevice"><option value="auto">Auto (CPU; GPU for precapture)</option><option value="cpu">CPU</option><option value="gpu">GPU</option></select>
       </label>
       <label class="set-row" title="downscale big frames before OCR — faster + far less GPU memory">
         <span>downscale</span>
@@ -5016,12 +5014,19 @@ function setLiveMode(on) {
 
 // ---- init -----------------------------------------------------------------
 
-// Show the topbar kill-GPU button only when the GPU is the active device — on CPU there's
-// nothing holding VRAM. (The select lives in the settings modal, so visibility is driven
-// here from the device state, independent of the modal being open.)
-function syncKillGpu(device) { const k = $("killGpuBtn"); if (k) k.hidden = device !== "gpu"; }
+// Show the topbar kill-GPU button only while a GPU OCR session is actually LOADED
+// (holding VRAM) — `ocr.gpu_active`, not merely "GPU is selected". The heartbeat hub
+// pushes the device slice every beat, so the button (re)appears on its own when a read
+// rebuilds the GPU session and hides after a kill frees it. Idempotent: touches the DOM
+// only on a real change (steady-state ticks mutate nothing — CLAUDE.md hard rule 1).
+function syncKillGpu(ocr) {
+  const k = $("killGpuBtn"); if (!k) return;
+  const hidden = !(ocr && ocr.gpu_active);
+  if (k.hidden !== hidden) k.hidden = hidden;
+}
 
-// Wire the persistent topbar kill-GPU button once at startup, and seed its visibility.
+// Wire the persistent topbar kill-GPU button once at startup. Visibility is driven by the
+// heartbeat hub thereafter; one upfront fetch seeds it before the first beat lands.
 async function initKillGpu() {
   const killBtn = $("killGpuBtn");
   if (!killBtn) return;
@@ -5029,11 +5034,12 @@ async function initKillGpu() {
     const done = timed("kill GPU OCR");
     killBtn.disabled = true;
     killBtn.classList.add("reading");
-    try { const r = await api.ocr.releaseGpu(); syncKillGpu(r.device); done("freed; reloads on next use"); }
+    try { const r = await api.ocr.releaseGpu(); syncKillGpu(r); done("freed; reloads on next use"); }
     catch (e) { done(String(e.message || e), "err"); }
     finally { killBtn.classList.remove("reading"); killBtn.disabled = false; }
   });
-  try { syncKillGpu((await api.ocr.getDevice()).device); } catch { /* ignore */ }
+  hub.subscribe((s) => syncKillGpu(s.ocr));
+  try { syncKillGpu(await api.ocr.getDevice()); } catch { /* ignore */ }
 }
 
 // Wire the OCR device + downscale selects inside a freshly-built settings modal.
@@ -5043,13 +5049,18 @@ async function wireOcrControls(root) {
   try {
     const st = await api.ocr.getDevice();
     const gpuOpt = sel.querySelector('option[value="gpu"]');
+    const autoOpt = sel.querySelector('option[value="auto"]');
+    // GPU + Auto both need CUDA (Auto bursts to GPU for the batch); grey them out without it
     gpuOpt.disabled = !st.gpu_available;
+    if (autoOpt) autoOpt.disabled = !st.gpu_available;
     if (!st.gpu_available) gpuOpt.textContent = "GPU (n/a)";
-    sel.value = st.device;
-    syncKillGpu(st.device);
+    sel.value = st.mode || st.device;   // the select reflects the MODE, not the live device
+    syncKillGpu(st);
     sel.addEventListener("change", async () => {
       const done = timed(`OCR device → ${sel.value}`);
-      try { const r = await api.ocr.setDevice(sel.value); sel.value = r.device; syncKillGpu(r.device); done(); }
+      // Keep the user's pick; only correct it if the server reports a different MODE. (Never
+      // fall back to the live device — under "auto" that's cpu and would yank the dropdown.)
+      try { const r = await api.ocr.setDevice(sel.value); if (r.mode) sel.value = r.mode; syncKillGpu(r); done(); }
       catch (e) { done(String(e.message || e), "err"); }
     });
     const scaleSel = root.querySelector("#ocrScale");
@@ -5128,6 +5139,8 @@ async function killStrayOcrThenBoot() {
     await refreshGames();
     if ($("gameSelect").value) await loadGame($("gameSelect").value);
     initKillGpu();
+    hub.init(() => model.profile.name);   // single backend heartbeat for every panel
+    hub.start();
     log("first read…");
     await bootSettle();
   } catch (e) {

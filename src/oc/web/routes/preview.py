@@ -101,7 +101,8 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
                 "conf": d["conf"],
             }
 
-    return {"detect": detect, "states": states, "scrollbar": scrollbar}
+    return {"detect": detect, "states": states, "scrollbar": scrollbar,
+            "device": getattr(engine.ocr, "device", "cpu")}
 
 
 @router.post("/preview")
@@ -155,7 +156,8 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
         if cell.get("item"):
             vals["_item"] = cell["item"]
         cell["key"] = km.build(vals)
-    return {"client": [frame.client.w, frame.client.h], **result}
+    return {"client": [frame.client.w, frame.client.h],
+            "device": getattr(engine.ocr, "device", "cpu"), **result}
 
 
 @router.post("/item/read")
@@ -190,4 +192,5 @@ def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...
     # the dedup key this read would store under (None = unkeyable, e.g. a part empty)
     spec = (it.key or window.key or KeyDef()).spec()
     vals = {fid: f.get("value") for fid, f in result["fields"].items()}
-    return {"cutout": [w, h], "key": spec.build(vals), "key_fields": list(spec.fields), **result}
+    return {"cutout": [w, h], "key": spec.build(vals), "key_fields": list(spec.fields),
+            "device": getattr(engine.ocr, "device", "cpu"), **result}
