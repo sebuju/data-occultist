@@ -61,20 +61,12 @@ def _refresh_profile(game: str, s: PrecaptureSession) -> None:
 
 
 @router.post("/{game}/record/start")
-def record_start(game: str, max_frames: int = 300, interval_ms: int = 0, label: str = "",
-                 autoscroll: bool = False, clicks: int = 1):
+def record_start(game: str, max_frames: int = 300, interval_ms: int = 0, label: str = ""):
     s = _session(game, create=True)
     _refresh_profile(game, s)
-    s.start_recording(max_frames=max_frames, interval_ms=interval_ms, label=label,
-                      autoscroll=autoscroll, clicks=clicks)
-    return s.status()
-
-
-@router.post("/{game}/record/autoscroll")
-def record_autoscroll(game: str, on: bool = True, clicks: int | None = None):
-    """Live-toggle auto-scroll (and its wheel step) on the running recording."""
-    s = _session(game)
-    s.set_autoscroll(on, clicks)
+    # auto-scroll is per-window now (ScrollDef.autoscroll/scroll_clicks); start_recording reads
+    # it off the window it classifies on screen.
+    s.start_recording(max_frames=max_frames, interval_ms=interval_ms, label=label)
     return s.status()
 
 

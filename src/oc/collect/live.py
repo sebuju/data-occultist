@@ -92,11 +92,27 @@ class LiveSession:
     def _loop(self) -> None:
         try:
             collector = Collector(self._engine, self._profile)
+            collector.on_frame = self._save_frame   # persist every captured frame (live images)
             # Collector.run owns the trigger loop + flushes via close() on the way out.
             collector.run(self._interval, on_tick=self._on_tick, should_stop=self._stop.is_set)
         except Exception as exc:  # pragma: no cover - defensive
             with self._lock:
                 self._error = str(exc)
+
+    def _save_frame(self, frame) -> None:
+        """Save one captured frame into the game's live/ image bucket — the same bucket the
+        read-only tuning loop writes to, so collecting mode also keeps its images. Best-effort:
+        an encode/disk hiccup must never disturb collection."""
+        try:
+            import cv2
+
+            from ..web import captures_store
+            ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            if ok:
+                captures_store.save(self._engine.settings.captures_dir, self._profile.name,
+                                    buf.tobytes(), sub=captures_store.LIVE)
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     def _on_tick(self, result) -> None:
         with self._lock:

@@ -502,13 +502,30 @@ class PrecaptureSession:
 
     # ---- recording ---------------------------------------------------------
 
-    def start_recording(self, max_frames: int = 300, interval_ms: int = 0, label: str = "",
-                        autoscroll: bool = False, clicks: int = _AUTOSCROLL_CLICKS) -> None:
+    def _apply_window_autoscroll(self) -> None:
+        """Auto-scroll settings now live PER WINDOW. Classify whatever window is on screen and
+        adopt its ``scroll.autoscroll`` + ``scroll_clicks`` for this recording (best-effort:
+        no window / no match / no scroll config -> auto-scroll stays off)."""
+        on, clicks = False, _AUTOSCROLL_CLICKS
+        try:
+            win = self._locator.locate(self._profile)
+            if win is not None:
+                frame = self._engine.capture.grab_window(win)
+                match = self._engine.classifier.classify(frame, self._profile)
+                wd = next((w for w in self._profile.windows if w.id == match[0]), None) if match else None
+                sc = wd.scroll if wd else None
+                if sc and sc.enabled and sc.autoscroll:
+                    on, clicks = True, max(1, int(sc.scroll_clicks or 1))
+        except Exception:  # pragma: no cover - record start must not die on a classify hiccup
+            pass
+        self.set_autoscroll(on, clicks)
+
+    def start_recording(self, max_frames: int = 300, interval_ms: int = 0, label: str = "") -> None:
         with self._lock:
             if self._phase in (Phase.recording, Phase.processing):
                 return
         self._join_prev()   # bury any lingering worker BEFORE clearing _stop (see _join_prev)
-        self.set_autoscroll(autoscroll, clicks)
+        self._apply_window_autoscroll()   # use the on-screen window's per-window scroll config
         with self._lock:
             self._session = self._new_session_id()   # each recording is its own session
             self._reset_locked()

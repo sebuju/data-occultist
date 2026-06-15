@@ -111,8 +111,13 @@ def get_bindings(captures_dir: Path | str, game: str) -> dict:
 
 
 def set_binding(captures_dir: Path | str, game: str, window: str, name: str) -> None:
+    """Bind a window to a stash, or UNBIND it when ``name`` is empty (so a window can have no
+    image — e.g. a freshly created one, which must not inherit a deleted window's binding)."""
     p = _bindings_path(captures_dir, game)
     p.parent.mkdir(parents=True, exist_ok=True)
     data = get_bindings(captures_dir, game)
-    data[window] = name
+    if name:
+        data[window] = name
+    else:
+        data.pop(window, None)
     p.write_text(json.dumps(data, ensure_ascii=False, indent=0, sort_keys=True), encoding="utf-8")
