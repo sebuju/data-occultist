@@ -13,6 +13,22 @@ export function floatWins() { return _wins; }
 
 const _topGap = () => (document.querySelector(".topbar")?.offsetHeight || 48) + 4;
 
+// Every visible, UNDOCKED panel is anchored TOP-RIGHT: on a window resize it keeps its
+// distance from the top (y unchanged) and from the right edge (x shifts by the width
+// delta), so panels ride the right side instead of drifting away from it. Docked children
+// follow their parent through reflowDock, so they're skipped. ONE shared listener drives
+// every panel — not a per-panel copy (see CLAUDE.md hard rule 7).
+let _prevW = window.innerWidth;
+window.addEventListener("resize", () => {
+  const dw = window.innerWidth - _prevW;
+  _prevW = window.innerWidth;
+  for (const [, w] of _wins) {
+    if (w.el.hidden || w.state.dock) continue;
+    w.place(w.el.offsetLeft + dw, w.el.offsetTop);   // x+dw = right-anchor; same y = top-anchor
+    w.onResize && w.onResize();
+  }
+});
+
 const SNAP = 9;   // px proximity at which an edge snaps
 const GAP = 8;    // exact padding left between two windows when their edges abut
 
@@ -300,13 +316,6 @@ export function createFloatWin({
   }
   el.querySelector(".fw-collapse").addEventListener("click", toggleCollapsed);
 
-  // pull back in-bounds if the window shrank under the panel
-  window.addEventListener("resize", () => {
-    if (el.hidden) return;
-    place(el.offsetLeft, el.offsetTop);
-    onResize && onResize();
-  });
-
   function setVisible(on) {
     state.visible = on;
     el.hidden = !on;
@@ -331,7 +340,7 @@ export function createFloatWin({
     applyState();
   }
 
-  const inst = { el, body, head, state, setVisible, applyState, place, stashSize, applySize, collect, hydrate };
+  const inst = { el, body, head, state, setVisible, applyState, place, stashSize, applySize, collect, hydrate, onResize };
   _wins.set(id, inst);
   return inst;
 }
