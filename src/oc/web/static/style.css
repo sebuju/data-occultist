@@ -127,6 +127,27 @@ body {
   margin: 0 6px;
 }
 .status { color: var(--muted); min-width: 12ch; }
+
+/* capture picker: a dropdown with Live (stashes) / Precaptures (frames by session) tabs */
+.cap-picker { position: relative; }
+#capPickerBtn.open { border-color: var(--accent); }
+.cap-pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 500; width: 420px; max-height: 60vh;
+  display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; box-shadow: 0 8px 24px #0008; overflow: hidden; }
+.cap-tabs { display: flex; flex: none; border-bottom: 1px solid var(--line); }
+.cap-tab { flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted);
+  padding: 6px 0; cursor: pointer; }
+.cap-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.cap-body { overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+#capLive { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; align-content: start; }
+.cap-grp-h { font-size: var(--fs-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 2px 0; }
+.cap-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cap-item { display: flex; flex-direction: column; gap: 2px; padding: 3px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 5px; cursor: pointer; color: var(--muted); font-size: var(--fs-xs); }
+.cap-item:hover { border-color: var(--accent); color: var(--text); }
+.cap-item img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 3px; display: block; background: var(--line); }
+.cap-item span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cap-empty { color: var(--muted); font-size: var(--fs-sm); padding: 14px; text-align: center; }
 .livestats { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm);
   color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }

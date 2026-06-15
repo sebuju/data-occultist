@@ -151,6 +151,18 @@ export function captureUrl(game, name) {
   return `/api/captures/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
 
+// Saved live-mode images live in their own bucket: grab one now (live tuning calls this
+// each round), read the {count,bytes} stat, or clear them all. grab returns the new stats.
+export const liveCaptures = {
+  grab: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/grab`, { method: "POST" }, OCR_MS).then((r) => r.json()),
+  stats: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/stats`).then((r) => r.json()),
+  clear: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/clear`, { method: "POST" }).then((r) => r.json()),
+};
+
+// URL of one frame image (NNNNN.jpg) of a saved precapture session — for the capture picker.
+export const precaptureFrameUrl = (game, sid, idx) =>
+  `/api/precapture/${encodeURIComponent(game)}/${encodeURIComponent(sid)}/frame/${idx}`;
+
 // Freeze an item cell from a stashed capture -> { name, url }. box is fractions.
 export async function itemCutout(game, capture, box) {
   const q = `game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}&x=${box.x}&y=${box.y}&w=${box.w}&h=${box.h}`;

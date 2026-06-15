@@ -14,7 +14,17 @@
     <label>window <select id="windowSelect"></select></label>
     <span class="spacer"></span>
     <button id="captureBtn">Capture</button>
-    <label>stash <select id="captureSelect" title="reload a stashed capture"></select></label>
+    <div class="cap-picker">
+      <button id="capPickerBtn" type="button" title="reload a saved capture">captures ▾</button>
+      <div id="capPop" class="cap-pop" hidden>
+        <div class="cap-tabs">
+          <button type="button" class="cap-tab active" data-tab="live">live</button>
+          <button type="button" class="cap-tab" data-tab="precap">precaptures</button>
+        </div>
+        <div id="capLive" class="cap-body"></div>
+        <div id="capPrecap" class="cap-body" hidden></div>
+      </div>
+    </div>
     <button id="suggestBtn" title="Analyse the capture and propose a layout">Suggest</button>
     <button id="previewBtn" title="OCR the current boxes and show what they read">Preview</button>
     <span id="status" class="status"></span>

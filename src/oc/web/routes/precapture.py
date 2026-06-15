@@ -7,10 +7,14 @@ records into the real datasets (the same ledger-backed stores live collection wr
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 
 from ...collect.precapture import PrecaptureSession
 from ...profile import list_profiles, load_profile
+from ..captures_store import _safe
 from ..deps import get_engine, get_settings
 from .ocr import read_mode
 
@@ -79,6 +83,21 @@ def list_sessions(game: str):
     """Every saved recording session for this game (newest first) + the active status."""
     s = _session(game, create=True)
     return {"sessions": s.list_sessions(), "status": s.status()}
+
+
+@router.get("/{game}/{sid}/frame/{idx}")
+def session_frame(game: str, sid: str, idx: int):
+    """Serve one frame image (``NNNNN.jpg``) of a saved session, for the capture picker.
+
+    Reads the file straight off disk (``captures/<game>/precapture/<sid>/<idx>.jpg``) — no
+    session/worker is created, so previewing frames never touches the OCR pipeline.
+    """
+    if "/" in sid or "\\" in sid or ".." in sid or idx < 0:
+        raise HTTPException(status_code=404, detail="bad frame reference")
+    path = Path(get_settings().captures_dir) / _safe(game) / "precapture" / _safe(sid) / f"{idx:05d}.jpg"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="frame not found")
+    return FileResponse(str(path), media_type="image/jpeg")
 
 
 @router.post("/{game}/sessions/{sid}/load")

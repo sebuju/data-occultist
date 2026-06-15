@@ -1,6 +1,6 @@
 // Teach page: edit ONE window of a game. The game (process/title/fields/windows)
 // is managed on the games page; here we draw boxes, suggest, preview, and save.
-// Loaded as teach.html?game=<name>&window=<id>.
+// Loaded as ui.html?game=<name>&window=<id>.
 import * as api from "./api.js";
 import { Overlay } from "./overlay.js";
 import { EditorModel } from "./model.js";
@@ -104,35 +104,94 @@ function showImage(url, status) {
   img.src = url;
 }
 
-async function refreshCaptures(select) {
-  const names = await api.listCaptures(game);
-  $("captureSelect").innerHTML = `<option value="">— stashed —</option>` +
-    names.map((n) => `<option value="${n}">${n.replace(/\.jpg$/, "")}</option>`).join("");
-  if (select) $("captureSelect").value = select;
-}
-
 $("captureBtn").addEventListener("click", async () => {
   setStatus("capturing…");
   try {
     const { url, name } = await api.capture(game);
     showImage(url, "captured");
-    await refreshCaptures(name);
     await api.bindCapture(game, model.windowId, name);  // newest becomes this window's image
+    refreshCaptures();   // reflect it in the picker if it's open
   } catch (e) { setStatus(String(e.message || e)); }
 });
 
-$("captureSelect").addEventListener("change", async (e) => {
-  const name = e.target.value;
-  if (!name) return;
-  showImage(api.captureUrl(game, name), `loaded ${name}`);
-  await api.bindCapture(game, model.windowId, name);    // selecting binds it to the window
-});
+// ---- capture picker: tabbed Live (stashes) | Precaptures (frames by session) ----
+const capPop = $("capPop"), capPickBtn = $("capPickerBtn");
+const capLive = $("capLive"), capPrecap = $("capPrecap");
+const CAP_THUMBS = 40;   // cap thumbnails per session (a session can hold hundreds of frames)
+
+function openCapPicker(on) {
+  const show = on === undefined ? capPop.hidden : on;
+  capPop.hidden = !show;
+  capPickBtn.classList.toggle("open", show);
+  if (show) (capPrecap.hidden ? renderCapLive() : renderCapPrecap());   // refresh the visible tab
+}
+capPickBtn.addEventListener("click", () => openCapPicker());
+document.addEventListener("click", (e) => { if (!capPop.hidden && !e.target.closest(".cap-picker")) openCapPicker(false); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !capPop.hidden) openCapPicker(false); });
+for (const t of capPop.querySelectorAll(".cap-tab")) {
+  t.addEventListener("click", () => {
+    for (const x of capPop.querySelectorAll(".cap-tab")) x.classList.toggle("active", x === t);
+    const live = t.dataset.tab === "live";
+    capLive.hidden = !live; capPrecap.hidden = live;
+    live ? renderCapLive() : renderCapPrecap();
+  });
+}
+
+function capItem(url, label, onPick) {
+  const it = document.createElement("button");
+  it.type = "button"; it.className = "cap-item"; it.title = label;
+  const img = new Image(); img.loading = "lazy"; img.src = url; img.alt = "";
+  const cap = document.createElement("span"); cap.textContent = label;
+  it.append(img, cap);
+  it.addEventListener("click", onPick);
+  return it;
+}
+
+async function renderCapLive() {
+  const names = await api.listCaptures(game).catch(() => []);
+  capLive.replaceChildren();
+  if (!names.length) { capLive.innerHTML = `<div class="cap-empty">no stashed captures</div>`; return; }
+  for (const n of names) {
+    capLive.appendChild(capItem(api.captureUrl(game, n), n.replace(/\.jpg$/, ""), () => {
+      showImage(api.captureUrl(game, n), `loaded ${n}`);
+      api.bindCapture(game, model.windowId, n).catch(() => {});   // a stash binds to the window
+      openCapPicker(false);
+    }));
+  }
+}
+
+async function renderCapPrecap() {
+  capPrecap.innerHTML = `<div class="cap-empty">loading…</div>`;
+  const r = await api.precapture.sessions(game).catch(() => ({ sessions: [] }));
+  const sessions = r.sessions || [];
+  capPrecap.replaceChildren();
+  if (!sessions.length) { capPrecap.innerHTML = `<div class="cap-empty">no precapture sessions</div>`; return; }
+  for (const s of sessions) {
+    const grp = document.createElement("div"); grp.className = "cap-grp";
+    const shown = Math.min(s.frames || 0, CAP_THUMBS);
+    const more = (s.frames || 0) > shown ? ` · +${s.frames - shown} more` : "";
+    const h = document.createElement("div"); h.className = "cap-grp-h";
+    h.textContent = `${s.label || s.id} · ${s.frames || 0}f${more}`;
+    const grid = document.createElement("div"); grid.className = "cap-grid";
+    for (let i = 0; i < shown; i++) {
+      const url = api.precaptureFrameUrl(game, s.id, i);
+      grid.appendChild(capItem(url, `#${i}`, () => {   // a precapture frame loads as the image (no bind)
+        showImage(url, `loaded ${s.label || s.id} #${i}`);
+        openCapPicker(false);
+      }));
+    }
+    grp.append(h, grid); capPrecap.appendChild(grp);
+  }
+}
+
+// kept name for callers: refresh whichever tab is showing (if the picker is open)
+function refreshCaptures() { if (!capPop.hidden) (capPrecap.hidden ? renderCapLive() : renderCapPrecap()); }
 
 async function loadBound(windowId) {
   try {
     const b = await api.getBindings(game);
     const name = b[windowId];
-    if (name) { $("captureSelect").value = name; showImage(api.captureUrl(game, name), `loaded ${name}`); }
+    if (name) showImage(api.captureUrl(game, name), `loaded ${name}`);
   } catch { /* no binding yet */ }
 }
 
