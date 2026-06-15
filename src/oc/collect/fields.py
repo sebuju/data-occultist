@@ -93,3 +93,16 @@ def coerce_rule(field: FieldDef, raw: str) -> tuple[str | float | int | None, st
 
 def coerce(field: FieldDef, raw: str) -> str | float | int | None:
     return coerce_rule(field, raw)[0]
+
+
+def out_of_range(field: FieldDef, value: object) -> bool:
+    """A genuine number read outside the field's authored ``[min, max]`` — implausible,
+    so the caller drops it. Only number values are range-checked; either bound may be
+    None (that side unbounded). A None/non-numeric value is never out of range here."""
+    if field.type is not FieldType.number or not isinstance(value, (int, float)):
+        return False
+    if field.min is not None and value < field.min:
+        return True
+    if field.max is not None and value > field.max:
+        return True
+    return False

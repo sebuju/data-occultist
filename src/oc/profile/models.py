@@ -111,6 +111,22 @@ class FieldDef(BaseModel):
     learn: bool = False
     # Similarity (0..1) an uncertain read must reach to be snapped to a known term.
     fuzzy: float = 0.82
+    # Per-field minimum OCR confidence (0..1). A non-empty read below this drops the whole
+    # record for that cell — a per-area floor on top of the global ``tuning.min_confidence``.
+    # 0 = no per-field floor (rely on the global one).
+    min_confidence: float = 0.0
+    # Number fields only: plausible value range. A genuine read outside [min, max] is
+    # implausible (e.g. a polarity glyph misread onto a drain digit -> "81" when the max is
+    # 16) and drops the whole record for that cell, same as a sub-confidence read. Either
+    # bound None -> that side unbounded. An authored fallback (empty/if_text) bypasses this.
+    min: float | None = None
+    max: float | None = None
+    # Read this box in ISOLATION: OCR only its own crop instead of picking tokens out of the
+    # window-wide pass. The shared pass can recognise a digit and an adjacent glyph as ONE
+    # token ("8" + polarity -> "81"); a token is kept whole by where its CENTRE falls, so a
+    # tight box can't split it. Isolate crops just the box (upscaled) so it sees only those
+    # pixels — the fix for a number fused with a neighbouring symbol.
+    isolate: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -137,6 +153,13 @@ class RegionDef(BaseModel):
     # field read something. Saves drawing a separate tell over the same box.
     tell: bool = False
     tell_conf: float = 0.0  # when ``tell``: min OCR confidence the read must reach (0 = any non-empty)
+    # when ``tell`` on a NUMBER field: pass on ANY read (even one with text, e.g. a polarity
+    # glyph next to the drain), not only a clean numeric value. Off = strict number required.
+    tell_allow_text: bool = False
+    # Use this field to LOCATE rows (anchor the grid), independently of ``tell``. Lets a
+    # reliable text field (e.g. an item name spanning the cell) find rows without also being
+    # a validation tell. Takes priority over the tell-field locator fallback (see locator_of).
+    locate: bool = False
     # When this field locates rows (a tell-field used as the locator): which line of a
     # wrapped name to anchor on — "top"/"center"/"bottom". Empty -> item's ``align``.
     align: str = ""
@@ -283,6 +306,11 @@ class ScrollDef(BaseModel):
     cell: Box | None = None            # first cell's box; grid tiles from here
     row_stride: float = 0.0            # fractional y-gap between row origins
     col_stride: float = 0.0            # fractional x-gap between col origins
+    # Precapture auto-scroll, per window: whether recording this window's list auto-advances,
+    # and how many wheel notches per nudge. Used when precapture classifies this window on
+    # screen (replaces the old global panel controls).
+    autoscroll: bool = False
+    scroll_clicks: int = 1
 
 
 class PreprocessMode(str, Enum):
@@ -333,6 +361,11 @@ class WindowDef(BaseModel):
     # area. When non-empty, the collector reads items from these instead of the grid.
     # A window may define several (e.g. different item layouts in the same panel).
     items: list[ItemDef] = Field(default_factory=list)
+    # Item row-finding for THIS window's grid (all its item templates share the data area):
+    # STATIC (default) tiles the data area into a fixed grid from the cell size — no OCR for
+    # location. Off -> locate rows by OCR (a tell/locate field), needed only for a
+    # scroll-parked list at an arbitrary sub-row offset.
+    static_grid: bool = True
     scroll: ScrollDef | None = None
     preprocess: Preprocess = Field(default_factory=Preprocess)
     # whether this window is attempted in live view (the graph UI's continuous re-read).

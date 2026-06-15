@@ -18,7 +18,7 @@ import cv2
 from ..interfaces import OcrEngine
 from ..profile.models import FieldDef, FieldType, ItemDef, Preprocess, WindowDef
 from ..types import FractionBox, Frame, OcrLine, PixelBox
-from .fields import coerce_rule
+from .fields import coerce_rule, out_of_range
 from .grid import Cell, cells_for_rows, expand_cells
 from .items import (
     ItemCell,
@@ -217,7 +217,10 @@ class RegionReader:
             # and OCR garbage (low confidence) instead of clustering them as rows
             lf = [((ln.box.x + ln.box.w / 2) / cw, (ln.box.y + ln.box.h / 2) / ch, ln.box.h / ch,
                    ln.text, ln.confidence) for ln in lines]
-            anchors = {it.id: self._item_anchor(it) for it in window.items if locator_of(it)}
+            # only the located mode needs the (cutout-OCR) anchor calibration; a static-grid
+            # window tiles geometrically, so skip that work entirely
+            anchors = ({} if getattr(window, "static_grid", True)
+                       else {it.id: self._item_anchor(it) for it in window.items if locator_of(it)})
             ics = locate_item_cells(frame, window, lf, self._templates, anchors)
             return [ic.cell for ic in ics], lines, ics
 
@@ -307,16 +310,20 @@ class RegionReader:
         records = [Record() for _ in range(n_cells)]
         worst = [1.0] * n_cells
         saw = [False] * n_cells
+        failed = [False] * n_cells   # a field read below its own min_confidence drops the cell
+        cell_confs = [dict() for _ in range(n_cells)]   # per-cell {field_id: conf} for tell gating
 
         # first gather every field from the single detection pass; queue the item-field
         # boxes it missed, then read them all in ONE batched recognition pass
         base, pending = {}, []
         for ci, field_id, box in targets:
-            if self._is_pip(fields.get(field_id)):
+            fdef = fields.get(field_id)
+            if self._is_pip(fdef):
                 continue
             tc = self._gather(lines, box)
             base[(ci, field_id)] = tc
-            if not tc[0] and ics is not None:
+            # isolate: always crop-read this box alone; else focus-read only the misses
+            if (fdef and fdef.isolate) or (not tc[0] and ics is not None):
                 pending.append(((ci, field_id), box))
         focus = self._focus_reads(frame, window, pending) if pending else {}
 
@@ -342,19 +349,30 @@ class RegionReader:
                 rec.values[field_id] = text or None
             if text:
                 saw[ci] = True
+                cell_confs[ci][field_id] = conf   # so a field-tell's tell_conf can gate
                 if not substituted:
                     # a fired fallback's value is authored config, not this read — the
                     # garbage OCR that triggered it must not sink the whole record
                     worst[ci] = min(worst[ci], conf)
+                    # per-field confidence floor: a genuine read below the field's own bar
+                    # drops the whole cell (an authored fallback bypasses it, like worst above)
+                    mc = getattr(fdef, "min_confidence", 0.0) or 0.0
+                    if mc and conf < mc:
+                        failed[ci] = True
+                    # plausibility range: an out-of-range number is a misread (a glyph fused
+                    # onto the digits), so drop the cell rather than store a wrong value
+                    if fdef and out_of_range(fdef, rec.values[field_id]):
+                        failed[ci] = True
 
         for ci, rec in enumerate(records):
             rec.confidence = worst[ci] if saw[ci] else 0.0
         if ics is None:
-            return [r for r in records if not r.is_empty()]
+            return [r for ci, r in enumerate(records) if not r.is_empty() and not failed[ci]]
         # Item templates: keep a cell only if all its tells pass (drops popups/empties);
         # resolve template overlaps; and (when >1 template) tag which one matched.
         valid = [ci for ci, r in enumerate(records)
-                 if not r.is_empty() and valid_cell(frame, window, r.values, ics[ci], self._templates, fields)]
+                 if not r.is_empty() and not failed[ci]
+                 and valid_cell(frame, window, r.values, ics[ci], self._templates, fields, cell_confs[ci])]
         kept = resolve_overlaps(ics, valid)
         tag = len(window.items) > 1
         for ci in kept:
@@ -389,11 +407,13 @@ class RegionReader:
 
         base, pending = {}, []   # gather from the detection pass; batch what it missed
         for ci, field_id, box in targets:
-            if self._is_pip(fields.get(field_id)):
+            fdef = fields.get(field_id)
+            if self._is_pip(fdef):
                 continue
             tc = self._gather(lines, box)
             base[(ci, field_id)] = tc
-            if not tc[0] and ics is not None:
+            # isolate: always crop-read this box alone; else focus-read only the misses
+            if (fdef and fdef.isolate) or (not tc[0] and ics is not None):
                 pending.append(((ci, field_id), box))
         focus = self._focus_reads(frame, window, pending) if pending else {}
 
@@ -417,9 +437,12 @@ class RegionReader:
                 value, rule = coerce_rule(fdef, text)
             else:
                 value, rule = text or None, None
+            # out-of-range numbers are kept VISIBLE in the preview (so the author sees the
+            # "81" misread) but flagged — the cell is dropped below, mirroring collection
+            oor = rule is None and bool(fdef) and out_of_range(fdef, value)
             # the box is shown where it was DEFINED (cell-relative), not snapped to data
             out[ci]["fields"][field_id] = {"raw": text, "value": value, "confidence": round(conf, 3),
-                                           "substituted": rule, "box": asfrac(box)}
+                                           "substituted": rule, "out_of_range": oor, "box": asfrac(box)}
 
         # mark which cells survive (tells pass AND win overlap resolution), record which
         # template matched, and attach per-tell diagnostics + the reject reason so the
@@ -436,7 +459,12 @@ class RegionReader:
                 rep = tell_report(frame, vals, ics[ci], self._templates, confs, fields)
                 cell["tells"] = rep
                 cell["tells_pass"] = all(r["pass"] for r in rep)
-                if cell["tells_pass"]:
+                # an out-of-range field drops the cell too (same as collection) — record it
+                # as the reject reason; it does not count as a tell failure
+                oor_fids = [fid for fid, f in cell["fields"].items() if f.get("out_of_range")]
+                if oor_fids:
+                    cell["reason"] = "out of range: " + ", ".join(oor_fids)
+                if cell["tells_pass"] and not oor_fids:
                     valid.append(ci)
             kept = set(resolve_overlaps(ics, valid))
             for ci, cell in enumerate(out):
@@ -484,11 +512,13 @@ class RegionReader:
         lines = self._ocr_union(frame, text_boxes, window.preprocess, None)
         base, pending = {}, []
         for fid, box in targets:
-            if self._is_pip(fields.get(fid)):
+            fdef = fields.get(fid)
+            if self._is_pip(fdef):
                 continue
             tc = self._gather(lines, box)
             base[fid] = tc
-            if not tc[0]:
+            # isolate: always crop-read this box alone (item_read already focus-reads misses)
+            if (fdef and fdef.isolate) or not tc[0]:
                 pending.append((fid, box))
         focus = self._focus_reads(frame, window, pending) if pending else {}
 
@@ -511,8 +541,9 @@ class RegionReader:
                 value, rule = coerce_rule(fdef, text)
             else:
                 value, rule = text or None, None
+            oor = rule is None and bool(fdef) and out_of_range(fdef, value)
             out_fields[fid] = {"raw": text, "value": value, "confidence": round(conf, 3),
-                               "substituted": rule, "box": bf}
+                               "substituted": rule, "out_of_range": oor, "box": bf}
             vals[fid], confs[fid] = value, conf
 
         tells = tell_report(frame, vals, ic, self._templates, confs, fields)

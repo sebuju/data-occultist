@@ -1,4 +1,4 @@
-from oc.collect.fields import coerce, coerce_rule
+from oc.collect.fields import coerce, coerce_rule, out_of_range
 from oc.profile.models import Extract, FieldDef, FieldType
 
 
@@ -87,6 +87,27 @@ def test_if_substitutions_do_not_swallow_empty():
     f = FieldDef(id="count", type=FieldType.number, empty="1", if_text="0")
     assert coerce(f, "") == 1
     assert coerce(f, "Guard") == 0
+
+
+def test_out_of_range_bounds():
+    # mod_drain plausibility: 8 keeps, a glyph-fused "81" is out of range
+    f = FieldDef(id="drain", type=FieldType.number, max=16)
+    assert out_of_range(f, 8) is False
+    assert out_of_range(f, 16) is False          # inclusive upper bound
+    assert out_of_range(f, 81) is True
+    g = FieldDef(id="rank", type=FieldType.number, min=0, max=10)
+    assert out_of_range(g, -1) is True
+    assert out_of_range(g, 0) is False
+    assert out_of_range(g, 5) is False
+
+
+def test_out_of_range_only_numbers_and_when_bounded():
+    f = FieldDef(id="drain", type=FieldType.number, max=16)
+    assert out_of_range(f, None) is False         # unread -> not range-checked
+    unbounded = FieldDef(id="n", type=FieldType.number)
+    assert out_of_range(unbounded, 999) is False  # no bounds -> never out of range
+    text = FieldDef(id="name", max=16)            # text field ignores numeric bounds
+    assert out_of_range(text, "anything") is False
 
 
 def test_number_digitless_junk_falls_back_to_empty():

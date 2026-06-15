@@ -14,7 +14,7 @@ def _window():
         tells=[Tell(id="icon", box=Box(x=0.1, y=0.05, w=0.5, h=0.4),
                     kind=TellKind.filled, threshold=0.2, locate=True)],
     )
-    return WindowDef(id="w", fields=[FieldDef(id="name")],
+    return WindowDef(id="w", fields=[FieldDef(id="name")], static_grid=False,
                      data_area=Box(x=0.0, y=0.0, w=1.0, h=1.0), items=[item])
 
 
@@ -76,7 +76,7 @@ def _text_window():
                 RegionDef(id="count", box=Box(x=0.0, y=0.0, w=0.5, h=0.15),
                           field="count")],
     )
-    return WindowDef(id="w", fields=[FieldDef(id="name"), FieldDef(id="count")],
+    return WindowDef(id="w", fields=[FieldDef(id="name"), FieldDef(id="count")], static_grid=False,
                      data_area=Box(x=0.0, y=0.0, w=1.0, h=1.0), items=[item])
 
 
@@ -109,6 +109,28 @@ def test_resolve_overlaps_priority_wins():
     # two templates on the SAME tile: higher priority kept, lower dropped
     ics = [_ic(prio=0, ntells=5), _ic(prio=9, ntells=1)]
     assert resolve_overlaps(ics, [0, 1]) == [1]
+
+
+def test_static_grid_tiles_from_data_area_corner_without_ocr():
+    # static grid anchors at the DATA-AREA corner and tiles by the cell SIZE (the cell sets
+    # only the stride, not the phase), no locator/lines needed. Cell 0.2x0.25 -> 5x4 over a 1x1.
+    item = ItemDef(id="it", box=Box(x=0.0, y=0.0, w=0.2, h=0.25),
+                   fields=[RegionDef(id="name", box=Box(x=0.05, y=0.6, w=0.9, h=0.3), field="name")])
+    win = WindowDef(id="w", fields=[FieldDef(id="name")],
+                    data_area=Box(x=0.0, y=0.0, w=1.0, h=1.0), items=[item])
+    frame = Frame(image=np.zeros((1000, 1000, 3), dtype=np.uint8), client=PixelBox(0, 0, 1000, 1000))
+    cells = locate_item_cells(frame, win, [])            # no OCR lines
+    assert {ic.cell.row for ic in cells} == {0, 1, 2, 3}  # 1.0 / 0.25 = 4 rows
+    assert {ic.cell.col for ic in cells} == {0, 1, 2, 3, 4}  # 1.0 / 0.2 = 5 cols
+    assert len(cells) == 20
+    # the cell POSITION is ignored: a cell drawn at x=0.1 still tiles from the corner 0.0
+    item.box = Box(x=0.1, y=0.0, w=0.2, h=0.25)
+    xs = sorted({round(ic.ox, 3) for ic in locate_item_cells(frame, win, [])})
+    assert xs == [0.0, 0.2, 0.4, 0.6, 0.8]
+    # and the data area corner sets the origin: a data area starting at 0.1 tiles from 0.1
+    win.data_area = Box(x=0.1, y=0.0, w=0.9, h=1.0)
+    xs2 = sorted({round(ic.ox, 3) for ic in locate_item_cells(frame, win, [])})
+    assert xs2 == [0.1, 0.3, 0.5, 0.7]
 
 
 def test_resolve_overlaps_priority_tie_breaks_on_tells():

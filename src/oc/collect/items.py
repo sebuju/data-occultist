@@ -43,14 +43,18 @@ class ItemCell:
 
 
 def locator_of(item: ItemDef):
-    """What finds the rows. Priority: an explicit ``locate`` tell, else the first visual
-    tell (cheap, no OCR), else any text tell, else a field flagged ``tell`` (it locates
-    by its OCR text) — so an item can be built entirely from field-tells, with no
-    separate tell drawn. Returns a Tell or a RegionDef field, or None."""
+    """What finds the rows. Priority: an explicit ``locate`` tell, else a field flagged
+    ``locate`` (a reliable text field used purely to anchor rows, no tell duty), else the
+    first visual tell (cheap, no OCR), else any text tell, else a field flagged ``tell`` (it
+    locates by its OCR text). So an item can be located by a name without that name being a
+    tell. Returns a Tell or a RegionDef field, or None."""
     tl = item.tells
     for t in tl:
         if t.locate:
             return t
+    for f in item.fields:                       # a field explicitly flagged to locate
+        if getattr(f, "locate", False):
+            return f
     for t in tl:
         if telldet.is_visual(t):
             return t
@@ -123,24 +127,25 @@ def _visual_rows(frame: Frame, item: ItemDef, loc, da, templates) -> list[float]
     return _peaks(ys, scores, loc.threshold, max(step * 3, ih * 0.15))
 
 
-def _loc_lines(item: ItemDef, loc, lines_frac, da, ncols: int, pitch: float) -> list[tuple]:
-    """The OCR lines eligible to anchor rows: letter-bearing, confident lines inside
-    the locator's x-range of ANY column (not just column 0 — a row whose first tile
-    is unreadable must still be found from its other tiles). Returns (cx, cy, h).
+def _loc_lines(item: ItemDef, loc, lines_frac, da, ncols: int, pitch: float, numeric: bool = False, min_conf: float = _LOC_MIN_CONF) -> list[tuple]:
+    """The OCR lines eligible to anchor rows: confident lines of the locator's CHARACTER
+    CLASS inside its x-range of ANY column (not just column 0 — a row whose first tile is
+    unreadable must still be found from its other tiles). Returns (cx, cy, h).
 
-    The locator is a TEXT field (a name), so only letter-bearing, confident lines
-    count. This rejects two things that otherwise sit in the same column and corrupt
-    the row anchor: numeric badges (e.g. a count "6" at the tile's top-left) and OCR
-    garbage off the icons (low confidence). Without this, a scrolled view clusters
-    badge + garbage + name into one band and the centroid misses the name entirely."""
+    The char class follows the locator FIELD's type: a text locator (a name) keeps only
+    letter-bearing lines — rejecting numeric badges (e.g. a count "6") and icon garbage
+    that would otherwise corrupt the row anchor; a NUMBER locator (e.g. a mod's drain)
+    keeps digit-bearing lines instead, since there the digits ARE the anchor. Low-confidence
+    lines are always dropped."""
     iw = item.box.w
     x0, x1 = loc.box.x * iw, (loc.box.x + loc.box.w) * iw   # locator x-range, cell-relative
     out = []
     for cx, cy, h, text, conf in lines_frac:
         if not (da.x <= cx <= da.x + da.w and da.y <= cy <= da.y + da.h):
             continue
-        if conf < _LOC_MIN_CONF or not any(ch.isalpha() for ch in text):
-            continue                     # skip numeric badges and low-confidence garbage
+        wanted = any(ch.isdigit() for ch in text) if numeric else any(ch.isalpha() for ch in text)
+        if conf < min_conf or not wanted:
+            continue                     # skip the wrong char class + low-confidence garbage
         k = min(ncols - 1, max(0, int((cx - da.x) // pitch)))
         if x0 <= cx - da.x - k * pitch <= x1:
             out.append((cx, cy, h))
@@ -175,11 +180,13 @@ def _column_anchor(loc_lines: list[tuple], x0: float, x1: float, lc: float, ih: 
     return sum(cy for cy, _ in band) / len(band)
 
 
-def _cell_in_bounds(item: ItemDef, cell_x: float, cell_y: float, da) -> bool:
+def _cell_in_bounds(item: ItemDef, cell_x: float, cell_y: float, da, iw: float | None = None, ih: float | None = None) -> bool:
     """Every field AND tell box of the placed cell must sit inside the data area.
     A row half-scrolled off the grid (or a misplaced anchor) pushes boxes outside,
-    where they read unrelated UI text — dismiss the whole cell instead."""
-    iw, ih = item.box.w, item.box.h
+    where they read unrelated UI text — dismiss the whole cell instead. ``iw``/``ih`` are the
+    placed cell dimensions (default the item's own box; a shared static grid passes its own)."""
+    iw = item.box.w if iw is None else iw
+    ih = item.box.h if ih is None else ih
     ex, ey = 0.02 * iw, 0.02 * ih           # authoring slack: boxes drawn to the edge
     boxes = [f.box for f in item.fields] + [t.box for t in item.tells]
     for b in boxes:
@@ -191,28 +198,78 @@ def _cell_in_bounds(item: ItemDef, cell_x: float, cell_y: float, da) -> bool:
     return True
 
 
-def _cells_for_item(frame: Frame, item: ItemDef, da, lines_frac, templates, ref: float) -> list[ItemCell]:
-    """``ref`` is the cell-relative y the detected row anchors to — calibrated from
-    where the locator's content ACTUALLY sits in the cutout (see RegionReader), not
-    the tell box's centre. That keeps the cell at the position the user authored, so
-    every field box lands where it was defined."""
-    loc = locator_of(item)
-    iw, ih = item.box.w, item.box.h
-    if loc is None or iw <= 0 or ih <= 0:
-        return []
+def static_grid_origins(o0: float, step: float, lo: float, hi: float) -> list[float]:
+    """Tile origins ``o0 + k*step`` (k any sign) whose tile ``[o, o+step]`` fits in ``[lo, hi]``.
+    The static grid anchors at the DATA-AREA corner (``o0 = lo``) and tiles by the cell size
+    (``step``), so row 0 / col 0 always start at the data-area top-left — the cell sets only the
+    pitch, never the phase. Walks both directions from o0 (a non-corner o0 still works)."""
+    if step <= 0:
+        return [o0]
+    slack = step * 0.04                      # authoring slack: a cell drawn flush to the edge counts
+    out = []
+    o = o0
+    while o >= lo - slack:                    # o0 and leftward
+        if o + step <= hi + slack:
+            out.append(o)
+        o -= step
+    o = o0 + step
+    while o + step <= hi + slack:             # rightward of o0
+        if o >= lo - slack:
+            out.append(o)
+        o += step
+    out.sort()
+    return out
 
-    # columns tile the data area EVENLY: step by the exact pitch (da.w / ncols), not
-    # the drawn cell width, so a slightly-tight cell doesn't drift across columns.
+
+def _cells_for_item(frame: Frame, item: ItemDef, da, lines_frac, templates, ref: float, loc_numeric: bool = False, loc_conf: float = _LOC_MIN_CONF, static_grid: bool = True, grid=None) -> list[ItemCell]:
+    """Locate this item's cells across the data area.
+
+    STATIC mode (default): tile from a shared grid (``grid`` = (xs, ys, giw, gih)) formed from
+    the window's lowest-priority cell, so every template aligns to the same cells. With no
+    shared grid, tile from this item's own authored cell. No OCR. LOCATED mode: rows come
+    from the OCR locator and ``ref`` is the cell-relative y its content anchors to."""
+    iw, ih = item.box.w, item.box.h
+    if iw <= 0 or ih <= 0 or da.w <= 0 or da.h <= 0:
+        return []
+    # static cells are placed on the SHARED grid (its cell size), so all templates line up;
+    # located cells use this item's own cell size.
+    giw, gih = (grid[2], grid[3]) if grid else (iw, ih)
+
+    def emit(out, ri, c, cell_x, cell_y, cw, ch):
+        if not _cell_in_bounds(item, cell_x, cell_y, da, cw, ch):
+            return                          # a box outside the data area reads stray UI text
+        boxes = {
+            f.field: FractionBox(cell_x + f.box.x * cw, cell_y + f.box.y * ch,
+                                 f.box.w * cw, f.box.h * ch)
+            for f in item.fields
+        }
+        out.append(ItemCell(Cell(row=ri, col=c, boxes=boxes), cell_x, cell_y, cw, ch, item))
+
+    out: list[ItemCell] = []
+    if static_grid:
+        # anchor at the data-area corner (its top-left), tile by the cell size — the cell's
+        # position is NOT used as a phase
+        xs = grid[0] if grid else static_grid_origins(da.x, iw, da.x, da.x + da.w)
+        ys = grid[1] if grid else static_grid_origins(da.y, ih, da.y, da.y + da.h)
+        for ri, cell_y in enumerate(ys):
+            for c, cell_x in enumerate(xs):
+                emit(out, ri, c, cell_x, cell_y, giw, gih)
+        return out
+
+    # columns tile the data area EVENLY for the LOCATED mode (rows come from OCR)
     ncols = max(1, round(da.w / iw))
     pitch_x = da.w / ncols
+
+    loc = locator_of(item)
+    if loc is None:
+        return []
     loc_lines = None
     if _is_visual_loc(loc):
         loc_anchors = _visual_rows(frame, item, loc, da, templates)
     else:
-        loc_lines = _loc_lines(item, loc, lines_frac, da, ncols, pitch_x)
+        loc_lines = _loc_lines(item, loc, lines_frac, da, ncols, pitch_x, numeric=loc_numeric, min_conf=loc_conf)
         loc_anchors = _text_rows(item, loc_lines, da)
     align = anchor_align(item)
-    out: list[ItemCell] = []
     for ri, lc in enumerate(loc_anchors):
         for c in range(ncols):
             cell_x = da.x + c * pitch_x
@@ -230,14 +287,7 @@ def _cells_for_item(frame: Frame, item: ItemDef, da, lines_frac, templates, ref:
                 # one line high and pushes the cell out of bounds. The row consensus
                 # still has it right — retry there before dismissing the tile.
                 cell_y = lc - ref * ih
-            if not _cell_in_bounds(item, cell_x, cell_y, da):
-                continue                    # a box outside the data area reads stray UI text
-            boxes = {
-                f.field: FractionBox(cell_x + f.box.x * iw, cell_y + f.box.y * ih,
-                                     f.box.w * iw, f.box.h * ih)
-                for f in item.fields
-            }
-            out.append(ItemCell(Cell(row=ri, col=c, boxes=boxes), cell_x, cell_y, iw, ih, item))
+            emit(out, ri, c, cell_x, cell_y, iw, ih)
     return out
 
 
@@ -249,15 +299,41 @@ def locate_item_cells(frame: Frame, window: WindowDef, lines_frac, templates=Non
     if not window.items or window.data_area is None:
         return []
     da = window.data_area.to_fraction()
+    items = [it for it in window.items if it.enabled]
+    if not items:
+        return []
     out: list[ItemCell] = []
-    for item in window.items:
-        if not item.enabled:
-            continue
+
+    # Row-finding mode is per WINDOW (all its item templates share the data-area grid).
+    if getattr(window, "static_grid", True):
+        # ONE grid for the whole window: anchored at the data-area corner, tiled by the
+        # LOWEST-priority item's cell SIZE (the generic base sets only the pitch, not the
+        # position). Every template reads at those cells; resolve_overlaps picks the winner.
+        base = min(items, key=lambda it: it.priority)
+        giw, gih = base.box.w, base.box.h
+        xs = static_grid_origins(da.x, giw, da.x, da.x + da.w)
+        ys = static_grid_origins(da.y, gih, da.y, da.y + da.h)
+        grid = (xs, ys, giw, gih)
+        for item in items:
+            out.extend(_cells_for_item(frame, item, da, lines_frac, templates, 0.5, static_grid=True, grid=grid))
+        return out
+
+    # LOCATED: each template resolves its own OCR locator + anchoring inputs
+    for item in items:
         loc = locator_of(item)
         if loc is None:
             continue
+        # a NUMBER-typed field locator (e.g. a mod's drain) anchors rows on its digits, not
+        # letters — so the line filter keeps digit lines instead of rejecting them as badges
+        fid = getattr(loc, "field", None)
+        fdef = next((f for f in window.fields if f.id == fid), None) if fid else None
+        loc_numeric = bool(fdef and fdef.type is FieldType.number)
+        # the locator's OWN confidence input governs which lines anchor rows — its tell_conf
+        # when set (>0), else the default floor.
+        tc = getattr(loc, "tell_conf", 0.0) or 0.0
+        loc_conf = tc if tc > 0 else _LOC_MIN_CONF
         ref = (anchors or {}).get(item.id, loc.box.y + loc.box.h / 2)
-        out.extend(_cells_for_item(frame, item, da, lines_frac, templates, ref))
+        out.extend(_cells_for_item(frame, item, da, lines_frac, templates, ref, loc_numeric, loc_conf, static_grid=False))
     return out
 
 
@@ -266,14 +342,18 @@ def resolve_overlaps(ics: list[ItemCell], idx: list[int]) -> list[int]:
 
     When several templates claim the same tile (e.g. a generic 'name' template and a
     specific 'arcane' template both match an arcane), keep the one with the higher
-    ``priority`` (ties broken by tell count). Cells overlap when their centres are
-    within half a cell. Single-template windows have no overlaps, so nothing is dropped."""
+    ``priority`` (ties broken by tell count). Cells overlap when their centres are within
+    half a cell — but ONLY across DIFFERENT templates: two cells of the SAME item are
+    distinct grid positions (adjacent rows/cols), never rivals, even when the authored cell
+    is taller than the real row pitch (which previously made a tightly-packed grid drop every
+    other row). So a single-template window never drops anything."""
     order = sorted(idx, key=lambda i: (-ics[i].item.priority, -len(ics[i].item.tells)))
     kept: list[int] = []
     for i in order:
         a = ics[i]
         acx, acy = a.ox + a.iw / 2, a.oy + a.ih / 2
-        clash = any(abs(acx - (ics[j].ox + ics[j].iw / 2)) < a.iw * 0.5
+        clash = any(ics[j].item is not a.item
+                    and abs(acx - (ics[j].ox + ics[j].iw / 2)) < a.iw * 0.5
                     and abs(acy - (ics[j].oy + ics[j].ih / 2)) < a.ih * 0.5 for j in kept)
         if not clash:
             kept.append(i)
@@ -328,7 +408,12 @@ def _field_tell_result(frame: Frame, values: dict, confs, ic: ItemCell, f, field
                 "threshold": thr or None, "pass": score >= thr, "detail": f"{f.field}: {cnt} marks"}
     val = values.get(f.field)
     conf = (confs or {}).get(f.field)
-    has = val not in (None, "") and not (isinstance(val, (int, float)) and val == 0)
+    if getattr(f, "tell_allow_text", False):
+        # lenient: a read of ANYTHING satisfies the tell (conf is set only when text read),
+        # so a number field still passes when its read carries text (e.g. a polarity glyph)
+        has = conf is not None or val not in (None, "")
+    else:
+        has = val not in (None, "") and not (isinstance(val, (int, float)) and val == 0)
     ok = has and (conf is None or conf >= thr)
     score = round(float(conf), 3) if conf is not None else (1.0 if has else 0.0)
     return {"id": f.id, "kind": "field", "field": f.field,
@@ -349,6 +434,7 @@ def tell_report(frame: Frame, values: dict, ic: ItemCell, templates=None, confs=
     return cell_results(frame, values, ic, templates, confs, fields)
 
 
-def valid_cell(frame: Frame, window: WindowDef, values: dict, ic: ItemCell, templates=None, fields=None) -> bool:
-    """True when every tell passes for this cell — explicit tells AND field tells."""
-    return all(r["pass"] for r in cell_results(frame, values, ic, templates, fields=fields))
+def valid_cell(frame: Frame, window: WindowDef, values: dict, ic: ItemCell, templates=None, fields=None, confs=None) -> bool:
+    """True when every tell passes for this cell — explicit tells AND field tells. ``confs``
+    (per-field OCR confidence) lets a field-tell's ``tell_conf`` actually gate the read."""
+    return all(r["pass"] for r in cell_results(frame, values, ic, templates, confs=confs, fields=fields))
