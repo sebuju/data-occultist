@@ -11,7 +11,12 @@ import { makeDraggable, addResizeGrips } from "./dragresize.js";
 const _wins = new Map();
 export function floatWins() { return _wins; }
 
-const _topGap = () => (document.querySelector(".topbar")?.offsetHeight || 48) + 4;
+const SNAP = 9;   // px proximity at which an edge snaps
+const GAP = 8;    // padding between abutting panels — ALSO the screen-edge + topbar margin,
+                  // so a panel docked to the edge sits the same distance in as a docked child.
+
+// Gap below the topbar = the same GAP, so the top margin matches the docking margin.
+const _topGap = () => (document.querySelector(".topbar")?.offsetHeight || 48) + GAP;
 
 // Every visible, UNDOCKED panel is anchored TOP-RIGHT: on a window resize it keeps its
 // distance from the top (y unchanged) and from the right edge (x shifts by the width
@@ -28,9 +33,6 @@ window.addEventListener("resize", () => {
     w.onResize && w.onResize();
   }
 });
-
-const SNAP = 9;   // px proximity at which an edge snaps
-const GAP = 8;    // exact padding left between two windows when their edges abut
 
 // Rects of the OTHER visible panels (the things to snap against).
 function _otherRects(id) {
@@ -50,8 +52,8 @@ function _otherRects(id) {
 //   • SCREEN — hug the viewport edges (below the topbar)
 function snapBox(id, x, y, w, h) {
   const W = window.innerWidth, H = window.innerHeight, top = _topGap();
-  const xc = [4, W - 4 - w];                 // screen left / right
-  const yc = [top, H - 4 - h];               // screen top / bottom
+  const xc = [GAP, W - GAP - w];             // screen left / right (GAP margin)
+  const yc = [top, H - GAP - h];             // screen top / bottom (GAP margin)
   for (const o of _otherRects(id)) {
     xc.push(o.left, o.right - w, o.left + o.w / 2 - w / 2,   // left / right / centre align
             o.right + GAP, o.left - GAP - w);                // abut to its right / left
@@ -70,7 +72,7 @@ function snapBox(id, x, y, w, h) {
 // screen edge. axis "x" → a left|right edge value; "y" → a top|bottom edge value.
 function snapEdgeVal(id, axis, v) {
   const W = window.innerWidth, H = window.innerHeight, top = _topGap();
-  const cands = axis === "x" ? [4, W - 4] : [top, H - 4];
+  const cands = axis === "x" ? [GAP, W - GAP] : [top, H - GAP];
   for (const o of _otherRects(id)) {
     if (axis === "x") cands.push(o.left, o.right, o.left - GAP, o.right + GAP);
     else cands.push(o.top, o.bottom, o.top - GAP, o.bottom + GAP);
@@ -101,25 +103,24 @@ function _wouldCycle(selfId, parentId) {
 // re-place every panel docked (directly or transitively) below `id`. `seen` guards cycles
 // and stops the place()→reflow→place() recursion from looping.
 //
-// A docked child shares the parent's WIDTH and left-aligns under it, so the whole stack is
-// one column of equal-width panels. (`oldL`/`oldR` are accepted for call-site compatibility
-// but no longer used now that width tracks the parent instead of a per-child edge anchor.)
+// A docked child is anchored TOP-RIGHT to the parent's BOTTOM-RIGHT: its right edge lines up
+// with the parent's right edge and it sits GAP px under the parent's bottom. The child keeps
+// its OWN width — docks never resize each other to match. Chains work (each placed child
+// reflows its own children via place()). (`oldL`/`oldR` accepted for call-site compat, unused.)
 function reflowDock(id, seen, oldL, oldR) {   // eslint-disable-line no-unused-vars
   seen = seen || new Set();
   if (seen.has(id)) return;
   seen.add(id);
   const p = _wins.get(id);
   if (!p || p.el.hidden) return;
-  const pl = p.el.offsetLeft, pw = p.el.offsetWidth, pb = p.el.offsetTop + p.el.offsetHeight;
+  const pr = p.el.offsetLeft + p.el.offsetWidth;    // parent right edge
+  const pb = p.el.offsetTop + p.el.offsetHeight;    // parent bottom edge
   for (const [, w] of _wins) {
     const d = w.state.dock;
     if (!d || d.to !== id || w.el.hidden) continue;
-    // a docked child takes the parent's width and left-aligns under it — the whole stack
-    // shares one width. Collapsed needs !important to beat the collapsed shrink-to-header CSS.
-    if (w.state.collapsed) w.el.style.setProperty("width", `${pw}px`, "important");
-    else w.el.style.width = `${pw}px`;
     d.ar = true; d.dx = 0;
-    w.place(pl, pb + GAP, seen);   // place() recurses into reflowDock
+    // child's right edge = parent's right edge; child's top = parent's bottom + GAP
+    w.place(pr - w.el.offsetWidth, pb + GAP, seen);   // place() recurses into reflowDock
   }
 }
 
@@ -154,6 +155,12 @@ function findDockChild(id) {
   return null;
 }
 
+// Raise the just-touched panel above the others: only one carries `fw-focused` (z above
+// every other panel) at a time, so the panel you last interacted with always sits on top.
+function _focus(el) {
+  for (const [, w] of _wins) w.el.classList.toggle("fw-focused", w.el === el);
+}
+
 // opts:
 //   id, title           — element id + header text
 //   headerExtra         — extra header HTML (e.g. a mode-toggle button), wired by the caller
@@ -177,6 +184,9 @@ export function createFloatWin({
     </div>
     <div class="fw-body"></div>`;
   document.body.appendChild(el);
+  // any interaction with this panel raises it above the others (capture, so it fires even
+  // when an inner handler stops propagation).
+  el.addEventListener("pointerdown", () => _focus(el), true);
   const head = el.querySelector(".fw-head");
   const body = el.querySelector(".fw-body");
 
@@ -188,9 +198,9 @@ export function createFloatWin({
   // Keep the panel fully on-screen and below the topbar (never off-screen / over the bar).
   function clamp(x, y, w, h) {
     const top = _topGap();
-    const maxX = Math.max(4, window.innerWidth - w - 4);
-    const maxY = Math.max(top, window.innerHeight - h - 4);
-    return [Math.max(4, Math.min(maxX, x)), Math.max(top, Math.min(maxY, y))];
+    const maxX = Math.max(GAP, window.innerWidth - w - GAP);
+    const maxY = Math.max(top, window.innerHeight - h - GAP);
+    return [Math.max(GAP, Math.min(maxX, x)), Math.max(top, Math.min(maxY, y))];
   }
   // prevL/prevR = my left/right edge as of the last placement — fed to reflowDock as the
   // "before" edges so docked children can tell if they were right-aligned to me.
@@ -211,7 +221,7 @@ export function createFloatWin({
   // collapsed height, which would otherwise overwrite the real expanded box)
   function stashSize() {
     if (el.hidden || state.collapsed || !el.offsetWidth) return;
-    if (!state.dock) state.w = el.offsetWidth;   // docked width is parent-driven; keep my own
+    state.w = el.offsetWidth;   // every panel (docked or not) owns its width now
     state.h = el.offsetHeight;
   }
 
@@ -238,14 +248,10 @@ export function createFloatWin({
       place(x, y);
     },
     // dock under whatever panel we came to rest on (null if dragged clear -> dismantled);
-    // also adopt a panel we were dropped directly on top of, then reflow the stack
+    // also adopt a panel we were dropped directly on top of, then reflow the stack. Widths
+    // are never touched by docking now, so there's nothing to restore on undock.
     onSettle: () => { state.dock = findDockParent(id); findDockChild(id);
-      // undocked -> drop the parent-matched width and go back to my own size
-      if (!state.dock) {
-        el.style.removeProperty("width");
-        if (!state.collapsed && Number.isFinite(state.w)) el.style.width = `${state.w}px`;
-      }
-      if (state.dock) reflowDock(state.dock.to);   // parent reflows me (width-matches the stack)
+      if (state.dock) reflowDock(state.dock.to);   // parent re-anchors me top-right under it
       reflowDock(id); save(); },
   });
 
@@ -290,16 +296,10 @@ export function createFloatWin({
     if (btn) btn.textContent = state.collapsed ? "▾" : "▴";   // collapsed → roll down; expanded → roll up
     if (state.collapsed) {
       el.style.height = "";
-      // docked + collapsed → match the dock parent's width; else shrink to the header
-      const p = state.dock && _wins.get(state.dock.to);
-      if (p && !p.el.hidden) el.style.setProperty("width", `${p.el.offsetWidth}px`, "important");
-      else el.style.width = "";
+      el.style.width = "";   // shrink to the header (docks never match widths)
     } else {                                                                // restore the box
-      el.style.removeProperty("width");   // drop any docked-collapsed !important width
-      // docked + expanded → match the dock parent's width; else use my own saved width
-      const p = state.dock && _wins.get(state.dock.to);
-      if (p && !p.el.hidden) el.style.width = `${p.el.offsetWidth}px`;
-      else if (Number.isFinite(state.w)) el.style.width = `${state.w}px`;
+      el.style.removeProperty("width");
+      if (Number.isFinite(state.w)) el.style.width = `${state.w}px`;   // my own saved width
       if (Number.isFinite(state.h)) el.style.height = `${state.h}px`;
     }
   }

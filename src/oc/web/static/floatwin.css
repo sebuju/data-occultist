@@ -27,11 +27,17 @@
 
 /* collapsed: shrunk to the header bar (visibility itself is the topbar button's job).
    Width collapses too — bar is only as wide as title + controls. */
-.floatwin.collapsed { min-height: 0; height: auto !important; min-width: 0; width: auto !important; }
+/* collapsed panels sit BELOW expanded ones (z 30 < the 40 above), so a folded panel never
+   covers an open one where they overlap. */
+.floatwin.collapsed { min-height: 0; height: auto !important; min-width: 0; width: auto !important; z-index: 30; }
 .floatwin.collapsed .fw-head { border-bottom: none; }
 .floatwin.collapsed .fw-head button:not(.fw-collapse) { display: none; }
 .floatwin.collapsed .fw-body { display: none; }
 .floatwin.collapsed .rz-grip, .floatwin.collapsed .rz-reset { display: none; }
+
+/* the last-touched panel rides above every other panel (beats both the expanded 40 and the
+   collapsed 30). Listed after .collapsed so a focused-collapsed panel still wins. */
+.floatwin.fw-focused { z-index: 50; }
 
 /* per-panel default sizes (overridden by the inline size once the user resizes) */
 #nodemap { width: 280px; height: 232px; }
