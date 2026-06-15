@@ -339,8 +339,19 @@ export function createFloatWin({
     Object.assign(state, JSON.parse(JSON.stringify(_default)), blob || {});
     applyState();
   }
+  // Reset the panel's BOX (size + collapsed + dock) to defaults and re-place it at its
+  // default top-right slot — keeps visibility. Bound to shift-clicking the panel's toggle.
+  function resetBox() {
+    state.w = _default.w; state.h = _default.h;
+    state.collapsed = !!_default.collapsed; state.dock = _default.dock || null;
+    state.userSized = false;
+    el.style.width = ""; el.style.height = "";
+    applySize(); applyCollapsed(); markSized();
+    place(window.innerWidth - (el.offsetWidth || 288) - GAP, _topGap());
+    save();
+  }
 
-  const inst = { el, body, head, state, setVisible, applyState, place, stashSize, applySize, collect, hydrate, onResize };
+  const inst = { el, body, head, state, setVisible, applyState, place, stashSize, applySize, collect, hydrate, onResize, resetBox };
   _wins.set(id, inst);
   return inst;
 }

@@ -1,6 +1,6 @@
 // Node-view home: edit a game's structure as a graph (Game → Windows → Fields →
 // Datasets), drag to arrange, drag-wire a window to a dataset, edit inline, and
-// watch live dataset counts. Box drawing stays on the canvas (teach.html link).
+// watch live dataset counts. Box drawing stays on the canvas (ui.html link).
 import * as api from "../api.js";
 import * as conn from "../conn.js";
 import * as hub from "../hub.js";
@@ -1597,6 +1597,8 @@ function updateOverlayZoom() {
 }
 
 function onWheel(ev) {
+  // Ctrl/Cmd+wheel belongs to the browser (page zoom) — don't hijack it or preventDefault.
+  if (ev.ctrlKey || ev.metaKey) return;
   // a SELECTED preview, or the batches ledger, scrolls its content; everywhere else zoom
   if (ev.target.closest(".scrollhost")) return;
   ev.preventDefault();
@@ -2931,6 +2933,11 @@ function renderPrecapLeft(left, st) {
     h.className = "pc-sess-h muted"; h.textContent = "sessions";
     left.append(left._new, h);
     left._head = h;           // header carries the all-sessions total image size
+    // rows live in their own scroll box so only the latest PC_ROWS_SHOWN are visible and the
+    // rest scroll (the ＋new button + header stay pinned above).
+    left._rowsBox = document.createElement("div");
+    left._rowsBox.className = "pc-sess-rows";
+    left.appendChild(left._rowsBox);
     left._rows = new Map();   // sid -> { row, load, ren }
   }
   left._new.classList.toggle("active", precapView === "new");
@@ -2940,6 +2947,7 @@ function renderPrecapLeft(left, st) {
   const want = new Set(precapSessions.map((s) => s.id));
   for (const [sid, r] of left._rows) if (!want.has(sid)) { r.row.remove(); left._rows.delete(sid); }
 
+  let i = 0;   // slot index into _rowsBox so rows are MOVED only when not already in place
   for (const s of precapSessions) {
     let r = left._rows.get(s.id);
     if (!r) {
@@ -2952,7 +2960,9 @@ function renderPrecapLeft(left, st) {
       row.append(name, meta, ren);
       r = { row, name, meta, ren }; left._rows.set(s.id, r);
     }
-    left.appendChild(r.row);   // (re)append in list order -> DOM order tracks newest-first
+    const at = left._rowsBox.children[i];        // keep DOM order = newest-first WITHOUT
+    if (at !== r.row) left._rowsBox.insertBefore(r.row, at || null);   // detaching settled rows
+    i++;
     r.row.dataset.label = s.label || "";   // source of truth for the rename input
     r.row.classList.toggle("active", precapView === "loaded" && s.id === st.session);
     if (!r.row._editing) {     // don't clobber the rename input mid-edit
@@ -2962,6 +2972,15 @@ function renderPrecapLeft(left, st) {
     const meta = `${s.frames}f · ${fmtBytes(s.bytes || 0)} · ${s.records || 0} rec${s.saved_at ? ' · <span class="tc-ok">committed</span>' : ""}`;
     if (r.meta._html !== meta) { r.meta.innerHTML = meta; r.meta._html = meta; }   // touch DOM only on change
     r.ren.disabled = precapBusy;
+  }
+  // cap the rows box to PC_ROWS_SHOWN rows, then it scrolls. Measure one row's height ONCE
+  // (rows are uniform) and cache it, so the busy-tick poll never forces a reflow.
+  const PC_ROWS_SHOWN = 5, ROW_GAP = 3;
+  if (!left._rowH && left._rowsBox.firstChild) left._rowH = left._rowsBox.firstChild.offsetHeight;
+  if (left._rowH) {
+    const cap = precapSessions.length > PC_ROWS_SHOWN
+      ? `${left._rowH * PC_ROWS_SHOWN + ROW_GAP * (PC_ROWS_SHOWN - 1)}px` : "";
+    if (left._rowsBox.style.maxHeight !== cap) left._rowsBox.style.maxHeight = cap;
   }
   // header shows the total image size across every session (touch DOM only on change)
   const total = precapSessions.reduce((a, s) => a + (s.bytes || 0), 0);
@@ -4689,6 +4708,20 @@ $("precapBtn").addEventListener("click", () => {
   if (!pcState.visible && !model.profile.name) { setStatus("load a game first"); return; }
   pc.setVisible(!pcState.visible);
 });
+
+// Shift-clicking a panel's topbar toggle resets that panel's box (size + position) instead
+// of toggling it. Capture phase so it can pre-empt the normal toggle handler above. If the
+// panel is already open we reset in place and suppress the toggle (which would hide it); if
+// it's closed/not-built we let the toggle open it, then reset on the next tick.
+const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", nodemapBtn: "nodemap", activityBtn: "activity", testingBtn: "testing" };
+for (const [btnId, panelId] of Object.entries(_PANEL_TOGGLES)) {
+  $(btnId)?.addEventListener("click", (ev) => {
+    if (!ev.shiftKey) return;
+    const p = floatWins().get(panelId);
+    if (p && p.state.visible) { ev.stopImmediatePropagation(); p.resetBox(); }
+    else setTimeout(() => floatWins().get(panelId)?.resetBox(), 0);
+  }, true);
+}
 $("selGroupBtn").addEventListener("click", () => groupShortcut());
 
 // The current selection the group action operates on: the multi-select set if any,
@@ -4946,6 +4979,7 @@ let liveFrames = 0, liveT0 = 0, liveFps = 0;
 let liveSave = true;
 let liveColStatus = null;   // latest server collector status (from the heartbeat) while collecting
 let liveColUnsub = null;    // hub subscription active while the server collector runs
+let liveImg = { count: 0, bytes: 0 };   // saved live-image stat (live tuning saves one frame/round)
 
 // ---- live floating panel --------------------------------------------------
 // Styled like the tasks panel: a master live toggle, live stats, and a list of every
@@ -4973,10 +5007,19 @@ function buildLiveWindow() {
           <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
       </button><span class="live-save-lbl">save to datasets</span></label>
     <div class="live-stats muted"></div>
+    <div class="live-imgs"><span class="live-imgstat muted"></span><button class="live-clear" data-armed="0" title="delete every saved live image">clear</button></div>
     <div class="live-wins"></div>`;
   liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
   liveWin.body.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
   liveWin.body.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
+  // clear saved live images — armed two-click (no blocking confirm; CLAUDE.md rule 2)
+  const clr = liveWin.body.querySelector(".live-clear");
+  clr.addEventListener("click", () => {
+    if (clr.dataset.armed !== "1") { clr.dataset.armed = "1"; clr.textContent = "sure?"; setTimeout(() => { if (clr.dataset.armed === "1") { clr.dataset.armed = "0"; clr.textContent = "clear"; } }, 2500); return; }
+    clr.dataset.armed = "0"; clr.textContent = "clear";
+    if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
+  });
+  if (model.profile.name) api.liveCaptures.stats(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
   renderLiveWindow();
 }
 
@@ -4997,6 +5040,12 @@ function renderLiveWindow() {
     : collecting ? `${liveColStatus?.written ?? 0} saved · ${(liveColStatus?.fps ?? 0).toFixed(1)}/s`
     : `${liveFps.toFixed(1)} img/s`;
   if (st && st.textContent !== stTxt) st.textContent = stTxt;
+  // saved-live-image stat (touch DOM only on change)
+  const ist = liveWin.body.querySelector(".live-imgstat");
+  const itxt = liveImg.count ? `${liveImg.count} imgs · ${fmtBytes(liveImg.bytes)} saved` : "no live images saved";
+  if (ist && ist.textContent !== itxt) ist.textContent = itxt;
+  const clr = liveWin.body.querySelector(".live-clear");
+  if (clr) clr.disabled = !liveImg.count;
   renderLiveWinList();
   fitLivePanelHeight();
 }
@@ -5068,6 +5117,9 @@ async function liveTick() {
   refreshLive();   // dataset counts
   const game = model.profile.name;
   if (game) {
+    // save what live mode sees: one frame per round into the live bucket (fire-and-forget;
+    // a capture failure must never stall tuning). grab returns the running {count,bytes}.
+    api.liveCaptures.grab(game).then((s) => { liveImg = s; }).catch(() => {});
     for (const w of model.profile.windows || []) {
       if (!liveOn || liveSave) break;
       if (w.live === false || w.enabled === false) continue;   // skip windows opted out of live

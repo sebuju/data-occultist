@@ -68,6 +68,39 @@ def list_captures(game: str):
     return captures_store.listing(get_settings().captures_dir, game)
 
 
+@router.post("/captures/{game}/live/grab")
+def live_grab(game: str):
+    """Capture the live window and save the frame into the game's ``live`` bucket.
+
+    Called once per live-tuning round so live mode persists what it sees. Returns the
+    running {count, bytes} of saved live images so the panel can show the stat. A missing
+    window is not an error here (live mode polls; the window may be hidden this instant) —
+    just return the current stats unchanged.
+    """
+    settings = get_settings()
+    profile = load_profile(settings.profiles_dir, game)
+    win = get_locator().locate(profile)
+    if win is not None:
+        frame = get_engine().capture.grab_window(win)
+        jpeg = frame_to_jpeg(frame)
+        captures_store.save(settings.captures_dir, game, jpeg, sub=captures_store.LIVE)
+    return captures_store.stats(settings.captures_dir, game, captures_store.LIVE)
+
+
+@router.get("/captures/{game}/live/stats")
+def live_stats(game: str):
+    """{count, bytes} of saved live images for the game."""
+    return captures_store.stats(get_settings().captures_dir, game, captures_store.LIVE)
+
+
+@router.post("/captures/{game}/live/clear")
+def live_clear(game: str):
+    """Delete all saved live images for the game; returns the (now-zero) stats."""
+    settings = get_settings()
+    captures_store.clear(settings.captures_dir, game, captures_store.LIVE)
+    return captures_store.stats(settings.captures_dir, game, captures_store.LIVE)
+
+
 @router.get("/captures/{game}/bindings")
 def get_bindings(game: str):
     """Which stash each window opens with: {window_id: capture_name}."""

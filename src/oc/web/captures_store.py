@@ -14,15 +14,22 @@ from pathlib import Path
 
 _SAFE = re.compile(r"[^A-Za-z0-9._-]")
 
+# Live mode writes its frames into this sub-folder so they pile up separately from the
+# hand-stashed captures (the top-level ``listing`` glob is non-recursive, so it never sees
+# them). They get their own stats + clear, and a bulk delete reclaims the disk.
+LIVE = "live"
+
 
 def _safe(name: str) -> str:
     return _SAFE.sub("_", name)
 
 
-def save(captures_dir: Path | str, game: str, data: bytes, clock=None) -> str:
+def save(captures_dir: Path | str, game: str, data: bytes, clock=None, sub: str = "") -> str:
+    """Save a JPEG under ``captures/<game>[/<sub>]/<stamp>.jpg`` and return its filename."""
     stamp = (clock or (lambda: datetime.now(timezone.utc)))().strftime("%Y%m%d-%H%M%S-%f")
     name = f"{stamp}.jpg"
-    path = Path(captures_dir) / _safe(game) / name
+    base = Path(captures_dir) / _safe(game)
+    path = (base / _safe(sub) / name) if sub else (base / name)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return name
@@ -33,6 +40,36 @@ def listing(captures_dir: Path | str, game: str) -> list[str]:
     if not d.exists():
         return []
     return sorted((p.name for p in d.glob("*.jpg")), reverse=True)
+
+
+def stats(captures_dir: Path | str, game: str, sub: str = "") -> dict:
+    """{count, bytes} of the .jpg files in ``captures/<game>[/<sub>]/`` (non-recursive)."""
+    base = Path(captures_dir) / _safe(game)
+    d = (base / _safe(sub)) if sub else base
+    count, nbytes = 0, 0
+    if d.exists():
+        for p in d.glob("*.jpg"):
+            count += 1
+            try:
+                nbytes += p.stat().st_size
+            except OSError:
+                pass
+    return {"count": count, "bytes": nbytes}
+
+
+def clear(captures_dir: Path | str, game: str, sub: str = "") -> int:
+    """Delete every .jpg in ``captures/<game>[/<sub>]/`` and return how many were removed."""
+    base = Path(captures_dir) / _safe(game)
+    d = (base / _safe(sub)) if sub else base
+    removed = 0
+    if d.exists():
+        for p in d.glob("*.jpg"):
+            try:
+                p.unlink()
+                removed += 1
+            except OSError:
+                pass
+    return removed
 
 
 def path_for(captures_dir: Path | str, game: str, name: str) -> Path | None:
