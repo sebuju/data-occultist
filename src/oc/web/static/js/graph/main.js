@@ -21,6 +21,9 @@ import { VTable, setVTableStore } from "../vtable.js";
 import { initPersist, persist } from "./persist.js";
 import { buildBackups } from "./backups.js";
 import * as groups from "./groups.js";
+import { initTitlebar } from "../titlebar.js";
+
+initTitlebar();   // custom window chrome — no-op outside the desktop window
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (m) => log(m);   // #status is gone — the log bar shows messages now

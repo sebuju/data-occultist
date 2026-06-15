@@ -12,6 +12,9 @@ import { renderBoxList } from "./panels/boxlist.js";
 import { renderPreview } from "./panels/preview.js";
 import { renderAppearance } from "./panels/appearance.js";
 import { renderFields } from "./panels/fields.js";
+import { initTitlebar } from "./titlebar.js";
+
+initTitlebar();   // custom window chrome — no-op outside the desktop window
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);

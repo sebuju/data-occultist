@@ -63,6 +63,36 @@ body {
   overflow: hidden;            /* only inner regions scroll, never the page */
 }
 
+/* Frameless desktop-window chrome. Injected by titlebar.js ONLY inside the
+   pywebview window (a browser never builds it). Sits above everything — incl. the
+   boot veil (z 3000) and offline overlay (z 4000) — so the window stays draggable
+   and closable during boot. Whole bar drags; the buttons still click (pywebview
+   only moves on mouse-move, not on a static click). */
+.titlebar {
+  flex: none;
+  position: relative;
+  z-index: 4500;
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding-left: 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.titlebar .tb-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.titlebar .tb-spacer { flex: 1; }
+.titlebar .tb-btn {
+  width: 44px; height: 30px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 0; color: var(--muted); cursor: pointer;
+}
+.titlebar .tb-btn svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 1.3; fill: none; }
+.titlebar .tb-btn:hover { background: var(--line); color: var(--text); }
+.titlebar .tb-close:hover { background: var(--danger); color: var(--on-danger); }
+
 .topbar {
   display: flex;
   align-items: center;
