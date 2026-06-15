@@ -1006,15 +1006,15 @@ layout:
   float_windows:
     nodemap:
       visible: true
-      x: 709
-      y: 73
+      x: 1228
+      y: 107
       w: 361
-      h: 325
+      h: 336
       mode: map
       sizes:
         map:
           w: 361
-          h: 325
+          h: 336
         list:
           w: 360
           h: 231
@@ -1022,8 +1022,8 @@ layout:
       dock: null
     activity:
       visible: true
-      x: 709
-      y: 406
+      x: 1228
+      y: 451
       w: 360
       h: 155
       collapsed: false
@@ -1042,8 +1042,8 @@ layout:
       userSized: true
     toolbox:
       visible: true
-      x: 709
-      y: 492
+      x: 1228
+      y: 802
       w: 200
       h: 204
       collapsed: false
@@ -1066,8 +1066,8 @@ layout:
       userSized: true
     live:
       visible: true
-      x: 709
-      y: 516
+      x: 1228
+      y: 614
       w: 300
       h: 180
       collapsed: false
