@@ -14,6 +14,8 @@
 // by. The control buttons sit inside it and still receive clicks: pywebview only
 // moves the window on mouse-MOVE after a press, so a static click never drags.
 
+import { initWindowResize } from "./desktop_resize.js";
+
 const ICON = {
   min: '<svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg>',
   max: '<svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7"/></svg>',
@@ -45,8 +47,16 @@ function build() {
     if (fn) fn();
   });
 
+  // double-click the bar (not a control) maximises / restores, like a normal title bar
+  bar.addEventListener("dblclick", (e) => {
+    if (e.target.closest(".tb-btn")) return;
+    const api = window.pywebview && window.pywebview.api;
+    if (api) api.toggle_maximize();
+  });
+
   document.body.insertBefore(bar, document.body.firstChild);
   document.documentElement.classList.add("desktop");
+  initWindowResize();   // edge/corner grips that drive native resize via the js_api bridge
 }
 
 // Build now if pywebview is already present; otherwise wait for it to announce

@@ -97,10 +97,25 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
+  padding: 0px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
+
+/* Frameless desktop-window resize grips (built by desktop_resize.js, desktop-only — a
+   browser never creates them). Thin transparent strips on each edge + small corner squares
+   that catch the edge mouse and drive native resize. Above everything so the edges always
+   grab, incl. over the titlebar's top edge. */
+.winsize-grip { position: fixed; z-index: 99998; }
+.winsize-n { top: 0; left: 0; right: 0; height: 5px; }
+.winsize-s { bottom: 0; left: 0; right: 0; height: 5px; }
+.winsize-w { top: 0; bottom: 0; left: 0; width: 5px; }
+.winsize-e { top: 0; bottom: 0; right: 0; width: 5px; }
+.winsize-ne, .winsize-nw, .winsize-se, .winsize-sw { width: 10px; height: 10px; z-index: 99999; }
+.winsize-ne { top: 0; right: 0; }
+.winsize-nw { top: 0; left: 0; }
+.winsize-se { bottom: 0; right: 0; }
+.winsize-sw { bottom: 0; left: 0; }
 .topbar .spacer { flex: 1; }
 /* floating-window toggles, the whole group pinned to the right edge of the topbar.
    testing is the leftmost button, separated from the rest by a fixed gap. */

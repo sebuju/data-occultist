@@ -95,6 +95,14 @@ class _WindowChrome:
         if _window is not None:
             _window.destroy()
 
+    # Resize is driven by the front-end's edge grips (the window is frameless, so the OS
+    # gives no sizing border; the page sees the edge mouse and calls this). Move + resize in
+    # ONE bridge call so the window doesn't jitter between the two steps. JS numbers -> int.
+    def set_bounds(self, x, y, width, height) -> None:
+        if _window is not None:
+            _window.move(int(x), int(y))
+            _window.resize(int(width), int(height))
+
 
 def _hwnd_of(window):
     """The native Win32 HWND (int) for a pywebview window, or None.
@@ -107,36 +115,6 @@ def _hwnd_of(window):
         return handle.ToInt64() if hasattr(handle, "ToInt64") else int(handle)
     except Exception:  # pragma: no cover - non-Windows / backend without a HWND
         return None
-
-
-def _restore_sizing_border(window) -> None:
-    """Give a frameless window back native edge/corner resize (+ Aero-snap).
-
-    ``frameless=True`` drops the whole OS frame, including the invisible sizing border,
-    so the window can't be dragged-resized. On Windows we re-add the ``WS_THICKFRAME``
-    sizing border (and a maximise box for snap) directly on the native HWND — that
-    restores real OS resizing from every edge WITHOUT bringing the caption back. The
-    front-end's titlebar still owns move/min/max/close. Runs on the ``shown`` event,
-    when the native handle exists. Any failure (non-Windows, no HWND) leaves the window
-    as-is rather than raising.
-    """
-    import ctypes
-
-    hwnd = _hwnd_of(window)
-    if hwnd is None:
-        return
-    GWL_STYLE = -16
-    WS_THICKFRAME = 0x00040000
-    WS_MAXIMIZEBOX = 0x00010000
-    # SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED — restyle in place.
-    SWP_FLAGS = 0x0001 | 0x0002 | 0x0004 | 0x0020
-    try:
-        user32 = ctypes.windll.user32
-        style = user32.GetWindowLongW(hwnd, GWL_STYLE)
-        user32.SetWindowLongW(hwnd, GWL_STYLE, style | WS_THICKFRAME | WS_MAXIMIZEBOX)
-        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_FLAGS)
-    except Exception:  # pragma: no cover - defensive; never block window startup
-        return
 
 
 def _set_window_icon(window, ico_path) -> None:
@@ -170,9 +148,12 @@ def open_window(url: str, *, title: str = "data-rig", size: tuple[int, int] = (1
     pywebview's ``start()`` must own the main thread, so call this last. A missing
     ``desktop`` extra surfaces as a clear install hint rather than an ImportError.
 
-    The window is **frameless** — the front-end draws its own title bar (visible only
-    inside the desktop window, never in a browser). ``easy_drag`` is off so only the
-    front-end's ``pywebview-drag-region`` bar moves the window, not the whole page.
+    The window is **frameless** — the front-end draws its own title bar and edge resize
+    grips (visible only inside the desktop window, never in a browser) and drives move /
+    resize / min / max / close through the ``js_api`` bridge. ``easy_drag`` is off so only
+    the front-end's ``pywebview-drag-region`` bar moves the window, not the whole page.
+    Frameless is kept dead-simple (no win32 frame hacks): the OS draws nothing, so there's
+    no stray border, and resizing is owned entirely by the page's grips.
     """
     try:
         import webview
@@ -204,10 +185,9 @@ def open_window(url: str, *, title: str = "data-rig", size: tuple[int, int] = (1
         frameless=True, easy_drag=False, resizable=True, js_api=chrome,
     )
 
-    # On show (native handle now exists): re-add the sizing border frameless dropped, and
-    # pin the favicon onto the window so the taskbar shows it, not the python/pythonw icon.
+    # On show (native handle now exists): pin the favicon onto the window so the taskbar
+    # shows it, not the python/pythonw icon.
     def _on_shown() -> None:
-        _restore_sizing_border(_window)
         _set_window_icon(_window, icon)
 
     _window.events.shown += _on_shown
