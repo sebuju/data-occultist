@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from ..store.keys import KeyMap, KeySpec
 from ..types import FractionBox
@@ -243,7 +243,10 @@ class ItemDef(BaseModel):
     # When several templates claim the same tile, the higher ``priority`` wins (e.g. a
     # specific 'arcane' over a generic 'item'). Ties fall back to tell count.
     priority: int = 0
-    fields: list[RegionDef] = Field(default_factory=list)  # boxes are cell-relative (0..1)
+    # Field boxes (cell-relative 0..1). RUNTIME-nested for the reader, but NOT serialised
+    # here: each item's fields are hoisted to the window's flat ``item_fields`` (with an
+    # ``item`` backref) so every field is its own thing on disk + its own node in the UI.
+    fields: list[RegionDef] = Field(default_factory=list, exclude=True)
     tells: list[Tell] = Field(default_factory=list)        # what makes a cell an item
     # How this template's records are keyed/deduped. None -> the window's key, else
     # the default (``name``). Per-template because templates sharing a window can
@@ -371,6 +374,45 @@ class WindowDef(BaseModel):
     # whether this window is attempted in live view (the graph UI's continuous re-read).
     # Off = skipped by the live loop; pure UI control, the collector ignores it.
     live: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _distribute_item_fields(cls, data):
+        """On load, fan the flat ``item_fields`` (window-level, each carrying an ``item``
+        backref) back onto each ItemDef's runtime ``fields`` so the reader is unchanged.
+        Legacy profiles (fields nested under items) pass through untouched."""
+        if not isinstance(data, dict) or not data.get("item_fields"):
+            return data
+        data = dict(data)
+        raw = data.pop("item_fields") or []
+        by_item: dict[str, list] = {}
+        for f in raw:
+            if not isinstance(f, dict):
+                continue
+            f = dict(f)
+            by_item.setdefault(f.pop("item", "") or "", []).append(f)
+        items = []
+        for it in data.get("items") or []:
+            if isinstance(it, dict):
+                it = dict(it)
+                extra = by_item.get(it.get("id", ""), [])
+                if extra:
+                    it["fields"] = (it.get("fields") or []) + extra
+            items.append(it)
+        if items:
+            data["items"] = items
+        return data
+
+    @computed_field
+    @property
+    def item_fields(self) -> list[dict]:
+        """Flat, on-disk form of every item template's fields — one entry per field with an
+        ``item`` backref. This is what makes each field its own node + its own YAML record."""
+        out: list[dict] = []
+        for it in self.items:
+            for f in it.fields:
+                out.append({**f.model_dump(mode="json"), "item": it.id})
+        return out
 
     @property
     def dataset_id(self) -> str:
