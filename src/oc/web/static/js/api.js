@@ -104,6 +104,20 @@ export async function preview(profile, game, capture) {
   return r.json();
 }
 
+// Re-read the current layout and COMMIT the keyable cells into the window's dataset
+// store (one revertable batch). Returns { dataset, written, skipped, cells }.
+export async function previewCommit(profile, game, capture) {
+  let url = "/api/preview/commit";
+  if (game && capture) url += `?game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}`;
+  const r = await tfetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profile),
+  }, OCR_MS);
+  if (!r.ok) throw new Error(`commit: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
 // Returns { url, width, height, name }. stash=false skips saving (live view).
 export async function capture(game, stash = true) {
   const r = await tfetch(`/api/capture?game=${encodeURIComponent(game)}&stash=${stash}`, {}, OCR_MS);

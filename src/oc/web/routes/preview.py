@@ -18,6 +18,7 @@ from ...learn.lexicon import Lexicon
 from ...learn.resolver import FieldResolver
 from ...ocr.serialize import ocr_job
 from ...profile import GameProfile, KeyDef, list_profiles, load_profile
+from ...store.dataset_store import DatasetStore
 from ...types import Frame, PixelBox
 from .. import captures_store
 from ..deps import get_engine, get_locator, get_settings
@@ -163,29 +164,11 @@ def detect_collisions(game: str):
     return {"windows": out}
 
 
-@router.post("/preview")
-def preview(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None)):
-    """OCR the current regions. If ``game``+``capture`` are given, read that stashed
-    image (the one shown in the image node); otherwise capture the live window."""
-    if not profile.windows:
-        raise HTTPException(status_code=400, detail="profile has no window")
-    engine = get_engine()
-
-    if game and capture:
-        path = captures_store.path_for(get_settings().captures_dir, game, capture)
-        if path is None:
-            raise HTTPException(status_code=404, detail="capture not found")
-        img = cv2.imread(str(path))
-        if img is None:
-            raise HTTPException(status_code=500, detail="failed to read capture")
-        h, w = img.shape[:2]
-        frame = Frame(image=img, client=PixelBox(0, 0, w, h))
-    else:
-        win = get_locator().locate(profile)
-        if win is None:
-            raise HTTPException(status_code=404, detail="game window not found")
-        frame = engine.capture.grab_window(win)
-
+def _read_window(engine, profile, game, capture):
+    """Shared read for /preview and /preview/commit: grab the frame (stashed image or live
+    window), build the read-only resolver, and OCR window[0]'s regions. Returns
+    (frame, window, result) — result is the ``read_preview`` dict (cells + fields)."""
+    frame = _frame_for(engine, profile, game, capture)
     window = profile.windows[0]
     fields = {f.id: f for f in profile.fields_for(window)}
     # load each item's frozen cutout so the row anchor can be calibrated to where the
@@ -206,16 +189,59 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
     reader = RegionReader(engine.ocr, resolver, cutouts=cutouts)
     with ocr_job():   # one job: the whole window read runs without interleaving another
         result = reader.read_preview(frame, window, fields)
+    return frame, window, result
+
+
+def _cell_values(cell):
+    """The field_id -> value dict a cell would store under (mirrors the key build)."""
+    vals = {fid: f.get("value") for fid, f in cell["fields"].items()}
+    if cell.get("item"):
+        vals["_item"] = cell["item"]
+    return vals
+
+
+@router.post("/preview")
+def preview(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None)):
+    """OCR the current regions. If ``game``+``capture`` are given, read that stashed
+    image (the one shown in the image node); otherwise capture the live window."""
+    if not profile.windows:
+        raise HTTPException(status_code=400, detail="profile has no window")
+    engine = get_engine()
+    frame, window, result = _read_window(engine, profile, game, capture)
     # the dedup key each cell would store under — same spec the collector resolves,
     # so the teaching UI previews record identity live
     km = profile.key_map_for(window.dataset_id)
     for cell in result["cells"]:
-        vals = {fid: f.get("value") for fid, f in cell["fields"].items()}
-        if cell.get("item"):
-            vals["_item"] = cell["item"]
-        cell["key"] = km.build(vals)
+        cell["key"] = km.build(_cell_values(cell))
     return {"client": [frame.client.w, frame.client.h],
             "device": getattr(engine.ocr, "device", "cpu"), **result}
+
+
+@router.post("/preview/commit")
+def preview_commit(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None)):
+    """Re-read the current regions and COMMIT the keyable cells into the window's dataset
+    store — the same ledger-backed store live collection writes, as one revertable batch.
+    Re-runs the read server-side (never trusts client-sent values); cells whose key is
+    unresolvable (a key part unread) are skipped, never guessed."""
+    if not profile.windows:
+        raise HTTPException(status_code=400, detail="profile has no window")
+    engine = get_engine()
+    _, window, result = _read_window(engine, profile, game, capture)
+
+    dataset = window.dataset_id
+    store = DatasetStore(get_settings().data_dir, profile.name, dataset,
+                         key=profile.key_map_for(dataset))
+    store.begin_batch()   # this commit is one revertable batch
+    written = skipped = 0
+    for cell in result["cells"]:
+        values = _cell_values(cell)
+        if store.record_seen(values) is not None:
+            written += 1
+        else:
+            skipped += 1
+    store.save()
+    return {"dataset": dataset, "written": written, "skipped": skipped,
+            "cells": len(result["cells"])}
 
 
 @router.post("/item/read")

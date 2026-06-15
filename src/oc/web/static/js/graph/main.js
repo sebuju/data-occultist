@@ -1093,7 +1093,8 @@ function nodeParts(n) {
     // on demand (its own button, or the image's 👁), rendered inline.
     return {
       title: `<span class="gi-id">${esc(n.ref.id)} preview</span>`,
-      body: `<div class="nodehost scrollhost prev-host"><p class="muted" style="padding:8px">open the window image or edit it to preview what it reads</p></div>`,
+      body: `<div class="nodehost scrollhost prev-host"><p class="muted" style="padding:8px">open the window image or edit it to preview what it reads</p></div>
+        <div class="gn-foot"><button class="prevcommit" title="write these reads into the window's dataset (one revertable batch)">commit to dataset</button></div>`,
     };
   }
   if (n.type === "subset") return subsetParts(n.ref);
@@ -2388,7 +2389,8 @@ function wireNode(div, n) {
   } else if (n.type === "window") {
     wireWindowControls(div, n);   // out-port wiring is handled generically in wireOutPort
   } else if (n.type === "preview") {
-    // no manual read button — the preview auto-reads on image change + any window edit
+    // auto-reads on image change + any window edit; the one button commits the read to the dataset
+    div.querySelector(".prevcommit")?.addEventListener("click", (e) => commitPreviewNode(n.ref.id, e.currentTarget));
   } else if (n.type === "dataset") {
     div.querySelector(".dsrename")?.addEventListener("change", async (e) => {
       const oldId = n.ref, newId = (e.target.value || "").trim();
@@ -3608,6 +3610,27 @@ async function refreshPreview(winId, live = false) {
     } else {
       setReadBusy(winId, false);
     }
+  }
+}
+
+// Commit what the preview node currently reads into the window's dataset store — re-reads
+// server-side (never trusts the rendered table) against the SAME image the preview shows
+// (the window's bound capture), as one revertable batch. Refreshes the dataset node after.
+async function commitPreviewNode(winId, btn) {
+  if (btn) { btn.disabled = true; btn.classList.add("reading"); }
+  const done = timed(`commit ${winId}`);
+  try {
+    const cap = (await api.getBindings(model.profile.name))[winId];
+    const r = await api.previewCommit(previewProfileFor(winId), model.profile.name, cap);
+    done(`· ${r.written} → ${r.dataset} (${r.skipped} skipped of ${r.cells})`);
+    setStatus(`committed ${r.written} to ${r.dataset} · ${r.skipped} skipped of ${r.cells}`);
+    if (nodeEls.has(`ds:${r.dataset}`)) { refreshDataNode(r.dataset); loadBatchesNode(r.dataset); }
+    refreshLive();   // record counts / new dataset edges
+  } catch (e) {
+    done(String(e.message || e), "err");
+    setStatus(String(e.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove("reading"); }
   }
 }
 
