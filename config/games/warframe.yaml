@@ -134,33 +134,6 @@ windows:
       h: 0.3201018038741048
     align: bottom
     priority: 0
-    fields:
-    - id: name
-      box:
-        x: 0.0008647839276872834
-        y: 0.49963703467726983
-        w: 0.9116685321352634
-        h: 0.3566060056546523
-      field: name
-      tell: true
-      tell_conf: 0.3
-      tell_allow_text: false
-      locate: false
-      align: bottom
-      enabled: true
-    - id: count
-      box:
-        x: 0.0
-        y: 0.0007938414839423913
-        w: 0.6963926439460314
-        h: 0.15434670589268576
-      field: count
-      tell: false
-      tell_conf: 0.0
-      tell_allow_text: false
-      locate: false
-      align: ''
-      enabled: true
     tells: []
     key:
       fields:
@@ -172,8 +145,8 @@ windows:
     box:
       x: 0.47210222904238824
       y: 0.4936875861083346
-      w: 0.10819738326573768
-      h: 0.20548627306849146
+      w: 0.108
+      h: 0.2045
     cutout: item-20260609-224909-757925.png
     cutout_box:
       x: 0.45085229291538953
@@ -182,46 +155,6 @@ windows:
       h: 0.30097729443750454
     align: bottom
     priority: 5
-    fields:
-    - id: name
-      box:
-        x: 0.00011645597995694553
-        y: 0.4921122085929414
-        w: 0.9116495404421442
-        h: 0.24518600148344633
-      field: name
-      tell: false
-      tell_conf: 0.3
-      tell_allow_text: false
-      locate: false
-      align: none
-      enabled: true
-    - id: arcane_level
-      box:
-        x: 0.0
-        y: 0.7379145017444578
-        w: 0.9123235573101921
-        h: 0.11592432005792572
-      field: arcane_level
-      tell: true
-      tell_conf: 0.3
-      tell_allow_text: false
-      locate: false
-      align: bottom
-      enabled: true
-    - id: count
-      box:
-        x: 0.0
-        y: 0.0011458270119331794
-        w: 0.3500557297941114
-        h: 0.1548895564172534
-      field: count
-      tell: false
-      tell_conf: 0.0
-      tell_allow_text: false
-      locate: false
-      align: ''
-      enabled: true
     tells: []
     key:
       fields:
@@ -250,6 +183,77 @@ windows:
     tolerance: 60
     scale: 1.0
   live: false
+  item_fields:
+  - id: name
+    box:
+      x: 0.0008647839276872834
+      y: 0.49963703467726983
+      w: 0.9116685321352634
+      h: 0.3566060056546523
+    field: name
+    tell: true
+    tell_conf: 0.3
+    tell_allow_text: false
+    locate: false
+    align: bottom
+    enabled: true
+    item: normal
+  - id: count
+    box:
+      x: 0.0
+      y: 0.0007938414839423913
+      w: 0.6963926439460314
+      h: 0.15434670589268576
+    field: count
+    tell: false
+    tell_conf: 0.0
+    tell_allow_text: false
+    locate: false
+    align: ''
+    enabled: true
+    item: normal
+  - id: name
+    box:
+      x: 0.00011666881756471019
+      y: 0.4944855925440958
+      w: 0.9133156919560398
+      h: 0.24636849708263572
+    field: name
+    tell: false
+    tell_conf: 0.3
+    tell_allow_text: false
+    locate: false
+    align: none
+    enabled: true
+    item: arcane
+  - id: arcane_level
+    box:
+      x: 0.0
+      y: 0.7414733535778069
+      w: 0.9139909406727041
+      h: 0.11648340580294438
+    field: arcane_level
+    tell: true
+    tell_conf: 0.3
+    tell_allow_text: false
+    locate: false
+    align: bottom
+    enabled: true
+    item: arcane
+  - id: count
+    box:
+      x: 0.0
+      y: 0.0011513531651019945
+      w: 0.35069549963797203
+      h: 0.1556365656988423
+    field: count
+    tell: false
+    tell_conf: 0.0
+    tell_allow_text: false
+    locate: false
+    align: ''
+    enabled: true
+    item: arcane
 - id: relic_window
   dataset: relics_offered
   fields:
@@ -299,20 +303,6 @@ windows:
       h: 0.2926472655222516
     align: center
     priority: 0
-    fields:
-    - id: name
-      box:
-        x: 0.000377186878240971
-        y: 0.6966810445020777
-        w: 0.9785099799550294
-        h: 0.3040611239007955
-      field: name
-      tell: true
-      tell_conf: 0.0
-      tell_allow_text: false
-      locate: false
-      align: bottom
-      enabled: true
     tells: []
   static_grid: true
   preprocess:
@@ -321,6 +311,21 @@ windows:
     tolerance: 60
     scale: 1.0
   live: true
+  item_fields:
+  - id: name
+    box:
+      x: 0.000377186878240971
+      y: 0.6966810445020777
+      w: 0.9785099799550294
+      h: 0.3040611239007955
+    field: name
+    tell: true
+    tell_conf: 0.0
+    tell_allow_text: false
+    locate: false
+    align: bottom
+    enabled: true
+    item: item_3
 - id: mod_window
   dataset: mods
   fields:
@@ -396,46 +401,6 @@ windows:
       h: 0.1632030618006055
     align: center
     priority: 0
-    fields:
-    - id: mod_name
-      box:
-        x: 0.0034701955059101707
-        y: 0.2554085486610772
-        w: 0.8728165224581136
-        h: 0.4960026872489347
-      field: mod_name
-      tell: false
-      tell_conf: 0.0
-      tell_allow_text: false
-      locate: false
-      align: ''
-      enabled: true
-    - id: mod_drain
-      box:
-        x: 0.716688581049454
-        y: 0.08001808357718306
-        w: 0.08159175297442162
-        h: 0.1669120812892762
-      field: mod_drain
-      tell: false
-      tell_conf: 0.1
-      tell_allow_text: true
-      locate: false
-      align: center
-      enabled: true
-    - id: mod_count
-      box:
-        x: 0.07902912607994707
-        y: 0.0804564227334973
-        w: 0.20941560966742015
-        h: 0.16736136777455043
-      field: mod_count
-      tell: false
-      tell_conf: 0.0
-      tell_allow_text: false
-      locate: false
-      align: ''
-      enabled: true
     tells: []
     key:
       fields:
@@ -457,7 +422,6 @@ windows:
       h: 0.17164047508731695
     align: center
     priority: 0
-    fields: []
     tells:
     - id: tell_3
       box:
@@ -487,6 +451,49 @@ windows:
     tolerance: 60
     scale: 1.0
   live: true
+  item_fields:
+  - id: mod_name
+    box:
+      x: 0.0034701955059101707
+      y: 0.2554085486610772
+      w: 0.8728165224581136
+      h: 0.4960026872489347
+    field: mod_name
+    tell: false
+    tell_conf: 0.0
+    tell_allow_text: false
+    locate: false
+    align: ''
+    enabled: true
+    item: mod
+  - id: mod_drain
+    box:
+      x: 0.716688581049454
+      y: 0.08001808357718306
+      w: 0.08159175297442162
+      h: 0.1669120812892762
+    field: mod_drain
+    tell: false
+    tell_conf: 0.1
+    tell_allow_text: true
+    locate: false
+    align: center
+    enabled: true
+    item: mod
+  - id: mod_count
+    box:
+      x: 0.07902912607994707
+      y: 0.0804564227334973
+      w: 0.20941560966742015
+      h: 0.16736136777455043
+    field: mod_count
+    tell: false
+    tell_conf: 0.0
+    tell_allow_text: false
+    locate: false
+    align: ''
+    enabled: true
+    item: mod
 datasets:
 - id: master
   aggregate: latest
@@ -868,21 +875,21 @@ layout:
       h: 420.0
       collapsed: false
     ds:prices_relic_live:
-      x: 2160.0
-      y: 3780.0
-      w: 440.0
+      x: 1980.0
+      y: 4520.0
+      w: 460.0
       h: 740.0
       collapsed: false
     sub:relic_rewards_live:
-      x: 1860.0
-      y: 2940.0
-      w: 540.0
+      x: 1700.0
+      y: 3680.0
+      w: 560.0
       h: 720.0
       collapsed: false
     price:relic_live:
-      x: 1700.0
-      y: 3780.0
-      w: 440.0
+      x: 1500.0
+      y: 4520.0
+      w: 460.0
       h: 740.0
       collapsed: false
     trigger:owned_refresh:
@@ -892,42 +899,44 @@ layout:
       h: 260.0
       collapsed: false
     trigger:relic_watch:
-      x: 960.0
-      y: 3360.0
+      x: 780.0
+      y: 4100.0
       w: 280.0
       h: 260.0
       collapsed: false
     win:relic_window:
-      x: 300.0
-      y: 2940.0
+      x: 100.0
+      y: 3680.0
+      w: 540.0
+      h: 500.0
       collapsed: false
     prev:relic_window:
-      x: 300.0
-      y: 3360.0
-      w: 520.0
+      x: 100.0
+      y: 4180.0
+      w: 540.0
       h: 240.0
       collapsed: false
     det:relic_window:detect_1:
-      x: 860.0
-      y: 2940.0
+      x: 680.0
+      y: 3680.0
       w: 220.0
       h: 180.0
       collapsed: false
     item:relic_window:item_3:
-      x: 320.0
-      y: 3640.0
+      x: 40.0
+      y: 4480.0
       collapsed: false
     sub:relic_rewards_limit:
-      x: 1260.0
-      y: 3360.0
-      w: 360.0
+      x: 1080.0
+      y: 4120.0
+      w: 380.0
       h: 740.0
       collapsed: false
     ds:relics_offered:
-      x: 1260.0
-      y: 2940.0
-      w: 360.0
-      h: 380.0
+      x: 1080.0
+      y: 3680.0
+      w: 380.0
+      h: 400.0
       collapsed: false
     ds:relic_rewards:
       x: 900.0
@@ -958,14 +967,14 @@ layout:
       h: 900.0
       collapsed: false
     prev:mod_window:
-      x: -1480.0
-      y: 3200.0
+      x: -1660.0
+      y: 2680.0
       w: 520.0
       h: 320.0
       collapsed: false
     win:mod_window:
-      x: -1480.0
-      y: 2700.0
+      x: -1660.0
+      y: 2180.0
       collapsed: false
     det:mod_window:detect_3:
       x: -800.0
@@ -974,23 +983,23 @@ layout:
       h: 0.0
       collapsed: false
     item:mod_window:mod:
-      x: -1880.0
-      y: 2700.0
+      x: -2140.0
+      y: 2180.0
       collapsed: false
     win:equipment_window:
-      x: -900.0
+      x: -1920.0
       y: 340.0
       w: 320.0
       h: 80.0
       collapsed: false
     sb:equipment_window:scrollbar:
-      x: -220.0
+      x: -1240.0
       y: 940.0
       w: 220.0
       h: 100.0
       collapsed: false
     prev:equipment_window:
-      x: -900.0
+      x: -1920.0
       y: 840.0
       w: 520.0
       h: 380.0
@@ -1012,8 +1021,8 @@ layout:
       y: 220.0
       collapsed: false
     item:equipment_window:arcane:
-      x: -1460.0
-      y: 340.0
+      x: -2440.0
+      y: 480.0
       w: 380.0
       h: 1374.0
       collapsed: false
@@ -1024,23 +1033,23 @@ layout:
       h: 1132.0
       collapsed: false
     item:equipment_window:normal:
-      x: -1880.0
+      x: -2900.0
       y: 340.0
       collapsed: false
     det:equipment_window:detect_2:
-      x: -220.0
+      x: -1240.0
       y: 340.0
       w: 220.0
       h: 180.0
       collapsed: false
     det:equipment_window:detect_4:
-      x: -220.0
+      x: -1240.0
       y: 540.0
       w: 220.0
       h: 180.0
       collapsed: false
     det:equipment_window:detect_1:
-      x: -220.0
+      x: -1240.0
       y: 740.0
       w: 220.0
       h: 180.0
@@ -1050,14 +1059,68 @@ layout:
       y: 20.0
       collapsed: false
     det:mod_window:detect_heading:
-      x: -820.0
-      y: 2700.0
+      x: -1000.0
+      y: 2180.0
       w: 260.0
       h: 180.0
       collapsed: false
     item:mod_window:drop_item:
-      x: -920.0
-      y: 3040.0
+      x: -1600.0
+      y: 3100.0
+      collapsed: false
+    fld:equipment_window:normal:name:
+      x: -3140.0
+      y: 340.0
+      w: 220.0
+      h: 580.0
+      collapsed: false
+    fld:equipment_window:normal:count:
+      x: -3380.0
+      y: 340.0
+      w: 220.0
+      h: 460.0
+      collapsed: false
+    fld:equipment_window:arcane:name:
+      x: -1520.0
+      y: 1420.0
+      w: 220.0
+      h: 500.0
+      collapsed: false
+    fld:equipment_window:arcane:arcane_level:
+      x: -2000.0
+      y: 1420.0
+      w: 220.0
+      h: 380.0
+      collapsed: false
+    fld:equipment_window:arcane:count:
+      x: -1760.0
+      y: 1420.0
+      w: 220.0
+      h: 460.0
+      collapsed: false
+    fld:relic_window:item_3:name:
+      x: -200.0
+      y: 4480.0
+      w: 220.0
+      h: 540.0
+      collapsed: false
+    fld:mod_window:mod:mod_name:
+      x: -2760.0
+      y: 2180.0
+      w: 220.0
+      h: 460.0
+      collapsed: false
+    fld:mod_window:mod:mod_drain:
+      x: -2520.0
+      y: 2180.0
+      w: 220.0
+      h: 460.0
+      collapsed: false
+    fld:mod_window:mod:mod_count:
+      x: -3000.0
+      y: 2180.0
+      w: 220.0
+      h: 460.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -1174,6 +1237,7 @@ layout:
     - sub:relic_rewards_view
     - sub:relic_rewards_limit
     - ds:relics_offered
+    - fld:relic_window:item_3:name
     outline:
       color: '#8a9ae6'
       style: none
@@ -1208,6 +1272,9 @@ layout:
     - prev:mod_window
     - det:mod_window:detect_heading
     - item:mod_window:mod
+    - fld:mod_window:mod:mod_name
+    - fld:mod_window:mod:mod_drain
+    - fld:mod_window:mod:mod_count
     - item:mod_window:drop_item
     outline:
       color: '#7ddc7d'
@@ -1260,6 +1327,11 @@ layout:
     - sb:equipment_window:scrollbar
     - item:equipment_window:normal
     - item:equipment_window:arcane
+    - fld:equipment_window:normal:name
+    - fld:equipment_window:normal:count
+    - fld:equipment_window:arcane:name
+    - fld:equipment_window:arcane:arcane_level
+    - fld:equipment_window:arcane:count
     outline:
       color: '#7ddc7d'
       style: none
