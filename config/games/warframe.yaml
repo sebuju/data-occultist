@@ -13,6 +13,8 @@ fields:
   dictionary: ''
   learn: true
   fuzzy: 0.82
+  min_confidence: 0.0
+  isolate: false
 - id: count
   type: number
   extract: whole
@@ -23,6 +25,8 @@ fields:
   dictionary: ''
   learn: false
   fuzzy: 0.82
+  min_confidence: 0.0
+  isolate: false
 - id: rank
   type: number
   extract: whole
@@ -33,8 +37,10 @@ fields:
   dictionary: ''
   learn: false
   fuzzy: 0.82
+  min_confidence: 0.0
+  isolate: false
 windows:
-- id: equip
+- id: equipment_window
   dataset: master
   fields:
   - id: name
@@ -47,6 +53,8 @@ windows:
     dictionary: wiki
     learn: false
     fuzzy: 0.82
+    min_confidence: 0.05
+    isolate: false
   - id: count
     type: number
     extract: whole
@@ -58,6 +66,8 @@ windows:
     dictionary: ''
     learn: false
     fuzzy: 0.82
+    min_confidence: 0.0
+    isolate: false
   - id: arcane_level
     type: diamonds
     extract: whole
@@ -68,11 +78,13 @@ windows:
     dictionary: ''
     learn: false
     fuzzy: 0.75
+    min_confidence: 0.0
+    isolate: false
   data_area:
-    x: 0.0392843423787693
-    y: 0.17411803841927975
-    w: 0.6493593537024408
-    h: 0.6190721796808167
+    x: 0.03842814716408418
+    y: 0.18255738071898048
+    w: 0.6554118083090305
+    h: 0.7137420285272785
   detect:
   - id: detect_2
     enabled: true
@@ -132,7 +144,9 @@ windows:
       field: name
       tell: true
       tell_conf: 0.3
-      align: ''
+      tell_allow_text: false
+      locate: false
+      align: bottom
       enabled: true
     - id: count
       box:
@@ -143,6 +157,8 @@ windows:
       field: count
       tell: false
       tell_conf: 0.0
+      tell_allow_text: false
+      locate: false
       align: ''
       enabled: true
     tells: []
@@ -176,6 +192,8 @@ windows:
       field: name
       tell: false
       tell_conf: 0.3
+      tell_allow_text: false
+      locate: false
       align: none
       enabled: true
     - id: arcane_level
@@ -187,7 +205,9 @@ windows:
       field: arcane_level
       tell: true
       tell_conf: 0.3
-      align: ''
+      tell_allow_text: false
+      locate: false
+      align: bottom
       enabled: true
     - id: count
       box:
@@ -198,6 +218,8 @@ windows:
       field: count
       tell: false
       tell_conf: 0.0
+      tell_allow_text: false
+      locate: false
       align: ''
       enabled: true
     tells: []
@@ -207,6 +229,7 @@ windows:
       - arcane_level
       sep: '|'
       case_sensitive: false
+  static_grid: true
   scroll:
     enabled: true
     scrollbar:
@@ -219,6 +242,8 @@ windows:
     cols: 8
     row_stride: 0.205
     col_stride: 0.108
+    autoscroll: true
+    scroll_clicks: 3
   preprocess:
     mode: none
     colors: []
@@ -238,6 +263,8 @@ windows:
     dictionary: ''
     learn: false
     fuzzy: 0.82
+    min_confidence: 0.0
+    isolate: false
   data_area:
     x: 0.2451303533740383
     y: 0.19907013446197167
@@ -282,9 +309,178 @@ windows:
       field: name
       tell: true
       tell_conf: 0.0
+      tell_allow_text: false
+      locate: false
       align: bottom
       enabled: true
     tells: []
+  static_grid: true
+  preprocess:
+    mode: none
+    colors: []
+    tolerance: 60
+    scale: 1.0
+  live: true
+- id: mod_window
+  dataset: mods
+  fields:
+  - id: mod_name
+    type: text
+    extract: whole
+    separator: /
+    if_number_any: false
+    if_text_any: false
+    dict_mode: correct
+    dictionary: ''
+    learn: false
+    fuzzy: 0.82
+    min_confidence: 0.5
+    isolate: false
+  - id: mod_drain
+    type: number
+    extract: number
+    separator: /
+    if_number_any: false
+    if_text_any: false
+    dict_mode: correct
+    dictionary: ''
+    learn: false
+    fuzzy: 0.8
+    min_confidence: 0.5
+    isolate: true
+  - id: mod_count
+    type: number
+    extract: number
+    separator: /
+    empty: '1'
+    if_number_any: false
+    if_text: '1'
+    if_text_any: false
+    dict_mode: correct
+    dictionary: ''
+    learn: false
+    fuzzy: 0.82
+    min_confidence: 0.5
+    isolate: false
+  data_area:
+    x: 0.04969665070187142
+    y: 0.5077902012066009
+    w: 0.9149945019250143
+    h: 0.38949677637348806
+  detect:
+  - id: detect_heading
+    enabled: true
+    search:
+      x: 0.24140101322150134
+      y: 0.03307670286240254
+      w: 0.061183569247061004
+      h: 0.05324730585577367
+    text: mods
+    threshold: 0.8
+    included: false
+  states: []
+  regions: []
+  items:
+  - id: mod
+    enabled: true
+    box:
+      x: 0.04992312138062725
+      y: 0.5086696100658491
+      w: 0.13032867390289435
+      h: 0.12262024242512659
+    cutout: item-20260615-104846-979492.png
+    cutout_box:
+      x: 0.04087541678446175
+      y: 0.48809833380739465
+      w: 0.161018821151476
+      h: 0.1632030618006055
+    align: center
+    priority: 0
+    fields:
+    - id: mod_name
+      box:
+        x: 0.0034701955059101707
+        y: 0.2554085486610772
+        w: 0.8728165224581136
+        h: 0.4960026872489347
+      field: mod_name
+      tell: false
+      tell_conf: 0.0
+      tell_allow_text: false
+      locate: false
+      align: ''
+      enabled: true
+    - id: mod_drain
+      box:
+        x: 0.716688581049454
+        y: 0.08001808357718306
+        w: 0.08159175297442162
+        h: 0.1669120812892762
+      field: mod_drain
+      tell: false
+      tell_conf: 0.1
+      tell_allow_text: true
+      locate: false
+      align: center
+      enabled: true
+    - id: mod_count
+      box:
+        x: 0.07902912607994707
+        y: 0.0804564227334973
+        w: 0.20941560966742015
+        h: 0.16736136777455043
+      field: mod_count
+      tell: false
+      tell_conf: 0.0
+      tell_allow_text: false
+      locate: false
+      align: ''
+      enabled: true
+    tells: []
+    key:
+      fields:
+      - mod_name
+      sep: '|'
+      case_sensitive: false
+  - id: drop_item
+    enabled: true
+    box:
+      x: 0.5697842209726376
+      y: 0.507410320248163
+      w: 0.1314278440050552
+      h: 0.1255875719519301
+    cutout: item-20260615-190059-748642.png
+    cutout_box:
+      x: 0.5578624040196977
+      y: 0.49149916604555643
+      w: 0.15578112162239388
+      h: 0.17164047508731695
+    align: center
+    priority: 0
+    fields: []
+    tells:
+    - id: tell_3
+      box:
+        x: 0.18366314779268103
+        y: 0.4980182809395574
+        w: 0.09949846537942178
+        h: 0.10403344290406999
+      kind: color
+      color: '#09889a'
+      tolerance: 60
+      threshold: 0.5
+      locate: true
+      align: ''
+  static_grid: true
+  scroll:
+    enabled: true
+    scrollbar_orientation: vertical
+    rows: 1
+    cols: 1
+    row_stride: 0.0
+    col_stride: 0.0
+    autoscroll: true
+    scroll_clicks: 2
   preprocess:
     mode: none
     colors: []
@@ -301,6 +497,8 @@ datasets:
 - id: relics_offered
   aggregate: latest
 - id: prices_relic_live
+  aggregate: latest
+- id: mods
   aggregate: latest
 subsets:
 - id: statistic_prices_joined
@@ -466,8 +664,8 @@ dictionaries:
 layout:
   nodes:
     game:
-      x: 100.0
-      y: -820.0
+      x: -500.0
+      y: -980.0
       w: 340.0
       h: 120.0
       collapsed: false
@@ -571,27 +769,9 @@ layout:
       x: 320.0
       y: 380.0
       collapsed: false
-    win:equip:
-      x: -1000.0
-      y: 500.0
-      w: 320.0
-      h: 80.0
-      collapsed: false
     anc:equip:detect_2:
       x: 1220.0
       y: 440.0
-      collapsed: false
-    sb:equip:scrollbar:
-      x: -320.0
-      y: 1100.0
-      w: 220.0
-      h: 100.0
-      collapsed: false
-    prev:equip:
-      x: -1000.0
-      y: 940.0
-      w: 520.0
-      h: 380.0
       collapsed: false
     anc:equip:detect_4:
       x: 1220.0
@@ -600,34 +780,6 @@ layout:
     anc:equip:detect_1:
       x: 1220.0
       y: 140.0
-      collapsed: false
-    reg:equip:item_name:
-      x: 40.0
-      y: 880.0
-      collapsed: false
-    reg:equip:item_count:
-      x: 40.0
-      y: 580.0
-      collapsed: false
-    item:equip:item_3:
-      x: -480.0
-      y: 220.0
-      collapsed: false
-    item:equip:item_2:
-      x: -60.0
-      y: 220.0
-      collapsed: false
-    item:equip:arcane:
-      x: -1560.0
-      y: 500.0
-      w: 380.0
-      h: 1374.0
-      collapsed: false
-    item:equip:item:
-      x: -560.0
-      y: 240.0
-      w: 380.0
-      h: 1132.0
       collapsed: false
     dsp:equip:
       x: 920.0
@@ -638,8 +790,8 @@ layout:
       y: 20.0
       collapsed: false
     dict:wiki:
-      x: 100.0
-      y: -680.0
+      x: -500.0
+      y: -840.0
       w: 340.0
       h: 180.0
       collapsed: false
@@ -655,37 +807,11 @@ layout:
       w: 0.0
       h: 0.0
       collapsed: false
-    item:equip:normal:
-      x: -1980.0
-      y: 500.0
-      collapsed: false
-    det:equip:detect_2:
-      x: -320.0
-      y: 500.0
-      w: 220.0
-      h: 180.0
-      collapsed: false
-    det:equip:detect_4:
-      x: -320.0
-      y: 700.0
-      w: 220.0
-      h: 180.0
-      collapsed: false
-    det:equip:detect_1:
-      x: -320.0
-      y: 900.0
-      w: 220.0
-      h: 180.0
-      collapsed: false
-    item:equip:normal1:
-      x: 300.0
-      y: 20.0
-      collapsed: false
     ds:master:
-      x: 480.0
-      y: -820.0
-      w: 560.0
-      h: 940.0
+      x: -120.0
+      y: -980.0
+      w: 500.0
+      h: 900.0
       collapsed: false
     ds:equip:
       x: 900.0
@@ -700,8 +826,8 @@ layout:
       h: 760.0
       collapsed: false
     price:price:
-      x: 1640.0
-      y: -400.0
+      x: 360.0
+      y: 860.0
       w: 340.0
       h: 460.0
       collapsed: false
@@ -712,100 +838,94 @@ layout:
       h: 0.0
       collapsed: false
     ds:prices_live:
-      x: 1640.0
-      y: 220.0
+      x: 360.0
+      y: 1480.0
       w: 340.0
       h: 400.0
       collapsed: false
     ds:prices_statistics:
-      x: 1640.0
-      y: -940.0
+      x: 360.0
+      y: 320.0
       w: 340.0
       h: 460.0
       collapsed: false
     sub:live_prices_joined:
-      x: 2000.0
-      y: 220.0
+      x: 720.0
+      y: 1480.0
       w: 1100.0
       h: 1160.0
       collapsed: false
     sub:statistic_prices_joined:
-      x: 2040.0
-      y: -940.0
+      x: 760.0
+      y: 320.0
       w: 1080.0
       h: 1000.0
       collapsed: false
     price:wf_market_live:
-      x: 1640.0
-      y: 680.0
+      x: 360.0
+      y: 1940.0
       w: 340.0
       h: 420.0
       collapsed: false
     ds:prices_relic_live:
-      x: 2280.0
-      y: 2660.0
+      x: 2160.0
+      y: 3780.0
       w: 440.0
       h: 740.0
       collapsed: false
     sub:relic_rewards_live:
-      x: 1980.0
-      y: 1820.0
+      x: 1860.0
+      y: 2940.0
       w: 540.0
       h: 720.0
       collapsed: false
     price:relic_live:
-      x: 1820.0
-      y: 2660.0
+      x: 1700.0
+      y: 3780.0
       w: 440.0
       h: 740.0
       collapsed: false
     trigger:owned_refresh:
-      x: 1640.0
-      y: 1140.0
+      x: 360.0
+      y: 2400.0
       w: 280.0
       h: 260.0
       collapsed: false
     trigger:relic_watch:
-      x: 1080.0
-      y: 2240.0
+      x: 960.0
+      y: 3360.0
       w: 280.0
       h: 260.0
       collapsed: false
-    ds:window_1:
-      x: 900.0
-      y: 336.0
-      w: 0.0
-      h: 0.0
-      collapsed: false
     win:relic_window:
-      x: 420.0
-      y: 1820.0
+      x: 300.0
+      y: 2940.0
       collapsed: false
     prev:relic_window:
-      x: 420.0
-      y: 2240.0
+      x: 300.0
+      y: 3360.0
       w: 520.0
       h: 240.0
       collapsed: false
     det:relic_window:detect_1:
-      x: 980.0
-      y: 1820.0
+      x: 860.0
+      y: 2940.0
       w: 220.0
       h: 180.0
       collapsed: false
     item:relic_window:item_3:
-      x: 440.0
-      y: 2520.0
+      x: 320.0
+      y: 3640.0
       collapsed: false
     sub:relic_rewards_limit:
-      x: 1380.0
-      y: 2240.0
+      x: 1260.0
+      y: 3360.0
       w: 360.0
       h: 740.0
       collapsed: false
     ds:relics_offered:
-      x: 1380.0
-      y: 1820.0
+      x: 1260.0
+      y: 2940.0
       w: 360.0
       h: 380.0
       collapsed: false
@@ -816,10 +936,128 @@ layout:
       h: 0.0
       collapsed: false
     sub:live_prices_joined_view:
-      x: 3260.0
-      y: 100.0
+      x: 2040.0
+      y: 220.0
       w: 480.0
       h: 660.0
+      collapsed: false
+    ds:window_1:
+      x: 900.0
+      y: 810.0
+      collapsed: false
+    ds:mod_window:
+      x: 900.0
+      y: 968.0
+      w: 0.0
+      h: 0.0
+      collapsed: false
+    ds:mods:
+      x: 420.0
+      y: -980.0
+      w: 500.0
+      h: 900.0
+      collapsed: false
+    prev:mod_window:
+      x: -1480.0
+      y: 3200.0
+      w: 520.0
+      h: 320.0
+      collapsed: false
+    win:mod_window:
+      x: -1480.0
+      y: 2700.0
+      collapsed: false
+    det:mod_window:detect_3:
+      x: -800.0
+      y: 2680.0
+      w: 0.0
+      h: 0.0
+      collapsed: false
+    item:mod_window:mod:
+      x: -1880.0
+      y: 2700.0
+      collapsed: false
+    win:equipment_window:
+      x: -900.0
+      y: 340.0
+      w: 320.0
+      h: 80.0
+      collapsed: false
+    sb:equipment_window:scrollbar:
+      x: -220.0
+      y: 940.0
+      w: 220.0
+      h: 100.0
+      collapsed: false
+    prev:equipment_window:
+      x: -900.0
+      y: 840.0
+      w: 520.0
+      h: 380.0
+      collapsed: false
+    reg:equipment_window:item_name:
+      x: 40.0
+      y: 880.0
+      collapsed: false
+    reg:equipment_window:item_count:
+      x: 40.0
+      y: 580.0
+      collapsed: false
+    item:equipment_window:item_3:
+      x: -480.0
+      y: 220.0
+      collapsed: false
+    item:equipment_window:item_2:
+      x: -60.0
+      y: 220.0
+      collapsed: false
+    item:equipment_window:arcane:
+      x: -1460.0
+      y: 340.0
+      w: 380.0
+      h: 1374.0
+      collapsed: false
+    item:equipment_window:item:
+      x: -560.0
+      y: 240.0
+      w: 380.0
+      h: 1132.0
+      collapsed: false
+    item:equipment_window:normal:
+      x: -1880.0
+      y: 340.0
+      collapsed: false
+    det:equipment_window:detect_2:
+      x: -220.0
+      y: 340.0
+      w: 220.0
+      h: 180.0
+      collapsed: false
+    det:equipment_window:detect_4:
+      x: -220.0
+      y: 540.0
+      w: 220.0
+      h: 180.0
+      collapsed: false
+    det:equipment_window:detect_1:
+      x: -220.0
+      y: 740.0
+      w: 220.0
+      h: 180.0
+      collapsed: false
+    item:equipment_window:normal1:
+      x: 300.0
+      y: 20.0
+      collapsed: false
+    det:mod_window:detect_heading:
+      x: -820.0
+      y: 2700.0
+      w: 260.0
+      h: 180.0
+      collapsed: false
+    item:mod_window:drop_item:
+      x: -920.0
+      y: 3040.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -881,49 +1119,20 @@ layout:
       - price_min
       - volume
       - total
+    ds:mods:
+      order:
+      - mod_name
+      - mod_count
+      - mod_drain
   open_images:
-  - equip
   - relic_window
+  - mod_window
+  - equipment_window
   groups:
-  - id: group_4
-    title: detects
-    members:
-    - det:equip:detect_4
-    - det:equip:detect_1
-    - det:equip:detect_2
-    - sb:equip:scrollbar
-    outline:
-      color: '#7ddc7d'
-      style: none
-      width: 2
-    bg: '#1f2a25'
-    titleBg: '#7ddc7d'
-    titleColor: '#08121d'
-    titleAlign: left
-    titlePos: tl
-  - id: group_5
-    title: 'price: statistics'
-    members:
-    - ds:prices_statistics
-    - price:price
-    - sub:statistic_prices_joined
-    outline:
-      color: '#e6c25a'
-      style: none
-      width: 2
-    bg: '#292722'
-    titleBg: '#e6c25a'
-    titleColor: '#08121d'
-    titleAlign: left
-    titlePos: tl
   - id: group_6
     title: 'price: live'
     members:
-    - ds:prices_live
-    - sub:live_prices_joined
     - price:price_2
-    - price:wf_market_live
-    - trigger:owned_refresh
     outline:
       color: '#e6c25a'
       style: none
@@ -931,34 +1140,6 @@ layout:
     bg: '#292722'
     titleBg: '#e6c25a'
     titleColor: '#08121d'
-    titleAlign: left
-    titlePos: tl
-  - id: group_7
-    title: 'window: equipment'
-    members:
-    - win:equip
-    - prev:equip
-    outline:
-      color: '#5aa9e6'
-      style: none
-      width: 2
-    bg: '#1b252f'
-    titleBg: '#5aa9e6'
-    titleColor: '#08121d'
-    titleAlign: left
-    titlePos: tl
-  - id: group_8
-    title: items
-    members:
-    - item:equip:normal
-    - item:equip:arcane
-    outline:
-      color: '#e0556b'
-      style: none
-      width: 2
-    bg: '#281d23'
-    titleBg: '#e0556b'
-    titleColor: '#1a0a0e'
     titleAlign: left
     titlePos: tl
   - id: group_9
@@ -967,13 +1148,14 @@ layout:
     - game
     - dict:wiki
     - ds:master
+    - ds:mods
     outline:
-      color: '#2c313c'
+      color: '#c98ae6'
       style: none
       width: 2
-    bg: '#181b20'
-    titleBg: ''
-    titleColor: ''
+    bg: '#26222f'
+    titleBg: '#c98ae6'
+    titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
   - id: group_11
@@ -983,8 +1165,6 @@ layout:
     - sub:relic_rewards_live
     - price:relic_live
     - trigger:relic_watch
-    - win:window_1
-    - prev:window_1
     - det:window_1:detect_1
     - item:window_1:item_3
     - win:relic_window
@@ -1003,17 +1183,103 @@ layout:
     titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
+  - id: group_12
+    title: 'window: mods'
+    members:
+    - win:mod_windowss
+    - prev:mod_windowss
+    - item:mod_windowss:item_1
+    - ds:mod_windowss
+    - det:mod_windowss:detect_2
+    - det:mod_windowss:detect_3
+    outline:
+      color: '#333333'
+      style: none
+      width: 2
+    bg: '#191c21'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+    titlePos: tl
+  - id: group_16
+    title: 'window: mods'
+    members:
+    - win:mod_window
+    - prev:mod_window
+    - det:mod_window:detect_heading
+    - item:mod_window:mod
+    - item:mod_window:drop_item
+    outline:
+      color: '#7ddc7d'
+      style: none
+      width: 2
+    bg: '#1f2a25'
+    titleBg: '#7ddc7d'
+    titleColor: '#08121d'
+    titleAlign: left
+    titlePos: tl
+  - id: group_17
+    title: 'price: stash'
+    members:
+    - ds:prices_statistics
+    - sub:statistic_prices_joined
+    - price:price
+    outline:
+      color: '#e69a5a'
+      style: none
+      width: 2
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
+    titleAlign: left
+    titlePos: tl
+  - id: group_18
+    title: 'price: live'
+    members:
+    - ds:prices_live
+    - sub:live_prices_joined
+    - price:wf_market_live
+    - trigger:owned_refresh
+    outline:
+      color: '#e6c25a'
+      style: none
+      width: 2
+    bg: '#292722'
+    titleBg: '#e6c25a'
+    titleColor: '#08121d'
+    titleAlign: left
+    titlePos: tl
+  - id: group_19
+    title: 'window: equipments'
+    members:
+    - win:equipment_window
+    - prev:equipment_window
+    - det:equipment_window:detect_2
+    - det:equipment_window:detect_4
+    - det:equipment_window:detect_1
+    - sb:equipment_window:scrollbar
+    - item:equipment_window:normal
+    - item:equipment_window:arcane
+    outline:
+      color: '#7ddc7d'
+      style: none
+      width: 2
+    bg: '#1f2a25'
+    titleBg: '#7ddc7d'
+    titleColor: '#08121d'
+    titleAlign: left
+    titlePos: tl
   float_windows:
     nodemap:
       visible: true
       x: 1208
       y: 82
-      w: 107
+      w: 300
       h: null
       mode: map
       sizes:
         map:
-          w: 107
+          w: 300
           h: 38
         list:
           w: 360
@@ -1035,12 +1301,12 @@ layout:
     testing:
       visible: true
       x: 1208
-      y: 555
+      y: 445
       w: 280
       h: 429
       collapsed: true
       dock:
-        to: precap
+        to: toolbox
         dx: 0
         ar: true
       userSized: true
@@ -1048,48 +1314,58 @@ layout:
       visible: true
       x: 1208
       y: 174
-      w: 200
-      h: 204
-      collapsed: true
+      w: 300
+      h: 263
+      collapsed: false
       dock:
         to: activity
         dx: 0
         ar: true
-      userSized: false
+      userSized: true
     precap:
       visible: true
-      x: 1198
-      y: 220
-      w: 310
-      h: 327
-      collapsed: false
-      dock:
-        to: toolbox
-        dx: 0
-        ar: true
-      userSized: true
-    live:
-      visible: true
-      x: 1208
-      y: 601
-      w: 300
-      h: 202
+      x: 1209
+      y: 491
+      w: 299
+      h: 313
       collapsed: false
       dock:
         to: testing
         dx: 0
         ar: true
       userSized: true
+    live:
+      visible: true
+      x: 1200
+      y: 812
+      w: 308
+      h: 354
+      collapsed: false
+      dock:
+        to: precap
+        dx: 0
+        ar: true
+      userSized: true
   super_groups:
   - id: sgroup_2
-    title: supagroup
+    title: master
     groups:
-    - group_7
-    - group_4
-    - group_8
+    - group_16
+    - group_19
     outline:
-      color: '#8a9ae6'
+      color: '#2c313c'
       style: none
       width: 2
-    bg: '#1a1c24'
-    titleColor: '#8a9ae6'
+    bg: '#1b1d23'
+    titleColor: ''
+  - id: sgroup_3
+    title: warframe.market
+    groups:
+    - group_17
+    - group_18
+    outline:
+      color: '#3a4154'
+      style: none
+      width: 2
+    bg: '#1b1d23'
+    titleColor: ''
