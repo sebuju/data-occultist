@@ -1006,24 +1006,25 @@ layout:
   float_windows:
     nodemap:
       visible: true
-      x: 1228
-      y: 107
-      w: 361
-      h: 336
+      x: 1169
+      y: 52
+      w: 339
+      h: 319
       mode: map
       sizes:
         map:
-          w: 361
-          h: 336
+          w: 339
+          h: 319
         list:
           w: 360
           h: 231
       collapsed: false
       dock: null
+      userSized: true
     activity:
       visible: true
-      x: 1228
-      y: 451
+      x: 1169
+      y: 379
       w: 360
       h: 155
       collapsed: false
@@ -1032,33 +1033,36 @@ layout:
         dx: 0
         ar: true
     testing:
-      visible: false
-      x: 1070
-      y: 66
+      visible: true
+      x: 1228
+      y: 800
       w: 280
       h: 429
       collapsed: false
-      dock: null
+      dock:
+        to: precap
+        dx: 0
+        ar: false
       userSized: true
     toolbox:
       visible: true
-      x: 1228
-      y: 802
+      x: 1169
+      y: 542
       w: 200
       h: 204
       collapsed: false
       dock:
-        to: live
+        to: activity
         dx: 0
         ar: true
       userSized: false
     precap:
-      visible: false
-      x: 1070
-      y: 696
-      w: 755
-      h: 587
-      collapsed: false
+      visible: true
+      x: 1169
+      y: 754
+      w: 310
+      h: 232
+      collapsed: true
       dock:
         to: toolbox
         dx: 0
@@ -1066,15 +1070,12 @@ layout:
       userSized: true
     live:
       visible: true
-      x: 1228
-      y: 614
+      x: 8
+      y: 607
       w: 300
       h: 180
-      collapsed: false
-      dock:
-        to: activity
-        dx: 0
-        ar: true
+      collapsed: true
+      dock: null
       userSized: true
   super_groups:
   - id: sgroup_2
