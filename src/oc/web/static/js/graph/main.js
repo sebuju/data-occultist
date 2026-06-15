@@ -32,7 +32,7 @@ const pos = new Map();            // node id -> {x,y}
 const nodeEls = new Map();        // node id -> DOM element (built once, reused)
 const collapsed = new Set();      // collapsed node ids
 const view = { panX: 0, panY: 0, zoom: 1 };  // canvas pan/zoom
-const COLX = { game: 20, window: 300, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, dataset: 900, subset: 1900, dictionary: 20 };
+const COLX = { game: 20, window: 300, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, dataset: 900, subset: 1900, dictionary: 20 };
 let live = {};                    // dataset -> {present,total,last_op,last_ts}
 const prevPresent = {};
 const prevLastTs = {};            // dataset -> last ledger event ts (changes on ANY batch)
@@ -253,7 +253,7 @@ initPersist({
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "detect", sb: "scrollbar", item: "item", ds: "dataset", sub: "subset", price: "price", dict: "dictionary" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", ds: "dataset", sub: "subset", price: "price", dict: "dictionary" };
 function nodeTypeOf(id) { return id === "game" ? "game" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
   world: () => $("ggroups"),
@@ -510,21 +510,30 @@ function memberBBox(snap) {
   for (const n of snap) { x = Math.min(x, n.x); y = Math.min(y, n.y); r = Math.max(r, n.x + n.w); b = Math.max(b, n.y + n.h); }
   return { x, y, w: r - x, h: b - y };
 }
-// Scale members' SIZE by s and reposition so inter-node GAPS stay EXACTLY constant (not
-// scaled). A node shifts by the ACTUAL size-growth of the nodes that are both fully before it
-// on an axis AND overlap it on the other axis (same row for x, same column for y) — so only a
-// genuine left/up neighbour pushes it, growth isn't double-counted across rows, and a node
-// that doesn't resize (non-host) contributes zero so the gap around it is untouched. Anchored
-// at the leftmost/topmost node; computed from the original snapshot each tick (no drift).
-const overlapY = (a, b) => a.y < b.y + b.h && a.y + a.h > b.y;   // share vertical extent → same row
-const overlapX = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x;   // share horizontal extent → same column
-// SIZES are GRID-stepped (clean steps, like the node grips); POSITIONS are NOT re-snapped —
-// each node moves by the EXACT cumulative growth of the nodes packed before it, so a gap (the
-// difference of two shifted edges that share those growth terms) stays byte-for-byte the same.
-// (Grid-snapping each position independently was the bug: two roundings on one gap drifted it.)
-// Each target size is written to the DOM and read back via offsetWidth/Height, so the browser
-// applies that node's own CSS constraints (min/max-width, item width-only + cutout aspect); the
-// post-clamp growth (dw/dh) is what shifts later nodes, so gaps hold even when a node hits a limit.
+// Group resize: each member's SIZE grows by s; every node then shifts so the empty GAP between
+// nodes stays constant (a growing node must push its neighbours, not eat the gap). Members are
+// assigned a column index (by x) and a row index (by y). A node is then pushed RIGHT by the
+// width-growth of every node LEFT of it IN ITS ROW, and DOWN by the height-growth of every node
+// ABOVE it IN ITS COLUMN — so each specific gap moves by exactly its neighbour's growth and holds
+// at any drag scale, even when node sizes differ (a per-band MAX would over-shift the smaller
+// ones). The leftmost column / topmost row is the anchor (shift 0).
+// SIZES are GRID-stepped and read back via offsetWidth/Height so each node's own CSS constraints
+// (min/max-width, item width-only + cutout aspect) apply; the post-clamp growth (dw/dh) drives
+// the shift, so gaps hold even when a node hits a limit.
+//
+// Cluster member START coords on one axis into ordered bands (columns for x, rows for y) and
+// return each node's band index. Positions are GRID-snapped, so anything within GRID/2 shares a band.
+function bandIndex(snap, startOf) {
+  const sorted = [...snap].sort((a, b) => startOf(a) - startOf(b));
+  const idx = new Map();          // id -> band index
+  let band = -1, edge = -Infinity;
+  for (const n of sorted) {
+    if (startOf(n) > edge + GRID / 2) band++;   // a coord past half-a-grid from the last starts a new band
+    edge = startOf(n);
+    idx.set(n.id, band);
+  }
+  return idx;
+}
 const G = (v) => Math.round(v / GRID) * GRID;
 function applyGroupScale(snap, s) {
   const grow = new Map();   // id -> { dw, dh } actual growth after CSS clamping (0 if it can't resize)
@@ -539,14 +548,16 @@ function applyGroupScale(snap, s) {
     if (free) nodeSizes.set(n.id, { w: aw, h: ah });
     grow.set(n.id, { dw: aw - n.w, dh: ah - n.h });
   }
+  const colOf = bandIndex(snap, (n) => n.x);   // column index per node (vertical stacks share one)
+  const rowOf = bandIndex(snap, (n) => n.y);   // row index per node (horizontal runs share one)
   for (const n of snap) {
     let shiftX = 0, shiftY = 0;
     for (const o of snap) {
       if (o === n) continue;
-      if (o.x + o.w <= n.x + 0.5 && overlapY(o, n)) shiftX += grow.get(o.id).dw;   // fully left, same row
-      if (o.y + o.h <= n.y + 0.5 && overlapX(o, n)) shiftY += grow.get(o.id).dh;   // fully above, same column
+      if (rowOf.get(o.id) === rowOf.get(n.id) && colOf.get(o.id) < colOf.get(n.id)) shiftX += grow.get(o.id).dw;   // left, same row
+      if (colOf.get(o.id) === colOf.get(n.id) && rowOf.get(o.id) < rowOf.get(n.id)) shiftY += grow.get(o.id).dh;   // above, same column
     }
-    pos.set(n.id, { x: Math.round(n.x + shiftX), y: Math.round(n.y + shiftY) });   // exact chain, no re-snap
+    pos.set(n.id, { x: Math.round(n.x + shiftX), y: Math.round(n.y + shiftY) });
     positionNode(n.id);
   }
 }
@@ -594,9 +605,65 @@ function windowControls(w) {
     <label class="win-live" title="attempt this window in live view"><input type="checkbox" class="winlive" ${w.live !== false ? "checked" : ""}/> live</label></div>`;
 }
 
+// The cell size (item.box w/h, window fractions) shown as editable inputs below the cutout
+// canvas. Under static grid this IS the grid pitch (column/row spacing); the cell's position
+// is unused. Editing reuses setItemCellKeepingChildren so fields/tells stay visually put.
+function cellSizeControls(it) {
+  const b = it.box || { w: 0, h: 0 };
+  const v = (n) => +(+n || 0).toFixed(4);
+  // priority-0 is the static grid's base cell; a non-0 item can match its w/h so every
+  // template tiles on the same pitch (only shown when this item isn't priority 0 itself)
+  return `<label class="flab" title="cell width as a window fraction — the static grid's column pitch">cell width <input type="number" class="csize" data-k="w" step="0.001" min="0.001" value="${v(b.w)}"/></label>
+    <label class="flab" title="cell height as a window fraction — the static grid's row pitch">cell height <input type="number" class="csize" data-k="h" step="0.001" min="0.001" value="${v(b.h)}"/></label>`;
+}
+
+// Keep the cell-size inputs in sync after a canvas cell-resize (which doesn't rebuild the node).
+function syncCellSize(winId, itemId) {
+  const node = nodeEls.get(`item:${winId}:${itemId}`), it = model.item(winId, itemId);
+  if (!node || !it || !it.box) return;
+  for (const k of ["w", "h"]) {
+    const inp = node.querySelector(`.csize[data-k="${k}"]`);
+    if (inp && document.activeElement !== inp) inp.value = +(+it.box[k]).toFixed(4);
+  }
+}
+
 // The tells + fields list shown under an item node's cutout canvas. Item fields
 // carry the SAME per-field config as the old region nodes (type/extract/sep/learn/
 // fuzzy/empty/pips) — edited here against the window's FieldDef.
+// One item field is its OWN node now (a child of its item node). This renders the same
+// per-field config that used to sit inline in the item node, against the window FieldDef.
+function itemFieldParts(n) {
+  const f = n.ref, w = n.win;
+  const fd = n.field || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
+  const types = TYPES.map(([v, t]) => `<option value="${v}" ${fd.type === v ? "selected" : ""}>${t}</option>`).join("");
+  const exs = EXTRACTS.map((v) => `<option ${(fd.extract || "whole") === v ? "selected" : ""}>${v}</option>`).join("");
+  const pips = fd.type === "pips" || fd.type === "diamonds";
+  const body = `
+    <label class="flab">type <select class="ffset" data-fid="${f.id}" data-k="type">${types}</select></label>
+    ${pips ? "" : `<label class="flab">extract <select class="ffset" data-fid="${f.id}" data-k="extract">${exs}</select></label>`}
+    ${(!pips && NEEDS_SEP.has(fd.extract)) ? `<label class="flab">separator <input class="ffset" type="text" data-fid="${f.id}" data-k="sep" value="${esc(fd.separator || "/")}"/></label>` : ""}
+    <label class="flab">learn <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="learn" ${fd.learn ? "checked" : ""}/></label>
+    <label class="flab">fuzzy <input type="number" class="ffset" data-fid="${f.id}" data-k="fuzzy" step="0.05" min="0" max="1" value="${fd.fuzzy ?? 0.82}"/></label>
+    <label class="flab" title="minimum OCR confidence this field must reach — a weaker read drops the whole record (0 = use the global floor)">conf <input type="number" class="ffset" data-fid="${f.id}" data-k="minconf" step="0.05" min="0" max="1" value="${fd.min_confidence ?? 0}"/></label>
+    <label class="flab" title="read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. drain '8' read as '81')">isolate <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="isolate" ${fd.isolate ? "checked" : ""}/></label>
+    <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="ffset" data-fid="${f.id}" data-k="empty" value="${esc(fd.empty || "")}" placeholder="(blank)"/></label>
+    ${fd.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="ffset" data-fid="${f.id}" data-k="ifnum" value="${esc(fd.if_number ?? "")}" placeholder="(off)"/></label>
+    <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="ifnumany" ${fd.if_number_any ? "checked" : ""}/></label>
+    <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="ffset" data-fid="${f.id}" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(fd.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+    ${(model.profile.dictionaries || []).length ? `<label class="flab" title="which authored dictionary this field snaps to (all = every enabled one pooled)">use dict <select class="ffset" data-fid="${f.id}" data-k="usedict">${dictOptions(fd.dictionary)}</select></label>` : ""}` : ""}
+    ${fd.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="ffset" data-fid="${f.id}" data-k="iftext" value="${esc(fd.if_text ?? "")}" placeholder="(off)"/></label>
+    <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="iftextany" ${fd.if_text_any ? "checked" : ""}/></label>
+    <label class="flab" title="lowest plausible value — a read below this is a misread and drops the record (blank = no minimum)">min <input type="number" class="ffset" data-fid="${f.id}" data-k="min" value="${fd.min ?? ""}" placeholder="(none)"/></label>
+    <label class="flab" title="highest plausible value — a read above this is a misread and drops the record (blank = no maximum)">max <input type="number" class="ffset" data-fid="${f.id}" data-k="max" value="${fd.max ?? ""}" placeholder="(none)"/></label>` : ""}
+    <label class="flab" title="require this field to read something — it doubles as a tell">tell <input type="checkbox" class="itell" data-fid="${f.id}" ${f.tell ? "checked" : ""}/></label>
+    ${f.tell ? `<label class="flab" title="minimum OCR confidence the read must reach (0 = any)">tell conf <input type="number" class="itellconf" data-fid="${f.id}" step="0.05" min="0" max="1" value="${f.tell_conf ?? 0}"/></label>` : ""}
+    ${f.tell && fd.type === "number" ? `<label class="flab" title="pass the tell even when the read carries text (e.g. a polarity glyph), not only a clean number">allow text <input type="checkbox" class="itelltext" data-fid="${f.id}" ${f.tell_allow_text ? "checked" : ""}/></label>` : ""}
+    <label class="flab" title="use this field to LOCATE rows (anchor the grid) — independent of tell; a reliable text field (e.g. the name) can locate without being a tell">locate <input type="checkbox" class="iloc" data-fid="${f.id}" ${f.locate ? "checked" : ""}/></label>
+    ${(f.tell || f.locate) ? `<label class="flab" title="which line of a wrapped name to anchor the row on">align <select class="itellalign" data-fid="${f.id}">${["none", "top", "center", "bottom"].map((v) => `<option ${(f.align || n.item.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>` : ""}
+    <div class="gn-foot"></div>`;
+  return { title: `<input class="gi gi-id" data-k="fldid" value="${esc(f.id)}" title="field id" />`, body };
+}
+
 function itemLists(it, w) {
   const fieldDef = (fid) => (w.fields || []).find((x) => x.id === fid) || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
   // static grid tiles rows from the cell — OCR row-location (locate) is unused, so lock it off
@@ -616,39 +683,30 @@ function itemLists(it, w) {
       <span class="ti-name">${esc(f.id)}</span>
       <span class="ti-ro muted">tell · conf ${f.tell_conf ?? 0}</span>
       <button class="ti-untell danger" data-fid="${esc(f.id)}" title="stop using this field as a tell">${TRASH}</button></div>`).join("");
-  const fields = (it.fields || []).map((f) => {
-    const fd = fieldDef(f.field);
-    const types = TYPES.map(([v, t]) => `<option value="${v}" ${fd.type === v ? "selected" : ""}>${t}</option>`).join("");
-    const exs = EXTRACTS.map((v) => `<option ${(fd.extract || "whole") === v ? "selected" : ""}>${v}</option>`).join("");
-    const pips = fd.type === "pips" || fd.type === "diamonds";
-    return `<div class="if-row" data-fid="${f.id}">
-      <div class="if-head"><input class="iset-fid" data-fid="${f.id}" value="${esc(f.id)}"/><button class="if-del danger" data-fid="${f.id}" title="remove">${TRASH}</button></div>
-      <label class="flab">type <select class="ffset" data-fid="${f.id}" data-k="type">${types}</select></label>
-      ${pips ? "" : `<label class="flab">extract <select class="ffset" data-fid="${f.id}" data-k="extract">${exs}</select></label>`}
-      ${(!pips && NEEDS_SEP.has(fd.extract)) ? `<label class="flab">separator <input class="ffset" type="text" data-fid="${f.id}" data-k="sep" value="${esc(fd.separator || "/")}"/></label>` : ""}
-      <label class="flab">learn <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="learn" ${fd.learn ? "checked" : ""}/></label>
-      <label class="flab">fuzzy <input type="number" class="ffset" data-fid="${f.id}" data-k="fuzzy" step="0.05" min="0" max="1" value="${fd.fuzzy ?? 0.82}"/></label>
-      <label class="flab" title="minimum OCR confidence this field must reach — a weaker read drops the whole record (0 = use the global floor)">conf <input type="number" class="ffset" data-fid="${f.id}" data-k="minconf" step="0.05" min="0" max="1" value="${fd.min_confidence ?? 0}"/></label>
-      <label class="flab" title="read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. drain '8' read as '81')">isolate <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="isolate" ${fd.isolate ? "checked" : ""}/></label>
-      <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="ffset" data-fid="${f.id}" data-k="empty" value="${esc(fd.empty || "")}" placeholder="(blank)"/></label>
-      ${fd.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="ffset" data-fid="${f.id}" data-k="ifnum" value="${esc(fd.if_number ?? "")}" placeholder="(off)"/></label>
-      <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="ifnumany" ${fd.if_number_any ? "checked" : ""}/></label>
-      <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="ffset" data-fid="${f.id}" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(fd.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-      ${(model.profile.dictionaries || []).length ? `<label class="flab" title="which authored dictionary this field snaps to (all = every enabled one pooled)">use dict <select class="ffset" data-fid="${f.id}" data-k="usedict">${dictOptions(fd.dictionary)}</select></label>` : ""}` : ""}
-      ${fd.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="ffset" data-fid="${f.id}" data-k="iftext" value="${esc(fd.if_text ?? "")}" placeholder="(off)"/></label>
-      <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="iftextany" ${fd.if_text_any ? "checked" : ""}/></label>
-      <label class="flab" title="lowest plausible value — a read below this is a misread and drops the record (blank = no minimum)">min <input type="number" class="ffset" data-fid="${f.id}" data-k="min" value="${fd.min ?? ""}" placeholder="(none)"/></label>
-      <label class="flab" title="highest plausible value — a read above this is a misread and drops the record (blank = no maximum)">max <input type="number" class="ffset" data-fid="${f.id}" data-k="max" value="${fd.max ?? ""}" placeholder="(none)"/></label>` : ""}
-      <label class="flab" title="require this field to read something — it doubles as a tell">tell <input type="checkbox" class="itell" data-fid="${f.id}" ${f.tell ? "checked" : ""}/></label>
-      ${f.tell ? `<label class="flab" title="minimum OCR confidence the read must reach (0 = any)">tell conf <input type="number" class="itellconf" data-fid="${f.id}" step="0.05" min="0" max="1" value="${f.tell_conf ?? 0}"/></label>` : ""}
-      ${f.tell && fd.type === "number" ? `<label class="flab" title="pass the tell even when the read carries text (e.g. a polarity glyph), not only a clean number">allow text <input type="checkbox" class="itelltext" data-fid="${f.id}" ${f.tell_allow_text ? "checked" : ""}/></label>` : ""}
-      <label class="flab" title="use this field to LOCATE rows (anchor the grid) — independent of tell; a reliable text field (e.g. the name) can locate without being a tell">locate <input type="checkbox" class="iloc" data-fid="${f.id}" ${f.locate ? "checked" : ""}/></label>
-      ${(f.tell || f.locate) ? `<label class="flab" title="which line of a wrapped name to anchor the row on">align <select class="itellalign" data-fid="${f.id}">${["none", "top", "center", "bottom"].map((v) => `<option ${(f.align || it.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>` : ""}
-    </div>`;
-  }).join("");
+  // fields are their OWN nodes now — the item lists only a compact summary (name + remove);
+  // the full per-field editor lives on each field node (itemFieldParts).
+  const fieldsSummary = (it.fields || []).map((f) => `<div class="if-sum" data-fid="${esc(f.id)}" title="select this field's node">
+      <span class="if-sum-name">${esc(f.id)}</span>
+      <button class="if-del danger" data-fid="${esc(f.id)}" title="remove">${TRASH}</button></div>`).join("");
+  // the cutout draw-mode buttons, split by what they draw: cell under "cell", field under
+  // "fields", every tell kind under "tells". Selecting one sets the active draw kind.
+  const drawBtn = ([v, label, icon]) => `<button class="tool${v === "field" ? " active" : ""}" data-kind="${v}" title="draw ${label}">${icon} ${label}</button>`;
+  // copy w/h from the priority-0 base cell — sits next to the cell draw button (non-base only)
+  const matchBtn = (it.priority || 0) === 0 ? ""
+    : `<button class="csize-match" title="copy width & height from the priority-0 cell (the static grid's base pitch)">= P0</button>`;
+  const cellBtns = ITEM_KINDS.filter(([v]) => v === "bbox").map(drawBtn).join("") + matchBtn;
+  const fieldBtns = ITEM_KINDS.filter(([v]) => v === "field").map(drawBtn).join("");
+  const tellBtns = ITEM_KINDS.filter(([v]) => v !== "bbox" && v !== "field").map(drawBtn).join("");
   return `<label class="flab" title="when templates overlap the same tile, higher priority wins">priority <input type="number" class="iprio" step="1" value="${it.priority || 0}"></label>
-    <div class="muted il-h">tells</div>${(tells + fieldTells) || '<div class="muted">draw a tell on the cutout</div>'}
-    <div class="muted il-h">fields</div>${fields || '<div class="muted">draw a field on the cutout</div>'}
+    <div class="muted il-h">tells</div>
+    <div class="il-tools">${tellBtns}</div>
+    ${(tells + fieldTells) || '<div class="muted">draw a tell on the cutout</div>'}
+    <div class="muted il-h">cell</div>
+    <div class="il-tools">${cellBtns}</div>
+    ${cellSizeControls(it)}
+    <div class="muted il-h">fields</div>
+    <div class="il-tools">${fieldBtns}</div>
+    ${fieldsSummary || '<div class="muted">draw a field on the cutout</div>'}
     ${keySection(it, w)}
     `;
 }
@@ -670,13 +728,10 @@ function keySection(it, w) {
     </div>`).join("");
   const addable = fids.filter((f) => !used.includes(f));
   return `<div class="muted il-h" title="which fields identify a record — reads with the same key merge; a different key (e.g. another level) is its own record. A record missing any key part is dropped.">key</div>
+    <label class="flab" title="joins the parts in the stored key">sep <input class="ksep" value="${esc(eff.sep ?? "|")}" size="2"/></label>
+    <label class="flab" title="treat keys differing only in case as distinct">case <input type="checkbox" class="kcase" ${eff.case_sensitive ? "checked" : ""}/></label>
     ${rows}
-    <div class="key-row">
-      ${addable.length ? `<select class="kadd"><option value="">+ field…</option>${addable.map((f) => `<option>${esc(f)}</option>`).join("")}</select>` : ""}
-      <label class="flab" title="joins the parts in the stored key">sep <input class="ksep" value="${esc(eff.sep ?? "|")}" size="2"/></label>
-      <label class="flab" title="treat keys differing only in case as distinct">case <input type="checkbox" class="kcase" ${eff.case_sensitive ? "checked" : ""}/></label>
-    </div>
-    <div class="key-prev" title="the key the last read would store under">${keyPrevHTML(w.id, it.id)}</div>`;
+    ${addable.length ? `<div class="key-row"><select class="kadd"><option value="">+ field…</option>${addable.map((f) => `<option>${esc(f)}</option>`).join("")}</select></div>` : ""}`;
 }
 
 // The key the LAST cutout read would store under — recomputed instantly from the
@@ -717,6 +772,21 @@ function itemChanged(winId, itemId, { rebuild = false, render: doRender = false 
 // preserving the live cutout canvas). Every edit funnels through itemChanged().
 function wireItemControls(div, n) {
   const winId = n.win.id, itemId = n.ref.id;
+  div.querySelectorAll(".csize").forEach((inp) => inp.addEventListener("change", (e) => {
+    const it = model.item(winId, itemId);
+    if (!it || !it.box) return;
+    const k = e.target.dataset.k, v = +e.target.value;
+    if (!(v > 0)) { e.target.value = +(+it.box[k]).toFixed(4); return; }   // reject 0/blank
+    setItemCellKeepingChildren(winId, itemId, { ...it.box, [k]: v });   // resize, keep fields put
+    itemChanged(winId, itemId);
+  }));
+  div.querySelector(".csize-match")?.addEventListener("click", () => {
+    const it = model.item(winId, itemId);
+    const base = (n.win.items || []).find((x) => (x.priority || 0) === 0);   // the grid's base cell
+    if (!it || !it.box || !base || !base.box) return;
+    setItemCellKeepingChildren(winId, itemId, { ...it.box, w: base.box.w, h: base.box.h });
+    itemChanged(winId, itemId); syncCellSize(winId, itemId);   // copy P0 w/h, reflect in inputs
+  });
   div.querySelector(".gi-id").addEventListener("change", (e) => {
     const newId = e.target.value.trim();
     if (!model.renameItem(winId, itemId, newId)) { e.target.value = itemId; return; }
@@ -741,63 +811,26 @@ function wireItemControls(div, n) {
     model.removeItemTell(winId, itemId, b.dataset.tid);
     itemChanged(winId, itemId, { rebuild: true });
   }));
-  // a field-tell's remove just clears the field's tell flag (the field itself stays)
+  // a field-tell's remove just clears the field's tell flag (the field itself stays). Render
+  // so the field's OWN node also reflects the unchecked tell.
   div.querySelectorAll(".ti-untell").forEach((b) => b.addEventListener("click", () => {
     model.setItemFieldTell(winId, itemId, b.dataset.fid, false);
-    itemChanged(winId, itemId, { rebuild: true });
+    itemChanged(winId, itemId, { render: true });
   }));
-  div.querySelectorAll(".iset-fid").forEach((inp) => inp.addEventListener("change", (e) => {
-    model.renameItemField(winId, itemId, e.target.dataset.fid, e.target.value.trim());
-    itemChanged(winId, itemId, { rebuild: true });
-  }));
-  // per-field config (same as the old region node): edits the window FieldDef
-  div.querySelectorAll(".ffset").forEach((inp) => inp.addEventListener("change", (e) => {
-    const f = model.itemField(winId, itemId, e.target.dataset.fid);
-    const fd = f && (n.win.fields || []).find((x) => x.id === f.field);
-    if (!fd) return;
-    const k = e.target.dataset.k;
-    let rebuild = false, doRender = false;
-    if (k === "type") { fd.type = e.target.value; rebuild = true; }       // toggles extract/sep/pips
-    else if (k === "extract") { fd.extract = e.target.value; rebuild = true; }  // toggles separator
-    else if (k === "sep") fd.separator = e.target.value || "/";
-    else if (k === "learn") fd.learn = e.target.checked;
-    else if (k === "fuzzy") fd.fuzzy = +e.target.value;
-    else if (k === "minconf") fd.min_confidence = +e.target.value || 0;
-    else if (k === "isolate") fd.isolate = e.target.checked;
-    else if (k === "empty") fd.empty = e.target.value || null;
-    else if (k === "ifnum") fd.if_number = e.target.value || null;
-    else if (k === "ifnumany") fd.if_number_any = e.target.checked;
-    else if (k === "iftext") fd.if_text = e.target.value || null;
-    else if (k === "iftextany") fd.if_text_any = e.target.checked;
-    else if (k === "min") fd.min = e.target.value === "" ? null : +e.target.value;
-    else if (k === "max") fd.max = e.target.value === "" ? null : +e.target.value;
-    else if (k === "dictmode") fd.dict_mode = e.target.value;
-    else if (k === "usedict") { fd.dictionary = e.target.value || ""; doRender = true; }   // redraw the muted dict link
-    itemChanged(winId, itemId, { rebuild, render: doRender });
-  }));
+  // a field's full editor is its OWN node now; the item shows a summary. Removing a field
+  // drops its node (full render). Clicking a summary row pans to the field node.
   div.querySelectorAll(".if-del").forEach((b) => b.addEventListener("click", () => {
     model.removeItemField(winId, itemId, b.dataset.fid);
-    itemChanged(winId, itemId, { rebuild: true });
+    itemChanged(winId, itemId, { render: true });   // the field node is gone -> re-render
   }));
-  div.querySelectorAll(".itell").forEach((inp) => inp.addEventListener("change", (e) => {
-    model.setItemFieldTell(winId, itemId, e.target.dataset.fid, e.target.checked);
-    itemChanged(winId, itemId, { rebuild: true });   // show/hide tell-conf + the tells-list mirror
+  div.querySelectorAll(".if-sum").forEach((row) => row.addEventListener("mousedown", (ev) => {
+    if (ev.target.closest("button")) return;
+    panZoomTo(`fld:${winId}:${itemId}:${row.dataset.fid}`);
   }));
-  div.querySelectorAll(".itellconf").forEach((inp) => inp.addEventListener("change", (e) => {
-    model.setItemFieldTellConf(winId, itemId, e.target.dataset.fid, +e.target.value || 0);
-    itemChanged(winId, itemId);
-  }));
-  div.querySelectorAll(".itelltext").forEach((inp) => inp.addEventListener("change", (e) => {
-    model.setItemFieldTellAllowText(winId, itemId, e.target.dataset.fid, e.target.checked);
-    itemChanged(winId, itemId);
-  }));
-  div.querySelectorAll(".iloc").forEach((inp) => inp.addEventListener("change", (e) => {
-    model.setItemFieldLocate(winId, itemId, e.target.dataset.fid, e.target.checked);
-    itemChanged(winId, itemId, { rebuild: true });   // show/hide the align dropdown
-  }));
-  div.querySelectorAll(".itellalign").forEach((sel) => sel.addEventListener("change", (e) => {
-    model.setItemFieldAlign(winId, itemId, e.target.dataset.fid, e.target.value);
-    itemChanged(winId, itemId);
+  // cutout draw-mode buttons live in the node body now: pick the active draw kind. The canvas
+  // overlay reads `.tool.active` off this node (see openItemImage's kindOf).
+  div.querySelectorAll(".tool").forEach((b) => b.addEventListener("click", () => {
+    div.querySelectorAll(".tool").forEach((x) => x.classList.remove("active")); b.classList.add("active");
   }));
   const prio = div.querySelector(".iprio");
   if (prio) prio.addEventListener("change", (e) => {
@@ -811,6 +844,8 @@ function wireItemControls(div, n) {
     if (!k) return;
     fn(k);
     itemChanged(winId, itemId, { rebuild: true });
+    const kp = div.querySelector(".key-prev");   // preview lives in the host now, not the lists
+    if (kp) kp.innerHTML = keyPrevHTML(winId, itemId);
   };
   div.querySelectorAll(".kfield").forEach((s) => s.addEventListener("change", (e) =>
     keyEdit((k) => { k.fields[+e.target.dataset.i] = e.target.value; })));
@@ -840,10 +875,99 @@ function wireItemControls(div, n) {
     if (ev.target.closest("input,select,button,label")) return;
     selectItemBox(row.dataset.tid, row);
   }));
-  div.querySelectorAll(".if-row").forEach((row) => row.addEventListener("mousedown", (ev) => {
-    if (ev.target.closest("input,select,button")) return;
-    selectItemBox(row.dataset.fid, row);
+}
+
+// Add a freshly-created field node to whatever group its item node belongs to, so a field
+// drawn from an item stays grouped with it (no-op when the item isn't grouped).
+function addFieldToItemGroup(winId, itemId, fid) {
+  const g = groups.groupOf(`item:${winId}:${itemId}`);
+  if (g) groups.addToGroup(g.id, [`fld:${winId}:${itemId}:${fid}`]);
+}
+
+// On load, pull every ORPHAN item-field node into its item's group, so fields that became
+// their own nodes sit with the item they were moved from. Idempotent; an already-grouped
+// field (incl. one the user moved elsewhere) is left alone. Needs nodes rendered (for rects).
+function groupItemFields() {
+  const byGroup = {};
+  for (const n of model.nodes()) {
+    if (n.type !== "itemfield" || groups.groupOf(n.id)) continue;
+    const g = groups.groupOf(`item:${n.win.id}:${n.item.id}`);
+    if (g) (byGroup[g.id] = byGroup[g.id] || []).push(n.id);
+  }
+  for (const [gid, ids] of Object.entries(byGroup)) groups.addToGroup(gid, ids);
+}
+
+// THE update path after a FIELD-node edit (mirrors itemChanged, but a field config also
+// affects the item's tells-mirror/key/summary, so optionally rebuild the item node too).
+//   rebuild:     the field node DOM (type/tell/locate toggled which controls show)
+//   rebuildItem: the item node DOM (tell flag / conf changed -> its mirror + key)
+//   render:      full graph render (id rename, dict link, node add/remove)
+function fieldChanged(winId, itemId, fid, { rebuild = false, rebuildItem = false, render: doRender = false } = {}) {
+  if (doRender) render();
+  else {
+    if (rebuild) rebuildNode(`fld:${winId}:${itemId}:${fid}`);
+    if (rebuildItem) rebuildNode(`item:${winId}:${itemId}`);
+  }
+  refreshItemBoxes(winId, itemId);
+  refreshImageBoxes(winId);
+  clearGrid(winId);
+  scheduleItemRead(winId, itemId);
+  autosave(true, winId);
+}
+
+// Wire one item-field node: the per-field config that used to live inline in the item node.
+function wireItemField(div, n) {
+  const winId = n.win.id, itemId = n.item.id, fid = n.ref.id;
+  div.querySelector(".gi-id").addEventListener("change", (e) => {
+    const newId = e.target.value.trim();
+    if (!model.renameItemField(winId, itemId, fid, newId)) { e.target.value = fid; return; }
+    movePos(`fld:${winId}:${itemId}:${fid}`, `fld:${winId}:${itemId}:${newId}`);
+    fieldChanged(winId, itemId, newId, { render: true });
+  });
+  div.querySelectorAll(".ffset").forEach((inp) => inp.addEventListener("change", (e) => {
+    const f = model.itemField(winId, itemId, fid);
+    const fd = f && (n.win.fields || []).find((x) => x.id === f.field);
+    if (!fd) return;
+    const k = e.target.dataset.k;
+    let rebuild = false, doRender = false;
+    if (k === "type") { fd.type = e.target.value; rebuild = true; }       // toggles extract/sep/pips
+    else if (k === "extract") { fd.extract = e.target.value; rebuild = true; }  // toggles separator
+    else if (k === "sep") fd.separator = e.target.value || "/";
+    else if (k === "learn") fd.learn = e.target.checked;
+    else if (k === "fuzzy") fd.fuzzy = +e.target.value;
+    else if (k === "minconf") fd.min_confidence = +e.target.value || 0;
+    else if (k === "isolate") fd.isolate = e.target.checked;
+    else if (k === "empty") fd.empty = e.target.value || null;
+    else if (k === "ifnum") fd.if_number = e.target.value || null;
+    else if (k === "ifnumany") fd.if_number_any = e.target.checked;
+    else if (k === "iftext") fd.if_text = e.target.value || null;
+    else if (k === "iftextany") fd.if_text_any = e.target.checked;
+    else if (k === "min") fd.min = e.target.value === "" ? null : +e.target.value;
+    else if (k === "max") fd.max = e.target.value === "" ? null : +e.target.value;
+    else if (k === "dictmode") fd.dict_mode = e.target.value;
+    else if (k === "usedict") { fd.dictionary = e.target.value || ""; doRender = true; }   // redraw the dict link
+    fieldChanged(winId, itemId, fid, { rebuild, render: doRender });
   }));
+  div.querySelector(".itell")?.addEventListener("change", (e) => {
+    model.setItemFieldTell(winId, itemId, fid, e.target.checked);
+    fieldChanged(winId, itemId, fid, { rebuild: true, rebuildItem: true });   // show/hide tell-conf + item mirror
+  });
+  div.querySelector(".itellconf")?.addEventListener("change", (e) => {
+    model.setItemFieldTellConf(winId, itemId, fid, +e.target.value || 0);
+    fieldChanged(winId, itemId, fid, { rebuildItem: true });
+  });
+  div.querySelector(".itelltext")?.addEventListener("change", (e) => {
+    model.setItemFieldTellAllowText(winId, itemId, fid, e.target.checked);
+    fieldChanged(winId, itemId, fid);
+  });
+  div.querySelector(".iloc")?.addEventListener("change", (e) => {
+    model.setItemFieldLocate(winId, itemId, fid, e.target.checked);
+    fieldChanged(winId, itemId, fid, { rebuild: true });   // show/hide the align dropdown
+  });
+  div.querySelector(".itellalign")?.addEventListener("change", (e) => {
+    model.setItemFieldAlign(winId, itemId, fid, e.target.value);
+    fieldChanged(winId, itemId, fid);
+  });
 }
 
 // Wire the window node's controls (extracted so rebuildNode can re-bind them
@@ -952,6 +1076,7 @@ function nodeParts(n) {
     return { title: `<input class="gi gi-id" data-k="itemid" value="${esc(n.ref.id)}" title="item template" />`,
       body: `<div class="item-img"></div><div class="item-lists">${itemLists(n.ref, n.win)}</div>` };
   }
+  if (n.type === "itemfield") return itemFieldParts(n);
   if (n.type === "scrollbar") {
     const o = n.ref.scrollbar_orientation || "vertical";
     return {
@@ -2383,6 +2508,8 @@ function wireNode(div, n) {
     }));
   } else if (n.type === "item") {
     wireItemControls(div, n);
+  } else if (n.type === "itemfield") {
+    wireItemField(div, n);
   }
 }
 
@@ -3258,10 +3385,10 @@ function openItemImage(winId, itemId) {
   if (!host) return;
   const it = model.item(winId, itemId);
   if (!it || !it.cutout_box) return;
-  host.innerHTML = `<div class="imgtools">
-      <span class="tools">${ITEM_KINDS.map(([v, label, icon]) => `${v === "filled" ? '<span class="tool-div" title="tells"></span>' : ""}<button class="tool ${v === "field" ? "active" : ""}" data-kind="${v}" title="draw ${label}">${icon} ${label}</button>`).join("")}</span>
-      <span class="spacer"></span></div>
-    <div class="item-readout muted"></div>
+  // draw-mode buttons live in the node body now (itemLists: cell/field + tell sections);
+  // this host is just the readout + cutout canvas.
+  host.innerHTML = `<div class="item-readout muted"></div>
+    <div class="key-prev" title="the key the last read would store under">${keyPrevHTML(winId, itemId)}</div>
     <div class="canvas-wrap"><canvas></canvas></div>`;
   const canvas = host.querySelector("canvas");
   const cb = it.cutout_box;
@@ -3270,16 +3397,28 @@ function openItemImage(winId, itemId) {
   const ibox = () => model.item(winId, itemId).box;
   const win2rel = (b) => { const ib = ibox(); return { x: (b.x - ib.x) / ib.w, y: (b.y - ib.y) / ib.h, w: b.w / ib.w, h: b.h / ib.h }; };
   const rel2win = (b) => { const ib = ibox(); return { x: ib.x + b.x * ib.w, y: ib.y + b.y * ib.h, w: b.w * ib.w, h: b.h * ib.h }; };
-  const kindOf = () => host.querySelector(".tool.active")?.dataset.kind || "field";
+  const kindOf = () => node.querySelector(".tool.active")?.dataset.kind || "field";
 
   const overlay = new Overlay(canvas, {
     onCreate: (geom) => {                       // geom in cutout fractions
       const w = cut2win(geom);
       const k = kindOf();
+      if (k === "field") {
+        // drawing a field SPAWNS its own node, grouped with the item. Position + render FIRST
+        // (addToGroup needs the node to have a rect), then attach to the item's group.
+        const fid = model.addItemField(winId, itemId, win2rel(w));
+        placeNewNode(`fld:${winId}:${itemId}:${fid}`, "itemfield");
+        render();
+        addFieldToItemGroup(winId, itemId, fid);
+        groups.renderGroups();
+        refreshItemBoxes(winId, itemId); refreshImageBoxes(winId);
+        clearGrid(winId); scheduleItemRead(winId, itemId); autosave(true, winId);
+        panZoomTo(`fld:${winId}:${itemId}:${fid}`);
+        return;
+      }
       if (k === "bbox") setItemCellKeepingChildren(winId, itemId, w);
-      else if (k === "field") model.addItemField(winId, itemId, win2rel(w));
       else model.addItemTell(winId, itemId, k, win2rel(w));   // filled/text/color/template
-      itemChanged(winId, itemId, { rebuild: true });   // a new field/tell adds a row
+      itemChanged(winId, itemId, { rebuild: true });   // a new tell adds a row
     },
     onChange: (box) => {                        // box in cutout fractions + role/id
       const w = cut2win(box);
@@ -3287,6 +3426,7 @@ function openItemImage(winId, itemId) {
       else if (box.role === "field") model.setItemFieldBox(winId, itemId, box.id, win2rel(w));
       else model.setItemTellBox(winId, itemId, box.id, win2rel(w));
       itemChanged(winId, itemId);              // box moved/resized — no DOM rebuild
+      if (box.role === "bbox") syncCellSize(winId, itemId);   // reflect new cell size in the inputs
     },
     onSelect: (id) => overlaySelected(`item:${winId}:${itemId}`, id),
   });
@@ -3298,13 +3438,11 @@ function openItemImage(winId, itemId) {
     else if (b.role === "field") model.setItemFieldBox(winId, itemId, b.id, win2rel(w));
     else model.setItemTellBox(winId, itemId, b.id, win2rel(w));
     itemChanged(winId, itemId);
+    if (b.role === "bbox") syncCellSize(winId, itemId);   // reflect new cell size in the inputs
   };
   registerOverlay(`item:${winId}:${itemId}`, { overlay, kind: "item", winId, itemId,
     persist: persistItem, refresh: () => { refreshItemBoxes(winId, itemId); refreshImageBoxes(winId); } });
   overlay.setWorldZoom(view.zoom);
-  host.querySelectorAll(".tool").forEach((b) => b.addEventListener("click", () => {
-    host.querySelectorAll(".tool").forEach((x) => x.classList.remove("active")); b.classList.add("active");
-  }));
   if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
 
   const img = new Image();
@@ -3394,10 +3532,10 @@ function itemReadout(res) {
   const status = res.valid ? '<span class="tc-ok">✓ valid</span>' : '<span class="tc-bad">✗ rejected</span>';
   const fields = Object.entries(res.fields || {}).map(([k, v]) => {
     const cls = v.substituted ? "conf-sub" : v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
-    return `<span class="ir-f">${esc(k)}=<b class="${cls}">${esc(String(v.value ?? "∅"))}</b></span>`;
-  }).join(" ");
+    return `<div class="ir-row"><span class="ir-f">${esc(k)}=<b class="${cls}">${esc(String(v.value ?? "∅"))}</b></span></div>`;
+  }).join("");
   const tells = (res.tells || []).map(tellChip).join(" ");
-  return `${status} ${fields}${tells ? " · " + tells : ""}`;
+  return `<div class="ir-row">${status}</div>${fields}${tells ? `<div class="ir-row">${tells}</div>` : ""}`;
 }
 
 function selectRegionNode(winId, boxId) {
@@ -4038,6 +4176,7 @@ async function loadGame(name) {
   hydrateLayout();        // restore node positions/sizes/collapse/open-images from the profile
   applyLocal(local);      // restore canvas zoom/pan + minimap from the per-device sidecar
   render();
+  groupItemFields();   // pull each item's field nodes into the item's group (idempotent)
   // reopen saved images (canvas lives in node); awaited so boot can tell when the
   // initial image loads (and the detects they fire) have actually started
   await Promise.all(pendingOpenImages.map((winId) => (model.window(winId) ? openImage(winId) : null)));
@@ -4067,10 +4206,10 @@ function createGame(name) {
 // mode persist (global UI pref, not per-game).
 
 const NM_TYPE = { win: "window", prev: "preview", reg: "region", det: "detect",
-  sb: "scrollbar", item: "item", ds: "dataset", sub: "subset",
+  sb: "scrollbar", item: "item", fld: "itemfield", ds: "dataset", sub: "subset",
   price: "price", dict: "dictionary" };
 const NM_COLOR = { game: "#7aa2f7", window: "#9ece6a", preview: "#56b6c2", region: "#e0af68",
-  detect: "#bb9af7", scrollbar: "#f7768e", item: "#7dcfff", dataset: "#e5c07b",
+  detect: "#bb9af7", scrollbar: "#f7768e", item: "#7dcfff", itemfield: "#e0af68", dataset: "#e5c07b",
   subset: "#73daca", price: "#ff9e64", dictionary: "#a9b1d6" };
 const nmTypeOf = (id) => (id === "game" ? "game" : NM_TYPE[id.split(":")[0]] || "node");
 const nmColor = (id) => NM_COLOR[nmTypeOf(id)] || "#9aa5ce";
@@ -4084,6 +4223,7 @@ function nodeLabel(n) {
     case "detect": return `detect: ${n.ref.id}`;
     case "scrollbar": return "scrollbar";
     case "item": return n.ref.id;
+    case "itemfield": return n.ref.id + (n.field ? ` → ${n.field.id}` : "");
     case "dataset": return n.ref;
     case "subset": return n.ref.id;
     case "price": return n.ref.id;

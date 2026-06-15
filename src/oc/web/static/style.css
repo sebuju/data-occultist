@@ -402,9 +402,21 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .item-img .canvas-wrap { width: 100%; overflow: hidden;
   border: 1px solid var(--line); border-radius: 4px; margin-top: 4px; }
 .item-img canvas { display: block; width: 100%; image-rendering: auto; }
+/* cell-size inputs (own flab rows): the static grid's pitch (item.box w/h) */
+.csize { width: 64px; }
+.csize-match { font-size: var(--fs-xs); padding: 1px 8px; }
+/* item node: draw-mode button rows under the tells / cell-and-fields headers */
+.il-tools { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0px 8px 0px; }
+.il-tools .tool { font-size: var(--fs-xs); padding: 1px 7px; }
+.il-tools .tool.active { background: var(--accent); color: var(--on-accent, #0b0e14); }
+/* compact field summary row (the full editor is the field's own node) */
+.if-sum { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+.if-sum:hover { background: var(--line); }
+.if-sum .if-sum-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item-readout { margin-top: 6px; font-size: var(--fs-sm); line-height: 1.5; }
 .item-readout:empty { display: none; }
-.item-readout .ir-f { margin-right: 6px; white-space: nowrap; }
+.item-readout .ir-row { display: block; }   /* each value / status / tells on its own row */
+.item-readout .ir-f { white-space: nowrap; }
 .item-lists { margin-top: 6px; }
 .item-lists .il-h { margin-top: 20px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--muted); }
 .ti-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
@@ -425,7 +437,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .key-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
 .key-row select { flex: 1 1 0; min-width: 0; }
 .key-row .ksep { width: 34px; flex: 0 0 auto; }
-.key-row .kmv, .key-row .kdel { flex: 0 0 auto; padding: 0 5px; }
+.key-row .kmv, .key-row .kdel { flex: 0 0 auto; padding: 0 10px; }
 .key-row .flab { display: inline-flex; gap: 4px; }
 .key-prev { margin-top: 4px; font-size: var(--fs-sm); word-break: break-all; }
 .key-prev:empty { display: none; }

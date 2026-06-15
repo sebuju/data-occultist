@@ -27,6 +27,20 @@ export class GraphModel {
     }
     for (const pn of this.profile.price_nodes) pn.sources = pn.sources || [];   // items the node prices (empty = catalogue)
     for (const t of this.profile.triggers) { t.watch = t.watch || []; t.targets = t.targets || []; }
+    // Item fields arrive HOISTED to the window (flat ``item_fields``, each with an ``item``
+    // backref) so each is its own node. Fan them back onto each item's ``fields`` for the
+    // per-item editing logic, and drop the flat key so saving re-nests (the backend re-hoists).
+    for (const w of this.profile.windows || []) {
+      w.items = w.items || [];
+      if (Array.isArray(w.item_fields)) {
+        const byItem = {};
+        for (const f of w.item_fields) { const { item, ...rest } = f; (byItem[item] = byItem[item] || []).push(rest); }
+        for (const it of w.items) it.fields = (it.fields || []).concat(byItem[it.id] || []);
+        delete w.item_fields;
+      } else {
+        for (const it of w.items) it.fields = it.fields || [];
+      }
+    }
   }
 
   // effective dataset id for a window (defaults to its own id)
@@ -114,7 +128,10 @@ export class GraphModel {
       for (const r of w.regions || []) ns.push({ id: `reg:${w.id}:${r.id}`, type: "region", ref: r, win: w, field: this.fieldOf(w, r) });
       for (const d of w.detect || []) ns.push({ id: `det:${w.id}:${d.id}`, type: "detect", ref: d, win: w });
       if (w.scroll && w.scroll.scrollbar) ns.push({ id: `sb:${w.id}:scrollbar`, type: "scrollbar", ref: w.scroll, win: w });
-      for (const it of w.items || []) ns.push({ id: `item:${w.id}:${it.id}`, type: "item", ref: it, win: w });
+      for (const it of w.items || []) {
+        ns.push({ id: `item:${w.id}:${it.id}`, type: "item", ref: it, win: w });
+        for (const f of it.fields || []) ns.push({ id: `fld:${w.id}:${it.id}:${f.id}`, type: "itemfield", ref: f, win: w, item: it, field: this.fieldOf(w, f) });
+      }
     }
     for (const ds of this.datasets()) ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
     for (const s of this.profile.subsets || []) ns.push({ id: `sub:${s.id}`, type: "subset", ref: s });
@@ -149,7 +166,10 @@ export class GraphModel {
       if (w.scroll && w.scroll.scrollbar) es.push({ from: `win:${w.id}`, to: `sb:${w.id}:scrollbar`, kind: "scrollbar" });
       for (const it of w.items || []) {
         es.push({ from: `win:${w.id}`, to: `item:${w.id}:${it.id}`, kind: "item" });
-        for (const f of it.fields || []) linkDict(`item:${w.id}:${it.id}`, w, f.field);
+        for (const f of it.fields || []) {
+          es.push({ from: `item:${w.id}:${it.id}`, to: `fld:${w.id}:${it.id}:${f.id}`, kind: "field" });
+          linkDict(`fld:${w.id}:${it.id}:${f.id}`, w, f.field);
+        }
       }
       if (this._windowHasDataset(w))   // no dataset node/wire until the window produces data
         es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
@@ -648,7 +668,7 @@ export class GraphModel {
     const it = this.item(winId, itemId);
     const f = this.itemField(winId, itemId, fid);
     const w = this.window(winId);
-    if (!it || !f || !newId || it.fields.some((x) => x.id === newId)) return;
+    if (!it || !f || !newId || it.fields.some((x) => x.id === newId)) return false;
     const old = f.field;
     const fld = (w.fields || []).find((x) => x.id === old);
     if (fld && fld.id === old) fld.id = newId;
@@ -658,6 +678,7 @@ export class GraphModel {
     // same for the record key — a stale part would silently drop every record
     if (it.key) it.key.fields = (it.key.fields || []).map((x) => (x === old ? newId : x));
     f.field = newId; f.id = newId;
+    return true;
   }
 
   // ---- record key (dedup identity) per item template -----------------------
