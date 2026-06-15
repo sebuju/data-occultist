@@ -884,7 +884,7 @@ layout:
       x: 1700.0
       y: 3680.0
       w: 560.0
-      h: 720.0
+      h: 780.0
       collapsed: false
     price:relic_live:
       x: 1500.0
@@ -913,7 +913,7 @@ layout:
     prev:relic_window:
       x: 100.0
       y: 4180.0
-      w: 540.0
+      w: 520.0
       h: 240.0
       collapsed: false
     det:relic_window:detect_1:
@@ -1408,9 +1408,9 @@ layout:
       userSized: true
     live:
       visible: true
-      x: 1200
+      x: 1209
       y: 812
-      w: 308
+      w: 299
       h: 354
       collapsed: false
       dock:
