@@ -1006,15 +1006,15 @@ layout:
   float_windows:
     nodemap:
       visible: true
-      x: 1310
+      x: 821
       y: 73
       w: 361
-      h: 336
+      h: 325
       mode: map
       sizes:
         map:
           w: 361
-          h: 336
+          h: 325
         list:
           w: 360
           h: 231
@@ -1022,8 +1022,8 @@ layout:
       dock: null
     activity:
       visible: true
-      x: 1310
-      y: 417
+      x: 821
+      y: 406
       w: 360
       h: 155
       collapsed: false
@@ -1033,7 +1033,7 @@ layout:
         ar: true
     testing:
       visible: false
-      x: 1254
+      x: 1182
       y: 66
       w: 280
       h: 429
@@ -1042,8 +1042,8 @@ layout:
       userSized: true
     toolbox:
       visible: true
-      x: 1310
-      y: 768
+      x: 821
+      y: 555
       w: 200
       h: 204
       collapsed: false
@@ -1055,7 +1055,7 @@ layout:
     precap:
       visible: false
       x: 1164
-      y: 1015
+      y: 759
       w: 755
       h: 587
       collapsed: false
@@ -1066,8 +1066,8 @@ layout:
       userSized: true
     live:
       visible: true
-      x: 1310
-      y: 580
+      x: 821
+      y: 569
       w: 300
       h: 180
       collapsed: false
