@@ -53,40 +53,47 @@ def serve_in_thread(host: str = "127.0.0.1", port: int = 8000, *, timeout: float
     return server
 
 
+# The live frameless Window + its maximised flag live at MODULE level, never as
+# attributes of the js_api instance below. pywebview serialises the api object to
+# inject it into the page; if it could reach the Window it would recurse forever
+# through the native control (``window.native.AccessibilityObject.Bounds.Empty...``)
+# and the window freezes at ``pywebviewready``. Keeping the api instance attribute-free
+# (empty ``__dict__``) avoids that entirely.
+_window = None
+_maxed = False
+
+
 class _WindowChrome:
     """JS-callable window controls for the frameless desktop window.
 
     The window is opened frameless (no OS title bar), so the front-end draws its own
     bar (``static/js/titlebar.js``) and calls these through pywebview's ``js_api``
-    bridge: ``window.pywebview.api.minimize()`` etc. The live ``Window`` is attached
-    after ``create_window`` returns. Methods no-op until then so an early call can't
-    raise.
+    bridge: ``window.pywebview.api.minimize()`` etc. The methods reach the live Window
+    via the module global ``_window`` (NOT an instance attribute — see note above) and
+    no-op until it is set, so an early call can't raise.
     """
 
-    def __init__(self) -> None:
-        self.window = None
-        self._maxed = False
-
     def minimize(self) -> None:
-        if self.window is not None:
-            self.window.minimize()
+        if _window is not None:
+            _window.minimize()
 
     def toggle_maximize(self) -> None:
-        if self.window is None:
+        global _maxed
+        if _window is None:
             return
         # pywebview's Window has no public maximize on every backend; prefer it when
         # present (real maximize, taskbar kept), else fall back to fullscreen toggle.
-        maximize = getattr(self.window, "maximize", None)
-        restore = getattr(self.window, "restore", None)
+        maximize = getattr(_window, "maximize", None)
+        restore = getattr(_window, "restore", None)
         if maximize is not None and restore is not None:
-            (restore if self._maxed else maximize)()
+            (restore if _maxed else maximize)()
         else:
-            self.window.toggle_fullscreen()
-        self._maxed = not self._maxed
+            _window.toggle_fullscreen()
+        _maxed = not _maxed
 
     def close(self) -> None:
-        if self.window is not None:
-            self.window.destroy()
+        if _window is not None:
+            _window.destroy()
 
 
 def open_window(url: str, *, title: str = "data-rig", size: tuple[int, int] = (1400, 900)):
@@ -108,8 +115,9 @@ def open_window(url: str, *, title: str = "data-rig", size: tuple[int, int] = (1
             "(on Windows it uses the Edge WebView2 runtime, preinstalled on Win11)."
         ) from exc
 
+    global _window
     chrome = _WindowChrome()
-    chrome.window = webview.create_window(
+    _window = webview.create_window(
         title, url, width=size[0], height=size[1], frameless=True, easy_drag=False, js_api=chrome
     )
 
