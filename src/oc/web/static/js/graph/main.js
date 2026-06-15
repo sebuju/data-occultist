@@ -9,7 +9,7 @@ import { openModal } from "../modal.js";
 import { Overlay } from "../overlay.js";
 import { log, timed, setLogOpen } from "../log.js";
 import { GraphModel } from "./model.js";
-import { EdgeRouter, polylinePath } from "./route.js";
+import { routeGraph, polylinePath } from "./route.js";
 import { buildKey, DEFAULT_KEY } from "../keys.js";
 import { priceParts, wirePriceNode } from "./price_node.js";
 import { GRID, snap, showSizeHud, hideSizeHud, addResizeGrips, beginDrag } from "./dragresize.js";
@@ -1887,44 +1887,6 @@ function facingSides(ra, rb) {
   return { p1: [acx, ra.y], d1: "T", p2: [bcx, rb.y + rb.h], d2: "B" };
 }
 
-// Centre point of one named side of a rect.
-function portOnSide(r, side) {
-  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-  if (side === "R") return [r.x + r.w, cy];
-  if (side === "L") return [r.x, cy];
-  if (side === "B") return [cx, r.y + r.h];
-  return [cx, r.y];   // "T"
-}
-const sidesFrom = (ra, rb, d1, d2) => ({ p1: portOnSide(ra, d1), d1, p2: portOnSide(rb, d2), d2 });
-
-// The (≤2) sides of a rect whose outward normal points toward (tx,ty): the only sides
-// worth considering for an edge heading that way (a back-facing side would U-turn).
-function sideCandidates(tx, ty) {
-  const c = [];
-  if (Math.abs(tx) >= 1) c.push(tx > 0 ? "R" : "L");
-  if (Math.abs(ty) >= 1) c.push(ty > 0 ? "B" : "T");
-  return c.length ? c : ["R"];
-}
-
-// Let the ROUTER pick the best pair of sides for a link, not raw distance: score every
-// sensible (sideA,sideB) by its actual A* route cost and take the cheapest. A faint bias
-// toward the geometric facing breaks ties so a clear straight shot isn't traded for an
-// equal-cost detour, and the choice doesn't flicker frame to frame.
-function bestSides(router, ra, rb, relax = false) {
-  const dx = (rb.x + rb.w / 2) - (ra.x + ra.w / 2), dy = (rb.y + rb.h / 2) - (ra.y + ra.h / 2);
-  const aC = sideCandidates(dx, dy), bC = sideCandidates(-dx, -dy);
-  const fac = facingSides(ra, rb);
-  let best = null, bestCost = Infinity;
-  for (const d1 of aC) for (const d2 of bC) {
-    let cost = router.routeCost(portOnSide(ra, d1), d1, portOnSide(rb, d2), d2, relax);
-    if (d1 === fac.d1 && d2 === fac.d2) cost *= 0.98;   // tie-break toward the facing pair
-    if (cost < bestCost) { bestCost = cost; best = { d1, d2 }; }
-  }
-  return best || { d1: fac.d1, d2: fac.d2 };
-}
-// Router-chosen sides per link key, persisted across passes so drawEdges() and
-// runRouting() agree on each line's ports (the route cache keys off them).
-const sidePick = new Map();
 
 const nodeRect = (id) => { const p = pos.get(id); return p && { x: p.x, y: p.y, w: nw(id), h: nh(id) }; };
 
@@ -1967,12 +1929,12 @@ const GAP = () => ROUTE.cell * 2;   // preferred spacing: fanned endpoints AND p
 function sameGroup(aId, bId) { const g = groups.groupOf(aId); return !!g && g === groups.groupOf(bId); }
 function computePorts(links) {
   for (const l of links) {
-    // use the router's chosen sides when it has scored this link, else the geometric facing
-    const pick = sidePick.get(l.key);
-    const f = pick ? sidesFrom(l.ra, l.rb, pick.d1, pick.d2) : facingSides(l.ra, l.rb);
+    // geometric facing — the pre-route default for a brand-new line; the router picks the real
+    // faces (and the routed result's ports override these in drawEdges/runRouting).
+    const f = facingSides(l.ra, l.rb);
     l.p1 = f.p1; l.d1 = f.d1; l.p2 = f.p2; l.d2 = f.d2;
     l.align = false;
-    l.relax = sameGroup(l.aId, l.bId);   // grouped lines route with relaxed clearance
+    l.relax = sameGroup(l.aId, l.bId);
   }
   // Grouped nodes read as a single unit, so the "ports sit at the edge centre" rule is relaxed
   // for lines BETWEEN members of the same group: if their facing sides share an axis, slide
@@ -2140,8 +2102,6 @@ function startMorph(el, toPts) {
   };
   el._raf = requestAnimationFrame(tick);
 }
-// cache route still matches the link's live ports? (node not moved since it was routed)
-function routeFresh(c, l) { return c.k === `${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2}`; }
 function geoChanged(el, pts) {
   if (!el._routed || !el._geo || el._geo.length !== pts.length) return true;
   for (let i = 0; i < pts.length; i++)
@@ -2158,8 +2118,11 @@ let draggingNodes = false;
 function drawEdges() {
   const svg = $("gedges"), top = $("gedges-top");
   const links = buildLinks();
+  drawSig = ROUTE.enabled ? linksSig(links) : "";   // change-gate: from the geometric facing ports
+  // adopt the routed result's chosen faces/ports so the port dots + freshness check line up with
+  // the painted path (the router, not the facing default, owns a routed line's endpoints).
+  for (const l of links) { const c = routeCache.get(l.key); if (c && c.p1) { l.p1 = c.p1; l.d1 = c.d1; l.p2 = c.p2; l.d2 = c.d2; } }
   placePortDots(links);   // move each out-port dot onto where its line actually starts
-  drawSig = ROUTE.enabled ? linksSig(links) : "";
   const used = new Set();
   // node ids that are turned off — any line touching one is greyed (carries no live data)
   const disSet = new Set();
@@ -2169,7 +2132,7 @@ function drawEdges() {
     const el = edgeEl(l.key, l.top ? top : svg);
     el.setAttribute("class", l.cls + (disSet.has(l.aId) || disSet.has(l.bId) ? " dis-edge" : ""));
     const c = routeCache.get(l.key);
-    if (c && c.pts.length >= 2 && routeFresh(c, l)) {        // have a current route for this line
+    if (c && c.pts.length >= 2) {                            // have a routed path for this line
       if (tweenRoutes && geoChanged(el, c.pts)) startMorph(el, c.pts);
       else if (!el._raf && geoChanged(el, c.pts)) setRouted(el, c.pts);   // only redraw if it changed; leave morphs alone
     } else if (!el.getAttribute("d")) {
@@ -2265,74 +2228,31 @@ function scheduleRouting() {
   routeRaf = requestAnimationFrame(runRouting);
 }
 
-// A link's OWN dependency signature: its endpoints + only the obstacles whose rect
-// touches the region its route can occupy (endpoints + last path, padded by the
-// clearance margin). So a node moving on the far side of the graph leaves this
-// unchanged — that link is NOT rerouted.
-function linkDeps(link, obs) {
-  const M = ROUTE.cell * (ROUTE.clearWanted + 2);
-  let minx = Math.min(link.p1[0], link.p2[0]), maxx = Math.max(link.p1[0], link.p2[0]);
-  let miny = Math.min(link.p1[1], link.p2[1]), maxy = Math.max(link.p1[1], link.p2[1]);
-  const prev = routeCache.get(link.key);
-  if (prev) for (const p of prev.pts) {
-    if (p[0] < minx) minx = p[0]; else if (p[0] > maxx) maxx = p[0];
-    if (p[1] < miny) miny = p[1]; else if (p[1] > maxy) maxy = p[1];
-  }
-  minx -= M; miny -= M; maxx += M; maxy += M;
-  let s = `${rnd(link.p1)}${link.d1}${rnd(link.p2)}${link.d2}|`;
-  for (const o of obs)
-    if (o.x < maxx && o.x + o.w > minx && o.y < maxy && o.y + o.h > miny) s += `${o.x},${o.y},${o.w},${o.h};`;
-  return s;
-}
-
 function runRouting() {
   routeRaf = null;                     // this frame's pass is running; let drawEdges queue the next one
   const links = buildLinks();          // route the layout as it stands NOW
   const sig = linksSig(links);
-  if (sig === routeHash) return;
-  let routeSig = sig;
-  const obs = obstacleRects();
+  if (sig === routeHash) return;       // nothing moved since the last pass
   try {
-    const router = new EdgeRouter(obs, { cell: ROUTE.cell, clearWanted: ROUTE.clearWanted });
-    // For the links whose neighbourhood changed, let the router choose the cheapest pair
-    // of node sides (not raw distance), then re-fan the ports with the new sides. Bounded
-    // to the changed links so it costs the same order as the routing itself.
-    let sidesChanged = false;
-    for (const l of links) {
-      const c = routeCache.get(l.key);
-      if (c && c.sig === linkDeps(l, obs)) continue;           // neighbourhood unchanged → keep its side
-      const best = bestSides(router, l.ra, l.rb, sameGroup(l.aId, l.bId));
-      const prev = sidePick.get(l.key);
-      if (!prev || prev.d1 !== best.d1 || prev.d2 !== best.d2) { sidePick.set(l.key, best); sidesChanged = true; }
-    }
-    if (sidesChanged) { computePorts(links); routeSig = linksSig(links); }
-
-    // split into links whose deps are unchanged (keep their cached path) and the rest
-    const fresh = new Map(), dirty = [];
-    for (const l of links) {
-      const lsig = linkDeps(l, obs);
-      const c = routeCache.get(l.key);
-      if (c && c.sig === lsig) fresh.set(l.key, c);
-      else { l._sig = lsig; dirty.push(l); }
-    }
-    for (const c of fresh.values()) router.stampPath(c.pts);   // reserve the kept corridors so dirty links avoid them
-    dirty.sort((a, b) => spanOf(a) - spanOf(b));               // shortest first: short links lock in straight
-    for (const l of dirty)
-      fresh.set(l.key, { pts: router.route(l.p1, l.d1, l.p2, l.d2, l.relax), sig: l._sig, k: `${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2}` });
-    routeCache = fresh;                                        // also drops keys for links that vanished
-    for (const k of sidePick.keys()) if (!fresh.has(k)) sidePick.delete(k);   // forget vanished links
-    routeHash = routeSig;
+    // The whole graph is routed in one pass (the engine needs every line together for face-
+    // selection + nudging). Obstacles = every node; soft obstacles = groups. Carry each line's
+    // last-frame faces in as hysteresis so a tiny move can't flip a route's whole shape.
+    const nodes = [];
+    for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) nodes.push({ id: n.id, x: r.x, y: r.y, w: r.w, h: r.h }); }
+    const grps = groups.allGroups().map((g) => ({ members: [...g.members] }));
+    const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key }));
+    const prevSides = new Map();
+    for (const [k, c] of routeCache) if (c.d1) prevSides.set(k, { d1: c.d1, d2: c.d2 });
+    const res = routeGraph(nodes, grps, edges, { prevSides, config: { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell } });
+    const fresh = new Map();
+    for (const l of links) { const r = res.get(l.key); if (r && r.pts && r.pts.length >= 2) fresh.set(l.key, r); }
+    routeCache = fresh;                 // also drops keys for links that vanished
+    routeHash = sig;
   } catch (err) {
-    setStatus(`route failed: ${err.message}`);   // surface instead of silently using beziers
+    setStatus(`route failed: ${err.message}`);   // surface instead of silently using elbows
     return;
   }
-  // No morph: routing reruns every frame, so a dragged line's route is already current
-  // each paint — setRouted snaps it crisply. (Morph was for the old debounced settle.)
   drawEdges();
-}
-
-function spanOf(l) {
-  return Math.abs(l.p2[0] - l.p1[0]) + Math.abs(l.p2[1] - l.p1[1]);
 }
 
 // ---- per-node interaction -------------------------------------------------
