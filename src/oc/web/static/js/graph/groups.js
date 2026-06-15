@@ -206,6 +206,12 @@ export function forgetNodes(idsGone) {
   if (changed) { pruneEmpty(); renderGroups(); ctx.persist(); }
 }
 
+// Rewrite member ids through `mapId` (returns a new id, or null/undefined to keep) so a
+// node rename carries its group membership instead of detaching it. Caller re-renders.
+export function remapNodes(mapId) {
+  for (const g of groups) g.members = g.members.map((id) => mapId(id) || id);
+}
+
 // ---- geometry -------------------------------------------------------------
 
 // World bounding box that hugs a group's member nodes, plus a uniform pad and room

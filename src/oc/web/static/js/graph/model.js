@@ -31,6 +31,12 @@ export class GraphModel {
 
   // effective dataset id for a window (defaults to its own id)
   datasetOf(win) { return win.dataset || win.id; }
+  // does this window HAVE a dataset at all? A freshly-created, empty window has none — it
+  // only gets one once it produces records (a region/item maps a field) or is explicitly
+  // pointed at a dataset. So a bare new window shows no dataset node until it earns one.
+  _windowHasDataset(win) {
+    return !!(win.dataset || (win.regions && win.regions.length) || (win.items && win.items.length));
+  }
 
   // ---- datasets just receive/store rows; keys live on the items/windows ----
   datasetDef(id) { return (this.profile.datasets || []).find((d) => d.id === id) || null; }
@@ -51,7 +57,8 @@ export class GraphModel {
   _datasetSites() {
     const sites = [];
     for (const w of this.profile.windows)
-      sites.push({ decl: true, get: () => this.datasetOf(w), set: (v) => { w.dataset = v; } });
+      if (this._windowHasDataset(w))   // an empty window declares no dataset
+        sites.push({ decl: true, get: () => this.datasetOf(w), set: (v) => { w.dataset = v; } });
     for (const d of this.profile.datasets || [])
       sites.push({ decl: true, get: () => d.id, set: (v) => { d.id = v; } });
     for (const pn of this.profile.price_nodes || []) {
@@ -144,7 +151,8 @@ export class GraphModel {
         es.push({ from: `win:${w.id}`, to: `item:${w.id}:${it.id}`, kind: "item" });
         for (const f of it.fields || []) linkDict(`item:${w.id}:${it.id}`, w, f.field);
       }
-      es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
+      if (this._windowHasDataset(w))   // no dataset node/wire until the window produces data
+        es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
     }
     for (const s of this.profile.subsets || [])
       for (const inp of this.subsetInputs(s)) {
@@ -535,6 +543,8 @@ export class GraphModel {
   }
   scrollbar(winId) { const w = this.window(winId); return w && w.scroll && w.scroll.scrollbar; }
   setScrollbarOrientation(winId, o) { const w = this.window(winId); if (w && w.scroll) w.scroll.scrollbar_orientation = o; }
+  setScrollAutoscroll(winId, on) { const w = this.window(winId); if (!w) return; w.scroll = w.scroll || { rows: 1, cols: 1 }; w.scroll.autoscroll = !!on; }
+  setScrollClicks(winId, n) { const w = this.window(winId); if (!w) return; w.scroll = w.scroll || { rows: 1, cols: 1 }; w.scroll.scroll_clicks = n; }
   removeScrollbar(winId) { const w = this.window(winId); if (w && w.scroll) delete w.scroll.scrollbar; }
 
   // ---- data area (bounds OCR) ---------------------------------------------
@@ -581,6 +591,7 @@ export class GraphModel {
     return id;
   }
   setItemPriority(winId, id, priority) { const it = this.item(winId, id); if (it) it.priority = priority | 0; }
+  setWindowStaticGrid(winId, on) { const w = this.window(winId); if (w) w.static_grid = !!on; }
   removeItem(winId, id) {
     const w = this.window(winId);
     if (!w) return;
@@ -618,6 +629,8 @@ export class GraphModel {
   setItemFieldBox(winId, itemId, fid, box) { const f = this.itemField(winId, itemId, fid); if (f) f.box = { x: box.x, y: box.y, w: box.w, h: box.h }; }
   setItemFieldTell(winId, itemId, fid, val) { const f = this.itemField(winId, itemId, fid); if (f) f.tell = !!val; }
   setItemFieldTellConf(winId, itemId, fid, conf) { const f = this.itemField(winId, itemId, fid); if (f) f.tell_conf = conf; }
+  setItemFieldTellAllowText(winId, itemId, fid, val) { const f = this.itemField(winId, itemId, fid); if (f) f.tell_allow_text = !!val; }
+  setItemFieldLocate(winId, itemId, fid, val) { const f = this.itemField(winId, itemId, fid); if (f) f.locate = !!val; }
   setItemFieldAlign(winId, itemId, fid, align) { const f = this.itemField(winId, itemId, fid); if (f) f.align = align; }
   removeItemField(winId, itemId, fid) {
     const it = this.item(winId, itemId);

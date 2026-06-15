@@ -52,6 +52,8 @@ export class Overlay {
     this.op = null;             // active interaction
     this.scale = 1;
     this.gridCells = [];        // faint preview rectangles (fractions)
+    this.cellBoxes = [];        // detected CELL outlines (the tiled item cells), drawn solid
+    this.gridGuides = null;     // search structure: column dividers + locator scan strips
     this.previewItems = [];     // extracted per-cell values: {x,y,w,h,text,confidence}
     this.detections = [];       // raw OCR lines: {box:{x,y,w,h}, text, confidence}
     this.autoFit = true;        // keep fit-to-width until the user manually zooms
@@ -66,6 +68,8 @@ export class Overlay {
 
   setWorldZoom(z) { this.worldZoom = z || 1; this.render(); }
   setGridPreview(cells) { this.gridCells = cells || []; this.render(); }
+  setCellBoxes(cells) { this.cellBoxes = cells || []; this.render(); }
+  setGridGuides(g) { this.gridGuides = g || null; this.render(); }
   setPreview(items) { this.previewItems = items || []; this.render(); }
   setDetections(items) { this.detections = items || []; this.render(); }
 
@@ -87,7 +91,7 @@ export class Overlay {
     this.canvas.style.width = `${Math.round(this.img.naturalWidth * this.scale)}px`;
     this.onZoom?.(this.scale);
   }
-  setScale(scale) { this.autoFit = false; this.scale = Math.min(8, Math.max(0.05, scale)); this._applyScale(); }
+  setScale(scale) { this.autoFit = false; this.scale = Math.min(20, Math.max(0.05, scale)); this._applyScale(); }
   zoom(factor) { this.setScale(this.scale * factor); }
   fit() {
     if (!this.img) return;
@@ -289,11 +293,19 @@ export class Overlay {
     ctx.clearRect(0, 0, W, H);
     if (img) ctx.drawImage(img, 0, 0, W, H);
 
+    // Detected cell structure: solid outline of each tiled item cell, so the grid the
+    // reader actually found is visible (drawn under the dashed per-field boxes).
+    if (this.cellBoxes.length) {
+      ctx.strokeStyle = "rgba(125,220,125,0.95)";
+      ctx.lineWidth = 2.5 * u;
+      for (const c of this.cellBoxes) ctx.strokeRect(c.x * W, c.y * H, c.w * W, c.h * H);
+    }
+
     // Grid preview: where each field will be read across the tiled grid.
     if (this.gridCells.length) {
-      ctx.strokeStyle = "rgba(90,169,230,0.5)";
-      ctx.lineWidth = 1 * u;
-      ctx.setLineDash([4 * u, 3 * u]);
+      ctx.strokeStyle = "rgba(90,169,230,0.9)";
+      ctx.lineWidth = 1.5 * u;
+      ctx.setLineDash([5 * u, 3 * u]);
       for (const c of this.gridCells) ctx.strokeRect(c.x * W, c.y * H, c.w * W, c.h * H);
       ctx.setLineDash([]);
     }
@@ -335,11 +347,27 @@ export class Overlay {
     for (const b of this.boxes) {
       const color = ROLE_COLOR[b.role] || "#fff";
       const isActive = b.id === this.activeId;
-      ctx.lineWidth = (isActive ? 1.4 : 0.9) * u;
+      ctx.lineWidth = (isActive ? 2.4 : 1.6) * u;
       ctx.strokeStyle = color;
       ctx.strokeRect(b.x * W, b.y * H, b.w * W, b.h * H);
       this._label(b.label || b.id || b.role, b.x * W, b.y * H, color, labelFs);
       if (isActive && !this.op) this._drawHandles(b, W, H, u);   // hide handles while dragging
+    }
+
+    // Search structure (drawn LAST, on top of everything): the columns the reader tiles the
+    // data area into + the locator scan strip in each — so the grid clues stay visible over
+    // the cells/reads/boxes instead of hiding beneath them.
+    const g = this.gridGuides;
+    if (g) {
+      ctx.fillStyle = "rgba(230,194,90,0.22)";          // locator scan band per column
+      for (const s of g.strips || []) ctx.fillRect(s.x * W, s.y * H, s.w * W, s.h * H);
+      ctx.strokeStyle = "rgba(230,194,90,0.9)";          // grid dividers
+      ctx.lineWidth = 1.5 * u;
+      ctx.setLineDash([3 * u, 4 * u]);
+      for (const x of g.cols || []) { ctx.beginPath(); ctx.moveTo(x * W, g.yTop * H); ctx.lineTo(x * W, g.yBot * H); ctx.stroke(); }
+      const xL = (g.xLeft ?? 0) * W, xR = (g.xRight ?? 1) * W;     // row dividers (static grid)
+      for (const y of g.rows || []) { ctx.beginPath(); ctx.moveTo(xL, y * H); ctx.lineTo(xR, y * H); ctx.stroke(); }
+      ctx.setLineDash([]);
     }
 
     if (this.op?.type === "create") {

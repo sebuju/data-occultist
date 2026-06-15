@@ -120,16 +120,20 @@
 .act-trigger .act-prog { color: var(--accent); }
 
 /* ---- live panel ------------------------------------------------------------ */
-.live-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-.live-switch-lbl { font-weight: 600; color: var(--text); }
-.live-stats { font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; margin: 6px 0; }
-.live-imgs { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: var(--fs-xs); }
-.live-imgstat { flex: 1; color: var(--muted); font-variant-numeric: tabular-nums; }
-.live-clear { font-size: var(--fs-xs); padding: 1px 8px; }
+.live-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.live-row > label { margin: 0; color: var(--text); font-weight: 600; }
+.live-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; flex: none; }
+/* a stat sits at the right of its row, truncating with an ellipsis rather than wrapping */
+.live-stats, .live-imgstat { flex: 1; min-width: 0; text-align: right; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.live-imgs { margin: 6px 0 0; }   /* the saved-images stat row, below the window list */
+.live-clear { flex: none; font-size: var(--fs-xs); padding: 1px 8px; }
 .live-clear[data-armed="1"] { background: var(--danger); color: var(--on-danger); }
 .live-clear:disabled { opacity: 0.4; cursor: default; }
 .live-wins { display: flex; flex-direction: column; gap: 4px; }
 .live-win .act-title { font-weight: 500; }
+/* detection count, pushed to the right of the row (.act-title flex:1 fills the gap) */
+.live-wcount { flex: none; margin-left: auto; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 /* detection dot: grey = not detected, green (glow) = currently on screen */
 .live-wdot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--line); transition: background .15s; }
 .live-wdot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
@@ -161,7 +165,7 @@
    one page is shown at a time (the other carries [hidden]) */
 .pc-main { display: flex; flex: 1; min-height: 0; }
 .pc-page { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.pc-left { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 3px; overflow: auto; }
+.pc-left { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 3px; overflow: hidden; }
 .pc-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
 /* detail-page header: back-to-list button + the selected pane's title */
 .pc-detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex: none; }
@@ -192,8 +196,9 @@
 .pc-recog-chip.miss { color: var(--warn); border-color: var(--warn); }
 /* saved-session list */
 .pc-sess-h { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
-/* session rows: show the latest ~5, then scroll (max-height set in JS from one row's height). */
-.pc-sess-rows { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; min-height: 0; }
+/* session rows fill the remaining panel height and scroll; the rendered window grows as you
+   scroll toward the bottom (see renderPrecapLeft). */
+.pc-sess-rows { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
 .pc-sess { display: grid; grid-template-columns: 1fr auto; column-gap: 6px; align-items: center; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
 .pc-sess:hover { background: var(--line); }
 .pc-sess.active { outline: 1px solid var(--accent); outline-offset: -1px; }

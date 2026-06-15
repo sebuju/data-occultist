@@ -43,6 +43,7 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }   /* the attribute always hides, never overridden */
+.ic { vertical-align: -0.15em; }   /* inline monochrome icons (dom.js CAMERA/WARN/PAUSE) sit on the text baseline */
 
 /* themed scrollbars to match the dark UI */
 * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
@@ -292,7 +293,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 8px;
   flex: 0 0 auto;   /* in flex-column host nodes, the header must NOT shrink when content overflows */
   margin: -7px -8px 6px; padding: 5px 8px; overflow: hidden;
-  background: rgba(140, 165, 200, 0.07); border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
+  background: #252a32; border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
 /* collapsed: header IS the whole node. Keep the same top/side margins + border-bottom WIDTH
    as expanded (so toggling never changes its height), but pull the bottom margin to -7 too
    (matching the top) so the header covers the node's bottom padding — no empty strip below.
@@ -368,12 +369,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    subset below); the BODY clips instead, keeping the canvas + controls inside the card. */
 .gnode.window > .gn-body { overflow: hidden; }
 .win-img { width: auto; }
-/* busy state: a scrim covers the whole node EXCEPT the header (the header sits above it
-   via z-index), with a spinner centred on it. Fades in/out so it isn't harsh. */
+/* busy state: just a centred spinner — no dimming scrim over the node (reads fire on every
+   edit now, so a full-node dim would flash constantly). Header stays above it via z-index. */
 .gnode .gn-h { position: relative; z-index: 2; }
 .gn-spin { position: absolute; inset: 0; z-index: 1; pointer-events: none; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(10, 14, 19, 0.55); opacity: 0; visibility: hidden;
+  opacity: 0; visibility: hidden;
   transition: opacity 0.18s ease, visibility 0.18s ease; }
 .gn-spin::after { content: ""; width: 30px; height: 30px; border-radius: 50%;
   border: 3px solid rgba(255, 255, 255, 0.15); border-top-color: var(--accent); }
@@ -389,7 +390,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .imgtools .spacer { flex: 1; }
 .imgtools .tool-div { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
 .win-img .canvas-wrap { width: 100%; overflow: hidden;
-  border: 1px solid var(--line); border-radius: 4px; }  /* fills the node; node grips resize it. aspect-ratio set per image in JS */
+  border: 1px solid var(--line); border-radius: 4px; margin-top: 4px; }  /* fills the node; node grips resize it. aspect-ratio set per image in JS */
 .win-img canvas { display: block; width: 100%; }
 
 /* item node: frozen cutout canvas + tells/fields lists.
@@ -399,7 +400,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .item-img { margin-top: 8px; }
 .item-img:empty { display: none; }
 .item-img .canvas-wrap { width: 100%; overflow: hidden;
-  border: 1px solid var(--line); border-radius: 4px; }
+  border: 1px solid var(--line); border-radius: 4px; margin-top: 4px; }
 .item-img canvas { display: block; width: 100%; image-rendering: auto; }
 .item-readout { margin-top: 6px; font-size: var(--fs-sm); line-height: 1.5; }
 .item-readout:empty { display: none; }
@@ -410,6 +411,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .ti-row .ti-kind { min-width: 52px; color: var(--muted); }
 .ti-row input[type="number"] { width: 52px; }
 .ti-row .ti-loc { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); }
+/* read-only mirror of a field-tell (edited in the fields list; only its remove acts) */
+.ti-fieldtell .ti-name { font-weight: 600; }
+.ti-fieldtell .ti-ro { flex: 1; text-align: right; font-size: var(--fs-xs); }
 /* each field is a block of controls (type/extract/learn/fuzzy/empty), divided */
 .if-row { margin: 6px -8px 0px -8px; padding: 6px 8px 0px 8px; border-top: 1px solid var(--line); }
 .if-head { display: flex; align-items: center; gap: 4px; }

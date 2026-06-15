@@ -32,3 +32,10 @@ export const TRASH =
   '<svg class="ic-trash" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
   '<path fill="currentColor" d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/>' +
   "</svg>";
+
+// Monochrome inline icons (fill = currentColor, sized to 1em) — used instead of colour
+// emoji so icons match the surrounding text colour. `.ic` aligns them with the baseline.
+const _ic = (d) => `<svg class="ic" viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true"><path fill="currentColor" d="${d}"/></svg>`;
+export const CAMERA = _ic("M20 5h-3.2l-1.4-1.8c-.2-.2-.5-.2-.8-.2H9.4c-.3 0-.6 0-.8.2L7.2 5H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-8 12c-2.8 0-5-2.2-5-5s2.2-5 5-5 5 2.2 5 5-2.2 5-5 5zm0-8c-1.7 0-3 1.3-3 3s1.3 3 3 3 3-1.3 3-3-1.3-3-3-3z");
+export const WARN = _ic("M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z");
+export const PAUSE = _ic("M6 5h4v14H6zM14 5h4v14h-4z");

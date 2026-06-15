@@ -4,7 +4,7 @@
 import * as api from "../api.js";
 import * as conn from "../conn.js";
 import * as hub from "../hub.js";
-import { esc, TRASH } from "../dom.js";
+import { esc, TRASH, CAMERA, WARN, PAUSE } from "../dom.js";
 import { openModal } from "../modal.js";
 import { Overlay } from "../overlay.js";
 import { log, timed, setLogOpen } from "../log.js";
@@ -76,6 +76,10 @@ let pendingOpenImages = [];
 const busy = new Map();            // node id -> active-work count (drives the spinner)
 const gridPreviews = new Map();    // winId -> live-detected field boxes (dashed grid)
 const gridReads = new Map();        // winId -> per-cell read values {x,y,w,h,text,confidence}
+const gridCellBoxes = new Map();    // winId -> detected CELL outlines (solid), the tiling found
+// Invalidate every detected-grid layer for a window at once (kept in lock-step so a stale
+// cell outline can't linger after the others clear).
+function clearGrid(winId) { gridPreviews.delete(winId); gridReads.delete(winId); gridCellBoxes.delete(winId); }
 const itemReads = new Map();        // "winId:itemId" -> last cutout read {fields,tells,valid,cell}
 
 // Show/hide a node's spinner via a ref count, so overlapping async tasks behave.
@@ -167,12 +171,12 @@ $("logWorkers").addEventListener("click", (ev) => {
 
 // ---- autosave + layout persistence (all IO goes through persist.js) --------
 
-function autosave(refresh = true) {
+function autosave(refresh = true, winId = null) {
   if (!model.profile.name) return;
   persist.content();         // debounced profile save; onContentSaved fires on success
   if (refresh) {             // a disabled node's edit passes false: it changes nothing others read
-    refreshOpenPreviews();   // update any open preview nodes after edits
-    refreshOpenDetect();     // update detector/state true-false after edits
+    refreshOpenPreviews(winId);   // update open preview nodes after edits (winId: only that window)
+    refreshOpenDetect(winId);     // update detector/state true-false after edits
   }
   pushHistory();             // record this change for undo/redo
 }
@@ -310,6 +314,7 @@ function remapNodeState(mapId) {
     const to = mapId(id);
     if (to && to !== id) { collapsed.delete(id); collapsed.add(to); }
   }
+  groups.remapNodes(mapId);   // carry group membership across the rename (don't detach)
 }
 
 // Carry one node's saved state to its new id after a rename, so it doesn't jump.
@@ -379,7 +384,6 @@ function ensurePositions() {
 
 // The node an edge points AT this one from (its logical parent), for placing a new node
 // next to where it belongs.
-function parentOf(id) { for (const e of model.edges()) if (e.to === id) return e.from; return null; }
 
 // Closest free (non-overlapping) slot in a column to `nearY`. Used to drop a brand-new
 // node beside its parent instead of at the far bottom of its column.
@@ -387,6 +391,7 @@ function freeSpot(x, nearY, w = 240, h = 160) {
   const GAP = 18, STEP = 20;
   const rects = [];
   for (const [id, p] of pos) if (Number.isFinite(p.x)) rects.push({ x: p.x, y: p.y, w: nw(id), h: nh(id) });
+  for (const g of groups.groupBoxes()) rects.push(g.box);   // a new node must not land inside a group
   const free = (y) => !rects.some((o) =>
     x < o.x + o.w + GAP && x + w + GAP > o.x && y < o.y + o.h + GAP && y + h + GAP > o.y);
   for (let d = 0; d <= 8000; d += STEP) {
@@ -399,10 +404,17 @@ function freeSpot(x, nearY, w = 240, h = 160) {
 
 // Position a just-created node at the nearest free spot to its parent. Call BEFORE
 // render() so ensurePositions() leaves it alone.
+// world-space coords of the centre of the usable (panel-clear) viewport
+function viewportCenterWorld() {
+  const u = usableViewport();
+  return { x: (u.left + u.w / 2 - view.panX) / view.zoom, y: (u.top + u.h / 2 - view.panY) / view.zoom };
+}
+
 function placeNewNode(id, type) {
-  const par = parentOf(id);
-  const nearY = (par && pos.get(par)?.y) ?? 20;
-  pos.set(id, freeSpot(COLX[type] ?? 300, nearY));
+  // start the free-space search at the viewport centre (offset by half a node so the box is
+  // centred, not its top-left), spiralling out from there past any nodes/groups in the way.
+  const c = viewportCenterWorld();
+  pos.set(id, freeSpot(c.x - 120, c.y - 80));
   setStatus(`created ${type} ${id.split(":").pop()}`);
 }
 
@@ -572,7 +584,13 @@ function windowControls(w) {
   // teach page covers grid windows). Where records flow is shown by the wire to the
   // dataset node, so the window node itself only carries the image/delete actions.
   // The "live" checkbox controls whether the live view attempts this window.
-  return `<div class="gn-foot"><button class="imgbtn">📷 image</button>
+  // auto-scroll lives on the window (precapture scrolls this window's list while recording).
+  const sc = w.scroll || {};
+  const autoScroll = `<label class="win-live" title="precapture auto-scrolls this window's list while recording it"><input type="checkbox" class="winscroll" data-k="autoscroll" ${sc.autoscroll ? "checked" : ""}/> auto-scroll</label>
+    <label class="flab" title="wheel notches sent per auto-scroll nudge">clicks <input type="number" class="winscroll" data-k="clicks" value="${sc.scroll_clicks ?? 1}" min="1"/></label>`;
+  return `<label class="win-live" title="item rows: static tiles the data area into a fixed grid from the cell size (no OCR for location); off locates rows by OCR (a tell/locate field) — only needed for a scroll-parked list"><input type="checkbox" class="winstatic" ${w.static_grid !== false ? "checked" : ""}/> static grid</label>
+    ${autoScroll}
+    <div class="gn-foot"><button class="imgbtn">${CAMERA}<span class="imgbtn-lbl">capture</span></button>
     <label class="win-live" title="attempt this window in live view"><input type="checkbox" class="winlive" ${w.live !== false ? "checked" : ""}/> live</label></div>`;
 }
 
@@ -581,14 +599,23 @@ function windowControls(w) {
 // fuzzy/empty/pips) — edited here against the window's FieldDef.
 function itemLists(it, w) {
   const fieldDef = (fid) => (w.fields || []).find((x) => x.id === fid) || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
+  // static grid tiles rows from the cell — OCR row-location (locate) is unused, so lock it off
+  const staticOn = w.static_grid !== false;
   const tells = (it.tells || []).map((t) => `<div class="ti-row" data-tid="${t.id}">
       <span class="ti-kind">${esc(t.kind)}</span>
-      <label class="ti-loc" title="use to locate rows"><input type="radio" name="loc-${esc(it.id)}" class="iset" data-k="locate" data-tid="${t.id}" ${t.locate ? "checked" : ""}/>loc</label>
+      <label class="ti-loc" title="${staticOn ? "row location is by the static grid — turn off static grid to locate by OCR" : "use to locate rows"}"><input type="radio" name="loc-${esc(it.id)}" class="iset" data-k="locate" data-tid="${t.id}" ${t.locate ? "checked" : ""} ${staticOn ? "disabled" : ""}/>loc</label>
       ${t.kind === "text" ? `<select class="iset" data-k="field" data-tid="${t.id}">${(it.fields || []).map((f) => `<option ${t.field === f.field ? "selected" : ""}>${esc(f.field)}</option>`).join("")}</select>` : ""}
       ${t.kind === "color" ? `<input type="color" class="iset" data-k="color" data-tid="${t.id}" value="${t.color || "#ffcc00"}"/>` : ""}
       ${t.locate ? `<select class="iset" data-k="align" data-tid="${t.id}" title="anchor on this line of a wrapped name">${["none", "top", "center", "bottom"].map((v) => `<option ${(t.align || it.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select>` : ""}
       <input type="number" class="iset" data-k="threshold" data-tid="${t.id}" step="0.05" min="0" max="1" value="${t.threshold ?? 0.5}" title="threshold"/>
       <button class="ti-del danger" data-tid="${t.id}" title="remove">${TRASH}</button></div>`).join("");
+  // fields flagged as tells (f.tell) show here too, read-only — they're edited in the fields
+  // list below; the only action is remove, which just unchecks the field's tell flag.
+  const fieldTells = (it.fields || []).filter((f) => f.tell).map((f) => `<div class="ti-row ti-fieldtell" data-fid="${esc(f.id)}">
+      <span class="ti-kind">field</span>
+      <span class="ti-name">${esc(f.id)}</span>
+      <span class="ti-ro muted">tell · conf ${f.tell_conf ?? 0}</span>
+      <button class="ti-untell danger" data-fid="${esc(f.id)}" title="stop using this field as a tell">${TRASH}</button></div>`).join("");
   const fields = (it.fields || []).map((f) => {
     const fd = fieldDef(f.field);
     const types = TYPES.map(([v, t]) => `<option value="${v}" ${fd.type === v ? "selected" : ""}>${t}</option>`).join("");
@@ -600,21 +627,27 @@ function itemLists(it, w) {
       ${pips ? "" : `<label class="flab">extract <select class="ffset" data-fid="${f.id}" data-k="extract">${exs}</select></label>`}
       ${(!pips && NEEDS_SEP.has(fd.extract)) ? `<label class="flab">separator <input class="ffset" type="text" data-fid="${f.id}" data-k="sep" value="${esc(fd.separator || "/")}"/></label>` : ""}
       <label class="flab">learn <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="learn" ${fd.learn ? "checked" : ""}/></label>
-      <label class="flab" title="require this field to read something — it doubles as a tell">tell <input type="checkbox" class="itell" data-fid="${f.id}" ${f.tell ? "checked" : ""}/></label>
-      ${f.tell ? `<label class="flab" title="minimum OCR confidence the read must reach (0 = any)">tell conf <input type="number" class="itellconf" data-fid="${f.id}" step="0.05" min="0" max="1" value="${f.tell_conf ?? 0}"/></label>` : ""}
-      ${f.tell ? `<label class="flab" title="if this field locates rows: which line of a wrapped name to anchor on">align <select class="itellalign" data-fid="${f.id}">${["none", "top", "center", "bottom"].map((v) => `<option ${(f.align || it.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>` : ""}
       <label class="flab">fuzzy <input type="number" class="ffset" data-fid="${f.id}" data-k="fuzzy" step="0.05" min="0" max="1" value="${fd.fuzzy ?? 0.82}"/></label>
+      <label class="flab" title="minimum OCR confidence this field must reach — a weaker read drops the whole record (0 = use the global floor)">conf <input type="number" class="ffset" data-fid="${f.id}" data-k="minconf" step="0.05" min="0" max="1" value="${fd.min_confidence ?? 0}"/></label>
+      <label class="flab" title="read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. drain '8' read as '81')">isolate <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="isolate" ${fd.isolate ? "checked" : ""}/></label>
       <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="ffset" data-fid="${f.id}" data-k="empty" value="${esc(fd.empty || "")}" placeholder="(blank)"/></label>
       ${fd.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="ffset" data-fid="${f.id}" data-k="ifnum" value="${esc(fd.if_number ?? "")}" placeholder="(off)"/></label>
       <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="ifnumany" ${fd.if_number_any ? "checked" : ""}/></label>
       <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="ffset" data-fid="${f.id}" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(fd.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
       ${(model.profile.dictionaries || []).length ? `<label class="flab" title="which authored dictionary this field snaps to (all = every enabled one pooled)">use dict <select class="ffset" data-fid="${f.id}" data-k="usedict">${dictOptions(fd.dictionary)}</select></label>` : ""}` : ""}
       ${fd.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="ffset" data-fid="${f.id}" data-k="iftext" value="${esc(fd.if_text ?? "")}" placeholder="(off)"/></label>
-      <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="iftextany" ${fd.if_text_any ? "checked" : ""}/></label>` : ""}
+      <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="iftextany" ${fd.if_text_any ? "checked" : ""}/></label>
+      <label class="flab" title="lowest plausible value — a read below this is a misread and drops the record (blank = no minimum)">min <input type="number" class="ffset" data-fid="${f.id}" data-k="min" value="${fd.min ?? ""}" placeholder="(none)"/></label>
+      <label class="flab" title="highest plausible value — a read above this is a misread and drops the record (blank = no maximum)">max <input type="number" class="ffset" data-fid="${f.id}" data-k="max" value="${fd.max ?? ""}" placeholder="(none)"/></label>` : ""}
+      <label class="flab" title="require this field to read something — it doubles as a tell">tell <input type="checkbox" class="itell" data-fid="${f.id}" ${f.tell ? "checked" : ""}/></label>
+      ${f.tell ? `<label class="flab" title="minimum OCR confidence the read must reach (0 = any)">tell conf <input type="number" class="itellconf" data-fid="${f.id}" step="0.05" min="0" max="1" value="${f.tell_conf ?? 0}"/></label>` : ""}
+      ${f.tell && fd.type === "number" ? `<label class="flab" title="pass the tell even when the read carries text (e.g. a polarity glyph), not only a clean number">allow text <input type="checkbox" class="itelltext" data-fid="${f.id}" ${f.tell_allow_text ? "checked" : ""}/></label>` : ""}
+      <label class="flab" title="use this field to LOCATE rows (anchor the grid) — independent of tell; a reliable text field (e.g. the name) can locate without being a tell">locate <input type="checkbox" class="iloc" data-fid="${f.id}" ${f.locate ? "checked" : ""}/></label>
+      ${(f.tell || f.locate) ? `<label class="flab" title="which line of a wrapped name to anchor the row on">align <select class="itellalign" data-fid="${f.id}">${["none", "top", "center", "bottom"].map((v) => `<option ${(f.align || it.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>` : ""}
     </div>`;
   }).join("");
   return `<label class="flab" title="when templates overlap the same tile, higher priority wins">priority <input type="number" class="iprio" step="1" value="${it.priority || 0}"></label>
-    <div class="muted il-h">tells</div>${tells || '<div class="muted">draw a tell on the cutout</div>'}
+    <div class="muted il-h">tells</div>${(tells + fieldTells) || '<div class="muted">draw a tell on the cutout</div>'}
     <div class="muted il-h">fields</div>${fields || '<div class="muted">draw a field on the cutout</div>'}
     ${keySection(it, w)}
     `;
@@ -663,18 +696,32 @@ function keyPrevHTML(winId, itemId) {
   return `<span class="tc-bad">∅ no key${miss ? ` — ${esc(miss)} read empty` : ""}</span> <span class="muted">(record dropped)</span>`;
 }
 
+// THE single update path after ANY item edit. Every item handler calls this instead of
+// hand-assembling rebuild/clear/refresh/read/save combos (which drifted and kept missing a
+// step). Order matters: rebuild/render the DOM first, then redraw boxes + invalidate the
+// stale window grid, re-read the cutout (item readout + tints), and persist — autosave's
+// refresh re-runs the open window preview so the window canvas re-detects too.
+//   rebuild: rebuild the item node DOM (the edit changed which controls show)
+//   render:  full graph render (the edit changed nodes/edges — id rename, dict link)
+function itemChanged(winId, itemId, { rebuild = false, render: doRender = false } = {}) {
+  if (doRender) render();
+  else if (rebuild) rebuildNode(`item:${winId}:${itemId}`);
+  refreshItemBoxes(winId, itemId);   // item cutout boxes
+  refreshImageBoxes(winId);          // window image boxes + grid guides
+  clearGrid(winId);                  // detected window grid is now stale
+  scheduleItemRead(winId, itemId);   // re-read the cutout -> readout + box tints
+  autosave(true, winId);             // persist + re-run ONLY this window's preview/detect
+}
+
 // Wire an item node's id + tells/fields lists (rebuildNode re-binds these,
-// preserving the live cutout canvas).
+// preserving the live cutout canvas). Every edit funnels through itemChanged().
 function wireItemControls(div, n) {
   const winId = n.win.id, itemId = n.ref.id;
-  // any tell/field config edit re-reads the cutout (bubbles after the specific handler
-  // that updated the model, so the read reflects the new setting). Debounced.
-  div.addEventListener("change", () => scheduleItemRead(winId, itemId));
   div.querySelector(".gi-id").addEventListener("change", (e) => {
     const newId = e.target.value.trim();
     if (!model.renameItem(winId, itemId, newId)) { e.target.value = itemId; return; }
     movePos(`item:${winId}:${itemId}`, `item:${winId}:${newId}`);
-    render(); autosave();
+    itemChanged(winId, newId, { render: true });
   });
   div.querySelectorAll(".iset").forEach((inp) => inp.addEventListener("change", (e) => {
     const tid = e.target.dataset.tid, k = e.target.dataset.k;
@@ -682,8 +729,7 @@ function wireItemControls(div, n) {
     if (k === "locate") { for (const t of n.ref.tells) t.locate = false; v = e.target.checked; }
     else if (k === "threshold") v = +e.target.value || 0;
     model.setItemTellProp(winId, itemId, tid, k, v);
-    if (k === "locate") rebuildNode(n.id);   // show/hide the per-tell align dropdown
-    gridPreviews.delete(winId); gridReads.delete(winId); refreshImageBoxes(winId); autosave();
+    itemChanged(winId, itemId, { rebuild: k === "locate" });   // locate toggles the align dropdown
   }));
   // persist the field a text tell's dropdown is SHOWING (the default option never
   // fires a change, so it'd otherwise stay unset and reject every row)
@@ -693,11 +739,16 @@ function wireItemControls(div, n) {
   });
   div.querySelectorAll(".ti-del").forEach((b) => b.addEventListener("click", () => {
     model.removeItemTell(winId, itemId, b.dataset.tid);
-    refreshItemBoxes(winId, itemId); rebuildNode(n.id); gridPreviews.delete(winId); gridReads.delete(winId); autosave();
+    itemChanged(winId, itemId, { rebuild: true });
+  }));
+  // a field-tell's remove just clears the field's tell flag (the field itself stays)
+  div.querySelectorAll(".ti-untell").forEach((b) => b.addEventListener("click", () => {
+    model.setItemFieldTell(winId, itemId, b.dataset.fid, false);
+    itemChanged(winId, itemId, { rebuild: true });
   }));
   div.querySelectorAll(".iset-fid").forEach((inp) => inp.addEventListener("change", (e) => {
     model.renameItemField(winId, itemId, e.target.dataset.fid, e.target.value.trim());
-    refreshItemBoxes(winId, itemId); rebuildNode(n.id); gridPreviews.delete(winId); gridReads.delete(winId); autosave();
+    itemChanged(winId, itemId, { rebuild: true });
   }));
   // per-field config (same as the old region node): edits the window FieldDef
   div.querySelectorAll(".ffset").forEach((inp) => inp.addEventListener("change", (e) => {
@@ -705,50 +756,61 @@ function wireItemControls(div, n) {
     const fd = f && (n.win.fields || []).find((x) => x.id === f.field);
     if (!fd) return;
     const k = e.target.dataset.k;
-    if (k === "type") { fd.type = e.target.value; rebuildNode(n.id); }       // toggles extract/sep/pips
-    else if (k === "extract") { fd.extract = e.target.value; rebuildNode(n.id); }  // toggles separator
+    let rebuild = false, doRender = false;
+    if (k === "type") { fd.type = e.target.value; rebuild = true; }       // toggles extract/sep/pips
+    else if (k === "extract") { fd.extract = e.target.value; rebuild = true; }  // toggles separator
     else if (k === "sep") fd.separator = e.target.value || "/";
     else if (k === "learn") fd.learn = e.target.checked;
     else if (k === "fuzzy") fd.fuzzy = +e.target.value;
+    else if (k === "minconf") fd.min_confidence = +e.target.value || 0;
+    else if (k === "isolate") fd.isolate = e.target.checked;
     else if (k === "empty") fd.empty = e.target.value || null;
     else if (k === "ifnum") fd.if_number = e.target.value || null;
     else if (k === "ifnumany") fd.if_number_any = e.target.checked;
     else if (k === "iftext") fd.if_text = e.target.value || null;
     else if (k === "iftextany") fd.if_text_any = e.target.checked;
+    else if (k === "min") fd.min = e.target.value === "" ? null : +e.target.value;
+    else if (k === "max") fd.max = e.target.value === "" ? null : +e.target.value;
     else if (k === "dictmode") fd.dict_mode = e.target.value;
-    else if (k === "usedict") { fd.dictionary = e.target.value || ""; render(); }   // redraw the muted dict link
-    gridPreviews.delete(winId); gridReads.delete(winId); autosave();
+    else if (k === "usedict") { fd.dictionary = e.target.value || ""; doRender = true; }   // redraw the muted dict link
+    itemChanged(winId, itemId, { rebuild, render: doRender });
   }));
   div.querySelectorAll(".if-del").forEach((b) => b.addEventListener("click", () => {
     model.removeItemField(winId, itemId, b.dataset.fid);
-    refreshItemBoxes(winId, itemId); rebuildNode(n.id); gridPreviews.delete(winId); gridReads.delete(winId); autosave();
+    itemChanged(winId, itemId, { rebuild: true });
   }));
   div.querySelectorAll(".itell").forEach((inp) => inp.addEventListener("change", (e) => {
     model.setItemFieldTell(winId, itemId, e.target.dataset.fid, e.target.checked);
-    rebuildNode(n.id);   // show/hide the tell-conf input
-    gridPreviews.delete(winId); gridReads.delete(winId); autosave();
+    itemChanged(winId, itemId, { rebuild: true });   // show/hide tell-conf + the tells-list mirror
   }));
   div.querySelectorAll(".itellconf").forEach((inp) => inp.addEventListener("change", (e) => {
     model.setItemFieldTellConf(winId, itemId, e.target.dataset.fid, +e.target.value || 0);
-    gridPreviews.delete(winId); gridReads.delete(winId); autosave();
+    itemChanged(winId, itemId);
+  }));
+  div.querySelectorAll(".itelltext").forEach((inp) => inp.addEventListener("change", (e) => {
+    model.setItemFieldTellAllowText(winId, itemId, e.target.dataset.fid, e.target.checked);
+    itemChanged(winId, itemId);
+  }));
+  div.querySelectorAll(".iloc").forEach((inp) => inp.addEventListener("change", (e) => {
+    model.setItemFieldLocate(winId, itemId, e.target.dataset.fid, e.target.checked);
+    itemChanged(winId, itemId, { rebuild: true });   // show/hide the align dropdown
   }));
   div.querySelectorAll(".itellalign").forEach((sel) => sel.addEventListener("change", (e) => {
     model.setItemFieldAlign(winId, itemId, e.target.dataset.fid, e.target.value);
-    gridPreviews.delete(winId); gridReads.delete(winId); refreshImageBoxes(winId); autosave();
+    itemChanged(winId, itemId);
   }));
   const prio = div.querySelector(".iprio");
   if (prio) prio.addEventListener("change", (e) => {
     model.setItemPriority(winId, itemId, parseInt(e.target.value, 10) || 0);
-    gridPreviews.delete(winId); gridReads.delete(winId); refreshImageBoxes(winId); autosave();
+    itemChanged(winId, itemId);
   });
   // record-key config: mutate the item's own KeyDef (created from the effective one on
-  // first edit) and rebuild the node — the key preview recomputes instantly from the
-  // cached read; no OCR needed.
+  // first edit). The key preview recomputes from the cached read; itemChanged rebuilds.
   const keyEdit = (fn) => {
     const k = model.ensureItemKey(winId, itemId);
     if (!k) return;
     fn(k);
-    rebuildNode(n.id); autosave();
+    itemChanged(winId, itemId, { rebuild: true });
   };
   div.querySelectorAll(".kfield").forEach((s) => s.addEventListener("change", (e) =>
     keyEdit((k) => { k.fields[+e.target.dataset.i] = e.target.value; })));
@@ -787,14 +849,27 @@ function wireItemControls(div, n) {
 // Wire the window node's controls (extracted so rebuildNode can re-bind them
 // without recreating the node — which would destroy the embedded image canvas).
 function wireWindowControls(div, n) {
-  div.querySelector(".gi-id").addEventListener("change", (e) => {
+  div.querySelector(".gi-id").addEventListener("change", async (e) => {
     const oldId = n.ref.id, newId = e.target.value.trim();
     const oldDs = model.datasetOf(n.ref);   // a default dataset (id == window id) renames with it
     if (!model.renameWindow(oldId, newId)) { e.target.value = oldId; return; }
+    // The capture binding + open image are keyed by window id — carry them across so the
+    // image canvas doesn't blank on rename. Move the binding (server), drop the old-keyed
+    // canvas, then re-open under the new id (which loads from the moved binding).
+    const game = model.profile.name, wasOpen = openImages.has(oldId);
+    try {
+      const cap = (await api.getBindings(game))[oldId];
+      if (cap) { await api.bindCapture(game, newId, cap); await api.bindCapture(game, oldId, ""); }
+    } catch { /* binding move failed -> image just reloads empty, not fatal */ }
+    if (imageCanvases.has(oldId)) closeImage(oldId);
     moveWindowPos(oldId, newId);            // win + all child nodes
     const newDs = model.datasetOf(n.ref);
     if (newDs !== oldDs) movePos(`ds:${oldDs}`, `ds:${newDs}`);
-    render(); autosave();
+    // a rename changes only the id/wiring — no pixels or boxes change, so DON'T trigger the
+    // all-open-windows detect/preview refresh (autosave(false)). The reopened image below
+    // re-detects just the renamed window.
+    render(); autosave(false);
+    if (wasOpen) await openImage(newId);    // restore the image against the moved binding
   });
   div.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal(n.ref.id));
   updateImageLabel(n.ref.id, div.querySelector(".imgbtn"));   // show the bound filename
@@ -803,6 +878,20 @@ function wireWindowControls(div, n) {
     autosave(false);          // a live-view flag changes nothing other nodes re-read
     renderLiveWindow();       // reflect in the live panel's window list
   });
+  div.querySelector(".winstatic")?.addEventListener("change", (e) => {
+    model.setWindowStaticGrid(n.ref.id, e.target.checked);
+    [...imageCanvases.keys()].includes(n.ref.id) && clearGrid(n.ref.id);   // grid<->locator
+    // static toggles whether OCR locate applies — re-bind item nodes so their locate
+    // radios enable/disable to match (rebuildNode keeps each item's live cutout canvas)
+    for (const it of model.window(n.ref.id)?.items || []) rebuildNode(`item:${n.ref.id}:${it.id}`);
+    refreshImageBoxes(n.ref.id); autosave();   // redraw guides; re-detect on next preview
+  });
+  div.querySelectorAll(".winscroll").forEach((inp) => inp.addEventListener("change", (e) => {
+    const k = e.target.dataset.k;
+    if (k === "autoscroll") model.setScrollAutoscroll(n.ref.id, e.target.checked);
+    else if (k === "clicks") model.setScrollClicks(n.ref.id, Math.max(1, +e.target.value || 1));
+    autosave();
+  }));
 }
 
 function nodeParts(n) {
@@ -835,13 +924,16 @@ function nodeParts(n) {
         ${(!pips && NEEDS_SEP.has(f.extract)) ? `<label class="flab">separator <input class="fset" type="text" data-k="sep" value="${esc(f.separator || "/")}" /></label>` : ""}
         <label class="flab">learn <input type="checkbox" class="fset" data-k="learn" ${f.learn ? "checked" : ""}/></label>
         <label class="flab">fuzzy <input type="number" class="fset" data-k="fuzzy" step="0.05" min="0" max="1" value="${f.fuzzy ?? 0.82}"/></label>
+        <label class="flab" title="read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. drain '8' read as '81')">isolate <input type="checkbox" class="fset" data-k="isolate" ${f.isolate ? "checked" : ""} /></label>
         <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="fset" data-k="empty" value="${esc(f.empty || "")}" placeholder="(blank)" /></label>
         ${f.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="fset" data-k="ifnum" value="${esc(f.if_number ?? "")}" placeholder="(off)" /></label>
         <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="fset" data-k="ifnumany" ${f.if_number_any ? "checked" : ""}/></label>
         <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="fset" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(f.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
         ${(model.profile.dictionaries || []).length ? `<label class="flab" title="which authored dictionary this field snaps to (all = every enabled one pooled)">use dict <select class="fset" data-k="usedict">${dictOptions(f.dictionary)}</select></label>` : ""}` : ""}
         ${f.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="fset" data-k="iftext" value="${esc(f.if_text ?? "")}" placeholder="(off)" /></label>
-        <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="fset" data-k="iftextany" ${f.if_text_any ? "checked" : ""}/></label>` : ""}
+        <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="fset" data-k="iftextany" ${f.if_text_any ? "checked" : ""}/></label>
+        <label class="flab" title="lowest plausible value — a read below this is a misread and drops the record (blank = no minimum)">min <input type="number" class="fset" data-k="min" value="${f.min ?? ""}" placeholder="(none)" /></label>
+        <label class="flab" title="highest plausible value — a read above this is a misread and drops the record (blank = no maximum)">max <input type="number" class="fset" data-k="max" value="${f.max ?? ""}" placeholder="(none)" /></label>` : ""}
         <div class="gn-foot"></div>`,
     };
   }
@@ -876,8 +968,7 @@ function nodeParts(n) {
     // on demand (its own button, or the image's 👁), rendered inline.
     return {
       title: `<span class="gi-id">${esc(n.ref.id)} preview</span>`,
-      body: `<div class="gn-foot"><button class="prevrun">↻ read</button></div>
-      <div class="nodehost scrollhost prev-host"><p class="muted" style="padding:8px">↻ read to preview what this window reads</p></div>`,
+      body: `<div class="nodehost scrollhost prev-host"><p class="muted" style="padding:8px">open the window image or edit it to preview what it reads</p></div>`,
     };
   }
   if (n.type === "subset") return subsetParts(n.ref);
@@ -1204,7 +1295,7 @@ function removeNode(n) {
   else if (n.type === "item") {
     const winId = n.win.id, itemId = n.ref.id;
     closeItemImage(winId, itemId); model.removeItem(winId, itemId); pos.delete(n.id);
-    gridPreviews.delete(winId); gridReads.delete(winId); render(); refreshImageBoxes(winId); autosave();
+    clearGrid(winId); render(); refreshImageBoxes(winId); autosave();
   }
   else if (n.type === "region") { model.removeRegion(n.win.id, n.ref.id); render(); autosave(); refreshImageBoxes(n.win.id); }
   else if (n.type === "detect") { model.removeDetect(n.win.id, n.ref.id); render(); autosave(); refreshImageBoxes(n.win.id); }
@@ -1293,7 +1384,7 @@ function fillNode(div, n) {
     n.ref.enabled = on;
     div.classList.toggle("node-disabled", !on);
     const winId = n.type === "window" ? n.ref.id : n.win?.id;
-    if (winId) { gridPreviews.delete(winId); gridReads.delete(winId); refreshImageBoxes(winId); }
+    if (winId) { clearGrid(winId); refreshImageBoxes(winId); }
     autosave(on);   // disabling shouldn't trigger re-reads in other nodes
   });
   if (busy.get(n.id)) div.classList.add("busy");   // preserve spinner across rebuilds
@@ -1605,7 +1696,7 @@ function onWheel(ev) {
   const rect = $("graph").getBoundingClientRect();
   const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
   const old = view.zoom;
-  const z = Math.min(8, Math.max(0.15, old * (ev.deltaY < 0 ? 1.1 : 1 / 1.1)));
+  const z = Math.min(20, Math.max(0.15, old * (ev.deltaY < 0 ? 1.1 : 1 / 1.1)));
   // keep the world point under the cursor fixed
   view.panX = mx - (mx - view.panX) * (z / old);
   view.panY = my - (my - view.panY) * (z / old);
@@ -2172,7 +2263,7 @@ function wireNode(div, n) {
   } else if (n.type === "window") {
     wireWindowControls(div, n);   // out-port wiring is handled generically in wireOutPort
   } else if (n.type === "preview") {
-    div.querySelector(".prevrun")?.addEventListener("click", () => refreshPreview(n.ref.id));
+    // no manual read button — the preview auto-reads on image change + any window edit
   } else if (n.type === "dataset") {
     div.querySelector(".dsrename")?.addEventListener("change", async (e) => {
       const oldId = n.ref, newId = (e.target.value || "").trim();
@@ -2251,14 +2342,17 @@ function wireNode(div, n) {
       else if (k === "sep") fld.separator = e.target.value || "/";
       else if (k === "learn") fld.learn = e.target.checked;
       else if (k === "fuzzy") fld.fuzzy = +e.target.value;
+      else if (k === "isolate") fld.isolate = e.target.checked;
       else if (k === "empty") fld.empty = e.target.value || null;
       else if (k === "ifnum") fld.if_number = e.target.value || null;
       else if (k === "ifnumany") fld.if_number_any = e.target.checked;
       else if (k === "iftext") fld.if_text = e.target.value || null;
       else if (k === "iftextany") fld.if_text_any = e.target.checked;
+      else if (k === "min") fld.min = e.target.value === "" ? null : +e.target.value;
+      else if (k === "max") fld.max = e.target.value === "" ? null : +e.target.value;
       else if (k === "dictmode") fld.dict_mode = e.target.value;
       else if (k === "usedict") { fld.dictionary = e.target.value || ""; render(); }   // redraw the muted dict link
-      autosave();   // plain value edits: no DOM rebuild
+      autosave(true, n.win?.id);   // plain value edits: no DOM rebuild; re-OCR only this window
     }));
   } else if (n.type === "detect") {
     div.addEventListener("click", (ev) => {
@@ -2283,7 +2377,10 @@ function wireNode(div, n) {
       if (ev.target.closest("input,select,button")) return;
       selectWindowBox(n.win.id, "scrollbar");
     });
-    div.querySelector(".sbset").addEventListener("change", (e) => { model.setScrollbarOrientation(n.win.id, e.target.value); autosave(); });
+    div.querySelectorAll(".sbset").forEach((inp) => inp.addEventListener("change", (e) => {
+      if (e.target.dataset.k === "orient") model.setScrollbarOrientation(n.win.id, e.target.value);
+      autosave();
+    }));
   } else if (n.type === "item") {
     wireItemControls(div, n);
   }
@@ -2620,14 +2717,12 @@ function buildPrecap() {
     const mf = +pcNode.querySelector(".pc-frames")?.value || 300;
     const iv = +pcNode.querySelector(".pc-interval")?.value || 0;
     const label = pcNode.querySelector(".pc-label")?.value || "";
-    const as = !!pcNode.querySelector(".pc-autoscroll")?.checked;
-    const clk = +pcNode.querySelector(".pc-clicks")?.value || 1;
     if (a === "recstop" || a === "cancel") { precapStopping = true; b.disabled = true; b.textContent = "stopping…"; }
     if (a === "back") { precapPage = "list"; if (precapLast) _pcDraw(precapLast); }
     else if (a === "newsess") { precapView = "new"; precapPage = "detail"; if (precapLast) _pcDraw(precapLast); }
     // recordStart creates+persists a new session server-side, so leave the "new" pane at
     // once and show it as the active loaded session (its row appears via loadSessions)
-    else if (a === "record") { precapView = "loaded"; _pcRun(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, as, clk, pcSig); _pcLoadSessions(); return st; }); }
+    else if (a === "record") { precapView = "loaded"; _pcRun(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, pcSig); _pcLoadSessions(); return st; }); }
     else if (a === "recstop") _pcRun(() => api.precapture.recordStop(game, pcSig));
     else if (a === "process") _pcRun(() => api.precapture.processStart(game, pcSig));
     else if (a === "pause") _pcRun(() => api.precapture.pause(game, true, pcSig));
@@ -2660,16 +2755,7 @@ function buildPrecap() {
     // reflect it without waiting out the cadence
     if (["record", "recstop", "process", "pause", "resume", "cancel"].includes(a)) hub.kick();
   });
-
-  // live auto-scroll toggle (checkbox shown while recording) — server is the source of
-  // truth; each poll re-reflects st.autoscroll, so a give-up server-side unchecks it here.
-  pcNode.addEventListener("change", (ev) => {
-    const game = model.profile.name; if (!game) return;
-    if (!ev.target.closest(".pc-autoscroll-live, .pc-clicks-live")) return;
-    const on = !!pcNode.querySelector(".pc-autoscroll-live")?.checked;
-    const clicks = +pcNode.querySelector(".pc-clicks-live")?.value || 1;
-    _pcRun(() => api.precapture.setAutoscroll(game, on, clicks, pcSig));
-  });
+  // auto-scroll is configured per window now (window node's scroll section), not here.
 }
 
 async function showPrecap() {
@@ -2836,8 +2922,6 @@ function renderPrecap(node, st) {
            <label class="flab">max frames <input type="number" class="pc-frames" value="300" min="1"></label>
            <label class="flab">interval ms <input type="number" class="pc-interval" value="0" min="0"></label>
            <label class="flab">label <input type="text" class="pc-label" placeholder="(optional)"></label>
-           <label class="flab pc-as-lab" title="scroll the game's list automatically after each captured frame; stops & unchecks itself at the end of the list">auto-scroll <input type="checkbox" class="pc-autoscroll"></label>
-           <label class="flab" title="wheel notches sent per scroll">clicks <input type="number" class="pc-clicks" value="1" min="1"></label>
          </div>
          <div class="pc-ctl"></div>`
       : `<div class="pc-bar"></div>
@@ -2864,8 +2948,8 @@ function renderPrecap(node, st) {
     ${stats.length ? `<span class="muted">${stats.join(" · ")}</span>` : ""}
     ${procLive ? `<span class="muted">· ${tm.ms_per_frame || 0} ms/frame (${esc(tm.device || "cpu")})</span>` : ""}
     ${procLive && st.window ? `<span class="conf-good" title="window/state recognised this frame">· ${esc(st.window)}/${esc(st.state)}</span>` : ""}
-    ${recPaused ? `<span class="conf-warn">⏸ auto-scroll reached the list end — resume to retry, or uncheck it</span>` : ""}
-    ${st.warning ? `<span class="conf-warn">⚠ ${esc(st.warning)}</span>` : ""}
+    ${recPaused ? `<span class="conf-warn">${PAUSE} auto-scroll reached the list end — resume to retry, or uncheck it</span>` : ""}
+    ${st.warning ? `<span class="conf-warn">${WARN} ${esc(st.warning)}</span>` : ""}
     ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}`;
   // recognition tally: per-window/state frame counts (the "" key is a miss — no window matched)
   const recogEl = right.querySelector(".pc-recog");
@@ -2884,10 +2968,6 @@ function renderPrecap(node, st) {
   // the record inputs are only present (and only editable) in the new-session pane
   right.querySelectorAll(".pc-opts input").forEach((i) => { i.disabled = recording; });
 
-  // live auto-scroll controls — shown both while recording and while auto-paused, so the
-  // user can toggle/adjust or just resume from the list end
-  const asCtl = `<label class="flab pc-as-lab" title="toggle auto-scroll live; reaching the list end pauses the recording">auto-scroll <input type="checkbox" class="pc-autoscroll-live" ${st.autoscroll ? "checked" : ""}></label><label class="flab" title="wheel notches sent per scroll (live)">clicks <input type="number" class="pc-clicks-live" value="${st.scroll_clicks || 1}" min="1"></label>`;
-
   const justSaved = phase === "saved";
   const anyRun = recording || busyRun;   // any worker running -> save/delete locked
   let ctl;
@@ -2896,14 +2976,16 @@ function renderPrecap(node, st) {
     ctl = `<button data-act="record"><span class="ic ic-rec">●</span> record</button>`;
   } else {
     const proc = precapStopping ? `<button disabled>stopping…</button>`
-      : recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>${asCtl}`
+      : recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>`
       : processing ? `<button data-act="pause">‖ pause</button>`
-      : paused ? `<button data-act="resume">► resume</button>${recPaused ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>${asCtl}` : ""}`
+      : paused ? `<button data-act="resume">► resume</button>${recPaused ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>` : ""}`
       : `<button data-act="process" ${canProcess ? "" : "disabled"}>process${st.frames ? ` ${st.frames}` : ""}</button>`;
     // auto-scroll hit the list end -> the recording is done; offer stop, not discard
     const cancel = busyRun && !precapStopping && !recPaused ? `<button data-act="cancel" class="warn">cancel</button>` : "";
-    // commit only makes sense when nothing's running — hide it entirely while a worker is active
-    const save = anyRun ? ""
+    // commit only makes sense when nothing's running AND processing has staged records —
+    // hide it entirely while a worker is active or before the precapture's been processed
+    // (keep showing it right after a commit for the "committed" feedback).
+    const save = (anyRun || (!staged && !justSaved)) ? ""
       : `<button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !justSaved) ? "" : "disabled"}>${justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`}</button>`;
     ctl = `${proc}${cancel}${save}`;
   }
@@ -2916,6 +2998,8 @@ function renderPrecap(node, st) {
   const data = right.querySelector(".pc-data");
   if (data) renderPrecapData(data, st.datasets);
 }
+
+const PC_PAGE = 30;   // session rows rendered per window; grows by this much on scroll-to-bottom
 
 // The left pane: "＋ new session" (the record-inputs pane) on top, then every saved
 // recording, newest first. The selected item is highlighted; switching is locked while a
@@ -2933,22 +3017,33 @@ function renderPrecapLeft(left, st) {
     h.className = "pc-sess-h muted"; h.textContent = "sessions";
     left.append(left._new, h);
     left._head = h;           // header carries the all-sessions total image size
-    // rows live in their own scroll box so only the latest PC_ROWS_SHOWN are visible and the
-    // rest scroll (the ＋new button + header stay pinned above).
+    // rows live in their own scroll box that FILLS the panel height; we render a window of
+    // the newest sessions and grow it (load more) as the user scrolls toward the bottom, so
+    // a huge session list never builds hundreds of rows up front. (＋new + header stay above.)
     left._rowsBox = document.createElement("div");
     left._rowsBox.className = "pc-sess-rows";
     left.appendChild(left._rowsBox);
     left._rows = new Map();   // sid -> { row, load, ren }
+    left._renderN = PC_PAGE;  // how many rows are currently rendered
+    left._rowsBox.addEventListener("scroll", () => {
+      const b = left._rowsBox;
+      if (b.scrollTop + b.clientHeight >= b.scrollHeight - 48 && left._renderN < precapSessions.length) {
+        left._renderN += PC_PAGE;
+        renderPrecapLeft(left, left._st);   // re-render with the bigger window
+      }
+    });
   }
+  left._st = st;   // remembered so the scroll handler can re-render with the latest status
   left._new.classList.toggle("active", precapView === "new");
   left._new.disabled = precapBusy;
 
-  // drop rows whose session is gone
-  const want = new Set(precapSessions.map((s) => s.id));
+  // render only the newest _renderN sessions; the rest appear as you scroll (see above)
+  const vis = precapSessions.slice(0, left._renderN);
+  const want = new Set(vis.map((s) => s.id));
   for (const [sid, r] of left._rows) if (!want.has(sid)) { r.row.remove(); left._rows.delete(sid); }
 
   let i = 0;   // slot index into _rowsBox so rows are MOVED only when not already in place
-  for (const s of precapSessions) {
+  for (const s of vis) {
     let r = left._rows.get(s.id);
     if (!r) {
       const row = document.createElement("div");
@@ -2972,15 +3067,6 @@ function renderPrecapLeft(left, st) {
     const meta = `${s.frames}f · ${fmtBytes(s.bytes || 0)} · ${s.records || 0} rec${s.saved_at ? ' · <span class="tc-ok">committed</span>' : ""}`;
     if (r.meta._html !== meta) { r.meta.innerHTML = meta; r.meta._html = meta; }   // touch DOM only on change
     r.ren.disabled = precapBusy;
-  }
-  // cap the rows box to PC_ROWS_SHOWN rows, then it scrolls. Measure one row's height ONCE
-  // (rows are uniform) and cache it, so the busy-tick poll never forces a reflow.
-  const PC_ROWS_SHOWN = 5, ROW_GAP = 3;
-  if (!left._rowH && left._rowsBox.firstChild) left._rowH = left._rowsBox.firstChild.offsetHeight;
-  if (left._rowH) {
-    const cap = precapSessions.length > PC_ROWS_SHOWN
-      ? `${left._rowH * PC_ROWS_SHOWN + ROW_GAP * (PC_ROWS_SHOWN - 1)}px` : "";
-    if (left._rowsBox.style.maxHeight !== cap) left._rowsBox.style.maxHeight = cap;
   }
   // header shows the total image size across every session (touch DOM only on change)
   const total = precapSessions.reduce((a, s) => a + (s.bytes || 0), 0);
@@ -3018,7 +3104,7 @@ async function openCaptureModal(winId) {
         <img loading="lazy" src="${api.captureUrl(game, name)}" alt="" />
         <span class="cap-time">${esc(fmtCaptureTime(name))}</span>
       </button>`).join("");
-    node.innerHTML = `<div class="cap-head"><button class="cap-new">📷 capture new</button>
+    node.innerHTML = `<div class="cap-head"><button class="cap-new">${CAMERA} capture new</button>
         <span class="muted">${caps.length} stashed</span></div>
       ${caps.length ? `<div class="cap-grid">${grid}</div>` : '<p class="cap-empty">no stashed captures yet</p>'}`;
     node.querySelectorAll(".cap-cell").forEach((b) =>
@@ -3042,7 +3128,7 @@ async function chooseCapture(winId, name) {
 
 // ---- window image / region drawing (in-graph) -----------------------------
 
-const KINDS = [["item", "item", "▣"], ["data_area", "data area", "▭"], ["detect", "detect", "◎"], ["scrollbar", "scrollbar", "↕"]];
+const KINDS = [["data_area", "data area", "▭"], ["item", "item", "▣"], ["detect", "detect", "◎"], ["scrollbar", "scrollbar", "↕"]];
 // kinds drawn INSIDE an item node (on its frozen cutout): the cell + fields + tells
 const ITEM_KINDS = [["bbox", "cell", "▣"], ["field", "field", "▦"], ["filled", "filled", "▩"], ["text", "text", "T"], ["color", "color", "◐"], ["template", "template", "⧉"], ["diamonds", "diamonds", "◆"]];
 
@@ -3053,7 +3139,8 @@ async function updateImageLabel(winId, btn) {
   if (!btn) return;
   try {
     const name = (await api.getBindings(model.profile.name))[winId];
-    btn.textContent = name ? `📷 ${name}` : "📷 image";
+    const lbl = btn.querySelector(".imgbtn-lbl");
+    if (lbl) lbl.textContent = name || "capture";   // keep the icon; only swap the label text
     btn.title = name || "capture image";
   } catch { /* ignore */ }
 }
@@ -3075,7 +3162,7 @@ async function openImage(winId) {
   if (!host) return;
   host.innerHTML = `<div class="imgtools">
       <span class="tools">${KINDS.map(([v, label, icon]) => `<button class="tool" data-kind="${v}" title="draw ${label}">${icon} ${label}</button>`).join("")}</span>
-      <span class="spacer"></span><button class="imgprev">👁</button><button class="imgcap">recapture</button><button class="imgclose">×</button></div>
+      <span class="spacer"></span><button class="imgcap">recapture</button><button class="imgclose">×</button></div>
     <div class="canvas-wrap"><canvas></canvas></div>`;
   const canvas = host.querySelector("canvas");
   const kindOf = () => host.querySelector(".tool.active")?.dataset.kind || "region";
@@ -3088,8 +3175,8 @@ async function openImage(winId) {
       else if (k === "scrollbar") model.setScrollbar(winId, geom);
       else if (k === "data_area") model.setDataArea(winId, geom);
       else model.addRegion(winId, geom);
-      gridPreviews.delete(winId); gridReads.delete(winId);   // layout changed → detected grid is stale
-      render(); refreshImageBoxes(winId); autosave();
+      clearGrid(winId);   // layout changed → detected grid is stale
+      render(); refreshImageBoxes(winId); autosave(true, winId);   // re-OCR only this window
       if (newDetect) prefillDetectText(winId, newDetect);
     },
     onChange: (box) => {
@@ -3099,8 +3186,8 @@ async function openImage(winId) {
       else if (r === "data_area") model.setDataArea(winId, box);
       else if (r === "item") { model.setItemBox(winId, box.id, box); refreshItemBoxes(winId, box.id); }
       else model.setRegionBox(winId, box.id, box);
-      gridPreviews.delete(winId); gridReads.delete(winId);   // layout changed → detected grid is stale
-      refreshImageBoxes(winId); drawEdges(); autosave();
+      clearGrid(winId);   // layout changed → detected grid is stale
+      refreshImageBoxes(winId); drawEdges(); autosave(true, winId);   // re-OCR only this window
     },
     onSelect: (id) => overlaySelected(`win:${winId}`, id),
   });
@@ -3115,8 +3202,7 @@ async function openImage(winId) {
     btn.classList.add("active");
   }));
   host.querySelector(".imgclose").addEventListener("click", () => closeImage(winId));
-  host.querySelector(".imgcap").addEventListener("click", () => loadImage(winId, true));
-  host.querySelector(".imgprev").addEventListener("click", () => refreshPreview(winId));
+  host.querySelector(".imgcap").addEventListener("click", () => loadImage(winId, true));   // recapture re-reads
   if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
   await loadImage(winId, false);   // its onload now refreshes detect once the pixels are in
   drawEdges();
@@ -3133,7 +3219,7 @@ async function createItemFromGeom(winId, geom) {
   try { cut = await api.itemCutout(game, cap, geom); }
   catch (e) { setStatus(String(e.message || e)); return; }
   const itemId = model.addItem(winId, { cutout: cut.name, cutout_box: geom, box: geom });
-  gridPreviews.delete(winId); gridReads.delete(winId);
+  clearGrid(winId);
   render(); refreshImageBoxes(winId); autosave();
   openItemImage(winId, itemId);
 }
@@ -3150,6 +3236,22 @@ function closeItemImage(winId, itemId) {
 }
 
 // Build the cutout canvas inside an item node and wire drawing of cell/fields/tells.
+// Resize the item's CELL box WITHOUT dragging its fields/tells along. Children are stored
+// RELATIVE to the cell, so changing the cell naively rescales them; re-anchor each child so
+// its absolute (window-fraction) box is preserved across the cell change.
+function setItemCellKeepingChildren(winId, itemId, newWinBox) {
+  const it = model.item(winId, itemId);
+  const old = it && it.box;
+  if (!old || !old.w || !old.h) { model.setItemBox(winId, itemId, newWinBox); return; }
+  const toAbs = (b, c) => ({ x: c.x + b.x * c.w, y: c.y + b.y * c.h, w: b.w * c.w, h: b.h * c.h });
+  const toRel = (b, c) => ({ x: (b.x - c.x) / c.w, y: (b.y - c.y) / c.h, w: b.w / c.w, h: b.h / c.h });
+  const fAbs = (it.fields || []).map((f) => toAbs(f.box, old));
+  const tAbs = (it.tells || []).map((t) => toAbs(t.box, old));
+  model.setItemBox(winId, itemId, newWinBox);
+  (it.fields || []).forEach((f, i) => { f.box = toRel(fAbs[i], newWinBox); });
+  (it.tells || []).forEach((t, i) => { t.box = toRel(tAbs[i], newWinBox); });
+}
+
 function openItemImage(winId, itemId) {
   const node = nodeEls.get(`item:${winId}:${itemId}`);
   const host = node && node.querySelector(".item-img");
@@ -3174,21 +3276,17 @@ function openItemImage(winId, itemId) {
     onCreate: (geom) => {                       // geom in cutout fractions
       const w = cut2win(geom);
       const k = kindOf();
-      if (k === "bbox") model.setItemBox(winId, itemId, w);
+      if (k === "bbox") setItemCellKeepingChildren(winId, itemId, w);
       else if (k === "field") model.addItemField(winId, itemId, win2rel(w));
       else model.addItemTell(winId, itemId, k, win2rel(w));   // filled/text/color/template
-      gridPreviews.delete(winId); gridReads.delete(winId);
-      refreshItemBoxes(winId, itemId); refreshImageBoxes(winId); rebuildNode(`item:${winId}:${itemId}`); autosave();
-      scheduleItemRead(winId, itemId);
+      itemChanged(winId, itemId, { rebuild: true });   // a new field/tell adds a row
     },
     onChange: (box) => {                        // box in cutout fractions + role/id
       const w = cut2win(box);
-      if (box.role === "bbox") model.setItemBox(winId, itemId, w);
+      if (box.role === "bbox") setItemCellKeepingChildren(winId, itemId, w);
       else if (box.role === "field") model.setItemFieldBox(winId, itemId, box.id, win2rel(w));
       else model.setItemTellBox(winId, itemId, box.id, win2rel(w));
-      gridPreviews.delete(winId); gridReads.delete(winId);
-      refreshItemBoxes(winId, itemId); refreshImageBoxes(winId); autosave();
-      scheduleItemRead(winId, itemId);
+      itemChanged(winId, itemId);              // box moved/resized — no DOM rebuild
     },
     onSelect: (id) => overlaySelected(`item:${winId}:${itemId}`, id),
   });
@@ -3196,11 +3294,10 @@ function openItemImage(winId, itemId) {
   // central registry: cross-deselect + WASD for the item's boxes
   const persistItem = (b) => {
     const w = cut2win(b);
-    if (b.role === "bbox") model.setItemBox(winId, itemId, w);
+    if (b.role === "bbox") setItemCellKeepingChildren(winId, itemId, w);
     else if (b.role === "field") model.setItemFieldBox(winId, itemId, b.id, win2rel(w));
     else model.setItemTellBox(winId, itemId, b.id, win2rel(w));
-    gridPreviews.delete(winId); gridReads.delete(winId);
-    scheduleItemRead(winId, itemId);
+    itemChanged(winId, itemId);
   };
   registerOverlay(`item:${winId}:${itemId}`, { overlay, kind: "item", winId, itemId,
     persist: persistItem, refresh: () => { refreshItemBoxes(winId, itemId); refreshImageBoxes(winId); } });
@@ -3465,6 +3562,7 @@ async function refreshDetect(winId, live = false) {
           const recognized = svals.length ? svals.some((s) => s.matched)
             : (dvals.length ? dvals.every((d) => d.matched) : false);
           liveRecog.set(winId, recognized);
+          if (recognized) liveDetCount.set(winId, (liveDetCount.get(winId) || 0) + 1);
           renderLiveWindow();
         }
         const sbEl = nodeEls.get(`sb:${winId}:scrollbar`);
@@ -3492,27 +3590,44 @@ function setDetectStatus(nodeId, info) {
   span.textContent = (info.matched ? "✓ true" : "✗ false") + conf + (info.read ? ` — "${info.read}"` : "");
   span.className = "detect-status " + (info.matched ? "conf-ok" : "conf-bad");
 }
+// Scoped re-OCR: an edit to ONE window (its items/boxes/detectors) should only re-read THAT
+// window, not every open one. Callers pass the window id; a null id means "all" (a global edit).
+// ids accumulate across the 700ms debounce so edits spanning windows don't drop each other.
 let detectT = null;
-function refreshOpenDetect() {
+const _detectPending = new Set();   // winIds queued; _detectAll overrides to all open windows
+let _detectAll = false;
+function refreshOpenDetect(winId = null) {
+  if (winId) _detectPending.add(winId); else _detectAll = true;
   clearTimeout(detectT);
   detectT = setTimeout(() => {
-    for (const winId of imageCanvases.keys())
-      if (model.window(winId)?.enabled !== false) refreshDetect(winId);   // skip disabled windows
+    const all = _detectAll; _detectAll = false;
+    for (const id of imageCanvases.keys()) {
+      if (!all && !_detectPending.has(id)) continue;
+      if (model.window(id)?.enabled !== false) refreshDetect(id);   // skip disabled windows
+    }
+    _detectPending.clear();
   }, 700);
 }
 
 let previewT = null;
-function refreshOpenPreviews() {
+const _previewPending = new Set();
+let _previewAll = false;
+function refreshOpenPreviews(winId = null) {
+  if (winId) _previewPending.add(winId); else _previewAll = true;
   clearTimeout(previewT);
   previewT = setTimeout(() => {
+    const all = _previewAll; _previewAll = false;
     for (const w of model.profile.windows || []) {
       if (w.enabled === false) continue;   // a disabled window reads nothing — don't re-run it
+      if (!all && !_previewPending.has(w.id)) continue;   // scoped: only the edited window(s)
       const host = prevHost(w.id);
-      // re-read the node's OWN bound image (live=false), not a fresh game grab — an edit
-      // (a box, a dictionary toggle) shouldn't need the game running, and forcing a live
-      // capture 404s "game window not found" when it isn't.
-      if (host && host.dataset.ran === "1") refreshPreview(w.id, false);
+      // Read on ANY update — the preview should always reflect the current setup, not wait
+      // for a first manual "read". Reads the window's OWN bound image (live=false), not a
+      // fresh game grab, so it doesn't need the game running (a live grab 404s when it isn't).
+      if (host) refreshPreview(w.id, false);              // refreshes the preview table + grid
+      else if (imageCanvases.has(w.id)) refreshGridPreview(w.id);   // image open, no preview node
     }
+    _previewPending.clear();
   }, 700);
 }
 
@@ -3544,12 +3659,12 @@ async function loadImage(winId, recapture) {
     entry.overlay.setImage(img);
     refreshImageBoxes(winId);
     drawEdges();
-    refreshGridPreview(winId);   // draw the grid where rows actually are in this capture
     updateImageLabel(winId);     // button shows the (possibly new) filename
-    // the image changed → re-read it only if the preview node was already run (avoid
-    // OCR work nobody asked for)
-    if (prevHost(winId)?.dataset.ran === "1") refreshPreview(winId);
-    refreshDetect(winId);   // image changed (recapture OR a different bound capture) → re-evaluate detectors
+    // the image changed (recapture / picked a capture / first open) → READ it: full preview
+    // when the node exists, else just the grid overlay. No first-manual-read gate.
+    if (prevHost(winId)) refreshPreview(winId, false);
+    else refreshGridPreview(winId);
+    refreshDetect(winId);   // re-evaluate detectors against the new image
   };
   img.onerror = () => setNodeBusy(`win:${winId}`, false);
   img.src = url;
@@ -3570,10 +3685,87 @@ function refreshImageBoxes(winId) {
   const sb = model.scrollbar(winId);
   if (sb) boxes.push({ id: "scrollbar", role: "scrollbar", ...sb });
   entry.overlay.setBoxes(boxes);
+  entry.overlay.setGridGuides(buildGridGuides(winId));   // columns + locator scan strips
   // prefer the live-detected grid (rows found in the actual capture); fall back to
   // the live-detected grid (where items were actually located this capture)
-  entry.overlay.setGridPreview(gridPreviews.get(winId) || []);
+  entry.overlay.setCellBoxes(gridCellBoxes.get(winId) || []);   // detected cell tiling (solid)
+  entry.overlay.setGridPreview(gridPreviews.get(winId) || staticFieldPreview(winId) || []);
   entry.overlay.setPreview(gridReads.get(winId) || []);   // value + confidence per cell
+}
+
+// The cell-relative box the reader scans for a row anchor — mirrors locator_of() server-side:
+// a locate tell → a visual tell → the first tell → the first field flagged as a tell.
+function itemLocatorBox(it) {
+  for (const t of it.tells || []) if (t.locate) return t.box;
+  for (const t of it.tells || []) if (t.kind && t.kind !== "text") return t.box;   // visual tell
+  if ((it.tells || []).length) return it.tells[0].box;
+  for (const f of it.fields || []) if (f.tell) return f.box;
+  return null;
+}
+
+// Author-time guides for the window canvas: the columns the data area tiles into
+// (ncols = round(da.w / cell.w), the same as the reader) and the locator scan strip in each
+// column — so it's clear WHERE rows/columns are looked for, before anything is found.
+// tile origins — mirrors static_grid_origins() in items.py so the drawn grid matches exactly
+// what the reader tiles. The static grid anchors at the data-area corner (o0 = lo) and tiles
+// by the cell SIZE (step); the cell sets the pitch, not the phase.
+function staticGridOrigins(o0, step, lo, hi) {
+  if (step <= 0) return [o0];
+  const slack = step * 0.04, out = [];
+  for (let o = o0; o >= lo - slack; o -= step) if (o + step <= hi + slack) out.push(o);
+  for (let o = o0 + step; o + step <= hi + slack; o += step) if (o >= lo - slack) out.push(o);
+  return out.sort((a, b) => a - b);
+}
+
+function buildGridGuides(winId) {
+  const da = model.dataArea(winId), w = model.window(winId);
+  if (!da || !w || !(w.items || []).length) return null;
+  const isStatic = w.static_grid !== false;   // row-finding mode is per window
+  const items = (w.items || []).filter((it) => it.enabled !== false && it.box && it.box.w && it.box.h);
+  const cols = new Set(), rows = new Set(), strips = [];
+  if (isStatic && items.length) {
+    // ONE grid for the window: anchored at the data-area corner, tiled by the LOWEST-priority
+    // cell SIZE (the cell sets the pitch, NOT the position) — matches the reader
+    const base = items.reduce((a, b) => ((b.priority || 0) < (a.priority || 0) ? b : a));
+    const iw = base.box.w, ih = base.box.h;
+    for (const x of staticGridOrigins(da.x, iw, da.x, da.x + da.w)) { cols.add(x); cols.add(x + iw); }
+    for (const y of staticGridOrigins(da.y, ih, da.y, da.y + da.h)) { rows.add(y); rows.add(y + ih); }
+  } else {
+    for (const it of items) {
+      const iw = it.box.w;
+      const ncols = Math.max(1, Math.round(da.w / iw)), pitch = da.w / ncols;
+      for (let c = 0; c <= ncols; c++) cols.add(da.x + c * pitch);
+      const loc = itemLocatorBox(it);   // located: show where the locator scans
+      if (loc) for (let c = 0; c < ncols; c++)
+        strips.push({ x: da.x + c * pitch + loc.x * iw, y: da.y, w: loc.w * iw, h: da.h });
+    }
+  }
+  return { cols: [...cols], rows: [...rows], strips, yTop: da.y, yBot: da.y + da.h, xLeft: da.x, xRight: da.x + da.w };
+}
+
+// Author-time field rectangles tiled across the STATIC grid, computed from geometry alone
+// (no OCR) — mirrors _cells_for_item()'s static branch in items.py so what's drawn is exactly
+// where the reader will read. Shown immediately on every item edit so a moved/resized box
+// updates on the window canvas at once, without waiting for the OCR preview round-trip. The
+// real OCR preview (gridPreviews) replaces this once it returns. Returns null in LOCATED mode
+// (rows come from OCR there, so geometry can't predict them) or with no items.
+function staticFieldPreview(winId) {
+  const da = model.dataArea(winId), w = model.window(winId);
+  if (!da || !w || w.static_grid === false) return null;
+  const items = (w.items || []).filter((it) => it.enabled !== false && it.box && it.box.w && it.box.h);
+  if (!items.length) return null;
+  // ONE grid anchored at the data-area corner, tiled by the lowest-priority cell SIZE (pitch).
+  const base = items.reduce((a, b) => ((b.priority || 0) < (a.priority || 0) ? b : a));
+  const giw = base.box.w, gih = base.box.h;
+  const xs = staticGridOrigins(da.x, giw, da.x, da.x + da.w);
+  const ys = staticGridOrigins(da.y, gih, da.y, da.y + da.h);
+  const out = [];
+  for (const cy of ys) for (const cx of xs)
+    for (const it of items) for (const f of it.fields || []) {
+      if (!f.box) continue;
+      out.push({ x: cx + f.box.x * giw, y: cy + f.box.y * gih, w: f.box.w * giw, h: f.box.h * gih });
+    }
+  return out.length ? out : null;
 }
 
 // Fetch where the rows ACTUALLY are by OCR-ing the capture, and draw that grid.
@@ -3611,8 +3803,11 @@ function setGridFromPreview(winId, res) {
     })));
   // which item template matched: its id centred on each cell, white on black
   reads.push(...kept.filter((c) => c.box && c.item).map((c) => ({ ...c.box, cell: c.box, text: c.item })));
+  // the detected CELL outlines — the tiling the reader actually found
+  const cells = kept.map((c) => c.box).filter(Boolean);
   if (boxes.length) gridPreviews.set(winId, boxes); else gridPreviews.delete(winId);
   if (reads.length) gridReads.set(winId, reads); else gridReads.delete(winId);
+  if (cells.length) gridCellBoxes.set(winId, cells); else gridCellBoxes.delete(winId);
   refreshImageBoxes(winId);
 }
 
@@ -4579,9 +4774,13 @@ $("testingBtn")?.addEventListener("click", () => testWin.setVisible(!testState.v
 const tbState = { visible: false, x: null, y: null, w: null, h: null };
 let tb = null;
 
-function createWindowNode() {
+async function createWindowNode() {
   const id = model.addWindow();   // default id; renamed in the window node
-  if (id) { placeNewNode(`win:${id}`, "window"); render(); autosave(); panTo(`win:${id}`); }
+  if (!id) return;
+  // a brand-new window starts with NO image — clear any binding left over from a deleted
+  // window that reused this id, so its button shows "capture" rather than a stale capture.
+  try { if (model.profile.name) await api.bindCapture(model.profile.name, id, ""); } catch { /* ignore */ }
+  placeNewNode(`win:${id}`, "window"); render(); autosave(); panTo(`win:${id}`);
 }
 function createPriceNode() {
   const id = model.addPriceNode();   // independent producer -> "prices" dataset
@@ -4624,7 +4823,7 @@ function buildToolbox() {
     <button class="tb-btn" data-create="price">+ price node</button>
     <button class="tb-btn" data-create="trigger">+ trigger</button>
     <button class="tb-btn" data-create="dictionary">+ dictionary</button>
-    <button class="tb-btn" data-create="collisions" title="run each window's bound image through every window's detectors — report which windows false-match each other">⚠ check window collisions</button>
+    <button class="tb-btn" data-create="collisions" title="run each window's bound image through every window's detectors — report which windows false-match each other">${WARN} check window collisions</button>
   </div>`;
   tb.body.addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-create]");
@@ -4642,7 +4841,7 @@ function buildToolbox() {
 // Verdict copy + class for the collision report. One source of truth for both.
 const COLLIDE_VERDICTS = {
   ok:            ["✓ ok",            "conf-ok",   "only this window matched its image"],
-  collision:     ["⚠ collision",     "conf-warn", "another window also fully matched — ambiguous"],
+  collision:     [`${WARN} collision`, "conf-warn", "another window also fully matched — ambiguous"],
   misclassified: ["✗ misclassified", "conf-bad",  "another window WINS the tie-break — classify picks the wrong one"],
   self_no_match: ["✗ self no-match",  "conf-bad",  "this window's own image doesn't match it — detectors too strict/disabled"],
   no_image:      ["– no image",       "muted",     "no bound capture to test — open the window node and bind one"],
@@ -4701,6 +4900,7 @@ let liveWin = null;
 let liveEmpty = null;
 const liveRows = new Map();    // winId -> { row, dot, name }
 const liveRecog = new Map();   // winId -> recognized in the last live detect round?
+const liveDetCount = new Map();   // winId -> how many times detected this run (shown per row)
 buildLiveWindow();
 $("liveBtn").classList.toggle("active", liveWinState.visible);
 $("liveBtn").addEventListener("click", () => liveWin.setVisible(!liveWinState.visible));   // the panel's toggle drives live mode
@@ -4996,19 +5196,23 @@ function buildLiveWindow() {
     onPersist: () => persist.layout(),
   });
   liveWin.body.innerHTML = `
-    <label class="live-toggle"><button class="act-enable live-switch" role="switch" aria-checked="false" title="enable / disable live mode">
-        <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
-          <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
-          <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
-      </button><span class="live-switch-lbl">live mode</span></label>
-    <label class="live-toggle"><button class="act-enable live-save" role="switch" aria-checked="true" title="save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)">
-        <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
-          <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
-          <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
-      </button><span class="live-save-lbl">save to datasets</span></label>
-    <div class="live-stats muted"></div>
-    <div class="live-imgs"><span class="live-imgstat muted"></span><button class="live-clear" data-armed="0" title="delete every saved live image">clear</button></div>
-    <div class="live-wins"></div>`;
+    <div class="live-row">
+      <label class="live-toggle"><button class="act-enable live-switch" role="switch" aria-checked="false" title="enable / disable live mode">
+          <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
+            <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
+            <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
+        </button><span class="live-switch-lbl">live mode</span></label>
+      <span class="live-stats muted"></span>
+    </div>
+    <div class="live-row">
+      <label class="live-toggle"><button class="act-enable live-save" role="switch" aria-checked="true" title="save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)">
+          <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
+            <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
+            <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
+        </button><span class="live-save-lbl">save to datasets</span></label>
+    </div>
+    <div class="live-wins"></div>
+    <div class="live-row live-imgs"><span class="live-imgstat muted"></span><button class="live-clear" data-armed="0" title="delete every saved live image">clear</button></div>`;
   liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
   liveWin.body.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
   liveWin.body.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
@@ -5025,18 +5229,22 @@ function buildLiveWindow() {
 
 function renderLiveWindow() {
   if (!liveWin || !liveWinState.visible) return;
-  const sw = liveWin.body.querySelector(".live-switch");
-  if (sw && sw.getAttribute("aria-checked") !== String(liveOn)) { sw.setAttribute("aria-checked", liveOn); sw.classList.toggle("on", liveOn); }
-  const sv = liveWin.body.querySelector(".live-save");
-  if (sv && sv.getAttribute("aria-checked") !== String(liveSave)) { sv.setAttribute("aria-checked", liveSave); sv.classList.toggle("on", liveSave); }
-  const lbl = liveWin.body.querySelector(".live-switch-lbl");
-  const lblTxt = liveOn ? "live mode · enabled" : "live mode · disabled";
-  if (lbl && lbl.textContent !== lblTxt) lbl.textContent = lblTxt;
+  // sync the visual `.on` class INDEPENDENTLY of aria-checked — the markup ships
+  // aria-checked already matching the default, so gating the class on an aria mismatch left
+  // a default-on switch (save-to-datasets) visually off. Each touched only when it differs.
+  const syncSwitch = (el, on) => {
+    if (!el) return;
+    if (el.getAttribute("aria-checked") !== String(on)) el.setAttribute("aria-checked", String(on));
+    if (el.classList.contains("on") !== on) el.classList.toggle("on", on);
+  };
+  syncSwitch(liveWin.body.querySelector(".live-switch"), liveOn);
+  syncSwitch(liveWin.body.querySelector(".live-save"), liveSave);
   const st = liveWin.body.querySelector(".live-stats");
   // collecting (armed): show what the server collector saved; tuning (disarmed): client fps.
-  // no processing/idle flip — it toggled every round (OCR vs the 200ms gap) and just flickered
+  // blank when off (the switch already conveys that). No processing/idle flip — it toggled
+  // every round (OCR vs the 200ms gap) and just flickered.
   const collecting = liveOn && liveSave;
-  const stTxt = !liveOn ? "off"
+  const stTxt = !liveOn ? ""
     : collecting ? `${liveColStatus?.written ?? 0} saved · ${(liveColStatus?.fps ?? 0).toFixed(1)}/s`
     : `${liveFps.toFixed(1)} img/s`;
   if (st && st.textContent !== stTxt) st.textContent = stTxt;
@@ -5066,8 +5274,9 @@ function renderLiveWinList() {
       const row = document.createElement("div"); row.className = "act-row live-win";
       const dot = document.createElement("span"); dot.className = "live-wdot";
       const name = document.createElement("div"); name.className = "act-title";
-      row.append(dot, name);
-      r = { row, dot, name }; liveRows.set(w.id, r);
+      const cnt = document.createElement("span"); cnt.className = "live-wcount";   // detections, right-justified
+      row.append(dot, name, cnt);
+      r = { row, dot, name, cnt }; liveRows.set(w.id, r);
     }
     const at = list.children[i];
     if (at !== r.row) list.insertBefore(r.row, at || null);
@@ -5077,6 +5286,10 @@ function renderLiveWinList() {
     if (r.dot.classList.contains("on") !== det) r.dot.classList.toggle("on", det);
     const dt = det ? "detected" : (liveOn ? "not detected yet" : "live off");
     if (r.dot.title !== dt) r.dot.title = dt;
+    const n = liveDetCount.get(w.id) || 0;          // how many times detected this run
+    const ctxt = n ? `${n}×` : "";
+    if (r.cnt.textContent !== ctxt) r.cnt.textContent = ctxt;
+    if (r.cnt.title !== `detected ${n}×`) r.cnt.title = `detected ${n}×`;
   }
 }
 
@@ -5142,9 +5355,13 @@ function startServerCollect() {
   if (!liveColUnsub) liveColUnsub = hub.subscribe((s) => {
     if (!liveOn || !liveSave) return;
     liveColStatus = s.live || null;
-    liveRecog.clear();
-    for (const r of (liveColStatus?.recognized || [])) {   // cumulative tally → "seen this run" dots
-      if (!r.miss && r.key.includes("/")) liveRecog.set(r.key.split("/")[0], true);
+    liveRecog.clear(); liveDetCount.clear();
+    for (const r of (liveColStatus?.recognized || [])) {   // cumulative tally → dots + per-window count
+      if (!r.miss && r.key.includes("/")) {
+        const wid = r.key.split("/")[0];
+        liveRecog.set(wid, true);
+        liveDetCount.set(wid, (liveDetCount.get(wid) || 0) + (r.count || 0));
+      }
     }
     renderLiveWindow();
   });
@@ -5167,7 +5384,7 @@ function setLiveMode(on) {
   if (on === liveOn) { renderLiveWindow(); return; }   // no change → don't double-start; keep the switch in sync
   liveOn = on;
   if (timer) { clearTimeout(timer); timer = null; }
-  if (!on) liveRecog.clear();            // drop stale detection dots
+  if (!on) { liveRecog.clear(); liveDetCount.clear(); }   // drop stale dots + counts
   showLiveStats(on);
   if (on) {
     log(liveSave ? "live collection started" : "live mode started (read-only)", "run");
