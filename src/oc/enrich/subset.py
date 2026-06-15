@@ -54,7 +54,7 @@ def _eval_arith(expr: str, row: dict | None = None) -> float:
             return _ARITH_OPS[type(n.op)](ev(n.left), ev(n.right))
         if isinstance(n, ast.UnaryOp) and type(n.op) in _ARITH_OPS:
             return _ARITH_OPS[type(n.op)](ev(n.operand))
-        raise ValueError("unsupported expression")
+        raise ValueError(f"unsupported expression element: {type(n).__name__}")
     return ev(ast.parse(expr, mode="eval").body)
 
 

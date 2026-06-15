@@ -25,12 +25,15 @@ export function onChange(fn) { listeners.add(fn); return () => listeners.delete(
 function emit() { for (const fn of listeners) { try { fn(online); } catch { /* ignore */ } } }
 
 // Reported by tfetch (api.js) on every outcome. Idempotent: only the actual up<->down
-// transition does any work, so reporting on every request is cheap.
+// transition does any work, so reporting on every request is cheap. `reason` is the
+// real failure (which request, what error) so the overlay can show what actually went
+// wrong instead of guessing a cause.
+let reason = "";
 export function reportReachable() { setState(true); }
-export function reportUnreachable() { setState(false); }
+export function reportUnreachable(detail = "") { reason = detail || ""; setState(false); }
 
 // Force offline from outside (boot detects the server is down before any poll runs).
-export function markOffline() { setState(false); }
+export function markOffline() { reason = ""; setState(false); }
 
 function setState(up) {
   if (online === up) return;
@@ -71,24 +74,34 @@ async function retryNow() {
 }
 
 // ---- overlay (reuses the .startup-halt look) -------------------------------------
-let el = null, btn = null;
+let el = null, btn = null, reasonEl = null;
 
 function ensureEl() {
   if (el) return;
   el = document.createElement("div");
   el.className = "startup-halt offline-overlay";
   el.hidden = true;
+  // Heading states only what we KNOW (a request didn't get a response); the cause
+  // line below shows the actual failing request/error rather than guessing whether
+  // the server is "down". The probe decides reachable-vs-not and auto-dismisses.
   el.innerHTML = `<div class="startup-halt-box">
-    <h3>Backend unavailable</h3>
-    <p>Can't reach the data-rig server. It may be starting, restarting, or stopped.</p>
-    <p class="muted">Retrying automatically — all updates are paused until it's back.</p>
+    <h3>No response from the backend</h3>
+    <p>A request failed and the server isn't answering the health check yet. It may be
+       busy, restarting, or unreachable.</p>
+    <p class="muted offline-reason"></p>
+    <p class="muted">Retrying automatically — all updates are paused until it answers.</p>
     <button class="startup-halt-retry" type="button">retry now</button></div>`;
   btn = el.querySelector(".startup-halt-retry");
+  reasonEl = el.querySelector(".offline-reason");
   btn.addEventListener("click", retryNow);
   document.body.appendChild(el);
 }
 
-function overlay(show) { ensureEl(); el.hidden = !show; }
+function overlay(show) {
+  ensureEl();
+  if (show) reasonEl.textContent = reason ? `last failure — ${reason}` : "";
+  el.hidden = !show;
+}
 
 function setBtnBusy(b) {
   if (!btn) return;

@@ -16,12 +16,21 @@ function tfetch(url, opts = {}, ms = LIGHT_MS) {
   }).catch((e) => {
     // A caller-driven abort (panel closed, navigation) is not a connectivity signal.
     const userAborted = opts.signal && opts.signal.aborted;
+    const path = url.split("?")[0];
     if (e.name === "TimeoutError") {
-      if (!userAborted) conn.reportUnreachable();   // hung/restarting server == unreachable
-      throw new Error(`${url.split("?")[0]} timed out after ${ms / 1000}s — server hung or restarting?`);
+      // No response arrived in time. We CANNOT tell why (slow server, dropped
+      // connection, a request blocked client-side) — so don't invent a cause; state
+      // only the fact. The health probe sorts reachable-vs-not on its own.
+      const reason = `${path}: no response within ${ms / 1000}s`;
+      if (!userAborted) conn.reportUnreachable(reason);
+      throw new Error(reason);
     }
-    // A bare fetch rejection (TypeError) == connection refused/dropped/DNS == backend down.
-    if (!userAborted && e.name === "TypeError") conn.reportUnreachable();
+    // fetch() usually rejects with TypeError for a dropped/refused connection, but the
+    // SAME error also covers a blocked or malformed request and missing browser APIs.
+    // We can't be sure it's connectivity, so flag it (the probe clears it within
+    // seconds if the server is actually up) and surface the REAL error untouched
+    // rather than asserting "backend down".
+    if (!userAborted && e.name === "TypeError") conn.reportUnreachable(`${path}: ${e.message}`);
     throw e;
   });
 }
