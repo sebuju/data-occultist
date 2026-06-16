@@ -149,24 +149,11 @@ export class GraphModel {
 
   edges() {
     const es = [];
-    // a muted node->dictionary link for every field that pins a specific dictionary
-    // (FieldDef.dictionary). De-duped per (node, dict) so an item with two fields on
-    // the same dictionary draws one line.
-    const dictSeen = new Set();
-    const linkDict = (fromNode, w, fid) => {
-      const fd = (w.fields || []).find((f) => f.id === fid);
-      if (!fd || !fd.dictionary || !this.dictionary(fd.dictionary)) return;
-      const k = `${fromNode}|${fd.dictionary}`;
-      if (dictSeen.has(k)) return;
-      dictSeen.add(k);
-      es.push({ from: fromNode, to: `dict:${fd.dictionary}`, kind: "usedict" });
-    };
     for (const w of this.profile.windows) {
       es.push({ from: "game", to: `win:${w.id}`, kind: "own" });
       es.push({ from: `win:${w.id}`, to: `prev:${w.id}`, kind: "img" });
       for (const r of w.regions || []) {
         es.push({ from: `win:${w.id}`, to: `reg:${w.id}:${r.id}`, kind: "field" });
-        linkDict(`reg:${w.id}:${r.id}`, w, r.field);
       }
       for (const d of w.detect || []) es.push({ from: `win:${w.id}`, to: `det:${w.id}:${d.id}`, kind: "detect" });
       if (w.scroll && w.scroll.scrollbar) es.push({ from: `win:${w.id}`, to: `sb:${w.id}:scrollbar`, kind: "scrollbar" });
@@ -174,7 +161,6 @@ export class GraphModel {
         es.push({ from: `win:${w.id}`, to: `item:${w.id}:${it.id}`, kind: "item" });
         for (const f of it.fields || []) {
           es.push({ from: `item:${w.id}:${it.id}`, to: `fld:${w.id}:${it.id}:${f.id}`, kind: "field" });
-          linkDict(`fld:${w.id}:${it.id}:${f.id}`, w, f.field);
         }
         for (const t of it.tells || []) es.push({ from: `item:${w.id}:${it.id}`, to: `tell:${w.id}:${it.id}:${t.id}`, kind: "tell" });
       }
@@ -326,12 +312,20 @@ export class GraphModel {
     this.profile.dictionaries.push({ id, name, enabled: true, source, terms: opts.terms || [] });
     return id;
   }
-  removeDictionary(id) { this.profile.dictionaries = (this.profile.dictionaries || []).filter((d) => d.id !== id); }
+  // Every FieldDef that pins a dictionary — the single place dict ids are referenced, so
+  // remove/rename repoint through here (a field's `dictionary` is a soft ref; the resolver
+  // already falls back to the pooled default when it points at nothing).
+  _dictFields() { return (this.profile.windows || []).flatMap((w) => w.fields || []); }
+  removeDictionary(id) {
+    this.profile.dictionaries = (this.profile.dictionaries || []).filter((d) => d.id !== id);
+    for (const f of this._dictFields()) if (f.dictionary === id) f.dictionary = "";   // pinned field -> pooled
+  }
   renameDictionary(oldId, newId) {
     newId = (newId || "").trim();
     const d = this.dictionary(oldId);
     if (!d || !newId || newId === oldId || this.dictionary(newId)) return false;
     d.id = newId;
+    for (const f of this._dictFields()) if (f.dictionary === oldId) f.dictionary = newId;   // keep pins pointing at it
     return true;
   }
   setDictionaryTerms(id, terms) { const d = this.dictionary(id); if (d) d.terms = terms; }
