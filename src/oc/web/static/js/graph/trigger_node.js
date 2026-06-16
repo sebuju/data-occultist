@@ -3,19 +3,25 @@
 // `manual` never auto-fires (the sweep button drives it). All config persists in the
 // profile YAML. Targets are wired by dragging the out-port to a price node; watch datasets
 // and targets can also be added from the dropdowns here. Rendering only — wiring is in main.js.
-import { esc, TRASH } from "../dom.js";
+import { esc, TRASH, labCell } from "../dom.js";
 
 const KINDS = [["interval", "interval (periodic)"], ["on_change", "on change (live)"], ["manual", "manual only"]];
 
-const chip = (val, attr, cls) =>
-  `<span class="tg-chip" ${attr}="${esc(val)}">${esc(val)} <button class="${cls}" ${attr}="${esc(val)}" title="remove">${TRASH}</button></span>`;
+// removable source pill — same look as a subset's join-source pills (.sv-input). `rmCls`
+// is the wiring hook (tg-rmwatch / tg-rmtarget); `attr` carries the id back to the handler.
+const srcChip = (val, attr, rmCls) =>
+  `<span class="sv-input">${esc(val)}<button class="sv-rmin danger ${rmCls}" ${attr}="${esc(val)}" title="remove">${TRASH}</button></span>`;
+
+// the pills + a "+ …" add-select that go in a watch/fires control cell.
+const srcInputs = (chipsHtml, addCls, addOpts) =>
+  `<div class="sv-inputs">${chipsHtml}<span class="sv-input sv-add"><select class="${addCls}">${addOpts}</select></span></div>`;
 
 export function triggerParts(t, model) {
   const kind = KINDS.some(([v]) => v === t.kind) ? t.kind : "interval";
   const kopt = ([v, l]) => `<option value="${v}"${v === kind ? " selected" : ""}>${l}</option>`;
 
   const interval = kind === "interval"
-    ? `<label class="flab" title="seconds between automatic sweeps">every <span class="tg-secs"><input class="tg-interval" type="number" min="1" step="1" value="${t.interval_s || 300}" /> s</span></label>`
+    ? `${labCell("every", "seconds between automatic sweeps")}<span class="tg-secs"><input class="tg-interval" type="number" min="1" step="1" value="${t.interval_s || 300}" /> s</span>`
     : "";
 
   let watch = "";
@@ -24,19 +30,31 @@ export function triggerParts(t, model) {
     // watch datasets OR views (a view fires when any of its source datasets gains rows)
     const sources = [...model.datasets(), ...(model.profile.subsets || []).map((s) => s.id)];
     const opts = sources.filter((d) => !have.has(d)).map((d) => `<option>${esc(d)}</option>`).join("");
-    watch = `<div class="tg-watch"><div class="sub-lbl">watch <span class="muted">(fires on new rows)</span></div>
-      <div class="tg-chips">${(t.watch || []).map((w) => chip(w, "data-ds", "tg-rmwatch")).join("")}<select class="tg-addwatch"><option value="">+ watch source…</option>${opts}</select></div></div>`;
+    watch = labCell("watch", "datasets or views; the trigger fires when one gains rows", true)
+      + srcInputs(
+        (t.watch || []).map((w) => srcChip(w, "data-ds", "tg-rmwatch")).join(""),
+        "tg-addwatch",
+        `<option value="">+ watch source…</option>${opts}`,
+      );
   }
 
-  // targets are wired by dragging the out-port to a price node — no add dropdown (redundant)
-  const targets = `<div class="tg-targets"><div class="sub-lbl">fires <span class="muted">(drag ▸ to a price node)</span></div>
-    <div class="tg-chips">${(t.targets || []).map((p) => chip(p, "data-p", "tg-rmtarget")).join("") || `<span class="muted">none — wire a price node</span>`}</div></div>`;
+  // targets: drag the out-port to a price node OR pick one here (same source-row UI as watch)
+  const haveT = new Set(t.targets || []);
+  const popts = (model.profile.price_nodes || []).map((p) => p.id)
+    .filter((p) => !haveT.has(p)).map((p) => `<option>${esc(p)}</option>`).join("");
+  const targets = labCell("fires", "price nodes this trigger fires", true)
+    + srcInputs(
+      (t.targets || []).map((p) => srcChip(p, "data-p", "tg-rmtarget")).join(""),
+      "tg-addfire",
+      `<option value="">+ fire target…</option>${popts}`,
+    );
 
   return {
     title: `<input class="gi gi-id tgrename" value="${esc(t.id)}" title="rename trigger" />`,
-    body: `<label class="flab">kind <select class="tg-kind">${KINDS.map(kopt).join("")}</select></label>
-      ${interval}${watch}${targets}
+    body: `<div class="lab-grid">${labCell("kind", "how the trigger decides to fire")}<select class="tg-kind">${KINDS.map(kopt).join("")}</select>
+      ${interval}${watch}${targets}</div>
       <div class="gn-foot"><button class="tg-fire">↻ fire now</button><span class="tg-prog muted"></span></div>`,
-    ports: `<span class="port out" title="drag to a price node this trigger should fire"></span>`,
+    ports: `<span class="port out" title="drag to a price node this trigger should fire"></span>`
+      + (kind === "on_change" ? `<span class="port pwatch" title="drag to a dataset or view to watch for new rows"></span>` : ""),
   };
 }

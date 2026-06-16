@@ -33,6 +33,15 @@ export const TRASH =
   '<path fill="currentColor" d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/>' +
   "</svg>";
 
+// One labelled control row inside a `.lab-grid` (graph.css): a label cell that sizes to its
+// own text (grid col 1) followed by whatever control the caller emits next (col 2, fills the
+// rest). The ONE label-grid primitive — triggers, the price node, and view config all build
+// their first config rows from it so labels line up and inputs share one width (don't hand-roll
+// a 1fr/1fr `.flab` per panel). `top` pins the label to the top for control cells that wrap to
+// several lines (e.g. a chip list). The control HTML is the caller's immediate next sibling.
+export const labCell = (label, title = "", top = false) =>
+  `<span class="lab${top ? " lab-top" : ""}"${title ? ` title="${esc(title)}"` : ""}>${label}</span>`;
+
 // Monochrome inline icons (fill = currentColor, sized to 1em) — used instead of colour
 // emoji so icons match the surrounding text colour. `.ic` aligns them with the baseline.
 const _ic = (d) => `<svg class="ic" viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true"><path fill="currentColor" d="${d}"/></svg>`;

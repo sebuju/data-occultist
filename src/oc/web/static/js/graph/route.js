@@ -25,6 +25,8 @@ const C = {
                    // clearly better route still switches, but ties/small margins don't flicker
 };
 const GBAND = 10;  // a segment within this of a group border (parallel) counts as riding it
+const PORT_MIN = 12;     // hard floor between fanned out-port dots on one face (dot is 8px) — no overlap
+const PORT_MARGIN = 12;  // keep the fan this far inside the face corners
 
 const center = (r) => [r.x + r.w / 2, r.y + r.h / 2];
 const faceOut = { L: [-1, 0], R: [1, 0], T: [0, -1], B: [0, 1] };
@@ -146,7 +148,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
 
   // stage 2: route each line; A* chooses the faces (super-source/sink over all 4)
   const lines = [];
-  for (const e of edges) { if (byId.has(e.from) && byId.has(e.to)) lines.push({ from: e.from, to: e.to, key: e.key }); }
+  for (const e of edges) { if (byId.has(e.from) && byId.has(e.to)) lines.push({ from: e.from, to: e.to, key: e.key, pinSrc: e.pinSrc || null, insetEnd: e.insetEnd || 0 }); }
   for (const ln of lines) {
     const A = byId.get(ln.from), B = byId.get(ln.to), base0 = WP.length;
     const ppA = portPos.get(ln.from), ppB = portPos.get(ln.to), peA = portEdges.get(ln.from), peB = portEdges.get(ln.to);
@@ -157,8 +159,10 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     const D0 = WP.length; WP.push(center(B));
     const own = new Set(); const sg = groupOfNode.get(ln.from), dg = groupOfNode.get(ln.to); if (sg != null) own.add(sg); if (dg != null) own.add(dg);
     const overlay = new Map(); const add = (from, e) => { if (!overlay.has(from)) overlay.set(from, []); overlay.get(from).push(e); };
-    // hysteresis: non-previous faces cost a small stickiness bias, so the route keeps its face
-    for (const f of FACES) { const od = outDir(f); add(S0, { to: srcIdx[f], d1: od, d2: od, corner: null, len: prev && prev.d1 !== f ? C.faceStick : 0, gset: EMPTY }); }
+    // hysteresis: non-previous faces cost a small stickiness bias, so the route keeps its face.
+    // pinSrc (port lines) clamps the source to a single face — the line leaves the out-port dot.
+    const srcFaces = ln.pinSrc ? [ln.pinSrc] : FACES;
+    for (const f of srcFaces) { const od = outDir(f); add(S0, { to: srcIdx[f], d1: od, d2: od, corner: null, len: prev && prev.d1 !== f ? C.faceStick : 0, gset: EMPTY }); }
     for (const f of FACES) { const id = inDirOf(f); add(dstIdx[f], { to: D0, d1: id, d2: id, corner: null, len: prev && prev.d2 !== f ? C.faceStick : 0, gset: EMPTY }); }
     for (const f of FACES) for (const e of peA[f]) add(srcIdx[f], e);
     for (const g of FACES) for (const e of peB[g]) add(e.to, { to: dstIdx[g], d1: rev(e.d2), d2: rev(e.d1), corner: e.corner, len: e.len, gset: e.gset });
@@ -177,14 +181,14 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
       const sc = center(A), dc = center(B), horiz = Math.abs(dc[0] - sc[0]) >= Math.abs(dc[1] - sc[1]);
       const mx = (sc[0] + dc[0]) / 2, my = (sc[1] + dc[1]) / 2;
       ln.pts = simplify(horiz ? [sc, [mx, sc[1]], [mx, dc[1]], dc] : [sc, [sc[0], my], [dc[0], my], dc]);
-      ln.srcSide = horiz ? (dc[0] >= sc[0] ? "R" : "L") : (dc[1] >= sc[1] ? "B" : "T");
+      ln.srcSide = ln.pinSrc || (horiz ? (dc[0] >= sc[0] ? "R" : "L") : (dc[1] >= sc[1] ? "B" : "T"));
       ln.dstSide = horiz ? (dc[0] >= sc[0] ? "L" : "R") : (dc[1] >= sc[1] ? "T" : "B");
     }
     WP.length = base0;
   }
 
   // stage 3: nudging — split shared corridors into nested lanes, centred in their alley
-  nudge(lines, byId, rects);
+  nudge(lines, byId, rects, opts.outPorts || new Map());
 
   const out = new Map();
   for (const ln of lines) out.set(ln.key, { pts: ln.pts, p1: ln.pts[0].slice(), d1: ln.srcSide, p2: ln.pts[ln.pts.length - 1].slice(), d2: ln.dstSide });
@@ -196,7 +200,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
 // so a vertex = base + its V-offset + its H-offset and orthogonality is preserved). Port stubs are
 // segments too => connectors leaving one face fan out along it. Each lane band is shifted to stay
 // within the free alley bounded by neighbouring nodes, so no lane spills across a node edge.
-function nudge(lines, byId, rects) {
+function nudge(lines, byId, rects, outPorts) {
   for (const ln of lines) { ln._V = ln.pts.map((p) => p.slice()); ln._dx = new Array(ln._V.length).fill(0); ln._dy = new Array(ln._V.length).fill(0); }
   const segs = [];
   for (const ln of lines) { const V = ln._V; for (let i = 0; i + 1 < V.length; i++) { const a = V[i], b = V[i + 1];
@@ -233,7 +237,57 @@ function nudge(lines, byId, rects) {
   for (const ln of lines) {
     const pts = ln._V.map((p, i) => [p[0] + ln._dx[i], p[1] + ln._dy[i]]);
     clampEnds(pts, byId.get(ln.from), ln.srcSide); clampEnds(pts, byId.get(ln.to), ln.dstSide, true);
-    ln.pts = simplify(pts);
+    ln._pts = pts;   // hold before simplify so the port-fan pass can place each source stub
+  }
+  // every PORT-line endpoint (data/control lines on a port dot) is laid out on the face it touches —
+  // BOTH the leaving end and the arriving end — fanned along that face so no two dots overlap.
+  fanFaceEnds(lines, byId, outPorts);
+  // pull a line's arriving end a few px INTO the node (along the face normal, so the last segment
+  // just shortens and stays orthogonal) — lets an end marker rest halfway inside the edge.
+  for (const ln of lines) if (ln.insetEnd) {
+    const p = ln._pts, i = p.length - 1, v = faceOut[ln.dstSide];
+    if (i >= 1 && v) p[i] = [p[i][0] - v[0] * ln.insetEnd, p[i][1] - v[1] * ln.insetEnd];
+  }
+  for (const ln of lines) ln.pts = simplify(ln._pts);
+}
+// Lay out the endpoints of every port line (pinSrc set) along the face each touches: the source end
+// where it LEAVES a node and the destination end where it ARRIVES. Per face, endpoints are ordered by
+// where their far end sits (so stubs don't cross) and spread one laneGap apart, kept inside the face
+// and floored at PORT_MIN so dots never overlap. An idle out-port dot sits dead-centre of its face, so
+// arriving lines on that same face are kept clear of the centre. Structural lines (no pinSrc) untouched.
+function fanFaceEnds(lines, byId, outPorts) {
+  const groups = new Map();   // "<node id>\x00<side>" -> endpoints touching that face
+  const push = (nodeId, side, ln, end, other) => {
+    const k = nodeId + "\x00" + side;
+    (groups.get(k) || groups.set(k, []).get(k)).push({ ln, end, other });
+  };
+  for (const ln of lines) {
+    if (!ln.pinSrc) continue;   // only port lines fan; structural lines keep their routed ends
+    push(ln.from, ln.srcSide, ln, "src", center(byId.get(ln.to)));
+    push(ln.to, ln.dstSide, ln, "dst", center(byId.get(ln.from)));
+  }
+  for (const [k, arr] of groups) {
+    const sep = k.indexOf("\x00"), nodeId = k.slice(0, sep), side = k.slice(sep + 1);
+    const nd = byId.get(nodeId); if (!nd) continue;
+    const horiz = side === "L" || side === "R";
+    const lo = horiz ? nd.y : nd.x, span = horiz ? nd.h : nd.w, mid = lo + span / 2;
+    arr.sort((a, b) => (horiz ? a.other[1] - b.other[1] : a.other[0] - b.other[0]));
+    const n = arr.length;
+    let coords;
+    if (n < 2) coords = [mid];
+    else {
+      const pref = Math.min(span - PORT_MARGIN, (n - 1) * C.laneGap);
+      const spread = Math.max(0, pref, (n - 1) * PORT_MIN);
+      coords = arr.map((_, i) => mid - spread / 2 + (i * spread) / (n - 1));
+    }
+    // a node with an idle out-port on THIS face parks its dot at the centre — push arriving lines off it
+    const reserveMid = outPorts.get(nodeId) === side && !arr.some((e) => e.end === "src");
+    for (let i = 0; i < n; i++) {
+      let c = coords[i];
+      if (reserveMid && Math.abs(c - mid) < PORT_MIN) c = mid + (c >= mid ? PORT_MIN : -PORT_MIN);
+      c = Math.max(lo + 4, Math.min(lo + span - 4, c));
+      setEnd(arr[i].ln._pts, side, c, arr[i].end === "dst");
+    }
   }
 }
 // keep a fanned port endpoint within its node face span (perp coord already correct)
@@ -242,6 +296,20 @@ function clampEnds(pts, nd, side, last) {
   const i = last ? pts.length - 1 : 0, j = last ? pts.length - 2 : 1, M = 6;
   if (side === "T" || side === "B") { const x = Math.max(nd.x + M, Math.min(nd.x + nd.w - M, pts[i][0])); if (pts[j] && Math.abs(pts[j][0] - pts[i][0]) < 0.5) pts[j] = [x, pts[j][1]]; pts[i] = [x, pts[i][1]]; }
   else { const y = Math.max(nd.y + M, Math.min(nd.y + nd.h - M, pts[i][1])); if (pts[j] && Math.abs(pts[j][1] - pts[i][1]) < 0.5) pts[j] = [pts[j][0], y]; pts[i] = [pts[i][0], y]; }
+}
+
+// place a port-line endpoint at `coord` along its face (perp axis), carrying the collinear stub
+// vertex with it so that segment stays orthogonal — the line meets its dot. `last` picks the END
+// endpoint (arriving) instead of the START (leaving).
+function setEnd(pts, side, coord, last) {
+  if (pts.length < 2) return;
+  const i = last ? pts.length - 1 : 0, j = last ? pts.length - 2 : 1;
+  // carry the collinear stub vertex too — but ONLY when it's interior. On a 2-point (straight) line
+  // the "neighbour" IS the opposite endpoint; dragging it would yank that dot off its own node when
+  // both ends fan to different coords. There, just move this endpoint (the segment goes diagonal).
+  const carry = pts.length > 2;
+  if (side === "T" || side === "B") { if (carry && Math.abs(pts[j][0] - pts[i][0]) < 0.5) pts[j][0] = coord; pts[i][0] = coord; }
+  else { if (carry && Math.abs(pts[j][1] - pts[i][1]) < 0.5) pts[j][1] = coord; pts[i][1] = coord; }
 }
 
 // ---- render: SVG path from a polyline (square or arc-rounded corners) ------

@@ -4,7 +4,8 @@
 import * as api from "../api.js";
 import * as conn from "../conn.js";
 import * as hub from "../hub.js";
-import { esc, TRASH, CAMERA, WARN, PAUSE } from "../dom.js";
+import { esc, TRASH, CAMERA, WARN, PAUSE, labCell } from "../dom.js";
+import { nodeIcon } from "./node_icons.js";
 import { openModal } from "../modal.js";
 import { Overlay } from "../overlay.js";
 import { log, timed, setLogOpen } from "../log.js";
@@ -25,29 +26,54 @@ import { initTitlebar } from "../titlebar.js";
 
 initTitlebar();   // custom window chrome — no-op outside the desktop window
 
-const $ = (id) => document.getElementById(id);
-const setStatus = (m) => log(m);   // #status is gone — the log bar shows messages now
-const model = new GraphModel();
-const pos = new Map();            // node id -> {x,y}
-const nodeEls = new Map();        // node id -> DOM element (built once, reused)
-const collapsed = new Set();      // collapsed node ids
-const view = { panX: 0, panY: 0, zoom: 1 };  // canvas pan/zoom
-const COLX = { game: 20, window: 300, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, dataset: 900, subset: 1900, dictionary: 20 };
-let live = {};                    // dataset -> {present,total,last_op,last_ts}
-const prevPresent = {};
-const prevLastTs = {};            // dataset -> last ledger event ts (changes on ANY batch)
-const dsTab = new Map();          // dataset -> "data" | "history" (which tab the merged node shows)
-let timer = null;
-let wire = null;                  // active drag-wire {winId, x1,y1}
-let selectedNodeId = null;        // node whose line(s) are highlighted
-const selected = new Set();       // multi-selected node ids (marquee / shift-click)
-const imageCanvases = new Map();  // winId -> { wrap, overlay, canvas } (drawing surface)
-const itemCanvases = new Map();   // `winId:itemId` -> { host, canvas, overlay, + coord maps }
+import {
+  $, setStatus, model, pos, nodeEls, collapsed, view, selected, nodeSizes, openImages, winPage,
+  imageCanvases, itemCanvases, busy, overlays, gridPreviews, gridReads, gridCellBoxes,
+  itemReads, prevPresent, prevLastTs, dsTab, clearGrid, nw, nh,
+} from "./state.js";
+import {
+  drawEdges, requestEdges, flushEdges, buildLinks, nodeRect, freezeRouting,
+  setDraggingNodes, routeCache, ROUTE,
+} from "./routing.js";
+import {
+  nmState, buildNodeMap, setNodeMapVisible, setNodeMapMode, nmSyncSelection,
+  renderNodeMap, nmUpdateViewport,
+} from "./panels/nodemap.js";
+import { act, actState, buildActivity } from "./panels/activity.js";
+import { testWin, testState, buildTesting } from "./panels/testing.js";
+import { tb, tbState, buildToolbox } from "./panels/toolbox.js";
+import {
+  vtables, vtableFor, refreshDataNode, refreshAllDataNodes, expandSubsetRow,
+  batchesState, loadBatchesNode, refreshAllBatchesNodes,
+} from "./panels/datanodes.js";
+import {
+  pc, pcState, precapOpen, precapBusy, buildPrecap, fmtBytes,
+} from "./panels/precap.js";
+import { pushHistory, resetHistory, undo, redo } from "./history.js";
+import { workers, registerWorker, unregisterWorker } from "./workers.js";
+import {
+  KINDS, ITEM_KINDS, updateImageLabel, closeImage, openImage, createItemFromGeom,
+  closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
+  itemReadTimers, itemReadBusy, itemReadAgain, scheduleItemRead, runItemRead, itemReadout,
+  prevHost, previewProfileFor, previewBusy, previewAgain, setReadBusy, refreshPreview,
+  commitPreviewNode, tellChip, subLabel, previewCell, previewTable, prefillDetectText,
+  detectBusy, detectAgain, refreshDetect, setDetectStatus, detectT, _detectPending,
+  _detectAll, refreshOpenDetect, previewT, _previewPending, _previewAll, refreshOpenPreviews,
+  loadImage, refreshImageBoxes, itemLocatorBox, staticGridOrigins, buildGridGuides,
+  staticFieldPreview, refreshGridPreview, cellKept, setGridFromPreview, selectRegionNode,
+} from "./imaging.js";
+import {
+  liveWin, liveWinState, buildLiveWindow, renderLiveWindow, setLiveMode, setLiveSave,
+} from "./panels/livewin.js";
 
-// Central registry of EVERY drawing overlay, so selection, deselection, and box
-// hotkeys are handled in ONE place — any new overlay just registers here and gets
+const COLX = { game: 20, window: 300, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, dataset: 900, subset: 1900, dictionary: 20 };
+export let live = {};             // dataset -> {present,total,last_op,last_ts} (read by datanodes/refreshLive)
+export let wire = null;           // active drag-wire {winId, x1,y1} (read by routing.drawEdges)
+export let selectedNodeId = null; // node whose line(s) are highlighted (read by routing.selClsFor)
+
+// Central registry of EVERY drawing overlay lives in state.js; selection, deselection, and
+// box hotkeys are handled in ONE place here — any new overlay registers and gets
 // cross-deselect + WASD for free. rec = { overlay, kind, winId, itemId?, persist(box), refresh() }.
-const overlays = new Map();
 let activeOverlayKey = null;        // which overlay holds the live box selection
 
 function registerOverlay(key, rec) { overlays.set(key, { key, ...rec }); }
@@ -70,17 +96,7 @@ function selectWindowBox(winId, boxId) {
   if (e) e.overlay.setActive(boxId);
   overlaySelected(`win:${winId}`, boxId);
 }
-const openImages = new Set();     // winIds whose image is loaded into the window node (persisted)
-const nodeSizes = new Map();      // node id -> {w,h} for resizable nodes (persisted)
 let pendingOpenImages = [];
-const busy = new Map();            // node id -> active-work count (drives the spinner)
-const gridPreviews = new Map();    // winId -> live-detected field boxes (dashed grid)
-const gridReads = new Map();        // winId -> per-cell read values {x,y,w,h,text,confidence}
-const gridCellBoxes = new Map();    // winId -> detected CELL outlines (solid), the tiling found
-// Invalidate every detected-grid layer for a window at once (kept in lock-step so a stale
-// cell outline can't linger after the others clear).
-function clearGrid(winId) { gridPreviews.delete(winId); gridReads.delete(winId); gridCellBoxes.delete(winId); }
-const itemReads = new Map();        // "winId:itemId" -> last cutout read {fields,tells,valid,cell}
 
 // Show/hide a node's spinner via a ref count, so overlapping async tasks behave.
 function setNodeBusy(nodeId, on) {
@@ -90,63 +106,11 @@ function setNodeBusy(nodeId, on) {
   if (on) freezeRouting();   // OCR shouldn't make the node lines re-route — freeze them
 }
 
-// Freeze edge re-routing while OCR runs. The image/cutout canvases redraw every read and
-// fire their ResizeObservers -> drawEdges -> A* reroute, so the lines visibly wiggle during
-// OCR (and continuously in live mode). While frozen, drawEdges keeps each line's current path
-// and scheduleRouting skips the A*. Each OCR tick refreshes the timer, so a continuous live
-// loop stays frozen; ~300ms after the last read it unfreezes and settles the routes once.
-let routingFrozen = false;
-let _routeFreezeTimer = null;
-function freezeRouting() {
-  routingFrozen = true;
-  clearTimeout(_routeFreezeTimer);
-  _routeFreezeTimer = setTimeout(() => { routingFrozen = false; drawEdges(); }, 300);
-}
 // Run an async task while showing spinners on the given node ids.
 async function withBusy(ids, fn) {
   ids.forEach((id) => setNodeBusy(id, true));
   try { return await fn(); }
   finally { ids.forEach((id) => setNodeBusy(id, false)); }
-}
-
-// ---- background worker registry -------------------------------------------
-// Anything doing real background work — the backend precapture worker, the live
-// re-read loop, future long jobs — registers here. The log bar then shows a live
-// count on its far right plus a per-worker emergency kill button.
-const workers = new Map();   // id -> { label, kill }
-function registerWorker(id, label, kill) {
-  const w = workers.get(id);
-  if (w) { w.kill = kill; if (w.label === label) return; w.label = label; }   // same label -> nothing visible changed
-  else workers.set(id, { label, kill });
-  renderWorkers();
-}
-function unregisterWorker(id) { if (workers.delete(id)) renderWorkers(); }
-
-// Reconcile the indicator IN PLACE — never rebuild innerHTML (the precapture poll
-// re-registers every 700ms; rebuilding would restart the spinner animation and churn
-// the buttons every tick). Fixed spinner + count are made once; buttons are reused.
-let wkSpin = null, wkCount = null;
-const workerBtns = new Map();   // id -> <button>
-function renderWorkers() {
-  const el = $("logWorkers");
-  if (!el) return;
-  el.hidden = workers.size === 0;
-  if (!wkSpin) {
-    wkSpin = document.createElement("span"); wkSpin.className = "lw-spin";
-    wkCount = document.createElement("span"); wkCount.className = "lw-count";
-    el.append(wkSpin, wkCount);
-  }
-  wkCount.textContent = `${workers.size} worker${workers.size === 1 ? "" : "s"}`;
-  for (const [id, btn] of workerBtns) if (!workers.has(id)) { btn.remove(); workerBtns.delete(id); }
-  for (const [id, w] of workers) {
-    let btn = workerBtns.get(id);
-    if (!btn) {
-      btn = document.createElement("button");
-      btn.className = "lw-kill"; btn.dataset.kill = id; btn.title = "emergency stop";
-      el.appendChild(btn); workerBtns.set(id, btn);
-    }
-    if (btn._label !== w.label) { btn.textContent = `⨯ ${w.label}`; btn._label = w.label; }
-  }
 }
 
 // `.flab` rows are <label>s for layout/a11y only — a click on the label chrome
@@ -260,6 +224,9 @@ groups.initGroups({
   superWorld: () => $("sgroups"),
   nodeRect: (id) => nodeRect(id),
   nodeType: nodeTypeOf,
+  // a window's preview node is bonded to it: it shares the window's group, follows it in/out,
+  // and is never grouped on its own (so it carries no detach button).
+  bonds: () => (model.profile.windows || []).map((w) => ({ leader: `win:${w.id}`, follower: `prev:${w.id}` })),
   moveMembers: (ids, ev) => { const lead = ids.find((id) => pos.get(id)); if (lead) moveNodes(lead, ids.filter((x) => x !== lead), ev); },
   persist: () => persist.layout(),
   afterChange: () => { refreshDetachIcons(); syncMultiSelect(); },
@@ -269,36 +236,6 @@ groups.initGroups({
   startGroupResize: (gid, ev) => startGroupResize(gid, ev),
 });
 
-// ---- undo / redo (full history of the profile) -----------------------------
-// Layout is EXCLUDED from history (snapState strips it) so undo/redo is config-only —
-// moving a node never becomes an undo step, and undo never shuffles the canvas.
-
-let history = [];
-let hIndex = -1;
-let restoring = false;
-function snapState() { const { layout, ...rest } = model.profile; return JSON.stringify(rest); }
-function pushHistory() {
-  if (restoring) return;
-  const s = snapState();
-  if (hIndex >= 0 && history[hIndex] === s) return;   // no change
-  history = history.slice(0, hIndex + 1);
-  history.push(s);
-  if (history.length > 200) history.shift();
-  hIndex = history.length - 1;
-}
-function resetHistory() { history = [snapState()]; hIndex = 0; }
-function applyHistory() {
-  restoring = true;
-  const layout = model.profile.layout;     // carry layout across the reload (it's not in history)
-  model.load(JSON.parse(history[hIndex]));
-  model.profile.layout = layout;
-  render();
-  for (const winId of imageCanvases.keys()) { refreshImageBoxes(winId); refreshDetect(winId); }
-  persist.content();
-  restoring = false;
-}
-function undo() { if (hIndex > 0) { hIndex--; applyHistory(); setStatus("undo"); } }
-function redo() { if (hIndex < history.length - 1) { hIndex++; applyHistory(); setStatus("redo"); } }
 // All per-node UI state (position, size, collapse) is keyed by node id, so any rename
 // that changes a node id must remap every one of those maps in lockstep — otherwise the
 // node loses its saved slot and jumps. `remapNodeState` is the single place that does
@@ -348,6 +285,21 @@ const DICT_MODES = [
   ["correct_drop", "correct + drop"],
 ];
 
+// Conditional fallback rules (FieldRule). `when` is a predicate on the RAW read's
+// shape; `then` substitutes a value or drops the record. Rules run in order, first
+// match wins. Generalises the old empty / if_number / if_text one-offs.
+const RULE_WHEN = [
+  ["empty", "is empty"],
+  ["no_digit", "has no digit"],
+  ["all_digit", "is all digits"],
+  ["has_digit", "has a digit"],
+  ["no_letter", "has no letter"],
+  ["all_letter", "is all letters"],
+  ["has_letter", "has a letter"],
+  ["always", "always"],
+];
+const RULE_THEN = [["set", "set value"], ["drop", "drop record"]];
+
 // <option>s for a field's dictionary picker: "all" (every enabled dictionary pooled)
 // + each named dictionary. `sel` is the field's pinned DictionaryDef.id ("" = pooled).
 function dictOptions(sel) {
@@ -386,12 +338,15 @@ function ensurePositions() {
 // next to where it belongs.
 
 // Closest free (non-overlapping) slot in a column to `nearY`. Used to drop a brand-new
-// node beside its parent instead of at the far bottom of its column.
-function freeSpot(x, nearY, w = 240, h = 160) {
+// node beside its parent instead of at the far bottom of its column. `w`/`h` are the new
+// node's REAL measured size (see measureNode) so the gap test fits the actual box, not a
+// guess. `joinGroupId` is the group the node is ABOUT to join — its box is excluded from
+// the obstacles so the node is allowed to land inside it (every other group still repels).
+function freeSpot(x, nearY, w = 240, h = 160, joinGroupId = null) {
   const GAP = 18, STEP = 20;
   const rects = [];
   for (const [id, p] of pos) if (Number.isFinite(p.x)) rects.push({ x: p.x, y: p.y, w: nw(id), h: nh(id) });
-  for (const g of groups.groupBoxes()) rects.push(g.box);   // a new node must not land inside a group
+  for (const g of groups.groupBoxes()) if (g.id !== joinGroupId) rects.push(g.box);   // a new node must not land inside a (foreign) group
   const free = (y) => !rects.some((o) =>
     x < o.x + o.w + GAP && x + w + GAP > o.x && y < o.y + o.h + GAP && y + h + GAP > o.y);
   for (let d = 0; d <= 8000; d += STEP) {
@@ -402,6 +357,27 @@ function freeSpot(x, nearY, w = 240, h = 160) {
   return { x, y: Math.max(0, snap(nearY)) };
 }
 
+// Build a brand-new node OFFSCREEN purely to read its real border-box size, then discard it.
+// buildNode has no global side effects (canvas/image registration happens in render() /
+// openItemImage, not here), so the throwaway element is safe to drop. A node whose size is
+// driven by a <canvas>/<img> only settles its aspect a frame later, so for those we wait two
+// rAFs and re-measure — hence async.
+async function measureNode(n) {
+  const probe = buildNode(n);
+  probe.style.position = "absolute";
+  probe.style.visibility = "hidden";
+  probe.style.left = "-99999px";
+  probe.style.top = "0";
+  $("gnodes").appendChild(probe);
+  let dims = { w: probe.offsetWidth || 240, h: probe.offsetHeight || 160 };
+  if (probe.querySelector("canvas, img")) {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    dims = { w: probe.offsetWidth || dims.w, h: probe.offsetHeight || dims.h };
+  }
+  probe.remove();
+  return dims;
+}
+
 // Position a just-created node at the nearest free spot to its parent. Call BEFORE
 // render() so ensurePositions() leaves it alone.
 // world-space coords of the centre of the usable (panel-clear) viewport
@@ -410,12 +386,33 @@ function viewportCenterWorld() {
   return { x: (u.left + u.w / 2 - view.panX) / view.zoom, y: (u.top + u.h / 2 - view.panY) / view.zoom };
 }
 
-function placeNewNode(id, type) {
-  // start the free-space search at the viewport centre (offset by half a node so the box is
-  // centred, not its top-left), spiralling out from there past any nodes/groups in the way.
-  const c = viewportCenterWorld();
-  pos.set(id, freeSpot(c.x - 120, c.y - 80));
+// Position a just-created node. Call BEFORE render() so ensurePositions() leaves it alone.
+// `srcId` is the node that SPAWNED this one (a node adding a node): the new node is placed
+// just beside it and — if that source sits in a group — allowed to land inside that group's
+// box (it then JOINS the group via inheritGroupFrom() after render). With no `srcId` (a
+// toolbox spawn) it lands at the viewport centre, clear of every group.
+// The node is prerendered (measureNode) so its REAL size drives the free-spot search.
+async function placeNewNode(id, type, srcId = null) {
+  const n = model.nodes().find((x) => x.id === id);
+  const dims = n ? await measureNode(n) : { w: 240, h: 160 };
+  const joinGroup = srcId ? groups.groupOf(srcId) : null;
+  const sp = srcId && pos.get(srcId);
+  // anchor beside the adding node (to its right, top-aligned), else the viewport centre
+  let x, y;
+  if (sp) { x = sp.x + nw(srcId) + 40; y = sp.y; }
+  else { const c = viewportCenterWorld(); x = c.x - dims.w / 2; y = c.y - dims.h / 2; }
+  pos.set(id, freeSpot(x, y, dims.w, dims.h, joinGroup?.id));
   setStatus(`created ${type} ${id.split(":").pop()}`);
+}
+
+// A node spawned by another inherits that node's group, so a "+ add" beside a grouped node
+// keeps the result in the same box. Call AFTER render() — addToGroup needs the new node to
+// have a live rect. Generalises the old item->field grouping; placeNewNode already parked
+// the node inside the group's box, so the box just grows to hug it.
+function inheritGroupFrom(newId, srcId) {
+  if (!srcId) return;
+  const g = groups.groupOf(srcId);
+  if (g) groups.addToGroup(g.id, [newId]);
 }
 
 // ---- smooth pan to a node (cancelled by any user action) ------------------
@@ -591,18 +588,31 @@ function startGroupResize(gid, ev) {
 // ---- render ---------------------------------------------------------------
 
 function windowControls(w) {
-  // The record key is taught per item template (key section in the item node; the
-  // teach page covers grid windows). Where records flow is shown by the wire to the
-  // dataset node, so the window node itself only carries the image/delete actions.
-  // The "live" checkbox controls whether the live view attempts this window.
-  // auto-scroll lives on the window (precapture scrolls this window's list while recording).
+  // The record key is taught per item template (key section in the item node; the teach
+  // page covers grid windows). Where records flow is shown by the wire to the dataset node.
+  // The toggles are slide-toggle flabs; the image selector / recapture / page nav live
+  // below the canvas (built in openImage). "clicks" only shows when auto-scroll is on.
   const sc = w.scroll || {};
-  const autoScroll = `<label class="win-live" title="precapture auto-scrolls this window's list while recording it"><input type="checkbox" class="winscroll" data-k="autoscroll" ${sc.autoscroll ? "checked" : ""}/> auto-scroll</label>
-    <label class="flab" title="wheel notches sent per auto-scroll nudge">clicks <input type="number" class="winscroll" data-k="clicks" value="${sc.scroll_clicks ?? 1}" min="1"/></label>`;
-  return `<label class="win-live" title="item rows: static tiles the data area into a fixed grid from the cell size (no OCR for location); off locates rows by OCR (a tell/locate field) — only needed for a scroll-parked list"><input type="checkbox" class="winstatic" ${w.static_grid !== false ? "checked" : ""}/> static grid</label>
-    ${autoScroll}
-    <div class="gn-foot"><button class="imgbtn">${CAMERA}<span class="imgbtn-lbl">capture</span></button>
-    <label class="win-live" title="attempt this window in live view"><input type="checkbox" class="winlive" ${w.live !== false ? "checked" : ""}/> live</label></div>`;
+  return `<label class="flab" title="item rows: static tiles the data area into a fixed grid from the cell size (no OCR for location); off locates rows by OCR (a tell/locate field) — only needed for a scroll-parked list">static grid <input type="checkbox" class="winstatic" ${w.static_grid !== false ? "checked" : ""}/></label>
+    <label class="flab" title="precapture auto-scrolls this window's list while recording it">auto-scroll <input type="checkbox" class="winscroll" data-k="autoscroll" ${sc.autoscroll ? "checked" : ""}/></label>
+    ${sc.autoscroll ? `<label class="flab" title="wheel notches sent per auto-scroll nudge">auto-scroll clicks <input type="number" class="winscroll" data-k="clicks" value="${sc.scroll_clicks ?? 1}" min="1"/></label>` : ""}
+    <label class="flab" title="attempt this window in live view">live <input type="checkbox" class="winlive" ${w.live !== false ? "checked" : ""}/></label>
+    ${windowItemOrder(w)}`;
+}
+
+// Item templates listed in PRIORITY order — the top row is priority 0 (the static grid's
+// base cell, which sets the grid pitch); a lower row outranks it when their cells overlap
+// the same tile. Reordering IS how priority is set; the number itself is never shown. Click
+// a name to jump to that item's node.
+function windowItemOrder(w) {
+  const items = [...(w.items || [])].sort((a, b) => (a.priority || 0) - (b.priority || 0));
+  if (!items.length) return "";
+  const rows = items.map((it, i) => `<div class="wi-row" data-id="${esc(it.id)}">
+      <span class="wi-name" title="select this item's node">${esc(it.id)}</span>
+      <button class="wimv" data-id="${esc(it.id)}" data-d="-1" ${i === 0 ? "disabled" : ""} title="move up — lower priority (top = base cell)">▲</button>
+      <button class="wimv" data-id="${esc(it.id)}" data-d="1" ${i === items.length - 1 ? "disabled" : ""} title="move down — higher priority (wins tile overlaps)">▼</button>
+    </div>`).join("");
+  return `<div class="muted il-h wi-h" title="template priority order — the top template is the base cell (sets the grid pitch); a lower template outranks it when their cells overlap the same tile">templates</div>${rows}`;
 }
 
 // The cell size (item.box w/h, window fractions) shown as editable inputs below the cutout
@@ -613,8 +623,8 @@ function cellSizeControls(it) {
   const v = (n) => +(+n || 0).toFixed(4);
   // priority-0 is the static grid's base cell; a non-0 item can match its w/h so every
   // template tiles on the same pitch (only shown when this item isn't priority 0 itself)
-  return `<label class="flab" title="cell width as a window fraction — the static grid's column pitch">cell width <input type="number" class="csize" data-k="w" step="0.001" min="0.001" value="${v(b.w)}"/></label>
-    <label class="flab" title="cell height as a window fraction — the static grid's row pitch">cell height <input type="number" class="csize" data-k="h" step="0.001" min="0.001" value="${v(b.h)}"/></label>`;
+  return `<label class="flab" title="cell width as a window fraction — the static grid's column pitch">width <input type="number" class="csize" data-k="w" step="0.001" min="0.001" value="${v(b.w)}"/></label>
+    <label class="flab" title="cell height as a window fraction — the static grid's row pitch">height <input type="number" class="csize" data-k="h" step="0.001" min="0.001" value="${v(b.h)}"/></label>`;
 }
 
 // Keep the cell-size inputs in sync after a canvas cell-resize (which doesn't rebuild the node).
@@ -627,34 +637,64 @@ function syncCellSize(winId, itemId) {
   }
 }
 
-// The tells + fields list shown under an item node's cutout canvas. Item fields
-// carry the SAME per-field config as the old region nodes (type/extract/sep/learn/
-// fuzzy/empty/pips) — edited here against the window's FieldDef.
-// One item field is its OWN node now (a child of its item node). This renders the same
-// per-field config that used to sit inline in the item node, against the window FieldDef.
-function itemFieldParts(n) {
-  const f = n.ref, w = n.win;
-  const fd = n.field || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
+// One field's fallback-rule rows (FieldRule list). `cls` is the change-class the node
+// wiring listens on; `fid` (item fields) tags each control so the wiring resolves the
+// field. The value input shows only for a `set` rule (a `drop` needs none).
+function ruleRows(fd, cls, fid) {
+  const da = fid ? ` data-fid="${esc(fid)}"` : "";
+  const rules = fd.rules || [];
+  if (!rules.length) return `<div class="muted frule-empty">no rules — the read is used as-is</div>`;
+  return rules.map((r, i) => {
+    const whenOpts = RULE_WHEN.map(([v, t]) => `<option value="${v}" ${(r.when || "empty") === v ? "selected" : ""}>${t}</option>`).join("");
+    const thenOpts = RULE_THEN.map(([v, t]) => `<option value="${v}" ${(r.then || "set") === v ? "selected" : ""}>${t}</option>`).join("");
+    const showVal = (r.then || "set") === "set";
+    return `<div class="frule" data-ri="${i}">
+      <select class="rule-when" data-ri="${i}"${da} title="condition tested on the raw read">${whenOpts}</select>
+      <select class="rule-then" data-ri="${i}"${da} title="what to do when it matches">${thenOpts}</select>
+      ${showVal ? `<input class="rule-val" data-ri="${i}"${da} value="${esc(r.value || "")}" placeholder="value" title="value substituted into the field"/>` : ""}
+      <button class="rule-del danger" data-ri="${i}"${da} title="remove this rule">${TRASH}</button>
+    </div>`;
+  }).join("");
+}
+
+// The per-field config body, SHARED by the region node and the item-field node (one
+// renderer, not two copies). Inputs are grouped under .fgrp sub-headings and only the
+// ones that DO something for the current type/mode are shown. `cls` is the wiring's
+// change-class ("fset" | "ffset"); `fid` (item fields) tags each control.
+function fieldConfigBody(fd, cls, fid) {
+  const da = fid ? ` data-fid="${esc(fid)}"` : "";
+  const pips = fd.type === "pips" || fd.type === "diamonds";
+  const isText = fd.type === "text";
+  const isNum = fd.type === "number";
+  const dictOn = (fd.dict_mode || "correct") !== "off";   // dictionary actually consulted
+  const hasDicts = (model.profile.dictionaries || []).length;
   const types = TYPES.map(([v, t]) => `<option value="${v}" ${fd.type === v ? "selected" : ""}>${t}</option>`).join("");
   const exs = EXTRACTS.map((v) => `<option ${(fd.extract || "whole") === v ? "selected" : ""}>${v}</option>`).join("");
-  const pips = fd.type === "pips" || fd.type === "diamonds";
-  const body = `
-    <label class="flab">type <select class="ffset" data-fid="${f.id}" data-k="type">${types}</select></label>
-    ${pips ? "" : `<label class="flab">extract <select class="ffset" data-fid="${f.id}" data-k="extract">${exs}</select></label>`}
-    ${(!pips && NEEDS_SEP.has(fd.extract)) ? `<label class="flab">separator <input class="ffset" type="text" data-fid="${f.id}" data-k="sep" value="${esc(fd.separator || "/")}"/></label>` : ""}
-    <label class="flab">learn <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="learn" ${fd.learn ? "checked" : ""}/></label>
-    <label class="flab">fuzzy <input type="number" class="ffset" data-fid="${f.id}" data-k="fuzzy" step="0.05" min="0" max="1" value="${fd.fuzzy ?? 0.82}"/></label>
-    <label class="flab" title="minimum OCR confidence this field must reach — a weaker read drops the whole record (0 = use the global floor)">conf <input type="number" class="ffset" data-fid="${f.id}" data-k="minconf" step="0.05" min="0" max="1" value="${fd.min_confidence ?? 0}"/></label>
-    <label class="flab" title="read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. drain '8' read as '81')">isolate <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="isolate" ${fd.isolate ? "checked" : ""}/></label>
-    <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="ffset" data-fid="${f.id}" data-k="empty" value="${esc(fd.empty || "")}" placeholder="(blank)"/></label>
-    ${fd.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="ffset" data-fid="${f.id}" data-k="ifnum" value="${esc(fd.if_number ?? "")}" placeholder="(off)"/></label>
-    <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="ifnumany" ${fd.if_number_any ? "checked" : ""}/></label>
-    <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="ffset" data-fid="${f.id}" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(fd.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-    ${(model.profile.dictionaries || []).length ? `<label class="flab" title="which authored dictionary this field snaps to (all = every enabled one pooled)">use dict <select class="ffset" data-fid="${f.id}" data-k="usedict">${dictOptions(fd.dictionary)}</select></label>` : ""}` : ""}
-    ${fd.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="ffset" data-fid="${f.id}" data-k="iftext" value="${esc(fd.if_text ?? "")}" placeholder="(off)"/></label>
-    <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="ffset" data-fid="${f.id}" data-k="iftextany" ${fd.if_text_any ? "checked" : ""}/></label>
-    <label class="flab" title="lowest plausible value — a read below this is a misread and drops the record (blank = no minimum)">min <input type="number" class="ffset" data-fid="${f.id}" data-k="min" value="${fd.min ?? ""}" placeholder="(none)"/></label>
-    <label class="flab" title="highest plausible value — a read above this is a misread and drops the record (blank = no maximum)">max <input type="number" class="ffset" data-fid="${f.id}" data-k="max" value="${fd.max ?? ""}" placeholder="(none)"/></label>` : ""}
+  return `
+    <div class="fgrp">read</div>
+    <label class="flab" title="read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. drain '8' read as '81')">isolate <input type="checkbox" class="${cls}" data-k="isolate"${da} ${fd.isolate ? "checked" : ""}/></label>
+    <label class="flab">type <select class="${cls}" data-k="type"${da}>${types}</select></label>
+    ${pips ? "" : `<label class="flab">extract <select class="${cls}" data-k="extract"${da}>${exs}</select></label>`}
+    ${(!pips && NEEDS_SEP.has(fd.extract)) ? `<label class="flab">separator <input class="${cls}" type="text" data-k="sep"${da} value="${esc(fd.separator || "/")}"/></label>` : ""}
+    <label class="flab" title="minimum OCR confidence this field must reach — a weaker read drops the whole record (0 = use the global floor)">conf <input type="number" class="${cls}" data-k="minconf"${da} step="0.05" min="0" max="1" value="${fd.min_confidence ?? 0}"/></label>
+    ${isNum ? `<label class="flab" title="lowest plausible value — a read below this is a misread and drops the record (blank = no minimum)">min <input type="number" class="${cls}" data-k="min"${da} value="${fd.min ?? ""}" placeholder="(none)"/></label>
+    <label class="flab" title="highest plausible value — a read above this is a misread and drops the record (blank = no maximum)">max <input type="number" class="${cls}" data-k="max"${da} value="${fd.max ?? ""}" placeholder="(none)"/></label>` : ""}
+    ${isText ? `<div class="fgrp">dictionary</div>
+    <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="${cls}" data-k="dictmode"${da}>${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(fd.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+    ${(hasDicts && dictOn) ? `<label class="flab" title="which authored dictionary this field snaps to (all = every enabled one pooled)">use dict <select class="${cls}" data-k="usedict"${da}>${dictOptions(fd.dictionary)}</select></label>` : ""}
+    <label class="flab" title="learn the dictionary from confident reads, fuzzy-correct uncertain ones">learn <input type="checkbox" class="${cls}" data-k="learn"${da} ${fd.learn ? "checked" : ""}/></label>
+    ${(fd.learn || dictOn) ? `<label class="flab" title="similarity (0-1) an uncertain read must reach to snap to a known word; higher = stricter">fuzzy <input type="number" class="${cls}" data-k="fuzzy"${da} step="0.05" min="0" max="1" value="${fd.fuzzy ?? 0.82}"/></label>` : ""}` : ""}
+    <div class="fgrp">rules <button class="ruleadd"${da} title="add a fallback rule">+ rule</button></div>
+    ${ruleRows(fd, cls, fid)}`;
+}
+
+// One item field is its OWN node (a child of its item node). It renders the shared
+// per-field config (against the window's FieldDef) plus the row-role controls (tell /
+// locate / align) that only make sense for a field inside an item template.
+function itemFieldParts(n) {
+  const f = n.ref, fd = n.field || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
+  const body = `${fieldConfigBody(fd, "ffset", f.id)}
+    <div class="fgrp">row role</div>
     <label class="flab" title="require this field to read something — it doubles as a tell">tell <input type="checkbox" class="itell" data-fid="${f.id}" ${f.tell ? "checked" : ""}/></label>
     ${f.tell ? `<label class="flab" title="minimum OCR confidence the read must reach (0 = any)">tell conf <input type="number" class="itellconf" data-fid="${f.id}" step="0.05" min="0" max="1" value="${f.tell_conf ?? 0}"/></label>` : ""}
     ${f.tell && fd.type === "number" ? `<label class="flab" title="pass the tell even when the read carries text (e.g. a polarity glyph), not only a clean number">allow text <input type="checkbox" class="itelltext" data-fid="${f.id}" ${f.tell_allow_text ? "checked" : ""}/></label>` : ""}
@@ -664,16 +704,39 @@ function itemFieldParts(n) {
   return { title: `<input class="gi gi-id" data-k="fldid" value="${esc(f.id)}" title="field id" />`, body };
 }
 
+// Shared wiring for a field-config body's rule editor (region + item-field nodes both
+// call this). `rebuild` re-renders the node body (add/remove a rule, or a then-toggle
+// that shows/hides its value); `commit` persists a plain value edit without a rebuild.
+function wireFieldRules(div, fd, { rebuild, commit }) {
+  fd.rules = fd.rules || [];
+  div.querySelector(".ruleadd")?.addEventListener("click", () => {
+    fd.rules.push({ when: "empty", then: "set", value: "" });
+    rebuild();
+  });
+  div.querySelectorAll(".rule-when").forEach((s) => s.addEventListener("change", (e) => {
+    fd.rules[+e.target.dataset.ri].when = e.target.value; commit();
+  }));
+  div.querySelectorAll(".rule-then").forEach((s) => s.addEventListener("change", (e) => {
+    fd.rules[+e.target.dataset.ri].then = e.target.value; rebuild();   // show/hide the value input
+  }));
+  div.querySelectorAll(".rule-val").forEach((inp) => inp.addEventListener("input", (e) => {
+    fd.rules[+e.target.dataset.ri].value = e.target.value; commit();
+  }));
+  div.querySelectorAll(".rule-del").forEach((b) => b.addEventListener("click", (e) => {
+    fd.rules.splice(+e.target.dataset.ri, 1); rebuild();
+  }));
+}
+
 function itemLists(it, w) {
   const fieldDef = (fid) => (w.fields || []).find((x) => x.id === fid) || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
   // static grid tiles rows from the cell — OCR row-location (locate) is unused, so lock it off
   const staticOn = w.static_grid !== false;
   const tells = (it.tells || []).map((t) => `<div class="ti-row" data-tid="${t.id}">
       <span class="ti-kind">${esc(t.kind)}</span>
-      <label class="ti-loc" title="${staticOn ? "row location is by the static grid — turn off static grid to locate by OCR" : "use to locate rows"}"><input type="radio" name="loc-${esc(it.id)}" class="iset" data-k="locate" data-tid="${t.id}" ${t.locate ? "checked" : ""} ${staticOn ? "disabled" : ""}/>loc</label>
+      ${staticOn ? "" : `<label class="ti-loc" title="use to locate rows"><input type="radio" name="loc-${esc(it.id)}" class="iset" data-k="locate" data-tid="${t.id}" ${t.locate ? "checked" : ""}/>loc</label>`}
       ${t.kind === "text" ? `<select class="iset" data-k="field" data-tid="${t.id}">${(it.fields || []).map((f) => `<option ${t.field === f.field ? "selected" : ""}>${esc(f.field)}</option>`).join("")}</select>` : ""}
       ${t.kind === "color" ? `<input type="color" class="iset" data-k="color" data-tid="${t.id}" value="${t.color || "#ffcc00"}"/>` : ""}
-      ${t.locate ? `<select class="iset" data-k="align" data-tid="${t.id}" title="anchor on this line of a wrapped name">${["none", "top", "center", "bottom"].map((v) => `<option ${(t.align || it.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select>` : ""}
+      ${(t.locate && !staticOn) ? `<select class="iset" data-k="align" data-tid="${t.id}" title="anchor on this line of a wrapped name">${["none", "top", "center", "bottom"].map((v) => `<option ${(t.align || it.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select>` : ""}
       <input type="number" class="iset" data-k="threshold" data-tid="${t.id}" step="0.05" min="0" max="1" value="${t.threshold ?? 0.5}" title="threshold"/>
       <button class="ti-del danger" data-tid="${t.id}" title="remove">${TRASH}</button></div>`).join("");
   // fields flagged as tells (f.tell) show here too, read-only — they're edited in the fields
@@ -690,20 +753,19 @@ function itemLists(it, w) {
       <button class="if-del danger" data-fid="${esc(f.id)}" title="remove">${TRASH}</button></div>`).join("");
   // the cutout draw-mode buttons, split by what they draw: cell under "cell", field under
   // "fields", every tell kind under "tells". Selecting one sets the active draw kind.
-  const drawBtn = ([v, label, icon]) => `<button class="tool${v === "field" ? " active" : ""}" data-kind="${v}" title="draw ${label}">${icon} ${label}</button>`;
+  const drawBtn = ([v, label, icon, tip]) => `<button class="tool" data-kind="${v}" title="${esc(tip || `draw ${label}`)}">${icon} ${label}</button>`;
   // copy w/h from the priority-0 base cell — sits next to the cell draw button (non-base only)
   const matchBtn = (it.priority || 0) === 0 ? ""
-    : `<button class="csize-match" title="copy width & height from the priority-0 cell (the static grid's base pitch)">= P0</button>`;
+    : `<button class="csize-match" title="copy width & height from the base cell (the top template — the static grid's base pitch)">match base</button>`;
   const cellBtns = ITEM_KINDS.filter(([v]) => v === "bbox").map(drawBtn).join("") + matchBtn;
   const fieldBtns = ITEM_KINDS.filter(([v]) => v === "field").map(drawBtn).join("");
   const tellBtns = ITEM_KINDS.filter(([v]) => v !== "bbox" && v !== "field").map(drawBtn).join("");
-  return `<label class="flab" title="when templates overlap the same tile, higher priority wins">priority <input type="number" class="iprio" step="1" value="${it.priority || 0}"></label>
+  return `<div class="muted il-h">cell</div>
+    <div class="il-tools">${cellBtns}</div>
+    ${cellSizeControls(it)}
     <div class="muted il-h">tells</div>
     <div class="il-tools">${tellBtns}</div>
     ${(tells + fieldTells) || '<div class="muted">draw a tell on the cutout</div>'}
-    <div class="muted il-h">cell</div>
-    <div class="il-tools">${cellBtns}</div>
-    ${cellSizeControls(it)}
     <div class="muted il-h">fields</div>
     <div class="il-tools">${fieldBtns}</div>
     ${fieldsSummary || '<div class="muted">draw a field on the cutout</div>'}
@@ -728,10 +790,10 @@ function keySection(it, w) {
     </div>`).join("");
   const addable = fids.filter((f) => !used.includes(f));
   return `<div class="muted il-h" title="which fields identify a record — reads with the same key merge; a different key (e.g. another level) is its own record. A record missing any key part is dropped.">key</div>
-    <label class="flab" title="joins the parts in the stored key">sep <input class="ksep" value="${esc(eff.sep ?? "|")}" size="2"/></label>
-    <label class="flab" title="treat keys differing only in case as distinct">case <input type="checkbox" class="kcase" ${eff.case_sensitive ? "checked" : ""}/></label>
-    ${rows}
-    ${addable.length ? `<div class="key-row"><select class="kadd"><option value="">+ field…</option>${addable.map((f) => `<option>${esc(f)}</option>`).join("")}</select></div>` : ""}`;
+    <label class="flab" title="joins the parts in the stored key">separator <input class="ksep" value="${esc(eff.sep ?? "|")}" size="2"/></label>
+    ${addable.length ? `<label class="flab" title="add a field to the key">+ field <select class="kadd"><option value="">field…</option>${addable.map((f) => `<option>${esc(f)}</option>`).join("")}</select></label>` : ""}
+    <label class="flab" title="treat keys differing only in case as distinct">is case-sensitive <input type="checkbox" class="kcase" ${eff.case_sensitive ? "checked" : ""}/></label>
+    ${rows}`;
 }
 
 // The key the LAST cutout read would store under — recomputed instantly from the
@@ -745,7 +807,7 @@ function keyPrevHTML(winId, itemId) {
   const vals = {};
   for (const [k, v] of Object.entries(rd.fields || {})) vals[k] = v.value;
   const key = buildKey(vals, eff);
-  if (key !== null) return `→ <b class="conf-ok">${esc(key)}</b>`;
+  if (key !== null) return `<b class="conf-ok">${esc(key)}</b>`;   // label ("key:") is the readout grid's job now
   const used = eff.fields && eff.fields.length ? eff.fields : ["name"];
   const miss = used.find((f) => vals[f] === null || vals[f] === undefined || vals[f] === "");
   return `<span class="tc-bad">∅ no key${miss ? ` — ${esc(miss)} read empty` : ""}</span> <span class="muted">(record dropped)</span>`;
@@ -758,14 +820,19 @@ function keyPrevHTML(winId, itemId) {
 // refresh re-runs the open window preview so the window canvas re-detects too.
 //   rebuild: rebuild the item node DOM (the edit changed which controls show)
 //   render:  full graph render (the edit changed nodes/edges — id rename, dict link)
-function itemChanged(winId, itemId, { rebuild = false, render: doRender = false } = {}) {
+//   reread:  the edit changed what/where OCR reads (geometry, tells, fields). FALSE for
+//            edits that touch neither pixels nor boxes (id rename, record-key identity) —
+//            skip the costly cutout re-read + window preview re-OCR for those.
+function itemChanged(winId, itemId, { rebuild = false, render: doRender = false, reread = true } = {}) {
   if (doRender) render();
   else if (rebuild) rebuildNode(`item:${winId}:${itemId}`);
   refreshItemBoxes(winId, itemId);   // item cutout boxes
   refreshImageBoxes(winId);          // window image boxes + grid guides
-  clearGrid(winId);                  // detected window grid is now stale
-  scheduleItemRead(winId, itemId);   // re-read the cutout -> readout + box tints
-  autosave(true, winId);             // persist + re-run ONLY this window's preview/detect
+  if (reread) {
+    clearGrid(winId);                // detected window grid is now stale
+    scheduleItemRead(winId, itemId); // re-read the cutout -> readout + box tints
+  }
+  autosave(reread, winId);           // persist; re-run this window's preview/detect only when reread
 }
 
 // Wire an item node's id + tells/fields lists (rebuildNode re-binds these,
@@ -791,7 +858,7 @@ function wireItemControls(div, n) {
     const newId = e.target.value.trim();
     if (!model.renameItem(winId, itemId, newId)) { e.target.value = itemId; return; }
     movePos(`item:${winId}:${itemId}`, `item:${winId}:${newId}`);
-    itemChanged(winId, newId, { render: true });
+    itemChanged(winId, newId, { render: true, reread: false });   // id only — no pixels/boxes change
   });
   div.querySelectorAll(".iset").forEach((inp) => inp.addEventListener("change", (e) => {
     const tid = e.target.dataset.tid, k = e.target.dataset.k;
@@ -832,20 +899,16 @@ function wireItemControls(div, n) {
   div.querySelectorAll(".tool").forEach((b) => b.addEventListener("click", () => {
     div.querySelectorAll(".tool").forEach((x) => x.classList.remove("active")); b.classList.add("active");
   }));
-  const prio = div.querySelector(".iprio");
-  if (prio) prio.addEventListener("change", (e) => {
-    model.setItemPriority(winId, itemId, parseInt(e.target.value, 10) || 0);
-    itemChanged(winId, itemId);
-  });
   // record-key config: mutate the item's own KeyDef (created from the effective one on
   // first edit). The key preview recomputes from the cached read; itemChanged rebuilds.
   const keyEdit = (fn) => {
     const k = model.ensureItemKey(winId, itemId);
     if (!k) return;
     fn(k);
-    itemChanged(winId, itemId, { rebuild: true });
-    const kp = div.querySelector(".key-prev");   // preview lives in the host now, not the lists
-    if (kp) kp.innerHTML = keyPrevHTML(winId, itemId);
+    itemChanged(winId, itemId, { rebuild: true, reread: false });   // record identity only — no OCR change
+    const out = div.querySelector(".item-readout");   // key lives in the readout now; refresh it now (the re-read is debounced)
+    const rd = itemReads.get(`${winId}:${itemId}`);
+    if (out && rd) out.innerHTML = itemReadout(rd, winId, itemId);
   };
   div.querySelectorAll(".kfield").forEach((s) => s.addEventListener("change", (e) =>
     keyEdit((k) => { k.fields[+e.target.dataset.i] = e.target.value; })));
@@ -880,8 +943,7 @@ function wireItemControls(div, n) {
 // Add a freshly-created field node to whatever group its item node belongs to, so a field
 // drawn from an item stays grouped with it (no-op when the item isn't grouped).
 function addFieldToItemGroup(winId, itemId, fid) {
-  const g = groups.groupOf(`item:${winId}:${itemId}`);
-  if (g) groups.addToGroup(g.id, [`fld:${winId}:${itemId}:${fid}`]);
+  inheritGroupFrom(`fld:${winId}:${itemId}:${fid}`, `item:${winId}:${itemId}`);
 }
 
 // On load, pull every ORPHAN item-field node into its item's group, so fields that became
@@ -930,24 +992,23 @@ function wireItemField(div, n) {
     if (!fd) return;
     const k = e.target.dataset.k;
     let rebuild = false, doRender = false;
-    if (k === "type") { fd.type = e.target.value; rebuild = true; }       // toggles extract/sep/pips
+    if (k === "type") { fd.type = e.target.value; rebuild = true; }       // toggles extract/sep/dict/min-max
     else if (k === "extract") { fd.extract = e.target.value; rebuild = true; }  // toggles separator
     else if (k === "sep") fd.separator = e.target.value || "/";
-    else if (k === "learn") fd.learn = e.target.checked;
+    else if (k === "learn") { fd.learn = e.target.checked; rebuild = true; }    // toggles fuzzy
     else if (k === "fuzzy") fd.fuzzy = +e.target.value;
     else if (k === "minconf") fd.min_confidence = +e.target.value || 0;
     else if (k === "isolate") fd.isolate = e.target.checked;
-    else if (k === "empty") fd.empty = e.target.value || null;
-    else if (k === "ifnum") fd.if_number = e.target.value || null;
-    else if (k === "ifnumany") fd.if_number_any = e.target.checked;
-    else if (k === "iftext") fd.if_text = e.target.value || null;
-    else if (k === "iftextany") fd.if_text_any = e.target.checked;
     else if (k === "min") fd.min = e.target.value === "" ? null : +e.target.value;
     else if (k === "max") fd.max = e.target.value === "" ? null : +e.target.value;
-    else if (k === "dictmode") fd.dict_mode = e.target.value;
+    else if (k === "dictmode") { fd.dict_mode = e.target.value; rebuild = true; }  // toggles use-dict/fuzzy
     else if (k === "usedict") { fd.dictionary = e.target.value || ""; doRender = true; }   // redraw the dict link
     fieldChanged(winId, itemId, fid, { rebuild, render: doRender });
   }));
+  if (n.field) wireFieldRules(div, n.field, {
+    rebuild: () => fieldChanged(winId, itemId, fid, { rebuild: true }),
+    commit: () => fieldChanged(winId, itemId, fid),
+  });
   div.querySelector(".itell")?.addEventListener("change", (e) => {
     model.setItemFieldTell(winId, itemId, fid, e.target.checked);
     fieldChanged(winId, itemId, fid, { rebuild: true, rebuildItem: true });   // show/hide tell-conf + item mirror
@@ -982,8 +1043,9 @@ function wireWindowControls(div, n) {
     // canvas, then re-open under the new id (which loads from the moved binding).
     const game = model.profile.name, wasOpen = openImages.has(oldId);
     try {
-      const cap = (await api.getBindings(game))[oldId];
-      if (cap) { await api.bindCapture(game, newId, cap); await api.bindCapture(game, oldId, ""); }
+      const caps = await api.bindingList(game, oldId);   // all image pages move with the window
+      if (caps.length) { await api.setBindings(game, newId, caps); await api.setBindings(game, oldId, []); }
+      if (winPage.has(oldId)) { winPage.set(newId, winPage.get(oldId)); winPage.delete(oldId); }
     } catch { /* binding move failed -> image just reloads empty, not fatal */ }
     if (imageCanvases.has(oldId)) closeImage(oldId);
     moveWindowPos(oldId, newId);            // win + all child nodes
@@ -995,8 +1057,6 @@ function wireWindowControls(div, n) {
     render(); autosave(false);
     if (wasOpen) await openImage(newId);    // restore the image against the moved binding
   });
-  div.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal(n.ref.id));
-  updateImageLabel(n.ref.id, div.querySelector(".imgbtn"));   // show the bound filename
   div.querySelector(".winlive")?.addEventListener("change", (e) => {
     model.setWindowLive(n.ref.id, e.target.checked);
     autosave(false);          // a live-view flag changes nothing other nodes re-read
@@ -1012,10 +1072,33 @@ function wireWindowControls(div, n) {
   });
   div.querySelectorAll(".winscroll").forEach((inp) => inp.addEventListener("change", (e) => {
     const k = e.target.dataset.k;
-    if (k === "autoscroll") model.setScrollAutoscroll(n.ref.id, e.target.checked);
-    else if (k === "clicks") model.setScrollClicks(n.ref.id, Math.max(1, +e.target.value || 1));
-    autosave();
+    if (k === "autoscroll") {
+      model.setScrollAutoscroll(n.ref.id, e.target.checked);
+      rebuildNode(`win:${n.ref.id}`);   // show/hide the "auto-scroll clicks" flab
+    } else if (k === "clicks") model.setScrollClicks(n.ref.id, Math.max(1, +e.target.value || 1));
+    autosave(false);   // precapture-only knobs — the reader/preview never use them, so don't re-OCR
   }));
+  // reorder the item-template priority list: ▲/▼ swap a template up/down, re-numbering
+  // priorities to match the new order (top = 0). The base cell may change -> reread.
+  div.querySelectorAll(".wimv").forEach((b) => b.addEventListener("click", () => {
+    model.moveItemPriority(n.ref.id, b.dataset.id, +b.dataset.d);
+    windowItemsReordered(n.ref.id);
+  }));
+  // click a template name -> jump to its item node (don't swallow the ▲/▼ button clicks)
+  div.querySelectorAll(".wi-row .wi-name").forEach((el) => el.addEventListener("click", (e) => {
+    panZoomTo(`item:${n.ref.id}:${el.closest(".wi-row").dataset.id}`);
+  }));
+}
+
+// After a priority reorder: refresh the window's ordered list (arrows/disabled), rebuild
+// every item node (the priority-0 base changed -> "match base" button visibility), drop the
+// stale grid (base pitch may differ), and re-run this window's preview.
+function windowItemsReordered(winId) {
+  rebuildNode(`win:${winId}`);
+  for (const it of model.window(winId)?.items || []) rebuildNode(`item:${winId}:${it.id}`);
+  clearGrid(winId);
+  refreshImageBoxes(winId);
+  autosave(true, winId);
 }
 
 function nodeParts(n) {
@@ -1038,26 +1121,9 @@ function nodeParts(n) {
   }
   if (n.type === "region") {
     const f = n.field || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
-    const types = TYPES.map(([v, t]) => `<option value="${v}" ${f.type === v ? "selected" : ""}>${t}</option>`).join("");
-    const exs = EXTRACTS.map((v) => `<option ${(f.extract || "whole") === v ? "selected" : ""}>${v}</option>`).join("");
-    const pips = f.type === "pips" || f.type === "diamonds";
     return {
       title: `<input class="gi gi-id" data-k="regid" value="${esc(n.ref.id)}" title="region / field id" />`,
-      body: `<label class="flab">type <select class="fset" data-k="type">${types}</select></label>
-        ${pips ? "" : `<label class="flab">extract <select class="fset" data-k="extract">${exs}</select></label>`}
-        ${(!pips && NEEDS_SEP.has(f.extract)) ? `<label class="flab">separator <input class="fset" type="text" data-k="sep" value="${esc(f.separator || "/")}" /></label>` : ""}
-        <label class="flab">learn <input type="checkbox" class="fset" data-k="learn" ${f.learn ? "checked" : ""}/></label>
-        <label class="flab">fuzzy <input type="number" class="fset" data-k="fuzzy" step="0.05" min="0" max="1" value="${f.fuzzy ?? 0.82}"/></label>
-        <label class="flab" title="read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. drain '8' read as '81')">isolate <input type="checkbox" class="fset" data-k="isolate" ${f.isolate ? "checked" : ""} /></label>
-        <label class="flab" title="value used when the read is truly empty (no text, no numbers)">if empty <input class="fset" data-k="empty" value="${esc(f.empty || "")}" placeholder="(blank)" /></label>
-        ${f.type === "text" ? `<label class="flab" title="value substituted when the read is numbers">if number <input class="fset" data-k="ifnum" value="${esc(f.if_number ?? "")}" placeholder="(off)" /></label>
-        <label class="flab" title="checked: fire when the read merely contains a digit; unchecked: only an all-number read">any digit <input type="checkbox" class="fset" data-k="ifnumany" ${f.if_number_any ? "checked" : ""}/></label>
-        <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="fset" data-k="dictmode">${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(f.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-        ${(model.profile.dictionaries || []).length ? `<label class="flab" title="which authored dictionary this field snaps to (all = every enabled one pooled)">use dict <select class="fset" data-k="usedict">${dictOptions(f.dictionary)}</select></label>` : ""}` : ""}
-        ${f.type === "number" ? `<label class="flab" title="value substituted when the read is text">if text <input class="fset" data-k="iftext" value="${esc(f.if_text ?? "")}" placeholder="(off)" /></label>
-        <label class="flab" title="checked: fire when the read merely contains a letter; unchecked: only an all-text read">any letter <input type="checkbox" class="fset" data-k="iftextany" ${f.if_text_any ? "checked" : ""}/></label>
-        <label class="flab" title="lowest plausible value — a read below this is a misread and drops the record (blank = no minimum)">min <input type="number" class="fset" data-k="min" value="${f.min ?? ""}" placeholder="(none)" /></label>
-        <label class="flab" title="highest plausible value — a read above this is a misread and drops the record (blank = no maximum)">max <input type="number" class="fset" data-k="max" value="${f.max ?? ""}" placeholder="(none)" /></label>` : ""}
+      body: `${fieldConfigBody(f, "fset")}
         <div class="gn-foot"></div>`,
     };
   }
@@ -1243,11 +1309,11 @@ function subConfigHTML(s) {
       <select class="ss-dir" data-i="${i}"><option value="asc"${so.desc ? "" : " selected"}>asc</option><option value="desc"${so.desc ? " selected" : ""}>desc</option></select>
       <button class="ss-del danger" data-i="${i}" title="remove sort">${TRASH}</button></div>`).join("");
   return `
-    <div class="sub-sec">
-      <div class="sub-row"><div class="flab sv-srcrow" title="datasets or views, joined on a shared field">sources<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="sv-addin">${addOpts}</select></span></div></div></div>
-      <div class="sub-row"><label class="flab">join on <select class="sv-join">${joinOpts}</select></label></div>
-      <div class="sub-row"><label class="flab" title="cap the number of result rows (0 = no limit)">limit <input type="number" class="sv-limit" min="0" step="1" value="${s.limit || 0}" placeholder="0" /></label></div>
-      <div class="sub-row"><label class="flab" title="how each key's many observations collapse to one value">many → <select class="sv-agg">${aggOpts}</select></label></div></div>
+    <div class="sub-sec lab-grid">
+      ${labCell("sources", "datasets or views, joined on a shared field", true)}<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="sv-addin">${addOpts}</select></span></div>
+      ${labCell("join on", "shared field the sources are joined on")}<select class="sv-join">${joinOpts}</select>
+      ${labCell("limit", "cap the number of result rows (0 = no limit)")}<input type="number" class="sv-limit" min="0" step="1" value="${s.limit || 0}" placeholder="0" />
+      ${labCell("many →", "how each key's many observations collapse to one value")}<select class="sv-agg">${aggOpts}</select></div>
     <div class="sub-sec"><div class="sub-lbl">filters <span class="muted">(all must pass)</span></div>${filters}
       <button class="sub-addf">+ filter</button></div>
     <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">({col} text · {=expr} math · mix freely)</span></div>${derived}
@@ -1399,9 +1465,11 @@ function wireTrigger(div, n) {
   });
   div.querySelector(".tg-interval")?.addEventListener("change", (e) => { model.setTriggerInterval(t.id, e.target.value); autosave(); });
   // rebuildNode (not render) re-renders THIS node's chips — render() only builds NEW nodes,
-  // so an in-place chip add/remove wouldn't show. drawEdges() drops/adds the trigger→price line.
-  div.querySelector(".tg-addwatch")?.addEventListener("change", (e) => { if (model.addTriggerWatch(t.id, e.target.value)) { rebuildNode(t.id); autosave(); } });
-  div.querySelectorAll(".tg-rmwatch").forEach((b) => b.addEventListener("click", () => { model.removeTriggerWatch(t.id, b.dataset.ds); rebuildNode(t.id); autosave(); }));
+  // so an in-place chip add/remove wouldn't show. drawEdges() drops/adds the trigger's edges
+  // (watch source→trigger and trigger→price) so a chip change reflects on the canvas live.
+  div.querySelector(".tg-addwatch")?.addEventListener("change", (e) => { if (model.addTriggerWatch(t.id, e.target.value)) { rebuildNode(t.id); drawEdges(); autosave(); } });
+  div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNode(t.id); drawEdges(); autosave(); } });
+  div.querySelectorAll(".tg-rmwatch").forEach((b) => b.addEventListener("click", () => { model.removeTriggerWatch(t.id, b.dataset.ds); rebuildNode(t.id); drawEdges(); autosave(); }));
   div.querySelectorAll(".tg-rmtarget").forEach((b) => b.addEventListener("click", () => { model.removeTriggerTarget(t.id, b.dataset.p); rebuildNode(t.id); drawEdges(); autosave(); }));
   div.querySelector(".tg-fire")?.addEventListener("click", async () => {
     const prog = div.querySelector(".tg-prog");
@@ -1411,7 +1479,7 @@ function wireTrigger(div, n) {
   });
 }
 
-const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "price", "trigger"]);
+export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "price", "trigger"]);
 const REMOVABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "subset", "dataset", "price", "trigger"]);
 
 // One place to remove any node; each goes through render()+autosave() so undo/redo
@@ -1471,7 +1539,10 @@ function fillNode(div, n) {
   const isCollapsed = collapsed.has(n.id);
   const canToggle = CAN_DISABLE.has(n.type);
   const enabled = !(canToggle && n.ref && n.ref.enabled === false);
-  div.className = `gnode ${n.type}${isCollapsed ? " collapsed" : ""}${enabled ? "" : " node-disabled"}`;
+  // field nodes carrying fallback rules get a wider natural width (the rule row packs three
+  // selects + a value + trash on one line) so a size RESET lands wide enough, not crushed.
+  const hasRules = (n.type === "itemfield" || n.type === "region") && (n.field?.rules?.length || 0) > 0;
+  div.className = `gnode ${n.type}${isCollapsed ? " collapsed" : ""}${enabled ? "" : " node-disabled"}${hasRules ? " has-rules" : ""}`;
   if (n.type === "dataset") { div.dataset.ds = n.ref; div.dataset.tab = dsTab.get(n.ref) || "data"; }
   const parts = nodeParts(n);
   const toggle = canToggle
@@ -1493,12 +1564,16 @@ function fillNode(div, n) {
         <rect x="3.2" y="7" width="9.6" height="6.5" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5" />
       </svg></button>`;
   div.innerHTML = `<div class="gn-h ${parts.pulse || ""}">
-      <button class="collapse" title="collapse/expand">${isCollapsed ? "▸" : "▾"}</button>${parts.title}${parts.head || ""}${detach}${toggle}${del}</div>
+      <span class="gn-disc" title="collapse/expand">${nodeIcon(n)}<button class="collapse" aria-label="collapse/expand">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <rect x="3.5" y="3.5" width="17" height="17" rx="5.5"/><line x1="8" y1="12" x2="16" y2="12"/><line class="cv" x1="12" y1="8" x2="12" y2="16"/>
+        </svg></button></span>${parts.title}${parts.head || ""}${toggle}${detach}${del}<span class="gn-type" aria-hidden="true">${esc(n.type === "itemfield" ? "field" : n.type)}</span></div>
     <div class="gn-body">${parts.body}</div>
     <span class="gn-spin" title="working…"></span>${parts.ports || ""}`;
   div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
   div.querySelector(".gn-detach").addEventListener("click", (e) => { e.stopPropagation(); groups.detachNode(n.id); });
-  div.classList.toggle("in-group", !!groups.groupOf(n.id));
+  // a preview is bonded to its window — it has no detach button (it leaves only when the window does)
+  div.classList.toggle("in-group", n.type !== "preview" && !!groups.groupOf(n.id));
   const delBtn = div.querySelector(".gn-del");
   if (delBtn) wireConfirmRemove(delBtn, () => removeNode(n));
   const tog = div.querySelector(".gn-enable");
@@ -1562,13 +1637,26 @@ function outPortSpec(n) {
   }
 }
 
+// The trigger's SECOND out-port (`.port.pwatch`, left face): drag to a dataset/view to make an
+// on_change trigger watch it. Separate from the fires port so the two control lines never share a dot.
+function watchPortSpec(n) {
+  if (n.type !== "trigger" || n.ref.kind !== "on_change") return null;
+  return {
+    side: "L",
+    target: ["dataset", "subset"],
+    onDrop: (id) => { if (model.addTriggerWatch(n.ref.id, id)) rebuildNode(n.id); },
+  };
+}
+
 function wireOutPort(div, n) {
-  const port = div.querySelector(".port.out");
-  if (!port) return;
+  div._outId = n.id;
   const spec = outPortSpec(n);
-  if (!spec) return;
-  div._outSpec = spec; div._outId = n.id;   // reused by placePortDots to wire per-line dots
-  port.addEventListener("mousedown", (ev) => startWire(n.id, ev, spec));
+  if (spec) { div._outSpec = spec; wirePortHandle(div.querySelector(".port.out"), n.id, spec); }   // reused by placePortDots
+  const wspec = watchPortSpec(n);
+  if (wspec) { div._watchSpec = wspec; wirePortHandle(div.querySelector(".port.pwatch"), n.id, wspec); }
+}
+function wirePortHandle(port, id, spec) {
+  if (port) port.addEventListener("mousedown", (ev) => startWire(id, ev, spec));
 }
 
 // place a (new) node at a world-space point, grid-snapped
@@ -1661,6 +1749,23 @@ function rebuildNode(id) {
   // only the grip DOM needs restoring, with grid snap (matching snapResize's `{...opts,snap:true}`).
   // (window + item already returned above; every remaining node type is freely resizable.)
   addResizeGrips(el, { ...nodeResizeOpts(el, n.id), snap: true });
+  fitNodeHeight(el, n.id);   // a revealed input (e.g. learn -> fuzzy) may overflow the pinned height — grow to fit
+}
+
+// A node with a manually-pinned height keeps that height across a rebuild, so revealing
+// extra inputs (a conditional row appearing) overflows its box. Grow the pinned height to
+// enclose the content — grow-only (never shrinks a deliberately-tall node) — and persist it
+// so the new size sticks and connectors/group boxes follow. No-op when not pinned or collapsed.
+function fitNodeHeight(el, id) {
+  if (collapsed.has(id) || !el.style.height) return;
+  const body = el.querySelector(".gn-body");
+  if (!body) return;
+  const over = body.scrollHeight - body.clientHeight;
+  if (over <= 1) return;
+  const h = el.offsetHeight + over;
+  el.style.height = `${h}px`;
+  nodeSizes.set(id, { w: el.offsetWidth, h });
+  drawEdges(); groups.renderGroups(); persist.layout();
 }
 
 function toggleCollapse(id) {
@@ -1668,8 +1773,7 @@ function toggleCollapse(id) {
   if (willCollapse) collapsed.add(id); else collapsed.delete(id);
   const el = nodeEls.get(id);
   if (el) {
-    el.classList.toggle("collapsed", willCollapse);
-    const b = el.querySelector(".collapse"); if (b) b.textContent = willCollapse ? "▸" : "▾";
+    el.classList.toggle("collapsed", willCollapse);   // CSS rotates the +/- glyph off this class
     if (willCollapse) {                       // drop the hard inline w/h -> header only (CSS)
       el.style.width = ""; el.style.height = "";
     } else {                                  // expand: restore from the persisted size
@@ -1755,6 +1859,7 @@ function clearNodeSelections(keepId = null) {
 
 function deselectAll() {
   for (const [, rec] of overlays) rec.overlay.setActive(null);   // every overlay, centrally
+  document.querySelectorAll(".tool.active").forEach((b) => b.classList.remove("active"));   // drop any picked draw tool
   for (const [, el] of nodeEls) el.classList.remove("selected");
   clearNodeSelections();
   selectedNodeId = null;
@@ -1780,14 +1885,38 @@ function syncMultiSelect() {
   const ng = groups.selectedGroupIds().length;   // ctrl-selected GROUPS (for super-grouping)
   if (bar) bar.hidden = !(selected.size >= 2 || ng >= 1);
   if (cnt) cnt.textContent = ng >= 1 ? `${ng} group${ng === 1 ? "" : "s"} selected` : `${selected.size} selected`;
-  // the group button super-groups when groups are selected, else groups nodes
-  if (gbtn) { gbtn.textContent = ng >= 1 ? "⬚ super-group" : "⬚ group";
-    gbtn.title = ng >= 1 ? "super-group / ungroup the selected groups (hotkey: g)" : "group / ungroup the selection (hotkey: g)"; }
+  // the button label mirrors what `g` would actually DO to this selection (group vs ungroup)
+  if (gbtn) { const s = groupBtnState(); gbtn.textContent = s.label; gbtn.title = s.title; }
+}
+
+// Predict the group action's label/title so the toolbar button shows group vs ungroup up
+// front — mirrors the branches in superGroupShortcut()/groupShortcut() exactly.
+function groupBtnState() {
+  const gids = groups.selectedGroupIds();
+  if (gids.length) {   // ctrl-selected GROUPS -> super-group ops
+    let ungroup;
+    if (gids.length === 1) ungroup = !!groups.superGroupOf(gids[0]);   // lone group in a super -> detach
+    else {
+      const sset = new Set(gids.map((id) => groups.superGroupOf(id)).filter(Boolean));
+      const loose = gids.some((id) => !groups.superGroupOf(id));
+      ungroup = sset.size === 1 && !loose;   // all in ONE super, none loose -> dissolve
+    }
+    return ungroup
+      ? { label: "⬚ ungroup", title: "dissolve the super group (hotkey: g)" }
+      : { label: "⬚ super-group", title: "super-group the selected groups (hotkey: g)" };
+  }
+  const ids = selectionIds();
+  const gset = new Set(ids.map((id) => groups.groupOf(id)).filter(Boolean));   // distinct groups in selection
+  const ungrouped = ids.some((id) => !groups.groupOf(id));
+  const ungroup = ids.length >= 2 && gset.size === 1 && !ungrouped;   // all share ONE group, none loose -> ungroup
+  return ungroup
+    ? { label: "⬚ ungroup", title: "ungroup the selection (hotkey: g)" }
+    : { label: "⬚ group", title: "group the selection (hotkey: g)" };
 }
 
 // Show the unlock icon only on nodes that currently belong to a group.
 function refreshDetachIcons() {
-  for (const [id, el] of nodeEls) el.classList.toggle("in-group", !!groups.groupOf(id));
+  for (const [id, el] of nodeEls) el.classList.toggle("in-group", nodeTypeOf(id) !== "preview" && !!groups.groupOf(id));
 }
 
 let suppressNextMenu = false;   // set when a right-drag pan actually moved
@@ -1830,430 +1959,11 @@ function onWheel(ev) {
   applyView(); updateOverlayZoom(); persist.local();
 }
 
-const nw = (id) => nodeEls.get(id)?.offsetWidth || 220;   // node width (right edge)
-const nh = (id) => nodeEls.get(id)?.offsetHeight || 80;   // node height
 
 // Double-click a node: fit it tight to the viewport and centre it (smooth, shared with
 // the node-map jump so both frame a node the same way).
 function zoomToNode(id) { panZoomTo(id, { fit: true }); }
 
-// Port exit directions (L/R/T/B) -> unit vector, used to stub a line out of a port the
-// right way before it turns. Lines are ALWAYS orthogonal — no bezier fallback exists.
-const _DIROFF = { L: [-1, 0], R: [1, 0], T: [0, -1], B: [0, 1] };
-
-// Orthogonal elbow between two ports — the instant fallback shown until A* routes the line.
-// Replaces the old direct bezier so a curved line is NEVER drawn: a short stub leaves each
-// port along its facing direction, then one right-angle connects the stubs. Same point list
-// the router emits, so polylinePath renders it in the identical (rounded-corner) 90° style.
-function dirElbowPts(x1, y1, d1, x2, y2, d2) {
-  const k = 16;
-  const a = _DIROFF[d1] || [0, 0], b = _DIROFF[d2] || [0, 0];
-  const s1 = [x1 + a[0] * k, y1 + a[1] * k];   // stub out of the source port
-  const s2 = [x2 + b[0] * k, y2 + b[1] * k];   // stub into the target port
-  // turn axis: if the source exits horizontally, run horizontal-then-vertical, else the reverse
-  const corner = a[0] !== 0 ? [s2[0], s1[1]] : [s1[0], s2[1]];
-  return [[x1, y1], s1, corner, s2, [x2, y2]];
-}
-
-// Resample a polyline to n+1 points spread evenly by arc length — so two shapes with
-// different vertex counts can be lerped point-for-point during a morph.
-function resamplePoly(pts, n) {
-  if (pts.length < 2) return Array.from({ length: n + 1 }, () => (pts[0] || [0, 0]).slice());
-  const seg = []; let total = 0;
-  for (let i = 0; i < pts.length - 1; i++) { const l = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); seg.push(l); total += l; }
-  if (total === 0) return Array.from({ length: n + 1 }, () => pts[0].slice());
-  const out = []; let si = 0, acc = 0;
-  for (let i = 0; i <= n; i++) {
-    const target = (total * i) / n;
-    while (si < seg.length - 1 && acc + seg[si] < target) { acc += seg[si]; si++; }
-    const t = seg[si] ? (target - acc) / seg[si] : 0;
-    out.push([pts[si][0] + (pts[si + 1][0] - pts[si][0]) * t, pts[si][1] + (pts[si + 1][1] - pts[si][1]) * t]);
-  }
-  return out;
-}
-const straightD = (pts) => "M " + pts.map((p) => `${Math.round(p[0] * 10) / 10} ${Math.round(p[1] * 10) / 10}`).join(" L ");
-
-// Closest-facing sides of two rects (shortest centre axis): the port point and
-// outward direction (L/R/T/B) on each. The geometric default — used for the live drag
-// bezier and as the fallback before the router has scored a better pair of sides.
-function facingSides(ra, rb) {
-  const acx = ra.x + ra.w / 2, acy = ra.y + ra.h / 2, bcx = rb.x + rb.w / 2, bcy = rb.y + rb.h / 2;
-  const dx = bcx - acx, dy = bcy - acy;
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    if (dx >= 0) return { p1: [ra.x + ra.w, acy], d1: "R", p2: [rb.x, bcy], d2: "L" };
-    return { p1: [ra.x, acy], d1: "L", p2: [rb.x + rb.w, bcy], d2: "R" };
-  }
-  if (dy >= 0) return { p1: [acx, ra.y + ra.h], d1: "B", p2: [bcx, rb.y], d2: "T" };
-  return { p1: [acx, ra.y], d1: "T", p2: [bcx, rb.y + rb.h], d2: "B" };
-}
-
-
-const nodeRect = (id) => { const p = pos.get(id); return p && { x: p.x, y: p.y, w: nw(id), h: nh(id) }; };
-
-// ---- one unified link list -------------------------------------------------
-// EVERY connection in the view is the same thing: a line between two NODES — always to
-// the node rect, never to a box on the image. They all flow through buildLinks →
-// routing → drawn on a persistent per-link <path>. No bespoke per-kind drawing.
-function selClsFor(aId, bId) {
-  return selectedNodeId && (aId === selectedNodeId || bId === selectedNodeId) ? " sel" : "";
-}
-
-// Build the descriptor for every line. `aId`/`bId` name each rect's owner (used to
-// fan endpoints that share a node side); `ra`/`rb` are the world rects.
-// A data edge always leaves its source node's `.port.out` handle. Every source that draws
-// one — window, price, dataset, view (subset) — anchors its data line at the port dot and
-// gets the animated flow. (Keep this prefix set in sync with `outPortSpec`.)
-const PORT_OUT_SRC = ["win:", "price:", "ds:", "sub:"];
-// a data edge leaves its source's out-port; a trigger's control edge leaves the trigger's out-port too
-const fromPortOut = (aId, kind) =>
-  (kind === "data" && PORT_OUT_SRC.some((p) => aId.startsWith(p))) ||
-  (kind === "trigger" && aId.startsWith("trigger:"));
-function buildLinks() {
-  const links = [];
-  const add = (key, aId, bId, top, kind, ra, rb) => {
-    if (!ra || !rb) return;
-    const port = fromPortOut(aId, kind);
-    const tgt = bId.startsWith("sub:") ? " toview" : "";
-    links.push({ key, aId, bId, top, port, cls: `gedge ${kind}${port ? " flow" : ""}${tgt}${selClsFor(aId, bId)}`, ra, rb });
-  };
-  for (const e of model.edges())
-    add(`${e.from} ${e.to}`, e.from, e.to, !!selClsFor(e.from, e.to), e.kind, nodeRect(e.from), nodeRect(e.to));
-  computePorts(links);
-  return links;
-}
-
-// Pick each line's port + side, then fan endpoints that share a node side so they sit
-// one GAP apart instead of all stacking on the side's midpoint.
-const GAP = () => ROUTE.cell * 2;   // preferred spacing: fanned endpoints AND parallel bundles (a line can still squeeze to 1 cell between two)
-// both node ids belong to the same (non-null) group
-function sameGroup(aId, bId) { const g = groups.groupOf(aId); return !!g && g === groups.groupOf(bId); }
-function computePorts(links) {
-  for (const l of links) {
-    // geometric facing — the pre-route default for a brand-new line; the router picks the real
-    // faces (and the routed result's ports override these in drawEdges/runRouting).
-    const f = facingSides(l.ra, l.rb);
-    l.p1 = f.p1; l.d1 = f.d1; l.p2 = f.p2; l.d2 = f.d2;
-    l.align = false;
-    l.relax = sameGroup(l.aId, l.bId);
-  }
-  // Grouped nodes read as a single unit, so the "ports sit at the edge centre" rule is relaxed
-  // for lines BETWEEN members of the same group: if their facing sides share an axis, slide
-  // both ports to a common coordinate inside the rects' overlap → the connector runs dead
-  // straight instead of doglegging to two centres. Aligned ports skip the fan below.
-  for (const l of links) {
-    if (!sameGroup(l.aId, l.bId)) continue;
-    const horiz = (l.d1 === "L" || l.d1 === "R") && (l.d2 === "L" || l.d2 === "R");
-    const vert = (l.d1 === "T" || l.d1 === "B") && (l.d2 === "T" || l.d2 === "B");
-    if (!horiz && !vert) continue;
-    const ax = horiz ? 1 : 0;   // perpendicular axis to align on
-    const aLo = ax ? l.ra.y : l.ra.x, aHi = aLo + (ax ? l.ra.h : l.ra.w);
-    const bLo = ax ? l.rb.y : l.rb.x, bHi = bLo + (ax ? l.rb.h : l.rb.w);
-    const lo = Math.max(aLo, bLo), hi = Math.min(aHi, bHi);
-    if (lo > hi) continue;      // no overlap → can't straighten, keep the centred ports
-    const c = (lo + hi) / 2;
-    l.p1[ax] = c; l.p2[ax] = c;
-    l.align = true;
-  }
-  const buckets = new Map();   // `${owner}|${dir}` -> endpoints on that rect side
-  const put = (owner, dir, l, end, other) => {
-    const horiz = dir === "L" || dir === "R";
-    const perp = horiz ? other.y + other.h / 2 : other.x + other.w / 2;
-    const k = `${owner}|${dir}`;
-    (buckets.get(k) || buckets.set(k, []).get(k)).push({ l, end, perp, horiz });
-  };
-  for (const l of links) {
-    if (l.align) continue;   // grouped straight lines keep their off-centre ports — don't fan them
-    put(l.aId, l.d1, l, "a", l.rb); put(l.bId, l.d2, l, "b", l.ra);
-  }
-  const gap = GAP();
-  for (const arr of buckets.values()) {
-    if (arr.length < 2) continue;
-    arr.sort((u, v) => u.perp - v.perp);   // order by where each other end sits → no crossing
-    const n = arr.length;
-    arr.forEach((it, i) => {
-      const rect = it.end === "a" ? it.l.ra : it.l.rb;
-      const lo = it.horiz ? rect.y : rect.x, span = it.horiz ? rect.h : rect.w;
-      const spread = Math.max(0, Math.min(span - gap, (n - 1) * gap));   // keep ports on the edge
-      const coord = lo + span / 2 - spread / 2 + (i * spread) / (n - 1);
-      const port = it.end === "a" ? it.l.p1 : it.l.p2;
-      if (it.horiz) port[1] = coord; else port[0] = coord;
-    });
-  }
-  // A line may share an EDGE with a node's out-port, but must not END directly OVER the out-port
-  // dot. The dot sits where the node's outgoing line starts (its p1). Nudge any incoming end that
-  // landed on the same side AND ~same coord as that dot just clear of it (kept on the edge).
-  const outDot = new Map();   // nodeId -> { dir, coord } of its out-port dot
-  for (const l of links) {
-    if (outDot.has(l.aId)) continue;
-    const horiz = l.d1 === "L" || l.d1 === "R";
-    outDot.set(l.aId, { dir: l.d1, coord: horiz ? l.p1[1] : l.p1[0] });
-  }
-  for (const l of links) {
-    const od = outDot.get(l.bId);
-    if (!od || od.dir !== l.d2) continue;            // different edge → no conflict
-    const horiz = l.d2 === "L" || l.d2 === "R";
-    const cur = horiz ? l.p2[1] : l.p2[0];
-    if (Math.abs(cur - od.coord) >= gap * 0.5) continue;   // already clear of the dot
-    const lo = horiz ? l.rb.y : l.rb.x, hi = lo + (horiz ? l.rb.h : l.rb.w);
-    const want = od.coord + (cur >= od.coord ? gap : -gap);
-    const v = Math.max(lo + 4, Math.min(hi - 4, want));
-    if (horiz) l.p2[1] = v; else l.p2[0] = v;
-  }
-}
-
-// Per-line out-ports: EVERY data line leaving a node gets its OWN dot at its start, so a node
-// that fans out N lines shows N dots (one per line) instead of all lines sharing a single dot.
-// The base `.port.out` is dot #0 (and the drag handle); extra dots are cloned + wired the same
-// way. Each dot FOLLOWS its line — routing (facingSides + fan) picks the start coord, the dot
-// moves onto that exact node-relative point. A node with no outgoing line keeps its default dot.
-function ensurePortDots(node, count) {
-  const base = node.querySelector(".port.out");
-  if (!base) return [];
-  let extras = [...node.querySelectorAll(".port.out.port-extra")];
-  while (extras.length < count - 1) {                 // grow the pool
-    const d = base.cloneNode(false);                  // listeners aren't cloned — wire below
-    d.classList.add("port-extra");
-    if (node._outSpec && node._outId) d.addEventListener("mousedown", (ev) => startWire(node._outId, ev, node._outSpec));
-    node.appendChild(d); extras.push(d);
-  }
-  for (let i = count - 1; i < extras.length; i++) extras[i].remove();   // shrink the pool
-  return [base, ...extras.slice(0, Math.max(0, count - 1))];
-}
-
-function placePortDots(links) {
-  const bySrc = new Map();   // source node id -> its outgoing port-lines
-  for (const l of links) {
-    if (!l.port) continue;
-    (bySrc.get(l.aId) || bySrc.set(l.aId, []).get(l.aId)).push(l);
-  }
-  // source nodes with NO outgoing line: drop extras + reset the base dot to its CSS default
-  for (const [id, node] of nodeEls) {
-    if (bySrc.has(id)) continue;
-    node.querySelectorAll(".port.out.port-extra").forEach((d) => d.remove());
-    const base = node.querySelector(".port.out");
-    if (base && base.style.left) { base.style.cssText = ""; base.classList.remove("sel"); }
-  }
-  for (const [aId, ls] of bySrc) {
-    const node = nodeEls.get(aId);
-    if (!node) continue;
-    const dots = ensurePortDots(node, ls.length);
-    ls.forEach((l, i) => {
-      const dot = dots[i]; if (!dot) return;
-      // -1: the dot is absolutely positioned in the node's PADDING box (inside its 1px
-      // border), but l.p1/ra are border-box world coords — without it the dot sits 1px off
-      dot.style.left = `${l.p1[0] - l.ra.x - 1}px`;
-      dot.style.top = `${l.p1[1] - l.ra.y - 1}px`;
-      dot.style.right = "auto";
-      dot.style.transform = "translate(-50%, -50%)";
-      const sel = l.cls.includes(" sel");
-      dot.classList.toggle("sel", sel);   // edge selected (either end) -> accent (CSS)
-      // match the dot to the colour of the line leaving it (clear inline when selected so the
-      // .sel accent rule wins): data lines are orange, trigger control lines are the warn hue
-      dot.style.background = sel ? "" : (l.cls.includes("trigger") ? "var(--warn)" : "#ff8c2b");
-    });
-  }
-}
-
-// Persistent <path> per link (NOT rebuilt each draw) — lets a line keep its identity
-// so it can follow the cursor live, then morph into its routed shape on settle.
-const edgeEls = new Map();   // link key -> <path>
-let wireEl = null;
-let tweenRoutes = false;     // set by runRouting so the NEXT draw morphs the lines that changed
-let _resizing = false;       // a node is being resized — draw cheap straight lines, no A*/bezier
-let _resizeRaf = null;       // coalesces resize-driven redraws to one per frame
-let _ptrDown = false;        // is a mouse button held? (a ResizeObserver tick is only a user
-if (typeof window !== "undefined") {                          // resize when the pointer is down)
-  window.addEventListener("mousedown", () => { _ptrDown = true; }, true);
-  window.addEventListener("mouseup", () => { _ptrDown = false; }, true);
-}
-
-function edgeEl(key, layer) {
-  let el = edgeEls.get(key);
-  if (!el) { el = document.createElementNS(SVGNS, "path"); edgeEls.set(key, el); }
-  if (el.parentNode !== layer) layer.appendChild(el);
-  return el;
-}
-function cancelMorph(el) { if (el && el._raf) { cancelAnimationFrame(el._raf); el._raf = null; } }
-function setRouted(el, pts) {
-  cancelMorph(el);
-  el._geo = pts; el._routed = true;
-  el.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
-}
-function setBezier(el, l) {   // name kept (one caller); draws an ORTHOGONAL elbow, never a curve
-  cancelMorph(el);
-  const pts = dirElbowPts(l.p1[0], l.p1[1], l.d1, l.p2[0], l.p2[1], l.d2);
-  el._geo = pts;
-  el._routed = false;
-  el.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
-}
-
-const MORPH_MS = 150, MORPH_N = 32;
-function startMorph(el, toPts) {
-  const from = resamplePoly(el._geo && el._geo.length ? el._geo : toPts, MORPH_N);
-  const to = resamplePoly(toPts, MORPH_N);
-  cancelMorph(el);
-  const t0 = performance.now();
-  const tick = (now) => {
-    let t = (now - t0) / MORPH_MS; if (t < 0) t = 0; if (t > 1) t = 1;
-    const e = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;   // easeInOutQuad
-    el.setAttribute("d", straightD(from.map((p, i) => [p[0] + (to[i][0] - p[0]) * e, p[1] + (to[i][1] - p[1]) * e])));
-    if (t < 1) el._raf = requestAnimationFrame(tick);
-    else { el._raf = null; setRouted(el, toPts); }   // land on the crisp rounded route
-  };
-  el._raf = requestAnimationFrame(tick);
-}
-function geoChanged(el, pts) {
-  if (!el._routed || !el._geo || el._geo.length !== pts.length) return true;
-  for (let i = 0; i < pts.length; i++)
-    if (Math.abs(el._geo[i][0] - pts[i][0]) > 0.5 || Math.abs(el._geo[i][1] - pts[i][1]) > 0.5) return true;
-  return false;
-}
-
-let drawSig = "";   // link signature for THIS draw (compared against the route cache's)
-// True while a node is being dragged. The line MODE never changes (always the A* 90° route);
-// this only makes routing run SYNCHRONOUSLY each frame instead of one rAF later, so the route
-// is recomputed and painted in the same frame the node moves — the line stays glued to the
-// node (smooth) instead of trailing it by a frame. Per-frame routing cost is accepted.
-let draggingNodes = false;
-function drawEdges() {
-  const svg = $("gedges"), top = $("gedges-top");
-  const links = buildLinks();
-  drawSig = ROUTE.enabled ? linksSig(links) : "";   // change-gate: from the geometric facing ports
-  // adopt the routed result's chosen faces/ports so the port dots + freshness check line up with
-  // the painted path (the router, not the facing default, owns a routed line's endpoints).
-  for (const l of links) { const c = routeCache.get(l.key); if (c && c.p1) { l.p1 = c.p1; l.d1 = c.d1; l.p2 = c.p2; l.d2 = c.d2; } }
-  placePortDots(links);   // move each out-port dot onto where its line actually starts
-  const used = new Set();
-  // node ids that are turned off — any line touching one is greyed (carries no live data)
-  const disSet = new Set();
-  for (const n of model.nodes()) if (CAN_DISABLE.has(n.type) && n.ref && n.ref.enabled === false) disSet.add(n.id);
-  for (const l of links) {
-    used.add(l.key);
-    const el = edgeEl(l.key, l.top ? top : svg);
-    el.setAttribute("class", l.cls + (disSet.has(l.aId) || disSet.has(l.bId) ? " dis-edge" : ""));
-    const c = routeCache.get(l.key);
-    if (c && c.pts.length >= 2) {                            // have a routed path for this line
-      if (tweenRoutes && geoChanged(el, c.pts)) startMorph(el, c.pts);
-      else if (!el._raf && geoChanged(el, c.pts)) setRouted(el, c.pts);   // only redraw if it changed; leave morphs alone
-    } else if (!el.getAttribute("d")) {
-      // BRAND-NEW line only (no path yet): give it an initial orthogonal elbow so it isn't
-      // invisible until the router runs. A line that already has a path keeps it — we never
-      // repaint a provisional stage over a routed line, so nothing flashes; the A* below
-      // updates it straight to the next FINISHED route.
-      setBezier(el, l);
-    }
-  }
-  for (const [k, el] of edgeEls) if (!used.has(k)) { cancelMorph(el); el.remove(); edgeEls.delete(k); }
-  if (wire) {
-    if (!wireEl) wireEl = document.createElementNS(SVGNS, "path");
-    if (wireEl.parentNode !== svg) svg.appendChild(wireEl);
-    wireEl.setAttribute("class", "gedge wire");
-    const dx = Math.max(30, (wire.x2 - wire.x1) / 2);
-    wireEl.setAttribute("d", `M ${wire.x1} ${wire.y1} C ${wire.x1 + dx} ${wire.y1}, ${wire.x2 - dx} ${wire.y2}, ${wire.x2} ${wire.y2}`);
-  } else if (wireEl) { wireEl.remove(); wireEl = null; }
-  tweenRoutes = false;
-  scheduleRouting();   // pathfind to the 90° route; lines only ever paint a FINISHED route
-}
-
-// Coalesce edge redraws under a drag: each requestEdges() queues at most ONE redraw per
-// animation frame, so the many mousemove events in a frame collapse to a single drawEdges()
-// that paints the LATEST node positions (pos is mutated in place before this is called). The
-// pending rAF IS the request — newer calls ride it instead of stacking a stale one behind it.
-let _edgeRaf = 0;
-function requestEdges() {
-  if (_edgeRaf) return;   // a redraw is already queued; it'll read the newest positions when it runs
-  _edgeRaf = requestAnimationFrame(() => {
-    _edgeRaf = 0;
-    // While dragging, route IN this frame (runRouting computes the route then paints) so the
-    // line is current the same frame the node moves. Otherwise just paint + defer routing to rAF.
-    if (draggingNodes) runRouting(); else drawEdges();
-  });
-}
-function flushEdges() {   // force the final frame now (drop on settle) — cancels any pending rAF
-  if (_edgeRaf) { cancelAnimationFrame(_edgeRaf); _edgeRaf = 0; }
-  drawEdges();
-}
-
-// ---- live line routing -----------------------------------------------------
-// Pathfinding runs every animation frame, as fast as the browser will paint:
-// drawEdges() paints direct beziers instantly for any line whose route is stale and
-// requests a recompute; the A* then fires on the next rAF and repaints with neat
-// routed paths — so lines re-route LIVE under a drag, not only on settle. Routing is
-// incremental + cached (only links whose deps changed re-run) and gated by a layout
-// signature, so a frame where nothing moved is a no-op and the loop idles.
-const ROUTE = {
-  enabled: true,
-  corners: "curve",   // "curve" | "square" — internal toggle (window.__route.corners)
-  cell: 10,           // grid resolution (world px) — fine enough to squeeze a line between two others
-  clearWanted: 5,     // cells of breathing room a line prefers around nodes
-  radius: 14,         // corner rounding for "curve"
-};
-// internal handles: tweak ROUTE in the console, __reroute() to force a recompute
-// (e.g. after flipping __route.corners to "square").
-if (typeof window !== "undefined") {
-  window.__route = ROUTE;
-  window.__reroute = () => { routeCache = new Map(); routeHash = ""; drawEdges(); };   // force a full recompute
-}
-
-const SVGNS = "http://www.w3.org/2000/svg";
-let routeCache = new Map();     // link key -> { pts:[[x,y]…], sig } (sig = its own deps)
-let routeHash = "";             // global layout signature of the last pass (cheap change gate)
-let routeRaf = null;            // pending requestAnimationFrame handle (one in flight at a time)
-
-// Everything physical is an obstacle: nodes AND panels. Lines weave around all of
-// them, not just the two rects they connect.
-function obstacleRects() {
-  const out = [];
-  for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) out.push(r); }
-  for (const t of groups.titleRects()) out.push(t);   // lines prefer not to cross a group title
-  return out;
-}
-
-// Signature that invalidates the route cache: the ports of every link plus every
-// obstacle rect. Any move/resize/open/close changes it (a moved node can reshape a
-// route it isn't even an endpoint of, so obstacles must be in here too).
-const rnd = (p) => `${Math.round(p[0])},${Math.round(p[1])}`;
-function linksSig(links) {
-  let s = `${ROUTE.cell}:${ROUTE.clearWanted}:`;
-  for (const l of links) s += `${l.key}@${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2};`;
-  for (const o of obstacleRects()) s += `${o.x},${o.y},${o.w},${o.h}|`;
-  return s;
-}
-
-function scheduleRouting() {
-  if (!ROUTE.enabled) return;
-  if (routingFrozen) return;           // OCR in progress -> don't re-route (lines would wiggle)
-  if (drawSig === routeHash) return;   // routes already current (drawSig set in drawEdges)
-  if (routeRaf) return;                // one recompute already queued for the next frame
-  routeRaf = requestAnimationFrame(runRouting);
-}
-
-function runRouting() {
-  routeRaf = null;                     // this frame's pass is running; let drawEdges queue the next one
-  const links = buildLinks();          // route the layout as it stands NOW
-  const sig = linksSig(links);
-  if (sig === routeHash) return;       // nothing moved since the last pass
-  try {
-    // The whole graph is routed in one pass (the engine needs every line together for face-
-    // selection + nudging). Obstacles = every node; soft obstacles = groups. Carry each line's
-    // last-frame faces in as hysteresis so a tiny move can't flip a route's whole shape.
-    const nodes = [];
-    for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) nodes.push({ id: n.id, x: r.x, y: r.y, w: r.w, h: r.h }); }
-    const grps = groups.allGroups().map((g) => ({ members: [...g.members] }));
-    const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key }));
-    const prevSides = new Map();
-    for (const [k, c] of routeCache) if (c.d1) prevSides.set(k, { d1: c.d1, d2: c.d2 });
-    const res = routeGraph(nodes, grps, edges, { prevSides, config: { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell } });
-    const fresh = new Map();
-    for (const l of links) { const r = res.get(l.key); if (r && r.pts && r.pts.length >= 2) fresh.set(l.key, r); }
-    routeCache = fresh;                 // also drops keys for links that vanished
-    routeHash = sig;
-  } catch (err) {
-    setStatus(`route failed: ${err.message}`);   // surface instead of silently using elbows
-    return;
-  }
-  drawEdges();
-}
 
 // ---- per-node interaction -------------------------------------------------
 
@@ -2265,9 +1975,23 @@ function wireNode(div, n) {
     // the collapse caret and the title input double as drag HANDLES: a real drag moves
     // the node, a plain click still toggles / edits (threshold-gated below).
     const handle = ev.target.closest(".collapse, input.gi-id");
-    if (!handle && ev.target.closest(".gn-body,input,select,button,a,.canvas-wrap,[contenteditable],.scrollhost")) return;  // .gn-body: node content isn't a drag zone; .canvas-wrap: resize handle; .scrollhost: scroll/edit node content
+    // node CONTENT (body, form fields, scroll areas, resize handle): NOT a drag zone. But a
+    // click here STILL selects the node — without preventDefault, so inputs keep native
+    // focus/caret/ctrl+A and buttons keep their own clicks.
+    const onContent = !handle && ev.target.closest(".gn-body,input,select,button,a,.canvas-wrap,[contenteditable],.scrollhost");
+    if (onContent) {
+      if (!selected.has(n.id)) { clearMultiSelect(); focusNode(n.id); }   // select, never drag
+      return;
+    }
+    // ctrl/cmd-click on the header/frame toggles this node in/out of the multi-selection
+    if (ev.ctrlKey || ev.metaKey) {
+      ev.preventDefault();
+      if (selected.has(n.id)) selected.delete(n.id); else selected.add(n.id);
+      syncMultiSelect();
+      return;
+    }
     const r = div.getBoundingClientRect();   // skip the CSS resize-handle corner (resizable nodes)
-    if (ev.clientX > r.right - 18 && ev.clientY > r.bottom - 18) return;
+    if (ev.clientX > r.right - 18 && ev.clientY > r.bottom - 18) { focusNode(n.id); return; }
     // grabbing a node OUTSIDE the current multi-selection drops it (fresh single focus);
     // grabbing one INSIDE keeps the set so the drag moves the whole selection.
     if (!selected.has(n.id)) clearMultiSelect();
@@ -2308,6 +2032,7 @@ function wireNode(div, n) {
     });
   } else if (n.type === "window") {
     wireWindowControls(div, n);   // out-port wiring is handled generically in wireOutPort
+    openImage(n.ref.id);          // the image surface is always present (canvas + controls below it)
   } else if (n.type === "preview") {
     // auto-reads on image change + any window edit; the one button commits the read to the dataset
     div.querySelector(".prevcommit")?.addEventListener("click", (e) => commitPreviewNode(n.ref.id, e.currentTarget));
@@ -2337,9 +2062,13 @@ function wireNode(div, n) {
       await refreshLive();   // re-reads the dataset list (now under the new name) and re-renders
     });
     div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(); });
-    div.querySelector(".dssubset")?.addEventListener("click", () => {
+    div.querySelector(".dssubset")?.addEventListener("click", async () => {
       const id = model.addSubset(n.ref);
-      if (id) { placeNewNode(`sub:${id}`, "subset"); render(); autosave(); panTo(`sub:${id}`); }
+      if (id) {
+        await placeNewNode(`sub:${id}`, "subset", `ds:${n.ref}`); render();
+        inheritGroupFrom(`sub:${id}`, `ds:${n.ref}`); groups.renderGroups();
+        autosave(); panTo(`sub:${id}`);
+      }
     });
     const clearBtn = div.querySelector(".dsclear");
     clearBtn?.addEventListener("click", async () => {
@@ -2348,7 +2077,8 @@ function wireNode(div, n) {
         setTimeout(() => { clearBtn.dataset.armed = "0"; clearBtn.textContent = "clear data"; }, 2500);
         return;
       }
-      try { await api.clearDataset(model.profile.name, n.ref); refreshLive(); refreshDataNode(n.ref); refreshAllBatchesNodes(); refreshAllSubsetNodes(); setStatus(`cleared ${n.ref}`); }
+      clearBtn.dataset.armed = "0"; clearBtn.textContent = "clear data";
+      try { await withBusy([n.id], () => api.clearDataset(model.profile.name, n.ref)); refreshLive(); refreshDataNode(n.ref); refreshAllBatchesNodes(); refreshAllSubsetNodes(); setStatus(`cleared ${n.ref}`); }
       catch (e) { setStatus(String(e.message || e)); }
     });
     // data | history tabs: swap the visible host; the ledger loads lazily on first open
@@ -2384,23 +2114,23 @@ function wireNode(div, n) {
     div.querySelectorAll(".fset").forEach((inp) => inp.addEventListener("change", (e) => {
       if (!fld) return;
       const k = e.target.dataset.k;
-      if (k === "type") { fld.type = e.target.value; rebuildNode(n.id); }  // toggles extract/sep
+      if (k === "type") { fld.type = e.target.value; rebuildNode(n.id); }  // toggles extract/sep/dict/min-max
       else if (k === "extract") { fld.extract = e.target.value; rebuildNode(n.id); }  // toggles sep
       else if (k === "sep") fld.separator = e.target.value || "/";
-      else if (k === "learn") fld.learn = e.target.checked;
+      else if (k === "learn") { fld.learn = e.target.checked; rebuildNode(n.id); }  // toggles fuzzy
       else if (k === "fuzzy") fld.fuzzy = +e.target.value;
       else if (k === "isolate") fld.isolate = e.target.checked;
-      else if (k === "empty") fld.empty = e.target.value || null;
-      else if (k === "ifnum") fld.if_number = e.target.value || null;
-      else if (k === "ifnumany") fld.if_number_any = e.target.checked;
-      else if (k === "iftext") fld.if_text = e.target.value || null;
-      else if (k === "iftextany") fld.if_text_any = e.target.checked;
+      else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
       else if (k === "min") fld.min = e.target.value === "" ? null : +e.target.value;
       else if (k === "max") fld.max = e.target.value === "" ? null : +e.target.value;
-      else if (k === "dictmode") fld.dict_mode = e.target.value;
+      else if (k === "dictmode") { fld.dict_mode = e.target.value; rebuildNode(n.id); }  // toggles use-dict/fuzzy
       else if (k === "usedict") { fld.dictionary = e.target.value || ""; render(); }   // redraw the muted dict link
       autosave(true, n.win?.id);   // plain value edits: no DOM rebuild; re-OCR only this window
     }));
+    if (fld) wireFieldRules(div, fld, {
+      rebuild: () => { rebuildNode(n.id); autosave(true, n.win?.id); },
+      commit: () => autosave(true, n.win?.id),
+    });
   } else if (n.type === "detect") {
     div.addEventListener("click", (ev) => {
       if (ev.target.closest("input,select,button")) return;
@@ -2435,1044 +2165,15 @@ function wireNode(div, n) {
   }
 }
 
-// ---- dataset records (rendered inline in the dataset node body) ----
-
-function dataHost(ds) {
-  const el = nodeEls.get(`ds:${ds}`);
-  return el && el.querySelector(".data-host");
-}
-// refresh every dataset node that currently exists (after save / clear / live change)
-function refreshAllDataNodes() {
-  for (const ds of model.datasets()) if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
-}
-// One VTable per data/subset node host (virtualized + searchable). Recreated if the host
-// element was rebuilt by a node re-render.
-const vtables = new Map();
-function vtableFor(key, host) {
-  let vt = vtables.get(key);
-  if (vt && vt.host === host) return vt;
-  if (vt) vt.destroy();
-  host.innerHTML = "";
-  vt = new VTable(host, key);
-  vtables.set(key, vt);
-  return vt;
-}
-
-const VT_META = ["present", "first_seen", "last_seen", "key", "_count"];   // not shown as columns
-
-// Show a count badge on a dataset node's tab (data → item count, batches → batch count).
-function setTabCount(ds, sel, n) {
-  const el = nodeEls.get(`ds:${ds}`)?.querySelector(sel);
-  if (el) el.textContent = n != null ? `${n}` : "";
-}
-
-async function refreshDataNode(ds) {
-  const host = dataHost(ds);
-  if (!host) return;
-  try {
-    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
-    const recs = (await r.json()).records || [];
-    const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
-    vtableFor(`ds:${ds}`, host).setData(cols, recs, {
-      rowClass: (row) => (row.present ? "" : "gone"),
-      expander: (row) => expandObservations(ds, row),   // drill into its observations inline
-    });
-    setTabCount(ds, ".data-n", recs.length);   // item count on the data tab
-  } catch (e) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
-}
-
-// Inline drill-down: a dataset record aggregates "many" observations under its key — fetch
-// them and return a detail node the VTable parks under the clicked row.
-async function expandObservations(ds, row) {
-  const node = document.createElement("div");
-  node.className = "vt-detail-inner";
-  const key = row && row.key;
-  if (!key) { node.innerHTML = `<p class="muted">no key</p>`; return node; }
-  try {
-    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}/observations?key=${encodeURIComponent(key)}`);
-    const obs = (await r.json()).observations || [];
-    const cols = [...new Set(obs.flatMap((o) => Object.keys(o)))];
-    const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
-    const rows = obs.map((o) => `<tr>${cols.map((c) => `<td>${esc(o[c] == null ? "" : String(o[c]))}</td>`).join("")}</tr>`).join("");
-    node.innerHTML = `<div class="vt-detail-lbl">${obs.length} observation${obs.length === 1 ? "" : "s"} · ${esc(key)}</div>
-      <table class="grid-table zebra vt-detail-tbl"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
-  } catch (e) { node.innerHTML = `<p class="muted">${esc(String(e.message || e))}</p>`; }
-  return node;
-}
-
-// One source block in a view-row drill-down: a labelled table of `rows` (label is already
-// escaped). Columns = union of keys minus the store's bookkeeping fields.
-function srcBlock(label, rows) {
-  if (!rows.length) return `<div class="vt-src-h muted">${label} — no rows</div>`;
-  const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((c) => !VT_META.includes(c));
-  const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
-  const body = rows.map((r) => `<tr>${cols.map((c) => `<td>${esc(r[c] == null ? "" : String(r[c]))}</td>`).join("")}</tr>`).join("");
-  return `<div class="vt-src-h">${label}</div>
-    <table class="grid-table zebra vt-detail-tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
-}
-
-// Inline drill-down for a VIEW row: per joined input, the RAW observations (the 'many' that
-// the view's aggregate collapsed) behind this row's join key — so you see the actual multiple
-// values, not the one aggregated record. A dataset source drills its observations; a view
-// source has none, so it shows its matching computed row(s).
-async function expandSubsetRow(sid, row) {
-  const node = document.createElement("div");
-  node.className = "vt-detail-inner";
-  const s = model.subsetDef(sid);
-  const jf = (s && s.join_field) || "name";
-  const jv = String(row[jf] ?? "").trim().toLowerCase();
-  if (!jv) { node.innerHTML = `<p class="muted">no <code>${esc(jf)}</code> value to trace</p>`; return node; }
-  const inputs = model.subsetInputs(s);
-  const game = encodeURIComponent(model.profile.name);
-  const matchJv = (r) => String(r[jf] ?? "").trim().toLowerCase() === jv;
-  const blocks = await Promise.all(inputs.map(async (inp) => {
-    const isView = !!model.subsetDef(inp);
-    try {
-      if (isView) {   // views have no observations — show the matching computed row(s)
-        const data = await (await fetch(`/api/flow/${game}/subset/${encodeURIComponent(inp)}`)).json();
-        return srcBlock(`${esc(inp)} (view)`, (data.rows || []).filter(matchJv));
-      }
-      // dataset: find the matching record(s), then drill each one's observations (the 'many')
-      const data = await (await fetch(`/api/flow/${game}/dataset/${encodeURIComponent(inp)}`)).json();
-      const match = (data.records || []).filter(matchJv);
-      if (!match.length) return `<div class="vt-src-h muted">${esc(inp)} — no matching record</div>`;
-      const obs = [];
-      for (const rec of match) {
-        if (rec.key == null) continue;
-        const od = await (await fetch(`/api/flow/${game}/dataset/${encodeURIComponent(inp)}/observations?key=${encodeURIComponent(rec.key)}`)).json();
-        obs.push(...(od.observations || []));
-      }
-      const seen = obs.length ? obs : match;   // fall back to the record itself if it has no key
-      return srcBlock(`${esc(inp)} · ${obs.length} observation${obs.length === 1 ? "" : "s"}`, seen);
-    } catch (e) { return `<div class="vt-src-h muted">${esc(inp)} — ${esc(String(e.message || e))}</div>`; }
-  }));
-  node.innerHTML = blocks.join("") || `<p class="muted">no sources</p>`;
-  return node;
-}
-
-// A dataset record aggregates "many" observations under its key — open them in a modal.
-// (kept as an alternative to the inline drill-down above; not currently wired)
-async function showRecordMany(ds, key, count) {
-  if (!key) return;
-  const node = document.createElement("div");
-  node.className = "vt-modal-host";
-  openModal({ title: `${ds}: ${key}${count ? ` · ${count} observations` : ""}`, size: "data", node });
-  try {
-    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}/observations?key=${encodeURIComponent(key)}`);
-    const obs = (await r.json()).observations || [];
-    const cols = [...new Set(obs.flatMap((o) => Object.keys(o)))];
-    new VTable(node).setData(cols, obs);
-  } catch (e) { node.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
-}
-
-// ---- batches node (ledger + per-batch contents/preview, embedded in the node) ----
-
-const batchesState = new Map();   // ds -> { sel, events } (selection + event cache per node)
-
-function batEls(ds) {
-  const el = nodeEls.get(`ds:${ds}`);   // batches live in the merged dataset node's history tab
-  return el && { list: el.querySelector(".bat-list"), detail: el.querySelector(".bat-detail") };
-}
-function batState(ds) {
-  if (!batchesState.has(ds)) batchesState.set(ds, { sel: null, events: {} });
-  return batchesState.get(ds);
-}
-
-// (re)fetch the ledger and paint it into the node body — called on build and whenever
-// the dataset's batches change (save / revert / edit / remove). No refresh button.
-async function loadBatchesNode(ds) {
-  const els = batEls(ds);
-  if (!els) return;
-  try {
-    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
-    const batches = (await r.json()).batches || [];
-    renderBatchesList(ds, batches);
-    setTabCount(ds, ".bat-n", batches.length);   // batch count on the batches tab
-  } catch (e) { els.list.innerHTML = `<li class="muted">${esc(String(e))}</li>`; }
-}
-
-// refresh every batches node that currently exists
-function refreshAllBatchesNodes() {
-  for (const ds of model.datasets()) if (nodeEls.has(`ds:${ds}`)) loadBatchesNode(ds);
-}
-
-function renderBatchesList(ds, batches) {
-  const els = batEls(ds);
-  if (!els) return;
-  const st = batState(ds);
-  els.list.parentElement?.classList.toggle("bat-empty", !batches.length);   // drop the box framing when empty
-  if (!batches.length) { els.list.innerHTML = '<li class="muted">no batches yet</li>'; els.detail.innerHTML = ""; st.sel = null; return; }
-  els.list.innerHTML = batches.map((b) => {
-    const parts = [b.adds ? `+${b.adds}` : "", b.updates ? `~${b.updates}` : "", b.removes ? `−${b.removes}` : ""].filter(Boolean).join(" ");
-    const keys = (b.keys || []).slice(0, 4).join(", ") + (b.count > 4 ? " …" : "");
-    const app = `<label class="led-apply" title="apply this batch to the dataset (uncheck to revert it)"><input type="checkbox" class="led-toggle" data-batch="${b.batch}"${b.reverted ? "" : " checked"}> applied</label>`;
-    const rm = `<button class="led-remove danger" data-batch="${b.batch}" title="permanently delete this batch from the ledger">remove</button>`;
-    return `<li class="batrow ${b.reverted ? "reverted" : ""}${st.sel === b.batch ? " sel" : ""}" data-batch="${b.batch}">
-      <span class="muted">${esc(clockTime(b.ts))}</span> <b>#${b.batch}</b>
-      <span class="muted batmeta" title="${parts} · ${b.count} · ${esc(keys)}">${parts} · ${b.count} · ${esc(keys)}</span> ${app} ${rm}</li>`;
-  }).join("");
-  // select on row click (but not when hitting the checkbox/remove)
-  els.list.querySelectorAll(".batrow").forEach((li) => li.addEventListener("click", (ev) => {
-    if (ev.target.closest(".led-apply,.led-remove")) return;
-    selectBatch(ds, +li.dataset.batch);
-  }));
-  els.list.querySelectorAll(".led-toggle").forEach((cb) => cb.addEventListener("change", async () => {
-    cb.disabled = true;
-    try {
-      await api.revertDatasetBatch(model.profile.name, ds, +cb.dataset.batch, !cb.checked);
-      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
-    } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
-  }));
-  els.list.querySelectorAll(".led-remove").forEach((b) => b.addEventListener("click", async () => {
-    if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "sure?"; setTimeout(() => { b.dataset.armed = "0"; b.textContent = "remove"; }, 2500); return; }
-    try {
-      if (st.sel === +b.dataset.batch) { st.sel = null; els.detail.innerHTML = ""; }
-      await api.removeDatasetBatch(model.profile.name, ds, +b.dataset.batch);
-      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
-    } catch (e) { setStatus(String(e.message || e)); }
-  }));
-  if (st.sel != null && batches.some((b) => b.batch === st.sel)) selectBatch(ds, st.sel);
-  else if (st.sel != null) { st.sel = null; els.detail.innerHTML = ""; }
-}
-
-async function selectBatch(ds, batch) {
-  const els = batEls(ds);
-  if (!els) return;
-  const st = batState(ds);
-  st.sel = batch;
-  els.list.querySelectorAll(".batrow").forEach((li) => li.classList.toggle("sel", +li.dataset.batch === batch));
-  els.detail.innerHTML = '<p class="muted">loading…</p>';
-  try {
-    renderBatchDetail(ds, await api.batchDetail(model.profile.name, ds, batch));
-  } catch (e) { els.detail.innerHTML = `<p class="muted">${esc(String(e))}</p>`; }
-}
-
-function renderBatchDetail(ds, bd) {
-  const els = batEls(ds);
-  if (!els) return;
-  const events = bd.events || [];
-  const preview = bd.preview || [];
-
-  // preview — what applying this batch changes in the dataset (read-only diff table)
-  const pvRows = preview.map((p) => {
-    if (p.kind === "add") return `<tr class="pv-add"><td>add</td><td>${esc(p.key)}</td><td>${esc(fmtVals(p.after))}</td></tr>`;
-    if (p.kind === "remove") return `<tr class="pv-remove"><td>remove</td><td>${esc(p.key)}</td><td>${esc(fmtVals(p.before))}</td></tr>`;
-    const diff = Object.entries(p.changed || {}).map(([f, [o, nv]]) => `${esc(f)}: ${esc(o ?? "∅")} → ${esc(nv ?? "∅")}`).join("; ");
-    return `<tr class="pv-update"><td>update</td><td>${esc(p.key)}</td><td>${diff}</td></tr>`;
-  }).join("");
-  const pvTable = preview.length
-    ? `<table class="grid-table zebra pv-table"><thead><tr><th>change</th><th>key</th><th>detail</th></tr></thead><tbody>${pvRows}</tbody></table>`
-    : '<p class="muted">applying this batch changes nothing</p>';
-
-  // event contents — read-only VTable (search/sort/resize), no editing
-  els.detail.innerHTML = `<h4 class="ds-h">Batch #${bd.batch} · ${events.length} events</h4>
-    <div class="bat-ev-host"></div>
-    <h4 class="ds-h">Applying this batch would…</h4>${pvTable}`;
-  const evHost = els.detail.querySelector(".bat-ev-host");
-  if (!events.length) { evHost.innerHTML = '<p class="muted" style="padding:8px">no events</p>'; return; }
-  const cols = ["id", "op", ...new Set(events.flatMap((e) => Object.keys(e.values || {})))];
-  const rows = events.map((e) => ({ id: e.id, op: e.op, reverted: e.reverted, ...(e.values || {}) }));
-  vtableFor(`bat:${ds}`, evHost).setData(cols, rows, { rowClass: (row) => (row.reverted ? "reverted" : "") });
-}
-
-function fmtVals(v) {
-  if (!v) return "";
-  return Object.entries(v).map(([k, val]) => `${k}=${val}`).join(", ");
-}
-
-// ---- precapture floating window -------------------------------------------
-// A floating panel (built like the node map) rather than a modal, so it can be moved and
-// left open while you work the game. Hiding it does NOT stop the worker — it keeps running
-// in the background and is tracked/cancellable from the Activity panel; reopening rehydrates.
-
-let pc = null;             // the createFloatWin instance (built once)
-let pcNode = null;         // the .precap body element handlers operate on
-let pcSig = null;          // current AbortController signal (new each show → aborts on hide)
-let pcCtl = null;          // current AbortController
-let precapLast = null;     // last status drawn — so view switches can redraw without a fetch
-let precapUnsub = null;   // heartbeat-hub subscription while the panel is open
-let precapBusy = false;   // recording/processing/paused
-let precapStopping = false;   // a stop/cancel was clicked, awaiting the worker to wind down
-let precapLastPhase = null;
-let precapSessions = [];   // saved recording sessions [{id,label,frames,bytes,processed,records,saved_at,active}]
-let precapView = null;     // which item is selected: "new" (record inputs) or "loaded" (a session)
-let precapPage = null;     // which page is shown: "list" (session list) or "detail" (the selected pane)
-const pcState = { visible: false, x: null, y: null, w: null, h: null };
-
-const _pcDraw = (st) => { precapLast = st; renderPrecap(pcNode, st); };
-const _pcRun = async (fn) => {
-  try { _pcDraw(await fn()); }
-  catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }   // ignore hide-aborts
-};
-// refresh the saved-session list (and the active status it returns)
-const _pcLoadSessions = async () => {
-  const game = model.profile.name; if (!game) return;
-  try { const r = await api.precapture.sessions(game, pcSig); precapSessions = r.sessions || []; _pcDraw(r.status); }
-  catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }
-};
-// a session op returns { sessions, status } — update both at once
-const _pcSessAct = async (p) => {
-  try { const r = await p; precapSessions = r.sessions || precapSessions; _pcDraw(r.status); }
-  catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }
-};
-
-function buildPrecap() {
-  if (pc) return;
-  pcNode = document.createElement("div");
-  pcNode.className = "precap";
-  pcNode.innerHTML = `<p class="muted" style="padding:12px">loading…</p>`;
-  pc = createFloatWin({
-    id: "precap", title: "precapture", state: pcState, bothAxes: true,
-    onShow: showPrecap, onHide: hidePrecap, onPersist: () => persist.layout(),
-  });
-  pc.body.appendChild(pcNode);
-
-  // Inline rename: swap the session's name span for an <input>, commit on Enter/blur,
-  // cancel on Escape — no blocking prompt(). Restores the span so reconcile resumes.
-  const beginRename = (row, sid) => {
-    const game = model.profile.name;
-    const nameEl = row.querySelector(".pc-sess-name");
-    if (!nameEl || row._editing) return;
-    row._editing = true;
-    const input = document.createElement("input");
-    input.className = "pc-sess-rename"; input.value = row.dataset.label || "";
-    nameEl.replaceWith(input);
-    input.focus(); input.select();
-    let done = false;
-    const finish = (commit) => {
-      if (done) return; done = true;
-      row._editing = false;
-      input.replaceWith(nameEl);   // reconcile refreshes the span's text on the next draw
-      const label = input.value.trim();
-      if (commit && label !== (row.dataset.label || ""))
-        _pcSessAct(api.precapture.renameSession(game, sid, label, pcSig));
-    };
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); finish(true); }
-      else if (e.key === "Escape") { e.preventDefault(); finish(false); }
-    });
-    input.addEventListener("blur", () => finish(true));
-  };
-
-  // one delegated handler for every control (buttons AND the clickable session rows)
-  pcNode.addEventListener("click", (ev) => {
-    if (ev.target.closest("input, textarea")) return;   // never let a field click trigger an action
-    const b = ev.target.closest("[data-act]");
-    if (!b) return;
-    const game = model.profile.name; if (!game) return;
-    const a = b.dataset.act, sid = b.dataset.sid;
-    // session-list actions are locked while a worker runs
-    if (precapBusy && (a === "newsess" || a === "loadsess" || a === "rensess" || a === "delsess")) return;
-    const mf = +pcNode.querySelector(".pc-frames")?.value || 300;
-    const iv = +pcNode.querySelector(".pc-interval")?.value || 0;
-    const label = pcNode.querySelector(".pc-label")?.value || "";
-    if (a === "recstop" || a === "cancel") { precapStopping = true; b.disabled = true; b.textContent = "stopping…"; }
-    if (a === "back") { precapPage = "list"; if (precapLast) _pcDraw(precapLast); }
-    else if (a === "newsess") { precapView = "new"; precapPage = "detail"; if (precapLast) _pcDraw(precapLast); }
-    // recordStart creates+persists a new session server-side, so leave the "new" pane at
-    // once and show it as the active loaded session (its row appears via loadSessions)
-    else if (a === "record") { precapView = "loaded"; _pcRun(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, pcSig); _pcLoadSessions(); return st; }); }
-    else if (a === "recstop") _pcRun(() => api.precapture.recordStop(game, pcSig));
-    else if (a === "process") _pcRun(() => api.precapture.processStart(game, pcSig));
-    else if (a === "pause") _pcRun(() => api.precapture.pause(game, true, pcSig));
-    else if (a === "resume") _pcRun(() => api.precapture.pause(game, false, pcSig));
-    else if (a === "cancel") _pcRun(() => api.precapture.cancel(game, pcSig));
-    else if (a === "save") {
-      b.classList.add("reading"); b.disabled = true;   // spinner until the commit returns
-      (async () => {
-        try {
-          const r = await api.precapture.save(game, pcSig);
-          refreshLive(); refreshAllDataNodes(); refreshAllBatchesNodes(); refreshAllSubsetNodes();
-          setStatus(`committed ${JSON.stringify(r.written)}`); _pcLoadSessions(); _pcDraw(r.status);
-        } catch (e) {
-          if (e.name !== "AbortError") { setStatus(String(e.message || e)); if (precapLast) _pcDraw(precapLast); }   // redraw clears the spinner
-        }
-      })();
-    }
-    else if (a === "loadsess") { precapView = "loaded"; precapPage = "detail"; _pcSessAct(api.precapture.loadSession(game, sid, pcSig)); }
-    else if (a === "delsess") {
-      if (b.dataset.armed !== "1") {   // inline confirm — no blocking dialog (armed two-click)
-        b.dataset.armed = "1"; b.textContent = "delete?"; b.classList.add("armed");
-        setTimeout(() => { b.dataset.armed = "0"; b.innerHTML = TRASH; b.classList.remove("armed"); }, 2500);
-        return;
-      }
-      b.dataset.armed = "0";
-      _pcSessAct(api.precapture.deleteSession(game, sid, pcSig));
-    }
-    else if (a === "rensess") beginRename(b.closest(".pc-sess"), sid);
-    // worker state just changed -> beat the hub now so the tasks panel + precap indicator
-    // reflect it without waiting out the cadence
-    if (["record", "recstop", "process", "pause", "resume", "cancel"].includes(a)) hub.kick();
-  });
-  // auto-scroll is configured per window now (window node's scroll section), not here.
-}
-
-async function showPrecap() {
-  const game = model.profile.name;
-  if (!game) { setStatus("load a game first"); pc.setVisible(false); return; }
-  setLiveMode(false);                         // mutually exclusive with live
-  precapOpen = true;
-  precapStopping = false; precapView = null; precapPage = null;
-  $("precapBtn").classList.add("active");
-  pc.el.querySelector(".fw-title").textContent = `precapture: ${game}`;
-  pcCtl = new AbortController(); pcSig = pcCtl.signal;
-  await _pcLoadSessions();
-  // The heartbeat hub already carries the precapture worker's status (only while it's
-  // busy), so subscribe instead of running our own status poll. When the worker finishes
-  // the hub stops carrying it — that falling edge (busy was true, now absent) is the one
-  // moment we fetch directly, to pull the final "done"/idle state the hub won't push.
-  precapUnsub = hub.subscribe((s) => {
-    if (!precapOpen) return;
-    if (s.precapture) _pcDraw(s.precapture);
-    else if (precapBusy) _pcRun(() => api.precapture.status(model.profile.name, pcSig));
-  });
-  hub.kick();   // beat now so a busy worker shows immediately on open
-}
-
-// Hiding the panel does NOT cancel the worker (the Activity panel monitors/cancels it).
-// Just stop polling and abort in-flight fetches; reopening rehydrates from the server.
-function hidePrecap() {
-  if (precapUnsub) { precapUnsub(); precapUnsub = null; }
-  if (pcCtl) { pcCtl.abort(); pcCtl = null; }
-  unregisterWorker("precap");
-  precapOpen = false; precapStopping = false;
-  $("precapBtn").classList.remove("active");
-}
-
-// Staged-data preview: one VTable per dataset (virtualized + searchable), reconciled IN
-// PLACE so the 700ms poll doesn't churn the tables or reset scroll/search — each dataset's
-// section + host is reused; setData only fires when its sample actually changes.
-function renderPrecapData(dataEl, datasets) {
-  datasets = datasets || [];
-  if (!dataEl._ds) {
-    dataEl._ds = new Map();   // dataset -> { section, label, host, _sig }
-    dataEl._empty = document.createElement("p");
-    dataEl._empty.className = "muted"; dataEl._empty.style.padding = "8px";
-    dataEl._empty.textContent = "no data staged yet — process the frames to read them";
-  }
-  if (!datasets.length) {
-    for (const [k, e] of dataEl._ds) { vtables.get(`pc:${k}`)?.destroy(); vtables.delete(`pc:${k}`); e.section.remove(); dataEl._ds.delete(k); }
-    if (!dataEl.contains(dataEl._empty)) dataEl.appendChild(dataEl._empty);
-    return;
-  }
-  if (dataEl.contains(dataEl._empty)) dataEl._empty.remove();
-  // drop sections whose dataset is gone
-  const want = new Set(datasets.map((d) => d.dataset));
-  for (const [k, e] of dataEl._ds) if (!want.has(k)) { vtables.get(`pc:${k}`)?.destroy(); vtables.delete(`pc:${k}`); e.section.remove(); dataEl._ds.delete(k); }
-
-  for (const d of datasets) {
-    let e = dataEl._ds.get(d.dataset);
-    if (!e) {
-      const section = document.createElement("div"); section.className = "pc-ds";
-      const label = document.createElement("div"); label.className = "pc-ds-h";
-      const host = document.createElement("div"); host.className = "pc-ds-vt";
-      section.append(label, host);
-      e = { section, label, host, _sig: null }; dataEl._ds.set(d.dataset, e);
-    }
-    dataEl.appendChild(e.section);   // (re)append in server order
-    const meta = `${d.count} row${d.count === 1 ? "" : "s"}`;
-    if (e.label._meta !== meta) { e.label.innerHTML = `<b>${esc(d.dataset)}</b> <span class="muted">${esc(meta)}</span>`; e.label._meta = meta; }
-    const rows = d.sample || [];
-    const sig = `${d.count}|${JSON.stringify(rows)}`;   // skip setData when nothing changed (poll churn)
-    if (e._sig === sig) continue;
-    e._sig = sig;
-    const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
-    const vt = vtableFor(`pc:${d.dataset}`, e.host);
-    vt.pinned = null;   // fit the container height (datasets share pc-data, then scroll)
-    vt.setData(cols, rows);
-  }
-}
-
-function renderPrecap(node, st) {
-  const phase = st.phase || "idle";
-  const recording = phase === "recording";
-  const processing = phase === "processing";
-  const paused = phase === "paused";
-  precapBusy = recording || processing || paused;   // gate modal dismissal
-  // surface the backend worker in the log bar with an emergency kill
-  if (precapBusy) registerWorker("precap", `precapture ${phase}`, () => api.precapture.cancel(model.profile.name).catch(() => {}));
-  else unregisterWorker("precap");
-  if (phase !== precapLastPhase) {                   // log phase transitions
-    if (phase === "recording") log("precapture: recording…", "run");
-    else if (phase === "recorded") log(`precapture: recorded ${st.frames} frames`, "ok");
-    else if (phase === "processing") log("precapture: processing…", "run");
-    else if (phase === "done") {
-      const t = st.timing || {};
-      log(`precapture done: ${st.processed} frames · ${t.ms_per_frame || 0} ms/frame on ${t.device || "cpu"} (decode ${t.decode_ms || 0} · classify ${t.classify_ms || 0} · read ${t.read_ms || 0}) · ${st.fps}/s`, "ok");
-      // recognition breakdown: which window/state each frame classified to (no-match = no window)
-      const rec = st.recognized || [];
-      const recStr = rec.map((r) => `${r.miss ? "no-match" : r.key} ${r.count}`).join(" · ");
-      if (recStr) log(`  recognized: ${recStr}`, rec.some((r) => !r.miss) ? "ok" : "warn");
-      // staging: rows read vs dropped for an incomplete key, and what landed per dataset
-      const ds = (st.datasets || []).map((d) => `${d.dataset} ${d.count}`).join(" · ") || "none";
-      const nothingStaged = (st.read || 0) > 0 && !(st.datasets || []).length;
-      log(`  staged: ${st.read || 0} read · ${st.no_key || 0} dropped (no key) · datasets: ${ds}`, nothingStaged ? "warn" : "ok");
-    }
-    else if (phase === "cancelled") log("precapture: cancelled", "warn");
-    else if (phase === "saved") log("precapture: committed", "ok");
-    // recording just finished -> flip to the loaded session's controls (process / save /
-    // delete) so the just-recorded frames are ready to work with, on the detail page
-    if (precapLastPhase === "recording" && phase !== "recording") { precapView = "loaded"; precapPage = "detail"; }
-    precapLastPhase = phase;
-  }
-  // first paint: pick the pane from what's on disk — a session with frames opens loaded,
-  // otherwise the new-recording pane
-  if (precapView === null) precapView = (st.session && st.frames) ? "loaded" : "new";
-  // a loaded session that vanished (deleted, none left) falls back to the new pane
-  if (precapView === "loaded" && !st.session) precapView = "new";
-  // first paint: a running worker opens straight to the detail page, otherwise the list
-  if (precapPage === null) precapPage = precapBusy ? "detail" : "list";
-
-  // closing always works now and cancels the run — say so on the button
-  const x = node.closest(".modal")?.querySelector(".modal-x");
-  if (x) x.title = precapBusy ? "close & cancel the run (Esc)" : "close (Esc)";
-  if (!precapBusy) precapStopping = false;   // worker wound down -> clear the stopping state
-  const pct = st.frames ? Math.round((100 * st.processed) / st.frames) : 0;
-  const staged = (st.datasets || []).reduce((n, d) => n + d.count, 0);
-  const busyRun = processing || paused;
-  const canProcess = st.frames > 0 && !recording && !processing && !paused;
-
-  // Paged skeleton built ONCE — list page = session list; detail page = back bar + the
-  // selected pane. One page is shown at a time (precapPage); the back button returns to list.
-  if (!node.querySelector(".pc-main")) {
-    node.innerHTML = `<div class="pc-main">
-        <div class="pc-page pc-page-list"><div class="pc-left"></div></div>
-        <div class="pc-page pc-page-detail">
-          <div class="pc-detail-head"><button class="pc-back" data-act="back" title="back to sessions">←</button><span class="pc-detail-title"></span><button class="pc-detail-del danger" data-act="delsess" title="delete session" hidden>${TRASH}</button></div>
-          <div class="pc-right"></div>
-        </div>
-      </div>`;
-  }
-  const onList = precapPage === "list";
-  node.querySelector(".pc-page-list").hidden = !onList;
-  node.querySelector(".pc-page-detail").hidden = onList;
-  renderPrecapLeft(node.querySelector(".pc-left"), st);
-  // detail-page heading reflects the selected pane
-  const dTitle = node.querySelector(".pc-detail-title");
-  if (dTitle) dTitle.textContent = precapView === "new" ? "new session"
-    : (st.session ? (st.label || fmtCaptureTime(st.session)) : "session");
-  // delete (trash) lives in the detail head — only for a loaded session, locked while busy
-  const dDel = node.querySelector(".pc-detail-del");
-  if (dDel) {
-    dDel.hidden = precapView !== "loaded" || !st.session;
-    dDel.dataset.sid = st.session || "";
-    dDel.disabled = (recording || busyRun) || !st.session;
-  }
-
-  // The right pane's STRUCTURE depends only on which pane is shown and whether a worker
-  // is running. Rebuild its innerHTML only when that shape changes — otherwise the 700ms
-  // poll would clobber the record inputs and steal focus while the user types in them.
-  const right = node.querySelector(".pc-right");
-  const shape = `${precapView}|${recording}|${busyRun}`;
-  if (right.dataset.shape !== shape) {
-    right.dataset.shape = shape;
-    right.innerHTML = precapView === "new"
-      ? `<div class="pc-opts">
-           <label class="flab">max frames <input type="number" class="pc-frames" value="300" min="1"></label>
-           <label class="flab">interval ms <input type="number" class="pc-interval" value="0" min="0"></label>
-           <label class="flab">label <input type="text" class="pc-label" placeholder="(optional)"></label>
-         </div>
-         <div class="pc-ctl"></div>`
-      : `<div class="pc-bar"></div>
-         <div class="pc-ctl"></div>
-         <div class="pc-progress"><div class="pc-fill"></div></div>
-         <div class="pc-recog"></div>
-         <div class="pc-data"></div>`;
-  }
-
-  const tm = st.timing || {};
-  // A paused worker can be EITHER a recording (auto-scroll hit the list end) or a
-  // processing run; st.kind disambiguates so the right counters/controls show.
-  const recPaused = paused && st.kind === "recording";   // recording, auto-paused at list end
-  const procLive = processing || (paused && st.kind === "processing");
-  const recLive = recording || recPaused;
-  // Live counters ONLY — show numbers while a worker is actually moving them. A recording
-  // shows its frame count; a processing run shows processed/read/fps + timing. An
-  // idle/done/just-loaded session shows nothing (static text is just noise).
-  const stats = [];
-  if (recLive || procLive) stats.push(`${st.frames} frames`);
-  if (procLive) stats.push(`${st.processed} processed`, `${st.read || 0} read`, `${st.fps} /s`);
-  const bar = right.querySelector(".pc-bar");   // absent in the new-session pane
-  if (bar) bar.innerHTML = `
-    ${stats.length ? `<span class="muted">${stats.join(" · ")}</span>` : ""}
-    ${procLive ? `<span class="muted">· ${tm.ms_per_frame || 0} ms/frame (${esc(tm.device || "cpu")})</span>` : ""}
-    ${procLive && st.window ? `<span class="conf-good" title="window/state recognised this frame">· ${esc(st.window)}/${esc(st.state)}</span>` : ""}
-    ${recPaused ? `<span class="conf-warn">${PAUSE} auto-scroll reached the list end — resume to retry, or uncheck it</span>` : ""}
-    ${st.warning ? `<span class="conf-warn">${WARN} ${esc(st.warning)}</span>` : ""}
-    ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}`;
-  // recognition tally: per-window/state frame counts (the "" key is a miss — no window matched)
-  const recogEl = right.querySelector(".pc-recog");
-  if (recogEl) {
-    const rec = st.recognized || [];
-    recogEl.innerHTML = rec.map((r) =>
-      `<span class="pc-recog-chip${r.miss ? " miss" : ""}">${r.miss ? "no match" : esc(r.key)} · ${r.count}</span>`).join("");
-  }
-  // progress bar matters only WHILE processing — gone once done so it doesn't linger
-  const prog = right.querySelector(".pc-progress");
-  if (prog) {
-    prog.hidden = !procLive;
-    right.querySelector(".pc-fill").style.width = `${pct}%`;
-  }
-
-  // the record inputs are only present (and only editable) in the new-session pane
-  right.querySelectorAll(".pc-opts input").forEach((i) => { i.disabled = recording; });
-
-  const justSaved = phase === "saved";
-  const anyRun = recording || busyRun;   // any worker running -> save/delete locked
-  let ctl;
-  if (precapView === "new") {
-    // recording immediately flips to the loaded pane, so the new pane is just the trigger
-    ctl = `<button data-act="record"><span class="ic ic-rec">●</span> record</button>`;
-  } else {
-    const proc = precapStopping ? `<button disabled>stopping…</button>`
-      : recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>`
-      : processing ? `<button data-act="pause">‖ pause</button>`
-      : paused ? `<button data-act="resume">► resume</button>${recPaused ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>` : ""}`
-      : `<button data-act="process" ${canProcess ? "" : "disabled"}>process${st.frames ? ` ${st.frames}` : ""}</button>`;
-    // auto-scroll hit the list end -> the recording is done; offer stop, not discard
-    const cancel = busyRun && !precapStopping && !recPaused ? `<button data-act="cancel" class="warn">cancel</button>` : "";
-    // commit only makes sense when nothing's running AND processing has staged records —
-    // hide it entirely while a worker is active or before the precapture's been processed
-    // (keep showing it right after a commit for the "committed" feedback).
-    const save = (anyRun || (!staged && !justSaved)) ? ""
-      : `<button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !justSaved) ? "" : "disabled"}>${justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`}</button>`;
-    ctl = `${proc}${cancel}${save}`;
-  }
-  const ctlEl = right.querySelector(".pc-ctl");
-  // don't clobber a live INPUT the user is editing (the clicks field) on a poll tick;
-  // a focused button must NOT block the rebuild (else post-save state wouldn't render)
-  const editing = ctlEl.contains(document.activeElement) && document.activeElement.matches("input");
-  if (!editing) ctlEl.innerHTML = ctl;
-
-  const data = right.querySelector(".pc-data");
-  if (data) renderPrecapData(data, st.datasets);
-}
-
-const PC_PAGE = 30;   // session rows rendered per window; grows by this much on scroll-to-bottom
-
-// The left pane: "＋ new session" (the record-inputs pane) on top, then every saved
-// recording, newest first. The selected item is highlighted; switching is locked while a
-// worker is busy. Loading is whole-row; ✎ renames. Delete lives in the right pane.
-//
-// Reconciled IN PLACE — never rebuild innerHTML (like renderWorkers). The poll redraws on
-// every busy tick; wiping the list would churn buttons and steal focus each tick. The new
-// button + header are made once; rows are a keyed map, reused/reordered/updated in place.
-function renderPrecapLeft(left, st) {
-  if (!left._rows) {
-    left._new = document.createElement("button");
-    left._new.className = "pc-sess-new"; left._new.dataset.act = "newsess";
-    left._new.title = "record a new session"; left._new.textContent = "＋ new session";
-    const h = document.createElement("div");
-    h.className = "pc-sess-h muted"; h.textContent = "sessions";
-    left.append(left._new, h);
-    left._head = h;           // header carries the all-sessions total image size
-    // rows live in their own scroll box that FILLS the panel height; we render a window of
-    // the newest sessions and grow it (load more) as the user scrolls toward the bottom, so
-    // a huge session list never builds hundreds of rows up front. (＋new + header stay above.)
-    left._rowsBox = document.createElement("div");
-    left._rowsBox.className = "pc-sess-rows";
-    left.appendChild(left._rowsBox);
-    left._rows = new Map();   // sid -> { row, load, ren }
-    left._renderN = PC_PAGE;  // how many rows are currently rendered
-    left._rowsBox.addEventListener("scroll", () => {
-      const b = left._rowsBox;
-      if (b.scrollTop + b.clientHeight >= b.scrollHeight - 48 && left._renderN < precapSessions.length) {
-        left._renderN += PC_PAGE;
-        renderPrecapLeft(left, left._st);   // re-render with the bigger window
-      }
-    });
-  }
-  left._st = st;   // remembered so the scroll handler can re-render with the latest status
-  left._new.classList.toggle("active", precapView === "new");
-  left._new.disabled = precapBusy;
-
-  // render only the newest _renderN sessions; the rest appear as you scroll (see above)
-  const vis = precapSessions.slice(0, left._renderN);
-  const want = new Set(vis.map((s) => s.id));
-  for (const [sid, r] of left._rows) if (!want.has(sid)) { r.row.remove(); left._rows.delete(sid); }
-
-  let i = 0;   // slot index into _rowsBox so rows are MOVED only when not already in place
-  for (const s of vis) {
-    let r = left._rows.get(s.id);
-    if (!r) {
-      const row = document.createElement("div");
-      row.className = "pc-sess"; row.dataset.act = "loadsess"; row.dataset.sid = s.id; row.title = "load this session";
-      const name = document.createElement("span"); name.className = "pc-sess-name";
-      const meta = document.createElement("span"); meta.className = "muted pc-sess-meta";
-      const ren = document.createElement("button");
-      ren.className = "pc-sess-ren"; ren.dataset.act = "rensess"; ren.dataset.sid = s.id; ren.title = "rename"; ren.textContent = "✎";
-      row.append(name, meta, ren);
-      r = { row, name, meta, ren }; left._rows.set(s.id, r);
-    }
-    const at = left._rowsBox.children[i];        // keep DOM order = newest-first WITHOUT
-    if (at !== r.row) left._rowsBox.insertBefore(r.row, at || null);   // detaching settled rows
-    i++;
-    r.row.dataset.label = s.label || "";   // source of truth for the rename input
-    r.row.classList.toggle("active", precapView === "loaded" && s.id === st.session);
-    if (!r.row._editing) {     // don't clobber the rename input mid-edit
-      const nm = s.label || fmtCaptureTime(s.id);
-      if (r.name.textContent !== nm) r.name.textContent = nm;
-    }
-    const meta = `${s.frames}f · ${fmtBytes(s.bytes || 0)} · ${s.records || 0} rec${s.saved_at ? ' · <span class="tc-ok">committed</span>' : ""}`;
-    if (r.meta._html !== meta) { r.meta.innerHTML = meta; r.meta._html = meta; }   // touch DOM only on change
-    r.ren.disabled = precapBusy;
-  }
-  // header shows the total image size across every session (touch DOM only on change)
-  const total = precapSessions.reduce((a, s) => a + (s.bytes || 0), 0);
-  const htxt = precapSessions.length ? `sessions · ${fmtBytes(total)}` : "sessions";
-  if (left._head.textContent !== htxt) left._head.textContent = htxt;
-}
-
-// Human-readable byte size (1 KB = 1024 B). Whole numbers for B and >=100;
-// one decimal otherwise — so "47f · 12.3 MB" reads cleanly in the session list.
-function fmtBytes(n) {
-  if (!n) return "0 B";
-  const u = ["B", "KB", "MB", "GB", "TB"];
-  let v = n, i = 0;
-  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
-  return `${i === 0 || v >= 100 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
-}
-
-// Capture filenames are "YYYYMMDD-HHMMSS-ffffff.jpg" — pull the time out for display.
-function fmtCaptureTime(name) {
-  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(name);
-  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}` : name;
-}
-
-// Pick which stashed capture a window opens with — a thumbnail grid of every stash.
-async function openCaptureModal(winId) {
-  const game = model.profile.name;
-  const node = document.createElement("div");
-  node.innerHTML = `<p class="muted" style="padding:12px">loading…</p>`;
-  const modal = openModal({ title: `${winId} — choose capture`, size: "data", node });
-  try {
-    const [caps, binds] = await Promise.all([api.listCaptures(game), api.getBindings(game)]);
-    const current = binds[winId];
-    const grid = caps.map((name) => `
-      <button class="cap-cell ${name === current ? "sel" : ""}" data-name="${esc(name)}" title="${esc(name)}">
-        <img loading="lazy" src="${api.captureUrl(game, name)}" alt="" />
-        <span class="cap-time">${esc(fmtCaptureTime(name))}</span>
-      </button>`).join("");
-    node.innerHTML = `<div class="cap-head"><button class="cap-new">${CAMERA} capture new</button>
-        <span class="muted">${caps.length} stashed</span></div>
-      ${caps.length ? `<div class="cap-grid">${grid}</div>` : '<p class="cap-empty">no stashed captures yet</p>'}`;
-    node.querySelectorAll(".cap-cell").forEach((b) =>
-      b.addEventListener("click", async () => { await chooseCapture(winId, b.dataset.name); modal.close(); }));
-    node.querySelector(".cap-new").addEventListener("click", async () => {
-      modal.close();
-      if (!imageCanvases.has(winId)) await openImage(winId);
-      await loadImage(winId, true);   // grab a fresh window capture + bind it
-    });
-  } catch (e) {
-    node.innerHTML = `<p class="muted" style="padding:12px">${esc(String(e))}</p>`;
-  }
-}
-
-async function chooseCapture(winId, name) {
-  await api.bindCapture(model.profile.name, winId, name);
-  if (!imageCanvases.has(winId)) await openImage(winId);   // openImage -> loadImage uses the binding
-  else await loadImage(winId, false);
-  updateImageLabel(winId);
-}
-
-// ---- window image / region drawing (in-graph) -----------------------------
-
-const KINDS = [["data_area", "data area", "▭"], ["item", "item", "▣"], ["detect", "detect", "◎"], ["scrollbar", "scrollbar", "↕"]];
-// kinds drawn INSIDE an item node (on its frozen cutout): the cell + fields + tells
-const ITEM_KINDS = [["bbox", "cell", "▣"], ["field", "field", "▦"], ["filled", "filled", "▩"], ["text", "text", "T"], ["color", "color", "◐"], ["template", "template", "⧉"], ["diamonds", "diamonds", "◆"]];
-
-// Show the bound capture's filename on the image button, so the user can tell
-// which picture this window is looking at.
-async function updateImageLabel(winId, btn) {
-  btn = btn || nodeEls.get(`win:${winId}`)?.querySelector(".imgbtn");
-  if (!btn) return;
-  try {
-    const name = (await api.getBindings(model.profile.name))[winId];
-    const lbl = btn.querySelector(".imgbtn-lbl");
-    if (lbl) lbl.textContent = name || "capture";   // keep the icon; only swap the label text
-    btn.title = name || "capture image";
-  } catch { /* ignore */ }
-}
-
-function closeImage(winId) {
-  const e = imageCanvases.get(winId);
-  if (e && e.host) e.host.innerHTML = "";
-  imageCanvases.delete(winId);
-  unregisterOverlay(`win:${winId}`);
-  openImages.delete(winId);
-  drawEdges();
-  persist.layout();
-}
-
-// The image surface lives INSIDE the window node's `.win-img` host — one node.
-async function openImage(winId) {
-  const node = nodeEls.get(`win:${winId}`);
-  const host = node && node.querySelector(".win-img");
-  if (!host) return;
-  host.innerHTML = `<div class="imgtools">
-      <span class="tools">${KINDS.map(([v, label, icon]) => `<button class="tool" data-kind="${v}" title="draw ${label}">${icon} ${label}</button>`).join("")}</span>
-      <span class="spacer"></span><button class="imgcap">recapture</button><button class="imgclose">×</button></div>
-    <div class="canvas-wrap"><canvas></canvas></div>`;
-  const canvas = host.querySelector("canvas");
-  const kindOf = () => host.querySelector(".tool.active")?.dataset.kind || "region";
-  const overlay = new Overlay(canvas, {
-    onCreate: (geom) => {
-      const k = kindOf();
-      if (k === "item") { createItemFromGeom(winId, geom); return; }   // freeze + spawn item node
-      let newDetect = null;
-      if (k === "detect") newDetect = model.addDetect(winId, geom);
-      else if (k === "scrollbar") model.setScrollbar(winId, geom);
-      else if (k === "data_area") model.setDataArea(winId, geom);
-      else model.addRegion(winId, geom);
-      clearGrid(winId);   // layout changed → detected grid is stale
-      render(); refreshImageBoxes(winId); autosave(true, winId);   // re-OCR only this window
-      if (newDetect) prefillDetectText(winId, newDetect);
-    },
-    onChange: (box) => {
-      const r = box.role;
-      if (r === "detect") model.setDetectBox(winId, box.id, box);
-      else if (r === "scrollbar") model.setScrollbar(winId, box);
-      else if (r === "data_area") model.setDataArea(winId, box);
-      else if (r === "item") { model.setItemBox(winId, box.id, box); refreshItemBoxes(winId, box.id); }
-      else model.setRegionBox(winId, box.id, box);
-      clearGrid(winId);   // layout changed → detected grid is stale
-      refreshImageBoxes(winId); drawEdges(); autosave(true, winId);   // re-OCR only this window
-    },
-    onSelect: (id) => overlaySelected(`win:${winId}`, id),
-  });
-  imageCanvases.set(winId, { host, canvas, overlay });
-  registerOverlay(`win:${winId}`, { overlay, kind: "window", winId,
-    persist: (b) => persistBox(winId, b), refresh: () => refreshImageBoxes(winId) });
-  overlay.setWorldZoom(view.zoom);
-  openImages.add(winId);
-  persist.layout();
-  host.querySelectorAll(".tool").forEach((btn) => btn.addEventListener("click", () => {
-    host.querySelectorAll(".tool").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-  }));
-  host.querySelector(".imgclose").addEventListener("click", () => closeImage(winId));
-  host.querySelector(".imgcap").addEventListener("click", () => loadImage(winId, true));   // recapture re-reads
-  if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
-  await loadImage(winId, false);   // its onload now refreshes detect once the pixels are in
-  drawEdges();
-}
-
-// ---- item template nodes (frozen cutout + cell-relative fields/tells) ------
-
-// Drawing an "item" box on the fullscreen image freezes that crop and spawns a node.
-async function createItemFromGeom(winId, geom) {
-  const game = model.profile.name;
-  const cap = (await api.getBindings(game))[winId];
-  if (!cap) { setStatus("recapture the window first"); return; }
-  let cut;
-  try { cut = await api.itemCutout(game, cap, geom); }
-  catch (e) { setStatus(String(e.message || e)); return; }
-  const itemId = model.addItem(winId, { cutout: cut.name, cutout_box: geom, box: geom });
-  clearGrid(winId);
-  render(); refreshImageBoxes(winId); autosave();
-  openItemImage(winId, itemId);
-}
-
-function closeItemImage(winId, itemId) {
-  const key = `${winId}:${itemId}`;
-  const e = itemCanvases.get(key);
-  if (e && e.host) e.host.innerHTML = "";
-  itemCanvases.delete(key);
-  itemReads.delete(key);
-  clearTimeout(itemReadTimers.get(key)); itemReadTimers.delete(key); itemReadAgain.delete(key);
-  unregisterOverlay(`item:${winId}:${itemId}`);
-  drawEdges();
-}
-
-// Build the cutout canvas inside an item node and wire drawing of cell/fields/tells.
-// Resize the item's CELL box WITHOUT dragging its fields/tells along. Children are stored
-// RELATIVE to the cell, so changing the cell naively rescales them; re-anchor each child so
-// its absolute (window-fraction) box is preserved across the cell change.
-function setItemCellKeepingChildren(winId, itemId, newWinBox) {
-  const it = model.item(winId, itemId);
-  const old = it && it.box;
-  if (!old || !old.w || !old.h) { model.setItemBox(winId, itemId, newWinBox); return; }
-  const toAbs = (b, c) => ({ x: c.x + b.x * c.w, y: c.y + b.y * c.h, w: b.w * c.w, h: b.h * c.h });
-  const toRel = (b, c) => ({ x: (b.x - c.x) / c.w, y: (b.y - c.y) / c.h, w: b.w / c.w, h: b.h / c.h });
-  const fAbs = (it.fields || []).map((f) => toAbs(f.box, old));
-  const tAbs = (it.tells || []).map((t) => toAbs(t.box, old));
-  model.setItemBox(winId, itemId, newWinBox);
-  (it.fields || []).forEach((f, i) => { f.box = toRel(fAbs[i], newWinBox); });
-  (it.tells || []).forEach((t, i) => { t.box = toRel(tAbs[i], newWinBox); });
-}
-
-function openItemImage(winId, itemId) {
-  const node = nodeEls.get(`item:${winId}:${itemId}`);
-  const host = node && node.querySelector(".item-img");
-  if (!host) return;
-  const it = model.item(winId, itemId);
-  if (!it || !it.cutout_box) return;
-  // draw-mode buttons live in the node body now (itemLists: cell/field + tell sections);
-  // this host is just the readout + cutout canvas.
-  host.innerHTML = `<div class="item-readout muted"></div>
-    <div class="key-prev" title="the key the last read would store under">${keyPrevHTML(winId, itemId)}</div>
-    <div class="canvas-wrap"><canvas></canvas></div>`;
-  const canvas = host.querySelector("canvas");
-  const cb = it.cutout_box;
-  const cut2win = (b) => ({ x: cb.x + b.x * cb.w, y: cb.y + b.y * cb.h, w: b.w * cb.w, h: b.h * cb.h });
-  const win2cut = (b) => ({ x: (b.x - cb.x) / cb.w, y: (b.y - cb.y) / cb.h, w: b.w / cb.w, h: b.h / cb.h });
-  const ibox = () => model.item(winId, itemId).box;
-  const win2rel = (b) => { const ib = ibox(); return { x: (b.x - ib.x) / ib.w, y: (b.y - ib.y) / ib.h, w: b.w / ib.w, h: b.h / ib.h }; };
-  const rel2win = (b) => { const ib = ibox(); return { x: ib.x + b.x * ib.w, y: ib.y + b.y * ib.h, w: b.w * ib.w, h: b.h * ib.h }; };
-  const kindOf = () => node.querySelector(".tool.active")?.dataset.kind || "field";
-
-  const overlay = new Overlay(canvas, {
-    onCreate: (geom) => {                       // geom in cutout fractions
-      const w = cut2win(geom);
-      const k = kindOf();
-      if (k === "field") {
-        // drawing a field SPAWNS its own node, grouped with the item. Position + render FIRST
-        // (addToGroup needs the node to have a rect), then attach to the item's group.
-        const fid = model.addItemField(winId, itemId, win2rel(w));
-        placeNewNode(`fld:${winId}:${itemId}:${fid}`, "itemfield");
-        render();
-        addFieldToItemGroup(winId, itemId, fid);
-        groups.renderGroups();
-        refreshItemBoxes(winId, itemId); refreshImageBoxes(winId);
-        clearGrid(winId); scheduleItemRead(winId, itemId); autosave(true, winId);
-        panZoomTo(`fld:${winId}:${itemId}:${fid}`);
-        return;
-      }
-      if (k === "bbox") setItemCellKeepingChildren(winId, itemId, w);
-      else model.addItemTell(winId, itemId, k, win2rel(w));   // filled/text/color/template
-      itemChanged(winId, itemId, { rebuild: true });   // a new tell adds a row
-    },
-    onChange: (box) => {                        // box in cutout fractions + role/id
-      const w = cut2win(box);
-      if (box.role === "bbox") setItemCellKeepingChildren(winId, itemId, w);
-      else if (box.role === "field") model.setItemFieldBox(winId, itemId, box.id, win2rel(w));
-      else model.setItemTellBox(winId, itemId, box.id, win2rel(w));
-      itemChanged(winId, itemId);              // box moved/resized — no DOM rebuild
-      if (box.role === "bbox") syncCellSize(winId, itemId);   // reflect new cell size in the inputs
-    },
-    onSelect: (id) => overlaySelected(`item:${winId}:${itemId}`, id),
-  });
-  itemCanvases.set(`${winId}:${itemId}`, { host, canvas, overlay, cut2win, win2cut, win2rel, rel2win });
-  // central registry: cross-deselect + WASD for the item's boxes
-  const persistItem = (b) => {
-    const w = cut2win(b);
-    if (b.role === "bbox") setItemCellKeepingChildren(winId, itemId, w);
-    else if (b.role === "field") model.setItemFieldBox(winId, itemId, b.id, win2rel(w));
-    else model.setItemTellBox(winId, itemId, b.id, win2rel(w));
-    itemChanged(winId, itemId);
-    if (b.role === "bbox") syncCellSize(winId, itemId);   // reflect new cell size in the inputs
-  };
-  registerOverlay(`item:${winId}:${itemId}`, { overlay, kind: "item", winId, itemId,
-    persist: persistItem, refresh: () => { refreshItemBoxes(winId, itemId); refreshImageBoxes(winId); } });
-  overlay.setWorldZoom(view.zoom);
-  if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
-
-  const img = new Image();
-  img.onload = () => {
-    canvas.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
-    overlay.setImage(img); refreshItemBoxes(winId, itemId); drawEdges();
-    scheduleItemRead(winId, itemId);   // show what current settings extract, right away
-  };
-  img.src = api.cutoutUrl(model.profile.name, it.cutout);
-  drawEdges();
-}
-
-// Draw the cell + fields + tells on the item's cutout canvas (in cutout fractions).
-function refreshItemBoxes(winId, itemId) {
-  const ent = itemCanvases.get(`${winId}:${itemId}`);
-  const it = model.item(winId, itemId);
-  if (!ent || !it) return;
-  // last read of this cutout, if any: pass/fail per tell + the extracted field values
-  const rd = itemReads.get(`${winId}:${itemId}`);
-  const tellPass = {};
-  for (const t of rd?.tells || []) tellPass[t.id] = t.pass;
-  const mark = (id) => (id in tellPass ? (tellPass[id] ? " ✓" : " ✗") : "");
-  const boxes = [{ id: "__bbox", role: "bbox", ...ent.win2cut(it.box) }];   // the tiling cell
-  // label fields/tells with their role so the cutout shows what each box does: a field
-  // flagged tell shows "⊙tell" + its align; a locating tell shows "loc" + align. After a
-  // read, a tell/field-tell box also shows ✓/✗ for whether it passed.
-  for (const f of it.fields || []) {
-    const al = f.align || it.align || "center";
-    const label = `${f.id}${f.tell ? ` ⊙tell·${al}${mark(f.id)}` : ""}`;
-    boxes.push({ id: f.id, label, role: "field", field: f.field, ...ent.win2cut(ent.rel2win(f.box)) });
-  }
-  for (const t of it.tells || []) {
-    const al = t.align || it.align || "center";
-    const label = `${t.id}${t.locate ? ` loc·${al}` : ""}${mark(t.id)}`;
-    boxes.push({ id: t.id, label, role: t.kind === "text" ? "detect" : "scrollbar", ...ent.win2cut(ent.rel2win(t.box)) });
-  }
-  ent.overlay.setBoxes(boxes);
-  // the extracted field values, drawn over their boxes tinted by confidence (same as the
-  // window preview). The read returns boxes already in cutout fractions.
-  const reads = rd ? Object.values(rd.fields).filter((f) => f.box)
-    .map((f) => ({ ...f.box, text: f.value, confidence: f.confidence, substituted: f.substituted })) : [];
-  ent.overlay.setPreview(reads);
-}
-
-// Re-read the cutout whenever its settings change, debounced and coalesced: config
-// edits fire a burst of change events and OCR is heavy, so wait for the dust to settle
-// and never run two reads for the same item at once (queue a single re-run instead).
-const itemReadTimers = new Map();   // "winId:itemId" -> debounce timer
-const itemReadBusy = new Set();     // items with a read in flight
-const itemReadAgain = new Set();    // items whose settings changed mid-read
-function scheduleItemRead(winId, itemId, delay = 500) {
-  const key = `${winId}:${itemId}`;
-  clearTimeout(itemReadTimers.get(key));
-  itemReadTimers.set(key, setTimeout(() => { itemReadTimers.delete(key); runItemRead(winId, itemId); }, delay));
-}
-
-// Read the item's frozen cutout with the current settings and show what it extracts:
-// field values tinted on the canvas + a compact tell/validity read-out under the toolbar.
-async function runItemRead(winId, itemId) {
-  const key = `${winId}:${itemId}`;
-  if (!itemCanvases.has(key)) return;
-  if (itemReadBusy.has(key)) { itemReadAgain.add(key); return; }   // re-run once after
-  itemReadBusy.add(key);
-  const node = nodeEls.get(`item:${winId}:${itemId}`);
-  const out = node?.querySelector(".item-readout");
-  if (out && !out.innerHTML) out.innerHTML = "reading…";
-  const done = timed(`item read ${key}`);
-  try {
-    const res = await api.itemRead(previewProfileFor(winId), model.profile.name, winId, itemId);
-    itemReads.set(key, res);
-    refreshItemBoxes(winId, itemId);
-    if (out) out.innerHTML = itemReadout(res);
-    const kp = node?.querySelector(".key-prev");   // key section's preview tracks the new read
-    if (kp) kp.innerHTML = keyPrevHTML(winId, itemId);
-    done(`· ${res.device || "?"} · ${res.valid ? "valid" : "rejected"}`);
-  } catch (e) {
-    done(String(e.message || e), "err");
-    if (out) out.innerHTML = `<span class="tc-bad">${esc(String(e.message || e))}</span>`;
-  } finally {
-    itemReadBusy.delete(key);
-    if (itemReadAgain.has(key)) { itemReadAgain.delete(key); runItemRead(winId, itemId); }
-  }
-}
-
-// Compact one-line summary of a cutout read: validity + each field's value + tell chips.
-function itemReadout(res) {
-  const status = res.valid ? '<span class="tc-ok">✓ valid</span>' : '<span class="tc-bad">✗ rejected</span>';
-  const fields = Object.entries(res.fields || {}).map(([k, v]) => {
-    const cls = v.substituted ? "conf-sub" : v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
-    return `<div class="ir-row"><span class="ir-f">${esc(k)}=<b class="${cls}">${esc(String(v.value ?? "∅"))}</b></span></div>`;
-  }).join("");
-  const tells = (res.tells || []).map(tellChip).join(" ");
-  return `<div class="ir-row">${status}</div>${fields}${tells ? `<div class="ir-row">${tells}</div>` : ""}`;
-}
-
-function selectRegionNode(winId, boxId) {
-  const ids = [`reg:${winId}:${boxId}`, `det:${winId}:${boxId}`, `st:${winId}:${boxId}`, `sb:${winId}:${boxId}`];
-  selectedNodeId = ids.find((id) => nodeEls.has(id)) || null;
-  for (const [id, el] of nodeEls) el.classList.toggle("selected", id === selectedNodeId);
-  drawEdges();   // restyle the selected node's line
-}
-
 // Focus ANY node (click or drag). Drops box selection so WASD targets the node,
 // highlights it + its lines. Box-backed nodes (region/detect/scrollbar) then re-select
 // their box on the trailing click, so WASD keeps nudging the box for those.
 function focusNode(id) {
   for (const [, rec] of overlays) rec.overlay.setActive(null);
   activeOverlayKey = null;
+  // drop any picked draw tool on OTHER nodes — focusing elsewhere deselects their tools
+  const keep = nodeEls.get(id);
+  document.querySelectorAll(".tool.active").forEach((b) => { if (!keep || !keep.contains(b)) b.classList.remove("active"); });
   selectedNodeId = id;
   clearNodeSelections(id);   // drop any other node's inner selection
   for (const [nid, el] of nodeEls) el.classList.toggle("selected", nid === id);
@@ -3480,422 +2181,19 @@ function focusNode(id) {
   nmSyncSelection();   // mirror the selection in the node map
 }
 
-// ---- live preview node (what the current setup would read) ------------------
-
-function prevHost(winId) {
-  const el = nodeEls.get(`prev:${winId}`);
-  return el && el.querySelector(".prev-host");
-}
-
-function previewProfileFor(winId) {
-  const w = model.window(winId);
-  return { ...model.profile, windows: w ? [w] : [] };
-}
-
-// Coalesce reads: at most ONE OCR request per window is ever in flight. Clicking
-// "read" again while one runs doesn't stack another (which would serialize on the OCR
-// lock and starve the server threadpool) — it just flags a single re-run with the
-// latest inputs once the current one returns. The button stays live.
-const previewBusy = new Set();        // winId -> a read is in flight
-const previewAgain = new Map();       // winId -> live flag of a queued re-run
-// disable + spin the read buttons for this window (preview node + image toolbar) while
-// an OCR read runs, so it's obvious it's working and the button can't be re-fired.
-function setReadBusy(winId, on) {
-  const pnode = nodeEls.get(`prev:${winId}`), wnode = nodeEls.get(`win:${winId}`);
-  const btns = [...(pnode?.querySelectorAll(".prevrun") || []), ...(wnode?.querySelectorAll(".imgprev") || [])];
-  for (const b of btns) { b.disabled = on; b.classList.toggle("reading", on); }
-}
-async function refreshPreview(winId, live = false) {
-  const host = prevHost(winId);
-  if (!host) return;
-  host.dataset.ran = "1";   // marks it for live re-reads
-  if (previewBusy.has(winId)) { previewAgain.set(winId, live); return; }   // already reading → re-run once after
-  previewBusy.add(winId);
-  setReadBusy(winId, true);
-  if (!live) host.innerHTML = `<p class="muted" style="padding:8px">reading…</p>`;
-  const done = timed(`OCR preview ${winId}`);
-  try {
-    const cap = live ? null : (await api.getBindings(model.profile.name))[winId];
-    const res = await api.preview(previewProfileFor(winId), model.profile.name, cap);
-    host.innerHTML = previewTable(res.cells);
-    setGridFromPreview(winId, res);   // same OCR pass drives the dashed grid
-    done(`· ${res.device || "?"} · ${(res.cells || []).length} cells`);
-  } catch (e) {
-    done(String(e.message || e), "err");
-    host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`;
-  } finally {
-    previewBusy.delete(winId);
-    if (previewAgain.has(winId)) {   // a click landed mid-read → run once more (button stays busy, no flicker)
-      const lv = previewAgain.get(winId); previewAgain.delete(winId); refreshPreview(winId, lv);
-    } else {
-      setReadBusy(winId, false);
-    }
-  }
-}
-
-// Commit what the preview node currently reads into the window's dataset store — re-reads
-// server-side (never trusts the rendered table) against the SAME image the preview shows
-// (the window's bound capture), as one revertable batch. Refreshes the dataset node after.
-async function commitPreviewNode(winId, btn) {
-  if (btn) { btn.disabled = true; btn.classList.add("reading"); }
-  const done = timed(`commit ${winId}`);
-  try {
-    const cap = (await api.getBindings(model.profile.name))[winId];
-    const r = await api.previewCommit(previewProfileFor(winId), model.profile.name, cap);
-    done(`· ${r.written} → ${r.dataset} (${r.skipped} skipped of ${r.cells})`);
-    setStatus(`committed ${r.written} to ${r.dataset} · ${r.skipped} skipped of ${r.cells}`);
-    if (nodeEls.has(`ds:${r.dataset}`)) { refreshDataNode(r.dataset); loadBatchesNode(r.dataset); }
-    refreshLive();   // record counts / new dataset edges
-  } catch (e) {
-    done(String(e.message || e), "err");
-    setStatus(String(e.message || e));
-  } finally {
-    if (btn) { btn.disabled = false; btn.classList.remove("reading"); }
-  }
-}
-
-function tellChip(t) {
-  // one tell's outcome: "id score/threshold" tinted by pass/fail
-  const thr = t.threshold == null ? "" : `<span class="muted">/${t.threshold}</span>`;
-  const title = t.detail ? ` title="${esc(t.detail)}"` : "";
-  return `<span class="tell-chip ${t.pass ? "tc-ok" : "tc-bad"}"${title}>${esc(t.id)} ${t.score}${thr}</span>`;
-}
-
-// "empty" -> "if empty", "if_number" -> "if number" — the badge shown instead of a
-// confidence % when a configured fallback produced the value (config, not a read)
-const subLabel = (r) => `if ${String(r).replace(/^if_/, "").replace(/_/g, " ")}`;
-
-function previewCell(v) {
-  if (!v) return "<td>—</td>";
-  if (v.substituted) {
-    return `<td class="conf-sub" title="${esc(v.raw || "(empty)")} → ${subLabel(v.substituted)}">${esc(v.value ?? "∅")}</td>`;
-  }
-  const cls = v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
-  return `<td class="${cls}" title="${esc(v.raw || "")}">${esc(v.value ?? "∅")}</td>`;
-}
-
-function previewTable(cells) {
-  const all = cells || [];
-  const hasItems = all.some((c) => Array.isArray(c.tells));
-  if (!hasItems) {
-    const kept = all.filter(cellKept);
-    if (!kept.length) return `<p class="muted" style="padding:8px">0 rows</p>`;
-    const fieldIds = [...new Set(kept.flatMap((c) => Object.keys(c.fields)))];
-    const head = fieldIds.map((f) => `<th>${esc(f)}</th>`).join("");
-    const rows = kept.slice(0, 200).map((c) => `<tr>${fieldIds.map((f) => previewCell(c.fields[f])).join("")}</tr>`).join("");
-    return `<div class="prev-count muted">${kept.length} row${kept.length === 1 ? "" : "s"}</div>
-      <table class="grid-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
-  }
-
-  // item-template diagnostics: show EVERY cell that read something (so rejected arcanes
-  // are visible), with its template, status, reject reason, and per-tell scores.
-  const read = all.filter((c) => Object.values(c.fields).some((f) => f && f.value !== null && f.value !== "" && f.value !== undefined));
-  if (!read.length) return `<p class="muted" style="padding:8px">0 cells read any data</p>`;
-  read.sort((a, b) => (b.valid === true) - (a.valid === true));
-  const fieldIds = [...new Set(read.flatMap((c) => Object.keys(c.fields)))];
-  const head = `<th></th><th>item</th>${fieldIds.map((f) => `<th>${esc(f)}</th>`).join("")}<th>tells</th><th>reason</th>`;
-  const rows = read.slice(0, 300).map((c) => {
-    const status = c.valid ? '<span class="tc-ok">✓</span>'
-      : c.tells_pass ? '<span class="tc-warn">◌</span>' : '<span class="tc-bad">✗</span>';
-    const fcols = fieldIds.map((f) => previewCell(c.fields[f])).join("");
-    const tells = (c.tells || []).map(tellChip).join(" ");
-    return `<tr class="${c.valid ? "" : "prev-rej"}"><td>${status}</td><td>${esc(c.item || "")}</td>${fcols}<td>${tells}</td><td class="muted">${esc(c.reason || "")}</td></tr>`;
-  }).join("");
-  const nValid = read.filter((c) => c.valid).length;
-  return `<div class="prev-count muted">${nValid} kept · ${read.length} read · ✓ kept, ◌ tells pass but lost overlap, ✗ tell failed</div>
-    <table class="grid-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
-}
-
-async function prefillDetectText(winId, detectId) {
-  try {
-    const b = await api.getBindings(model.profile.name);
-    const res = await api.detect(previewProfileFor(winId), model.profile.name, b[winId]);
-    const info = res.detect?.[detectId];
-    const a = model.detect(winId, detectId);
-    if (a && !a.text && info && info.read && info.read !== "(template)") {
-      a.text = info.read;
-      render(); autosave();
-    }
-  } catch { /* ignore */ }
-}
-
-// Coalesce detect the same way as preview: at most one in flight per window, with a
-// single queued re-run. Without this, live mode would enqueue a detect every round and
-// they'd stack on the OCR queue until each takes tens of seconds.
-const detectBusy = new Set();
-const detectAgain = new Map();
-async function refreshDetect(winId, live = false) {
-  if (detectBusy.has(winId)) { detectAgain.set(winId, live); return; }
-  detectBusy.add(winId);
-  // spinner on every node whose value this detect refreshes
-  const ids = [`win:${winId}`, ...model.detects(winId).map((a) => `det:${winId}:${a.id}`)];
-  if (model.scrollbar(winId)) ids.push(`sb:${winId}:scrollbar`);
-  const done = timed(`detect ${winId}`);
-  try {
-    await withBusy(ids, async () => {
-      try {
-        const cap = live ? null : (await api.getBindings(model.profile.name))[winId];
-        const res = await api.detect(previewProfileFor(winId), model.profile.name, cap);
-        for (const [aid, info] of Object.entries(res.detect || {})) setDetectStatus(`det:${winId}:${aid}`, info);
-        for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);
-        if (live) {   // is this window currently recognised on screen? (drives the live panel dot)
-          const dvals = Object.values(res.detect || {}), svals = Object.values(res.states || {});
-          const recognized = svals.length ? svals.some((s) => s.matched)
-            : (dvals.length ? dvals.every((d) => d.matched) : false);
-          liveRecog.set(winId, recognized);
-          if (recognized) liveDetCount.set(winId, (liveDetCount.get(winId) || 0) + 1);
-          renderLiveWindow();
-        }
-        const sbEl = nodeEls.get(`sb:${winId}:scrollbar`);
-        const sbSpan = sbEl && sbEl.querySelector(".detect-status");
-        if (sbSpan) {
-          const sb = res.scrollbar;
-          sbSpan.textContent = sb == null ? "position: —"
-            : `position: ${Math.round(sb.pos * 100)}% · ${sb.px}px · ${Math.round(sb.conf * 100)}%`;
-        }
-        done(`· ${res.device || "?"}`);
-      } catch (e) { done(String(e.message || e), "err"); }
-    });
-  } finally {
-    detectBusy.delete(winId);
-    if (detectAgain.has(winId)) { const lv = detectAgain.get(winId); detectAgain.delete(winId); refreshDetect(winId, lv); }
-  }
-}
-function setDetectStatus(nodeId, info) {
-  const el = nodeEls.get(nodeId);
-  const span = el && el.querySelector(".detect-status");
-  if (!span) return;
-  const conf = info.score != null
-    ? ` (${Math.round(info.score * 100)}%${info.threshold != null ? `/${Math.round(info.threshold * 100)}%` : ""})`
-    : "";
-  span.textContent = (info.matched ? "✓ true" : "✗ false") + conf + (info.read ? ` — "${info.read}"` : "");
-  span.className = "detect-status " + (info.matched ? "conf-ok" : "conf-bad");
-}
-// Scoped re-OCR: an edit to ONE window (its items/boxes/detectors) should only re-read THAT
-// window, not every open one. Callers pass the window id; a null id means "all" (a global edit).
-// ids accumulate across the 700ms debounce so edits spanning windows don't drop each other.
-let detectT = null;
-const _detectPending = new Set();   // winIds queued; _detectAll overrides to all open windows
-let _detectAll = false;
-function refreshOpenDetect(winId = null) {
-  if (winId) _detectPending.add(winId); else _detectAll = true;
-  clearTimeout(detectT);
-  detectT = setTimeout(() => {
-    const all = _detectAll; _detectAll = false;
-    for (const id of imageCanvases.keys()) {
-      if (!all && !_detectPending.has(id)) continue;
-      if (model.window(id)?.enabled !== false) refreshDetect(id);   // skip disabled windows
-    }
-    _detectPending.clear();
-  }, 700);
-}
-
-let previewT = null;
-const _previewPending = new Set();
-let _previewAll = false;
-function refreshOpenPreviews(winId = null) {
-  if (winId) _previewPending.add(winId); else _previewAll = true;
-  clearTimeout(previewT);
-  previewT = setTimeout(() => {
-    const all = _previewAll; _previewAll = false;
-    for (const w of model.profile.windows || []) {
-      if (w.enabled === false) continue;   // a disabled window reads nothing — don't re-run it
-      if (!all && !_previewPending.has(w.id)) continue;   // scoped: only the edited window(s)
-      const host = prevHost(w.id);
-      // Read on ANY update — the preview should always reflect the current setup, not wait
-      // for a first manual "read". Reads the window's OWN bound image (live=false), not a
-      // fresh game grab, so it doesn't need the game running (a live grab 404s when it isn't).
-      if (host) refreshPreview(w.id, false);              // refreshes the preview table + grid
-      else if (imageCanvases.has(w.id)) refreshGridPreview(w.id);   // image open, no preview node
-    }
-    _previewPending.clear();
-  }, 700);
-}
-
-
-async function loadImage(winId, recapture) {
-  const entry = imageCanvases.get(winId);
-  if (!entry) return;
-  const game = model.profile.name;
-  let url = null;
-  const done = timed(`${recapture ? "recapture" : "load image"} ${winId}`);
-  setNodeBusy(`win:${winId}`, true);   // capturing/fetching the image
-  try {
-    if (!recapture) {
-      const b = await api.getBindings(game);
-      if (b[winId]) url = api.captureUrl(game, b[winId]);
-    }
-    if (!url) {
-      const c = await api.capture(game);          // capture + bind newest
-      await api.bindCapture(game, winId, c.name);
-      url = c.url;
-    }
-  } catch (e) { done(String(e.message || e), "err"); setStatus(String(e.message || e)); setNodeBusy(`win:${winId}`, false); return; }
-  const img = new Image();
-  img.onload = () => {
-    done();
-    setNodeBusy(`win:${winId}`, false);
-    // keep the canvas area at the image aspect ratio so resizing always fits
-    entry.canvas.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
-    entry.overlay.setImage(img);
-    refreshImageBoxes(winId);
-    drawEdges();
-    updateImageLabel(winId);     // button shows the (possibly new) filename
-    // the image changed (recapture / picked a capture / first open) → READ it: full preview
-    // when the node exists, else just the grid overlay. No first-manual-read gate.
-    if (prevHost(winId)) refreshPreview(winId, false);
-    else refreshGridPreview(winId);
-    refreshDetect(winId);   // re-evaluate detectors against the new image
-  };
-  img.onerror = () => setNodeBusy(`win:${winId}`, false);
-  img.src = url;
-}
-
-function refreshImageBoxes(winId) {
-  const entry = imageCanvases.get(winId);
-  if (!entry) return;
-  // data area first: drawn under everything and lowest hit priority, so the field
-  // regions inside it stay selectable.
-  const boxes = [];
-  const da = model.dataArea(winId);
-  if (da) boxes.push({ id: "__data_area", role: "data_area", ...da });
-  for (const r of model.regions(winId)) boxes.push({ id: r.id, role: "region", field: r.field, ...r.box });
-  for (const a of model.detects(winId)) boxes.push({ id: a.id, role: "detect", ...a.search });
-  // item template box is NOT drawn here — it's the authored cell at one spot, which
-  // isn't where detection actually reads; the live grid (below) shows the real cells
-  const sb = model.scrollbar(winId);
-  if (sb) boxes.push({ id: "scrollbar", role: "scrollbar", ...sb });
-  entry.overlay.setBoxes(boxes);
-  entry.overlay.setGridGuides(buildGridGuides(winId));   // columns + locator scan strips
-  // prefer the live-detected grid (rows found in the actual capture); fall back to
-  // the live-detected grid (where items were actually located this capture)
-  entry.overlay.setCellBoxes(gridCellBoxes.get(winId) || []);   // detected cell tiling (solid)
-  entry.overlay.setGridPreview(gridPreviews.get(winId) || staticFieldPreview(winId) || []);
-  entry.overlay.setPreview(gridReads.get(winId) || []);   // value + confidence per cell
-}
-
-// The cell-relative box the reader scans for a row anchor — mirrors locator_of() server-side:
-// a locate tell → a visual tell → the first tell → the first field flagged as a tell.
-function itemLocatorBox(it) {
-  for (const t of it.tells || []) if (t.locate) return t.box;
-  for (const t of it.tells || []) if (t.kind && t.kind !== "text") return t.box;   // visual tell
-  if ((it.tells || []).length) return it.tells[0].box;
-  for (const f of it.fields || []) if (f.tell) return f.box;
-  return null;
-}
-
-// Author-time guides for the window canvas: the columns the data area tiles into
-// (ncols = round(da.w / cell.w), the same as the reader) and the locator scan strip in each
-// column — so it's clear WHERE rows/columns are looked for, before anything is found.
-// tile origins — mirrors static_grid_origins() in items.py so the drawn grid matches exactly
-// what the reader tiles. The static grid anchors at the data-area corner (o0 = lo) and tiles
-// by the cell SIZE (step); the cell sets the pitch, not the phase.
-function staticGridOrigins(o0, step, lo, hi) {
-  if (step <= 0) return [o0];
-  const slack = step * 0.04, out = [];
-  for (let o = o0; o >= lo - slack; o -= step) if (o + step <= hi + slack) out.push(o);
-  for (let o = o0 + step; o + step <= hi + slack; o += step) if (o >= lo - slack) out.push(o);
-  return out.sort((a, b) => a - b);
-}
-
-function buildGridGuides(winId) {
-  const da = model.dataArea(winId), w = model.window(winId);
-  if (!da || !w || !(w.items || []).length) return null;
-  const isStatic = w.static_grid !== false;   // row-finding mode is per window
-  const items = (w.items || []).filter((it) => it.enabled !== false && it.box && it.box.w && it.box.h);
-  const cols = new Set(), rows = new Set(), strips = [];
-  if (isStatic && items.length) {
-    // ONE grid for the window: anchored at the data-area corner, tiled by the LOWEST-priority
-    // cell SIZE (the cell sets the pitch, NOT the position) — matches the reader
-    const base = items.reduce((a, b) => ((b.priority || 0) < (a.priority || 0) ? b : a));
-    const iw = base.box.w, ih = base.box.h;
-    for (const x of staticGridOrigins(da.x, iw, da.x, da.x + da.w)) { cols.add(x); cols.add(x + iw); }
-    for (const y of staticGridOrigins(da.y, ih, da.y, da.y + da.h)) { rows.add(y); rows.add(y + ih); }
-  } else {
-    for (const it of items) {
-      const iw = it.box.w;
-      const ncols = Math.max(1, Math.round(da.w / iw)), pitch = da.w / ncols;
-      for (let c = 0; c <= ncols; c++) cols.add(da.x + c * pitch);
-      const loc = itemLocatorBox(it);   // located: show where the locator scans
-      if (loc) for (let c = 0; c < ncols; c++)
-        strips.push({ x: da.x + c * pitch + loc.x * iw, y: da.y, w: loc.w * iw, h: da.h });
-    }
-  }
-  return { cols: [...cols], rows: [...rows], strips, yTop: da.y, yBot: da.y + da.h, xLeft: da.x, xRight: da.x + da.w };
-}
-
-// Author-time field rectangles tiled across the STATIC grid, computed from geometry alone
-// (no OCR) — mirrors _cells_for_item()'s static branch in items.py so what's drawn is exactly
-// where the reader will read. Shown immediately on every item edit so a moved/resized box
-// updates on the window canvas at once, without waiting for the OCR preview round-trip. The
-// real OCR preview (gridPreviews) replaces this once it returns. Returns null in LOCATED mode
-// (rows come from OCR there, so geometry can't predict them) or with no items.
-function staticFieldPreview(winId) {
-  const da = model.dataArea(winId), w = model.window(winId);
-  if (!da || !w || w.static_grid === false) return null;
-  const items = (w.items || []).filter((it) => it.enabled !== false && it.box && it.box.w && it.box.h);
-  if (!items.length) return null;
-  // ONE grid anchored at the data-area corner, tiled by the lowest-priority cell SIZE (pitch).
-  const base = items.reduce((a, b) => ((b.priority || 0) < (a.priority || 0) ? b : a));
-  const giw = base.box.w, gih = base.box.h;
-  const xs = staticGridOrigins(da.x, giw, da.x, da.x + da.w);
-  const ys = staticGridOrigins(da.y, gih, da.y, da.y + da.h);
-  const out = [];
-  for (const cy of ys) for (const cx of xs)
-    for (const it of items) for (const f of it.fields || []) {
-      if (!f.box) continue;
-      out.push({ x: cx + f.box.x * giw, y: cy + f.box.y * gih, w: f.box.w * giw, h: f.box.h * gih });
-    }
-  return out.length ? out : null;
-}
-
-// Fetch where the rows ACTUALLY are by OCR-ing the capture, and draw that grid.
-// This is what makes the dashed grid follow a scrolled list instead of guessing.
-async function refreshGridPreview(winId, live = false) {
-  const entry = imageCanvases.get(winId);
-  if (!entry) return;
-  try {
-    const cap = live ? null : (await api.getBindings(model.profile.name))[winId];
-    const res = await api.preview(previewProfileFor(winId), model.profile.name, cap);
-    setGridFromPreview(winId, res);
-  } catch { /* ignore */ }
-}
-
-// A cell is a real, kept row: it passed its item tells (valid) AND read some data.
-function cellKept(c) {
-  if (c.valid === false) return false;
-  return Object.values(c.fields).some((f) => f.value !== null && f.value !== undefined && f.value !== "");
-}
-
-// Pull the detected per-field boxes + their read values out of a preview response.
-// Only kept cells, so blank/invalid slots don't scatter dashes across the image.
-function setGridFromPreview(winId, res) {
-  if (!res || !res.cells) return;
-  const kept = res.cells.filter(cellKept);
-  const boxes = kept.flatMap((c) => Object.values(c.fields).map((f) => f.box)).filter(Boolean);
-  // what each cell actually read (value + confidence) — shown on the window canvas
-  const reads = kept.flatMap((c) => Object.values(c.fields)
-    .filter((f) => f.box)
-    .map((f) => ({
-      ...f.box,
-      text: f.value,
-      confidence: f.confidence,
-      substituted: f.substituted || null,
-    })));
-  // which item template matched: its id centred on each cell, white on black
-  reads.push(...kept.filter((c) => c.box && c.item).map((c) => ({ ...c.box, cell: c.box, text: c.item })));
-  // the detected CELL outlines — the tiling the reader actually found
-  const cells = kept.map((c) => c.box).filter(Boolean);
-  if (boxes.length) gridPreviews.set(winId, boxes); else gridPreviews.delete(winId);
-  if (reads.length) gridReads.set(winId, reads); else gridReads.delete(winId);
-  if (cells.length) gridCellBoxes.set(winId, cells); else gridCellBoxes.delete(winId);
-  refreshImageBoxes(winId);
-}
-
-
 // ---- dragging -------------------------------------------------------------
 // GRID, snap, addResizeGrips, beginDrag and makeDraggable are imported from dragresize.js
 // — the same primitives the floating panels use.
+
+// Node-resize coalescing state (used by snapResize's ResizeObserver). A ResizeObserver
+// tick is only a real user resize when the pointer is down — track that globally.
+let _resizing = false;       // a node is being resized — draw cheap straight lines, no A*/bezier
+let _resizeRaf = null;       // coalesces resize-driven redraws to one per frame
+let _ptrDown = false;        // is a mouse button held?
+if (typeof window !== "undefined") {
+  window.addEventListener("mousedown", () => { _ptrDown = true; }, true);
+  window.addEventListener("mouseup", () => { _ptrDown = false; }, true);
+}
 
 // Snap a resizable element to the grid — but only when the drag is RELEASED, not while
 // resizing (snapping mid-drag fights the smooth native resize). The observer just flags
@@ -3972,7 +2270,7 @@ function moveNodes(id, extra, ev) {
   const rect = $("graph").getBoundingClientRect();
   const toWorld = (e) => ({ x: (e.clientX - rect.left - view.panX) / view.zoom, y: (e.clientY - rect.top - view.panY) / view.zoom });
   const g0 = toWorld(ev);
-  draggingNodes = true;   // route synchronously each frame so lines track the node smoothly
+  setDraggingNodes(true);   // route synchronously each frame so lines track the node smoothly
   // shared drag loop (dragresize.js) — onMove does the world-space + grid-snap work
   beginDrag(ev, {
     onMove: (e) => {
@@ -3986,7 +2284,7 @@ function moveNodes(id, extra, ev) {
       groups.renderGroups();   // group boxes hug their members live
     },
     onSettle: () => {
-      draggingNodes = false;
+      setDraggingNodes(false);
       flushEdges();   // paint the final positions now, dropping any pending coalesced frame
       groups.absorb([id, ...extra.filter((x) => x !== id)]);   // dropped inside a group box -> join it
       resizeCanvas(); groups.renderGroups(); persist.layout(); renderNodeMap();
@@ -4018,13 +2316,13 @@ function positionNode(id) { const el = nodeEls.get(id); const p = pos.get(id); i
 // Drag a wire out of a node's `.port.out`. Drop on a dataset node to wire to it, or on
 // empty canvas to mint a fresh dataset there and wire to that. ``srcId`` is the source
 // node id (win:… / price:…); ``onDrop(ds)`` commits the chosen target dataset.
-function startWire(srcId, ev, spec) {
+export function startWire(srcId, ev, spec) {
   ev.preventDefault();
   ev.stopPropagation();
   const rect = $("graph").getBoundingClientRect();
   const p = pos.get(srcId);
   if (!p) return;
-  const rx = nw(srcId);   // right edge — where the out-port sits
+  const rx = spec.side === "L" ? 0 : nw(srcId);   // which face the port sits on (watch = left, else right)
   wire = { x1: p.x + rx, y1: p.y + 28, x2: p.x + rx, y2: p.y + 28 };
   // a spec may accept ONE target type ("subset") or SEVERAL (["subset","price"]) — match any.
   const targets = Array.isArray(spec.target) ? spec.target : [spec.target];
@@ -4148,842 +2446,27 @@ function createGame(name) {
 // Clicking any node in either view smoothly pans+zooms to it. Visibility, position and
 // mode persist (global UI pref, not per-game).
 
-const NM_TYPE = { win: "window", prev: "preview", reg: "region", det: "detect",
-  sb: "scrollbar", item: "item", fld: "itemfield", ds: "dataset", sub: "subset",
-  price: "price", dict: "dictionary" };
-const NM_COLOR = { game: "#7aa2f7", window: "#9ece6a", preview: "#56b6c2", region: "#e0af68",
-  detect: "#bb9af7", scrollbar: "#f7768e", item: "#7dcfff", itemfield: "#e0af68", dataset: "#e5c07b",
-  subset: "#73daca", price: "#ff9e64", dictionary: "#a9b1d6" };
-const nmTypeOf = (id) => (id === "game" ? "game" : NM_TYPE[id.split(":")[0]] || "node");
-const nmColor = (id) => NM_COLOR[nmTypeOf(id)] || "#9aa5ce";
-
-function nodeLabel(n) {
-  switch (n.type) {
-    case "game": return n.ref.name || "game";
-    case "window": return n.ref.id;
-    case "preview": return `${n.ref.id} ▸ preview`;
-    case "region": return n.ref.id + (n.field ? ` → ${n.field.id}` : "");
-    case "detect": return `detect: ${n.ref.id}`;
-    case "scrollbar": return "scrollbar";
-    case "item": return n.ref.id;
-    case "itemfield": return n.ref.id + (n.field ? ` → ${n.field.id}` : "");
-    case "dataset": return n.ref;
-    case "subset": return n.ref.id;
-    case "price": return n.ref.id;
-    case "dictionary": return n.ref.name || n.ref.id;
-    default: return n.id;
-  }
-}
-
-// Compact id for a map box (no decorations — the box is tiny).
-function nodeShort(n) {
-  switch (n.type) {
-    case "game": return n.ref.name || "game";
-    case "preview": return "preview";
-    case "scrollbar": return "scroll";
-    case "dataset": return n.ref;
-    default: return n.ref?.id ?? n.id;
-  }
-}
-
-// Largest font that fits ``label`` in a ``bw``×``bh`` box, trying both orientations and
-// picking whichever is bigger (so a tall box gets vertical text). ~0.58em per char.
-function nmFit(label, bw, bh) {
-  const n = Math.max(1, label.length), CW = 0.58, PAD = 0.86;
-  const fh = Math.min(bh * PAD, (bw * PAD) / (n * CW));   // horizontal
-  const fv = Math.min(bw * PAD, (bh * PAD) / (n * CW));   // rotated 90°
-  return { fs: Math.min(11, Math.max(fh, fv)), vertical: fv > fh };
-}
-
-let nm = null;            // the createFloatWin instance (built once at startup)
-let nmTransform = null;   // last map projection {ox,oy,s} for the viewport indicator
-// Node-map panel state. Persisted in the profile YAML (layout.float_windows.nodemap) via
-// the shared float-window machinery — hydrateLayout feeds it in, collectLayout writes it
-// back. `mode` + `sizes` are nodemap's own extras carried in the same blob: `sizes` keeps
-// each mode's box (map auto-fits its height to the graph, list is freely resized) so
-// toggling restores the entering mode's box instead of carrying one over the other.
-const nmState = { visible: false, x: null, y: null, w: null, h: null, mode: "map",
-  sizes: { map: { w: null, h: null }, list: { w: null, h: null } } };
-
-// Restore the active mode's saved box into nmState.w/h, then apply. Width always; height
-// only in list mode (map height is recomputed by nmFitPanelHeight on render).
-function applyNmModeSize() {
-  const sz = (nmState.sizes && nmState.sizes[nmState.mode]) || {};
-  if (Number.isFinite(sz.w)) nmState.w = sz.w;
-  // map mode: drop the height so applySize leaves it to nmFitPanelHeight (auto-fit)
-  nmState.h = (nmState.mode === "list" && Number.isFinite(sz.h)) ? sz.h
-    : (nmState.mode === "list" ? nmState.h : null);
-  nm.applySize();
-}
-
-function buildNodeMap() {
-  if (nm) return;
-  nm = createFloatWin({
-    id: "nodemap",
-    title: nmState.mode === "list" ? "node list" : "node map",
-    headerExtra: `<button class="nm-mode" title="toggle map / list view">${nmState.mode === "list" ? "▤" : "⊞"}</button>`,
-    state: nmState,
-    bothAxes: () => nmState.mode === "list",   // list: free width+height; map: width only
-    onResize: () => {
-      if (!nmState.visible || !nm.el.offsetWidth) return;
-      nmState.sizes[nmState.mode] = { w: nm.el.offsetWidth, h: nm.el.offsetHeight };   // per-mode box
-      renderNodeMap();   // map: refit to new size; list: cheap re-render
-    },
-    onShow: () => { $("nodemapBtn")?.classList.toggle("active", true); nmSyncHeader(); applyNmModeSize(); renderNodeMap(); },
-    onHide: () => { $("nodemapBtn")?.classList.toggle("active", false); },
-    onPersist: () => persist.layout(),
-  });
-  nm.el.querySelector(".nm-mode").addEventListener("click", () =>
-    setNodeMapMode(nmState.mode === "map" ? "list" : "map"));
-  // jump-to: click a node in either view -> select + smooth pan/zoom; a group row -> frame it
-  nm.body.addEventListener("click", (ev) => {
-    const sg = ev.target.closest("[data-sgid]");
-    if (sg) { const sb = groups.superGroupBoxes().find((b) => b.id === sg.dataset.sgid); if (sb) panZoomToRect(sb.box); return; }
-    const g = ev.target.closest("[data-gid]");
-    if (g) { const gb = groups.groupBoxes().find((b) => b.id === g.dataset.gid); if (gb) panZoomToRect(gb.box); return; }
-    const t = ev.target.closest("[data-id]");
-    if (!t) return;
-    const id = t.dataset.id;
-    if (!nodeEls.has(id)) return;
-    focusNode(id); panZoomTo(id); nmSyncSelection();
-  });
-}
-
-// Reflect the current mode on the header (title text + toggle glyph).
-function nmSyncHeader() {
-  nm.el.querySelector(".nm-mode").textContent = nmState.mode === "list" ? "▤" : "⊞";
-  nm.el.querySelector(".fw-title").textContent = nmState.mode === "list" ? "node list" : "node map";
-}
-
-function setNodeMapVisible(on) {
-  nm.setVisible(on);   // toggles the button + renders via onShow/onHide
-}
-function setNodeMapMode(mode) {
-  if (mode === nmState.mode) return;
-  const right = nm.el.offsetLeft + nm.el.offsetWidth;   // pin right edge so the toggle button stays put
-  if (nm.el.offsetWidth) nmState.sizes[nmState.mode] = { w: nm.el.offsetWidth, h: nm.el.offsetHeight };  // stash leaving box
-  nmState.mode = mode;
-  nmSyncHeader();
-  applyNmModeSize();           // restore the entering mode's box
-  renderNodeMap();
-  nm.place(right - nm.el.offsetWidth, nm.el.offsetTop);   // re-anchor by the right edge
-  persist.layout();
-}
-
-function nmSyncSelection() {
-  if (!nm) return;
-  nm.el.querySelectorAll("[data-id]").forEach((e) => e.classList.toggle("sel", e.dataset.id === selectedNodeId));
-}
-
-function renderNodeMap() {
-  if (!nm || !nmState.visible) return;
-  const body = nm.body;
-  body.classList.toggle("nm-bmap", nmState.mode === "map");   // centre the wrapped svg
-  if (nmState.mode === "list") nmRenderList(body); else nmRenderMap(body);
-}
-
-function nmRenderMap(body) {
-  const ids = [...pos.keys()].filter((id) => nodeEls.has(id) && Number.isFinite(pos.get(id).x));
-  if (!ids.length) { body.innerHTML = `<div class="nm-empty">no nodes</div>`; nmTransform = null; return; }
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  const rects = ids.map((id) => {
-    const p = pos.get(id), w = nw(id), h = nh(id);
-    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x + w); maxY = Math.max(maxY, p.y + h);
-    return { id, x: p.x, y: p.y, w, h };
-  });
-  // Resizing drives WIDTH only; the panel height is then locked to the content's aspect
-  // (nmFitPanelHeight) so the map always fills the panel exactly — no empty space.
-  const availW = Math.max(120, (body.clientWidth || 276) - 12), PAD = 8;
-  const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
-  const s = (availW - 2 * PAD) / spanX;        // fit to width; height follows
-  const W = availW, H = spanY * s + 2 * PAD;   // svg wraps content tightly
-  const ox = PAD - minX * s, oy = PAD - minY * s;
-  nmTransform = { ox, oy, s };
-  const X = (v) => ox + v * s, Y = (v) => oy + v * s;
-  const labels = new Map(model.nodes().map((n) => [n.id, nodeShort(n)]));
-  // Build edges from the ROUTED geometry (orthogonal polylines), never the live DOM paths
-  // which can be mid-bezier during a morph. Uncached links fall back to a straight segment —
-  // still never a bezier. World coords, reprojected by one group transform (same as X/Y).
-  const edgePaths = buildLinks().map((l) => {
-    const c = routeCache.get(l.key);
-    const pts = (c && c.pts && c.pts.length >= 2) ? c.pts : [l.p1, l.p2];
-    const d = polylinePath(pts, ROUTE.corners, ROUTE.radius);
-    return d && !d.includes("NaN") ? `<path d="${d}" />` : "";
-  }).join("");
-  const node = (r) => {
-    const bw = Math.max(2, r.w * s), bh = Math.max(2, r.h * s);
-    const x = X(r.x), y = Y(r.y), cx = x + bw / 2, cy = y + bh / 2;
-    const lbl = labels.get(r.id) || r.id;
-    const rect = `<rect class="nm-n${r.id === selectedNodeId ? " sel" : ""}" data-id="${esc(r.id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${nmColor(r.id)}"><title>${esc(lbl)}</title></rect>`;
-    // size the label to fit; rotate it 90° when that lets it be bigger; hide if it'd be unreadable
-    const f = nmFit(lbl, bw, bh);
-    const text = f.fs >= 3
-      ? `<text class="nm-lbl" x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" font-size="${f.fs.toFixed(1)}"${f.vertical ? ` transform="rotate(90 ${cx.toFixed(1)} ${cy.toFixed(1)})"` : ""}>${esc(lbl)}</text>`
-      : "";
-    return rect + text;
-  };
-  // Group + super-group boxes (behind everything), hugging their members like the live layer.
-  const boxSvg = (b, cls) => {
-    const x = X(b.box.x), y = Y(b.box.y), w = b.box.w * s, h = b.box.h * s;
-    const style = b.outline.style;
-    const stroke = style === "none" ? "none" : b.outline.color;
-    const dash = style === "dashed" ? ` stroke-dasharray="4 3"` : style === "dotted" ? ` stroke-dasharray="1 3"` : "";
-    return `<rect class="${cls}" data-${cls === "nm-super" ? "sgid" : "gid"}="${esc(b.id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${b.bg}" stroke="${stroke}"${dash}><title>${esc(b.title)}</title></rect>`;
-  };
-  const superSvg = groups.superGroupBoxes().map((sp) => boxSvg(sp, "nm-super")).join("");
-  const groupSvg = groups.groupBoxes().map((gp) => boxSvg(gp, "nm-group")).join("");
-  // The viewport indicator is a plain DIV moved with a CSS transform (compositor-only) — it
-  // must NOT be an SVG element whose geometry attributes are rewritten each pan frame, since
-  // that forces a layout, and with this huge DOM each layout is ~3ms (the pan lag).
-  body.innerHTML = `<div class="nm-wrap" style="width:${W.toFixed(1)}px;height:${H.toFixed(1)}px;">
-    <svg class="nm-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
-      <g class="nm-supers">${superSvg}</g>
-      <g class="nm-groups">${groupSvg}</g>
-      <g class="nm-edges" transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})">${edgePaths}</g>
-      <g class="nm-nodes">${rects.map(node).join("")}</g></svg>
-    <div class="nm-vp"></div>
-  </div>`;
-  nmUpdateViewport();
-  nmFitPanelHeight(H);   // shrink/grow the panel height to the content -> no empty space
-}
-
-// Lock the panel height to the map content (map mode) so resizing width never leaves a
-// vertical gap. Height-only write: the next ResizeObserver tick re-renders with the same
-// width and converges (no loop).
-function nmFitPanelHeight(svgH) {
-  if (!nm || nmState.mode !== "map" || nmState.collapsed) return;   // collapsed owns its height
-  const headerH = nm.el.querySelector(".fw-head")?.offsetHeight || 28;
-  const targetH = Math.round(svgH + 12 + headerH + 2);   // body padding + header + borders
-  if (Math.abs(nm.el.offsetHeight - targetH) > 1) {
-    nm.el.style.height = `${targetH}px`; nmState.h = targetH;
-  }
-}
-
-function nmRenderList(body) {
-  const nodes = model.nodes();
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const kids = new Map();
-  for (const e of model.edges()) {
-    if (!byId.has(e.from) || !byId.has(e.to)) continue;
-    if (!kids.has(e.from)) kids.set(e.from, []);
-    kids.get(e.from).push(e.to);
-  }
-  // edge-tree walk over a node SUBSET: local roots (no in-subset parent) first, then leftovers
-  const orderWalk = (subset) => {
-    const indeg = new Map(); for (const id of subset) indeg.set(id, 0);
-    for (const e of model.edges()) if (subset.has(e.from) && subset.has(e.to)) indeg.set(e.to, (indeg.get(e.to) || 0) + 1);
-    const seen = new Set(), out = [];
-    const walk = (id, depth) => {
-      if (seen.has(id) || !subset.has(id)) return;
-      seen.add(id);
-      const n = byId.get(id); if (!n) return;
-      out.push({ id, depth, label: nodeLabel(n), type: n.type });
-      for (const c of (kids.get(id) || [])) walk(c, depth + 1);
-    };
-    for (const id of subset) if ((indeg.get(id) || 0) === 0) walk(id, 0);
-    for (const id of subset) walk(id, 0);
-    return out;
-  };
-
-  // super groups (header → their groups → members), then loose groups, then ungrouped nodes
-  const rows = [], grouped = new Set(), placedGroups = new Set();
-  const emitGroup = (g, depth) => {
-    placedGroups.add(g.id);
-    const sub = new Set(g.members.filter((id) => byId.has(id)));
-    if (!sub.size) return;
-    for (const id of sub) grouped.add(id);
-    rows.push({ kind: "group", gid: g.id, label: g.title || g.id, color: g.outline?.color, depth });
-    for (const r of orderWalk(sub)) rows.push({ kind: "node", ...r, depth: r.depth + depth + 1 });
-  };
-  for (const sg of groups.allSuperGroups()) {
-    const memberGroups = sg.groups.map((id) => groups.allGroups().find((g) => g.id === id)).filter(Boolean);
-    if (!memberGroups.length) continue;
-    rows.push({ kind: "super", sgid: sg.id, label: sg.title || sg.id, color: sg.outline?.color, depth: 0 });
-    for (const g of memberGroups) emitGroup(g, 1);
-  }
-  for (const g of groups.allGroups()) if (!placedGroups.has(g.id)) emitGroup(g, 0);
-  const ungrouped = new Set(nodes.map((n) => n.id).filter((id) => !grouped.has(id)));
-  for (const r of orderWalk(ungrouped)) rows.push({ kind: "node", ...r });
-
-  const rowHTML = (r) => {
-    const pad = 6 + (r.depth || 0) * 14;
-    if (r.kind === "super") return `<div class="nm-row nm-super-row" data-sgid="${esc(r.sgid)}" title="zoom to super group" style="padding-left:${pad}px">
-        <span class="nm-gswatch nm-sswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${esc(r.label)}</div>`;
-    if (r.kind === "group") return `<div class="nm-row nm-grp" data-gid="${esc(r.gid)}" title="zoom to group" style="padding-left:${pad}px">
-        <span class="nm-gswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${esc(r.label)}</div>`;
-    return `<div class="nm-row${r.id === selectedNodeId ? " sel" : ""}" data-id="${esc(r.id)}" style="padding-left:${pad}px">
-        <span class="nm-dot" style="background:${NM_COLOR[r.type] || "#9aa5ce"}"></span>${esc(r.label)}</div>`;
-  };
-  body.innerHTML = `<div class="nm-list">${rows.map(rowHTML).join("") || `<div class="nm-empty">no nodes</div>`}</div>`;
-}
-
-// Cache the graph viewport box — nmUpdateViewport runs every pan FRAME, and reading
-// getBoundingClientRect right after applyView writes the transform forces a sync layout
-// (the pan lag). The box only changes on resize, so cache and invalidate there.
-let _graphBox = null;
-function graphBox() { return _graphBox || (_graphBox = $("graph").getBoundingClientRect()); }
-window.addEventListener("resize", () => { _graphBox = null; });
-
-function nmUpdateViewport() {
-  if (!nm || !nmState.visible || nmState.mode !== "map" || !nmTransform) return;
-  const vp = nm.el.querySelector(".nm-vp"); if (!vp) return;
-  const rect = graphBox();
-  const { ox, oy, s } = nmTransform;
-  const x = ox + (-view.panX / view.zoom) * s, y = oy + (-view.panY / view.zoom) * s;
-  const w = Math.max(0, (rect.width / view.zoom) * s), h = Math.max(0, (rect.height / view.zoom) * s);
-  // width/height only change on ZOOM (not pan) — set them rarely; the per-frame pan update
-  // is a pure transform (no layout/paint of the box)
-  if (vp._w !== w || vp._h !== h) { vp.style.width = `${w.toFixed(1)}px`; vp.style.height = `${h.toFixed(1)}px`; vp._w = w; vp._h = h; }
-  vp.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
-}
 
 buildNodeMap();
 $("nodemapBtn")?.classList.toggle("active", nmState.visible);
 $("nodemapBtn")?.addEventListener("click", () => setNodeMapVisible(!nmState.visible));
 // (on-screen re-clamp + re-render on window resize is handled inside createFloatWin)
 
-// ---- activity panel (live sweeps + precapture) ----------------------------
-// A floating window listing every running background job for the current game — price
-// sweeps and the precapture worker — fetched from /api/activity while it's open. Network
-// Data comes from the shared heartbeat hub (one poll feeds every panel); the hub sets the
-// network cadence (fast while a job runs, slow when idle/backgrounded). A 500ms LOCAL ticker
-// re-renders the cached snapshot in between so "fires in …" countdowns stay live without any
-// server hit, and beats the hub the instant a countdown elapses. Rows reconcile in place
-// (keyed map) so neither the beats nor the local ticker churn the DOM.
-const actState = { visible: false, x: null, y: null, w: null, h: null };
-let act = null;
-let actTick = null;          // local ticker for live countdowns (no server hit)
-let actUnsub = null;         // heartbeat-hub subscription while the panel is open
-let actData = null;          // last hub snapshot (re-rendered locally between beats)
-let actAt = 0;               // Date.now() of the last snapshot, used to age the countdowns
-const actRows = new Map();   // job key -> { row, title, prog }
-const actPending = new Set();   // trigger ids whose enable toggle is mid-flight (debounce until the next update)
-let actEmpty = null;         // the reused "nothing active" placeholder (never innerHTML)
-
-function buildActivity() {
-  if (act) return;
-  act = createFloatWin({
-    id: "activity", title: "tasks", state: actState, bothAxes: true,
-    onShow: () => { $("activityBtn")?.classList.toggle("active", true); startActivityPoll(); },
-    onHide: () => { $("activityBtn")?.classList.toggle("active", false); stopActivityPoll(); },
-    onPersist: () => persist.layout(),
-  });
-  act.body.innerHTML = `<div class="act-list"></div>`;
-  actEmpty = document.createElement("div"); actEmpty.className = "act-empty"; actEmpty.textContent = "nothing active";
-  // regaining focus -> the backgrounded cadence is stale; beat the hub right away
-  window.addEventListener("focus", () => { if (actState.visible) hub.kick(); });
-  // one delegated handler for every row's button (cancel a job, or fire a trigger now)
-  act.body.addEventListener("click", (ev) => {
-    const game = model.profile.name; if (!game) return;
-    const c = ev.target.closest("button[data-cancel]");
-    if (c && !c.disabled) {
-      c.disabled = true; c.textContent = "cancelling…";
-      const p = c.dataset.cancel === "sweep" ? api.prices.cancel(game, c.dataset.ds) : api.precapture.cancel(game);
-      p.catch(() => {}).finally(() => setTimeout(hub.kick, 300));   // state changed -> beat the hub
-      return;
-    }
-    const f = ev.target.closest("button[data-fire]");
-    if (f && !f.disabled) {
-      f.disabled = true; f.classList.add("loading");   // spinner overlay, label stays put (no resize/flicker)
-      api.triggers.fire(game, f.dataset.fire).catch(() => {})
-        .finally(() => { f.disabled = false; f.classList.remove("loading"); hub.kick(); });   // refresh next-fire time
-      return;
-    }
-    // enable/disable a trigger: flip it in the profile + save; the row reflects it on the
-    // next render (optimistically patched so it's instant), the server reads it after save
-    const en = ev.target.closest("button[data-enable]");
-    if (en) {
-      const id = en.dataset.enable;
-      if (actPending.has(id)) return;   // debounce: ignore further clicks until this update lands
-      const t = model.trigger(id);
-      if (!t) return;
-      actPending.add(id);
-      t.enabled = !(t.enabled !== false);
-      const live = (actData?.triggers || []).find((x) => x.id === t.id);
-      if (live) live.enabled = t.enabled;
-      autosave(false);                 // persist; a disabled toggle changes nothing others re-read
-      if (actData) renderActivity(actData, 0);
-      // poll ONLY after the save has actually landed (flush the debounce), so the server's
-      // schedule already reflects the new enabled state — no stale flip-back. Clearing the
-      // pending guard re-enables the toggle on the next render.
-      persist.flush().then(hub.kick).catch(() => hub.kick()).finally(() => {
-        actPending.delete(id);
-        if (actData) renderActivity(actData, 0);
-      });
-    }
-  });
-}
-
-// Human-readable duration: 45s / 5m / 5m 30s / 2h 10m.
-function fmtDur(s) {
-  s = Math.max(0, Math.round(s || 0));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60), rs = s % 60;
-  if (m < 60) return rs ? `${m}m ${rs}s` : `${m}m`;
-  const h = Math.floor(m / 60), rm = m % 60;
-  return rm ? `${h}h ${rm}m` : `${h}h`;
-}
-
-function stopActivityPoll() {
-  if (actTick) { clearInterval(actTick); actTick = null; }
-  if (actUnsub) { actUnsub(); actUnsub = null; }
-}
-
-// any interval trigger whose countdown has just hit zero since the last fetch -> it fired,
-// so the server state changed and a refresh is due (don't wait out the cadence)
-function actDueForRefresh(elapsed) {
-  return (actData?.triggers || []).some((t) => t.kind === "interval" && (t.next_in || 0) > 0 && (t.next_in - elapsed) <= 0);
-}
-
-function startActivityPoll() {
-  stopActivityPoll();
-  const game = model.profile.name;
-  if (!game) { actData = { sweeps: [], precapture: null }; actAt = Date.now(); renderActivity(actData, 0); }
-  // Data arrives from the heartbeat hub (one poll feeds every panel); this panel just
-  // renders its slice of each snapshot.
-  actUnsub = hub.subscribe((s) => {
-    if (!actState.visible) return;
-    actData = s; actAt = Date.now(); renderActivity(actData, 0);
-  });
-  hub.kick();   // immediate beat on open
-  // Local ticker: re-render the cached payload so the "fires in …" countdowns keep ticking
-  // between beats (no server hit), and beat the hub the instant a countdown elapses so the
-  // fired trigger's new schedule lands promptly.
-  actTick = setInterval(() => {
-    if (!actState.visible || !conn.isOnline()) return;   // backend down -> halt countdowns
-    const elapsed = (Date.now() - actAt) / 1000;
-    if (elapsed >= 1.5 && actDueForRefresh(elapsed)) hub.kick();
-    else if (actData) renderActivity(actData, elapsed);
-  }, 500);
-}
-
-// Map a raw status object to display row specs. Each job: { key, title, prog, cls?, action? }
-// where action is {type:"cancel",kind,ds?} | {type:"fire",id} | null.
-function activityJobs(data, elapsed = 0) {
-  const jobs = [];
-  for (const s of (data.sweeps || [])) {
-    jobs.push({
-      key: `sweep:${s.dataset}`, action: { type: "cancel", kind: "sweep", ds: s.dataset },
-      title: `sweep · ${s.dataset}`,
-      prog: `${s.done}/${s.total || "…"} · ${s.fetched} ok${s.failed ? ` · ${s.failed} failed` : ""}${s.cancel ? " · cancelling…" : ""}${s.last ? ` · ${s.last}` : ""}`,
-    });
-  }
-  const p = data.precapture;
-  if (p) {
-    const recog = p.window ? ` · ${p.window}/${p.state}` : "";
-    const prog = p.phase === "recording" ? `${p.frames} frames`
-      : `${p.processed}/${p.frames} · ${p.read || 0} read · ${p.fps}/s${recog}`;
-    jobs.push({ key: "precap", action: { type: "cancel", kind: "precap" }, title: `precapture · ${p.phase}`, prog });
-  }
-  for (const t of (data.triggers || [])) {
-    const enabled = t.enabled !== false;
-    const running = (t.targets || []).some((x) => x.running);
-    let prog;
-    if (!enabled) {
-      prog = t.kind === "interval" ? `disabled · every ${fmtDur(t.interval_s)}`
-        : t.kind === "on_change" ? `disabled · on change: ${(t.watch || []).join(", ") || "—"}`
-        : "disabled";
-    } else if (t.kind === "interval") {
-      const remaining = Math.max(0, (t.next_in || 0) - elapsed);   // age locally between fetches
-      prog = running ? "firing now…"
-        : remaining <= 0 ? `due… · every ${fmtDur(t.interval_s)}`
-        : `fires in ${fmtDur(remaining)} · every ${fmtDur(t.interval_s)}`;
-    } else if (t.kind === "on_change") {
-      prog = `on change: ${(t.watch || []).join(", ") || "—"}${running ? " · firing now…" : ""}`;
-    } else { prog = t.kind; }
-    jobs.push({ key: `trigger:${t.id}`, cls: `act-trigger${enabled ? "" : " act-off"}`,
-      action: { type: "fire", id: t.id }, enable: { id: t.id, enabled },
-      title: `trigger · ${t.id}`, prog });
-  }
-  return jobs;
-}
-
-function renderActivity(data, elapsed = 0) {
-  if (!act) return;
-  const list = act.body.querySelector(".act-list");
-  const jobs = activityJobs(data, elapsed);
-  const want = new Set(jobs.map((j) => j.key));
-  for (const [key, r] of actRows) if (!want.has(key)) { r.row.remove(); actRows.delete(key); }
-  if (!jobs.length) {
-    if (!actEmpty.isConnected) list.appendChild(actEmpty);   // reuse the placeholder, no innerHTML
-    return;
-  }
-  if (actEmpty.isConnected) actEmpty.remove();
-  let i = 0;
-  for (const j of jobs) {
-    let r = actRows.get(j.key);
-    if (!r) {
-      const row = document.createElement("div"); row.className = `act-row${j.cls ? ` ${j.cls}` : ""}`;
-      const body = document.createElement("div"); body.className = "act-body";
-      const title = document.createElement("div"); title.className = "act-title";
-      const prog = document.createElement("div"); prog.className = "act-prog";
-      body.append(title, prog);
-      row.append(body);
-      // enable/disable toggle (triggers only) sits just before the action button
-      let enableBtn = null;
-      if (j.enable) {
-        enableBtn = document.createElement("button");
-        enableBtn.className = "act-enable"; enableBtn.setAttribute("role", "switch");
-        enableBtn.dataset.enable = j.enable.id;
-        enableBtn.title = "enable / disable this trigger";
-        enableBtn.innerHTML = `<svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
-          <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
-          <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>`;
-        row.append(enableBtn);
-      }
-      // button is stable per key (sweep/precap → cancel, trigger → fire)
-      if (j.action?.type === "cancel") {
-        const btn = document.createElement("button");
-        btn.className = "act-cancel"; btn.textContent = "cancel";
-        btn.dataset.cancel = j.action.kind; if (j.action.ds) btn.dataset.ds = j.action.ds;
-        row.append(btn);
-      } else if (j.action?.type === "fire") {
-        const btn = document.createElement("button");
-        btn.className = "act-fire"; btn.textContent = "fire";
-        btn.dataset.fire = j.action.id;
-        row.append(btn);
-      }
-      r = { row, title, prog, enableBtn, cls: j.cls || "" }; actRows.set(j.key, r);
-    }
-    // place at slot i ONLY if it isn't already there — no needless detach/reattach (which
-    // flashes as a "recreate" in devtools + thrashes layout every tick)
-    const at = list.children[i];
-    if (at !== r.row) list.insertBefore(r.row, at || null);
-    i++;
-    if (r.cls !== (j.cls || "")) { r.row.className = `act-row${j.cls ? ` ${j.cls}` : ""}`; r.cls = j.cls || ""; }
-    if (r.enableBtn) {
-      const on = j.enable?.enabled !== false;
-      if (r.enableBtn.getAttribute("aria-checked") !== String(on)) {
-        r.enableBtn.setAttribute("aria-checked", on);
-        r.enableBtn.classList.toggle("on", on);
-      }
-      const dis = actPending.has(j.enable?.id);   // disabled while a toggle is mid-flight (debounce)
-      if (r.enableBtn.disabled !== dis) r.enableBtn.disabled = dis;
-    }
-    if (r.title.textContent !== j.title) r.title.textContent = j.title;
-    if (r.prog.textContent !== j.prog) r.prog.textContent = j.prog;
-  }
-  fitActivityHeight();   // grow/shrink the panel to its contents (unless the user resized it)
-}
-
-// Fit the activity panel's height to its rows (like the node map auto-fits) so a couple of
-// tasks don't leave a tall empty panel. Skipped once the user manually resizes it (a real
-// size write only happens when the target actually differs, so a steady tick mutates nothing).
-function fitActivityHeight() {
-  if (!act || !actState.visible || actState.collapsed || actState.userSized) return;
-  const list = act.body.querySelector(".act-list");
-  if (!list) return;
-  const kids = [...list.children];
-  let content = 0;
-  for (const k of kids) content += k.offsetHeight;
-  content += Math.max(0, kids.length - 1) * 4;   // the .act-list row gap
-  const headerH = act.el.querySelector(".fw-head")?.offsetHeight || 28;
-  const maxH = window.innerHeight - 60;
-  const target = Math.round(Math.min(maxH, headerH + content + 14));   // body padding + borders
-  if (Math.abs(act.el.offsetHeight - target) > 1) { act.el.style.height = `${target}px`; actState.h = target; }
-}
 
 buildActivity();
 $("activityBtn")?.classList.toggle("active", actState.visible);
 $("activityBtn")?.addEventListener("click", () => act.setVisible(!actState.visible));
 
-// ---- testing harness: play a recorded video through the live OCR pipeline ----
-// Import a screen-capture clip and step/play it as the live frame source so live
-// mode's detect + OCR can be exercised with no game running. The frame source +
-// playback position live server-side (one VideoSource); this panel just drives it
-// and mirrors the returned status. Playback is browser-paced (a timer that steps
-// one frame per tick); live mode reads whichever frame is current, independently.
-const testState = { visible: false, x: null, y: null, w: null, h: null };
-let testWin = null, testInfo = null, testTimer = null;
-
-function testRender(info) {
-  if (!testWin) return;
-  if (info) testInfo = info;
-  const i = testInfo || { loaded: false, count: 0, index: 0, enabled: false, name: "" };
-  const b = testWin.body;
-  const loaded = !!i.loaded;
-  b.querySelector(".test-name").textContent =
-    loaded ? `${i.name}  (${i.width}×${i.height}, ${i.fps || "?"}fps)` : "no video loaded";
-  const seek = b.querySelector(".test-seek");
-  seek.max = String(Math.max(0, (i.count || 1) - 1));
-  if (document.activeElement !== seek) seek.value = String(i.index || 0);
-  b.querySelector(".test-frame").textContent =
-    loaded ? `${(i.index || 0) + 1} / ${i.count || "?"}` : "– / –";
-  b.querySelector(".test-feed-cb").checked = !!i.enabled;
-  b.querySelector(".test-play").textContent = testTimer ? "pause" : "▶ play";
-  for (const el of b.querySelectorAll(".test-ctl")) el.disabled = !loaded;
-}
-
-function testStopPlay() {
-  if (testTimer) { clearInterval(testTimer); testTimer = null; }
-  testRender();
-}
-
-function testStartPlay() {
-  if (testTimer || !testInfo?.loaded) return;
-  const fps = testInfo.fps || 30;
-  const ms = Math.max(100, Math.round(1000 / fps));   // cap pace so reads can keep up
-  testTimer = setInterval(async () => {
-    if (!conn.isOnline()) return;   // backend down -> halt playback stepping
-    try {
-      const info = await api.video.step(1);
-      testRender(info);
-      if (info.count && info.index >= info.count - 1) testStopPlay();   // hit the end
-    } catch (e) { testStopPlay(); log(String(e.message || e), "err"); }
-  }, ms);
-  testRender();
-}
-
-function buildTesting() {
-  if (testWin) return;
-  testWin = createFloatWin({
-    id: "testing", title: "testing", state: testState, bothAxes: true,
-    onShow: () => { $("testingBtn")?.classList.toggle("active", true);
-      api.video.status().then(testRender).catch(() => {}); },
-    onHide: () => { $("testingBtn")?.classList.toggle("active", false); testStopPlay(); },
-    onPersist: () => persist.layout(),
-  });
-  testWin.body.innerHTML = `<div class="test-panel">
-    <input type="file" class="test-file" accept="video/*" />
-    <div class="test-name">no video loaded</div>
-    <div class="test-bar">
-      <button class="test-ctl test-back" title="step back one frame">◀</button>
-      <button class="test-ctl test-play" title="play / pause">▶ play</button>
-      <button class="test-ctl test-fwd" title="step forward one frame">▶</button>
-    </div>
-    <input type="range" class="test-ctl test-seek" min="0" max="0" value="0" />
-    <div class="test-frame">– / –</div>
-    <label class="test-feed"><input type="checkbox" class="test-ctl test-feed-cb" /> feed live mode from video</label>
-    <div class="test-hint">enable feed, open a window, then turn on <b>live</b> to OCR each frame.</div>
-    <div class="test-sep"></div>
-    <div class="test-cap">
-      <div class="test-cap-head">capture rate
-        <select class="test-cap-be" title="capture backend to measure"></select>
-        <button class="test-cap-run">measure</button>
-      </div>
-      <div class="test-cap-out">– not measured –</div>
-      <div class="test-hint"><b>grabs/s</b> = how fast capture returns. <b>frames/s</b> = real new frames
-        (WGC is capped at the monitor refresh; a static screen yields ~0). PrintWindow forces a game
-        re-render per grab — WGC does not.</div>
-    </div>
-  </div>`;
-  const b = testWin.body;
-  b.querySelector(".test-file").addEventListener("change", async (ev) => {
-    const f = ev.target.files?.[0];
-    if (!f) return;
-    const done = timed(`load video ${f.name}`);
-    testStopPlay();
-    try { testRender(await api.video.upload(f)); done(); }
-    catch (e) { done(String(e.message || e), "err"); }
-  });
-  b.querySelector(".test-back").addEventListener("click", async () => {
-    testStopPlay();
-    try { testRender(await api.video.step(-1)); } catch (e) { log(String(e.message || e), "err"); }
-  });
-  b.querySelector(".test-fwd").addEventListener("click", async () => {
-    testStopPlay();
-    try { testRender(await api.video.step(1)); } catch (e) { log(String(e.message || e), "err"); }
-  });
-  b.querySelector(".test-play").addEventListener("click", () => {
-    if (testTimer) testStopPlay(); else testStartPlay();
-  });
-  const seek = b.querySelector(".test-seek");
-  seek.addEventListener("input", () => {   // live label while dragging, no server call
-    b.querySelector(".test-frame").textContent = `${Number(seek.value) + 1} / ${testInfo?.count || "?"}`;
-  });
-  seek.addEventListener("change", async () => {
-    testStopPlay();
-    try { testRender(await api.video.seek(Number(seek.value))); } catch (e) { log(String(e.message || e), "err"); }
-  });
-  b.querySelector(".test-feed-cb").addEventListener("change", async (ev) => {
-    try { testRender(await api.video.enable(ev.target.checked)); } catch (e) { log(String(e.message || e), "err"); }
-  });
-  wireCaptureBench(b);
-  testRender();
-}
-
-// Capture-rate tester (lives in the testing panel). Populates the backend dropdown
-// once from /api/bench/backends (so wgc only shows when windows-capture is installed),
-// then "measure" runs a short server-side grab benchmark and prints the rate. All
-// click-driven — no poll — so a plain innerHTML write of the small result is fine.
-let benchBackendsLoaded = false;
-function wireCaptureBench(b) {
-  const sel = b.querySelector(".test-cap-be");
-  const out = b.querySelector(".test-cap-out");
-  const run = b.querySelector(".test-cap-run");
-  const loadBackends = async () => {
-    if (benchBackendsLoaded) return;
-    try {
-      const { backends, default: def } = await api.bench.backends();
-      sel.replaceChildren(...backends.map((n) => {
-        const o = document.createElement("option");
-        o.value = n; o.textContent = n === def ? `${n} (default)` : n;
-        if (n === def) o.selected = true;
-        return o;
-      }));
-      benchBackendsLoaded = true;
-    } catch (e) { log(String(e.message || e), "err"); }
-  };
-  loadBackends();
-  run.addEventListener("click", async () => {
-    const game = model.profile.name;
-    if (!game) { out.textContent = "load a game first"; return; }
-    run.disabled = true; out.textContent = `measuring ${sel.value}…`;
-    const done = timed(`bench ${sel.value}`);
-    try {
-      const r = await api.bench.run(game, sel.value, 3);
-      const cap = r.captured ? `${r.captured[0]}×${r.captured[1]}` : "?";
-      const fps = r.frames_per_s == null
-        ? `frames/s = grabs/s (fresh frame per grab)`
-        : `frames/s = <b>${r.frames_per_s}</b> (${r.frames} distinct${r.frames_per_s < 1 ? " — static screen" : ""})`;
-      out.innerHTML = `<b>${r.backend}</b> @ ${cap}<br>`
-        + `grabs/s = <b>${r.grabs_per_s}</b> (${r.ms_per_grab} ms/grab)<br>${fps}`;
-      done();
-    } catch (e) { out.textContent = String(e.message || e); done(String(e.message || e), "err"); }
-    finally { run.disabled = false; }
-  });
-}
 
 buildTesting();
 $("testingBtn")?.classList.toggle("active", testState.visible);
 $("testingBtn")?.addEventListener("click", () => testWin.setVisible(!testState.visible));
 
-// ---- node-creation toolbox ------------------------------------------------
-// Top-level node creation (window / price / trigger / dictionary) lives in this floating
-// panel instead of cluttering the game node. Each button mints a node, drops it in a free
-// spot, and pans to it. Contextual creation (datasets/views via wire-drag, regions/items by
-// drawing on a window image) stays where the context is.
-const tbState = { visible: false, x: null, y: null, w: null, h: null };
-let tb = null;
-
-async function createWindowNode() {
-  const id = model.addWindow();   // default id; renamed in the window node
-  if (!id) return;
-  // a brand-new window starts with NO image — clear any binding left over from a deleted
-  // window that reused this id, so its button shows "capture" rather than a stale capture.
-  try { if (model.profile.name) await api.bindCapture(model.profile.name, id, ""); } catch { /* ignore */ }
-  placeNewNode(`win:${id}`, "window"); render(); autosave(); panTo(`win:${id}`);
-}
-function createPriceNode() {
-  const id = model.addPriceNode();   // independent producer -> "prices" dataset
-  if (id) { placeNewNode(`price:${id}`, "price"); render(); autosave(); panTo(`price:${id}`); }
-}
-function createTriggerNode() {
-  const id = model.addTrigger();   // fires price-node sweeps on a condition
-  if (id) { placeNewNode(`trigger:${id}`, "trigger"); render(); autosave(); panTo(`trigger:${id}`); }
-}
-function createDictionaryNode() {
-  openDictionaryPicker({
-    used: new Set((model.profile.dictionaries || []).map((d) => d.source)),
-    // existing word file: re-use its node if already on the graph, else reference it
-    // (fetch its terms so the new node shows them straight away).
-    onPick: async (source) => {
-      const existing = model.dictionaryBySource(source);
-      if (existing) { panTo(`dict:${existing.id}`); return; }
-      let terms = [];
-      try { ({ terms } = await api.dictionaries.get(source)); } catch { /* missing file -> 0 terms */ }
-      const id = model.addDictionary({ source, terms });
-      if (id) { placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
-    },
-    onCreate: (name) => {
-      const id = model.addDictionary({ name });
-      if (id) { placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
-    },
-  });
-}
-
-function buildToolbox() {
-  if (tb) return;
-  tb = createFloatWin({
-    id: "toolbox", title: "toolbox", state: tbState, bothAxes: true,
-    onShow: () => $("createBtn")?.classList.toggle("active", true),
-    onHide: () => $("createBtn")?.classList.toggle("active", false),
-    onPersist: () => persist.layout(),
-  });
-  tb.body.innerHTML = `<div class="tb-list">
-    <button class="tb-btn" data-create="window">+ window</button>
-    <button class="tb-btn" data-create="price">+ price node</button>
-    <button class="tb-btn" data-create="trigger">+ trigger</button>
-    <button class="tb-btn" data-create="dictionary">+ dictionary</button>
-    <button class="tb-btn" data-create="collisions" title="run each window's bound image through every window's detectors — report which windows false-match each other">${WARN} check window collisions</button>
-  </div>`;
-  tb.body.addEventListener("click", (ev) => {
-    const b = ev.target.closest("[data-create]");
-    if (!b) return;
-    if (!model.profile.name) { setStatus("load a game first"); return; }
-    const k = b.dataset.create;
-    if (k === "window") createWindowNode();
-    else if (k === "price") createPriceNode();
-    else if (k === "trigger") createTriggerNode();
-    else if (k === "dictionary") createDictionaryNode();
-    else if (k === "collisions") runCollisionCheck();
-  });
-}
-
-// Verdict copy + class for the collision report. One source of truth for both.
-const COLLIDE_VERDICTS = {
-  ok:            ["✓ ok",            "conf-ok",   "only this window matched its image"],
-  collision:     [`${WARN} collision`, "conf-warn", "another window also fully matched — ambiguous"],
-  misclassified: ["✗ misclassified", "conf-bad",  "another window WINS the tie-break — classify picks the wrong one"],
-  self_no_match: ["✗ self no-match",  "conf-bad",  "this window's own image doesn't match it — detectors too strict/disabled"],
-  no_image:      ["– no image",       "muted",     "no bound capture to test — open the window node and bind one"],
-};
-
-function collisionReportHTML(data) {
-  const wins = data.windows || [];
-  if (!wins.length) return `<p class="muted" style="padding:12px">no windows to check</p>`;
-  const bad = wins.filter((w) => w.verdict !== "ok" && w.verdict !== "no_image").length;
-  const head = bad
-    ? `<p class="conf-warn" style="margin:0 0 8px">${bad} window(s) collide — a frame could classify to the wrong window.</p>`
-    : `<p class="conf-ok" style="margin:0 0 8px">no collisions — every window matches only its own image.</p>`;
-  const rows = wins.map((w) => {
-    const [label, cls, tip] = COLLIDE_VERDICTS[w.verdict] || ["?", "muted", ""];
-    // for a colliding/misclassified window, show WHICH windows also matched + their detector scores
-    const offenders = (w.matches || []).filter((m) => m.matched && m.window !== w.window);
-    const detail = offenders.map((m) => {
-      const dets = (m.detectors || []).map((d) =>
-        `<span class="cc-det ${d.matched ? "conf-ok" : "conf-bad"}">${esc(d.id)} ${Math.round((d.score || 0) * 100)}%/${Math.round((d.threshold || 0) * 100)}%${d.read ? ` "${esc(d.read)}"` : ""}</span>`).join(" ");
-      return `<div class="cc-off">↳ also matched <b>${esc(m.window)}</b> ${dets}</div>`;
-    }).join("");
-    const win = w.winner && w.winner !== w.window ? ` <span class="muted">→ classifies as ${esc(w.winner)}</span>` : "";
-    return `<div class="cc-row">
-      <div class="cc-head"><span class="${cls}" title="${esc(tip)}">${label}</span> <b>${esc(w.window)}</b>${win}
-        ${w.capture ? `<span class="muted cc-cap">${esc(w.capture)}</span>` : ""}</div>
-      ${detail}</div>`;
-  }).join("");
-  return `<div class="cc-wrap">${head}<div class="cc-list">${rows}</div></div>`;
-}
-
-async function runCollisionCheck() {
-  if (!model.profile.name) { setStatus("load a game first"); return; }
-  const m = openModal({ title: "window collisions", size: "medium",
-    html: `<p class="muted" style="padding:12px">checking…</p>` });
-  const body = m.body || m.el?.querySelector(".modal-body");
-  const done = timed("collision check");
-  try {
-    const data = await api.detectCollisions(model.profile.name, m.signal);   // GET; whole-profile cross-check
-    done();
-    if (body) body.innerHTML = collisionReportHTML(data);
-  } catch (e) {
-    if (e.name === "AbortError") return;   // modal closed mid-fetch
-    done(String(e.message || e), "err");
-    if (body) body.innerHTML = `<p class="conf-bad" style="padding:12px">${esc(String(e.message || e))}</p>`;
-  }
-}
 buildToolbox();
 $("createBtn")?.classList.toggle("active", tbState.visible);
 $("createBtn")?.addEventListener("click", () => tb.setVisible(!tbState.visible));
 
 buildPrecap();
-// live floating panel state — declared BEFORE buildLiveWindow() runs at module-eval
-// (it reads liveWin/liveWinState), else a `let` TDZ throws and aborts the whole script.
-const liveWinState = { visible: false, x: null, y: null, w: null, h: null };
-let liveWin = null;
-let liveEmpty = null;
-const liveRows = new Map();    // winId -> { row, dot, name }
-const liveRecog = new Map();   // winId -> recognized in the last live detect round?
-const liveDetCount = new Map();   // winId -> how many times detected this run (shown per row)
 buildLiveWindow();
 $("liveBtn").classList.toggle("active", liveWinState.visible);
 $("liveBtn").addEventListener("click", () => liveWin.setVisible(!liveWinState.visible));   // the panel's toggle drives live mode
@@ -5251,250 +2734,6 @@ function persistBox(winId, b) {
   else if (b.role === "data_area") model.setDataArea(winId, box);
   else model.setRegionBox(winId, b.id, box);
 }
-// Live = re-read live-enabled windows continuously (view only, no saving). Saving is a
-// deliberate precapture step now. live and precapture are mutually exclusive. The control
-// surface is the LIVE floating panel (toggle + stats + per-window detection), built below.
-let liveOn = false, precapOpen = false;
-let liveFrames = 0, liveT0 = 0, liveFps = 0;
-// "save to datasets" arm (default ON): when live + armed, a SERVER-SIDE collector runs the
-// real pipeline (confirm_frames -> dedup -> store -> triggers). When live + disarmed, only
-// the read-only client detect/preview loop runs (tuning, no writes).
-let liveSave = true;
-let liveColStatus = null;   // latest server collector status (from the heartbeat) while collecting
-let liveColUnsub = null;    // hub subscription active while the server collector runs
-let liveImg = { count: 0, bytes: 0 };   // saved live-image stat (live tuning saves one frame/round)
-
-// ---- live floating panel --------------------------------------------------
-// Styled like the tasks panel: a master live toggle, live stats, and a list of every
-// live-enabled window with a dot showing whether it's currently detected on screen.
-// (State — liveWinState/liveWin/liveRows/… — is declared up by the buildLiveWindow()
-// call site so it's initialized before that call runs at module-eval.)
-
-function buildLiveWindow() {
-  if (liveWin) return;
-  liveWin = createFloatWin({
-    id: "live", title: "live", state: liveWinState, bothAxes: true,
-    onShow: () => { $("liveBtn")?.classList.toggle("active", true); renderLiveWindow(); },
-    onHide: () => { $("liveBtn")?.classList.toggle("active", false); },
-    onPersist: () => persist.layout(),
-  });
-  liveWin.body.innerHTML = `
-    <div class="live-row">
-      <label class="live-toggle"><button class="act-enable live-switch" role="switch" aria-checked="false" title="enable / disable live mode">
-          <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
-            <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
-            <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
-        </button><span class="live-switch-lbl">live mode</span></label>
-      <span class="live-stats muted"></span>
-    </div>
-    <div class="live-row">
-      <label class="live-toggle"><button class="act-enable live-save" role="switch" aria-checked="true" title="save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)">
-          <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
-            <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
-            <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
-        </button><span class="live-save-lbl">save to datasets</span></label>
-    </div>
-    <div class="live-wins"></div>
-    <div class="live-row live-imgs"><span class="live-imgstat muted"></span><button class="live-clear" data-armed="0" title="delete every saved live image">clear</button></div>`;
-  liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
-  liveWin.body.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
-  liveWin.body.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
-  // clear saved live images — armed two-click (no blocking confirm; CLAUDE.md rule 2)
-  const clr = liveWin.body.querySelector(".live-clear");
-  clr.addEventListener("click", () => {
-    if (clr.dataset.armed !== "1") { clr.dataset.armed = "1"; clr.textContent = "sure?"; setTimeout(() => { if (clr.dataset.armed === "1") { clr.dataset.armed = "0"; clr.textContent = "clear"; } }, 2500); return; }
-    clr.dataset.armed = "0"; clr.textContent = "clear";
-    if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
-  });
-  if (model.profile.name) api.liveCaptures.stats(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
-  renderLiveWindow();
-}
-
-function renderLiveWindow() {
-  if (!liveWin || !liveWinState.visible) return;
-  // sync the visual `.on` class INDEPENDENTLY of aria-checked — the markup ships
-  // aria-checked already matching the default, so gating the class on an aria mismatch left
-  // a default-on switch (save-to-datasets) visually off. Each touched only when it differs.
-  const syncSwitch = (el, on) => {
-    if (!el) return;
-    if (el.getAttribute("aria-checked") !== String(on)) el.setAttribute("aria-checked", String(on));
-    if (el.classList.contains("on") !== on) el.classList.toggle("on", on);
-  };
-  syncSwitch(liveWin.body.querySelector(".live-switch"), liveOn);
-  syncSwitch(liveWin.body.querySelector(".live-save"), liveSave);
-  const st = liveWin.body.querySelector(".live-stats");
-  // collecting (armed): show what the server collector saved; tuning (disarmed): client fps.
-  // blank when off (the switch already conveys that). No processing/idle flip — it toggled
-  // every round (OCR vs the 200ms gap) and just flickered.
-  const collecting = liveOn && liveSave;
-  const stTxt = !liveOn ? ""
-    : collecting ? `${liveColStatus?.written ?? 0} saved · ${(liveColStatus?.fps ?? 0).toFixed(1)}/s`
-    : `${liveFps.toFixed(1)} img/s`;
-  if (st && st.textContent !== stTxt) st.textContent = stTxt;
-  // saved-live-image stat (touch DOM only on change)
-  const ist = liveWin.body.querySelector(".live-imgstat");
-  const itxt = liveImg.count ? `${liveImg.count} imgs · ${fmtBytes(liveImg.bytes)} saved` : "no live images saved";
-  if (ist && ist.textContent !== itxt) ist.textContent = itxt;
-  const clr = liveWin.body.querySelector(".live-clear");
-  if (clr) clr.disabled = !liveImg.count;
-  renderLiveWinList();
-  fitLivePanelHeight();
-}
-
-// Reconcile the live-enabled window list in place (keyed Map, no innerHTML per tick).
-function renderLiveWinList() {
-  const list = liveWin.body.querySelector(".live-wins");
-  if (!list) return;
-  const wins = (model.profile.windows || []).filter((w) => w.live !== false);
-  const want = new Set(wins.map((w) => w.id));
-  for (const [id, r] of liveRows) if (!want.has(id)) { r.row.remove(); liveRows.delete(id); }
-  if (!wins.length) { if (!liveEmpty.isConnected) list.appendChild(liveEmpty); return; }
-  if (liveEmpty.isConnected) liveEmpty.remove();
-  let i = 0;
-  for (const w of wins) {
-    let r = liveRows.get(w.id);
-    if (!r) {
-      const row = document.createElement("div"); row.className = "act-row live-win";
-      const dot = document.createElement("span"); dot.className = "live-wdot";
-      const name = document.createElement("div"); name.className = "act-title";
-      const cnt = document.createElement("span"); cnt.className = "live-wcount";   // detections, right-justified
-      row.append(dot, name, cnt);
-      r = { row, dot, name, cnt }; liveRows.set(w.id, r);
-    }
-    const at = list.children[i];
-    if (at !== r.row) list.insertBefore(r.row, at || null);
-    i++;
-    if (r.name.textContent !== w.id) r.name.textContent = w.id;
-    const det = liveOn && !!liveRecog.get(w.id);
-    if (r.dot.classList.contains("on") !== det) r.dot.classList.toggle("on", det);
-    const dt = det ? "detected" : (liveOn ? "not detected yet" : "live off");
-    if (r.dot.title !== dt) r.dot.title = dt;
-    const n = liveDetCount.get(w.id) || 0;          // how many times detected this run
-    const ctxt = n ? `${n}×` : "";
-    if (r.cnt.textContent !== ctxt) r.cnt.textContent = ctxt;
-    if (r.cnt.title !== `detected ${n}×`) r.cnt.title = `detected ${n}×`;
-  }
-}
-
-// Auto-fit the panel height to its contents until the user resizes it (a size write only
-// happens when the target actually differs, so a steady tick mutates nothing).
-function fitLivePanelHeight() {
-  if (!liveWin || !liveWinState.visible || liveWinState.collapsed || liveWinState.userSized) return;
-  const headerH = liveWin.el.querySelector(".fw-head")?.offsetHeight || 28;
-  // Measure CONTENT, not body.scrollHeight: the body is flex:1 so its scrollHeight is at
-  // least its own clientHeight — feeding that back grew the panel ~14px every tick. The body's
-  // children are block-flow, so their intrinsic offsetHeight sums to the true content height.
-  const bs = getComputedStyle(liveWin.body);
-  const padV = parseFloat(bs.paddingTop) + parseFloat(bs.paddingBottom);
-  const content = [...liveWin.body.children].reduce((h, c) => h + c.offsetHeight, 0);
-  const target = Math.round(Math.min(window.innerHeight - 60, headerH + content + padV));
-  if (Math.abs(liveWin.el.offsetHeight - target) > 1) { liveWin.el.style.height = `${target}px`; liveWinState.h = target; }
-}
-
-function showLiveStats(on) {
-  liveFrames = 0; liveT0 = on ? performance.now() : 0; liveFps = 0;
-  renderLiveStats();
-}
-function renderLiveStats() {
-  const now = performance.now();
-  if (liveT0 && now - liveT0 >= 1000) {            // recompute rate over a ~1s window
-    liveFps = (liveFrames * 1000) / (now - liveT0);
-    liveFrames = 0; liveT0 = now;
-  }
-  renderLiveWindow();   // stats + detection dots now live only in the live panel
-}
-
-// Self-paced: a round AWAITS its detect+preview before the next is scheduled, so live
-// mode adapts to how fast OCR actually is and never piles requests on the OCR queue
-// (a fixed interval would stack them until each took tens of seconds). Iterates every
-// LIVE-ENABLED window (not just the ones with an open image) — detect captures its own frame.
-async function liveTick() {
-  if (!liveOn || liveSave) return;   // client tuning loop only runs in read-only (disarmed) mode
-  refreshLive();   // dataset counts
-  const game = model.profile.name;
-  if (game) {
-    // save what live mode sees: one frame per round into the live bucket (fire-and-forget;
-    // a capture failure must never stall tuning). grab returns the running {count,bytes}.
-    api.liveCaptures.grab(game).then((s) => { liveImg = s; }).catch(() => {});
-    for (const w of model.profile.windows || []) {
-      if (!liveOn || liveSave) break;
-      if (w.live === false || w.enabled === false) continue;   // skip windows opted out of live
-      await refreshDetect(w.id, true);   // sets liveRecog + refreshes the panel
-      liveFrames++;
-      if (prevHost(w.id)?.dataset.ran === "1") await refreshPreview(w.id, true);
-    }
-    renderLiveStats();   // recompute fps + refresh the panel after the round
-  }
-  if (liveOn && !liveSave) timer = setTimeout(liveTick, 200);   // next round only AFTER this one drained
-}
-
-// Server-side collector (the real pipeline): started when live + save are both on. The
-// heartbeat carries its status; we mirror recognized windows into liveRecog for the dots.
-function startServerCollect() {
-  const game = model.profile.name;
-  if (!game) return;
-  liveColStatus = null;
-  api.live.start(game).catch((e) => setStatus(String(e.message || e)));
-  if (!liveColUnsub) liveColUnsub = hub.subscribe((s) => {
-    if (!liveOn || !liveSave) return;
-    liveColStatus = s.live || null;
-    liveRecog.clear(); liveDetCount.clear();
-    for (const r of (liveColStatus?.recognized || [])) {   // cumulative tally → dots + per-window count
-      if (!r.miss && r.key.includes("/")) {
-        const wid = r.key.split("/")[0];
-        liveRecog.set(wid, true);
-        liveDetCount.set(wid, (liveDetCount.get(wid) || 0) + (r.count || 0));
-      }
-    }
-    renderLiveWindow();
-  });
-  hub.kick();   // beat now so collection status shows immediately
-}
-function stopServerCollect() {
-  const game = model.profile.name;
-  if (liveColUnsub) { liveColUnsub(); liveColUnsub = null; }
-  if (game) api.live.stop(game).catch(() => {});
-  liveColStatus = null;
-  hub.kick();
-}
-
-function setLiveMode(on) {
-  // Mutually exclusive with precapture, but only the WORKER actually competes for OCR — a
-  // merely-open (idle) precap panel doesn't. Block live while precap is busy; otherwise just
-  // close the idle precap panel and proceed (don't silently no-op like before).
-  if (on && precapBusy) { setStatus("precapture is running — stop it before live mode"); renderLiveWindow(); return; }
-  if (on && precapOpen) pc.setVisible(false);   // idle precap panel open → close it (one OCR consumer at a time)
-  if (on === liveOn) { renderLiveWindow(); return; }   // no change → don't double-start; keep the switch in sync
-  liveOn = on;
-  if (timer) { clearTimeout(timer); timer = null; }
-  if (!on) { liveRecog.clear(); liveDetCount.clear(); }   // drop stale dots + counts
-  showLiveStats(on);
-  if (on) {
-    log(liveSave ? "live collection started" : "live mode started (read-only)", "run");
-    registerWorker("live", liveSave ? "live collection" : "live view", () => setLiveMode(false));
-    if (liveSave) startServerCollect(); else liveTick();   // armed → server collector; else client tuning loop
-  } else {
-    log("live mode stopped");
-    unregisterWorker("live");
-    stopServerCollect();   // harmless if not running
-  }
-  renderLiveWindow();   // reflect the toggle + cleared dots
-}
-
-// Arm/disarm saving. While live is on, this swaps between the server collector (armed) and
-// the client tuning loop (disarmed) without leaving live mode.
-function setLiveSave(on) {
-  if (on === liveSave) return;
-  liveSave = on;
-  if (liveOn) {
-    if (timer) { clearTimeout(timer); timer = null; }   // stop the client loop either way
-    if (on) { stopServerCollect(); startServerCollect(); }   // (re)start the collector
-    else { stopServerCollect(); liveTick(); }                // back to read-only tuning
-    registerWorker("live", on ? "live collection" : "live view", () => setLiveMode(false));
-    log(on ? "live saving armed" : "live saving disarmed", on ? "run" : undefined);
-  }
-  renderLiveWindow();
-}
 
 // ---- init -----------------------------------------------------------------
 
@@ -5643,3 +2882,13 @@ let booted = false;
 conn.onChange((up) => { if (up && !booted) location.reload(); });
 
 killStrayOcrThenBoot();
+
+// ---- exports consumed by panel modules (imported back from "./main.js") ----
+export {
+  focusNode, panZoomTo, panZoomToRect, autosave, placeNewNode, render, panTo,
+  refreshLive, clockTime,
+  refreshAllSubsetNodes,
+  rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,
+  overlaySelected, selectWindowBox, persistBox, syncCellSize, itemChanged,
+  keyPrevHTML, addFieldToItemGroup,
+};

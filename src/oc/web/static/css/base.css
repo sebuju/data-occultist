@@ -1,0 +1,98 @@
+/* base.css - design tokens, reset, scrollbars, page body
+   Part of the app stylesheet, split from style.css. Load order matters (cascade):
+   base -> chrome -> graph -> overlays -> controls -> flow -> tables. */
+
+:root {
+  /* surfaces */
+  --bg: #15171c;            /* app background */
+  --panel: #1d2027;         /* nodes, panels, top bar */
+  --line: #2c313c;          /* borders, neutral button fill */
+  --float-panel: #232936;   /* floating windows — cooler/bluer than nodes */
+  --float-head: #2b3343;    /* float-window header bar */
+  --float-line: #3a4253;    /* float-window borders */
+  --node-head: #252a32;     /* graph-node header band */
+  --log-bg: #0a0e13;        /* terminal log bar */
+
+  /* text */
+  --text: #d7dbe2;          /* primary */
+  --muted: #8a93a3;         /* secondary / labels */
+  --log-fg: #aeb8c2;        /* log body */
+  --log-dim: #4a5560;       /* log timestamps */
+  --white: #fff;
+  --black: #000;
+
+  /* semantic / status */
+  --accent: #5aa9e6;        /* selection, primary actions, regions (blue) */
+  --accent-bg: #5aa9e615;   /* selection, primary actions, regions (blue) */
+  --danger: #e6685a;        /* destructive, errors (red) */
+  --ok: #7ddc7d;            /* success / high confidence (green) */
+  --warn: #e6c25a;          /* caution / medium confidence (amber) */
+  --record: #e0556b;        /* recording / item role (pink-red) */
+  --trigger-line: #02d8ce;  /* trigger fire-control edge (cyan) */
+  --watch-line: #2bd4c4;    /* on_change watch edge (teal) */
+  --purple: #c98ae6;        /* scrollbar / raw detections */
+  --neutral: #6b7280;       /* paused (grey) */
+  --phase-done: #2f7d4f;    /* finished (deep green) */
+  --on-accent: #08121d;     /* text on accent fill */
+  --on-danger: #1a0a08;     /* text on danger fill */
+  --data: #ff8c2b;          /* data-flow edges + out-ports (orange) */
+
+  /* effects */
+  --hover: #ffffff1a;       /* row / cell hover tint */
+  --zebra: #8ca5c80f;  /* table zebra striping */
+  --shadow: #0008;          /* drop-shadow colour for popovers/HUDs */
+
+  /* typography */
+  --font-sans: system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;            /* body */
+  --fs-lg: 18px;
+  --fs-xl: 20px;
+  --fs-xxl: 22px;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }   /* the attribute always hides, never overridden */
+.ic { vertical-align: -0.15em; }   /* inline monochrome icons (dom.js CAMERA/WARN/PAUSE) sit on the text baseline */
+
+/* themed scrollbars to match the dark UI */
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* every checkbox renders as a slide-toggle — same look/size as the node enable switch
+   (--line off, --accent on). The thumb is a radial-gradient ON the control (inputs don't
+   render ::before/::after in Chromium), so background-position animates the slide.
+   appearance:none only restyles it; .checked still drives JS. */
+input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none; margin: 0; flex: 0 0 auto;
+  width: 28px; height: 16px; border-radius: 8px; box-sizing: border-box;
+  border: 1px solid var(--line); background-color: var(--line); cursor: pointer; vertical-align: middle;
+  background-image: radial-gradient(circle at center, var(--muted) 0 5px, transparent 5.5px);
+  background-repeat: no-repeat; background-size: 12px 100%; background-position: 2px center;
+  transition: background-color .18s ease, border-color .18s ease, background-position .2s ease;
+}
+input[type="checkbox"]:checked {
+  background-color: color-mix(in srgb, var(--accent) 35%, transparent); border-color: var(--accent);
+  background-image: radial-gradient(circle at center, var(--accent) 0 5px, transparent 5.5px);
+  background-position: calc(100% - 2px) center;
+}
+input[type="checkbox"]:disabled { opacity: .5; cursor: default; }
+input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font: var(--fs-md)/1.4 var(--font-mono);
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;            /* only inner regions scroll, never the page */
+}

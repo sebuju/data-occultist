@@ -5,7 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>data-rig — node view</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="/style.css" />
+  <!-- style.css was split by section; load order is the cascade order (see each file's banner) -->
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/chrome.css" />
+  <link rel="stylesheet" href="/css/graph.css" />
+  <link rel="stylesheet" href="/css/overlays.css" />
+  <link rel="stylesheet" href="/css/controls.css" />
+  <link rel="stylesheet" href="/css/flow.css" />
+  <link rel="stylesheet" href="/css/tables.css" />
   <link rel="stylesheet" href="/floatwin.css" />
 </head>
 <body spellcheck="false">
@@ -57,6 +64,16 @@
           <defs>
             <marker id="flowarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" class="flowarrow-head" />
+            </marker>
+            <!-- trigger control line end: a perpendicular bar (not an arrowhead) so a fire-control
+                 edge reads differently from data flow. Takes the line's colour via context-stroke. -->
+            <marker id="triggerbar" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+              <path d="M2,0 L2,10" class="triggerbar-head" />
+            </marker>
+            <!-- watch (on_change) line end: a small diamond, distinct from the data arrow and the
+                 trigger bar so a "fires-on-new-rows" edge reads on sight. Takes the line's colour. -->
+            <marker id="watchcap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+              <path d="M0,5 L5,0 L10,5 L5,10 z" class="watchcap-head" />
             </marker>
           </defs>
         </svg>

@@ -15,9 +15,10 @@
 
 import { beginDrag } from "./dragresize.js";   // shared drag-loop primitive
 
-const PAD = 20;          // uniform gap between members and the group outline (all 4 sides,
-                         // incl. between the title band's bottom and the first node) — one GRID
-                         // step, so the outline lands on the canvas grid like the nodes do
+const PAD = 40;          // uniform gap between members and the group outline (all 4 sides,
+                         // incl. between the title band's bottom and the first node) — two GRID
+                         // steps, so the outline lands on the canvas grid like the nodes do AND
+                         // routed connectors have room to run inside the group edge without crowding
 const TITLE_H = 24;      // fallback title height until the real one is measured (world px)
 const DRAG_THRESH = 4;   // px before a title press becomes a move (else it's a click)
 
@@ -101,6 +102,7 @@ export function hydrate(arr) {
   })).filter((g) => g.members.length);
   // keep group_N counter past any already-used numbers
   seq = groups.reduce((m, g) => { const n = /^group_(\d+)$/.exec(g.id); return n ? Math.max(m, +n[1]) : m; }, 0);
+  reconcileFollowers();   // a saved layout may predate preview-follows-window — fix membership on load
 }
 export function clear() {
   closePopover(); closeSuperPopover();
@@ -130,6 +132,7 @@ export function createGroup(memberIds) {
     titleBg: "", titleColor: "",
   };
   groups.push(g);
+  reconcileFollowers();   // pull each member window's preview into the new group
   pruneEmpty();
   renderGroups(); ctx.persist(); ctx.afterChange();
   return g;
@@ -152,7 +155,24 @@ export function detachNodes(nodeIds) {
     const g = groupOf(id);
     if (g) { g.members = g.members.filter((m) => m !== id); changed = true; }
   }
+  if (reconcileFollowers()) changed = true;
   if (changed) { pruneEmpty(); renderGroups(); ctx.persist(); ctx.afterChange(); }
+}
+
+// A bonded follower (a window's PREVIEW node) has no group of its own — it always sits
+// in exactly its leader's group, following the leader in and out. ctx.bonds() lists every
+// {leader, follower} pair. Force each follower onto its leader's group (or out, if the
+// leader is ungrouped); never group a follower independently. Returns true if anything moved.
+function reconcileFollowers() {
+  if (!ctx.bonds) return false;
+  let changed = false;
+  for (const { leader, follower } of ctx.bonds()) {
+    const lg = groupOf(leader), fg = groupOf(follower);
+    if (lg === fg) continue;
+    if (fg) { fg.members = fg.members.filter((m) => m !== follower); changed = true; }
+    if (lg && !lg.members.includes(follower)) { lg.members.push(follower); changed = true; }
+  }
+  return changed;
 }
 
 // Add nodes to an existing group, pulling each out of any prior group first (a node
@@ -164,6 +184,7 @@ export function addToGroup(groupId, nodeIds) {
   if (!add.length) return;
   for (const id of add) { const p = groupOf(id); if (p) p.members = p.members.filter((m) => m !== id); }
   g.members.push(...add);
+  reconcileFollowers();
   pruneEmpty(); renderGroups(); ctx.persist(); ctx.afterChange();
 }
 
@@ -183,6 +204,7 @@ export function absorb(ids) {
     target.members.push(id);
     changed = true;
   }
+  if (reconcileFollowers()) changed = true;   // a window that joined drags its preview along; a preview dropped alone snaps back to its window
   if (changed) { pruneEmpty(); renderGroups(); ctx.persist(); ctx.afterChange(); }
   return changed;
 }

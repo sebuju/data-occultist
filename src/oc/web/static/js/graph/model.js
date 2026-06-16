@@ -191,13 +191,14 @@ export class GraphModel {
       }
     }
     // a trigger FIRES its target price nodes (trigger -> price); an on_change trigger also
-    // WATCHES datasets (watched -> trigger) so the line shows what wakes it.
+    // WATCHES datasets — the dashed line leaves the trigger's watch port and reaches OUT to the
+    // dataset/view it wakes on (trigger -> watched), so both control lines emanate from the trigger.
     for (const t of this.profile.triggers || []) {
       for (const pid of t.targets || []) if (this.priceNode(pid)) es.push({ from: `trigger:${t.id}`, to: `price:${pid}`, kind: "trigger" });
       if (t.kind === "on_change")
         for (const w of t.watch || []) {
-          const from = this.subsetDef(w) ? `sub:${w}` : `ds:${w}`;
-          es.push({ from, to: `trigger:${t.id}`, kind: "watch" });
+          const to = this.subsetDef(w) ? `sub:${w}` : `ds:${w}`;
+          es.push({ from: `trigger:${t.id}`, to, kind: "watch" });
         }
     }
     for (const d of this.profile.dictionaries || []) es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
@@ -611,6 +612,18 @@ export class GraphModel {
     return id;
   }
   setItemPriority(winId, id, priority) { const it = this.item(winId, id); if (it) it.priority = priority | 0; }
+  // Move an item up/down the priority order (dir -1/+1) and renumber every item's priority
+  // to match its new rank — top = 0. Renumbering keeps the list dense and contiguous so the
+  // window node's order list stays a faithful 1:1 view of priority.
+  moveItemPriority(winId, id, dir) {
+    const w = this.window(winId);
+    if (!w || !w.items) return;
+    const order = [...w.items].sort((a, b) => (a.priority || 0) - (b.priority || 0));
+    const i = order.findIndex((x) => x.id === id), j = i + dir;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    order.forEach((it, k) => { it.priority = k; });   // top of the list -> priority 0
+  }
   setWindowStaticGrid(winId, on) { const w = this.window(winId); if (w) w.static_grid = !!on; }
   removeItem(winId, id) {
     const w = this.window(winId);

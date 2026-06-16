@@ -1,0 +1,106 @@
+/* controls.css - global form controls, buttons, icons, loaders, settings modal, backups
+   Part of the app stylesheet, split from style.css. Load order matters (cascade):
+   base -> chrome -> graph -> overlays -> controls -> flow -> tables. */
+
+/* Every form control inherits the page font-family — buttons, inputs, selects, textareas,
+   and anything added later. UA styles otherwise reset these to a system font. Specific
+   font-SIZE rules (e.g. buttons use --fs-sm) still apply on top of the inherited family. */
+button, input, select, textarea, optgroup, option {
+  font-family: inherit;
+}
+input, select, textarea {
+  font: inherit;
+}
+input, select {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.topbar input, .topbar select { width: auto; }
+:is(select, input, textarea):not(.sv-addin):focus-visible {
+  outline: 1px solid #bababa;
+  outline-offset: -1px;
+}
+
+/* ONE button, everywhere. Icon + text are centred and never make it taller than a
+   text-only button. Variants differ by COLOUR only. */
+button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 4px 10px; min-height: 26px; line-height: 1;
+  font-family: inherit; font-size: var(--fs-sm);   /* inherit the page font (body = --font-mono) */
+  background: var(--line); color: var(--text);
+  border: 0; border-radius: 4px; cursor: pointer; white-space: nowrap;
+}
+button:hover:not(:disabled) { filter: brightness(1.18); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+/* a button mid-async-work: keep its label, append a small spinner */
+button.reading::after { content: ""; display: inline-block; width: 9px; height: 9px; margin-left: 6px;
+  vertical-align: -1px; border: 2px solid currentColor; border-top-color: transparent;
+  border-radius: 50%; animation: spin 0.7s linear infinite; }
+/* first-load screen loader (boot veil): a thick green ring with an orange dot riding the
+   inside edge clockwise. 36dvh — owns the full-screen loading view but stays modest. */
+.loader-orbit { position: relative; height: 36dvh; aspect-ratio: 1; max-width: 90vw;
+  border-radius: 50%; border: 18px solid var(--ok); }
+.loader-orbit .arm { position: absolute; inset: 0; animation: spin 5s linear infinite; }   /* clockwise */
+.loader-orbit .dot { position: absolute; top: 1.5%; left: 50%; width: 9%; height: 9%; margin-left: -4.5%;
+  border-radius: 50%; background: var(--data); }
+button.primary, button.active { background: var(--accent); color: var(--on-accent); }
+button.danger { background: var(--danger); color: var(--on-danger); }
+/* the one delete/remove glyph (dom.js TRASH). Sized to the button's font, inherits its
+   colour via currentColor; pointer-events:none so a click's target is always the button
+   (delegated handlers read the button, never the svg path). */
+.ic-trash { width: 1em; height: 1em; display: inline-block; vertical-align: -0.14em; pointer-events: none; }
+button.warn { background: var(--warn); color: var(--on-accent); }   /* cancel/abort (non-destructive) */
+/* kill-gpu: an ACTION button, not a floating-window toggle like .modebtn. Styled as a
+   hollow danger outline so it reads as distinct from the solid mode buttons + dropdowns;
+   fills red on hover/while-working. */
+.killbtn { background: transparent; color: var(--danger);
+  box-shadow: inset 0 0 0 1px var(--danger); }
+.killbtn:hover:not(:disabled) { background: var(--danger); color: var(--on-danger); filter: none; }
+.killbtn svg { width: 13px; height: 13px; flex: none; }
+
+/* settings cog: a bare icon button in the topbar (replaces the old "oc" wordmark) */
+.cogbtn { background: transparent; color: var(--muted); padding: 4px 6px; }
+.cogbtn:hover:not(:disabled) { background: transparent; color: var(--text); filter: none; }
+.cogbtn svg { width: 17px; height: 17px; display: block; }
+
+/* settings modal: stacked sections (new game, OCR, backups) */
+.settings { display: flex; flex-direction: column; gap: 18px; padding: 16px; }
+.set-sec { display: flex; flex-direction: column; gap: 8px; }
+.set-row { display: flex; align-items: center; gap: 8px; margin: 0; }
+.set-row > span { min-width: 9ch; color: var(--muted); }
+.set-row #newGameName { flex: 1; }
+/* backups section: list/detail layout is in .backups; narrower list to fit the modal.
+   Explicit height so the flex chain gives the preview a real, non-zero box to measure. */
+.set-backups .backups { height: 360px; }
+.set-backups .bk-list { width: 200px; }
+/* shorter preview floor + scrollable detail so the info + restore foot always fit */
+.set-backups .bk-preview { min-height: 120px; }
+.set-backups .bk-detail { overflow: auto; }
+/* the preview is a static thumbnail — no interactive node hover/highlight */
+.bk-preview svg { pointer-events: none; }
+/* monochrome icon glyphs inside buttons — colourable (inherit currentColor by default) */
+.ic { font-size: var(--fs-sm); line-height: 1; }
+.ic-rec { color: var(--record); }
+.ic-ok { color: var(--ok); }
+.row { display: flex; gap: 8px; margin-top: 8px; }
+
+.box-list { list-style: none; margin: 0; padding: 0; }
+.box-list li {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+.box-list li.active { border-color: var(--accent); }
+.box-list .tag { color: var(--accent); font-size: var(--fs-sm); }
+
+.muted { color: var(--muted); font-size: var(--fs-sm); }
+.warn { color: var(--warn); }
+.navlink { color: var(--accent); text-decoration: none; }
+.navlink:hover { text-decoration: underline; }
+

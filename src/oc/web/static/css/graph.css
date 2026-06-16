@@ -1,0 +1,414 @@
+/* graph.css - profile node graph: nodes, fields, edges, groups, super-groups, detach
+   Part of the app stylesheet, split from style.css. Load order matters (cascade):
+   base -> chrome -> graph -> overlays -> controls -> flow -> tables. */
+
+/* node graph */
+.graphwrap { flex: 1; min-height: 0; overflow: hidden; position: relative; }
+.graphcanvas { position: absolute; inset: 0; overflow: hidden; user-select: none; }
+#gworld { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+/* skip hit-testing the whole graph subtree during a pan drag — pointer events aren't
+   needed mid-pan and testing every node/edge each move was a big cost */
+.graphcanvas.panning #gworld { pointer-events: none; }
+/* stacking inside #gworld: group boxes + their title bands (0) < edges (1) < nodes (2) <
+   selected-edges (5). Edges/nodes deliberately sit ABOVE the group box so a wire never
+   disappears under a group outline; the title band (a child of the box) is below nodes too,
+   so a node is never obscured by a title. */
+#gedges { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; overflow: visible; }
+/* The nodes layer is sized to the full canvas (see resizeCanvas), so it must NOT capture
+   pointer events itself — otherwise it would swallow presses meant for the title band that
+   sits below it (band z0, this z2). Only the node CARDS take events (.gnode below). */
+#gnodes { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; }
+#gedges-top { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 5; overflow: visible; }
+.gnode.collapsed .gn-body { display: none !important; }   /* beats the host-node `> .gn-body { display:flex }` */
+/* collapse works the SAME for every node: header only. !important overrides the inline
+   width/height a resizable host node carries, and resizing is off while collapsed. */
+.gnode.collapsed { height: auto !important; min-height: 0 !important; resize: none !important; }
+.gnode.collapsed .gn-spin { display: none; }
+.gn-h .collapse { background: transparent; color: var(--muted); padding: 0; min-height: 0; flex: 0 0 auto;
+  width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; }
+.gn-h .collapse:hover { color: var(--text); }
+.gn-h .collapse svg { width: 16px; height: 16px; display: block; }
+/* collapse + type icon share ONE fixed slot: the type icon shows at rest, the collapse
+   button replaces it while the slot is hovered. Both are absolute inside the 22px box, so the
+   hidden one takes no space and swapping never shifts the header. */
+.gn-disc { position: relative; width: 22px; height: 22px; flex: 0 0 auto; }
+.gn-disc .nicon, .gn-disc .collapse { position: absolute; inset: 0; margin: auto; }
+.gn-disc .collapse { display: none; }
+.gn-disc:hover .collapse { display: flex; }
+.gn-disc:hover .nicon { display: none; }
+/* disclosure = a rounded +/- box. The horizontal dash is fixed; the vertical bar rotates
+   to lie on it when EXPANDED, so opening spins it CW (+ -> -), closing spins CCW (- -> +). */
+.collapse .cv { transform-box: fill-box; transform-origin: center; transform: rotate(90deg); transition: transform .2s ease; }
+.gnode.collapsed .collapse .cv { transform: rotate(0deg); }
+
+/* per-type node-header glyph (declared once in node_icons.js). One size for every node;
+   tinted by type so cards read apart at a glance. */
+/* one per-type tint set on the header (`--ntint`); BOTH the icon and the node-type tag
+   read it, so they always match — change a type's colour in ONE place. */
+.gn-h { --ntint: var(--muted); }
+.gnode.game      .gn-h { --ntint: var(--text); }
+.gnode.window    .gn-h { --ntint: var(--accent); }
+.gnode.region    .gn-h { --ntint: var(--accent); }
+.gnode.detect    .gn-h { --ntint: var(--ok); }
+.gnode.scrollbar .gn-h { --ntint: var(--ok); }
+.gnode.item      .gn-h { --ntint: var(--record); }
+.gnode.itemfield .gn-h { --ntint: var(--accent); }
+.gnode.dataset   .gn-h { --ntint: var(--ok); }
+.gnode.subset    .gn-h { --ntint: var(--purple); }
+.gnode.price     .gn-h { --ntint: var(--warn); }
+.gnode.dictionary .gn-h { --ntint: var(--accent); }
+.gnode.trigger   .gn-h { --ntint: var(--trigger-line); }
+.gn-h .nicon { width: 18px; height: 18px; flex: 0 0 auto; color: var(--ntint); }
+/* Nothing in the node canvas is text-selectable — kills the stray highlight that
+   appears while dragging nodes around (user-select:none set on .graphcanvas above).
+   Exceptions: form fields (so you can edit) and table cells (so you can copy rows). */
+.graphcanvas input, .graphcanvas select, .graphcanvas textarea { user-select: text; }
+.graphcanvas table, .graphcanvas table * { user-select: text; }
+
+.gnode {
+  position: absolute; width: 220px; pointer-events: auto;   /* re-enable on the card (the #gnodes layer is none) */
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 8px; font-size: var(--fs-base);
+  cursor: grab;                 /* whole card drags; the exceptions below override */
+  user-select: none;            /* don't select text while dragging */
+}
+.gnode.game { width: 340px; }
+/* a field node with fallback rules needs room for the rule row (when + then + value + trash
+   on one line); this is its natural width, so a size reset lands here instead of crushing them */
+.gnode.has-rules { width: 320px; }
+.gnode, .gnode * { box-sizing: border-box; }
+.gnode input, .gnode select { user-select: text; max-width: 100%; }
+/* the node-wide cursor:grab (set on .gnode above) gives way to these — form fields,
+   buttons, scroll/resize areas — so the cursor always tells the truth */
+.gnode input:not([type="checkbox"]), .gnode textarea, .gnode [contenteditable="true"] { cursor: text; }
+.gnode button, .gnode select, .gnode a, .gnode .collapse, .gnode .port, .gnode .gn-enable, input[type="checkbox"] { cursor: pointer; }
+.gnode .scrollhost, .gnode .nodehost, .gnode .canvas-wrap, .gnode table { cursor: auto; }
+/* remove button lives in the header now: a danger-coloured icon, two-click confirm */
+.gn-del { margin-left: auto; flex: 0 0 auto; width: 22px; height: 22px; min-height: 0; padding: 0; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--muted); border: 0; border-radius: 4px; font-size: var(--fs-sm); font-weight: bold; }
+.gn-del:hover { color: var(--danger); }
+.gn-del.armed { background: var(--warn); color: var(--on-accent); }
+.gn-del svg { display: block; margin: auto; }
+.glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; overflow: hidden; }
+.glab input { margin-top: 2px; }
+.modal-body h4 { margin: 0; color: var(--muted); font-weight: 500; font-size: var(--fs-base); text-transform: uppercase; letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--muted);  }
+.gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 8px;
+  flex: 0 0 auto;   /* in flex-column host nodes, the header must NOT shrink when content overflows */
+  margin: -7px -8px 6px; padding: 5px 8px; overflow: hidden; position: relative; z-index: 2;
+  background: var(--node-head); border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
+/* collapsed: header IS the whole node. Keep the same top/side margins + border-bottom WIDTH
+   as expanded (so toggling never changes its height), but pull the bottom margin to -7 too
+   (matching the top) so the header covers the node's bottom padding — no empty strip below.
+   Divider colour hidden, all four corners rounded. */
+.gnode.collapsed .gn-h { margin: -7px -8px; border-bottom-color: transparent; border-radius: 8px; }
+.gnode .gn-h.pulse { animation: pulse 1.2s ease-out; }
+/* node-type tag pinned to the header's right edge, shown at REST and hidden while hovering
+   the node (so the action buttons it sits under read clear on hover). Absolute + opacity
+   (never display/inline) so showing/hiding it NEVER reflows the header — no node resize, no
+   connector reroute. pointer-events:none + lower z so the action buttons stay clickable. */
+.gn-h .gn-type { position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  font-size: var(--fs-xs); font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--ntint); background: var(--node-head); padding-left: 8px;
+  pointer-events: none; opacity: 1; transition: opacity .12s ease; z-index: 0; }
+.gnode:hover .gn-h .gn-type { opacity: 0; }
+.gn-h .gn-enable, .gn-h .gn-detach, .gn-h .gn-del { position: relative; z-index: 1; }
+.gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap; }
+.gnode input.gi { width: 100%; }
+.gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; border: unset; background: transparent; margin-left: -35px; padding-left: 35px; }
+input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
+.gnode .big { font-size: var(--fs-xl); }
+/* labelled field controls — label + input in a 2-col grid so every input
+   lines up and shares one width */
+.flab { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 6px;
+  margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap;
+  /* hold every row to one input-control height so slide-toggle rows match text/select rows
+     (the toggle is shorter than an input — without this its row sat lower) */
+  min-height: calc(1.4em + 14px); }
+/* field-config sub-heading: groups the inputs under read / dictionary / rules / row role */
+.fgrp { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--line);
+  font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  display: flex; align-items: center; justify-content: space-between; }
+.fgrp:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.fgrp .ruleadd { font-size: var(--fs-xs); line-height: 1; padding: 2px 6px; min-height: 0;
+  text-transform: none; letter-spacing: 0; }
+/* one fallback rule: when + then + value all on a single row, trash at the end */
+.frule { display: flex; flex-wrap: nowrap; gap: 4px; align-items: center; margin-top: 6px;
+  padding: 5px; border: 1px solid var(--line); border-radius: 4px; }
+.frule select, .frule .rule-val { flex: 1 1 0; min-width: 0; width: auto; }
+.frule .rule-del { flex: 0 0 auto; }
+.frule-empty { margin-top: 6px; font-size: var(--fs-sm); }
+.flab select, .flab input[type="number"], .flab input[type="text"] { width: 100%; min-width: 0; }
+/* shared labelled grid (triggers, price node, view config): every label cell sizes to its own
+   text in col 1 and the control fills col 2 — short labels (kind/source/join on/limit) no longer
+   eat half the row like a 1fr/1fr .flab does. Built from dom.js `labCell`; the cell AFTER each
+   .lab is its control. .lab-top pins a label to the top of a control that wraps to many lines. */
+.lab-grid { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 8px;
+  margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
+.lab-grid > .lab { white-space: nowrap; }
+.lab-grid > .lab-top { align-self: start; padding-top: 4px; }
+.lab-grid > select, .lab-grid > input, .lab-grid > .tg-secs { width: 100%; min-width: 0; }
+.lab-grid > .tg-secs input { width: 100%; }
+.lab-grid > .sv-inputs { margin: 0; min-width: 0; }
+/* full-width cells inside the grid (e.g. the price node's source-pill list) span both columns */
+.lab-grid > .gspan { grid-column: 1 / -1; }
+/* input + its unit suffix share ONE grid cell (else the "s" wraps to the next grid row) */
+.tg-secs { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.tg-secs input { width: 100%; }
+/* checkboxes are slide-toggles now (base.css). Keep them at the start of their grid cell
+   and never let a flex row stretch them — their size is fixed by the toggle. */
+/* inside a node the toggle adopts the form-input palette so it doesn't pop next to the text
+   inputs: --bg track like an input, --line border, on = a soft accent tint (not a bright fill). */
+.gnode input[type="checkbox"] {
+  background-color: var(--bg); border-color: var(--line);
+  background-image: radial-gradient(circle at center, var(--muted) 0 5px, transparent 5.5px);
+}
+.gnode input[type="checkbox"]:checked {
+  background-color: color-mix(in srgb, var(--accent) 18%, var(--bg)); border-color: var(--accent);
+  background-image: radial-gradient(circle at center, var(--accent) 0 5px, transparent 5.5px);
+}
+.flab input[type="checkbox"] { justify-self: start; margin-left: 0; margin-right: 0; }
+.gnode .gn-row input:not([type="checkbox"]) { flex: 1 1 0; min-width: 0; }
+.detect-status { margin-top: 4px; font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.detect-status:empty::before { content: "\00a0"; }   /* hold the row height when status is empty — no layout jump */
+/* footer separates the action row (button base owns sizing) */
+.gn-foot { display: flex; gap: 6px; margin-top: 8px; }
+.gn-foot:empty { display: none; }   /* remove moved to the header — don't leave a gap */
+.gn-foot button { flex: 1 1 0; min-width: 0; }
+.gn-foot button.danger { flex: 0 0 auto; margin-left: auto; }  /* remove always sits at the right */
+.gn-foot .imgbtn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* per-window "live" checkbox in the window footer — doesn't stretch like the buttons */
+.win-live { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; cursor: pointer; }
+.win-live input { margin: 0; }
+.gnode .delfield { width: 100%; margin-top: 8px; }
+.gnode .port {
+  position: absolute; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); top: 50%; transform: translateY(-50%); cursor: crosshair; z-index: 2;
+}
+.gnode .port.out { right: -4px; background: var(--data); }   /* match the data-line orange */
+.gnode .port.out.sel { background: var(--accent); }   /* edge selected (either end) -> accent */
+.gnode .port.in { left: -4px; background: var(--line); }
+.gnode .port.pwatch { left: -4px; right: auto; background: var(--watch-line); }   /* trigger watch out-port (left face) */
+.gnode .port.pwatch.sel { background: var(--accent); }
+.gedge { fill: none; stroke: var(--line); stroke-width: 1.8; }
+.gedge.data { stroke: var(--data); opacity: 1; }   /* data flow: solid bright orange */
+.gedge.toview { marker-end: url(#flowarrow); }                     /* dataset -> view: solid + arrow */
+/* producer → dataset (a node pushing data OUT): emphasised + an arrowhead so the flow
+   direction reads at a glance. No animation (constant repaint is too costly). */
+.gedge.flow { stroke-width: 1.8; opacity: 1; marker-end: url(#flowarrow); }
+.flowarrow-head { fill: context-stroke; }   /* arrow takes the line's colour (orange, or accent when selected) */
+.gedge.ownwin { stroke: var(--accent); opacity: 0.6; }   /* game→window: match the window icon tint */
+.gedge.field { stroke: var(--accent); opacity: 0.5; }
+.gedge.detect, .gedge.scrollbar { stroke: var(--ok); opacity: 0.5; }
+.gedge.state { stroke: var(--warn); opacity: 0.5; }
+.gedge.item { stroke: var(--record); opacity: 0.6; }
+.gedge.attach { stroke: var(--accent); opacity: 0.85; }
+.gedge.img { stroke: var(--muted); stroke-dasharray: 2 4; opacity: 0.7; }
+.gedge.usedict { stroke: var(--muted); stroke-dasharray: 2 4; opacity: 0.45; }   /* field -> the dictionary it snaps to */
+/* trigger -> the price node it fires: cyan, solid, ending in a bar (not the flow arrow).
+   marker-end overrides .gedge.flow's #flowarrow (same specificity, declared later wins). */
+.gedge.trigger { stroke: var(--trigger-line); opacity: 0.95; marker-end: url(#triggerbar); }
+.triggerbar-head { stroke: context-stroke; stroke-width: 2; }   /* bar takes the line's colour (cyan, or accent when selected) */
+/* watched dataset/view -> on_change trigger: own teal, fine dotted, ending in a diamond —
+   distinct from data (solid orange), trigger (solid cyan+bar) and state (amber). */
+.gedge.watch { stroke: var(--watch-line); stroke-dasharray: 1 5; stroke-linecap: round; opacity: 0.9; marker-end: url(#watchcap); }
+.watchcap-head { fill: context-stroke; }   /* diamond takes the line's colour (teal, or accent when selected) */
+.gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; }
+.gedge.sel { stroke: var(--accent) !important; stroke-width: 2.2; opacity: 1 !important; }
+/* a line touching a disabled node is greyed (it carries no live data) */
+.gedge.dis-edge { filter: grayscale(1); opacity: 0.4; }
+
+/* window node: fixed default width, resized by WIDTH (its grips) like the item node —
+   the embedded image canvas fills the node and its height follows the image aspect.
+   overflow:hidden keeps the canvas + controls clipped to the card; spinner in header. */
+.gnode.window { width: 520px; min-width: 240px; max-width: 76vw; }
+/* node overflow stays visible so the right-edge out-port isn't clipped (like price/dataset/
+   subset below); the BODY clips instead, keeping the canvas + controls inside the card. */
+.gnode.window > .gn-body { overflow: hidden; }
+/* busy state: just a centred spinner — no dimming scrim over the node (reads fire on every
+   edit now, so a full-node dim would flash constantly). The header (z2, set above) stays above it. */
+.gn-spin { position: absolute; inset: 0; z-index: 1; pointer-events: none; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; visibility: hidden;
+  transition: opacity 0.18s ease, visibility 0.18s ease; }
+.gn-spin::after { content: ""; width: 30px; height: 30px; border-radius: 50%;
+  border: 3px solid #ffffff26; border-top-color: var(--accent); }
+.gnode.busy .gn-spin { opacity: 1; visibility: visible; }
+.gnode.busy .gn-spin::after { animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* the image drawing surface lives INSIDE the window node (one DOM element) */
+.win-img { width: auto; margin-top: 8px; }
+.win-img:empty { display: none; }
+.imgtools { display: flex; align-items: center; gap: 6px; padding: 4px 0; flex-wrap: wrap; }
+.imgtools .tools { display: inline-flex; gap: 2px; flex-wrap: wrap; }
+.imgtools .spacer { flex: 1; }
+.imgtools .tool-div { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
+.win-img .canvas-wrap, .item-img .canvas-wrap { width: 100%; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 4px; margin-top: 4px; }  /* fills the node; node grips resize it. aspect-ratio set per image in JS */
+.win-img canvas { display: block; width: 100%; }
+/* below-canvas bar: page nav + image selector + recapture + preview-all */
+.img-foot { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.img-foot button { flex: 0 0 auto; min-width: 0; }
+.img-foot .imgbtn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
+.img-foot .imgall { margin-left: auto; }   /* preview-all always sits at the right */
+.img-pages { display: inline-flex; align-items: center; gap: 4px; }
+.img-pages[hidden] { display: none; }
+.img-pageind { font-size: var(--fs-sm); color: var(--muted); min-width: 28px; text-align: center; }
+.imgpg { padding: 2px 8px; }
+
+/* item node: frozen cutout canvas + tells/fields lists.
+   The NODE is resizable; the canvas fills it (so the cutout grows with the node
+   and tiny text stays legible). The canvas has no separate resize handle. */
+.gnode.item { width: 380px; min-width: 280px; max-width: 80vw; resize: none; overflow: hidden; }
+.item-img { margin-top: 8px; }
+.item-img:empty { display: none; }
+.item-img canvas { display: block; width: 100%; image-rendering: auto; }
+/* cell-size inputs (own flab rows): the static grid's pitch (item.box w/h) */
+.csize { width: 64px; }
+.csize-match { font-size: var(--fs-xs); padding: 1px 8px; }
+/* item node: draw-mode button rows under the tells / cell-and-fields headers */
+.il-tools { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0px 8px 0px; }
+.il-tools .tool { font-size: var(--fs-xs); padding: 1px 7px; }
+.il-tools .tool.active { background: var(--accent); color: var(--on-accent); }
+/* compact field summary row (the full editor is the field's own node) */
+.if-sum { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+.if-sum:hover { background: var(--line); }
+.if-sum .if-sum-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* readout: 2-col grid (label : value) so field names + the key line up in a column */
+.item-readout { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; margin-top: 6px; font-size: var(--fs-sm); line-height: 1.5; }
+.item-readout:empty { display: none; }
+.item-readout .ir-row { grid-column: 1 / -1; }   /* status / tells span both columns, on their own row */
+.item-readout .ir-k { color: var(--muted); white-space: nowrap; }   /* field name / "key" label column */
+.item-readout .ir-v { min-width: 0; overflow-wrap: anywhere; }       /* value column wraps, never widens the node */
+.item-lists { margin-top: 6px; }
+.item-lists .il-h { margin-top: 20px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--muted); }
+.ti-row, .key-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
+.ti-row .ti-kind { min-width: 52px; color: var(--muted); }
+.ti-row input[type="number"] { width: 52px; }
+.ti-row .ti-loc { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); }
+/* read-only mirror of a field-tell (edited in the fields list; only its remove acts) */
+.ti-fieldtell .ti-name { font-weight: 600; }
+.ti-fieldtell .ti-ro { flex: 1; text-align: right; font-size: var(--fs-xs); }
+/* each field is a block of controls (type/extract/learn/fuzzy/empty), divided */
+.if-row { margin: 6px -8px 0px -8px; padding: 6px 8px 0px 8px; border-top: 1px solid var(--line); }
+.if-head { display: flex; align-items: center; gap: 4px; }
+.if-head input { flex: 1 1 0; min-width: 0; font-weight: 600; }
+.ti-del, .if-del { flex: 0 0 auto; }
+.ti-row, .if-row { cursor: pointer; }
+.ti-row.il-sel, .if-row.il-sel { background: var(--accent-bg); }
+/* record key (dedup identity) config: ordered field parts + live key preview.
+   (.key-row's base flex layout is shared with .ti-row above) */
+.key-row select { flex: 1 1 0; min-width: 0; }
+.key-row .ksep { width: 34px; flex: 0 0 auto; }
+.key-row .kmv, .key-row .kdel { flex: 0 0 auto; padding: 0 10px; }
+.key-row .flab { display: inline-flex; gap: 4px; }
+.key-prev { margin-top: 4px; font-size: var(--fs-sm); word-break: break-all; }
+/* window node: item templates listed in priority order (top = priority 0). Reorder with the
+   ▲/▼ buttons to set priority; the number itself is never shown. */
+.win-controls .wi-h { margin-top: 14px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 1px solid var(--muted); }
+.wi-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
+.wi-row .wi-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.wi-row .wi-name:hover { text-decoration: underline; color: var(--text); }
+.wi-row .wimv { flex: 0 0 auto; padding: 0 10px; }
+.key-prev:empty { display: none; }
+.key-sec { margin: 6px 0; }
+.prev-count { padding: 4px 8px; font-size: var(--fs-sm); }
+
+.gnode.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); z-index: 20; }
+.gnode.multisel { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
+
+/* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
+.seltoolbar { position: fixed; left: 50%; top: 69px; transform: translateX(-50%);
+  z-index: 200; display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 6px 20px var(--shadow); }
+.seltoolbar .sel-count { color: var(--muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+
+/* ---- rubber-band marquee (screen space, over the canvas) ---- */
+.marquee { position: absolute; z-index: 50; pointer-events: none;
+  border: 1px solid var(--accent); background: var(--accent-bg); border-radius: 2px; }
+
+/* ---- groups layer (behind nodes + edges) ---- */
+#ggroups { position: absolute; top: 0; left: 0; z-index: 0; }
+/* overflow:hidden makes the box CLIP the title band to its rounded inner rect — so the band
+   hugs the border on all sides with no manual inset math, never covers the outline, and has
+   no corner gap, at any border width. */
+.ggroup { position: absolute; box-sizing: border-box; pointer-events: none; overflow: hidden; }
+/* The title is a child of the box, pinned to the top edge (left/right:0). The box clips it,
+   so it needs no border/radius of its own — just a bottom divider. pointer-events:auto so it
+   stays draggable even though the box layer (z0) is below the nodes. */
+.ggroup-title { position: absolute; top: 0; left: 0; right: 0; box-sizing: border-box;
+  display: flex; align-items: center; padding: 9px 15px;
+  font-family: var(--font-mono); font-size: var(--fs-xl); font-weight: 700; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--text); cursor: grab; pointer-events: auto;
+  background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ggroup-title:active { cursor: grabbing; }
+/* group settings cog — ABSOLUTE at the title's right edge so it's out of the flex flow: it
+   never affects the title's padding or fights its text alignment (justify-content). */
+.ggt-cog { position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  width: 22px; height: 20px; padding: 0; min-height: 0;
+  display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+  background: transparent; border: 0; color: inherit; cursor: pointer; pointer-events: auto;
+  opacity: 0; transition: opacity .12s; }
+.ggroup-title:hover .ggt-cog { opacity: 0.7; }   /* inherits the title's text colour → tracks the scheme */
+.ggroup-title:hover .ggt-cog:hover { opacity: 1; }
+/* bottom-right resize grip — same look/size as node resize grips (.rz-grip).
+   pointer-events:auto because the box layer itself is none. */
+.ggroup-grip { position: absolute; right: 1px; bottom: 1px; width: 14px; height: 14px; z-index: 1;
+  cursor: nwse-resize; pointer-events: auto; opacity: 0.5; background-repeat: no-repeat;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='13' y1='9' x2='9' y2='13'/><line x1='13' y1='4' x2='4' y2='13'/></g></svg>"); }
+.ggroup-grip:hover { opacity: 1; }
+/* floating W×H readout shown while resizing a node or group */
+.size-hud { position: fixed; z-index: 300; pointer-events: none; padding: 2px 7px; border-radius: 5px;
+  font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text);
+  background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 8px var(--shadow); white-space: nowrap; }
+
+/* group options popover (screen-fixed, like the topbar dropdowns) */
+.ggroup-pop { position: fixed; z-index: 200; min-width: 220px; display: flex; flex-direction: column; gap: 6px;
+  padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 8px 24px #00000066; }
+.ggroup-pop .flab { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
+/* fixed-width leader so every row's control starts at the same x (labels + inputs line up) */
+.ggroup-pop .gp-lab { flex: 0 0 auto; width: 72px; }
+.ggroup-pop input[type="text"], .ggroup-pop .gp-title, .ggroup-pop select { flex: 1; min-width: 0; }
+.ggroup-pop input[type="range"] { flex: 1; min-width: 0; }
+.ggroup-pop input[type="color"] { flex: 0 0 auto; width: 28px; height: 22px; padding: 0; border: 1px solid var(--line); background: none; }
+.ggroup-pop .gp-disband { margin-top: 4px; }
+/* premade scheme swatches */
+.gp-schemes { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
+.gp-scheme { width: 22px; height: 22px; padding: 0; border-radius: 5px; border: 1.5px solid var(--line);
+  cursor: pointer; flex: 0 0 auto; }
+.gp-scheme:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+/* ---- super-group layer (a group OF groups; sits behind the group layer) ---- */
+#sgroups { position: absolute; top: 0; left: 0; z-index: 0; }
+.sgroup { position: absolute; box-sizing: border-box; pointer-events: none; border-radius: 16px; }
+/* bottom-left: a small cog + a ridiculously large, faint watermark label — each absolutely
+   pinned so the giant label can never push the cog out of place */
+.sgroup-label { position: absolute; left: 40px; bottom: 25px;    /* clear the cog */
+  pointer-events: auto; cursor: grab; user-select: none;
+  font-family: var(--font-mono); font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase;
+  font-size: 88px; line-height: 0.8; color: var(--text); opacity: 0.13; white-space: nowrap; }
+.sgroup-label:active { cursor: grabbing; }
+.sgroup-cog { position: absolute; left: 5px; bottom: 5px; z-index: 1;
+  pointer-events: auto; width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+  background: transparent; border: 0; color: var(--text); cursor: pointer; opacity: 0; transition: opacity .12s; }
+.sgroup:hover .sgroup-cog { opacity: 0.55; }
+.sgroup-cog:hover { opacity: 1 !important; }
+/* ctrl-selected group (armed for super-grouping) */
+.ggroup.gsel { outline: 2px dashed var(--accent); outline-offset: 2px; }
+
+/* ---- detach (unlock) icon: only on grouped nodes ---- */
+.gn-detach { display: none; flex: 0 0 auto; width: 22px; height: 22px; min-height: 0; padding: 0;
+  background: transparent; border: 0; color: var(--muted); line-height: 0; }
+.gn-detach:hover { color: var(--accent); }
+.gn-detach svg { display: block; margin: auto; }
+/* toggle is the first of the right-hand cluster: it takes the auto margin (pushing it +
+   detach + delete to the right, via the base .gn-enable rule), and the others drop theirs
+   so the gap (not a second auto) spaces them. */
+.gnode.in-group .gn-detach { display: inline-flex; align-items: center; justify-content: center; margin-left: 0; }
+.gnode.in-group .gn-detach ~ .gn-del { margin-left: 0; }
+

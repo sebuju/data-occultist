@@ -56,6 +56,7 @@ export class Overlay {
     this.gridGuides = null;     // search structure: column dividers + locator scan strips
     this.previewItems = [];     // extracted per-cell values: {x,y,w,h,text,confidence}
     this.detections = [];       // raw OCR lines: {box:{x,y,w,h}, text, confidence}
+    this.detectStatus = {};     // live detector outcomes by box id: {matched, score?, threshold?}
     this.autoFit = true;        // keep fit-to-width until the user manually zooms
     this.worldZoom = 1;         // outer graph zoom, so UI sizes stay constant on screen
     this._bind();
@@ -72,9 +73,11 @@ export class Overlay {
   setGridGuides(g) { this.gridGuides = g || null; this.render(); }
   setPreview(items) { this.previewItems = items || []; this.render(); }
   setDetections(items) { this.detections = items || []; this.render(); }
+  setDetectStatus(map) { this.detectStatus = map || {}; this.render(); }   // colour/tint detect boxes by live match
 
   setImage(img) {
     this.img = img;
+    if (!img) { this.canvas.width = 0; this.canvas.height = 0; this.render(); return; }   // blank: no image bound
     this.canvas.width = img.naturalWidth;
     this.canvas.height = img.naturalHeight;
     this.fit();
@@ -95,7 +98,12 @@ export class Overlay {
   zoom(factor) { this.setScale(this.scale * factor); }
   fit() {
     if (!this.img) return;
-    const avail = (this.canvas.parentElement?.clientWidth || this.img.naturalWidth) - 4;
+    // NO naturalWidth fallback: when the wrap has no width yet (clientWidth 0, e.g. the
+    // node isn't laid out at setImage time) falling back to the image's own width scales
+    // to ~1:1 — a giant canvas that only corrects when a later reflow (OCR readout filling
+    // in) fires the ResizeObserver, so it visibly jumps. Bail instead; the observer retries
+    // fit() the moment the wrap gets real width, sizing it right the FIRST time.
+    const avail = (this.canvas.parentElement?.clientWidth || 0) - 4;
     if (avail <= 1) return;     // layout not ready; ResizeObserver will retry
     this.setScale(avail / this.img.naturalWidth);
     this.autoFit = true;        // keep auto-fitting on later resizes
@@ -345,12 +353,21 @@ export class Overlay {
     }
 
     for (const b of this.boxes) {
-      const color = ROLE_COLOR[b.role] || "#fff";
+      // a detect box carries its LIVE outcome: green/✓ when matched, red/✗ when not (a
+      // faint fill so the verdict reads at a glance, with score% on the label)
+      const st = b.role === "detect" ? this.detectStatus[b.id] : null;
+      const color = st ? (st.matched ? "#7ddc7d" : "#e6685a") : (ROLE_COLOR[b.role] || "#fff");
       const isActive = b.id === this.activeId;
       ctx.lineWidth = (isActive ? 2.4 : 1.6) * u;
       ctx.strokeStyle = color;
+      if (st) {
+        ctx.fillStyle = st.matched ? "rgba(125,220,125,0.14)" : "rgba(230,104,90,0.14)";
+        ctx.fillRect(b.x * W, b.y * H, b.w * W, b.h * H);
+      }
       ctx.strokeRect(b.x * W, b.y * H, b.w * W, b.h * H);
-      this._label(b.label || b.id || b.role, b.x * W, b.y * H, color, labelFs);
+      let label = b.label || b.id || b.role;
+      if (st) label += `  ${st.matched ? "✓" : "✗"}${st.score != null ? ` ${Math.round(st.score * 100)}%` : ""}`;
+      this._label(label, b.x * W, b.y * H, color, labelFs);
       if (isActive && !this.op) this._drawHandles(b, W, H, u);   // hide handles while dragging
     }
 

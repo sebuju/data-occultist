@@ -1,0 +1,173 @@
+/* chrome.css - desktop titlebar/resize grips, topbar toggles, capture picker, collapsible panels
+   Part of the app stylesheet, split from style.css. Load order matters (cascade):
+   base -> chrome -> graph -> overlays -> controls -> flow -> tables. */
+
+
+/* Frameless desktop-window chrome. Injected by titlebar.js ONLY inside the
+   pywebview window (a browser never builds it). Sits above everything — incl. the
+   boot veil (z 3000) and offline overlay (z 4000) — so the window stays draggable
+   and closable during boot. Whole bar drags; the buttons still click (pywebview
+   only moves on mouse-move, not on a static click). */
+.titlebar {
+  flex: none;
+  position: relative;
+  z-index: 4500;
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding-left: 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.titlebar .tb-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.titlebar .tb-spacer { flex: 1; }
+.titlebar .tb-btn {
+  width: 44px; height: 30px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 0; color: var(--muted); cursor: pointer;
+}
+.titlebar .tb-btn svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 1.3; fill: none; }
+.titlebar .tb-btn:hover { background: var(--line); color: var(--text); }
+.titlebar .tb-close:hover { background: var(--danger); color: var(--on-danger); }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Frameless desktop-window resize grips (built by desktop_resize.js, desktop-only — a
+   browser never creates them). Thin transparent strips on each edge + small corner squares
+   that catch the edge mouse and drive native resize. Above everything so the edges always
+   grab, incl. over the titlebar's top edge. */
+.winsize-grip { position: fixed; z-index: 99998; }
+.winsize-n { top: 0; left: 0; right: 0; height: 5px; }
+.winsize-s { bottom: 0; left: 0; right: 0; height: 5px; }
+.winsize-w { top: 0; bottom: 0; left: 0; width: 5px; }
+.winsize-e { top: 0; bottom: 0; right: 0; width: 5px; }
+.winsize-ne, .winsize-nw, .winsize-se, .winsize-sw { width: 10px; height: 10px; z-index: 99999; }
+.winsize-ne { top: 0; right: 0; }
+.winsize-nw { top: 0; left: 0; }
+.winsize-se { bottom: 0; right: 0; }
+.winsize-sw { bottom: 0; left: 0; }
+.topbar .spacer { flex: 1; }
+/* floating-window toggles, the whole group pinned to the right edge of the topbar.
+   testing is the leftmost button, separated from the rest by a fixed gap. */
+.topbar-tools { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.topbar-tools .spacer {   /* vertical divider rule between testing and the rest */
+  flex: 0 0 1px;
+  height: 0.75em;
+  background-color: var(--accent);
+  margin: 0 6px;
+}
+.status { color: var(--muted); min-width: 12ch; }
+
+/* capture picker: a dropdown with Live (stashes) / Precaptures (frames by session) tabs */
+.cap-picker { position: relative; }
+#capPickerBtn.open { border-color: var(--accent); }
+.cap-pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 500; width: 420px; max-height: 60vh;
+  display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; box-shadow: 0 8px 24px var(--shadow); overflow: hidden; }
+.cap-tabs { display: flex; flex: none; border-bottom: 1px solid var(--line); }
+.cap-tab { flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted);
+  padding: 6px 0; cursor: pointer; }
+.cap-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.cap-body { overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+#capLive { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; align-content: start; }
+.cap-grp-h { font-size: var(--fs-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 2px 0; }
+/* .cap-grid + .cap-empty are defined once in overlays.css — shared by this dropdown's
+   precapture grid and the graph capture node (was a duplicate-collision here). */
+.cap-item { display: flex; flex-direction: column; gap: 2px; padding: 3px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 5px; cursor: pointer; color: var(--muted); font-size: var(--fs-xs); }
+.cap-item:hover { border-color: var(--accent); color: var(--text); }
+.cap-item img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 3px; display: block; background: var(--line); }
+.cap-item span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.livestats { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm);
+  color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.live-dot.on { background: var(--accent); animation: live-pulse 0.9s ease-in-out infinite; }
+@keyframes live-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 12px;
+  padding: 12px;
+  flex: 1;
+  min-height: 0;               /* allow children to own the scroll */
+}
+
+.canvas-col { display: flex; flex-direction: column; min-width: 0; }
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 8px;
+}
+.toolbar .spacer { flex: 1; }
+.canvas-wrap {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--line);
+  background: var(--black);
+}
+canvas {
+  display: block;
+  cursor: crosshair;
+}
+.hint { color: var(--muted); }
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.panel > div:empty { display: none; }
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+}
+legend { color: var(--muted); padding: 0 6px; }
+
+/* collapsible panels (details/summary) */
+.panel-fs {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.panel-fs > summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  color: var(--text);
+  font-weight: 500;
+  list-style: none;
+  user-select: none;
+}
+.panel-fs > summary::-webkit-details-marker { display: none; }
+.panel-fs > summary::before { content: "▸ "; color: var(--muted); }
+.panel-fs[open] > summary::before { content: "▾ "; }
+.panel-fs[open] > summary { border-bottom: 1px solid var(--line); }
+.fs-body { padding: 10px; }
+
+.games {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  overflow-y: auto;
+}
+

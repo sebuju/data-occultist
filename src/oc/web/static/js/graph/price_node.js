@@ -4,7 +4,7 @@
 // movers, and a per-item history chart; joining prices to inventory is a view's job.
 import * as api from "../api.js";
 import { isOnline } from "../conn.js";
-import { esc, TRASH } from "../dom.js";
+import { esc, TRASH, labCell } from "../dom.js";
 
 const plat = (n) => (n == null ? "—" : Number.isInteger(n) ? `${n}` : n.toFixed(1));
 const pctTxt = (f) => `${f > 0 ? "+" : ""}${(f * 100).toFixed(1)}%`;
@@ -26,21 +26,19 @@ export function priceParts(pn, cols = []) {
   const opt = (v, label) => `<option value="${v}"${v === mode ? " selected" : ""}>${label}</option>`;
   const hasSrc = (pn.sources || []).length;
   const srcs = hasSrc
-    ? `<div class="pr-srcs">prices: ${pn.sources.map((s) => `<span class="pr-src" data-ds="${esc(s)}">${esc(s)} <button class="pr-rmsrc" data-ds="${esc(s)}" title="stop pricing this source">${TRASH}</button></span>`).join("")}</div>`
-    : `<div class="pr-srcs muted">prices: whole catalogue — drag a dataset/view here to price only those items</div>`;
+    ? `<div class="pr-srcs gspan">prices: ${pn.sources.map((s) => `<span class="pr-src" data-ds="${esc(s)}">${esc(s)} <button class="pr-rmsrc" data-ds="${esc(s)}" title="stop pricing this source">${TRASH}</button></span>`).join("")}</div>`
+    : `<div class="pr-srcs gspan muted">prices: whole catalogue — drag a dataset/view here to price only those items</div>`;
   // which source column names the item to price (resolved to a market slug). Only relevant
   // when sourcing from datasets/views (the whole-catalogue sweep needs no key).
   const nf = pn.source_field || "name";
   const nfOpts = [...new Set([nf, ...cols])].map((c) => `<option${c === nf ? " selected" : ""}>${esc(c)}</option>`).join("");
   const keyFld = hasSrc
-    ? `<label class="enr-keyfld flab" title="which source column names the item to price (it's resolved to a market slug)">price by <select class="enr-keyfld-sel">${nfOpts}</select></label>`
+    ? `${labCell("price by", "which source column names the item to price (it's resolved to a market slug)")}<select class="enr-keyfld-sel">${nfOpts}</select>`
     : "";
   const head = `<div class="enr-sum muted">↻ sweep to price the market</div>
-      <label class="enr-src flab">source
-        <select class="enr-mode">${opt("statistics", "statistics (history)")}${opt("orders", "live orders (now)")}</select>
-      </label>
+      <div class="lab-grid">${labCell("source", "what each sweep stores: full daily history or a live now-snapshot")}<select class="enr-mode">${opt("statistics", "statistics (history)")}${opt("orders", "live orders (now)")}</select>
       ${srcs}
-      ${keyFld}
+      ${keyFld}</div>
       <div class="gn-foot">
         <button class="enr-refresh">↻ sweep prices</button>
         <button class="enr-cancel warn" hidden>cancel</button>

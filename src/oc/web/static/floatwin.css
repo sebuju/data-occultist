@@ -1,7 +1,6 @@
 /* Floating windows: one shell for the node map, activity panel, and precapture, built by
-   createFloatWin (graph/floatwin.js). Pulled out of style.css so all float styling lives in
-   one place. The shared .rz-grip resize-grip rules stay in style.css (graph nodes use them
-   too). */
+   createFloatWin (graph/floatwin.js). Pulled out so all float styling lives in one place. The
+   shared .rz-grip resize-grip rules live in css/tables.css (graph nodes use them too). */
 
 /* ---- generic shell --------------------------------------------------------- */
 .floatwin {
