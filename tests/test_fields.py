@@ -114,23 +114,50 @@ def test_number_digitless_junk_falls_back_to_empty():
     # a count box may hold a marker icon instead of a number; OCR junk off the icon
     # ('人', '#') has no digits, so it means "no number rendered" -> the empty value
     f = FieldDef(id="count", type=FieldType.number, empty="1")
-    assert coerce_rule(f, "人") == (1, "empty")
-    assert coerce_rule(f, "#") == (1, "empty")
+    assert coerce_rule(f, "人") == (1, "no_digit")
+    assert coerce_rule(f, "#") == (1, "no_digit")
     assert coerce_rule(f, "@2") == (2, None)         # a digit anywhere is a real read
-    assert coerce_rule(f, "junk") == (1, "empty")
+    assert coerce_rule(f, "junk") == (1, "no_digit")
     # without an empty value there is nothing to fall back to
     bare = FieldDef(id="count", type=FieldType.number)
     assert coerce_rule(bare, "#") == (None, None)
 
 
-def test_coerce_rule_reports_which_fallback_fired():
+def test_coerce_rule_reports_which_rule_fired():
+    # the reported label is the matched rule's `when` (legacy fields migrate to rules)
     f = FieldDef(id="count", type=FieldType.number, empty="1", if_text="0")
     assert coerce_rule(f, "") == (1, "empty")
-    assert coerce_rule(f, "Guard") == (0, "if_text")
+    assert coerce_rule(f, "Guard") == (0, "no_digit")
     assert coerce_rule(f, "7") == (7, None)               # a real read carries no rule
     t = FieldDef(id="name", if_number="unknown")
-    assert coerce_rule(t, "1234") == ("unknown", "if_number")
+    assert coerce_rule(t, "1234") == ("unknown", "all_digit")
     assert coerce_rule(t, "Soma") == ("Soma", None)
+
+
+def test_rules_evaluated_in_order_first_match_wins():
+    from oc.profile.models import FieldRule
+
+    f = FieldDef(id="name", rules=[
+        FieldRule(when="has_digit", then="set", value="A"),
+        FieldRule(when="always", then="set", value="B"),
+    ])
+    assert coerce(f, "x9") == "A"          # first matching rule wins
+    assert coerce(f, "plain") == "B"       # falls through to the catch-all
+
+
+def test_rule_drop_resolves_to_none():
+    from oc.profile.models import FieldRule
+
+    f = FieldDef(id="count", type=FieldType.number, rules=[
+        FieldRule(when="all_letter", then="drop"),
+    ])
+    assert coerce_rule(f, "Guard") == (None, "all_letter")
+    assert coerce(f, "x 7") == 7           # a numeric read is unaffected
+
+
+def test_no_rules_reads_pass_through():
+    assert coerce(FieldDef(id="name"), "Soma") == "Soma"
+    assert coerce(FieldDef(id="n", type=FieldType.number), "x 3") == 3
 
 
 def test_fields_for_dedupes_stale_duplicate_ids():

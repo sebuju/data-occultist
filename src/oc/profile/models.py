@@ -79,6 +79,39 @@ class DictMode(str, Enum):
     correct_drop = "correct_drop"
 
 
+class RuleWhen(str, Enum):
+    """A condition tested against a field's RAW read (before extraction) to fire a
+    fallback. Each is a predicate on the read's shape (after a whitespace strip)."""
+
+    empty = "empty"            # nothing at all (no characters)
+    no_digit = "no_digit"      # no digit anywhere (empty, symbol-only, or pure text)
+    all_digit = "all_digit"    # has a digit and NO letter (a clean number)
+    has_digit = "has_digit"    # at least one digit present
+    no_letter = "no_letter"    # no letter anywhere
+    all_letter = "all_letter"  # has a letter and NO digit (pure text)
+    has_letter = "has_letter"  # at least one letter present
+    always = "always"          # unconditional catch-all (place last)
+
+
+class RuleThen(str, Enum):
+    """What a matched :class:`FieldRule` does to the read."""
+
+    set = "set"    # substitute the rule's ``value`` (parsed to a number for number fields)
+    drop = "drop"  # resolve the read to None -> the record is dropped for this cell
+
+
+class FieldRule(BaseModel):
+    """One conditional fallback for a field. When the raw read matches ``when``, the
+    rule's ``then`` fires — substitute ``value`` or drop the read. Rules are evaluated
+    in order and the FIRST match wins, stopping evaluation; they run BEFORE extraction
+    so they react to the raw read's shape. Generalises the old fixed ``empty`` /
+    ``if_number`` / ``if_text`` one-offs into an authored, ordered list."""
+
+    when: RuleWhen = RuleWhen.empty
+    then: RuleThen = RuleThen.set
+    value: str = ""   # for ``set``: the substituted text; ignored for ``drop``
+
+
 class FieldDef(BaseModel):
     """One column in a game's data schema, read from a region."""
 
@@ -87,19 +120,10 @@ class FieldDef(BaseModel):
     # Declarative extraction strategy (replaces raw regex).
     extract: Extract = Extract.whole
     separator: str = "/"
-    # Value to use when the read is TRULY empty — no text and no numbers detected
-    # (after whitespace strip). None -> leave empty.
-    empty: str | None = None
-    # text fields: value substituted when the read is numeric. With ``if_number_any``
-    # it fires on a read merely CONTAINING a digit; otherwise only when the read is
-    # all-number (digits, no letters). None -> off.
-    if_number: str | None = None
-    if_number_any: bool = False
-    # number fields: value substituted when the read is text. With ``if_text_any``
-    # it fires on a read merely CONTAINING a letter; otherwise only when the read is
-    # all-text (letters, no digits). None -> off.
-    if_text: str | None = None
-    if_text_any: bool = False
+    # Ordered conditional fallbacks applied to the raw read BEFORE extraction (see
+    # FieldRule). Replaces the old fixed empty / if_number / if_text fields (migrated
+    # in from legacy profiles below). The first matching rule wins.
+    rules: list[FieldRule] = Field(default_factory=list)
     # How the game dictionary participates in this field's reads (see DictMode).
     dict_mode: DictMode = DictMode.correct
     # Which authored dictionary this field snaps to (a DictionaryDef.id). Empty ->
@@ -118,7 +142,7 @@ class FieldDef(BaseModel):
     # Number fields only: plausible value range. A genuine read outside [min, max] is
     # implausible (e.g. a polarity glyph misread onto a drain digit -> "81" when the max is
     # 16) and drops the whole record for that cell, same as a sub-confidence read. Either
-    # bound None -> that side unbounded. An authored fallback (empty/if_text) bypasses this.
+    # bound None -> that side unbounded. An authored ``set`` rule bypasses this.
     min: float | None = None
     max: float | None = None
     # Read this box in ISOLATION: OCR only its own crop instead of picking tokens out of the
@@ -130,12 +154,44 @@ class FieldDef(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _migrate_dict_only(cls, data):
+    def _migrate(cls, data):
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
         # legacy bool: dict_only true meant "correct AND drop unmatched"
-        if isinstance(data, dict) and "dict_mode" not in data:
+        if "dict_mode" not in data:
             legacy = data.pop("dict_only", None)
             if legacy is not None:
                 data["dict_mode"] = "correct_drop" if legacy else "correct"
+        # legacy fixed fallbacks (empty / if_number / if_text) -> the ordered rule list,
+        # preserving their exact firing order/priority so old profiles read identically.
+        empty = data.pop("empty", None)
+        if_number = data.pop("if_number", None)
+        if_number_any = bool(data.pop("if_number_any", False))
+        if_text = data.pop("if_text", None)
+        if_text_any = bool(data.pop("if_text_any", False))
+        if "rules" not in data and any(v is not None for v in (empty, if_number, if_text)):
+            ftype = data.get("type", "text")
+            ftype = getattr(ftype, "value", ftype)
+            rules: list[dict] = []
+            if ftype == "number":
+                # a number's ``empty`` value also covered the digitless case, but
+                # ``if_text`` took priority on a digitless read when both were set.
+                if empty is not None:
+                    rules.append({"when": "empty", "then": "set", "value": empty})
+                if if_text is not None:
+                    rules.append({"when": "has_letter" if if_text_any else "no_digit",
+                                  "then": "set", "value": if_text})
+                if empty is not None:
+                    rules.append({"when": "no_digit", "then": "set", "value": empty})
+            else:
+                if empty is not None:
+                    rules.append({"when": "empty", "then": "set", "value": empty})
+                if if_number is not None:
+                    rules.append({"when": "has_digit" if if_number_any else "all_digit",
+                                  "then": "set", "value": if_number})
+            if rules:
+                data["rules"] = rules
         return data
 
 

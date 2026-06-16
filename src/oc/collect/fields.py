@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from ..profile.models import Extract, FieldDef, FieldType
+from ..profile.models import Extract, FieldDef, FieldType, RuleThen, RuleWhen
 
 _NUMBER_RE = re.compile(r"-?\d[\d,]*\.?\d*")
 
@@ -46,44 +46,56 @@ def _to_number(num: str | None) -> float | int | None:
     return float(num) if "." in num else int(num)
 
 
+def _rule_matches(when: RuleWhen, raw: str, has_digit: bool, has_alpha: bool) -> bool:
+    """Whether ``when`` holds for the (stripped) raw read and its precomputed shape."""
+    if when is RuleWhen.empty:
+        return not raw
+    if when is RuleWhen.no_digit:
+        return not has_digit
+    if when is RuleWhen.all_digit:
+        return has_digit and not has_alpha
+    if when is RuleWhen.has_digit:
+        return has_digit
+    if when is RuleWhen.no_letter:
+        return not has_alpha
+    if when is RuleWhen.all_letter:
+        return has_alpha and not has_digit
+    if when is RuleWhen.has_letter:
+        return has_alpha
+    if when is RuleWhen.always:
+        return True
+    return False
+
+
+def _rule_value(field: FieldDef, value: str) -> str | float | int | None:
+    """A ``set`` rule's substituted text coerced to the field's type."""
+    if field.type is FieldType.number:
+        return _to_number(_first_number(value))
+    return value.strip() or None
+
+
 def coerce_rule(field: FieldDef, raw: str) -> tuple[str | float | int | None, str | None]:
-    """``(value, rule)`` — ``rule`` names the fallback that produced the value
-    ("empty" / "if_number" / "if_text"), or None for a real read. A substituted value
-    is configuration, not OCR, so callers shouldn't present it as a confident read."""
+    """``(value, rule)`` — ``rule`` is the ``when`` of the FieldRule that produced the
+    value (e.g. "empty" / "all_digit"), or None for a plain read. A rule-produced value
+    is configuration, not OCR, so callers shouldn't present it as a confident read.
+
+    Rules run before extraction, in order; the first whose condition matches the raw
+    read's shape wins. ``drop`` resolves to None (the cell, and so the record, is
+    dropped). With no matching rule the read is extracted/typed normally."""
     raw = raw.strip()
-
-    # "empty" means OCR detected no text and no numbers at all. For a NUMBER field a
-    # digitless read also counts as empty (see below): icon art OCR'd as stray glyphs
-    # ('人', '#') is not text, so a box holding only an icon reads as "no number here".
-    # For a TEXT field junk does not fall back — if_number handles type mismatches.
-    if not raw:
-        if field.empty is None:
-            return None, None
-        if field.type is FieldType.number:
-            return _to_number(_first_number(field.empty)), "empty"
-        return field.empty.strip() or None, "empty"
-
     has_digit = any(c.isdigit() for c in raw)
     has_alpha = any(c.isalpha() for c in raw)
 
-    # a text field that read numbers / a number field that read text substitutes its
-    # configured value; the *_any flag fires on "contains", default on "is entirely"
-    if field.type is FieldType.text and field.if_number is not None:
-        if has_digit if field.if_number_any else (has_digit and not has_alpha):
-            return field.if_number.strip() or None, "if_number"
-    if field.type is FieldType.number and field.if_text is not None:
-        # default mode is "no digits at all", not "has letters": OCR junk off an icon
-        # in the box is often symbol-only ('#', '@') — still not a number
-        if has_alpha if field.if_text_any else not has_digit:
-            return _to_number(_first_number(field.if_text)), "if_text"
+    for rule in field.rules:
+        if not _rule_matches(rule.when, raw, has_digit, has_alpha):
+            continue
+        if rule.then is RuleThen.drop:
+            return None, rule.when.value
+        return _rule_value(field, rule.value), rule.when.value
 
     text = _apply_extract(field, raw)
 
     if field.type is FieldType.number:
-        if not has_digit and field.empty is not None:
-            # no digits anywhere = no number was rendered; whatever OCR picked up is
-            # a marker icon (built-status, equipped, ...) — same as an empty box
-            return _to_number(_first_number(field.empty)), "empty"
         return _to_number(_first_number(text) if text else None), None
 
     if not text:

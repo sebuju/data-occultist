@@ -98,7 +98,7 @@ def test_substituted_value_bypasses_dictionary(tmp_path):
 
     res = resolver.resolve(field, "1234", confidence=0.99)
     assert res.value == "unknown"
-    assert res.substituted == "if_number"
+    assert res.substituted == "all_digit"
     assert lex.terms("name") == []
 
 
