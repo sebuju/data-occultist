@@ -50,9 +50,11 @@ a.node.win:hover { border-color: var(--accent); }
 .history li { padding: 4px 6px; border-bottom: 1px solid var(--line); font-size: var(--fs-base);
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .history .op { font-weight: 600; margin-right: 6px; }
-.history li.reverted { opacity: 0.5; text-decoration: line-through; }
-.history li.reverted .led-apply,
-.history li.reverted .led-remove { text-decoration: none; opacity: 1; }
+/* a reverted row: strike + dim only the INFO children (time / id / meta), NEVER the <li> itself.
+   opacity on the <li> composites the whole row as one group, so a child (.led-remove) can't undo it;
+   an ancestor's line-through likewise can't be cleared on an inline child. Style the text directly so
+   the action controls (.led-apply / .led-remove) stay full-strength. */
+.history li.reverted > span, .history li.reverted > b { opacity: 0.5; text-decoration: line-through; }
 .led-apply { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .led-apply input { margin: 0; }
 .records { max-height: 50vh; overflow: auto; }

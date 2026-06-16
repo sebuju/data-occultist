@@ -6,7 +6,7 @@ import { esc } from "../../dom.js";
 import { openModal } from "../../modal.js";
 import { VTable } from "../../vtable.js";
 import { nodeEls, setStatus, model } from "../state.js";
-import { refreshLive, clockTime } from "../main.js";
+import { refreshLive, clockTime, refreshDatasetConsumers } from "../main.js";
 
 // ---- dataset records (rendered inline in the dataset node body) ----
 
@@ -196,16 +196,17 @@ function renderBatchesList(ds, batches) {
     cb.disabled = true;
     try {
       await api.revertDatasetBatch(model.profile.name, ds, +cb.dataset.batch, !cb.checked);
-      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
+      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds); refreshDatasetConsumers(ds);   // views reading ds are stale (a revert doesn't bump last_ts)
     } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
   }));
   els.list.querySelectorAll(".led-remove").forEach((b) => b.addEventListener("click", async () => {
     if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "sure?"; setTimeout(() => { b.dataset.armed = "0"; b.textContent = "remove"; }, 2500); return; }
+    b.disabled = true; b.classList.add("reading");   // spinner while the ledger deletes + nodes refresh
     try {
       if (st.sel === +b.dataset.batch) { st.sel = null; els.detail.innerHTML = ""; }
       await api.removeDatasetBatch(model.profile.name, ds, +b.dataset.batch);
-      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds);
-    } catch (e) { setStatus(String(e.message || e)); }
+      refreshLive(); refreshDataNode(ds); loadBatchesNode(ds); refreshDatasetConsumers(ds);   // views reading ds are stale (loadBatchesNode re-renders this list — button gone)
+    } catch (e) { b.disabled = false; b.classList.remove("reading"); setStatus(String(e.message || e)); }
   }));
   if (st.sel != null && batches.some((b) => b.batch === st.sel)) selectBatch(ds, st.sel);
   else if (st.sel != null) { st.sel = null; els.detail.innerHTML = ""; }

@@ -1403,6 +1403,15 @@ function refreshAllSubsetNodes() {
   for (const s of model.profile.subsets || []) if (nodeEls.has(`sub:${s.id}`)) refreshSubsetNode(s.id);
 }
 
+// Refresh every view that READS from `ds` (directly or through an upstream view). Batch edits
+// (revert / remove) change a dataset's contents WITHOUT appending a history event, so its ledger
+// last_ts is unchanged and refreshLive's last_ts gate misses them — callers fixing a dataset's
+// data must refresh its consumers explicitly.
+function refreshDatasetConsumers(ds) {
+  for (const s of model.profile.subsets || [])
+    if (nodeEls.has(`sub:${s.id}`) && model.subsetReaches(s.id, ds)) refreshSubsetNode(s.id);
+}
+
 function wireSubset(div, s) {
   const recompute = () => { autosave(); refreshSubsetNode(s.id); };
   const restructure = () => { autosave(); rebuildNode(`sub:${s.id}`); };   // rebuild this node's config
@@ -2576,6 +2585,7 @@ function superGroupShortcut() {
   if (!gids.length) return false;
   if (gids.length === 1) {
     if (groups.superGroupOf(gids[0])) { groups.detachGroups(gids); setStatus("removed from super group"); }
+    else { const sg = groups.createSuperGroup(gids); if (sg) setStatus("super-grouped 1 group"); }   // a super group of one is allowed
     groups.clearGroupSelection();
     return true;
   }
@@ -2599,6 +2609,7 @@ function groupShortcut() {
   if (!ids.length) return;
   if (ids.length === 1) {
     if (groups.groupOf(ids[0])) { groups.detachNode(ids[0]); setStatus("detached from group"); }
+    else { const g = groups.createGroup(ids); if (g) setStatus("grouped 1 node"); }   // a group of one is allowed
     return;
   }
   const gset = new Set(ids.map((id) => groups.groupOf(id)).filter(Boolean));   // distinct groups in the selection
@@ -2965,7 +2976,7 @@ killStrayOcrThenBoot();
 export {
   focusNode, panZoomTo, panZoomToRect, autosave, placeNewNode, render, panTo,
   refreshLive, clockTime,
-  refreshAllSubsetNodes,
+  refreshAllSubsetNodes, refreshDatasetConsumers,
   rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,
   overlaySelected, selectWindowBox, persistBox, syncCellSize, itemChanged,
   keyPrevHTML, addFieldToItemGroup, addTellToItemGroup,
