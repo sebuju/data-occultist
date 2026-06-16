@@ -191,6 +191,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gnode .port.in { left: -4px; background: var(--line); }
 .gnode .port.pwatch { left: -4px; right: auto; background: var(--watch-line); }   /* trigger watch out-port (left face) */
 .gnode .port.pwatch.sel { background: var(--accent); }
+/* an idle out-port (drag handle with no line) only appears while its node is hovered, so resting
+   nodes aren't dotted with empty ports; it's still grabbable once shown. */
+.gnode .port.port-idle { opacity: 0; pointer-events: none; transition: opacity .1s; }
+.gnode:hover .port.port-idle { opacity: 1; pointer-events: auto; }
 .gedge { fill: none; stroke: var(--line); stroke-width: 1.8; }
 .gedge.data { stroke: var(--data); opacity: 1; }   /* data flow: solid bright orange */
 .gedge.toview { marker-end: url(#flowarrow); }                     /* dataset -> view: solid + arrow */
@@ -203,13 +207,15 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gedge.detect, .gedge.scrollbar { stroke: var(--ok); opacity: 0.5; }
 .gedge.state { stroke: var(--warn); opacity: 0.5; }
 .gedge.item { stroke: var(--record); opacity: 0.6; }
+.gedge.tell { stroke: var(--ok); opacity: 0.5; }   /* item -> its tell nodes (pass/fail checks) */
 .gedge.attach { stroke: var(--accent); opacity: 0.85; }
 .gedge.img { stroke: var(--muted); stroke-dasharray: 2 4; opacity: 0.7; }
 .gedge.usedict { stroke: var(--muted); stroke-dasharray: 2 4; opacity: 0.45; }   /* field -> the dictionary it snaps to */
-/* trigger -> the price node it fires: cyan, solid, ending in a bar (not the flow arrow).
-   marker-end overrides .gedge.flow's #flowarrow (same specificity, declared later wins). */
-.gedge.trigger { stroke: var(--trigger-line); opacity: 0.95; marker-end: url(#triggerbar); }
-.triggerbar-head { stroke: context-stroke; stroke-width: 2; }   /* bar takes the line's colour (cyan, or accent when selected) */
+/* trigger -> the price node it fires: cyan, solid, ending in a » go/activate chevron (not the flow
+   arrow). marker-end overrides .gedge.flow's #flowarrow (same specificity, declared later wins). */
+.gedge.trigger { stroke: var(--trigger-line); opacity: 0.95; marker-end: url(#triggergo); }
+.triggergo-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }   /* » = go/activate, takes the line's colour */
+.triggerbar-head { stroke: context-stroke; stroke-width: 2; }   /* reusable bar end-cap (takes the line's colour); not on the trigger line now */
 /* watched dataset/view -> on_change trigger: own teal, fine dotted, ending in a diamond —
    distinct from data (solid orange), trigger (solid cyan+bar) and state (amber). */
 .gedge.watch { stroke: var(--watch-line); stroke-dasharray: 1 5; stroke-linecap: round; opacity: 0.9; marker-end: url(#watchcap); }
@@ -268,19 +274,27 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* cell-size inputs (own flab rows): the static grid's pitch (item.box w/h) */
 .csize { width: 64px; }
 .csize-match { font-size: var(--fs-xs); padding: 1px 8px; }
+/* draw-mode buttons (the ones that paint a box onto a canvas): a dashed accent outline marks
+   them as "draw a box" tools, distinct from the solid action buttons. The picked tool (.active)
+   fills solid accent. Shared by the window image tools AND the item cutout tools. */
+.tool { background: transparent; color: var(--accent); border: 1px dashed var(--accent); padding: 3px 9px; }
+.tool:hover:not(:disabled) { background: var(--accent-bg); filter: none; }
+.tool.active { background: var(--accent); color: var(--on-accent); border-style: solid; }
 /* item node: draw-mode button rows under the tells / cell-and-fields headers */
 .il-tools { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0px 8px 0px; }
 .il-tools .tool { font-size: var(--fs-xs); padding: 1px 7px; }
-.il-tools .tool.active { background: var(--accent); color: var(--on-accent); }
-/* compact field summary row (the full editor is the field's own node) */
-.if-sum { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
-.if-sum:hover { background: var(--line); }
-.if-sum .if-sum-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* readout: 2-col grid (label : value) so field names + the key line up in a column */
-.item-readout { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; margin-top: 6px; font-size: var(--fs-sm); line-height: 1.5; }
+/* compact field / tell summary row (the full editor is the child's own node) */
+.if-sum, .ti-sum { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+.if-sum:hover, .ti-sum:hover { background: var(--line); }
+.if-sum .if-sum-name, .ti-sum .ti-sum-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ti-sum .ti-sum-kind { flex: 0 0 auto; font-size: var(--fs-xs); }   /* the tell's kind, dimmed */
+/* readout: 3-col grid (label · ":" · value) — the colon sits in its OWN column so every
+   label and value lines up regardless of label width */
+.item-readout { display: grid; grid-template-columns: auto auto 1fr; gap: 0 6px; margin-top: 6px; font-size: var(--fs-sm); line-height: 1.5; }
 .item-readout:empty { display: none; }
-.item-readout .ir-row { grid-column: 1 / -1; }   /* status / tells span both columns, on their own row */
-.item-readout .ir-k { color: var(--muted); white-space: nowrap; }   /* field name / "key" label column */
+.item-readout .ir-row { grid-column: 1 / -1; }   /* status spans all columns, on its own row */
+.item-readout .ir-k { color: var(--muted); white-space: nowrap; }   /* field / tell / "key" label column */
+.item-readout .ir-c { color: var(--muted); }                        /* the ":" separator column */
 .item-readout .ir-v { min-width: 0; overflow-wrap: anywhere; }       /* value column wraps, never widens the node */
 .item-lists { margin-top: 6px; }
 .item-lists .il-h { margin-top: 20px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--muted); }
