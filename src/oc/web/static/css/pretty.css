@@ -1,0 +1,194 @@
+/* Pretty Studio — the convenience surface (#pretty) and its studio chrome. The floating
+   panels reuse .floatwin (floatwin.css) and widget frames reuse the .rz-grip resize handles
+   (graph.css), so this file styles only what's new: the page surface, widget frames + each
+   widget type, the inspector/sources/palette bodies, the pretty topbar tools, and the
+   node-view "pretty dirty" badge. */
+
+/* ---- view container ---- */
+#pretty { position: absolute; inset: 0; overflow: auto; background: #14161b; display: none; }
+#pretty.active { display: block; }
+body.pretty-mode #graph { display: none; }
+body.pretty-mode .pw-dirtybar { display: none; }
+body.pretty-mode #seltoolbar { display: none; }
+.pw-surface { position: relative; min-width: 100%; min-height: 100%; }
+.pw-surface.edit { background-image: radial-gradient(rgba(255,255,255,0.05) 1px, transparent 1px); background-size: 20px 20px; }
+
+/* ---- widget frame ---- */
+.pw { position: absolute; box-sizing: border-box; color: #d8dde6; font-size: 14px; overflow: hidden; }
+.pw-content { width: 100%; height: 100%; overflow: auto; }
+.pw-surface.edit .pw { outline: 1px dashed rgba(255,255,255,0.12); }
+.pw-surface.edit .pw-content { pointer-events: none; }   /* edit: clicks move/select the frame */
+.pw-edit { cursor: grab; }
+.pw-sel { outline: 2px solid #4ea1ff !important; }
+.pw-cond-hidden { opacity: 0.35; }
+.pw-cond-disabled { outline-color: #f7768e; }
+.pw-disabled { opacity: 0.5; pointer-events: none; }
+
+/* ---- widgets ---- */
+/* grid (not flex) so inherited text-align actually positions the text, while align-content
+   keeps it vertically centred */
+.pw-label { display: grid; align-content: center; height: 100%; padding: 2px 4px; white-space: pre-wrap; }
+.pw-container { width: 100%; height: 100%; box-sizing: border-box; }
+.pw-container-title { font-weight: 600; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.12); }
+
+.pw-t-table { font-size: 12px; }   /* compact default; user font-size (inline on the frame) overrides */
+.pw-tbl { border-collapse: collapse; width: 100%; }
+.pw-tbl th, .pw-tbl td { font-size: inherit; }   /* inherit so the widget's styled size reaches cells */
+.pw-tbl th, .pw-tbl td { border: 1px solid rgba(255,255,255,0.1); padding: 2px 6px; text-align: left; white-space: nowrap; }
+.pw-tbl th { position: sticky; top: 0; background: #1b1f27; }
+.pw-tbl-foot { font-size: 11px; opacity: 0.7; padding: 2px 4px; display: flex; align-items: center; gap: 4px; }
+.pw-tbl-foot[hidden] { display: none; }
+.pw-pg { padding: 0 8px; line-height: 1.6; }
+.pw-pg:disabled { opacity: 0.35; }
+.pw-pg-lbl { min-width: 36px; text-align: center; }
+
+.pw-chart-host { width: 100%; height: 100%; }
+.pw-chart { width: 100%; height: 100%; }
+.pw-ch-title { fill: #d8dde6; font-size: 12px; }
+.pw-ax { stroke: rgba(255,255,255,0.25); stroke-width: 1; }
+.pw-axlbl { fill: #9aa5ce; font-size: 9px; }
+.pw-chart-empty { display: grid; place-items: center; height: 100%; opacity: 0.5; }
+
+.pw-control { display: flex; flex-direction: column; gap: 4px; padding: 4px 6px; height: 100%; box-sizing: border-box; justify-content: center; }
+.pw-ctl-lab { font-size: inherit; opacity: 0.85; }   /* inherit so the widget's styled size applies */
+.pw-ctl-unset { font-size: 11px; opacity: 0.5; font-style: italic; }
+.pw-control input[type="range"] { width: 100%; }
+.pw-slider { display: flex; align-items: center; gap: 6px; }
+.pw-slider-val, .pw-step-val { min-width: 36px; }
+.pw-stepper { display: flex; gap: 4px; align-items: center; }
+.pw-step { width: 24px; }
+.pw-radio { display: flex; gap: 8px; flex-wrap: wrap; }
+.pw-radio-opt { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; }
+
+.pw-form { display: flex; flex-direction: column; gap: 4px; padding: 6px; height: 100%; box-sizing: border-box; }
+.pw-form-row { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.pw-form-lab { opacity: 0.8; }
+.pw-form-submit { align-self: flex-start; margin-top: 2px; }
+.pw-form-msg { font-size: 11px; opacity: 0.7; }
+
+.pw-button-host { display: flex; align-items: center; gap: 6px; height: 100%; padding: 4px 6px; box-sizing: border-box; }
+.pw-button { padding: 4px 12px; }
+.pw-button-msg { font-size: 11px; opacity: 0.7; }
+
+/* ---- pretty topbar tools (placeholder replacing .topbar-tools) ---- */
+.topbar-pretty-tools { display: none; align-items: center; gap: 6px; flex: 1; }
+body.pretty-mode .topbar-tools { display: none; }
+body.pretty-mode .topbar-pretty-tools { display: flex; }
+.pw-modeswitch { display: inline-flex; border: 1px solid rgba(255,255,255,0.18); border-radius: 6px; overflow: hidden; }
+.pw-mode { border: none; background: transparent; padding: 3px 12px; color: inherit; cursor: pointer; }
+.pw-mode.active { background: #4ea1ff; color: #06121f; }
+.pw-edittools { display: inline-flex; gap: 10px; }
+/* panel toggles use the same base button + .active look as the node-view topbar buttons */
+.pw-pagesel { max-width: 160px; }
+
+/* node ⇄ pretty toggle (lives in the main topbar, left side) — prominent, not a skinny chip */
+.pw-viewtoggle { display: inline-flex; border: 1px solid rgba(255,255,255,0.22); border-radius: 8px; overflow: hidden; margin: 0 10px; }
+.pw-viewtoggle .vt { border: none; background: transparent; color: inherit; padding: 7px 20px; font-weight: 600; letter-spacing: 0.02em; cursor: pointer; transition: background 0.12s; }
+.pw-viewtoggle .vt:hover { background: rgba(255,255,255,0.08); }
+.pw-viewtoggle .vt.active { background: #4ea1ff; color: #06121f; }
+.pw-viewtoggle .vt + .vt { border-left: 1px solid rgba(255,255,255,0.18); }
+
+/* node-view "pretty dirty" badge: a node whose input is held by a transient pretty override */
+.gnode .gn-pretty-dirty { font-size: 9px; font-weight: 700; color: #06121f; background: #ff9e64;
+  border-radius: 3px; padding: 0 4px; margin-left: 4px; letter-spacing: 0.03em; }
+.gnode:not(.pretty-dirty) .gn-pretty-dirty { display: none; }
+
+/* pretty-dirty controls in the node-view topbar (only shown when overrides exist) */
+.pw-dirtybar { display: inline-flex; gap: 4px; align-items: center; margin-left: 6px; }
+.pw-dirtybar[hidden] { display: none; }
+.pw-dirtybar .pw-dirty-count { font-size: 11px; color: #ff9e64; }
+
+/* topbar selects were oversized */
+#gameSelect, .pw-pagesel { font-size: 12px; }
+
+/* per-widget hover delete (edit mode): a red trashcan, top-right, armed two-click confirm */
+.pw-del { position: absolute; top: 3px; right: 3px; z-index: 6; display: none; padding: 2px; line-height: 0;
+  background: rgba(20,22,27,0.88); border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; color: #f7768e; cursor: pointer; }
+.pw-edit:hover > .pw-del { display: inline-flex; }
+.pw-del.armed { background: #f7768e; color: #06121f; }
+
+/* right-click add-widget menu */
+.pw-ctxmenu { position: fixed; z-index: 1000; background: #1b1f27; border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); padding: 4px; min-width: 150px; display: flex; flex-direction: column; }
+.pw-ctx-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: transparent; border: none;
+  color: inherit; text-align: left; cursor: pointer; border-radius: 4px; }
+.pw-ctx-item:hover { background: rgba(255,255,255,0.08); }
+
+/* sources token showing its live value on hover */
+.pw-src-tok.pw-src-val { background: #2a3550; color: #cfe3ff; }
+
+/* studio panels default to AUTO height (fit all their inputs); a viewport cap keeps a tall
+   one on-screen — the .fw-body then scrolls instead of overflowing. */
+#pretty-palette, #pretty-inspector, #pretty-sources, #pretty-theme { max-height: calc(100vh - 64px); }
+/* body flex-BASIS auto (not the default 0): in an auto-height panel a basis-0 flex child
+   collapses to 0 (no free space to grow into) — THE inspector "height resets to nothing" bug.
+   With auto basis the body is its content height; when the panel hits max-height it shrinks
+   and scrolls. No JS height measurement needed. */
+#pretty-palette .fw-body, #pretty-inspector .fw-body, #pretty-sources .fw-body, #pretty-theme .fw-body { flex: 1 1 auto; }
+
+/* ---- palette ---- */
+.pw-pal-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; background: transparent; border: none; color: inherit; text-align: left; cursor: pointer; }
+.pw-pal-item:hover { background: rgba(255,255,255,0.06); }
+.pw-pal-ic { width: 18px; text-align: center; opacity: 0.8; }
+
+/* ---- inspector ---- */
+.pw-insp-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.pw-insp-type { font-size: 12px; opacity: 0.8; }
+.pw-insp-remove { font-size: 11px; }
+.pw-insp-grp { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+.pw-insp-h { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55; margin-bottom: 4px; }
+.pw-insp-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; min-height: 26px; }
+.pw-insp-lab { flex: 0 0 84px; font-size: 12px; opacity: 0.8; }
+.pw-insp-row input, .pw-insp-row select, .pw-insp-row textarea { flex: 1; min-width: 0; }
+.pw-insp-row textarea { min-height: 40px; resize: vertical; }
+.pw-insp-hint { font-size: 11px; opacity: 0.5; margin-top: 2px; }
+.pw-insp-frow { display: flex; gap: 4px; margin-bottom: 3px; align-items: center; }
+.pw-insp-frow input[type="text"] { flex: 1 1 90px; min-width: 64px; }
+.pw-insp-frow select { flex: 0 1 auto; min-width: 0; }
+.pw-insp-del { width: 22px; }
+.pw-insp-add { font-size: 11px; }
+.pw-insp-flab { flex: 1; font-size: 12px; opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-cond-row { flex-wrap: nowrap; }
+.pw-cond-row select { flex: 1 1 0; min-width: 0; }
+.pw-cond-row input[type="text"] { flex: 0 1 64px; min-width: 0; }
+.pw-cond-row .pw-insp-del { flex: 0 0 auto; }
+.pw-col-w { width: 48px; flex: 0 0 auto; }
+
+/* uniform control height on the right-hand inputs (normal input height) */
+.pw-insp-row :is(input, select, button),
+.pw-insp-frow :is(input, select, button),
+.pw-se-row :is(input, select, button) { min-height: 26px; box-sizing: border-box; }
+/* checkboxes don't stretch and aren't tall */
+.pw-insp-row input[type="checkbox"], .pw-insp-frow input[type="checkbox"], .pw-se-row input[type="checkbox"] { flex: 0 0 auto; width: auto; min-height: 0; }
+.pw-insp-row input[type="color"], .pw-se-row input[type="color"], .pw-se-cmini { height: 26px; }
+.pw-insp-empty, .pw-src-empty { padding: 12px; opacity: 0.5; font-size: 12px; }
+
+/* ---- sources ---- */
+.pw-src-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.pw-src-search { flex: 1; min-width: 0; }
+.pw-src-valonly { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; white-space: nowrap; opacity: 0.85; }
+.pw-src-valonly input { min-height: 0; }
+.pw-src-sec { margin-bottom: 8px; }
+.pw-src-h { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55; margin: 4px 0; }
+.pw-src-row { display: flex; align-items: center; gap: 4px; margin-bottom: 2px; }
+.pw-src-child .pw-src-tok { margin-left: 14px; }   /* fields/columns sit a tad deeper than their dataset/view */
+.pw-src-meta { font-size: 10px; opacity: 0.5; flex: 0 0 auto; }
+.pw-src-tok { font-size: 11px; background: rgba(255,255,255,0.06); padding: 5px 4px; border-radius: 3px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* copy + use buttons: equal width, identical height (both .pw-src-btn) */
+.pw-src-btn { font-size: 10px; padding: 2px 0; flex: 0 0 auto; width: 44px; text-align: center; box-sizing: border-box; }
+.pw-src-use { background: #38507a; }
+
+/* ---- style editor (inspector + theme) ---- */
+#pretty-theme .fw-body { padding: 8px; }   /* theme panel hosts the style editor directly */
+.pw-style-ed { display: flex; flex-direction: column; gap: 4px; }
+.pw-se-row { display: flex; align-items: center; gap: 6px; }
+.pw-se-lab { flex: 0 0 64px; font-size: 11px; opacity: 0.75; }
+.pw-se-row input[type="color"] { width: 28px; height: 22px; padding: 0; border: none; background: none; }
+.pw-se-text { flex: 1 1 0; min-width: 48px; }
+.pw-se-row select { flex: 1 1 0; min-width: 0; }   /* font select shares the row with the custom input */
+.pw-se-num { width: 64px; }
+.pw-se-clear { width: 20px; }
+.pw-se-out { font-size: 11px; min-width: 28px; }
+.pw-se-toggle, .pw-se-aln { min-width: 26px; }
+.pw-se-toggle.on, .pw-se-aln.on { background: #4ea1ff; color: #06121f; }
+.pw-se-align { display: inline-flex; gap: 2px; }

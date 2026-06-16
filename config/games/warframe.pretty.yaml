@@ -1,0 +1,172 @@
+version: 1
+theme: {}
+pages:
+- id: main
+  title: Main
+  style: {}
+  widgets:
+  - id: w1
+    x: 40
+    y: 60
+    w: 440
+    h: 120
+    z: 1
+    style:
+      font_size: 13
+      align: left
+      opacity: 1
+      border_w: 4
+    conditions:
+      rules: []
+    type: label
+    config:
+      text: '{{subset:relic_rewards_live}} {{subset:relic_rewards_live.slug}}'
+  - id: w2
+    x: 40
+    y: 220
+    w: 420
+    h: 260
+    z: 2
+    style: {}
+    conditions:
+      rules: []
+    type: table
+    config:
+      columns: []
+      pageSize: 50
+    binding:
+      src: dataset
+      id: ''
+  - id: w5
+    x: 520
+    y: 240
+    w: 140
+    h: 44
+    z: 5
+    style: {}
+    conditions:
+      rules: []
+    type: button
+    config:
+      action: fire_trigger
+      target: ''
+      value: ''
+      page: ''
+      label: Run
+  - id: w4
+    x: 580
+    y: 380
+    w: 320
+    h: 100
+    z: 5
+    style:
+      align: left
+      font_size: 6
+    conditions:
+      rules: []
+    type: button
+    config:
+      action: fire_trigger
+      target: ''
+      value: ''
+      page: ''
+      label: Run
+  - id: w6
+    x: 720
+    y: 80
+    w: 320
+    h: 200
+    z: 6
+    style: {}
+    conditions:
+      rules: []
+    type: container
+    config:
+      title: Panel
+  - id: w7
+    x: 120
+    y: 900
+    w: 300
+    h: 240
+    z: 7
+    style: {}
+    conditions:
+      rules: []
+    type: form
+    config:
+      dataset: relics_offered
+      submit: Add
+      fields:
+      - column: name
+        input: text
+        required: false
+  - id: w8
+    x: 600
+    y: 960
+    w: 380
+    h: 240
+    z: 8
+    style: {}
+    conditions:
+      rules: []
+    type: chart
+    config:
+      chart_type: bar
+      x: name
+      y: []
+      colors: []
+      title: ''
+      colorBy: {}
+    binding:
+      src: dataset
+      id: ''
+  - id: w3
+    x: 40
+    y: 620
+    w: 1040
+    h: 120
+    z: 8
+    style:
+      font_size: 12
+    conditions:
+      rules:
+      - effect: show
+        source: ''
+        op: nonempty
+        value: ''
+      - effect: show
+        source: ''
+        op: nonempty
+        value: ''
+      visible_when: ''
+      enabled_when: ''
+    type: table
+    config:
+      columns:
+      - key: name
+        enabled: true
+      - key: count
+        enabled: true
+      - key: arcane_level
+        enabled: false
+      - key: key
+        enabled: true
+      - key: present
+        enabled: false
+      - key: first_seen
+        enabled: false
+      - key: last_seen
+        enabled: false
+      - key: slug
+        enabled: false
+      - key: price_min
+        enabled: true
+      - key: price_median
+        enabled: true
+      pageSize: 4
+      sortDesc: true
+      sortField: name
+      paging: false
+    binding:
+      src: subset
+      id: relic_rewards_limit

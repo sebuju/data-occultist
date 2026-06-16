@@ -25,6 +25,12 @@ let tProfile = null, tLocal = null;
 let pendingContent = false;
 const DEBOUNCE = 400;
 
+// Pretty Studio injects a "scrub" here: before each save it temporarily restores any
+// pretty-dirty node-input paths to their authored value (and returns an undo), so transient
+// override values NEVER reach the YAML while everything else still saves. Null = no-op.
+let scrubHook = null;
+export function setScrubHook(fn) { scrubHook = fn; }
+
 export function initPersist(opts) {
   M = opts.model;
   collectLayout = opts.collectLayout;
@@ -38,11 +44,14 @@ async function flushProfile() {
   collectLayout();                 // fold live node layout into the profile first
   const wasContent = pendingContent;
   pendingContent = false;
+  const restore = scrubHook ? scrubHook(M.profile) : null;   // pretty values out of the YAML
   try {
     await api.saveProfile(M.profile, false);   // full replace — the graph is complete
     if (wasContent) onContentSaved?.();
   } catch (e) {
     if (onContentSaved) onContentSaved(String(e.message || e));   // surface the error
+  } finally {
+    if (restore) restore();        // put the live override values back into the model
   }
 }
 
