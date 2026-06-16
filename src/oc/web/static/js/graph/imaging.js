@@ -22,7 +22,7 @@ import {
   render, autosave, rebuildNode, focusNode, setNodeBusy, withBusy,
   registerOverlay, unregisterOverlay, overlaySelected, selectWindowBox, selectedNodeId,
   panZoomTo, placeNewNode, refreshLive, persistBox, syncCellSize, itemChanged,
-  keyPrevHTML, addFieldToItemGroup,
+  keyPrevHTML, addFieldToItemGroup, addTellToItemGroup,
 } from "./main.js";
 
 // ---- window image / region drawing (in-graph) -----------------------------
@@ -252,9 +252,20 @@ function openItemImage(winId, itemId) {
         panZoomTo(`fld:${winId}:${itemId}:${fid}`);
         return;
       }
-      if (k === "bbox") setItemCellKeepingChildren(winId, itemId, w);
-      else model.addItemTell(winId, itemId, k, win2rel(w));   // filled/text/color/template
-      itemChanged(winId, itemId, { rebuild: true });   // a new tell adds a row
+      if (k === "bbox") {
+        setItemCellKeepingChildren(winId, itemId, w);
+        itemChanged(winId, itemId, { rebuild: true });
+        return;
+      }
+      // a tell SPAWNS its own node too, grouped with the item (mirror the field path above)
+      const tid = model.addItemTell(winId, itemId, k, win2rel(w));   // filled/text/color/template/diamonds
+      await placeNewNode(`tell:${winId}:${itemId}:${tid}`, "itemtell", `item:${winId}:${itemId}`);
+      render();
+      addTellToItemGroup(winId, itemId, tid);
+      groups.renderGroups();
+      refreshItemBoxes(winId, itemId); refreshImageBoxes(winId);
+      clearGrid(winId); scheduleItemRead(winId, itemId); autosave(true, winId);
+      panZoomTo(`tell:${winId}:${itemId}:${tid}`);
     },
     onChange: (box) => {                        // box in cutout fractions + role/id
       const w = cut2win(box);
@@ -369,18 +380,27 @@ async function runItemRead(winId, itemId) {
   }
 }
 
-// Compact readout of a cutout read: validity, each field's value, the record key it
-// stores under, and tell chips — a 2-col grid (label : value) so the columns line up.
+// Compact readout of a cutout read: validity, each field's value, the record key it stores
+// under, and each tell — a 3-col grid (label · ":" · value) so the colon sits in its OWN
+// column and every label/value lines up. One `row()` builds a grid line for fields, key, AND
+// tells alike, so they all share the columns.
 function itemReadout(res, winId, itemId) {
   const status = res.valid ? '<span class="tc-ok">✓ valid</span>' : '<span class="tc-bad">✗ rejected</span>';
+  const row = (label, valueHtml) => `<span class="ir-k">${label}</span><span class="ir-c">:</span><span class="ir-v">${valueHtml}</span>`;
   const fields = Object.entries(res.fields || {}).map(([k, v]) => {
     const cls = v.substituted ? "conf-sub" : v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
-    return `<span class="ir-k">${esc(k)}:</span><span class="ir-v"><b class="${cls}">${esc(String(v.value ?? "∅"))}</b></span>`;
+    return row(esc(k), `<b class="${cls}">${esc(String(v.value ?? "∅"))}</b>`);
   }).join("");
   const kv = keyPrevHTML(winId, itemId);   // the record key this read would store under
-  const key = kv ? `<span class="ir-k">key:</span><span class="ir-v">${kv}</span>` : "";
-  const tells = (res.tells || []).map(tellChip).join(" ");
-  return `<div class="ir-row">${status}</div>${fields}${key}${tells ? `<div class="ir-row">${tells}</div>` : ""}`;
+  const key = kv ? row("key", kv) : "";
+  // each tell is its OWN readout row (id : ✓/✗ score) so it aligns in the same columns as the
+  // fields, instead of a separate full-width chip band.
+  const tells = (res.tells || []).map((t) => {
+    const thr = t.threshold == null ? "" : `<span class="muted">/${esc(String(t.threshold))}</span>`;
+    const title = t.detail ? ` title="${esc(t.detail)}"` : "";
+    return row(`<span${title}>${esc(t.id)}</span>`, `<span class="${t.pass ? "tc-ok" : "tc-bad"}">${t.pass ? "✓" : "✗"} ${esc(String(t.score))}${thr}</span>`);
+  }).join("");
+  return `<div class="ir-row">${status}</div>${fields}${key}${tells}`;
 }
 
 function selectRegionNode(winId, boxId) {

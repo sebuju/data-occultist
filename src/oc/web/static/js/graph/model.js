@@ -27,19 +27,24 @@ export class GraphModel {
     }
     for (const pn of this.profile.price_nodes) pn.sources = pn.sources || [];   // items the node prices (empty = catalogue)
     for (const t of this.profile.triggers) { t.watch = t.watch || []; t.targets = t.targets || []; }
-    // Item fields arrive HOISTED to the window (flat ``item_fields``, each with an ``item``
-    // backref) so each is its own node. Fan them back onto each item's ``fields`` for the
-    // per-item editing logic, and drop the flat key so saving re-nests (the backend re-hoists).
+    // Item children arrive HOISTED to the window (flat ``item_fields``/``item_tells``, each
+    // with an ``item`` backref) so each is its own node. Fan them back onto each item's
+    // ``fields``/``tells`` for the per-item editing logic, and drop the flat key so saving
+    // re-nests (the backend re-hoists). ONE fan-in drives both child kinds.
+    const fanIn = (w, flatKey, attr) => {
+      if (Array.isArray(w[flatKey])) {
+        const byItem = {};
+        for (const c of w[flatKey]) { const { item, ...rest } = c; (byItem[item] = byItem[item] || []).push(rest); }
+        for (const it of w.items) it[attr] = (it[attr] || []).concat(byItem[it.id] || []);
+        delete w[flatKey];
+      } else {
+        for (const it of w.items) it[attr] = it[attr] || [];
+      }
+    };
     for (const w of this.profile.windows || []) {
       w.items = w.items || [];
-      if (Array.isArray(w.item_fields)) {
-        const byItem = {};
-        for (const f of w.item_fields) { const { item, ...rest } = f; (byItem[item] = byItem[item] || []).push(rest); }
-        for (const it of w.items) it.fields = (it.fields || []).concat(byItem[it.id] || []);
-        delete w.item_fields;
-      } else {
-        for (const it of w.items) it.fields = it.fields || [];
-      }
+      fanIn(w, "item_fields", "fields");
+      fanIn(w, "item_tells", "tells");
     }
   }
 
@@ -131,6 +136,7 @@ export class GraphModel {
       for (const it of w.items || []) {
         ns.push({ id: `item:${w.id}:${it.id}`, type: "item", ref: it, win: w });
         for (const f of it.fields || []) ns.push({ id: `fld:${w.id}:${it.id}:${f.id}`, type: "itemfield", ref: f, win: w, item: it, field: this.fieldOf(w, f) });
+        for (const t of it.tells || []) ns.push({ id: `tell:${w.id}:${it.id}:${t.id}`, type: "itemtell", ref: t, win: w, item: it });
       }
     }
     for (const ds of this.datasets()) ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
@@ -170,6 +176,7 @@ export class GraphModel {
           es.push({ from: `item:${w.id}:${it.id}`, to: `fld:${w.id}:${it.id}:${f.id}`, kind: "field" });
           linkDict(`fld:${w.id}:${it.id}:${f.id}`, w, f.field);
         }
+        for (const t of it.tells || []) es.push({ from: `item:${w.id}:${it.id}`, to: `tell:${w.id}:${it.id}:${t.id}`, kind: "tell" });
       }
       if (this._windowHasDataset(w))   // no dataset node/wire until the window produces data
         es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
@@ -741,6 +748,15 @@ export class GraphModel {
   itemTell(winId, itemId, tid) { const it = this.item(winId, itemId); return it && (it.tells || []).find((t) => t.id === tid); }
   setItemTellBox(winId, itemId, tid, box) { const t = this.itemTell(winId, itemId, tid); if (t) t.box = { x: box.x, y: box.y, w: box.w, h: box.h }; }
   setItemTellProp(winId, itemId, tid, key, value) { const t = this.itemTell(winId, itemId, tid); if (t) t[key] = value; }
+  // Rename a tell. Tell ids aren't referenced anywhere else (unlike fields, which the key
+  // and other tells point at), so the rename is self-contained — just guard collisions.
+  renameItemTell(winId, itemId, tid, newId) {
+    const it = this.item(winId, itemId);
+    const t = this.itemTell(winId, itemId, tid);
+    if (!it || !t || !newId || (it.tells || []).some((x) => x.id === newId)) return false;
+    t.id = newId;
+    return true;
+  }
   removeItemTell(winId, itemId, tid) { const it = this.item(winId, itemId); if (it) it.tells = (it.tells || []).filter((t) => t.id !== tid); }
 
   // Wire a window to a dataset (drag-connect). "" => back to default (own id).

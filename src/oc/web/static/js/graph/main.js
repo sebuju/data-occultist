@@ -8,7 +8,9 @@ import { esc, TRASH, CAMERA, WARN, PAUSE, labCell } from "../dom.js";
 import { nodeIcon } from "./node_icons.js";
 import { openModal } from "../modal.js";
 import { Overlay } from "../overlay.js";
-import { log, timed, setLogOpen } from "../log.js";
+import { log, timed, setLogOpen, mirrorConsole } from "../log.js";
+
+mirrorConsole();   // surface uncaught errors + console.error/warn in the log bar (no devtools needed)
 import { GraphModel } from "./model.js";
 import { routeGraph, polylinePath } from "./route.js";
 import { buildKey, DEFAULT_KEY } from "../keys.js";
@@ -66,7 +68,7 @@ import {
   liveWin, liveWinState, buildLiveWindow, renderLiveWindow, setLiveMode, setLiveSave,
 } from "./panels/livewin.js";
 
-const COLX = { game: 20, window: 300, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, dataset: 900, subset: 1900, dictionary: 20 };
+const COLX = { game: 20, window: 300, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, dictionary: 20 };
 export let live = {};             // dataset -> {present,total,last_op,last_ts} (read by datanodes/refreshLive)
 export let wire = null;           // active drag-wire {winId, x1,y1} (read by routing.drawEdges)
 export let selectedNodeId = null; // node whose line(s) are highlighted (read by routing.selClsFor)
@@ -217,7 +219,7 @@ initPersist({
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", ds: "dataset", sub: "subset", price: "price", dict: "dictionary" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", price: "price", dict: "dictionary" };
 function nodeTypeOf(id) { return id === "game" ? "game" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
   world: () => $("ggroups"),
@@ -704,6 +706,24 @@ function itemFieldParts(n) {
   return { title: `<input class="gi gi-id" data-k="fldid" value="${esc(f.id)}" title="field id" />`, body };
 }
 
+// One tell is its OWN node (a child of its item node). It renders the per-tell controls that
+// used to live inline in the item node: kind, the kind-specific input (field for text, colour
+// for color), threshold, and — only when the window locates rows by OCR (static grid off) —
+// the locate toggle + its align. Mirrors itemFieldParts.
+function itemTellParts(n) {
+  const t = n.ref, it = n.item, w = n.win;
+  const staticOn = w.static_grid !== false;   // static grid tiles rows from the cell — locate is unused
+  const body = `
+    <label class="flab" title="what this tell checks">kind <span class="tt-kind">${esc(t.kind)}</span></label>
+    ${t.kind === "text" ? `<label class="flab" title="which field this tell reads to validate the cell">field <select class="tset" data-k="field">${(it.fields || []).map((f) => `<option ${t.field === f.field ? "selected" : ""}>${esc(f.field)}</option>`).join("")}</select></label>` : ""}
+    ${t.kind === "color" ? `<label class="flab" title="the colour that must be present in the tell box">colour <input type="color" class="tset" data-k="color" value="${t.color || "#ffcc00"}"/></label>` : ""}
+    <label class="flab" title="pass score (0..1) the tell must reach">threshold <input type="number" class="tset" data-k="threshold" step="0.05" min="0" max="1" value="${t.threshold ?? 0.5}"/></label>
+    ${staticOn ? "" : `<label class="flab" title="use this tell to LOCATE rows (anchor the grid) — only one tell per item locates">locate <input type="checkbox" class="tloc" ${t.locate ? "checked" : ""}/></label>`}
+    ${(t.locate && !staticOn) ? `<label class="flab" title="anchor on this line of a wrapped name">align <select class="tset" data-k="align">${["none", "top", "center", "bottom"].map((v) => `<option ${(t.align || it.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>` : ""}
+    <div class="gn-foot"></div>`;
+  return { title: `<input class="gi gi-id" data-k="tellid" value="${esc(t.id)}" title="tell id" />`, body };
+}
+
 // Shared wiring for a field-config body's rule editor (region + item-field nodes both
 // call this). `rebuild` re-renders the node body (add/remove a rule, or a then-toggle
 // that shows/hides its value); `commit` persists a plain value edit without a rebuild.
@@ -728,17 +748,12 @@ function wireFieldRules(div, fd, { rebuild, commit }) {
 }
 
 function itemLists(it, w) {
-  const fieldDef = (fid) => (w.fields || []).find((x) => x.id === fid) || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
-  // static grid tiles rows from the cell — OCR row-location (locate) is unused, so lock it off
-  const staticOn = w.static_grid !== false;
-  const tells = (it.tells || []).map((t) => `<div class="ti-row" data-tid="${t.id}">
-      <span class="ti-kind">${esc(t.kind)}</span>
-      ${staticOn ? "" : `<label class="ti-loc" title="use to locate rows"><input type="radio" name="loc-${esc(it.id)}" class="iset" data-k="locate" data-tid="${t.id}" ${t.locate ? "checked" : ""}/>loc</label>`}
-      ${t.kind === "text" ? `<select class="iset" data-k="field" data-tid="${t.id}">${(it.fields || []).map((f) => `<option ${t.field === f.field ? "selected" : ""}>${esc(f.field)}</option>`).join("")}</select>` : ""}
-      ${t.kind === "color" ? `<input type="color" class="iset" data-k="color" data-tid="${t.id}" value="${t.color || "#ffcc00"}"/>` : ""}
-      ${(t.locate && !staticOn) ? `<select class="iset" data-k="align" data-tid="${t.id}" title="anchor on this line of a wrapped name">${["none", "top", "center", "bottom"].map((v) => `<option ${(t.align || it.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select>` : ""}
-      <input type="number" class="iset" data-k="threshold" data-tid="${t.id}" step="0.05" min="0" max="1" value="${t.threshold ?? 0.5}" title="threshold"/>
-      <button class="ti-del danger" data-tid="${t.id}" title="remove">${TRASH}</button></div>`).join("");
+  // tells are their OWN nodes now — the item lists only a compact summary (id + kind + remove);
+  // the full per-tell editor lives on each tell node (itemTellParts). Mirrors fieldsSummary below.
+  const tellsSummary = (it.tells || []).map((t) => `<div class="ti-sum" data-tid="${esc(t.id)}" title="select this tell's node">
+      <span class="ti-sum-name">${esc(t.id)}</span>
+      <span class="ti-sum-kind muted">${esc(t.kind)}</span>
+      <button class="ti-del danger" data-tid="${esc(t.id)}" title="remove">${TRASH}</button></div>`).join("");
   // fields flagged as tells (f.tell) show here too, read-only — they're edited in the fields
   // list below; the only action is remove, which just unchecks the field's tell flag.
   const fieldTells = (it.fields || []).filter((f) => f.tell).map((f) => `<div class="ti-row ti-fieldtell" data-fid="${esc(f.id)}">
@@ -765,7 +780,7 @@ function itemLists(it, w) {
     ${cellSizeControls(it)}
     <div class="muted il-h">tells</div>
     <div class="il-tools">${tellBtns}</div>
-    ${(tells + fieldTells) || '<div class="muted">draw a tell on the cutout</div>'}
+    ${(tellsSummary + fieldTells) || '<div class="muted">draw a tell on the cutout</div>'}
     <div class="muted il-h">fields</div>
     <div class="il-tools">${fieldBtns}</div>
     ${fieldsSummary || '<div class="muted">draw a field on the cutout</div>'}
@@ -860,23 +875,11 @@ function wireItemControls(div, n) {
     movePos(`item:${winId}:${itemId}`, `item:${winId}:${newId}`);
     itemChanged(winId, newId, { render: true, reread: false });   // id only — no pixels/boxes change
   });
-  div.querySelectorAll(".iset").forEach((inp) => inp.addEventListener("change", (e) => {
-    const tid = e.target.dataset.tid, k = e.target.dataset.k;
-    let v = e.target.value;
-    if (k === "locate") { for (const t of n.ref.tells) t.locate = false; v = e.target.checked; }
-    else if (k === "threshold") v = +e.target.value || 0;
-    model.setItemTellProp(winId, itemId, tid, k, v);
-    itemChanged(winId, itemId, { rebuild: k === "locate" });   // locate toggles the align dropdown
-  }));
-  // persist the field a text tell's dropdown is SHOWING (the default option never
-  // fires a change, so it'd otherwise stay unset and reject every row)
-  div.querySelectorAll('.iset[data-k="field"]').forEach((sel) => {
-    const t = model.itemTell(winId, itemId, sel.dataset.tid);
-    if (t && !t.field && sel.value) { t.field = sel.value; autosave(); }
-  });
+  // a tell's full editor is its OWN node now; the item shows a summary. Removing a tell
+  // drops its node (full render). Clicking a summary row pans to the tell node (below).
   div.querySelectorAll(".ti-del").forEach((b) => b.addEventListener("click", () => {
     model.removeItemTell(winId, itemId, b.dataset.tid);
-    itemChanged(winId, itemId, { rebuild: true });
+    itemChanged(winId, itemId, { render: true });   // the tell node is gone -> re-render
   }));
   // a field-tell's remove just clears the field's tell flag (the field itself stays). Render
   // so the field's OWN node also reflects the unchecked tell.
@@ -924,35 +927,29 @@ function wireItemControls(div, n) {
   });
   div.querySelector(".ksep")?.addEventListener("change", (e) => keyEdit((k) => { k.sep = e.target.value || "|"; }));
   div.querySelector(".kcase")?.addEventListener("change", (e) => keyEdit((k) => { k.case_sensitive = e.target.checked; }));
-  // Click a tell/field row to SELECT its box on the cutout — the only way to reach a
-  // box that's drawn under another. Routes through the chokepoint (highlights it,
-  // deselects others, enables WASD).
-  const selectItemBox = (boxId, row) => {
-    const ent = itemCanvases.get(`${winId}:${itemId}`);
-    if (ent) ent.overlay.setActive(boxId);
-    overlaySelected(`item:${winId}:${itemId}`, boxId);
-    div.querySelectorAll(".ti-row,.if-row").forEach((r) => r.classList.remove("il-sel"));
-    row.classList.add("il-sel");
-  };
-  div.querySelectorAll(".ti-row").forEach((row) => row.addEventListener("mousedown", (ev) => {
-    if (ev.target.closest("input,select,button,label")) return;
-    selectItemBox(row.dataset.tid, row);
+  // a tell summary row pans to that tell's OWN node (its box is selectable on the cutout)
+  div.querySelectorAll(".ti-sum").forEach((row) => row.addEventListener("mousedown", (ev) => {
+    if (ev.target.closest("button")) return;
+    panZoomTo(`tell:${winId}:${itemId}:${row.dataset.tid}`);
   }));
 }
 
-// Add a freshly-created field node to whatever group its item node belongs to, so a field
-// drawn from an item stays grouped with it (no-op when the item isn't grouped).
+// Add a freshly-created field/tell node to whatever group its item node belongs to, so a
+// child drawn from an item stays grouped with it (no-op when the item isn't grouped).
 function addFieldToItemGroup(winId, itemId, fid) {
   inheritGroupFrom(`fld:${winId}:${itemId}:${fid}`, `item:${winId}:${itemId}`);
 }
+function addTellToItemGroup(winId, itemId, tid) {
+  inheritGroupFrom(`tell:${winId}:${itemId}:${tid}`, `item:${winId}:${itemId}`);
+}
 
-// On load, pull every ORPHAN item-field node into its item's group, so fields that became
-// their own nodes sit with the item they were moved from. Idempotent; an already-grouped
-// field (incl. one the user moved elsewhere) is left alone. Needs nodes rendered (for rects).
-function groupItemFields() {
+// On load, pull every ORPHAN item-child node (fields/tells) into its item's group, so a child
+// that became its own node sits with the item it was moved from. Idempotent; an already-grouped
+// child (incl. one the user moved elsewhere) is left alone. Needs nodes rendered (for rects).
+function groupOrphanChildren(type) {
   const byGroup = {};
   for (const n of model.nodes()) {
-    if (n.type !== "itemfield" || groups.groupOf(n.id)) continue;
+    if (n.type !== type || groups.groupOf(n.id)) continue;
     const g = groups.groupOf(`item:${n.win.id}:${n.item.id}`);
     if (g) (byGroup[g.id] = byGroup[g.id] || []).push(n.id);
   }
@@ -1028,6 +1025,44 @@ function wireItemField(div, n) {
   div.querySelector(".itellalign")?.addEventListener("change", (e) => {
     model.setItemFieldAlign(winId, itemId, fid, e.target.value);
     fieldChanged(winId, itemId, fid);
+  });
+}
+
+// THE update path after a TELL-node edit (mirrors fieldChanged): a tell change affects the
+// item's readout, the cutout boxes, the window grid (locate anchors rows), and the item
+// node's tell summary — so re-OCR + persist, optionally rebuilding the tell node / full graph.
+//   rebuild: the tell node DOM (a control toggled which others show)
+//   render:  full graph render (id rename, locate toggle -> sibling tell nodes, node add/remove)
+//   reread:  the edit changed what/where OCR reads. FALSE for id-only renames.
+function tellChanged(winId, itemId, tid, { rebuild = false, render: doRender = false, reread = true } = {}) {
+  if (doRender) render();
+  else if (rebuild) rebuildNode(`tell:${winId}:${itemId}:${tid}`);
+  refreshItemBoxes(winId, itemId);
+  refreshImageBoxes(winId);
+  if (reread) { clearGrid(winId); scheduleItemRead(winId, itemId); }
+  autosave(reread, winId);
+}
+
+// Wire one tell node: the per-tell controls that used to live inline in the item node.
+function wireItemTell(div, n) {
+  const winId = n.win.id, itemId = n.item.id, tid = n.ref.id;
+  div.querySelector(".gi-id").addEventListener("change", (e) => {
+    const newId = e.target.value.trim();
+    if (!model.renameItemTell(winId, itemId, tid, newId)) { e.target.value = tid; return; }
+    movePos(`tell:${winId}:${itemId}:${tid}`, `tell:${winId}:${itemId}:${newId}`);
+    tellChanged(winId, itemId, newId, { render: true, reread: false });   // id only — no pixels/boxes
+  });
+  div.querySelectorAll(".tset").forEach((inp) => inp.addEventListener("change", (e) => {
+    const k = e.target.dataset.k;
+    const v = k === "threshold" ? (+e.target.value || 0) : e.target.value;
+    model.setItemTellProp(winId, itemId, tid, k, v);
+    tellChanged(winId, itemId, tid);
+  }));
+  div.querySelector(".tloc")?.addEventListener("change", (e) => {
+    // locate is single-choice across the item's tells — clear the others, set this one
+    for (const t of n.item.tells || []) model.setItemTellProp(winId, itemId, t.id, "locate", false);
+    model.setItemTellProp(winId, itemId, tid, "locate", e.target.checked);
+    tellChanged(winId, itemId, tid, { render: true });   // align dropdown + sibling tell nodes
   });
 }
 
@@ -1143,6 +1178,7 @@ function nodeParts(n) {
       body: `<div class="item-img"></div><div class="item-lists">${itemLists(n.ref, n.win)}</div>` };
   }
   if (n.type === "itemfield") return itemFieldParts(n);
+  if (n.type === "itemtell") return itemTellParts(n);
   if (n.type === "scrollbar") {
     const o = n.ref.scrollbar_orientation || "vertical";
     return {
@@ -1567,7 +1603,7 @@ function fillNode(div, n) {
       <span class="gn-disc" title="collapse/expand">${nodeIcon(n)}<button class="collapse" aria-label="collapse/expand">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
           <rect x="3.5" y="3.5" width="17" height="17" rx="5.5"/><line x1="8" y1="12" x2="16" y2="12"/><line class="cv" x1="12" y1="8" x2="12" y2="16"/>
-        </svg></button></span>${parts.title}${parts.head || ""}${toggle}${detach}${del}<span class="gn-type" aria-hidden="true">${esc(n.type === "itemfield" ? "field" : n.type)}</span></div>
+        </svg></button></span>${parts.title}${parts.head || ""}${toggle}${detach}${del}<span class="gn-type" aria-hidden="true">${esc(n.type === "itemfield" ? "field" : n.type === "itemtell" ? "tell" : n.type)}</span></div>
     <div class="gn-body">${parts.body}</div>
     <span class="gn-spin" title="working…"></span>${parts.ports || ""}`;
   div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
@@ -2162,6 +2198,8 @@ function wireNode(div, n) {
     wireItemControls(div, n);
   } else if (n.type === "itemfield") {
     wireItemField(div, n);
+  } else if (n.type === "itemtell") {
+    wireItemTell(div, n);
   }
 }
 
@@ -2406,7 +2444,26 @@ async function loadGame(name) {
   if (!name) return;
   await persist.flush();   // commit any pending save before switching games
   const done = timed(`load game ${name}`);
-  const { profile, local, migrated } = await persist.open(name);
+  let opened;
+  try {
+    opened = await persist.open(name);
+  } catch (e) {
+    done(String(e.message || e), "err");
+    if (!conn.isOnline()) return;   // server unreachable -> conn's offline overlay owns the screen
+    // a real load failure (e.g. a 500 while the server is restarting): block with a card the
+    // user can act on instead of leaving a half-loaded graph and a lone log line.
+    blockOverlay({
+      title: `Couldn't load ${name}`,
+      lines: [{ text: String(e.message || e) },
+        { text: "The server may be restarting. Retry the load, or reload the page.", muted: true }],
+      actions: [
+        { label: "retry", primary: true, run: () => loadGame(name) },
+        { label: "reload page", run: () => location.reload() },
+      ],
+    });
+    return;
+  }
+  const { profile, local, migrated } = opened;
   done();
   model.load(profile);
   nodeEls.clear();
@@ -2417,11 +2474,16 @@ async function loadGame(name) {
   hydrateLayout();        // restore node positions/sizes/collapse/open-images from the profile
   applyLocal(local);      // restore canvas zoom/pan + minimap from the per-device sidecar
   render();
-  groupItemFields();   // pull each item's field nodes into the item's group (idempotent)
   // reopen saved images (canvas lives in node); awaited so boot can tell when the
-  // initial image loads (and the detects they fire) have actually started
+  // initial image loads (and the detects they fire) have actually started. MUST run BEFORE
+  // grouping orphans: grouping a NEW orphan child persists the layout, and collectLayout
+  // writes open_images from the live `openImages` set — if the canvases aren't open yet that
+  // set is empty and we'd save open_images:[], stranding every window's canvas on next load.
   await Promise.all(pendingOpenImages.map((winId) => (model.window(winId) ? openImage(winId) : null)));
   pendingOpenImages = [];
+  groupOrphanChildren("itemfield");   // pull each item's field nodes into the item's group (idempotent)
+  groupOrphanChildren("itemtell");    // …and its tell nodes
+  drawEdges();                        // reflect any new group membership in the routing
   resetHistory();   // fresh undo/redo baseline for this game
   if (migrated) persist.layout();   // lock in node layout imported from legacy localStorage
   refreshLive();
@@ -2822,18 +2884,34 @@ async function bootSettle(maxMs = 30000, quietMs = 600) {
   }
 }
 
+// Full-screen blocking error card with a title, message lines, and one or more action
+// buttons. The ONE such overlay — startup-halt and a failed game-load both build on it (don't
+// copy the markup). `lines` = [{text, muted?}]; `actions` = [{label, primary?, run}]. A click
+// removes the overlay BEFORE running, so a `run` that rebuilds it (retry) starts clean. Only
+// one is ever shown at a time (an existing card is replaced).
+function blockOverlay({ title, lines = [], actions = [] }) {
+  document.querySelector(".startup-halt")?.remove();
+  const o = document.createElement("div");
+  o.className = "startup-halt";
+  const body = lines.map((l) => `<p${l.muted ? ' class="muted"' : ""}>${esc(l.text)}</p>`).join("");
+  o.innerHTML = `<div class="startup-halt-box"><h3>${esc(title)}</h3>${body}
+    <div class="halt-actions">${actions.map((a, i) =>
+      `<button class="startup-halt-retry${a.primary ? "" : " ghost"}" data-i="${i}">${esc(a.label)}</button>`).join("")}</div></div>`;
+  actions.forEach((a, i) => o.querySelector(`[data-i="${i}"]`).addEventListener("click", () => { o.remove(); a.run(); }));
+  document.body.appendChild(o);
+  return o;
+}
+
 // Block the whole UI with an unmissable message and refuse to continue.
 function haltStartup(msg) {
   veil.drop();   // the halt overlay must be visible (the veil sits above it)
   log(msg, "err");
-  const o = document.createElement("div");
-  o.className = "startup-halt";
-  o.innerHTML = `<div class="startup-halt-box"><h3>Background OCR still running</h3>
-    <p>${esc(msg)}</p>
-    <p class="muted">Nothing was loaded. Kill the stray worker (or the python process), then retry.</p>
-    <button class="startup-halt-retry">retry</button></div>`;
-  document.body.appendChild(o);
-  o.querySelector(".startup-halt-retry").addEventListener("click", () => location.reload());
+  blockOverlay({
+    title: "Background OCR still running",
+    lines: [{ text: msg },
+      { text: "Nothing was loaded. Kill the stray worker (or the python process), then retry.", muted: true }],
+    actions: [{ label: "retry", primary: true, run: () => location.reload() }],
+  });
 }
 
 // On page load, kill any background OCR worker from a prior session and WAIT for it to
@@ -2890,5 +2968,5 @@ export {
   refreshAllSubsetNodes,
   rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,
   overlaySelected, selectWindowBox, persistBox, syncCellSize, itemChanged,
-  keyPrevHTML, addFieldToItemGroup,
+  keyPrevHTML, addFieldToItemGroup, addTellToItemGroup,
 };

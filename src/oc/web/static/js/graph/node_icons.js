@@ -16,6 +16,8 @@ const INNER = {
   scrollbar: `<rect x="9" y="3" width="6" height="18" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><rect x="9.7" y="6" width="4.6" height="5" rx="1" fill="currentColor" stroke="none"/>`,
   item: `<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M9 9h6v6H9z"/><path d="M9 4v3M15 4v3M9 17v3M15 17v3M4 9h3M4 15h3M17 9h3M17 15h3" opacity=".4"/>`,
   itemfield: `<rect x="3" y="9" width="12" height="6" rx="3"/><line x1="6.5" y1="12" x2="11" y2="12"/><path d="M17 9l3 3-3 3"/>`,
+  // tell: a dashed detection box with a pass tick + the same child-of-item arrow as itemfield
+  itemtell: `<rect x="2.5" y="7.5" width="11" height="9" rx="2" stroke-dasharray="2.4 2"/><path d="M5.5 12l2 2 3.4-3.8"/><path d="M17 9l3 3-3 3"/>`,
   dataset: `<ellipse cx="12" cy="6" rx="7" ry="2.6"/><path d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6"/><path d="M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6"/>`,
   subset: `<path d="M4 8h6l4 4h6M4 16h6l2-2"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>`,
   price: `<circle cx="12" cy="12" r="8"/><path d="M12 8v8M10 10.5c0-1 1-1.5 2-1.5s2 .6 2 1.5-1 1.3-2 1.5-2 .6-2 1.5 1 1.5 2 1.5 2-.5 2-1.5"/>`,
