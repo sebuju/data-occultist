@@ -166,12 +166,15 @@ export class VTable {
         s.textContent = this.sortDir === 1 ? " ▲" : " ▼";
         h.appendChild(s);
       }
-      const grip = document.createElement("span");
-      grip.className = "vt-grip";
-      grip.title = "drag to resize · double-click to fit";
-      grip.addEventListener("mousedown", (e) => this._startResize(e, i));
-      grip.addEventListener("dblclick", (e) => { e.preventDefault(); e.stopPropagation(); this._autofit(i); });
-      h.appendChild(grip);
+      // a lone column always spans the whole table — no width to set, so no resize grip
+      if (this.columns.length > 1) {
+        const grip = document.createElement("span");
+        grip.className = "vt-grip";
+        grip.title = "drag to resize · double-click to fit";
+        grip.addEventListener("mousedown", (e) => this._startResize(e, i));
+        grip.addEventListener("dblclick", (e) => { e.preventDefault(); e.stopPropagation(); this._autofit(i); });
+        h.appendChild(grip);
+      }
       this.head.appendChild(h);
     });
     this._applyWidths();
@@ -181,8 +184,10 @@ export class VTable {
   // width is fixed (flex:0 0 w); the rest stay flexible (flex:1 1 0) and share the slack.
   _applyWidths() {
     const css = (el, w) => { el.style.flex = w ? `0 0 ${w}px` : ""; el.style.width = w ? `${w}px` : ""; };
-    this.columns.forEach((c, i) => { const h = this.head.children[i]; if (h) css(h, this.widths[c]); });
-    for (const row of this.pool) row._cells.forEach((cell, i) => css(cell, this.widths[this.columns[i]]));
+    // a single column always flexes to fill the table — ignore any stored width for it
+    const widthOf = (c) => (this.columns.length > 1 ? this.widths[c] : undefined);
+    this.columns.forEach((c, i) => { const h = this.head.children[i]; if (h) css(h, widthOf(c)); });
+    for (const row of this.pool) row._cells.forEach((cell, i) => css(cell, widthOf(this.columns[i])));
   }
 
   // CSS scale this table is rendered at (graph nodes live inside a `scale(zoom)` transform).
