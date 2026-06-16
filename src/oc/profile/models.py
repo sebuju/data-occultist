@@ -508,6 +508,12 @@ class DatasetDef(BaseModel):
 
     id: str
     aggregate: str = "latest"
+    # Dataset-level key override for the 1->many collapse. "" = inherit the key taught on the
+    # windows/items feeding it (the default). A field name = key on that single field instead.
+    key_field: str = ""
+    # False turns the 1->many collapse OFF entirely: every read is kept as its own record
+    # (no dedup/merge). ``key_field`` is ignored when ``dedup`` is False.
+    dedup: bool = True
 
 
 class DictionaryDef(BaseModel):
@@ -790,6 +796,13 @@ class GameProfile(BaseModel):
         """How records of a dataset are keyed: each item template's own spec (records
         carry ``_item`` when a window has several templates), with the first window
         default as fallback. Falls back to keying on ``name`` when nothing is taught."""
+        # Dataset-level override wins: no-dedup (every read its own record), or a single-field
+        # key chosen on the dataset node — both bypass the window/item keys.
+        d = self.dataset_def(dataset_id)
+        if d is not None and d.dedup is False:
+            return KeyMap(KeySpec(), {}, dedup=False)
+        if d is not None and d.key_field:
+            return KeyMap(KeySpec(fields=(d.key_field,)), {})
         by_item: dict[str, KeySpec] = {}
         for w in self.windows:
             if w.dataset_id != dataset_id:

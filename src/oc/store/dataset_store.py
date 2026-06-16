@@ -21,6 +21,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import changes
 from .change import ChangeEvent, ChangeOp
 from .keys import KeyMap, KeySpec
 
@@ -116,9 +117,17 @@ def replay(events: list[ChangeEvent], reverted: set[int],
     change re-keys the dataset on the next replay; a remove flips ``present`` off. Events
     unkeyable under the current spec (a key part missing/empty) are skipped.
     """
+    no_dedup = getattr(key, "dedup", True) is False
     state: dict[str, dict] = {}
     for ev in events:
         if ev.id in reverted:
+            continue
+        if no_dedup:
+            # 1->many OFF: every non-remove observation is its own record, keyed per event.
+            if ev.op is ChangeOp.remove:
+                continue
+            state[f"#{ev.id}"] = {"records": [{"values": dict(ev.values), "ts": ev.ts}],
+                                  "first_seen": ev.ts, "last_seen": ev.ts, "present": True, "_seq": ev.id}
             continue
         k = key.build(ev.values)
         if k is None:
@@ -131,7 +140,9 @@ def replay(events: list[ChangeEvent], reverted: set[int],
             continue
         obs = {"values": dict(ev.values), "ts": ev.ts}
         if entry is None:
-            state[k] = {"records": [obs], "first_seen": ev.ts, "last_seen": ev.ts, "present": True}
+            # _seq = the add event's id: a monotonic rolling id capturing arrival order,
+            # stable across replays (same ledger -> same ids). Sort by it for "order they came".
+            state[k] = {"records": [obs], "first_seen": ev.ts, "last_seen": ev.ts, "present": True, "_seq": ev.id}
         else:
             entry["records"].append(obs)
             entry["last_seen"] = ev.ts
@@ -153,6 +164,8 @@ class DatasetStore:
         aggregate: str = "latest",
     ) -> None:
         base = Path(data_dir) / game
+        self._game = game
+        self._dataset = dataset
         self._history_path = base / f"{dataset}.history.jsonl"
         self._reverted_path = base / f"{dataset}.reverted.json"
         self._state_path = base / f"{dataset}.state.json"
@@ -160,6 +173,8 @@ class DatasetStore:
         self._agg = aggregate or "latest"
         self._clock = clock
         self._events: list[ChangeEvent] = []
+        self._events_loaded = False   # events are parsed lazily — a valid cache skips the parse
+        self._n_events = 0            # total event count (kept without holding the list)
         self._reverted: set[int] = set()
         self._next_id = 1
         self._batch = 0
@@ -169,59 +184,87 @@ class DatasetStore:
     # ---- persistence -------------------------------------------------------
 
     def _replay(self) -> dict[str, dict]:
+        self._ensure_events()
         return replay(self._events, self._reverted, self._key, self._agg)
 
     def _apply_agg(self, entry: dict) -> None:
         entry["values"] = aggregate_records(entry.get("records", []), self._agg)
 
-    def _meta(self) -> dict:
-        """Fingerprint of the inputs the cached state was built from. State is reused only
-        when this matches — so a key change (re-key) or a new/removed event invalidates
-        the cache and forces a replay."""
-        # ``v`` is the on-disk state SHAPE version — bump it to invalidate caches written
-        # by an older shape (v2 = per-key observation lists). Aggregate policy is NOT in
-        # the fingerprint: the displayed ``values`` are recomputed per-open from the stored
-        # observations, so changing the policy needs no replay and won't thrash the cache.
-        return {"v": 2, "key": self._key.meta(),
-                "n_events": len(self._events), "reverted": sorted(self._reverted)}
+    def _src(self) -> dict | None:
+        """Identity of the history file (size + mtime) — lets the cache be validated WITHOUT
+        parsing the file. Any append changes it, invalidating the cache."""
+        try:
+            st = self._history_path.stat()
+            return {"size": st.st_size, "mtime": st.st_mtime_ns}
+        except OSError:
+            return None
 
-    def _load(self) -> None:
-        history_existed = self._history_path.exists()
-        if history_existed:
+    def _meta(self) -> dict:
+        """Fingerprint the cached state was built from, validated WITHOUT reading history:
+        shape version + key spec + reverted set + the history file's size/mtime. It also
+        carries ``next_id``/``batch``/``n_events`` so the fast path can restore them without
+        a parse. A re-key, a revert, or any new event (file grows) invalidates it."""
+        return {"v": 4, "key": self._key.meta(), "reverted": sorted(self._reverted),
+                "src": self._src(), "next_id": self._next_id, "batch": self._batch,
+                "n_events": self._n_events}
+
+    def _read_events(self) -> None:
+        """Parse the full history ledger into memory (the expensive part — avoided when a
+        valid state cache exists)."""
+        self._events = []
+        if self._history_path.exists():
             for line in self._history_path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if line:
                     self._events.append(ChangeEvent.from_dict(json.loads(line)))
-        if self._reverted_path.exists():
-            self._reverted = set(json.loads(self._reverted_path.read_text(encoding="utf-8")))
+        self._n_events = len(self._events)
         self._next_id = 1 + max((e.id for e in self._events), default=0)
         self._batch = max((e.batch for e in self._events), default=0)
-        if not self._load_cached_state():
-            self._state = self._replay()
-            # Only persist the state cache for a dataset that actually has a ledger.
-            # Merely READING a nonexistent/renamed dataset must not write a phantom
-            # ``<name>.state.json`` — list_datasets globs those, so it would resurface
-            # the dataset (e.g. the old name after a rename) as a blank duplicate.
-            if history_existed:
-                self.save()
+        self._events_loaded = True
+
+    def _ensure_events(self) -> None:
+        """Parse the ledger on first need (revert/edit/batch views/replay)."""
+        if not self._events_loaded:
+            self._read_events()
+
+    def _load(self) -> None:
+        history_existed = self._history_path.exists()
+        if self._reverted_path.exists():
+            self._reverted = set(json.loads(self._reverted_path.read_text(encoding="utf-8")))
+        if self._load_cached_state():   # FAST: stat-validated cache, no history parse
+            return
+        # cache miss -> parse the ledger, replay, and persist a fresh cache
+        self._read_events()
+        self._state = self._replay()
+        # Only persist the state cache for a dataset that actually has a ledger. Merely
+        # READING a nonexistent/renamed dataset must not write a phantom ``<name>.state.json``
+        # — list_datasets globs those, so it would resurface the dataset as a blank duplicate.
+        if history_existed:
+            self.save()
 
     def _load_cached_state(self) -> bool:
-        """Use the cached snapshot when its fingerprint still matches the current key
-        options + ledger; otherwise we must re-key. Returns True if the cache was used."""
+        """Use the cached snapshot when its fingerprint (key + reverted + history size/mtime)
+        still matches — WITHOUT parsing history. Restores next_id/batch/n_events from the
+        cache so events can stay unloaded. Returns True if the cache was used."""
         if not self._state_path.exists():
             return False
         try:
             cached = json.loads(self._state_path.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             return False
-        if not isinstance(cached, dict) or cached.get("_meta") != self._meta():
+        if not isinstance(cached, dict):
+            return False
+        meta = cached.get("_meta") or {}
+        if (meta.get("v") != 4 or meta.get("key") != self._key.meta()
+                or meta.get("reverted") != sorted(self._reverted) or meta.get("src") != self._src()):
             return False
         self._state = cached.get("state", {})
-        # the cache stores observations; recompute the displayed values under THIS store's
-        # aggregate policy (it may differ from whatever policy last wrote the cache).
-        for entry in self._state.values():
+        for entry in self._state.values():   # recompute displayed values under THIS aggregate
             self._apply_agg(entry)
-        return True
+        self._next_id = meta.get("next_id", 1)
+        self._batch = meta.get("batch", 0)
+        self._n_events = meta.get("n_events", 0)
+        return True   # events stay lazy
 
     def save(self) -> None:
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,7 +278,9 @@ class DatasetStore:
         self._history_path.parent.mkdir(parents=True, exist_ok=True)
         with self._history_path.open("a", encoding="utf-8") as fh:
             fh.write(event.to_json() + "\n")
-        self._events.append(event)
+        self._n_events += 1
+        if self._events_loaded:
+            self._events.append(event)
 
     def _save_reverted(self) -> None:
         self._reverted_path.parent.mkdir(parents=True, exist_ok=True)
@@ -253,6 +298,11 @@ class DatasetStore:
         self._batch += 1
         return self._batch
 
+    def _announce(self, records: list) -> None:
+        """Tell the change bus this dataset's data changed (UI push + on_change triggers).
+        ``records`` are the values just added/updated, for trigger pricing; [] = UI-only."""
+        changes.publish(self._game, self._dataset, records)
+
     # ---- mutation ----------------------------------------------------------
 
     def record_seen(self, values: dict) -> ChangeEvent | None:
@@ -260,6 +310,15 @@ class DatasetStore:
         key APPENDS a fresh observation when the merged record differs from its latest
         (so the key accumulates a history instead of overwriting). Returns the event, or
         ``None`` when the read is identical to the current latest (nothing to track)."""
+        if getattr(self._key, "dedup", True) is False:
+            # 1->many OFF: every read is its own record (keyed per event), never merged.
+            ev = self._new_event(ChangeOp.add, "", dict(values))
+            self._state[f"#{ev.id}"] = {"records": [{"values": dict(values), "ts": ev.ts}],
+                                        "first_seen": ev.ts, "last_seen": ev.ts, "present": True,
+                                        "_seq": ev.id, "values": dict(values)}
+            self._apply_agg(self._state[f"#{ev.id}"])
+            self._announce([dict(values)])
+            return ev
         key = self._key.build(values)
         if key is None:
             return None
@@ -269,8 +328,9 @@ class DatasetStore:
             ev = self._new_event(ChangeOp.add, key, dict(values))
             self._state[key] = {"records": [{"values": dict(values), "ts": ev.ts}],
                                 "first_seen": ev.ts, "last_seen": ev.ts, "present": True,
-                                "values": dict(values)}
+                                "_seq": ev.id, "values": dict(values)}
             self._apply_agg(self._state[key])
+            self._announce([dict(values)])
             return ev
 
         records = entry.setdefault("records", [])
@@ -288,6 +348,7 @@ class DatasetStore:
         entry["present"] = True
         entry.pop("removed_at", None)
         self._apply_agg(entry)                     # refresh the displayed (aggregated) value
+        self._announce([dict(merged)])
         return ev
 
     def reconcile(self, present_keys: set[str]) -> list[ChangeEvent]:
@@ -303,6 +364,8 @@ class DatasetStore:
                 entry["present"] = False
                 entry["removed_at"] = ev.ts
                 events.append(ev)
+        if events:
+            self._announce([])
         return events
 
     # ---- ledger / revert ---------------------------------------------------
@@ -311,6 +374,7 @@ class DatasetStore:
         self._save_reverted()
         self._state = self._replay()
         self.save()
+        self._announce([])
 
     def set_reverted(self, event_id: int, reverted: bool = True) -> None:
         """Revert (or un-revert) a single event."""
@@ -320,6 +384,7 @@ class DatasetStore:
     def revert_batch(self, batch: int, reverted: bool = True) -> None:
         """Revert (or restore) a whole batch — every record it added/changed falls back
         to its previous accepted value."""
+        self._ensure_events()
         ids = {e.id for e in self._events if e.batch == int(batch)}
         if reverted:
             self._reverted |= ids
@@ -330,6 +395,7 @@ class DatasetStore:
     def clear_data(self) -> None:
         """Empty the current records by reverting every event — KEEPS the batch ledger
         (each batch shows reverted and stays restorable)."""
+        self._ensure_events()
         self._reverted = {e.id for e in self._events}
         self._apply_reverted()
 
@@ -340,6 +406,7 @@ class DatasetStore:
     def remove_batch(self, batch: int) -> None:
         """Permanently delete a batch's events from the ledger (not just revert)."""
         batch = int(batch)
+        self._ensure_events()
         ids = {e.id for e in self._events if e.batch == batch}
         if not ids:
             return
@@ -349,13 +416,16 @@ class DatasetStore:
         self._save_reverted()
         self._state = self._replay()
         self.save()
+        self._announce([])
 
     def _replay_with(self, reverted: set[int]) -> dict[str, dict]:
+        self._ensure_events()
         return replay(self._events, reverted, self._key, self._agg)
 
     def batch_events(self, batch: int) -> list[dict]:
         """Every event of one batch in ledger order, each flagged reverted."""
         batch = int(batch)
+        self._ensure_events()
         out = []
         for ev in self._events:
             if ev.batch != batch:
@@ -372,6 +442,7 @@ class DatasetStore:
         (all other batches kept in their current reverted state). One row per affected
         key: kind add/update/remove, with before/after values and per-field old→new."""
         batch = int(batch)
+        self._ensure_events()
         bids = {e.id for e in self._events if e.batch == batch}
         if not bids:
             return []
@@ -402,6 +473,7 @@ class DatasetStore:
         """Replace one event's recorded values (re-keys it if the key field changed).
         Permanent — rewrites the ledger."""
         eid = int(event_id)
+        self._ensure_events()
         for ev in self._events:
             if ev.id == eid:
                 ev.values = dict(values)
@@ -414,6 +486,7 @@ class DatasetStore:
     def remove_event(self, event_id: int) -> bool:
         """Permanently delete one event from the ledger."""
         eid = int(event_id)
+        self._ensure_events()
         kept = [e for e in self._events if e.id != eid]
         if len(kept) == len(self._events):
             return False
@@ -423,10 +496,12 @@ class DatasetStore:
         self._save_reverted()
         self._state = self._replay()
         self.save()
+        self._announce([])
         return True
 
     def history(self, limit: int = 50) -> list[dict]:
         """Individual ledger events newest-first, each flagged reverted."""
+        self._ensure_events()
         out = []
         for ev in reversed(self._events[-limit:] if limit else self._events):
             d = ev.to_dict()
@@ -437,6 +512,7 @@ class DatasetStore:
     def batches(self, limit: int = 50) -> list[dict]:
         """The ledger as runs, newest-first: counts + a key sample, with a reverted flag
         (true when every event in the run is reverted)."""
+        self._ensure_events()
         groups: dict[int, list[ChangeEvent]] = {}
         for ev in self._events:
             groups.setdefault(ev.batch, []).append(ev)
@@ -468,7 +544,7 @@ class DatasetStore:
         (the default) — a dataset is served whole; callers don't truncate records."""
         rows = [{"key": k, "present": e.get("present", True),
                  "first_seen": e.get("first_seen"), "last_seen": e.get("last_seen"),
-                 "_count": len(e.get("records", [])),
+                 "_count": len(e.get("records", [])), "_seq": e.get("_seq"),
                  **e.get("values", {})} for k, e in self._state.items()]
         rows.sort(key=lambda r: (not r["present"], r["key"]))
         return rows[:limit] if limit and limit > 0 else rows

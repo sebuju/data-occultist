@@ -14,7 +14,8 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from ...enrich.price_runner import cancel_sweep, start_sweep, sweep_status
-from ...profile import list_profiles, load_profile
+from ...profile import list_profiles
+from ...runtime import load_live_profile
 from ...profile.models import PriceNodeDef
 from ...store import PriceStore
 from ..deps import get_settings
@@ -41,7 +42,7 @@ def _price_store(game: str) -> PriceStore:
 def _profile(game: str):
     settings = get_settings()
     if game in list_profiles(settings.profiles_dir):
-        return load_profile(settings.profiles_dir, game)
+        return load_live_profile(settings.profiles_dir, game)
     return None
 
 

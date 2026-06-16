@@ -147,6 +147,11 @@ def _join(inputs: list[tuple[str, list[dict]]], join_field: str) -> list[dict]:
     """Outer-join the source datasets on ``join_field`` (case-insensitive), unioning
     columns. A row without a join value stays standalone. Earlier inputs win column
     collisions (their non-empty value is kept); later inputs fill gaps."""
+    # A single source isn't joined — pass its rows through 1:1 (stripping bookkeeping cols).
+    # Joining by ``join_field`` would collapse same-key rows, which is wrong for a no-dedup
+    # dataset that intentionally keeps many rows per name.
+    if len(inputs) == 1:
+        return [{k: v for k, v in rec.items() if k not in _HIDDEN} for rec in inputs[0][1]]
     merged: dict[str, dict] = {}
     order: list[str] = []
     for ds_id, recs in inputs:

@@ -17,7 +17,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, Query
 
-from ...profile import load_profile
+from ...runtime import load_live_profile
 from ...registry import build_capture, capture_names
 from ..deps import get_engine, get_locator, get_settings
 
@@ -40,7 +40,7 @@ def bench(
 ):
     engine = get_engine()
     settings = get_settings()
-    profile = load_profile(settings.profiles_dir, game)
+    profile = load_live_profile(settings.profiles_dir, game)
     win = get_locator().locate(profile)
     if win is None:
         raise HTTPException(status_code=404, detail=f"Window for {game!r} not found")

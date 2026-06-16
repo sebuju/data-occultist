@@ -69,10 +69,15 @@ class KeySpec:
 @dataclass(frozen=True)
 class KeyMap:
     """Which :class:`KeySpec` keys a record: the template's own spec when the record
-    is tagged with the item that read it (``_item``), else the default."""
+    is tagged with the item that read it (``_item``), else the default.
+
+    ``dedup`` False turns OFF the 1->many collapse for the dataset: every observation is
+    kept as its OWN record (keyed per-event in the store) instead of merging same-key reads.
+    """
 
     default: KeySpec = KeySpec()
     by_item: dict[str, KeySpec] = field(default_factory=dict)
+    dedup: bool = True
 
     def spec_for(self, values: dict) -> KeySpec:
         return self.by_item.get(values.get("_item"), self.default)
@@ -93,5 +98,5 @@ class KeyMap:
         return out
 
     def meta(self) -> dict:
-        return {"default": self.default.meta(),
+        return {"default": self.default.meta(), "dedup": self.dedup,
                 "by_item": {k: v.meta() for k, v in sorted(self.by_item.items())}}

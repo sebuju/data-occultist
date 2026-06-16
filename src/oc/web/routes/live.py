@@ -10,7 +10,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ...collect.live import LiveSession
-from ...profile import list_profiles, load_profile
+from ...profile import list_profiles
+from ...runtime import load_live_profile
 from ..deps import get_engine, get_settings
 
 router = APIRouter(prefix="/api/live", tags=["live"])
@@ -38,7 +39,7 @@ def _session(game: str, create: bool = False) -> LiveSession:
         settings = get_settings()
         if game not in list_profiles(settings.profiles_dir):
             raise HTTPException(status_code=404, detail=f"no profile {game!r}")
-        s = _sessions[game] = LiveSession(get_engine(), load_profile(settings.profiles_dir, game))
+        s = _sessions[game] = LiveSession(get_engine(), load_live_profile(settings.profiles_dir, game))
     return s
 
 
@@ -46,7 +47,7 @@ def _refresh_profile(game: str, s: LiveSession) -> None:
     """Push the on-disk profile into the long-lived session before a run (no-op mid-run)."""
     settings = get_settings()
     if game in list_profiles(settings.profiles_dir):
-        s.update_profile(load_profile(settings.profiles_dir, game))
+        s.update_profile(load_live_profile(settings.profiles_dir, game))
 
 
 @router.post("/{game}/start")

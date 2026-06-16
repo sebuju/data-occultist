@@ -24,12 +24,37 @@ def test_dataset_def_lookup():
     assert p.dataset_def("missing") is None
 
 
-def test_dataset_def_carries_no_key():
-    # datasets only receive/store rows; the key moved to the item/window
+def test_dataset_def_legacy_key_fields_gone():
+    # legacy dataset keying (strip/case) moved to the item/window long ago
     d = DatasetDef(id="loot")
-    assert not hasattr(d, "key_field")
     assert not hasattr(d, "strip_nonalnum")
     assert not hasattr(d, "case_sensitive")
+
+
+def test_dataset_key_override_and_no_dedup():
+    from oc.store import KeySpec
+    # default: inherit window/item keys (no override)
+    p = GameProfile(name="g", datasets=[DatasetDef(id="loot")])
+    assert p.key_map_for("loot").dedup is True
+    # dataset-level single-field key override
+    p2 = GameProfile(name="g", datasets=[DatasetDef(id="loot", key_field="slug")])
+    assert p2.key_map_for("loot").default == KeySpec(fields=("slug",))
+    # no-dedup: every read its own record
+    p3 = GameProfile(name="g", datasets=[DatasetDef(id="loot", dedup=False)])
+    assert p3.key_map_for("loot").dedup is False
+
+
+def test_store_no_dedup_keeps_every_read(tmp_path):
+    from oc.store import DatasetStore, KeyMap, KeySpec
+    s = DatasetStore(tmp_path, "g", "d", key=KeyMap(KeySpec(), {}, dedup=False))
+    s.begin_batch()
+    s.record_seen({"name": "x", "p": 1})
+    s.record_seen({"name": "x", "p": 2})   # same name, but dedup OFF -> own record
+    s.record_seen({"name": "x", "p": 1})   # identical read -> still its own record
+    assert len(s.records()) == 3
+    # reopen: replay reconstructs the same 3 distinct records
+    s2 = DatasetStore(tmp_path, "g", "d", key=KeyMap(KeySpec(), {}, dedup=False))
+    assert len(s2.records()) == 3
 
 
 def test_warframe_profile_keys(tmp_path):

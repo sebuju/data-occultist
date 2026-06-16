@@ -285,9 +285,10 @@ class Collector:
                 result = self.tick()
                 if on_tick:
                     on_tick(result)
+                # on_change now fires via the dataset change bus (oc.store.changes) — any write,
+                # wherever it comes from, announces itself and the registered firer prices it.
+                # The collector only needs to drive the periodic (interval) triggers here.
                 if triggers is not None:
-                    if result.status is TickStatus.saved and result.changed:
-                        triggers.on_change(result.dataset, result.changed)
                     triggers.tick()
                 # interruptible wait: poll should_stop so cancel doesn't wait out the interval
                 if should_stop is not None:

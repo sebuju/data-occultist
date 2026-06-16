@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ...collect.suggest import analyze
 from ...ocr.serialize import ocr_job
-from ...profile import list_profiles, load_profile
+from ...profile import list_profiles
+from ...runtime import load_live_profile
 from ..deps import get_engine, get_locator, get_settings
 
 router = APIRouter(prefix="/api", tags=["suggest"])
@@ -22,7 +23,7 @@ def suggest(
     engine = get_engine()
     if game not in list_profiles(settings.profiles_dir):
         raise HTTPException(status_code=404, detail=f"No profile {game!r}")
-    profile = load_profile(settings.profiles_dir, game)
+    profile = load_live_profile(settings.profiles_dir, game)
     win = get_locator().locate(profile)
     if win is None:
         raise HTTPException(status_code=404, detail="game window not found")

@@ -18,13 +18,46 @@ or hitting the network.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
+from datetime import datetime, timezone
+from pathlib import Path
 
 from ..enrich.price_collector import inventory_slugs
 from ..enrich.price_runner import start_sweep, sweep_status
 from ..enrich.slug_resolver import get_resolver
 from ..enrich.wm_client import slugify
+
+
+# ---- last-activation tracking (shared across firers via a tiny sidecar) -------------
+
+def _fires_path(data_dir, game: str) -> Path:
+    return Path(data_dir) / game / ".trigger_fires.json"
+
+
+def read_fires(data_dir, game: str) -> dict:
+    """``{trigger_id: iso-timestamp}`` of the last time each trigger fired, or ``{}``."""
+    p = _fires_path(data_dir, game)
+    if not p.exists():
+        return {}
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def record_fire(data_dir, game: str, trigger_id: str) -> None:
+    """Stamp ``trigger_id`` as fired now (UTC). Cross-firer visible (web + collector)."""
+    p = _fires_path(data_dir, game)
+    d = read_fires(data_dir, game)
+    d[trigger_id] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(d), encoding="utf-8")
+    except OSError:
+        pass
 
 
 class TriggerRunner:
@@ -53,6 +86,7 @@ class TriggerRunner:
             if now - self._last.get(t.id, now) >= t.interval_s:
                 self._last[t.id] = now
                 self._fire_targets(t, items=None)   # node sources / catalogue decide
+                record_fire(self._data_dir, self._profile.name, t.id)
                 fired.append(t.id)
         return fired
 
@@ -71,6 +105,7 @@ class TriggerRunner:
             if items is None:
                 items = self._items_for(changed_records)
             self._fire_targets(t, items=items)
+            record_fire(self._data_dir, self._profile.name, t.id)
             fired.append(t.id)
         return fired
 

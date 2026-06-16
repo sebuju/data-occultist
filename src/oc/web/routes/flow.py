@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from ...profile import list_profiles, load_profile
+from ...profile import list_profiles
+from ...runtime import load_live_profile
 from ...store import KeySpec, inspect
 from ...store.dataset_store import DatasetStore
 from ..deps import get_settings
@@ -19,7 +20,7 @@ def flow(game: str):
     settings = get_settings()
     if game not in list_profiles(settings.profiles_dir):
         raise HTTPException(status_code=404, detail=f"No profile {game!r}")
-    profile = load_profile(settings.profiles_dir, game)
+    profile = load_live_profile(settings.profiles_dir, game)
 
     windows = []
     used_datasets = set()
@@ -46,25 +47,9 @@ def flow(game: str):
     return {"game": game, "windows": windows, "datasets": datasets}
 
 
-def _fire_on_change(game: str, dataset: str, records: list[dict]) -> list[str]:
-    """Re-applying batch rows from the UI is a dataset change like a collector read — fire any
-    on_change trigger watching ``dataset`` so it prices the restored rows. The collector loop
-    normally drives on_change, but it isn't running here. No-op when nothing watches the set."""
-    if not records:
-        return []
-    settings = get_settings()
-    if game not in list_profiles(settings.profiles_dir):
-        return []
-    profile = load_profile(settings.profiles_dir, game)
-    if not any(t.enabled and t.kind == "on_change" for t in profile.triggers):
-        return []
-    from ...collect.triggers import TriggerRunner
-    return TriggerRunner(profile, settings.data_dir).on_change(dataset, records)
-
-
 def _store(game: str, dataset: str, aggregate: str | None = None) -> DatasetStore:
     settings = get_settings()
-    profile = load_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
+    profile = load_live_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
     key = profile.key_map_for(dataset) if profile else KeySpec()
     # a view passes its OWN aggregate (the 'many → one' is the view's call); a bare
     # dataset read falls back to the dataset default (or "latest").
@@ -138,10 +123,12 @@ def revert_batch(game: str, dataset: str, batch: int, on: bool = True):
     added or changed falls back to its previous accepted value. Returns refreshed detail."""
     store = _store(game, dataset)
     store.revert_batch(batch, on)
-    if not on:   # restoring a batch re-applies its rows -> "new rows" for on_change triggers
+    if not on:   # restoring a batch re-applies its rows -> announce them so on_change prices them
         recs = [ev["values"] for ev in store.batch_events(batch)
                 if not ev.get("reverted") and ev.get("values")]
-        _fire_on_change(game, dataset, recs)
+        if recs:
+            from ...store import changes
+            changes.publish(game, dataset, recs)
     return _detail(store, dataset)
 
 
@@ -188,7 +175,7 @@ def _subset(game: str, subset: str):
     settings = get_settings()
     if game not in list_profiles(settings.profiles_dir):
         raise HTTPException(status_code=404, detail=f"No profile {game!r}")
-    profile = load_profile(settings.profiles_dir, game)
+    profile = load_live_profile(settings.profiles_dir, game)
     sub = profile.subset_def(subset)
     if sub is None:
         raise HTTPException(status_code=404, detail=f"No subset {subset!r}")

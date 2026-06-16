@@ -17,7 +17,8 @@ from ...learn.dictionary import build_dictionaries
 from ...learn.lexicon import Lexicon
 from ...learn.resolver import FieldResolver
 from ...ocr.serialize import ocr_job
-from ...profile import GameProfile, KeyDef, list_profiles, load_profile
+from ...profile import GameProfile, KeyDef, list_profiles
+from ...runtime import load_live_profile
 from ...store.dataset_store import DatasetStore
 from ...types import Frame, PixelBox
 from .. import captures_store
@@ -121,7 +122,7 @@ def detect_collisions(game: str):
     settings = get_settings()
     if game not in list_profiles(settings.profiles_dir):
         raise HTTPException(status_code=404, detail=f"no profile {game!r}")
-    profile = load_profile(settings.profiles_dir, game)
+    profile = load_live_profile(settings.profiles_dir, game)
     engine = get_engine()
     matcher = DetectMatcher(engine.ocr, str(settings.profiles_dir))
     bindings = captures_store.get_bindings(settings.captures_dir, game)

@@ -11,7 +11,8 @@ import cv2
 from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from ...profile import list_profiles, load_profile
+from ...profile import list_profiles
+from ...runtime import load_live_profile
 from .. import captures_store
 from ..deps import get_engine, get_locator, get_settings
 from ..encode import frame_to_jpeg
@@ -26,7 +27,7 @@ def detect_games():
     locator = get_locator()
     out = []
     for name in list_profiles(settings.profiles_dir):
-        profile = load_profile(settings.profiles_dir, name)
+        profile = load_live_profile(settings.profiles_dir, name)
         win = locator.locate(profile)
         out.append(
             {
@@ -44,7 +45,7 @@ def capture(game: str = Query(..., description="profile name"), stash: bool = Tr
     """Return a JPEG of the game window. ``stash=false`` (live view) skips saving."""
     engine = get_engine()
     settings = get_settings()
-    profile = load_profile(settings.profiles_dir, game)
+    profile = load_live_profile(settings.profiles_dir, game)
     win = get_locator().locate(profile)
     if win is None:
         raise HTTPException(status_code=404, detail=f"Window for {game!r} not found")
@@ -78,7 +79,7 @@ def live_grab(game: str):
     just return the current stats unchanged.
     """
     settings = get_settings()
-    profile = load_profile(settings.profiles_dir, game)
+    profile = load_live_profile(settings.profiles_dir, game)
     win = get_locator().locate(profile)
     if win is not None:
         frame = get_engine().capture.grab_window(win)

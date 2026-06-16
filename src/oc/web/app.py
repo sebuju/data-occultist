@@ -16,11 +16,13 @@ from .routes import (
     bench,
     capture,
     dictionaries,
+    events,
     flow,
     lexicon,
     live,
     ocr,
     precapture,
+    pretty,
     preview,
     prices,
     profiles,
@@ -89,6 +91,22 @@ async def lifespan(_app: FastAPI):
         _start_triggers(get_settings())
     except Exception:  # noqa: BLE001 - best-effort
         pass
+    # Fire on_change triggers for ANY dataset write in this process (form, sweep, preview,
+    # precapture, live collection, batch restore) via the dataset change bus.
+    try:
+        from ..collect.triggers import TriggerRunner
+        from ..runtime import load_live_profile
+        from ..store.changes import OnChangeFirer, subscribe
+
+        def _runner_for(game: str):
+            try:
+                profile = load_live_profile(get_settings().profiles_dir, game)
+                return TriggerRunner(profile, get_settings().data_dir) if profile.triggers else None
+            except Exception:  # noqa: BLE001
+                return None
+        subscribe(OnChangeFirer(_runner_for))
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
     yield
 
 
@@ -122,6 +140,8 @@ def create_app() -> FastAPI:
     app.include_router(activity.router)
     app.include_router(triggers.router)
     app.include_router(dictionaries.router)
+    app.include_router(pretty.router)
+    app.include_router(events.router)
     app.include_router(video.router)
     app.include_router(bench.router)
     # Serve the single-page front-end at root.

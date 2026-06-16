@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from ..collect.collector import Collector, TickResult, TickStatus
+from ..collect.triggers import TriggerRunner
 from ..engine import Engine
 from ..profile import load_profile
+from ..store.changes import OnChangeFirer, subscribe
 
 
 def register(sub) -> None:
@@ -31,6 +33,11 @@ def run(args) -> int:
     engine = Engine.build()
     profile = load_profile(engine.settings.profiles_dir, args.game)
     collector = Collector(engine, profile)
+    # on_change triggers fire off the dataset change bus now (not inline in the loop), so any
+    # write announces itself. Register the firer for this game.
+    if profile.triggers:
+        runner = TriggerRunner(profile, engine.settings.data_dir)
+        subscribe(OnChangeFirer(lambda _g: runner))
     if args.once:
         _print_tick(collector.tick())
         collector.close()

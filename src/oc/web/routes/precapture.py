@@ -13,7 +13,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from ...collect.precapture import PrecaptureSession
-from ...profile import list_profiles, load_profile
+from ...profile import list_profiles
+from ...runtime import load_live_profile
 from ..captures_store import _safe
 from ..deps import get_engine, get_settings
 from .ocr import read_mode
@@ -48,7 +49,7 @@ def _session(game: str, create: bool = False) -> PrecaptureSession:
         settings = get_settings()
         if game not in list_profiles(settings.profiles_dir):
             raise HTTPException(status_code=404, detail=f"no profile {game!r}")
-        s = _sessions[game] = PrecaptureSession(get_engine(), load_profile(settings.profiles_dir, game))
+        s = _sessions[game] = PrecaptureSession(get_engine(), load_live_profile(settings.profiles_dir, game))
     return s
 
 
@@ -57,7 +58,7 @@ def _refresh_profile(game: str, s: PrecaptureSession) -> None:
     detect/region boxes since the session was created actually take effect (no-op mid-run)."""
     settings = get_settings()
     if game in list_profiles(settings.profiles_dir):
-        s.update_profile(load_profile(settings.profiles_dir, game))
+        s.update_profile(load_live_profile(settings.profiles_dir, game))
 
 
 @router.post("/{game}/record/start")

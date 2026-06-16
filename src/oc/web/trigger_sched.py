@@ -22,7 +22,8 @@ import time
 
 from ..collect.triggers import TriggerRunner
 from ..enrich.price_runner import sweep_status
-from ..profile import list_profiles, load_profile
+from ..profile import list_profiles
+from ..runtime import load_live_profile
 
 _lock = threading.Lock()
 _runners: dict[str, tuple[str, TriggerRunner, object]] = {}   # game -> (config-sig, runner, profile)
@@ -36,7 +37,7 @@ def _sig(profile) -> str:
 
 def _runner_for(game: str, settings):
     """Per-game runner, kept across ticks so interval clocks persist; rebuilt on config change."""
-    profile = load_profile(settings.profiles_dir, game)
+    profile = load_live_profile(settings.profiles_dir, game)
     sig = _sig(profile)
     cur = _runners.get(game)
     if cur is None or cur[0] != sig:
@@ -89,13 +90,16 @@ def schedule(game: str, settings) -> list[dict]:
         except Exception:
             return []
         now = runner._clock()
+        from ..collect.triggers import read_fires
+        fires = read_fires(settings.data_dir, game)
         by_id = {p.id: p for p in profile.price_nodes}
         out: list[dict] = []
         for t in profile.triggers:
             targets = [{"id": pid, "dataset": by_id[pid].dataset,
                         "running": bool(sweep_status(game, by_id[pid].dataset).get("running"))}
                        for pid in t.targets if pid in by_id]
-            item = {"id": t.id, "kind": t.kind, "targets": targets, "enabled": bool(t.enabled)}
+            item = {"id": t.id, "kind": t.kind, "targets": targets, "enabled": bool(t.enabled),
+                    "last_fired": fires.get(t.id)}
             if t.kind == "interval":
                 item["interval_s"] = t.interval_s
                 if t.enabled:   # a disabled trigger never fires -> no countdown

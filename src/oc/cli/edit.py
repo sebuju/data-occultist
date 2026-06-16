@@ -20,5 +20,7 @@ def run(args) -> int:
         host=args.host,
         port=args.port,
         reload=args.reload,
+        # don't let a long-lived SSE stream block shutdown/reload forever — force-close after 5s
+        timeout_graceful_shutdown=5,
     )
     return 0
