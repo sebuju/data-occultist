@@ -53,7 +53,7 @@ export function triggerParts(t, model) {
     title: `<input class="gi gi-id tgrename" value="${esc(t.id)}" title="rename trigger" />`,
     body: `<div class="lab-grid">${labCell("kind", "how the trigger decides to fire")}<select class="tg-kind">${KINDS.map(kopt).join("")}</select>
       ${interval}${watch}${targets}</div>
-      <div class="gn-foot"><button class="tg-fire">↻ fire now</button><span class="tg-prog muted"></span></div>`,
+      <div class="gn-foot"><button class="tg-fire">↻ fire now</button><span class="tg-prog muted"></span><span class="tg-last muted" title="last time this trigger fired"></span></div>`,
     ports: `<span class="port out" title="drag to a price node this trigger should fire"></span>`
       + (kind === "on_change" ? `<span class="port pwatch" title="drag to a dataset or view to watch for new rows"></span>` : ""),
   };

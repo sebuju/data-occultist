@@ -22,13 +22,15 @@ const elapsed = (start, end) => {
 // Node title + body for a price producer. ``statistics`` mode shows the history chart +
 // movers; ``orders`` mode is a live lowest-sell snapshot (no candle history) so those are
 // omitted. The source <select> and sweep controls are common to both.
-export function priceParts(pn, cols = []) {
+export function priceParts(pn, cols = [], free = []) {
   const mode = pn.mode === "orders" ? "orders" : "statistics";
   const opt = (v, label) => `<option value="${v}"${v === mode ? " selected" : ""}>${label}</option>`;
   const hasSrc = (pn.sources || []).length;
-  const srcs = hasSrc
-    ? `<div class="pr-srcs gspan">prices: ${pn.sources.map((s) => `<span class="pr-src" data-ds="${esc(s)}">${esc(s)} <button class="pr-rmsrc" data-ds="${esc(s)}" title="stop pricing this source">${TRASH}</button></span>`).join("")}</div>`
-    : `<div class="pr-srcs gspan muted">prices: whole catalogue — drag a dataset/view here to price only those items</div>`;
+  // priced-item sources use the SAME chip + add-select input the subset's sources use.
+  const chips = (pn.sources || []).map((s) => `<span class="sv-input">${esc(s)}<button class="pr-rmsrc danger" data-ds="${esc(s)}" title="stop pricing this source">${TRASH}</button></span>`).join("");
+  const addOpts = ['<option value="">+ source…</option>'].concat(free.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`)).join("");
+  const hint = hasSrc ? "" : ` <span class="muted">empty = whole catalogue</span>`;
+  const srcs = `${labCell("prices", "datasets/views whose items to price (empty = whole market catalogue)", true)}<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="pr-addsrc">${addOpts}</select></span>${hint}</div>`;
   // which source column names the item to price (resolved to a market slug). Only relevant
   // when sourcing from datasets/views (the whole-catalogue sweep needs no key).
   const nf = pn.source_field || "name";

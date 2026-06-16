@@ -447,9 +447,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
   background: transparent; border: 0; color: var(--muted); line-height: 0; }
 .gn-detach:hover { color: var(--accent); }
 .gn-detach svg { display: block; margin: auto; }
-/* toggle is the first of the right-hand cluster: it takes the auto margin (pushing it +
-   detach + delete to the right, via the base .gn-enable rule), and the others drop theirs
-   so the gap (not a second auto) spaces them. */
+/* detach sits at the LEFT edge of the header (first action button, right after the disc),
+   not in the right-hand cluster — so it gets no auto margin. The right cluster (toggle +
+   delete) is pushed right by the base .gn-enable / .gn-del margin-left:auto. */
 .gnode.in-group .gn-detach { display: inline-flex; align-items: center; justify-content: center; margin-left: 0; }
-.gnode.in-group .gn-detach ~ .gn-del { margin-left: 0; }
 

@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/css/controls.css" />
   <link rel="stylesheet" href="/css/flow.css" />
   <link rel="stylesheet" href="/css/tables.css" />
+  <link rel="stylesheet" href="/css/pretty.css" />
   <link rel="stylesheet" href="/floatwin.css" />
 </head>
 <body spellcheck="false">
@@ -35,6 +36,17 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
       kill gpu
     </button>
+    <!-- node ⇄ pretty view switch (both views are the same SPA; pretty is a convenience layer) -->
+    <div class="pw-viewtoggle">
+      <button class="vt active" id="vtNode" title="node view: the graph editor">node</button>
+      <button class="vt" id="vtPretty" title="pretty view: the built dashboard surface">pretty</button>
+    </div>
+    <!-- pretty-dirty controls: shown in node view only when transient overrides exist -->
+    <div class="pw-dirtybar" id="prettyDirtyBar" hidden>
+      <span class="pw-dirty-count" id="prettyDirtyCount"></span>
+      <button id="prettyRevertBtn" class="modebtn" title="revert pretty overrides to the authored yaml (click again to confirm)">revert pretty</button>
+      <button id="prettySaveBtn" class="modebtn" title="save pretty overrides into the yaml (click again to confirm)">save pretty</button>
+    </div>
     <!-- floating-window toggles. testing sits leftmost; a spacer pushes the rest right. -->
     <div class="topbar-tools">
       <button id="testingBtn" class="modebtn" title="testing: feed a recorded video through live OCR (no game needed)">testing</button>
@@ -45,6 +57,8 @@
       <button id="nodemapBtn" class="modebtn" title="node map: overview + jump to any node">map</button>
       <button id="activityBtn" class="modebtn" title="tasks: live price sweeps + precapture progress">tasks</button>
     </div>
+    <!-- pretty view tools replace .topbar-tools in pretty mode; filled by pretty/topbar.js -->
+    <div class="topbar-pretty-tools" id="prettyTools"></div>
   </header>
 
   <!-- Selection toolbar: fixed under the topbar, shown only while >1 node is
@@ -160,6 +174,8 @@
       </div>
       <div id="marquee" class="marquee" hidden></div>
     </div>
+    <!-- Pretty Studio surface: same SPA, shown instead of #graph in pretty view. Mounted lazily. -->
+    <div id="pretty"></div>
   </main>
 
   <div id="logbar" class="logbar">

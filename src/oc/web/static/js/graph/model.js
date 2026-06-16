@@ -67,6 +67,12 @@ export class GraphModel {
   // how a key's many observations collapse to the displayed value
   datasetAggregate(id) { const d = this.datasetDef(id); return (d && d.aggregate) || "latest"; }
   setDatasetAggregate(id, agg) { this.ensureDatasetDef(id).aggregate = agg || "latest"; }
+  // The field the dataset's 1->many collapse keys on: "" = inherit the window/item keys.
+  datasetKeyField(id) { const d = this.datasetDef(id); return (d && d.key_field) || ""; }
+  setDatasetKeyField(id, f) { const d = this.ensureDatasetDef(id); d.key_field = f || ""; d.dedup = true; }
+  // Whether the dataset does the 1->many collapse at all (false = keep every read as its own row).
+  datasetDedup(id) { const d = this.datasetDef(id); return !d || d.dedup !== false; }
+  setDatasetDedup(id, on) { this.ensureDatasetDef(id).dedup = !!on; }
   // SINGLE SOURCE OF TRUTH for every place a dataset id is stored, as live get/set accessors.
   // `decl: true` sites DECLARE a dataset's existence (a node literally IS this dataset);
   // ref sites merely point at one (a consumer). EVERYTHING that lists or renames datasets
@@ -246,6 +252,15 @@ export class GraphModel {
     return true;
   }
   removePriceSource(id, ds) { const pn = this.priceNode(id); if (pn) pn.sources = (pn.sources || []).filter((d) => d !== ds); }
+  // datasets + views a price node can still add as a priced-item source (minus current ones
+  // and its own output dataset) — feeds the same chip/add-select input the subset uses.
+  priceJoinable(pn) {
+    const cur = new Set(pn.sources || []);
+    const out = [];
+    for (const d of this.datasets()) if (!cur.has(d) && d !== pn.dataset) out.push(d);
+    for (const s of this.profile.subsets || []) if (!cur.has(s.id)) out.push(s.id);
+    return out;
+  }
   // which source column names the item to price (resolved to a market slug). Default "name".
   setPriceSourceField(id, f) { const pn = this.priceNode(id); if (pn) pn.source_field = f || "name"; }
   // columns available across a price node's source datasets/views (for the name-field picker)

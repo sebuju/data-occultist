@@ -21,7 +21,8 @@ import { triggerParts } from "./trigger_node.js";
 import { openDictionaryPicker } from "./dict_picker.js";
 import { enhanceTable, setTableStore } from "./table.js";
 import { VTable, setVTableStore } from "../vtable.js";
-import { initPersist, persist } from "./persist.js";
+import { initPersist, persist, setScrubHook } from "./persist.js";
+import * as prettyOverrides from "../pretty/overrides.js";
 import { buildBackups } from "./backups.js";
 import * as groups from "./groups.js";
 import { initTitlebar } from "../titlebar.js";
@@ -167,7 +168,7 @@ function collectLayout() {
   L.super_groups = groups.collectSuper();   // groups-of-groups travel with the profile too
   // floating panels (node map / activity / precapture) travel with the profile
   const fw = {};
-  for (const [id, w] of floatWins()) fw[id] = w.collect();
+  for (const [id, w] of floatWins()) if (!id.startsWith("pretty-")) fw[id] = w.collect();   // pretty panels are session-only (auto-fit, not persisted)
   L.float_windows = fw;
 }
 function hydrateLayout() {
@@ -1200,7 +1201,7 @@ function nodeParts(n) {
     };
   }
   if (n.type === "subset") return subsetParts(n.ref);
-  if (n.type === "price") return priceParts(n.ref, model.priceSourceColumns(n.ref));
+  if (n.type === "price") return priceParts(n.ref, model.priceSourceColumns(n.ref), model.priceJoinable(n.ref));
   if (n.type === "trigger") return triggerParts(n.ref, model);
   if (n.type === "dictionary") {
     // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The
@@ -1220,9 +1221,15 @@ function nodeParts(n) {
   // The key itself is no concern of the dataset: it's taught on the item templates
   // (or windows) that read the records.
   const ds = n.ref;
+  const noDedup = !model.datasetDedup(ds);
+  const kf = model.datasetKeyField(ds);
+  const keyOpts = ['<option value="">key: from windows</option>']
+    .concat(model.datasetFields(ds).map((f) => `<option value="${esc(f)}"${!noDedup && kf === f ? " selected" : ""}>key: ${esc(f)}</option>`))
+    .concat([`<option value="__nodedup__"${noDedup ? " selected" : ""}>no dedup (keep every read)</option>`]).join("");
   return {
     title: `<input class="gi gi-id dsrename" value="${esc(ds)}" title="dataset name" />`,
-    body: `<div class="gn-foot"><button class="dssubset">+ view</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
+    body: `<div class="lab-grid"><label class="flab">1→many <select class="dskey" title="the key the dataset collapses many reads on (or none)">${keyOpts}</select></label></div>
+      <div class="gn-foot"><button class="dssubset">+ view</button><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
       <div class="ds-tabs" role="tablist">
         <button class="ds-tab on" data-tab="data" role="tab">data <span class="ds-tab-n data-n"></span></button>
         <button class="ds-tab" data-tab="batches" role="tab" title="this dataset's collection/save runs">batches <span class="ds-tab-n bat-n"></span></button>
@@ -1328,7 +1335,16 @@ function subConfigHTML(s) {
   // if not in the live column set yet.
   const jf = s.join_field || "name";
   const joinOpts = [...new Set([jf, ...cols])].map((c) => `<option${c === jf ? " selected" : ""}>${esc(c)}</option>`).join("");
+  // join-on only matters when 2+ sources are combined; with a single source there's nothing
+  // to join across, so hide the row entirely (the field still persists for when a source is added)
+  const joinRow = inputs.length > 1
+    ? `${labCell("join on", "shared field the sources are joined on")}<select class="sv-join">${joinOpts}</select>`
+    : "";
   const aggOpts = AGGREGATES.map((a) => `<option${a === model.subsetAggregate(s.id) ? " selected" : ""}>${a}</option>`).join("");
+  // the "many →" collapse only does anything when an INPUT dataset dedups (a no-dedup dataset
+  // already serves one row per read) — show it only then.
+  const showAgg = model.subsetInputs(s).some((inp) => !model.subsetDef(inp) && model.datasetDedup(inp));
+  const aggRow = showAgg ? `${labCell("many →", "how each key's many observations collapse to one value")}<select class="sv-agg">${aggOpts}</select>` : "";
   const filters = (s.filters || []).map((f, i) => `<div class="sub-row" data-i="${i}">
       <select class="sf-field" data-i="${i}">${_colOpts(cols, f.field)}</select>
       <select class="sf-op" data-i="${i}">${SUB_OPS.map((o) => `<option${o === f.op ? " selected" : ""}>${o}</option>`).join("")}</select>
@@ -1347,9 +1363,9 @@ function subConfigHTML(s) {
   return `
     <div class="sub-sec lab-grid">
       ${labCell("sources", "datasets or views, joined on a shared field", true)}<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="sv-addin">${addOpts}</select></span></div>
-      ${labCell("join on", "shared field the sources are joined on")}<select class="sv-join">${joinOpts}</select>
+      ${joinRow}
       ${labCell("limit", "cap the number of result rows (0 = no limit)")}<input type="number" class="sv-limit" min="0" step="1" value="${s.limit || 0}" placeholder="0" />
-      ${labCell("many →", "how each key's many observations collapse to one value")}<select class="sv-agg">${aggOpts}</select></div>
+      ${aggRow}</div>
     <div class="sub-sec"><div class="sub-lbl">filters <span class="muted">(all must pass)</span></div>${filters}
       <button class="sub-addf">+ filter</button></div>
     <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">({col} text · {=expr} math · mix freely)</span></div>${derived}
@@ -1489,9 +1505,13 @@ function wirePrice(div, n) {
     if (!model.renamePriceNode(oldId, newId)) { e.target.value = oldId; return; }
     movePos(`price:${oldId}`, `price:${newId}`); render(); autosave();
   });
-  // unwire a priced-item source (the dataset/view it prices) — removes the input edge
+  // add a priced-item source via the chip add-select (same input the subset uses)
+  div.querySelector(".pr-addsrc")?.addEventListener("change", (e) => {
+    if (e.target.value && model.addPriceSource(n.ref.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(); }
+  });
+  // unwire a priced-item source — rebuild the node so the chip goes too, and redraw the edge
   div.querySelectorAll(".pr-rmsrc").forEach((b) => b.addEventListener("click", () => {
-    model.removePriceSource(n.ref.id, b.dataset.ds); render(); autosave();
+    model.removePriceSource(n.ref.id, b.dataset.ds); rebuildNode(n.id); drawEdges(); autosave();
   }));
 }
 
@@ -1587,7 +1607,8 @@ function fillNode(div, n) {
   // field nodes carrying fallback rules get a wider natural width (the rule row packs three
   // selects + a value + trash on one line) so a size RESET lands wide enough, not crushed.
   const hasRules = (n.type === "itemfield" || n.type === "region") && (n.field?.rules?.length || 0) > 0;
-  div.className = `gnode ${n.type}${isCollapsed ? " collapsed" : ""}${enabled ? "" : " node-disabled"}${hasRules ? " has-rules" : ""}`;
+  const prettyDirty = prettyOverrides.isNodeDirty(n.id);
+  div.className = `gnode ${n.type}${isCollapsed ? " collapsed" : ""}${enabled ? "" : " node-disabled"}${hasRules ? " has-rules" : ""}${prettyDirty ? " pretty-dirty" : ""}`;
   if (n.type === "dataset") { div.dataset.ds = n.ref; div.dataset.tab = dsTab.get(n.ref) || "data"; }
   const parts = nodeParts(n);
   const toggle = canToggle
@@ -1612,7 +1633,7 @@ function fillNode(div, n) {
       <span class="gn-disc" title="collapse/expand">${nodeIcon(n)}<button class="collapse" aria-label="collapse/expand">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
           <rect x="3.5" y="3.5" width="17" height="17" rx="5.5"/><line x1="8" y1="12" x2="16" y2="12"/><line class="cv" x1="12" y1="8" x2="12" y2="16"/>
-        </svg></button></span>${parts.title}${parts.head || ""}${toggle}${detach}${del}<span class="gn-type" aria-hidden="true">${esc(n.type === "itemfield" ? "field" : n.type === "itemtell" ? "tell" : n.type)}</span></div>
+        </svg></button></span>${detach}${parts.title}${parts.head || ""}${toggle}${del}<span class="gn-type" aria-hidden="true">${esc(n.type === "itemfield" ? "field" : n.type === "itemtell" ? "tell" : n.type)}</span><span class="gn-pretty-dirty" title="held by a pretty override — not saved to yaml">pretty</span></div>
     <div class="gn-body">${parts.body}</div>
     <span class="gn-spin" title="working…"></span>${parts.ports || ""}`;
   div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
@@ -1987,11 +2008,23 @@ function updateOverlayZoom() {
   for (const [, rec] of overlays) rec.overlay.setWorldZoom(view.zoom);   // every overlay (window + item)
 }
 
+// Is the cursor over an element whose content actually overflows and can scroll? Walk up to
+// the canvas; the wheel belongs to that element (native scroll), not to the canvas zoom.
+function scrollableUnder(target) {
+  for (let n = target; n && n.id !== "graph" && !n.classList?.contains("graphcanvas"); n = n.parentElement) {
+    if (n.classList?.contains("scrollhost")) return true;
+    const oy = getComputedStyle(n).overflowY;
+    if ((oy === "auto" || oy === "scroll") && n.scrollHeight > n.clientHeight + 1) return true;
+  }
+  return false;
+}
+
 function onWheel(ev) {
   // Ctrl/Cmd+wheel belongs to the browser (page zoom) — don't hijack it or preventDefault.
   if (ev.ctrlKey || ev.metaKey) return;
-  // a SELECTED preview, or the batches ledger, scrolls its content; everywhere else zoom
-  if (ev.target.closest(".scrollhost")) return;
+  // anything scrollable under the cursor (preview/batches scrollhost, overflowing tables/lists)
+  // scrolls its own content; everywhere else the wheel zooms the canvas
+  if (scrollableUnder(ev.target)) return;
   ev.preventDefault();
   const rect = $("graph").getBoundingClientRect();
   const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
@@ -2114,6 +2147,14 @@ function wireNode(div, n) {
         inheritGroupFrom(`sub:${id}`, `ds:${n.ref}`); groups.renderGroups();
         autosave(); panTo(`sub:${id}`);
       }
+    });
+    div.querySelector(".dskey")?.addEventListener("change", async (e) => {
+      const v = e.target.value;
+      if (v === "__nodedup__") model.setDatasetDedup(n.ref, false);
+      else model.setDatasetKeyField(n.ref, v);
+      autosave();
+      await persist.flush();   // re-key on disk before re-reading
+      refreshDataNode(n.ref); refreshAllSubsetNodes();
     });
     const clearBtn = div.querySelector(".dsclear");
     clearBtn?.addEventListener("click", async () => {
@@ -2449,6 +2490,39 @@ async function refreshGames(select) {
   if (select && names.includes(select)) $("gameSelect").value = select;
 }
 
+// Node view listens to the dataset change bus over SSE — any write/edit (collection, sweep,
+// form, manual edit, revert) refreshes the affected data node + subset/batch nodes at once,
+// instead of waiting for the hub heartbeat to notice a coarse count change.
+let _evStream = null;
+const _evPending = new Set();
+let _evTimer = null;
+function _flushEvents() {
+  _evTimer = null;
+  const changed = [..._evPending]; _evPending.clear();
+  for (const ds of changed) if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
+  // refresh ONLY subset nodes that actually read a changed dataset (recomputing every subset
+  // on each event hammered the backend — heavy joins timed out).
+  for (const s of model.profile.subsets || []) {
+    if (!nodeEls.has(`sub:${s.id}`)) continue;
+    if (changed.some((ds) => model.subsetReaches(s.id, ds))) refreshSubsetNode(s.id);
+  }
+  refreshAllBatchesNodes();
+}
+function openEventStream(name) {
+  if (_evStream) { _evStream.close(); _evStream = null; }
+  if (!name) return;
+  try {
+    _evStream = new EventSource(`/api/events/${encodeURIComponent(name)}`);
+    _evStream.addEventListener("dataset", (e) => {
+      let ds = null; try { ds = JSON.parse(e.data).dataset; } catch { /* */ }
+      if (ds) _evPending.add(ds);
+      clearTimeout(_evTimer); _evTimer = setTimeout(_flushEvents, 200);   // debounce bursts
+    });
+    // NOTE: no refetch on "ready" — streams are short-lived (frequent reconnects) and a
+    // dataset refresh parses the ledger; rely on "dataset" events + the hub heartbeat instead.
+  } catch { /* no EventSource -> hub heartbeat still covers it */ }
+}
+
 async function loadGame(name) {
   if (!name) return;
   await persist.flush();   // commit any pending save before switching games
@@ -2483,6 +2557,9 @@ async function loadGame(name) {
   hydrateLayout();        // restore node positions/sizes/collapse/open-images from the profile
   applyLocal(local);      // restore canvas zoom/pan + minimap from the per-device sidecar
   render();
+  await prettyOverrides.initOverrides(name);   // layer this game's transient pretty overrides onto the model
+  refreshDirtyUI();
+  if (prettyActive && _pretty) _pretty.setPrettyGame(name);
   // reopen saved images (canvas lives in node); awaited so boot can tell when the
   // initial image loads (and the detects they fire) have actually started. MUST run BEFORE
   // grouping orphans: grouping a NEW orphan child persists the layout, and collectLayout
@@ -2496,6 +2573,7 @@ async function loadGame(name) {
   resetHistory();   // fresh undo/redo baseline for this game
   if (migrated) persist.layout();   // lock in node layout imported from legacy localStorage
   refreshLive();
+  openEventStream(name);   // live dataset push for node view
   hub.kick();   // new game -> beat the hub so every panel re-reflects its state now
   setStatus(`loaded ${name}`);
 }
@@ -2559,6 +2637,76 @@ for (const [btnId, panelId] of Object.entries(_PANEL_TOGGLES)) {
     else setTimeout(() => floatWins().get(panelId)?.resetBox(), 0);
   }, true);
 }
+// ---- Pretty Studio: node ⇄ pretty view switch + pretty-dirty controls -----------
+// Pretty is a convenience surface in the SAME SPA; switching just swaps which container +
+// topbar tools are visible. The controller is imported lazily on first switch.
+let prettyActive = false;
+let _pretty = null;
+let _hiddenNodePanels = [];
+
+// Node-view floating panels belong to the node view: hide them while in pretty, restore the
+// ones that were open on return (open state remembered, never reset).
+const _NODE_PANELS = ["nodemap", "activity", "testing", "toolbox", "live", "precap"];
+function setNodePanelsHidden(hidden) {
+  if (hidden) {
+    _hiddenNodePanels = [];
+    for (const id of _NODE_PANELS) { const w = floatWins().get(id); if (w && w.state.visible) { _hiddenNodePanels.push(id); w.setVisible(false); } }
+  } else {
+    for (const id of _hiddenNodePanels) floatWins().get(id)?.setVisible(true);
+    _hiddenNodePanels = [];
+  }
+}
+
+async function setPrettyView(on) {
+  if (on === prettyActive) return;
+  prettyActive = on;
+  document.body.classList.toggle("pretty-mode", on);
+  $("vtNode")?.classList.toggle("active", !on);
+  $("vtPretty")?.classList.toggle("active", on);
+  $("pretty")?.classList.toggle("active", on);
+  if (on) {
+    setNodePanelsHidden(true);   // node tools go out while pretty is up
+    try {
+      _pretty = _pretty || await import("../pretty/pretty.js");
+      if (!_pretty.isMounted()) await _pretty.mountPretty($("pretty"), $("prettyTools"), model.profile.name);
+      else await _pretty.setPrettyGame(model.profile.name);
+      _pretty.activatePretty();
+    } catch (e) { setStatus(`pretty: ${e.message || e}`); }
+  } else {
+    if (_pretty) _pretty.deactivatePretty();   // pretty tools go out
+    setNodePanelsHidden(false);                // node tools come back as they were
+  }
+}
+$("vtNode")?.addEventListener("click", () => setPrettyView(false));
+$("vtPretty")?.addEventListener("click", () => setPrettyView(true));
+
+// Show the revert/save-pretty controls only while transient overrides exist.
+function refreshDirtyUI() {
+  const bar = $("prettyDirtyBar");
+  if (!bar) return;
+  const has = prettyOverrides.hasDirty();
+  bar.hidden = !has;
+  const c = $("prettyDirtyCount");
+  if (c) c.textContent = has ? `${prettyOverrides.dirtyCount()} pretty` : "";
+}
+// Armed two-click confirm (no blocking dialogs — rule 2), shared by both buttons.
+function armConfirm(btn, run) {
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    if (btn.dataset.armed !== "1") { btn.dataset.armed = "1"; btn.dataset.label = btn.textContent; btn.textContent = "confirm"; setTimeout(() => { if (btn.dataset.armed === "1") { btn.dataset.armed = "0"; btn.textContent = btn.dataset.label; } }, 2500); return; }
+    btn.dataset.armed = "0"; btn.textContent = btn.dataset.label || btn.textContent; run();
+  });
+}
+armConfirm($("prettyRevertBtn"), () => prettyOverrides.revertAll());
+armConfirm($("prettySaveBtn"), () => prettyOverrides.commit());
+
+prettyOverrides.setOverrideHooks({
+  rebuildNode: (id) => { if (nodeEls.has(id)) rebuildNode(id); },
+  onChange: refreshDirtyUI,
+  persistFlush: () => persist.flush(),
+});
+setScrubHook(prettyOverrides.scrubForSave);
+
 $("selGroupBtn").addEventListener("click", () => groupShortcut());
 
 // The current selection the group action operates on: the multi-select set if any,

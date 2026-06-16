@@ -7,7 +7,8 @@ import * as hub from "../../hub.js";
 import { log } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
-import { $, model } from "../state.js";
+import { $, model, nodeEls } from "../state.js";
+import { since } from "../../datefmt.js";
 import { autosave } from "../main.js";
 
 // ---- activity panel (live sweeps + precapture) ----------------------------
@@ -166,8 +167,22 @@ function activityJobs(data, elapsed = 0) {
   return jobs;
 }
 
+// Reflect each trigger's last-activation onto its node (reconcile-in-place: textContent set
+// only when it actually changes — steady-state is zero DOM writes except as the "since" label
+// ticks over).
+function updateTriggerNodes(data) {
+  for (const t of (data.triggers || [])) {
+    const span = nodeEls.get(`trigger:${t.id}`)?.querySelector(".tg-last");
+    if (!span) continue;
+    const running = (t.targets || []).some((x) => x.running);
+    const txt = running ? "firing now…" : (t.last_fired ? `last fired ${since(t.last_fired)}` : "never fired");
+    if (span.textContent !== txt) span.textContent = txt;
+  }
+}
+
 function renderActivity(data, elapsed = 0) {
   if (!act) return;
+  updateTriggerNodes(data);
   const list = act.body.querySelector(".act-list");
   const jobs = activityJobs(data, elapsed);
   const want = new Set(jobs.map((j) => j.key));

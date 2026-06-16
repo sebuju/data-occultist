@@ -43,7 +43,7 @@ async function refreshDataNode(ds) {
   const host = dataHost(ds);
   if (!host) return;
   try {
-    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
+    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
     const recs = (await r.json()).records || [];
     const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
     vtableFor(`ds:${ds}`, host).setData(cols, recs, {
