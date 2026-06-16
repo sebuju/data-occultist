@@ -195,32 +195,52 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    nodes aren't dotted with empty ports; it's still grabbable once shown. */
 .gnode .port.port-idle { opacity: 0; pointer-events: none; transition: opacity .1s; }
 .gnode:hover .port.port-idle { opacity: 1; pointer-events: auto; }
-.gedge { fill: none; stroke: var(--line); stroke-width: 1.8; }
+/* every line caps BOTH ends with the small square by default; the more-specific edge rules
+   below (.gedge.flow/.toview/.trigger/.watch) override only marker-end with their own glyph,
+   so a line keeps the square wherever it has no arrow/chevron/diamond (incl. the port start). */
+.gedge { fill: none; stroke: var(--line); stroke-width: 1.8; marker-start: url(#squarecap); marker-end: url(#squarecap); }
+.squarecap-head { fill: context-stroke; }   /* square takes the line's colour (or accent when selected) */
 .gedge.data { stroke: var(--data); opacity: 1; }   /* data flow: solid bright orange */
 .gedge.toview { marker-end: url(#flowarrow); }                     /* dataset -> view: solid + arrow */
 /* producer → dataset (a node pushing data OUT): emphasised + an arrowhead so the flow
    direction reads at a glance. No animation (constant repaint is too costly). */
 .gedge.flow { stroke-width: 1.8; opacity: 1; marker-end: url(#flowarrow); }
 .flowarrow-head { fill: context-stroke; }   /* arrow takes the line's colour (orange, or accent when selected) */
-.gedge.ownwin { stroke: var(--accent); opacity: 0.6; }   /* game→window: match the window icon tint */
-.gedge.field { stroke: var(--accent); opacity: 0.5; }
-.gedge.detect, .gedge.scrollbar { stroke: var(--ok); opacity: 0.5; }
-.gedge.state { stroke: var(--warn); opacity: 0.5; }
-.gedge.item { stroke: var(--record); opacity: 0.6; }
-.gedge.tell { stroke: var(--ok); opacity: 0.5; }   /* item -> its tell nodes (pass/fail checks) */
-.gedge.attach { stroke: var(--accent); opacity: 0.85; }
-.gedge.img { stroke: var(--muted); stroke-dasharray: 2 4; opacity: 0.7; }
-.gedge.usedict { stroke: var(--muted); stroke-dasharray: 2 4; opacity: 0.45; }   /* field -> the dictionary it snaps to */
+.gedge.ownwin { stroke: var(--accent); }   /* game→window: match the window icon tint */
+.gedge.field { stroke: var(--accent); }
+.gedge.detect, .gedge.scrollbar { stroke: var(--ok); }
+.gedge.state { stroke: var(--warn); }
+.gedge.item { stroke: var(--record); }
+.gedge.tell { stroke: var(--ok); }   /* item -> its tell nodes (pass/fail checks) */
+.gedge.attach { stroke: var(--accent); }
+.gedge.img { stroke: var(--muted); stroke-dasharray: 2 4; }
 /* trigger -> the price node it fires: cyan, solid, ending in a » go/activate chevron (not the flow
    arrow). marker-end overrides .gedge.flow's #flowarrow (same specificity, declared later wins). */
-.gedge.trigger { stroke: var(--trigger-line); opacity: 0.95; marker-end: url(#triggergo); }
+.gedge.trigger { stroke: var(--trigger-line); marker-end: url(#ringcap); }
 .triggergo-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }   /* » = go/activate, takes the line's colour */
 .triggerbar-head { stroke: context-stroke; stroke-width: 2; }   /* reusable bar end-cap (takes the line's colour); not on the trigger line now */
 /* watched dataset/view -> on_change trigger: own teal, fine dotted, ending in a diamond —
    distinct from data (solid orange), trigger (solid cyan+bar) and state (amber). */
-.gedge.watch { stroke: var(--watch-line); stroke-dasharray: 1 5; stroke-linecap: round; opacity: 0.9; marker-end: url(#watchcap); }
+.gedge.watch { stroke: var(--watch-line); stroke-dasharray: 1 5; stroke-linecap: round; marker-end: url(#watchcap); }
 .watchcap-head { fill: context-stroke; }   /* diamond takes the line's colour (teal, or accent when selected) */
-.gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; }
+/* ---- reusable end-glyph palette (see #defs in index.html). Filled glyphs take the line's
+   colour via fill:context-stroke; stroked glyphs via stroke:context-stroke. No edge kind uses
+   these yet — set `marker-end: url(#name)` on a `.gedge.<kind>` to wire one. ---- */
+.dotcap-head { fill: context-stroke; }
+.ringcap-head { fill: none; stroke: context-stroke; stroke-width: 1.6; }
+.chevroncap-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.teecap-head { fill: none; stroke: context-stroke; stroke-width: 2; stroke-linecap: round; }
+.crowfoot-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; }
+.triopen-head { fill: none; stroke: context-stroke; stroke-width: 1.4; stroke-linejoin: round; }
+.squareopen-head { fill: none; stroke: context-stroke; stroke-width: 1.4; }
+.diamondopen-head { fill: none; stroke: context-stroke; stroke-width: 1.4; stroke-linejoin: round; }
+.pluscap-head { fill: none; stroke: context-stroke; stroke-width: 2; stroke-linecap: round; }
+.xcap-head { fill: none; stroke: context-stroke; stroke-width: 2; stroke-linecap: round; }
+.dblbar-head { fill: none; stroke: context-stroke; stroke-width: 1.8; stroke-linecap: round; }
+.barbcap-head { fill: none; stroke: context-stroke; stroke-width: 1.8; stroke-linecap: round; }
+.stealthcap-head { fill: context-stroke; }
+.circlebar-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; }
+.gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; marker-start: none; marker-end: none; }   /* live drag line: no caps */
 .gedge.sel { stroke: var(--accent) !important; stroke-width: 2.2; opacity: 1 !important; }
 /* a line touching a disabled node is greyed (it carries no live data) */
 .gedge.dis-edge { filter: grayscale(1); opacity: 0.4; }
@@ -235,10 +255,14 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* busy state: just a centred spinner — no dimming scrim over the node (reads fire on every
    edit now, so a full-node dim would flash constantly). The header (z2, set above) stays above it. */
 .gn-spin { position: absolute; inset: 0; z-index: 1; pointer-events: none; border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
   opacity: 0; visibility: hidden;
   transition: opacity 0.18s ease, visibility 0.18s ease; }
-.gn-spin::after { content: ""; width: 30px; height: 30px; border-radius: 50%;
+/* centre with absolute pos + a fixed margin offset (NOT flexbox) so the ring's rotation is
+   layout-independent: while the node is busy it reflows (OCR reads fire), and flex re-centring
+   each frame landed the rotation origin on a half-pixel — the ring visibly wobbled. The only
+   transform now is the pure rotate, spun about the ring's own centre. */
+.gn-spin::after { content: ""; position: absolute; top: 50%; left: 50%; margin: -15px 0 0 -15px;
+  width: 30px; height: 30px; border-radius: 50%;
   border: 3px solid #ffffff26; border-top-color: var(--accent); }
 .gnode.busy .gn-spin { opacity: 1; visibility: visible; }
 .gnode.busy .gn-spin::after { animation: spin 0.7s linear infinite; }
@@ -252,8 +276,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .imgtools .spacer { flex: 1; }
 .imgtools .tool-div { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
 .win-img .canvas-wrap, .item-img .canvas-wrap { width: 100%; overflow: hidden;
-  border: 1px solid var(--line); border-radius: 4px; margin-top: 4px; }  /* fills the node; node grips resize it. aspect-ratio set per image in JS */
-.win-img canvas { display: block; width: 100%; }
+  border-radius: 4px; margin-top: 4px; }  /* fills the node; node grips resize it. aspect-ratio set per image in JS */
+/* canvas fills the wrap EXACTLY (height:100%, not buffer-intrinsic) so the wrap's
+   aspect-ratio box never leaves a dark gap around the image; the buffer ratio already
+   matches the wrap ratio, so this stretches nothing. No border — the image is the edge. */
+.win-img canvas { display: block; width: 100%; height: 100%; }
 /* below-canvas bar: page nav + image selector + recapture + preview-all */
 .img-foot { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
 .img-foot button { flex: 0 0 auto; min-width: 0; }
@@ -270,7 +297,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gnode.item { width: 380px; min-width: 280px; max-width: 80vw; resize: none; overflow: hidden; }
 .item-img { margin-top: 8px; }
 .item-img:empty { display: none; }
-.item-img canvas { display: block; width: 100%; image-rendering: auto; }
+.item-img canvas { display: block; width: 100%; height: 100%; image-rendering: auto; }
 /* cell-size inputs (own flab rows): the static grid's pitch (item.box w/h) */
 .csize { width: 64px; }
 .csize-match { font-size: var(--fs-xs); padding: 1px 8px; }
@@ -297,7 +324,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .item-readout .ir-c { color: var(--muted); }                        /* the ":" separator column */
 .item-readout .ir-v { min-width: 0; overflow-wrap: anywhere; }       /* value column wraps, never widens the node */
 .item-lists { margin-top: 6px; }
-.item-lists .il-h { margin-top: 20px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--muted); }
+.item-lists .il-h { margin-top: 20px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--line); }
 .ti-row, .key-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
 .ti-row .ti-kind { min-width: 52px; color: var(--muted); }
 .ti-row input[type="number"] { width: 52px; }

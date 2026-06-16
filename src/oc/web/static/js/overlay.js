@@ -91,7 +91,11 @@ export class Overlay {
 
   _applyScale() {
     if (!this.img) return;
-    this.canvas.style.width = `${Math.round(this.img.naturalWidth * this.scale)}px`;
+    // autoFit fills the wrap EXACTLY via CSS (width:100%), so no sub-pixel slack ever shows on
+    // the right/bottom edge (a rounded px width can't match a fractional wrap width). A MANUAL
+    // zoom (teach page) uses an explicit px width so the canvas can grow past its container.
+    // Either way `scale` still carries the fit ratio that drives buffer supersampling.
+    this.canvas.style.width = this.autoFit ? "100%" : `${Math.round(this.img.naturalWidth * this.scale)}px`;
     this.onZoom?.(this.scale);
   }
   setScale(scale) { this.autoFit = false; this.scale = Math.min(20, Math.max(0.05, scale)); this._applyScale(); }
@@ -103,10 +107,16 @@ export class Overlay {
     // to ~1:1 — a giant canvas that only corrects when a later reflow (OCR readout filling
     // in) fires the ResizeObserver, so it visibly jumps. Bail instead; the observer retries
     // fit() the moment the wrap gets real width, sizing it right the FIRST time.
-    const avail = (this.canvas.parentElement?.clientWidth || 0) - 4;
+    // fill the wrap's FULL content width — no slack. The wrap has overflow:hidden and the
+    // canvas is its only flow child, so an exact fit can't trigger a scrollbar; any leftover
+    // slack just shows the wrap (dark) on the right/bottom edge.
+    const avail = this.canvas.parentElement?.clientWidth || 0;
     if (avail <= 1) return;     // layout not ready; ResizeObserver will retry
-    this.setScale(avail / this.img.naturalWidth);
-    this.autoFit = true;        // keep auto-fitting on later resizes
+    // set autoFit BEFORE applying, so _applyScale fills via width:100% (not a rounded px) —
+    // going through setScale would clear autoFit first and bake in a px width with sub-px slack.
+    this.scale = Math.min(20, Math.max(0.05, avail / this.img.naturalWidth));
+    this.autoFit = true;        // keep auto-fitting on later resizes; fill the wrap exactly
+    this._applyScale();
   }
 
   // ---- geometry helpers ---------------------------------------------------
@@ -404,6 +414,10 @@ export class Overlay {
     ctx.font = `${fs}px system-ui`;
     const h = fs + pad * 2;
     const w = ctx.measureText(text).width + pad * 2;
+    // keep the plate fully on-canvas vertically — a label anchored at a top-row box's top
+    // would otherwise sit above y=0 and be clipped (overflow:hidden) and never seen. The
+    // plate spans [y-h, y]; clamp its bottom so the whole plate stays within [0, height].
+    y = Math.max(h, Math.min(y, this.canvas.height));
     ctx.fillStyle = "rgba(0,0,0,0.65)";
     ctx.fillRect(x, y - h, w, h);      // readable plate behind the text
     ctx.fillStyle = color;
@@ -420,6 +434,7 @@ export class Overlay {
     const m = ctx.measureText(text);
     const h = fs + pad * 2;
     const w = m.width + pad * 2;
+    cy = Math.max(h / 2, Math.min(cy, this.canvas.height - h / 2));   // keep the plate on-canvas vertically
     ctx.fillStyle = "rgba(0,0,0,0.9)";
     ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
     ctx.fillStyle = "#fff";
