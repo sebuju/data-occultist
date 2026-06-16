@@ -197,6 +197,23 @@ function nmRenderMap(body) {
   };
   const superSvg = groups.superGroupBoxes().map((sp) => boxSvg(sp, "nm-super")).join("");
   const groupSvg = groups.groupBoxes().map((gp) => boxSvg(gp, "nm-group")).join("");
+  // Group / super-group NAME as a title BAR at the box's top-left: an opaque dark plate +
+  // coloured text (same idiom as the canvas labels). Drawn ABOVE the nodes so it's never
+  // hidden, but the solid plate makes it read as a deliberate header — not text bleeding over
+  // node squares. Font shrinks to fit the box width; hidden (hover <title> still names it) when
+  // it'd be too small to read.
+  const boxTitle = (b, col) => {
+    if (!b.title) return "";
+    const x = X(b.box.x), y = Y(b.box.y), w = b.box.w * s, len = b.title.length;
+    const fs = Math.min(9, (w - 6) / Math.max(1, len * 0.58));
+    if (fs < 4) return "";
+    const tw = Math.min(w, len * fs * 0.58 + 6), th = fs + 3;
+    return `<g class="nm-gtitle">`
+      + `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${tw.toFixed(1)}" height="${th.toFixed(1)}" rx="1.5" fill="rgba(8,11,16,0.72)"/>`
+      + `<text x="${(x + 3).toFixed(1)}" y="${(y + 1.5).toFixed(1)}" font-size="${fs.toFixed(1)}" fill="${col}">${esc(b.title)}</text></g>`;
+  };
+  const titleSvg = groups.superGroupBoxes().map((b) => boxTitle(b, "#cdd3dc"))   // super outlines run dark -> light text
+    .concat(groups.groupBoxes().map((b) => boxTitle(b, b.outline?.color || "#cdd3dc"))).join("");
   // The viewport indicator is a plain DIV moved with a CSS transform (compositor-only) — it
   // must NOT be an SVG element whose geometry attributes are rewritten each pan frame, since
   // that forces a layout, and with this huge DOM each layout is ~3ms (the pan lag).
@@ -205,7 +222,8 @@ function nmRenderMap(body) {
       <g class="nm-supers">${superSvg}</g>
       <g class="nm-groups">${groupSvg}</g>
       <g class="nm-edges" transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})">${edgePaths}</g>
-      <g class="nm-nodes">${rects.map(node).join("")}</g></svg>
+      <g class="nm-nodes">${rects.map(node).join("")}</g>
+      <g class="nm-titles">${titleSvg}</g></svg>
     <div class="nm-vp"></div>
   </div>`;
   nmUpdateViewport();

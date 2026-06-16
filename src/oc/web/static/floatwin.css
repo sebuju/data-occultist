@@ -69,6 +69,9 @@
 .nm-n.sel { stroke: var(--accent); stroke-width: 1.5; opacity: 1; }
 .nm-lbl { fill: #0b0e14; font-family: var(--font-mono); font-weight: 700; text-anchor: middle;
   dominant-baseline: central; pointer-events: none; }
+/* group / super-group NAME title-bar drawn at the top of its box in the map */
+.nm-gtitle { pointer-events: none; }
+.nm-gtitle text { font-family: var(--font-mono); font-weight: 700; dominant-baseline: text-before-edge; }
 .nm-list { overflow: auto; }
 .nm-row {
   display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px;
