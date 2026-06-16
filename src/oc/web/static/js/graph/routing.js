@@ -91,7 +91,11 @@ function buildLinks() {
     const tgt = bId.startsWith("sub:") ? " toview" : "";
     const own = kind === "own" && bId.startsWith("win:") ? " ownwin" : "";   // game→window owns the window's accent tint
     const portKind = kind === "watch" ? "watch" : "out";   // which port element this line leaves (`.port.pwatch` vs `.port.out`)
-    links.push({ key, aId, bId, top, port, portKind, cls: `gedge ${kind}${flow ? " flow" : ""}${tgt}${own}${selClsFor(aId, bId)}`, ra, rb });
+    // EVERY line ends in a glyph (squarecap by default, else arrow/chevron/diamond); they all
+    // draw on the top layer so the end glyph sits OVER the node instead of being hidden behind
+    // its card (edges z1 < nodes z2 < top z5).
+    const over = true;
+    links.push({ key, aId, bId, top, over, port, portKind, cls: `gedge ${kind}${flow ? " flow" : ""}${tgt}${own}${selClsFor(aId, bId)}`, ra, rb });
   };
   for (const e of model.edges())
     add(`${e.from} ${e.to}`, e.from, e.to, !!selClsFor(e.from, e.to), e.kind, nodeRect(e.from), nodeRect(e.to));
@@ -229,11 +233,13 @@ function ensurePortDots(node, count, base, extrasSel, extraCls, spec) {
 function placeSrcDots(node, lines, baseSel, extrasSel, extraCls, spec) {
   const base = node.querySelector(baseSel);
   if (!base) return;
-  if (!lines || !lines.length) {
+  if (!lines || !lines.length) {   // idle handle: no line uses it — show only on node hover (.port-idle)
     node.querySelectorAll(extrasSel).forEach((d) => d.remove());
     if (base.style.left || base.style.top) { base.style.cssText = ""; base.classList.remove("sel"); }
+    base.classList.add("port-idle");
     return;
   }
+  base.classList.remove("port-idle");
   const dots = ensurePortDots(node, lines.length, base, extrasSel, extraCls, spec);
   lines.forEach((l, i) => { if (dots[i]) styleDot(dots[i], l.p1, l.ra, l.cls); });
 }
@@ -321,7 +327,7 @@ function drawEdges() {
   for (const n of model.nodes()) if (CAN_DISABLE.has(n.type) && n.ref && n.ref.enabled === false) disSet.add(n.id);
   for (const l of links) {
     used.add(l.key);
-    const el = edgeEl(l.key, l.top ? top : svg);
+    const el = edgeEl(l.key, (l.top || l.over) ? top : svg);
     el.setAttribute("class", l.cls + (disSet.has(l.aId) || disSet.has(l.bId) ? " dis-edge" : ""));
     const c = routeCache.get(l.key);
     if (c && c.pts.length >= 2) {                            // have a routed path for this line
@@ -433,7 +439,9 @@ function runRouting() {
     for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) nodes.push({ id: n.id, x: r.x, y: r.y, w: r.w, h: r.h }); }
     const grps = groups.allGroups().map((g) => ({ members: [...g.members] }));
     const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, pinSrc: l.port ? (l.portKind === "watch" ? "L" : "R") : null,
-      insetEnd: l.portKind === "watch" ? 6 : 0 }));   // watch ends in a diamond — sink it halfway into the watched node's edge
+      // watch ends in a diamond sunk slightly into the watched node; trigger ends in a hollow ring
+      // pulled back by its radius (3px) so the ring centres ON the fired node's edge.
+      insetEnd: l.portKind === "watch" ? 3 : (/\btrigger\b/.test(l.cls) ? 3 : 0) }));
     // every node that renders an out-port parks it on its RIGHT face; the router keeps arriving
     // lines off that dot when it's idle (`reserveMid`). Trigger fires-port lives on the right too.
     const outPorts = new Map();

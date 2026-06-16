@@ -14,7 +14,7 @@ const srcChip = (val, attr, rmCls) =>
 
 // the pills + a "+ …" add-select that go in a watch/fires control cell.
 const srcInputs = (chipsHtml, addCls, addOpts) =>
-  `<div class="sv-inputs">${chipsHtml}<span class="sv-input sv-add"><select class="${addCls}">${addOpts}</select></span></div>`;
+  `<div class="sv-inputs">${chipsHtml}<span class="sv-input sv-add"><select class="sv-addin ${addCls}">${addOpts}</select></span></div>`;
 
 export function triggerParts(t, model) {
   const kind = KINDS.some(([v]) => v === t.kind) ? t.kind : "interval";
