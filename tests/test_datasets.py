@@ -37,7 +37,7 @@ def test_warframe_profile_keys(tmp_path):
     import pathlib
     games = pathlib.Path("config/games")
     p = load_profile(games, "warframe")
-    km = p.key_map_for("equip")
+    km = p.key_map_for("master")   # the equipment window's dataset id
     assert km.build({"name": "Amesha", "_item": "normal"}) == "amesha"
     assert km.build({"name": "Arcane Aegis", "arcane_level": 3, "_item": "arcane"}) == "arcane_aegis|3"
 
