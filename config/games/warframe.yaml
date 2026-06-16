@@ -133,7 +133,6 @@ windows:
       h: 0.3201018038741048
     align: bottom
     priority: 0
-    tells: []
     key:
       fields:
       - name
@@ -154,7 +153,6 @@ windows:
       h: 0.30097729443750454
     align: bottom
     priority: 5
-    tells: []
     key:
       fields:
       - name
@@ -253,6 +251,7 @@ windows:
     align: ''
     enabled: true
     item: arcane
+  item_tells: []
 - id: relic_window
   dataset: relics_offered
   fields:
@@ -301,7 +300,6 @@ windows:
       h: 0.2926472655222516
     align: center
     priority: 0
-    tells: []
   static_grid: true
   preprocess:
     mode: none
@@ -324,6 +322,7 @@ windows:
     align: bottom
     enabled: true
     item: item_3
+  item_tells: []
 - id: mod_window
   dataset: mods
   fields:
@@ -403,7 +402,6 @@ windows:
       h: 0.1632030618006055
     align: center
     priority: 1
-    tells: []
     key:
       fields:
       - mod_name
@@ -424,19 +422,6 @@ windows:
       h: 0.17164047508731695
     align: center
     priority: 0
-    tells:
-    - id: tell_3
-      box:
-        x: 0.18366314779268103
-        y: 0.4980182809395574
-        w: 0.09949846537942178
-        h: 0.10403344290406999
-      kind: color
-      color: '#09889a'
-      tolerance: 60
-      threshold: 0.5
-      locate: true
-      align: ''
   static_grid: true
   scroll:
     enabled: true
@@ -496,6 +481,22 @@ windows:
     align: ''
     enabled: true
     item: mod
+  item_tells:
+  - id: tell_3
+    box:
+      x: 0.18366314779268103
+      y: 0.4980182809395574
+      w: 0.09949846537942178
+      h: 0.10403344290406999
+    kind: color
+    field: null
+    color: '#09889a'
+    tolerance: 60
+    template: null
+    threshold: 0.5
+    locate: true
+    align: ''
+    item: drop_item
 datasets:
 - id: master
   aggregate: latest
@@ -879,20 +880,20 @@ layout:
       h: 420.0
       collapsed: false
     ds:prices_relic_live:
-      x: 1960.0
-      y: 4060.0
+      x: 1500.0
+      y: 4120.0
       w: 460.0
       h: 440.0
       collapsed: false
     sub:relic_rewards_live:
-      x: 1440.0
-      y: 2980.0
+      x: 980.0
+      y: 3040.0
       w: 980.0
       h: 720.0
       collapsed: false
     price:relic_live:
-      x: 1960.0
-      y: 3760.0
+      x: 1500.0
+      y: 3820.0
       w: 460.0
       h: 280.0
       collapsed: false
@@ -903,42 +904,42 @@ layout:
       h: 260.0
       collapsed: false
     trigger:relic_watch:
-      x: 1440.0
-      y: 4500.0
-      w: 780.0
-      h: 220.0
+      x: 980.0
+      y: 4560.0
+      w: 460.0
+      h: 240.0
       collapsed: false
     win:relic_window:
-      x: 640.0
-      y: 2980.0
+      x: 180.0
+      y: 3040.0
       w: 540.0
       h: 500.0
       collapsed: false
     prev:relic_window:
-      x: 640.0
-      y: 3480.0
+      x: 180.0
+      y: 3540.0
       w: 520.0
       h: 240.0
       collapsed: false
     det:relic_window:detect_1:
-      x: 1180.0
-      y: 2980.0
+      x: 740.0
+      y: 3040.0
       w: 220.0
       h: 180.0
       collapsed: false
     item:relic_window:item_3:
-      x: 640.0
-      y: 3780.0
+      x: 180.0
+      y: 3840.0
       collapsed: false
     sub:relic_rewards_limit:
-      x: 1440.0
-      y: 4180.0
+      x: 980.0
+      y: 4240.0
       w: 380.0
       h: 280.0
       collapsed: false
     ds:relics_offered:
-      x: 1440.0
-      y: 3760.0
+      x: 980.0
+      y: 3820.0
       w: 380.0
       h: 400.0
       collapsed: false
@@ -971,14 +972,14 @@ layout:
       h: 900.0
       collapsed: false
     prev:mod_window:
-      x: -1680.0
-      y: 3700.0
+      x: -1780.0
+      y: 3580.0
       w: 920.0
       h: 860.0
       collapsed: false
     win:mod_window:
-      x: -1680.0
-      y: 3020.0
+      x: -1380.0
+      y: 3040.0
       collapsed: false
     det:mod_window:detect_3:
       x: -800.0
@@ -987,24 +988,24 @@ layout:
       h: 0.0
       collapsed: false
     item:mod_window:mod:
-      x: -2200.0
-      y: 3020.0
+      x: -3060.0
+      y: 3040.0
       collapsed: false
     win:equipment_window:
-      x: -1540.0
-      y: 480.0
+      x: -1700.0
+      y: 400.0
       w: 320.0
       h: 80.0
       collapsed: false
     sb:equipment_window:scrollbar:
-      x: -980.0
-      y: 1080.0
+      x: -1960.0
+      y: 980.0
       w: 220.0
       h: 100.0
       collapsed: false
     prev:equipment_window:
-      x: -1540.0
-      y: 1160.0
+      x: -1700.0
+      y: 820.0
       w: 520.0
       h: 380.0
       collapsed: false
@@ -1025,8 +1026,8 @@ layout:
       y: 220.0
       collapsed: false
     item:equipment_window:arcane:
-      x: -2000.0
-      y: 1660.0
+      x: -3080.0
+      y: 1560.0
       w: 380.0
       h: 1374.0
       collapsed: false
@@ -1037,24 +1038,24 @@ layout:
       h: 1132.0
       collapsed: false
     item:equipment_window:normal:
-      x: -2000.0
-      y: 500.0
+      x: -3080.0
+      y: 380.0
       collapsed: false
     det:equipment_window:detect_2:
-      x: -980.0
-      y: 480.0
+      x: -1960.0
+      y: 380.0
       w: 220.0
       h: 180.0
       collapsed: false
     det:equipment_window:detect_4:
-      x: -980.0
-      y: 680.0
+      x: -1960.0
+      y: 580.0
       w: 220.0
       h: 180.0
       collapsed: false
     det:equipment_window:detect_1:
-      x: -980.0
-      y: 880.0
+      x: -1960.0
+      y: 780.0
       w: 220.0
       h: 180.0
       collapsed: false
@@ -1063,66 +1064,66 @@ layout:
       y: 20.0
       collapsed: false
     det:mod_window:detect_heading:
-      x: -960.0
-      y: 3020.0
+      x: -1720.0
+      y: 3040.0
       w: 300.0
       h: 180.0
       collapsed: false
     item:mod_window:drop_item:
-      x: -2200.0
-      y: 4020.0
+      x: -3060.0
+      y: 4040.0
       collapsed: false
     fld:equipment_window:normal:name:
-      x: -2240.0
-      y: 500.0
+      x: -2300.0
+      y: 380.0
       w: 220.0
-      h: 580.0
+      h: 700.0
       collapsed: false
     fld:equipment_window:normal:count:
-      x: -2480.0
-      y: 500.0
-      w: 220.0
-      h: 460.0
+      x: -2660.0
+      y: 380.0
+      w: 320.0
+      h: 540.0
       collapsed: false
     fld:equipment_window:arcane:name:
-      x: -2240.0
-      y: 1660.0
+      x: -2200.0
+      y: 1560.0
       w: 220.0
       h: 620.0
       collapsed: false
     fld:equipment_window:arcane:arcane_level:
-      x: -2720.0
-      y: 1660.0
+      x: -2680.0
+      y: 1560.0
       w: 220.0
       h: 440.0
       collapsed: false
     fld:equipment_window:arcane:count:
-      x: -2480.0
-      y: 1660.0
+      x: -2440.0
+      y: 1560.0
       w: 220.0
       h: 540.0
       collapsed: false
     fld:relic_window:item_3:name:
-      x: 400.0
-      y: 3780.0
+      x: -60.0
+      y: 3840.0
       w: 220.0
       h: 660.0
       collapsed: false
     fld:mod_window:mod:mod_name:
-      x: -2680.0
-      y: 3020.0
+      x: -2280.0
+      y: 3040.0
       w: 220.0
       h: 660.0
       collapsed: false
     fld:mod_window:mod:mod_drain:
-      x: -2440.0
-      y: 3020.0
+      x: -2040.0
+      y: 3040.0
       w: 220.0
       h: 460.0
       collapsed: false
     fld:mod_window:mod:mod_count:
-      x: -3060.0
-      y: 3020.0
+      x: -2660.0
+      y: 3040.0
       w: 360.0
       h: 580.0
       collapsed: false
@@ -1131,6 +1132,12 @@ layout:
       y: 4360.0
       w: 0.0
       h: 0.0
+      collapsed: false
+    tell:mod_window:drop_item:tell_3:
+      x: -2660.0
+      y: 4040.0
+      w: 220.0
+      h: 160.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -1297,6 +1304,7 @@ layout:
     - fld:mod_window:mod:mod_drain
     - fld:mod_window:mod:mod_count
     - item:mod_window:drop_item
+    - tell:mod_window:drop_item:tell_3
     outline:
       color: '#7ddc7d'
       style: none
@@ -1368,12 +1376,12 @@ layout:
       x: 1208
       y: 52
       w: 300
-      h: 340
+      h: 342
       mode: map
       sizes:
         map:
           w: 300
-          h: 340
+          h: 342
         list:
           w: 300
           h: 230
@@ -1383,7 +1391,7 @@ layout:
     activity:
       visible: true
       x: 1208
-      y: 400
+      y: 402
       w: 360
       h: 155
       collapsed: true
@@ -1394,7 +1402,7 @@ layout:
     testing:
       visible: true
       x: 1208
-      y: 717
+      y: 719
       w: 280
       h: 429
       collapsed: true
@@ -1406,7 +1414,7 @@ layout:
     toolbox:
       visible: true
       x: 1208
-      y: 446
+      y: 448
       w: 300
       h: 263
       collapsed: false
@@ -1418,7 +1426,7 @@ layout:
     precap:
       visible: true
       x: 1209
-      y: 763
+      y: 765
       w: 299
       h: 313
       collapsed: false
@@ -1430,7 +1438,7 @@ layout:
     live:
       visible: true
       x: 1209
-      y: 1084
+      y: 1086
       w: 299
       h: 354
       collapsed: false

@@ -303,7 +303,10 @@ class ItemDef(BaseModel):
     # here: each item's fields are hoisted to the window's flat ``item_fields`` (with an
     # ``item`` backref) so every field is its own thing on disk + its own node in the UI.
     fields: list[RegionDef] = Field(default_factory=list, exclude=True)
-    tells: list[Tell] = Field(default_factory=list)        # what makes a cell an item
+    # Tells (cell-relative). Like fields: RUNTIME-nested for the reader, but NOT serialised
+    # here — hoisted to the window's flat ``item_tells`` (with an ``item`` backref) so every
+    # tell is its own thing on disk + its own node in the UI.
+    tells: list[Tell] = Field(default_factory=list, exclude=True)   # what makes a cell an item
     # How this template's records are keyed/deduped. None -> the window's key, else
     # the default (``name``). Per-template because templates sharing a window can
     # need different identities (an arcane keys on name+level, a plain item on name).
@@ -394,6 +397,11 @@ class Preprocess(BaseModel):
     scale: float = 1.0                                 # upscale factor for small fonts
 
 
+# Item children hoisted to FLAT window-level lists on disk (one record per child, with an
+# ``item`` backref) so each is its own node + its own YAML entry. {flat key: ItemDef attr}.
+_HOISTED_ITEM_CHILDREN = {"item_fields": "fields", "item_tells": "tells"}
+
+
 class WindowDef(BaseModel):
     """One recognisable screen/panel within a game.
 
@@ -433,42 +441,55 @@ class WindowDef(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _distribute_item_fields(cls, data):
-        """On load, fan the flat ``item_fields`` (window-level, each carrying an ``item``
-        backref) back onto each ItemDef's runtime ``fields`` so the reader is unchanged.
-        Legacy profiles (fields nested under items) pass through untouched."""
-        if not isinstance(data, dict) or not data.get("item_fields"):
+    def _distribute_item_children(cls, data):
+        """On load, fan each flat ``item_fields``/``item_tells`` (window-level, every entry
+        carrying an ``item`` backref) back onto its ItemDef's runtime ``fields``/``tells`` so
+        the reader is unchanged. Legacy profiles (children nested under items) pass through
+        untouched. One loop drives every hoisted child kind (see _HOISTED_ITEM_CHILDREN)."""
+        if not isinstance(data, dict):
+            return data
+        spread = _HOISTED_ITEM_CHILDREN
+        if not any(data.get(k) for k in spread):
             return data
         data = dict(data)
-        raw = data.pop("item_fields") or []
-        by_item: dict[str, list] = {}
-        for f in raw:
-            if not isinstance(f, dict):
-                continue
-            f = dict(f)
-            by_item.setdefault(f.pop("item", "") or "", []).append(f)
+        # item id -> {attr: [child, ...]} gathered across every flat list
+        by_item: dict[str, dict[str, list]] = {}
+        for flat_key, attr in spread.items():
+            for c in data.pop(flat_key, None) or []:
+                if not isinstance(c, dict):
+                    continue
+                c = dict(c)
+                by_item.setdefault(c.pop("item", "") or "", {}).setdefault(attr, []).append(c)
         items = []
         for it in data.get("items") or []:
             if isinstance(it, dict):
                 it = dict(it)
-                extra = by_item.get(it.get("id", ""), [])
-                if extra:
-                    it["fields"] = (it.get("fields") or []) + extra
+                for attr, extra in by_item.get(it.get("id", ""), {}).items():
+                    if extra:
+                        it[attr] = (it.get(attr) or []) + extra
             items.append(it)
         if items:
             data["items"] = items
         return data
 
+    def _hoist_item_children(self, attr: str) -> list[dict]:
+        """Flat, on-disk form of every item template's ``attr`` children — one entry per child
+        with an ``item`` backref (what makes each its own node + its own YAML record)."""
+        out: list[dict] = []
+        for it in self.items:
+            for c in getattr(it, attr):
+                out.append({**c.model_dump(mode="json"), "item": it.id})
+        return out
+
     @computed_field
     @property
     def item_fields(self) -> list[dict]:
-        """Flat, on-disk form of every item template's fields — one entry per field with an
-        ``item`` backref. This is what makes each field its own node + its own YAML record."""
-        out: list[dict] = []
-        for it in self.items:
-            for f in it.fields:
-                out.append({**f.model_dump(mode="json"), "item": it.id})
-        return out
+        return self._hoist_item_children("fields")
+
+    @computed_field
+    @property
+    def item_tells(self) -> list[dict]:
+        return self._hoist_item_children("tells")
 
     @property
     def dataset_id(self) -> str:
