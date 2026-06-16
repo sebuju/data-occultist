@@ -24,6 +24,7 @@ import {
   panZoomTo, placeNewNode, refreshLive, persistBox, syncCellSize, itemChanged,
   keyPrevHTML, addFieldToItemGroup, addTellToItemGroup,
 } from "./main.js";
+import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 
 // ---- window image / region drawing (in-graph) -----------------------------
 
@@ -474,8 +475,8 @@ async function commitPreviewNode(winId, btn) {
     const r = await api.previewCommit(previewProfileFor(winId), model.profile.name, cap);
     done(`· ${r.written} → ${r.dataset} (${r.skipped} skipped of ${r.cells})`);
     setStatus(`committed ${r.written} to ${r.dataset} · ${r.skipped} skipped of ${r.cells}`);
+    await refreshLive();   // record counts / new dataset edges — may render a brand-new dataset node
     if (nodeEls.has(`ds:${r.dataset}`)) { refreshDataNode(r.dataset); loadBatchesNode(r.dataset); }
-    refreshLive();   // record counts / new dataset edges
   } catch (e) {
     done(String(e.message || e), "err");
     setStatus(String(e.message || e));
