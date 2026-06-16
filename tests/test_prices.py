@@ -35,7 +35,9 @@ def _stats(closed=(), live=(), buys=()):
 # ---- orders payload helper --------------------------------------------------
 
 def _order(platinum, order_type="sell", status="online"):
-    return {"platinum": platinum, "order_type": order_type, "user": {"status": status}}
+    # v2 /orders payload: the order's buy/sell field is ``type`` (v1's ``order_type``
+    # was renamed; v1 is now 403-deprecated). ``user.status`` is ingame/online/offline.
+    return {"platinum": platinum, "type": order_type, "user": {"status": status}}
 
 
 def _orders(*specs):
