@@ -46,6 +46,22 @@ def flow(game: str):
     return {"game": game, "windows": windows, "datasets": datasets}
 
 
+def _fire_on_change(game: str, dataset: str, records: list[dict]) -> list[str]:
+    """Re-applying batch rows from the UI is a dataset change like a collector read — fire any
+    on_change trigger watching ``dataset`` so it prices the restored rows. The collector loop
+    normally drives on_change, but it isn't running here. No-op when nothing watches the set."""
+    if not records:
+        return []
+    settings = get_settings()
+    if game not in list_profiles(settings.profiles_dir):
+        return []
+    profile = load_profile(settings.profiles_dir, game)
+    if not any(t.enabled and t.kind == "on_change" for t in profile.triggers):
+        return []
+    from ...collect.triggers import TriggerRunner
+    return TriggerRunner(profile, settings.data_dir).on_change(dataset, records)
+
+
 def _store(game: str, dataset: str, aggregate: str | None = None) -> DatasetStore:
     settings = get_settings()
     profile = load_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
@@ -122,6 +138,10 @@ def revert_batch(game: str, dataset: str, batch: int, on: bool = True):
     added or changed falls back to its previous accepted value. Returns refreshed detail."""
     store = _store(game, dataset)
     store.revert_batch(batch, on)
+    if not on:   # restoring a batch re-applies its rows -> "new rows" for on_change triggers
+        recs = [ev["values"] for ev in store.batch_events(batch)
+                if not ev.get("reverted") and ev.get("values")]
+        _fire_on_change(game, dataset, recs)
     return _detail(store, dataset)
 
 
