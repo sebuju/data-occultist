@@ -8,7 +8,7 @@ window-fraction coords stored in the profile.
 from __future__ import annotations
 
 import cv2
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from ...profile import list_profiles, load_profile
@@ -103,15 +103,24 @@ def live_clear(game: str):
 
 @router.get("/captures/{game}/bindings")
 def get_bindings(game: str):
-    """Which stash each window opens with: {window_id: capture_name}."""
-    return captures_store.get_bindings(get_settings().captures_dir, game)
+    """Which stashes each window opens with: {window_id: [capture_name, …]}. Always a list
+    (a window can hold several image pages); legacy bare-string values are normalised here."""
+    raw = captures_store.get_bindings(get_settings().captures_dir, game)
+    return {w: captures_store.as_list(v) for w, v in raw.items()}
 
 
 @router.post("/captures/{game}/bind")
 def bind_capture(game: str, window: str = Query(...), name: str = Query(...)):
-    """Bind a stashed capture to a window so it loads when that window opens."""
+    """Bind a single stashed capture to a window (replacing any pages), or unbind (empty name)."""
     captures_store.set_binding(get_settings().captures_dir, game, window, name)
     return {"ok": True, "window": window, "name": name}
+
+
+@router.post("/captures/{game}/bindlist")
+def bind_list(game: str, window: str = Query(...), names: list[str] = Body(...)):
+    """Bind a window to an ordered list of stashes (its image pages); empty list unbinds."""
+    captures_store.set_bindings(get_settings().captures_dir, game, window, names)
+    return {"ok": True, "window": window, "names": names}
 
 
 @router.get("/captures/{game}/{name}")

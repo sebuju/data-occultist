@@ -128,7 +128,7 @@ def detect_collisions(game: str):
 
     out = []
     for w in profile.windows:
-        cap = bindings.get(w.id)
+        cap = captures_store.first(bindings.get(w.id))   # the window's primary page
         if not cap:
             out.append({"window": w.id, "capture": None, "verdict": "no_image",
                         "winner": None, "collides_with": [], "matches": []})

@@ -395,3 +395,15 @@ export async function bindCapture(game, window, name) {
   await tfetch(`/api/captures/${encodeURIComponent(game)}/bind?window=${encodeURIComponent(window)}&name=${encodeURIComponent(name)}`, { method: "POST" });
   invalidateBindings(game);   // next read re-fetches the updated map
 }
+// Bind a window to an ordered list of stashes (its image pages); empty list unbinds.
+export async function setBindings(game, window, names) {
+  await tfetch(`/api/captures/${encodeURIComponent(game)}/bindlist?window=${encodeURIComponent(window)}`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(names) });
+  invalidateBindings(game);
+}
+// A window's bound capture list (the route always returns an array; this guards legacy
+// callers/undefined). Callers index it by the current page.
+export async function bindingList(game, window) {
+  const v = (await getBindings(game))[window];
+  return Array.isArray(v) ? v.slice() : (v ? [v] : []);
+}

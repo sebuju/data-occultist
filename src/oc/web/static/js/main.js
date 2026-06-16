@@ -189,8 +189,8 @@ function refreshCaptures() { if (!capPop.hidden) (capPrecap.hidden ? renderCapLi
 
 async function loadBound(windowId) {
   try {
-    const b = await api.getBindings(game);
-    const name = b[windowId];
+    const v = (await api.getBindings(game))[windowId];
+    const name = Array.isArray(v) ? v[0] : v;   // bindings are lists now (pages); show the first
     if (name) showImage(api.captureUrl(game, name), `loaded ${name}`);
   } catch { /* no binding yet */ }
 }

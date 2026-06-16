@@ -106,18 +106,46 @@ def _bindings_path(captures_dir: Path | str, game: str) -> Path:
 
 
 def get_bindings(captures_dir: Path | str, game: str) -> dict:
+    """Raw bindings map. A window's value is a LIST of capture names (the pages it shows),
+    but legacy files store a bare string for a single binding — callers normalise with
+    ``as_list``/``first`` so both shapes read the same."""
     p = _bindings_path(captures_dir, game)
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
 
-def set_binding(captures_dir: Path | str, game: str, window: str, name: str) -> None:
-    """Bind a window to a stash, or UNBIND it when ``name`` is empty (so a window can have no
-    image — e.g. a freshly created one, which must not inherit a deleted window's binding)."""
+def as_list(value) -> list[str]:
+    """A binding value (list, bare string, or missing) as a list of capture names."""
+    if not value:
+        return []
+    return list(value) if isinstance(value, list) else [value]
+
+
+def first(value) -> str | None:
+    """The primary (page 0) capture of a binding value, or None when unbound."""
+    names = as_list(value)
+    return names[0] if names else None
+
+
+def _write_bindings(captures_dir: Path | str, game: str, data: dict) -> None:
     p = _bindings_path(captures_dir, game)
     p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=0, sort_keys=True), encoding="utf-8")
+
+
+def set_binding(captures_dir: Path | str, game: str, window: str, name: str) -> None:
+    """Bind a window to a single stash (replacing any pages it had), or UNBIND it when
+    ``name`` is empty (so a window can have no image — e.g. a freshly created one, which
+    must not inherit a deleted window's binding)."""
+    set_bindings(captures_dir, game, window, [name] if name else [])
+
+
+def set_bindings(captures_dir: Path | str, game: str, window: str, names: list[str]) -> None:
+    """Bind a window to an ordered list of stashes (its image pages), or UNBIND it when the
+    list is empty. Blanks are dropped and order is preserved (it drives the page buttons)."""
     data = get_bindings(captures_dir, game)
-    if name:
-        data[window] = name
+    kept = [n for n in names if n]
+    if kept:
+        data[window] = kept
     else:
         data.pop(window, None)
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=0, sort_keys=True), encoding="utf-8")
+    _write_bindings(captures_dir, game, data)
