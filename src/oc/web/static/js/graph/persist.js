@@ -14,6 +14,7 @@
 // so a node drag never enters undo/redo or triggers a preview re-read.
 
 import * as api from "../api.js";
+import { log } from "../log.js";
 
 let M = null;                 // the GraphModel
 let collectLayout = null;     // () => write live node state into model.profile.layout
@@ -54,7 +55,7 @@ function scheduleProfile(isContent) {
 async function flushLocal() {
   tLocal = null;
   if (!M?.profile?.name) return;
-  try { await api.graphLocal.put(M.profile.name, collectLocal()); } catch { /* sidecar is best-effort */ }
+  try { await api.graphLocal.put(M.profile.name, collectLocal()); } catch (e) { log(`layout save failed: ${e.message || e}`, "warn"); }   // sidecar is best-effort
 }
 
 export const persist = {

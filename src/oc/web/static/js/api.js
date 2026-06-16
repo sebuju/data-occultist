@@ -76,7 +76,7 @@ export const graphLocal = {
   get: (name) => tfetch(`/api/profiles/${encodeURIComponent(name)}/graphlocal`).then((r) => (r.ok ? r.json() : {})).catch(() => ({})),
   put: (name, state) => tfetch(`/api/profiles/${encodeURIComponent(name)}/graphlocal`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state),
-  }).then((r) => r.json()).catch(() => {}),
+  }).then((r) => ok(r, "graphlocal save")).then((r) => r.json()),   // reject on HTTP error too — persist.js flushLocal logs it
 };
 
 // Versioned profile backups: list snapshots (meta only), fetch one's full profile,
@@ -168,9 +168,9 @@ export function captureUrl(game, name) {
 // Saved live-mode images live in their own bucket: grab one now (live tuning calls this
 // each round), read the {count,bytes} stat, or clear them all. grab returns the new stats.
 export const liveCaptures = {
-  grab: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/grab`, { method: "POST" }, OCR_MS).then((r) => r.json()),
+  grab: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/grab`, { method: "POST" }, OCR_MS).then((r) => ok(r, "live grab")).then((r) => r.json()),
   stats: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/stats`).then((r) => r.json()),
-  clear: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/clear`, { method: "POST" }).then((r) => r.json()),
+  clear: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/clear`, { method: "POST" }).then((r) => ok(r, "clear live")).then((r) => r.json()),
 };
 
 // URL of one frame image (NNNNN.jpg) of a saved precapture session — for the capture picker.
@@ -264,7 +264,7 @@ export const precapture = {
 // Status { running, frames, written, fps, window, state, recognized:[{key,count,miss}] }.
 export const live = {
   start: (game, interval, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/start?interval=${interval || 1}`, { method: "POST", signal }).then((r) => r.json()),
-  stop: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/stop`, { method: "POST", signal }).then((r) => r.json()),
+  stop: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/stop`, { method: "POST", signal }).then((r) => ok(r, "live stop")).then((r) => r.json()),
   status: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
 };
 
@@ -338,7 +338,7 @@ export const prices = {
   item: (game, slug) => tfetch(`/api/prices/${_pg(game)}/item/${encodeURIComponent(slug)}`).then((r) => ok(r, "price item").then((x) => x.json())),
   movers: (game, days = 7, threshold = 0.15) => tfetch(`/api/prices/${_pg(game)}/movers?days=${days}&threshold=${threshold}`).then((r) => ok(r, "movers").then((x) => x.json())),
   refresh: (game, dataset, mode = "statistics") => tfetch(`/api/prices/${_pg(game)}/refresh?dataset=${encodeURIComponent(dataset)}&mode=${encodeURIComponent(mode)}`, { method: "POST" }, 30_000).then((r) => ok(r, "price refresh").then((x) => x.json())),
-  cancel: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/cancel?dataset=${encodeURIComponent(dataset)}`, { method: "POST" }).then((r) => r.json()),
+  cancel: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/cancel?dataset=${encodeURIComponent(dataset)}`, { method: "POST" }).then((r) => ok(r, "cancel sweep")).then((r) => r.json()),
   status: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/status?dataset=${encodeURIComponent(dataset)}`).then((r) => r.json()),
 };
 
@@ -392,7 +392,7 @@ export function invalidateBindings(game) {
   if (game === undefined) _bindingsCache.clear(); else _bindingsCache.delete(game);
 }
 export async function bindCapture(game, window, name) {
-  await tfetch(`/api/captures/${encodeURIComponent(game)}/bind?window=${encodeURIComponent(window)}&name=${encodeURIComponent(name)}`, { method: "POST" });
+  await tfetch(`/api/captures/${encodeURIComponent(game)}/bind?window=${encodeURIComponent(window)}&name=${encodeURIComponent(name)}`, { method: "POST" }).then((r) => ok(r, "bind capture"));
   invalidateBindings(game);   // next read re-fetches the updated map
 }
 // Bind a window to an ordered list of stashes (its image pages); empty list unbinds.

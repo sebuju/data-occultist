@@ -5,6 +5,7 @@
 import * as api from "../api.js";
 import { isOnline } from "../conn.js";
 import { esc, TRASH, labCell } from "../dom.js";
+import { log } from "../log.js";
 
 const plat = (n) => (n == null ? "—" : Number.isInteger(n) ? `${n}` : n.toFixed(1));
 const pctTxt = (f) => `${f > 0 ? "+" : ""}${(f * 100).toFixed(1)}%`;
@@ -148,7 +149,7 @@ export function wirePriceNode(div, game, dataset, mode = "statistics", onDone = 
   $(".enr-cancel").addEventListener("click", () => {
     const b = $(".enr-cancel");                       // instant feedback (don't wait for the poll)
     b.disabled = true; b.classList.add("busy"); b.textContent = "cancelling…";
-    api.prices.cancel(game, dataset).catch(() => {});
+    api.prices.cancel(game, dataset).catch((e) => log(`cancel failed: ${e.message || e}`, "err"));
     if (!div._enrPoll) poll();                         // make sure we keep polling until it stops
     onChange?.();                                      // state changed -> notify
   });

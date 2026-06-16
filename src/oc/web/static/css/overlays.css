@@ -97,8 +97,13 @@
   background: var(--panel); border: 1px solid var(--danger); border-radius: 10px; }
 .startup-halt-box h3 { margin: 0 0 8px; color: var(--danger); }
 .startup-halt-box p { margin: 6px 0; }
-.startup-halt-retry { margin-top: 14px; background: var(--danger); color: var(--on-danger);
+.halt-actions { margin-top: 14px; display: flex; gap: 10px; justify-content: center; }
+.startup-halt-retry { background: var(--danger); color: var(--on-danger);
   border: 0; border-radius: 5px; padding: 6px 16px; cursor: pointer; }
+.halt-actions .startup-halt-retry { margin-top: 0; }
+/* secondary action (e.g. "reload page") — quiet outline so the primary recovery reads first */
+.startup-halt-retry.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+.startup-halt-retry.ghost:hover { border-color: var(--accent); color: var(--accent); }
 .startup-halt-retry:disabled { opacity: .6; cursor: default; }
 /* backend-offline overlay: sits ABOVE everything (boot veil, floating panels) so the
    whole UI is blocked while we can't reach the server; auto-dismissed by conn.js. */

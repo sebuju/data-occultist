@@ -4,6 +4,7 @@
 import * as api from "../../api.js";
 import * as conn from "../../conn.js";
 import * as hub from "../../hub.js";
+import { log } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
 import { $, model } from "../state.js";
@@ -46,13 +47,13 @@ function buildActivity() {
     if (c && !c.disabled) {
       c.disabled = true; c.textContent = "cancelling…";
       const p = c.dataset.cancel === "sweep" ? api.prices.cancel(game, c.dataset.ds) : api.precapture.cancel(game);
-      p.catch(() => {}).finally(() => setTimeout(hub.kick, 300));   // state changed -> beat the hub
+      p.catch((e) => log(`cancel failed: ${e.message || e}`, "err")).finally(() => setTimeout(hub.kick, 300));   // state changed -> beat the hub
       return;
     }
     const f = ev.target.closest("button[data-fire]");
     if (f && !f.disabled) {
       f.disabled = true; f.classList.add("loading");   // spinner overlay, label stays put (no resize/flicker)
-      api.triggers.fire(game, f.dataset.fire).catch(() => {})
+      api.triggers.fire(game, f.dataset.fire).catch((e) => log(`trigger fire failed: ${e.message || e}`, "err"))
         .finally(() => { f.disabled = false; f.classList.remove("loading"); hub.kick(); });   // refresh next-fire time
       return;
     }

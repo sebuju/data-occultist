@@ -154,7 +154,7 @@ async function renderCapLive() {
   for (const n of names) {
     capLive.appendChild(capItem(api.captureUrl(game, n), n.replace(/\.jpg$/, ""), () => {
       showImage(api.captureUrl(game, n), `loaded ${n}`);
-      api.bindCapture(game, model.windowId, n).catch(() => {});   // a stash binds to the window
+      api.bindCapture(game, model.windowId, n).catch((e) => setStatus(String(e.message || e)));   // a stash binds to the window
       openCapPicker(false);
     }));
   }

@@ -4,7 +4,7 @@
 import * as api from "../../api.js";
 import { esc, WARN } from "../../dom.js";
 import { openModal } from "../../modal.js";
-import { timed } from "../../log.js";
+import { log, timed } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
 import { openDictionaryPicker } from "../dict_picker.js";
@@ -24,7 +24,7 @@ async function createWindowNode() {
   if (!id) return;
   // a brand-new window starts with NO image — clear any binding left over from a deleted
   // window that reused this id, so its button shows "capture" rather than a stale capture.
-  try { if (model.profile.name) await api.bindCapture(model.profile.name, id, ""); } catch { /* ignore */ }
+  try { if (model.profile.name) await api.bindCapture(model.profile.name, id, ""); } catch (e) { log(`unbind capture failed: ${e.message || e}`, "err"); }
   await placeNewNode(`win:${id}`, "window"); render(); autosave(); panTo(`win:${id}`);
 }
 async function createPriceNode() {

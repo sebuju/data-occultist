@@ -55,6 +55,30 @@ export function log(msg, level = "info") {
   if (ensure()) append(e); else buffer.push(e);
 }
 
+// Mirror uncaught errors + console.error/warn into the log bar so problems show up without
+// devtools open. Only the brief message is logged (never the full stack — the bar is a
+// glanceable strip; devtools still has the trace). Idempotent; call once at boot.
+let mirrored = false;
+export function mirrorConsole() {
+  if (mirrored) return;
+  mirrored = true;
+  const brief = (v) => {
+    if (v instanceof Error) return v.message || String(v);
+    if (v && typeof v === "object") { try { return JSON.stringify(v); } catch { return String(v); } }
+    return String(v);
+  };
+  const join = (args) => args.map(brief).join(" ").trim();
+  for (const kind of ["error", "warn"]) {
+    const orig = console[kind].bind(console);
+    console[kind] = (...args) => { orig(...args); try { log(join(args), kind === "warn" ? "warn" : "err"); } catch { /* never let logging throw */ } };
+  }
+  window.addEventListener("error", (e) => log(e.error?.message || e.message || "script error", "err"));
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = e.reason;
+    log((r && (r.message || (typeof r === "string" && r))) || "unhandled promise rejection", "err");
+  });
+}
+
 // timed("load image"): logs "load image…" now, returns done(extra?, level?) that logs
 // "load image <extra> (1.2s)". Use done() on success, done(msg, "err") on failure.
 export function timed(label) {

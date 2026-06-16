@@ -74,7 +74,7 @@ function buildLiveWindow() {
   clr.addEventListener("click", () => {
     if (clr.dataset.armed !== "1") { clr.dataset.armed = "1"; clr.textContent = "sure?"; setTimeout(() => { if (clr.dataset.armed === "1") { clr.dataset.armed = "0"; clr.textContent = "clear"; } }, 2500); return; }
     clr.dataset.armed = "0"; clr.textContent = "clear";
-    if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
+    if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch((e) => log(`clear live images failed: ${e.message || e}`, "err"));
   });
   if (model.profile.name) api.liveCaptures.stats(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
   renderLiveWindow();
@@ -185,7 +185,7 @@ async function liveTick() {
   if (game) {
     // save what live mode sees: one frame per round into the live bucket (fire-and-forget;
     // a capture failure must never stall tuning). grab returns the running {count,bytes}.
-    api.liveCaptures.grab(game).then((s) => { liveImg = s; }).catch(() => {});
+    api.liveCaptures.grab(game).then((s) => { liveImg = s; }).catch((e) => log(`live grab failed: ${e.message || e}`, "err"));
     for (const w of model.profile.windows || []) {
       if (!liveOn || liveSave) break;
       if (w.live === false || w.enabled === false) continue;   // skip windows opted out of live
@@ -223,7 +223,7 @@ function startServerCollect() {
 function stopServerCollect() {
   const game = model.profile.name;
   if (liveColUnsub) { liveColUnsub(); liveColUnsub = null; }
-  if (game) api.live.stop(game).catch(() => {});
+  if (game) api.live.stop(game).catch((e) => log(`live stop failed: ${e.message || e}`, "err"));
   liveColStatus = null;
   hub.kick();
 }
