@@ -4,6 +4,8 @@ All pure-logic — no game, GPU, or Windows needed."""
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import yaml
 
 from oc.profile import (
@@ -15,7 +17,12 @@ from oc.profile import (
     save_graph_local,
     save_profile,
 )
-from oc.profile.loader import dictionaries_dir, profile_path
+from oc.profile.loader import (
+    _STAMP_FMT,
+    dictionaries_dir,
+    profile_path,
+    retention_keep,
+)
 from oc.profile.models import GameProfile, NodeLayout
 
 
@@ -70,6 +77,74 @@ def test_layout_only_save_skips_snapshot(tmp_path):
     p.process_names = ["y.exe"]                         # now a real content change
     save_profile(d, p)
     assert len(list_backups(d, "g")) == 1               # snapshots this time
+
+
+# ---- non-structural churn skips the snapshot (geometry + UI view-state) -----------
+
+def _win(box_x):
+    return {"id": "equip", "items": [{"id": "normal",
+            "box": {"x": box_x, "y": 0, "w": 1, "h": 1}}]}
+
+
+def test_geometry_only_change_skips_snapshot(tmp_path):
+    d = _profiles_dir(tmp_path)
+    save_profile(d, _prof(windows=[_win(0.0)]))
+    save_profile(d, _prof(windows=[_win(0.5)]))     # only a box's x/y/w/h moved
+    assert list_backups(d, "g") == []               # drag/resize doesn't spam backups
+    saved = load_profile(d, "g")
+    assert saved.windows[0].items[0].box.x == 0.5   # but the new coord did persist
+
+
+def test_ui_view_state_change_skips_snapshot(tmp_path):
+    d = _profiles_dir(tmp_path)
+    sub = lambda c, h: {"id": "v", "config_collapsed": c, "hidden_columns": h}
+    save_profile(d, _prof(subsets=[sub(False, [])]))
+    save_profile(d, _prof(subsets=[sub(True, ["plat"])]))   # only UI view-state
+    assert list_backups(d, "g") == []
+
+
+def test_structural_change_snapshots_full_prior_including_coords(tmp_path):
+    d = _profiles_dir(tmp_path)
+    save_profile(d, _prof(windows=[_win(0.3)]))
+    # structural change (new process_names) AND a geometry move in the same save
+    save_profile(d, _prof(windows=[_win(0.9)], process_names=["x.exe"]))
+    backups = list_backups(d, "g")
+    assert len(backups) == 1                                 # one snapshot
+    assert "0.3" in backups[0].read_text(encoding="utf-8")   # full prior file, prior coords
+
+
+# ---- tiered retention ------------------------------------------------------------
+
+def test_retention_keep_policy():
+    now = datetime(2026, 6, 16, 12, 0, 0, tzinfo=timezone.utc)
+    stamp = lambda dt: dt.strftime(_STAMP_FMT)
+
+    recent = [now - timedelta(hours=3 * i) for i in range(1, 11)]   # 3h..30h, all <48h
+    day_old = [now - timedelta(days=dd, hours=hh)                   # 3 per day, days 3..7
+               for dd in range(3, 8) for hh in (1, 5, 9)]
+    weekly = [now - timedelta(days=dd) for dd in (40, 41, 47, 48, 60, 61)]  # 3 ISO weeks
+
+    keep = retention_keep([stamp(dt) for dt in recent + day_old + weekly], now)
+
+    assert all(stamp(dt) in keep for dt in recent)             # every <48h snapshot kept
+    assert len({stamp(dt) for dt in day_old if stamp(dt) in keep}) == 5   # one per day
+    assert len({stamp(dt) for dt in weekly if stamp(dt) in keep}) == 3    # one per week
+
+
+def test_snapshot_prunes_over_dense_dir(tmp_path):
+    d = _profiles_dir(tmp_path)
+    bdir = d / ".backups" / "g"
+    bdir.mkdir(parents=True)
+    now = datetime(2026, 6, 16, 12, 0, 0, tzinfo=timezone.utc)
+    # 20 old snapshots all on the SAME ancient day -> retention keeps exactly one
+    for i in range(20):
+        s = (now - timedelta(days=200, minutes=i)).strftime(_STAMP_FMT)
+        (bdir / f"{s}.yaml").write_text("name: g\n", encoding="utf-8")
+
+    save_profile(d, _prof(process_names=["a.exe"]))
+    save_profile(d, _prof(process_names=["b.exe"]))   # content change -> snapshot + prune
+    # the 20 same-day ancients collapse to 1 (one per ISO week), plus the fresh snapshot
+    assert len(list_backups(d, "g")) == 2
 
 
 def test_no_tmp_file_left_behind(tmp_path):

@@ -3,10 +3,14 @@
 This module is the single IO boundary for a profile, and it owns three on-disk
 splits that keep the profile YAML small, safe, and versioned:
 
-* **Backups** — every content-changing save first snapshots the prior file to
-  ``config/games/.backups/<name>/<stamp>.yaml`` (kept forever), and the write
-  itself is atomic (temp + ``os.replace``) so a crash can never truncate a profile.
-  Layout-only saves (just node positions moving) skip the snapshot.
+* **Backups** — a save snapshots the prior file to
+  ``config/games/.backups/<name>/<stamp>.yaml`` only when something *structural*
+  changed, and the write itself is atomic (temp + ``os.replace``) so a crash can never
+  truncate a profile. Non-structural churn — node layout, box geometry (``x/y/w/h``),
+  and UI view-state (``config_collapsed``/``hidden_columns``) — still persists to the
+  live file but does NOT create a snapshot (see ``_structural``); it rides into the next
+  structural snapshot instead. Snapshots are thinned by ``retention_keep`` (all of the
+  last 48h, then daily for a month, then weekly) so the dir stays bounded forever.
 * **Dictionaries** — a dictionary's terms live in ``config/dictionaries/<source>``,
   not inline in the profile. The loader fills ``DictionaryDef.terms`` from that file
   on load and writes it back on save; a missing file resolves to zero terms so the
@@ -22,7 +26,7 @@ import os
 import re
 import stat
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
@@ -184,13 +188,31 @@ def _profile_yaml(profile: GameProfile) -> str:
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
 
 
-def _without_layout(text: str) -> str:
-    """``text`` re-dumped with the ``layout`` block removed, so two profiles that
-    differ ONLY in node layout compare equal (layout-only saves skip a snapshot)."""
+# Keys whose churn is NOT structural: a save that touches only these makes no backup.
+# ``layout`` is the whole top-level node-layout block; ``x/y/w/h`` are FractionBox
+# geometry (drag/resize); ``config_collapsed``/``hidden_columns`` are UI view-state that
+# leaks into the profile body. All of it still persists to the live file — it just
+# rides into the next structural snapshot, exactly as node layout already did.
+_NONSTRUCTURAL_KEYS = frozenset({"layout", "x", "y", "w", "h",
+                                 "config_collapsed", "hidden_columns"})
+
+
+def _strip_nonstructural(node):
+    """Recursively drop ``_NONSTRUCTURAL_KEYS`` from a parsed-YAML tree."""
+    if isinstance(node, dict):
+        return {k: _strip_nonstructural(v) for k, v in node.items()
+                if k not in _NONSTRUCTURAL_KEYS}
+    if isinstance(node, list):
+        return [_strip_nonstructural(v) for v in node]
+    return node
+
+
+def _structural(text: str) -> str:
+    """``text`` re-dumped with all non-structural fields removed, so two profiles that
+    differ ONLY in node layout / box geometry / UI view-state compare equal — such saves
+    persist to disk but skip a snapshot."""
     raw = yaml.safe_load(text) or {}
-    if isinstance(raw, dict):
-        raw.pop("layout", None)
-    return yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
+    return yaml.safe_dump(_strip_nonstructural(raw), sort_keys=False, allow_unicode=True)
 
 
 def save_profile(profiles_dir: Path | str, profile: GameProfile) -> Path:
@@ -209,8 +231,8 @@ def save_profile(profiles_dir: Path | str, profile: GameProfile) -> Path:
         old = path.read_text(encoding="utf-8")
         if old == text:
             return path  # true no-op: nothing changed, don't churn a backup
-        # Snapshot the prior version unless the only change is node layout.
-        if _without_layout(old) != _without_layout(text):
+        # Snapshot the prior version only when something structural changed.
+        if _structural(old) != _structural(text):
             _snapshot(profiles_dir, profile.name, old)
 
     _atomic_write_text(path, text)
@@ -234,12 +256,69 @@ def backup_path(profiles_dir: Path | str, name: str, stamp: str) -> Path:
     return _backup_dir(profiles_dir, name) / f"{stamp}.yaml"
 
 
+_STAMP_FMT = "%Y%m%d-%H%M%S-%f"
+
+
+def retention_keep(stamps: list[str], now: datetime) -> set[str]:
+    """Thinning policy for backup stamps (``%Y%m%d-%H%M%S-%f``, UTC). Returns the subset
+    to KEEP; the caller deletes the rest. Dense recent, sparse old:
+
+    * keep ALL snapshots from the last 48h (active authoring → fine-grained undo),
+    * keep the newest one per calendar day for the prior 30 days,
+    * keep the newest one per ISO week older than that.
+
+    ``now`` is passed in (not read from the clock) so the policy is pure and testable.
+    Unparseable stamps are kept (never silently delete something we don't understand)."""
+    keep: set[str] = set()
+    keep_buckets: set = set()
+    # Newest first so the first stamp seen in each day/week bucket is the one we keep.
+    for s in sorted(stamps, reverse=True):
+        try:
+            dt = datetime.strptime(s, _STAMP_FMT).replace(tzinfo=timezone.utc)
+        except ValueError:
+            keep.add(s)
+            continue
+        age = now - dt
+        if age.total_seconds() <= 48 * 3600:
+            keep.add(s)                       # all of the last 48h
+            continue
+        if age.days <= 30:
+            bucket = ("D", dt.year, dt.month, dt.day)        # one per calendar day
+        else:
+            iso = dt.isocalendar()
+            bucket = ("W", iso[0], iso[1])                   # one per ISO week
+        if bucket not in keep_buckets:
+            keep_buckets.add(bucket)
+            keep.add(s)
+    return keep
+
+
 def _snapshot(profiles_dir: Path | str, name: str, text: str) -> Path:
-    """Copy a profile's prior contents into the keep-all backup dir, stamped UTC."""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
-    path = backup_path(profiles_dir, name, stamp)
+    """Snapshot a profile's prior contents into the backup dir, stamped UTC, then thin
+    the dir per ``retention_keep`` so it stays bounded."""
+    # Windows' wall clock has ~15ms resolution, so two snapshots in quick succession can
+    # produce an identical %f stamp; bump by a microsecond until the path is free so a
+    # snapshot never silently overwrites another (the stamp stays parseable + sortable).
+    now = datetime.now(timezone.utc)
+    path = backup_path(profiles_dir, name, now.strftime(_STAMP_FMT))
+    while path.exists():
+        now += timedelta(microseconds=1)
+        path = backup_path(profiles_dir, name, now.strftime(_STAMP_FMT))
     _atomic_write_text(path, text)
+    _prune_backups(profiles_dir, name, datetime.now(timezone.utc))
     return path
+
+
+def _prune_backups(profiles_dir: Path | str, name: str, now: datetime) -> None:
+    """Delete snapshots outside the ``retention_keep`` policy."""
+    d = _backup_dir(profiles_dir, name)
+    if not d.exists():
+        return
+    files = list(d.glob("*.yaml"))
+    keep = retention_keep([p.stem for p in files], now)
+    for p in files:
+        if p.stem not in keep:
+            p.unlink(missing_ok=True)
 
 
 def list_backups(profiles_dir: Path | str, name: str) -> list[Path]:
