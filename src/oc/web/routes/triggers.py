@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from ...collect.triggers import fire_target, record_fire
 from ...enrich.price_runner import start_sweep, sweep_status
 from ...profile import list_profiles, load_profile
 from ..deps import get_settings
@@ -48,11 +49,17 @@ def fire_trigger(game: str, trigger_id: str):
     if trig is None:
         raise HTTPException(status_code=404, detail=f"No trigger {trigger_id!r}")
     by_id = {p.id: p for p in profile.price_nodes}
+    data_dir = get_settings().data_dir
+    # SAME funnel the collector uses (fire_target): skip-if-sweeping + the trigger->price control
+    # pulse, so a manual fire behaves identically to an automatic one — no path drifts.
     started = []
+    fired = False
     for pid in trig.targets:
         pn = by_id.get(pid)
-        if pn is None or not pn.enabled:
-            continue
-        state = start_sweep(get_settings().data_dir, game, pn, profile=profile)
-        started.append(state.public())
+        if fire_target(game, pn, None, trigger_id=trigger_id,
+                       fire=lambda p, items: start_sweep(data_dir, game, p, profile=profile, items=items)):
+            started.append(sweep_status(game, pn.dataset))
+            fired = True
+    if fired:
+        record_fire(data_dir, game, trigger_id)   # stamp the sidecar so the fire countdown is right
     return {"trigger": trigger_id, "started": started}

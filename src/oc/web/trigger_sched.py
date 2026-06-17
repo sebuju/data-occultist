@@ -61,7 +61,8 @@ def _tick(settings) -> None:
 
 
 def _loop(settings) -> None:
-    while True:
+    from .shutdown import is_shutting_down
+    while not is_shutting_down():
         with _lock:
             try:
                 _tick(settings)

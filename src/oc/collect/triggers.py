@@ -29,6 +29,8 @@ from ..enrich.price_runner import start_sweep, sweep_status
 from ..enrich.slug_resolver import get_resolver
 from ..enrich.wm_client import slugify
 from ..eventlog import publish as logev
+from ..eventlog import slog
+from ..store.flow_events import publish_flow
 
 
 # ---- last-activation tracking (shared across firers via a tiny sidecar) -------------
@@ -88,6 +90,8 @@ class TriggerRunner:
                 self._last[t.id] = now
                 logev(f"trigger {t.id} fired (interval, every {int(t.interval_s)}s)",
                       level="run", game=self._profile.name)
+                slog(f"trigger {t.id} fired (interval, every {int(t.interval_s)}s)",
+                     game=self._profile.name)
                 self._fire_targets(t, items=None)   # node sources / catalogue decide
                 record_fire(self._data_dir, self._profile.name, t.id)
                 fired.append(t.id)
@@ -109,6 +113,13 @@ class TriggerRunner:
                 items = self._items_for(changed_records)
             logev(f"trigger {t.id} <- {dataset} changed ({len(changed_records)} rows, "
                   f"{len(items)} to price)", level="run", game=self._profile.name)
+            slog(f"trigger {t.id} <- {dataset} changed ({len(changed_records)} rows, "
+                 f"{len(items)} to price)", game=self._profile.name)
+            # animate the watch hop trigger -> watched dataset/view (a control pulse)
+            for w in t.watch:
+                if w == dataset or self._subset_reaches(w, dataset, set()):
+                    node = f"sub:{w}" if self._profile.subset_def(w) else f"ds:{w}"
+                    publish_flow(self._profile.name, "watch", f"trigger:{t.id}", node, 1)
             self._fire_targets(t, items=items)
             record_fire(self._data_dir, self._profile.name, t.id)
             fired.append(t.id)
@@ -145,22 +156,37 @@ class TriggerRunner:
         return inventory_slugs(records, "name", self._resolve)
 
     def _fire_targets(self, trigger, items) -> None:
+        by_id = {p.id: p for p in self._profile.price_nodes}
         for pid in trigger.targets:
-            pn = next((p for p in self._profile.price_nodes if p.id == pid), None)
-            if pn is None or not pn.enabled:
-                continue
-            # don't re-fire a node whose sweep is already running — start_sweep would no-op
-            # anyway (per-node running flag + per-game gate + cross-process file lock), but skip
-            # up front so a busy node is never disturbed or double-counted.
-            if sweep_status(self._profile.name, pn.dataset).get("running"):
-                logev(f"  -> {pid} skipped (already sweeping)", level="info",
-                      game=self._profile.name)
-                continue
-            try:
-                self._fire(pn, items)
-            except Exception:   # a misbehaving fire must never crash the collector loop
-                pass
+            fire_target(self._profile.name, by_id.get(pid), items,
+                        trigger_id=trigger.id, fire=self._fire)
 
     def _default_fire(self, price_node, items) -> None:
         start_sweep(self._data_dir, self._profile.name, price_node,
                     profile=self._profile, items=items)
+
+
+def fire_target(game: str, price_node, items, *, trigger_id: str,
+                fire: Callable[[object, object], None]) -> bool:
+    """Fire ONE price-node target of a trigger — the single funnel every fire path uses
+    (collector interval/on_change AND the web "fire now" route), so the per-fire side effects
+    never drift between callers. Skips a node whose sweep is already running; on a real fire it
+    runs ``fire`` then emits the trigger->price control pulse. Returns True if it fired.
+
+    ``fire(price_node, items)`` performs the actual sweep start (injectable for tests / so the
+    web route can supply its own data_dir/profile). ``record_fire`` stays with the CALLER — it's
+    a per-trigger stamp, fired once after all targets, not per target."""
+    if price_node is None or not getattr(price_node, "enabled", False):
+        return False
+    # don't re-fire a node whose sweep is already running — start_sweep would no-op anyway
+    # (per-node running flag + per-game gate + cross-process file lock), but skip up front so a
+    # busy node is never disturbed or double-counted.
+    if sweep_status(game, price_node.dataset).get("running"):
+        logev(f"  -> {price_node.id} skipped (already sweeping)", level="info", game=game)
+        return False
+    try:
+        fire(price_node, items)
+        publish_flow(game, "trigger", f"trigger:{trigger_id}", f"price:{price_node.id}", 1)
+        return True
+    except Exception:   # a misbehaving fire must never crash the collector loop / a request
+        return False
