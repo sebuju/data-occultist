@@ -730,6 +730,8 @@ subsets:
   - live_ask
   - _item
   - key
+  - _seq
+  - volume
   enrich: []
   sort: []
   sort_by: ''
@@ -1035,8 +1037,8 @@ layout:
       h: 240.0
       collapsed: false
     trigger:relic_watch:
-      x: 2240.0
-      y: 4220.0
+      x: 2220.0
+      y: 4060.0
       w: 280.0
       h: 280.0
       collapsed: false
@@ -1274,7 +1276,7 @@ layout:
       collapsed: false
     prev:relic_window_3:
       x: 0.0
-      y: 3820.0
+      y: 3900.0
       w: 520.0
       h: 300.0
       collapsed: false
@@ -1288,13 +1290,13 @@ layout:
       collapsed: false
     det:relic_window_3:detect_3:
       x: 0.0
-      y: 4160.0
+      y: 4240.0
       w: 220.0
       h: 340.0
       collapsed: false
     det:relic_window_3:detect_4:
-      x: 280.0
-      y: 4160.0
+      x: 240.0
+      y: 4240.0
       w: 220.0
       h: 340.0
       collapsed: false
@@ -1379,14 +1381,18 @@ layout:
       order:
       - name
       - price_min
+      - price_median
       - live_median
       - live_sellers
-      - price_median
-      - volume
-      - _seq
       widths:
         live_median: 90
-        name: 170
+        name: 466
+        price_min: 87
+        price_median: 96
+        live_sellers: 110
+      sorts:
+      - col: price_min
+        dir: -1
     view:relic_rewards_limit:
       widths:
         key: 52
@@ -1402,6 +1408,18 @@ layout:
       sorts:
       - col: _seq
         dir: -1
+      order:
+      - _batch
+      - _seq
+      - live_ask
+      - live_median
+      - live_sellers
+      - name
+      - price_median
+      - price_min
+      - slug
+      - updated
+      - volume
     ds:relics_offered:
       order:
       - _seq
