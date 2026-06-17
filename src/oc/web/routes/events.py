@@ -3,8 +3,8 @@ update the instant a dataset is written — from any source — instead of polli
 dataset change bus (:mod:`oc.store.changes`).
 
 Each connection is intentionally SHORT-LIVED (a bounded window), then closed so the client's
-EventSource auto-reconnects. That keeps a long stream from blocking server shutdown/reload,
-and a disconnect check frees the connection promptly when a tab closes.
+EventSource auto-reconnects. The shared :func:`oc.web.sse.sse_response` primitive also ends the
+stream the instant the server shuts down, so a long stream never blocks shutdown/reload.
 """
 
 from __future__ import annotations
@@ -13,52 +13,58 @@ import asyncio
 import json
 
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
 
 from ...store.changes import subscribe
+from ...store.flow_events import subscribe as subscribe_flow
+from ..sse import sse_response
 
 router = APIRouter(prefix="/api/events", tags=["events"])
-
-_WINDOW_S = 600.0   # backstop only. The REAL shutdown fix is uvicorn timeout_graceful_shutdown
-#                     (force-cancels the stream task) set in cli/edit.py; this just guarantees no
-#                     stream is truly immortal. The client's EventSource auto-reconnects.
 
 
 @router.get("/{game}")
 async def events(game: str, request: Request):
     """A short-lived ``text/event-stream`` of ``dataset`` change events for ``game``. The
     client refetches what it needs on each event (and on reconnect, via the ``ready`` event)."""
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[str] = asyncio.Queue()
 
-    def on_change(g: str, dataset: str, _records: list) -> None:
-        if g == game:
-            loop.call_soon_threadsafe(queue.put_nowait, dataset)   # bus runs on worker threads
+    def subscribe_fn(push):
+        def on_change(g: str, dataset: str, records: list) -> None:
+            if g == game:
+                # carry the row count so the client can animate "n items flowed into this dataset"
+                push((dataset, len(records or [])))
+        return subscribe(on_change)
 
-    off = subscribe(on_change)
+    async def fmt(first, queue: asyncio.Queue) -> str:
+        # COALESCE a burst (a sweep/collection writes thousands of rows -> a flood of publishes):
+        # drain ~1s and emit each changed dataset ONCE, summing the row counts so a heavy dataset
+        # is refetched at most ~once/sec during a sweep.
+        counts: dict[str, int] = {}
+        ds, n = first
+        counts[ds] = counts.get(ds, 0) + n
+        await asyncio.sleep(1.0)
+        while not queue.empty():
+            ds, n = queue.get_nowait()
+            counts[ds] = counts.get(ds, 0) + n
+        return "".join(f"event: dataset\ndata: {json.dumps({'dataset': d, 'n': t})}\n\n"
+                       for d, t in counts.items())
 
-    async def gen():
-        try:
-            yield "event: ready\ndata: {}\n\n"
-            deadline = loop.time() + _WINDOW_S
-            while loop.time() < deadline:
-                if await request.is_disconnected():
-                    break
-                try:
-                    first = await asyncio.wait_for(queue.get(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    continue   # idle tick — re-check disconnect / deadline
-                # COALESCE a burst (a sweep/collection writes thousands of rows -> a flood of
-                # publishes): drain ~1s and emit each changed dataset ONCE, so the client refetches
-                # a heavy dataset at most ~once/sec during a sweep instead of per burst.
-                batch = {first}
-                await asyncio.sleep(1.0)
-                while not queue.empty():
-                    batch.add(queue.get_nowait())
-                for dataset in batch:
-                    yield f"event: dataset\ndata: {json.dumps({'dataset': dataset})}\n\n"
-        finally:
-            off()
+    return sse_response(request, subscribe_fn, fmt)
 
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+@router.get("/flow/{game}")
+async def flow_events(game: str, request: Request):
+    """A short-lived ``text/event-stream`` of FLOW events for ``game`` — one per real per-stage
+    write (window->dataset, price->dataset, trigger->price, trigger->watch), carrying the item
+    count. Drives the graph's blob animation. Unlike :func:`events`, these are NOT coalesced:
+    every hop is a distinct animation, so each is forwarded as it arrives (a heavy sweep can
+    burst, but the client caps blobs per event)."""
+
+    def subscribe_fn(push):
+        def on_flow(g: str, kind: str, src: str, dst: str, n: int) -> None:
+            if g == game:
+                push({"kind": kind, "src": src, "dst": dst, "n": n})
+        return subscribe_flow(on_flow)
+
+    async def fmt(ev, _queue) -> str:
+        return f"event: flow\ndata: {json.dumps(ev)}\n\n"
+
+    return sse_response(request, subscribe_fn, fmt)

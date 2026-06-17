@@ -370,11 +370,13 @@ class DatasetStore:
 
     # ---- ledger / revert ---------------------------------------------------
 
-    def _apply_reverted(self) -> None:
+    def _apply_reverted(self, records: list | None = None) -> None:
         self._save_reverted()
         self._state = self._replay()
         self.save()
-        self._announce([])
+        # `records` are the rows a restore re-applies (so on_change re-prices them); a plain
+        # revert/clear passes none -> UI-only announce.
+        self._announce(records or [])
 
     def set_reverted(self, event_id: int, reverted: bool = True) -> None:
         """Revert (or un-revert) a single event."""
@@ -385,12 +387,18 @@ class DatasetStore:
         """Revert (or restore) a whole batch — every record it added/changed falls back
         to its previous accepted value."""
         self._ensure_events()
-        ids = {e.id for e in self._events if e.batch == int(batch)}
+        bi = int(batch)
+        ids = {e.id for e in self._events if e.batch == bi}
         if reverted:
             self._reverted |= ids
+            self._apply_reverted()
         else:
             self._reverted -= ids
-        self._apply_reverted()
+            # restoring re-applies this batch's live rows -> announce them so on_change prices
+            # them. Owned by the mutation, not the caller, so every restore path is covered.
+            recs = [dict(e.values) for e in self._events
+                    if e.batch == bi and e.id not in self._reverted and e.values]
+            self._apply_reverted(recs)
 
     def clear_data(self) -> None:
         """Empty the current records by reverting every event — KEEPS the batch ledger
@@ -480,6 +488,7 @@ class DatasetStore:
                 self._rewrite_history()
                 self._state = self._replay()
                 self.save()
+                self._announce([dict(values)])   # edited row -> UI refresh + on_change re-price
                 return True
         return False
 
