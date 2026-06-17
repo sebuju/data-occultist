@@ -1,7 +1,7 @@
 """Composite record keys: KeySpec/KeyMap build + profile resolution + migration."""
 
 from oc.profile.loader import _migrate_detect_thresholds, _migrate_keys
-from oc.profile.models import Box, GameProfile, ItemDef, KeyDef, WindowDef
+from oc.profile.models import Box, GameProfile, ItemDef, KeyDef, RegionDef, WindowDef
 from oc.store.keys import KeyMap, KeySpec
 
 CELL = Box(x=0.1, y=0.1, w=0.2, h=0.2)
@@ -62,17 +62,33 @@ def test_profile_resolves_window_key():
 def test_profile_single_item_key_acts_as_default():
     # a single-template window doesn't tag records, so its item key is the default
     it = ItemDef(id="arc", box=CELL, key=KeyDef(fields=["name", "level"]))
-    p = GameProfile(name="g", windows=[WindowDef(id="w", items=[it])])
+    p = GameProfile(name="g", windows=[WindowDef(id="w", dataset="w", items=[it])])
     assert p.key_map_for("w").build({"name": "A", "level": 1}) == "a|1"
 
 
 def test_profile_multi_template_routes_by_item():
     arc = ItemDef(id="arcane", box=CELL, key=KeyDef(fields=["name", "level"]))
-    plain = ItemDef(id="normal", box=CELL)
-    p = GameProfile(name="g", windows=[WindowDef(id="w", items=[plain, arc])])
+    # no explicit key -> defaults to the template's FIRST field ("name" here), never imaginary
+    plain = ItemDef(id="normal", box=CELL, fields=[RegionDef(id="name", box=CELL, field="name")])
+    p = GameProfile(name="g", windows=[WindowDef(id="w", dataset="w", items=[plain, arc])])
     km = p.key_map_for("w")
-    assert km.build({"name": "A", "_item": "normal"}) == "a"            # window default (name)
+    assert km.build({"name": "A", "_item": "normal"}) == "a"            # first-field default
     assert km.build({"name": "A", "level": 2, "_item": "arcane"}) == "a|2"
+
+
+def test_item_without_fields_is_unkeyable():
+    # no explicit key and no fields -> empty spec -> records drop (no imaginary "name")
+    plain = ItemDef(id="normal", box=CELL)
+    p = GameProfile(name="g", windows=[WindowDef(id="w", dataset="w", items=[plain])])
+    assert p.key_map_for("w").build({"name": "A", "_item": "normal"}) is None
+
+
+def test_first_field_is_default_key():
+    # a window with regions and no explicit key defaults to its FIRST region's field
+    p = GameProfile(name="g", windows=[WindowDef(id="w", dataset="w",
+        regions=[RegionDef(id="r1", box=CELL, field="title"),
+                 RegionDef(id="r2", box=CELL, field="count")])])
+    assert p.key_map_for("w").build({"title": "Soma", "count": 3}) == "soma"
 
 
 def test_key_conflict_when_window_defaults_disagree():

@@ -20,7 +20,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..eventlog import publish as _logev
-from ..store import DatasetStore, KeySpec, PriceStore
+from ..store import DatasetStore, KeySpec, PriceStore, store_for
 from .wm_client import NET_ERRORS, fetch_items, fetch_orders, fetch_statistics, slugify
 
 # Persist progress every this many fetched items so a long sweep survives a crash
@@ -183,9 +183,10 @@ class PriceCollector:
 
 
 def sweep_catalogue(
-    data_dir, game: str, out_dataset: str = "prices", *, key=None, throttle: float = 0.4,
-    timeout: float = 30.0, limit: int = 0, workers: int = _WORKERS, mode: str = "statistics",
-    on_item=None, should_stop=None, items: list[tuple[str, str]] | None = None,
+    data_dir, game: str, out_dataset: str = "prices", *, key=None, profile=None,
+    throttle: float = 0.4, timeout: float = 30.0, limit: int = 0, workers: int = _WORKERS,
+    mode: str = "statistics", on_item=None, should_stop=None,
+    items: list[tuple[str, str]] | None = None,
 ) -> dict:
     """Producer sweep: price the WHOLE market catalogue and push one snapshot record per
     item into ``out_dataset`` (history accumulates in the price store). ``items`` may be
@@ -196,7 +197,8 @@ def sweep_catalogue(
     if limit and limit > 0:
         items = items[:limit]
     store = PriceStore(data_dir, game)
-    dstore = DatasetStore(data_dir, game, out_dataset, key=key or KeySpec(fields=("name",)))
+    dstore = store_for(data_dir, game, out_dataset, profile=profile,
+                       key=key or KeySpec(fields=("name",)))
     dstore.begin_batch()
     collector = PriceCollector(store, throttle=throttle, timeout=timeout, workers=workers, mode=mode)
     return collector.sweep(items, dataset_store=dstore, on_item=on_item, should_stop=should_stop,
@@ -213,8 +215,7 @@ def sweep_dataset(
     ``key`` is the dataset's resolved KeyMap/KeySpec (so the store replays correctly);
     ``resolve(name)->slug`` maps names to slugs (defaults to naive slugify);
     ``limit`` caps how many distinct slugs to fetch (0 = all)."""
-    ds = DatasetStore(data_dir, game, dataset, key=key) if key is not None \
-        else DatasetStore(data_dir, game, dataset)
+    ds = store_for(data_dir, game, dataset, key=key)
     records = [r for r in ds.records() if r.get("present", True)]
     items = inventory_slugs(records, name_field, resolve or slugify)
     if limit and limit > 0:

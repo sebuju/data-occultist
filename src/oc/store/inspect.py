@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .dataset_store import DatasetStore
+from .factory import store_for
 from .keys import KeyMap, KeySpec
 
 
@@ -22,7 +23,7 @@ def _game_dir(data_dir: Path | str, game: str) -> Path:
 
 def _reader(data_dir: Path | str, game: str, dataset: str,
             key: KeyMap | KeySpec = KeySpec(), aggregate: str = "latest") -> DatasetStore:
-    return DatasetStore(data_dir, game, dataset, key=key, aggregate=aggregate)
+    return store_for(data_dir, game, dataset, key=key, aggregate=aggregate)
 
 
 def list_datasets(data_dir: Path | str, game: str) -> list[str]:

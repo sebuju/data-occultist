@@ -10,8 +10,9 @@ occluded view must never be mistaken for "everything sold".
 from . import inspect
 from .change import ChangeEvent, ChangeOp
 from .dataset_store import DatasetStore
+from .factory import store_for
 from .keys import KeyMap, KeySpec
 from .price_store import PriceStore
 
 __all__ = ["ChangeEvent", "ChangeOp", "DatasetStore", "KeyMap", "KeySpec",
-           "PriceStore", "inspect"]
+           "PriceStore", "inspect", "store_for"]

@@ -10,8 +10,10 @@ export const DEFAULT_KEY = { fields: ["name"], sep: "|", case_sensitive: false }
 // it would be dropped, never guessed). 0 is a valid part.
 export function keyParts(values, keyDef) {
   const k = keyDef || DEFAULT_KEY;
+  const fields = k.fields || [];
+  if (!fields.length) return null;   // empty recipe = unkeyable (never an imaginary "name")
   const out = [];
-  for (const f of k.fields && k.fields.length ? k.fields : ["name"]) {
+  for (const f of fields) {
     const v = values ? values[f] : null;
     if (v === null || v === undefined || v === "") return null;
     // whitespace runs -> single underscores, same as the server's KeySpec

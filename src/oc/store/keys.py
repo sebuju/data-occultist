@@ -45,7 +45,11 @@ class KeySpec:
     case_sensitive: bool = False
 
     def parts(self, values: dict) -> list[str] | None:
-        """The normalised key parts, or ``None`` when any part is missing/empty."""
+        """The normalised key parts, or ``None`` when any part is missing/empty.
+        An empty recipe (no fields) is itself unkeyable — a record is dropped, never
+        collapsed under a blank key."""
+        if not self.fields:
+            return None
         out = []
         for f in self.fields:
             p = _norm_part(values.get(f), self.case_sensitive)

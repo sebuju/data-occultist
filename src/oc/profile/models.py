@@ -342,6 +342,18 @@ class StripMode(str, Enum):
     none = "none"      # compare raw (whitespace + punctuation significant)
 
 
+class DetectCombine(str, Enum):
+    """How a window's detectors are combined into one match verdict.
+
+    ``all`` (the historical behaviour) requires EVERY enabled detector to pass; ``any``
+    accepts when at least one passes. A detector "passes" per its own polarity — a
+    positive detector passes when present, a ``negate`` detector passes when ABSENT.
+    """
+
+    all = "all"  # AND — every enabled detector must pass (default)
+    any = "any"  # OR  — at least one enabled detector passes
+
+
 class DetectDef(BaseModel):
     """A visual landmark used to recognise a window or state.
 
@@ -367,6 +379,10 @@ class DetectDef(BaseModel):
     case_sensitive: bool = False  # False -> fold case before comparing
     min_chars: int = 0            # hard floor: reads shorter than this never match
     strip: StripMode = StripMode.alnum  # what to ignore before comparing
+    # Polarity. False (default) -> a POSITIVE detector: passes when the landmark is
+    # present (score >= threshold). True -> a NEGATIVE detector: passes when the landmark
+    # is ABSENT, so the window fails if this landmark IS found (e.g. "not the shop tab").
+    negate: bool = False
 
 
 class StateKind(str, Enum):
@@ -445,8 +461,9 @@ class WindowDef(BaseModel):
     ``dataset`` names the logical collection this window's records belong to.
     Several windows can share a dataset when they show overlapping data (e.g.
     arcanes appear in both the Equipment and Arcane windows) — records from all of
-    them are merged and deduplicated together into one output. Defaults to the
-    window id, so each window has its own dataset unless told otherwise.
+    them are merged and deduplicated together into one output. When unset the
+    window has NO dataset: its records are discarded (never stored). Wire it to a
+    dataset in the UI to give it one — no implicit window-id default is minted.
     """
 
     id: str
@@ -459,6 +476,9 @@ class WindowDef(BaseModel):
     # so stray UI text elsewhere is never read.
     data_area: Box | None = None
     detect: list[DetectDef] = Field(default_factory=list)
+    # How this window's detectors combine: ``all`` (AND, default) or ``any`` (OR). Each
+    # detector's own ``negate`` flips its sense before the combine. See DetectCombine.
+    detect_mode: DetectCombine = DetectCombine.all
     states: list[StateDef] = Field(default_factory=list)
     regions: list[RegionDef] = Field(default_factory=list)
     # Preferred over ``regions``+``scroll``: item templates matched across the data
@@ -529,8 +549,10 @@ class WindowDef(BaseModel):
         return self._hoist_item_children("tells")
 
     @property
-    def dataset_id(self) -> str:
-        return self.dataset or self.id
+    def dataset_id(self) -> str | None:
+        """The dataset this window feeds, or ``None`` when it has none (records
+        discarded). No implicit window-id fallback."""
+        return self.dataset
 
 
 class DatasetDef(BaseModel):
@@ -682,6 +704,10 @@ class SubsetDef(BaseModel):
     sort: list[SortRule] = Field(default_factory=list)   # multi-column sort (primary first)
     sort_by: str = ""               # legacy single-column sort (folded into ``sort``)
     sort_desc: bool = False
+    # Keep only rows from each source's most recent collection batch, applied FIRST (before
+    # join/filter/derive/sort/limit) — so the view shows just the latest pass, not the
+    # accumulated history.
+    latest_batch: bool = False
     limit: int = 0                  # 0 = no limit
     config_collapsed: bool = False  # UI: the view's config block is folded away (persists per game)
 
@@ -814,25 +840,47 @@ class GameProfile(BaseModel):
         d = self.dataset_def(dataset_id)
         return (d.aggregate if d and d.aggregate else "latest")
 
+    @staticmethod
+    def _item_default_spec(it: ItemDef, w: WindowDef | None) -> KeySpec:
+        """The spec keying an item template's records: its own ``key``, else the
+        window's ``key``, else its FIRST field. Never an imaginary ``name`` — a
+        template with no fields is unkeyable (empty spec) and its records drop."""
+        if it.key is not None:
+            return it.key.spec()
+        if w is not None and w.key is not None:
+            return w.key.spec()
+        if it.fields:
+            return KeySpec((it.fields[0].field,))
+        return KeySpec(())
+
+    def _window_default_spec(self, w: WindowDef) -> KeySpec:
+        """The DEFAULT spec for records a window produces that carry no item tag:
+        the window's ``key``, else its first region's field, else (single-template
+        window) the item default, else an empty/unkeyable spec."""
+        if w.key is not None:
+            return w.key.spec()
+        if w.regions:
+            return KeySpec((w.regions[0].field,))
+        if len(w.items) == 1:
+            return self._item_default_spec(w.items[0], w)
+        return KeySpec(())
+
     def _key_defaults(self, dataset_id: str) -> list[KeySpec]:
-        """Candidate DEFAULT specs (for records not tagged with an item template), one
-        per window feeding the dataset that expresses a key, in window order: the
-        window's own ``key``, else its single item template's ``key``. Multi-template
-        windows tag every record, so their item keys never act as defaults."""
+        """Default specs (for records not tagged with an item template), one per
+        window feeding the dataset, in window order — each window's effective default
+        (its ``key``, first region field, or single-item default)."""
         out: list[KeySpec] = []
         for w in self.windows:
             if w.dataset_id != dataset_id:
                 continue
-            if w.key is not None:
-                out.append(w.key.spec())
-            elif len(w.items) == 1 and w.items[0].key is not None:
-                out.append(w.items[0].key.spec())
+            out.append(self._window_default_spec(w))
         return out
 
     def key_map_for(self, dataset_id: str) -> KeyMap:
         """How records of a dataset are keyed: each item template's own spec (records
         carry ``_item`` when a window has several templates), with the first window
-        default as fallback. Falls back to keying on ``name`` when nothing is taught."""
+        default as fallback. With nothing taught, keys on the FIRST field (never an
+        imaginary ``name``); a producer with no fields yields unkeyable records."""
         # Dataset-level override wins: no-dedup (every read its own record), or a single-field
         # key chosen on the dataset node — both bypass the window/item keys.
         d = self.dataset_def(dataset_id)
@@ -845,11 +893,11 @@ class GameProfile(BaseModel):
             if w.dataset_id != dataset_id:
                 continue
             for it in w.items:
-                if it.key is not None:
-                    by_item.setdefault(it.id, it.key.spec())
-                elif w.key is not None:
-                    by_item.setdefault(it.id, w.key.spec())
+                by_item.setdefault(it.id, self._item_default_spec(it, w))
         defaults = self._key_defaults(dataset_id)
+        # No window feeds this dataset (e.g. data only on disk, or a price-only dataset):
+        # nothing to derive a key from, so fall back to ``name`` as a last resort. When a
+        # window DOES feed it, its first-field default is used (never an imaginary name).
         return KeyMap(defaults[0] if defaults else KeySpec(), by_item)
 
     def key_conflict(self, dataset_id: str) -> bool:

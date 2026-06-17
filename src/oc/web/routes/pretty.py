@@ -13,8 +13,7 @@ from fastapi import APIRouter, Body, HTTPException
 from ...profile import list_profiles, load_profile, save_profile
 from ...profile.pretty import load_pretty, save_pretty
 from ...runtime import apply_overrides, clear_override, get_overrides, set_override
-from ...store import KeySpec
-from ...store.dataset_store import DatasetStore
+from ...store import store_for
 from ..deps import get_settings
 
 router = APIRouter(prefix="/api/pretty", tags=["pretty"])
@@ -94,9 +93,7 @@ def record_row(game: str, dataset: str, values: dict = Body(...)):
     revertable from the node view's dataset history."""
     settings = _require_game(game)
     profile = load_profile(settings.profiles_dir, game)
-    key = profile.key_map_for(dataset) if profile else KeySpec()
-    agg = profile.aggregate_for(dataset) if profile else "latest"
-    store = DatasetStore(settings.data_dir, game, dataset, key=key, aggregate=agg)
+    store = store_for(settings.data_dir, game, dataset, profile=profile)
     store.begin_batch()
     ev = store.record_seen({k: v for k, v in (values or {}).items()})
     store.save()
