@@ -284,6 +284,14 @@ def cancel_sweep(game: str, dataset: str) -> dict:
     return runner.state.public() if runner.state else {"running": False}
 
 
+def cancel_all_sweeps() -> None:
+    """Ask every running sweep (any game/dataset) to stop after its current item — used on
+    server shutdown so no sweep keeps working during teardown."""
+    for runner in list(_runners.values()):
+        if runner.state and runner.state.running:
+            runner.state.cancel = True
+
+
 def sweep_status(game: str, dataset: str) -> dict:
     runner = _runner(game, dataset)
     return runner.state.public() if runner.state else {"running": False, "total": 0, "done": 0}
