@@ -71,7 +71,7 @@ const nlCollapsed = new Set();   // node-list row keys whose subtree is folded a
 const nlDefaulted = new Set();   // group keys already given their default-collapsed state (once each)
 
 // jump-to wiring shared by both panels: click a node -> select + smooth pan/zoom; a group /
-// super-group row -> frame it. (One handler builder, two callers — see CLAUDE.md hard rule 7.)
+// super-group row -> frame it. (One handler builder, two callers.)
 function wireJump(panel) {
   panel.body.addEventListener("click", (ev) => {
     // collapse/expand toggle (list only) — fold this row's whole subtree; never a jump

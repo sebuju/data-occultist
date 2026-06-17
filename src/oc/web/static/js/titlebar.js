@@ -8,7 +8,7 @@
 // and the page keeps its normal tab chrome — the bar is invisible there.
 //
 // Shared by BOTH entry points (graph/main.js + main.js) so the chrome is authored
-// once, never copied per page (see CLAUDE.md hard rule 7).
+// once, never copied per page.
 //
 // The whole bar carries `pywebview-drag-region`, which pywebview moves the window
 // by. The control buttons sit inside it and still receive clicks: pywebview only

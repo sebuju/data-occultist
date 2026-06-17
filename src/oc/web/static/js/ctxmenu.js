@@ -1,7 +1,7 @@
 // Shared right-click context menu. One floating menu at a time, positioned at the click
 // point, clamped on-screen, dismissed on the next click anywhere / Escape. Both the graph
 // node-view (add node) and pretty studio (add widget) build their right-click menus on this —
-// do NOT fork a second copy (see CLAUDE.md hard rule 7).
+// do NOT fork a second copy — one shared primitive.
 
 let _menu = null;
 function closeContextMenu() {

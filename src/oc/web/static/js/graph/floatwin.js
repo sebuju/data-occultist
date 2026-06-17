@@ -23,7 +23,7 @@ const _topGap = () => (document.querySelector(".topbar")?.offsetHeight || 48) + 
 // distance from the top (y unchanged) and from the right edge (x shifts by the width
 // delta), so panels ride the right side instead of drifting away from it. Docked children
 // follow their parent through reflowDock, so they're skipped. ONE shared listener drives
-// every panel — not a per-panel copy (see CLAUDE.md hard rule 7).
+// every panel — not a per-panel copy.
 let _prevW = window.innerWidth;
 window.addEventListener("resize", () => {
   const dw = window.innerWidth - _prevW;

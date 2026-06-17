@@ -672,7 +672,7 @@ function setDetectStatus(nodeId, info) {
 }
 
 // Fill the window node's detects section live, reconciling in place (the rows are built once
-// in windowDetects; this only updates textContent/class/title, never rebuilds — see hard rule 1).
+// in windowDetects; this only updates textContent/class/title, never rebuilds).
 // Each `.wd-status` is coloured by PASS (negate-aware), with the raw landmark match in its title;
 // `.wd-verdict` shows whether the whole window would match under its combine mode.
 function setWindowDetectStatus(winId, res) {

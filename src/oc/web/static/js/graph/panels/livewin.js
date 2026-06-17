@@ -83,7 +83,7 @@ function buildLiveWindow() {
   });
   liveWin.body.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
   liveWin.body.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
-  // clear saved live images — armed two-click (no blocking confirm; CLAUDE.md rule 2)
+  // clear saved live images — armed two-click (no blocking confirm)
   const clr = liveWin.body.querySelector(".live-clear");
   clr.addEventListener("click", () => {
     if (clr.dataset.armed !== "1") { clr.dataset.armed = "1"; clr.textContent = "sure?"; setTimeout(() => { if (clr.dataset.armed === "1") { clr.dataset.armed = "0"; clr.textContent = "clear"; } }, 2500); return; }
