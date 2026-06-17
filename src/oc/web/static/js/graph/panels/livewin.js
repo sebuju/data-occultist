@@ -7,7 +7,7 @@ import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
 import { $, setStatus, model, nodeEls } from "../state.js";
 import { registerWorker, unregisterWorker } from "../workers.js";
-import { pc, pcState, precapBusy, fmtBytes } from "./precap.js";
+import { pc, pcState, precapOpen, precapBusy, fmtBytes } from "./precap.js";
 import { prevHost, refreshDetect, refreshPreview } from "../imaging.js";
 import { refreshLive } from "../main.js";
 

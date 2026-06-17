@@ -152,12 +152,13 @@ class Collector:
     def _store_for(self, window: WindowDef) -> DatasetStore:
         dataset = window.dataset_id
         if dataset not in self._stores:
-            self._stores[dataset] = DatasetStore(
+            store = self._stores[dataset] = DatasetStore(
                 self._engine.settings.data_dir,
                 self._profile.name,
                 dataset,
                 key=self._key_map(dataset),
             )
+            store.begin_batch()   # one collection run = one revertable batch (CLI collect + live)
             self._observed.setdefault(dataset, set())
         return self._stores[dataset]
 
