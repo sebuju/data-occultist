@@ -9,6 +9,7 @@ import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
 import { $, model, nodeEls } from "../state.js";
 import { since } from "../../datefmt.js";
+import { liveAgo, stopAgo } from "../../ago.js";
 import { autosave, panZoomTo } from "../main.js";
 
 // ---- activity panel (live sweeps + precapture) ----------------------------
@@ -178,11 +179,14 @@ function activityJobs(data, elapsed = 0) {
     } else if (t.kind === "on_change") {
       prog = `on change: ${(t.watch || []).join(", ") || "—"}${running ? " · firing now…" : ""}`;
     } else { prog = t.kind; }
-    // last-activation gets its OWN (third) row, not crammed onto the status line
+    // last-activation gets its OWN (third) row, not crammed onto the status line. `lastTs`
+    // (set only when it's a real elapsed time) drives the optimistic 1s "ago" tick; `last` is
+    // the static fallback text for the running / never-fired states.
+    const lastTs = !running && t.last_fired ? t.last_fired : null;
     const last = running ? "firing now…" : (t.last_fired ? `last fired ${since(t.last_fired)}` : "never fired");
     jobs.push({ key: `trigger:${t.id}`, cls: `act-trigger${enabled ? "" : " act-off"}`,
       action: { type: "fire", id: t.id }, enable: { id: t.id, enabled }, node: `trigger:${t.id}`,
-      title: `trigger · ${t.id}`, prog, last });
+      title: `trigger · ${t.id}`, prog, last, lastTs });
   }
   return jobs;
 }
@@ -195,8 +199,13 @@ function updateTriggerNodes(data) {
     const span = nodeEls.get(`trigger:${t.id}`)?.querySelector(".tg-last");
     if (!span) continue;
     const running = (t.targets || []).some((x) => x.running);
-    const txt = running ? "firing now…" : (t.last_fired ? `last fired ${since(t.last_fired)}` : "never fired");
-    if (span.textContent !== txt) span.textContent = txt;
+    if (!running && t.last_fired) {
+      liveAgo(span, t.last_fired, (s) => `last fired ${s}`);   // ticks every 1s, panel open or not
+    } else {
+      stopAgo(span);
+      const txt = running ? "firing now…" : "never fired";
+      if (span.textContent !== txt) span.textContent = txt;
+    }
   }
 }
 
@@ -273,7 +282,10 @@ function renderActivity(data, elapsed = 0) {
     }
     if (r.title.textContent !== j.title) r.title.textContent = j.title;
     if (r.prog.textContent !== j.prog) r.prog.textContent = j.prog;
-    if (r.last && r.last.textContent !== (j.last || "")) r.last.textContent = j.last || "";
+    if (r.last) {
+      if (j.lastTs) liveAgo(r.last, j.lastTs, (s) => `last fired ${s}`);   // ticks every 1s
+      else { stopAgo(r.last); if (r.last.textContent !== (j.last || "")) r.last.textContent = j.last || ""; }
+    }
   }
   fitActivityHeight();   // grow/shrink the panel to its contents (unless the user resized it)
 }

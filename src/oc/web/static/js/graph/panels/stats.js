@@ -7,23 +7,39 @@
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
 import { $, model } from "../state.js";
-import { since } from "../../datefmt.js";
+import { liveAgo, stopAgo } from "../../ago.js";
 import { drawChart } from "../../pretty/chart_draw.js";
 
 const statsState = { visible: false, x: null, y: null, w: null, h: null };
 let statsWin = null;
 let statsTimer = null;
 let statsEmpty = null;
+let statsOrder = null;   // frozen key order ("node|op"), set on open by avg desc; null => re-sort next render
 const statsRows = new Map();   // "node|op" -> { row, detail, chart, cells:{}, expanded, loaded, node, op }
+const statsHeads = new Map();  // op -> { el, label }   group headings, reconciled in place like rows
 
 // duration chips, shown in ONE unit per card (chosen by durUnit): [key, label]
 const DUR_METRICS = [["last_ms", "last"], ["avg_ms", "avg"], ["min_ms", "min"], ["max_ms", "max"]];
+
+// op-code -> display order of its type bucket + heading label. Cards group under these; the
+// order here is the order the buckets render in. Mirrors stats_store.OPS.
+const OP_GROUPS = [
+  ["tk", "ticks"], ["oc", "ocr"], ["rp", "replays"], ["rc", "recomputes"], ["sw", "sweeps"], ["fr", "frames"],
+];
+const GROUP_RANK = new Map(OP_GROUPS.map(([op], i) => [op, i]));
+const GROUP_LABEL = new Map(OP_GROUPS);
+const groupRank = (op) => (GROUP_RANK.has(op) ? GROUP_RANK.get(op) : OP_GROUPS.length);
+const groupLabel = (op) => GROUP_LABEL.get(op) || op;
+
+// replays/recomputes are the slow-path ops we flag: avg over 1s = warn, over 10s = danger.
+const SLOW_OPS = new Set(["rp", "rc"]);
+const WARN_MS = 1000, DANGER_MS = 10000;
 
 function buildStats() {
   if (statsWin) return;
   statsWin = createFloatWin({
     id: "stats", title: "stats", state: statsState, bothAxes: true,
-    onShow: () => { $("statsBtn")?.classList.toggle("active", true); startStatsPoll(); },
+    onShow: () => { $("statsBtn")?.classList.toggle("active", true); statsOrder = null; startStatsPoll(); },
     onHide: () => { $("statsBtn")?.classList.toggle("active", false); stopStatsPoll(); },
     // the SVG charts are sized to their host at draw time, so a panel resize leaves them stale —
     // redraw every open one from its cached samples (no refetch) when the panel size changes
@@ -78,13 +94,25 @@ function renderStats(nodes) {
   if (!statsWin) return;
   const live = liveNodeIds();
   const list = statsWin.body.querySelector(".st-list");
-  // stable order: by node id then op, so reconcile never reshuffles. `precap` is a
-  // synthetic (per-game) node, not a graph node, so it's always allowed through the filter.
-  const rows = nodes
-    .filter((r) => !live || r.node === "precap" || live.has(r.node))
-    .sort((a, b) => (a.node === b.node ? a.op.localeCompare(b.op) : a.node.localeCompare(b.node)));
+  // `precap` is a synthetic (per-game) node, not a graph node, so it's always allowed through.
+  const rows = nodes.filter((r) => !live || r.node === "precap" || live.has(r.node));
+  // Cards are grouped by type (op) under a heading; WITHIN each bucket they sort by avg desc.
+  // On open (statsOrder null) freeze the within-bucket key order so later polls don't reshuffle
+  // as live avgs drift. Sort key: group rank first (keeps buckets contiguous, headings stable),
+  // then frozen rank, then avg desc for any new keys with no frozen rank.
+  if (!statsOrder) {
+    statsOrder = [...rows]
+      .sort((a, b) => (groupRank(a.op) - groupRank(b.op)) || ((b.avg_ms || 0) - (a.avg_ms || 0)))
+      .map((r) => `${r.node}|${r.op}`);
+  }
+  const rank = new Map(statsOrder.map((k, i) => [k, i]));
+  const frozen = (r) => (rank.has(`${r.node}|${r.op}`) ? rank.get(`${r.node}|${r.op}`) : Infinity);
+  rows.sort((a, b) =>
+    (groupRank(a.op) - groupRank(b.op)) || (frozen(a) - frozen(b)) || ((b.avg_ms || 0) - (a.avg_ms || 0)));
   const want = new Set(rows.map((r) => `${r.node}|${r.op}`));
+  const wantOps = new Set(rows.map((r) => r.op));
   for (const [k, r] of statsRows) if (!want.has(k)) { r.row.remove(); statsRows.delete(k); }
+  for (const [op, h] of statsHeads) if (!wantOps.has(op)) { h.el.remove(); statsHeads.delete(op); }
   if (!rows.length) {
     if (!statsEmpty.isConnected) list.appendChild(statsEmpty);
     statsWin.fitHeight();   // size to the placeholder
@@ -92,7 +120,16 @@ function renderStats(nodes) {
   }
   if (statsEmpty.isConnected) statsEmpty.remove();
   let i = 0;
+  let curOp = null;
   for (const d of rows) {
+    if (d.op !== curOp) {   // bucket boundary -> place (or move) its heading first
+      curOp = d.op;
+      let h = statsHeads.get(d.op);
+      if (!h) { h = makeHead(d.op); statsHeads.set(d.op, h); }
+      const at = list.children[i];
+      if (at !== h.el) list.insertBefore(h.el, at || null);
+      i++;
+    }
     const k = `${d.node}|${d.op}`;
     let r = statsRows.get(k);
     if (!r) r = makeRow(k, d);
@@ -106,6 +143,14 @@ function renderStats(nodes) {
   statsWin.fitHeight();
   // live: each poll, refresh the history of every EXPANDED card so its chart tracks new runs.
   for (const r of statsRows.values()) if (r.expanded) loadHistory(r, true);
+}
+
+// one heading per type bucket (ticks/ocr/replays/…), reconciled in place like the cards.
+function makeHead(op) {
+  const el = document.createElement("div");
+  el.className = "st-group"; el.dataset.op = op;
+  el.textContent = groupLabel(op);
+  return { el, op };
 }
 
 // one card per node+op: a clickable head (title + a row of labelled metric chips) with the
@@ -162,7 +207,13 @@ function updateRow(r, d) {
   setText(r.runs, `${d.count} runs`);
   const u = durUnit(DUR_METRICS.map(([key]) => d[key]));
   for (const [key] of DUR_METRICS) setText(r.cells[key], `${u.fmt(d[key])}${u.unit}`);
-  setText(r.cells.since, d.last_ts ? since(d.last_ts * 1000) : "—");   // unix s -> ms for Date()
+  // since label ticks optimistically (1s) via the shared ago ticker, not just on the poll
+  if (d.last_ts) liveAgo(r.cells.since, d.last_ts * 1000);   // unix s -> ms for Date()
+  else { stopAgo(r.cells.since); setText(r.cells.since, "—"); }
+  // flag slow replays/recomputes by avg: >10s danger, >1s warn (no class otherwise).
+  const slow = SLOW_OPS.has(d.op) ? (d.avg_ms || 0) : 0;
+  r.row.classList.toggle("st-danger", slow > DANGER_MS);
+  r.row.classList.toggle("st-warn", slow > WARN_MS && slow <= DANGER_MS);
 }
 
 function toggleDetail(r) {

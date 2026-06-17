@@ -8,6 +8,7 @@ import { openModal } from "../modal.js";
 import { esc } from "../dom.js";
 import { renderMiniMap } from "./minimap.js";
 import { fmtDateTime, since } from "../datefmt.js";
+import { liveAgo } from "../ago.js";
 
 const fmtSize = (n) => (n >= 1024 ? `${(n / 1024).toFixed(1)} kB` : `${n || 0} B`);
 
@@ -31,10 +32,14 @@ export function buildBackups(host, name, { onRestored = null, signal = null, clo
   function appendRows(items) {
     const tmp = document.createElement("div");
     tmp.innerHTML = items.map(rowHtml).join("");
-    for (const row of [...tmp.children]) {
+    const rows = [...tmp.children];
+    rows.forEach((row, idx) => {
       row.addEventListener("click", () => select(row.dataset.stamp, row));
+      // the "ago" label ticks optimistically (1s) so it never sits stale while the modal is open
+      const when = row.querySelector(".bk-when");
+      if (when && items[idx]) liveAgo(when, items[idx].iso);
       listEl.appendChild(row);
-    }
+    });
   }
   async function loadMore() {
     if (busy || end) return;

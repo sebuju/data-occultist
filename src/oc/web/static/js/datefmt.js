@@ -1,6 +1,6 @@
 // Date/time formatting — HOUSE RULE: 24-hour clock, dates as dd/mm/yy. Never 12-hour
 // / AM-PM, never locale-default (toLocaleString varies by machine). Every date/time the
-// UI shows goes through here. See CLAUDE.md Hard rules.
+// UI shows goes through here.
 
 const p2 = (n) => String(n).padStart(2, "0");
 
