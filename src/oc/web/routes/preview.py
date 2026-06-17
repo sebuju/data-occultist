@@ -165,10 +165,11 @@ def detect_collisions(game: str):
     return {"windows": out}
 
 
-def _read_window(engine, profile, game, capture):
-    """Shared read for /preview and /preview/commit: grab the frame (stashed image or live
-    window), build the read-only resolver, and OCR window[0]'s regions. Returns
-    (frame, window, result) — result is the ``read_preview`` dict (cells + fields)."""
+def _window_reader(engine, profile, game, capture):
+    """Shared setup for /preview and /preview/commit: grab the frame (stashed image or
+    live window), load item cutouts, and build the read-only resolver-backed reader.
+    Returns (frame, window, fields, reader); each caller then picks ``read_preview``
+    (display) or ``read`` (the gated collection path)."""
     frame = _frame_for(engine, profile, game, capture)
     window = profile.windows[0]
     fields = {f.id: f for f in profile.fields_for(window)}
@@ -188,6 +189,13 @@ def _read_window(engine, profile, game, capture):
     resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
                              dictionary=pooled, dictionaries=dict_map, learn_enabled=False)
     reader = RegionReader(engine.ocr, resolver, cutouts=cutouts)
+    return frame, window, fields, reader
+
+
+def _read_window(engine, profile, game, capture):
+    """Shared read for /preview: returns (frame, window, result) — result is the
+    ``read_preview`` dict (cells + fields)."""
+    frame, window, fields, reader = _window_reader(engine, profile, game, capture)
     with ocr_job():   # one job: the whole window read runs without interleaving another
         result = reader.read_preview(frame, window, fields)
     return frame, window, result
@@ -220,29 +228,42 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
 
 @router.post("/preview/commit")
 def preview_commit(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None)):
-    """Re-read the current regions and COMMIT the keyable cells into the window's dataset
-    store — the same ledger-backed store live collection writes, as one revertable batch.
-    Re-runs the read server-side (never trusts client-sent values); cells whose key is
-    unresolvable (a key part unread) are skipped, never guessed."""
+    """Re-read the current regions and COMMIT into the window's dataset store — the same
+    ledger-backed store live collection writes, as one revertable batch.
+
+    Runs the SAME gates as live collection so a manual commit can't inject data the
+    collector would have rejected: ``reader.read`` already drops cells that fail tells /
+    out-of-range / a field's own ``min_confidence``, then the global ``min_confidence``
+    floor drops any record whose worst field is too weak. The only collection gate not
+    applied is the confirmer (temporal stability), which is inherently multi-frame — a
+    one-shot manual commit has a single frame to confirm against. Re-runs the read
+    server-side (never trusts client-sent values); records whose key is unresolvable (a
+    key part unread) are skipped, never guessed."""
     if not profile.windows:
         raise HTTPException(status_code=400, detail="profile has no window")
     engine = get_engine()
-    _, window, result = _read_window(engine, profile, game, capture)
+    frame, window, fields, reader = _window_reader(engine, profile, game, capture)
+    with ocr_job():
+        records = reader.read(frame, window, fields)
+    floor = engine.settings.tuning.min_confidence
+    gated = [r for r in records if r.confidence >= floor]   # worst-field floor, as in collection
+    low_conf = len(records) - len(gated)
 
     dataset = window.dataset_id
     store = DatasetStore(get_settings().data_dir, profile.name, dataset,
                          key=profile.key_map_for(dataset))
     store.begin_batch()   # this commit is one revertable batch
-    written = skipped = 0
-    for cell in result["cells"]:
-        values = _cell_values(cell)
-        if store.record_seen(values) is not None:
+    written = no_key = 0
+    for rec in gated:
+        if store.record_seen(rec.values) is not None:
             written += 1
         else:
-            skipped += 1
+            no_key += 1
     store.save()
-    return {"dataset": dataset, "written": written, "skipped": skipped,
-            "cells": len(result["cells"])}
+    # ``skipped`` = everything read but not written (below floor + unkeyable); ``low_conf``
+    # breaks out the floor drops so the status can say why.
+    return {"dataset": dataset, "written": written, "skipped": low_conf + no_key,
+            "low_conf": low_conf, "cells": len(records)}
 
 
 @router.post("/item/read")

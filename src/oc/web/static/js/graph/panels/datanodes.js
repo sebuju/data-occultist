@@ -39,9 +39,12 @@ function setTabCount(ds, sel, n) {
   if (el) el.textContent = n != null ? `${n}` : "";
 }
 
+const _dnInflight = new Set();
 async function refreshDataNode(ds) {
   const host = dataHost(ds);
   if (!host) return;
+  if (_dnInflight.has(ds)) return;   // a fetch for this dataset is already running — don't pile on
+  _dnInflight.add(ds);
   try {
     const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
     const recs = (await r.json()).records || [];
@@ -52,6 +55,7 @@ async function refreshDataNode(ds) {
     });
     setTabCount(ds, ".data-n", recs.length);   // item count on the data tab
   } catch (e) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
+  finally { _dnInflight.delete(ds); }
 }
 
 // Inline drill-down: a dataset record aggregates "many" observations under its key — fetch
@@ -257,8 +261,33 @@ function fmtVals(v) {
   return Object.entries(v).map(([k, val]) => `${k}=${val}`).join(", ");
 }
 
+// ONE fetch updates BOTH a dataset node's data tab and its batches tab — they share the same
+// endpoint, so on a live change refresh both from a single request instead of two.
+async function refreshDatasetNode(ds) {
+  const host = dataHost(ds), els = batEls(ds);
+  if (!host && !els) return;
+  if (_dnInflight.has(ds)) return;
+  _dnInflight.add(ds);
+  try {
+    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
+    const j = await r.json();
+    if (host) {
+      const recs = j.records || [];
+      const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
+      vtableFor(`ds:${ds}`, host).setData(cols, recs, { rowClass: (row) => (row.present ? "" : "gone"), expander: (row) => expandObservations(ds, row) });
+      setTabCount(ds, ".data-n", recs.length);
+    }
+    if (els) {
+      const batches = j.batches || [];
+      renderBatchesList(ds, batches);
+      setTabCount(ds, ".bat-n", batches.filter((b) => !b.reverted).length);
+    }
+  } catch (e) { if (host) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; } }
+  finally { _dnInflight.delete(ds); }
+}
+
 export {
-  dataHost, vtables, vtableFor, VT_META, setTabCount, refreshDataNode,
+  dataHost, vtables, vtableFor, VT_META, setTabCount, refreshDataNode, refreshDatasetNode,
   refreshAllDataNodes, expandObservations, srcBlock, expandSubsetRow, showRecordMany,
   batchesState, batEls, batState, loadBatchesNode, refreshAllBatchesNodes,
   renderBatchesList, selectBatch, renderBatchDetail, fmtVals,

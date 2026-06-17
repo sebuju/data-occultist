@@ -9,6 +9,7 @@
 // `widget:` values are published by widgets into the scope.
 
 import * as papi from "./api.js";
+import { isOnline } from "../conn.js";
 import { model } from "../graph/state.js";
 import { pathGet } from "./path.js";
 
@@ -40,16 +41,32 @@ export function stopData() { if (timer) clearInterval(timer); timer = null; clos
 // key something currently needs — cheap, and guarantees bound tables/charts/subsets update.
 function refetchNeeded() { for (const key of _need.keys()) fetchKey(key); }
 let _evtDebounce = null;
-function onStreamChange() {   // debounce so a burst of dataset events triggers one refetch round
+const _changedDs = new Set();
+// Refetch ONLY what depends on the dataset(s) that changed — not every bound key. A commit to
+// one dataset must not refetch all of them (that fan-out is what hammered the server).
+function onStreamChange(e) {
+  try { const d = JSON.parse(e.data); if (d && d.dataset) _changedDs.add(d.dataset); } catch { /* */ }
   clearTimeout(_evtDebounce);
-  _evtDebounce = setTimeout(refetchNeeded, 150);
+  _evtDebounce = setTimeout(flushChanged, 150);
+}
+function flushChanged() {
+  const changed = [..._changedDs]; _changedDs.clear();
+  if (!changed.length) { refetchNeeded(); return; }   // no dataset name -> safe fallback
+  for (const key of _need.keys()) {
+    if (key === "status") { fetchKey(key); continue; }   // cheap
+    if (key.startsWith("dataset:")) { if (changed.includes(key.slice(8))) fetchKey(key); continue; }
+    if (key.startsWith("subset:")) {
+      const id = key.slice(7);
+      if (changed.some((ds) => id === ds || model.subsetReaches(id, ds))) fetchKey(key);
+    }
+  }
 }
 function openStream() {
   closeStream();
   if (!game) return;
   try {
     stream = new EventSource(`/api/events/${encodeURIComponent(game)}`);
-    stream.addEventListener("dataset", onStreamChange);   // any dataset write -> pull fresh (debounced)
+    stream.addEventListener("dataset", onStreamChange);   // any dataset write -> pull dependents (debounced)
     // (no refetch on "ready": streams are short-lived/reconnect often; the fallback interval
     //  covers the brief reconnect gap without refetching on every reconnect)
   } catch { /* EventSource unavailable -> the fallback interval covers it */ }
@@ -98,8 +115,11 @@ export function publish(widgetId, value) {
 
 // ---- polling ------------------------------------------------------------------------
 
+const _inflight = new Set();
 async function fetchKey(key) {
-  if (!game) return;
+  if (!game || !isOnline()) return;        // don't hammer a paused/unreachable backend
+  if (_inflight.has(key)) return;          // a fetch for this key is already running — don't pile on
+  _inflight.add(key);
   try {
     let value;
     if (key === "status") value = await papi.flowStatus(game);
@@ -112,6 +132,7 @@ async function fetchKey(key) {
     _cache.set(key, value);
     notify(key);
   } catch { /* transient fetch error — keep last cache, retry next tick */ }
+  finally { _inflight.delete(key); }
 }
 
 // Force an immediate refetch of one key (e.g. right after a write) — bound widgets update at

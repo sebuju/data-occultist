@@ -26,6 +26,7 @@ import * as prettyOverrides from "../pretty/overrides.js";
 import { buildBackups } from "./backups.js";
 import * as groups from "./groups.js";
 import { initTitlebar } from "../titlebar.js";
+import { openLogStream } from "../logstream.js";
 
 initTitlebar();   // custom window chrome — no-op outside the desktop window
 
@@ -46,7 +47,7 @@ import { act, actState, buildActivity } from "./panels/activity.js";
 import { testWin, testState, buildTesting } from "./panels/testing.js";
 import { tb, tbState, buildToolbox } from "./panels/toolbox.js";
 import {
-  vtables, vtableFor, refreshDataNode, refreshAllDataNodes, expandSubsetRow,
+  vtables, vtableFor, refreshDataNode, refreshDatasetNode, refreshAllDataNodes, expandSubsetRow,
   batchesState, loadBatchesNode, refreshAllBatchesNodes,
 } from "./panels/datanodes.js";
 import {
@@ -1390,10 +1391,29 @@ function subsetParts(s) {
   };
 }
 
+// The sort/filter/join selects are built from the STATIC schema at render time — before the
+// live join exposes its real columns. Repaint their options (preserving the current value)
+// once the live column set changes, so every actual column is offered. Only touches the DOM
+// when the set actually changed (event-driven, not a poll).
+function repaintSubsetCols(el, s) {
+  const cols = viewColumns(s);
+  const sig = cols.join("|");
+  if (el._colsig === sig) return;
+  el._colsig = sig;
+  for (const sel of el.querySelectorAll(".ss-field, .sf-field, .sv-join")) {
+    const v = sel.value;
+    sel.innerHTML = _colOpts(cols, v);
+    sel.value = v;
+  }
+}
+
+const _subInflight = new Set();
 async function refreshSubsetNode(id) {
   const el = nodeEls.get(`sub:${id}`);
   const host = el && el.querySelector(".sub-host");
   if (!host) return;
+  if (_subInflight.has(id)) return;   // its compute can be slow — never run two at once for one view
+  _subInflight.add(id);
   try {
     const r = await api.getSubset(model.profile.name, id);
     const vt = vtableFor(`view:${id}`, host);
@@ -1405,14 +1425,14 @@ async function refreshSubsetNode(id) {
     // the live join may expose columns the static schema can't know (orders/enrich fields) —
     // cache them and re-render the visible/hide toggles so every actual column is listed.
     subsetLiveCols.set(id, r.columns || []);
-    if (s) renderHideToggles(el, s);
+    if (s) { renderHideToggles(el, s); repaintSubsetCols(el, s); }
   } catch (e) {
     // a just-added subset isn't on the backend until the profile saves (debounced) —
     // that's a transient 404, not an error; the post-save refresh fills it in.
     const msg = /\b404\b/.test(String(e.message || e)) ? "no data yet" : String(e.message || e);
     vtables.delete(`view:${id}`);
     host.innerHTML = `<p class="muted" style="padding:8px">${esc(msg)}</p>`;
-  }
+  } finally { _subInflight.delete(id); }
 }
 
 function refreshAllSubsetNodes() {
@@ -2463,8 +2483,7 @@ async function refreshLive() {
     // otherwise stay stale until the tab was clicked.
     for (const ds in map) {
       if (prevLastTs[ds] === undefined || prevLastTs[ds] === map[ds].last_ts) continue;
-      if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
-      if (nodeEls.has(`ds:${ds}`)) loadBatchesNode(ds);
+      if (nodeEls.has(`ds:${ds}`)) refreshDatasetNode(ds);   // one fetch -> data tab + batches tab
       // refresh every view that reads this dataset — directly OR through an upstream view
       for (const s of model.profile.subsets || [])
         if (nodeEls.has(`sub:${s.id}`) && model.subsetReaches(s.id, ds)) refreshSubsetNode(s.id);
@@ -2490,38 +2509,9 @@ async function refreshGames(select) {
   if (select && names.includes(select)) $("gameSelect").value = select;
 }
 
-// Node view listens to the dataset change bus over SSE — any write/edit (collection, sweep,
-// form, manual edit, revert) refreshes the affected data node + subset/batch nodes at once,
-// instead of waiting for the hub heartbeat to notice a coarse count change.
-let _evStream = null;
-const _evPending = new Set();
-let _evTimer = null;
-function _flushEvents() {
-  _evTimer = null;
-  const changed = [..._evPending]; _evPending.clear();
-  for (const ds of changed) if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
-  // refresh ONLY subset nodes that actually read a changed dataset (recomputing every subset
-  // on each event hammered the backend — heavy joins timed out).
-  for (const s of model.profile.subsets || []) {
-    if (!nodeEls.has(`sub:${s.id}`)) continue;
-    if (changed.some((ds) => model.subsetReaches(s.id, ds))) refreshSubsetNode(s.id);
-  }
-  refreshAllBatchesNodes();
-}
-function openEventStream(name) {
-  if (_evStream) { _evStream.close(); _evStream = null; }
-  if (!name) return;
-  try {
-    _evStream = new EventSource(`/api/events/${encodeURIComponent(name)}`);
-    _evStream.addEventListener("dataset", (e) => {
-      let ds = null; try { ds = JSON.parse(e.data).dataset; } catch { /* */ }
-      if (ds) _evPending.add(ds);
-      clearTimeout(_evTimer); _evTimer = setTimeout(_flushEvents, 200);   // debounce bursts
-    });
-    // NOTE: no refetch on "ready" — streams are short-lived (frequent reconnects) and a
-    // dataset refresh parses the ledger; rely on "dataset" events + the hub heartbeat instead.
-  } catch { /* no EventSource -> hub heartbeat still covers it */ }
-}
+// Node view live-data refresh is driven by the HUB heartbeat (refreshLive, keyed on each
+// dataset's last_ts) — ONE mechanism, no separate SSE here (that duplicated the hub and
+// flooded the backend). Pretty Studio uses the SSE bus instead because it has no hub.
 
 async function loadGame(name) {
   if (!name) return;
@@ -2573,7 +2563,7 @@ async function loadGame(name) {
   resetHistory();   // fresh undo/redo baseline for this game
   if (migrated) persist.layout();   // lock in node layout imported from legacy localStorage
   refreshLive();
-  openEventStream(name);   // live dataset push for node view
+  openLogStream(name);   // mirror server activity (trigger watches/fires, API fetches) into the log bar
   hub.kick();   // new game -> beat the hub so every panel re-reflects its state now
   setStatus(`loaded ${name}`);
 }

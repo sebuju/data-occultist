@@ -265,11 +265,11 @@ windows:
     extract: whole
     separator: /
     rules: []
-    dict_mode: correct
+    dict_mode: 'off'
     dictionary: ''
     learn: false
     fuzzy: 0.82
-    min_confidence: 0.0
+    min_confidence: 0.5
     isolate: false
   data_area:
     x: 0.2451303533740383
@@ -305,6 +305,11 @@ windows:
       h: 0.2926472655222516
     align: center
     priority: 0
+    key:
+      fields:
+      - name
+      sep: '|'
+      case_sensitive: false
   static_grid: true
   preprocess:
     mode: none
@@ -321,7 +326,7 @@ windows:
       h: 0.3040611239007955
     field: name
     tell: true
-    tell_conf: 0.0
+    tell_conf: 0.5
     tell_allow_text: false
     locate: false
     align: bottom
@@ -619,7 +624,10 @@ subsets:
   - relics_offered
   join_field: name
   aggregate: latest
-  filters: []
+  filters:
+  - field: ''
+    op: contains
+    value: ''
   derived: []
   hidden_columns: []
   enrich: []
@@ -885,10 +893,10 @@ layout:
       h: 560.0
       collapsed: false
     ds:prices_relic_live:
-      x: 1420.0
-      y: 4360.0
+      x: 1920.0
+      y: 3820.0
       w: 460.0
-      h: 380.0
+      h: 920.0
       collapsed: false
     sub:relic_rewards_live:
       x: 980.0
@@ -898,7 +906,9 @@ layout:
       collapsed: false
     price:relic_live:
       x: 1420.0
-      y: 3780.0
+      y: 3820.0
+      w: 460.0
+      h: 560.0
       collapsed: false
     trigger:owned_refresh:
       x: 360.0
@@ -907,20 +917,20 @@ layout:
       h: 200.0
       collapsed: false
     trigger:relic_watch:
-      x: 1400.0
-      y: 4780.0
-      w: 280.0
+      x: 1440.0
+      y: 4500.0
+      w: 420.0
       h: 220.0
       collapsed: false
     win:relic_window:
-      x: 180.0
+      x: 160.0
       y: 3040.0
       w: 540.0
       h: 500.0
       collapsed: false
     prev:relic_window:
       x: 160.0
-      y: 3640.0
+      y: 3660.0
       w: 540.0
       h: 240.0
       collapsed: false
@@ -935,8 +945,8 @@ layout:
       y: 3980.0
       collapsed: false
     sub:relic_rewards_limit:
-      x: 680.0
-      y: 4240.0
+      x: 740.0
+      y: 4220.0
       w: 640.0
       h: 580.0
       collapsed: false
@@ -1210,11 +1220,12 @@ layout:
     view:relic_rewards_live:
       order:
       - name
-      - live_median
       - price_min
+      - live_median
       - live_sellers
       - price_median
       - volume
+      - _seq
       widths:
         live_median: 90
         name: 170
@@ -1222,9 +1233,18 @@ layout:
       widths:
         key: 52
         _seq: 61
+      order:
+      - key
+      - _seq
+      - name
     ds:prices_relic_live:
       widths:
         name: 131
+    ds:relics_offered:
+      order:
+      - _seq
+      - name
+      - _item
   open_images:
   - relic_window
   - mod_window
@@ -1399,16 +1419,13 @@ layout:
       dock: null
       userSized: true
     activity:
-      visible: false
-      x: 972
-      y: 413
+      visible: true
+      x: 1158
+      y: 861
       w: 360
       h: 155
-      collapsed: true
-      dock:
-        to: nodemap
-        dx: 0
-        ar: true
+      collapsed: false
+      dock: null
     testing:
       visible: false
       x: 972
@@ -1446,16 +1463,13 @@ layout:
         ar: true
       userSized: true
     live:
-      visible: false
-      x: 972
-      y: 597
+      visible: true
+      x: 1219
+      y: 1200
       w: 299
       h: 354
-      collapsed: true
-      dock:
-        to: precap
-        dx: 0
-        ar: true
+      collapsed: false
+      dock: null
       userSized: true
   super_groups:
   - id: sgroup_2

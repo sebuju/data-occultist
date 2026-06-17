@@ -48,10 +48,11 @@ async def events(game: str, request: Request):
                     first = await asyncio.wait_for(queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
                     continue   # idle tick — re-check disconnect / deadline
-                # COALESCE a burst (a sweep/collection writes many rows -> many publishes):
-                # drain ~250ms and emit each changed dataset ONCE.
+                # COALESCE a burst (a sweep/collection writes thousands of rows -> a flood of
+                # publishes): drain ~1s and emit each changed dataset ONCE, so the client refetches
+                # a heavy dataset at most ~once/sec during a sweep instead of per burst.
                 batch = {first}
-                await asyncio.sleep(0.25)
+                await asyncio.sleep(1.0)
                 while not queue.empty():
                     batch.add(queue.get_nowait())
                 for dataset in batch:

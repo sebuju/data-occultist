@@ -96,6 +96,8 @@
 .act-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .act-prog { font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .act-recog { font-size: var(--fs-xs); color: var(--accent); }
+/* third row (triggers): last-activity line, dimmer than the status line above it */
+.act-last { font-size: var(--fs-xs); color: var(--muted); opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .act-cancel, .act-fire {
   flex: none; align-self: center; border: 0; border-radius: 4px; padding: 3px 9px;
   cursor: pointer; font-size: var(--fs-xs);

@@ -473,8 +473,9 @@ async function commitPreviewNode(winId, btn) {
   try {
     const cap = await curCapOf(winId);   // commit the page currently on screen
     const r = await api.previewCommit(previewProfileFor(winId), model.profile.name, cap);
-    done(`· ${r.written} → ${r.dataset} (${r.skipped} skipped of ${r.cells})`);
-    setStatus(`committed ${r.written} to ${r.dataset} · ${r.skipped} skipped of ${r.cells}`);
+    const lc = r.low_conf ? `, ${r.low_conf} low-conf` : "";
+    done(`· ${r.written} → ${r.dataset} (${r.skipped} skipped${lc} of ${r.cells})`);
+    setStatus(`committed ${r.written} to ${r.dataset} · ${r.skipped} skipped${lc} of ${r.cells}`);
     await refreshLive();   // record counts / new dataset edges — may render a brand-new dataset node
     if (nodeEls.has(`ds:${r.dataset}`)) { refreshDataNode(r.dataset); loadBatchesNode(r.dataset); }
   } catch (e) {

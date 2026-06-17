@@ -137,6 +137,14 @@ function activityJobs(data, elapsed = 0) {
       prog: `${s.done}/${s.total || "…"} · ${s.fetched} ok${s.failed ? ` · ${s.failed} failed` : ""}${s.cancel ? " · cancelling…" : ""}${s.last ? ` · ${s.last}` : ""}`,
     });
   }
+  // sweeps refused because another node/process held the per-game gate — no running thread, so
+  // they'd otherwise be invisible. Skip one that's since started running (shown above).
+  const running = new Set((data.sweeps || []).map((s) => s.dataset));
+  for (const b of (data.blocked || [])) {
+    if (running.has(b.dataset)) continue;
+    jobs.push({ key: `blocked:${b.dataset}`, cls: "act-trigger act-off",
+      title: `sweep · ${b.dataset}`, prog: `blocked · ${b.blocked_by || "another sweep running"}` });
+  }
   const p = data.precapture;
   if (p) {
     const recog = p.window ? ` · ${p.window}/${p.state}` : "";
@@ -160,9 +168,11 @@ function activityJobs(data, elapsed = 0) {
     } else if (t.kind === "on_change") {
       prog = `on change: ${(t.watch || []).join(", ") || "—"}${running ? " · firing now…" : ""}`;
     } else { prog = t.kind; }
+    // last-activation gets its OWN (third) row, not crammed onto the status line
+    const last = running ? "firing now…" : (t.last_fired ? `last fired ${since(t.last_fired)}` : "never fired");
     jobs.push({ key: `trigger:${t.id}`, cls: `act-trigger${enabled ? "" : " act-off"}`,
       action: { type: "fire", id: t.id }, enable: { id: t.id, enabled },
-      title: `trigger · ${t.id}`, prog });
+      title: `trigger · ${t.id}`, prog, last });
   }
   return jobs;
 }
@@ -201,6 +211,13 @@ function renderActivity(data, elapsed = 0) {
       const title = document.createElement("div"); title.className = "act-title";
       const prog = document.createElement("div"); prog.className = "act-prog";
       body.append(title, prog);
+      // optional third row: last-activity line (triggers). Created once iff the job carries
+      // `last`; the key namespace fixes a row's type, so its presence never changes per tick.
+      let last = null;
+      if (j.last !== undefined) {
+        last = document.createElement("div"); last.className = "act-last";
+        body.append(last);
+      }
       row.append(body);
       // enable/disable toggle (triggers only) sits just before the action button
       let enableBtn = null;
@@ -226,7 +243,7 @@ function renderActivity(data, elapsed = 0) {
         btn.dataset.fire = j.action.id;
         row.append(btn);
       }
-      r = { row, title, prog, enableBtn, cls: j.cls || "" }; actRows.set(j.key, r);
+      r = { row, title, prog, last, enableBtn, cls: j.cls || "" }; actRows.set(j.key, r);
     }
     // place at slot i ONLY if it isn't already there — no needless detach/reattach (which
     // flashes as a "recreate" in devtools + thrashes layout every tick)
@@ -245,6 +262,7 @@ function renderActivity(data, elapsed = 0) {
     }
     if (r.title.textContent !== j.title) r.title.textContent = j.title;
     if (r.prog.textContent !== j.prog) r.prog.textContent = j.prog;
+    if (r.last && r.last.textContent !== (j.last || "")) r.last.textContent = j.last || "";
   }
   fitActivityHeight();   // grow/shrink the panel to its contents (unless the user resized it)
 }

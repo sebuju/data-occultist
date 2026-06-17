@@ -145,6 +145,7 @@ export class VTable {
       values: row,
       text: this.columns.map((c) => cell(row, c)).join("  ").toLowerCase(),
     }));
+    this._applySort();        // restore the persisted sort against the (possibly new) columns
     this._renderHead();
     this._filter();           // builds this.filtered + renders
   }
@@ -249,6 +250,28 @@ export class VTable {
   _savedOrder() { return (this.id ? _store.load(this.id).order : null) || null; }
   _saveOrder() { if (this.id) _store.save(this.id, { ...(_store.load(this.id)), order: this.columns.slice() }); }
 
+  // ---- sort persistence ----
+  // Sort travels with the profile in the same per-table store as widths/order. Stored by
+  // column NAME (not index, so it survives reorder/add/remove) as a single-element `sorts`
+  // array, matching table.js's shape (dir: 1 asc, -1 desc).
+  _savedSort() { const s = this.id ? _store.load(this.id).sorts : null; return (Array.isArray(s) && s.length) ? s[0] : null; }
+  _saveSort() {
+    if (!this.id) return;
+    const sorts = this.sortCol != null ? [{ col: this.columns[this.sortCol], dir: this.sortDir }] : [];
+    _store.save(this.id, { ...(_store.load(this.id)), sorts });
+  }
+  // Resolve the persisted sort against the current columns. No id (store unwired) -> leave the
+  // in-memory sort alone so it survives the poll's setData re-renders.
+  _applySort() {
+    if (!this.id) return;
+    const s = this._savedSort();
+    this.sortCol = null; this.sortDir = 1;
+    if (s && s.col) {
+      const i = this.columns.indexOf(s.col);
+      if (i >= 0) { this.sortCol = i; this.sortDir = s.dir === -1 ? -1 : 1; }
+    }
+  }
+
   // Reorder incoming columns to the saved order; columns not in the saved list (new ones)
   // keep their server order and append at the end. No saved order → leave as-is.
   _applyOrder(cols) {
@@ -350,6 +373,7 @@ export class VTable {
       if (this.sortDir === 1) this.sortDir = -1;
       else { this.sortCol = null; this.sortDir = 1; }
     } else { this.sortCol = i; this.sortDir = 1; }
+    this._saveSort();
     this._renderHead();
     this._filter();
   }
