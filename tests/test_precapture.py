@@ -18,6 +18,7 @@ from oc.store.keys import KeySpec
 def _profile():
     win = WindowDef(
         id="equip",
+        dataset="equip",
         key=KeyDef(fields=["item_name"]),
         fields=[FieldDef(id="item_name"), FieldDef(id="item_count")],
         regions=[RegionDef(id="n", box=Box(x=0, y=0.5, w=0.5, h=0.1), field="item_name")],
@@ -87,6 +88,16 @@ def test_confidence_floor_drops_low_reads(tmp_path):
 def test_unrecognised_window_stages_nothing(tmp_path):
     recs = [Record(values={"item_name": "Adra"}, confidence=0.9)]
     s = _session(tmp_path, recs, classify=None)   # classifier finds no window
+    s._process_loop([_jpeg(1)], 80, 60)
+    assert s.status()["processed"] == 1
+    assert s.status()["datasets"] == []
+
+
+def test_window_without_dataset_discards(tmp_path):
+    # a window with no dataset produces records that are DISCARDED, never staged
+    recs = [Record(values={"item_name": "Adra"}, confidence=0.9)]
+    s = _session(tmp_path, recs)
+    s._profile.windows[0].dataset = None
     s._process_loop([_jpeg(1)], 80, 60)
     assert s.status()["processed"] == 1
     assert s.status()["datasets"] == []

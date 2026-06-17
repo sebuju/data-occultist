@@ -40,7 +40,8 @@ from ..learn.lexicon import Lexicon
 from ..learn.resolver import FieldResolver
 from ..locate import WindowLocator
 from ..profile.models import GameProfile, WindowDef
-from ..store import DatasetStore, KeyMap
+from ..store import KeyMap, store_for
+from ..store.flow_events import publish_flow
 from ..types import Frame, FractionBox, PixelBox
 from ..capture.mss_backend import MssCaptureBackend
 from ..ocr.serialize import ocr_job
@@ -773,7 +774,7 @@ class PrecaptureSession:
 
                 # one OCR job per frame: held only for this frame, then released, so a UI
                 # read/detect can take a turn between frames instead of fighting the GPU.
-                with ocr_job():
+                with ocr_job(eng.ocr):
                     asig = self._signature(frame, self._detect_fracs)
                     if asig is not None and asig == last_detect_sig:
                         match = last_match
@@ -854,6 +855,8 @@ class PrecaptureSession:
         if not records:
             return
         dataset = window.dataset_id
+        if dataset is None:
+            return   # no dataset -> records discarded, nothing to stage
         km = self._key_map(dataset)
         with self._lock:
             self._read += len(records)
@@ -955,8 +958,8 @@ class PrecaptureSession:
         written = {}
         for dataset, (rows, counts, parts) in staged.items():
             rows = _consolidate(rows, counts, parts)   # merge OCR-noise doubles before committing
-            store = DatasetStore(self._engine.settings.data_dir, self._profile.name,
-                                 dataset, key=self._key_map(dataset))
+            store = store_for(self._engine.settings.data_dir, self._profile.name, dataset,
+                              profile=self._profile, key=self._key_map(dataset))
             store.begin_batch()   # this save is one revertable batch
             n = 0
             for values in rows.values():
@@ -964,6 +967,15 @@ class PrecaptureSession:
                     n += 1
             store.save()
             written[dataset] = n
+            if n:
+                # Source-aware data hops for the graph animation. A precapture save is a whole
+                # session commit, so EVERY window feeding this dataset genuinely produced — light
+                # each of their edges (the multi-feeder fan-in is correct here, unlike live where
+                # only the one writing window should animate).
+                for w in self._profile.windows:
+                    if w.dataset_id == dataset:
+                        publish_flow(self._profile.name, "data", f"win:{w.id}",
+                                     f"ds:{dataset}", n)
         self._lexicon.save()
         self._confusions.save()
         # keep the checkpoint: the session retains its processed records so it can be
@@ -997,6 +1009,11 @@ class PrecaptureSession:
                 "frames": self._frame_count(), "processed": self._processed,
                 "read": self._read, "errors": errors, **self._timing_locked(),
             }
+        # Also feed the per-node stats panel: precapture is per-game, so it lands on a
+        # synthetic ``precap`` node, op ``fr`` (per-frame ms across the OCR pipeline).
+        from ..store import stats_store
+        stats_store.record_timing(self._profile.name, "precap", "fr",
+                                  rec.get("ms_per_frame", 0.0), n=rec.get("processed", 0))
         try:
             path = Path(self._engine.settings.data_dir) / _safe(self._profile.name) / "precapture_perf.jsonl"
             path.parent.mkdir(parents=True, exist_ok=True)

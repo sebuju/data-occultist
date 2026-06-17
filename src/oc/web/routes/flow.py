@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from ...profile import list_profiles
 from ...runtime import load_live_profile
-from ...store import KeySpec, inspect
+from ...store import inspect, store_for
 from ...store.dataset_store import DatasetStore
 from ..deps import get_settings
 
@@ -25,11 +25,13 @@ def flow(game: str):
     windows = []
     used_datasets = set()
     for w in profile.windows:
-        used_datasets.add(w.dataset_id)
+        ds = w.dataset_id   # None when the window has no dataset (records discarded)
+        if ds is not None:
+            used_datasets.add(ds)
         windows.append({
             "id": w.id,
-            "dataset": w.dataset_id,
-            "key_fields": profile.key_map_for(w.dataset_id).fields_used(),
+            "dataset": ds,
+            "key_fields": profile.key_map_for(ds).fields_used() if ds is not None else [],
             "fields": sorted({r.field for r in w.regions}),
             "regions": len(w.regions),
             "detect": len(w.detect),
@@ -50,11 +52,9 @@ def flow(game: str):
 def _store(game: str, dataset: str, aggregate: str | None = None) -> DatasetStore:
     settings = get_settings()
     profile = load_live_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
-    key = profile.key_map_for(dataset) if profile else KeySpec()
-    # a view passes its OWN aggregate (the 'many → one' is the view's call); a bare
-    # dataset read falls back to the dataset default (or "latest").
-    agg = aggregate if aggregate is not None else (profile.aggregate_for(dataset) if profile else "latest")
-    return DatasetStore(settings.data_dir, game, dataset, key=key, aggregate=agg)
+    # a view passes its OWN aggregate (the 'many → one' is the view's call); a bare dataset read
+    # falls back to the profile/dataset default — store_for resolves both key and aggregate.
+    return store_for(settings.data_dir, game, dataset, profile=profile, aggregate=aggregate)
 
 
 def _detail(store: DatasetStore, dataset: str, limit: int = 0) -> dict:
@@ -212,9 +212,14 @@ def subset_view(game: str, subset: str):
     upstream view's derived columns feed downstream. Recomputed from current records, so it
     tracks updates. Input cycles resolve to empty rather than looping."""
     from ...enrich.subset import compute_view
+    from ...store import stats_store
     profile, sub = _subset(game, subset)
     cache: dict = {}
     agg = getattr(sub, "aggregate", "latest") or "latest"
-    inputs = [(i, _input_rows(profile, game, i, frozenset({subset}), cache, agg)) for i in sub.inputs()]
-    result = compute_view(inputs, sub)
+    # Time the whole top-level recompute (nested inputs included) — this is the cost that
+    # grows as the source datasets grow. Nested views aren't timed separately (no double-count).
+    with stats_store.time_block(game, f"sub:{subset}", "rc",
+                                n_fn=lambda: len(result.get("rows", []))):
+        inputs = [(i, _input_rows(profile, game, i, frozenset({subset}), cache, agg)) for i in sub.inputs()]
+        result = compute_view(inputs, sub)
     return {"subset": subset, "datasets": sub.inputs(), **result}

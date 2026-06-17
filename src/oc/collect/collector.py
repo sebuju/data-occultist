@@ -27,7 +27,8 @@ from ..learn.lexicon import Lexicon
 from ..learn.resolver import FieldResolver
 from ..locate import WindowLocator
 from ..profile.models import GameProfile, WindowDef
-from ..store import DatasetStore, KeyMap
+from ..store import DatasetStore, KeyMap, store_for
+from ..store.flow_events import publish_flow
 from .reader import Record, RegionReader
 from .sink import RecordSink
 from .stability import Confirmer
@@ -152,11 +153,12 @@ class Collector:
     def _store_for(self, window: WindowDef) -> DatasetStore:
         dataset = window.dataset_id
         if dataset not in self._stores:
-            store = self._stores[dataset] = DatasetStore(
+            store = self._stores[dataset] = store_for(
                 self._engine.settings.data_dir,
                 self._profile.name,
                 dataset,
-                key=self._key_map(dataset),
+                profile=self._profile,           # resolves the aggregate
+                key=self._key_map(dataset),      # conflict-checked map wins over the profile's
             )
             store.begin_batch()   # one collection run = one revertable batch (CLI collect + live)
             self._observed.setdefault(dataset, set())
@@ -196,6 +198,8 @@ class Collector:
     # ---- pipeline ----------------------------------------------------------
 
     def tick(self) -> TickResult:
+        from ..store import stats_store
+        t0 = time.perf_counter()
         eng = self._engine
         win = self._locator.locate(self._profile)
         if win is None:
@@ -224,15 +228,38 @@ class Collector:
             records = cached[1]
         else:
             fields = {f.id: f for f in self._profile.fields_for(window)}
+            # Time OCR read specifically (only the frames where it actually ran — a
+            # cache-hit frame does no OCR, so recording it would understate the real cost).
+            _oc = time.perf_counter()
             records = self._reader.read(frame, window, fields)
+            stats_store.record_timing(self._profile.name, f"win:{window_id}", "oc",
+                                      (time.perf_counter() - _oc) * 1000.0, n=len(records))
             if sig is not None:
                 self._frame_cache[window_id] = (sig, records)
 
         kept = self._above_floor(records)               # occlusion / garbage gate
+
+        dataset = window.dataset_id
+        # A window with no dataset produces nothing storable — discard its reads
+        # (no confirmer, no store, no disk file). An explicit sink overrides this.
+        if self._explicit_sink is None and dataset is None:
+            stats_store.record_timing(self._profile.name, f"win:{window_id}", "tk",
+                                      (time.perf_counter() - t0) * 1000.0, n=len(records))
+            return TickResult(
+                TickStatus.saved,
+                window_id=window_id,
+                state_id=state_id,
+                read=len(records),
+                kept=len(kept),
+                new=0,
+                total=0,
+                dataset=None,
+                changed=[],
+            )
+
         confirmer = self._confirmer_for(window)         # shared per dataset
         confirmed = confirmer.observe(kept)             # temporal stability gate
 
-        dataset = window.dataset_id
         new = 0
         changed: list[dict] = []
         if self._explicit_sink is not None:
@@ -249,7 +276,14 @@ class Collector:
                 if store.record_seen(rec.values) is not None:
                     new += 1
                     changed.append(dict(rec.values))   # added/updated -> triggers may price it
+            if new:
+                # Source-aware data hop for the graph blob animation: announce that THIS window
+                # (not every window sharing the dataset) fed it, so only its edge lights up.
+                publish_flow(self._profile.name, "data", f"win:{window_id}",
+                             f"ds:{dataset}", new)
 
+        stats_store.record_timing(self._profile.name, f"win:{window_id}", "tk",
+                                  (time.perf_counter() - t0) * 1000.0, n=len(records))
         return TickResult(
             TickStatus.saved,
             window_id=window_id,

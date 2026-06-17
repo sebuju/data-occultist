@@ -129,32 +129,33 @@ function step(now) {
 }
 
 // ---- live streams ----------------------------------------------------------
-// CONTROL hops (trigger->price, trigger->watch) are explicit pulses with no dataset write, so
-// they come from the dedicated flow bus.
-function onControl(e) {
+// FLOW hops are explicit, SOURCE-AWARE pulses from the dedicated flow bus: each event names the
+// exact edge that a real backend stage wrote (the window/price node that produced, the dataset
+// that received) plus the kind ("data" orange, "trigger" cyan, "watch" teal). We animate that
+// ONE edge. This is why two windows sharing a dataset no longer both light up: only the window
+// that actually wrote emits a "data" hop, so only its edge animates.
+function onFlow(e) {
   if (!enabled) return;
   let d;
   try { d = JSON.parse(e.data); } catch { return; }
   if (!d || !d.kind || !d.src || !d.dst) return;
   spawn(d.kind, d.src, d.dst, d.n || 1);
 }
-// DATA hops are derived from the universal dataset-change stream, so they fire for EVERY write
-// path — live collection, the commit-to-dataset button, manual edits, batch restore, price
-// sweeps — not just one code site. On "dataset X gained n rows" we animate every data edge that
-// FEEDS X (its window / price-node sources), plus a short train down each view that re-derives
-// from X (ds -> sub). We do NOT animate ds -> price here: a price node only reads on its own
-// sweep, and that sweep's WRITE shows up as its own dataset event (price -> its output dataset).
+// The ds -> view train is the one data segment that is NOT source-ambiguous — a dataset changing
+// re-derives ALL of its views regardless of who wrote it — so it rides the universal, coalesced
+// dataset-change stream and fires for EVERY write path (live collection, commit button, manual
+// edits, batch restore, price sweeps). The feeder -> dataset hop deliberately does NOT come from
+// here (it has no source info); it comes from the source-aware flow bus above.
 function onData(e) {
   if (!enabled) return;
   let d;
   try { d = JSON.parse(e.data); } catch { return; }
   if (!d || !d.dataset) return;
   const n = d.n || 1;
-  const to = `ds:${d.dataset}`;
+  const from = `ds:${d.dataset}`;
   for (const ed of model.edges()) {
     if (ed.kind !== "data") continue;
-    if (ed.to === to) spawn("data", ed.from, to, n);                                    // feeders -> dataset
-    else if (ed.from === to && ed.to.startsWith("sub:")) spawn("data", to, ed.to, Math.min(n, 4));  // dataset -> view
+    if (ed.from === from && ed.to.startsWith("sub:")) spawn("data", from, ed.to, Math.min(n, 4));  // dataset -> view
   }
 }
 function openStream() {
@@ -163,7 +164,7 @@ function openStream() {
   const g = encodeURIComponent(game);
   try {
     ctrlStream = new EventSource(`/api/events/flow/${g}`);
-    ctrlStream.addEventListener("flow", onControl);
+    ctrlStream.addEventListener("flow", onFlow);
     dataStream = new EventSource(`/api/events/${g}`);
     dataStream.addEventListener("dataset", onData);
   } catch { /* EventSource unavailable -> no blobs, no harm */ }

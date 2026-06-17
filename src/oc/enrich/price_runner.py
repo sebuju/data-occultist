@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..eventlog import publish as logev
-from ..store import DatasetStore
+from ..store import store_for
 from .price_collector import inventory_slugs, sweep_catalogue
 from .slug_resolver import get_resolver
 from .wm_client import slugify
@@ -164,9 +164,7 @@ def _source_rows(data_dir, game: str, profile, input_id: str,
         return cache[input_id]
     sub = profile.subset_def(input_id) if profile else None
     if sub is None:                                   # a plain dataset
-        key = profile.key_map_for(input_id) if profile else None
-        ds = DatasetStore(data_dir, game, input_id, key=key) if key is not None \
-            else DatasetStore(data_dir, game, input_id)
+        ds = store_for(data_dir, game, input_id, profile=profile)
         rows = [r for r in ds.records() if r.get("present", True)]
     elif input_id in stack:                           # cycle -> stop
         rows = []
@@ -207,6 +205,7 @@ def _run_sweep(data_dir, game: str, price_node, *, profile, key, resolve, items,
                gate: threading.Lock, lock_path: Path) -> None:
     dataset = price_node.dataset
     state = _runner(game, dataset).state
+    _t0 = time.perf_counter()
 
     def on_item(done, total, slug, name, ok):
         state.total = total
@@ -224,12 +223,20 @@ def _run_sweep(data_dir, game: str, price_node, *, profile, key, resolve, items,
             items = gather_source_items(data_dir, game, profile, price_node.sources, resolve,
                                         name_field=getattr(price_node, "source_field", "name"))
         sweep_catalogue(
-            data_dir, game, dataset, key=key, throttle=price_node.throttle, timeout=timeout,
-            limit=limit, workers=workers, mode=price_node.mode, on_item=on_item,
+            data_dir, game, dataset, key=key, profile=profile, throttle=price_node.throttle,
+            timeout=timeout, limit=limit, workers=workers, mode=price_node.mode, on_item=on_item,
             should_stop=lambda: state.cancel, items=items)
     finally:
         state.running = False
         state.finished = _utcnow_iso()
+        from ..store import stats_store
+        from ..store.flow_events import publish_flow
+        stats_store.record_timing(game, f"price:{price_node.id}", "sw",
+                                  (time.perf_counter() - _t0) * 1000.0, n=state.fetched)
+        if state.fetched:
+            # Source-aware data hop: the sweep wrote `fetched` snapshots from THIS price node
+            # into its output dataset. One pulse at sweep end (not per item) keeps it un-chatty.
+            publish_flow(game, "data", f"price:{price_node.id}", f"ds:{dataset}", state.fetched)
         _release_file_lock(lock_path)
         gate.release()
 
