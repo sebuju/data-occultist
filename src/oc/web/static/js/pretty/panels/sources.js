@@ -15,7 +15,7 @@ import { el } from "../widgets/util.js";
 export const sourcesState = { visible: false, x: null, y: null, w: 300, h: null, collapsed: false };
 
 export function buildSources(ctx) {
-  const win = createFloatWin({ id: "pretty-sources", title: "sources", state: sourcesState, bothAxes: true,
+  const win = createFloatWin({ id: "pretty-sources", title: "sources", state: sourcesState, bothAxes: true, autoFit: false,
     onShow: () => refresh(), onHide: () => wireValueData(false) });
 
   const head = el("div", "pw-src-head");

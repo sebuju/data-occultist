@@ -7,7 +7,7 @@ import { styleEditor } from "../style_editor.js";
 export const themeState = { visible: false, x: null, y: null, w: 280, h: null, collapsed: false };
 
 export function buildTheme(ctx) {
-  const win = createFloatWin({ id: "pretty-theme", title: "theme", state: themeState, bothAxes: true,
+  const win = createFloatWin({ id: "pretty-theme", title: "theme", state: themeState, bothAxes: true, autoFit: false,
     onShow: () => refresh() });
   function refresh() {
     styleEditor(win.body, ctx.pretty.theme(), () => { ctx.pretty.save(); ctx.refresh(); });

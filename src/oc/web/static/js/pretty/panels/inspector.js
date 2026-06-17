@@ -11,7 +11,7 @@ import { el, humanize } from "../widgets/util.js";
 export const inspectorState = { visible: false, x: null, y: null, w: 320, h: null, collapsed: false };
 
 export function buildInspector(ctx) {
-  const win = createFloatWin({ id: "pretty-inspector", title: "inspector", state: inspectorState, bothAxes: true });
+  const win = createFloatWin({ id: "pretty-inspector", title: "inspector", state: inspectorState, bothAxes: true, autoFit: false });
   let current = null;
 
   function show(widget) { current = widget; win.setVisible(true); render(); }   // visible BEFORE render so height measures right

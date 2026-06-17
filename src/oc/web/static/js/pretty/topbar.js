@@ -26,36 +26,16 @@ export function buildPrettyTools(host, ctx, panels) {
   const toggleBtns = new Map();
   for (const [label, panel] of toggles) {
     const b = el("button", "pw-paneltog", label);
-    b.addEventListener("click", () => { if (panel.win.state.visible) panel.win.setVisible(false); else openPanel(panel); refresh(); });
+    // Same path as the node-view topbar toggles: open with reset (uniform 300px box, free slot,
+    // auto-dock under a panel if it lands below one), so pretty panels behave identically.
+    b.addEventListener("click", () => {
+      const show = !panel.win.state.visible;
+      panel.win.setVisible(show, true);
+      if (show) panel.refresh && panel.refresh();
+      refresh();
+    });
     editTools.appendChild(b);
     toggleBtns.set(panel, b);
-  }
-
-  // Open a panel: expand it if collapsed, then tile it into the first free slot — columns
-  // from the RIGHT edge leftward, stacking within a column; if a column is full it tries the
-  // next column further from the right. Standard margins respected.
-  function openPanel(panel) {
-    const GAP = 8;
-    const top = (document.querySelector(".topbar")?.offsetHeight || 48) + GAP;
-    const vh = window.innerHeight;
-    panel.win.state.collapsed = false;
-    panel.win.setVisible(true);
-    const w = panel.win.el.offsetWidth, h = panel.win.el.offsetHeight || 200;
-    const others = [];
-    for (const [pn] of toggleBtns) {
-      if (pn === panel || !pn.win.state.visible) continue;
-      const e = pn.win.el;
-      others.push({ l: e.offsetLeft, t: e.offsetTop, r: e.offsetLeft + e.offsetWidth, b: e.offsetTop + e.offsetHeight });
-    }
-    let spot = null;
-    for (let x = window.innerWidth - w - GAP; x >= GAP && !spot; x -= (w + GAP)) {
-      const band = others.filter((o) => o.r > x + 2 && o.l < x + w - 2);   // panels sharing this column
-      const y = band.length ? Math.max(top, ...band.map((o) => o.b + GAP)) : top;
-      if (y + h <= vh - GAP) spot = { x, y };
-    }
-    if (!spot) spot = { x: Math.max(GAP, window.innerWidth - w - GAP), y: top };
-    panel.win.place(spot.x, spot.y);
-    panel.refresh && panel.refresh();
   }
 
   host.append(mode, pageSel, addPage, spacer, editTools);

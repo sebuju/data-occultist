@@ -17,6 +17,7 @@ import { buildSources } from "./panels/sources.js";
 import { buildTheme } from "./panels/theme.js";
 import { buildPrettyTools } from "./topbar.js";
 import { el } from "./widgets/util.js";
+import { openContextMenu } from "../ctxmenu.js";
 import * as papi from "./api.js";
 import { model } from "../graph/state.js";
 
@@ -62,7 +63,7 @@ export async function mountPretty(container, toolsHost, g) {
     // Click anywhere that is NOT a widget, a floating panel, or the edit-tools deselects.
     document.addEventListener("mousedown", (ev) => {
       if (!mounted || mode !== "edit" || !document.body.classList.contains("pretty-mode")) return;
-      if (ev.target.closest(".pw, .floatwin, .pw-edittools, .pw-ctxmenu")) return;
+      if (ev.target.closest(".pw, .floatwin, .pw-edittools, .ctxmenu")) return;
       deselect();
     });
     // WASD nudges the selected widget (edit mode, not while typing). Shift = 1px, else grid step.
@@ -78,10 +79,14 @@ export async function mountPretty(container, toolsHost, g) {
     });
     // Right-click empty canvas -> add-widget menu, dropping the new widget at the click spot.
     surface.addEventListener("contextmenu", (ev) => {
+      if (ev.shiftKey) return;   // shift+right-click reserved -> no add-widget menu
       if (mode !== "edit" || ev.target.closest(".pw")) return;
       ev.preventDefault();
       const rect = surface.getBoundingClientRect();
-      openAddMenu(ev.clientX, ev.clientY, ev.clientX - rect.left + surface.scrollLeft, ev.clientY - rect.top + surface.scrollTop);
+      const sx = ev.clientX - rect.left + surface.scrollLeft, sy = ev.clientY - rect.top + surface.scrollTop;
+      openContextMenu(ev.clientX, ev.clientY, WIDGET_LIST.map((def) => ({
+        icon: def.icon, title: def.title, onClick: () => addWidgetAt(def.type, sx, sy),
+      })));
     });
     mounted = true;
   }
@@ -157,32 +162,7 @@ function nudge(dx, dy) {
   pretty.save();
 }
 
-// ---- right-click add-widget menu --------------------------------------------------
-let _menu = null;
-function closeAddMenu() {
-  if (!_menu) return;
-  _menu.remove(); _menu = null;
-  document.removeEventListener("mousedown", onMenuOutside, true);
-  document.removeEventListener("keydown", onMenuKey, true);
-}
-function onMenuOutside(e) { if (_menu && !_menu.contains(e.target)) closeAddMenu(); }
-function onMenuKey(e) { if (e.key === "Escape") closeAddMenu(); }
-function openAddMenu(clientX, clientY, sx, sy) {
-  closeAddMenu();
-  _menu = el("div", "pw-ctxmenu");
-  _menu.style.left = `${clientX}px`; _menu.style.top = `${clientY}px`;
-  for (const def of WIDGET_LIST) {
-    const b = el("button", "pw-ctx-item");
-    b.innerHTML = `<span class="pw-pal-ic">${def.icon || "▫"}</span><span>${def.title}</span>`;
-    b.addEventListener("click", () => { addWidgetAt(def.type, sx, sy); closeAddMenu(); });
-    _menu.appendChild(b);
-  }
-  document.body.appendChild(_menu);
-  const r = _menu.getBoundingClientRect();   // keep fully on-screen
-  if (r.right > window.innerWidth) _menu.style.left = `${window.innerWidth - r.width - 6}px`;
-  if (r.bottom > window.innerHeight) _menu.style.top = `${window.innerHeight - r.height - 6}px`;
-  setTimeout(() => { document.addEventListener("mousedown", onMenuOutside, true); document.addEventListener("keydown", onMenuKey, true); }, 0);
-}
+// ---- right-click add-widget menu (shared primitive, see ../ctxmenu.js) -------------
 function addWidgetAt(type, x, y) {
   const w = pretty.addWidget(pageId, newWidget(type));
   if (!w) return;

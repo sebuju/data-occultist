@@ -107,12 +107,7 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-edit:hover > .pw-del { display: inline-flex; }
 .pw-del.armed { background: #f7768e; color: #06121f; }
 
-/* right-click add-widget menu */
-.pw-ctxmenu { position: fixed; z-index: 1000; background: #1b1f27; border: 1px solid rgba(255,255,255,0.18);
-  border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); padding: 4px; min-width: 150px; display: flex; flex-direction: column; }
-.pw-ctx-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: transparent; border: none;
-  color: inherit; text-align: left; cursor: pointer; border-radius: 4px; }
-.pw-ctx-item:hover { background: rgba(255,255,255,0.08); }
+/* right-click add-widget menu uses the shared .ctxmenu / .ctx-item (overlays.css, js/ctxmenu.js) */
 
 /* sources token showing its live value on hover */
 .pw-src-tok.pw-src-val { background: #2a3550; color: #cfe3ff; }
