@@ -73,13 +73,12 @@ a.node.win:hover { border-color: var(--accent); }
   background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-size: var(--fs-sm); }
 .pr-src button { border: none; background: none; color: var(--muted); cursor: pointer; padding: 0; line-height: 1; }
 .pr-src button:hover { color: var(--warn); }
-.tg-prog:empty { display: none; }   /* no progress text -> take no space */
 .pr-srcs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 4px 0; font-size: var(--fs-sm); }
 .gnode.dataset { width: 360px; height: 380px; }
 .gnode.preview { width: 360px; height: 320px; }
 .gnode.dictionary { width: 300px; height: 360px; }
 .gnode.subset { width: 360px; height: 440px; min-width: 320px; }
-.gnode.price { width: 460px; height: 560px; }
+.gnode.price { width: 360px; height: auto; }   /* config-only now (no chart/movers) -> fit content */
 /* nodes with an out-port dot at their right edge (price, dataset, view): node-level clipping
    would cut the port in half, so clip the BODY instead and let the node (hence the port) overflow */
 .gnode.price, .gnode.dataset, .gnode.subset { overflow: visible; }
@@ -274,60 +273,26 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 [data-role="state_detect"] .r-detect,
 [data-role="state_detect"] .r-state { display: block; }
 
-/* price producer node: sweep control, history chart, movers ------------------ */
+/* price producer node: sweep config + controls (no chart/movers/table) -------- */
 .enr-cfg { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .enr-cfg select { flex: 0 1 auto; }
-/* one-line, ellipsised — a long line must never wrap and shove the chart/table down */
+/* one-line, ellipsised — a long line must never wrap */
 .enr-sum { font-size: var(--fs-sm); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
 .enr-sum strong { color: var(--text); font-variant-numeric: tabular-nums; }
 /* the price node's source-mode + price-by rows now build on `.lab-grid` (graph.css). */
-.enr-orders { margin-top: 6px; padding: 6px; border: 1px dashed var(--line); border-radius: 4px; font-size: var(--fs-sm); flex: none; }
 .gnode.price .gn-foot { flex-wrap: nowrap; align-items: center; flex: none; }
-.gnode.price .enr-chart { flex: none; }   /* fixed bits don't squish when the node shrinks */
 .gnode.price .enr-refresh { flex: 0 0 auto; }   /* don't stretch the sweep button to full width */
 .enr-cancel.busy { display: inline-flex; align-items: center; gap: 6px; }
 .enr-cancel.busy::before { content: ""; width: 11px; height: 11px; border-radius: 50%;
   border: 2px solid currentColor; border-top-color: transparent; animation: spin 0.7s linear infinite; }
 .enr-prog { font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
-.enr-movers-wrap { margin-top: 6px; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.enr-movers { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.enr-movers-wrap .sub-lbl { color: var(--muted); font-size: var(--fs-sm); margin-bottom: 3px; }
 .enr-of { margin-bottom: 6px; }
 
-.ptable { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
-.ptable th { position: sticky; top: 0; background: var(--panel); text-align: left; color: var(--muted);
-  font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--line); }
-.ptable th.num, .ptable td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.ptable td { padding: 3px 6px; border-bottom: 1px solid var(--bg); white-space: nowrap; }
-.ptable tbody tr { cursor: pointer; }
-.ptable tbody tr:hover { background: var(--accent-bg); }
-.ptable tr.sel { background: var(--accent-bg); outline: 1px solid var(--accent); }
-.ptable tr.st-missing td, .ptable tr.st-pending td { color: var(--muted); }
-.ptable td.strong { color: var(--text); font-weight: 600; }
-.ptable .miss { color: var(--warn); font-size: var(--fs-xs); cursor: help; }
-
-.pchart { border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--bg); margin-bottom: 6px; }
-.enr-chart { margin-top: 12px; }
-.pchart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; }
-.pchart-head .muted { font-size: var(--fs-xs); }
-/* lock the box to the viewBox aspect so preserveAspectRatio="none" doesn't stretch the
-   axis labels (text) non-uniformly */
-.enr-svg { width: 100%; aspect-ratio: 640 / 240; height: auto; display: block; }
-.cline { fill: none; stroke: var(--accent); stroke-width: 1.6; }
-.cband { fill: var(--accent); opacity: 0.10; stroke: none; }
-.cdot { fill: var(--accent); }
-.cgrid { stroke: var(--line); stroke-width: 1; }
-.cax { fill: var(--muted); font-size: 10px; }
-.cax.cend { text-anchor: end; }
-.cempty { fill: var(--muted); font-size: var(--fs-base); text-anchor: middle; }
-
-.movers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.mover { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center;
-  padding: 4px 8px; border-radius: 5px; background: var(--bg); cursor: pointer; font-size: var(--fs-sm); }
-.mover:hover { background: var(--accent-bg); }
-.mover .mname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mover .mprice { color: var(--muted); font-variant-numeric: tabular-nums; }
-.mover .mpct { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 6ch; text-align: right; }
-.mover.up .mpct { color: var(--ok); }
-.mover.down .mpct { color: var(--danger); }
+/* flow blobs: small dots traveling node->node along graph edges on live activity. Colour by
+   edge kind (matches the edge stroke vars in base.css): data orange, trigger cyan, watch teal.
+   The layer (#gflow) lives in graph.css; here is just the dot look. JS drives cx/cy + r. */
+.flow-blob { pointer-events: none; filter: drop-shadow(0 0 3px currentColor); }
+.flow-blob.data { fill: var(--data); color: var(--data); }
+.flow-blob.trigger { fill: var(--trigger-line); color: var(--trigger-line); }
+.flow-blob.watch { fill: var(--watch-line); color: var(--watch-line); }
 

@@ -122,13 +122,7 @@ def revert_batch(game: str, dataset: str, batch: int, on: bool = True):
     """Revert (``on=true``) or restore a whole collection/save batch — every record it
     added or changed falls back to its previous accepted value. Returns refreshed detail."""
     store = _store(game, dataset)
-    store.revert_batch(batch, on)
-    if not on:   # restoring a batch re-applies its rows -> announce them so on_change prices them
-        recs = [ev["values"] for ev in store.batch_events(batch)
-                if not ev.get("reverted") and ev.get("values")]
-        if recs:
-            from ...store import changes
-            changes.publish(game, dataset, recs)
+    store.revert_batch(batch, on)   # the store owns the change-bus announce (incl. restore rows)
     return _detail(store, dataset)
 
 
