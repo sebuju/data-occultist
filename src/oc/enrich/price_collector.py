@@ -107,6 +107,7 @@ class PriceCollector:
         periodic saves run on this single consumer thread, so callbacks stay serialised."""
         total = len(items)
         fetched = failed = done = 0
+        t0 = time.monotonic()
         store_lock = threading.Lock()
         limiter = _RateLimiter(self._throttle)
         stop = threading.Event()
@@ -156,11 +157,6 @@ class PriceCollector:
                         failed += 1
                     if on_item is not None:
                         on_item(done, total, slug, name, ok)
-                    # one log line per external fetch (warframe.market), so the log bar shows
-                    # every API call. Gameless when no context given (e.g. tests).
-                    _logev(f"  market {self._mode}: {name} [{slug}] "
-                           f"{'ok' if ok else ('404' if missing else 'fail')} ({done}/{total})",
-                           level="ok" if ok else "info", game=game, dataset=log_dataset)
                     if fetched and fetched % _SAVE_EVERY == 0:
                         with store_lock:
                             self._store.save()
@@ -175,6 +171,13 @@ class PriceCollector:
                 self._store.save()
                 if dataset_store is not None:
                     dataset_store.save()
+        # ONE summary line per sweep (not one per fetch) — every price sweep funnels through
+        # here, so it covers the trigger, manual-refresh, and CLI paths uniformly.
+        dt = time.monotonic() - t0
+        _logev(f"sweep {log_dataset or '?'} done · {fetched}/{total} ok"
+               + (f" · {failed} failed" if failed else "") + f" · {dt:.1f}s",
+               level="ok" if fetched and not failed else "info",
+               game=game, dataset=log_dataset)
         return {"total": total, "fetched": fetched, "failed": failed,
                 "slugs": len(self._store.slugs())}
 

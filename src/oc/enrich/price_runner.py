@@ -256,8 +256,8 @@ def start_sweep(data_dir, game: str, price_node, *, profile=None, key=None, reso
         gate.release()                       # another PROCESS is sweeping this game
         return _note_blocked(game, dataset, price_node.mode, "another process sweeping")
     _recent_blocked.pop((game, dataset), None)   # this node is now sweeping — drop any stale block
-    n = "?" if items is None else len(items)
-    logev(f"sweep {dataset} started · {n} item(s) · {price_node.mode}", level="run", game=game)
+    n = "" if items is None else f" · {len(items)} item(s)"   # count unknown until sources resolve
+    logev(f"sweep {dataset} started · {price_node.mode}{n}", level="run", game=game)
     runner.state = SweepState(game=game, dataset=dataset, mode=price_node.mode,
                               running=True, started=_utcnow_iso())
     runner.thread = threading.Thread(

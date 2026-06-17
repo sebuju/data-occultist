@@ -178,6 +178,24 @@ def test_sweep_catalogue_writes_dataset_and_history(tmp_path, monkeypatch):
     assert len(PriceStore(tmp_path, "g").history("acceltra_prime_set")) == 2
 
 
+def test_sweep_logs_one_summary_line_not_per_item(tmp_path, monkeypatch):
+    from oc import eventlog
+
+    monkeypatch.setattr(price_collector, "fetch_statistics",
+                        lambda slug, timeout=30.0: _stats(closed=[("2026-06-08", 48)]))
+    lines = []
+    off = eventlog.subscribe(lambda ev: lines.append(ev))
+    try:
+        items = [("a_set", "A Set"), ("b_set", "B Set"), ("c_set", "C Set")]
+        sweep_catalogue(tmp_path, "g", "relics", throttle=0, items=items)
+    finally:
+        off()
+    # exactly one line for a 3-item sweep — the summary, not three per-item lines
+    assert len(lines) == 1
+    assert lines[0]["game"] == "g" and lines[0]["dataset"] == "relics"
+    assert "sweep relics done" in lines[0]["msg"] and "3/3 ok" in lines[0]["msg"]
+
+
 def test_sweep_flushes_partial_on_cancel(tmp_path, monkeypatch):
     monkeypatch.setattr(price_collector, "fetch_statistics",
                         lambda slug, timeout=30.0: _stats(closed=[("2026-06-08", 10)]))
