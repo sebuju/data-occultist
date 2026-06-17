@@ -49,6 +49,10 @@ class Engine:
         from .window.dpi import set_process_dpi_aware
 
         set_process_dpi_aware()
+        # Point the per-node timing store at the data dir so durations persist (in-memory
+        # only until set). Safe to call repeatedly.
+        from .store import stats_store
+        stats_store.configure(settings.data_dir)
         ocr = build_ocr(settings.ocr.name, **settings.ocr.options)
         # The classifier needs the OCR engine (text detectors) and where templates live.
         classifier_opts = {

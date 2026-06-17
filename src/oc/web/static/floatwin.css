@@ -156,6 +156,37 @@
   border-radius: 50%; animation: spin 0.7s linear infinite; }
 .act-trigger .act-prog { color: var(--accent); }
 
+/* ---- stats panel ----------------------------------------------------------- */
+.st-panel { display: flex; flex-direction: column; min-height: 100%; }
+.st-list { display: flex; flex-direction: column; gap: 4px; min-height: 100%; }
+.st-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); padding: 12px; }
+/* one card per node+op (same shape as the tasks panel's .act-row): a clickable head with the
+   node title + a wrap of labelled metric chips, and a hidden history chart below it. An accent
+   stripe down the left edge keeps the otherwise-bland list scannable; it brightens when open. */
+.st-card { background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; overflow: hidden; }
+.st-card.open { border-left-color: var(--accent); }
+.st-head { display: flex; flex-direction: column; gap: 3px; padding: 7px 9px; cursor: pointer; }
+.st-head:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.st-card.open .st-head { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.st-title { font-weight: 600; font-size: var(--fs-sm);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-name { color: var(--text); }
+.st-runs { color: var(--accent); font-weight: 700; }   /* run count, dot-delimited in the title */
+.st-meta { display: flex; flex-wrap: wrap; gap: 3px 10px;
+  font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--text); }
+.st-m { display: inline-flex; align-items: baseline; gap: 4px; }
+.st-m i { font-style: normal; font-size: 0.85em; color: var(--muted); }
+.st-m b { font-weight: 600; }
+/* colour-code the durations so min/last/max read at a glance */
+.st-m-last b { color: var(--accent); }
+.st-m-avg b  { color: var(--text); }
+.st-m-min b  { color: var(--ok); }
+.st-m-max b  { color: var(--warn); }
+.st-m-since b { color: var(--muted); font-weight: 500; }
+.st-detail { border-top: 1px solid var(--line); padding: 6px; }
+.st-chart { width: 100%; height: 150px; }
+
 /* ---- live panel ------------------------------------------------------------ */
 .live-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .live-row > label { margin: 0; color: var(--text); font-weight: 600; }
