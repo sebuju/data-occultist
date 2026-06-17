@@ -4,6 +4,8 @@ Files (under ``data/<game>/``):
   * ``<dataset>.history.jsonl`` — append-only ChangeEvent ledger (the source of truth)
   * ``<dataset>.reverted.json`` — set of event ids the user has reverted
   * ``<dataset>.state.json``    — derived snapshot cache (current keyed records)
+  * ``<dataset>.summary.json``  — tiny derived counts/columns/last-change for the dashboard
+    poll (so a flow tick never reads/parses the full, possibly-huge, state snapshot)
 
 The ledger is authoritative: the current state is the result of REPLAYING every
 non-reverted event in order. Events are grouped into **batches** (one collection/save
@@ -28,6 +30,26 @@ from .keys import KeyMap, KeySpec
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def file_src(path: Path) -> dict | None:
+    """A file's identity (size + mtime) — lets a derived cache be validated WITHOUT
+    parsing the file. Any write changes it. ``None`` when the file is absent."""
+    try:
+        st = path.stat()
+        return {"size": st.st_size, "mtime": st.st_mtime_ns}
+    except OSError:
+        return None
+
+
+# Fields that are row plumbing, not data columns — hidden from a dataset's column preview.
+SUMMARY_HIDDEN = {"key", "present", "first_seen", "last_seen", "removed_at", "_count",
+                  "_seq", "_batch"}
+
+# Derived-cache schema version (state snapshot + summary sidecar). Bump to invalidate every cache
+# on disk — e.g. when the meaning of a stored field changes, or to flush caches a fixed bug may
+# have poisoned. v7: `src` is now stamped consistent with content (was a racy post-build stat).
+CACHE_V = 7
 
 
 # the three files that make up one dataset on disk (see module docstring)
@@ -169,12 +191,24 @@ class DatasetStore:
         self._history_path = base / f"{dataset}.history.jsonl"
         self._reverted_path = base / f"{dataset}.reverted.json"
         self._state_path = base / f"{dataset}.state.json"
+        self._summary_path = base / f"{dataset}.summary.json"
         self._key = key
         self._agg = aggregate or "latest"
         self._clock = clock
         self._events: list[ChangeEvent] = []
         self._events_loaded = False   # events are parsed lazily — a valid cache skips the parse
         self._n_events = 0            # total event count (kept without holding the list)
+        self._last_ts: str | None = None   # newest event's ts/op, carried in the state cache so the
+        self._last_op: str | None = None   # dashboard's "last change" needs no ledger parse
+        # The history src (size+mtime) the IN-MEMORY state was built from — captured BEFORE the
+        # parse / right after each append, NOT a fresh stat at write time. A derived cache (state
+        # snapshot, summary sidecar) is stamped with THIS, so a concurrent appender (a price sweep
+        # thread writing the same dataset) can only ever make the stamp look OLDER than the live
+        # file (-> reader reparses, safe), never NEWER than the content it carries (-> reader would
+        # trust a stale snapshot, the partial-batch bug). See _meta / write_summary.
+        self._content_src: dict | None = None
+        self._state_cached = False    # state came from the snapshot cache (events still unparsed)
+
         self._reverted: set[int] = set()
         self._next_id = 1
         self._batch = 0
@@ -195,26 +229,27 @@ class DatasetStore:
         entry["values"] = aggregate_records(entry.get("records", []), self._agg)
 
     def _src(self) -> dict | None:
-        """Identity of the history file (size + mtime) — lets the cache be validated WITHOUT
+        """Identity of the history file (size + mtime) — lets a cache be validated WITHOUT
         parsing the file. Any append changes it, invalidating the cache."""
-        try:
-            st = self._history_path.stat()
-            return {"size": st.st_size, "mtime": st.st_mtime_ns}
-        except OSError:
-            return None
+        return file_src(self._history_path)
 
     def _meta(self) -> dict:
         """Fingerprint the cached state was built from, validated WITHOUT reading history:
         shape version + key spec + reverted set + the history file's size/mtime. It also
         carries ``next_id``/``batch``/``n_events`` so the fast path can restore them without
         a parse. A re-key, a revert, or any new event (file grows) invalidates it."""
-        return {"v": 5, "key": self._key.meta(), "reverted": sorted(self._reverted),
-                "src": self._src(), "next_id": self._next_id, "batch": self._batch,
-                "n_events": self._n_events}
+        return {"v": CACHE_V, "key": self._key.meta(), "reverted": sorted(self._reverted),
+                "src": self._content_src, "next_id": self._next_id, "batch": self._batch,
+                "n_events": self._n_events, "last_ts": self._last_ts, "last_op": self._last_op}
 
     def _read_events(self) -> None:
         """Parse the full history ledger into memory (the expensive part — avoided when a
         valid state cache exists)."""
+        # Stat BEFORE reading: the parsed content reflects the file at-or-after this point, so
+        # stamping a cache with this src can never overstate what the content covers (a write
+        # racing the read just makes the live file newer -> the cache is rejected, not trusted).
+        self._content_src = file_src(self._history_path)
+        cached_n = self._n_events if self._state_cached else None   # cache's event basis, to detect drift
         self._events = []
         if self._history_path.exists():
             for line in self._history_path.read_text(encoding="utf-8").splitlines():
@@ -224,12 +259,30 @@ class DatasetStore:
         self._n_events = len(self._events)
         self._next_id = 1 + max((e.id for e in self._events), default=0)
         self._batch = max((e.batch for e in self._events), default=0)
+        last = self._events[-1] if self._events else None
+        self._last_ts = last.ts if last else None
+        self._last_op = last.op.value if last else None
         self._events_loaded = True
+        # BACKSTOP: if the state came from the cache but the ledger we just parsed has a different
+        # event count, that cache was stale (the bug that left records() behind batches/history) —
+        # rebuild the keyed state from the real ledger and persist a fresh cache. Should never fire
+        # now that caches stamp `_content_src` consistently, but it heals any already-poisoned file
+        # the moment any event-reading view (batches/history/detail) touches the dataset.
+        if cached_n is not None and cached_n != self._n_events:
+            self._state = replay(self._events, self._reverted, self._key, self._agg)
+            self._state_cached = False
+            self.save()
 
     def _ensure_events(self) -> None:
         """Parse the ledger on first need (revert/edit/batch views/replay)."""
         if not self._events_loaded:
             self._read_events()
+
+    def ensure_loaded(self) -> None:
+        """Force the ledger to be parsed now (and heal a stale state cache — see _read_events).
+        A reader that shows records ALONGSIDE the ledger (the dashboard detail) calls this first so
+        its records can never lag the batches/history it shows from the same ledger."""
+        self._ensure_events()
 
     def _load(self) -> None:
         history_existed = self._history_path.exists()
@@ -259,7 +312,7 @@ class DatasetStore:
         if not isinstance(cached, dict):
             return False
         meta = cached.get("_meta") or {}
-        if (meta.get("v") != 5 or meta.get("key") != self._key.meta()
+        if (meta.get("v") != CACHE_V or meta.get("key") != self._key.meta()
                 or meta.get("reverted") != sorted(self._reverted) or meta.get("src") != self._src()):
             return False
         self._state = cached.get("state", {})
@@ -268,6 +321,10 @@ class DatasetStore:
         self._next_id = meta.get("next_id", 1)
         self._batch = meta.get("batch", 0)
         self._n_events = meta.get("n_events", 0)
+        self._last_ts = meta.get("last_ts")
+        self._last_op = meta.get("last_op")
+        self._content_src = meta.get("src")   # this state matches the cache's src — carry it for re-saves
+        self._state_cached = True             # state is from the snapshot; events not parsed yet
         return True   # events stay lazy
 
     def save(self) -> None:
@@ -277,14 +334,48 @@ class DatasetStore:
                        ensure_ascii=False, indent=0, sort_keys=True),
             encoding="utf-8",
         )
+        self.write_summary()
+
+    def summary(self) -> dict:
+        """Cheap dashboard digest computed from the in-memory state: counts + a column
+        preview + the last change. No record materialisation, no ledger parse."""
+        present = self.present_count
+        total = len(self._state)
+        cols: list[str] = []
+        for entry in list(self._state.values())[:20]:
+            for k in entry.get("values", {}):
+                if k not in SUMMARY_HIDDEN and k not in cols:
+                    cols.append(k)
+        return {"dataset": self._dataset, "present": present, "total": total,
+                "removed": total - present, "columns": cols,
+                "last_ts": self._last_ts, "last_op": self._last_op}
+
+    def write_summary(self) -> None:
+        """Persist the digest beside the state (called on every ``save`` and by the dashboard
+        reader on a sidecar miss), fingerprinted by the history file + key spec
+        so a reader can trust it without opening either. Only for a dataset that has a ledger —
+        a phantom summary would mislead the dashboard (list_datasets ignores *.summary.json,
+        so it can't resurrect a dataset, but keep it honest anyway)."""
+        if not self._history_path.exists():
+            return
+        self._summary_path.write_text(
+            json.dumps({"v": CACHE_V, "src": self._content_src, "key": self._key.meta(),
+                        **self.summary()}, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
     def _append(self, event: ChangeEvent) -> None:
         self._history_path.parent.mkdir(parents=True, exist_ok=True)
         with self._history_path.open("a", encoding="utf-8") as fh:
             fh.write(event.to_json() + "\n")
         self._n_events += 1
+        self._last_ts = event.ts
+        self._last_op = event.op.value
         if self._events_loaded:
             self._events.append(event)
+        # this instance is the sole writer (per-game gate + cross-process file lock), so the file
+        # now reflects exactly the in-memory state through this event — advance the stamp to match.
+        self._content_src = file_src(self._history_path)
 
     def _save_reverted(self) -> None:
         self._reverted_path.parent.mkdir(parents=True, exist_ok=True)
@@ -405,11 +496,23 @@ class DatasetStore:
             self._apply_reverted(recs)
 
     def clear_data(self) -> None:
-        """Empty the current records by reverting every event — KEEPS the batch ledger
-        (each batch shows reverted and stays restorable)."""
+        """Permanently delete EVERY batch from the ledger — empties the dataset and wipes
+        its history (not just reverting). Unlike ``revert_batch``, nothing stays restorable."""
         self._ensure_events()
-        self._reverted = {e.id for e in self._events}
-        self._apply_reverted()
+        if not self._events:
+            return
+        self._events = []
+        self._reverted = set()
+        self._n_events = 0
+        self._next_id = 1
+        self._batch = 0
+        self._last_ts = None
+        self._last_op = None
+        self._rewrite_history()
+        self._save_reverted()
+        self._state = self._replay()
+        self.save()
+        self._announce([])
 
     def _rewrite_history(self) -> None:
         self._history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -551,6 +654,16 @@ class DatasetStore:
     @property
     def present_count(self) -> int:
         return sum(1 for e in self._state.values() if e.get("present", True))
+
+    @property
+    def last_change(self) -> dict | None:
+        """The newest ledger event's ``{ts, op}`` WITHOUT parsing the ledger — read from
+        the state cache (or kept live as events append). ``None`` when the ledger is empty.
+        The dashboard summary uses this instead of ``history(1)`` so a flow poll never forces
+        a full-ledger parse."""
+        if self._last_ts is None:
+            return None
+        return {"ts": self._last_ts, "op": self._last_op}
 
     def records(self, limit: int = 0) -> list[dict]:
         """All current records, present first then by key. ``limit<=0`` means no cap

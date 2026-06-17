@@ -4,18 +4,20 @@
 // Widgets `require(key)` what they need (a dataset/subset/status) and `subscribe(key, fn)` to
 // be told when it changes; `read(key)` returns the cached value. A tick refetches only the
 // keys something currently needs and notifies subscribers ONLY when the value actually
-// changed (so steady-state polls cause zero work downstream — widgets reconcile in place,
-// CLAUDE.md rule 1). `node:` values are read live off the shared model (not polled);
+// changed (so steady-state polls cause zero work downstream — widgets reconcile in
+// place). `node:` values are read live off the shared model (not polled);
 // `widget:` values are published by widgets into the scope.
 
 import * as papi from "./api.js";
 import { isOnline } from "../conn.js";
 import { model } from "../graph/state.js";
 import { pathGet } from "./path.js";
+import * as dsevents from "../graph/dsevents.js";
+import { singleFlight } from "../singleflight.js";
 
 let game = null;
 let timer = null;
-let stream = null;            // EventSource — server pushes "this dataset changed"
+let dsUnsub = null;           // unsubscribe from the shared dataset-change push bus
 const _need = new Map();      // key -> refcount (which dataset/subset/status to poll)
 const _cache = new Map();     // key -> last value (rows array, or the status object)
 const _sig = new Map();       // key -> JSON signature, to detect real changes
@@ -29,13 +31,23 @@ const FALLBACK_MS = 12000;
 export function initData(g) {
   game = g;
   _need.clear(); _cache.clear(); _sig.clear(); _scope.clear();
-  if (timer) openStream();   // active session switching games -> repoint the stream
+  if (timer) dsevents.setGame(g);   // active session switching games -> repoint the shared bus
   // _subs is intentionally kept: widgets re-subscribe on re-render, and stale keys are
   // harmless (notified only when present in _cache).
 }
 
-export function startData() { stopData(); openStream(); refetchNeeded(); timer = setInterval(refetchNeeded, FALLBACK_MS); }
-export function stopData() { if (timer) clearInterval(timer); timer = null; closeStream(); }
+export function startData() {
+  stopData();
+  dsevents.setGame(game);                          // ensure the shared bus is pointed at our game
+  dsUnsub = dsevents.subscribe(onStreamChange);    // any dataset write -> pull dependents (debounced)
+  refetchNeeded();
+  timer = setInterval(refetchNeeded, FALLBACK_MS);
+}
+export function stopData() {
+  if (timer) clearInterval(timer);
+  timer = null;
+  if (dsUnsub) { dsUnsub(); dsUnsub = null; }       // drop our subscription; the bus stays open for the node view
+}
 
 // On a dataset change the server doesn't know which subsets depend on it, so refetch every
 // key something currently needs — cheap, and guarantees bound tables/charts/subsets update.
@@ -44,8 +56,8 @@ let _evtDebounce = null;
 const _changedDs = new Set();
 // Refetch ONLY what depends on the dataset(s) that changed — not every bound key. A commit to
 // one dataset must not refetch all of them (that fan-out is what hammered the server).
-function onStreamChange(e) {
-  try { const d = JSON.parse(e.data); if (d && d.dataset) _changedDs.add(d.dataset); } catch { /* */ }
+function onStreamChange(dataset) {
+  if (dataset) _changedDs.add(dataset);
   clearTimeout(_evtDebounce);
   _evtDebounce = setTimeout(flushChanged, 150);
 }
@@ -61,18 +73,6 @@ function flushChanged() {
     }
   }
 }
-function openStream() {
-  closeStream();
-  if (!game) return;
-  try {
-    stream = new EventSource(`/api/events/${encodeURIComponent(game)}`);
-    stream.addEventListener("dataset", onStreamChange);   // any dataset write -> pull dependents (debounced)
-    // (no refetch on "ready": streams are short-lived/reconnect often; the fallback interval
-    //  covers the brief reconnect gap without refetching on every reconnect)
-  } catch { /* EventSource unavailable -> the fallback interval covers it */ }
-}
-function closeStream() { if (stream) { try { stream.close(); } catch { /* */ } stream = null; } }
-
 // ---- needs / subscriptions ---------------------------------------------------------
 
 export function require(key) {
@@ -115,11 +115,12 @@ export function publish(widgetId, value) {
 
 // ---- polling ------------------------------------------------------------------------
 
-const _inflight = new Set();
-async function fetchKey(key) {
+// Single-flight per key WITH a trailing re-run: a refetch requested while one is in flight (a
+// slow subset compute during a live sweep) must not be dropped — else the bound widget stalls on
+// stale data until the next fallback tick. The latest request runs once the current one ends.
+function fetchKey(key) { singleFlight(`pd:${key}`, () => _fetchKey(key)); }
+async function _fetchKey(key) {
   if (!game || !isOnline()) return;        // don't hammer a paused/unreachable backend
-  if (_inflight.has(key)) return;          // a fetch for this key is already running — don't pile on
-  _inflight.add(key);
   try {
     let value;
     if (key === "status") value = await papi.flowStatus(game);
@@ -132,7 +133,6 @@ async function fetchKey(key) {
     _cache.set(key, value);
     notify(key);
   } catch { /* transient fetch error — keep last cache, retry next tick */ }
-  finally { _inflight.delete(key); }
 }
 
 // Force an immediate refetch of one key (e.g. right after a write) — bound widgets update at

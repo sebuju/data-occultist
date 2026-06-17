@@ -5,6 +5,7 @@ import * as api from "../../api.js";
 import { esc } from "../../dom.js";
 import { openModal } from "../../modal.js";
 import { VTable } from "../../vtable.js";
+import { singleFlight } from "../../singleflight.js";
 import { nodeEls, setStatus, model } from "../state.js";
 import { refreshLive, clockTime, refreshDatasetConsumers } from "../main.js";
 
@@ -39,12 +40,15 @@ function setTabCount(ds, sel, n) {
   if (el) el.textContent = n != null ? `${n}` : "";
 }
 
-const _dnInflight = new Set();
-async function refreshDataNode(ds) {
+// Single-flight key shared by refreshDataNode + refreshDatasetNode: they hit the same endpoint
+// and write the same node host, so they must not race; a call arriving mid-fetch re-runs once
+// after (the LATEST request wins) — never dropped, so the final write of a live sweep lands.
+const _dnKey = (ds) => `dn:${ds}`;
+
+function refreshDataNode(ds) { singleFlight(_dnKey(ds), () => _refreshDataNode(ds)); }
+async function _refreshDataNode(ds) {
   const host = dataHost(ds);
   if (!host) return;
-  if (_dnInflight.has(ds)) return;   // a fetch for this dataset is already running — don't pile on
-  _dnInflight.add(ds);
   try {
     const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
     const recs = (await r.json()).records || [];
@@ -55,7 +59,6 @@ async function refreshDataNode(ds) {
     });
     setTabCount(ds, ".data-n", recs.length);   // item count on the data tab
   } catch (e) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
-  finally { _dnInflight.delete(ds); }
 }
 
 // Inline drill-down: a dataset record aggregates "many" observations under its key — fetch
@@ -263,11 +266,10 @@ function fmtVals(v) {
 
 // ONE fetch updates BOTH a dataset node's data tab and its batches tab — they share the same
 // endpoint, so on a live change refresh both from a single request instead of two.
-async function refreshDatasetNode(ds) {
+function refreshDatasetNode(ds) { singleFlight(_dnKey(ds), () => _refreshDatasetNode(ds)); }
+async function _refreshDatasetNode(ds) {
   const host = dataHost(ds), els = batEls(ds);
   if (!host && !els) return;
-  if (_dnInflight.has(ds)) return;
-  _dnInflight.add(ds);
   try {
     const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
     const j = await r.json();
@@ -283,7 +285,6 @@ async function refreshDatasetNode(ds) {
       setTabCount(ds, ".bat-n", batches.filter((b) => !b.reverted).length);
     }
   } catch (e) { if (host) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; } }
-  finally { _dnInflight.delete(ds); }
 }
 
 export {

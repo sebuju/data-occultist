@@ -58,6 +58,9 @@ def _store(game: str, dataset: str, aggregate: str | None = None) -> DatasetStor
 
 
 def _detail(store: DatasetStore, dataset: str, limit: int = 0) -> dict:
+    # Parse the ledger up front so `records` (keyed state) can't lag the `batches`/`history` we
+    # show from that same ledger — and so a stale state cache self-heals before we read it.
+    store.ensure_loaded()
     # `history` (per-event) kept for the legacy dashboard page; the graph uses `batches`
     return {"dataset": dataset, "records": store.records(limit),
             "batches": store.batches(80), "history": store.history(50)}
@@ -189,7 +192,9 @@ def _input_rows(profile, game: str, input_id: str, stack: frozenset, cache: dict
         return cache[ck]
     sub = profile.subset_def(input_id)
     if sub is None:                                   # a plain dataset
-        rows = _store(game, input_id, aggregate).records()
+        store = _store(game, input_id, aggregate)
+        store.ensure_loaded()   # records from the real ledger (heal a stale cache) so a view can't lag it
+        rows = store.records()
     elif input_id in stack:                           # cycle -> stop
         rows = []
     else:

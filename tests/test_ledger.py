@@ -88,15 +88,16 @@ def test_batches_group_events_and_revert_wholesale(tmp_path):
     assert s.records()[0]["v"] in (1, 2)
 
 
-def test_clear_data_empties_records_keeps_batches(tmp_path):
+def test_clear_data_removes_all_batches(tmp_path):
     s = _store(tmp_path)
     s.begin_batch(); s.record_seen({"name": "A"}); s.record_seen({"name": "B"})
+    s.begin_batch(); s.record_seen({"name": "C"})
     s.clear_data()
-    assert s.records() == []                      # no current records
-    assert len(s.batches()) == 1                  # the batch ledger survives
-    assert s.batches()[0]["reverted"] is True
-    s.revert_batch(1, reverted=False)             # restore brings the data back
-    assert s.present_count == 2
+    assert s.records() == []                       # no current records
+    assert s.batches() == []                       # every batch wiped from the ledger
+    # truly gone from disk: a reload brings nothing back
+    s2 = DatasetStore(tmp_path, "game", "mods")
+    assert s2.batches() == [] and s2.records() == []
 
 
 def test_remove_batch_deletes_from_ledger(tmp_path):

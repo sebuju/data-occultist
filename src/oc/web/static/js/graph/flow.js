@@ -4,7 +4,7 @@
 // count). NOT a choreographed full-chain walk — each blob animates exactly the one edge that
 // the matching backend stage wrote.
 //
-// Performance contract (CLAUDE.md rule 1): nothing runs at idle. The rAF loop is started on
+// Performance contract: nothing runs at idle. The rAF loop is started on
 // the first spawned blob and STOPPED the moment the active list empties; <circle> elements are
 // pooled (created on demand, parked on finish), never created/destroyed per frame. While
 // active, each frame is a handful of cx/cy writes (capped). The blob layer lives inside
@@ -12,6 +12,7 @@
 
 import { edgeGeometry } from "./routing.js";
 import { model } from "./state.js";
+import * as dsevents from "./dsevents.js";
 
 const CAP = 40;            // max blobs spawned per event (overflow is represented, not drawn)
 const STAGGER_MS = 80;     // gap between blobs of one event, so they read as a train not a clump
@@ -21,7 +22,7 @@ const SVGNS = "http://www.w3.org/2000/svg";
 let game = null;
 let enabled = true;        // code-level toggle; default ON. UI may flip this later via setFlowEnabled.
 let ctrlStream = null;     // EventSource: control hops (trigger->price, trigger->watch)
-let dataStream = null;     // EventSource: dataset writes (drives data hops, any write path)
+let dsUnsub = null;        // unsubscribe from the shared dataset-change bus (drives data hops)
 let layer = null;          // <svg id="gflow"> inside #gworld
 const pool = [];           // parked <circle> free-list
 const blobs = [];          // active particles
@@ -30,7 +31,7 @@ let raf = 0;
 // ---- geometry --------------------------------------------------------------
 // edgeGeometry(src,dst) -> world-space polyline for that edge (or null if not routed yet) is
 // the ONE source of edge geometry, exported from routing.js so flow.js and routing don't fork
-// link-key/route-cache logic (CLAUDE.md rule 7).
+// link-key/route-cache logic (one shared primitive).
 
 // Cumulative arc length of a polyline + a point at distance `d` along it.
 function polyLength(pts) {
@@ -146,13 +147,9 @@ function onFlow(e) {
 // dataset-change stream and fires for EVERY write path (live collection, commit button, manual
 // edits, batch restore, price sweeps). The feeder -> dataset hop deliberately does NOT come from
 // here (it has no source info); it comes from the source-aware flow bus above.
-function onData(e) {
+function onData(dataset, n) {
   if (!enabled) return;
-  let d;
-  try { d = JSON.parse(e.data); } catch { return; }
-  if (!d || !d.dataset) return;
-  const n = d.n || 1;
-  const from = `ds:${d.dataset}`;
+  const from = `ds:${dataset}`;
   for (const ed of model.edges()) {
     if (ed.kind !== "data") continue;
     if (ed.from === from && ed.to.startsWith("sub:")) spawn("data", from, ed.to, Math.min(n, 4));  // dataset -> view
@@ -161,17 +158,17 @@ function onData(e) {
 function openStream() {
   closeStream();
   if (!game || !enabled) return;
-  const g = encodeURIComponent(game);
   try {
-    ctrlStream = new EventSource(`/api/events/flow/${g}`);
+    ctrlStream = new EventSource(`/api/events/flow/${encodeURIComponent(game)}`);
     ctrlStream.addEventListener("flow", onFlow);
-    dataStream = new EventSource(`/api/events/${g}`);
-    dataStream.addEventListener("dataset", onData);
   } catch { /* EventSource unavailable -> no blobs, no harm */ }
+  // dataset writes ride the SHARED bus (one connection for the whole page); the subscription
+  // stays only while flow is enabled — onData no-ops otherwise, but unsubscribing is cleaner.
+  dsUnsub = dsevents.subscribe(onData);
 }
 function closeStream() {
-  for (const s of [ctrlStream, dataStream]) if (s) { try { s.close(); } catch { /* */ } }
-  ctrlStream = dataStream = null;
+  if (ctrlStream) { try { ctrlStream.close(); } catch { /* */ } ctrlStream = null; }
+  if (dsUnsub) { dsUnsub(); dsUnsub = null; }
 }
 
 function clearBlobs() {

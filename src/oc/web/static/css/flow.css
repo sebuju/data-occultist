@@ -168,7 +168,7 @@ a.node.win:hover { border-color: var(--accent); }
 .bat-list .batrow.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .bat-list .batrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .bat-detail { border-top: 1px solid var(--line); padding-top: 6px; overflow: auto; flex: 1 1 auto; min-height: 0; }
-.bat-detail:empty { border-top: 0; padding-top: 0; }   /* no stray divider when nothing is selected */
+.bat-detail:empty { display: none; }   /* hidden entirely when no batch is selected — no divider, no reserved flex space */
 .bat-detail .ds-h { margin: 8px 0 4px; }
 /* no batches yet: don't render a tall empty bordered box (its side borders read as two lines) */
 .bat-host.bat-empty { border: 0; min-height: 0; padding: 0; }

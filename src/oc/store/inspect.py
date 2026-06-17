@@ -10,9 +10,11 @@ time, so the spec decides how rows dedup.
 
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 
-from .dataset_store import DatasetStore
+from .dataset_store import CACHE_V, DatasetStore, file_src
 from .factory import store_for
 from .keys import KeyMap, KeySpec
 
@@ -47,29 +49,34 @@ def batches(data_dir: Path | str, game: str, dataset: str, n: int = 50) -> list[
     return _reader(data_dir, game, dataset).batches(n)
 
 
-_SUMMARY_HIDDEN = {"key", "present", "first_seen", "last_seen", "removed_at", "_count"}
-
-
 def summarize(data_dir: Path | str, game: str, dataset: str,
               key: KeyMap | KeySpec = KeySpec(), aggregate: str = "latest") -> dict:
+    """Dashboard digest for one dataset (counts + column preview + last change).
+
+    Steady-state flow polls hit the tiny ``<dataset>.summary.json`` sidecar, validated
+    against the history file's stat + the key spec — so a poll never opens the full state
+    snapshot (which can be tens of MB). A miss (sidecar absent/stale/wrong key) falls back
+    to a full store load, which rewrites the sidecar for next time."""
+    d = _game_dir(data_dir, game)
+    cached = _read_summary_sidecar(d / f"{dataset}.summary.json",
+                                   d / f"{dataset}.history.jsonl", key)
+    if cached is not None:
+        return cached
     store = _reader(data_dir, game, dataset, key, aggregate)
-    hist = store.history(1)
-    last = hist[0] if hist else None
-    recs = store.records()
-    present = store.present_count
-    # data field names, from the union over a few rows (so the node can show what a
-    # dataset actually holds instead of a meaningless dash)
-    cols: list[str] = []
-    for r in recs[:20]:
-        for k in r:
-            if k not in _SUMMARY_HIDDEN and k not in cols:
-                cols.append(k)
-    return {
-        "dataset": dataset,
-        "present": present,
-        "total": len(recs),
-        "removed": len(recs) - present,
-        "columns": cols,
-        "last_ts": last["ts"] if last else None,
-        "last_op": last["op"] if last else None,
-    }
+    store.write_summary()   # rebuild the sidecar so the next poll takes the fast path
+    return store.summary()
+
+
+def _read_summary_sidecar(sidecar: Path, history: Path,
+                          key: KeyMap | KeySpec) -> dict | None:
+    """Return the cached digest iff it still matches the live ledger (history stat) and the
+    requested key spec; else ``None`` so the caller rebuilds. Never parses the ledger."""
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
+    if (data.get("v") != CACHE_V or data.get("src") != file_src(history)
+            or data.get("key") != key.meta()):
+        return None
+    return {k: data[k] for k in ("dataset", "present", "total", "removed",
+                                 "columns", "last_ts", "last_op") if k in data}

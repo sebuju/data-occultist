@@ -40,6 +40,8 @@ import {
   setDraggingNodes, routeCache, ROUTE,
 } from "./routing.js";
 import { initFlow } from "./flow.js";
+import * as dsevents from "./dsevents.js";
+import { singleFlight } from "../singleflight.js";
 import {
   nmState, nlState, buildNodeMap, buildNodeList, setNodeMapVisible, setNodeListVisible,
   nmSyncSelection, renderNodeViews, nmUpdateViewport,
@@ -77,6 +79,7 @@ import {
 } from "./panels/livewin.js";
 
 const COLX = { game: 20, window: 300, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, dictionary: 20 };
+const FLOW_FALLBACK_MS = 15000;   // safety-net /api/flow poll; the dataset-change bus is the real mechanism
 export let live = {};             // dataset -> {present,total,last_op,last_ts} (read by datanodes/refreshLive)
 export let wire = null;           // active drag-wire {winId, x1,y1} (read by routing.drawEdges)
 export let selectedNodeId = null; // node whose line(s) are highlighted (read by routing.selClsFor)
@@ -1526,13 +1529,14 @@ function repaintSubsetCols(el, s) {
   }
 }
 
-const _subInflight = new Set();
-async function refreshSubsetNode(id) {
+// Its compute can be slow — never run two at once for one view, but a request that arrives
+// mid-compute must re-run once after (never dropped), so a view tracking a live sweep lands on
+// the FINAL data instead of stalling on a stale mid-sweep snapshot.
+function refreshSubsetNode(id) { singleFlight(`sub:${id}`, () => _refreshSubsetNode(id)); }
+async function _refreshSubsetNode(id) {
   const el = nodeEls.get(`sub:${id}`);
   const host = el && el.querySelector(".sub-host");
   if (!host) return;
-  if (_subInflight.has(id)) return;   // its compute can be slow — never run two at once for one view
-  _subInflight.add(id);
   try {
     const r = await api.getSubset(model.profile.name, id);
     const vt = vtableFor(`view:${id}`, host);
@@ -1551,7 +1555,7 @@ async function refreshSubsetNode(id) {
     const msg = /\b404\b/.test(String(e.message || e)) ? "no data yet" : String(e.message || e);
     vtables.delete(`view:${id}`);
     host.innerHTML = `<p class="muted" style="padding:8px">${esc(msg)}</p>`;
-  } finally { _subInflight.delete(id); }
+  }
 }
 
 function refreshAllSubsetNodes() {
@@ -2594,9 +2598,14 @@ export function startWire(srcId, ev, spec) {
 // ---- live + toolbar -------------------------------------------------------
 
 let refreshLiveInFlight = false;
+let refreshLiveAgain = false;
 async function refreshLive() {
   if (!model.profile.name) return;
-  if (refreshLiveInFlight) return;   // hub beats can overlap a slow /api/flow — don't stack fetches
+  // A push that lands DURING an in-flight fetch must not be dropped — the last write of an
+  // async sweep (prices) often arrives while we're still fetching the previous event, and
+  // losing it would strand the final data until some later unrelated event. Mark "run again"
+  // and re-fire once this fetch completes (the detectAgain/previewAgain idiom).
+  if (refreshLiveInFlight) { refreshLiveAgain = true; return; }
   refreshLiveInFlight = true;
   try {
     const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}`);
@@ -2625,7 +2634,19 @@ async function refreshLive() {
         if (nodeEls.has(`sub:${s.id}`) && model.subsetReaches(s.id, ds)) refreshSubsetNode(s.id);
     }
   } catch { /* ignore */ }
-  finally { refreshLiveInFlight = false; }
+  finally {
+    refreshLiveInFlight = false;
+    if (refreshLiveAgain) { refreshLiveAgain = false; scheduleRefreshLive(); }   // a push arrived mid-fetch -> run once more
+  }
+}
+
+// Coalesce a burst of dataset-change pushes (a sweep writes several datasets ~at once) into a
+// single /api/flow refetch. refreshLive already diffs per-dataset last_ts, so one call after the
+// burst refreshes exactly the nodes whose ledger grew.
+let _liveDebounce = null;
+function scheduleRefreshLive() {
+  clearTimeout(_liveDebounce);
+  _liveDebounce = setTimeout(refreshLive, 200);
 }
 
 function updateDatasetNodes() {
@@ -2646,9 +2667,13 @@ async function refreshGames(select) {
   if (select && names.includes(select)) $("gameSelect").value = select;
 }
 
-// Node view live-data refresh is driven by the HUB heartbeat (refreshLive, keyed on each
-// dataset's last_ts) — ONE mechanism, no separate SSE here (that duplicated the hub and
-// flooded the backend). Pretty Studio uses the SSE bus instead because it has no hub.
+// Node view live-data refresh is PUSH-driven: the shared dataset-change bus (dsevents) calls
+// scheduleRefreshLive on every write (live collection, sweeps, commits, edits, restores), so
+// node tables update the instant a dataset's ledger changes — no per-beat /api/flow poll. The
+// server coalesces ~1s/dataset and the client debounces the burst, so a heavy sweep refetches
+// at most ~once/second. A slow interval (FLOW_FALLBACK_MS) is a safety net for missed events /
+// reconnect gaps only, NOT the mechanism. (An earlier version polled /api/flow every hub beat;
+// that ran even at idle and, with the old full-state read, was the page's heaviest request.)
 
 async function loadGame(name) {
   if (!name) return;
@@ -2701,6 +2726,7 @@ async function loadGame(name) {
   if (migrated) persist.layout();   // lock in node layout imported from legacy localStorage
   refreshLive();
   openLogStream(name);   // mirror server activity (trigger watches/fires, API fetches) into the log bar
+  dsevents.setGame(name);   // (re)point the shared dataset-change bus (drives node refresh + flow blobs)
   initFlow(name);   // (re)point the flow-blob stream at this game (clears any prior blobs)
   hub.kick();   // new game -> beat the hub so every panel re-reflects its state now
   setStatus(`loaded ${name}`);
@@ -3118,7 +3144,7 @@ function persistBox(winId, b) {
 // (holding VRAM) — `ocr.gpu_active`, not merely "GPU is selected". The heartbeat hub
 // pushes the device slice every beat, so the button (re)appears on its own when a read
 // rebuilds the GPU session and hides after a kill frees it. Idempotent: touches the DOM
-// only on a real change (steady-state ticks mutate nothing — CLAUDE.md hard rule 1).
+// only on a real change (steady-state ticks mutate nothing).
 function syncKillGpu(ocr) {
   const k = $("killGpuBtn"); if (!k) return;
   const hidden = !(ocr && ocr.gpu_active);
@@ -3139,11 +3165,22 @@ async function initKillGpu() {
     finally { killBtn.classList.remove("reading"); killBtn.disabled = false; }
   });
   hub.subscribe((s) => syncKillGpu(s.ocr));
-  // Node live-data refresh rides the SAME heartbeat: every beat re-reads /api/flow and, keyed
-  // on each dataset's last_ts, refreshes only the dataset/view nodes whose ledger grew. This is
-  // what makes an AUTOMATIC write (an on_change sweep, live collection) update the node tables
-  // without a user action — manual actions still call refreshLive() directly for immediacy.
-  hub.subscribe(() => refreshLive());
+  // Live node refresh is PUSH and TARGETED: the bus names exactly which dataset changed, so we
+  // refetch THAT dataset's node (data + batches) and every view reading it DIRECTLY — never gated
+  // on refreshLive's /api/flow last_ts diff, which can stick (a stale last_ts) and strand the data
+  // tab on old rows while the batches tab — fetched unconditionally — stays correct. A write from
+  // ANY path (on_change sweep, live collection, manual edit) thus lands in the tables at once.
+  // scheduleRefreshLive still runs for structure/counts (brand-new or removed datasets).
+  dsevents.subscribe((dataset) => {
+    scheduleRefreshLive();
+    if (!dataset) return;
+    if (nodeEls.has(`ds:${dataset}`)) refreshDatasetNode(dataset);   // singleFlight -> latest wins, never dropped
+    for (const s of model.profile.subsets || [])
+      if (nodeEls.has(`sub:${s.id}`) && model.subsetReaches(s.id, dataset)) refreshSubsetNode(s.id);
+  });
+  // Safety net only: catch any event missed across a stream reconnect. Slow on purpose — the
+  // push bus is the mechanism, not this. Skipped while offline (conn.js gates the overlay).
+  setInterval(() => { if (model.profile.name && conn.isOnline()) refreshLive(); }, FLOW_FALLBACK_MS);
   try { syncKillGpu(await api.ocr.getDevice()); } catch { /* ignore */ }
 }
 

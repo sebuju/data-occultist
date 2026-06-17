@@ -2,8 +2,8 @@
 
 Every read/write path used to construct a ``DatasetStore`` by hand and re-resolve the record
 key + aggregate locally — seven copies that quietly disagreed (a couple omitted the aggregate,
-the sweep fell back to a name-only key). That is exactly the drift CLAUDE.md rule 7 exists to
-prevent: a dataset MUST key and aggregate identically no matter who opens it, else the same
+the sweep fell back to a name-only key). That is exactly the kind of drift this funnel exists
+to prevent: a dataset MUST key and aggregate identically no matter who opens it, else the same
 rows dedup one way on write and another on read.
 
 ``store_for`` is that single funnel. Give it the profile and it resolves both from the profile
