@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import signal
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -70,8 +72,44 @@ def _warm() -> None:
         pass
 
 
+def _install_shutdown_signals() -> None:
+    """Make the process notice a shutdown signal the MOMENT it arrives — before uvicorn
+    starts waiting for connections to drain. uvicorn installs its own SIGINT/SIGTERM
+    handlers in ``serve()`` just before this lifespan startup runs, so we CHAIN them: flip
+    our shutdown flag first (long-lived SSE streams watch it and end immediately), then call
+    uvicorn's handler (which sets ``should_exit``). With the streams self-closing there is
+    nothing left for uvicorn to wait on, so shutdown is clean with no graceful-shutdown
+    timeout. Off the main thread (e.g. desktop mode runs uvicorn on a daemon thread),
+    ``signal.signal`` raises — harmless; that path stops via the lifespan-shutdown backstop."""
+    from .shutdown import signal_shutdown
+
+    def _chain(sig: int) -> None:
+        try:
+            prev = signal.getsignal(sig)
+        except (ValueError, OSError):
+            return
+
+        def handler(signum, frame):
+            signal_shutdown()
+            if callable(prev):
+                prev(signum, frame)
+
+        try:
+            signal.signal(sig, handler)
+        except (ValueError, OSError, RuntimeError):
+            pass   # not the main thread / unsupported on this platform
+
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            _chain(sig)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    from .shutdown import bind_loop, signal_shutdown
+    bind_loop(asyncio.get_running_loop())
+    _install_shutdown_signals()
     # Kill any precapture OCR worker that somehow outlived a prior run before doing
     # anything else — no stray thread should keep hammering the GPU at startup.
     try:
@@ -117,6 +155,25 @@ async def lifespan(_app: FastAPI):
     except Exception:  # noqa: BLE001 - best-effort
         pass
     yield
+    # --- shutdown -------------------------------------------------------------------------
+    # Backstop for any stop that ISN'T a signal (e.g. desktop's server.should_exit): flip the
+    # flag so any still-open SSE stream ends, then stop the background work so teardown is idle.
+    signal_shutdown()
+    try:
+        from ..enrich.price_runner import cancel_all_sweeps
+        cancel_all_sweeps()
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
+    try:
+        from .routes.precapture import kill_all_sessions
+        kill_all_sessions()
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
+    try:
+        from .routes.live import kill_all_sessions as kill_live
+        kill_live()
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
 
 
 def create_app() -> FastAPI:

@@ -43,6 +43,15 @@ def publish(msg: str, level: str = "info", *, game: str | None = None, **fields)
     return ev
 
 
+def slog(msg: str, *, game: str | None = None) -> None:
+    """Print one line to the server console (stdout) with a 24h timestamp — for backend
+    events worth seeing in the terminal running the app (e.g. timed/on_change trigger fires),
+    separate from the browser log bar that :func:`publish` feeds."""
+    stamp = time.strftime("%d/%m/%y %H:%M:%S")
+    tag = f"[{game}] " if game else ""
+    print(f"{stamp} {tag}{msg}", flush=True)
+
+
 def recent(after_seq: int = 0, game: str | None = None) -> list[dict]:
     """Buffered events with ``seq`` > ``after_seq`` (for a reconnecting client to backfill).
     A ``game`` filters to that game's lines plus global (gameless) ones."""
