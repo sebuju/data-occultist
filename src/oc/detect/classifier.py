@@ -1,9 +1,11 @@
 """Detector-based window + state classifier.
 
-Strategy: a window matches when ALL its detectors match. Among matching windows
-the one with the most detectors (most specific) wins. Within that window, a state
-matches when all its detectors match; the first matching state is returned. ``None``
-state means "window recognised, no specific state".
+Strategy: a window matches when its detectors combine to pass — ``all`` of them (AND,
+the default) or ``any`` (OR), per ``WindowDef.detect_mode``. Each detector passes per
+its own polarity (a ``negate`` detector passes when its landmark is ABSENT). Among
+matching windows the one with the most detectors (most specific) wins. Within that
+window, a state matches when ALL its detectors pass; the first matching state is
+returned. ``None`` state means "window recognised, no specific state".
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from ..interfaces import OcrEngine, WindowClassifier
 from ..profile.models import GameProfile, WindowDef
 from ..registry import register_classifier
 from ..types import Frame
-from .matcher import DetectMatcher
+from .matcher import DetectMatcher, combine_passes, detector_passes
 
 
 @register_classifier("detect")
@@ -32,12 +34,15 @@ class DetectClassifier(WindowClassifier):
         active = self._cheap_first(window.detect)
         if not active:
             return False
-        return all(self._matcher.matches(d, frame) for d in active)
+        # generator -> combine_passes' any()/all() still short-circuits the OCR work
+        passes = (detector_passes(self._matcher.matches(d, frame), d.negate) for d in active)
+        return combine_passes(passes, window.detect_mode)
 
     def _state_for(self, window: WindowDef, frame: Frame) -> str | None:
+        # states always combine with AND; a state detector may still be negated.
         for state in window.states:
             active = self._cheap_first(state.detect)
-            if active and all(self._matcher.matches(d, frame) for d in active):
+            if active and all(detector_passes(self._matcher.matches(d, frame), d.negate) for d in active):
                 return state.id
         return None
 

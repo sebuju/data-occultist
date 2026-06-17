@@ -12,14 +12,15 @@ import cv2
 from fastapi import APIRouter, HTTPException, Query
 
 from ...collect.reader import RegionReader
-from ...detect.matcher import DetectMatcher
+from ...detect.matcher import DetectMatcher, combine_passes
 from ...learn.dictionary import build_dictionaries
 from ...learn.lexicon import Lexicon
 from ...learn.resolver import FieldResolver
 from ...ocr.serialize import ocr_job
 from ...profile import GameProfile, KeyDef, list_profiles
 from ...runtime import load_live_profile
-from ...store.dataset_store import DatasetStore
+from ...store import store_for
+from ...store.flow_events import publish_flow
 from ...types import Frame, PixelBox
 from .. import captures_store
 from ..deps import get_engine, get_locator, get_settings
@@ -66,13 +67,17 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
     matcher = DetectMatcher(engine.ocr, str(get_settings().profiles_dir))
 
     # one job: run the whole detect pass without interleaving with another OCR job
-    with ocr_job():
+    with ocr_job(engine.ocr) as job:
         detect = {d.id: matcher.evaluate(d, frame) for d in window.detect}
+        # overall window verdict — mirrors the classifier (only ENABLED detectors count,
+        # each per its polarity, combined by detect_mode), so the UI shows pass/fail.
+        enabled = [detect[d.id]["passes"] for d in window.detect if d.enabled]
+        window_pass = combine_passes(enabled, window.detect_mode) if enabled else False
         states = {}
         for s in window.states:
             evs = [matcher.evaluate(d, frame) for d in s.detect]
             states[s.id] = {
-                "matched": bool(evs) and all(e["matched"] for e in evs),
+                "matched": bool(evs) and all(e["passes"] for e in evs),
                 "read": " | ".join(e["read"] for e in evs),
             }
 
@@ -92,15 +97,16 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
             }
 
     return {"detect": detect, "states": states, "scrollbar": scrollbar,
-            "device": getattr(engine.ocr, "device", "cpu")}
+            "window": {"pass": window_pass, "mode": window.detect_mode},
+            "device": getattr(engine.ocr, "device", "cpu"), "ms": round(job.ms)}
 
 
 def _window_match(matcher, win, frame):
     """Evaluate a window's ENABLED detectors against a frame. Returns (matched, evs).
-    Mirrors the classifier: a window matches when it has >=1 enabled detector and ALL pass."""
+    Mirrors the classifier: each detector passes per its polarity, combined by detect_mode."""
     dets = [d for d in win.detect if d.enabled]
     evs = [{"id": d.id, **matcher.evaluate(d, frame)} for d in dets]
-    matched = bool(evs) and all(e["matched"] for e in evs)
+    matched = combine_passes([e["passes"] for e in evs], win.detect_mode) if evs else False
     return matched, evs
 
 
@@ -141,7 +147,7 @@ def detect_collisions(game: str):
                         "winner": None, "collides_with": [], "matches": []})
             continue
         matches = []
-        with ocr_job():   # one OCR job for the whole cross-check of this image
+        with ocr_job(engine.ocr):   # one OCR job for the whole cross-check of this image
             for v in profile.windows:
                 matched, evs = _window_match(matcher, v, frame)
                 if matched or v.id == w.id:   # always include the owner so self-miss shows
@@ -196,8 +202,9 @@ def _read_window(engine, profile, game, capture):
     """Shared read for /preview: returns (frame, window, result) — result is the
     ``read_preview`` dict (cells + fields)."""
     frame, window, fields, reader = _window_reader(engine, profile, game, capture)
-    with ocr_job():   # one job: the whole window read runs without interleaving another
+    with ocr_job(engine.ocr) as job:   # one job: the whole window read runs without interleaving another
         result = reader.read_preview(frame, window, fields)
+    result["ms"] = round(job.ms)   # real compute time (lock-wait excluded) for the log bar
     return frame, window, result
 
 
@@ -218,10 +225,12 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
     engine = get_engine()
     frame, window, result = _read_window(engine, profile, game, capture)
     # the dedup key each cell would store under — same spec the collector resolves,
-    # so the teaching UI previews record identity live
-    km = profile.key_map_for(window.dataset_id)
-    for cell in result["cells"]:
-        cell["key"] = km.build(_cell_values(cell))
+    # so the teaching UI previews record identity live. A window with no dataset
+    # stores nothing, so there is no key to preview.
+    if window.dataset_id is not None:
+        km = profile.key_map_for(window.dataset_id)
+        for cell in result["cells"]:
+            cell["key"] = km.build(_cell_values(cell))
     return {"client": [frame.client.w, frame.client.h],
             "device": getattr(engine.ocr, "device", "cpu"), **result}
 
@@ -243,15 +252,18 @@ def preview_commit(profile: GameProfile, game: str | None = Query(None), capture
         raise HTTPException(status_code=400, detail="profile has no window")
     engine = get_engine()
     frame, window, fields, reader = _window_reader(engine, profile, game, capture)
-    with ocr_job():
+    with ocr_job(engine.ocr) as job:
         records = reader.read(frame, window, fields)
     floor = engine.settings.tuning.min_confidence
     gated = [r for r in records if r.confidence >= floor]   # worst-field floor, as in collection
     low_conf = len(records) - len(gated)
 
     dataset = window.dataset_id
-    store = DatasetStore(get_settings().data_dir, profile.name, dataset,
-                         key=profile.key_map_for(dataset))
+    if dataset is None:
+        # no dataset -> nowhere to commit; don't mint a store on disk
+        return {"dataset": None, "written": 0, "skipped": len(gated) + low_conf,
+                "low_conf": low_conf, "cells": len(records), "ms": round(job.ms)}
+    store = store_for(get_settings().data_dir, profile.name, dataset, profile=profile)
     store.begin_batch()   # this commit is one revertable batch
     written = no_key = 0
     for rec in gated:
@@ -260,10 +272,13 @@ def preview_commit(profile: GameProfile, game: str | None = Query(None), capture
         else:
             no_key += 1
     store.save()
+    if written:
+        # Source-aware data hop: this commit came from THIS window, so animate only its edge.
+        publish_flow(profile.name, "data", f"win:{window.id}", f"ds:{dataset}", written)
     # ``skipped`` = everything read but not written (below floor + unkeyable); ``low_conf``
     # breaks out the floor drops so the status can say why.
     return {"dataset": dataset, "written": written, "skipped": low_conf + no_key,
-            "low_conf": low_conf, "cells": len(records)}
+            "low_conf": low_conf, "cells": len(records), "ms": round(job.ms)}
 
 
 @router.post("/item/read")
@@ -292,11 +307,11 @@ def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...
     resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
                              dictionary=pooled, dictionaries=dict_map, learn_enabled=False)
     reader = RegionReader(engine.ocr, resolver)
-    with ocr_job():
+    with ocr_job(engine.ocr) as job:
         result = reader.read_cutout(cut, window, it, fields)
     h, w = cut.shape[:2]
     # the dedup key this read would store under (None = unkeyable, e.g. a part empty)
     spec = (it.key or window.key or KeyDef()).spec()
     vals = {fid: f.get("value") for fid, f in result["fields"].items()}
     return {"cutout": [w, h], "key": spec.build(vals), "key_fields": list(spec.fields),
-            "device": getattr(engine.ocr, "device", "cpu"), **result}
+            "device": getattr(engine.ocr, "device", "cpu"), "ms": round(job.ms), **result}

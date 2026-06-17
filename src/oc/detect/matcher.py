@@ -10,9 +10,25 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..interfaces import OcrEngine
-from ..profile.models import DetectDef
+from ..profile.models import DetectCombine, DetectDef
 from ..types import Frame
 from .template import best_match, load_template
+
+
+def detector_passes(matched: bool, negate: bool) -> bool:
+    """A single detector's verdict accounting for its polarity: a positive detector
+    passes when the landmark MATCHED; a ``negate`` detector passes when it did NOT."""
+    return (not matched) if negate else matched
+
+
+def combine_passes(passes, mode) -> bool:
+    """Combine per-detector pass/fail by window ``mode``: ``any`` -> OR, else AND.
+
+    ``passes`` may be a generator (so the classifier keeps its OCR short-circuit). The
+    caller must guarantee it is non-empty — an empty detector set means "no detector",
+    which is no match, but ``all([])`` would wrongly be True; callers guard that first.
+    """
+    return any(passes) if mode == DetectCombine.any else all(passes)
 
 
 def _norm(s: str, strip: str = "alnum", case_sensitive: bool = False) -> str:
@@ -148,8 +164,12 @@ class DetectMatcher:
         disagreed with the recognition-only runtime read.)"""
         if det.template:
             s = self.score(det, frame)
-            return {"matched": s >= det.threshold, "read": "(template)",
+            matched = s >= det.threshold
+            return {"matched": matched, "passes": detector_passes(matched, det.negate),
+                    "negate": det.negate, "read": "(template)",
                     "score": round(s, 2), "threshold": det.threshold}
         read, s = self._text_score(det, frame)
-        return {"matched": bool(det.text) and s >= det.threshold, "read": read,
+        matched = bool(det.text) and s >= det.threshold
+        return {"matched": matched, "passes": detector_passes(matched, det.negate),
+                "negate": det.negate, "read": read,
                 "score": round(s, 2), "threshold": det.threshold}
