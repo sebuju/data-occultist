@@ -7,6 +7,8 @@
 
 export const GRID = 20;
 export const snap = (v) => Math.round(v / GRID) * GRID;
+// Resize snaps UP (ceil) so a drag never shrinks the element below the grid step it crossed.
+export const snapUp = (v) => Math.ceil(v / GRID) * GRID;
 
 // ---- floating W×H readout shown while resizing -----------------------------
 
@@ -47,7 +49,7 @@ export function hideSizeHud() { if (_sizeHud) _sizeHud.style.display = "none"; }
 // not viewport space, so a viewport clamp would be meaningless there).
 export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onSettle = null, snapEdge = null, onReset = null, screenClamp = false, margin = 0 } = {}) {
   if (el.querySelector(":scope > .rz-grip")) return;   // once only
-  const q = (v) => (snapGrid ? snap(v) : v);   // grid-step nodes; panels resize smoothly
+  const q = (v) => (snapGrid ? snapUp(v) : v);   // grid-step nodes (round up); panels resize smoothly
   for (const side of ["left", "right"]) {
     if (side === "left" && !left) continue;            // left grip needs a left-edge accessor
     const g = document.createElement("div");

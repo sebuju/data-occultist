@@ -289,6 +289,25 @@ function fanFaceEnds(lines, byId, outPorts) {
       setEnd(arr[i].ln._pts, side, c, arr[i].end === "dst");
     }
   }
+  // Structural lines (no pinSrc) keep their routed ends — EXCEPT a SOURCE end that landed on an
+  // IDLE out-port dot. A window's bonded-preview line leaves the same RIGHT face the window parks
+  // its (hover-only) out-port dot on; with no dataset there's no port line to fan against, so the
+  // routed stub sits dead-centre, right under the empty dot — making the line look like it starts
+  // FROM the empty out-port. Nudge such a source end clear of the dot (the dot itself stays put).
+  for (const ln of lines) {
+    if (ln.pinSrc) continue;                               // port lines already laid out above
+    const side = ln.srcSide;
+    if (outPorts.get(ln.from) !== side) continue;          // node has no out-port on this face
+    const arr = groups.get(ln.from + "\x00" + side);
+    if (arr && arr.some((e) => e.end === "src")) continue; // a real port line owns the dot -> not idle
+    const nd = byId.get(ln.from), p = ln._pts;
+    if (!nd || !p || p.length < 2) continue;
+    const horiz = side === "L" || side === "R";
+    const lo = horiz ? nd.y : nd.x, span = horiz ? nd.h : nd.w, mid = lo + span / 2;
+    const cur = horiz ? p[0][1] : p[0][0];
+    if (Math.abs(cur - mid) >= PORT_MIN) continue;         // already clear of the dot
+    setEnd(p, side, Math.max(lo + 4, Math.min(lo + span - 4, mid + PORT_MIN)), false);
+  }
 }
 // keep a fanned port endpoint within its node face span (perp coord already correct)
 function clampEnds(pts, nd, side, last) {

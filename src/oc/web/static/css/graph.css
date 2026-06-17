@@ -356,6 +356,24 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .wi-row .wi-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .wi-row .wi-name:hover { text-decoration: underline; color: var(--text); }
 .wi-row .wimv { flex: 0 0 auto; padding: 0 10px; }
+/* window node: detects section — combine mode + per-detector polarity, with a live verdict.
+   Rows are three aligned columns (detector | require | live); the wd-head row labels them.
+   min-width:0 on every flex child lets the select shrink instead of clipping past the node. */
+.wd-mode-line { margin: 4px 0; font-size: var(--fs-sm); display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.wd-mode-line .wd-mode { flex: 0 0 auto; }
+/* col2 is a FIXED track and .wd-neg is width:100% inside it -> the select can never overflow
+   the (overflow:hidden) window body. col1 (minmax(0,1fr)) absorbs all the slack. */
+.wd-row { display: grid; grid-template-columns: minmax(0, 1fr) 6em; align-items: center; gap: 6px; margin-top: 4px; font-size: var(--fs-sm); }
+.wd-left { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.wd-left .wd-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wd-row:not(.wd-head) .wd-name { cursor: pointer; }
+.wd-row:not(.wd-head) .wd-name:hover { text-decoration: underline; color: var(--text); }
+.wd-left .wd-status { flex: 0 0 auto; white-space: nowrap; }
+.wd-neg { width: 100%; min-width: 0; }
+.wd-head { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
+.wd-head .wd-req-h { text-align: center; }
+.wd-verdict { margin-top: 6px; font-size: var(--fs-sm); font-weight: 600; }
+.wd-verdict:empty { display: none; }
 .key-prev:empty { display: none; }
 .key-sec { margin: 6px 0; }
 .prev-count { padding: 4px 8px; font-size: var(--fs-sm); }

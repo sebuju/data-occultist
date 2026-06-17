@@ -5,7 +5,6 @@ import { esc, CAMERA } from "../dom.js";
 import { openModal } from "../modal.js";
 import { openCaptureModal } from "./panels/precap.js";
 import { log, timed } from "../log.js";
-import { buildKey, DEFAULT_KEY } from "../keys.js";
 import { openDictionaryPicker } from "./dict_picker.js";
 import { enhanceTable } from "./table.js";
 import { Overlay } from "../overlay.js";
@@ -132,18 +131,23 @@ async function openImage(winId, nodeEl = null) {
   const canvas = host.querySelector("canvas");
   const kindOf = () => host.querySelector(".tool.active")?.dataset.kind || "region";
   const overlay = new Overlay(canvas, {
-    onCreate: (geom) => {
+    onCreate: async (geom) => {
       const k = kindOf();
-      if (k === "item") { createItemFromGeom(winId, geom); return; }   // freeze + spawn item node
+      if (k === "item") { await createItemFromGeom(winId, geom); return; }   // freeze + spawn item node
       let newDetect = null, newNode = null;   // the node this draw spawned → inherit the window's group
       if (k === "detect") { newDetect = model.addDetect(winId, geom); newNode = `det:${winId}:${newDetect}`; }
       else if (k === "scrollbar") { model.setScrollbar(winId, geom); newNode = `sb:${winId}:scrollbar`; }
       else if (k === "data_area") model.setDataArea(winId, geom);   // a window box, not its own node
       else newNode = `reg:${winId}:${model.addRegion(winId, geom)}`;
       clearGrid(winId);   // layout changed → detected grid is stale
+      // park the new node right BESIDE its window (srcId) before render() so ensurePositions
+      // leaves it alone — no autoplacement into a far column.
+      if (newNode) await placeNewNode(newNode, k, `win:${winId}`);
       render(); refreshImageBoxes(winId); autosave(true, winId);   // re-OCR only this window
+      if (newDetect) rebuildNode(`win:${winId}`);   // add the new detector to the window's detects section
       if (newNode) inheritGroupFrom(newNode, `win:${winId}`);   // box drawn on a grouped window → join its group
       if (newDetect) prefillDetectText(winId, newDetect);
+      drawEdges();   // edge to the window drawn immediately
     },
     onChange: (box) => {
       const r = box.role;
@@ -188,8 +192,11 @@ async function createItemFromGeom(winId, geom) {
   catch (e) { setStatus(String(e.message || e)); return; }
   const itemId = model.addItem(winId, { cutout: cut.name, cutout_box: geom, box: geom });
   clearGrid(winId);
-  render(); refreshImageBoxes(winId); autosave();
+  // park beside its window before render() so ensurePositions skips it — no autoplacement.
+  await placeNewNode(`item:${winId}:${itemId}`, "item", `win:${winId}`);
+  render(); refreshImageBoxes(winId); autosave(true, winId);   // re-OCR only this window
   inheritGroupFrom(`item:${winId}:${itemId}`, `win:${winId}`);   // box drawn on a grouped window → join its group
+  drawEdges();   // edge to the window drawn immediately
   openItemImage(winId, itemId);
 }
 
@@ -382,7 +389,7 @@ async function runItemRead(winId, itemId) {
     itemReads.set(key, res);
     refreshItemBoxes(winId, itemId);
     if (out) out.innerHTML = itemReadout(res, winId, itemId);
-    done(`· ${res.device || "?"} · ${res.valid ? "valid" : "rejected"}`);
+    done(`· ${res.device || "?"} · ${res.valid ? "valid" : "rejected"}`, "ok", res.ms);
   } catch (e) {
     done(String(e.message || e), "err");
     if (out) out.innerHTML = `<span class="tc-bad">${esc(String(e.message || e))}</span>`;
@@ -461,7 +468,7 @@ async function refreshPreview(winId, live = false) {
     const res = await api.preview(previewProfileFor(winId), model.profile.name, cap);
     host.innerHTML = previewTable(res.cells);
     setGridFromPreview(winId, res);   // same OCR pass drives the dashed grid
-    done(`· ${res.device || "?"} · ${(res.cells || []).length} cells`);
+    done(`· ${res.device || "?"} · ${(res.cells || []).length} cells`, "ok", res.ms);
   } catch (e) {
     done(String(e.message || e), "err");
     host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`;
@@ -509,14 +516,15 @@ async function previewAll(winId, btn) {
   const done = timed(`OCR preview-all ${winId}`);
   try {
     const game = model.profile.name, cells = [];
-    let img = 0;
+    let img = 0, srvMs = 0;
     for (const cap of list) {
       const res = await api.preview(previewProfileFor(winId), game, cap);
+      srvMs += res.ms || 0;   // sum each page's real compute, not wall-since-issue
       for (const c of res.cells || []) { c._img = img; cells.push(c); }   // tag rows by source image so the table can rule between images
       img++;
     }
     if (host) host.innerHTML = previewTable(cells);
-    done(`· ${list.length} images · ${cells.length} cells`);
+    done(`· ${list.length} images · ${cells.length} cells`, "ok", srvMs);
   } catch (e) {
     done(String(e.message || e), "err");
     if (host) host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`;
@@ -601,7 +609,7 @@ async function prefillDetectText(winId, detectId) {
     const a = model.detect(winId, detectId);
     if (a && !a.text && info && info.read && info.read !== "(template)") {
       a.text = info.read;
-      render(); autosave();
+      render(); autosave(true, winId);   // re-detect only this window
     }
   } catch { /* ignore */ }
 }
@@ -626,12 +634,13 @@ async function refreshDetect(winId, live = false) {
         const dstatus = {};   // mirror onto the window canvas: colour/tint each detect box by its verdict
         for (const [aid, info] of Object.entries(res.detect || {})) { setDetectStatus(`det:${winId}:${aid}`, info); dstatus[aid] = info; }
         for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);
+        setWindowDetectStatus(winId, res);   // window node's detects section: per-row + overall verdict
         const dent = imageCanvases.get(winId);
         if (dent) dent.overlay.setDetectStatus(dstatus);
         if (live) {   // is this window currently recognised on screen? (drives the live panel dot)
-          const dvals = Object.values(res.detect || {}), svals = Object.values(res.states || {});
-          const recognized = svals.length ? svals.some((s) => s.matched)
-            : (dvals.length ? dvals.every((d) => d.matched) : false);
+          const svals = Object.values(res.states || {});
+          // mode/negate-aware window verdict comes from the server; states (when present) still win
+          const recognized = svals.length ? svals.some((s) => s.matched) : (res.window?.pass ?? false);
           liveRecog.set(winId, recognized);
           if (recognized) liveDetCount.set(winId, (liveDetCount.get(winId) || 0) + 1);
           renderLiveWindow();
@@ -643,7 +652,7 @@ async function refreshDetect(winId, live = false) {
           sbSpan.textContent = sb == null ? "position: —"
             : `position: ${Math.round(sb.pos * 100)}% · ${sb.px}px · ${Math.round(sb.conf * 100)}%`;
         }
-        done(`· ${res.device || "?"}`);
+        done(`· ${res.device || "?"}`, "ok", res.ms);
       } catch (e) { done(String(e.message || e), "err"); }
     });
   } finally {
@@ -660,6 +669,32 @@ function setDetectStatus(nodeId, info) {
     : "";
   span.textContent = (info.matched ? "✓ true" : "✗ false") + conf + (info.read ? ` — "${info.read}"` : "");
   span.className = "detect-status " + (info.matched ? "conf-ok" : "conf-bad");
+}
+
+// Fill the window node's detects section live, reconciling in place (the rows are built once
+// in windowDetects; this only updates textContent/class/title, never rebuilds — see hard rule 1).
+// Each `.wd-status` is coloured by PASS (negate-aware), with the raw landmark match in its title;
+// `.wd-verdict` shows whether the whole window would match under its combine mode.
+function setWindowDetectStatus(winId, res) {
+  const el = nodeEls.get(`win:${winId}`);
+  if (!el) return;
+  const det = res.detect || {};
+  // skip the header row's "live" label (no data-id) — only the per-detector status spans
+  for (const span of el.querySelectorAll(".wd-row:not(.wd-head) .wd-status")) {
+    const info = det[span.dataset.id];
+    if (!info) { span.textContent = ""; span.className = "wd-status muted"; continue; }
+    const pass = info.passes != null ? info.passes : info.matched;
+    span.textContent = pass ? "✓" : "✗";   // bare verdict; score/read live on the detect node
+    span.className = "wd-status " + (pass ? "conf-ok" : "conf-bad");
+    span.title = `landmark ${info.matched ? "found" : "absent"}, ${info.negate ? "must be absent" : "must be present"} → ${pass ? "passes" : "fails"}`;
+  }
+  const verdict = el.querySelector(".wd-verdict");
+  if (verdict) {
+    const w = res.window;
+    if (!w) { verdict.textContent = ""; verdict.className = "wd-verdict muted"; return; }
+    verdict.textContent = w.pass ? "✓ would match this window" : "✗ would not match";
+    verdict.className = "wd-verdict " + (w.pass ? "conf-ok" : "conf-bad");
+  }
 }
 // Scoped re-OCR: an edit to ONE window (its items/boxes/detectors) should only re-read THAT
 // window, not every open one. Callers pass the window id; a null id means "all" (a global edit).

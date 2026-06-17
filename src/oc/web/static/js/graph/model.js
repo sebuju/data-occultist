@@ -51,12 +51,13 @@ export class GraphModel {
   }
 
   // effective dataset id for a window (defaults to its own id)
-  datasetOf(win) { return win.dataset || win.id; }
-  // does this window HAVE a dataset at all? A freshly-created, empty window has none — it
-  // only gets one once it produces records (a region/item maps a field) or is explicitly
-  // pointed at a dataset. So a bare new window shows no dataset node until it earns one.
+  datasetOf(win) { return win.dataset || null; }
+  // does this window HAVE a dataset at all? Only when EXPLICITLY pointed at one
+  // (`win.dataset` set). A window with regions/items but no dataset produces records
+  // that are DISCARDED — no implicit window-id dataset is minted. Wire the window's
+  // out-port to a dataset node to give it one.
   _windowHasDataset(win) {
-    return !!(win.dataset || (win.regions && win.regions.length) || (win.items && win.items.length));
+    return !!win.dataset;
   }
 
   // ---- datasets just receive/store rows; keys live on the items/windows ----
@@ -373,7 +374,7 @@ export class GraphModel {
     while (this.subsetDef(id)) id = `${ds}_view${++n}`;
     (this.profile.subsets = this.profile.subsets || []).push({
       id, dataset: "", datasets: [ds], join_field: "name",
-      filters: [], derived: [], hidden_columns: [], enrich: [], sort: [], sort_by: "", sort_desc: false, limit: 0,
+      filters: [], derived: [], hidden_columns: [], enrich: [], sort: [], sort_by: "", sort_desc: false, latest_batch: false, limit: 0,
     });
     return id;
   }
@@ -418,6 +419,8 @@ export class GraphModel {
   // how a dataset input's MANY observations collapse to one value when THIS view reads it
   subsetAggregate(id) { const s = this.subsetDef(id); return (s && s.aggregate) || "latest"; }
   setSubsetAggregate(id, agg) { const s = this.subsetDef(id); if (s) s.aggregate = agg || "latest"; }
+  // only pull rows from each source's most recent collection batch (applied first)
+  setSubsetLatestBatch(id, on) { const s = this.subsetDef(id); if (s) s.latest_batch = !!on; }
   // cap the number of result rows (0 = no limit)
   setSubsetLimit(id, n) { const s = this.subsetDef(id); if (s) s.limit = Math.max(0, Math.floor(+n || 0)); }
   // swap one of a view's source inputs for another (the row-select edit), preserving order
@@ -571,6 +574,11 @@ export class GraphModel {
     return true;
   }
   detects(winId) { const w = this.window(winId); return (w && w.detect) || []; }
+  // how a window's detectors combine: "all" (AND, default) or "any" (OR)
+  detectMode(winId) { const w = this.window(winId); return (w && w.detect_mode) || "all"; }
+  setDetectMode(winId, mode) { const w = this.window(winId); if (w) w.detect_mode = mode === "any" ? "any" : "all"; }
+  // per-detector polarity: negate=true requires the landmark ABSENT (window fails if found)
+  setDetectNegate(winId, id, neg) { const d = this.detect(winId, id); if (d) d.negate = !!neg; }
 
   // ---- scrollbar (single box on the window's scroll config) ----------------
 
@@ -717,17 +725,22 @@ export class GraphModel {
   // mirrors the server: {fields:[...], sep, case_sensitive}.
 
   itemKey(winId, itemId) { const it = this.item(winId, itemId); return (it && it.key) || null; }
-  // the key the item EFFECTIVELY uses (own -> window -> default), for display/preview
+  // the key the item EFFECTIVELY uses (own -> window -> FIRST field), for display/preview.
+  // Never an imaginary "name": with no explicit key it defaults to the item's first field,
+  // and to an EMPTY key (no fields yet) when the item has none — the UI shows a dash.
   effectiveItemKey(winId, itemId) {
-    const w = this.window(winId);
-    return this.itemKey(winId, itemId) || (w && w.key) || { fields: ["name"], sep: "|", case_sensitive: false };
+    const it = this.item(winId, itemId), w = this.window(winId);
+    const explicit = (it && it.key) || (w && w.key);
+    if (explicit) return explicit;
+    const first = it && it.fields && it.fields[0] && it.fields[0].field;
+    return { fields: first ? [first] : [], sep: "|", case_sensitive: false };
   }
   ensureItemKey(winId, itemId) {
     const it = this.item(winId, itemId);
     if (!it) return null;
     if (!it.key) {
       const eff = this.effectiveItemKey(winId, itemId);
-      it.key = { fields: [...(eff.fields || ["name"])], sep: eff.sep ?? "|", case_sensitive: !!eff.case_sensitive };
+      it.key = { fields: [...(eff.fields || [])], sep: eff.sep ?? "|", case_sensitive: !!eff.case_sensitive };
     }
     return it.key;
   }

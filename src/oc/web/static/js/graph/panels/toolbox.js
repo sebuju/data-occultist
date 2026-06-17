@@ -38,27 +38,29 @@ async function createWindowNode(at = null, group = null) {
   await placeNewNode(`prev:${id}`, "preview", `win:${id}`);
   render();
   if (group) groups.addToGroup(group, [`win:${id}`]);
-  autosave(); if (!at) panTo(`win:${id}`);
+  // a brand-new empty window has no image/regions/detect of its own and changes nothing
+  // other windows read — autosave(false) so it never re-OCRs the open windows.
+  autosave(false); if (!at) panTo(`win:${id}`);
 }
 async function createPriceNode(at = null, group = null) {
   const id = model.addPriceNode();   // independent producer -> "prices" dataset
   if (!id) return;
   await placeNewNode(`price:${id}`, "price", null, at); render();
   if (group) groups.addToGroup(group, [`price:${id}`]);
-  autosave(); if (!at) panTo(`price:${id}`);
+  autosave(false); if (!at) panTo(`price:${id}`);   // new node changes nothing open windows OCR
 }
 async function createTriggerNode(at = null, group = null) {
   const id = model.addTrigger();   // fires price-node sweeps on a condition
   if (!id) return;
   await placeNewNode(`trigger:${id}`, "trigger", null, at); render();
   if (group) groups.addToGroup(group, [`trigger:${id}`]);
-  autosave(); if (!at) panTo(`trigger:${id}`);
+  autosave(false); if (!at) panTo(`trigger:${id}`);   // new node changes nothing open windows OCR
 }
 function createDictionaryNode(at = null, group = null) {
   const place = async (id) => {
     await placeNewNode(`dict:${id}`, "dictionary", null, at); render();
     if (group) groups.addToGroup(group, [`dict:${id}`]);
-    autosave(); if (!at) panTo(`dict:${id}`);
+    autosave(false); if (!at) panTo(`dict:${id}`);   // new node changes nothing open windows OCR
   };
   openDictionaryPicker({
     used: new Set((model.profile.dictionaries || []).map((d) => d.source)),

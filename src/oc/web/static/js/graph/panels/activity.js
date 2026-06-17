@@ -41,6 +41,12 @@ function buildActivity() {
   actEmpty = document.createElement("div"); actEmpty.className = "act-empty"; actEmpty.textContent = "nothing active";
   // regaining focus -> the backgrounded cadence is stale; beat the hub right away
   window.addEventListener("focus", () => { if (actState.visible) hub.kick(); });
+  // Trigger NODE labels (.tg-last "last fired") track EVERY heartbeat, panel open or not —
+  // a trigger that fires while the tasks panel is closed must still update its node, else the
+  // label sticks at "never fired" forever. The panel's own render (gated on visibility) only
+  // drives the panel rows; the node labels are independent. Reconciles in place (textContent
+  // only when changed), so an always-on beat costs nothing at steady state (rule 1).
+  hub.subscribe((s) => updateTriggerNodes(s));
   // one delegated handler for every row's button (cancel a job, or fire a trigger now)
   act.body.addEventListener("click", (ev) => {
     const game = model.profile.name; if (!game) return;
