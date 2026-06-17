@@ -52,10 +52,17 @@ export function drawChart(host, spec) {
   const X = (i) => pad.l + (rows.length === 1 ? iw / 2 : (i / (rows.length - 1)) * iw);
   const Y = (v) => pad.t + ih - ((v - lo) / (hi - lo)) * ih;
 
+  // y ticks at lo / midpoint / hi: a faint horizontal gridline (except at lo, which is the
+  // x-axis itself) plus a value label, so a point's height reads off without guessing.
+  const ticks = [lo, (lo + hi) / 2, hi];
+  const grid = ticks.map((t) => {
+    const y = Y(t);
+    const ln = t === lo ? "" : `<line class="pw-grid" x1="${pad.l}" y1="${y.toFixed(1)}" x2="${pad.l + iw}" y2="${y.toFixed(1)}"/>`;
+    return ln + `<text class="pw-axlbl" x="${pad.l - 4}" y="${(y + 3).toFixed(1)}" text-anchor="end">${esc(fmt(t))}</text>`;
+  }).join("");
   const axes = `<line class="pw-ax" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${pad.t + ih}"/>`
     + `<line class="pw-ax" x1="${pad.l}" y1="${pad.t + ih}" x2="${pad.l + iw}" y2="${pad.t + ih}"/>`
-    + `<text class="pw-axlbl" x="${pad.l - 4}" y="${pad.t + 4}" text-anchor="end">${esc(fmt(hi))}</text>`
-    + `<text class="pw-axlbl" x="${pad.l - 4}" y="${pad.t + ih}" text-anchor="end">${esc(fmt(lo))}</text>`;
+    + grid;
 
   let body = "";
   if (spec.type === "bar") {
@@ -67,7 +74,7 @@ export function drawChart(host, spec) {
     }));
   } else {
     ys.forEach((f, s) => {
-      const pts = rows.map((r, i) => ({ x: X(i), v: num(r[f]) })).filter((p) => p.v != null);
+      const pts = rows.map((r, i) => ({ x: X(i), v: num(r[f]), lbl: r[spec.x] })).filter((p) => p.v != null);
       if (!pts.length) return;
       const line = pts.map((p, i) => `${i ? "L" : "M"} ${p.x.toFixed(1)} ${Y(p.v).toFixed(1)}`).join(" ");
       if (spec.type === "area") {
@@ -75,7 +82,12 @@ export function drawChart(host, spec) {
         body += `<path d="${area}" fill="${colors(s)}" fill-opacity="0.25"/>`;
       }
       if (spec.type !== "scatter") body += `<path d="${line}" fill="none" stroke="${colors(s)}" stroke-width="2"/>`;
-      if (spec.type === "scatter" || spec.type === "line") body += pts.map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="2.6" fill="${colors(s)}"/>`).join("");
+      if (spec.type === "scatter" || spec.type === "line") body += pts.map((p) => {
+        const cy = Y(p.v).toFixed(1), cx = p.x.toFixed(1);
+        // visible dot + a larger transparent disc that catches the hover and shows the value
+        return `<circle cx="${cx}" cy="${cy}" r="2.6" fill="${colors(s)}"/>`
+          + `<circle cx="${cx}" cy="${cy}" r="7" fill="transparent"><title>${esc(p.lbl)}: ${esc(fmt(p.v))}</title></circle>`;
+      }).join("");
     });
   }
   host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="pw-chart">${title}${axes}${body}</svg>`;
