@@ -126,7 +126,7 @@ def replay(events: list[ChangeEvent], reverted: set[int],
             # 1->many OFF: every non-remove observation is its own record, keyed per event.
             if ev.op is ChangeOp.remove:
                 continue
-            state[f"#{ev.id}"] = {"records": [{"values": dict(ev.values), "ts": ev.ts}],
+            state[f"#{ev.id}"] = {"records": [{"values": dict(ev.values), "ts": ev.ts, "batch": ev.batch}],
                                   "first_seen": ev.ts, "last_seen": ev.ts, "present": True, "_seq": ev.id}
             continue
         k = key.build(ev.values)
@@ -138,7 +138,7 @@ def replay(events: list[ChangeEvent], reverted: set[int],
                 entry["present"] = False
                 entry["removed_at"] = ev.ts
             continue
-        obs = {"values": dict(ev.values), "ts": ev.ts}
+        obs = {"values": dict(ev.values), "ts": ev.ts, "batch": ev.batch}
         if entry is None:
             # _seq = the add event's id: a monotonic rolling id capturing arrival order,
             # stable across replays (same ledger -> same ids). Sort by it for "order they came".
@@ -185,7 +185,11 @@ class DatasetStore:
 
     def _replay(self) -> dict[str, dict]:
         self._ensure_events()
-        return replay(self._events, self._reverted, self._key, self._agg)
+        from . import stats_store
+        with stats_store.time_block(self._game, f"ds:{self._dataset}", "rp",
+                                    n_fn=lambda: len(out)):
+            out = replay(self._events, self._reverted, self._key, self._agg)
+        return out
 
     def _apply_agg(self, entry: dict) -> None:
         entry["values"] = aggregate_records(entry.get("records", []), self._agg)
@@ -204,7 +208,7 @@ class DatasetStore:
         shape version + key spec + reverted set + the history file's size/mtime. It also
         carries ``next_id``/``batch``/``n_events`` so the fast path can restore them without
         a parse. A re-key, a revert, or any new event (file grows) invalidates it."""
-        return {"v": 4, "key": self._key.meta(), "reverted": sorted(self._reverted),
+        return {"v": 5, "key": self._key.meta(), "reverted": sorted(self._reverted),
                 "src": self._src(), "next_id": self._next_id, "batch": self._batch,
                 "n_events": self._n_events}
 
@@ -255,7 +259,7 @@ class DatasetStore:
         if not isinstance(cached, dict):
             return False
         meta = cached.get("_meta") or {}
-        if (meta.get("v") != 4 or meta.get("key") != self._key.meta()
+        if (meta.get("v") != 5 or meta.get("key") != self._key.meta()
                 or meta.get("reverted") != sorted(self._reverted) or meta.get("src") != self._src()):
             return False
         self._state = cached.get("state", {})
@@ -313,7 +317,7 @@ class DatasetStore:
         if getattr(self._key, "dedup", True) is False:
             # 1->many OFF: every read is its own record (keyed per event), never merged.
             ev = self._new_event(ChangeOp.add, "", dict(values))
-            self._state[f"#{ev.id}"] = {"records": [{"values": dict(values), "ts": ev.ts}],
+            self._state[f"#{ev.id}"] = {"records": [{"values": dict(values), "ts": ev.ts, "batch": ev.batch}],
                                         "first_seen": ev.ts, "last_seen": ev.ts, "present": True,
                                         "_seq": ev.id, "values": dict(values)}
             self._apply_agg(self._state[f"#{ev.id}"])
@@ -326,7 +330,7 @@ class DatasetStore:
 
         if entry is None:
             ev = self._new_event(ChangeOp.add, key, dict(values))
-            self._state[key] = {"records": [{"values": dict(values), "ts": ev.ts}],
+            self._state[key] = {"records": [{"values": dict(values), "ts": ev.ts, "batch": ev.batch}],
                                 "first_seen": ev.ts, "last_seen": ev.ts, "present": True,
                                 "_seq": ev.id, "values": dict(values)}
             self._apply_agg(self._state[key])
@@ -343,7 +347,7 @@ class DatasetStore:
 
         op = ChangeOp.add if was_absent else ChangeOp.update
         ev = self._new_event(op, key, dict(merged), changed)
-        records.append({"values": dict(merged), "ts": ev.ts})
+        records.append({"values": dict(merged), "ts": ev.ts, "batch": ev.batch})
         entry["last_seen"] = ev.ts
         entry["present"] = True
         entry.pop("removed_at", None)
@@ -554,6 +558,7 @@ class DatasetStore:
         rows = [{"key": k, "present": e.get("present", True),
                  "first_seen": e.get("first_seen"), "last_seen": e.get("last_seen"),
                  "_count": len(e.get("records", [])), "_seq": e.get("_seq"),
+                 "_batch": max((o.get("batch", 0) for o in e.get("records", [])), default=0),
                  **e.get("values", {})} for k, e in self._state.items()]
         rows.sort(key=lambda r: (not r["present"], r["key"]))
         return rows[:limit] if limit and limit > 0 else rows

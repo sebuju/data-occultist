@@ -140,7 +140,18 @@ def apply_derived(row: dict, derived: list[DerivedColumn]) -> None:
 
 
 # columns that the store adds for bookkeeping — hidden from a subset by default
-_HIDDEN = ("present", "first_seen", "last_seen", "_count")
+_HIDDEN = ("present", "first_seen", "last_seen", "_count", "_batch")
+
+
+def _latest_batch_only(recs: list[dict]) -> list[dict]:
+    """Keep only the rows from each input's most recent batch — those whose ``_batch`` equals
+    the highest ``_batch`` present. Rows without a ``_batch`` (e.g. an upstream view that
+    already stripped it) are left untouched, so the filter is a no-op there."""
+    batches = [r.get("_batch") for r in recs if r.get("_batch") is not None]
+    if not batches:
+        return recs
+    top = max(batches)
+    return [r for r in recs if r.get("_batch") == top]
 
 
 def _join(inputs: list[tuple[str, list[dict]]], join_field: str) -> list[dict]:
@@ -178,8 +189,12 @@ def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
     """Return ``{columns, rows}`` for a view over its joined source datasets.
 
     ``inputs`` is ``[(dataset_id, records), ...]`` — the datasets the view joins (on
-    ``sub.join_field``). Merge -> derive -> filter -> sort -> limit, so filters and sort
-    can reference joined and derived columns alike."""
+    ``sub.join_field``). Latest-batch -> merge -> derive -> filter -> sort -> limit, so
+    filters and sort can reference joined and derived columns alike."""
+    # latest-batch first: trim each source to its most recent batch BEFORE the join, so the
+    # rest of the pipeline only ever sees the latest pass.
+    if getattr(sub, "latest_batch", False):
+        inputs = [(ds, _latest_batch_only(recs)) for ds, recs in inputs]
     rows = _join(inputs, sub.join_field or "name")
     for row in rows:
         apply_derived(row, sub.derived)

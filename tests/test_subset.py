@@ -85,6 +85,45 @@ def test_view_feeding_view_chains_derived_columns():
     assert row["value"] == 30 and row["label"] == "60 pl"   # upstream derived feeds downstream
 
 
+def test_latest_batch_keeps_only_newest_batch_rows():
+    # rows carry the store's `_batch`; latest_batch trims to the highest before anything else
+    recs = [{"name": "Old", "_batch": 1, "present": True},
+            {"name": "Mid", "_batch": 1, "present": True},
+            {"name": "New", "_batch": 2, "present": True}]
+    sub = SubsetDef(id="v", dataset="d", latest_batch=True)
+    rows = compute_subset(recs, sub)["rows"]
+    assert {r["name"] for r in rows} == {"New"}              # batch 1 dropped
+    assert "_batch" not in rows[0]                            # bookkeeping col stays hidden
+
+
+def test_latest_batch_off_keeps_all():
+    recs = [{"name": "Old", "_batch": 1, "present": True},
+            {"name": "New", "_batch": 2, "present": True}]
+    rows = compute_subset(recs, SubsetDef(id="v", dataset="d"))["rows"]
+    assert {r["name"] for r in rows} == {"Old", "New"}
+
+
+def test_latest_batch_applied_before_limit():
+    # apply order: latest-batch FIRST, then limit — so limit counts only newest-batch rows
+    recs = [{"name": "a", "_batch": 1, "present": True}, {"name": "b", "_batch": 1, "present": True},
+            {"name": "c", "_batch": 2, "present": True}, {"name": "d", "_batch": 2, "present": True}]
+    sub = SubsetDef(id="v", dataset="d", latest_batch=True, limit=10)
+    rows = compute_subset(recs, sub)["rows"]
+    assert {r["name"] for r in rows} == {"c", "d"}           # only batch 2 survived, limit didn't pull batch 1
+
+
+def test_store_records_expose_latest_batch():
+    # the store tags each observation with its batch; records() surfaces the row's max _batch
+    import tempfile
+    from oc.store.dataset_store import DatasetStore
+    with tempfile.TemporaryDirectory() as d:
+        s = DatasetStore(d, "g", "ds")
+        s.begin_batch(); s.record_seen({"name": "A"})
+        s.begin_batch(); s.record_seen({"name": "B"})
+        by = {r["name"]: r for r in s.records()}
+        assert by["A"]["_batch"] == 1 and by["B"]["_batch"] == 2
+
+
 def test_subset_round_trips_through_profile(tmp_path):
     p = GameProfile(name="g", subsets=[SubsetDef(
         id="arc", dataset="equip",
