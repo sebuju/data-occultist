@@ -28,6 +28,7 @@ from ..enrich.price_collector import inventory_slugs
 from ..enrich.price_runner import start_sweep, sweep_status
 from ..enrich.slug_resolver import get_resolver
 from ..enrich.wm_client import slugify
+from ..eventlog import publish as logev
 
 
 # ---- last-activation tracking (shared across firers via a tiny sidecar) -------------
@@ -85,6 +86,8 @@ class TriggerRunner:
                 continue
             if now - self._last.get(t.id, now) >= t.interval_s:
                 self._last[t.id] = now
+                logev(f"trigger {t.id} fired (interval, every {int(t.interval_s)}s)",
+                      level="run", game=self._profile.name)
                 self._fire_targets(t, items=None)   # node sources / catalogue decide
                 record_fire(self._data_dir, self._profile.name, t.id)
                 fired.append(t.id)
@@ -104,6 +107,8 @@ class TriggerRunner:
                 continue
             if items is None:
                 items = self._items_for(changed_records)
+            logev(f"trigger {t.id} <- {dataset} changed ({len(changed_records)} rows, "
+                  f"{len(items)} to price)", level="run", game=self._profile.name)
             self._fire_targets(t, items=items)
             record_fire(self._data_dir, self._profile.name, t.id)
             fired.append(t.id)
@@ -148,6 +153,8 @@ class TriggerRunner:
             # anyway (per-node running flag + per-game gate + cross-process file lock), but skip
             # up front so a busy node is never disturbed or double-counted.
             if sweep_status(self._profile.name, pn.dataset).get("running"):
+                logev(f"  -> {pid} skipped (already sweeping)", level="info",
+                      game=self._profile.name)
                 continue
             try:
                 self._fire(pn, items)

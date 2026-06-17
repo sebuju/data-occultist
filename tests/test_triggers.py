@@ -5,6 +5,7 @@ an injected clock and a captured ``fire``. ``gather_source_items`` is tested aga
 DatasetStore with a stubbed name->slug resolver.
 """
 
+from oc import eventlog
 from oc.collect.triggers import TriggerRunner
 from oc.enrich.price_runner import gather_source_items
 from oc.profile.models import GameProfile, PriceNodeDef, TriggerDef
@@ -64,6 +65,25 @@ def test_on_change_ignores_empty_and_disabled():
     assert tr.on_change("relic_rewards", [{"name": "x"}]) == []   # disabled
     assert tr.on_change("relic_rewards", []) == []               # nothing changed
     assert calls == []
+
+
+def test_triggers_publish_activity_log_lines():
+    # every watch+fire and interval fire emits a log-bar line via the eventlog bus
+    lines = []
+    off = eventlog.subscribe(lambda ev: lines.append(ev))
+    try:
+        clock = [1000.0]
+        tr, _ = _runner(_profile(), clock)
+        tr._resolve = lambda n: n.lower().replace(" ", "_")
+        tr.on_change("relic_rewards", [{"name": "Soma Prime"}])
+        clock[0] = 1100.0
+        tr.tick()
+    finally:
+        off()
+    msgs = [e["msg"] for e in lines]
+    assert any("relicwatch <- relic_rewards changed" in m for m in msgs)
+    assert any("periodic fired (interval" in m for m in msgs)
+    assert all(e["game"] == "g" for e in lines)   # scoped to the profile's game
 
 
 def test_gather_source_items_from_dataset(tmp_path):

@@ -19,6 +19,7 @@ import urllib.error
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from ..eventlog import publish as _logev
 from ..store import DatasetStore, KeySpec, PriceStore
 from .wm_client import NET_ERRORS, fetch_items, fetch_orders, fetch_statistics, slugify
 
@@ -92,6 +93,8 @@ class PriceCollector:
         dataset_store: DatasetStore | None = None,
         on_item: Callable[[int, int, str, str, bool], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
+        game: str | None = None,
+        log_dataset: str | None = None,
     ) -> dict:
         """Fetch statistics for every ``(slug, name)`` in ``items`` concurrently (rate-
         limited), ingesting into the price store. When ``dataset_store`` is given, each
@@ -153,6 +156,11 @@ class PriceCollector:
                         failed += 1
                     if on_item is not None:
                         on_item(done, total, slug, name, ok)
+                    # one log line per external fetch (warframe.market), so the log bar shows
+                    # every API call. Gameless when no context given (e.g. tests).
+                    _logev(f"  market {self._mode}: {name} [{slug}] "
+                           f"{'ok' if ok else ('404' if missing else 'fail')} ({done}/{total})",
+                           level="ok" if ok else "info", game=game, dataset=log_dataset)
                     if fetched and fetched % _SAVE_EVERY == 0:
                         with store_lock:
                             self._store.save()
@@ -188,7 +196,8 @@ def sweep_catalogue(
     dstore = DatasetStore(data_dir, game, out_dataset, key=key or KeySpec(fields=("name",)))
     dstore.begin_batch()
     collector = PriceCollector(store, throttle=throttle, timeout=timeout, workers=workers, mode=mode)
-    return collector.sweep(items, dataset_store=dstore, on_item=on_item, should_stop=should_stop)
+    return collector.sweep(items, dataset_store=dstore, on_item=on_item, should_stop=should_stop,
+                           game=game, log_dataset=out_dataset)
 
 
 def sweep_dataset(
@@ -209,4 +218,5 @@ def sweep_dataset(
         items = items[:limit]
     store = PriceStore(data_dir, game)
     collector = PriceCollector(store, throttle=throttle, timeout=timeout, workers=workers, mode=mode)
-    return collector.sweep(items, on_item=on_item, should_stop=should_stop)
+    return collector.sweep(items, on_item=on_item, should_stop=should_stop,
+                           game=game, log_dataset=dataset)

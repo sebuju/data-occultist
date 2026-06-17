@@ -20,6 +20,7 @@ from .routes import (
     flow,
     lexicon,
     live,
+    logstream,
     ocr,
     precapture,
     pretty,
@@ -83,6 +84,14 @@ async def lifespan(_app: FastAPI):
         kill_live()
     except Exception:  # noqa: BLE001 - best-effort
         pass
+    # A sweep killed mid-run (e.g. server restart) strands its per-game .price_sweep.lock,
+    # which then BLOCKS every trigger-fired sweep for ~30 min. A fresh process holds no sweep,
+    # so any lock on disk is orphaned — clear them all now.
+    try:
+        from ..enrich.price_runner import clear_stale_locks
+        clear_stale_locks(get_settings().data_dir)
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
     threading.Thread(target=_warm, daemon=True).start()
     # keep interval triggers firing (+ feed the Activity panel's countdown) while only the
     # teach UI is up; safe — firing is guarded and cross-process file-locked.
@@ -142,6 +151,7 @@ def create_app() -> FastAPI:
     app.include_router(dictionaries.router)
     app.include_router(pretty.router)
     app.include_router(events.router)
+    app.include_router(logstream.router)
     app.include_router(video.router)
     app.include_router(bench.router)
     # Serve the single-page front-end at root.
