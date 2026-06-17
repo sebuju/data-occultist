@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ...enrich.price_runner import active_sweeps
+from ...enrich.price_runner import active_sweeps, recent_blocked
 from ..deps import get_settings
 from ..trigger_sched import schedule as trigger_schedule
 from .live import _sessions as _live_sessions
@@ -40,5 +40,6 @@ def activity(game: str) -> dict:
         lst = ls.status()
         if lst.get("running"):
             live = lst
-    return {"sweeps": active_sweeps(game), "precapture": precap, "live": live,
+    return {"sweeps": active_sweeps(game), "blocked": recent_blocked(game),
+            "precapture": precap, "live": live,
             "triggers": trigger_schedule(game, get_settings()), "ocr": ocr_state()}

@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..eventlog import publish as logev
 from ..store import DatasetStore
 from .price_collector import inventory_slugs, sweep_catalogue
 from .slug_resolver import get_resolver
@@ -51,6 +52,7 @@ class SweepState:
     # set when a sweep was refused because another node in the same game is sweeping
     # (fetching is serialised per game for the rate limit + shared price store).
     blocked: bool = False
+    blocked_by: str = ""   # human reason, surfaced in the Activity panel
     last: str = ""
     started: str = ""
     finished: str = ""
@@ -71,6 +73,13 @@ _runners: dict[tuple[str, str], _Runner] = {}
 _game_gate: dict[str, threading.Lock] = {}
 _gate_guard = threading.Lock()
 
+# A blocked sweep (refused because another node/process holds the per-game gate) runs nothing,
+# so it never reaches active_sweeps — yet a trigger that hit it looks like it silently did
+# nothing. Remember the most recent block per (game, dataset) so the Activity panel can show
+# "blocked" for a short window. (state, monotonic_ts); expired/cleared lazily.
+_recent_blocked: dict[tuple[str, str], tuple[SweepState, float]] = {}
+_BLOCKED_TTL = 20.0   # seconds a block stays visible in the panel
+
 
 def _runner(game: str, dataset: str) -> _Runner:
     return _runners.setdefault((game, dataset), _Runner())
@@ -90,6 +99,24 @@ _LOCK_STALE = 1800.0   # 30 min
 
 def _lock_path(data_dir, game: str) -> Path:
     return Path(data_dir) / game / ".price_sweep.lock"
+
+
+def clear_stale_locks(data_dir) -> list[str]:
+    """Remove every per-game ``.price_sweep.lock`` under ``data_dir``. Safe to call at
+    process startup: a fresh process holds no in-process sweep, so any lock file on disk was
+    orphaned by a crashed/killed sweep and would otherwise BLOCK all sweeps for ``_LOCK_STALE``.
+    Returns the games whose lock was cleared."""
+    cleared: list[str] = []
+    base = Path(data_dir)
+    if not base.is_dir():
+        return cleared
+    for lock in base.glob("*/.price_sweep.lock"):
+        try:
+            lock.unlink()
+            cleared.append(lock.parent.name)
+        except OSError:
+            pass
+    return cleared
 
 
 def _acquire_file_lock(path: Path, stale: float = _LOCK_STALE) -> bool:
@@ -223,11 +250,14 @@ def start_sweep(data_dir, game: str, price_node, *, profile=None, key=None, reso
         key = profile.key_map_for(dataset)
     gate = _gate(game)
     if not gate.acquire(blocking=False):
-        return SweepState(game=game, dataset=dataset, mode=price_node.mode, blocked=True)
+        return _note_blocked(game, dataset, price_node.mode, "another sweep running")
     lock_path = _lock_path(data_dir, game)
     if not _acquire_file_lock(lock_path):
         gate.release()                       # another PROCESS is sweeping this game
-        return SweepState(game=game, dataset=dataset, mode=price_node.mode, blocked=True)
+        return _note_blocked(game, dataset, price_node.mode, "another process sweeping")
+    _recent_blocked.pop((game, dataset), None)   # this node is now sweeping — drop any stale block
+    n = "?" if items is None else len(items)
+    logev(f"sweep {dataset} started · {n} item(s) · {price_node.mode}", level="run", game=game)
     runner.state = SweepState(game=game, dataset=dataset, mode=price_node.mode,
                               running=True, started=_utcnow_iso())
     runner.thread = threading.Thread(
@@ -263,3 +293,27 @@ def active_sweeps(game: str) -> list[dict]:
     """Every currently-running sweep for ``game`` (one per dataset). For the Activity panel."""
     return [r.state.public() for (g, _ds), r in _runners.items()
             if g == game and r.state and r.state.running]
+
+
+def _note_blocked(game: str, dataset: str, mode: str, reason: str) -> SweepState:
+    """Record (and return) a blocked sweep so the Activity panel can surface it briefly."""
+    st = SweepState(game=game, dataset=dataset, mode=mode, blocked=True, blocked_by=reason,
+                    finished=_utcnow_iso())
+    _recent_blocked[(game, dataset)] = (st, time.monotonic())
+    logev(f"sweep {dataset} blocked — {reason}", level="warn", game=game)
+    return st
+
+
+def recent_blocked(game: str, within: float = _BLOCKED_TTL) -> list[dict]:
+    """Sweeps refused (gate held by another node/process) within the last ``within`` seconds —
+    so a trigger that fired but couldn't sweep is visible instead of silently doing nothing.
+    Expired entries are pruned on read."""
+    now = time.monotonic()
+    out: list[dict] = []
+    for (g, ds), (st, ts) in list(_recent_blocked.items()):
+        if now - ts > within:
+            _recent_blocked.pop((g, ds), None)
+            continue
+        if g == game:
+            out.append(st.public())
+    return out

@@ -390,3 +390,23 @@ def test_fetch_statistics_builds_encoded_url(monkeypatch):
     monkeypatch.setattr(wm_client, "_get", fake_get)
     wm_client.fetch_statistics("höfn")
     assert seen["path"] == "/v1/items/h%C3%B6fn/statistics"
+
+
+def test_clear_stale_locks_removes_orphaned_sweep_locks(tmp_path):
+    # A sweep killed mid-run strands its per-game lock; startup must clear it (else every
+    # later sweep is blocked for ~30 min). Plant locks for two games and one stray dir.
+    from oc.enrich.price_runner import _lock_path, clear_stale_locks
+
+    for game in ("warframe", "other"):
+        p = _lock_path(tmp_path, game)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("999 0")
+    (tmp_path / "nolock").mkdir()
+
+    cleared = clear_stale_locks(tmp_path)
+    assert sorted(cleared) == ["other", "warframe"]
+    assert not _lock_path(tmp_path, "warframe").exists()
+    assert not _lock_path(tmp_path, "other").exists()
+    # idempotent + safe on a clean tree
+    assert clear_stale_locks(tmp_path) == []
+    assert clear_stale_locks(tmp_path / "missing") == []
