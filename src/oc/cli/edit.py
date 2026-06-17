@@ -15,12 +15,14 @@ def run(args) -> int:
     import uvicorn
 
     print(f"data-rig UI -> http://{args.host}:{args.port}")
+    # Shutdown is clean WITHOUT a graceful-shutdown timeout: the app's lifespan chains the
+    # SIGINT/SIGTERM handlers to flip a shutdown flag that every long-lived SSE stream watches
+    # (see oc.web.shutdown / oc.web.sse), so the streams self-close and uvicorn's connection
+    # drain finishes at once. No timeout band-aid needed.
     uvicorn.run(
         "oc.web.app:app",
         host=args.host,
         port=args.port,
         reload=args.reload,
-        # don't let a long-lived SSE stream block shutdown/reload forever — force-close after 5s
-        timeout_graceful_shutdown=5,
     )
     return 0

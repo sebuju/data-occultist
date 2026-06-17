@@ -23,7 +23,7 @@ def _cluster_rows(lines: list[OcrLine], gap: float) -> list[list[OcrLine]]:
     rows: list[list[OcrLine]] = []
     cur: list[OcrLine] = []
     prev_yc = None
-    for ln in sorted(lines, key=lambda l: l.box.y + l.box.h / 2):
+    for ln in sorted(lines, key=lambda x: x.box.y + x.box.h / 2):
         yc = ln.box.y + ln.box.h / 2
         if prev_yc is not None and yc - prev_yc > gap:
             rows.append(cur)
@@ -85,18 +85,20 @@ def analyze(frame: Frame, ocr: OcrEngine, search: dict | None = None) -> dict:
     cols = max(len(r) for r in grid_rows)
     n_rows = len(grid_rows)
 
-    first = min(grid_names, key=lambda l: (l.box.y, l.box.x))
+    first = min(grid_names, key=lambda x: (x.box.y, x.box.x))
     cell_w = round(median(ln.box.w for ln in grid_names))
     region = PixelBox(first.box.x, first.box.y, cell_w, round(med_h * 1.2))
 
     # Search area = padded union of the grid's name boxes.
-    x0 = min(ln.box.x for ln in grid_names); y0 = min(ln.box.y for ln in grid_names)
-    x1 = max(ln.box.right for ln in grid_names); y1 = max(ln.box.bottom for ln in grid_names)
+    x0 = min(ln.box.x for ln in grid_names)
+    y0 = min(ln.box.y for ln in grid_names)
+    x1 = max(ln.box.right for ln in grid_names)
+    y1 = max(ln.box.bottom for ln in grid_names)
     search_box = PixelBox(x0, y0, x1 - x0, y1 - y0)
 
     parts = _suggest_number_parts(grid_names, numbers, first, col_pitch, row_pitch, cw, ch)
 
-    row0 = sorted(grid_rows[0], key=lambda l: l.box.x)
+    row0 = sorted(grid_rows[0], key=lambda x: x.box.x)
     samples = [ln.text for ln in row0[:cols]]
 
     return {
@@ -137,7 +139,9 @@ def _suggest_number_parts(names, numbers, first, col_pitch, row_pitch, cw, ch) -
         return []
     # Median real offset/size for the dominant cluster.
     members = [s for o, s in zip(offsets, sizes) if o == key]
-    w = round(median(m[0] for m in members)); h = round(median(m[1] for m in members))
-    dx = round(median(m[2] for m in members)); dy = round(median(m[3] for m in members))
+    w = round(median(m[0] for m in members))
+    h = round(median(m[1] for m in members))
+    dx = round(median(m[2] for m in members))
+    dy = round(median(m[3] for m in members))
     box = PixelBox(first.box.x + dx, first.box.y + dy, w, h)
     return [{"field": "count", "type": "number", "box": _frac(box, cw, ch)}]
