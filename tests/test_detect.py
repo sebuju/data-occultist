@@ -37,10 +37,54 @@ def test_empty_is_zero():
     assert text_match_score("", "y") == 0.0
 
 
+def test_partial_waves_through_near_substring():
+    # the reported bug: 'WARDSI' shares "wards" with 'rewards', so partial_ratio
+    # aligns it and scores high — loose by design, this is what 'full' fixes.
+    assert text_match_score("rewards", "WARDSI", mode="partial") >= 0.8
+
+
+def test_full_mode_rejects_near_substring():
+    # whole-string ratio: the extra/missing chars cost, so the same pair fails 0.8
+    assert text_match_score("rewards", "WARDSI", mode="full") < 0.8
+    # but a clean noisy read of the real word still passes
+    assert text_match_score("rewards", "REWARDS", mode="full") >= 0.8
+
+
+def test_exact_mode_is_all_or_nothing():
+    assert text_match_score("inventory", "INVENTORY", mode="exact") == 1.0
+    assert text_match_score("inventory", "inventori", mode="exact") == 0.0
+
+
+def test_prefix_mode():
+    # included=False: the detect text begins the read (read may have trailing junk)
+    assert text_match_score("equipment", "EQUIPMENT UPGRADE", mode="prefix") == 1.0
+    assert text_match_score("equipment", "loadout", mode="prefix") < 0.8
+    # included=True: the read is a prefix of the detect text (truncated read)
+    assert text_match_score("inventory", "INV", mode="prefix", included=True) == 1.0
+
+
+def test_min_chars_floor():
+    # a 4-char read that would otherwise match is killed by a higher floor
+    assert text_match_score("name", "NAME", mode="full") >= 0.8
+    assert text_match_score("name", "NAME", mode="full", min_chars=5) == 0.0
+
+
+def test_case_sensitive():
+    assert text_match_score("Name", "name", mode="exact") == 1.0          # folded
+    assert text_match_score("Name", "name", mode="exact", case_sensitive=True) == 0.0
+
+
+def test_strip_mode_keeps_punctuation():
+    # default alnum drops the slash; 'none'/'spaces' keep it significant
+    assert text_match_score("a/b", "ab", mode="exact") == 1.0
+    assert text_match_score("a/b", "ab", mode="exact", strip="none") == 0.0
+    assert text_match_score("a / b", "a/b", mode="exact", strip="spaces") == 1.0
+
+
 def _classifier_with(matched: dict):
     win = WindowDef(id="equip", detect=[
-        DetectDef(id="a", search=Box(x=0, y=0, w=0.1, h=0.1), text="inventory"),
-        DetectDef(id="b", search=Box(x=0.2, y=0, w=0.1, h=0.1), text="name"),
+        DetectDef(id="a", search=Box(x=0, y=0, w=0.1, h=0.1), text="inventory", threshold=0.8),
+        DetectDef(id="b", search=Box(x=0.2, y=0, w=0.1, h=0.1), text="name", threshold=0.8),
     ])
     profile = GameProfile(name="g", windows=[win])
     clf = DetectClassifier.__new__(DetectClassifier)

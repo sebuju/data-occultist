@@ -1,6 +1,6 @@
 """Composite record keys: KeySpec/KeyMap build + profile resolution + migration."""
 
-from oc.profile.loader import _migrate_keys
+from oc.profile.loader import _migrate_detect_thresholds, _migrate_keys
 from oc.profile.models import Box, GameProfile, ItemDef, KeyDef, WindowDef
 from oc.store.keys import KeyMap, KeySpec
 
@@ -102,3 +102,22 @@ def test_migration_synthesizes_window_key_from_old_shapes():
     assert "dedup_field" not in out["windows"][1]["scroll"]
     p = GameProfile.model_validate(out)                                  # validates post-migration
     assert p.key_map_for("loot").build({"item_name": "Adra"}) == "adra"
+
+
+def test_migration_backfills_missing_detect_threshold():
+    # threshold is now required; an old profile that predates the UI always writing
+    # it must still load (backfilled to the default), not fail validation.
+    raw = {
+        "name": "g",
+        "windows": [{
+            "id": "w1",
+            "detect": [{"id": "a", "search": CELL.model_dump(), "text": "inv"}],   # no threshold
+            "states": [{"id": "s", "detect": [
+                {"id": "b", "search": CELL.model_dump(), "text": "name"}]}],         # no threshold
+        }],
+    }
+    out = _migrate_detect_thresholds(raw)
+    w = out["windows"][0]
+    assert w["detect"][0]["threshold"] == 0.8
+    assert w["states"][0]["detect"][0]["threshold"] == 0.8
+    GameProfile.model_validate(out)                                          # would raise if unfilled

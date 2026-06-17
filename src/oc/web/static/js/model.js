@@ -3,6 +3,8 @@
 // (type/pattern/learn), window dataset + key, grid params, states (valid_for_save),
 // and the labelled boxes — so nothing about a game needs hand-edited YAML.
 
+import { DEFAULT_DETECT_THRESHOLD, DETECT_DEFAULTS, detectToProfile, detectToBox } from "./defaults.js";
+
 let _seq = 1;
 const nextId = (role) => `${role}_${_seq++}`;
 
@@ -61,7 +63,8 @@ export class EditorModel {
 
   addBox(geom, role = "region") {
     const box = {
-      id: nextId(role), role, field: "", text: "", stateId: "", threshold: 0.8, ...geom,
+      id: nextId(role), role, field: "", text: "", stateId: "",
+      threshold: DEFAULT_DETECT_THRESHOLD, ...DETECT_DEFAULTS, ...geom,
     };
     this.boxes.push(box);
     this.selectedId = box.id;
@@ -91,11 +94,11 @@ export class EditorModel {
         regions.push({ id: b.id, box, field });
         this.ensureField(field);
       } else if (b.role === "detect") {
-        detect.push({ id: b.id, search: box, text: b.text || null, threshold: b.threshold ?? 0.8 });
+        detect.push(detectToProfile(b, box));
       } else if (b.role === "state_detect") {
         const sid = b.stateId || "state";
         if (!statesMap.has(sid)) statesMap.set(sid, { id: sid, kind: "ordering", valid_for_save: true, detect: [] });
-        statesMap.get(sid).detect.push({ id: b.id, search: box, text: b.text || null, threshold: b.threshold ?? 0.8 });
+        statesMap.get(sid).detect.push(detectToProfile(b, box));
       } else if (b.role === "scrollbar") {
         scrollbarBox = box;
       }
@@ -178,12 +181,12 @@ export class EditorModel {
     }
 
     for (const a of win.detect || []) {
-      this.boxes.push({ id: a.id, role: "detect", text: a.text || "", threshold: a.threshold ?? 0.8, ...a.search });
+      this.boxes.push(detectToBox(a, { role: "detect" }));
     }
     for (const s of win.states || []) {
       this.states.push({ id: s.id, kind: s.kind || "ordering", valid_for_save: s.valid_for_save !== false });
       for (const a of s.detect || []) {
-        this.boxes.push({ id: a.id, role: "state_detect", text: a.text || "", stateId: s.id, threshold: a.threshold ?? 0.8, ...a.search });
+        this.boxes.push(detectToBox(a, { role: "state_detect", stateId: s.id }));
       }
     }
     for (const r of win.regions || []) {

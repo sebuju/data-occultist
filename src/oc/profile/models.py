@@ -17,6 +17,11 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 from ..store.keys import KeyMap, KeySpec
 from ..types import FractionBox
 
+# Single source of truth for a detector's match-score floor. The UI seeds new
+# detect nodes with this so the value lives in exactly one place per layer (web
+# mirror: DEFAULT_DETECT_THRESHOLD in static/js/defaults.js) — no bare 0.8 literals.
+DEFAULT_DETECT_THRESHOLD = 0.8
+
 
 class Box(BaseModel):
     """Fraction rectangle relative to the window client area (or, for an item's
@@ -313,12 +318,36 @@ class ItemDef(BaseModel):
     key: KeyDef | None = None
 
 
+class MatchMode(str, Enum):
+    """How a text detector compares its ``text`` against the OCR read.
+
+    ``partial`` aligns the shorter string *anywhere inside* the longer one — loose,
+    so a read that merely contains (or is contained by) the target scores ~1.0; the
+    length guards in :func:`text_match_score` are what keep it honest. The stricter
+    modes compare the strings as wholes and so reject near-substring false matches
+    (e.g. 'WARDSI' vs 'rewards') that ``partial`` waves through.
+    """
+
+    partial = "partial"  # substring alignment (loose) — historical default
+    full = "full"        # whole-string similarity (rejects extra/missing chars)
+    exact = "exact"      # normalised equality: 1.0 or 0.0
+    prefix = "prefix"    # read must begin the target (or vice-versa if ``included``)
+
+
+class StripMode(str, Enum):
+    """What ``_norm`` removes before comparing detector text to the OCR read."""
+
+    alnum = "alnum"    # keep only letters/digits (ignore spaces + punctuation)
+    spaces = "spaces"  # drop only whitespace (punctuation is significant)
+    none = "none"      # compare raw (whitespace + punctuation significant)
+
+
 class DetectDef(BaseModel):
     """A visual landmark used to recognise a window or state.
 
     ``template`` is a PNG path (relative to the profile dir) matched within
     ``search`` via template matching. Alternatively ``text`` is OCR'd inside
-    ``search`` and compared (case-insensitive substring).
+    ``search`` and compared against ``text`` per the ``match`` knobs below.
     """
 
     id: str
@@ -326,10 +355,18 @@ class DetectDef(BaseModel):
     search: Box
     template: str | None = None
     text: str | None = None
-    threshold: float = 0.8  # template-match confidence required
-    # Match direction for text: False -> detect text must appear in the OCR read;
-    # True -> accept when the OCR read is contained within the detect text (looser).
+    # 0..1 score required to match. REQUIRED — no baked-in default; the UI seeds new
+    # nodes from DEFAULT_DETECT_THRESHOLD and the loader backfills older profiles
+    # (_migrate_detect_thresholds), so the magic number lives in exactly one place.
+    threshold: float
+    match: MatchMode = MatchMode.partial  # how text is compared (see MatchMode)
+    # Match direction for ``partial``/``prefix``: False -> detect text must appear in
+    # the OCR read; True -> accept when the OCR read is contained within the detect
+    # text (looser). Ignored by ``full``/``exact``.
     included: bool = False
+    case_sensitive: bool = False  # False -> fold case before comparing
+    min_chars: int = 0            # hard floor: reads shorter than this never match
+    strip: StripMode = StripMode.alnum  # what to ignore before comparing
 
 
 class StateKind(str, Enum):

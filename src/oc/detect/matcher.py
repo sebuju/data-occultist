@@ -15,35 +15,73 @@ from ..types import Frame
 from .template import best_match, load_template
 
 
-def _norm(s: str) -> str:
-    """Lowercase, drop everything but letters/digits — so detection ignores spaces,
-    punctuation and case (e.g. 'INVENTORY / SELL' -> 'inventorysell')."""
+def _norm(s: str, strip: str = "alnum", case_sensitive: bool = False) -> str:
+    """Canonicalise text before comparison. ``strip`` chooses what is ignored:
+    ``alnum`` keeps only letters/digits (drops spaces + punctuation — the historical
+    behaviour, e.g. 'INVENTORY / SELL' -> 'inventorysell'); ``spaces`` drops only
+    whitespace; ``none`` keeps everything. Case is folded unless ``case_sensitive``."""
     import re
-    return re.sub(r"[^a-z0-9]", "", s.lower())
+    if not case_sensitive:
+        s = s.lower()
+    if strip == "alnum":
+        keep = r"[^a-z0-9]" if not case_sensitive else r"[^A-Za-z0-9]"
+        return re.sub(keep, "", s)
+    if strip == "spaces":
+        return re.sub(r"\s", "", s)
+    return s
 
 
-def text_match_score(want: str, got: str, included: bool = False) -> float:
-    """Fuzzy 0..1 score that ``want`` is present in OCR ``got`` (or vice versa if
-    ``included``), ignoring spaces/special chars/case, so stylised or noisy OCR still
-    matches (e.g. 'INVTNTORYSELL' ~ 'INVENTORY / SELL').
+def text_match_score(
+    want: str,
+    got: str,
+    *,
+    mode: str = "partial",
+    included: bool = False,
+    case_sensitive: bool = False,
+    min_chars: int = 0,
+    strip: str = "alnum",
+) -> float:
+    """Fuzzy 0..1 score that detector text ``want`` is present in OCR read ``got``.
 
-    ``partial_ratio`` aligns the shorter string anywhere inside the longer one, so a
-    read that merely *contains* (or is contained by) the target would otherwise score
-    ~1.0. Two guards reject that:
-    - Too LONG: a read far longer than the target means the box caught a paragraph
-      (wrong screen), not the landmark.
-    - Too SHORT: a read far shorter than the target is a fragment/noise — e.g. a 3-char
-      blob "war" sits inside "reward" and would score 1.0, so a near-empty box would
-      false-match. Require the read to cover most of the target's length.
+    ``mode`` picks how strictly the two are compared:
+
+    - ``partial`` (default) — ``partial_ratio`` aligns the shorter string anywhere
+      inside the longer, so a read that merely *contains* (or, with ``included``, is
+      contained by) the target scores ~1.0. Two length guards keep that honest:
+      a read far LONGER than the target caught a paragraph (wrong screen); a read far
+      SHORTER is a fragment/noise (a 3-char "war" sits inside "reward"). This mode is
+      loose: 'WARDSI' still scores ~0.9 against 'rewards' off the shared "wards".
+    - ``full`` — whole-string ``ratio``; extra/missing chars both cost, so 'WARDSI' vs
+      'rewards' drops to ~0.77 and is rejected at the usual 0.8 floor.
+    - ``exact`` — normalised equality only (1.0 or 0.0).
+    - ``prefix`` — the read must begin the target (or the target begins the read when
+      ``included``); a near-prefix scores by similarity of the leading slice.
+
+    ``case_sensitive`` and ``strip`` feed :func:`_norm`. ``min_chars`` is a hard floor
+    on the normalised read length — below it nothing matches, deterministically killing
+    tiny-blob false positives regardless of mode.
     """
-    nw, ng = _norm(want), _norm(got)
+    nw = _norm(want, strip, case_sensitive)
+    ng = _norm(got, strip, case_sensitive)
     if not nw or not ng:
         return 0.0
+    if len(ng) < min_chars:
+        return 0.0
+    from rapidfuzz import fuzz
+    if mode == "exact":
+        return 1.0 if nw == ng else 0.0
+    if mode == "prefix":
+        a, b = (ng, nw) if included else (nw, ng)   # does b start with a?
+        if b.startswith(a):
+            return 1.0
+        return fuzz.ratio(a, b[: len(a)]) / 100.0
+    if mode == "full":
+        return fuzz.ratio(nw, ng) / 100.0
+    # partial (default): keep the length guards that reject paragraphs/fragments.
     if len(ng) > max(len(nw) * 3, len(nw) + 8):
         return 0.0
     if len(ng) < 0.75 * len(nw):   # fragment, not the landmark
         return 0.0
-    from rapidfuzz import fuzz
     a, b = (ng, nw) if included else (nw, ng)   # look for a inside b
     return fuzz.partial_ratio(a, b) / 100.0
 
@@ -82,7 +120,12 @@ class DetectMatcher:
         box = det.search.to_fraction().to_pixels(frame.client.w, frame.client.h)
         text, _conf = self._read_text_box(frame, box)
         read = text.strip()
-        return read, text_match_score((det.text or "").lower(), read.lower(), det.included)
+        score = text_match_score(
+            det.text or "", read,
+            mode=det.match, included=det.included,
+            case_sensitive=det.case_sensitive, min_chars=det.min_chars, strip=det.strip,
+        )
+        return read, score
 
     def score(self, det: DetectDef, frame: Frame) -> float:
         """Return a 0..1 confidence that this detector is present."""

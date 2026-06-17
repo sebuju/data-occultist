@@ -31,7 +31,7 @@ from pathlib import Path
 
 import yaml
 
-from .models import GameProfile
+from .models import DEFAULT_DETECT_THRESHOLD, GameProfile
 
 
 def profile_path(profiles_dir: Path | str, name: str) -> Path:
@@ -100,6 +100,25 @@ def _migrate_keys(raw: dict) -> dict:
             w["key"] = dict(legacy)
         elif dedup and dedup != "name":
             w["key"] = {"fields": [dedup]}
+    return raw
+
+
+def _migrate_detect_thresholds(raw: dict) -> dict:
+    """``DetectDef.threshold`` is now a required field (no baked-in default in the
+    model — the UI seeds it from ``DEFAULT_DETECT_THRESHOLD`` at node creation). Older
+    profiles that predate the UI always writing it would fail validation, so backfill
+    any detector / state-detector missing ``threshold`` with the same default."""
+    def _fix(dets) -> None:
+        for d in dets or []:
+            if isinstance(d, dict) and d.get("threshold") is None:
+                d["threshold"] = DEFAULT_DETECT_THRESHOLD
+    for w in raw.get("windows") or []:
+        if not isinstance(w, dict):
+            continue
+        _fix(w.get("detect"))
+        for s in w.get("states") or []:
+            if isinstance(s, dict):
+                _fix(s.get("detect"))
     return raw
 
 
@@ -173,7 +192,7 @@ def load_profile(profiles_dir: Path | str, name: str) -> GameProfile:
     path = profile_path(profiles_dir, name)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if isinstance(raw, dict):
-        raw = _migrate_keys(raw)
+        raw = _migrate_detect_thresholds(_migrate_keys(raw))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
     return profile
@@ -358,7 +377,7 @@ def read_backup(profiles_dir: Path | str, name: str, stamp: str) -> GameProfile:
     path = backup_path(profiles_dir, name, stamp)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if isinstance(raw, dict):
-        raw = _migrate_keys(raw)
+        raw = _migrate_detect_thresholds(_migrate_keys(raw))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
     return profile

@@ -21,7 +21,7 @@ def _profile():
         key=KeyDef(fields=["item_name"]),
         fields=[FieldDef(id="item_name"), FieldDef(id="item_count")],
         regions=[RegionDef(id="n", box=Box(x=0, y=0.5, w=0.5, h=0.1), field="item_name")],
-        detect=[DetectDef(id="a", search=Box(x=0.0, y=0.0, w=0.2, h=0.1), text="inv")],
+        detect=[DetectDef(id="a", search=Box(x=0.0, y=0.0, w=0.2, h=0.1), text="inv", threshold=0.8)],
     )
     return GameProfile(name="testgame", windows=[win])
 
