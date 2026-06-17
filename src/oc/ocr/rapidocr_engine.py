@@ -313,6 +313,11 @@ class RapidOcrEngine(OcrEngine):
                 out[keep[j]] = (str(res[0]), float(res[1]))
         return out
 
+    def prepare(self) -> None:
+        # Build the RapidOCR/ORT sessions now (no-op once built) so the first real read
+        # isn't charged for the multi-second model construction.
+        self._ensure_engine()
+
     def read_image(self, image: np.ndarray) -> list[OcrLine]:
         engine = self._ensure_engine()
         f = self._scale

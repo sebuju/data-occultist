@@ -65,6 +65,12 @@ class OcrEngine(ABC):
     def read_image(self, image) -> list[OcrLine]:
         """OCR a whole BGR image. Boxes are relative to that image."""
 
+    def prepare(self) -> None:
+        """Build/load any heavy model NOW, outside any timed read region. Called before a
+        job's timer starts so a first-time lazy build isn't charged to that read's compute.
+        Safe to call repeatedly (no-op once ready). Default does nothing — backends with
+        lazy model construction override it."""
+
     def read_line(self, image) -> tuple[str, float]:
         """Recognise a crop that is KNOWN to be a single text line — skipping the
         expensive text-detection stage. Returns ``(text, confidence)``.

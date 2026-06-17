@@ -29,6 +29,7 @@ from .routes import (
     preview,
     prices,
     profiles,
+    stats,
     suggest,
     triggers,
     video,
@@ -67,7 +68,14 @@ def _warm() -> None:
         from .routes.ocr import apply_persisted
 
         apply_persisted()   # restore the saved CPU/GPU choice before warming the model
-        get_engine().ocr.read_image(np.zeros((32, 64, 3), dtype=np.uint8))
+        ocr = get_engine().ocr
+        ocr.read_image(np.zeros((32, 64, 3), dtype=np.uint8))
+        # ALSO warm the recognition path: grid reads use read_lines/text_rec, but
+        # read_image's detector finds no boxes in a blank frame so it never runs rec.
+        # Without this, the first real grid read pays rec's first-inference cost INSIDE
+        # the OCR lock — the log bar then reports a wildly inflated "initial" duration.
+        if hasattr(ocr, "read_lines"):
+            ocr.read_lines([np.zeros((16, 48, 3), dtype=np.uint8)])
     except Exception:  # noqa: BLE001
         pass
 
@@ -130,6 +138,13 @@ async def lifespan(_app: FastAPI):
         clear_stale_locks(get_settings().data_dir)
     except Exception:  # noqa: BLE001 - best-effort
         pass
+    # Point the per-node timing store at the data dir (also done in Engine.build, but a
+    # request can replay a dataset before the warm thread builds the engine).
+    try:
+        from ..store import stats_store
+        stats_store.configure(get_settings().data_dir)
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
     threading.Thread(target=_warm, daemon=True).start()
     # keep interval triggers firing (+ feed the Activity panel's countdown) while only the
     # teach UI is up; safe — firing is guarded and cross-process file-locked.
@@ -159,6 +174,11 @@ async def lifespan(_app: FastAPI):
     # Backstop for any stop that ISN'T a signal (e.g. desktop's server.should_exit): flip the
     # flag so any still-open SSE stream ends, then stop the background work so teardown is idle.
     signal_shutdown()
+    try:
+        from ..store import stats_store
+        stats_store.flush_all()
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
     try:
         from ..enrich.price_runner import cancel_all_sweeps
         cancel_all_sweeps()
@@ -211,6 +231,7 @@ def create_app() -> FastAPI:
     app.include_router(logstream.router)
     app.include_router(video.router)
     app.include_router(bench.router)
+    app.include_router(stats.router)
     # Serve the single-page front-end at root.
     app.mount("/", _NoCacheStatic(directory=str(_STATIC), html=True), name="static")
     return app

@@ -79,11 +79,14 @@ export function mirrorConsole() {
   });
 }
 
-// timed("load image"): logs "load image…" now, returns done(extra?, level?) that logs
-// "load image <extra> (1.2s)". Use done() on success, done(msg, "err") on failure.
+// timed("load image"): logs "load image…" now, returns done(extra?, level?, ms?) that logs
+// "load image <extra> (1.2s)". Use done() on success, done(msg, "err") on failure. Pass an
+// explicit `ms` to show a server-reported compute time instead of client wall-clock — OCR
+// ops issued together serialize on the backend lock, so wall-since-issue is mostly queue
+// wait and reads ~identical for every op; the server's own per-op time is the true cost.
 export function timed(label) {
   const t0 = performance.now();
   log(`${label}…`, "run");
-  return (extra = "", level = "ok") =>
-    log(`${label}${extra ? " " + extra : ""} (${fmtDur(performance.now() - t0)})`, level);
+  return (extra = "", level = "ok", ms = null) =>
+    log(`${label}${extra ? " " + extra : ""} (${fmtDur(ms == null ? performance.now() - t0 : ms)})`, level);
 }

@@ -31,5 +31,5 @@ def suggest(
     search = None
     if None not in (sx, sy, sw, sh):
         search = {"x": sx, "y": sy, "w": sw, "h": sh}
-    with ocr_job():   # one job so it doesn't interleave with a preview/detect/precapture
+    with ocr_job(engine.ocr):   # one job so it doesn't interleave with a preview/detect/precapture
         return analyze(frame, engine.ocr, search)
