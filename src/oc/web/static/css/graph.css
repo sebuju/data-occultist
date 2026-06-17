@@ -19,6 +19,9 @@
    sits below it (band z0, this z2). Only the node CARDS take events (.gnode below). */
 #gnodes { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; }
 #gedges-top { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 5; overflow: visible; }
+/* flow-blob layer: dots animating along edges on live activity (graph/flow.js). Above
+   everything inside the world, never takes pointer events; rides the #gworld transform. */
+#gflow { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 6; overflow: visible; }
 .gnode.collapsed .gn-body { display: none !important; }   /* beats the host-node `> .gn-body { display:flex }` */
 /* collapse works the SAME for every node: header only. !important overrides the inline
    width/height a resizable host node carries, and resizing is off while collapsed. */
@@ -56,7 +59,7 @@
 .gnode.dataset   .gn-h { --ntint: var(--ok); }
 .gnode.subset    .gn-h { --ntint: var(--purple); }
 .gnode.price     .gn-h { --ntint: var(--warn); }
-.gnode.dictionary .gn-h { --ntint: var(--accent); }
+.gnode.dictionary .gn-h { --ntint: var(--purple); }
 .gnode.trigger   .gn-h { --ntint: var(--trigger-line); }
 .gn-h .nicon { width: 18px; height: 18px; flex: 0 0 auto; color: var(--ntint); }
 /* Nothing in the node canvas is text-selectable — kills the stray highlight that

@@ -477,4 +477,12 @@ function freezeRouting() {
 // per frame while a node is dragged (line stays glued to the node).
 export function setDraggingNodes(v) { draggingNodes = v; }
 
+// World-space routed polyline for the edge between two node ids (the same key buildLinks uses,
+// `${from} ${to}`), or null if that edge isn't drawn/routed yet. The ONE accessor for an edge's
+// geometry — flow.js animates blobs along it instead of re-deriving link keys / route cache.
+export function edgeGeometry(fromId, toId) {
+  const c = routeCache.get(`${fromId} ${toId}`);
+  return c && c.pts && c.pts.length >= 2 ? c.pts : null;
+}
+
 export { drawEdges, requestEdges, flushEdges, buildLinks, nodeRect, freezeRouting, routeCache, ROUTE };

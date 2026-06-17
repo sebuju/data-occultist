@@ -58,7 +58,7 @@ function testStartPlay() {
 function buildTesting() {
   if (testWin) return;
   testWin = createFloatWin({
-    id: "testing", title: "testing", state: testState, bothAxes: true,
+    id: "testing", title: "testing", state: testState, bothAxes: true,   // auto-fit height; user can still resize
     onShow: () => { $("testingBtn")?.classList.toggle("active", true);
       api.video.status().then(testRender).catch(() => {}); },
     onHide: () => { $("testingBtn")?.classList.toggle("active", false); testStopPlay(); },

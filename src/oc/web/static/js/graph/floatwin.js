@@ -6,14 +6,15 @@
 
 import { makeDraggable, addResizeGrips } from "./dragresize.js";
 
-// Registry of live panels by id, so collectLayout/hydrateLayout can round-trip them all
-// to profile.layout.float_windows without knowing which panels exist.
+// Registry of live panels by id. Panels are SESSION-ONLY (not persisted): hydrateLayout resets
+// them all to their hidden defaults on load; nothing writes their state back to the profile.
 const _wins = new Map();
 export function floatWins() { return _wins; }
 
 const SNAP = 9;   // px proximity at which an edge snaps
 const GAP = 8;    // padding between abutting panels — ALSO the screen-edge + topbar margin,
                   // so a panel docked to the edge sits the same distance in as a docked child.
+const RESET_W = 300;   // every panel resets to this width (uniform), whatever its default
 
 // Gap below the topbar = the same GAP, so the top margin matches the docking margin.
 const _topGap = () => (document.querySelector(".topbar")?.offsetHeight || 48) + GAP;
@@ -31,6 +32,7 @@ window.addEventListener("resize", () => {
     if (w.el.hidden || w.state.dock) continue;
     w.place(w.el.offsetLeft + dw, w.el.offsetTop);   // x+dw = right-anchor; same y = top-anchor
     w.onResize && w.onResize();
+    w.fitHeight && w.fitHeight();   // viewport changed -> re-fit (the max-height cap may have moved)
   }
 });
 
@@ -155,10 +157,81 @@ function findDockChild(id) {
   return null;
 }
 
+// Every visible panel docked (directly or transitively) below `id`, ordered top→bottom by
+// on-screen position. Used to drive the whole docked chain at once (shift-collapse, fit).
+function dockDescendants(id) {
+  const out = [];
+  const visit = (pid) => {
+    for (const [k, w] of _wins) if (!w.el.hidden && w.state.dock && w.state.dock.to === pid) { out.push(k); visit(k); }
+  };
+  visit(id);
+  out.sort((a, b) => _wins.get(a).el.offsetTop - _wins.get(b).el.offsetTop);
+  return out;
+}
+
+// Walk up the dock links to the topmost panel of `id`'s chain (the one nothing carries it under).
+function chainRoot(id) {
+  let cur = id, guard = 0;
+  while (guard++ < 64) {
+    const w = _wins.get(cur);
+    const to = w && w.state.dock ? w.state.dock.to : null;
+    if (!to || !_wins.get(to) || _wins.get(to).el.hidden) return cur;
+    cur = to;
+  }
+  return cur;
+}
+
+// Lowest pixel any visible member of `chain` reaches.
+function _chainBottom(chain) {
+  let b = 0;
+  for (const id of chain) { const w = _wins.get(id); if (w && !w.el.hidden) b = Math.max(b, w.el.offsetTop + w.el.offsetHeight); }
+  return b;
+}
+
+// After a panel expands, its docked chain can overrun the screen bottom. Collapse trailing
+// (bottom-most) members one at a time — re-measuring after each — until the chain fits.
+function fitChainToScreen(id) {
+  const root = chainRoot(id);
+  const chain = [root, ...dockDescendants(root)];
+  reflowDock(root);
+  const limit = window.innerHeight - GAP;
+  for (let i = chain.length - 1; i >= 1 && _chainBottom(chain) > limit; i--) {
+    const w = _wins.get(chain[i]);
+    if (w && !w.el.hidden && !w.state.collapsed) { w.collapse(true); reflowDock(root); }
+  }
+}
+
+// First free spot for a w×h panel: start at the top-right column and slide DOWN past any
+// panel it would overlap. If the column fills to the screen bottom, step LEFT one panel-width
+// and try that column from the top — so panels that can't fit on the right find room further
+// left instead of stacking on top of each other. Falls back to top-right (clamped) only when
+// no column has room. Used when a hidden panel is reopened with no saved position.
+function findFreeSlot(id, w, h) {
+  const W = window.innerWidth, H = window.innerHeight, top = _topGap();
+  const rects = _otherRects(id);
+  const bottom = H - GAP;
+  for (let x = Math.max(GAP, W - w - GAP); x >= GAP; x -= w + GAP) {
+    let y = top, guard = 0;
+    while (guard++ < 200) {
+      const hit = rects.find((o) => x < o.right && x + w > o.left && y < o.bottom && y + h > o.top);
+      if (!hit) break;
+      y = hit.bottom + GAP;
+    }
+    if (y + h <= bottom) return [x, y];   // fits in this column -> done
+  }
+  return [Math.max(GAP, W - w - GAP), top];   // every column full -> top-right (clamp keeps it on-screen)
+}
+
 // Raise the just-touched panel above the others: only one carries `fw-focused` (z above
 // every other panel) at a time, so the panel you last interacted with always sits on top.
 function _focus(el) {
   for (const [, w] of _wins) w.el.classList.toggle("fw-focused", w.el === el);
+}
+
+// Reflect dock state visually: a docked panel carries `fw-docked` (a small accent cue, see
+// floatwin.css). Synced after any dock mutation (settle / hide-reparent / load / reset).
+function _syncDockMarks() {
+  for (const [, w] of _wins) w.el.classList.toggle("fw-docked", !!w.state.dock);
 }
 
 // opts:
@@ -172,6 +245,8 @@ function _focus(el) {
 export function createFloatWin({
   id, title = "", headerExtra = "", state,
   bothAxes = false, onResize = null, onShow = null, onHide = null, onPersist = null,
+  autoFit = true,   // height auto-fits the content; width is the only preset/user-sized axis.
+                    // Panels with their own height logic (the node map's aspect fit) pass false.
 }) {
   state.collapsed = !!state.collapsed;   // ensure the key exists so it round-trips + resets
   if (state.dock === undefined) state.dock = null;   // { to, dx } when docked below another panel
@@ -225,11 +300,30 @@ export function createFloatWin({
     state.h = el.offsetHeight;
   }
 
+  // Auto-fit the panel HEIGHT to its content — the ONE shared height-fit for every panel
+  // (replaces the old per-panel copies). Width is the only preset/user-sized axis; height
+  // always tracks what the body holds. Measured by briefly going height:auto (so flex-fill
+  // panes collapse to their natural content), clamped to the viewport, written only on a real
+  // >1px change so a steady poll-tick mutates nothing. No-op while collapsed/hidden or off.
+  function fitHeight() {
+    if (!autoFit || el.hidden || state.collapsed || state.userSized || !el.offsetWidth) return;
+    const cur = el.offsetHeight;
+    el.style.height = "auto";
+    const natural = el.offsetHeight;
+    const maxH = Math.max(90, window.innerHeight - _topGap() - GAP);
+    const target = Math.round(Math.min(maxH, natural));
+    if (Math.abs(cur - target) > 1) { el.style.height = `${target}px`; state.h = target; }
+    else el.style.height = `${cur}px`;   // restore a definite height (we were briefly auto)
+  }
+
   // never restore a box bigger than the viewport (the window may have shrunk since saving)
   function applySize() {
     const maxW = Math.max(180, window.innerWidth - 8);
     const maxH = Math.max(90, window.innerHeight - _topGap() - 8);
     if (Number.isFinite(state.w)) { const w = Math.min(state.w, maxW); el.style.width = `${w}px`; state.w = w; }
+    // CSS-preset width (state.w null) wider than the viewport -> cap it so it never spawns off-screen.
+    // Inline-only (don't write state.w), so a reset still falls back to the per-panel CSS preset.
+    else if (!el.hidden && el.offsetWidth > maxW) el.style.width = `${maxW}px`;
     // height only when expanded — collapsed height is owned by applyCollapsed (auto = header)
     if (!state.collapsed && Number.isFinite(state.h)) { const h = Math.min(state.h, maxH); el.style.height = `${h}px`; state.h = h; }
     if (Number.isFinite(state.x) && Number.isFinite(state.y)) place(state.x, state.y);
@@ -252,24 +346,25 @@ export function createFloatWin({
     // are never touched by docking now, so there's nothing to restore on undock.
     onSettle: () => { state.dock = findDockParent(id); findDockChild(id);
       if (state.dock) reflowDock(state.dock.to);   // parent re-anchors me top-right under it
-      reflowDock(id); save(); },
+      reflowDock(id); _syncDockMarks(); save(); },
   });
 
   // resize grips on both bottom corners — the SAME grips nodes use (smooth, no grid-snap).
   // The live `onResize` refit comes from the ResizeObserver below (the grip just writes the
   // style; the observer fires), so grips only need to persist on settle.
   addResizeGrips(el, {
-    both: bothAxes,
+    both: bothAxes,   // height IS manually resizable; a manual resize sets userSized -> stops the auto-fit
+    screenClamp: true, margin: GAP,   // never let a resize push the panel off-screen
     left: (v) => { if (v === undefined) return el.offsetLeft; const x = Math.max(4, v); el.style.left = `${x}px`; state.x = x; },
     snapEdge: (axis, v) => snapEdgeVal(id, axis, v),   // align resize edges to other panels
-    onSettle: () => { state.userSized = true; markSized(); stashSize(); save(); },   // manual resize -> stop auto-fitting
-    // reset dot: drop the user's size back to the panel's default box
+    onSettle: () => { state.userSized = true; markSized(); stashSize(); save(); },   // manual size -> stop auto-fitting
+    // reset dot: drop the user's WIDTH back to the panel's preset (CSS default); height re-fits
     onReset: () => {
-      state.userSized = false;   // resume any auto-fit
-      state.w = _default.w; state.h = _default.h;
-      el.style.width = ""; el.style.height = "";   // undefined default → natural CSS size
+      state.userSized = false;
+      state.w = RESET_W; state.h = null;   // width -> uniform preset (300); height -> auto-fit
+      el.style.width = ""; el.style.height = "";
       applySize(); markSized();
-      onResize && onResize();
+      onResize && onResize(); fitHeight();
       save();
     },
   });
@@ -278,13 +373,16 @@ export function createFloatWin({
   markSized();
 
   // CSS-resize / programmatic size changes: re-fit + persist (debounced)
-  let rt = null;
+  let rt = null, _obsW = el.offsetWidth;
   new ResizeObserver(() => {
     if (el.hidden || state.collapsed || !el.offsetWidth) return;
+    const widthChanged = Math.abs(el.offsetWidth - _obsW) > 0.5;
+    _obsW = el.offsetWidth;
     stashSize();
     reflowDock(id, null, prevL, prevR);   // height/width changed -> slide docked panels (using my pre-resize edges)
     prevL = el.offsetLeft; prevR = prevL + el.offsetWidth;
     onResize && onResize();
+    if (widthChanged) fitHeight();   // a width change rewraps the content -> re-fit the height to it
     clearTimeout(rt); rt = setTimeout(save, 300);
   }).observe(el);
 
@@ -303,23 +401,79 @@ export function createFloatWin({
       if (Number.isFinite(state.h)) el.style.height = `${state.h}px`;
     }
   }
-  function toggleCollapsed() {
+  // Fold/unfold to an explicit state (no-op if already there). Re-anchors by the right edge so
+  // the collapse button stays put and any right-aligned docked child stays aligned.
+  function setCollapsed(val) {
+    if (state.collapsed === val) return;
     const oldL = el.offsetLeft, oldR = oldL + el.offsetWidth;   // edges before folding (pin the right one)
-    if (!state.collapsed) stashSize();   // capture the expanded box before folding
-    state.collapsed = !state.collapsed;
+    if (val) stashSize();   // capture the expanded box before folding
+    state.collapsed = val;
     applyCollapsed();
-    // re-anchor by the right edge (expand → restores left); pass the OLD edges so a docked
-    // child that was right-aligned to me stays right-aligned after the width change
     place(oldR - el.offsetWidth, el.offsetTop, null, oldL, oldR);
-    if (!state.collapsed) onResize && onResize();   // re-render the freshly shown body
+    if (!val) { onResize && onResize(); fitHeight(); }   // re-render the freshly shown body + re-fit
+  }
+  // Toolbar/header toggle. Shift+click applies the SAME resulting state to every panel docked
+  // below this one (drive the whole chain, not a per-panel toggle). Expanding may overrun the
+  // screen, so fit the chain afterwards (collapses trailing members back if needed).
+  function toggleCollapsed(ev) {
+    const target = !state.collapsed;
+    setCollapsed(target);
+    if (ev && ev.shiftKey) for (const cid of dockDescendants(id)) _wins.get(cid)?.collapse(target);
+    if (!target) fitChainToScreen(id);
     save();
   }
   el.querySelector(".fw-collapse").addEventListener("click", toggleCollapsed);
 
-  function setVisible(on) {
+  // `reset` (topbar open): start from a fresh default box (authored preset width, auto-fit
+  // height, expanded, not user-sized) rather than whatever size it carried when last hidden.
+  function setVisible(on, reset = false) {
     state.visible = on;
     el.hidden = !on;
-    if (on) { applySize(); applyCollapsed(); if (state.dock) reflowDock(state.dock.to); onShow && onShow(); } else onHide && onHide();
+    if (on) {
+      if (reset) {
+        state.collapsed = !!_default.collapsed; state.userSized = false;
+        state.w = RESET_W; state.h = null;   // width -> uniform preset (300); height -> auto-fit
+        el.style.width = ""; el.style.height = "";
+      }
+      applySize(); applyCollapsed(); markSized();
+      _focus(el);   // a freshly opened panel rides above the others (same as clicking it)
+      // Render the body FIRST, then find a position. onShow builds/sizes the content (fit-to-
+      // content panels set their real height in here), so findFreeSlot + clamp below operate on
+      // the panel's TRUE dimensions instead of its pre-render size. onShow can re-hide a panel
+      // that can't open (e.g. precap with no game), so guard the placement on still being visible.
+      onShow && onShow();
+      if (state.visible) {
+        fitHeight();   // size to content (now rendered) BEFORE positioning, so placement uses the real height
+        // reopened with no saved spot (cleared on hide) -> find a free one instead of reusing
+        // wherever it last sat (which may now be occupied / off a resized screen). If that spot
+        // landed directly below another panel, DOCK under it so it joins the chain.
+        if (!Number.isFinite(state.x) || !Number.isFinite(state.y)) {
+          const [x, y] = findFreeSlot(id, el.offsetWidth || state.w || RESET_W, el.offsetHeight || 120);
+          place(x, y);
+          const dp = findDockParent(id);
+          if (dp) { state.dock = dp; reflowDock(dp.to); }
+        }
+        if (state.dock) reflowDock(state.dock.to);
+        reflowDock(id);   // drag any children that are still docked under me into place
+      }
+    } else {
+      // hiding via the topbar: pull my docked chain UP to fill the gap I leave. My direct
+      // child re-docks to my parent (slides up under it); if I was the chain root, my child
+      // takes my old top slot and becomes the new root. Its own descendants follow via place/
+      // reflow. (el is already display:none here, so its offsetTop reads 0 — use the saved y.)
+      const parent = state.dock && _wins.get(state.dock.to) && !_wins.get(state.dock.to).el.hidden ? state.dock.to : null;
+      const myTop = Number.isFinite(state.y) ? state.y : el.offsetTop;
+      for (const [, w] of _wins) {
+        if (w.el.hidden || !w.state.dock || w.state.dock.to !== id) continue;
+        if (parent) w.state.dock = { ...w.state.dock, to: parent };   // re-anchor under my parent
+        else { w.state.dock = null; w.place(w.el.offsetLeft, myTop); }   // I was the root -> child takes my slot
+      }
+      if (parent) reflowDock(parent);   // slide the re-anchored child (+ its chain) up under the parent
+      // hiding drops the saved position + dock so the next open re-places it cleanly
+      state.x = null; state.y = null; state.dock = null;
+      onHide && onHide();
+    }
+    _syncDockMarks();
     save();
   }
   // reflect state (just loaded from YAML) onto the panel
@@ -329,7 +483,8 @@ export function createFloatWin({
     markSized();   // reflect the loaded user-sized flag onto the reset-dot gate
     el.hidden = !state.visible;
     if (state.dock && state.visible) reflowDock(state.dock.to);   // snap under my parent
-    if (state.visible) onShow && onShow(); else onHide && onHide();
+    _syncDockMarks();
+    if (state.visible) { onShow && onShow(); fitHeight(); } else onHide && onHide();
   }
   function collect() { stashSize(); return { ...state }; }
   // Restore to defaults, then overlay the saved blob — so switching to a profile that never
@@ -342,16 +497,18 @@ export function createFloatWin({
   // Reset the panel's BOX (size + collapsed + dock) to defaults and re-place it at its
   // default top-right slot — keeps visibility. Bound to shift-clicking the panel's toggle.
   function resetBox() {
-    state.w = _default.w; state.h = _default.h;
+    state.w = RESET_W; state.h = null;   // width -> uniform preset (300); height -> auto-fit
     state.collapsed = !!_default.collapsed; state.dock = _default.dock || null;
     state.userSized = false;
     el.style.width = ""; el.style.height = "";
     applySize(); applyCollapsed(); markSized();
+    onResize && onResize(); fitHeight();
     place(window.innerWidth - (el.offsetWidth || 288) - GAP, _topGap());
+    _syncDockMarks();
     save();
   }
 
-  const inst = { el, body, head, state, setVisible, applyState, place, stashSize, applySize, collect, hydrate, onResize, resetBox };
+  const inst = { el, body, head, state, setVisible, applyState, place, stashSize, applySize, collect, hydrate, onResize, resetBox, fitHeight, collapse: setCollapsed };
   _wins.set(id, inst);
   return inst;
 }

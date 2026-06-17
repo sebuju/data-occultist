@@ -9,7 +9,7 @@ import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
 import { $, model, nodeEls } from "../state.js";
 import { since } from "../../datefmt.js";
-import { autosave } from "../main.js";
+import { autosave, panZoomTo } from "../main.js";
 
 // ---- activity panel (live sweeps + precapture) ----------------------------
 // A floating window listing every running background job for the current game — price
@@ -79,7 +79,11 @@ function buildActivity() {
         actPending.delete(id);
         if (actData) renderActivity(actData, 0);
       });
+      return;
     }
+    // clicked the row body (not a control) -> pan+zoom to the bound graph node
+    const nav = ev.target.closest(".act-row[data-node]");
+    if (nav) panZoomTo(nav.dataset.node);
   });
 }
 
@@ -171,7 +175,7 @@ function activityJobs(data, elapsed = 0) {
     // last-activation gets its OWN (third) row, not crammed onto the status line
     const last = running ? "firing now…" : (t.last_fired ? `last fired ${since(t.last_fired)}` : "never fired");
     jobs.push({ key: `trigger:${t.id}`, cls: `act-trigger${enabled ? "" : " act-off"}`,
-      action: { type: "fire", id: t.id }, enable: { id: t.id, enabled },
+      action: { type: "fire", id: t.id }, enable: { id: t.id, enabled }, node: `trigger:${t.id}`,
       title: `trigger · ${t.id}`, prog, last });
   }
   return jobs;
@@ -207,6 +211,7 @@ function renderActivity(data, elapsed = 0) {
     let r = actRows.get(j.key);
     if (!r) {
       const row = document.createElement("div"); row.className = `act-row${j.cls ? ` ${j.cls}` : ""}`;
+      if (j.node) { row.dataset.node = j.node; row.title = "go to this node"; }   // click navigates (key fixes a row's type, so this never changes per tick)
       const body = document.createElement("div"); body.className = "act-body";
       const title = document.createElement("div"); title.className = "act-title";
       const prog = document.createElement("div"); prog.className = "act-prog";
@@ -267,22 +272,8 @@ function renderActivity(data, elapsed = 0) {
   fitActivityHeight();   // grow/shrink the panel to its contents (unless the user resized it)
 }
 
-// Fit the activity panel's height to its rows (like the node map auto-fits) so a couple of
-// tasks don't leave a tall empty panel. Skipped once the user manually resizes it (a real
-// size write only happens when the target actually differs, so a steady tick mutates nothing).
-function fitActivityHeight() {
-  if (!act || !actState.visible || actState.collapsed || actState.userSized) return;
-  const list = act.body.querySelector(".act-list");
-  if (!list) return;
-  const kids = [...list.children];
-  let content = 0;
-  for (const k of kids) content += k.offsetHeight;
-  content += Math.max(0, kids.length - 1) * 4;   // the .act-list row gap
-  const headerH = act.el.querySelector(".fw-head")?.offsetHeight || 28;
-  const maxH = window.innerHeight - 60;
-  const target = Math.round(Math.min(maxH, headerH + content + 14));   // body padding + borders
-  if (Math.abs(act.el.offsetHeight - target) > 1) { act.el.style.height = `${target}px`; actState.h = target; }
-}
+// Auto-fit delegates to the shared floatwin height-fit (one primitive for every panel).
+function fitActivityHeight() { act?.fitHeight(); }
 
 export {
   act, actState, buildActivity, fmtDur, stopActivityPoll, actDueForRefresh,

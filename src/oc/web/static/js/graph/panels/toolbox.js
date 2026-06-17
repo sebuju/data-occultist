@@ -8,6 +8,7 @@ import { log, timed } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
 import { openDictionaryPicker } from "../dict_picker.js";
+import * as groups from "../groups.js";
 import { $, setStatus, model } from "../state.js";
 import { placeNewNode, render, autosave, panTo } from "../main.js";
 
@@ -19,23 +20,46 @@ import { placeNewNode, render, autosave, panTo } from "../main.js";
 const tbState = { visible: false, x: null, y: null, w: null, h: null };
 let tb = null;
 
-async function createWindowNode() {
+// `at` (optional world-coords {x,y}) is the spot the right-click add-node menu was opened at:
+// the node spawns there and we skip the pan-to (it's already under the cursor). A toolbox-style
+// call with no `at` lands at the viewport centre and pans to it. `group` (optional group id) is
+// set when the menu was opened over a group's box -> the new node joins that group (added AFTER
+// render(), which addToGroup needs for the node's live rect).
+async function createWindowNode(at = null, group = null) {
   const id = model.addWindow();   // default id; renamed in the window node
   if (!id) return;
   // a brand-new window starts with NO image — clear any binding left over from a deleted
   // window that reused this id, so its button shows "capture" rather than a stale capture.
   try { if (model.profile.name) await api.bindCapture(model.profile.name, id, ""); } catch (e) { log(`unbind capture failed: ${e.message || e}`, "err"); }
-  await placeNewNode(`win:${id}`, "window"); render(); autosave(); panTo(`win:${id}`);
+  await placeNewNode(`win:${id}`, "window", null, at);
+  render();   // window now in the DOM with its real height, so its bonded preview can stack right below it
+  // the window's bonded preview node spawns directly BELOW the window (srcId stacks it there),
+  // else ensurePositions() would drop it in the far COLX.preview column, leagues from its window.
+  await placeNewNode(`prev:${id}`, "preview", `win:${id}`);
+  render();
+  if (group) groups.addToGroup(group, [`win:${id}`]);
+  autosave(); if (!at) panTo(`win:${id}`);
 }
-async function createPriceNode() {
+async function createPriceNode(at = null, group = null) {
   const id = model.addPriceNode();   // independent producer -> "prices" dataset
-  if (id) { await placeNewNode(`price:${id}`, "price"); render(); autosave(); panTo(`price:${id}`); }
+  if (!id) return;
+  await placeNewNode(`price:${id}`, "price", null, at); render();
+  if (group) groups.addToGroup(group, [`price:${id}`]);
+  autosave(); if (!at) panTo(`price:${id}`);
 }
-async function createTriggerNode() {
+async function createTriggerNode(at = null, group = null) {
   const id = model.addTrigger();   // fires price-node sweeps on a condition
-  if (id) { await placeNewNode(`trigger:${id}`, "trigger"); render(); autosave(); panTo(`trigger:${id}`); }
+  if (!id) return;
+  await placeNewNode(`trigger:${id}`, "trigger", null, at); render();
+  if (group) groups.addToGroup(group, [`trigger:${id}`]);
+  autosave(); if (!at) panTo(`trigger:${id}`);
 }
-function createDictionaryNode() {
+function createDictionaryNode(at = null, group = null) {
+  const place = async (id) => {
+    await placeNewNode(`dict:${id}`, "dictionary", null, at); render();
+    if (group) groups.addToGroup(group, [`dict:${id}`]);
+    autosave(); if (!at) panTo(`dict:${id}`);
+  };
   openDictionaryPicker({
     used: new Set((model.profile.dictionaries || []).map((d) => d.source)),
     // existing word file: re-use its node if already on the graph, else reference it
@@ -46,11 +70,11 @@ function createDictionaryNode() {
       let terms = [];
       try { ({ terms } = await api.dictionaries.get(source)); } catch { /* missing file -> 0 terms */ }
       const id = model.addDictionary({ source, terms });
-      if (id) { await placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
+      if (id) await place(id);
     },
     onCreate: async (name) => {
       const id = model.addDictionary({ name });
-      if (id) { await placeNewNode(`dict:${id}`, "dictionary"); render(); autosave(); panTo(`dict:${id}`); }
+      if (id) await place(id);
     },
   });
 }
@@ -63,23 +87,16 @@ function buildToolbox() {
     onHide: () => $("createBtn")?.classList.toggle("active", false),
     onPersist: () => persist.layout(),
   });
+  // Node creation (window / price / trigger / dictionary) moved to the canvas right-click
+  // add-node menu (see main.js); the toolbox keeps the cross-cutting tools.
   tb.body.innerHTML = `<div class="tb-list">
-    <button class="tb-btn" data-create="window">+ window</button>
-    <button class="tb-btn" data-create="price">+ price node</button>
-    <button class="tb-btn" data-create="trigger">+ trigger</button>
-    <button class="tb-btn" data-create="dictionary">+ dictionary</button>
     <button class="tb-btn" data-create="collisions" title="run each window's bound image through every window's detectors — report which windows false-match each other">${WARN} check window collisions</button>
   </div>`;
   tb.body.addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-create]");
     if (!b) return;
     if (!model.profile.name) { setStatus("load a game first"); return; }
-    const k = b.dataset.create;
-    if (k === "window") createWindowNode();
-    else if (k === "price") createPriceNode();
-    else if (k === "trigger") createTriggerNode();
-    else if (k === "dictionary") createDictionaryNode();
-    else if (k === "collisions") runCollisionCheck();
+    if (b.dataset.create === "collisions") runCollisionCheck();
   });
 }
 

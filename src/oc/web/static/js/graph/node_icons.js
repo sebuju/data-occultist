@@ -35,3 +35,10 @@ export function nodeIcon(n) {
   if (n.type === "trigger") return ICONS[n.ref?.kind === "interval" ? "trigger_timer" : "trigger_change"];
   return ICONS[n.type] || "";
 }
+
+// The same glyph by bare type id (no node instance) — for menus/legends that name a type
+// before any node exists. `trigger` defaults to the bolt. Shares the ONE icon source above.
+export function iconFor(type) {
+  if (type === "trigger") return ICONS.trigger_change;
+  return ICONS[type] || "";
+}

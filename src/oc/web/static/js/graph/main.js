@@ -4,8 +4,8 @@
 import * as api from "../api.js";
 import * as conn from "../conn.js";
 import * as hub from "../hub.js";
-import { esc, TRASH, CAMERA, WARN, PAUSE, labCell } from "../dom.js";
-import { nodeIcon } from "./node_icons.js";
+import { esc, TRASH, CAMERA, PAUSE, labCell } from "../dom.js";
+import { nodeIcon, iconFor } from "./node_icons.js";
 import { openModal } from "../modal.js";
 import { Overlay } from "../overlay.js";
 import { log, timed, setLogOpen, mirrorConsole } from "../log.js";
@@ -39,13 +39,18 @@ import {
   drawEdges, requestEdges, flushEdges, buildLinks, nodeRect, freezeRouting,
   setDraggingNodes, routeCache, ROUTE,
 } from "./routing.js";
+import { initFlow } from "./flow.js";
 import {
-  nmState, buildNodeMap, setNodeMapVisible, setNodeMapMode, nmSyncSelection,
-  renderNodeMap, nmUpdateViewport,
+  nmState, nlState, buildNodeMap, buildNodeList, setNodeMapVisible, setNodeListVisible,
+  nmSyncSelection, renderNodeViews, nmUpdateViewport,
 } from "./panels/nodemap.js";
 import { act, actState, buildActivity } from "./panels/activity.js";
 import { testWin, testState, buildTesting } from "./panels/testing.js";
-import { tb, tbState, buildToolbox } from "./panels/toolbox.js";
+import {
+  tb, tbState, buildToolbox,
+  createWindowNode, createPriceNode, createTriggerNode, createDictionaryNode,
+} from "./panels/toolbox.js";
+import { openContextMenu } from "../ctxmenu.js";
 import {
   vtables, vtableFor, refreshDataNode, refreshDatasetNode, refreshAllDataNodes, expandSubsetRow,
   batchesState, loadBatchesNode, refreshAllBatchesNodes,
@@ -167,10 +172,9 @@ function collectLayout() {
   L.tables = L.tables || {};
   L.groups = groups.collect();
   L.super_groups = groups.collectSuper();   // groups-of-groups travel with the profile too
-  // floating panels (node map / activity / precapture) travel with the profile
-  const fw = {};
-  for (const [id, w] of floatWins()) if (!id.startsWith("pretty-")) fw[id] = w.collect();   // pretty panels are session-only (auto-fit, not persisted)
-  L.float_windows = fw;
+  // floating panels are NOT persisted (session-only) — drop any stale saved state so it's
+  // cleaned from the profile on the next write.
+  delete L.float_windows;
 }
 function hydrateLayout() {
   pos.clear(); nodeSizes.clear(); collapsed.clear();
@@ -183,17 +187,22 @@ function hydrateLayout() {
   pendingOpenImages = [...(L.open_images || [])];
   groups.hydrate(L.groups);
   groups.hydrateSuper(L.super_groups);   // after groups (super groups reference group ids)
-  const fw = L.float_windows || {};
-  for (const [id, w] of floatWins()) w.hydrate(fw[id]);   // resets to defaults when absent
+  // floating panels are session-only: never restored from the profile -> always start at their
+  // defaults (all hidden). hydrate(undefined) resets each to its _default state.
+  for (const [, w] of floatWins()) w.hydrate(undefined);
 }
 
-// Per-device viewport (canvas zoom/pan) ↔ the gitignored sidecar. Floating panels used to
-// live here too; they're in the profile YAML now (layout.float_windows), via floatWins().
+// Per-device viewport (canvas zoom/pan) ↔ the gitignored sidecar. Floating panels are not
+// persisted at all now (session-only, all start hidden) — see hydrateLayout/collectLayout.
 function collectLocal() {
   return { view: { panX: view.panX, panY: view.panY, zoom: view.zoom } };
 }
 function applyLocal(local) {
-  if (local?.view && Number.isFinite(local.view.zoom)) { Object.assign(view, local.view); applyView(); }
+  if (local?.view && Number.isFinite(local.view.zoom)) {
+    Object.assign(view, local.view);
+    view.zoom = Math.max(0.15, view.zoom);   // restored manual zoom: lower bound only, no font cap
+    applyView();
+  }
 }
 
 // table.js persists its per-table widths/sort into the profile's layout (so they travel
@@ -362,12 +371,14 @@ function freeSpot(x, nearY, w = 240, h = 160, joinGroupId = null) {
 }
 
 // Build a brand-new node OFFSCREEN purely to read its real border-box size, then discard it.
-// buildNode has no global side effects (canvas/image registration happens in render() /
-// openItemImage, not here), so the throwaway element is safe to drop. A node whose size is
-// driven by a <canvas>/<img> only settles its aspect a frame later, so for those we wait two
-// rAFs and re-measure — hence async.
+// Built UNWIRED (wire=false): wireNode side-effects (window openImage() registering into
+// imageCanvases, out-port drag wiring) must NOT fire for a throwaway probe — a wired window
+// probe would register imageCanvases[winId] against this detached host, so the real node's
+// openImage() then early-returns and renders an empty .win-img (no canvas, no capture buttons).
+// A node whose size is driven by a <canvas>/<img> only settles its aspect a frame later, so for
+// those we wait two rAFs and re-measure — hence async.
 async function measureNode(n) {
-  const probe = buildNode(n);
+  const probe = buildNode(n, false);
   probe.style.position = "absolute";
   probe.style.visibility = "hidden";
   probe.style.left = "-99999px";
@@ -396,16 +407,20 @@ function viewportCenterWorld() {
 // box (it then JOINS the group via inheritGroupFrom() after render). With no `srcId` (a
 // toolbox spawn) it lands at the viewport centre, clear of every group.
 // The node is prerendered (measureNode) so its REAL size drives the free-spot search.
-async function placeNewNode(id, type, srcId = null) {
+// `at` (world-coords {x,y}) drops the node centred on a specific point — the spot the canvas
+// right-click add-node menu was opened at — taking precedence over the viewport-centre default.
+async function placeNewNode(id, type, srcId = null, at = null) {
   const n = model.nodes().find((x) => x.id === id);
   const dims = n ? await measureNode(n) : { w: 240, h: 160 };
-  const joinGroup = srcId ? groups.groupOf(srcId) : null;
   const sp = srcId && pos.get(srcId);
-  // anchor beside the adding node (to its right, top-aligned), else the viewport centre
+  // No free-spot search: a node lands exactly where it was asked for — directly BELOW its
+  // spawning node (a bonded preview / subset), else centred on the click/drop point, else the
+  // viewport centre. Overlaps are the user's to sort out; they asked for it placed HERE.
   let x, y;
-  if (sp) { x = sp.x + nw(srcId) + 40; y = sp.y; }
+  if (sp) { x = sp.x; y = sp.y + nh(srcId) + 24; }
+  else if (at) { x = at.x - dims.w / 2; y = at.y - dims.h / 2; }
   else { const c = viewportCenterWorld(); x = c.x - dims.w / 2; y = c.y - dims.h / 2; }
-  pos.set(id, freeSpot(x, y, dims.w, dims.h, joinGroup?.id));
+  pos.set(id, { x: snap(x), y: snap(y) });
   setStatus(`created ${type} ${id.split(":").pop()}`);
 }
 
@@ -443,12 +458,23 @@ function panTo(id) {
   panAnim = requestAnimationFrame(step);
 }
 
+// Hard zoom-in ceiling: nodes inherit the body font (--fs-md), so on-screen text = baseFont ×
+// zoom. Cap so it never renders larger than 16px — i.e. don't zoom closer than 16/baseFont.
+// Read the computed value (tracks the CSS var; no hard-coded px). Used by fit/pan-zoom-to only —
+// the manual wheel is unrestricted.
+const MAX_FONT_PX = 16;
+let _maxZoom = null;
+function maxZoom() {
+  if (_maxZoom == null) _maxZoom = MAX_FONT_PX / (parseFloat(getComputedStyle(document.body).fontSize) || 14);
+  return _maxZoom;
+}
+
 // Comfortable zoom to fit a node in the viewport, with only a small margin around it
 // (tight, not lots of empty space). Shared by double-click AND the node-map jump.
 const FIT_FILL = 0.96;   // node spans this fraction of the viewport
 const FIT_MAX = 4;       // allow zooming further in for small nodes
 function fitZoom(w, h, rect) {
-  return Math.min(8, Math.max(0.15, Math.min(FIT_MAX, (rect.width * FIT_FILL) / w, (rect.height * FIT_FILL) / h)));
+  return Math.min(maxZoom(), Math.max(0.15, Math.min(FIT_MAX, (rect.width * FIT_FILL) / w, (rect.height * FIT_FILL) / h)));
 }
 
 // The part of the graph viewport NOT covered by any visible, uncollapsed floating window —
@@ -578,7 +604,7 @@ function startGroupResize(gid, ev) {
     const dx = (e.clientX - start.x) / z, dy = (e.clientY - start.y) / z;   // drag the bottom-right outward
     lastS = Math.max(0.25, Math.hypot(mb.w + dx, mb.h + dy) / oldD);
     applyGroupScale(snap, lastS);   // grid-stepped each tick
-    drawEdges(); groups.renderGroups(); renderNodeMap();
+    drawEdges(); groups.renderGroups(); renderNodeViews();
     showSizeHud(mb.w * lastS, mb.h * lastS, e.clientX, e.clientY);
   };
   const onUp = () => {
@@ -1169,8 +1195,23 @@ function nodeParts(n) {
     return {
       title: `<input class="gi gi-id" data-k="detid" value="${esc(a.id)}" title="detector: all must match to capture" />`,
       body: `<label class="flab">text <input class="aset" data-k="text" value="${esc(a.text || "")}" placeholder="EQUIPMENT" /></label>
-        <label class="flab">read ⊆ text <input type="checkbox" class="aset" data-k="incl" ${a.included ? "checked" : ""} title="match if the read word is included in this text" /></label>
+        <label class="flab" title="how text is compared: partial=substring (loose); full=whole-string; exact=equal; prefix=starts-with">mode
+          <select class="aset" data-k="match">
+            <option value="partial" ${(a.match ?? "partial") === "partial" ? "selected" : ""}>partial</option>
+            <option value="full" ${a.match === "full" ? "selected" : ""}>full</option>
+            <option value="exact" ${a.match === "exact" ? "selected" : ""}>exact</option>
+            <option value="prefix" ${a.match === "prefix" ? "selected" : ""}>prefix</option>
+          </select></label>
+        <label class="flab">read ⊆ text <input type="checkbox" class="aset" data-k="incl" ${a.included ? "checked" : ""} title="partial/prefix only: match if the read word is included in this text" /></label>
         <label class="flab">threshold <input type="number" class="aset" data-k="thr" step="0.05" min="0" max="1" value="${a.threshold ?? 0.8}" /></label>
+        <label class="flab" title="hard floor: reads shorter than this never match (kills tiny-blob false hits)">min chars <input type="number" class="aset" data-k="minchars" step="1" min="0" value="${a.min_chars ?? 0}" /></label>
+        <label class="flab" title="what to ignore before comparing">strip
+          <select class="aset" data-k="strip">
+            <option value="alnum" ${(a.strip ?? "alnum") === "alnum" ? "selected" : ""}>alnum</option>
+            <option value="spaces" ${a.strip === "spaces" ? "selected" : ""}>spaces</option>
+            <option value="none" ${a.strip === "none" ? "selected" : ""}>none</option>
+          </select></label>
+        <label class="flab">case sensitive <input type="checkbox" class="aset" data-k="case" ${a.case_sensitive ? "checked" : ""} title="off = fold case before comparing" /></label>
         <div class="detect-status muted">◯ —</div>
         <div class="gn-foot"></div>`,
     };
@@ -1505,7 +1546,7 @@ function wireSubset(div, s) {
 // ---- price producer node: sweeps the market into its output dataset ---------
 
 function wirePrice(div, n) {
-  // the full producer panel (sweep, stored count, movers, history chart). The out-port
+  // the producer panel (sweep config + controls, stored count). The out-port
   // (drag to a dataset) is wired generically by wireOutPort.
   // when a sweep ends (or is cancelled), refresh the dataset it feeds so its new batch shows
   wirePriceNode(div, model.profile.name, n.ref.dataset, n.ref.mode || "statistics", () => {
@@ -1620,7 +1661,7 @@ function wireConfirmRemove(btn, onConfirm) {
   });
 }
 
-function fillNode(div, n) {
+function fillNode(div, n, wire = true) {
   const isCollapsed = collapsed.has(n.id);
   const canToggle = CAN_DISABLE.has(n.type);
   const enabled = !(canToggle && n.ref && n.ref.enabled === false);
@@ -1675,6 +1716,7 @@ function fillNode(div, n) {
     autosave(on);   // disabling shouldn't trigger re-reads in other nodes
   });
   if (busy.get(n.id)) div.classList.add("busy");   // preserve spinner across rebuilds
+  if (!wire) return;   // measurement probe: skip side-effecting wiring (openImage, out-port drag)
   wireNode(div, n);
   wireOutPort(div, n);   // any node with a `.port.out` drags to a dataset — one mechanism
 }
@@ -1793,11 +1835,11 @@ function makeNodeResizable(div, id) {
   snapResize(div, nodeResizeOpts(div, id));
 }
 
-function buildNode(n) {
+function buildNode(n, wire = true) {
   const div = document.createElement("div");
   div.id = `node-${n.id}`;
   div.dataset.id = n.id;
-  fillNode(div, n);
+  fillNode(div, n, wire);
   // item + window nodes wrap a FIXED-ASPECT canvas (cutout / captured image): resize by
   // WIDTH only — height follows the image aspect (a free height would clip the canvas or
   // leave a gap). Both-axis node resize is wrong for them; the rest get it below.
@@ -1893,7 +1935,7 @@ function render() {
   groups.renderGroups();
   refreshDetachIcons();
   syncMultiSelect();
-  renderNodeMap();
+  renderNodeViews();
 }
 
 // Item nodes always show their frozen cutout canvas; open any that aren't yet.
@@ -2049,7 +2091,7 @@ function onWheel(ev) {
   const rect = $("graph").getBoundingClientRect();
   const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
   const old = view.zoom;
-  const z = Math.min(20, Math.max(0.15, old * (ev.deltaY < 0 ? 1.1 : 1 / 1.1)));
+  const z = Math.max(0.15, old * (ev.deltaY < 0 ? 1.1 : 1 / 1.1));   // manual wheel: no font ceiling
   // keep the world point under the cursor fixed
   view.panX = mx - (mx - view.panX) * (z / old);
   view.panY = my - (my - view.panY) * (z / old);
@@ -2130,7 +2172,7 @@ function wireNode(div, n) {
     });
   } else if (n.type === "window") {
     wireWindowControls(div, n);   // out-port wiring is handled generically in wireOutPort
-    openImage(n.ref.id);          // the image surface is always present (canvas + controls below it)
+    openImage(n.ref.id, div);     // pass div: this runs during buildNode, before nodeEls has the node
   } else if (n.type === "preview") {
     // auto-reads on image change + any window edit; the one button commits the read to the dataset
     div.querySelector(".prevcommit")?.addEventListener("click", (e) => commitPreviewNode(n.ref.id, e.currentTarget));
@@ -2253,6 +2295,10 @@ function wireNode(div, n) {
       if (k === "text") n.ref.text = e.target.value;
       else if (k === "thr") n.ref.threshold = +e.target.value;
       else if (k === "incl") n.ref.included = e.target.checked;
+      else if (k === "match") n.ref.match = e.target.value;
+      else if (k === "minchars") n.ref.min_chars = Math.max(0, Math.trunc(+e.target.value) || 0);
+      else if (k === "strip") n.ref.strip = e.target.value;
+      else if (k === "case") n.ref.case_sensitive = e.target.checked;
       autosave(); refreshOpenDetect();
     }));
   } else if (n.type === "scrollbar") {
@@ -2395,7 +2441,7 @@ function moveNodes(id, extra, ev) {
       setDraggingNodes(false);
       flushEdges();   // paint the final positions now, dropping any pending coalesced frame
       groups.absorb([id, ...extra.filter((x) => x !== id)]);   // dropped inside a group box -> join it
-      resizeCanvas(); groups.renderGroups(); persist.layout(); renderNodeMap();
+      resizeCanvas(); groups.renderGroups(); persist.layout(); renderNodeViews();
     },
   });
 }
@@ -2430,12 +2476,19 @@ export function startWire(srcId, ev, spec) {
   const rect = $("graph").getBoundingClientRect();
   const p = pos.get(srcId);
   if (!p) return;
-  const rx = spec.side === "L" ? 0 : nw(srcId);   // which face the port sits on (watch = left, else right)
-  wire = { x1: p.x + rx, y1: p.y + 28, x2: p.x + rx, y2: p.y + 28 };
+  const toWorld = (e) => ({ x: (e.clientX - rect.left - view.panX) / view.zoom, y: (e.clientY - rect.top - view.panY) / view.zoom });
+  // Anchor the preview line at the REAL out-port dot, not an empty point. The clicked handle's
+  // rendered centre is where the routed line will leave from (the dot may be fanned off the face
+  // centre), so read it directly; fall back to the face's vertical centre if the rect is missing.
+  const portEl = ev.currentTarget;
+  const pr = portEl && portEl.getBoundingClientRect && portEl.getBoundingClientRect();
+  const start = pr && pr.width
+    ? toWorld({ clientX: pr.left + pr.width / 2, clientY: pr.top + pr.height / 2 })
+    : { x: p.x + (spec.side === "L" ? 0 : nw(srcId)), y: p.y + nh(srcId) / 2 };
+  wire = { x1: start.x, y1: start.y, x2: start.x, y2: start.y };
   // a spec may accept ONE target type ("subset") or SEVERAL (["subset","price"]) — match any.
   const targets = Array.isArray(spec.target) ? spec.target : [spec.target];
   const sel = targets.map((t) => `.gnode.${t}`).join(",");
-  const toWorld = (e) => ({ x: (e.clientX - rect.left - view.panX) / view.zoom, y: (e.clientY - rect.top - view.panY) / view.zoom });
   const onMove = (e) => { const w = toWorld(e); wire.x2 = w.x; wire.y2 = w.y; drawEdges(); };
   const onUp = (e) => {
     document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
@@ -2564,6 +2617,7 @@ async function loadGame(name) {
   if (migrated) persist.layout();   // lock in node layout imported from legacy localStorage
   refreshLive();
   openLogStream(name);   // mirror server activity (trigger watches/fires, API fetches) into the log bar
+  initFlow(name);   // (re)point the flow-blob stream at this game (clears any prior blobs)
   hub.kick();   // new game -> beat the hub so every panel re-reflects its state now
   setStatus(`loaded ${name}`);
 }
@@ -2588,37 +2642,41 @@ function createGame(name) {
 
 buildNodeMap();
 $("nodemapBtn")?.classList.toggle("active", nmState.visible);
-$("nodemapBtn")?.addEventListener("click", () => setNodeMapVisible(!nmState.visible));
+$("nodemapBtn")?.addEventListener("click", () => setNodeMapVisible(!nmState.visible, true));
 // (on-screen re-clamp + re-render on window resize is handled inside createFloatWin)
+
+buildNodeList();
+$("nodelistBtn")?.classList.toggle("active", nlState.visible);
+$("nodelistBtn")?.addEventListener("click", () => setNodeListVisible(!nlState.visible, true));
 
 
 buildActivity();
 $("activityBtn")?.classList.toggle("active", actState.visible);
-$("activityBtn")?.addEventListener("click", () => act.setVisible(!actState.visible));
+$("activityBtn")?.addEventListener("click", () => act.setVisible(!actState.visible, true));
 
 
 buildTesting();
 $("testingBtn")?.classList.toggle("active", testState.visible);
-$("testingBtn")?.addEventListener("click", () => testWin.setVisible(!testState.visible));
+$("testingBtn")?.addEventListener("click", () => testWin.setVisible(!testState.visible, true));
 
 buildToolbox();
 $("createBtn")?.classList.toggle("active", tbState.visible);
-$("createBtn")?.addEventListener("click", () => tb.setVisible(!tbState.visible));
+$("createBtn")?.addEventListener("click", () => tb.setVisible(!tbState.visible, true));
 
 buildPrecap();
 buildLiveWindow();
 $("liveBtn").classList.toggle("active", liveWinState.visible);
-$("liveBtn").addEventListener("click", () => liveWin.setVisible(!liveWinState.visible));   // the panel's toggle drives live mode
+$("liveBtn").addEventListener("click", () => liveWin.setVisible(!liveWinState.visible, true));   // the panel's toggle drives live mode
 $("precapBtn").addEventListener("click", () => {
   if (!pcState.visible && !model.profile.name) { setStatus("load a game first"); return; }
-  pc.setVisible(!pcState.visible);
+  pc.setVisible(!pcState.visible, true);
 });
 
 // Shift-clicking a panel's topbar toggle resets that panel's box (size + position) instead
 // of toggling it. Capture phase so it can pre-empt the normal toggle handler above. If the
 // panel is already open we reset in place and suppress the toggle (which would hide it); if
 // it's closed/not-built we let the toggle open it, then reset on the next tick.
-const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", nodemapBtn: "nodemap", activityBtn: "activity", testingBtn: "testing" };
+const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", nodemapBtn: "nodemap", nodelistBtn: "nodelist", activityBtn: "activity", testingBtn: "testing" };
 for (const [btnId, panelId] of Object.entries(_PANEL_TOGGLES)) {
   $(btnId)?.addEventListener("click", (ev) => {
     if (!ev.shiftKey) return;
@@ -2636,7 +2694,7 @@ let _hiddenNodePanels = [];
 
 // Node-view floating panels belong to the node view: hide them while in pretty, restore the
 // ones that were open on return (open state remembered, never reset).
-const _NODE_PANELS = ["nodemap", "activity", "testing", "toolbox", "live", "precap"];
+const _NODE_PANELS = ["nodemap", "nodelist", "activity", "testing", "toolbox", "live", "precap"];
 function setNodePanelsHidden(hidden) {
   if (hidden) {
     _hiddenNodePanels = [];
@@ -2882,7 +2940,27 @@ function startMarquee(ev) {
 // release — and thus the native contextmenu — can land on a node panel, modal, or even
 // outside #graph, where a graph-scoped listener would never see it.
 window.addEventListener("contextmenu", (ev) => {
-  if (suppressNextMenu) { ev.preventDefault(); suppressNextMenu = false; }   // a pan-drag just ended
+  if (suppressNextMenu) { ev.preventDefault(); suppressNextMenu = false; return; }   // a pan-drag just ended
+  // Right-click empty canvas → add-node menu (same primitive as pretty's add-widget). The new
+  // node spawns at the world point under the cursor. Clicks on nodes/groups/floating panels/
+  // form controls fall through to the native menu. Capture phase + the suppress check above run
+  // before this, so a pan-drag never opens the menu.
+  if (ev.shiftKey) return;   // shift+right-click is reserved -> no add-node menu (native too)
+  if (!ev.target.closest("#graph")) return;
+  if (ev.target.closest(".gnode, .ggroup, .floatwin, input, select, textarea")) return;
+  ev.preventDefault();
+  const box = $("graph").getBoundingClientRect();
+  const at = { x: (ev.clientX - box.left - view.panX) / view.zoom, y: (ev.clientY - box.top - view.panY) / view.zoom };
+  const gid = groups.groupAt(at.x, at.y);   // opened over a group's box -> new node joins it
+  const ready = () => { if (model.profile.name) return true; setStatus("load a game first"); return false; };
+  // icons + tints come from the ONE shared source (node_icons / graph.css --ntint) so a menu row
+  // reads in the same glyph + colour as the node it mints (rule 7).
+  openContextMenu(ev.clientX, ev.clientY, [
+    { icon: iconFor("window"),     title: "window",      tint: "var(--accent)",       onClick: () => ready() && createWindowNode(at, gid) },
+    { icon: iconFor("price"),      title: "price node",  tint: "var(--warn)",         onClick: () => ready() && createPriceNode(at, gid) },
+    { icon: iconFor("trigger"),    title: "trigger",     tint: "var(--trigger-line)", onClick: () => ready() && createTriggerNode(at, gid) },
+    { icon: iconFor("dictionary"), title: "dictionary",  tint: "var(--purple)",       onClick: () => ready() && createDictionaryNode(at, gid) },
+  ]);
 }, true);
 $("graph").addEventListener("wheel", onWheel, { passive: false });
 // any user action cancels an in-flight smooth pan-to-new-node
@@ -3117,5 +3195,5 @@ export {
   refreshAllSubsetNodes, refreshDatasetConsumers,
   rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,
   overlaySelected, selectWindowBox, persistBox, syncCellSize, itemChanged,
-  keyPrevHTML, addFieldToItemGroup, addTellToItemGroup,
+  keyPrevHTML, addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom,
 };

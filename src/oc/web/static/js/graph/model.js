@@ -3,6 +3,8 @@
 // (regions/detect/states/preprocess/scroll) is never touched here — it's authored
 // on the canvas — so saving preserves it.
 
+import { DEFAULT_DETECT_THRESHOLD } from "../defaults.js";
+
 let _fieldSeq = 1;
 
 export class GraphModel {
@@ -555,7 +557,7 @@ export class GraphModel {
     w.detect = w.detect || [];
     let id = "detect_" + _fieldSeq++;
     while (w.detect.some((d) => d.id === id)) id = "detect_" + _fieldSeq++;
-    w.detect.push({ id, search: { x: box.x, y: box.y, w: box.w, h: box.h }, text: "", threshold: 0.8 });
+    w.detect.push({ id, search: { x: box.x, y: box.y, w: box.w, h: box.h }, text: "", threshold: DEFAULT_DETECT_THRESHOLD });
     return id;
   }
   detect(winId, id) { const w = this.window(winId); return w && (w.detect || []).find((d) => d.id === id); }
@@ -598,7 +600,7 @@ export class GraphModel {
     let id = "state_" + _fieldSeq++;
     while (w.states.some((s) => s.id === id)) id = "state_" + _fieldSeq++;
     w.states.push({ id, kind: "ordering", valid_for_save: true,
-      detect: [{ id: id + "_a", search: { x: box.x, y: box.y, w: box.w, h: box.h }, text: "", threshold: 0.8 }] });
+      detect: [{ id: id + "_a", search: { x: box.x, y: box.y, w: box.w, h: box.h }, text: "", threshold: DEFAULT_DETECT_THRESHOLD }] });
     return id;
   }
   state(winId, id) { const w = this.window(winId); return w && (w.states || []).find((s) => s.id === id); }

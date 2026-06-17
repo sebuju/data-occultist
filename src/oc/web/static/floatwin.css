@@ -37,11 +37,18 @@
    collapsed 30). Listed after .collapsed so a focused-collapsed panel still wins. */
 .floatwin.fw-focused { z-index: 50; }
 
+/* docked under another panel: a small accent strip across the top edge hints it's attached
+   to the panel above (positioned at top:0 because .floatwin clips overflow). */
+.floatwin.fw-docked::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: var(--accent); opacity: 0.5; pointer-events: none; z-index: 1;
+}
+
 /* per-panel default sizes (overridden by the inline size once the user resizes) */
 #nodemap { width: 280px; height: 232px; }
 #activity { width: 360px; height: 260px; }
 #live { width: 300px; height: 220px; }
-#precap { width: 900px; height: 80vh; }
+#precap { width: 560px; }   /* height auto-fits the content now (was a fixed 80vh modal) */
 #toolbox { width: 200px; height: auto; }   /* content-height: always shows every button */
 #testing { width: 280px; height: 232px; }
 
@@ -53,7 +60,7 @@
 /* map mode: centre the tightly-wrapped SVG so leftover space is panel-coloured (no bars) */
 .nm-body.nm-bmap, .fw-body.nm-bmap { display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .nm-empty { color: var(--muted); padding: 12px; text-align: center; }
-.nm-wrap { position: relative; }
+.nm-wrap { position: relative; overflow: hidden; border-radius: 4px; }
 .nm-svg { display: block; max-width: 100%; max-height: 100%; background: var(--bg); border-radius: 4px; }
 /* viewport indicator: a div moved by CSS transform (no per-frame layout) */
 .nm-vp { position: absolute; left: 0; top: 0; box-sizing: border-box; pointer-events: none;
@@ -72,17 +79,39 @@
 /* group / super-group NAME title-bar drawn at the top of its box in the map */
 .nm-gtitle { pointer-events: none; }
 .nm-gtitle text { font-family: var(--font-mono); font-weight: 700; dominant-baseline: text-before-edge; }
-.nm-list { overflow: auto; }
+.nm-list { overflow: hidden; --nm-row-pad: 6px; --nm-row-indent: 10px; }
 .nm-row {
-  display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px;
-  cursor: pointer; white-space: nowrap; color: var(--text);
+  position: relative;   /* anchors the absolute collapse button + hidden-count badge */
+  display: flex; align-items: flex-start; gap: 6px; padding: 3px 22px 3px 6px; border-radius: 4px;
+  cursor: pointer; white-space: normal; color: var(--text);
+  /* indent = base pad + depth steps; tune --nm-row-pad / --nm-row-indent live in devtools */
+  padding-left: calc(var(--nm-row-pad) + var(--nm-depth, 0) * var(--nm-row-indent));
 }
 .nm-row:hover { background: var(--line); }
 .nm-row.sel { background: var(--accent-bg); color: var(--accent); }
-.nm-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+/* collapse toggle + hidden-count: both ABSOLUTE (right edge, first-line height) so showing/hiding
+   them never reflows the row. Toggle appears only on hover; count shows while collapsed (and
+   yields to the toggle on hover so it can be expanded). */
+.nm-collapse {
+  position: absolute; right: 4px; top: 0; bottom: 0; margin: auto 0; width: 16px; height: 16px;
+  padding: 0; border: 0; background: none; cursor: pointer; color: var(--muted);
+  display: none; align-items: center; justify-content: center; line-height: 1; font-size: 10px;
+  transform: rotate(0deg); transform-origin: center; transition: transform 0.12s ease;
+}
+.nm-collapse.open { transform: rotate(90deg); }   /* expanded → caret points down */
+.nm-row:hover .nm-collapse { display: flex; }
+.nm-collapse:hover { color: var(--accent); }
+.nm-hidden {
+  position: absolute; right: 6px; top: 3px; height: 1lh; display: flex; align-items: center;
+  font-size: var(--fs-xs); color: var(--muted); pointer-events: none; font-variant-numeric: tabular-nums;
+}
+.nm-row:hover .nm-hidden { display: none; }
+/* dot/swatch align to the CENTRE OF THE FIRST LINE (not the whole wrapped block): top-align,
+   then nudge down by half the gap between the line box (1lh) and the marker's own height. */
+.nm-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; margin-top: calc((1lh - 8px) / 2); }
 /* group header row in the node list: a hollow swatch (outline colour) + bold title */
 .nm-grp { font-weight: 600; color: var(--text); margin-top: 2px; }
-.nm-gswatch { width: 9px; height: 9px; border: 2px solid; border-radius: 2px; background: transparent; flex: none; box-sizing: border-box; }
+.nm-gswatch { width: 9px; height: 9px; border: 2px solid; border-radius: 2px; background: transparent; flex: none; box-sizing: border-box; margin-top: calc((1lh - 9px) / 2); }
 
 /* ---- activity panel -------------------------------------------------------- */
 .act-list { display: flex; flex-direction: column; gap: 4px; min-height: 100%; }
@@ -92,6 +121,10 @@
   display: flex; align-items: center; gap: 8px; padding: 7px 9px;
   background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
 }
+/* a row bound to a graph node: click it to pan+zoom there (hover hints the title) */
+.act-row[data-node] { cursor: pointer; }
+.act-row[data-node]:hover { border-color: var(--accent); }
+.act-row[data-node]:hover .act-title { color: var(--accent); }
 .act-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .act-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .act-prog { font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

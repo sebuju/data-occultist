@@ -33,11 +33,24 @@ const byId = (id) => groups.find((g) => g.id === id);
 export function groupOf(nodeId) { return groups.find((g) => g.members.includes(nodeId)) || null; }
 export function allGroups() { return groups; }
 
+// Id of the (innermost, by area) group whose box contains world point (x,y), or null. Used by
+// the add-node context menu so a node created over a group joins it.
+export function groupAt(x, y) {
+  let best = null, bestArea = Infinity;
+  for (const g of groups) {
+    const box = groupBox(g);
+    if (!box || x < box.x || x > box.x + box.w || y < box.y || y > box.y + box.h) continue;
+    const area = box.w * box.h;
+    if (area < bestArea) { bestArea = area; best = g.id; }
+  }
+  return best;
+}
+
 // World-space box of every group (members hugged the same way the live layer does), for
 // external renderers like the node map. Skips groups whose members aren't laid out yet.
 export function groupBoxes() {
   return groups
-    .map((g) => ({ id: g.id, title: g.title, outline: { ...g.outline }, bg: g.bg, box: groupBox(g) }))
+    .map((g) => ({ id: g.id, title: g.title, outline: { ...g.outline }, bg: g.bg, titleAlign: g.titleAlign, bandH: g._titleH || TITLE_H, box: groupBox(g) }))
     .filter((x) => x.box);
 }
 
@@ -517,7 +530,7 @@ function superMemberNodeIds(sg) {
 }
 // world boxes for external renderers (node map, canvas dblclick hit-test)
 export function superGroupBoxes() {
-  return superGroups.map((sg) => ({ id: sg.id, title: sg.title, outline: { ...sg.outline }, bg: sg.bg, box: superBox(sg) }))
+  return superGroups.map((sg) => ({ id: sg.id, title: sg.title, outline: { ...sg.outline }, bg: sg.bg, bandH: SUPER_LABEL_BAND, box: superBox(sg) }))
     .filter((x) => x.box);
 }
 

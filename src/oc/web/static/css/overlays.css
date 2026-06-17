@@ -2,6 +2,19 @@
    Part of the app stylesheet, split from style.css. Load order matters (cascade):
    base -> chrome -> graph -> overlays -> controls -> flow -> tables. */
 
+/* shared right-click context menu (graph add-node, pretty add-widget) — js/ctxmenu.js */
+.ctxmenu { position: fixed; z-index: 1000; background: var(--float-panel); color: var(--text); border: 1px solid var(--float-line);
+  border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); padding: 4px; min-width: 150px; display: flex; flex-direction: column; }
+.ctx-item { display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 6px 8px;
+  background: transparent; border: none; text-align: left; cursor: pointer; border-radius: 4px; }
+.ctx-item:hover { background: var(--accent-bg); }
+/* per-type colour: the JS sets --ctx-tint per row; icon takes it fully, label takes it too
+   (falls back to muted icon / --text label when a row has no tint). */
+.ctx-ic { width: 18px; height: 18px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  text-align: center; color: var(--ctx-tint, var(--muted)); }
+.ctx-ic svg { width: 18px; height: 18px; }
+.ctx-lbl { color: var(--ctx-tint, var(--text)); }
+
 /* modals */
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 1000;

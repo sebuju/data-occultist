@@ -22,7 +22,7 @@ import {
   render, autosave, rebuildNode, focusNode, setNodeBusy, withBusy,
   registerOverlay, unregisterOverlay, overlaySelected, selectWindowBox, selectedNodeId,
   panZoomTo, placeNewNode, refreshLive, persistBox, syncCellSize, itemChanged,
-  keyPrevHTML, addFieldToItemGroup, addTellToItemGroup,
+  keyPrevHTML, addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom,
 } from "./main.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 
@@ -106,11 +106,20 @@ function closeImage(winId) {
 // The image surface lives INSIDE the window node's `.win-img` host — one per window node,
 // built once and always present. Draw tools sit above the canvas; the page nav, image
 // selector, recapture and "preview all" sit BELOW it. There is no clear/close button.
-async function openImage(winId) {
-  if (imageCanvases.has(winId)) return;   // idempotent: the surface is built once per node
-  const node = nodeEls.get(`win:${winId}`);
+// `nodeEl` is the window node element when known by the caller (wireNode passes it): the surface
+// is built during buildNode(), BEFORE render() registers the node in nodeEls, so a nodeEls lookup
+// would miss it and the node would render with an empty .win-img (no canvas, no capture buttons).
+// Other callers (load-time pendingOpenImages, precapture) omit it and resolve via nodeEls.
+async function openImage(winId, nodeEl = null) {
+  const node = nodeEl || nodeEls.get(`win:${winId}`);
   const host = node && node.querySelector(".win-img");
   if (!host) return;
+  // Idempotent only against the LIVE node's host: a stale entry (e.g. a measurement probe or a
+  // removed/recreated same-id window registered against a now-detached host) must NOT short-
+  // circuit — else the real node's .win-img renders empty (no canvas, no capture buttons).
+  const prev = imageCanvases.get(winId);
+  if (prev && prev.host === host) return;   // surface already built on THIS host — leave it
+  if (prev) { unregisterOverlay(`win:${winId}`); imageCanvases.delete(winId); openImages.delete(winId); }
   host.innerHTML = `<div class="imgtools">
       <span class="tools">${KINDS.map(([v, label, icon]) => `<button class="tool" data-kind="${v}" title="draw ${label}">${icon} ${label}</button>`).join("")}</span></div>
     <div class="canvas-wrap"><canvas></canvas></div>
@@ -126,13 +135,14 @@ async function openImage(winId) {
     onCreate: (geom) => {
       const k = kindOf();
       if (k === "item") { createItemFromGeom(winId, geom); return; }   // freeze + spawn item node
-      let newDetect = null;
-      if (k === "detect") newDetect = model.addDetect(winId, geom);
-      else if (k === "scrollbar") model.setScrollbar(winId, geom);
-      else if (k === "data_area") model.setDataArea(winId, geom);
-      else model.addRegion(winId, geom);
+      let newDetect = null, newNode = null;   // the node this draw spawned → inherit the window's group
+      if (k === "detect") { newDetect = model.addDetect(winId, geom); newNode = `det:${winId}:${newDetect}`; }
+      else if (k === "scrollbar") { model.setScrollbar(winId, geom); newNode = `sb:${winId}:scrollbar`; }
+      else if (k === "data_area") model.setDataArea(winId, geom);   // a window box, not its own node
+      else newNode = `reg:${winId}:${model.addRegion(winId, geom)}`;
       clearGrid(winId);   // layout changed → detected grid is stale
       render(); refreshImageBoxes(winId); autosave(true, winId);   // re-OCR only this window
+      if (newNode) inheritGroupFrom(newNode, `win:${winId}`);   // box drawn on a grouped window → join its group
       if (newDetect) prefillDetectText(winId, newDetect);
     },
     onChange: (box) => {
@@ -179,6 +189,7 @@ async function createItemFromGeom(winId, geom) {
   const itemId = model.addItem(winId, { cutout: cut.name, cutout_box: geom, box: geom });
   clearGrid(winId);
   render(); refreshImageBoxes(winId); autosave();
+  inheritGroupFrom(`item:${winId}:${itemId}`, `win:${winId}`);   // box drawn on a grouped window → join its group
   openItemImage(winId, itemId);
 }
 

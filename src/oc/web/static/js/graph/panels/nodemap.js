@@ -17,7 +17,7 @@ const NM_TYPE = { win: "window", prev: "preview", reg: "region", det: "detect",
   price: "price", dict: "dictionary" };
 const NM_COLOR = { game: "#7aa2f7", window: "#9ece6a", preview: "#56b6c2", region: "#e0af68",
   detect: "#bb9af7", scrollbar: "#f7768e", item: "#7dcfff", itemfield: "#e0af68", dataset: "#e5c07b",
-  subset: "#73daca", price: "#ff9e64", dictionary: "#a9b1d6" };
+  subset: "#73daca", price: "#ff9e64", dictionary: "#c98ae6" };
 const nmTypeOf = (id) => (id === "game" ? "game" : NM_TYPE[id.split(":")[0]] || "node");
 const nmColor = (id) => NM_COLOR[nmTypeOf(id)] || "#9aa5ce";
 
@@ -59,48 +59,34 @@ function nmFit(label, bw, bh) {
   return { fs: Math.min(11, Math.max(fh, fv)), vertical: fv > fh };
 }
 
-let nm = null;            // the createFloatWin instance (built once at startup)
+let nm = null;            // node-MAP float-win instance (scaled svg overview)
+let nl = null;            // node-LIST float-win instance (edge-tree outline)
 let nmTransform = null;   // last map projection {ox,oy,s} for the viewport indicator
-// Node-map panel state. Persisted in the profile YAML (layout.float_windows.nodemap) via
-// the shared float-window machinery — hydrateLayout feeds it in, collectLayout writes it
-// back. `mode` + `sizes` are nodemap's own extras carried in the same blob: `sizes` keeps
-// each mode's box (map auto-fits its height to the graph, list is freely resized) so
-// toggling restores the entering mode's box instead of carrying one over the other.
-const nmState = { visible: false, x: null, y: null, w: null, h: null, mode: "map",
-  sizes: { map: { w: null, h: null }, list: { w: null, h: null } } };
+// Map + list are now TWO distinct panels (split from one mode-toggled panel), each toggled
+// from its own topbar button. Neither is persisted — floating panels are session-only and
+// start hidden on every load (see floatwin.js / hydrateLayout).
+const nmState = { visible: false, x: null, y: null, w: null, h: null };   // map: width-only (auto-fit height)
+const nlState = { visible: false, x: null, y: null, w: null, h: null };   // list: free width + height
+const nlCollapsed = new Set();   // node-list row keys whose subtree is folded away
+const nlDefaulted = new Set();   // group keys already given their default-collapsed state (once each)
 
-// Restore the active mode's saved box into nmState.w/h, then apply. Width always; height
-// only in list mode (map height is recomputed by nmFitPanelHeight on render).
-function applyNmModeSize() {
-  const sz = (nmState.sizes && nmState.sizes[nmState.mode]) || {};
-  if (Number.isFinite(sz.w)) nmState.w = sz.w;
-  // map mode: drop the height so applySize leaves it to nmFitPanelHeight (auto-fit)
-  nmState.h = (nmState.mode === "list" && Number.isFinite(sz.h)) ? sz.h
-    : (nmState.mode === "list" ? nmState.h : null);
-  nm.applySize();
-}
-
-function buildNodeMap() {
-  if (nm) return;
-  nm = createFloatWin({
-    id: "nodemap",
-    title: nmState.mode === "list" ? "node list" : "node map",
-    headerExtra: `<button class="nm-mode" title="toggle map / list view">${nmState.mode === "list" ? "▤" : "⊞"}</button>`,
-    state: nmState,
-    bothAxes: () => nmState.mode === "list",   // list: free width+height; map: width only
-    onResize: () => {
-      if (!nmState.visible || !nm.el.offsetWidth) return;
-      nmState.sizes[nmState.mode] = { w: nm.el.offsetWidth, h: nm.el.offsetHeight };   // per-mode box
-      renderNodeMap();   // map: refit to new size; list: cheap re-render
-    },
-    onShow: () => { $("nodemapBtn")?.classList.toggle("active", true); nmSyncHeader(); applyNmModeSize(); renderNodeMap(); },
-    onHide: () => { $("nodemapBtn")?.classList.toggle("active", false); },
-    onPersist: () => persist.layout(),
-  });
-  nm.el.querySelector(".nm-mode").addEventListener("click", () =>
-    setNodeMapMode(nmState.mode === "map" ? "list" : "map"));
-  // jump-to: click a node in either view -> select + smooth pan/zoom; a group row -> frame it
-  nm.body.addEventListener("click", (ev) => {
+// jump-to wiring shared by both panels: click a node -> select + smooth pan/zoom; a group /
+// super-group row -> frame it. (One handler builder, two callers — see CLAUDE.md hard rule 7.)
+function wireJump(panel) {
+  panel.body.addEventListener("click", (ev) => {
+    // collapse/expand toggle (list only) — fold this row's whole subtree; never a jump
+    const cb = ev.target.closest(".nm-collapse");
+    if (cb) {
+      ev.stopPropagation();
+      const k = cb.dataset.key, willCollapse = !nlCollapsed.has(k);
+      willCollapse ? nlCollapsed.add(k) : nlCollapsed.delete(k);
+      // Rotate the LIVE caret so it transitions (a re-render would swap in a fresh, already-rotated
+      // element — no state change, no animation). Re-render after the spin so rows update with the
+      // caret already at its final angle.
+      cb.classList.toggle("open", !willCollapse);
+      setTimeout(renderNodeList, 130);
+      return;
+    }
     const sg = ev.target.closest("[data-sgid]");
     if (sg) { const sb = groups.superGroupBoxes().find((b) => b.id === sg.dataset.sgid); if (sb) panZoomToRect(sb.box); return; }
     const g = ev.target.closest("[data-gid]");
@@ -113,38 +99,50 @@ function buildNodeMap() {
   });
 }
 
-// Reflect the current mode on the header (title text + toggle glyph).
-function nmSyncHeader() {
-  nm.el.querySelector(".nm-mode").textContent = nmState.mode === "list" ? "▤" : "⊞";
-  nm.el.querySelector(".fw-title").textContent = nmState.mode === "list" ? "node list" : "node map";
+function buildNodeMap() {
+  if (nm) return;
+  nm = createFloatWin({
+    id: "nodemap", title: "node map", state: nmState,
+    bothAxes: false, autoFit: false,   // width only — height auto-fits the GRAPH ASPECT (nmFitPanelHeight), not the content
+    onResize: () => { if (nmState.visible && nm.el.offsetWidth) renderNodeMap(); },
+    onShow: () => { $("nodemapBtn")?.classList.toggle("active", true); renderNodeMap(); },
+    onHide: () => { $("nodemapBtn")?.classList.toggle("active", false); },
+    onPersist: () => persist.layout(),
+  });
+  wireJump(nm);
 }
 
-function setNodeMapVisible(on) {
-  nm.setVisible(on);   // toggles the button + renders via onShow/onHide
+function buildNodeList() {
+  if (nl) return;
+  nl = createFloatWin({
+    id: "nodelist", title: "node list", state: nlState,
+    bothAxes: true, autoFit: false,   // a scrolling outline freely resized in both axes (not content-fit)
+    onShow: () => { $("nodelistBtn")?.classList.toggle("active", true); renderNodeList(); },
+    onHide: () => { $("nodelistBtn")?.classList.toggle("active", false); },
+    onPersist: () => persist.layout(),
+  });
+  wireJump(nl);
 }
-function setNodeMapMode(mode) {
-  if (mode === nmState.mode) return;
-  const right = nm.el.offsetLeft + nm.el.offsetWidth;   // pin right edge so the toggle button stays put
-  if (nm.el.offsetWidth) nmState.sizes[nmState.mode] = { w: nm.el.offsetWidth, h: nm.el.offsetHeight };  // stash leaving box
-  nmState.mode = mode;
-  nmSyncHeader();
-  applyNmModeSize();           // restore the entering mode's box
-  renderNodeMap();
-  nm.place(right - nm.el.offsetWidth, nm.el.offsetTop);   // re-anchor by the right edge
-  persist.layout();
-}
+
+function setNodeMapVisible(on, reset) { nm.setVisible(on, reset); }    // toggles button + renders via onShow/onHide
+function setNodeListVisible(on, reset) { nl.setVisible(on, reset); }
 
 function nmSyncSelection() {
-  if (!nm) return;
-  nm.el.querySelectorAll("[data-id]").forEach((e) => e.classList.toggle("sel", e.dataset.id === selectedNodeId));
+  for (const p of [nm, nl]) p && p.el.querySelectorAll("[data-id]")
+    .forEach((e) => e.classList.toggle("sel", e.dataset.id === selectedNodeId));
 }
 
 function renderNodeMap() {
   if (!nm || !nmState.visible) return;
-  const body = nm.body;
-  body.classList.toggle("nm-bmap", nmState.mode === "map");   // centre the wrapped svg
-  if (nmState.mode === "list") nmRenderList(body); else nmRenderMap(body);
+  nm.body.classList.add("nm-bmap");   // centre the wrapped svg
+  nmRenderMap(nm.body);
 }
+function renderNodeList() {
+  if (!nl || !nlState.visible) return;
+  nmRenderList(nl.body);
+}
+// Refresh whichever overview panels are open — called wherever the graph changes.
+function renderNodeViews() { renderNodeMap(); renderNodeList(); }
 
 function nmRenderMap(body) {
   const ids = [...pos.keys()].filter((id) => nodeEls.has(id) && Number.isFinite(pos.get(id).x));
@@ -197,23 +195,31 @@ function nmRenderMap(body) {
   };
   const superSvg = groups.superGroupBoxes().map((sp) => boxSvg(sp, "nm-super")).join("");
   const groupSvg = groups.groupBoxes().map((gp) => boxSvg(gp, "nm-group")).join("");
-  // Group / super-group NAME as a title BAR at the box's top-left: an opaque dark plate +
-  // coloured text (same idiom as the canvas labels). Drawn ABOVE the nodes so it's never
-  // hidden, but the solid plate makes it read as a deliberate header — not text bleeding over
-  // node squares. Font shrinks to fit the box width; hidden (hover <title> still names it) when
-  // it'd be too small to read.
-  const boxTitle = (b, col) => {
+  // Group / super-group NAME as a title BAR: an opaque dark plate + coloured text (same idiom
+  // as the canvas labels). Drawn ABOVE the nodes so it's never hidden, but the solid plate makes
+  // it read as a deliberate header. Placement MIRRORS the live canvas: group titles align
+  // (left/center/right) per the group's titleAlign and sit at the box TOP; super-group titles
+  // pin BOTTOM-LEFT (the canvas watermark idiom). The plate width is clamped to the box so the
+  // text always fits the space the box gives it; font shrinks too, and the title hides (hover
+  // <title> still names it) when it'd be too small to read.
+  const boxTitle = (b, col, { align = "left", bottom = false } = {}) => {
     if (!b.title) return "";
-    const x = X(b.box.x), y = Y(b.box.y), w = b.box.w * s, len = b.title.length;
+    const bx = X(b.box.x), by = Y(b.box.y), w = b.box.w * s, h = b.box.h * s, len = b.title.length;
+    // Cap by WIDTH only — the reserved title band scales to ~2px on the mini-map, so capping the
+    // font to it (bandH*s) drove fs negative and hid EVERY heading. The plate is opaque and drawn
+    // last (nm-titles on top), so a fixed readable size sitting slightly over the first node row
+    // is fine — that's the canvas title-bar idiom. Hide only when too narrow to read.
     const fs = Math.min(9, (w - 6) / Math.max(1, len * 0.58));
     if (fs < 4) return "";
     const tw = Math.min(w, len * fs * 0.58 + 6), th = fs + 3;
+    const tx = align === "center" ? bx + (w - tw) / 2 : align === "right" ? bx + w - tw : bx;
+    const ty = bottom ? by + h - th : by;
     return `<g class="nm-gtitle">`
-      + `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${tw.toFixed(1)}" height="${th.toFixed(1)}" rx="1.5" fill="rgba(8,11,16,0.72)"/>`
-      + `<text x="${(x + 3).toFixed(1)}" y="${(y + 1.5).toFixed(1)}" font-size="${fs.toFixed(1)}" fill="${col}">${esc(b.title)}</text></g>`;
+      + `<rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${tw.toFixed(1)}" height="${th.toFixed(1)}" rx="1.5" fill="rgba(8,11,16,0.72)"/>`
+      + `<text x="${(tx + 3).toFixed(1)}" y="${(ty + 1.5).toFixed(1)}" font-size="${fs.toFixed(1)}" fill="${col}">${esc(b.title)}</text></g>`;
   };
-  const titleSvg = groups.superGroupBoxes().map((b) => boxTitle(b, "#cdd3dc"))   // super outlines run dark -> light text
-    .concat(groups.groupBoxes().map((b) => boxTitle(b, b.outline?.color || "#cdd3dc"))).join("");
+  const titleSvg = groups.superGroupBoxes().map((b) => boxTitle(b, "#cdd3dc", { bottom: true }))   // super outlines run dark -> light text, label bottom-left
+    .concat(groups.groupBoxes().map((b) => boxTitle(b, b.outline?.color || "#cdd3dc", { align: b.titleAlign }))).join("");
   // The viewport indicator is a plain DIV moved with a CSS transform (compositor-only) — it
   // must NOT be an SVG element whose geometry attributes are rewritten each pan frame, since
   // that forces a layout, and with this huge DOM each layout is ~3ms (the pan lag).
@@ -234,7 +240,7 @@ function nmRenderMap(body) {
 // vertical gap. Height-only write: the next ResizeObserver tick re-renders with the same
 // width and converges (no loop).
 function nmFitPanelHeight(svgH) {
-  if (!nm || nmState.mode !== "map" || nmState.collapsed) return;   // collapsed owns its height
+  if (!nm || nmState.collapsed) return;   // collapsed owns its height
   const headerH = nm.el.querySelector(".fw-head")?.offsetHeight || 28;
   const targetH = Math.round(svgH + 12 + headerH + 2);   // body padding + header + borders
   if (Math.abs(nm.el.offsetHeight - targetH) > 1) {
@@ -288,16 +294,54 @@ function nmRenderList(body) {
   const ungrouped = new Set(nodes.map((n) => n.id).filter((id) => !grouped.has(id)));
   for (const r of orderWalk(ungrouped)) rows.push({ kind: "node", ...r });
 
-  const rowHTML = (r) => {
-    const pad = 6 + (r.depth || 0) * 14;
-    if (r.kind === "super") return `<div class="nm-row nm-super-row" data-sgid="${esc(r.sgid)}" title="zoom to super group" style="padding-left:${pad}px">
-        <span class="nm-gswatch nm-sswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${esc(r.label)}</div>`;
-    if (r.kind === "group") return `<div class="nm-row nm-grp" data-gid="${esc(r.gid)}" title="zoom to group" style="padding-left:${pad}px">
-        <span class="nm-gswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${esc(r.label)}</div>`;
-    return `<div class="nm-row${r.id === selectedNodeId ? " sel" : ""}" data-id="${esc(r.id)}" style="padding-left:${pad}px">
-        <span class="nm-dot" style="background:${NM_COLOR[r.type] || "#9aa5ce"}"></span>${esc(r.label)}</div>`;
+  // Per-row tree bookkeeping: a stable key (for the collapse set), and the count of descendant
+  // rows (the run of following rows deeper than it) — that count IS the hidden total when folded.
+  const keyOf = (r) => r.kind === "node" ? `n:${r.id}` : r.kind === "group" ? `g:${r.gid}` : `s:${r.sgid}`;
+  for (let i = 0; i < rows.length; i++) {
+    rows[i].key = keyOf(rows[i]);
+    let j = i + 1; while (j < rows.length && rows[j].depth > rows[i].depth) j++;
+    rows[i].kids = j - i - 1;
+    // window nodes start collapsed — seed once per window so the user can still expand it (and any
+    // newly-appearing window also defaults to collapsed exactly once).
+    if (rows[i].kind === "node" && rows[i].type === "window" && rows[i].kids && !nlDefaulted.has(rows[i].key)) {
+      nlDefaulted.add(rows[i].key); nlCollapsed.add(rows[i].key);
+    }
+  }
+  // Drop rows sitting under a collapsed ancestor: when a collapsed row is emitted, hide every
+  // following row deeper than it until depth returns to its level or shallower.
+  const visible = [];
+  let hideBelow = Infinity;
+  for (const r of rows) {
+    if (r.depth > hideBelow) continue;
+    hideBelow = Infinity;
+    visible.push(r);
+    if (r.kids && nlCollapsed.has(r.key)) hideBelow = r.depth;
+  }
+
+  // Allow wrapping after every non-alphanumeric char (':', '→', '▸', '_', space, …) so long
+  // labels break at their separators instead of overflowing. Escape per-char so the injected
+  // <wbr> tags survive (esc() on the whole string would mangle them).
+  const wbr = (s) => [...String(s)].map((c) => esc(c) + (/[\p{L}\p{N}]/u.test(c) ? "" : "<wbr>")).join("");
+  // Right-edge affordances (both ABSOLUTE so they never reflow the row): a hover-only
+  // collapse/expand toggle for any row with children, and a hidden-count badge while collapsed.
+  const afford = (r) => {
+    if (!r.kids) return "";
+    const collapsed = nlCollapsed.has(r.key);
+    // one caret glyph (▸), rotated 90° when expanded — so it never points the wrong way
+    return `<button class="nm-collapse${collapsed ? "" : " open"}" data-key="${esc(r.key)}" title="${collapsed ? "expand" : "collapse"}">▸</button>`
+      + (collapsed ? `<span class="nm-hidden" title="${r.kids} hidden">${r.kids}</span>` : "");
   };
-  body.innerHTML = `<div class="nm-list">${rows.map(rowHTML).join("") || `<div class="nm-empty">no nodes</div>`}</div>`;
+  const rowHTML = (r) => {
+    const depth = r.depth || 0;   // CSS computes padding-left from --nm-depth (see floatwin.css)
+    const folded = nlCollapsed.has(r.key) ? " nm-folded" : "";
+    if (r.kind === "super") return `<div class="nm-row nm-super-row${folded}" data-sgid="${esc(r.sgid)}" title="zoom to super group" style="--nm-depth:${depth}">
+        <span class="nm-gswatch nm-sswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${wbr(r.label)}${afford(r)}</div>`;
+    if (r.kind === "group") return `<div class="nm-row nm-grp${folded}" data-gid="${esc(r.gid)}" title="zoom to group" style="--nm-depth:${depth}">
+        <span class="nm-gswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${wbr(r.label)}${afford(r)}</div>`;
+    return `<div class="nm-row${r.id === selectedNodeId ? " sel" : ""}${folded}" data-id="${esc(r.id)}" style="--nm-depth:${depth}">
+        <span class="nm-dot" style="background:${NM_COLOR[r.type] || "#9aa5ce"}"></span>${wbr(r.label)}${afford(r)}</div>`;
+  };
+  body.innerHTML = `<div class="nm-list">${visible.map(rowHTML).join("") || `<div class="nm-empty">no nodes</div>`}</div>`;
 }
 
 // Cache the graph viewport box — nmUpdateViewport runs every pan FRAME, and reading
@@ -308,10 +352,13 @@ function graphBox() { return _graphBox || (_graphBox = $("graph").getBoundingCli
 window.addEventListener("resize", () => { _graphBox = null; });
 
 function nmUpdateViewport() {
-  if (!nm || !nmState.visible || nmState.mode !== "map" || !nmTransform) return;
+  if (!nm || !nmState.visible || !nmTransform) return;
   const vp = nm.el.querySelector(".nm-vp"); if (!vp) return;
   const rect = graphBox();
   const { ox, oy, s } = nmTransform;
+  // True viewport rect in map space (no clamping — the indicator must show the REAL position,
+  // even when it runs past the node extents). The overflow:hidden on .nm-wrap clips the part
+  // outside the map, so panning far just slides it off-edge instead of spilling/leaving a line.
   const x = ox + (-view.panX / view.zoom) * s, y = oy + (-view.panY / view.zoom) * s;
   const w = Math.max(0, (rect.width / view.zoom) * s), h = Math.max(0, (rect.height / view.zoom) * s);
   // width/height only change on ZOOM (not pan) — set them rarely; the per-frame pan update
@@ -321,7 +368,8 @@ function nmUpdateViewport() {
 }
 
 export {
-  nmColor, nodeLabel, nodeShort, nmFit, nm, nmTransform, nmState, applyNmModeSize,
-  buildNodeMap, nmSyncHeader, setNodeMapVisible, setNodeMapMode, nmSyncSelection,
-  renderNodeMap, nmRenderMap, nmFitPanelHeight, nmRenderList, graphBox, nmUpdateViewport,
+  nmColor, nodeLabel, nodeShort, nmFit, nm, nl, nmTransform, nmState, nlState,
+  buildNodeMap, buildNodeList, setNodeMapVisible, setNodeListVisible, nmSyncSelection,
+  renderNodeMap, renderNodeList, renderNodeViews, nmRenderMap, nmFitPanelHeight,
+  nmRenderList, graphBox, nmUpdateViewport,
 };

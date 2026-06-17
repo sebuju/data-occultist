@@ -41,7 +41,11 @@ export function hideSizeHud() { if (_sizeHud) _sizeHud.style.display = "none"; }
 // panels pass it so resize lines up with other panels; graph nodes leave it null.
 // `onReset` (optional) adds a small dot centred between the two grips that restores the
 // element's default size on click — revealed, like the grips, only while hovering the element.
-export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onSettle = null, snapEdge = null, onReset = null } = {}) {
+// `screenClamp` (panels only) caps the new size so the element never grows past the viewport
+// edges — its anchored top + fixed corner stay put, so only the moving edge/bottom is limited,
+// leaving `margin` px clear. Graph nodes leave it off (they live in zoomed/panned canvas space,
+// not viewport space, so a viewport clamp would be meaningless there).
+export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onSettle = null, snapEdge = null, onReset = null, screenClamp = false, margin = 0 } = {}) {
   if (el.querySelector(":scope > .rz-grip")) return;   // once only
   const q = (v) => (snapGrid ? snap(v) : v);   // grid-step nodes; panels resize smoothly
   for (const side of ["left", "right"]) {
@@ -55,6 +59,7 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
       const z = zoom() || 1, sx = ev.clientX, sy = ev.clientY;
       const startW = el.offsetWidth, startH = el.offsetHeight, startL = left ? left() : 0;
       const startT = el.offsetTop;
+      const rect = screenClamp ? el.getBoundingClientRect() : null;   // fixed-edge anchor in viewport px
       let lastW = startW, lastH = startH;
       document.body.style.cursor = side === "left" ? "nesw-resize" : "nwse-resize";
       const mv = (e) => {
@@ -65,6 +70,14 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
           if (side === "left") w = Math.max(1, (startL + startW) - snapEdge("x", startL + startW - w));
           else w = Math.max(1, snapEdge("x", startL + w) - startL);   // right edge
           if (allowH) h = Math.max(1, snapEdge("y", startT + h) - startT);   // bottom edge
+        }
+        // hard screen-bounds clamp (final authority, after snapping): the right/left grip's
+        // fixed edge (rect.right / rect.left) + the fixed top stay put, so cap the growing
+        // dimensions to keep `margin` px clear of the viewport edges.
+        if (rect) {
+          const maxW = side === "left" ? rect.right - margin : (window.innerWidth - margin) - rect.left;
+          w = Math.min(w, Math.max(1, maxW));
+          if (allowH) h = Math.min(h, Math.max(1, (window.innerHeight - margin) - rect.top));
         }
         // only act on a REAL size step (else snapped sub-grid moves churn resize+reroute)
         if (w === lastW && (!allowH || h === lastH)) return;

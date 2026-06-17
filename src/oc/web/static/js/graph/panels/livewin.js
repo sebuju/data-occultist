@@ -9,7 +9,7 @@ import { $, setStatus, model, nodeEls } from "../state.js";
 import { registerWorker, unregisterWorker } from "../workers.js";
 import { pc, pcState, precapOpen, precapBusy, fmtBytes } from "./precap.js";
 import { prevHost, refreshDetect, refreshPreview } from "../imaging.js";
-import { refreshLive } from "../main.js";
+import { refreshLive, panZoomTo } from "../main.js";
 
 let timer = null;
 // live floating panel state — declared BEFORE buildLiveWindow() runs at module-eval
@@ -44,7 +44,15 @@ function buildLiveWindow() {
   if (liveWin) return;
   liveWin = createFloatWin({
     id: "live", title: "live", state: liveWinState, bothAxes: true,
-    onShow: () => { $("liveBtn")?.classList.toggle("active", true); renderLiveWindow(); },
+    onShow: () => {
+      $("liveBtn")?.classList.toggle("active", true);
+      refreshLiveImgStat(true);   // re-pull the saved-image count: it may be stale (fetched before a profile loaded, or frames saved while hidden)
+      renderLiveWindow();
+      // re-fit after layout settles AND after web fonts swap in — a first-open fit can measure
+      // rows before the font loads and spawn short (a later reset reads right: font's already in).
+      requestAnimationFrame(() => fitLivePanelHeight());
+      document.fonts?.ready?.then(() => { if (liveWinState.visible) fitLivePanelHeight(); });
+    },
     onHide: () => { $("liveBtn")?.classList.toggle("active", false); },
     onPersist: () => persist.layout(),
   });
@@ -65,8 +73,14 @@ function buildLiveWindow() {
         </button><span class="live-save-lbl">save to datasets</span></label>
     </div>
     <div class="live-wins"></div>
-    <div class="live-row live-imgs"><span class="live-imgstat muted"></span><button class="live-clear" data-armed="0" title="delete every saved live image">clear</button></div>`;
+    <div class="live-row live-imgs"><span class="live-imgstat muted">&nbsp;</span><button class="live-clear" data-armed="0" title="delete every saved live image">clear</button></div>`;
   liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
+  // click a window row -> pan+zoom to its window node on the graph (hover hints via CSS)
+  liveWin.body.querySelector(".live-wins").addEventListener("click", (ev) => {
+    if (ev.target.closest("button, input")) return;
+    const row = ev.target.closest(".live-win[data-node]");
+    if (row) panZoomTo(row.dataset.node);
+  });
   liveWin.body.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
   liveWin.body.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
   // clear saved live images — armed two-click (no blocking confirm; CLAUDE.md rule 2)
@@ -125,6 +139,7 @@ function renderLiveWinList() {
     let r = liveRows.get(w.id);
     if (!r) {
       const row = document.createElement("div"); row.className = "act-row live-win";
+      row.dataset.node = `win:${w.id}`; row.title = "go to this window's node";
       const dot = document.createElement("span"); dot.className = "live-wdot";
       const name = document.createElement("div"); name.className = "act-title";
       const cnt = document.createElement("span"); cnt.className = "live-wcount";   // detections, right-justified
@@ -146,20 +161,8 @@ function renderLiveWinList() {
   }
 }
 
-// Auto-fit the panel height to its contents until the user resizes it (a size write only
-// happens when the target actually differs, so a steady tick mutates nothing).
-function fitLivePanelHeight() {
-  if (!liveWin || !liveWinState.visible || liveWinState.collapsed || liveWinState.userSized) return;
-  const headerH = liveWin.el.querySelector(".fw-head")?.offsetHeight || 28;
-  // Measure CONTENT, not body.scrollHeight: the body is flex:1 so its scrollHeight is at
-  // least its own clientHeight — feeding that back grew the panel ~14px every tick. The body's
-  // children are block-flow, so their intrinsic offsetHeight sums to the true content height.
-  const bs = getComputedStyle(liveWin.body);
-  const padV = parseFloat(bs.paddingTop) + parseFloat(bs.paddingBottom);
-  const content = [...liveWin.body.children].reduce((h, c) => h + c.offsetHeight, 0);
-  const target = Math.round(Math.min(window.innerHeight - 60, headerH + content + padV));
-  if (Math.abs(liveWin.el.offsetHeight - target) > 1) { liveWin.el.style.height = `${target}px`; liveWinState.h = target; }
-}
+// Auto-fit delegates to the shared floatwin height-fit (one primitive for every panel).
+function fitLivePanelHeight() { liveWin?.fitHeight(); }
 
 function showLiveStats(on) {
   liveFrames = 0; liveT0 = on ? performance.now() : 0; liveFps = 0;
@@ -216,15 +219,29 @@ function startServerCollect() {
         liveDetCount.set(wid, (liveDetCount.get(wid) || 0) + (r.count || 0));
       }
     }
+    refreshLiveImgStat();   // server collector saves frames to disk — keep the saved-image stat fresh
     renderLiveWindow();
   });
   hub.kick();   // beat now so collection status shows immediately
+}
+// Throttled saved-image stat refresh — the heartbeat fires often, but stat() globs the live/
+// dir, so re-fetch at most every ~5s. Without this the armed (server-collector) path never
+// refreshes liveImg and the panel reads "no live images saved" while frames pile up on disk.
+let liveImgStatT0 = 0;
+function refreshLiveImgStat(force = false) {
+  const game = model.profile.name;
+  if (!game) return;
+  const now = performance.now();
+  if (!force && liveImgStatT0 && now - liveImgStatT0 < 5000) return;
+  liveImgStatT0 = now;
+  api.liveCaptures.stats(game).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
 }
 function stopServerCollect() {
   const game = model.profile.name;
   if (liveColUnsub) { liveColUnsub(); liveColUnsub = null; }
   if (game) api.live.stop(game).catch((e) => log(`live stop failed: ${e.message || e}`, "err"));
   liveColStatus = null;
+  refreshLiveImgStat(true);   // final count after the run stops
   hub.kick();
 }
 

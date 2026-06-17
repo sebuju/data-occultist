@@ -150,6 +150,10 @@ async function showPrecap() {
   setLiveMode(false);                         // mutually exclusive with live
   precapOpen = true;
   precapStopping = false; precapView = null; precapPage = null;
+  // reopening starts from the latest few sessions again — don't rebuild whatever big window
+  // a prior scroll grew the list to (keeps the panel light + sized for ~5 rows on open)
+  const left = pcNode.querySelector(".pc-left");
+  if (left && left._rows) left._renderN = PC_FIRST;
   $("precapBtn").classList.add("active");
   pc.el.querySelector(".fw-title").textContent = `precapture: ${game}`;
   pcCtl = new AbortController(); pcSig = pcCtl.signal;
@@ -164,6 +168,11 @@ async function showPrecap() {
     else if (precapBusy) _pcRun(() => api.precapture.status(model.profile.name, pcSig));
   });
   hub.kick();   // beat now so a busy worker shows immediately on open
+  // re-fit once layout settles and again once web fonts swap in — a first-open fit can measure
+  // rows before the font loads and come out short (resetting later reads correct because the
+  // font is already in by then).
+  requestAnimationFrame(() => fitPrecapHeight());
+  document.fonts?.ready?.then(() => { if (precapOpen) fitPrecapHeight(); });
 }
 
 // Hiding the panel does NOT cancel the worker (the Activity panel monitors/cancels it).
@@ -383,8 +392,13 @@ function renderPrecap(node, st) {
 
   const data = right.querySelector(".pc-data");
   if (data) renderPrecapData(data, st.datasets);
+  fitPrecapHeight();   // size the panel to what it's showing (skipped once the user resizes it)
 }
 
+// Auto-fit delegates to the shared floatwin height-fit (one primitive for every panel).
+function fitPrecapHeight() { pc?.fitHeight(); }
+
+const PC_FIRST = 5;   // session rows shown on (re)open — the rest load as you scroll down
 const PC_PAGE = 30;   // session rows rendered per window; grows by this much on scroll-to-bottom
 
 // The left pane: "＋ new session" (the record-inputs pane) on top, then every saved
@@ -410,7 +424,7 @@ function renderPrecapLeft(left, st) {
     left._rowsBox.className = "pc-sess-rows";
     left.appendChild(left._rowsBox);
     left._rows = new Map();   // sid -> { row, load, ren }
-    left._renderN = PC_PAGE;  // how many rows are currently rendered
+    left._renderN = PC_FIRST;  // how many rows are currently rendered (grows on scroll)
     left._rowsBox.addEventListener("scroll", () => {
       const b = left._rowsBox;
       if (b.scrollTop + b.clientHeight >= b.scrollHeight - 48 && left._renderN < precapSessions.length) {
