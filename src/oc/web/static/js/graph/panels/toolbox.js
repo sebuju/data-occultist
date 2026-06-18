@@ -2,12 +2,14 @@
 // trigger / dictionary) plus the window-collision cross-check. Extracted from main.js
 // verbatim.
 import * as api from "../../api.js";
-import { esc, WARN } from "../../dom.js";
+import { esc, WARN, CAMERA } from "../../dom.js";
 import { openModal } from "../../modal.js";
 import { log, timed } from "../../log.js";
+import { domToBlob } from "../../vendor/dom-to-image.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
 import { openDictionaryPicker } from "../dict_picker.js";
+import { nodemapShot } from "./nodemap.js";
 import * as groups from "../groups.js";
 import { $, setStatus, model } from "../state.js";
 import { placeNewNode, render, autosave, panTo } from "../main.js";
@@ -84,7 +86,10 @@ function createDictionaryNode(at = null, group = null) {
 function buildToolbox() {
   if (tb) return;
   tb = createFloatWin({
-    id: "toolbox", title: "toolbox", state: tbState, bothAxes: true,
+    // autoFit:false -> let the CSS `#toolbox { height:auto }` size it: the body is a static
+    // button list, so the panel always hugs every button exactly (the shared fitHeight rounds
+    // to a fixed px height that can land 1px short -> a stray scrollbar).
+    id: "toolbox", title: "toolbox", state: tbState, bothAxes: true, autoFit: false,
     onShow: () => $("createBtn")?.classList.toggle("active", true),
     onHide: () => $("createBtn")?.classList.toggle("active", false),
     onPersist: () => persist.layout(),
@@ -93,12 +98,18 @@ function buildToolbox() {
   // add-node menu (see main.js); the toolbox keeps the cross-cutting tools.
   tb.body.innerHTML = `<div class="tb-list">
     <button class="tb-btn" data-create="collisions" title="run each window's bound image through every window's detectors — report which windows false-match each other">${WARN} check window collisions</button>
+    <button class="tb-btn" data-create="shot-canvas" title="render the WHOLE node canvas (every node/edge/group, any zoom) to a PNG, stashed under .trash/">${CAMERA} screenshot canvas</button>
+    <button class="tb-btn" data-create="shot-viewport" title="capture just the CURRENT on-screen view (current pan/zoom) to a PNG, stashed under .trash/">${CAMERA} screenshot viewport</button>
+    <button class="tb-btn" data-create="shot-nodemap" title="render the node MAP (minimap overview) to a PNG sized so the smallest label is 13px, stashed under .trash/">${CAMERA} screenshot node map</button>
   </div>`;
   tb.body.addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-create]");
     if (!b) return;
     if (!model.profile.name) { setStatus("load a game first"); return; }
     if (b.dataset.create === "collisions") runCollisionCheck();
+    else if (b.dataset.create === "shot-canvas") screenshotCanvas();
+    else if (b.dataset.create === "shot-viewport") screenshotViewport();
+    else if (b.dataset.create === "shot-nodemap") screenshotNodemap();
   });
 }
 
@@ -150,6 +161,100 @@ async function runCollisionCheck() {
     if (e.name === "AbortError") return;   // modal closed mid-fetch
     done(String(e.message || e), "err");
     if (body) body.innerHTML = `<p class="conf-bad" style="padding:12px">${esc(String(e.message || e))}</p>`;
+  }
+}
+
+// ---- whole-canvas screenshot ----------------------------------------------
+// Render the ENTIRE node graph (every placed node, regardless of the current pan/zoom)
+// to a PNG and stash it under the repo's .trash/. The canvas is plain DOM, so we lean on
+// the vendored dom-to-image. We DON'T touch the live #gworld transform: dom-to-image
+// clones the subtree offscreen, and we hand the clone a fresh transform that shifts the
+// graph's bounding box to the origin at scale 1 — so the output is the whole map, not the
+// on-screen viewport.
+const SHOT_MARGIN = 40;   // breathing room (world px) around the content
+const SHOT_SCALE = 2;     // output pixel-ratio — crisp without ballooning huge graphs
+
+// Tight bounding box of everything ACTUALLY rendered in the world layer — node elements
+// plus group + supergroup boxes (so their title bands / labels are included). We measure
+// the live DOM (offsetLeft/Top/Width/Height are world coords — transform-independent), NOT
+// the `pos` map: that map carries stale/zero-size phantom entries (e.g. unplaced view nodes)
+// far from the real cluster, which would inflate the box into huge empty bands. Zero-size
+// elements are skipped for the same reason.
+function graphBBox() {
+  const world = $("gworld");
+  if (!world) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, any = false;
+  // supergroup + group boxes first (they back the nodes), then the nodes themselves
+  for (const el of world.querySelectorAll("#sgroups > *, #ggroups > *, #gnodes > *")) {
+    if (el.hidden) continue;
+    const w = el.offsetWidth, h = el.offsetHeight;
+    if (!w || !h) continue;   // phantom / unrendered -> ignore
+    const x = el.offsetLeft, y = el.offsetTop;
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + w); maxY = Math.max(maxY, y + h);
+    any = true;
+  }
+  if (!any) return null;   // nothing rendered
+  return { minX: minX - SHOT_MARGIN, minY: minY - SHOT_MARGIN,
+           w: (maxX - minX) + SHOT_MARGIN * 2, h: (maxY - minY) + SHOT_MARGIN * 2 };
+}
+
+function graphBg() {
+  return getComputedStyle($("graph")).getPropertyValue("--bg").trim() || "#1c1e23";
+}
+
+// Render `node` to a PNG with `opts` and stash it under .trash/ (view tags the filename).
+// Shared by both screenshot buttons — the only difference is WHAT/HOW they render.
+async function stashShot(view, node, opts) {
+  const done = timed("screenshot");
+  try {
+    const blob = await domToBlob(node, { scale: SHOT_SCALE, backgroundColor: graphBg(), ...opts });
+    const { path } = await api.stashScreenshot(model.profile.name, blob, view);
+    done();
+    setStatus(`saved ${path}`);
+  } catch (e) {
+    done(String(e.message || e), "err");
+    setStatus(`screenshot failed: ${e.message || e}`);
+  }
+}
+
+// Whole graph: render #gworld with the live pan/zoom overridden to a 1:1 transform that shifts
+// the content bounding box to the origin, sized to the full span — so every node is captured.
+async function screenshotCanvas() {
+  if (!model.profile.name) { setStatus("load a game first"); return; }
+  const world = $("gworld");
+  const box = graphBBox();
+  if (!world || !box) { setStatus("nothing to screenshot — no placed nodes"); return; }
+  await stashShot("canvas", world, {
+    width: box.w, height: box.h,
+    style: { transform: `translate(${-box.minX}px, ${-box.minY}px)`, transformOrigin: "0 0" },
+  });
+}
+
+// Current view: render the #graph viewport as-is (it clips to the visible area at the live
+// pan/zoom). Floating panels are siblings of #graph, not children, so they don't appear.
+async function screenshotViewport() {
+  if (!model.profile.name) { setStatus("load a game first"); return; }
+  const graph = $("graph");
+  if (!graph) { setStatus("no canvas to screenshot"); return; }
+  await stashShot("viewport", graph, {});
+}
+
+// Node map: the minimap SVG overview, sized so the smallest label is 13px (nodemapShot solves
+// the scale). The .nm-* styling is global CSS, so the SVG must be ATTACHED to render — drop it
+// in an off-screen host, rasterise, remove. scale:1 (the SVG is already sized for readability).
+async function screenshotNodemap() {
+  if (!model.profile.name) { setStatus("load a game first"); return; }
+  const shot = nodemapShot({ floor: 13 });
+  if (!shot) { setStatus("nothing to screenshot — no nodes"); return; }
+  const host = document.createElement("div");
+  host.style.cssText = `position:fixed; left:-99999px; top:0; width:${shot.W}px; height:${shot.H}px;`;
+  host.innerHTML = shot.svg;
+  document.body.appendChild(host);
+  try {
+    await stashShot("nodemap", host, { width: shot.W, height: shot.H, scale: 1 });
+  } finally {
+    host.remove();
   }
 }
 

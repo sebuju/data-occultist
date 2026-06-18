@@ -51,12 +51,14 @@ function nodeShort(n) {
 }
 
 // Largest font that fits ``label`` in a ``bw``×``bh`` box, trying both orientations and
-// picking whichever is bigger (so a tall box gets vertical text). ~0.58em per char.
-function nmFit(label, bw, bh) {
+// picking whichever is bigger (so a tall box gets vertical text). ~0.58em per char. `cap`
+// is the font ceiling — the live map caps at 11 (tiny boxes); the screenshot lifts it so a
+// label can grow to the requested readable floor.
+function nmFit(label, bw, bh, cap = 11) {
   const n = Math.max(1, label.length), CW = 0.58, PAD = 0.86;
   const fh = Math.min(bh * PAD, (bw * PAD) / (n * CW));   // horizontal
   const fv = Math.min(bw * PAD, (bh * PAD) / (n * CW));   // rotated 90°
-  return { fs: Math.min(11, Math.max(fh, fv)), vertical: fv > fh };
+  return { fs: Math.min(cap, Math.max(fh, fv)), vertical: fv > fh };
 }
 
 let nm = null;            // node-MAP float-win instance (scaled svg overview)
@@ -144,9 +146,11 @@ function renderNodeList() {
 // Refresh whichever overview panels are open — called wherever the graph changes.
 function renderNodeViews() { renderNodeMap(); renderNodeList(); }
 
-function nmRenderMap(body) {
+// Gather every placed, rendered node + its world rect and the content extent. Shared by the
+// live map and the screenshot so both project IDENTICAL geometry (rule: one source of truth).
+function nmMapModel() {
   const ids = [...pos.keys()].filter((id) => nodeEls.has(id) && Number.isFinite(pos.get(id).x));
-  if (!ids.length) { body.innerHTML = `<div class="nm-empty">no nodes</div>`; nmTransform = null; return; }
+  if (!ids.length) return null;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const rects = ids.map((id) => {
     const p = pos.get(id), w = nw(id), h = nh(id);
@@ -154,16 +158,20 @@ function nmRenderMap(body) {
     maxX = Math.max(maxX, p.x + w); maxY = Math.max(maxY, p.y + h);
     return { id, x: p.x, y: p.y, w, h };
   });
-  // Resizing drives WIDTH only; the panel height is then locked to the content's aspect
-  // (nmFitPanelHeight) so the map always fills the panel exactly — no empty space.
-  const availW = Math.max(120, (body.clientWidth || 276) - 12), PAD = 8;
-  const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
-  const s = (availW - 2 * PAD) / spanX;        // fit to width; height follows
-  const W = availW, H = spanY * s + 2 * PAD;   // svg wraps content tightly
-  const ox = PAD - minX * s, oy = PAD - minY * s;
-  nmTransform = { ox, oy, s };
-  const X = (v) => ox + v * s, Y = (v) => oy + v * s;
   const labels = new Map(model.nodes().map((n) => [n.id, nodeShort(n)]));
+  return { rects, minX, minY, maxX, maxY, labels };
+}
+
+// Build the map <svg> markup projecting world coords at scale `s` (pad px margin). `cap` is the
+// node-label font ceiling (live = 11; screenshot lifts it so labels reach the readable floor);
+// `titleCap` the same for group headings. Returns { svg, W, H, ox, oy, s }. Pure string build,
+// no DOM and no viewport indicator (that's the live panel's job). Used by BOTH callers.
+function nmBuildMapSvg(m, s, { cap = 11, titleCap = 9, pad = 8 } = {}) {
+  const { rects, minX, minY, maxX, maxY, labels } = m;
+  const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
+  const W = spanX * s + 2 * pad, H = spanY * s + 2 * pad;
+  const ox = pad - minX * s, oy = pad - minY * s;
+  const X = (v) => ox + v * s, Y = (v) => oy + v * s;
   // Build edges from the ROUTED geometry (orthogonal polylines), never the live DOM paths
   // which can be mid-bezier during a morph. Uncached links fall back to a straight segment —
   // still never a bezier. World coords, reprojected by one group transform (same as X/Y).
@@ -179,7 +187,7 @@ function nmRenderMap(body) {
     const lbl = labels.get(r.id) || r.id;
     const rect = `<rect class="nm-n${r.id === selectedNodeId ? " sel" : ""}" data-id="${esc(r.id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${nmColor(r.id)}"><title>${esc(lbl)}</title></rect>`;
     // size the label to fit; rotate it 90° when that lets it be bigger; hide if it'd be unreadable
-    const f = nmFit(lbl, bw, bh);
+    const f = nmFit(lbl, bw, bh, cap);
     const text = f.fs >= 3
       ? `<text class="nm-lbl" x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" font-size="${f.fs.toFixed(1)}"${f.vertical ? ` transform="rotate(90 ${cx.toFixed(1)} ${cy.toFixed(1)})"` : ""}>${esc(lbl)}</text>`
       : "";
@@ -209,7 +217,7 @@ function nmRenderMap(body) {
     // font to it (bandH*s) drove fs negative and hid EVERY heading. The plate is opaque and drawn
     // last (nm-titles on top), so a fixed readable size sitting slightly over the first node row
     // is fine — that's the canvas title-bar idiom. Hide only when too narrow to read.
-    const fs = Math.min(9, (w - 6) / Math.max(1, len * 0.58));
+    const fs = Math.min(titleCap, (w - 6) / Math.max(1, len * 0.58));
     if (fs < 4) return "";
     const tw = Math.min(w, len * fs * 0.58 + 6), th = fs + 3;
     const tx = align === "center" ? bx + (w - tw) / 2 : align === "right" ? bx + w - tw : bx;
@@ -220,20 +228,50 @@ function nmRenderMap(body) {
   };
   const titleSvg = groups.superGroupBoxes().map((b) => boxTitle(b, "#cdd3dc", { bottom: true }))   // super outlines run dark -> light text, label bottom-left
     .concat(groups.groupBoxes().map((b) => boxTitle(b, b.outline?.color || "#cdd3dc", { align: b.titleAlign }))).join("");
-  // The viewport indicator is a plain DIV moved with a CSS transform (compositor-only) — it
-  // must NOT be an SVG element whose geometry attributes are rewritten each pan frame, since
-  // that forces a layout, and with this huge DOM each layout is ~3ms (the pan lag).
-  body.innerHTML = `<div class="nm-wrap" style="width:${W.toFixed(1)}px;height:${H.toFixed(1)}px;">
-    <svg class="nm-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+  const svg = `<svg class="nm-svg" width="${W.toFixed(1)}" height="${H.toFixed(1)}" viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" preserveAspectRatio="xMidYMid meet">
       <g class="nm-supers">${superSvg}</g>
       <g class="nm-groups">${groupSvg}</g>
       <g class="nm-edges" transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})">${edgePaths}</g>
       <g class="nm-nodes">${rects.map(node).join("")}</g>
-      <g class="nm-titles">${titleSvg}</g></svg>
-    <div class="nm-vp"></div>
-  </div>`;
+      <g class="nm-titles">${titleSvg}</g></svg>`;
+  return { svg, W, H, ox, oy, s };
+}
+
+function nmRenderMap(body) {
+  const m = nmMapModel();
+  if (!m) { body.innerHTML = `<div class="nm-empty">no nodes</div>`; nmTransform = null; return; }
+  // Resizing drives WIDTH only; the panel height is then locked to the content's aspect
+  // (nmFitPanelHeight) so the map always fills the panel exactly — no empty space.
+  const availW = Math.max(120, (body.clientWidth || 276) - 12), PAD = 8;
+  const spanX = Math.max(1, m.maxX - m.minX);
+  const s = (availW - 2 * PAD) / spanX;   // fit to width; height follows
+  const { svg, W, H, ox, oy } = nmBuildMapSvg(m, s, { cap: 11, pad: PAD });
+  nmTransform = { ox, oy, s };
+  // The viewport indicator is a plain DIV moved with a CSS transform (compositor-only) — it
+  // must NOT be an SVG element whose geometry attributes are rewritten each pan frame, since
+  // that forces a layout, and with this huge DOM each layout is ~3ms (the pan lag).
+  body.innerHTML = `<div class="nm-wrap" style="width:${W.toFixed(1)}px;height:${H.toFixed(1)}px;">${svg}<div class="nm-vp"></div></div>`;
   nmUpdateViewport();
   nmFitPanelHeight(H);   // shrink/grow the panel height to the content -> no empty space
+}
+
+// Build a standalone node-map SVG sized so the SMALLEST node label renders at `floor` px.
+// Each label's fitted size grows linearly with the scale `s`, so the binding (smallest-fit)
+// node fixes `s = floor / min(per-node fit at s=1)`; with the font cap lifted every label then
+// lands at `floor` or larger. Returns { svg, W, H } or null when there are no nodes. The
+// caller rasterises it (the .nm-* classes are global CSS, so it must render attached).
+function nodemapShot({ floor = 13, titleCap = 16, pad = 16 } = {}) {
+  const m = nmMapModel();
+  if (!m) return null;
+  let minFit = Infinity;
+  for (const r of m.rects) {
+    const lbl = m.labels.get(r.id) || r.id;
+    const fit = nmFit(lbl, Math.max(2, r.w), Math.max(2, r.h), Infinity).fs;   // size at s=1
+    if (fit > 0) minFit = Math.min(minFit, fit);
+  }
+  if (!Number.isFinite(minFit) || minFit <= 0) return null;
+  const { svg, W, H } = nmBuildMapSvg(m, floor / minFit, { cap: Infinity, titleCap, pad });
+  return { svg, W, H };
 }
 
 // Lock the panel height to the map content (map mode) so resizing width never leaves a
@@ -371,5 +409,5 @@ export {
   nmColor, nodeLabel, nodeShort, nmFit, nm, nl, nmTransform, nmState, nlState,
   buildNodeMap, buildNodeList, setNodeMapVisible, setNodeListVisible, nmSyncSelection,
   renderNodeMap, renderNodeList, renderNodeViews, nmRenderMap, nmFitPanelHeight,
-  nmRenderList, graphBox, nmUpdateViewport,
+  nmRenderList, graphBox, nmUpdateViewport, nodemapShot,
 };

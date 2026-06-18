@@ -188,6 +188,15 @@ export function cutoutUrl(game, name) {
   return `/api/item/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
 
+// POST a rendered node-canvas PNG (Blob) -> stashed under .trash/ on the server.
+// `view` ("canvas" whole graph | "viewport" on-screen) tags the saved filename.
+// Returns { path, name }. OCR_MS deadline: a big graph can take a moment to encode.
+export async function stashScreenshot(game, blob, view = "canvas") {
+  const r = await tfetch(`/api/screenshot/${encodeURIComponent(game)}?view=${encodeURIComponent(view)}`,
+    { method: "POST", headers: { "Content-Type": "image/png" }, body: blob }, OCR_MS);
+  return ok(r, "screenshot").then((x) => x.json());
+}
+
 // Read one item's frozen cutout with the current settings -> { cutout:[w,h],
 // fields:{id:{raw,value,confidence,substituted,box}}, tells:[...], valid, cell }.
 export async function itemRead(profile, game, win, item) {
