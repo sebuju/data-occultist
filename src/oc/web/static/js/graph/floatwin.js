@@ -266,7 +266,9 @@ export function createFloatWin({
   const body = el.querySelector(".fw-body");
 
   if (Number.isFinite(state.w)) el.style.width = `${state.w}px`;
-  if (Number.isFinite(state.h)) el.style.height = `${state.h}px`;
+  // height only for auto-fit / user-sized panels; content-driven panels stay CSS-sized even if
+  // a stale state.h was carried in (else they spawn pinned at min-height — "resets to nothing").
+  if (Number.isFinite(state.h) && (autoFit || state.userSized)) el.style.height = `${state.h}px`;
 
   const save = () => onPersist && onPersist();
 
@@ -297,7 +299,12 @@ export function createFloatWin({
   function stashSize() {
     if (el.hidden || state.collapsed || !el.offsetWidth) return;
     state.w = el.offsetWidth;   // every panel (docked or not) owns its width now
-    state.h = el.offsetHeight;
+    // Height is the CSS/content-driven axis for non-autoFit panels until the user manually
+    // resizes it (userSized). Stashing the TRANSIENT height of an empty/mid-render body (a
+    // re-render briefly empties it -> ResizeObserver fires at min-height) would pin that value
+    // via applySize and collapse the panel to min-height — the inspector "resets to nothing"
+    // bug. Only persist height once it's genuinely owned: auto-fit or a manual resize.
+    if (autoFit || state.userSized) state.h = el.offsetHeight;
   }
 
   // Auto-fit the panel HEIGHT to its content — the ONE shared height-fit for every panel
@@ -324,8 +331,10 @@ export function createFloatWin({
     // CSS-preset width (state.w null) wider than the viewport -> cap it so it never spawns off-screen.
     // Inline-only (don't write state.w), so a reset still falls back to the per-panel CSS preset.
     else if (!el.hidden && el.offsetWidth > maxW) el.style.width = `${maxW}px`;
-    // height only when expanded — collapsed height is owned by applyCollapsed (auto = header)
-    if (!state.collapsed && Number.isFinite(state.h)) { const h = Math.min(state.h, maxH); el.style.height = `${h}px`; state.h = h; }
+    // height only when expanded — collapsed height is owned by applyCollapsed (auto = header).
+    // Never pin height on a content-driven panel that the user hasn't resized: leave it CSS/
+    // content-sized (a stale state.h would otherwise collapse it — the "resets to nothing" bug).
+    if (!state.collapsed && Number.isFinite(state.h) && (autoFit || state.userSized)) { const h = Math.min(state.h, maxH); el.style.height = `${h}px`; state.h = h; }
     if (Number.isFinite(state.x) && Number.isFinite(state.y)) place(state.x, state.y);
   }
 
