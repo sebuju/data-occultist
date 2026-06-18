@@ -33,6 +33,17 @@ body.pretty-view .logbar {
 }
 body.pretty-view .pw-edge-trigger.bottom:hover ~ .logbar,
 body.pretty-view .logbar:hover { transform: translateY(0); }
+/* decorative cauldron mark: only in pretty VIEW mode, pinned bottom-right, small + faint so it
+   reads as a watermark, not a control. Non-interactive. */
+.pw-cauldron-mark { display: none; }
+body.pretty-view .pw-cauldron-mark {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    position: fixed; right: 18px; bottom: 14px; z-index: 9200;
+    opacity: .28; pointer-events: none; user-select: none;
+}
+.pw-cauldron-mark svg { width: 96px; height: 96px; overflow: visible; }
+.pw-cauldron-label { font-size: 11px; letter-spacing: .18em; text-transform: uppercase;
+    color: #38ada9; }
 .pw-surface { position: relative; min-width: 100%; min-height: 100%; }
 /* dots sit ON the snap lines (multiples of GRID=20): the gradient dot is centred in its 20px
    tile (at 10,10), so shift the pattern half a cell to land each dot at 0/20/40 — where a

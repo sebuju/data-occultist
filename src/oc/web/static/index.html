@@ -17,6 +17,24 @@
     <link rel="stylesheet" href="/floatwin.css" />
 </head>
 <body spellcheck="false">
+    <!-- Cauldron mark, defined ONCE as an SVG sprite so every instance (boot veil, pretty
+         view-mode corner) is a <use>, never a copied path set. Visual cl-* classes live in
+         controls.css and style the cloned content wherever it's referenced. -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+        <symbol id="cauldron-mark" viewBox="0 0 100 100" overflow="visible">
+            <path class="cl-pot" d="M22 48 H78 L71 80 A5 5 0 0 1 66 85 H34 A5 5 0 0 1 29 80 Z" />
+            <ellipse class="cl-rim" cx="50" cy="48" rx="28" ry="7" />
+            <path class="cl-legs" d="M34 85 L30 95 M66 85 L70 95" />
+            <g class="cl-bubbles">
+                <circle class="cl-bubble" cx="40" cy="46" r="4"   style="--d:0s" />
+                <circle class="cl-bubble" cx="52" cy="46" r="6"   style="--d:.5s" />
+                <circle class="cl-bubble" cx="60" cy="46" r="4.5" style="--d:1s" />
+                <circle class="cl-bubble" cx="45" cy="46" r="3.5" style="--d:1.5s" />
+                <circle class="cl-bubble" cx="56" cy="46" r="3.5" style="--d:.8s" />
+                <circle class="cl-bubble" cx="48" cy="46" r="3"   style="--d:1.9s" />
+            </g>
+        </symbol>
+    </svg>
     <!-- Full-page veil shown from FIRST PAINT: the boot sequence (stop stray OCR,
        load profile, reopen images, first detect/preview round) makes the page laggy
        and half-interactive — block everything until it has settled. Removed by
@@ -26,21 +44,15 @@
        logbar when the cursor reaches the top / bottom edge. Inert unless body.pretty-view (CSS). -->
     <div class="pw-edge-trigger top"></div>
     <div class="pw-edge-trigger bottom"></div>
+    <!-- decorative cauldron mark + label, bottom-right of pretty view mode only (CSS-gated on body.pretty-view) -->
+    <div class="pw-cauldron-mark" aria-hidden="true">
+        <svg viewBox="0 0 100 100"><use href="#cauldron-mark" /></svg>
+        <div class="pw-cauldron-label">data occultist</div>
+    </div>
     <div id="bootveil">
         <div class="bootveil-box">
-            <svg class="cauldron-loader" viewBox="0 0 100 100" aria-hidden="true">
-                <path class="cl-pot" d="M22 48 H78 L71 80 A5 5 0 0 1 66 85 H34 A5 5 0 0 1 29 80 Z" />
-                <ellipse class="cl-rim" cx="50" cy="48" rx="28" ry="7" />
-                <path class="cl-legs" d="M34 85 L30 95 M66 85 L70 95" />
-                <g class="cl-bubbles">
-                    <circle class="cl-bubble" cx="40" cy="46" r="4"   style="--d:0s" />
-                    <circle class="cl-bubble" cx="52" cy="46" r="6"   style="--d:.5s" />
-                    <circle class="cl-bubble" cx="60" cy="46" r="4.5" style="--d:1s" />
-                    <circle class="cl-bubble" cx="45" cy="46" r="3.5" style="--d:1.5s" />
-                    <circle class="cl-bubble" cx="56" cy="46" r="3.5" style="--d:.8s" />
-                    <circle class="cl-bubble" cx="48" cy="46" r="3"   style="--d:1.9s" />
-                </g>
-            </svg>
+            <svg class="cauldron-loader" viewBox="0 0 100 100" aria-hidden="true"><use href="#cauldron-mark" /></svg>
+            <div class="bootveil-title">data occultist</div>
         </div>
     </div>
     <header class="topbar">

@@ -51,10 +51,12 @@ button.reading::after { content: ""; display: inline-block; width: 9px; height: 
 /* first-load screen loader (boot veil): a bubbling cauldron (same mark as the favicon).
    30dvh — owns the full-screen loading view but stays modest. Pure CSS animation. */
 .cauldron-loader { height: 30dvh; max-width: 90vw; aspect-ratio: 1; overflow: visible; }
-.cauldron-loader .cl-pot  { fill: #0a3d62; }
-.cauldron-loader .cl-rim  { fill: #38ada9; animation: cl-boil 1.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
-.cauldron-loader .cl-legs { stroke: #0a3d62; stroke-width: 3; stroke-linecap: round; fill: none; }
-.cauldron-loader .cl-bubble {
+/* cl-* visual rules are UNSCOPED so they style the cauldron sprite wherever it's <use>d
+   (boot veil + pretty view-mode corner mark), not only inside .cauldron-loader. */
+.cl-pot  { fill: #0a3d62; }
+.cl-rim  { fill: #38ada9; animation: cl-boil 1.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.cl-legs { stroke: #0a3d62; stroke-width: 3; stroke-linecap: round; fill: none; }
+.cl-bubble {
     fill: #f7d794;
     transform-box: fill-box; transform-origin: center;
     animation: cl-rise 2.2s ease-in infinite;
