@@ -163,10 +163,12 @@ def _latest_batch_only(recs: list[dict]) -> list[dict]:
     return [r for r in recs if r.get("_batch") == top]
 
 
-def _join(inputs: list[tuple[str, list[dict]]], join_field: str) -> list[dict]:
-    """Outer-join the source datasets on ``join_field`` (case-insensitive), unioning
-    columns. A row without a join value stays standalone. Earlier inputs win column
-    collisions (their non-empty value is kept); later inputs fill gaps."""
+def _join(inputs: list[tuple[str, list[dict]]], join_field: str, mode: str = "outer") -> list[dict]:
+    """Join the source datasets on ``join_field`` (case-insensitive), unioning columns.
+    ``outer`` (default) keeps every key — a row without a join value stays standalone, and
+    later inputs fill gaps. ``inner`` keeps only keys present in EVERY source (intersection);
+    unjoinable rows are dropped. Earlier inputs win column collisions (their non-empty value
+    is kept); later inputs fill gaps."""
     # A single source isn't joined — pass its rows through 1:1 (stripping bookkeeping cols).
     # Joining by ``join_field`` would collapse same-key rows, which is wrong for a no-dedup
     # dataset that intentionally keeps many rows per name.
@@ -174,7 +176,8 @@ def _join(inputs: list[tuple[str, list[dict]]], join_field: str) -> list[dict]:
         return [{k: v for k, v in rec.items() if k not in _HIDDEN} for rec in inputs[0][1]]
     merged: dict[str, dict] = {}
     order: list[str] = []
-    for ds_id, recs in inputs:
+    seen_in: dict[str, set] = {}   # join key -> set of source ids that contributed it (inner mode)
+    for idx, (ds_id, recs) in enumerate(inputs):
         for rec in recs:
             row = {k: v for k, v in rec.items() if k not in _HIDDEN}
             kv = str(row.get(join_field, "")).strip().lower()
@@ -183,6 +186,7 @@ def _join(inputs: list[tuple[str, list[dict]]], join_field: str) -> list[dict]:
                 merged[key] = row
                 order.append(key)
                 continue
+            seen_in.setdefault(kv, set()).add(idx)
             if kv in merged:
                 base = merged[kv]
                 for k, v in row.items():
@@ -191,6 +195,10 @@ def _join(inputs: list[tuple[str, list[dict]]], join_field: str) -> list[dict]:
             else:
                 merged[kv] = row
                 order.append(kv)
+    if mode == "inner":
+        # keep only real join keys (not the unjoinable \x00-prefixed standalones) seen in EVERY source
+        n = len(inputs)
+        order = [k for k in order if k in seen_in and len(seen_in[k]) == n]
     return [merged[k] for k in order]
 
 
@@ -204,7 +212,7 @@ def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
     # rest of the pipeline only ever sees the latest pass.
     if getattr(sub, "latest_batch", False):
         inputs = [(ds, _latest_batch_only(recs)) for ds, recs in inputs]
-    rows = _join(inputs, sub.join_field or "name")
+    rows = _join(inputs, sub.join_field or "name", getattr(sub, "join_mode", "outer") or "outer")
     for row in rows:
         apply_derived(row, sub.derived)
     rows = [r for r in rows if all(match_rule(r, f) for f in sub.filters if f.field)]

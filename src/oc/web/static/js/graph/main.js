@@ -1473,6 +1473,11 @@ function subConfigHTML(s) {
     const joinRow = inputs.length > 1
         ? `${labCell("join on", "shared field the sources are joined on")}<select class="sv-join">${joinOpts}</select>`
         : "";
+    // outer (keep every key) vs inner (only keys present in every source) — only matters with 2+ sources
+    const jmode = model.subsetJoinMode(s.id);
+    const joinModeRow = inputs.length > 1
+        ? `${labCell("join", "outer = keep every key; inner = only keys present in every source")}<select class="sv-jmode"><option value="outer"${jmode === "outer" ? " selected" : ""}>outer (all keys)</option><option value="inner"${jmode === "inner" ? " selected" : ""}>inner (in every source)</option></select>`
+        : "";
     const aggOpts = AGGREGATES.map((a) => `<option${a === model.subsetAggregate(s.id) ? " selected" : ""}>${a}</option>`).join("");
     // the "many →" collapse only does anything when an INPUT dataset dedups (a no-dedup dataset
     // already serves one row per read) — show it only then.
@@ -1497,9 +1502,10 @@ function subConfigHTML(s) {
     <div class="sub-sec lab-grid">
       ${labCell("sources", "datasets or subsets, joined on a shared field", true)}<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="sv-addin">${addOpts}</select></span></div>
       ${joinRow}
-      ${labCell("latest batch only", "only pull rows from each source's most recent collection batch (applied before everything else)")}<label class="flab"><input type="checkbox" class="sv-latest" ${s.latest_batch ? "checked" : ""}/></label>
+      ${joinModeRow}
       ${labCell("limit", "cap the number of result rows (0 = no limit)")}<input type="number" class="sv-limit" min="0" step="1" value="${s.limit || 0}" placeholder="0" />
-      ${aggRow}</div>
+      ${aggRow}
+      ${labCell("latest batch only", "only pull rows from each source's most recent collection batch (applied before everything else)")}<label class="flab"><input type="checkbox" class="sv-latest" ${s.latest_batch ? "checked" : ""}/></label></div>
     <div class="sub-sec"><div class="sub-lbl">filters <span class="muted">(all must pass)</span></div>${filters}
       <button class="sub-addf">+ filter</button></div>
     <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">({col} text · {=expr} math · mix freely)</span></div>${derived}
@@ -1612,6 +1618,7 @@ function wireSubset(div, s) {
         model.removeSubsetInput(s.id, b.dataset.ds); render(); restructure();
     }));
     div.querySelector(".sv-join")?.addEventListener("change", (e) => { model.setJoinField(s.id, e.target.value.trim()); recompute(); });
+    div.querySelector(".sv-jmode")?.addEventListener("change", (e) => { model.setSubsetJoinMode(s.id, e.target.value); recompute(); });
     div.querySelector(".sv-agg")?.addEventListener("change", (e) => { model.setSubsetAggregate(s.id, e.target.value); recompute(); });
     div.querySelector(".sv-latest")?.addEventListener("change", (e) => { model.setSubsetLatestBatch(s.id, e.target.checked); recompute(); });
     div.querySelector(".sv-limit")?.addEventListener("change", (e) => { model.setSubsetLimit(s.id, e.target.value); e.target.value = s.limit || 0; recompute(); });
@@ -2192,6 +2199,19 @@ function zoomToNode(id) { panZoomTo(id, { fit: true }); }
 
 // ---- per-node interaction -------------------------------------------------
 
+// The node-title id input (`input.gi-id`) is "click-to-arm": a first click only
+// selects the node (focus is blocked); a SECOND click on the same already-armed
+// input focuses it for editing. Any mousedown elsewhere disarms + blurs, so an id
+// is never edited by accident while panning/selecting. One global capture listener
+// drives the disarm (fires before the node's own bubble-phase mousedown).
+let armedGiId = null;
+function disarmGiId() {
+    if (armedGiId) { armedGiId.blur(); armedGiId = null; }
+}
+document.addEventListener("mousedown", (ev) => {
+    if (armedGiId && ev.target !== armedGiId) disarmGiId();
+}, true);
+
 function wireNode(div, n) {
     // drag-move from the node header / frame, NOT the body — so interacting with body content
     // (selects, chips, tables) never drags the node. The header + outer padding stay grab zones.
@@ -2221,6 +2241,12 @@ function wireNode(div, n) {
         // grabbing one INSIDE keeps the set so the drag moves the whole selection.
         if (!selected.has(n.id)) clearMultiSelect();
         focusNode(n.id);   // select on click / drag start (every node is focusable)
+        // id input is click-to-arm: block native focus on the FIRST click (just arm + select);
+        // a second click on the same armed input falls through to native focus → editing.
+        if (handle && handle.matches?.("input.gi-id") && handle !== armedGiId) {
+            ev.preventDefault();   // suppress focus/caret on this click
+            armedGiId = handle;
+        }
         if (handle) dragFromHandle(n.id, ev, div, handle);   // drag past threshold, else click
         else startMove(n.id, ev);
     });

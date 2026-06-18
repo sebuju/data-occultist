@@ -33,29 +33,25 @@ pages:
     type: table
     config:
       columns:
-      - key: name
-        enabled: true
-      - key: price
-        enabled: true
-      - key: live_ask
+      - key: slug
+        enabled: false
+      - key: _seq
+        enabled: false
+      - key: live_sellers
         enabled: false
       - key: live_median
         enabled: false
-      - key: live_sellers
-        enabled: true
-      - key: price_median
-        enabled: false
       - key: price_min
         enabled: false
-      - key: updated
+      - key: live_ask
         enabled: false
       - key: volume
         enabled: false
-      - key: slug
+      - key: price_median
         enabled: false
       - key: key
         enabled: false
-      - key: _seq
+      - key: updated
         enabled: false
       pageSize: 4
       sortDesc: true
@@ -63,7 +59,7 @@ pages:
       paging: false
     binding:
       src: subset
-      id: relic_rewards_live
+      id: relic_rewards_price_from_stored
     anchor:
       to: ''
       corner: tc

@@ -685,6 +685,7 @@ subsets:
   - master
   - prices_statistics
   join_field: name
+  join_mode: outer
   aggregate: latest
   filters:
   - field: slug
@@ -712,6 +713,7 @@ subsets:
   - master
   - prices_live
   join_field: name
+  join_mode: outer
   aggregate: latest
   filters:
   - field: slug
@@ -742,6 +744,7 @@ subsets:
   datasets:
   - prices_relic_live
   join_field: name
+  join_mode: outer
   aggregate: latest
   filters: []
   derived:
@@ -769,19 +772,55 @@ subsets:
   datasets:
   - relics_offered
   join_field: name
+  join_mode: outer
   aggregate: latest
   filters:
   - field: name
     op: nonempty
     value: ''
   derived: []
-  hidden_columns: []
+  hidden_columns:
+  - _seq
+  - key
   enrich: []
   sort: []
   sort_by: ''
   sort_desc: false
   latest_batch: true
   limit: 4
+  config_collapsed: true
+- id: relic_rewards_price_from_stored
+  dataset: ''
+  datasets:
+  - relic_rewards_limit
+  - prices_live
+  join_field: name
+  join_mode: inner
+  aggregate: latest
+  filters: []
+  derived:
+  - name: price
+    template: '{price_min} platinium'
+  hidden_columns:
+  - total
+  - volume
+  - updated
+  - slug
+  - _seq
+  - count
+  - _item
+  - live_sellers
+  - live_median
+  - price_median
+  - live_ask
+  - key
+  - price_min
+  enrich: []
+  sort: []
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
   config_collapsed: true
 price_nodes:
 - id: price
@@ -827,6 +866,15 @@ triggers:
   - relic_rewards_limit
   targets:
   - relic_live
+  enabled: false
+  sound: blip.wav
+  volume: 0.25
+- id: trigger
+  kind: on_change
+  interval_s: 300.0
+  watch:
+  - relic_rewards_price_from_stored
+  targets: []
   enabled: true
   sound: blip.wav
   volume: 0.25
@@ -1123,6 +1171,18 @@ layout:
       w: 360.0
       h: 320.0
       collapsed: false
+    sub:relic_rewards_price_from_stored:
+      x: 740.0
+      y: 980.0
+      w: 440.0
+      h: 300.0
+      collapsed: false
+    trigger:trigger:
+      x: 1220.0
+      y: 980.0
+      w: 340.0
+      h: 320.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -1212,9 +1272,7 @@ layout:
       - key
       - _seq
       - name
-      sorts:
-      - col: name
-        dir: -1
+      sorts: []
     ds:prices_relic_live:
       widths: {}
       sorts:
@@ -1235,6 +1293,14 @@ layout:
     ds:prices_statistics:
       sorts:
       - col: _seq
+        dir: -1
+    view:relic_rewards_stored:
+      sorts:
+      - col: price
+        dir: -1
+    view:relic_rewards_price_from_stored:
+      sorts:
+      - col: price
         dir: -1
   open_images:
   - equipment_window
@@ -1382,6 +1448,8 @@ layout:
     - sub:relic_rewards_limit
     - price:relic_live
     - trigger:relic_watch
+    - sub:relic_rewards_price_from_stored
+    - trigger:trigger
     outline:
       color: '#e6c25a'
       style: none

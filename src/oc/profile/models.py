@@ -701,6 +701,9 @@ class SubsetDef(BaseModel):
     dataset: str = ""               # legacy single source (kept; folds into ``datasets``)
     datasets: list[str] = Field(default_factory=list)   # sources to join (on ``join_field``)
     join_field: str = "name"        # field the datasets are joined on
+    # ``outer`` keeps every key (gaps filled from later inputs); ``inner`` keeps only keys
+    # present in EVERY joined source (intersection). Ignored for a single source.
+    join_mode: str = "outer"
     # How each dataset input's MANY observations per key collapse to one value when this
     # view reads them — the view's call, not the dataset's (one dataset can feed two views
     # that want latest vs sum). ``latest|first|sum|mean|max|min``.

@@ -56,6 +56,7 @@ export function nodeInputs(model) {
         add(`sub:${s.id}`, s.id, `subsets[${s.id}].limit`, "limit", N(0, null, 1));
         add(`sub:${s.id}`, s.id, `subsets[${s.id}].aggregate`, "aggregate", ENUM("latest", "first", "sum", "mean", "max", "min"));
         add(`sub:${s.id}`, s.id, `subsets[${s.id}].join_field`, "join field", STR);
+        add(`sub:${s.id}`, s.id, `subsets[${s.id}].join_mode`, "join mode", ENUM("outer", "inner"));
     }
     for (const d of p.datasets || []) {
         add(`ds:${d.id}`, d.id, `datasets[${d.id}].aggregate`, "aggregate", ENUM("latest", "first", "sum", "mean", "max", "min"));

@@ -382,7 +382,7 @@ export class GraphModel {
         let n = 1, id = base;
         while (this.subsetDef(id)) id = ds ? `${ds}_view${++n}` : `subset_${++n}`;
         (this.profile.subsets = this.profile.subsets || []).push({
-            id, dataset: "", datasets: ds ? [ds] : [], join_field: "name",
+            id, dataset: "", datasets: ds ? [ds] : [], join_field: "name", join_mode: "outer",
             filters: [], derived: [], hidden_columns: [], enrich: [], sort: [], sort_by: "", sort_desc: false, latest_batch: false, limit: 0,
         });
         return id;
@@ -425,6 +425,9 @@ export class GraphModel {
         if (s) s.datasets = (s.datasets || []).filter((d) => d !== ds);
     }
     setJoinField(id, field) { const s = this.subsetDef(id); if (s) s.join_field = field || "name"; }
+    // outer = keep every key; inner = keep only keys present in every joined source
+    subsetJoinMode(id) { const s = this.subsetDef(id); return (s && s.join_mode) || "outer"; }
+    setSubsetJoinMode(id, mode) { const s = this.subsetDef(id); if (s) s.join_mode = mode === "inner" ? "inner" : "outer"; }
     // how a dataset input's MANY observations collapse to one value when THIS subset reads it
     subsetAggregate(id) { const s = this.subsetDef(id); return (s && s.aggregate) || "latest"; }
     setSubsetAggregate(id, agg) { const s = this.subsetDef(id); if (s) s.aggregate = agg || "latest"; }
