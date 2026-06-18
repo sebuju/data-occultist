@@ -11,7 +11,7 @@ button, input, select, textarea, optgroup, option {
 input, select, textarea {
   font: inherit;
 }
-input, select {
+input, select, textarea {
   width: 100%;
   padding: 6px 8px;
   background: var(--bg);
@@ -19,6 +19,7 @@ input, select {
   border: 1px solid var(--line);
   border-radius: 4px;
 }
+textarea { resize: vertical; min-height: 56px; line-height: 1.4; }
 .topbar input, .topbar select { width: auto; }
 :is(select, input, textarea):not(.sv-addin):focus-visible {
   outline: 1px solid #bababa;
