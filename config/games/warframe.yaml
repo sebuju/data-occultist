@@ -357,6 +357,11 @@ windows:
   item_tells: []
 - id: mod_window
   dataset: mods
+  key:
+    fields:
+    - mod_name
+    sep: '|'
+    case_sensitive: false
   fields:
   - id: mod_name
     type: text
@@ -655,7 +660,11 @@ datasets:
   dedup: false
 - id: mods
   aggregate: latest
-  key_field: mod_name
+  key_field: ''
+  dedup: true
+- id: prices
+  aggregate: latest
+  key_field: ''
   dedup: true
 subsets:
 - id: statistic_prices_joined
@@ -801,6 +810,18 @@ triggers:
   targets:
   - relic_live
   enabled: true
+- id: trigger
+  kind: interval
+  interval_s: 300.0
+  watch: []
+  targets: []
+  enabled: true
+- id: trigger_2
+  kind: interval
+  interval_s: 300.0
+  watch: []
+  targets: []
+  enabled: true
 dictionaries:
 - id: wiki
   name: wiki
@@ -811,86 +832,86 @@ layout:
     game:
       x: -1400.0
       y: -760.0
-      w: 0.0
-      h: 0.0
+      w: 340.0
+      h: 140.0
       collapsed: false
     dict:wiki:
       x: -1380.0
       y: -600.0
-      w: 0.0
-      h: 0.0
+      w: 300.0
+      h: 360.0
       collapsed: false
     ds:master:
       x: -1020.0
       y: -760.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 380.0
       collapsed: false
     price:price:
-      x: -180.0
-      y: 720.0
-      w: 0.0
-      h: 0.0
+      x: -200.0
+      y: 1040.0
+      w: 360.0
+      h: 180.0
       collapsed: false
     ds:prices_live:
       x: -180.0
       y: 1460.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 380.0
       collapsed: false
     ds:prices_statistics:
-      x: -180.0
-      y: 300.0
-      w: 0.0
-      h: 0.0
+      x: -200.0
+      y: 500.0
+      w: 360.0
+      h: 380.0
       collapsed: false
     sub:live_prices_joined:
       x: 240.0
       y: 1460.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 440.0
       collapsed: false
     sub:statistic_prices_joined:
-      x: 320.0
-      y: 300.0
-      w: 0.0
-      h: 0.0
+      x: 300.0
+      y: 500.0
+      w: 360.0
+      h: 440.0
       collapsed: false
     price:wf_market_live:
       x: -180.0
       y: 1860.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 220.0
       collapsed: false
     ds:prices_relic_live:
-      x: 1680.0
+      x: 1360.0
       y: 2020.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 380.0
       collapsed: false
     sub:relic_rewards_live:
-      x: 1000.0
+      x: 880.0
       y: 1460.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 220.0
       collapsed: false
     price:relic_live:
-      x: 1680.0
+      x: 1360.0
       y: 1760.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 220.0
       collapsed: false
     trigger:owned_refresh:
       x: -180.0
       y: 2100.0
-      w: 0.0
-      h: 0.0
+      w: 280.0
+      h: 260.0
       collapsed: false
     trigger:relic_watch:
-      x: 1680.0
+      x: 1360.0
       y: 1460.0
-      w: 0.0
-      h: 0.0
+      w: 280.0
+      h: 280.0
       collapsed: false
     win:relic_window:
       x: 1560.0
@@ -901,42 +922,42 @@ layout:
     prev:relic_window:
       x: 1560.0
       y: 3880.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 320.0
       collapsed: false
     det:relic_window:detect_1:
       x: 2140.0
       y: 3040.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 340.0
       collapsed: false
     item:relic_window:item_3:
       x: 1140.0
       y: 3040.0
       collapsed: false
     sub:relic_rewards_limit:
-      x: 1000.0
-      y: 1760.0
-      w: 0.0
-      h: 0.0
+      x: 880.0
+      y: 1700.0
+      w: 340.0
+      h: 320.0
       collapsed: false
     ds:relics_offered:
-      x: 1000.0
-      y: 2000.0
-      w: 0.0
-      h: 0.0
+      x: 880.0
+      y: 2040.0
+      w: 360.0
+      h: 380.0
       collapsed: false
     ds:mods:
       x: -380.0
       y: -760.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 380.0
       collapsed: false
     prev:mod_window:
       x: -1460.0
       y: 4040.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 320.0
       collapsed: false
     win:mod_window:
       x: -1460.0
@@ -955,14 +976,14 @@ layout:
     sb:equipment_window:scrollbar:
       x: -1960.0
       y: 1100.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 120.0
       collapsed: false
     prev:equipment_window:
       x: -1680.0
       y: 1500.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 320.0
       collapsed: false
     item:equipment_window:arcane:
       x: -3080.0
@@ -977,20 +998,20 @@ layout:
     det:equipment_window:detect_2:
       x: -1960.0
       y: 380.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 340.0
       collapsed: false
     det:equipment_window:detect_1:
       x: -1960.0
       y: 740.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 340.0
       collapsed: false
     det:mod_window:detect_heading:
       x: -1700.0
       y: 3040.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 340.0
       collapsed: false
     item:mod_window:drop_item:
       x: -3060.0
@@ -999,68 +1020,68 @@ layout:
     fld:equipment_window:normal:name:
       x: -2300.0
       y: 380.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 700.0
       collapsed: false
     fld:equipment_window:normal:count:
       x: -2660.0
       y: 380.0
-      w: 0.0
-      h: 0.0
+      w: 320.0
+      h: 540.0
       collapsed: false
     fld:equipment_window:arcane:name:
       x: -2040.0
       y: 1560.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 620.0
       collapsed: false
     fld:equipment_window:arcane:arcane_level:
       x: -2660.0
       y: 1560.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 440.0
       collapsed: false
     fld:equipment_window:arcane:count:
       x: -2400.0
       y: 1560.0
-      w: 0.0
-      h: 0.0
+      w: 320.0
+      h: 540.0
       collapsed: false
     fld:relic_window:item_3:name:
       x: 1140.0
       y: 4020.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 580.0
       collapsed: false
     fld:mod_window:mod:mod_name:
       x: -2300.0
       y: 3040.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 660.0
       collapsed: false
     fld:mod_window:mod:mod_drain:
       x: -2060.0
       y: 3040.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 480.0
       collapsed: false
     fld:mod_window:mod:mod_count:
       x: -2640.0
       y: 3040.0
-      w: 0.0
-      h: 0.0
+      w: 320.0
+      h: 600.0
       collapsed: false
     tell:mod_window:drop_item:tell_3:
       x: -2660.0
       y: 4040.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 180.0
       collapsed: false
     prev:relic_window_3:
       x: 220.0
       y: 3880.0
-      w: 0.0
-      h: 0.0
+      w: 360.0
+      h: 320.0
       collapsed: false
     win:relic_window_3:
       x: 220.0
@@ -1073,26 +1094,44 @@ layout:
     det:relic_window_3:detect_3:
       x: 800.0
       y: 3040.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 340.0
       collapsed: false
     det:relic_window_3:detect_4:
       x: 800.0
       y: 3400.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 340.0
       collapsed: false
     fld:relic_window_3:item_1:name:
       x: -200.0
       y: 4000.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 580.0
       collapsed: false
     det:relic_window:detect_2:
       x: 2140.0
       y: 3400.0
-      w: 0.0
-      h: 0.0
+      w: 220.0
+      h: 340.0
+      collapsed: false
+    trigger:trigger:
+      x: 2740.0
+      y: 3580.0
+      w: 280.0
+      h: 240.0
+      collapsed: false
+    ds:prices:
+      x: 900.0
+      y: 20.0
+      w: 360.0
+      h: 380.0
+      collapsed: false
+    trigger:trigger_2:
+      x: 2780.0
+      y: 3860.0
+      w: 280.0
+      h: 240.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -1186,11 +1225,11 @@ layout:
     ds:prices_relic_live:
       widths:
         name: 131
-        _batch: 54
+        _batch: 58
         _seq: 45
         live_ask: 36
       sorts:
-      - col: _seq
+      - col: _batch
         dir: -1
       order:
       - _batch
@@ -1224,19 +1263,6 @@ layout:
   - mod_window
   - relic_window_3
   groups:
-  - id: group_6
-    title: 'price: live'
-    members:
-    - price:price_2
-    outline:
-      color: '#e6c25a'
-      style: none
-      width: 2
-    bg: '#292722'
-    titleBg: '#e6c25a'
-    titleColor: '#08121d'
-    titleAlign: left
-    titlePos: tl
   - id: group_9
     title: warframe
     members:

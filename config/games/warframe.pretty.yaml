@@ -1,14 +1,15 @@
 version: 1
-theme: {}
+theme:
+  bg: '#000000'
 pages:
 - id: main
   title: Main
   style: {}
   widgets:
   - id: w3
-    x: 60
-    y: 220
-    w: 1040
+    x: 40
+    y: 140
+    w: 600
     h: 120
     z: 8
     style:
@@ -28,6 +29,22 @@ pages:
     type: table
     config:
       columns:
+      - key: name
+        enabled: true
+      - key: live_ask
+        enabled: true
+      - key: live_median
+        enabled: true
+      - key: live_sellers
+        enabled: true
+      - key: price_median
+        enabled: false
+      - key: price_min
+        enabled: false
+      - key: updated
+        enabled: false
+      - key: volume
+        enabled: false
       - key: slug
         enabled: false
       - key: key
@@ -41,3 +58,57 @@ pages:
     binding:
       src: subset
       id: relic_rewards_live
+  - id: w1
+    x: 40
+    y: 560
+    w: 600
+    h: 300
+    z: 2
+    style: {}
+    conditions:
+      rules: []
+    type: panel
+    config:
+      panel: precap
+  - id: w2
+    x: 44
+    y: 280
+    w: 280
+    h: 220
+    z: 3
+    style: {}
+    conditions:
+      rules: []
+    type: panel
+    config:
+      panel: live
+    anchor:
+      to: ''
+      corner: tl
+  - id: w4
+    x: 360
+    y: 280
+    w: 280
+    h: 220
+    z: 4
+    style: {}
+    conditions:
+      rules: []
+    type: panel
+    config:
+      panel: activity
+  - id: w5
+    x: 724
+    y: 140
+    w: 240
+    h: 44
+    z: 5
+    style: {}
+    conditions:
+      rules: []
+    type: label
+    config:
+      text: Label
+    anchor:
+      to: ''
+      corner: tl
