@@ -26,12 +26,18 @@ import os
 import re
 import stat
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 
+from .. import backup
 from .models import DEFAULT_DETECT_THRESHOLD, GameProfile
+
+# Re-exported for callers/tests that imported these from here before the stamp/list/prune
+# machinery + thinning policy were hoisted into the shared snapshot module (oc.backup).
+retention_keep = backup.retention_keep
+_STAMP_FMT = backup.STAMP_FMT
 
 
 def profile_path(profiles_dir: Path | str, name: str) -> Path:
@@ -275,54 +281,11 @@ def backup_path(profiles_dir: Path | str, name: str, stamp: str) -> Path:
     return _backup_dir(profiles_dir, name) / f"{stamp}.yaml"
 
 
-_STAMP_FMT = "%Y%m%d-%H%M%S-%f"
-
-
-def retention_keep(stamps: list[str], now: datetime) -> set[str]:
-    """Thinning policy for backup stamps (``%Y%m%d-%H%M%S-%f``, UTC). Returns the subset
-    to KEEP; the caller deletes the rest. Dense recent, sparse old:
-
-    * keep ALL snapshots from the last 48h (active authoring → fine-grained undo),
-    * keep the newest one per calendar day for the prior 30 days,
-    * keep the newest one per ISO week older than that.
-
-    ``now`` is passed in (not read from the clock) so the policy is pure and testable.
-    Unparseable stamps are kept (never silently delete something we don't understand)."""
-    keep: set[str] = set()
-    keep_buckets: set = set()
-    # Newest first so the first stamp seen in each day/week bucket is the one we keep.
-    for s in sorted(stamps, reverse=True):
-        try:
-            dt = datetime.strptime(s, _STAMP_FMT).replace(tzinfo=timezone.utc)
-        except ValueError:
-            keep.add(s)
-            continue
-        age = now - dt
-        if age.total_seconds() <= 48 * 3600:
-            keep.add(s)                       # all of the last 48h
-            continue
-        if age.days <= 30:
-            bucket = ("D", dt.year, dt.month, dt.day)        # one per calendar day
-        else:
-            iso = dt.isocalendar()
-            bucket = ("W", iso[0], iso[1])                   # one per ISO week
-        if bucket not in keep_buckets:
-            keep_buckets.add(bucket)
-            keep.add(s)
-    return keep
-
-
 def _snapshot(profiles_dir: Path | str, name: str, text: str) -> Path:
     """Snapshot a profile's prior contents into the backup dir, stamped UTC, then thin
-    the dir per ``retention_keep`` so it stays bounded."""
-    # Windows' wall clock has ~15ms resolution, so two snapshots in quick succession can
-    # produce an identical %f stamp; bump by a microsecond until the path is free so a
-    # snapshot never silently overwrites another (the stamp stays parseable + sortable).
-    now = datetime.now(timezone.utc)
-    path = backup_path(profiles_dir, name, now.strftime(_STAMP_FMT))
-    while path.exists():
-        now += timedelta(microseconds=1)
-        path = backup_path(profiles_dir, name, now.strftime(_STAMP_FMT))
+    the dir per the shared thinning policy so it stays bounded."""
+    _, path = backup.new_stamp_path(_backup_dir(profiles_dir, name), "yaml",
+                                    datetime.now(timezone.utc))
     _atomic_write_text(path, text)
     _prune_backups(profiles_dir, name, datetime.now(timezone.utc))
     return path
@@ -331,21 +294,13 @@ def _snapshot(profiles_dir: Path | str, name: str, text: str) -> Path:
 def _prune_backups(profiles_dir: Path | str, name: str, now: datetime) -> None:
     """Delete snapshots outside the ``retention_keep`` policy."""
     d = _backup_dir(profiles_dir, name)
-    if not d.exists():
-        return
-    files = list(d.glob("*.yaml"))
-    keep = retention_keep([p.stem for p in files], now)
-    for p in files:
-        if p.stem not in keep:
-            p.unlink(missing_ok=True)
+    keep = backup.retention_keep([p.stem for p in backup.list_snapshots(d, "yaml")], now)
+    backup.prune(d, "yaml", keep)
 
 
 def list_backups(profiles_dir: Path | str, name: str) -> list[Path]:
     """All snapshots for a profile, oldest first (the stamp sorts chronologically)."""
-    d = _backup_dir(profiles_dir, name)
-    if not d.exists():
-        return []
-    return sorted(d.glob("*.yaml"))
+    return backup.list_snapshots(_backup_dir(profiles_dir, name), "yaml")
 
 
 def backup_meta(path: Path) -> dict:

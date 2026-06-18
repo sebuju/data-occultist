@@ -17,6 +17,7 @@ from .routes import (
     activity,
     bench,
     capture,
+    dbbackup,
     dbschema,
     dictionaries,
     events,
@@ -171,6 +172,14 @@ async def lifespan(_app: FastAPI):
         subscribe(OnChangeFirer(_runner_for))
     except Exception:  # noqa: BLE001 - best-effort
         pass
+    # Daily-on-change database backup: any dataset write may trigger a snapshot if the
+    # newest one is >24h old (the snapshot runs off-thread, never blocking the write).
+    try:
+        from ..store.changes import subscribe as _sub_changes
+        from ..store.db_backup import AutoBackup
+        _sub_changes(AutoBackup(get_settings().data_dir))
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
     yield
     # --- shutdown -------------------------------------------------------------------------
     # Backstop for any stop that ISN'T a signal (e.g. desktop's server.should_exit): flip the
@@ -236,6 +245,7 @@ def create_app() -> FastAPI:
     app.include_router(stats.router)
     app.include_router(screenshot.router)
     app.include_router(dbschema.router)
+    app.include_router(dbbackup.router)
     # Serve the single-page front-end at root.
     app.mount("/", _NoCacheStatic(directory=str(_STATIC), html=True), name="static")
     return app
