@@ -164,23 +164,6 @@ def test_rekey_when_key_config_changes(tmp_path):
     assert {r["key"] for r in s3.records()} == {"1", "2"}
 
 
-def test_state_cache_skips_replay_when_fingerprint_matches(tmp_path, monkeypatch):
-    s = DatasetStore(tmp_path, "g", "d")
-    s.record_seen({"name": "A"})
-    s.save()
-    import oc.store.dataset_store as mod
-    calls = {"n": 0}
-    real = mod.replay
-    def counting(*a, **k):
-        calls["n"] += 1
-        return real(*a, **k)
-    monkeypatch.setattr(mod, "replay", counting)
-    DatasetStore(tmp_path, "g", "d")                              # same key -> cache hit, no replay
-    assert calls["n"] == 0
-    DatasetStore(tmp_path, "g", "d", key=KeySpec(("name", "x")))  # changed -> replay (re-key)
-    assert calls["n"] == 1
-
-
 def test_replay_pure_function():
     evs = [
         ChangeEvent("t1", ChangeOp.add, "x", {"name": "x", "v": 1}, id=1),

@@ -112,16 +112,14 @@ def test_latest_batch_applied_before_limit():
     assert {r["name"] for r in rows} == {"c", "d"}           # only batch 2 survived, limit didn't pull batch 1
 
 
-def test_store_records_expose_latest_batch():
+def test_store_records_expose_latest_batch(tmp_path):
     # the store tags each observation with its batch; records() surfaces the row's max _batch
-    import tempfile
     from oc.store.dataset_store import DatasetStore
-    with tempfile.TemporaryDirectory() as d:
-        s = DatasetStore(d, "g", "ds")
-        s.begin_batch(); s.record_seen({"name": "A"})
-        s.begin_batch(); s.record_seen({"name": "B"})
-        by = {r["name"]: r for r in s.records()}
-        assert by["A"]["_batch"] == 1 and by["B"]["_batch"] == 2
+    s = DatasetStore(tmp_path, "g", "ds")
+    s.begin_batch(); s.record_seen({"name": "A"})
+    s.begin_batch(); s.record_seen({"name": "B"})
+    by = {r["name"]: r for r in s.records()}
+    assert by["A"]["_batch"] == 1 and by["B"]["_batch"] == 2
 
 
 def test_subset_round_trips_through_profile(tmp_path):

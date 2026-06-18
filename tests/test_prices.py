@@ -223,13 +223,13 @@ def test_index_sidecar_written(tmp_path, monkeypatch):
 
 
 def test_price_store_file_distinct_from_prices_dataset(tmp_path, monkeypatch):
-    # regression: PriceStore must NOT use prices.state.json — a "prices" dataset's
-    # DatasetStore writes that path and would clobber the time-series store.
+    # regression: PriceStore (price_store.json) must stay distinct from a "prices" dataset's
+    # store. The dataset now lives in the per-game SQLite DB, so the two can't collide.
     monkeypatch.setattr(price_collector, "fetch_statistics",
                         lambda slug, timeout=30.0: _stats(closed=[("2026-06-08", 10)]))
     sweep_catalogue(tmp_path, "g", "prices", throttle=0, items=[("x", "X")])
     assert (tmp_path / "g" / "price_store.json").exists()
-    assert (tmp_path / "g" / "prices.state.json").exists()        # the dataset's own file
+    assert (tmp_path / "g" / "store.sqlite").exists()             # the dataset's own store
     assert PriceStore(tmp_path, "g").price("x") == 10             # not clobbered
 
 
