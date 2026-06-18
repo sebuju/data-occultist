@@ -36,75 +36,75 @@ export function reportUnreachable(detail = "") { reason = detail || ""; setState
 export function markOffline() { reason = ""; setState(false); }
 
 function setState(up) {
-  if (online === up) return;
-  online = up;
-  overlay(!up);
-  if (up) { clearTimeout(probeTimer); probeTimer = null; }
-  else startProbe();
-  emit();
+    if (online === up) return;
+    online = up;
+    overlay(!up);
+    if (up) { clearTimeout(probeTimer); probeTimer = null; }
+    else startProbe();
+    emit();
 }
 
 // A health ping that BYPASSES tfetch — it must touch the network even while we count as
 // offline, and must NOT recurse back into this module. True iff the server answers.
 async function ping() {
-  try {
-    const r = await fetch(HEALTH_URL, { cache: "no-store", signal: AbortSignal.timeout(5000) });
-    return r.ok;
-  } catch { return false; }
+    try {
+        const r = await fetch(HEALTH_URL, { cache: "no-store", signal: AbortSignal.timeout(5000) });
+        return r.ok;
+    } catch { return false; }
 }
 
 function startProbe() {
-  if (probeTimer) return;
-  const tick = async () => {
-    probeTimer = null;
-    if (online) return;
-    if (await ping()) { setState(true); return; }
+    if (probeTimer) return;
+    const tick = async () => {
+        probeTimer = null;
+        if (online) return;
+        if (await ping()) { setState(true); return; }
+        probeTimer = setTimeout(tick, PROBE_MS);
+    };
     probeTimer = setTimeout(tick, PROBE_MS);
-  };
-  probeTimer = setTimeout(tick, PROBE_MS);
 }
 
 // Manual Retry button: probe once now; dismiss on success, else keep waiting.
 async function retryNow() {
-  if (checking) return;
-  checking = true; setBtnBusy(true);
-  const up = await ping();
-  checking = false; setBtnBusy(false);
-  if (up) setState(true);
+    if (checking) return;
+    checking = true; setBtnBusy(true);
+    const up = await ping();
+    checking = false; setBtnBusy(false);
+    if (up) setState(true);
 }
 
 // ---- overlay (reuses the .startup-halt look) -------------------------------------
 let el = null, btn = null, reasonEl = null;
 
 function ensureEl() {
-  if (el) return;
-  el = document.createElement("div");
-  el.className = "startup-halt offline-overlay";
-  el.hidden = true;
-  // Heading states only what we KNOW (a request didn't get a response); the cause
-  // line below shows the actual failing request/error rather than guessing whether
-  // the server is "down". The probe decides reachable-vs-not and auto-dismisses.
-  el.innerHTML = `<div class="startup-halt-box">
+    if (el) return;
+    el = document.createElement("div");
+    el.className = "startup-halt offline-overlay";
+    el.hidden = true;
+    // Heading states only what we KNOW (a request didn't get a response); the cause
+    // line below shows the actual failing request/error rather than guessing whether
+    // the server is "down". The probe decides reachable-vs-not and auto-dismisses.
+    el.innerHTML = `<div class="startup-halt-box">
     <h3>No response from the backend</h3>
     <p>A request failed and the server isn't answering the health check yet. It may be
        busy, restarting, or unreachable.</p>
     <p class="muted offline-reason"></p>
     <p class="muted">Retrying automatically — all updates are paused until it answers.</p>
     <button class="startup-halt-retry" type="button">retry now</button></div>`;
-  btn = el.querySelector(".startup-halt-retry");
-  reasonEl = el.querySelector(".offline-reason");
-  btn.addEventListener("click", retryNow);
-  document.body.appendChild(el);
+    btn = el.querySelector(".startup-halt-retry");
+    reasonEl = el.querySelector(".offline-reason");
+    btn.addEventListener("click", retryNow);
+    document.body.appendChild(el);
 }
 
 function overlay(show) {
-  ensureEl();
-  if (show) reasonEl.textContent = reason ? `last failure — ${reason}` : "";
-  el.hidden = !show;
+    ensureEl();
+    if (show) reasonEl.textContent = reason ? `last failure — ${reason}` : "";
+    el.hidden = !show;
 }
 
 function setBtnBusy(b) {
-  if (!btn) return;
-  btn.disabled = b;
-  btn.textContent = b ? "checking…" : "retry now";
+    if (!btn) return;
+    btn.disabled = b;
+    btn.textContent = b ? "checking…" : "retry now";
 }

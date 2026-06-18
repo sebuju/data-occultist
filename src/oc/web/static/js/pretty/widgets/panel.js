@@ -18,46 +18,46 @@ const NOOP_ADAPTER = (host) => ({ host, fit() {}, nav() {}, setTitle() {}, setAc
 // generically by borrowing its floatwin body (floatwin.embed — rule 7), so the select can expose
 // them all without a bespoke adapter each.
 const ADAPTERS = {
-  live:     { mount: mountLive,     activate: activateLive,     deactivate: deactivateLive },
-  precap:   { mount: mountPrecap,   activate: showPrecap,       deactivate: hidePrecap },
-  activity: { mount: mountActivity, activate: activateActivity, deactivate: deactivateActivity },
+    live:     { mount: mountLive,     activate: activateLive,     deactivate: deactivateLive },
+    precap:   { mount: mountPrecap,   activate: showPrecap,       deactivate: hidePrecap },
+    activity: { mount: mountActivity, activate: activateActivity, deactivate: deactivateActivity },
 };
 
 // value = the floatwin id (so generic embed can look it up); label = how it reads in the select.
 export const PANEL_OPTIONS = [
-  { value: "live", label: "live" },
-  { value: "precap", label: "precapture" },
-  { value: "activity", label: "tasks" },
-  { value: "stats", label: "stats" },
-  { value: "nodemap", label: "node map" },
-  { value: "nodelist", label: "node list" },
-  { value: "toolbox", label: "toolbox" },
-  { value: "testing", label: "testing" },
+    { value: "live", label: "live" },
+    { value: "precap", label: "precapture" },
+    { value: "activity", label: "tasks" },
+    { value: "stats", label: "stats" },
+    { value: "nodemap", label: "node map" },
+    { value: "nodelist", label: "node list" },
+    { value: "toolbox", label: "toolbox" },
+    { value: "testing", label: "testing" },
 ];
 
 export default {
-  type: "panel",
-  title: "Embed",
-  icon: "▤",
-  defaults: () => ({ config: { panel: "live" }, w: 280, h: 220 }),
-  create(host, widget, ctx) {
-    host.className = "pw-panel";
-    const id = widget.config?.panel || "live";
-    const a = ADAPTERS[id];
-    if (a) {
-      const adapter = NOOP_ADAPTER(host);
-      a.mount(adapter);        // (re-)parent the panel content into THIS widget host
-      a.activate();            // start its poll / render
-      // update fires on every data tick AND when pretty is re-activated — only RECLAIM the root
-      // here (cheap parent check, no-op in steady state), never re-activate (that would re-
-      // subscribe the hub each tick). The shared poll keeps rendering into the moved root.
-      return { update: () => a.mount(adapter), destroy: () => a.deactivate() };
-    }
-    // generic: borrow the floating panel's body (it's built at app start). Some panels (e.g. the
-    // node map) size to their own frame, so they may render small while embedded.
-    const win = floatWins().get(id);
-    if (!win) { host.textContent = `panel "${id}" unavailable`; return { update() {}, destroy() {} }; }
-    win.embed(host);
-    return { update: () => win.reclaim(), destroy: () => win.unembed() };
-  },
+    type: "panel",
+    title: "Embed",
+    icon: "▤",
+    defaults: () => ({ config: { panel: "live" }, w: 280, h: 220 }),
+    create(host, widget, ctx) {
+        host.className = "pw-panel";
+        const id = widget.config?.panel || "live";
+        const a = ADAPTERS[id];
+        if (a) {
+            const adapter = NOOP_ADAPTER(host);
+            a.mount(adapter);        // (re-)parent the panel content into THIS widget host
+            a.activate();            // start its poll / render
+            // update fires on every data tick AND when pretty is re-activated — only RECLAIM the root
+            // here (cheap parent check, no-op in steady state), never re-activate (that would re-
+            // subscribe the hub each tick). The shared poll keeps rendering into the moved root.
+            return { update: () => a.mount(adapter), destroy: () => a.deactivate() };
+        }
+        // generic: borrow the floating panel's body (it's built at app start). Some panels (e.g. the
+        // node map) size to their own frame, so they may render small while embedded.
+        const win = floatWins().get(id);
+        if (!win) { host.textContent = `panel "${id}" unavailable`; return { update() {}, destroy() {} }; }
+        win.embed(host);
+        return { update: () => win.reclaim(), destroy: () => win.unembed() };
+    },
 };

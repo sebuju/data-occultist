@@ -22,14 +22,14 @@ body.pretty-mode #seltoolbar { display: none; }
 body.pretty-view .pw-edge-trigger { pointer-events: auto; }
 
 body.pretty-view .topbar {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 9400;
-  transform: translateY(-100%); transition: transform .18s ease;
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9400;
+    transform: translateY(-100%); transition: transform .18s ease;
 }
 body.pretty-view .pw-edge-trigger.top:hover ~ .topbar,
 body.pretty-view .topbar:hover { transform: translateY(0); }
 
 body.pretty-view .logbar {
-  z-index: 9400; transform: translateY(100%); transition: transform .18s ease;
+    z-index: 9400; transform: translateY(100%); transition: transform .18s ease;
 }
 body.pretty-view .pw-edge-trigger.bottom:hover ~ .logbar,
 body.pretty-view .logbar:hover { transform: translateY(0); }
@@ -176,7 +176,7 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 
 /* node-view "pretty dirty" badge: a node whose input is held by a transient pretty override */
 .gnode .gn-pretty-dirty { font-size: 9px; font-weight: 700; color: #06121f; background: #ff9e64;
-  border-radius: 3px; padding: 0 4px; margin-left: 4px; letter-spacing: 0.03em; }
+    border-radius: 3px; padding: 0 4px; margin-left: 4px; letter-spacing: 0.03em; }
 .gnode:not(.pretty-dirty) .gn-pretty-dirty { display: none; }
 
 /* pretty-dirty controls in the node-view topbar (only shown when overrides exist) */
@@ -189,7 +189,7 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 
 /* per-widget hover delete (edit mode): a red trashcan, top-right, armed two-click confirm */
 .pw-del { position: absolute; top: 3px; right: 3px; z-index: 6; display: none; padding: 2px; line-height: 0;
-  background: rgba(20,22,27,0.88); border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; color: #f7768e; cursor: pointer; }
+    background: rgba(20,22,27,0.88); border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; color: #f7768e; cursor: pointer; }
 .pw-edit:hover > .pw-del { display: inline-flex; }
 .pw-del.armed { background: #f7768e; color: #06121f; }
 

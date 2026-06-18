@@ -12,36 +12,36 @@
 const SEG = /^([A-Za-z_]\w*)(?:\[(.+)\])?$/;
 
 function step(obj, name, key) {
-  const cur = obj == null ? undefined : obj[name];
-  if (key == null) return cur;
-  if (!Array.isArray(cur)) return undefined;
-  return cur.find((e) => e != null && String(e.id) === key);
+    const cur = obj == null ? undefined : obj[name];
+    if (key == null) return cur;
+    if (!Array.isArray(cur)) return undefined;
+    return cur.find((e) => e != null && String(e.id) === key);
 }
 
 // Resolve to the {parent, name} holding the final attribute (so callers can get OR set it),
 // or null if any step is missing or the final segment isn't a plain attribute.
 export function pathParent(profile, path) {
-  const segs = String(path || "").split(".");
-  let parent = profile;
-  for (const s of segs.slice(0, -1)) {
-    const m = SEG.exec(s);
-    if (!m) return null;
-    parent = step(parent, m[1], m[2]);
-    if (parent == null) return null;
-  }
-  const m = SEG.exec(segs[segs.length - 1]);
-  if (!m || m[2] != null) return null;
-  return { parent, name: m[1] };
+    const segs = String(path || "").split(".");
+    let parent = profile;
+    for (const s of segs.slice(0, -1)) {
+        const m = SEG.exec(s);
+        if (!m) return null;
+        parent = step(parent, m[1], m[2]);
+        if (parent == null) return null;
+    }
+    const m = SEG.exec(segs[segs.length - 1]);
+    if (!m || m[2] != null) return null;
+    return { parent, name: m[1] };
 }
 
 export function pathGet(profile, path) {
-  const p = pathParent(profile, path);
-  return p ? p.parent[p.name] : undefined;
+    const p = pathParent(profile, path);
+    return p ? p.parent[p.name] : undefined;
 }
 
 export function pathSet(profile, path, value) {
-  const p = pathParent(profile, path);
-  if (!p) return false;
-  p.parent[p.name] = value;
-  return true;
+    const p = pathParent(profile, path);
+    if (!p) return false;
+    p.parent[p.name] = value;
+    return true;
 }

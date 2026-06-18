@@ -9,17 +9,17 @@
 /* two diagonal lines (short + long) right at the corner: "/" on the right, "\" mirror on
    the left — the classic resize grip */
 .rz-grip { position: absolute; bottom: 1px; width: 14px; height: 14px; z-index: 3;
-  opacity: 0; background-repeat: no-repeat; transition: opacity 0.12s; }
+    opacity: 0; background-repeat: no-repeat; transition: opacity 0.12s; }
 :hover > .rz-grip { opacity: 0.5; }   /* reveal only while hovering the node / panel */
 .rz-grip:hover { opacity: 1; }
 .rz-rgrip { right: 1px; cursor: nwse-resize;
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='13' y1='9' x2='9' y2='13'/><line x1='13' y1='4' x2='4' y2='13'/></g></svg>"); }
+    background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='13' y1='9' x2='9' y2='13'/><line x1='13' y1='4' x2='4' y2='13'/></g></svg>"); }
 .rz-lgrip { left: 1px; cursor: nesw-resize;
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='1' y1='9' x2='5' y2='13'/><line x1='1' y1='4' x2='10' y2='13'/></g></svg>"); }
+    background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='1' y1='9' x2='5' y2='13'/><line x1='1' y1='4' x2='10' y2='13'/></g></svg>"); }
 /* reset-size dot, centred between the two grips — hover-revealed like them */
 .rz-reset { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
-  width: 6px; height: 6px; border-radius: 50%; background: #8a93a3; z-index: 3;
-  opacity: 0; cursor: pointer; transition: opacity 0.12s; display: none; }
+    width: 6px; height: 6px; border-radius: 50%; background: #8a93a3; z-index: 3;
+    opacity: 0; cursor: pointer; transition: opacity 0.12s; display: none; }
 /* the reset dot only exists once a custom size has been set (a node carries .has-size, a
    panel .fw-sized) — there's nothing to reset back to before then. */
 .gnode.has-size:hover > .rz-reset, .floatwin.fw-sized:not(.collapsed):hover > .rz-reset { display: block; opacity: 0.5; }
@@ -55,8 +55,8 @@
 .dpk-pad { padding: 10px 2px; }
 .dpk-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 6px; overflow: auto; max-height: 50vh; }
 .dpk-row {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-  padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
 }
 .dpk-row:last-child { border-bottom: 0; }
 .dpk-row:hover { background: var(--hover); }
@@ -71,13 +71,13 @@
 .vt-bar { display: flex; align-items: center; gap: 9px; flex: none; margin: 6px 0px 9px 0px; }
 .vt-search { flex: 1; min-width: 0; padding: 3px 6px; font-size: var(--fs-sm); }
 .vt-clear { flex: none; width: 22px; height: 22px; min-height: 0; padding: 0; line-height: 1;
-  border: 1px solid var(--line); background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; }
+    border: 1px solid var(--line); background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; }
 .vt-clear:hover { background: var(--danger); color: var(--on-danger); }
 .vt-rows-n { flex: none; width: 5ch; padding: 3px 4px; text-align: right; }
 /* hover-revealed reset: icon only, clears this table's width/order/sort overrides */
 .vt-reset { flex: none; width: 22px; height: 22px; min-height: 0; padding: 0; line-height: 1;
-  font-size: 14px; border: 1px solid var(--line); background: transparent; color: var(--muted);
-  border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity 0.12s, color 0.12s; }
+    font-size: 14px; border: 1px solid var(--line); background: transparent; color: var(--muted);
+    border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity 0.12s, color 0.12s; }
 .vt-host:hover .vt-reset { opacity: 0.55; }
 .vt-reset:hover { opacity: 1; color: var(--text); background: var(--line); }
 .vt-count { flex: none; white-space: nowrap; }
@@ -98,7 +98,7 @@
 .vt-head.vt-reordering .vt-th { cursor: grabbing; }
 .vt-dragcol { opacity: 0.4; }
 .vt-col-marker { position: absolute; top: 0; height: 100%; width: 2px; background: var(--accent);
-  pointer-events: none; z-index: 2; }
+    pointer-events: none; z-index: 2; }
 
 .vt-main { flex: 1 1 auto; min-height: 0; position: relative; }
 .vt-scroll { position: absolute; inset: 0; overflow: scroll; scrollbar-width: none; }
@@ -113,7 +113,7 @@
 
 /* inline row drill-down: parked under the clicked row, set apart from the data rows */
 .vt-detail { position: absolute; left: 0px; right: 0px; z-index: 2; box-sizing: border-box; background: var(--black);
-  cursor: default; }
+    cursor: default; }
 .vt-detail-inner { padding: 6px 8px; overflow-x: auto; }
 .vt-detail-lbl { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 4px; }
 .vt-detail-tbl { width: 100%; }

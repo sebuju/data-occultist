@@ -28,7 +28,7 @@
 .gnode.collapsed { height: auto !important; min-height: 0 !important; resize: none !important; }
 .gnode.collapsed .gn-spin { display: none; }
 .gn-h .collapse { background: transparent; color: var(--muted); padding: 0; min-height: 0; flex: 0 0 auto;
-  width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; }
+    width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; }
 .gn-h .collapse:hover { color: var(--text); }
 .gn-h .collapse svg { width: 16px; height: 16px; display: block; }
 /* collapse + type icon share ONE fixed slot: the type icon shows at rest, the collapse
@@ -69,11 +69,11 @@
 .graphcanvas table, .graphcanvas table * { user-select: text; }
 
 .gnode {
-  position: absolute; width: 220px; pointer-events: auto;   /* re-enable on the card (the #gnodes layer is none) */
-  background: var(--panel); border: 1px solid var(--line);
-  border-radius: 8px; padding: 6px 8px; font-size: var(--fs-base);
-  cursor: grab;                 /* whole card drags; the exceptions below override */
-  user-select: none;            /* don't select text while dragging */
+    position: absolute; width: 220px; pointer-events: auto;   /* re-enable on the card (the #gnodes layer is none) */
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 8px; font-size: var(--fs-base);
+    cursor: grab;                 /* whole card drags; the exceptions below override */
+    user-select: none;            /* don't select text while dragging */
 }
 .gnode.game { width: 340px; }
 /* a field node with fallback rules needs room for the rule row (when + then + value + trash
@@ -89,11 +89,11 @@
 .glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; overflow: hidden; }
 .glab input { margin-top: 2px; }
 .modal-body h4 { margin: 0; color: var(--muted); font-weight: 500; font-size: var(--fs-base); text-transform: uppercase; letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--muted);  }
+    border-bottom: 1px solid var(--muted);  }
 .gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 8px;
-  flex: 0 0 auto;   /* in flex-column host nodes, the header must NOT shrink when content overflows */
-  margin: -7px -8px 6px; padding: 5px 8px; overflow: hidden; position: relative; z-index: 2;
-  background: var(--node-head); border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
+    flex: 0 0 auto;   /* in flex-column host nodes, the header must NOT shrink when content overflows */
+    margin: -7px -8px 6px; padding: 5px 8px; overflow: hidden; position: relative; z-index: 2;
+    background: var(--node-head); border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
 /* collapsed: header IS the whole node. Keep the same top/side margins + border-bottom WIDTH
    as expanded (so toggling never changes its height), but pull the bottom margin to -7 too
    (matching the top) so the header covers the node's bottom padding — no empty strip below.
@@ -104,9 +104,9 @@
    nothing hover-reveals over it anymore). In normal flow now. pointer-events:none + lower z so
    the enable toggle stays clickable. */
 .gn-h .gn-type {
-  font-size: var(--fs-xs); font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
-  color: var(--ntint); background: var(--node-head); padding-left: 8px;
-  pointer-events: none; opacity: 1; transition: opacity .12s ease; z-index: 0; }
+    font-size: var(--fs-xs); font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--ntint); background: var(--node-head); padding-left: 8px;
+    pointer-events: none; opacity: 1; transition: opacity .12s ease; z-index: 0; }
 .gn-h .gn-enable { position: relative; z-index: 1; }
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap; }
 .gnode input.gi { width: 100%; }
@@ -116,20 +116,20 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* labelled field controls — label + input in a 2-col grid so every input
    lines up and shares one width */
 .flab { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 6px;
-  margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap;
-  /* hold every row to one input-control height so slide-toggle rows match text/select rows
+    margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap;
+    /* hold every row to one input-control height so slide-toggle rows match text/select rows
      (the toggle is shorter than an input — without this its row sat lower) */
-  min-height: calc(1.4em + 14px); }
+    min-height: calc(1.4em + 14px); }
 /* field-config sub-heading: groups the inputs under read / dictionary / rules / row role */
 .fgrp { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--line);
-  font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
-  display: flex; align-items: center; justify-content: space-between; }
+    font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+    display: flex; align-items: center; justify-content: space-between; }
 .fgrp:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .fgrp .ruleadd { font-size: var(--fs-xs); line-height: 1; padding: 2px 6px; min-height: 0;
-  text-transform: none; letter-spacing: 0; }
+    text-transform: none; letter-spacing: 0; }
 /* one fallback rule: when + then + value all on a single row, trash at the end */
 .frule { display: flex; flex-wrap: nowrap; gap: 4px; align-items: center; margin-top: 6px;
-  padding: 5px; border: 1px solid var(--line); border-radius: 4px; }
+    padding: 5px; border: 1px solid var(--line); border-radius: 4px; }
 .frule select, .frule .rule-val { flex: 1 1 0; min-width: 0; width: auto; }
 .frule .rule-del { flex: 0 0 auto; }
 .frule-empty { margin-top: 6px; font-size: var(--fs-sm); }
@@ -139,7 +139,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    eat half the row like a 1fr/1fr .flab does. Built from dom.js `labCell`; the cell AFTER each
    .lab is its control. .lab-top pins a label to the top of a control that wraps to many lines. */
 .lab-grid { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 8px;
-  margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
+    margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
 .lab-grid > .lab { white-space: nowrap; }
 .lab-grid > .lab-top { align-self: start; padding-top: 4px; }
 .lab-grid > select, .lab-grid > input, .lab-grid > .tg-secs { width: 100%; min-width: 0; }
@@ -155,12 +155,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* inside a node the toggle adopts the form-input palette so it doesn't pop next to the text
    inputs: --bg track like an input, --line border, on = a soft accent tint (not a bright fill). */
 .gnode input[type="checkbox"] {
-  background-color: var(--bg); border-color: var(--line);
-  background-image: radial-gradient(circle at center, var(--muted) 0 5px, transparent 5.5px);
+    background-color: var(--bg); border-color: var(--line);
+    background-image: radial-gradient(circle at center, var(--muted) 0 5px, transparent 5.5px);
 }
 .gnode input[type="checkbox"]:checked {
-  background-color: color-mix(in srgb, var(--accent) 18%, var(--bg)); border-color: var(--accent);
-  background-image: radial-gradient(circle at center, var(--accent) 0 5px, transparent 5.5px);
+    background-color: color-mix(in srgb, var(--accent) 18%, var(--bg)); border-color: var(--accent);
+    background-image: radial-gradient(circle at center, var(--accent) 0 5px, transparent 5.5px);
 }
 .flab input[type="checkbox"] { justify-self: start; margin-left: 0; margin-right: 0; }
 .gnode .gn-row input:not([type="checkbox"]) { flex: 1 1 0; min-width: 0; }
@@ -177,8 +177,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .win-live input { margin: 0; }
 .gnode .delfield { width: 100%; margin-top: 8px; }
 .gnode .port {
-  position: absolute; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--accent); top: 50%; transform: translateY(-50%); cursor: crosshair; z-index: 2;
+    position: absolute; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); top: 50%; transform: translateY(-50%); cursor: crosshair; z-index: 2;
 }
 .gnode .port.out { right: -4px; background: var(--data); }   /* match the data-line orange */
 .gnode .port.out.sel { background: var(--accent); }   /* edge selected (either end) -> accent */
@@ -249,15 +249,15 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* busy state: just a centred spinner — no dimming scrim over the node (reads fire on every
    edit now, so a full-node dim would flash constantly). The header (z2, set above) stays above it. */
 .gn-spin { position: absolute; inset: 0; z-index: 1; pointer-events: none; border-radius: 8px;
-  opacity: 0; visibility: hidden;
-  transition: opacity 0.18s ease, visibility 0.18s ease; }
+    opacity: 0; visibility: hidden;
+    transition: opacity 0.18s ease, visibility 0.18s ease; }
 /* centre with absolute pos + a fixed margin offset (NOT flexbox) so the ring's rotation is
    layout-independent: while the node is busy it reflows (OCR reads fire), and flex re-centring
    each frame landed the rotation origin on a half-pixel — the ring visibly wobbled. The only
    transform now is the pure rotate, spun about the ring's own centre. */
 .gn-spin::after { content: ""; position: absolute; top: 50%; left: 50%; margin: -15px 0 0 -15px;
-  width: 30px; height: 30px; border-radius: 50%;
-  border: 3px solid #ffffff26; border-top-color: var(--accent); }
+    width: 30px; height: 30px; border-radius: 50%;
+    border: 3px solid #ffffff26; border-top-color: var(--accent); }
 .gnode.busy .gn-spin { opacity: 1; visibility: visible; }
 .gnode.busy .gn-spin::after { animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -270,7 +270,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .imgtools .spacer { flex: 1; }
 .imgtools .tool-div { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
 .win-img .canvas-wrap, .item-img .canvas-wrap { width: 100%; overflow: hidden;
-  border-radius: 4px; margin-top: 4px; }  /* fills the node; node grips resize it. aspect-ratio set per image in JS */
+    border-radius: 4px; margin-top: 4px; }  /* fills the node; node grips resize it. aspect-ratio set per image in JS */
 /* canvas fills the wrap EXACTLY (height:100%, not buffer-intrinsic) so the wrap's
    aspect-ratio box never leaves a dark gap around the image; the buffer ratio already
    matches the wrap ratio, so this stretches nothing. No border — the image is the edge. */
@@ -373,9 +373,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
 .seltoolbar { position: fixed; left: 50%; top: 69px; transform: translateX(-50%);
-  z-index: 200; display: flex; align-items: center; gap: 10px; padding: 6px 10px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-  box-shadow: 0 6px 20px var(--shadow); }
+    z-index: 200; display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 6px 20px var(--shadow); }
 .seltoolbar .sel-count { color: var(--muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 .seltoolbar button { display: inline-flex; align-items: center; gap: 5px; }
 .seltoolbar .sel-ic { display: inline-flex; align-items: center; }
@@ -389,7 +389,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 
 /* ---- rubber-band marquee (screen space, over the canvas) ---- */
 .marquee { position: absolute; z-index: 50; pointer-events: none;
-  border: 1px solid var(--accent); background: var(--accent-bg); border-radius: 2px; }
+    border: 1px solid var(--accent); background: var(--accent-bg); border-radius: 2px; }
 
 /* ---- groups layer (behind nodes + edges) ---- */
 #ggroups { position: absolute; top: 0; left: 0; z-index: 0; }
@@ -401,35 +401,35 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    so it needs no border/radius of its own — just a bottom divider. pointer-events:auto so it
    stays draggable even though the box layer (z0) is below the nodes. */
 .ggroup-title { position: absolute; top: 0; left: 0; right: 0; box-sizing: border-box;
-  display: flex; align-items: center; padding: 9px 15px;
-  font-family: var(--font-mono); font-size: var(--fs-xl); font-weight: 700; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--text); cursor: grab; pointer-events: auto;
-  background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    display: flex; align-items: center; padding: 9px 15px;
+    font-family: var(--font-mono); font-size: var(--fs-xl); font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--text); cursor: grab; pointer-events: auto;
+    background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ggroup-title:active { cursor: grabbing; }
 /* group settings cog — ABSOLUTE at the title's right edge so it's out of the flex flow: it
    never affects the title's padding or fights its text alignment (justify-content). */
 .ggt-cog { position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
-  width: 22px; height: 20px; padding: 0; min-height: 0;
-  display: inline-flex; align-items: center; justify-content: center; line-height: 0;
-  background: transparent; border: 0; color: inherit; cursor: pointer; pointer-events: auto;
-  opacity: 0; transition: opacity .12s; }
+    width: 22px; height: 20px; padding: 0; min-height: 0;
+    display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+    background: transparent; border: 0; color: inherit; cursor: pointer; pointer-events: auto;
+    opacity: 0; transition: opacity .12s; }
 .ggroup-title:hover .ggt-cog { opacity: 0.7; }   /* inherits the title's text colour → tracks the scheme */
 .ggroup-title:hover .ggt-cog:hover { opacity: 1; }
 /* bottom-right resize grip — same look/size as node resize grips (.rz-grip).
    pointer-events:auto because the box layer itself is none. */
 .ggroup-grip { position: absolute; right: 1px; bottom: 1px; width: 14px; height: 14px; z-index: 1;
-  cursor: nwse-resize; pointer-events: auto; opacity: 0.5; background-repeat: no-repeat;
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='13' y1='9' x2='9' y2='13'/><line x1='13' y1='4' x2='4' y2='13'/></g></svg>"); }
+    cursor: nwse-resize; pointer-events: auto; opacity: 0.5; background-repeat: no-repeat;
+    background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='13' y1='9' x2='9' y2='13'/><line x1='13' y1='4' x2='4' y2='13'/></g></svg>"); }
 .ggroup-grip:hover { opacity: 1; }
 /* floating W×H readout shown while resizing a node or group */
 .size-hud { position: fixed; z-index: 300; pointer-events: none; padding: 2px 7px; border-radius: 5px;
-  font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text);
-  background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 8px var(--shadow); white-space: nowrap; }
+    font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text);
+    background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 8px var(--shadow); white-space: nowrap; }
 
 /* group options popover (screen-fixed, like the topbar dropdowns) */
 .ggroup-pop { position: fixed; z-index: 200; min-width: 220px; display: flex; flex-direction: column; gap: 6px;
-  padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-  box-shadow: 0 8px 24px #00000066; }
+    padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 8px 24px #00000066; }
 .ggroup-pop .flab { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
 /* fixed-width leader so every row's control starts at the same x (labels + inputs line up) */
 .ggroup-pop .gp-lab { flex: 0 0 auto; width: 72px; }
@@ -440,7 +440,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* premade scheme swatches */
 .gp-schemes { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
 .gp-scheme { width: 22px; height: 22px; padding: 0; border-radius: 5px; border: 1.5px solid var(--line);
-  cursor: pointer; flex: 0 0 auto; }
+    cursor: pointer; flex: 0 0 auto; }
 .gp-scheme:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
 
 /* ---- super-group layer (a group OF groups; sits behind the group layer) ---- */
@@ -449,14 +449,14 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* bottom-left: a small cog + a ridiculously large, faint watermark label — each absolutely
    pinned so the giant label can never push the cog out of place */
 .sgroup-label { position: absolute; left: 40px; bottom: 25px;    /* clear the cog */
-  pointer-events: auto; cursor: grab; user-select: none;
-  font-family: var(--font-mono); font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase;
-  font-size: 88px; line-height: 0.8; color: var(--text); opacity: 0.13; white-space: nowrap; }
+    pointer-events: auto; cursor: grab; user-select: none;
+    font-family: var(--font-mono); font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase;
+    font-size: 88px; line-height: 0.8; color: var(--text); opacity: 0.13; white-space: nowrap; }
 .sgroup-label:active { cursor: grabbing; }
 .sgroup-cog { position: absolute; left: 5px; bottom: 5px; z-index: 1;
-  pointer-events: auto; width: 26px; height: 26px; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center; line-height: 0;
-  background: transparent; border: 0; color: var(--text); cursor: pointer; opacity: 0; transition: opacity .12s; }
+    pointer-events: auto; width: 26px; height: 26px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+    background: transparent; border: 0; color: var(--text); cursor: pointer; opacity: 0; transition: opacity .12s; }
 .sgroup:hover .sgroup-cog { opacity: 0.55; }
 .sgroup-cog:hover { opacity: 1 !important; }
 /* ctrl-selected group (armed for super-grouping) */

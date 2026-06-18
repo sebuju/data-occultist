@@ -11,19 +11,19 @@ const tracked = new Map();   // el -> { ts, fmt }
 let timer = null;
 
 function paint(el, rec) {
-  const t = rec.fmt(since(rec.ts));
-  if (el.textContent !== t) el.textContent = t;
+    const t = rec.fmt(since(rec.ts));
+    if (el.textContent !== t) el.textContent = t;
 }
 
 function ensureTimer() {
-  if (timer) return;
-  timer = setInterval(() => {
-    for (const [el, rec] of tracked) {
-      if (!el.isConnected) { tracked.delete(el); continue; }   // gone from the DOM -> forget it
-      paint(el, rec);
-    }
-    if (!tracked.size) { clearInterval(timer); timer = null; }
-  }, 1000);
+    if (timer) return;
+    timer = setInterval(() => {
+        for (const [el, rec] of tracked) {
+            if (!el.isConnected) { tracked.delete(el); continue; }   // gone from the DOM -> forget it
+            paint(el, rec);
+        }
+        if (!tracked.size) { clearInterval(timer); timer = null; }
+    }, 1000);
 }
 
 // Track `el` as a live "ago" label for source time `ts` (ms epoch or an iso/Date-parseable
@@ -31,11 +31,11 @@ function ensureTimer() {
 // A static state (e.g. "never fired") is the caller's: pass that text itself and DON'T call
 // this — call stopAgo to untrack a label that was previously live.
 export function liveAgo(el, ts, fmt = (s) => s) {
-  if (!el || ts == null) return;
-  const rec = { ts, fmt };
-  tracked.set(el, rec);
-  paint(el, rec);
-  ensureTimer();
+    if (!el || ts == null) return;
+    const rec = { ts, fmt };
+    tracked.set(el, rec);
+    paint(el, rec);
+    ensureTimer();
 }
 
 // Untrack `el` (it's showing a static label now, or is being torn down).

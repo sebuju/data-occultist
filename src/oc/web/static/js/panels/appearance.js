@@ -4,23 +4,23 @@
 import { fieldset, mount, esc, TRASH } from "../dom.js";
 
 const MODES = [
-  ["none", "none"],
-  ["color", "keep text colour(s)"],
-  ["threshold", "auto threshold"],
-  ["invert", "invert"],
+    ["none", "none"],
+    ["color", "keep text colour(s)"],
+    ["threshold", "auto threshold"],
+    ["invert", "invert"],
 ];
 
 export function renderAppearance(container, model, ctx) {
-  const pp = model.preprocess;
-  const modeOpts = MODES.map(([v, t]) => `<option value="${v}" ${pp.mode === v ? "selected" : ""}>${t}</option>`).join("");
-  const chips = pp.colors.map((c, i) => `
+    const pp = model.preprocess;
+    const modeOpts = MODES.map(([v, t]) => `<option value="${v}" ${pp.mode === v ? "selected" : ""}>${t}</option>`).join("");
+    const chips = pp.colors.map((c, i) => `
     <span class="chip" style="border-color:${esc(c)}">
       <span class="sw" style="background:${esc(c)}"></span>${esc(c)}
       <button class="chip-x" data-i="${i}" title="remove">${TRASH}</button>
     </span>`).join("") || `<span class="muted">no colours yet</span>`;
 
-  const showColor = pp.mode === "color" ? "" : "hidden";
-  const fs = fieldset("Text appearance", `
+    const showColor = pp.mode === "color" ? "" : "hidden";
+    const fs = fieldset("Text appearance", `
     <label>preprocess <select id="pp-mode">${modeOpts}</select></label>
     <div id="pp-color" ${showColor}>
       <div class="chips">${chips}</div>
@@ -37,16 +37,16 @@ export function renderAppearance(container, model, ctx) {
     <p class="hint">Pick the text colour, choose “keep text colour(s)”, then Preview.</p>
   `);
 
-  const q = (s) => fs.querySelector(s);
-  q("#pp-mode").addEventListener("change", (e) => { pp.mode = e.target.value; ctx.refresh(); });
-  q("#pp-scale").addEventListener("input", (e) => { pp.scale = +e.target.value || 1; });
-  q("#pp-tol")?.addEventListener("input", (e) => { pp.tolerance = +e.target.value; ctx.refresh(); });
-  q("#pp-pick")?.addEventListener("click", () => ctx.pickColor());
-  q("#pp-add")?.addEventListener("click", () => {
-    const v = q("#pp-hex").value.trim();
-    if (/^#?[0-9a-fA-F]{6}$/.test(v)) { pp.colors.push(v.startsWith("#") ? v : `#${v}`); ctx.refresh(); }
-  });
-  fs.querySelectorAll(".chip-x").forEach((b) =>
-    b.addEventListener("click", () => { pp.colors.splice(+b.dataset.i, 1); ctx.refresh(); }));
-  mount(container, fs);
+    const q = (s) => fs.querySelector(s);
+    q("#pp-mode").addEventListener("change", (e) => { pp.mode = e.target.value; ctx.refresh(); });
+    q("#pp-scale").addEventListener("input", (e) => { pp.scale = +e.target.value || 1; });
+    q("#pp-tol")?.addEventListener("input", (e) => { pp.tolerance = +e.target.value; ctx.refresh(); });
+    q("#pp-pick")?.addEventListener("click", () => ctx.pickColor());
+    q("#pp-add")?.addEventListener("click", () => {
+        const v = q("#pp-hex").value.trim();
+        if (/^#?[0-9a-fA-F]{6}$/.test(v)) { pp.colors.push(v.startsWith("#") ? v : `#${v}`); ctx.refresh(); }
+    });
+    fs.querySelectorAll(".chip-x").forEach((b) =>
+        b.addEventListener("click", () => { pp.colors.splice(+b.dataset.i, 1); ctx.refresh(); }));
+    mount(container, fs);
 }

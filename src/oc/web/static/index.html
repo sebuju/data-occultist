@@ -1,204 +1,204 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>data-occultist — node view</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <!-- style.css was split by section; load order is the cascade order (see each file's banner) -->
-  <link rel="stylesheet" href="/css/base.css" />
-  <link rel="stylesheet" href="/css/chrome.css" />
-  <link rel="stylesheet" href="/css/graph.css" />
-  <link rel="stylesheet" href="/css/overlays.css" />
-  <link rel="stylesheet" href="/css/controls.css" />
-  <link rel="stylesheet" href="/css/flow.css" />
-  <link rel="stylesheet" href="/css/tables.css" />
-  <link rel="stylesheet" href="/css/pretty.css" />
-  <link rel="stylesheet" href="/floatwin.css" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>data-occultist — node view</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- style.css was split by section; load order is the cascade order (see each file's banner) -->
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/chrome.css" />
+    <link rel="stylesheet" href="/css/graph.css" />
+    <link rel="stylesheet" href="/css/overlays.css" />
+    <link rel="stylesheet" href="/css/controls.css" />
+    <link rel="stylesheet" href="/css/flow.css" />
+    <link rel="stylesheet" href="/css/tables.css" />
+    <link rel="stylesheet" href="/css/pretty.css" />
+    <link rel="stylesheet" href="/floatwin.css" />
 </head>
 <body spellcheck="false">
-  <!-- Full-page veil shown from FIRST PAINT: the boot sequence (stop stray OCR,
+    <!-- Full-page veil shown from FIRST PAINT: the boot sequence (stop stray OCR,
        load profile, reopen images, first detect/preview round) makes the page laggy
        and half-interactive — block everything until it has settled. Removed by
        graph/main.js once boot quiesces (hard-capped, so a hung server can't keep
        the veil up forever). -->
-  <!-- pretty view-mode edge hover triggers: thin fixed strips that reveal the hidden topbar /
+    <!-- pretty view-mode edge hover triggers: thin fixed strips that reveal the hidden topbar /
        logbar when the cursor reaches the top / bottom edge. Inert unless body.pretty-view (CSS). -->
-  <div class="pw-edge-trigger top"></div>
-  <div class="pw-edge-trigger bottom"></div>
-  <div id="bootveil">
-    <div class="bootveil-box">
-      <div class="loader-orbit"><div class="arm"><div class="dot"></div></div></div>
+    <div class="pw-edge-trigger top"></div>
+    <div class="pw-edge-trigger bottom"></div>
+    <div id="bootveil">
+        <div class="bootveil-box">
+            <div class="loader-orbit"><div class="arm"><div class="dot"></div></div></div>
+        </div>
     </div>
-  </div>
-  <header class="topbar">
-    <button id="settingsBtn" class="cogbtn" title="settings: new game, OCR device + downscale">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    </button>
-    <label><select id="gameSelect"></select></label>
-    <button id="killGpuBtn" class="killbtn" title="kill GPU OCR: drop the model and free VRAM (stays on GPU; rebuilds on next read)" hidden>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
-      kill gpu
-    </button>
-    <!-- node ⇄ pretty view switch (both views are the same SPA; pretty is a convenience layer) -->
-    <div class="pw-viewtoggle">
-      <button class="vt active" id="vtNode" title="node view: the graph editor">node</button>
-      <button class="vt" id="vtPretty" title="pretty view: the built dashboard surface">pretty</button>
-    </div>
-    <!-- pretty-dirty controls: shown in node view only when transient overrides exist -->
-    <div class="pw-dirtybar" id="prettyDirtyBar" hidden>
-      <span class="pw-dirty-count" id="prettyDirtyCount"></span>
-      <button id="prettyRevertBtn" class="modebtn" title="revert pretty overrides to the authored yaml (click again to confirm)">revert pretty</button>
-      <button id="prettySaveBtn" class="modebtn" title="save pretty overrides into the yaml (click again to confirm)">save pretty</button>
-    </div>
-    <!-- floating-window toggles. testing + stats sit leftmost (separated from the rest by a
+    <header class="topbar">
+        <button id="settingsBtn" class="cogbtn" title="settings: new game, OCR device + downscale">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <label><select id="gameSelect"></select></label>
+        <button id="killGpuBtn" class="killbtn" title="kill GPU OCR: drop the model and free VRAM (stays on GPU; rebuilds on next read)" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+            kill gpu
+        </button>
+        <!-- node ⇄ pretty view switch (both views are the same SPA; pretty is a convenience layer) -->
+        <div class="pw-viewtoggle">
+            <button class="vt active" id="vtNode" title="node view: the graph editor">node</button>
+            <button class="vt" id="vtPretty" title="pretty view: the built dashboard surface">pretty</button>
+        </div>
+        <!-- pretty-dirty controls: shown in node view only when transient overrides exist -->
+        <div class="pw-dirtybar" id="prettyDirtyBar" hidden>
+            <span class="pw-dirty-count" id="prettyDirtyCount"></span>
+            <button id="prettyRevertBtn" class="modebtn" title="revert pretty overrides to the authored yaml (click again to confirm)">revert pretty</button>
+            <button id="prettySaveBtn" class="modebtn" title="save pretty overrides into the yaml (click again to confirm)">save pretty</button>
+        </div>
+        <!-- floating-window toggles. testing + stats sit leftmost (separated from the rest by a
          rule); a spacer pushes the rest right. -->
-    <div class="topbar-tools">
-      <button id="testingBtn" class="modebtn" title="testing: feed a recorded video through live OCR (no game needed)">testing</button>
-      <button id="statsBtn" class="modebtn" title="stats: per-node execution durations — spot what's getting slow">stats</button>
-      <button id="dbstructBtn" class="modebtn" title="database: SQLite store structure — tables, indexes, per-dataset row counts">db</button>
-      <span class="spacer"></span>
-      <button id="liveBtn" class="modebtn" title="live panel: toggle live view + per-window detection (no saving)">live</button>
-      <button id="precapBtn" class="modebtn" title="precapture: record frames fast, OCR them in a batch, then save">precapture</button>
-      <button id="createBtn" class="modebtn" title="toolbox: window collision check and other tools (right-click the canvas to add nodes)">toolbox</button>
-      <button id="nodemapBtn" class="modebtn" title="node map: overview + jump to any node">map</button>
-      <button id="nodelistBtn" class="modebtn" title="node list: edge-tree outline + jump to any node">list</button>
-      <button id="activityBtn" class="modebtn" title="tasks: live price sweeps + precapture progress">tasks</button>
-    </div>
-    <!-- pretty view tools replace .topbar-tools in pretty mode; filled by pretty/topbar.js -->
-    <div class="topbar-pretty-tools" id="prettyTools"></div>
-  </header>
+        <div class="topbar-tools">
+            <button id="testingBtn" class="modebtn" title="testing: feed a recorded video through live OCR (no game needed)">testing</button>
+            <button id="statsBtn" class="modebtn" title="stats: per-node execution durations — spot what's getting slow">stats</button>
+            <button id="dbstructBtn" class="modebtn" title="database: SQLite store structure — tables, indexes, per-dataset row counts">db</button>
+            <span class="spacer"></span>
+            <button id="liveBtn" class="modebtn" title="live panel: toggle live view + per-window detection (no saving)">live</button>
+            <button id="precapBtn" class="modebtn" title="precapture: record frames fast, OCR them in a batch, then save">precapture</button>
+            <button id="createBtn" class="modebtn" title="toolbox: window collision check and other tools (right-click the canvas to add nodes)">toolbox</button>
+            <button id="nodemapBtn" class="modebtn" title="node map: overview + jump to any node">map</button>
+            <button id="nodelistBtn" class="modebtn" title="node list: edge-tree outline + jump to any node">list</button>
+            <button id="activityBtn" class="modebtn" title="tasks: live price sweeps + precapture progress">tasks</button>
+        </div>
+        <!-- pretty view tools replace .topbar-tools in pretty mode; filled by pretty/topbar.js -->
+        <div class="topbar-pretty-tools" id="prettyTools"></div>
+    </header>
 
-  <!-- Selection toolbar: fixed under the topbar, shown whenever a node is selected
+    <!-- Selection toolbar: fixed under the topbar, shown whenever a node is selected
        (single focus, marquee, or shift-click). Acts on the live selection. -->
-  <div id="seltoolbar" class="seltoolbar" hidden>
-    <span id="selCount" class="sel-count">0 selected</span>
-    <button id="selGroupBtn" title="group / ungroup the selection (hotkey: g)"><span class="sel-ic">⬚</span><span class="sel-lbl">group</span></button>
-    <button id="selDetachBtn" title="detach the selection from its group" hidden><span class="sel-ic"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M5 7V4.5a3 3 0 0 1 5.9-.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3.2" y="7" width="9.6" height="6.5" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span><span class="sel-lbl">detach</span></button>
-    <button id="selDeleteBtn" class="sel-del" title="delete the selection" hidden><span class="sel-ic"><svg class="ic-trash" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/></svg></span><span class="sel-lbl">remove</span></button>
-    <span class="sel-sep"></span>
-    <button id="selClearBtn" class="sel-icon-only" title="clear selection" aria-label="clear selection">✕</button>
-  </div>
+    <div id="seltoolbar" class="seltoolbar" hidden>
+        <span id="selCount" class="sel-count">0 selected</span>
+        <button id="selGroupBtn" title="group / ungroup the selection (hotkey: g)"><span class="sel-ic">⬚</span><span class="sel-lbl">group</span></button>
+        <button id="selDetachBtn" title="detach the selection from its group" hidden><span class="sel-ic"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M5 7V4.5a3 3 0 0 1 5.9-.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3.2" y="7" width="9.6" height="6.5" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span><span class="sel-lbl">detach</span></button>
+        <button id="selDeleteBtn" class="sel-del" title="delete the selection" hidden><span class="sel-ic"><svg class="ic-trash" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/></svg></span><span class="sel-lbl">remove</span></button>
+        <span class="sel-sep"></span>
+        <button id="selClearBtn" class="sel-icon-only" title="clear selection" aria-label="clear selection">✕</button>
+    </div>
 
-  <main class="graphwrap">
-    <div id="graph" class="graphcanvas">
-      <div id="gworld">
-        <div id="sgroups"></div>
-        <div id="ggroups"></div>
-        <svg id="gedges">
-          <defs>
-            <marker id="flowarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
-              <path d="M0,0 L10,5 L0,10 z" class="flowarrow-head" />
-            </marker>
-            <!-- trigger control line end: a double chevron (») reading "go / activate / fire" — set
+    <main class="graphwrap">
+        <div id="graph" class="graphcanvas">
+            <div id="gworld">
+                <div id="sgroups"></div>
+                <div id="ggroups"></div>
+                <svg id="gedges">
+                    <defs>
+                        <marker id="flowarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+                            <path d="M0,0 L10,5 L0,10 z" class="flowarrow-head" />
+                        </marker>
+                        <!-- trigger control line end: a double chevron (») reading "go / activate / fire" — set
                  apart from the solid data arrow by shape AND by the line's cyan colour. -->
-            <marker id="triggergo" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M1,1 L5,5 L1,9 M5,1 L9,5 L5,9" class="triggergo-head" />
-            </marker>
-            <!-- a perpendicular bar end-cap. Not used by the trigger line anymore; kept as a reusable
+                        <marker id="triggergo" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M1,1 L5,5 L1,9 M5,1 L9,5 L5,9" class="triggergo-head" />
+                        </marker>
+                        <!-- a perpendicular bar end-cap. Not used by the trigger line anymore; kept as a reusable
                  marker for some other edge type. Takes the line's colour via context-stroke. -->
-            <marker id="triggerbar" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M2,0 L2,10" class="triggerbar-head" />
-            </marker>
-            <!-- watch (on_change) line end: a small diamond, distinct from the data arrow and the
+                        <marker id="triggerbar" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M2,0 L2,10" class="triggerbar-head" />
+                        </marker>
+                        <!-- watch (on_change) line end: a small diamond, distinct from the data arrow and the
                  trigger bar so a "fires-on-new-rows" edge reads on sight. Takes the line's colour. -->
-            <marker id="watchcap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M0,5 L5,0 L10,5 L5,10 z" class="watchcap-head" />
-            </marker>
-            <!-- generic end-cap: a small square, smaller than the other glyphs. The default cap on
+                        <marker id="watchcap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M0,5 L5,0 L10,5 L5,10 z" class="watchcap-head" />
+                        </marker>
+                        <!-- generic end-cap: a small square, smaller than the other glyphs. The default cap on
                  BOTH ends of every line (incl. the port end) so a line that carries no arrow/chevron/
                  diamond still reads as terminated. Centred on the endpoint; takes the line's colour. -->
-            <marker id="squarecap" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M2,2 L8,2 L8,8 L2,8 z" class="squarecap-head" />
-            </marker>
+                        <marker id="squarecap" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M2,2 L8,2 L8,8 L2,8 z" class="squarecap-head" />
+                        </marker>
 
-            <!-- ============================================================
+                        <!-- ============================================================
                  Reusable end-glyph palette. Each takes the line's colour via
                  context-stroke; none is wired to an edge kind yet — add a
                  `.gedge.<kind> { marker-end: url(#name) }` rule to use one.
                  Filled apex glyphs sit refX near 9 so the tip touches the node
                  edge; centred caps sit refX 5. ============================ -->
 
-            <!-- filled dot -->
-            <marker id="dotcap" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto">
-              <circle cx="5" cy="5" r="3" class="dotcap-head" />
-            </marker>
-            <!-- hollow ring centred ON the node's edge (half in / half out). route.js pulls the
+                        <!-- filled dot -->
+                        <marker id="dotcap" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto">
+                            <circle cx="5" cy="5" r="3" class="dotcap-head" />
+                        </marker>
+                        <!-- hollow ring centred ON the node's edge (half in / half out). route.js pulls the
                  arriving end 3px INTO the node (along -faceOut) and the marker's +x faces inward,
                  so the ring centre (cx=5) must land 3px back toward the edge: refX = cx + insetEnd = 8. -->
-            <marker id="ringcap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
-              <circle cx="5" cy="5" r="3" class="ringcap-head" />
-            </marker>
-            <!-- single chevron › -->
-            <marker id="chevroncap" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M2,1 L7,5 L2,9" class="chevroncap-head" />
-            </marker>
-            <!-- T-bar: perpendicular bar on a short stem -->
-            <marker id="teecap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M8,1 L8,9 M3,5 L8,5" class="teecap-head" />
-            </marker>
-            <!-- crow's-foot (ER "many"): three prongs to an apex at the node edge -->
-            <marker id="crowfoot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M9,5 L1,1 M9,5 L1,5 M9,5 L1,9" class="crowfoot-head" />
-            </marker>
-            <!-- hollow triangle -->
-            <marker id="triopen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M0,1 L9,5 L0,9 z" class="triopen-head" />
-            </marker>
-            <!-- hollow square -->
-            <marker id="squareopen" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M2,2 L8,2 L8,8 L2,8 z" class="squareopen-head" />
-            </marker>
-            <!-- hollow diamond -->
-            <marker id="diamondopen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M0,5 L5,0 L10,5 L5,10 z" class="diamondopen-head" />
-            </marker>
-            <!-- plus / cross -->
-            <marker id="pluscap" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M5,1 L5,9 M1,5 L9,5" class="pluscap-head" />
-            </marker>
-            <!-- X / cross -->
-            <marker id="xcap" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M1,1 L9,9 M9,1 L1,9" class="xcap-head" />
-            </marker>
-            <!-- double bar ‖ (ER "one and only one") -->
-            <marker id="dblbar" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M4,1 L4,9 M7,1 L7,9" class="dblbar-head" />
-            </marker>
-            <!-- single-sided barb (half arrow) -->
-            <marker id="barbcap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M9,5 L1,1" class="barbcap-head" />
-            </marker>
-            <!-- concave stealth arrow -->
-            <marker id="stealthcap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M0,1 L9,5 L0,9 L3,5 z" class="stealthcap-head" />
-            </marker>
-            <!-- circle + bar (ER "one"): bar then a ring toward the node -->
-            <marker id="circlebar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
-              <path d="M2,1 L2,9" class="circlebar-head" />
-              <circle cx="6" cy="5" r="2.4" class="circlebar-head" />
-            </marker>
-          </defs>
-        </svg>
-        <div id="gnodes"></div>
-        <svg id="gedges-top"></svg>
-      </div>
-      <div id="marquee" class="marquee" hidden></div>
-    </div>
-    <!-- Pretty Studio surface: same SPA, shown instead of #graph in pretty view. Mounted lazily. -->
-    <div id="pretty"></div>
-  </main>
+                        <marker id="ringcap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+                            <circle cx="5" cy="5" r="3" class="ringcap-head" />
+                        </marker>
+                        <!-- single chevron › -->
+                        <marker id="chevroncap" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M2,1 L7,5 L2,9" class="chevroncap-head" />
+                        </marker>
+                        <!-- T-bar: perpendicular bar on a short stem -->
+                        <marker id="teecap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M8,1 L8,9 M3,5 L8,5" class="teecap-head" />
+                        </marker>
+                        <!-- crow's-foot (ER "many"): three prongs to an apex at the node edge -->
+                        <marker id="crowfoot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M9,5 L1,1 M9,5 L1,5 M9,5 L1,9" class="crowfoot-head" />
+                        </marker>
+                        <!-- hollow triangle -->
+                        <marker id="triopen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M0,1 L9,5 L0,9 z" class="triopen-head" />
+                        </marker>
+                        <!-- hollow square -->
+                        <marker id="squareopen" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M2,2 L8,2 L8,8 L2,8 z" class="squareopen-head" />
+                        </marker>
+                        <!-- hollow diamond -->
+                        <marker id="diamondopen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M0,5 L5,0 L10,5 L5,10 z" class="diamondopen-head" />
+                        </marker>
+                        <!-- plus / cross -->
+                        <marker id="pluscap" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M5,1 L5,9 M1,5 L9,5" class="pluscap-head" />
+                        </marker>
+                        <!-- X / cross -->
+                        <marker id="xcap" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M1,1 L9,9 M9,1 L1,9" class="xcap-head" />
+                        </marker>
+                        <!-- double bar ‖ (ER "one and only one") -->
+                        <marker id="dblbar" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M4,1 L4,9 M7,1 L7,9" class="dblbar-head" />
+                        </marker>
+                        <!-- single-sided barb (half arrow) -->
+                        <marker id="barbcap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M9,5 L1,1" class="barbcap-head" />
+                        </marker>
+                        <!-- concave stealth arrow -->
+                        <marker id="stealthcap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M0,1 L9,5 L0,9 L3,5 z" class="stealthcap-head" />
+                        </marker>
+                        <!-- circle + bar (ER "one"): bar then a ring toward the node -->
+                        <marker id="circlebar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M2,1 L2,9" class="circlebar-head" />
+                            <circle cx="6" cy="5" r="2.4" class="circlebar-head" />
+                        </marker>
+                    </defs>
+                </svg>
+                <div id="gnodes"></div>
+                <svg id="gedges-top"></svg>
+            </div>
+            <div id="marquee" class="marquee" hidden></div>
+        </div>
+        <!-- Pretty Studio surface: same SPA, shown instead of #graph in pretty view. Mounted lazily. -->
+        <div id="pretty"></div>
+    </main>
 
-  <div id="logbar" class="logbar">
-    <div class="log-head">
-      <span class="log-prompt">&gt;_</span>
-      <span class="log-latest">ready</span>
-      <span class="log-workers" id="logWorkers" hidden></span>
-      <span class="log-toggle">▴</span>
+    <div id="logbar" class="logbar">
+        <div class="log-head">
+            <span class="log-prompt">&gt;_</span>
+            <span class="log-latest">ready</span>
+            <span class="log-workers" id="logWorkers" hidden></span>
+            <span class="log-toggle">▴</span>
+        </div>
+        <div class="log-body"></div>
     </div>
-    <div class="log-body"></div>
-  </div>
 
-  <script type="module" src="/js/graph/main.js"></script>
+    <script type="module" src="/js/graph/main.js"></script>
 </body>
 </html>

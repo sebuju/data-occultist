@@ -17,52 +17,52 @@
 import { initWindowResize } from "./desktop_resize.js";
 
 const ICON = {
-  min: '<svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg>',
-  max: '<svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7"/></svg>',
-  close: '<svg viewBox="0 0 12 12"><line x1="3" y1="3" x2="9" y2="9"/><line x1="9" y1="3" x2="3" y2="9"/></svg>',
+    min: '<svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg>',
+    max: '<svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7"/></svg>',
+    close: '<svg viewBox="0 0 12 12"><line x1="3" y1="3" x2="9" y2="9"/><line x1="9" y1="3" x2="3" y2="9"/></svg>',
 };
 
 let built = false;
 
 function build() {
-  if (built) return;
-  built = true;
+    if (built) return;
+    built = true;
 
-  const bar = document.createElement("div");
-  bar.className = "titlebar pywebview-drag-region";
-  // Fixed product name — NOT document.title (that carries the internal package name,
-  // e.g. "oc — node view", which must never surface in the UI).
-  bar.innerHTML =
-    `<span class="tb-title">data-occultist</span>` +
-    `<span class="tb-spacer"></span>` +
-    `<button class="tb-btn" data-act="min" title="minimize" aria-label="minimize">${ICON.min}</button>` +
-    `<button class="tb-btn" data-act="max" title="maximize" aria-label="maximize">${ICON.max}</button>` +
-    `<button class="tb-btn tb-close" data-act="close" title="close" aria-label="close">${ICON.close}</button>`;
+    const bar = document.createElement("div");
+    bar.className = "titlebar pywebview-drag-region";
+    // Fixed product name — NOT document.title (that carries the internal package name,
+    // e.g. "oc — node view", which must never surface in the UI).
+    bar.innerHTML =
+        `<span class="tb-title">data-occultist</span>` +
+        `<span class="tb-spacer"></span>` +
+        `<button class="tb-btn" data-act="min" title="minimize" aria-label="minimize">${ICON.min}</button>` +
+        `<button class="tb-btn" data-act="max" title="maximize" aria-label="maximize">${ICON.max}</button>` +
+        `<button class="tb-btn tb-close" data-act="close" title="close" aria-label="close">${ICON.close}</button>`;
 
-  bar.addEventListener("click", (e) => {
-    const btn = e.target.closest(".tb-btn");
-    const api = window.pywebview && window.pywebview.api;
-    if (!btn || !api) return;
-    const fn = { min: api.minimize, max: api.toggle_maximize, close: api.close }[btn.dataset.act];
-    if (fn) fn();
-  });
+    bar.addEventListener("click", (e) => {
+        const btn = e.target.closest(".tb-btn");
+        const api = window.pywebview && window.pywebview.api;
+        if (!btn || !api) return;
+        const fn = { min: api.minimize, max: api.toggle_maximize, close: api.close }[btn.dataset.act];
+        if (fn) fn();
+    });
 
-  // double-click the bar (not a control) maximises / restores, like a normal title bar
-  bar.addEventListener("dblclick", (e) => {
-    if (e.target.closest(".tb-btn")) return;
-    const api = window.pywebview && window.pywebview.api;
-    if (api) api.toggle_maximize();
-  });
+    // double-click the bar (not a control) maximises / restores, like a normal title bar
+    bar.addEventListener("dblclick", (e) => {
+        if (e.target.closest(".tb-btn")) return;
+        const api = window.pywebview && window.pywebview.api;
+        if (api) api.toggle_maximize();
+    });
 
-  document.body.insertBefore(bar, document.body.firstChild);
-  document.documentElement.classList.add("desktop");
-  initWindowResize();   // edge/corner grips that drive native resize via the js_api bridge
+    document.body.insertBefore(bar, document.body.firstChild);
+    document.documentElement.classList.add("desktop");
+    initWindowResize();   // edge/corner grips that drive native resize via the js_api bridge
 }
 
 // Build now if pywebview is already present; otherwise wait for it to announce
 // itself. (`window.pywebview` exists in the desktop window even before the api
 // bridge is ready — we only read `.api` at click time, by when it is ready.)
 export function initTitlebar() {
-  if (typeof window.pywebview !== "undefined") build();
-  else window.addEventListener("pywebviewready", build, { once: true });
+    if (typeof window.pywebview !== "undefined") build();
+    else window.addEventListener("pywebviewready", build, { once: true });
 }

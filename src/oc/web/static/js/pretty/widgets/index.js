@@ -18,8 +18,8 @@ export function widgetDef(type) { return WIDGETS[type] || null; }
 
 // Build a fresh widget data object for a type (defaults merged onto the common frame).
 export function newWidget(type) {
-  const def = widgetDef(type);
-  if (!def) return null;
-  const d = def.defaults ? def.defaults() : {};
-  return { type, style: {}, conditions: {}, config: {}, ...d };
+    const def = widgetDef(type);
+    if (!def) return null;
+    const d = def.defaults ? def.defaults() : {};
+    return { type, style: {}, conditions: {}, config: {}, ...d };
 }

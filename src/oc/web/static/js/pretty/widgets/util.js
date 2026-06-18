@@ -7,13 +7,13 @@ import { tokensIn } from "../expr.js";
 import { subKeyForToken, dataKeyForBinding } from "../binding.js";
 
 export function keySubscription(ctx, onChange) {
-  const active = new Map();   // key -> unsubscribe fn
-  function sync(keys) {
-    const want = new Set((keys || []).filter(Boolean));
-    for (const [k, unsub] of active) if (!want.has(k)) { unsub(); ctx.data.release(k); active.delete(k); }
-    for (const k of want) if (!active.has(k)) { ctx.data.require(k); active.set(k, ctx.data.subscribe(k, onChange)); }
-  }
-  return { sync, destroy() { for (const [k, unsub] of active) { unsub(); ctx.data.release(k); } active.clear(); } };
+    const active = new Map();   // key -> unsubscribe fn
+    function sync(keys) {
+        const want = new Set((keys || []).filter(Boolean));
+        for (const [k, unsub] of active) if (!want.has(k)) { unsub(); ctx.data.release(k); active.delete(k); }
+        for (const k of want) if (!active.has(k)) { ctx.data.require(k); active.set(k, ctx.data.subscribe(k, onChange)); }
+    }
+    return { sync, destroy() { for (const [k, unsub] of active) { unsub(); ctx.data.release(k); } active.clear(); } };
 }
 
 // Subscribe keys implied by every {{token}} in a piece of text (for dynamic labels).
@@ -23,14 +23,14 @@ export { dataKeyForBinding };
 
 // Tiny DOM helper: an element with class + optional text.
 export function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
 }
 
 // Default human label for a column key: special chars -> spaces, each word Capitalised.
 // e.g. "price_median" -> "Price Median", "live.ask" -> "Live Ask".
 export function humanize(key) {
-  return String(key || "").replace(/[_\-.]+/g, " ").trim().replace(/\b\w/g, (c) => c.toUpperCase());
+    return String(key || "").replace(/[_\-.]+/g, " ").trim().replace(/\b\w/g, (c) => c.toUpperCase());
 }

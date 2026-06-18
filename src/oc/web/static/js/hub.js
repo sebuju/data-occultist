@@ -34,44 +34,44 @@ export function latest() { return last; }
 // Subscribe to every heartbeat snapshot. Fires IMMEDIATELY with the last snapshot (if
 // any) so a freshly-opened panel paints without waiting a full tick. Returns unsubscribe.
 export function subscribe(fn) {
-  subs.add(fn);
-  if (last) { try { fn(last); } catch { /* ignore */ } }
-  return () => subs.delete(fn);
+    subs.add(fn);
+    if (last) { try { fn(last); } catch { /* ignore */ } }
+    return () => subs.delete(fn);
 }
 
 function busy(s) {
-  if (!s) return false;
-  if (s.precapture) return true;
-  if (s.live) return true;
-  if (s.sweeps && s.sweeps.length) return true;
-  if (s.triggers && s.triggers.some((t) => (t.targets || []).some((x) => x.running))) return true;
-  return false;
+    if (!s) return false;
+    if (s.precapture) return true;
+    if (s.live) return true;
+    if (s.sweeps && s.sweeps.length) return true;
+    if (s.triggers && s.triggers.some((t) => (t.targets || []).some((x) => x.running))) return true;
+    return false;
 }
 
 function nextDelay() {
-  if (busy(last)) return FAST_MS;
-  if (typeof document !== "undefined" && !document.hasFocus()) return BG_MS;
-  return IDLE_MS;
+    if (busy(last)) return FAST_MS;
+    if (typeof document !== "undefined" && !document.hasFocus()) return BG_MS;
+    return IDLE_MS;
 }
 
 async function tick() {
-  timer = null;
-  const game = gameFn();
-  if (game && conn.isOnline() && !inFlight) {
-    inFlight = true;
-    try {
-      const snap = await api.activity.get(game);
-      last = snap;
-      for (const fn of subs) { try { fn(snap); } catch { /* a bad subscriber must not stall the others */ } }
-    } catch { /* tfetch already told conn; just retry on the next beat */ }
-    finally { inFlight = false; }
-  }
-  schedule();
+    timer = null;
+    const game = gameFn();
+    if (game && conn.isOnline() && !inFlight) {
+        inFlight = true;
+        try {
+            const snap = await api.activity.get(game);
+            last = snap;
+            for (const fn of subs) { try { fn(snap); } catch { /* a bad subscriber must not stall the others */ } }
+        } catch { /* tfetch already told conn; just retry on the next beat */ }
+        finally { inFlight = false; }
+    }
+    schedule();
 }
 
 function schedule() {
-  if (timer) return;
-  timer = setTimeout(tick, nextDelay());
+    if (timer) return;
+    timer = setTimeout(tick, nextDelay());
 }
 
 // Begin (or resume) the heartbeat. Idempotent.

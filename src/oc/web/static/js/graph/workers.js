@@ -8,10 +8,10 @@ import { $ } from "./state.js";
 // count on its far right plus a per-worker emergency kill button.
 const workers = new Map();   // id -> { label, kill }
 function registerWorker(id, label, kill) {
-  const w = workers.get(id);
-  if (w) { w.kill = kill; if (w.label === label) return; w.label = label; }   // same label -> nothing visible changed
-  else workers.set(id, { label, kill });
-  renderWorkers();
+    const w = workers.get(id);
+    if (w) { w.kill = kill; if (w.label === label) return; w.label = label; }   // same label -> nothing visible changed
+    else workers.set(id, { label, kill });
+    renderWorkers();
 }
 function unregisterWorker(id) { if (workers.delete(id)) renderWorkers(); }
 
@@ -21,25 +21,25 @@ function unregisterWorker(id) { if (workers.delete(id)) renderWorkers(); }
 let wkSpin = null, wkCount = null;
 const workerBtns = new Map();   // id -> <button>
 function renderWorkers() {
-  const el = $("logWorkers");
-  if (!el) return;
-  el.hidden = workers.size === 0;
-  if (!wkSpin) {
-    wkSpin = document.createElement("span"); wkSpin.className = "lw-spin";
-    wkCount = document.createElement("span"); wkCount.className = "lw-count";
-    el.append(wkSpin, wkCount);
-  }
-  wkCount.textContent = `${workers.size} worker${workers.size === 1 ? "" : "s"}`;
-  for (const [id, btn] of workerBtns) if (!workers.has(id)) { btn.remove(); workerBtns.delete(id); }
-  for (const [id, w] of workers) {
-    let btn = workerBtns.get(id);
-    if (!btn) {
-      btn = document.createElement("button");
-      btn.className = "lw-kill"; btn.dataset.kill = id; btn.title = "emergency stop";
-      el.appendChild(btn); workerBtns.set(id, btn);
+    const el = $("logWorkers");
+    if (!el) return;
+    el.hidden = workers.size === 0;
+    if (!wkSpin) {
+        wkSpin = document.createElement("span"); wkSpin.className = "lw-spin";
+        wkCount = document.createElement("span"); wkCount.className = "lw-count";
+        el.append(wkSpin, wkCount);
     }
-    if (btn._label !== w.label) { btn.textContent = `⨯ ${w.label}`; btn._label = w.label; }
-  }
+    wkCount.textContent = `${workers.size} worker${workers.size === 1 ? "" : "s"}`;
+    for (const [id, btn] of workerBtns) if (!workers.has(id)) { btn.remove(); workerBtns.delete(id); }
+    for (const [id, w] of workers) {
+        let btn = workerBtns.get(id);
+        if (!btn) {
+            btn = document.createElement("button");
+            btn.className = "lw-kill"; btn.dataset.kill = id; btn.title = "emergency stop";
+            el.appendChild(btn); workerBtns.set(id, btn);
+        }
+        if (btn._label !== w.label) { btn.textContent = `⨯ ${w.label}`; btn._label = w.label; }
+    }
 }
 
 export { workers, registerWorker, unregisterWorker, renderWorkers };

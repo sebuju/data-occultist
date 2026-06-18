@@ -19,7 +19,7 @@ export const savePretty = (game, doc) => fetch(`/api/pretty/${enc(game)}`, PUT_J
 export const listOverrides = (game) => GET(`/api/pretty/${enc(game)}/overrides`).then(j);
 export const setOverride = (game, path, value) => fetch(`/api/pretty/${enc(game)}/override`, POST_JSON({ path, value })).then(j);
 export const clearOverride = (game, path) =>
-  fetch(`/api/pretty/${enc(game)}/override${path ? `?path=${enc(path)}` : ""}`, { method: "DELETE" }).then(j);
+    fetch(`/api/pretty/${enc(game)}/override${path ? `?path=${enc(path)}` : ""}`, { method: "DELETE" }).then(j);
 export const commitOverrides = (game) => fetch(`/api/pretty/${enc(game)}/overrides/commit`, { method: "POST" }).then(j);
 
 // ---- live data ---------------------------------------------------------------------
@@ -29,4 +29,4 @@ export const subsetRows = (game, subset) => fetch(`/api/flow/${enc(game)}/subset
 
 // ---- data entry (manual record into a dataset) ------------------------------------
 export const recordRow = (game, dataset, values) =>
-  fetch(`/api/pretty/${enc(game)}/dataset/${enc(dataset)}/record`, POST_JSON(values)).then(j);
+    fetch(`/api/pretty/${enc(game)}/dataset/${enc(dataset)}/record`, POST_JSON(values)).then(j);

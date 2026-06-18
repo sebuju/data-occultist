@@ -6,16 +6,16 @@ import { renderDynamicText } from "../binding.js";
 import { keySubscription, textKeys } from "./util.js";
 
 export default {
-  type: "label",
-  title: "Label",
-  icon: "T",
-  defaults: () => ({ config: { text: "Label" }, w: 240, h: 44 }),
-  create(host, widget, ctx) {
-    host.className = "pw-label";
-    const sub = keySubscription(ctx, render);
-    function render() { host.textContent = renderDynamicText(ctx, widget.config.text || ""); }
-    sub.sync(textKeys(widget.config.text || ""));
-    render();
-    return { update: render, destroy: sub.destroy };
-  },
+    type: "label",
+    title: "Label",
+    icon: "T",
+    defaults: () => ({ config: { text: "Label" }, w: 240, h: 44 }),
+    create(host, widget, ctx) {
+        host.className = "pw-label";
+        const sub = keySubscription(ctx, render);
+        function render() { host.textContent = renderDynamicText(ctx, widget.config.text || ""); }
+        sub.sync(textKeys(widget.config.text || ""));
+        render();
+        return { update: render, destroy: sub.destroy };
+    },
 };

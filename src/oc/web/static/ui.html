@@ -1,72 +1,72 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>data-occultist</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <!-- style.css was split by section; load order is the cascade order (see each file's banner) -->
-  <link rel="stylesheet" href="/css/base.css" />
-  <link rel="stylesheet" href="/css/chrome.css" />
-  <link rel="stylesheet" href="/css/graph.css" />
-  <link rel="stylesheet" href="/css/overlays.css" />
-  <link rel="stylesheet" href="/css/controls.css" />
-  <link rel="stylesheet" href="/css/flow.css" />
-  <link rel="stylesheet" href="/css/tables.css" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>data-occultist</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- style.css was split by section; load order is the cascade order (see each file's banner) -->
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/chrome.css" />
+    <link rel="stylesheet" href="/css/graph.css" />
+    <link rel="stylesheet" href="/css/overlays.css" />
+    <link rel="stylesheet" href="/css/controls.css" />
+    <link rel="stylesheet" href="/css/flow.css" />
+    <link rel="stylesheet" href="/css/tables.css" />
 </head>
 <body spellcheck="false">
-  <header class="topbar">
-    <a class="navlink" href="/">← games</a>
-    <strong id="gameLabel">—</strong>
-    <label>window <select id="windowSelect"></select></label>
-    <span class="spacer"></span>
-    <button id="captureBtn">Capture</button>
-    <div class="cap-picker">
-      <button id="capPickerBtn" type="button" title="reload a saved capture">captures ▾</button>
-      <div id="capPop" class="cap-pop" hidden>
-        <div class="cap-tabs">
-          <button type="button" class="cap-tab active" data-tab="live">live</button>
-          <button type="button" class="cap-tab" data-tab="precap">precaptures</button>
-        </div>
-        <div id="capLive" class="cap-body"></div>
-        <div id="capPrecap" class="cap-body" hidden></div>
-      </div>
-    </div>
-    <button id="suggestBtn" title="Analyse the capture and propose a layout">Suggest</button>
-    <button id="previewBtn" title="OCR the current boxes and show what they read">Preview</button>
-    <span id="status" class="status"></span>
-  </header>
-
-  <main class="layout">
-    <section class="canvas-col">
-      <div class="toolbar">
-        <span class="hint">Drag to draw a box. Click to select; drag body to move, handles to resize.</span>
+    <header class="topbar">
+        <a class="navlink" href="/">← games</a>
+        <strong id="gameLabel">—</strong>
+        <label>window <select id="windowSelect"></select></label>
         <span class="spacer"></span>
-        <label class="inline"><input type="checkbox" id="gridPreview" checked /> grid</label>
-        <label class="inline"><input type="checkbox" id="previewToggle" checked /> values</label>
-        <label class="inline"><input type="checkbox" id="detectToggle" /> detections</label>
-        <button id="zoomOutBtn" title="zoom out">−</button>
-        <button id="fitBtn" title="fit to width">Fit</button>
-        <button id="oneToOneBtn" title="100%">1:1</button>
-        <button id="zoomInBtn" title="zoom in">+</button>
-        <span id="zoomLabel" class="status"></span>
-      </div>
-      <div class="canvas-wrap">
-        <canvas id="canvas"></canvas>
-      </div>
-    </section>
+        <button id="captureBtn">Capture</button>
+        <div class="cap-picker">
+            <button id="capPickerBtn" type="button" title="reload a saved capture">captures ▾</button>
+            <div id="capPop" class="cap-pop" hidden>
+                <div class="cap-tabs">
+                    <button type="button" class="cap-tab active" data-tab="live">live</button>
+                    <button type="button" class="cap-tab" data-tab="precap">precaptures</button>
+                </div>
+                <div id="capLive" class="cap-body"></div>
+                <div id="capPrecap" class="cap-body" hidden></div>
+            </div>
+        </div>
+        <button id="suggestBtn" title="Analyse the capture and propose a layout">Suggest</button>
+        <button id="previewBtn" title="OCR the current boxes and show what they read">Preview</button>
+        <span id="status" class="status"></span>
+    </header>
 
-    <aside class="panel">
-      <div id="panel-box"></div>
-      <div id="panel-window"></div>
-      <div id="panel-fields"></div>
-      <div id="panel-appearance"></div>
-      <div id="panel-states"></div>
-      <div id="panel-boxlist"></div>
-      <div id="panel-preview"></div>
-    </aside>
-  </main>
+    <main class="layout">
+        <section class="canvas-col">
+            <div class="toolbar">
+                <span class="hint">Drag to draw a box. Click to select; drag body to move, handles to resize.</span>
+                <span class="spacer"></span>
+                <label class="inline"><input type="checkbox" id="gridPreview" checked /> grid</label>
+                <label class="inline"><input type="checkbox" id="previewToggle" checked /> values</label>
+                <label class="inline"><input type="checkbox" id="detectToggle" /> detections</label>
+                <button id="zoomOutBtn" title="zoom out">−</button>
+                <button id="fitBtn" title="fit to width">Fit</button>
+                <button id="oneToOneBtn" title="100%">1:1</button>
+                <button id="zoomInBtn" title="zoom in">+</button>
+                <span id="zoomLabel" class="status"></span>
+            </div>
+            <div class="canvas-wrap">
+                <canvas id="canvas"></canvas>
+            </div>
+        </section>
 
-  <script type="module" src="/js/main.js"></script>
+        <aside class="panel">
+            <div id="panel-box"></div>
+            <div id="panel-window"></div>
+            <div id="panel-fields"></div>
+            <div id="panel-appearance"></div>
+            <div id="panel-states"></div>
+            <div id="panel-boxlist"></div>
+            <div id="panel-preview"></div>
+        </aside>
+    </main>
+
+    <script type="module" src="/js/main.js"></script>
 </body>
 </html>

@@ -4,43 +4,43 @@
 
 /* shared right-click context menu (graph add-node, pretty add-widget) — js/ctxmenu.js */
 .ctxmenu { position: fixed; z-index: 1000; background: var(--float-panel); color: var(--text); border: 1px solid var(--float-line);
-  border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); padding: 4px; min-width: 150px; display: flex; flex-direction: column; }
+    border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); padding: 4px; min-width: 150px; display: flex; flex-direction: column; }
 .ctx-item { display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 6px 8px;
-  background: transparent; border: none; text-align: left; cursor: pointer; border-radius: 4px; }
+    background: transparent; border: none; text-align: left; cursor: pointer; border-radius: 4px; }
 .ctx-item:hover { background: var(--accent-bg); }
 /* per-type colour: the JS sets --ctx-tint per row; icon takes it fully, label takes it too
    (falls back to muted icon / --text label when a row has no tint). */
 .ctx-ic { width: 18px; height: 18px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-  text-align: center; color: var(--ctx-tint, var(--muted)); }
+    text-align: center; color: var(--ctx-tint, var(--muted)); }
 .ctx-ic svg { width: 18px; height: 18px; }
 .ctx-lbl { color: var(--ctx-tint, var(--text)); }
 
 /* modals */
 .modal-backdrop {
-  position: fixed; inset: 0; z-index: 1000;
-  background: #0000008c;
-  display: flex; align-items: center; justify-content: center;
+    position: fixed; inset: 0; z-index: 1000;
+    background: #0000008c;
+    display: flex; align-items: center; justify-content: center;
 }
 .modal {
-  background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
-  display: flex; flex-direction: column; overflow: hidden;
-  box-shadow: 0 12px 40px #00000080;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 12px 40px #00000080;
 }
 .modal.large { width: 95vw; height: 92vh; }
 .modal.data { width: 760px; max-width: 92vw; max-height: 82vh; }
 .modal.medium { width: 520px; max-width: 92vw; max-height: 82vh; }
 .modal-h {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line);
 }
 .modal-title { font-weight: 600; }
 .modal-x { background: transparent; color: var(--muted); font-size: var(--fs-lg); padding: 0 8px; }
 .modal-x.locked { opacity: 0.4; cursor: not-allowed; }
 .modal.shake { animation: modal-shake 0.3s; }
 @keyframes modal-shake {
-  0%, 100% { transform: translateX(0); }
-  20%, 60% { transform: translateX(-6px); }
-  40%, 80% { transform: translateX(6px); }
+    0%, 100% { transform: translateX(0); }
+    20%, 60% { transform: translateX(-6px); }
+    40%, 80% { transform: translateX(6px); }
 }
 .modal-body { flex: 1; min-height: 0; overflow: auto; font-size: var(--fs-sm); }
 .modal.large .modal-body { overflow: hidden; }
@@ -51,36 +51,36 @@
 .cap-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
 .cap-head .spacer { flex: 1; }
 .cap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 8px; padding: 0 12px 12px; }
+    gap: 8px; padding: 0 12px 12px; }
 .cap-cell { position: relative; padding: 4px; background: var(--bg); border: 1px solid var(--line);
-  border-radius: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+    border-radius: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
 .cap-cell.used { border-color: color-mix(in srgb, var(--line), #fff 25%); }
 .cap-cell:hover { border-color: var(--accent); }
 .cap-cell.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 /* "make first" star — top-left badge. Hidden by default; revealed on hover of a SELECTED
    cell, and shown persistently (accent) on the current lead so the first image is obvious. */
 .cap-first { position: absolute; top: 7px; left: 7px; z-index: 1; display: none;
-  align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0;
-  border-radius: 5px; border: 1px solid var(--line); cursor: pointer; line-height: 0;
-  background: color-mix(in srgb, var(--black) 55%, transparent); color: var(--muted); }
+    align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0;
+    border-radius: 5px; border: 1px solid var(--line); cursor: pointer; line-height: 0;
+    background: color-mix(in srgb, var(--black) 55%, transparent); color: var(--muted); }
 .cap-first .ic { width: 14px; height: 14px; }
 .cap-cell.sel:hover .cap-first { display: inline-flex; }
 .cap-first:hover { color: var(--accent); border-color: var(--accent); }
 .cap-cell.is-first .cap-first { display: inline-flex; color: var(--accent); border-color: var(--accent); }
 .cap-cell img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px;
-  display: block; background: var(--black); }
+    display: block; background: var(--black); }
 .cap-time { font-size: var(--fs-xs); color: var(--muted); text-align: center; white-space: nowrap; }
 /* windows this image is bound to — single line, ellipsis on overflow, always present so
    every cell keeps the same height whether bound or not */
 .cap-wins { font-size: var(--fs-xs); color: var(--accent); text-align: center;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
-  min-height: 1.3em; line-height: 1.3em; }
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+    min-height: 1.3em; line-height: 1.3em; }
 .cap-empty { padding: 16px; color: var(--muted); }
 
 /* bottom terminal log bar (fixed; overlays, never shifts layout) */
 .logbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1100;
-  background: var(--log-bg); border-top: 1px solid var(--line);
-  font: var(--fs-sm)/1.55 var(--font-mono); color: var(--log-fg); }
+    background: var(--log-bg); border-top: 1px solid var(--line);
+    font: var(--fs-sm)/1.55 var(--font-mono); color: var(--log-fg); }
 .log-head { display: flex; align-items: center; gap: 8px; padding: 3px 10px; cursor: pointer; user-select: none; }
 .log-prompt { color: var(--accent); font-weight: 600; }
 .log-latest { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -96,33 +96,33 @@
 .log-workers { display: inline-flex; align-items: center; gap: 6px; flex: none; cursor: default; }
 .log-workers[hidden] { display: none; }
 .lw-spin { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--warn);
-  border-top-color: transparent; animation: lw-spin 0.7s linear infinite; }
+    border-top-color: transparent; animation: lw-spin 0.7s linear infinite; }
 @keyframes lw-spin { to { transform: rotate(360deg); } }
 .lw-count { color: var(--warn); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lw-kill { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap;
-  background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px;
-  height: 16px; min-height: 0; padding: 0 6px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1; }
+    background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px;
+    height: 16px; min-height: 0; padding: 0 6px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1; }
 .lw-kill:hover { filter: brightness(1.12); }
 
 /* boot veil: covers everything from first paint until the boot sequence settles, so
    the user can't poke a half-loaded, laggy UI. main.js removes it once boot quiesces
    (and before showing a startup-halt, which sits below it). */
 #bootveil { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center;
-  justify-content: center; background: var(--bg); transition: opacity .25s; }
+    justify-content: center; background: var(--bg); transition: opacity .25s; }
 #bootveil.fade { opacity: 0; pointer-events: none; }
 .bootveil-box { display: flex; flex-direction: column; align-items: center; gap: 14px;
-  color: var(--muted); }
+    color: var(--muted); }
 
 /* full-screen block when a background OCR worker refuses to die on startup */
 .startup-halt { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center;
-  justify-content: center; background: #0a0e13e0; }
+    justify-content: center; background: #0a0e13e0; }
 .startup-halt-box { max-width: 460px; padding: 22px 26px; text-align: center;
-  background: var(--panel); border: 1px solid var(--danger); border-radius: 10px; }
+    background: var(--panel); border: 1px solid var(--danger); border-radius: 10px; }
 .startup-halt-box h3 { margin: 0 0 8px; color: var(--danger); }
 .startup-halt-box p { margin: 6px 0; }
 .halt-actions { margin-top: 14px; display: flex; gap: 10px; justify-content: center; }
 .startup-halt-retry { background: var(--danger); color: var(--on-danger);
-  border: 0; border-radius: 5px; padding: 6px 16px; cursor: pointer; }
+    border: 0; border-radius: 5px; padding: 6px 16px; cursor: pointer; }
 .halt-actions .startup-halt-retry { margin-top: 0; }
 /* secondary action (e.g. "reload page") — quiet outline so the primary recovery reads first */
 .startup-halt-retry.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
@@ -133,7 +133,7 @@
 .offline-overlay { z-index: 4000; }
 .offline-overlay[hidden] { display: none; }
 .log-body { display: none; max-height: 38vh; overflow: auto; padding: 4px 10px 8px;
-  border-top: 1px solid var(--line); overscroll-behavior: contain; }
+    border-top: 1px solid var(--line); overscroll-behavior: contain; }
 .logbar.open .log-body { display: block; }
 .log-row { white-space: pre-wrap; word-break: break-word; }
 .log-ts { color: var(--log-dim); margin-right: 8px; }

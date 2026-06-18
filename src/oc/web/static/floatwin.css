@@ -4,22 +4,22 @@
 
 /* ---- generic shell --------------------------------------------------------- */
 .floatwin {
-  position: fixed; z-index: 40;
-  min-width: 180px; min-height: 90px; overflow: hidden;
-  display: flex; flex-direction: column;
-  background: var(--float-panel); border: 1px solid var(--float-line); 
-  box-shadow: 0 6px 24px #0008; font-size: var(--fs-sm); user-select: none;
+    position: fixed; z-index: 40;
+    min-width: 180px; min-height: 90px; overflow: hidden;
+    display: flex; flex-direction: column;
+    background: var(--float-panel); border: 1px solid var(--float-line); 
+    box-shadow: 0 6px 24px #0008; font-size: var(--fs-sm); user-select: none;
 }
 .floatwin[hidden] { display: none; }
 .fw-head {
-  display: flex; align-items: center; gap: 6px; padding: 5px 8px; flex: none;
-  background: var(--float-head); border-bottom: 1px solid var(--float-line); cursor: grab;
+    display: flex; align-items: center; gap: 6px; padding: 5px 8px; flex: none;
+    background: var(--float-head); border-bottom: 1px solid var(--float-line); cursor: grab;
 }
 .fw-head:active { cursor: grabbing; }
 .fw-title { flex: 1; color: var(--muted); font-weight: 600; font-size: var(--fs-base); }
 .fw-head button {
-  width: 26px; height: 26px; padding: 0; border: 1px solid var(--float-line);
-  background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; line-height: 1;
+    width: 26px; height: 26px; padding: 0; border: 1px solid var(--float-line);
+    background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; line-height: 1;
 }
 .fw-head button:hover { background: var(--accent); color: var(--on-accent); }
 .fw-body { padding: 6px; flex: 1; min-height: 0; overflow: auto; }
@@ -40,8 +40,8 @@
 /* docked under another panel: a small accent strip across the top edge hints it's attached
    to the panel above (positioned at top:0 because .floatwin clips overflow). */
 .floatwin.fw-docked::before {
-  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
-  background: var(--accent); opacity: 0.5; pointer-events: none; z-index: 1;
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: var(--accent); opacity: 0.5; pointer-events: none; z-index: 1;
 }
 
 /* per-panel default sizes (overridden by the inline size once the user resizes) */
@@ -64,7 +64,7 @@
 .nm-svg { display: block; max-width: 100%; max-height: 100%; background: var(--bg); border-radius: 4px; }
 /* viewport indicator: a div moved by CSS transform (no per-frame layout) */
 .nm-vp { position: absolute; left: 0; top: 0; box-sizing: border-box; pointer-events: none;
-  background: var(--accent-bg); border: 1px solid var(--accent); will-change: transform; }
+    background: var(--accent-bg); border: 1px solid var(--accent); will-change: transform; }
 .nm-group { stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 .nm-super { stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: auto; cursor: pointer; }
 /* super-group header row in the node list */
@@ -75,17 +75,17 @@
 .nm-n:hover { opacity: 1; stroke: var(--white); stroke-width: 1; }
 .nm-n.sel { stroke: var(--accent); stroke-width: 1.5; opacity: 1; }
 .nm-lbl { fill: #0b0e14; font-family: var(--font-mono); font-weight: 700; text-anchor: middle;
-  dominant-baseline: central; pointer-events: none; }
+    dominant-baseline: central; pointer-events: none; }
 /* group / super-group NAME title-bar drawn at the top of its box in the map */
 .nm-gtitle { pointer-events: none; }
 .nm-gtitle text { font-family: var(--font-mono); font-weight: 700; dominant-baseline: text-before-edge; }
 .nm-list { overflow: hidden; --nm-row-pad: 6px; --nm-row-indent: 10px; }
 .nm-row {
-  position: relative;   /* anchors the absolute collapse button + hidden-count badge */
-  display: flex; align-items: flex-start; gap: 6px; padding: 3px 22px 3px 6px; border-radius: 4px;
-  cursor: pointer; white-space: normal; color: var(--text);
-  /* indent = base pad + depth steps; tune --nm-row-pad / --nm-row-indent live in devtools */
-  padding-left: calc(var(--nm-row-pad) + var(--nm-depth, 0) * var(--nm-row-indent));
+    position: relative;   /* anchors the absolute collapse button + hidden-count badge */
+    display: flex; align-items: flex-start; gap: 6px; padding: 3px 22px 3px 6px; border-radius: 4px;
+    cursor: pointer; white-space: normal; color: var(--text);
+    /* indent = base pad + depth steps; tune --nm-row-pad / --nm-row-indent live in devtools */
+    padding-left: calc(var(--nm-row-pad) + var(--nm-depth, 0) * var(--nm-row-indent));
 }
 .nm-row:hover { background: var(--line); }
 .nm-row.sel { background: var(--accent-bg); color: var(--accent); }
@@ -93,17 +93,17 @@
    them never reflows the row. Toggle appears only on hover; count shows while collapsed (and
    yields to the toggle on hover so it can be expanded). */
 .nm-collapse {
-  position: absolute; right: 4px; top: 0; bottom: 0; margin: auto 0; width: 16px; height: 16px;
-  padding: 0; border: 0; background: none; cursor: pointer; color: var(--muted);
-  display: none; align-items: center; justify-content: center; line-height: 1; font-size: 10px;
-  transform: rotate(0deg); transform-origin: center; transition: transform 0.12s ease;
+    position: absolute; right: 4px; top: 0; bottom: 0; margin: auto 0; width: 16px; height: 16px;
+    padding: 0; border: 0; background: none; cursor: pointer; color: var(--muted);
+    display: none; align-items: center; justify-content: center; line-height: 1; font-size: 10px;
+    transform: rotate(0deg); transform-origin: center; transition: transform 0.12s ease;
 }
 .nm-collapse.open { transform: rotate(90deg); }   /* expanded → caret points down */
 .nm-row:hover .nm-collapse { display: flex; }
 .nm-collapse:hover { color: var(--accent); }
 .nm-hidden {
-  position: absolute; right: 6px; top: 3px; height: 1lh; display: flex; align-items: center;
-  font-size: var(--fs-xs); color: var(--muted); pointer-events: none; font-variant-numeric: tabular-nums;
+    position: absolute; right: 6px; top: 3px; height: 1lh; display: flex; align-items: center;
+    font-size: var(--fs-xs); color: var(--muted); pointer-events: none; font-variant-numeric: tabular-nums;
 }
 .nm-row:hover .nm-hidden { display: none; }
 /* dot/swatch align to the CENTRE OF THE FIRST LINE (not the whole wrapped block): top-align,
@@ -118,8 +118,8 @@
 /* empty state fills the panel and centres both axes */
 .act-empty { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--muted); }
 .act-row {
-  display: flex; align-items: center; gap: 8px; padding: 7px 9px;
-  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    display: flex; align-items: center; gap: 8px; padding: 7px 9px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
 }
 /* a row bound to a graph node: click it to pan+zoom there (hover hints the title) */
 .act-row[data-node] { cursor: pointer; }
@@ -132,8 +132,8 @@
 /* third row (triggers): last-activity line, dimmer than the status line above it */
 .act-last { font-size: var(--fs-xs); color: var(--muted); opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .act-cancel, .act-fire {
-  flex: none; align-self: center; border: 0; border-radius: 4px; padding: 3px 9px;
-  cursor: pointer; font-size: var(--fs-xs);
+    flex: none; align-self: center; border: 0; border-radius: 4px; padding: 3px 9px;
+    cursor: pointer; font-size: var(--fs-xs);
 }
 .act-cancel { background: var(--warn); color: var(--on-accent); }
 .act-fire { background: var(--ok); color: var(--on-accent); }
@@ -152,8 +152,8 @@
    centred spinner. No text swap = no fumble. */
 .act-fire.loading { position: relative; color: transparent; opacity: 1; }
 .act-fire.loading::after { content: ""; position: absolute; inset: 0; margin: auto;
-  width: 10px; height: 10px; border: 2px solid var(--on-accent); border-top-color: transparent;
-  border-radius: 50%; animation: spin 0.7s linear infinite; }
+    width: 10px; height: 10px; border: 2px solid var(--on-accent); border-top-color: transparent;
+    border-radius: 50%; animation: spin 0.7s linear infinite; }
 .act-trigger .act-prog { color: var(--accent); }
 
 /* ---- stats panel ----------------------------------------------------------- */
@@ -162,32 +162,32 @@
 .st-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); padding: 12px; }
 /* first-load spinner (while the rollup is being built/fetched); replaced by cards or .st-empty. */
 .st-spin { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 8px; color: var(--muted); padding: 16px; }
+    gap: 8px; color: var(--muted); padding: 16px; }
 .st-spin::before { content: ""; width: 18px; height: 18px; border-radius: 50%;
-  border: 2px solid var(--accent); border-top-color: transparent; animation: spin 0.7s linear infinite; }
+    border: 2px solid var(--accent); border-top-color: transparent; animation: spin 0.7s linear infinite; }
 /* one card per node+op (same shape as the tasks panel's .act-row): a clickable head with the
    node title + a wrap of labelled metric chips, and a hidden history chart below it. An accent
    stripe down the left edge keeps the otherwise-bland list scannable; it brightens when open. */
 /* type-bucket heading (ticks/ocr/replays/…); cards group under it, sorted by avg within. */
 .st-group { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--muted); padding: 6px 2px 1px; }
+    letter-spacing: 0.06em; color: var(--muted); padding: 6px 2px 1px; }
 .st-group:first-child { padding-top: 1px; }
 .st-card { background: var(--bg); border: 1px solid var(--line);
-  border-radius: 6px; overflow: hidden; }
+    border-radius: 6px; overflow: hidden; }
 /* slow replays/recomputes flagged by avg: amber over 1s, red over 10s (left stripe + tint). */
 .st-card.st-warn   { border-color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 8%, var(--bg)); }
+    background: color-mix(in srgb, var(--warn) 8%, var(--bg)); }
 .st-card.st-danger { border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 10%, var(--bg)); }
+    background: color-mix(in srgb, var(--danger) 10%, var(--bg)); }
 .st-head { display: flex; flex-direction: column; gap: 3px; padding: 7px 9px; cursor: pointer; }
 .st-head:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .st-card.open .st-head { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .st-title { font-weight: 600; font-size: var(--fs-sm);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .st-name { color: var(--text); }
 .st-runs { color: var(--accent); font-weight: 700; }   /* run count, dot-delimited in the title */
 .st-meta { display: flex; flex-wrap: wrap; gap: 3px 10px;
-  font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--text); }
+    font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--text); }
 .st-m { display: inline-flex; align-items: baseline; gap: 4px; }
 .st-m i { font-style: normal; font-size: 0.85em; color: var(--muted); }
 .st-m b { font-weight: 600; }
@@ -207,23 +207,23 @@
 /* ---- database structure panel ---------------------------------------------- */
 .db-panel { display: flex; flex-direction: column; gap: 8px; min-height: 100%; }
 .db-head { font-size: var(--fs-sm); font-weight: 600; color: var(--accent);
-  font-variant-numeric: tabular-nums; }
+    font-variant-numeric: tabular-nums; }
 .db-sec { display: flex; flex-direction: column; gap: 4px; }
 .db-h { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--muted); }
+    letter-spacing: 0.06em; color: var(--muted); }
 .db-trow { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
 .db-tname { font-size: var(--fs-sm); }
 .db-tname b { font-weight: 600; color: var(--text); }
 .db-tmeta { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
 .db-tcols { font-size: var(--fs-xs); color: var(--muted); margin-top: 2px;
-  word-break: break-word; }
+    word-break: break-word; }
 .db-tidx { font-size: var(--fs-xs); color: var(--muted); margin-top: 1px; }
 .db-tidx:empty { display: none; }
 .db-dsrow { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 10px;
-  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
 .db-dsname { font-size: var(--fs-sm); font-weight: 600; color: var(--text); margin-right: auto; }
 .db-chip { display: inline-flex; align-items: baseline; gap: 4px;
-  font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+    font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .db-chip i { font-style: normal; font-size: 0.85em; color: var(--muted); }
 .db-chip b { font-weight: 600; }
 .db-events b  { color: var(--text); }
@@ -236,7 +236,7 @@
 .live-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; flex: none; }
 /* a stat sits at the right of its row, truncating with an ellipsis rather than wrapping */
 .live-stats, .live-imgstat { flex: 1; min-width: 0; text-align: right; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+    overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
 .live-imgs { margin: 6px 0 0; }   /* the saved-images stat row, below the window list */
 .live-clear { flex: none; font-size: var(--fs-xs); padding: 1px 8px; }
 .live-clear[data-armed="1"] { background: var(--danger); color: var(--on-danger); }
@@ -266,7 +266,7 @@
 .test-cap-head { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: var(--fs-xs); }
 .test-cap-be { flex: 1; min-width: 0; }
 .test-cap-out { color: var(--text); font-size: var(--fs-xs); line-height: 1.5; font-variant-numeric: tabular-nums;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
+    background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
 
 /* ---- precapture (now floating, was a centred modal) ------------------------ */
 #precap .fw-body { padding: 0; }
@@ -281,17 +281,17 @@
 /* detail-page header: back-to-list button + the selected pane's title */
 .pc-detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex: none; }
 .pc-back { width: 28px; height: 24px; padding: 0; flex: none; border: 1px solid var(--float-line);
-  background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; line-height: 1; }
+    background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; line-height: 1; }
 .pc-back:hover { background: var(--accent); color: var(--on-accent); }
 .pc-detail-title { flex: 1; font-weight: 600; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* delete (×) pinned to the right of the detail header */
 .pc-detail-del { width: 28px; height: 24px; padding: 0; flex: none; border: 0; line-height: 1;
-  background: var(--danger); color: var(--on-danger); border-radius: 4px; cursor: pointer; }
+    background: var(--danger); color: var(--on-danger); border-radius: 4px; cursor: pointer; }
 .pc-detail-del:hover { filter: brightness(1.12); }
 .pc-detail-del[disabled] { opacity: 0.5; cursor: default; }
 /* armed (first click): widen for the "delete?" label + warn colour until the 2nd click */
 .pc-detail-del.armed { width: auto; padding: 0 8px; font-size: var(--fs-xs);
-  background: var(--warn); color: var(--on-accent); }
+    background: var(--warn); color: var(--on-accent); }
 .pc-sess-new { text-align: left; margin-bottom: 4px; }
 .pc-sess-new.active { outline: 1px solid var(--accent); border-radius: 4px; }
 .pc-opts { display: flex; flex-wrap: wrap; gap: 14px; }
@@ -303,7 +303,7 @@
 /* recognised window/state during processing + a tally with a distinct misses row */
 .pc-recog { display: flex; flex-wrap: wrap; gap: 6px; }
 .pc-recog-chip { font-size: var(--fs-xs); padding: 1px 7px; border-radius: 10px;
-  background: var(--bg); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+    background: var(--bg); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
 .pc-recog-chip.miss { color: var(--warn); border-color: var(--warn); }
 /* saved-session list */
 .pc-sess-h { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
@@ -319,7 +319,7 @@
 .pc-sess-ren { width: 26px; grid-row: 1 / span 2; }
 /* save button after a successful save — green, not dimmed like a normal disabled button */
 .pc-ctl button.pc-saved, .pc-ctl button.pc-saved:disabled {
-  background: var(--phase-done); color: var(--white); opacity: 1; cursor: default; }
+    background: var(--phase-done); color: var(--white); opacity: 1; cursor: default; }
 .pc-progress { height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .pc-fill { height: 100%; background: var(--accent); transition: width 0.2s; }
 .pc-data { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; }

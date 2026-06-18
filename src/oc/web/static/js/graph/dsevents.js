@@ -24,37 +24,37 @@ const subs = new Set();
 // Subscribe to every dataset change. `fn(dataset, n)` — the dataset id and the coalesced row
 // count for this event. Returns an unsubscribe.
 export function subscribe(fn) {
-  subs.add(fn);
-  return () => subs.delete(fn);
+    subs.add(fn);
+    return () => subs.delete(fn);
 }
 
 // Point the bus at a game (opening or repointing the stream). Idempotent: a no-op when the
 // stream is already open for the same game.
 export function setGame(g) {
-  if (g === game && stream) return;
-  game = g;
-  open();
+    if (g === game && stream) return;
+    game = g;
+    open();
 }
 
 export function stop() { close(); }
 
 function open() {
-  close();
-  if (!game) return;
-  try {
-    stream = new EventSource(`/api/events/${encodeURIComponent(game)}`);
-    stream.addEventListener("dataset", onMessage);
-    // (no work on "ready": streams reconnect often; each subscriber's fallback poll covers the gap)
-  } catch { /* EventSource unavailable -> subscribers fall back to their own poll */ }
+    close();
+    if (!game) return;
+    try {
+        stream = new EventSource(`/api/events/${encodeURIComponent(game)}`);
+        stream.addEventListener("dataset", onMessage);
+        // (no work on "ready": streams reconnect often; each subscriber's fallback poll covers the gap)
+    } catch { /* EventSource unavailable -> subscribers fall back to their own poll */ }
 }
 
 function close() {
-  if (stream) { try { stream.close(); } catch { /* */ } stream = null; }
+    if (stream) { try { stream.close(); } catch { /* */ } stream = null; }
 }
 
 function onMessage(e) {
-  let d;
-  try { d = JSON.parse(e.data); } catch { return; }
-  if (!d || !d.dataset) return;
-  for (const fn of subs) { try { fn(d.dataset, d.n || 1); } catch { /* one bad subscriber must not stall the rest */ } }
+    let d;
+    try { d = JSON.parse(e.data); } catch { return; }
+    if (!d || !d.dataset) return;
+    for (const fn of subs) { try { fn(d.dataset, d.n || 1); } catch { /* one bad subscriber must not stall the rest */ } }
 }

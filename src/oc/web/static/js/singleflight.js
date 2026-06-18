@@ -15,11 +15,11 @@ const _inflight = new Set();
 const _again = new Map();   // key -> the LATEST fn requested while busy (run once when the current ends)
 
 export function singleFlight(key, fn) {
-  if (_inflight.has(key)) { _again.set(key, fn); return; }   // busy -> remember the latest request
-  _inflight.add(key);
-  Promise.resolve().then(fn).catch(() => {}).finally(() => {
-    _inflight.delete(key);
-    const next = _again.get(key);
-    if (next) { _again.delete(key); singleFlight(key, next); }   // a call arrived mid-flight -> run it now
-  });
+    if (_inflight.has(key)) { _again.set(key, fn); return; }   // busy -> remember the latest request
+    _inflight.add(key);
+    Promise.resolve().then(fn).catch(() => {}).finally(() => {
+        _inflight.delete(key);
+        const next = _again.get(key);
+        if (next) { _again.delete(key); singleFlight(key, next); }   // a call arrived mid-flight -> run it now
+    });
 }

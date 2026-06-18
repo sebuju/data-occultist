@@ -9,16 +9,16 @@
 
 /* flow graph */
 .diagram {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 90px;
-  padding: 8px 4px;
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 90px;
+    padding: 8px 4px;
 }
 .edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
 .edge {
-  fill: none; stroke: var(--line); stroke-width: 2;
-  stroke-dasharray: 7 6; /* TEMP: animation: flow 1.1s linear infinite; — constant repaint */
+    fill: none; stroke: var(--line); stroke-width: 2;
+    stroke-dasharray: 7 6; /* TEMP: animation: flow 1.1s linear infinite; — constant repaint */
 }
 .edge.active { stroke: var(--accent); stroke-width: 3; }
 @keyframes flow { to { stroke-dashoffset: -13; } }
@@ -26,8 +26,8 @@
 .col { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 16px; }
 .col-h { color: var(--muted); font-size: var(--fs-sm); margin-bottom: 2px; }
 .node {
-  background: var(--panel); border: 1px solid var(--line);
-  border-radius: 8px; padding: 8px 10px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px;
 }
 .node-h { font-weight: 600; }
 .node.ds { cursor: pointer; }
@@ -37,18 +37,18 @@ a.node.win:hover { border-color: var(--accent); }
 .node.ds .big { font-size: var(--fs-xxl); margin: 2px 0; }
 .node.pulse { animation: pulse 1.2s ease-out; }
 @keyframes pulse {
-  0% { box-shadow: 0 0 0 0 #5aa9e699; border-color: var(--accent); }
-  100% { box-shadow: 0 0 0 14px #5aa9e600; }
+    0% { box-shadow: 0 0 0 0 #5aa9e699; border-color: var(--accent); }
+    100% { box-shadow: 0 0 0 14px #5aa9e600; }
 }
 .fchip {
-  display: inline-block; background: var(--bg); border: 1px solid var(--line);
-  border-radius: 10px; padding: 1px 7px; font-size: var(--fs-sm); margin: 2px 3px 0 0;
+    display: inline-block; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1px 7px; font-size: var(--fs-sm); margin: 2px 3px 0 0;
 }
 
 .detail-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .history { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow: auto; }
 .history li { padding: 4px 6px; border-bottom: 1px solid var(--line); font-size: var(--fs-base);
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .history .op { font-weight: 600; margin-right: 6px; }
 /* a reverted row: strike + dim only the INFO children (time / id / meta), NEVER the <li> itself.
    opacity on the <li> composites the whole row as one group, so a child (.led-remove) can't undo it;
@@ -66,11 +66,11 @@ a.node.win:hover { border-color: var(--accent); }
 /* host nodes (dataset/preview/batches/dictionary/subset): the NODE itself resizes and
    its body + content host fill it. ONE behaviour — no separate resize handle inside. */
 .gnode.dataset, .gnode.preview, .gnode.dictionary, .gnode.subset, .gnode.price {
-  display: flex; flex-direction: column; resize: none; overflow: hidden; min-width: 280px; }
+    display: flex; flex-direction: column; resize: none; overflow: hidden; min-width: 280px; }
 /* trigger node: compact, fixed; out-port must show so it can be wired to a price node */
 .gnode.trigger { width: 280px; overflow: visible; }
 .pr-src { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px;
-  background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-size: var(--fs-sm); }
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-size: var(--fs-sm); }
 .pr-src button { border: none; background: none; color: var(--muted); cursor: pointer; padding: 0; line-height: 1; }
 .pr-src button:hover { color: var(--warn); }
 .pr-srcs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 4px 0; font-size: var(--fs-sm); }
@@ -85,11 +85,11 @@ a.node.win:hover { border-color: var(--accent); }
 .gnode.price > .gn-body, .gnode.dataset > .gn-body, .gnode.subset > .gn-body { overflow: auto; }   /* scroll when too small instead of squishing/clipping */
 .gnode.dataset > .gn-body, .gnode.preview > .gn-body,
 .gnode.dictionary > .gn-body, .gnode.subset > .gn-body, .gnode.price > .gn-body {
-  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 /* dataset node: [data | history] tabs swap which host fills the body */
 .ds-tabs { display: flex; gap: 4px; margin-top: 6px; flex: 0 0 auto; }
 .ds-tab { flex: 1 1 0; padding: 2px 0; font-size: var(--fs-sm); background: var(--bg);
-  border: 1px solid var(--line); border-radius: 6px; color: var(--muted); cursor: pointer; }
+    border: 1px solid var(--line); border-radius: 6px; color: var(--muted); cursor: pointer; }
 .ds-tab:hover { color: var(--text); }
 .ds-tab.on { background: var(--accent-bg); border-color: var(--accent); color: var(--text); }
 .ds-tab-n { margin-left: 2px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -106,8 +106,8 @@ a.node.win:hover { border-color: var(--accent); }
 .sub-cfg.collapsed { display: none; }
 .sub-cfg.collapsed + .sub-host { margin-top: 0; }
 .gn-cog { margin-left: auto; flex: 0 0 auto; width: 22px; height: 22px; min-height: 0; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: transparent; border: 0; color: var(--muted); line-height: 0; cursor: pointer; }
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 0; color: var(--muted); line-height: 0; cursor: pointer; }
 .gn-cog svg { display: block; margin: auto; }
 .gn-cog:hover { color: var(--text); }
 .gn-cog.on { color: var(--accent); }
@@ -139,17 +139,17 @@ a.node.win:hover { border-color: var(--accent); }
 .sub-row button.danger { flex: 0 0 auto; padding: 0 6px; }
 .sv-inputs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
 .sv-input { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 7px; box-sizing: border-box;
-  min-height: 22px;   /* pin chip + add-select to one height so the select's UA min never makes them differ */
-  background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 10px; font-size: var(--fs-sm); }
+    min-height: 22px;   /* pin chip + add-select to one height so the select's UA min never makes them differ */
+    background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 10px; font-size: var(--fs-sm); }
 .sv-input .sv-rmin { padding: 0 3px; min-height: 0; background: transparent; color: var(--danger); }
 /* the "+ join source" add control is a pill like the source pills; the select inside is
    borderless/transparent so the pill (.sv-input) supplies the look */
 .sv-add { padding: 0; overflow: hidden; }
 .sv-add .sv-addin { max-width: 150px; border: 0; background: transparent; color: var(--text);
-  font-size: var(--fs-sm); padding: 1px 7px; cursor: pointer;
-  appearance: none; -webkit-appearance: none;   /* drop the native dropdown caret — the pill is the affordance */
-  field-sizing: content;   /* size to the SELECTED text ("+ source…"), not the widest option */
-  align-self: stretch; min-height: 0; box-sizing: border-box; }   /* fill the pill, drop the select UA min-height */
+    font-size: var(--fs-sm); padding: 1px 7px; cursor: pointer;
+    appearance: none; -webkit-appearance: none;   /* drop the native dropdown caret — the pill is the affordance */
+    field-sizing: content;   /* size to the SELECTED text ("+ source…"), not the widest option */
+    align-self: stretch; min-height: 0; box-sizing: border-box; }   /* fill the pill, drop the select UA min-height */
 /* the dropdown popup inherits the select's bg — transparent renders white, so set the
    options to the panel colour so they stay readable when opened */
 .sv-add .sv-addin option { background: var(--panel); color: var(--text); }
@@ -157,11 +157,11 @@ a.node.win:hover { border-color: var(--accent); }
    border/resize of its own — the host owns those */
 /* the inner host just FILLS the node now (no resize handle of its own) */
 .nodehost { margin-top: 6px; overflow: auto; flex: 1 1 auto; min-height: 80px;
-  border: 1px solid var(--line); border-radius: 6px; padding: 0 6px 4px; }
+    border: 1px solid var(--line); border-radius: 6px; padding: 0 6px 4px; }
 .dict-host { padding: 0; }
 .dict-host > .dictterms { width: 100%; height: 100%; resize: none; box-sizing: border-box; display: block;
-  font: var(--fs-sm)/1.4 var(--font-mono); background: var(--bg); color: var(--text);
-  border: 0; border-radius: 6px; padding: 6px; }
+    font: var(--fs-sm)/1.4 var(--font-mono); background: var(--bg); color: var(--text);
+    border: 0; border-radius: 6px; padding: 6px; }
 /* batches sub-layout: ledger list on top, selected-batch contents + preview below */
 .bat-host { display: flex; flex-direction: column; gap: 8px; }   /* fills the node (see .nodehost) */
 .bat-list { max-height: 45%; overflow: auto; flex: 0 0 auto; }
@@ -202,7 +202,7 @@ a.node.win:hover { border-color: var(--accent); }
 /* enabled/disabled nodes — SVG slide toggle, styled to the node palette. Sits at the
    right edge of the header (margin-left:auto pushes it). */
 .gn-h .gn-enable { margin: 0; margin-left: auto; flex: 0 0 auto; padding: 0; border: 0;
-  background: transparent; display: inline-flex; align-items: center; cursor: pointer; }
+    background: transparent; display: inline-flex; align-items: center; cursor: pointer; }
 .gn-enable svg { display: block; }
 /* track + thumb take the node's own colours: --line off, --accent on */
 .gn-enable .gt-track { fill: var(--line); stroke: var(--line); transition: fill .18s ease, stroke .18s ease; }
@@ -218,16 +218,16 @@ a.node.win:hover { border-color: var(--accent); }
 .prev-rej td { opacity: 0.62; }
 .prev-sep td { padding: 0; height: 2px; background: var(--accent); opacity: 0.5; }   /* rule between images in preview-all */
 .tell-chip { display: inline-block; padding: 0 5px; margin: 1px; border-radius: 3px;
-  font-size: var(--fs-xs); border: 1px solid currentColor; white-space: nowrap; }
+    font-size: var(--fs-xs); border: 1px solid currentColor; white-space: nowrap; }
 .tell-chip.tc-ok { background: #7ddc7d1f; }
 .tell-chip.tc-bad { background: #e6685a1f; }
 .grid-table td .tell-chip + .tell-chip { margin-left: 2px; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
 .chip {
-  display: inline-flex; align-items: center; gap: 4px;
-  border: 1px solid var(--line); border-radius: 12px;
-  padding: 2px 6px; font-size: var(--fs-sm);
+    display: inline-flex; align-items: center; gap: 4px;
+    border: 1px solid var(--line); border-radius: 12px;
+    padding: 2px 6px; font-size: var(--fs-sm);
 }
 .chip .sw { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
 .chip-x { padding: 0 4px; background: transparent; color: var(--muted); }
@@ -238,8 +238,8 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 .grid-table { width: 100%; border-collapse: separate; border-spacing: 0; }
 .grid-table.zebra tbody tr:nth-child(even) { background: var(--zebra); }
 .grid-table th { text-align: left; color: var(--muted); font-weight: 400; font-size: var(--fs-sm);
-  position: sticky; top: 0; z-index: 1; background: var(--panel);
-  box-shadow: inset 0 -1px 0 var(--line); }   /* opaque + separate borders: rows never bleed past sticky header */
+    position: sticky; top: 0; z-index: 1; background: var(--panel);
+    box-shadow: inset 0 -1px 0 var(--line); }   /* opaque + separate borders: rows never bleed past sticky header */
 /* dataset records, rendered inline in the dataset node */
 .ds-detail { padding: 4px 2px; }
 .ds-detail .ds-h { margin: 10px 0 4px; }
@@ -255,12 +255,12 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 .grid-table.colsized th, .grid-table.colsized td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grid-table th.th-sortable { cursor: pointer; user-select: none; }
 .grid-table th .th-sort { position: absolute; top: 0; right: 1px; font-size: 8px; line-height: 1.3;
-  color: var(--accent); pointer-events: none; }       /* overlay — never takes column width */
+    color: var(--accent); pointer-events: none; }       /* overlay — never takes column width */
 .grid-table th .th-grip { position: absolute; top: 0; right: -4px; width: 8px; height: 100%;
-  cursor: col-resize; z-index: 3; }
+    cursor: col-resize; z-index: 3; }
 .grid-table th .th-grip::after {            /* always-visible divider line at the column boundary */
-  content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px;
-  background: var(--line); }
+    content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px;
+    background: var(--line); }
 .grid-table th .th-grip:hover::after { width: 2px; background: var(--accent); }
 
 /* dataset node summary */
@@ -288,7 +288,7 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 .gnode.price .enr-refresh { flex: 0 0 auto; }   /* don't stretch the sweep button to full width */
 .enr-cancel.busy { display: inline-flex; align-items: center; gap: 6px; }
 .enr-cancel.busy::before { content: ""; width: 11px; height: 11px; border-radius: 50%;
-  border: 2px solid currentColor; border-top-color: transparent; animation: spin 0.7s linear infinite; }
+    border: 2px solid currentColor; border-top-color: transparent; animation: spin 0.7s linear infinite; }
 .enr-prog { font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
 .enr-of { margin-bottom: 6px; }
 
