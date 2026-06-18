@@ -53,6 +53,8 @@ export function buildInspector(ctx) {
       for (const u of POS_UNITS) { const o = el("option", null, u); o.value = u; us.appendChild(o); }
       us.value = (gm.units && gm.units[k]) || "px";
       us.addEventListener("change", () => { ctx.setUnit(w.id, k, us.value); syncGeom(w.id); });
+      // a matched dimension is driven by another widget — its own value/unit no longer apply.
+      if ((k === "w" && w.matchW) || (k === "h" && w.matchH)) { inp.disabled = true; us.disabled = true; cell.title = "size matched to another widget"; }
       cell.append(inp, us);
       geomRefs[k] = { inp, us };
       g.appendChild(cell);
@@ -227,16 +229,36 @@ export function buildInspector(ctx) {
     { value: "ml", label: "left" }, { value: "mc", label: "center" }, { value: "mr", label: "right" },
     { value: "bl", label: "bottom-left" }, { value: "bc", label: "bottom" }, { value: "br", label: "bottom-right" },
   ];
+  // A compact 3x3 picker for one of the nine anchor points — clicking a cell selects it. Small
+  // by design: it's a quick pick, not a big control.
+  function cornerGrid(value, onPick) {
+    const g = el("div", "pw-corner-grid");
+    for (const p of ANCHOR_POINTS) {
+      const b = el("button", "pw-corner-cell"); b.type = "button"; b.title = p.label;
+      if (p.value === (value || "tl")) b.classList.add("on");
+      b.addEventListener("click", () => onPick(p.value));
+      g.appendChild(b);
+    }
+    return g;
+  }
   const widgetName = (x) => { const c = x.config || {}; const lab = c.title || c.text || c.label || (x.binding && x.binding.id) || x.type; return `${lab} · ${x.id}`; };
   function anchorEditor(w) {
     const g = el("div", "pw-insp-grp");
-    g.appendChild(hdr("anchor", () => { ctx.setAnchor(w.id, { to: "", corner: "tl" }); render(); }));
+    g.appendChild(hdr("anchor", () => { ctx.setAnchor(w.id, { to: "", corner: "tl", target: "tl" }); render(); }));
     const a = w.anchor || { to: "", corner: "tl" };
     const others = ctx.currentWidgets().filter((x) => x.id !== w.id);
     const toOpts = [{ value: "", label: "canvas" }, ...others.map((x) => ({ value: x.id, label: widgetName(x) }))];
-    const set = (patch) => { ctx.setAnchor(w.id, { to: a.to || "", corner: a.corner || "tl", ...patch }); render(); };
+    // `corner` = the widget's OWN point; `target` = the point on the anchor target it pins to.
+    // Both default to the other so existing single-point anchors keep working.
+    const set = (patch) => { ctx.setAnchor(w.id, { to: a.to || "", corner: a.corner || "tl", target: a.target || a.corner || "tl", ...patch }); render(); };
     g.appendChild(row("anchor to", sel(a.to || "", toOpts, (v) => set({ to: v }))));
-    g.appendChild(row("point", sel(a.corner || "tl", ANCHOR_POINTS, (v) => set({ corner: v }))));
+    g.appendChild(row("this", cornerGrid(a.corner || "tl", (v) => set({ corner: v }))));
+    g.appendChild(row("target", cornerGrid(a.target || a.corner || "tl", (v) => set({ target: v }))));
+    // match this widget's width / height to another widget's resolved size ("—" = own size).
+    const matchOpts = [{ value: "", label: "—" }, ...others.map((x) => ({ value: x.id, label: widgetName(x) }))];
+    const setMatch = (key, v) => { ctx.setMatch(w.id, key, v); render(); };   // re-render so the size field's disabled state follows
+    g.appendChild(row("match w", sel(w.matchW || "", matchOpts, (v) => setMatch("matchW", v))));
+    g.appendChild(row("match h", sel(w.matchH || "", matchOpts, (v) => setMatch("matchH", v))));
     return g;
   }
 

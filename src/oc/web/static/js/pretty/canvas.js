@@ -58,8 +58,15 @@ export function renderPage(surface, page, ctx) {
   placeAll();
 
   // anchored-to-canvas widgets (e.g. pinned to the right/bottom edge) re-place when the
-  // surface changes size; cheap, and it keeps edge-pinned widgets where they belong.
-  const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => placeAll()) : null;
+  // surface changes size; cheap, and it keeps edge-pinned widgets where they belong. placeAll
+  // resizes widgets, which can resize the surface again — running it synchronously inside the
+  // observer trips "ResizeObserver loop completed with undelivered notifications", so defer to the
+  // next frame (coalescing bursts) to break the feedback loop.
+  let roFrame = 0;
+  const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
+    if (roFrame) return;
+    roFrame = requestAnimationFrame(() => { roFrame = 0; placeAll(); });
+  }) : null;
   ro && ro.observe(surface);
 
   function build(widget) {
@@ -109,13 +116,20 @@ export function renderPage(surface, page, ctx) {
         const t = box(a.to, new Set(seen).add(id));
         if (t) tbox = t;
       }
-      const ww = lenToPx(w.w ?? 200, unitOf(w, "w"), tbox.w);
-      const wh = lenToPx(w.h ?? 80, unitOf(w, "h"), tbox.h);
-      const { fx, fy } = anchorFrac(a && a.corner);
-      const ox = tbox.left + fx * tbox.w, oy = tbox.top + fy * tbox.h;
+      let ww = lenToPx(w.w ?? 200, unitOf(w, "w"), tbox.w);
+      let wh = lenToPx(w.h ?? 80, unitOf(w, "h"), tbox.h);
+      // optional dimension match: copy another widget's RESOLVED px width/height. Resolved through
+      // the same recursive box() with the same cycle guard as the anchor chain, so the source is
+      // always computed first and a match loop (or a match back through an anchor) safely falls
+      // back to the widget's own size instead of recursing forever.
+      if (w.matchW && w.matchW !== id && recs.has(w.matchW) && !seen.has(w.matchW)) { const t = box(w.matchW, new Set(seen).add(id)); if (t) ww = t.w; }
+      if (w.matchH && w.matchH !== id && recs.has(w.matchH) && !seen.has(w.matchH)) { const t = box(w.matchH, new Set(seen).add(id)); if (t) wh = t.h; }
+      const sf = anchorFrac(a && a.corner);                 // widget's own anchor point
+      const tf = anchorFrac(a && (a.target || a.corner));   // point on the target box (defaults to corner)
+      const ox = tbox.left + tf.fx * tbox.w, oy = tbox.top + tf.fy * tbox.h;
       const offX = lenToPx(w.x ?? 0, unitOf(w, "x"), tbox.w);
       const offY = lenToPx(w.y ?? 0, unitOf(w, "y"), tbox.h);
-      const b = { left: ox - fx * ww + offX, top: oy - fy * wh + offY, w: ww, h: wh };
+      const b = { left: ox - sf.fx * ww + offX, top: oy - sf.fy * wh + offY, w: ww, h: wh };
       memo.set(id, b);
       return b;
     };
@@ -152,7 +166,9 @@ export function renderPage(surface, page, ctx) {
     if (!rec) return;
     const w = rec.widget;
     const before = resolveBoxes().get(id);
-    w.anchor = anchor && anchor.to !== undefined ? { to: anchor.to, corner: anchor.corner || "tl" } : { to: "", corner: "tl" };
+    w.anchor = anchor && anchor.to !== undefined
+      ? { to: anchor.to, corner: anchor.corner || "tl", target: anchor.target || anchor.corner || "tl" }
+      : { to: "", corner: "tl", target: "tl" };
     const sx = w.x, sy = w.y; w.x = 0; w.y = 0;
     const base = resolveBoxes().get(id);   // box with zero offset = the anchor-aligned position
     const ref = targetRef(id);
@@ -164,37 +180,92 @@ export function renderPage(surface, page, ctx) {
 
   // ---- anchor cue (selected widget -> its anchor target) -----------------------------
   // When a selected widget is anchored to ANOTHER widget (not the canvas), outline that target
-  // and draw a line from the target's anchor point to the widget's anchored corner, so the
-  // "pinned to / point to" relationship is visible. Redrawn whenever either box moves.
+  // and draw the x/y offset as an L of two dashed lines — one horizontal, one vertical — from the
+  // target's anchor point to the widget's anchored corner, so the "pinned to / point to" gap is
+  // visible per-axis. Both legs ORIGINATE at the starting point P (the target's anchor point): the
+  // horizontal one runs to the widget's x, the vertical one to its y. Each leg is labelled with its
+  // distance in the widget's CONFIGURED unit for that field (unitOf x / y), midpoint, on a solid
+  // chip for contrast. Redrawn whenever a box moves.
+  const SVGNS = "http://www.w3.org/2000/svg";
   let cueId = null, cueSvg = null;
   function ensureCueSvg() {
     if (!cueSvg) {
-      cueSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      cueSvg = document.createElementNS(SVGNS, "svg");
       cueSvg.setAttribute("class", "pw-anchor-cue");
       surface.appendChild(cueSvg);
     }
     return cueSvg;
   }
   function showAnchorCue(id) { cueId = id; drawAnchorCue(); }
+  function cueLine(x1, y1, x2, y2) {
+    const l = document.createElementNS(SVGNS, "line");
+    l.setAttribute("x1", x1); l.setAttribute("y1", y1);
+    l.setAttribute("x2", x2); l.setAttribute("y2", y2);
+    l.setAttribute("class", "pw-cue-line");
+    return l;
+  }
+  function cueDot(cx, cy, r, cls) {
+    const c = document.createElementNS(SVGNS, "circle");
+    c.setAttribute("cx", cx); c.setAttribute("cy", cy); c.setAttribute("r", r);
+    c.setAttribute("class", cls);
+    return c;
+  }
+  // A distance chip centred on (cx, cy): text sized via getBBox, solid rect sized behind it.
+  function cueLabel(svg, cx, cy, text) {
+    const g = document.createElementNS(SVGNS, "g");
+    const rect = document.createElementNS(SVGNS, "rect");
+    rect.setAttribute("class", "pw-cue-lbl-bg"); rect.setAttribute("rx", "2");
+    const t = document.createElementNS(SVGNS, "text");
+    t.setAttribute("class", "pw-cue-lbl-tx");
+    t.setAttribute("text-anchor", "middle");
+    t.setAttribute("dominant-baseline", "central");
+    t.setAttribute("x", cx); t.setAttribute("y", cy);
+    t.textContent = text;
+    g.appendChild(rect); g.appendChild(t); svg.appendChild(g);   // appended so getBBox resolves
+    const bb = t.getBBox(), px = 4, py = 2;
+    rect.setAttribute("x", bb.x - px); rect.setAttribute("y", bb.y - py);
+    rect.setAttribute("width", bb.width + px * 2); rect.setAttribute("height", bb.height + py * 2);
+  }
+  const distLabel = (w, k) => `${r2(Math.abs(w[k] ?? 0))}${unitOf(w, k)}`;
   function drawAnchorCue() {
-    for (const r of recs.values()) r.frame.classList.remove("pw-anchor-target");
     const rec = cueId && recs.get(cueId);
     const a = rec && rec.widget.anchor;
     if (!rec || !a || !a.to || !recs.has(a.to)) { if (cueSvg) cueSvg.style.display = "none"; return; }
     const boxes = resolveBoxes();
     const sb = boxes.get(cueId), tb = boxes.get(a.to);
     if (!sb || !tb) { if (cueSvg) cueSvg.style.display = "none"; return; }
-    const { fx, fy } = anchorFrac(a.corner);
-    const P = { x: tb.left + fx * tb.w, y: tb.top + fy * tb.h };   // target's anchor point
-    const Q = { x: sb.left + fx * sb.w, y: sb.top + fy * sb.h };   // widget's anchored corner
-    recs.get(a.to).frame.classList.add("pw-anchor-target");
+    const sf = anchorFrac(a.corner), tf = anchorFrac(a.target || a.corner);
+    const P = { x: tb.left + tf.fx * tb.w, y: tb.top + tf.fy * tb.h };   // target's anchor point
+    const Q = { x: sb.left + sf.fx * sb.w, y: sb.top + sf.fy * sb.h };   // widget's anchored corner
     const svg = ensureCueSvg();
     svg.setAttribute("width", surface.scrollWidth); svg.setAttribute("height", surface.scrollHeight);
     svg.style.display = "";
-    svg.innerHTML =
-      `<line x1="${P.x}" y1="${P.y}" x2="${Q.x}" y2="${Q.y}" class="pw-cue-line"/>` +
-      `<circle cx="${P.x}" cy="${P.y}" r="4" class="pw-cue-dot"/>` +
-      `<circle cx="${Q.x}" cy="${Q.y}" r="3" class="pw-cue-end"/>`;
+    svg.innerHTML = "";
+    const w = rec.widget;
+    // two legs originate at P and two at Q, completing the offset rectangle: each end gets a
+    // horizontal and a vertical leg, every leg carrying its distance label at its midpoint. The
+    // two horizontals share a y-gap of |Q.y-P.y| and the two verticals an x-gap of |Q.x-P.x|; when
+    // that gap is tiny the pair (and its labels) would overlap, so the second leg is dropped.
+    const NEAR = 22;
+    const farY = Math.abs(Q.y - P.y) >= NEAR, farX = Math.abs(Q.x - P.x) >= NEAR;
+    if (Q.x !== P.x) {
+      svg.appendChild(cueLine(P.x, P.y, Q.x, P.y));   // P horizontal
+      cueLabel(svg, (P.x + Q.x) / 2, P.y, distLabel(w, "x"));
+      if (farY) {                                     // Q horizontal — only if clear of the first
+        svg.appendChild(cueLine(P.x, Q.y, Q.x, Q.y));
+        cueLabel(svg, (P.x + Q.x) / 2, Q.y, distLabel(w, "x"));
+      }
+    }
+    if (Q.y !== P.y) {
+      svg.appendChild(cueLine(P.x, P.y, P.x, Q.y));   // P vertical
+      cueLabel(svg, P.x, (P.y + Q.y) / 2, distLabel(w, "y"));
+      if (farX) {                                     // Q vertical — only if clear of the first
+        svg.appendChild(cueLine(Q.x, P.y, Q.x, Q.y));
+        cueLabel(svg, Q.x, (P.y + Q.y) / 2, distLabel(w, "y"));
+      }
+    }
+    svg.appendChild(cueDot(P.x, P.y, 4, "pw-cue-dot"));
+    svg.appendChild(cueDot(Q.x, Q.y, 3, "pw-cue-end"));
   }
 
   function wireConditions(rec) {
@@ -316,14 +387,31 @@ export function renderPage(surface, page, ctx) {
       placeAll(); drawAnchorCue();
       if (("w" in patch) || ("h" in patch)) { try { rec.inst.update && rec.inst.update(); } catch { /* */ } }
     },
-    // change a field's unit, preserving its on-screen px so the widget doesn't jump
+    // change a field's unit, preserving its on-screen px so the widget doesn't jump. The stored
+    // value is rounded (r2) per unit, so a naive value->px->value round-trip drifts (px->%->px
+    // loses precision each hop). Cache the EXACT px per field and reuse it whenever the current
+    // stored value still rounds back to it — so toggling a unit out and back is lossless. A manual
+    // edit (or drag) changes the value so the cache no longer matches and we recompute from it.
     setUnit(id, k, unit) {
       const rec = recs.get(id); if (!rec) return; const w = rec.widget;
       const ref = refFor(id, k);
       const def = k === "w" ? 200 : k === "h" ? 80 : 0;
-      const curPx = lenToPx(w[k] ?? def, unitOf(w, k), ref);
+      const curUnit = unitOf(w, k);
+      const cache = (rec.pxCache = rec.pxCache || {});
+      const cached = cache[k];
+      const matches = cached != null && r2(pxToLen(cached, curUnit, ref)) === (w[k] ?? def);
+      const px = matches ? cached : lenToPx(w[k] ?? def, curUnit, ref);
       w.units = w.units || {}; w.units[k] = unit;
-      w[k] = r2(pxToLen(curPx, unit, ref));
+      w[k] = r2(pxToLen(px, unit, ref));
+      cache[k] = px;   // keep the exact px so the next toggle stays lossless
+      placeAll(); drawAnchorCue();
+    },
+    // match a dimension to another widget's resolved size. key is "matchW" / "matchH"; to is the
+    // source widget id ("" clears). Resolution (and cycle safety) lives in resolveBoxes; here we
+    // just record the link and re-place — every dependent recomputes from the single resolve pass.
+    setMatch(id, key, to) {
+      const rec = recs.get(id); if (!rec) return;
+      if (to) rec.widget[key] = to; else delete rec.widget[key];
       placeAll(); drawAnchorCue();
     },
     geom(id) {
@@ -331,7 +419,7 @@ export function renderPage(surface, page, ctx) {
       return { x: w.x ?? 0, y: w.y ?? 0, w: w.w ?? 200, h: w.h ?? 80,
         units: { x: unitOf(w, "x"), y: unitOf(w, "y"), w: unitOf(w, "w"), h: unitOf(w, "h") } };
     },
-    destroy() { ro && ro.disconnect(); for (const rec of recs.values()) { try { rec.inst.destroy && rec.inst.destroy(); } catch { /* */ } rec.condSub.destroy(); } recs.clear(); },
+    destroy() { ro && ro.disconnect(); if (roFrame) cancelAnimationFrame(roFrame); for (const rec of recs.values()) { try { rec.inst.destroy && rec.inst.destroy(); } catch { /* */ } rec.condSub.destroy(); } recs.clear(); },
   };
 }
 

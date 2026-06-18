@@ -43,6 +43,7 @@ const ctx = {
   geomOf: (id) => (canvasCtrl ? canvasCtrl.geom(id) : null),
   applyGeom: (id, patch) => { if (canvasCtrl) canvasCtrl.setGeom(id, patch); pretty.save(); },
   setUnit: (id, k, unit) => { if (canvasCtrl) canvasCtrl.setUnit(id, k, unit); pretty.save(); },
+  setMatch: (id, key, to) => { if (canvasCtrl) canvasCtrl.setMatch(id, key, to); pretty.save(); },
   geomChanged: (id) => { if (id === selectedId && panels) panels.inspector.syncGeom(id); },
   addWidget: (type) => addWidget(type),
   removeWidget: (id) => removeWidget(id),
@@ -255,6 +256,9 @@ function switchPage(id) {
 
 function setMode(m) {
   mode = m === "view" ? "view" : "edit";
+  // view mode hides the app chrome (topbar/logbar) for a clean dashboard; CSS reveals them on
+  // hovering the top/bottom edge triggers. Cleared automatically on leaving pretty (pretty-mode off).
+  document.body.classList.toggle("pretty-view", mode === "view");
   if (mode === "view" && panels) for (const p of Object.values(panels)) p.win.setVisible(false);
   renderCurrent();
   if (tools) tools.refresh();

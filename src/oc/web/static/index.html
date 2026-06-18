@@ -22,6 +22,10 @@
        and half-interactive — block everything until it has settled. Removed by
        graph/main.js once boot quiesces (hard-capped, so a hung server can't keep
        the veil up forever). -->
+  <!-- pretty view-mode edge hover triggers: thin fixed strips that reveal the hidden topbar /
+       logbar when the cursor reaches the top / bottom edge. Inert unless body.pretty-view (CSS). -->
+  <div class="pw-edge-trigger top"></div>
+  <div class="pw-edge-trigger bottom"></div>
   <div id="bootveil">
     <div class="bootveil-box">
       <div class="loader-orbit"><div class="arm"><div class="dot"></div></div></div>

@@ -10,6 +10,29 @@
 body.pretty-mode #graph { display: none; }
 body.pretty-mode .pw-dirtybar { display: none; }
 body.pretty-mode #seltoolbar { display: none; }
+
+/* ---- view-mode auto-hiding chrome ----
+   In view mode the topbar + logbar slide off-screen for a clean dashboard, and slide back when
+   the cursor reaches the matching screen edge. Two thin fixed trigger strips catch the edge hover;
+   each reveals the bar that follows it in the DOM (general-sibling). The bars sit ABOVE the
+   triggers so, once shown, they receive the hover (stay open) and remain fully clickable. */
+.pw-edge-trigger { position: fixed; left: 0; right: 0; height: 6px; z-index: 9300; pointer-events: none; }
+.pw-edge-trigger.top { top: 0; }
+.pw-edge-trigger.bottom { bottom: 0; }
+body.pretty-view .pw-edge-trigger { pointer-events: auto; }
+
+body.pretty-view .topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 9400;
+  transform: translateY(-100%); transition: transform .18s ease;
+}
+body.pretty-view .pw-edge-trigger.top:hover ~ .topbar,
+body.pretty-view .topbar:hover { transform: translateY(0); }
+
+body.pretty-view .logbar {
+  z-index: 9400; transform: translateY(100%); transition: transform .18s ease;
+}
+body.pretty-view .pw-edge-trigger.bottom:hover ~ .logbar,
+body.pretty-view .logbar:hover { transform: translateY(0); }
 .pw-surface { position: relative; min-width: 100%; min-height: 100%; }
 /* dots sit ON the snap lines (multiples of GRID=20): the gradient dot is centred in its 20px
    tile (at 10,10), so shift the pattern half a cell to land each dot at 0/20/40 — where a
@@ -27,9 +50,16 @@ body.pretty-mode #seltoolbar { display: none; }
 .pw-marquee { position: absolute; z-index: 9000; pointer-events: none; border: 1px solid #4ea1ff; background: rgba(78,161,255,0.12); }
 /* anchor cue: the selected widget's anchor target (when not the canvas) + a line to it */
 .pw-anchor-cue { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 8000; overflow: visible; }
-.pw-cue-line { stroke: #ffb454; stroke-width: 1.5; stroke-dasharray: 4 3; }
+.pw-cue-line { stroke: #ffb454; stroke-width: 1; stroke-dasharray: 4 3; }
 .pw-cue-dot, .pw-cue-end { fill: #ffb454; }
-.pw-anchor-target { outline: 2px dashed #ffb454 !important; outline-offset: 1px; }
+.pw-cue-lbl-bg { fill: #ffb454; }
+.pw-cue-lbl-tx { fill: #1a1206; font: 600 11px ui-monospace, monospace; }
+
+/* compact 3x3 anchor-point picker (inspector) */
+.pw-corner-grid { display: grid; grid-template-columns: repeat(3, 14px); grid-template-rows: repeat(3, 14px); gap: 2px; }
+.pw-corner-cell { width: 14px; height: 14px; padding: 0; border: 1px solid var(--line); background: #22252c; border-radius: 2px; cursor: pointer; }
+.pw-corner-cell:hover { border-color: #ffb454; }
+.pw-corner-cell.on { background: #ffb454; border-color: #ffb454; }
 .pw-cond-hidden { opacity: 0.35; }
 .pw-cond-disabled { outline-color: #f7768e; }
 .pw-disabled { opacity: 0.5; pointer-events: none; }
@@ -171,12 +201,14 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-insp-h-lab { flex: 1 1 auto; }
 .pw-insp-h-reset { flex: 0 0 auto; background: none; border: 0; color: inherit; opacity: 0.6; cursor: pointer; padding: 0 2px; line-height: 0; min-height: 0; }
 .pw-insp-h-reset:hover { opacity: 1; color: #4ea1ff; }
-/* editable position + size grid (each: value input + unit select) */
-.pw-geom { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+/* editable position + size grid (each: value input + unit select). The global
+   `input,select { width:100% }` would make the unit select demand the whole cell and never
+   shrink (it's flex:0 0) — so override its width to auto and let the value input flex-grow. */
+.pw-geom { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 6px; }
 .pw-geom-cell { display: flex; align-items: center; gap: 3px; min-width: 0; }
 .pw-geom-lab { flex: 0 0 auto; width: 1.2ch; text-transform: uppercase; font-size: 11px; opacity: 0.6; }
-.pw-geom-val { flex: 1 1 auto; min-width: 0; }
-.pw-geom-unit { flex: 0 0 auto; }
+.pw-geom-val { flex: 1 1 0; min-width: 0; width: auto; padding-left: 5px; padding-right: 2px; }
+.pw-geom-unit { flex: 0 0 auto; width: auto; padding-left: 4px; padding-right: 2px; }
 .pw-insp-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; min-height: 26px; }
 .pw-insp-lab { flex: 0 0 84px; font-size: 12px; opacity: 0.8; }
 .pw-insp-row input, .pw-insp-row select, .pw-insp-row textarea { flex: 1; min-width: 0; }
