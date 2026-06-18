@@ -14,6 +14,7 @@ const statsState = { visible: false, x: null, y: null, w: null, h: null };
 let statsWin = null;
 let statsTimer = null;
 let statsEmpty = null;
+let statsSpin = null;   // "building…" spinner, shown while a fetch is in flight and no cards yet
 let statsOrder = null;   // frozen key order ("node|op"), set on open by avg desc; null => re-sort next render
 const statsRows = new Map();   // "node|op" -> { row, detail, chart, cells:{}, expanded, loaded, node, op }
 const statsHeads = new Map();  // op -> { el, label }   group headings, reconciled in place like rows
@@ -49,6 +50,8 @@ function buildStats() {
   statsWin.body.innerHTML = `<div class="st-panel"><div class="st-list"></div></div>`;
   statsEmpty = document.createElement("div");
   statsEmpty.className = "st-empty"; statsEmpty.textContent = "no timing yet";
+  statsSpin = document.createElement("div");
+  statsSpin.className = "st-spin"; statsSpin.textContent = "building…";
   // one delegated click: toggle a row's inline history chart (lazy fetch on first open)
   statsWin.body.addEventListener("click", (ev) => {
     const head = ev.target.closest(".st-list .st-head");
@@ -68,10 +71,20 @@ function startStatsPoll() {
   statsTimer = setInterval(pollStats, 2500);   // same cadence as the activity panel
 }
 
+// Show the "building…" spinner only on the FIRST load (no cards yet, no empty placeholder
+// shown) — a steady poll over existing cards leaves the DOM untouched.
+function showSpin() {
+  if (statsRows.size || !statsWin) return;
+  const list = statsWin.body.querySelector(".st-list");
+  if (statsEmpty.isConnected) return;   // already resolved to "no timing yet" — don't flip back
+  if (!statsSpin.isConnected) { list.appendChild(statsSpin); statsWin.fitHeight(); }
+}
+
 function pollStats() {
   if (!statsState.visible) return;
   const game = model.profile.name;
   if (!game) { renderStats([]); return; }
+  showSpin();
   fetch(`/api/stats/${encodeURIComponent(game)}`)
     .then((r) => r.json())
     .then((d) => { if (statsState.visible) renderStats(d.nodes || []); })
@@ -94,6 +107,7 @@ function renderStats(nodes) {
   if (!statsWin) return;
   const live = liveNodeIds();
   const list = statsWin.body.querySelector(".st-list");
+  if (statsSpin.isConnected) statsSpin.remove();   // a response arrived -> spinner done
   // `precap` is a synthetic (per-game) node, not a graph node, so it's always allowed through.
   const rows = nodes.filter((r) => !live || r.node === "precap" || live.has(r.node));
   // Cards are grouped by type (op) under a heading; WITHIN each bucket they sort by avg desc.

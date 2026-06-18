@@ -160,6 +160,11 @@
 .st-panel { display: flex; flex-direction: column; min-height: 100%; }
 .st-list { display: flex; flex-direction: column; gap: 4px; min-height: 100%; }
 .st-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); padding: 12px; }
+/* first-load spinner (while the rollup is being built/fetched); replaced by cards or .st-empty. */
+.st-spin { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; color: var(--muted); padding: 16px; }
+.st-spin::before { content: ""; width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--accent); border-top-color: transparent; animation: spin 0.7s linear infinite; }
 /* one card per node+op (same shape as the tasks panel's .act-row): a clickable head with the
    node title + a wrap of labelled metric chips, and a hidden history chart below it. An accent
    stripe down the left edge keeps the otherwise-bland list scannable; it brightens when open. */
@@ -171,9 +176,9 @@
   border-radius: 6px; overflow: hidden; }
 /* slow replays/recomputes flagged by avg: amber over 1s, red over 10s (left stripe + tint). */
 .st-card.st-warn   { border-color: var(--warn);
-  box-shadow: inset 3px 0 0 var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--bg)); }
+  background: color-mix(in srgb, var(--warn) 8%, var(--bg)); }
 .st-card.st-danger { border-color: var(--danger);
-  box-shadow: inset 3px 0 0 var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--bg)); }
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg)); }
 .st-head { display: flex; flex-direction: column; gap: 3px; padding: 7px 9px; cursor: pointer; }
 .st-head:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .st-card.open .st-head { background: color-mix(in srgb, var(--accent) 16%, transparent); }
