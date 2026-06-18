@@ -22,6 +22,13 @@ import { autosave, panZoomTo } from "../main.js";
 // (keyed map) so neither the beats nor the local ticker churn the DOM.
 const actState = { visible: false, x: null, y: null, w: null, h: null };
 let act = null;
+// Host adapter: the panel content (actRoot) is mounted into a host (the floatwin body in graph
+// view, a pretty-widget host in pretty view) and re-parented to whichever is shown. `active`
+// gates the poll/render the same way `actState.visible` used to — independent of which host.
+let A = null;                // current host adapter { host, fit(), nav(id) }
+let active = false;          // poll + render live? (set by activate/deactivate)
+let actRoot = null;          // the .act-list element, MOVED between hosts (keyed rows survive)
+let winAdapter = null;       // the floatwin-backed adapter (reclaimed on the panel's onShow)
 let actTick = null;          // local ticker for live countdowns (no server hit)
 let actUnsub = null;         // heartbeat-hub subscription while the panel is open
 let actData = null;          // last hub snapshot (re-rendered locally between beats)
@@ -34,22 +41,38 @@ function buildActivity() {
   if (act) return;
   act = createFloatWin({
     id: "activity", title: "tasks", state: actState, bothAxes: true,
-    onShow: () => { $("activityBtn")?.classList.toggle("active", true); startActivityPoll(); },
-    onHide: () => { $("activityBtn")?.classList.toggle("active", false); stopActivityPoll(); },
+    onShow: () => { $("activityBtn")?.classList.toggle("active", true); mountActivity(winAdapter); activateActivity(); },
+    onHide: () => { $("activityBtn")?.classList.toggle("active", false); deactivateActivity(); },
     onPersist: () => persist.layout(),
   });
-  act.body.innerHTML = `<div class="act-list"></div>`;
-  actEmpty = document.createElement("div"); actEmpty.className = "act-empty"; actEmpty.textContent = "nothing active";
+  winAdapter = { host: act.body, fit: () => act.fitHeight(), nav: (id) => panZoomTo(id) };
   // regaining focus -> the backgrounded cadence is stale; beat the hub right away
-  window.addEventListener("focus", () => { if (actState.visible) hub.kick(); });
+  window.addEventListener("focus", () => { if (active) hub.kick(); });
   // Trigger NODE labels (.tg-last "last fired") track EVERY heartbeat, panel open or not —
   // a trigger that fires while the tasks panel is closed must still update its node, else the
-  // label sticks at "never fired" forever. The panel's own render (gated on visibility) only
+  // label sticks at "never fired" forever. The panel's own render (gated on `active`) only
   // drives the panel rows; the node labels are independent. Reconciles in place (textContent
   // only when changed), so an always-on beat costs nothing at steady state (rule 1).
   hub.subscribe((s) => updateTriggerNodes(s));
+  mountActivity(winAdapter);
+}
+
+// Build the content root once, then (re-)parent it into `adapter.host`. Re-parenting moves the
+// intact subtree, so the keyed actRows map stays valid across a host switch (rule 1: no rebuild).
+function mountActivity(adapter) {
+  if (!adapter) return;
+  A = adapter;
+  if (!actRoot) {
+    actRoot = document.createElement("div"); actRoot.className = "act-list";
+    actEmpty = document.createElement("div"); actEmpty.className = "act-empty"; actEmpty.textContent = "nothing active";
+    wireActivityClicks(actRoot);
+  }
+  if (actRoot.parentElement !== adapter.host) adapter.host.appendChild(actRoot);
+}
+
+function wireActivityClicks(root) {
   // one delegated handler for every row's button (cancel a job, or fire a trigger now)
-  act.body.addEventListener("click", (ev) => {
+  root.addEventListener("click", (ev) => {
     const game = model.profile.name; if (!game) return;
     const c = ev.target.closest("button[data-cancel]");
     if (c && !c.disabled) {
@@ -88,9 +111,9 @@ function buildActivity() {
       });
       return;
     }
-    // clicked the row body (not a control) -> pan+zoom to the bound graph node
+    // clicked the row body (not a control) -> navigate to the bound graph node (no-op in pretty)
     const nav = ev.target.closest(".act-row[data-node]");
-    if (nav) panZoomTo(nav.dataset.node);
+    if (nav) A?.nav?.(nav.dataset.node);
   });
 }
 
@@ -104,10 +127,13 @@ function fmtDur(s) {
   return rm ? `${h}h ${rm}m` : `${h}h`;
 }
 
-function stopActivityPoll() {
+function deactivateActivity() {
+  active = false;
   if (actTick) { clearInterval(actTick); actTick = null; }
   if (actUnsub) { actUnsub(); actUnsub = null; }
 }
+// kept name for back-compat with any external callers
+const stopActivityPoll = deactivateActivity;
 
 // any interval trigger whose countdown has just hit zero since the last fetch -> it fired,
 // so the server state changed and a refresh is due (don't wait out the cadence)
@@ -115,14 +141,15 @@ function actDueForRefresh(elapsed) {
   return (actData?.triggers || []).some((t) => t.kind === "interval" && (t.next_in || 0) > 0 && (t.next_in - elapsed) <= 0);
 }
 
-function startActivityPoll() {
-  stopActivityPoll();
+function activateActivity() {
+  deactivateActivity();
+  active = true;
   const game = model.profile.name;
   if (!game) { actData = { sweeps: [], precapture: null }; actAt = Date.now(); renderActivity(actData, 0); }
   // Data arrives from the heartbeat hub (one poll feeds every panel); this panel just
   // renders its slice of each snapshot.
   actUnsub = hub.subscribe((s) => {
-    if (!actState.visible) return;
+    if (!active) return;
     actData = s; actAt = Date.now(); renderActivity(actData, 0);
   });
   hub.kick();   // immediate beat on open
@@ -130,12 +157,13 @@ function startActivityPoll() {
   // between beats (no server hit), and beat the hub the instant a countdown elapses so the
   // fired trigger's new schedule lands promptly.
   actTick = setInterval(() => {
-    if (!actState.visible || !conn.isOnline()) return;   // backend down -> halt countdowns
+    if (!active || !conn.isOnline()) return;   // backend down -> halt countdowns
     const elapsed = (Date.now() - actAt) / 1000;
     if (elapsed >= 1.5 && actDueForRefresh(elapsed)) hub.kick();
     else if (actData) renderActivity(actData, elapsed);
   }, 500);
 }
+const startActivityPoll = activateActivity;
 
 // Map a raw status object to display row specs. Each job: { key, title, prog, cls?, action? }
 // where action is {type:"cancel",kind,ds?} | {type:"fire",id} | null.
@@ -210,9 +238,9 @@ function updateTriggerNodes(data) {
 }
 
 function renderActivity(data, elapsed = 0) {
-  if (!act) return;
+  if (!actRoot) return;
   updateTriggerNodes(data);
-  const list = act.body.querySelector(".act-list");
+  const list = actRoot;
   const jobs = activityJobs(data, elapsed);
   const want = new Set(jobs.map((j) => j.key));
   for (const [key, r] of actRows) if (!want.has(key)) { r.row.remove(); actRows.delete(key); }
@@ -290,10 +318,11 @@ function renderActivity(data, elapsed = 0) {
   fitActivityHeight();   // grow/shrink the panel to its contents (unless the user resized it)
 }
 
-// Auto-fit delegates to the shared floatwin height-fit (one primitive for every panel).
-function fitActivityHeight() { act?.fitHeight(); }
+// Auto-fit delegates to the host adapter (floatwin height-fit in graph; no-op in a pretty widget).
+function fitActivityHeight() { A?.fit?.(); }
 
 export {
-  act, actState, buildActivity, fmtDur, stopActivityPoll, actDueForRefresh,
+  act, actState, buildActivity, mountActivity, activateActivity, deactivateActivity,
+  fmtDur, stopActivityPoll, actDueForRefresh,
   startActivityPoll, activityJobs, renderActivity, fitActivityHeight,
 };

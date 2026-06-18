@@ -21,9 +21,14 @@ import {
 // left open while you work the game. Hiding it does NOT stop the worker — it keeps running
 // in the background and is tracked/cancellable from the Activity panel; reopening rehydrates.
 
-let precapOpen = false;    // panel currently open (read by livewin: one OCR consumer at a time)
+let precapOpen = false;    // panel currently open/active (read by livewin: one OCR consumer at a time)
 let pc = null;             // the createFloatWin instance (built once)
-let pcNode = null;         // the .precap body element handlers operate on
+let pcNode = null;         // the .precap content node — MOVED between hosts (floatwin / pretty widget)
+// Host adapter: pcNode mounts into whichever host is shown (floatwin body in graph, a
+// pretty-widget host in pretty view). precapOpen already gates render; the adapter abstracts
+// the chrome the panel used to poke directly (title, the topbar button, fit, close).
+let A = null;
+let winAdapter = null;     // floatwin-backed adapter (reclaimed on the panel's onShow)
 let pcSig = null;          // current AbortController signal (new each show → aborts on hide)
 let pcCtl = null;          // current AbortController
 let precapLast = null;     // last status drawn — so view switches can redraw without a fetch
@@ -60,9 +65,14 @@ function buildPrecap() {
   pcNode.innerHTML = `<p class="muted" style="padding:12px">loading…</p>`;
   pc = createFloatWin({
     id: "precap", title: "precapture", state: pcState, bothAxes: true,
-    onShow: showPrecap, onHide: hidePrecap, onPersist: () => persist.layout(),
+    onShow: () => { mountPrecap(winAdapter); showPrecap(); }, onHide: hidePrecap, onPersist: () => persist.layout(),
   });
-  pc.body.appendChild(pcNode);
+  winAdapter = {
+    host: pc.body, fit: () => pc.fitHeight(), close: () => pc.setVisible(false),
+    setTitle: (s) => { const t = pc.el.querySelector(".fw-title"); if (t) t.textContent = s; },
+    setActive: (on) => $("precapBtn")?.classList.toggle("active", on),
+  };
+  mountPrecap(winAdapter);
 
   // Inline rename: swap the session's name span for an <input>, commit on Enter/blur,
   // cancel on Escape — no blocking prompt(). Restores the span so reconcile resumes.
@@ -144,9 +154,17 @@ function buildPrecap() {
   // auto-scroll is configured per window now (window node's scroll section), not here.
 }
 
+// (Re-)parent pcNode into `adapter.host`. The node moves intact, so the session list + its
+// keyed rows survive a host switch (rule 1: no rebuild).
+function mountPrecap(adapter) {
+  if (!adapter) return;
+  A = adapter;
+  if (pcNode.parentElement !== adapter.host) adapter.host.appendChild(pcNode);
+}
+
 async function showPrecap() {
   const game = model.profile.name;
-  if (!game) { setStatus("load a game first"); pc.setVisible(false); return; }
+  if (!game) { setStatus("load a game first"); A?.close?.(); return; }
   setLiveMode(false);                         // mutually exclusive with live
   precapOpen = true;
   precapStopping = false; precapView = null; precapPage = null;
@@ -154,8 +172,8 @@ async function showPrecap() {
   // a prior scroll grew the list to (keeps the panel light + sized for ~5 rows on open)
   const left = pcNode.querySelector(".pc-left");
   if (left && left._rows) left._renderN = PC_FIRST;
-  $("precapBtn").classList.add("active");
-  pc.el.querySelector(".fw-title").textContent = `precapture: ${game}`;
+  A?.setActive?.(true);
+  A?.setTitle?.(`precapture: ${game}`);
   pcCtl = new AbortController(); pcSig = pcCtl.signal;
   await _pcLoadSessions();
   // The heartbeat hub already carries the precapture worker's status (only while it's
@@ -182,7 +200,7 @@ function hidePrecap() {
   if (pcCtl) { pcCtl.abort(); pcCtl = null; }
   unregisterWorker("precap");
   precapOpen = false; precapStopping = false;
-  $("precapBtn").classList.remove("active");
+  A?.setActive?.(false);
 }
 
 // Staged-data preview: one VTable per dataset (virtualized + searchable), reconciled IN
@@ -395,8 +413,8 @@ function renderPrecap(node, st) {
   fitPrecapHeight();   // size the panel to what it's showing (skipped once the user resizes it)
 }
 
-// Auto-fit delegates to the shared floatwin height-fit (one primitive for every panel).
-function fitPrecapHeight() { pc?.fitHeight(); }
+// Auto-fit delegates to the host adapter (floatwin height-fit in graph; no-op in a pretty widget).
+function fitPrecapHeight() { A?.fit?.(); }
 
 const PC_FIRST = 5;   // session rows shown on (re)open — the rest load as you scroll down
 const PC_PAGE = 30;   // session rows rendered per window; grows by this much on scroll-to-bottom
@@ -567,6 +585,6 @@ async function openCaptureModal(winId) {
 
 export {
   pc, pcState, precapOpen, precapBusy,
-  buildPrecap, showPrecap, hidePrecap, renderPrecap, renderPrecapData, renderPrecapLeft,
+  buildPrecap, mountPrecap, showPrecap, hidePrecap, renderPrecap, renderPrecapData, renderPrecapLeft,
   openCaptureModal, fmtBytes, fmtCaptureTime, PC_PAGE,
 };

@@ -17,6 +17,13 @@ let timer = null;
 const liveWinState = { visible: false, x: null, y: null, w: null, h: null };
 let liveWin = null;
 let liveEmpty = null;
+// Host adapter: the panel content (liveRoot) mounts into a host (floatwin body in graph view,
+// a pretty-widget host in pretty view) and re-parents to whichever is shown. `active` gates
+// render the way `liveWinState.visible` used to — independent of which host owns the content.
+let A = null;                // current host adapter { host, fit(), nav(id) }
+let active = false;          // panel shown -> render allowed
+let liveRoot = null;         // the content element, MOVED between hosts (rows survive)
+let winAdapter = null;       // floatwin-backed adapter (reclaimed on the panel's onShow)
 const liveRows = new Map();    // winId -> { row, dot, name }
 const liveRecog = new Map();   // winId -> recognized in the last live detect round?
 const liveDetCount = new Map();   // winId -> how many times detected this run (shown per row)
@@ -44,58 +51,72 @@ function buildLiveWindow() {
   if (liveWin) return;
   liveWin = createFloatWin({
     id: "live", title: "live", state: liveWinState, bothAxes: true,
-    onShow: () => {
-      $("liveBtn")?.classList.toggle("active", true);
-      refreshLiveImgStat(true);   // re-pull the saved-image count: it may be stale (fetched before a profile loaded, or frames saved while hidden)
-      renderLiveWindow();
-      // re-fit after layout settles AND after web fonts swap in — a first-open fit can measure
-      // rows before the font loads and spawn short (a later reset reads right: font's already in).
-      requestAnimationFrame(() => fitLivePanelHeight());
-      document.fonts?.ready?.then(() => { if (liveWinState.visible) fitLivePanelHeight(); });
-    },
-    onHide: () => { $("liveBtn")?.classList.toggle("active", false); },
+    onShow: () => { $("liveBtn")?.classList.toggle("active", true); mountLive(winAdapter); activateLive(); },
+    onHide: () => { $("liveBtn")?.classList.toggle("active", false); deactivateLive(); },
     onPersist: () => persist.layout(),
   });
-  liveWin.body.innerHTML = `
-    <div class="live-row">
-      <label class="live-toggle"><button class="act-enable live-switch" role="switch" aria-checked="false" title="enable / disable live mode">
-          <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
-            <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
-            <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
-        </button><span class="live-switch-lbl">live mode</span></label>
-      <span class="live-stats muted"></span>
-    </div>
-    <div class="live-row">
-      <label class="live-toggle"><button class="act-enable live-save" role="switch" aria-checked="true" title="save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)">
-          <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
-            <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
-            <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
-        </button><span class="live-save-lbl">save to datasets</span></label>
-    </div>
-    <div class="live-wins"></div>
-    <div class="live-row live-imgs"><span class="live-imgstat muted">&nbsp;</span><button class="live-clear" data-armed="0" title="delete every saved live image">clear</button></div>`;
-  liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
-  // click a window row -> pan+zoom to its window node on the graph (hover hints via CSS)
-  liveWin.body.querySelector(".live-wins").addEventListener("click", (ev) => {
-    if (ev.target.closest("button, input")) return;
-    const row = ev.target.closest(".live-win[data-node]");
-    if (row) panZoomTo(row.dataset.node);
-  });
-  liveWin.body.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
-  liveWin.body.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
-  // clear saved live images — armed two-click (no blocking confirm)
-  const clr = liveWin.body.querySelector(".live-clear");
-  clr.addEventListener("click", () => {
-    if (clr.dataset.armed !== "1") { clr.dataset.armed = "1"; clr.textContent = "sure?"; setTimeout(() => { if (clr.dataset.armed === "1") { clr.dataset.armed = "0"; clr.textContent = "clear"; } }, 2500); return; }
-    clr.dataset.armed = "0"; clr.textContent = "clear";
-    if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch((e) => log(`clear live images failed: ${e.message || e}`, "err"));
-  });
-  if (model.profile.name) api.liveCaptures.stats(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
-  renderLiveWindow();
+  winAdapter = { host: liveWin.body, fit: () => liveWin.fitHeight(), nav: (id) => panZoomTo(id) };
+  mountLive(winAdapter);
 }
 
+// Build the content root once, wire its handlers, then (re-)parent it into `adapter.host`.
+// Re-parenting moves the intact subtree so the keyed liveRows map stays valid (rule 1).
+function mountLive(adapter) {
+  if (!adapter) return;
+  A = adapter;
+  if (!liveRoot) {
+    liveRoot = document.createElement("div"); liveRoot.className = "live-root";
+    liveRoot.innerHTML = `
+      <div class="live-row">
+        <label class="live-toggle"><button class="act-enable live-switch" role="switch" aria-checked="false" title="enable / disable live mode">
+            <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
+              <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
+              <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
+          </button><span class="live-switch-lbl">live mode</span></label>
+        <span class="live-stats muted"></span>
+      </div>
+      <div class="live-row">
+        <label class="live-toggle"><button class="act-enable live-save" role="switch" aria-checked="true" title="save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)">
+            <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
+              <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
+              <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
+          </button><span class="live-save-lbl">save to datasets</span></label>
+      </div>
+      <div class="live-wins"></div>
+      <div class="live-row live-imgs"><span class="live-imgstat muted">&nbsp;</span><button class="live-clear" data-armed="0" title="delete every saved live image">clear</button></div>`;
+    liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
+    // click a window row -> navigate to its window node on the graph (no-op in pretty)
+    liveRoot.querySelector(".live-wins").addEventListener("click", (ev) => {
+      if (ev.target.closest("button, input")) return;
+      const row = ev.target.closest(".live-win[data-node]");
+      if (row) A?.nav?.(row.dataset.node);
+    });
+    liveRoot.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
+    liveRoot.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
+    // clear saved live images — armed two-click (no blocking confirm)
+    const clr = liveRoot.querySelector(".live-clear");
+    clr.addEventListener("click", () => {
+      if (clr.dataset.armed !== "1") { clr.dataset.armed = "1"; clr.textContent = "sure?"; setTimeout(() => { if (clr.dataset.armed === "1") { clr.dataset.armed = "0"; clr.textContent = "clear"; } }, 2500); return; }
+      clr.dataset.armed = "0"; clr.textContent = "clear";
+      if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch((e) => log(`clear live images failed: ${e.message || e}`, "err"));
+    });
+    if (model.profile.name) api.liveCaptures.stats(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
+  }
+  if (liveRoot.parentElement !== adapter.host) adapter.host.appendChild(liveRoot);
+}
+
+// Panel shown: pull a fresh saved-image count + render + fit (after layout/fonts settle).
+function activateLive() {
+  active = true;
+  refreshLiveImgStat(true);   // re-pull the saved-image count: it may be stale (fetched before a profile loaded, or frames saved while hidden)
+  renderLiveWindow();
+  requestAnimationFrame(() => fitLivePanelHeight());
+  document.fonts?.ready?.then(() => { if (active) fitLivePanelHeight(); });
+}
+function deactivateLive() { active = false; }
+
 function renderLiveWindow() {
-  if (!liveWin || !liveWinState.visible) return;
+  if (!liveRoot || !active) return;
   // sync the visual `.on` class INDEPENDENTLY of aria-checked — the markup ships
   // aria-checked already matching the default, so gating the class on an aria mismatch left
   // a default-on switch (save-to-datasets) visually off. Each touched only when it differs.
@@ -104,9 +125,9 @@ function renderLiveWindow() {
     if (el.getAttribute("aria-checked") !== String(on)) el.setAttribute("aria-checked", String(on));
     if (el.classList.contains("on") !== on) el.classList.toggle("on", on);
   };
-  syncSwitch(liveWin.body.querySelector(".live-switch"), liveOn);
-  syncSwitch(liveWin.body.querySelector(".live-save"), liveSave);
-  const st = liveWin.body.querySelector(".live-stats");
+  syncSwitch(liveRoot.querySelector(".live-switch"), liveOn);
+  syncSwitch(liveRoot.querySelector(".live-save"), liveSave);
+  const st = liveRoot.querySelector(".live-stats");
   // collecting (armed): show what the server collector saved; tuning (disarmed): client fps.
   // blank when off (the switch already conveys that). No processing/idle flip — it toggled
   // every round (OCR vs the 200ms gap) and just flickered.
@@ -116,10 +137,10 @@ function renderLiveWindow() {
     : `${liveFps.toFixed(1)} img/s`;
   if (st && st.textContent !== stTxt) st.textContent = stTxt;
   // saved-live-image stat (touch DOM only on change)
-  const ist = liveWin.body.querySelector(".live-imgstat");
+  const ist = liveRoot.querySelector(".live-imgstat");
   const itxt = liveImg.count ? `${liveImg.count} imgs · ${fmtBytes(liveImg.bytes)} saved` : "no live images saved";
   if (ist && ist.textContent !== itxt) ist.textContent = itxt;
-  const clr = liveWin.body.querySelector(".live-clear");
+  const clr = liveRoot.querySelector(".live-clear");
   if (clr) clr.disabled = !liveImg.count;
   renderLiveWinList();
   fitLivePanelHeight();
@@ -127,7 +148,7 @@ function renderLiveWindow() {
 
 // Reconcile the live-enabled window list in place (keyed Map, no innerHTML per tick).
 function renderLiveWinList() {
-  const list = liveWin.body.querySelector(".live-wins");
+  const list = liveRoot?.querySelector(".live-wins");
   if (!list) return;
   const wins = (model.profile.windows || []).filter((w) => w.live !== false);
   const want = new Set(wins.map((w) => w.id));
@@ -161,8 +182,8 @@ function renderLiveWinList() {
   }
 }
 
-// Auto-fit delegates to the shared floatwin height-fit (one primitive for every panel).
-function fitLivePanelHeight() { liveWin?.fitHeight(); }
+// Auto-fit delegates to the host adapter (floatwin height-fit in graph; no-op in a pretty widget).
+function fitLivePanelHeight() { A?.fit?.(); }
 
 function showLiveStats(on) {
   liveFrames = 0; liveT0 = on ? performance.now() : 0; liveFps = 0;
@@ -285,7 +306,8 @@ function setLiveSave(on) {
 
 export {
   liveWin, liveWinState, liveRecog, liveDetCount,
-  buildLiveWindow, renderLiveWindow, renderLiveWinList, fitLivePanelHeight,
+  buildLiveWindow, mountLive, activateLive, deactivateLive,
+  renderLiveWindow, renderLiveWinList, fitLivePanelHeight,
   showLiveStats, renderLiveStats, liveTick, startServerCollect, stopServerCollect,
   setLiveMode, setLiveSave,
 };

@@ -9,8 +9,9 @@ import control from "./control.js";
 import container from "./container.js";
 import form from "./form.js";
 import button from "./button.js";
+import panel from "./panel.js";
 
-export const WIDGETS = { label, table, chart, control, container, form, button };
+export const WIDGETS = { label, table, chart, control, container, form, button, panel };
 export const WIDGET_LIST = Object.values(WIDGETS);
 
 export function widgetDef(type) { return WIDGETS[type] || null; }
