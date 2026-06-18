@@ -688,6 +688,8 @@ class TriggerDef(BaseModel):
     watch: list[str] = Field(default_factory=list)    # for kind="on_change": datasets to watch
     targets: list[str] = Field(default_factory=list)  # price-node ids this trigger fires
     enabled: bool = True
+    sound: str = ""                         # optional sound file (in the web sounds folder) the UI plays on fire
+    volume: float = 1.0                     # playback volume for ``sound`` (0..1)
 
 
 class SubsetDef(BaseModel):

@@ -150,6 +150,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* input + its unit suffix share ONE grid cell (else the "s" wraps to the next grid row) */
 .tg-secs { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .tg-secs input { width: 100%; }
+/* a range (volume) shares its cell with a % label — let it FLEX to fill the rest of the row
+   instead of width:100% (which overflows next to the label and shrinks the usable track), so
+   the thumb travels the full track end to end. The label takes only its own width. */
+.tg-secs input[type="range"] { flex: 1; width: auto; min-width: 0; margin: 0; }
+.tg-volnum { flex: 0 0 auto; min-width: 2.4em; text-align: right; }
 /* checkboxes are slide-toggles now (base.css). Keep them at the start of their grid cell
    and never let a flex row stretch them — their size is fixed by the toggle. */
 /* inside a node the toggle adopts the form-input palette so it doesn't pop next to the text

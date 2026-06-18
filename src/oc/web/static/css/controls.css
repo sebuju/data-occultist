@@ -19,6 +19,13 @@ input, select, textarea {
     border: 1px solid var(--line);
     border-radius: 4px;
 }
+/* A range is NOT a text box: the generic rule's horizontal padding insets the native track so
+   the thumb can't reach either end (dead zones), the border/bg box it like a field, and it
+   inherits the text caret. Strip all of that back to a bare slider so every slider in the app
+   drags fully end to end with the right cursor. */
+input[type="range"] {
+    padding: 0; border: 0; background: transparent; border-radius: 0; cursor: pointer;
+}
 textarea { resize: vertical; min-height: 56px; line-height: 1.4; }
 .topbar input, .topbar select { width: auto; }
 :is(select, input, textarea):not(.sv-addin):focus-visible {

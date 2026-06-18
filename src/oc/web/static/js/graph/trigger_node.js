@@ -49,10 +49,24 @@ export function triggerParts(t, model) {
             `<option value="">+ fire target</option>${popts}`,
         );
 
+    // optional sound: the UI plays it (in the browser) when the trigger fires. Only shown when
+    // the sounds/ folder has files; the chosen name is just persisted on the trigger. ▶ auditions.
+    let sound = "";
+    if ((model.sounds || []).length) {
+        const cur = t.sound || "";
+        const sopt = (s) => `<option${s === cur ? " selected" : ""}>${esc(s)}</option>`;
+        const vol = t.volume == null ? 1 : t.volume;
+        sound = labCell("sound", "optional sound played (in the browser) when it fires")
+            + `<span class="tg-secs"><select class="tg-sound"><option value=""${cur ? "" : " selected"}>none</option>${model.sounds.map(sopt).join("")}</select>`
+            + `<button class="tg-sound-preview" title="play this sound">▶</button></span>`
+            + labCell("volume", "playback volume for the sound")
+            + `<span class="tg-secs"><input class="tg-volume" type="range" min="0" max="1" step="0.05" value="${vol}" /><span class="tg-volnum muted">${Math.round(vol * 100)}%</span></span>`;
+    }
+
     return {
         title: `<input class="gi gi-id tgrename" value="${esc(t.id)}" title="rename trigger" />`,
         body: `<div class="lab-grid">${labCell("kind", "how the trigger decides to fire")}<select class="tg-kind">${KINDS.map(kopt).join("")}</select>
-      ${interval}${watch}${targets}
+      ${interval}${watch}${targets}${sound}
       ${labCell("progress", "what the current/last sweep is doing")}<span class="tg-prog muted">idle</span>
       ${labCell("last fired", "last time this trigger fired")}<span class="tg-last muted">never fired</span></div>
       <div class="gn-foot"><button class="tg-fire">↻ fire now</button></div>`,

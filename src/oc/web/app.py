@@ -32,6 +32,7 @@ from .routes import (
     prices,
     profiles,
     screenshot,
+    sounds,
     stats,
     suggest,
     triggers,
@@ -236,6 +237,7 @@ def create_app() -> FastAPI:
     app.include_router(prices.router)
     app.include_router(activity.router)
     app.include_router(triggers.router)
+    app.include_router(sounds.router)
     app.include_router(dictionaries.router)
     app.include_router(pretty.router)
     app.include_router(events.router)

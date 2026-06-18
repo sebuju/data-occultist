@@ -18,6 +18,7 @@ import { priceParts, wirePriceNode } from "./price_node.js";
 import { GRID, snap, snapUp, showSizeHud, hideSizeHud, addResizeGrips, beginDrag } from "./dragresize.js";
 import { createFloatWin, floatWins } from "./floatwin.js";
 import { triggerParts } from "./trigger_node.js";
+import { playSound } from "./sound.js";
 import { openDictionaryPicker } from "./dict_picker.js";
 import { enhanceTable, setTableStore } from "./table.js";
 import { VTable, setVTableStore } from "../vtable.js";
@@ -1685,6 +1686,15 @@ function wireTrigger(div, n) {
         model.setTriggerKind(t.id, e.target.value); rebuildNode(n.id); render(); autosave(false);
     });
     div.querySelector(".tg-interval")?.addEventListener("change", (e) => { model.setTriggerInterval(t.id, e.target.value); autosave(false); });
+    div.querySelector(".tg-sound")?.addEventListener("change", (e) => { model.setTriggerSound(t.id, e.target.value); autosave(false); });
+    // volume slider: `input` (not change) so the % label tracks the live drag; autosave coalesces the writes
+    div.querySelector(".tg-volume")?.addEventListener("input", (e) => {
+        model.setTriggerVolume(t.id, e.target.value);
+        const n = div.querySelector(".tg-volnum"); if (n) n.textContent = `${Math.round((model.trigger(t.id)?.volume ?? 1) * 100)}%`;
+        autosave(false);
+    });
+    // ▶ audition the currently-selected sound at the current volume (also unlocks browser autoplay for later auto-fires)
+    div.querySelector(".tg-sound-preview")?.addEventListener("click", () => { playSound(div.querySelector(".tg-sound")?.value, model.trigger(t.id)?.volume ?? 1); });
     // rebuildNode (not render) re-renders THIS node's chips — render() only builds NEW nodes,
     // so an in-place chip add/remove wouldn't show. drawEdges() drops/adds the trigger's edges
     // (watch source→trigger and trigger→price) so a chip change reflects on the canvas live.
@@ -3326,6 +3336,7 @@ async function killStrayOcrThenBoot() {
     try {
         log("loading profile…");
         await refreshGames();
+        model.sounds = await api.sounds.list().catch(() => []);   // trigger-sound picker options (global, once)
         if ($("gameSelect").value) await loadGame($("gameSelect").value);
         // ?view=pretty (the desktop window passes it) boots into the pretty dashboard;
         // a plain browser has no param and stays on the node view.

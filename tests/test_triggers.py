@@ -86,6 +86,16 @@ def test_triggers_publish_activity_log_lines():
     assert all(e["game"] == "g" for e in lines)   # scoped to the profile's game
 
 
+def test_trigger_sound_defaults_empty_and_roundtrips():
+    # optional sound the web UI plays on fire — defaults to "", survives dump/reload
+    assert TriggerDef(id="t").sound == ""
+    assert TriggerDef(id="t").volume == 1.0
+    p = GameProfile(name="g", triggers=[TriggerDef(id="t", sound="chirp.wav", volume=0.4)])
+    reloaded = GameProfile.model_validate(p.model_dump())
+    assert reloaded.triggers[0].sound == "chirp.wav"
+    assert reloaded.triggers[0].volume == 0.4
+
+
 def test_gather_source_items_from_dataset(tmp_path):
     ds = DatasetStore(tmp_path, "g", "master", key=KeySpec(fields=("name",)))
     ds.begin_batch()

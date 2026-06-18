@@ -8,7 +8,7 @@ import { DEFAULT_DETECT_THRESHOLD } from "../defaults.js";
 let _fieldSeq = 1;
 
 export class GraphModel {
-    constructor() { this.profile = blank(""); }
+    constructor() { this.profile = blank(""); this.sounds = []; }   // sounds: available trigger-sound filenames (fetched once)
 
     load(profile) {
         this.profile = profile || blank("");
@@ -28,7 +28,7 @@ export class GraphModel {
             if (!s.sort.length && s.sort_by) { s.sort = [{ field: s.sort_by, desc: !!s.sort_desc }]; s.sort_by = ""; }
         }
         for (const pn of this.profile.price_nodes) pn.sources = pn.sources || [];   // items the node prices (empty = catalogue)
-        for (const t of this.profile.triggers) { t.watch = t.watch || []; t.targets = t.targets || []; }
+        for (const t of this.profile.triggers) { t.watch = t.watch || []; t.targets = t.targets || []; if (t.volume == null) t.volume = 1; }
         // Item children arrive HOISTED to the window (flat ``item_fields``/``item_tells``, each
         // with an ``item`` backref) so each is its own node. Fan them back onto each item's
         // ``fields``/``tells`` for the per-item editing logic, and drop the flat key so saving
@@ -287,7 +287,7 @@ export class GraphModel {
         this.profile.triggers = this.profile.triggers || [];
         let n = 1, id = "trigger";
         while (this.trigger(id)) id = `trigger_${++n}`;
-        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true });
+        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, sound: "", volume: 1 });
         return id;
     }
     removeTrigger(id) { this.profile.triggers = (this.profile.triggers || []).filter((t) => t.id !== id); }
@@ -299,6 +299,8 @@ export class GraphModel {
     }
     setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "on_change", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
+    setTriggerSound(id, v) { const t = this.trigger(id); if (t) t.sound = v || ""; }
+    setTriggerVolume(id, v) { const t = this.trigger(id); const n = parseFloat(v); if (t && !Number.isNaN(n)) t.volume = Math.max(0, Math.min(1, n)); }
     addTriggerTarget(id, pid) {
         const t = this.trigger(id);
         if (!t || !pid || !this.priceNode(pid)) return false;

@@ -399,6 +399,12 @@ export const dictionaries = {
     get: (source) => tfetch(`/api/dictionaries/${encodeURIComponent(source)}`).then((r) => ok(r, "dictionary").then((x) => x.json())),
 };
 
+// Sounds: audio files under the web static sounds/ folder, served at /sounds/<name>.
+// A trigger names one to play (in the browser) when it fires; the picker lists them.
+export const sounds = {
+    list: () => tfetch("/api/sounds").then((r) => (r.ok ? r.json() : [])),
+};
+
 // Views: outer-join the source datasets on the shared key, then filter/derive/sort.
 // Returns { subset, datasets, columns, rows }.
 export async function getSubset(game, subset) {

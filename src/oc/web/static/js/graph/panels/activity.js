@@ -11,6 +11,7 @@ import { $, model, nodeEls } from "../state.js";
 import { since } from "../../datefmt.js";
 import { liveAgo, stopAgo } from "../../ago.js";
 import { autosave, panZoomTo } from "../main.js";
+import { playSound } from "../sound.js";
 
 // ---- activity panel (live sweeps + precapture) ----------------------------
 // A floating window listing every running background job for the current game — price
@@ -219,10 +220,28 @@ function activityJobs(data, elapsed = 0) {
     return jobs;
 }
 
+// last_fired we've already observed per trigger — drives the one-shot sound on a real fire.
+// Seeded on first sight (no replay of a pre-existing fire on page load / panel open).
+const triggerFireSeen = new Map();
+
+// Play a trigger's sound once per fresh fire. The heartbeat is the SINGLE funnel for every
+// fire source (interval / on_change / manual), so sound lives here, not on each fire button
+// (rule 7). A `last_fired` that differs from what we last saw = a new fire.
+function detectFires(data) {
+    for (const t of (data.triggers || [])) {
+        const ts = t.last_fired || null;
+        if (!ts) continue;
+        const prev = triggerFireSeen.get(t.id);
+        triggerFireSeen.set(t.id, ts);
+        if (prev !== undefined && prev !== ts) { const tr = model.trigger(t.id); playSound(tr?.sound, tr?.volume ?? 1); }   // prev===undefined => first sight, don't replay
+    }
+}
+
 // Reflect each trigger's last-activation onto its node (reconcile-in-place: textContent set
 // only when it actually changes — steady-state is zero DOM writes except as the "since" label
 // ticks over).
 function updateTriggerNodes(data) {
+    detectFires(data);
     for (const t of (data.triggers || [])) {
         const span = nodeEls.get(`trigger:${t.id}`)?.querySelector(".tg-last");
         if (!span) continue;
