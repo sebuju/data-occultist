@@ -52,11 +52,21 @@
 .cap-head .spacer { flex: 1; }
 .cap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 8px; padding: 0 12px 12px; }
-.cap-cell { padding: 4px; background: var(--bg); border: 1px solid var(--line);
+.cap-cell { position: relative; padding: 4px; background: var(--bg); border: 1px solid var(--line);
   border-radius: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
 .cap-cell.used { border-color: color-mix(in srgb, var(--line), #fff 25%); }
 .cap-cell:hover { border-color: var(--accent); }
 .cap-cell.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+/* "make first" star — top-left badge. Hidden by default; revealed on hover of a SELECTED
+   cell, and shown persistently (accent) on the current lead so the first image is obvious. */
+.cap-first { position: absolute; top: 7px; left: 7px; z-index: 1; display: none;
+  align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0;
+  border-radius: 5px; border: 1px solid var(--line); cursor: pointer; line-height: 0;
+  background: color-mix(in srgb, var(--black) 55%, transparent); color: var(--muted); }
+.cap-first .ic { width: 14px; height: 14px; }
+.cap-cell.sel:hover .cap-first { display: inline-flex; }
+.cap-first:hover { color: var(--accent); border-color: var(--accent); }
+.cap-cell.is-first .cap-first { display: inline-flex; color: var(--accent); border-color: var(--accent); }
 .cap-cell img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px;
   display: block; background: var(--black); }
 .cap-time { font-size: var(--fs-xs); color: var(--muted); text-align: center; white-space: nowrap; }

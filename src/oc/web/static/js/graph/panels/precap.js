@@ -2,7 +2,7 @@
 // Extracted from main.js verbatim.
 import * as api from "../../api.js";
 import * as hub from "../../hub.js";
-import { esc, TRASH, CAMERA, WARN, PAUSE } from "../../dom.js";
+import { esc, TRASH, CAMERA, WARN, PAUSE, STAR } from "../../dom.js";
 import { openModal } from "../../modal.js";
 import { log } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
@@ -528,6 +528,16 @@ async function openCaptureModal(winId) {
     const [caps, binds] = await Promise.all([api.listCaptures(game), api.getBindings(game)]);
     const cur = binds[winId];
     const sel = new Set(Array.isArray(cur) ? cur : (cur ? [cur] : []));
+    // which selected image LEADS (becomes page 0). Seeded from the current page-0 binding;
+    // the star icon on a selected cell repoints it. Falls back to the first selected in
+    // listing order when unset (or when the chosen one is deselected).
+    let first = (Array.isArray(cur) ? cur[0] : cur) || null;
+    // selection in commit order: the lead first, then the rest in listing (newest-first) order.
+    const orderedSel = () => {
+      const picks = caps.filter((c) => sel.has(c));
+      return first && sel.has(first) ? [first, ...picks.filter((c) => c !== first)] : picks;
+    };
+    const leadName = () => orderedSel()[0] || null;   // effective first, default included
     // which windows each capture is bound to — current window tracked by live `sel`, the
     // rest from the persisted map. One image can be used by several windows (multi-bind).
     const usedBy = (name) => {
@@ -540,11 +550,14 @@ async function openCaptureModal(winId) {
       return wins;
     };
     const draw = () => {
+      const lead = leadName();
       const grid = caps.map((name) => {
         const wins = usedBy(name), label = wins.join(", ");
+        const isFirst = name === lead;
         return `
-        <button class="cap-cell ${sel.has(name) ? "sel" : ""} ${wins.length ? "used" : ""}" data-name="${esc(name)}" title="${esc(name)}">
+        <button class="cap-cell ${sel.has(name) ? "sel" : ""} ${wins.length ? "used" : ""} ${isFirst ? "is-first" : ""}" data-name="${esc(name)}" title="${esc(name)}">
           <img loading="lazy" src="${api.captureUrl(game, name)}" alt="" />
+          <span class="cap-first ${isFirst ? "on" : ""}" title="${isFirst ? "first image (page 1)" : "make this the first image"}" aria-label="make first image">${STAR}</span>
           <span class="cap-time">${esc(fmtCaptureTime(name))}</span>
           <span class="cap-wins" title="${esc(label)}">${esc(label)}</span>
         </button>`;
@@ -559,8 +572,16 @@ async function openCaptureModal(winId) {
         if (sel.has(nm)) sel.delete(nm); else sel.add(nm);
         draw();
       }));
+      // star: pin this image as the lead (page 0). Selects it if it wasn't, and stops the
+      // click from also toggling the cell off.
+      node.querySelectorAll(".cap-first").forEach((s) => s.addEventListener("click", (e) => {
+        e.stopPropagation();
+        first = s.closest(".cap-cell").dataset.name;
+        sel.add(first);
+        draw();
+      }));
       node.querySelector(".cap-use")?.addEventListener("click", async () => {
-        await apply(caps.filter((c) => sel.has(c)));   // listing order (newest first) = page order
+        await apply(orderedSel());   // lead first, then listing order (newest first)
         modal.close();
       });
       node.querySelector(".cap-new").addEventListener("click", async () => {
