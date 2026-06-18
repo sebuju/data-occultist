@@ -50,7 +50,9 @@ def run_release() -> int:
             server.should_exit = True
 
     try:
-        open_window(f"http://127.0.0.1:{port}")   # blocks until the window is closed
+        # ?view=pretty makes the desktop window boot straight into the pretty dashboard;
+        # a plain browser hitting "/" has no param and so defaults to the node view.
+        open_window(f"http://127.0.0.1:{port}/?view=pretty")   # blocks until the window is closed
     finally:
         server.should_exit = True                 # then stop the server (daemon thread)
     return 0

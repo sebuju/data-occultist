@@ -679,7 +679,7 @@ function setWindowDetectStatus(winId, res) {
   const el = nodeEls.get(`win:${winId}`);
   if (!el) return;
   const det = res.detect || {};
-  // skip the header row's "live" label (no data-id) — only the per-detector status spans
+  // skip the header row's "pass" label (no data-id) — only the per-detector status spans
   for (const span of el.querySelectorAll(".wd-row:not(.wd-head) .wd-status")) {
     const info = det[span.dataset.id];
     if (!info) { span.textContent = ""; span.className = "wd-status muted"; continue; }
