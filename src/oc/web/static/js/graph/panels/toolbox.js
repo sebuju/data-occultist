@@ -83,6 +83,21 @@ function createDictionaryNode(at = null, group = null) {
   });
 }
 
+async function createDatasetNode(at = null, group = null) {
+  const ds = model.addDataset();   // fresh empty dataset; producers wired to it later
+  if (!ds) return;
+  await placeNewNode(`ds:${ds}`, "dataset", null, at); render();
+  if (group) groups.addToGroup(group, [`ds:${ds}`]);
+  autosave(false); if (!at) panTo(`ds:${ds}`);   // empty dataset changes nothing open windows OCR
+}
+async function createSubsetNode(at = null, group = null) {
+  const id = model.addSubset();   // input-less view; user wires a source dataset/view after
+  if (!id) return;
+  await placeNewNode(`sub:${id}`, "subset", null, at); render();
+  if (group) groups.addToGroup(group, [`sub:${id}`]);
+  autosave(false); if (!at) panTo(`sub:${id}`);   // empty view changes nothing open windows OCR
+}
+
 function buildToolbox() {
   if (tb) return;
   tb = createFloatWin({
@@ -279,6 +294,7 @@ function svgToPngBlob(svg, W, H) {
 
 export {
   tb, tbState, createWindowNode, createPriceNode, createTriggerNode,
-  createDictionaryNode, buildToolbox, COLLIDE_VERDICTS, collisionReportHTML,
+  createDictionaryNode, createDatasetNode, createSubsetNode,
+  buildToolbox, COLLIDE_VERDICTS, collisionReportHTML,
   runCollisionCheck,
 };

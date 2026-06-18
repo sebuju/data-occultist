@@ -166,7 +166,7 @@ def remove_event(game: str, dataset: str, batch: int, event_id: int):
     return _batch_detail(store, dataset, batch)
 
 
-# ---- subsets: derived views over a dataset ---------------------------------
+# ---- subsets: derived tables over a dataset --------------------------------
 
 def _subset(game: str, subset: str):
     settings = get_settings()
@@ -181,10 +181,10 @@ def _subset(game: str, subset: str):
 
 def _input_rows(profile, game: str, input_id: str, stack: frozenset, cache: dict,
                 aggregate: str = "latest") -> list[dict]:
-    """Rows for one view input. A dataset input -> its stored records aggregated by the
-    CONSUMING view's ``aggregate`` policy; a VIEW input -> that view computed first
+    """Rows for one subset input. A dataset input -> its stored records aggregated by the
+    CONSUMING subset's ``aggregate`` policy; a SUBSET input -> that subset computed first
     (recursively, with ITS own aggregate), so its derived columns are available here.
-    `stack` holds the views currently being computed -> a cycle resolves to no rows instead
+    `stack` holds the subsets currently being computed -> a cycle resolves to no rows instead
     of recursing forever. `cache` memoises by (input, aggregate) so a shared upstream
     computes once per policy."""
     ck = (input_id, aggregate)
@@ -193,7 +193,11 @@ def _input_rows(profile, game: str, input_id: str, stack: frozenset, cache: dict
     sub = profile.subset_def(input_id)
     if sub is None:                                   # a plain dataset
         store = _store(game, input_id, aggregate)
-        store.ensure_loaded()   # records from the real ledger (heal a stale cache) so a view can't lag it
+        # records() off the fingerprinted state cache — NO forced ledger parse. The cache's src
+        # (history size+mtime) invalidates on any append, so _load reparses whenever the ledger
+        # moved; when it hasn't, the cache is provably current and a subset can't lag it. Parsing
+        # the full ledger here (ensure_loaded) cost ~870ms on a 44MB/101k-event dataset for no
+        # gain — the heal it provided only ever fired on an already-poisoned cache.
         rows = store.records()
     elif input_id in stack:                           # cycle -> stop
         rows = []

@@ -123,7 +123,7 @@ function rowHtml(m) {
   const summ = [
     c.windows ? `${c.windows} win` : null,
     c.datasets ? `${c.datasets} ds` : null,
-    c.subsets ? `${c.subsets} view` : null,
+    c.subsets ? `${c.subsets} subset` : null,
   ].filter(Boolean).join(" · ");
   return `<div class="bk-row" data-stamp="${esc(m.stamp)}">
     <div class="bk-when" title="${esc(fmtDateTime(m.iso))}">${esc(since(m.iso))}</div>

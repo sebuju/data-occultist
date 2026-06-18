@@ -27,14 +27,14 @@ export function triggerParts(t, model) {
   let watch = "";
   if (kind === "on_change") {
     const have = new Set(t.watch || []);
-    // watch datasets OR views (a view fires when any of its source datasets gains rows)
+    // watch datasets OR subsets (a subset fires when any of its source datasets gains rows)
     const sources = [...model.datasets(), ...(model.profile.subsets || []).map((s) => s.id)];
     const opts = sources.filter((d) => !have.has(d)).map((d) => `<option>${esc(d)}</option>`).join("");
-    watch = labCell("watch", "datasets or views; the trigger fires when one gains rows", true)
+    watch = labCell("watch", "datasets or subsets; the trigger fires when one gains rows", true)
       + srcInputs(
         (t.watch || []).map((w) => srcChip(w, "data-ds", "tg-rmwatch")).join(""),
         "tg-addwatch",
-        `<option value="">+ watch source…</option>${opts}`,
+        `<option value="">+ watch source</option>${opts}`,
       );
   }
 
@@ -46,7 +46,7 @@ export function triggerParts(t, model) {
     + srcInputs(
       (t.targets || []).map((p) => srcChip(p, "data-p", "tg-rmtarget")).join(""),
       "tg-addfire",
-      `<option value="">+ fire target…</option>${popts}`,
+      `<option value="">+ fire target</option>${popts}`,
     );
 
   return {
@@ -57,6 +57,6 @@ export function triggerParts(t, model) {
       ${labCell("last fired", "last time this trigger fired")}<span class="tg-last muted">never fired</span></div>
       <div class="gn-foot"><button class="tg-fire">↻ fire now</button></div>`,
     ports: `<span class="port out" title="drag to a price node this trigger should fire"></span>`
-      + (kind === "on_change" ? `<span class="port pwatch" title="drag to a dataset or view to watch for new rows"></span>` : ""),
+      + (kind === "on_change" ? `<span class="port pwatch" title="drag to a dataset or subset to watch for new rows"></span>` : ""),
   };
 }

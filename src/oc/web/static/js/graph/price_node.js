@@ -26,10 +26,10 @@ export function priceParts(pn, cols = [], free = []) {
   // same chip + add-select look as subset/trigger sources: shared .sv-* classes for style,
   // pr-* classes are the wiring hooks.
   const chips = (pn.sources || []).map((s) => `<span class="sv-input">${esc(s)}<button class="sv-rmin danger pr-rmsrc" data-ds="${esc(s)}" title="stop pricing this source">${TRASH}</button></span>`).join("");
-  const addOpts = `<option value="">+ source…</option>${free.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join("")}`;
-  const srcs = `${labCell("prices", "datasets/views whose items to price (empty = whole market catalogue)", true)}<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="sv-addin pr-addsrc">${addOpts}</select></span></div>`;
+  const addOpts = `<option value="">+ source</option>${free.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join("")}`;
+  const srcs = `${labCell("prices", "datasets/subsets whose items to price (empty = whole market catalogue)", true)}<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="sv-addin pr-addsrc">${addOpts}</select></span></div>`;
   // which source column names the item to price (resolved to a market slug). Only relevant
-  // when sourcing from datasets/views (the whole-catalogue sweep needs no key).
+  // when sourcing from datasets/subsets (the whole-catalogue sweep needs no key).
   const nf = pn.source_field || "name";
   const nfOpts = [...new Set([nf, ...cols])].map((c) => `<option${c === nf ? " selected" : ""}>${esc(c)}</option>`).join("");
   const keyFld = hasSrc

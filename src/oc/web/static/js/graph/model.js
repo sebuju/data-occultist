@@ -19,7 +19,7 @@ export class GraphModel {
     this.profile.price_nodes = this.profile.price_nodes || [];
     this.profile.triggers = this.profile.triggers || [];
     this.profile.dictionaries = this.profile.dictionaries || [];
-    // a view joins many datasets; fold a legacy single ``dataset`` into ``datasets``
+    // a subset joins many datasets; fold a legacy single ``dataset`` into ``datasets``
     for (const s of this.profile.subsets) {
       s.datasets = s.datasets || [];
       if (s.dataset && !s.datasets.includes(s.dataset)) { s.datasets.unshift(s.dataset); s.dataset = ""; }
@@ -94,7 +94,7 @@ export class GraphModel {
       (pn.sources || []).forEach((_, i) =>                            // priced-item sources are REFs
         sites.push({ decl: false, get: () => pn.sources[i], set: (v) => { pn.sources[i] = v; } }));
     }
-    for (const s of this.profile.subsets || []) {                     // view inputs are REFs
+    for (const s of this.profile.subsets || []) {                     // subset inputs are REFs
       sites.push({ decl: false, get: () => s.dataset, set: (v) => { s.dataset = v; } });   // legacy single
       (s.datasets || []).forEach((_, i) =>
         sites.push({ decl: false, get: () => s.datasets[i], set: (v) => { s.datasets[i] = v; } }));
@@ -178,12 +178,12 @@ export class GraphModel {
     }
     for (const s of this.profile.subsets || [])
       for (const inp of this.subsetInputs(s)) {
-        // an input can be a dataset OR another view (subset) — pick the right source node
+        // an input can be a dataset OR another subset — pick the right source node
         const from = this.subsetDef(inp) ? `sub:${inp}` : `ds:${inp}`;
         es.push({ from, to: `sub:${s.id}`, kind: "data" });
       }
     // a price producer WRITES into its output dataset (producer -> dataset), and READS its
-    // item list from any wired source dataset/view (source -> producer); empty = whole catalogue.
+    // item list from any wired source dataset/subset (source -> producer); empty = whole catalogue.
     for (const pn of this.profile.price_nodes || []) {
       es.push({ from: `price:${pn.id}`, to: `ds:${pn.dataset}`, kind: "data" });
       for (const src of pn.sources || []) {
@@ -194,7 +194,7 @@ export class GraphModel {
     }
     // a trigger FIRES its target price nodes (trigger -> price); an on_change trigger also
     // WATCHES datasets — the dashed line leaves the trigger's watch port and reaches OUT to the
-    // dataset/view it wakes on (trigger -> watched), so both control lines emanate from the trigger.
+    // dataset/subset it wakes on (trigger -> watched), so both control lines emanate from the trigger.
     for (const t of this.profile.triggers || []) {
       for (const pid of t.targets || []) if (this.priceNode(pid)) es.push({ from: `trigger:${t.id}`, to: `price:${pid}`, kind: "trigger" });
       if (t.kind === "on_change")
@@ -244,7 +244,7 @@ export class GraphModel {
     const pn = this.priceNode(id);
     if (pn && (mode === "statistics" || mode === "orders")) pn.mode = mode;
   }
-  // a node's priced-item sources (datasets/views). Empty = the whole catalogue. A node may
+  // a node's priced-item sources (datasets/subsets). Empty = the whole catalogue. A node may
   // not source its own output dataset (a self-loop). Returns true when the wire was added.
   addPriceSource(id, ds) {
     const pn = this.priceNode(id);
@@ -255,7 +255,7 @@ export class GraphModel {
     return true;
   }
   removePriceSource(id, ds) { const pn = this.priceNode(id); if (pn) pn.sources = (pn.sources || []).filter((d) => d !== ds); }
-  // datasets + views a price node can still add as a priced-item source (minus current ones
+  // datasets + subsets a price node can still add as a priced-item source (minus current ones
   // and its own output dataset) — feeds the same chip/add-select input the subset uses.
   priceJoinable(pn) {
     const cur = new Set(pn.sources || []);
@@ -266,7 +266,7 @@ export class GraphModel {
   }
   // which source column names the item to price (resolved to a market slug). Default "name".
   setPriceSourceField(id, f) { const pn = this.priceNode(id); if (pn) pn.source_field = f || "name"; }
-  // columns available across a price node's source datasets/views (for the name-field picker)
+  // columns available across a price node's source datasets/subsets (for the name-field picker)
   priceSourceColumns(pn) {
     const out = [];
     const add = (c) => { if (c && !out.includes(c)) out.push(c); };
@@ -365,15 +365,18 @@ export class GraphModel {
     return id;
   }
 
-  // ---- views: join one or more datasets, then filter/derive/sort ----------
+  // ---- subsets: join one or more datasets, then filter/derive/sort ----------
   subsetDef(id) { return (this.profile.subsets || []).find((s) => s.id === id) || null; }
-  // a view's source datasets (joined on join_field), in order
+  // a subset's source datasets (joined on join_field), in order
   subsetInputs(s) { return (s && s.datasets && s.datasets.length) ? s.datasets : (s && s.dataset ? [s.dataset] : []); }
-  addSubset(ds) {
-    let n = 1, id = `${ds}_view`;
-    while (this.subsetDef(id)) id = `${ds}_view${++n}`;
+  // `ds` (optional) seeds the subset's first input + name. Omitted (e.g. minted from the
+  // canvas add-node menu) -> a standalone, input-less subset named "subset" the user wires later.
+  addSubset(ds = null) {
+    const base = ds ? `${ds}_view` : "subset";
+    let n = 1, id = base;
+    while (this.subsetDef(id)) id = ds ? `${ds}_view${++n}` : `subset_${++n}`;
     (this.profile.subsets = this.profile.subsets || []).push({
-      id, dataset: "", datasets: [ds], join_field: "name",
+      id, dataset: "", datasets: ds ? [ds] : [], join_field: "name",
       filters: [], derived: [], hidden_columns: [], enrich: [], sort: [], sort_by: "", sort_desc: false, latest_batch: false, limit: 0,
     });
     return id;
@@ -383,10 +386,10 @@ export class GraphModel {
     newId = (newId || "").trim();
     if (!newId || newId === oldId || this.subsetDef(newId)) return false;
     this.subsetDef(oldId).id = newId;
-    this._repointRefs(oldId, newId);   // a view can feed another view — repoint those inputs too
+    this._repointRefs(oldId, newId);   // a subset can feed another subset — repoint those inputs too
     return true;
   }
-  // does view `fromId` use `targetId` as a (transitive) input? Used to refuse cycles.
+  // does subset `fromId` use `targetId` as a (transitive) input? Used to refuse cycles.
   subsetReaches(fromId, targetId) {
     const seen = new Set();
     const stack = [fromId];
@@ -400,8 +403,8 @@ export class GraphModel {
     }
     return false;
   }
-  // add/remove a source (dataset OR another view) to a view's join inputs. Refuses self-
-  // reference and any cycle (would loop forever when computing the view).
+  // add/remove a source (dataset OR another subset) to a subset's join inputs. Refuses self-
+  // reference and any cycle (would loop forever when computing the subset).
   addSubsetInput(id, ds) {
     const s = this.subsetDef(id);
     if (!s || !ds || ds === id) return false;
@@ -416,14 +419,14 @@ export class GraphModel {
     if (s) s.datasets = (s.datasets || []).filter((d) => d !== ds);
   }
   setJoinField(id, field) { const s = this.subsetDef(id); if (s) s.join_field = field || "name"; }
-  // how a dataset input's MANY observations collapse to one value when THIS view reads it
+  // how a dataset input's MANY observations collapse to one value when THIS subset reads it
   subsetAggregate(id) { const s = this.subsetDef(id); return (s && s.aggregate) || "latest"; }
   setSubsetAggregate(id, agg) { const s = this.subsetDef(id); if (s) s.aggregate = agg || "latest"; }
   // only pull rows from each source's most recent collection batch (applied first)
   setSubsetLatestBatch(id, on) { const s = this.subsetDef(id); if (s) s.latest_batch = !!on; }
   // cap the number of result rows (0 = no limit)
   setSubsetLimit(id, n) { const s = this.subsetDef(id); if (s) s.limit = Math.max(0, Math.floor(+n || 0)); }
-  // swap one of a view's source inputs for another (the row-select edit), preserving order
+  // swap one of a subset's source inputs for another (the row-select edit), preserving order
   replaceSubsetInput(id, oldDs, newDs) {
     const s = this.subsetDef(id);
     if (!s || oldDs === newDs) return false;
@@ -435,9 +438,9 @@ export class GraphModel {
     if (i >= 0) s.datasets.splice(i, 0, newDs); else s.datasets.push(newDs);
     return true;
   }
-  // columns a view can reference: every input's columns + this view's derived names. A
-  // dataset input contributes its window fields (+ known price columns); a VIEW input
-  // contributes its own output columns (recursively, so an upstream view's derived columns
+  // columns a subset can reference: every input's columns + this subset's derived names. A
+  // dataset input contributes its window fields (+ known price columns); a SUBSET input
+  // contributes its own output columns (recursively, so an upstream subset's derived columns
   // are visible downstream). `_seen` guards against an input cycle.
   subsetColumns(id, _seen) {
     const s = this.subsetDef(id);
@@ -448,7 +451,7 @@ export class GraphModel {
     const out = [];
     const add = (c) => { if (c && !out.includes(c)) out.push(c); };
     for (const inp of this.subsetInputs(s)) {
-      if (this.subsetDef(inp)) { this.subsetColumns(inp, _seen).forEach(add); continue; }   // view input
+      if (this.subsetDef(inp)) { this.subsetColumns(inp, _seen).forEach(add); continue; }   // subset input
       this.datasetFields(inp).forEach(add);
       // price datasets aren't fed by windows, so expose their known snapshot columns
       if ((this.profile.price_nodes || []).some((p) => p.dataset === inp))
@@ -457,8 +460,8 @@ export class GraphModel {
     for (const d of s.derived || []) if (d.name) add(d.name);
     return out;
   }
-  // sources a view can still add as an input: datasets + OTHER views, minus its current
-  // inputs, itself, and any view that already depends on it (would form a cycle).
+  // sources a subset can still add as an input: datasets + OTHER subsets, minus its current
+  // inputs, itself, and any subset that already depends on it (would form a cycle).
   joinableInputs(s) {
     const inputs = this.subsetInputs(s);
     const out = [];

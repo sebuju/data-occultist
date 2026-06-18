@@ -1,6 +1,6 @@
-"""Compute a view (:class:`SubsetDef`) over one or more datasets.
+"""Compute a subset (:class:`SubsetDef`) over one or more datasets.
 
-A view outer-joins its source datasets on a shared key (``join_field``, default
+A subset outer-joins its source datasets on a shared key (``join_field``, default
 ``name``), then filters rows, adds computed columns, sorts, and limits. It holds no
 state — recomputed from the current records each call, so it always reflects the latest
 stored data. Joining inventory to a producer's price dataset (then deriving
@@ -21,6 +21,7 @@ from __future__ import annotations
 import ast
 import operator
 import re
+from functools import lru_cache
 
 from ..profile.models import DerivedColumn, FilterRule, SortRule, SubsetDef
 
@@ -41,6 +42,14 @@ _ARITH_OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.m
               ast.UAdd: operator.pos, ast.Mod: operator.mod}
 
 
+@lru_cache(maxsize=512)
+def _parse_arith(expr: str):
+    """Parse one arithmetic expression to its AST body once and reuse it. A subset's derived
+    columns share the same expr string across every row, so this turns N row-level
+    ``ast.parse`` calls into one."""
+    return ast.parse(expr, mode="eval").body
+
+
 def _eval_arith(expr: str, row: dict | None = None) -> float:
     def ev(n):
         if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)):
@@ -55,7 +64,7 @@ def _eval_arith(expr: str, row: dict | None = None) -> float:
         if isinstance(n, ast.UnaryOp) and type(n.op) in _ARITH_OPS:
             return _ARITH_OPS[type(n.op)](ev(n.operand))
         raise ValueError(f"unsupported expression element: {type(n).__name__}")
-    return ev(ast.parse(expr, mode="eval").body)
+    return ev(_parse_arith(expr))
 
 
 def match_rule(row: dict, rule: FilterRule) -> bool:

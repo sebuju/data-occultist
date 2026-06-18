@@ -89,7 +89,7 @@ export function buildSources(ctx) {
     }
     if (ds.children.length > 1) list.appendChild(ds);
 
-    const subs = section("views");
+    const subs = section("subsets");
     for (const s of m.profile.subsets || []) {
       if (match(`subset ${s.id}`)) push(subs, `{{subset:${s.id}}}`, () => ctx.bindDataToSelected("subset", s.id));
       for (const c of m.subsetColumns(s.id)) if (match(`${s.id} ${c}`)) push(subs, `{{subset:${s.id}.${c}}}`, null, true);
