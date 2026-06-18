@@ -810,18 +810,6 @@ triggers:
   targets:
   - relic_live
   enabled: true
-- id: trigger
-  kind: interval
-  interval_s: 300.0
-  watch: []
-  targets: []
-  enabled: true
-- id: trigger_2
-  kind: interval
-  interval_s: 300.0
-  watch: []
-  targets: []
-  enabled: true
 dictionaries:
 - id: wiki
   name: wiki
@@ -922,7 +910,7 @@ layout:
     prev:relic_window:
       x: 1560.0
       y: 3880.0
-      w: 360.0
+      w: 520.0
       h: 320.0
       collapsed: false
     det:relic_window:detect_1:
@@ -1115,23 +1103,11 @@ layout:
       w: 220.0
       h: 340.0
       collapsed: false
-    trigger:trigger:
-      x: 2740.0
-      y: 3580.0
-      w: 280.0
-      h: 240.0
-      collapsed: false
     ds:prices:
       x: 900.0
       y: 20.0
       w: 360.0
       h: 380.0
-      collapsed: false
-    trigger:trigger_2:
-      x: 2780.0
-      y: 3860.0
-      w: 280.0
-      h: 240.0
       collapsed: false
   tables:
     warframe:ds:master:

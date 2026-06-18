@@ -7,10 +7,10 @@ pages:
   style: {}
   widgets:
   - id: w3
-    x: 40
-    y: 140
-    w: 600
-    h: 120
+    x: 32.5
+    y: 50
+    w: 35
+    h: 140
     z: 8
     style:
       font_size: 12
@@ -58,10 +58,16 @@ pages:
     binding:
       src: subset
       id: relic_rewards_live
+    anchor:
+      to: ''
+      corner: tl
+    units:
+      x: dvw
+      w: dvw
   - id: w1
-    x: 40
-    y: 560
-    w: 600
+    x: 0
+    y: 420
+    w: 35
     h: 300
     z: 2
     style: {}
@@ -70,10 +76,15 @@ pages:
     type: panel
     config:
       panel: precap
+    anchor:
+      to: w2
+      corner: bl
+    units:
+      w: dvw
   - id: w2
-    x: 44
-    y: 280
-    w: 280
+    x: 0
+    y: 200
+    w: 16
     h: 220
     z: 3
     style: {}
@@ -83,12 +94,14 @@ pages:
     config:
       panel: live
     anchor:
-      to: ''
+      to: w3
       corner: tl
+    units:
+      w: dvw
   - id: w4
-    x: 360
-    y: 280
-    w: 280
+    x: 0
+    y: 230
+    w: 16
     h: 220
     z: 4
     style: {}
@@ -97,18 +110,44 @@ pages:
     type: panel
     config:
       panel: activity
+    anchor:
+      to: w5
+      corner: br
+    units:
+      w: dvw
   - id: w5
-    x: 724
-    y: 140
-    w: 240
-    h: 44
+    x: 0
+    y: 50
+    w: 16
+    h: 20
     z: 5
-    style: {}
+    style:
+      bg: rgb(0, 0, 0, 0)
+    conditions:
+      rules: []
+    type: label
+    config:
+      text: Tasks
+    anchor:
+      to: w3
+      corner: br
+    units:
+      w: dvw
+  - id: w6
+    x: -0.4
+    y: 50
+    w: 16
+    h: 20
+    z: 6
+    style:
+      bg: rgb(0, 0, 0, 0)
     conditions:
       rules: []
     type: label
     config:
       text: Label
+    units:
+      w: dvw
     anchor:
-      to: ''
-      corner: tl
+      to: w3
+      corner: bl
