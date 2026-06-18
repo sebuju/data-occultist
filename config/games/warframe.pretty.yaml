@@ -7,13 +7,17 @@ pages:
   style: {}
   widgets:
   - id: w3
-    x: 32.5
-    y: 50
-    w: 35
+    x: 0
+    y: 100
+    w: clamp(500px, 50dvw, 1000px)
     h: 140
     z: 8
     style:
       font_size: 12
+      radius: 4
+      border_color: '#242424'
+      border_w: 0
+      padding: 0
     conditions:
       rules:
       - effect: show
@@ -53,58 +57,76 @@ pages:
         enabled: false
       pageSize: 4
       sortDesc: true
-      sortField: ''
+      sortField: live_ask
       paging: false
     binding:
       src: subset
       id: relic_rewards_live
     anchor:
       to: ''
-      corner: tl
+      corner: tc
+      target: tc
     units:
       x: dvw
-      w: dvw
+      w: calc
   - id: w1
     x: 0
-    y: 420
-    w: 35
+    y: 3
+    w: 34.51
     h: 300
     z: 2
-    style: {}
+    style:
+      border_color: '#242424'
+      border_w: 1
+      radius: 4
+      padding: 6
     conditions:
       rules: []
     type: panel
     config:
       panel: precap
     anchor:
-      to: w2
-      corner: bl
+      to: w4
+      corner: tr
+      target: br
     units:
       w: dvw
+      y: dvh
+    matchW: w3
   - id: w2
     x: 0
-    y: 200
-    w: 16
-    h: 220
+    y: 4
+    w: 15.63
+    h: 260
     z: 3
-    style: {}
+    style:
+      border_w: 1
+      border_color: '#242424'
+      padding: 6
+      radius: 4
     conditions:
       rules: []
     type: panel
     config:
       panel: live
     anchor:
-      to: w3
+      to: w6
       corner: tl
+      target: bl
     units:
       w: dvw
+    matchW: w6
   - id: w4
     x: 0
-    y: 230
+    y: 4
     w: 16
     h: 220
     z: 4
-    style: {}
+    style:
+      border_w: 1
+      border_color: '#242424'
+      radius: 4
+      padding: 6
     conditions:
       rules: []
     type: panel
@@ -112,13 +134,16 @@ pages:
       panel: activity
     anchor:
       to: w5
-      corner: br
+      corner: tr
+      target: br
     units:
       w: dvw
+    matchW: w6
+    matchH: w2
   - id: w5
     x: 0
-    y: 50
-    w: 16
+    y: 3
+    w: 14.32
     h: 20
     z: 5
     style:
@@ -130,24 +155,51 @@ pages:
       text: Tasks
     anchor:
       to: w3
-      corner: br
+      corner: tr
+      target: br
     units:
       w: dvw
+      y: dvh
+    matchW: w6
   - id: w6
-    x: -0.4
-    y: 50
+    x: 0
+    y: 3
     w: 16
     h: 20
     z: 6
     style:
       bg: rgb(0, 0, 0, 0)
+      font_size: 14
+      bold: true
     conditions:
       rules: []
     type: label
     config:
-      text: Label
+      text: Live
     units:
       w: dvw
+      y: dvh
+    anchor:
+      to: w3
+      corner: tl
+      target: bl
+    matchW: w3
+    matchWPct: 48
+  - id: w7
+    x: 0
+    y: -4
+    w: 240
+    h: 20
+    z: 7
+    style: {}
+    conditions:
+      rules: []
+    type: label
+    config:
+      text: Relic results
+    units:
+      x: dvw
     anchor:
       to: w3
       corner: bl
+      target: tl

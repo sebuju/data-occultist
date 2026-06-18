@@ -39,6 +39,11 @@ fields:
 windows:
 - id: equipment_window
   dataset: master
+  key:
+    fields:
+    - name
+    sep: '|'
+    case_sensitive: false
   fields:
   - id: name
     type: text
@@ -662,10 +667,6 @@ datasets:
   aggregate: latest
   key_field: ''
   dedup: true
-- id: prices
-  aggregate: latest
-  key_field: ''
-  dedup: true
 subsets:
 - id: statistic_prices_joined
   dataset: ''
@@ -735,12 +736,14 @@ subsets:
   derived: []
   hidden_columns:
   - slug
-  - updated
-  - live_ask
   - _item
   - key
   - _seq
   - volume
+  - price_median
+  - live_median
+  - updated
+  - live_sellers
   enrich: []
   sort: []
   sort_by: ''
@@ -856,8 +859,8 @@ layout:
     sub:live_prices_joined:
       x: 240.0
       y: 1460.0
-      w: 360.0
-      h: 440.0
+      w: 480.0
+      h: 840.0
       collapsed: false
     sub:statistic_prices_joined:
       x: 300.0
@@ -1103,12 +1106,6 @@ layout:
       w: 220.0
       h: 340.0
       collapsed: false
-    ds:prices:
-      x: 900.0
-      y: 20.0
-      w: 360.0
-      h: 380.0
-      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -1183,7 +1180,7 @@ layout:
       - live_sellers
       widths:
         live_median: 90
-        name: 263
+        name: 166
         price_min: 87
         price_median: 96
         live_sellers: 69
@@ -1199,26 +1196,11 @@ layout:
       - _seq
       - name
     ds:prices_relic_live:
-      widths:
-        name: 131
-        _batch: 58
-        _seq: 45
-        live_ask: 36
+      widths: {}
       sorts:
-      - col: _batch
+      - col: _seq
         dir: -1
-      order:
-      - _batch
-      - name
-      - live_ask
-      - live_median
-      - live_sellers
-      - price_median
-      - price_min
-      - slug
-      - updated
-      - volume
-      - _seq
+      order: []
     ds:relics_offered:
       order:
       - _seq
