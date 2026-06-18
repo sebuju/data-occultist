@@ -255,6 +255,61 @@ def delete_dataset(data_dir: Path | str, game: str, dataset: str) -> bool:
     return removed
 
 
+def clear_table(data_dir: Path | str, game: str, table: str) -> int:
+    """Empty ONE physical SQLite table (rows only, schema kept). ``table`` is validated
+    against the live table list — never interpolated raw — so this can't run arbitrary SQL.
+    Returns the row count deleted (0 when the DB or table is absent).
+
+    Low-level surgery: the tables are inter-related (``current`` materialises ``events``),
+    so clearing one alone can leave the others showing stale counts until the next write
+    rebuilds them. Prefer :func:`drop_database` (whole, coherent reset) or a dataset's
+    ``clear_data`` / :func:`delete_dataset`; this exists for when you really mean one table."""
+    db = _db_path(data_dir, game)
+    if not db.exists():
+        return 0
+    conn = _connect(db)
+    try:
+        valid = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+        if table not in valid:
+            raise KeyError(f"no table {table!r}")
+        return conn.execute(f"DELETE FROM {table}").rowcount   # autocommit; name is allow-listed
+    finally:
+        conn.close()
+
+
+def drop_database(data_dir: Path | str, game: str) -> list[str]:
+    """Drop the whole game store and leave a fresh, empty one in its place — every dataset
+    gone, but the (re-created) schema present so the store is fresh, not absent. Returns the
+    dataset names that existed, so the caller can announce each as changed (panels + the
+    graph's dataset nodes refresh; a node resurrects its dataset on the next write).
+
+    Empties by row-delete + ``VACUUM`` rather than unlinking the file, so a concurrent
+    reader/writer (WAL) is never fighting a vanished file handle — same mechanism the rest
+    of the store uses."""
+    db = _db_path(data_dir, game)
+    if not db.exists():
+        return []
+    conn = _connect(db)
+    try:
+        names = [r[0] for r in conn.execute("SELECT dataset FROM datasets ORDER BY dataset")]
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for t in ("events", "current", "datasets"):
+                conn.execute(f"DELETE FROM {t}")
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        try:
+            conn.execute("VACUUM")   # reclaim the file size so "fresh" shows as a small DB
+        except sqlite3.OperationalError:
+            pass
+        return names
+    finally:
+        conn.close()
+
+
 class DatasetStore:
     def __init__(
         self,

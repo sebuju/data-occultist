@@ -120,6 +120,40 @@ def test_delete_dataset_missing_is_noop(tmp_path):
     assert delete_dataset(tmp_path, "game", "nope") is False
 
 
+def test_drop_database_empties_all_datasets(tmp_path):
+    from oc.store import inspect
+    from oc.store.dataset_store import drop_database
+    _store(tmp_path).record_seen({"name": "Serration"})                 # "mods"
+    DatasetStore(tmp_path, "game", "arsenal").record_seen({"name": "Excalibur"})
+    removed = drop_database(tmp_path, "game")
+    assert set(removed) == {"mods", "arsenal"}                          # reports what existed
+    assert inspect.list_datasets(tmp_path, "game") == []                # all gone
+    assert DatasetStore(tmp_path, "game", "mods").present_count == 0    # fresh, not absent
+    # a node resurrects its dataset on the next write
+    DatasetStore(tmp_path, "game", "mods").record_seen({"name": "Vitality"})
+    assert "mods" in inspect.list_datasets(tmp_path, "game")
+
+
+def test_drop_database_missing_is_noop(tmp_path):
+    from oc.store.dataset_store import drop_database
+    assert drop_database(tmp_path, "game") == []
+
+
+def test_clear_table_empties_one_table(tmp_path):
+    from oc.store.dataset_store import clear_table
+    s = _store(tmp_path)
+    s.record_seen({"name": "Serration", "rank": 1})
+    assert clear_table(tmp_path, "game", "events") >= 1                 # rows removed
+    assert DatasetStore(tmp_path, "game", "mods").history(10) == []     # ledger empty
+
+
+def test_clear_table_rejects_unknown(tmp_path):
+    from oc.store.dataset_store import clear_table
+    _store(tmp_path).record_seen({"name": "Serration"})
+    with pytest.raises(KeyError):
+        clear_table(tmp_path, "game", "events; DROP TABLE events")
+
+
 def test_reading_missing_dataset_writes_no_files(tmp_path):
     # Merely opening a nonexistent dataset must not materialize a state cache — else
     # list_datasets resurfaces it (e.g. an old name after a rename) as a blank phantom.
