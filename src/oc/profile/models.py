@@ -573,6 +573,12 @@ class DatasetDef(BaseModel):
     # False turns the 1->many collapse OFF entirely: every read is kept as its own record
     # (no dedup/merge). ``key_field`` is ignored when ``dedup`` is False.
     dedup: bool = True
+    # How a live collection run splits into revertable batches:
+    #   "run"       — one batch for the whole run (default; persistent inventory).
+    #   "detection" — a NEW batch every time the feeding window is freshly detected after a
+    #                 gap. For transient per-event screens (e.g. relic offerings) where each
+    #                 appearance is a distinct set, not an update of the last one.
+    batch_mode: str = "run"
 
 
 class DictionaryDef(BaseModel):
@@ -839,6 +845,12 @@ class GameProfile(BaseModel):
         """How the dataset collapses each key's many observations (``latest`` default)."""
         d = self.dataset_def(dataset_id)
         return (d.aggregate if d and d.aggregate else "latest")
+
+    def batch_per_detection(self, dataset_id: str) -> bool:
+        """True when the dataset starts a NEW batch on each fresh window detection
+        (``batch_mode: detection``) rather than one batch per run."""
+        d = self.dataset_def(dataset_id)
+        return bool(d and d.batch_mode == "detection")
 
     @staticmethod
     def _item_default_spec(it: ItemDef, w: WindowDef | None) -> KeySpec:

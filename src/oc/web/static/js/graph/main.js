@@ -1346,9 +1346,13 @@ function nodeParts(n) {
     const keyOpts = ['<option value="">key: from windows</option>']
         .concat(keyFields.map((f) => `<option value="${esc(f)}"${!noDedup && kf === f ? " selected" : ""}>key: ${esc(f)}</option>`))
         .concat([`<option value="__nodedup__"${noDedup ? " selected" : ""}>no dedup (keep every read)</option>`]).join("");
+    const bm = model.datasetBatchMode(ds);
+    const batchOpts = [["run", "per run"], ["detection", "per detection"]]
+        .map(([v, l]) => `<option value="${v}"${bm === v ? " selected" : ""}>${l}</option>`).join("");
     return {
         title: `<input class="gi gi-id dsrename" value="${esc(ds)}" title="dataset name" />`,
-        body: `<div class="lab-grid">1 → many<select class="dskey" title="the key the dataset collapses many reads on (or none)">${keyOpts}</select></div>
+        body: `<div class="lab-grid">1 → many<select class="dskey" title="the key the dataset collapses many reads on (or none)">${keyOpts}</select>
+      batch<select class="dsbatch" title="how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like relic offerings)">${batchOpts}</select></div>
       <div class="gn-foot"><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
       <div class="ds-tabs" role="tablist">
         <button class="ds-tab on" data-tab="data" role="tab">data <span class="ds-tab-n data-n"></span></button>
@@ -2280,6 +2284,10 @@ function wireNode(div, n) {
             autosave();
             await persist.flush();   // re-key on disk before re-reading
             refreshDataNode(n.ref); refreshAllSubsetNodes();
+        });
+        div.querySelector(".dsbatch")?.addEventListener("change", (e) => {
+            model.setDatasetBatchMode(n.ref, e.target.value);
+            autosave();
         });
         const clearBtn = div.querySelector(".dsclear");
         clearBtn?.addEventListener("click", async () => {

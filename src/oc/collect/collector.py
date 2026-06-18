@@ -112,6 +112,15 @@ class Collector:
         self._stores: dict[str, DatasetStore] = {}
         self._key_maps: dict[str, KeyMap] = {}
         self._observed: dict[str, set[str]] = {}
+        # Per-detection batching (``batch_mode: detection`` datasets, e.g. relic offerings):
+        # a fresh window detection after a gap starts a NEW revertable batch. ``_tick_no``
+        # counts EVERY tick (incl. no-window/unrecognised), so the gap since a dataset was
+        # last fed is just a subtraction — no per-tick presence bookkeeping on every return
+        # path. ``_pending_batch`` defers ``begin_batch`` to the first actual write, so an
+        # empty detection (no confirmed rows) never spawns an empty batch.
+        self._tick_no = 0
+        self._last_seen_tick: dict[str, int] = {}
+        self._pending_batch: set[str] = set()
         # Per-window cache of (region signature, last read records) so an unchanged
         # view re-feeds the confirmer without paying for OCR again.
         self._frame_cache: dict[str, tuple[int, list[Record]]] = {}
@@ -160,7 +169,9 @@ class Collector:
                 profile=self._profile,           # resolves the aggregate
                 key=self._key_map(dataset),      # conflict-checked map wins over the profile's
             )
-            store.begin_batch()   # one collection run = one revertable batch (CLI collect + live)
+            if not self._profile.batch_per_detection(dataset):
+                store.begin_batch()   # one collection run = one revertable batch (CLI collect + live)
+            # detection-mode datasets begin a batch per detection edge instead (see tick())
             self._observed.setdefault(dataset, set())
         return self._stores[dataset]
 
@@ -200,6 +211,7 @@ class Collector:
     def tick(self) -> TickResult:
         from ..store import stats_store
         t0 = time.perf_counter()
+        self._tick_no += 1   # counts EVERY tick, so the gap since a dataset was last fed is a subtraction
         eng = self._engine
         win = self._locator.locate(self._profile)
         if win is None:
@@ -257,6 +269,19 @@ class Collector:
                 changed=[],
             )
 
+        # Per-detection batching: when this dataset hasn't been fed within the grace window
+        # (confirm_frames), the relic screen is freshly open — a NEW offering. Mark a new
+        # batch (materialised on the first write below) and drop the confirmer so the new
+        # offering's rows re-confirm and land in it rather than being suppressed as
+        # already-seen from the previous offering.
+        if self._explicit_sink is None and self._profile.batch_per_detection(dataset):
+            grace = max(1, self._tuning.confirm_frames)
+            last = self._last_seen_tick.get(dataset)
+            if last is None or (self._tick_no - last) > grace:
+                self._pending_batch.add(dataset)
+                self._confirmers.pop(dataset, None)   # forget the prior offering's confirmations
+            self._last_seen_tick[dataset] = self._tick_no
+
         confirmer = self._confirmer_for(window)         # shared per dataset
         confirmed = confirmer.observe(kept)             # temporal stability gate
 
@@ -268,6 +293,9 @@ class Collector:
                 new += 1
         else:
             store = self._store_for(window)
+            if confirmed and dataset in self._pending_batch:
+                store.begin_batch()   # this detection's offering = its own revertable batch
+                self._pending_batch.discard(dataset)
             observed = self._observed[dataset]
             for rec in confirmed:
                 key = store.key_of(rec.values)

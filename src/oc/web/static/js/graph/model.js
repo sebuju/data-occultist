@@ -76,6 +76,10 @@ export class GraphModel {
     // Whether the dataset does the 1->many collapse at all (false = keep every read as its own row).
     datasetDedup(id) { const d = this.datasetDef(id); return !d || d.dedup !== false; }
     setDatasetDedup(id, on) { this.ensureDatasetDef(id).dedup = !!on; }
+    // How a live run splits into batches: "run" (one per run) or "detection" (a new batch each
+    // time the feeding window is freshly detected — transient per-event screens like relic offerings).
+    datasetBatchMode(id) { const d = this.datasetDef(id); return (d && d.batch_mode) || "run"; }
+    setDatasetBatchMode(id, m) { this.ensureDatasetDef(id).batch_mode = m === "detection" ? "detection" : "run"; }
     // SINGLE SOURCE OF TRUTH for every place a dataset id is stored, as live get/set accessors.
     // `decl: true` sites DECLARE a dataset's existence (a node literally IS this dataset);
     // ref sites merely point at one (a consumer). EVERYTHING that lists or renames datasets

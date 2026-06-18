@@ -44,6 +44,16 @@ def test_dataset_key_override_and_no_dedup():
     assert p3.key_map_for("loot").dedup is False
 
 
+def test_batch_mode_per_detection():
+    # default = one batch per run
+    assert GameProfile(name="g", datasets=[DatasetDef(id="d")]).batch_per_detection("d") is False
+    # opt-in = new batch on each fresh window detection (relic offerings)
+    p = GameProfile(name="g", datasets=[DatasetDef(id="d", batch_mode="detection")])
+    assert p.batch_per_detection("d") is True
+    # unknown / missing dataset -> run semantics
+    assert p.batch_per_detection("nope") is False
+
+
 def test_store_no_dedup_keeps_every_read(tmp_path):
     from oc.store import DatasetStore, KeyMap, KeySpec
     s = DatasetStore(tmp_path, "g", "d", key=KeyMap(KeySpec(), {}, dedup=False))
