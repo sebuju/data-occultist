@@ -11,6 +11,8 @@
 // injected store, so it travels with the game — table.js itself stays decoupled from the
 // model and persist internals. Until wired, an in-memory fallback keeps it working.
 
+import { colResizeDrag } from "./dragresize.js";
+
 let _store = (() => {
   const mem = new Map();
   return { load: (id) => mem.get(id) || {}, save: (id, st) => mem.set(id, st) };
@@ -147,20 +149,10 @@ function renderIcons(ths, names, st) {
 }
 
 function startColResize(e, col, name, id, st, table) {
-  e.preventDefault();
-  e.stopPropagation();
-  const startX = e.clientX;
   const startW = parseFloat(col.style.width) || col.offsetWidth || 80;
-  const onMove = (ev) => {
-    if (Math.abs(ev.clientX - startX) > 2) table.__resized = true;   // suppress the trailing sort click
-    col.style.width = `${Math.max(36, Math.round(startW + (ev.clientX - startX)))}px`;
-  };
-  const onUp = () => {
-    document.removeEventListener("mousemove", onMove);
-    document.removeEventListener("mouseup", onUp);
-    st.widths[name] = parseFloat(col.style.width);
-    saveState(id, st);
-  };
-  document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", onUp);
+  colResizeDrag(e, {
+    moved: () => { table.__resized = true; },   // suppress the trailing sort click
+    onDelta: (dx) => { col.style.width = `${Math.max(36, Math.round(startW + dx))}px`; },
+    onSettle: () => { st.widths[name] = parseFloat(col.style.width); saveState(id, st); },
+  });
 }

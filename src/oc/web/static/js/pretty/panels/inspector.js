@@ -7,8 +7,9 @@ import { styleEditor } from "../style_editor.js";
 import { nodeInputs, inputMeta } from "../constraints.js";
 import { sourceTokenList } from "../binding.js";
 import { el, humanize } from "../widgets/util.js";
-import { makeReorderable, arrayMove, orderColumns } from "../reorder.js";
+import { makeReorderable, arrayMove, orderColumns, setColumnProp } from "../reorder.js";
 import { PANEL_OPTIONS } from "../widgets/panel.js";
+import { POS_UNITS } from "../canvas.js";
 
 export const inspectorState = { visible: false, x: null, y: null, w: 320, h: null, collapsed: false };
 
@@ -22,6 +23,52 @@ export function buildInspector(ctx) {
   // ---- small control builders --------------------------------------------------------
   const save = () => { ctx.pretty.save(); ctx.refresh(); render(); };
   function row(label, control) { const r = el("div", "pw-insp-row"); r.appendChild(el("span", "pw-insp-lab", label)); r.appendChild(control); return r; }
+  // A section header with an optional icon-only reset button justified to the right of the row.
+  function hdr(label, onReset) {
+    const h = el("div", "pw-insp-h");
+    h.appendChild(el("span", "pw-insp-h-lab", label));
+    if (onReset) {
+      const b = el("button", "pw-insp-h-reset"); b.title = `reset ${label}`;
+      b.innerHTML = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.2V5h-2.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      b.addEventListener("click", (e) => { e.stopPropagation(); onReset(); });
+      h.appendChild(b);
+    }
+    return h;
+  }
+
+  // Editable position + size at the top of the inspector, each with a unit (px/%/vw/vh/dvw/dvh).
+  // Values live-update while the widget is dragged/resized (syncGeom) and apply on enter/blur.
+  const GEOM_FIELDS = ["x", "y", "w", "h"];
+  let geomRefs = null;
+  function geomEditor(w) {
+    const g = el("div", "pw-insp-grp pw-geom");
+    const gm = ctx.geomOf(w.id) || { x: w.x ?? 0, y: w.y ?? 0, w: w.w ?? 200, h: w.h ?? 80, units: {} };
+    geomRefs = {};
+    for (const k of GEOM_FIELDS) {
+      const cell = el("div", "pw-geom-cell");
+      cell.appendChild(el("span", "pw-geom-lab", k));
+      const inp = el("input", "pw-geom-val"); inp.type = "number"; inp.value = gm[k];
+      inp.addEventListener("change", () => ctx.applyGeom(w.id, { [k]: Number(inp.value) }));
+      const us = el("select", "pw-geom-unit");
+      for (const u of POS_UNITS) { const o = el("option", null, u); o.value = u; us.appendChild(o); }
+      us.value = (gm.units && gm.units[k]) || "px";
+      us.addEventListener("change", () => { ctx.setUnit(w.id, k, us.value); syncGeom(w.id); });
+      cell.append(inp, us);
+      geomRefs[k] = { inp, us };
+      g.appendChild(cell);
+    }
+    return g;
+  }
+  function syncGeom(id) {
+    if (!geomRefs || !current || current.id !== id) return;
+    const gm = ctx.geomOf(id); if (!gm) return;
+    for (const k of GEOM_FIELDS) {
+      const ref = geomRefs[k]; if (!ref) continue;
+      if (document.activeElement !== ref.inp) { const v = String(gm[k]); if (ref.inp.value !== v) ref.inp.value = v; }
+      const u = (gm.units && gm.units[k]) || "px";
+      if (ref.us.value !== u) ref.us.value = u;
+    }
+  }
   function sel(value, options, onChange) {
     const s = el("select");
     for (const o of options) { const op = el("option", null, o.label ?? o); op.value = o.value ?? o; s.appendChild(op); }
@@ -57,7 +104,7 @@ export function buildInspector(ctx) {
   }
   function bindingEditor(w) {
     const wrap = el("div", "pw-insp-grp");
-    wrap.appendChild(el("div", "pw-insp-h", "data"));
+    wrap.appendChild(hdr("data", () => { w.binding = { src: "dataset", id: "" }; resetBindingConfig(w); save(); }));
     w.binding = w.binding || { src: "dataset", id: "" };
     wrap.appendChild(row("source", sel(w.binding.src, [{ value: "dataset", label: "dataset" }, { value: "subset", label: "subset" }], (v) => { w.binding.src = v; w.binding.id = ""; resetBindingConfig(w); save(); })));
     const opts = w.binding.src === "subset" ? subOptions() : dsOptions();
@@ -67,7 +114,7 @@ export function buildInspector(ctx) {
 
   function configEditor(w) {
     const g = el("div", "pw-insp-grp");
-    g.appendChild(el("div", "pw-insp-h", "config"));
+    g.appendChild(hdr("config", () => { w.config = {}; save(); }));
     const c = w.config = w.config || {};
     if (w.type === "label") g.appendChild(row("text", txt(c.text, (v) => { c.text = v; save(); }, true)));
     if (w.type === "container") g.appendChild(row("title", txt(c.title, (v) => { c.title = v; save(); })));
@@ -78,11 +125,11 @@ export function buildInspector(ctx) {
       g.appendChild(row("paging", chk(c.paging, (v) => { c.paging = v; save(); })));
       g.appendChild(row("sort by", sel(c.sortField || "", [{ value: "", label: "—" }, ...avail.map((k) => ({ value: k, label: humanize(k) }))], (v) => { c.sortField = v; save(); })));
       g.appendChild(row("direction", sel(c.sortDesc ? "desc" : "asc", ["asc", "desc"], (v) => { c.sortDesc = v === "desc"; save(); })));
-      g.appendChild(el("div", "pw-insp-h", "columns"));
+      g.appendChild(hdr("columns", () => { c.columns = []; save(); }));
       if (!avail.length) g.appendChild(el("div", "pw-insp-hint", "bind data to list columns"));
       c.columns = Array.isArray(c.columns) ? c.columns : [];
       const entryOf = (key) => c.columns.find((e) => e.key === key);
-      const upsert = (key, patch) => { let e = entryOf(key); if (!e) { e = { key, enabled: true }; c.columns.push(e); } Object.assign(e, patch); save(); };
+      const upsert = (key, patch) => { setColumnProp(c.columns, key, patch); save(); };
       // Row order mirrors the table: config order first (drag-reordered), then any remaining
       // available column. Rows live in their own container so the reorder primitive only sees them.
       const cfgOrder = c.columns.map((e) => e.key).filter((k) => avail.includes(k));
@@ -109,7 +156,7 @@ export function buildInspector(ctx) {
       g.appendChild(row("type", sel(c.chart_type || "bar", ["bar", "line", "area", "scatter", "pie", "donut"], (v) => { c.chart_type = v; save(); })));
       g.appendChild(row("x", sel(c.x || "", [{ value: "", label: "—" }, ...avail.map((k) => ({ value: k, label: humanize(k) }))], (v) => { c.x = v; save(); })));
       g.appendChild(row("title", txt(c.title, (v) => { c.title = v; save(); })));
-      g.appendChild(el("div", "pw-insp-h", "series"));
+      g.appendChild(hdr("series", () => { c.y = []; c.colorBy = {}; save(); }));
       if (!avail.length) g.appendChild(el("div", "pw-insp-hint", "bind data to pick series"));
       c.y = Array.isArray(c.y) ? c.y : []; c.colorBy = c.colorBy || {};
       for (const k of avail) {
@@ -136,7 +183,7 @@ export function buildInspector(ctx) {
     if (w.type === "form") {
       g.appendChild(row("dataset", sel(c.dataset, [{ value: "", label: "—" }, ...dsOptions()], (v) => { c.dataset = v; save(); })));
       g.appendChild(row("submit", txt(c.submit || "Add", (v) => { c.submit = v; save(); })));
-      g.appendChild(el("div", "pw-insp-h", "fields"));
+      g.appendChild(hdr("fields", () => { c.fields = []; save(); }));
       (c.fields = c.fields || []).forEach((f, i) => {
         const fr = el("div", "pw-insp-frow");
         fr.appendChild(txt(f.column, (v) => { f.column = v; save(); }));
@@ -170,6 +217,29 @@ export function buildInspector(ctx) {
     return g;
   }
 
+  // ---- anchor (layout): where the widget is pinned -------------------------------------
+  // A widget is positioned relative to an anchor — the canvas (default) or another widget —
+  // at one of nine points. x/y become the offset from that point, so anchoring to another
+  // widget makes this one follow it. ctx.setAnchor re-solves the offset so the widget stays
+  // put when the anchor changes (canvas.js reanchor).
+  const ANCHOR_POINTS = [
+    { value: "tl", label: "top-left" }, { value: "tc", label: "top" }, { value: "tr", label: "top-right" },
+    { value: "ml", label: "left" }, { value: "mc", label: "center" }, { value: "mr", label: "right" },
+    { value: "bl", label: "bottom-left" }, { value: "bc", label: "bottom" }, { value: "br", label: "bottom-right" },
+  ];
+  const widgetName = (x) => { const c = x.config || {}; const lab = c.title || c.text || c.label || (x.binding && x.binding.id) || x.type; return `${lab} · ${x.id}`; };
+  function anchorEditor(w) {
+    const g = el("div", "pw-insp-grp");
+    g.appendChild(hdr("anchor", () => { ctx.setAnchor(w.id, { to: "", corner: "tl" }); render(); }));
+    const a = w.anchor || { to: "", corner: "tl" };
+    const others = ctx.currentWidgets().filter((x) => x.id !== w.id);
+    const toOpts = [{ value: "", label: "canvas" }, ...others.map((x) => ({ value: x.id, label: widgetName(x) }))];
+    const set = (patch) => { ctx.setAnchor(w.id, { to: a.to || "", corner: a.corner || "tl", ...patch }); render(); };
+    g.appendChild(row("anchor to", sel(a.to || "", toOpts, (v) => set({ to: v }))));
+    g.appendChild(row("point", sel(a.corner || "tl", ANCHOR_POINTS, (v) => set({ corner: v }))));
+    return g;
+  }
+
   const OPS = ["==", "!=", ">", "<", ">=", "<=", "nonempty", "empty"];
   // Compile the structured rule list -> the visible_when / enabled_when expr strings the
   // canvas evaluates. Rules of the same effect are AND-ed.
@@ -190,7 +260,7 @@ export function buildInspector(ctx) {
 
   function conditionsEditor(w) {
     const g = el("div", "pw-insp-grp");
-    g.appendChild(el("div", "pw-insp-h", "conditions"));
+    g.appendChild(hdr("conditions", () => { w.conditions = { rules: [], visible_when: "", enabled_when: "" }; save(); }));
     w.conditions = w.conditions || {}; w.conditions.rules = w.conditions.rules || [];
     const srcOpts = [{ value: "", label: "—" }, ...sourceTokenList(ctx.model, ctx.currentWidgets())];
     const recompile = () => { compileConditions(w); ctx.pretty.save(); ctx.refresh(); render(); };
@@ -214,6 +284,7 @@ export function buildInspector(ctx) {
   function render() {
     const body = win.body;
     body.textContent = "";
+    geomRefs = null;
     if (!current) { body.appendChild(el("div", "pw-insp-empty", "select a widget")); return; }
     const w = current;
     const head = el("div", "pw-insp-head");
@@ -226,12 +297,14 @@ export function buildInspector(ctx) {
     head.appendChild(del);
     body.appendChild(head);
 
+    body.appendChild(geomEditor(w));
     if (["table", "chart"].includes(w.type)) body.appendChild(bindingEditor(w));
     body.appendChild(configEditor(w));
+    body.appendChild(anchorEditor(w));
     body.appendChild(conditionsEditor(w));
 
     const styleGrp = el("div", "pw-insp-grp");
-    styleGrp.appendChild(el("div", "pw-insp-h", "style"));
+    styleGrp.appendChild(hdr("style", () => { w.style = {}; ctx.pretty.save(); ctx.restyle(w.id); render(); }));
     const seHost = el("div");
     styleGrp.appendChild(seHost);
     body.appendChild(styleGrp);
@@ -239,5 +312,5 @@ export function buildInspector(ctx) {
     // height is content-driven via CSS (.fw-body flex-basis:auto) — no JS measurement.
   }
 
-  return { win, show, clear, refresh: render };
+  return { win, show, clear, refresh: render, syncGeom };
 }

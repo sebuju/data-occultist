@@ -160,8 +160,8 @@ export function disband(groupId) {
 
 export function detachNode(nodeId) { detachNodes([nodeId]); }
 
-// Pull every given node out of whatever group holds it. Backs the per-node detach
-// icon (one id) and the group hotkey's "ungroup everything" (the whole selection).
+// Pull every given node out of whatever group holds it. Backs the toolbar detach button
+// and the group hotkey's "ungroup everything" (the whole selection).
 export function detachNodes(nodeIds) {
   let changed = false;
   for (const id of nodeIds) {

@@ -24,6 +24,7 @@ import { model } from "../graph/state.js";
 const pretty = new PrettyModel();
 let surface = null, toolsEl = null, panels = null, tools = null, canvasCtrl = null;
 let game = null, mode = "edit", pageId = null, selectedId = null, mounted = false;
+const selection = new Set();   // every selected widget id; selectedId is the primary (inspector) one
 
 const ctx = {
   get mode() { return mode; },
@@ -32,11 +33,17 @@ const ctx = {
   currentPageId: () => pageId,
   currentWidgets: () => pretty.widgets(pageId),
   selectedWidget: () => (selectedId ? pretty.widget(pageId, selectedId) : null),
+  selectionIds: () => selection,
   requestSave: () => pretty.save(),
   refresh: () => renderCurrent(),
   restyle: (id) => restyleWidget(id),
   effectiveStyle: (id) => { const f = surface && surface.querySelector(`.pw[data-id="${id}"]`); return f ? computedToStyle(getComputedStyle(f)) : {}; },
-  selectWidget: (id) => selectWidget(id),
+  selectWidget: (id, additive) => selectWidget(id, additive),
+  setAnchor: (id, anchor) => { if (canvasCtrl) canvasCtrl.reanchor(id, anchor); },
+  geomOf: (id) => (canvasCtrl ? canvasCtrl.geom(id) : null),
+  applyGeom: (id, patch) => { if (canvasCtrl) canvasCtrl.setGeom(id, patch); pretty.save(); },
+  setUnit: (id, k, unit) => { if (canvasCtrl) canvasCtrl.setUnit(id, k, unit); pretty.save(); },
+  geomChanged: (id) => { if (id === selectedId && panels) panels.inspector.syncGeom(id); },
   addWidget: (type) => addWidget(type),
   removeWidget: (id) => removeWidget(id),
   switchPage: (id) => switchPage(id),
@@ -68,7 +75,7 @@ export async function mountPretty(container, toolsHost, g) {
     });
     // WASD nudges the selected widget (edit mode, not while typing). Shift = 1px, else grid step.
     document.addEventListener("keydown", (ev) => {
-      if (!mounted || mode !== "edit" || !document.body.classList.contains("pretty-mode") || !selectedId) return;
+      if (!mounted || mode !== "edit" || !document.body.classList.contains("pretty-mode") || !selection.size) return;
       if (ev.target && ev.target.closest && ev.target.closest("input, select, textarea, [contenteditable=true]")) return;
       const map = { w: [0, -1], a: [-1, 0], s: [0, 1], d: [1, 0] };
       const m = map[ev.key.toLowerCase()];
@@ -77,6 +84,9 @@ export async function mountPretty(container, toolsHost, g) {
       const step = ev.shiftKey ? 1 : GRID;
       nudge(m[0] * step, m[1] * step);
     });
+    // Drag a rectangle on empty canvas -> rubber-band multi-select (shift adds to the current
+    // selection). A click that doesn't move clears the selection.
+    surface.addEventListener("mousedown", startMarquee);
     // Right-click empty canvas -> add-widget menu, dropping the new widget at the click spot.
     surface.addEventListener("contextmenu", (ev) => {
       if (ev.shiftKey) return;   // shift+right-click reserved -> no add-widget menu
@@ -96,7 +106,7 @@ export async function mountPretty(container, toolsHost, g) {
 export async function setPrettyGame(g) {
   if (!mounted) return;
   game = g;
-  selectedId = null;
+  selection.clear(); selectedId = null;
   data.initData(g);
   try { pretty.load(g, await papi.getPretty(g)); } catch { pretty.load(g, null); }
   pageId = pretty.firstPageId();
@@ -130,7 +140,7 @@ function renderCurrent() {
   const page = pretty.page(pageId) || pretty.pages()[0];
   pageId = page ? page.id : null;
   canvasCtrl = page ? renderPage(surface, page, ctx) : null;
-  if (canvasCtrl && selectedId) canvasCtrl.select(selectedId);
+  if (canvasCtrl && selection.size) { canvasCtrl.select(selection); canvasCtrl.showAnchorCue(selectedId); }
 }
 
 function restyleWidget(id) {
@@ -139,27 +149,79 @@ function restyleWidget(id) {
   if (w && frame) applyStyle(frame, mergeStyle(pretty.theme(), w.style));
 }
 
-function selectWidget(id) {
-  selectedId = id;
-  if (canvasCtrl) canvasCtrl.select(id);
-  const w = pretty.widget(pageId, id);
-  if (w && panels) { panels.inspector.show(w); tools.refresh(); }
+// Select a widget. `additive` (shift-click / shift-marquee) toggles it in/out of the current
+// group instead of replacing it; the primary (inspector) widget follows the last touched id.
+function selectWidget(id, additive) {
+  if (additive) {
+    if (selection.has(id)) { selection.delete(id); if (selectedId === id) selectedId = [...selection].pop() || null; }
+    else { selection.add(id); selectedId = id; }
+  } else {
+    selection.clear(); selection.add(id); selectedId = id;
+  }
+  syncSelection();
+}
+
+// Replace the whole selection at once (marquee). `primary` becomes the inspector widget.
+function setSelection(ids, primary) {
+  selection.clear();
+  for (const id of ids) selection.add(id);
+  selectedId = primary != null && selection.has(primary) ? primary : [...selection][0] || null;
+  syncSelection();
+}
+
+function syncSelection() {
+  if (canvasCtrl) { canvasCtrl.select(selection); canvasCtrl.showAnchorCue(selectedId); }
+  const w = selectedId ? pretty.widget(pageId, selectedId) : null;
+  if (panels) { if (w) panels.inspector.show(w); else panels.inspector.clear(); }
+  if (tools) tools.refresh();
 }
 
 function deselect() {
-  if (!selectedId) return;
-  selectedId = null;
-  if (canvasCtrl) canvasCtrl.select(null);
+  if (!selection.size) return;
+  selection.clear(); selectedId = null;
+  if (canvasCtrl) { canvasCtrl.select(null); canvasCtrl.showAnchorCue(null); }
   if (panels) panels.inspector.clear();
 }
 
 function nudge(dx, dy) {
-  const w = pretty.widget(pageId, selectedId);
-  if (!w) return;
-  w.x = Math.max(0, (w.x || 0) + dx); w.y = Math.max(0, (w.y || 0) + dy);
-  const f = surface.querySelector(`.pw[data-id="${selectedId}"]`);
-  if (f) { f.style.left = `${w.x}px`; f.style.top = `${w.y}px`; }
+  if (!selection.size || !canvasCtrl) return;
+  canvasCtrl.nudge(dx, dy, selection);
+  if (panels && selectedId) panels.inspector.syncGeom(selectedId);
   pretty.save();
+}
+
+// Rubber-band selection: draw a rectangle over the empty canvas and select every widget whose
+// resolved box intersects it. Highlight tracks live during the drag; the inspector/selection
+// is only committed on mouseup so it doesn't thrash. Shift keeps the existing selection.
+function startMarquee(ev) {
+  if (!mounted || mode !== "edit" || ev.button !== 0) return;
+  if (ev.target.closest(".pw, .floatwin, .pw-edittools, .ctxmenu")) return;   // a widget/panel owns its own click
+  ev.preventDefault(); ev.stopPropagation();   // take over selection for the empty canvas (no document-deselect)
+  const additive = ev.shiftKey;
+  const rect = surface.getBoundingClientRect();
+  const x0 = ev.clientX - rect.left + surface.scrollLeft, y0 = ev.clientY - rect.top + surface.scrollTop;
+  const box = el("div", "pw-marquee");
+  surface.appendChild(box);
+  const base = additive ? new Set(selection) : new Set();
+  let moved = false, hit = new Set(base);
+  const draw = (e) => {
+    const x1 = e.clientX - rect.left + surface.scrollLeft, y1 = e.clientY - rect.top + surface.scrollTop;
+    const L = Math.min(x0, x1), T = Math.min(y0, y1), W = Math.abs(x1 - x0), H = Math.abs(y1 - y0);
+    if (W > 3 || H > 3) moved = true;
+    box.style.left = `${L}px`; box.style.top = `${T}px`; box.style.width = `${W}px`; box.style.height = `${H}px`;
+    if (!moved) return;
+    hit = new Set(base);
+    const boxes = canvasCtrl ? canvasCtrl.boxes() : new Map();
+    for (const [id, b] of boxes) if (b.left < L + W && b.left + b.w > L && b.top < T + H && b.top + b.h > T) hit.add(id);
+    if (canvasCtrl) canvasCtrl.select(hit);
+  };
+  const up = () => {
+    document.removeEventListener("mousemove", draw); document.removeEventListener("mouseup", up);
+    box.remove();
+    if (moved) setSelection(hit, selectedId);
+    else if (!additive) deselect();   // a plain empty click clears the selection
+  };
+  document.addEventListener("mousemove", draw); document.addEventListener("mouseup", up);
 }
 
 // ---- right-click add-widget menu (shared primitive, see ../ctxmenu.js) -------------
@@ -179,13 +241,13 @@ function addWidget(type) {
 
 function removeWidget(id) {
   pretty.removeWidget(pageId, id);
-  selectedId = null;
-  if (panels) panels.inspector.clear();   // always drop the inspector to the deleted widget
+  selection.delete(id); if (selectedId === id) selectedId = [...selection].pop() || null;
+  if (panels && !selectedId) panels.inspector.clear();   // drop the inspector if nothing's left selected
   renderCurrent();
 }
 
 function switchPage(id) {
-  pageId = id; selectedId = null;
+  pageId = id; selection.clear(); selectedId = null;
   if (panels) panels.inspector.clear();
   renderCurrent();
   if (tools) tools.refresh();

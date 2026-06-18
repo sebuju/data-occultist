@@ -14,10 +14,12 @@ import { model } from "../graph/state.js";
 import { pathGet } from "./path.js";
 import * as dsevents from "../graph/dsevents.js";
 import { singleFlight } from "../singleflight.js";
+import * as hub from "../hub.js";
 
 let game = null;
 let timer = null;
 let dsUnsub = null;           // unsubscribe from the shared dataset-change push bus
+let hubUnsub = null;          // unsubscribe from the activity heartbeat (the "activity" source)
 const _need = new Map();      // key -> refcount (which dataset/subset/status to poll)
 const _cache = new Map();     // key -> last value (rows array, or the status object)
 const _sig = new Map();       // key -> JSON signature, to detect real changes
@@ -40,6 +42,8 @@ export function startData() {
   stopData();
   dsevents.setGame(game);                          // ensure the shared bus is pointed at our game
   dsUnsub = dsevents.subscribe(onStreamChange);    // any dataset write -> pull dependents (debounced)
+  hubUnsub = hub.subscribe(setActivity);           // live worker status (the "activity" source)
+  hub.start();
   refetchNeeded();
   timer = setInterval(refetchNeeded, FALLBACK_MS);
 }
@@ -47,6 +51,17 @@ export function stopData() {
   if (timer) clearInterval(timer);
   timer = null;
   if (dsUnsub) { dsUnsub(); dsUnsub = null; }       // drop our subscription; the bus stays open for the node view
+  if (hubUnsub) { hubUnsub(); hubUnsub = null; }    // hub keeps running for the node view; we just stop listening
+}
+
+// Cache the heartbeat snapshot under "activity" and notify only on a real change, so widgets
+// bound to activity:* (live / sweeps / precapture / triggers) reconcile in place each beat.
+function setActivity(s) {
+  const sig = JSON.stringify(s ?? null);
+  if (_sig.get("activity") === sig) { _cache.set("activity", s); return; }
+  _sig.set("activity", sig);
+  _cache.set("activity", s);
+  notify("activity");
 }
 
 // On a dataset change the server doesn't know which subsets depend on it, so refetch every
@@ -78,6 +93,7 @@ function flushChanged() {
 export function require(key) {
   if (!key) return;
   if (key.startsWith("node:") || key.startsWith("widget:")) return;   // not polled
+  if (key === "activity") { const s = hub.latest(); if (s != null) _cache.set("activity", s); return; }   // hub-driven
   _need.set(key, (_need.get(key) || 0) + 1);
   fetchKey(key);   // pull immediately so a freshly placed widget isn't blank until the next tick
 }

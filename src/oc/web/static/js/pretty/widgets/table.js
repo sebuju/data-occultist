@@ -5,7 +5,8 @@
 
 import { resolveRows, columnsOf, dataKeyForBinding } from "../binding.js";
 import { keySubscription, el, humanize } from "./util.js";
-import { makeReorderable, arrayMove, orderColumns } from "../reorder.js";
+import { makeReorderable, arrayMove, orderColumns, setColumnProp } from "../reorder.js";
+import { colResizeDrag } from "../../graph/dragresize.js";
 
 const ROW_CAP = 200;
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -60,17 +61,38 @@ export default {
       return out;
     }
     function syncHead(next2) {
-      const sig = next2.map((c) => `${c.key}${c.label}`).join("|");
+      const sig = next2.map((c) => `${c.key}${c.label}${c.width ?? ""}`).join("|");
       if (sig === cols._sig) return;
       cols = next2; cols._sig = sig;
       headRow.textContent = ""; colg.textContent = "";
-      for (const c of cols) {
+      cols.forEach((c, i) => {
         const th = el("th");
         if (editing) { const g = el("span", "pw-th-grip", "⠿"); g.title = "drag to reorder column"; th.appendChild(g); }
         th.appendChild(el("span", "pw-th-lab", c.label));
+        if (editing) { const rz = el("span", "pw-th-rz"); rz.title = "drag to resize column"; rz.addEventListener("mousedown", (ev) => startColResize(ev, i)); th.appendChild(rz); }
         headRow.appendChild(th);
         const col = el("col"); if (c.width) col.style.width = `${c.width}%`; colg.appendChild(col);
-      }
+      });
+      // fixed layout (so % widths are honoured + overflow clips) only once a width is set
+      table.classList.toggle("pw-tbl-fixed", cols.some((c) => c.width));
+    }
+    // Drag a header's right-edge grip to set that column's width as a % of the table width; the
+    // value is materialised into config.columns so it persists and the inspector reflects it.
+    function startColResize(ev, i) {
+      const colEl = colg.children[i]; if (!colEl) return;
+      const tableW = table.getBoundingClientRect().width || 1;   // screen px; cancels canvas zoom against dx
+      const startPx = headRow.children[i].getBoundingClientRect().width;
+      const key = cols[i].key;
+      let pct = (startPx / tableW) * 100;
+      table.classList.add("pw-tbl-fixed");
+      colResizeDrag(ev, {
+        onDelta: (dx) => { pct = Math.max(3, Math.min(95, ((startPx + dx) / tableW) * 100)); colEl.style.width = `${pct.toFixed(1)}%`; },
+        onSettle: () => {
+          widget.config.columns = widget.config.columns || [];
+          setColumnProp(widget.config.columns, key, { width: Math.round(pct) });
+          ctx.pretty.save(); ctx.refresh();
+        },
+      });
     }
     // Drag a header grip to reorder; new order is materialised into config.columns so it
     // persists and the inspector reflects it. Edit mode only.

@@ -7,6 +7,7 @@
 //   subset:<id>[.<col>]      rows of a view, or one column aggregated to a scalar
 //   node:<path>              a node-input value (live, honours transient overrides)
 //   status[:<ds>.<f>]        live flow status (dataset present/total/last_op, or counts)
+//   activity[:<what>]        live worker heartbeat (running / live / precapture / sweeps / triggers)
 //   widget:<id>              another pretty element's published value (the reactive scope)
 //
 // A token may end with `| <agg>` (count|sum|mean|min|max|latest|first) to collapse rows.
@@ -24,6 +25,12 @@ export function sourceTokenList(model, widgets = []) {
   for (const i of nodeInputs(model)) add(`node:${i.path}`, `node · ${i.nodeLabel} · ${i.label}`);
   for (const w of widgets) add(`widget:${w.id}`, `widget · ${w.id} (${w.type})`);
   add("status:datasets", "status · datasets");
+  // live worker heartbeat (what the tasks/live/precapture panels reflect) — see resolveToken
+  add("activity:running", "activity · any running");
+  add("activity:live", "activity · live");
+  add("activity:precapture", "activity · precapture");
+  add("activity:sweeps", "activity · sweeps running");
+  add("activity:triggers", "activity · triggers firing");
   return out;
 }
 
@@ -35,6 +42,7 @@ export function subKeyForToken(inner) {
   if (src.startsWith("node:")) return `node:${src.slice(5).trim()}`;
   if (src.startsWith("widget:")) return `widget:${src.slice(7).trim()}`;
   if (src.startsWith("status")) return "status";
+  if (src.startsWith("activity")) return "activity";
   return null;
 }
 
@@ -73,6 +81,19 @@ export function resolveToken(ctx, inner) {
     const [dsId, f] = rest.split(".");
     const ds = (st.datasets || []).find((d) => d.dataset === dsId || d.id === dsId);
     return ds ? (f ? ds[f] : ds.present) : "";
+  }
+  if (src.startsWith("activity")) {
+    const a = ctx.data.read("activity") || {};
+    const rest = src.includes(":") ? src.slice(src.indexOf(":") + 1).trim() : "running";
+    const firing = (a.triggers || []).filter((t) => (t.targets || []).some((x) => x.running)).length;
+    switch (rest) {
+      case "": case "running": return (a.live || a.precapture || (a.sweeps || []).length || firing) ? 1 : 0;
+      case "live": return a.live ? 1 : 0;
+      case "precapture": return a.precapture ? 1 : 0;
+      case "sweeps": return (a.sweeps || []).length;
+      case "triggers": return firing;
+      default: return "";
+    }
   }
   if (src.startsWith("dataset:") || src.startsWith("subset:")) {
     const isSub = src.startsWith("subset:");

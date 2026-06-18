@@ -140,6 +140,21 @@ export function beginDrag(ev, { threshold = 0, cursor = "", onStart = null, onMo
   return stop;
 }
 
+// Drag a column-boundary grip — the ONE column-resize loop, shared by every table that
+// sizes columns by dragging (graph node table, virtual table, pretty table — rule 7). Built
+// on beginDrag so it's the same drag machinery as everything else. The caller owns units +
+// persistence: `onDelta(dxPx)` runs each move (compute & apply the new width in whatever unit
+// it uses), `onSettle()` persists. `moved()` (optional) fires once the drag passes the click
+// slop so a header that also sorts on click can suppress the trailing sort click.
+export function colResizeDrag(ev, { onDelta, onSettle = null, moved = null, slop = 2 } = {}) {
+  ev.preventDefault(); ev.stopPropagation();
+  const sx = ev.clientX;
+  beginDrag(ev, {
+    onMove: (e) => { const dx = e.clientX - sx; if (moved && Math.abs(dx) > slop) moved(); onDelta && onDelta(dx); },
+    onSettle: () => onSettle && onSettle(),
+  });
+}
+
 // Make `el` draggable by a `handle` (default the element itself). Attaches the mousedown;
 // clicks on `ignore` selectors (buttons/inputs in the handle) don't start a drag. Thin
 // wrapper over beginDrag so panels and any future draggable use the exact same loop.

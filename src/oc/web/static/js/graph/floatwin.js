@@ -439,6 +439,7 @@ export function createFloatWin({
     state.visible = on;
     el.hidden = !on;
     if (on) {
+      if (_embedHost) unembed();   // opening in the graph reclaims the body from any pretty embed
       if (reset) {
         state.collapsed = !!_default.collapsed; state.userSized = false;
         state.w = RESET_W; state.h = null;   // width -> uniform preset (300); height -> auto-fit
@@ -517,7 +518,31 @@ export function createFloatWin({
     save();
   }
 
-  const inst = { el, body, head, state, setVisible, applyState, place, stashSize, applySize, collect, hydrate, onResize, resetBox, fitHeight, collapse: setCollapsed };
+  // ---- embedding (pretty "Embed" widget) -------------------------------------
+  // Borrow this panel's body into an external host (a pretty-view widget) so its live content
+  // shows there without duplicating it. The body element is MOVED into `host` and the panel is
+  // driven as if shown (onShow runs its poll/render) while its own floating frame stays hidden.
+  // ONE primitive every panel embeds through (rule 7); unembed()/reclaim() restore it.
+  // Caveat: a panel can be embedded in one place at a time — opening it in the graph view
+  // (setVisible) reclaims the body back into the floatwin.
+  let _embedHost = null, _embedForced = false;
+  function embed(host) {
+    if (_embedHost === host) { reclaim(); return inst; }
+    if (!state.visible) { state.visible = true; _embedForced = true; }
+    _embedHost = host;
+    onShow && onShow();
+    host.appendChild(body);
+    return inst;
+  }
+  function unembed() {
+    if (!_embedHost) return;
+    _embedHost = null;
+    if (el.querySelector(":scope > .fw-body") !== body) el.appendChild(body);   // body back under the frame
+    if (_embedForced) { state.visible = false; _embedForced = false; onHide && onHide(); }
+  }
+  function reclaim() { if (_embedHost && body.parentElement !== _embedHost) _embedHost.appendChild(body); }
+
+  const inst = { el, body, head, state, setVisible, applyState, place, stashSize, applySize, collect, hydrate, onResize, resetBox, fitHeight, collapse: setCollapsed, embed, unembed, reclaim };
   _wins.set(id, inst);
   return inst;
 }

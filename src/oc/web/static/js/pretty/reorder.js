@@ -25,6 +25,16 @@ export function orderColumns(config, orderedKeys) {
   return next;
 }
 
+// Upsert a per-column override into a sparse column-config array: patch the entry for `key`
+// (creating an enabled one if it's absent). Shared by the inspector's show/label/width
+// controls AND the table header's drag-resize (rule 7). Mutates `config`, returns it.
+export function setColumnProp(config, key, patch) {
+  let e = config.find((c) => c.key === key);
+  if (!e) { e = { key, enabled: true }; config.push(e); }
+  Object.assign(e, patch);
+  return config;
+}
+
 export function makeReorderable(container, { itemSel, handleSel, axis = "y", onReorder }) {
   container.classList.add(axis === "x" ? "pw-ro-x" : "pw-ro-y");
   container.addEventListener("mousedown", (ev) => {
