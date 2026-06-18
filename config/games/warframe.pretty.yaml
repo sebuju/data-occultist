@@ -7,7 +7,7 @@ pages:
   style: {}
   widgets:
   - id: w3
-    x: 0
+    x: -2.6
     y: 100
     w: clamp(500px, 50dvw, 1000px)
     h: 140
@@ -35,10 +35,12 @@ pages:
       columns:
       - key: name
         enabled: true
+      - key: price
+        enabled: true
       - key: live_ask
-        enabled: true
+        enabled: false
       - key: live_median
-        enabled: true
+        enabled: false
       - key: live_sellers
         enabled: true
       - key: price_median
@@ -57,7 +59,7 @@ pages:
         enabled: false
       pageSize: 4
       sortDesc: true
-      sortField: live_ask
+      sortField: price
       paging: false
     binding:
       src: subset
