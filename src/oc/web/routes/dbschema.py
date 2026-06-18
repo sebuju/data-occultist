@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
-from ...store.dataset_store import _db_path
+from ...store import changes
+from ...store.dataset_store import _db_path, clear_table, drop_database
+from ...store.db_backup import snapshot_db
 from ..deps import get_settings
 
 router = APIRouter(prefix="/api/dbschema", tags=["dbschema"])
@@ -58,3 +60,43 @@ def dbschema(game: str) -> dict:
         return {"game": game, "db": db.name, "size": size, "tables": tables, "datasets": datasets}
     finally:
         conn.close()
+
+
+def _datasets_on_disk(game: str) -> list[str]:
+    """The dataset names currently registered in the game's store (empty when none)."""
+    db = _db_path(get_settings().data_dir, game)
+    if not db.exists():
+        return []
+    conn = sqlite3.connect(str(db))
+    try:
+        try:
+            return [r[0] for r in conn.execute("SELECT dataset FROM datasets ORDER BY dataset")]
+        except sqlite3.OperationalError:
+            return []
+    finally:
+        conn.close()
+
+
+@router.post("/{game}/drop")
+def drop_db(game: str) -> dict:
+    """Drop the whole game store and leave a fresh empty one. Every dataset's data is gone;
+    the graph's dataset nodes survive and resurrect their dataset on the next write."""
+    snapshot_db(get_settings().data_dir, game, reason="pre-drop")   # before this irreversible wipe
+    removed = drop_database(get_settings().data_dir, game)
+    for ds in removed:
+        changes.publish(game, ds)   # nudge every panel/node that watched a now-empty dataset
+    return dbschema(game)
+
+
+@router.post("/{game}/table/{table}/clear")
+def clear_db_table(game: str, table: str) -> dict:
+    """Empty ONE physical table (rows only). Low-level — see ``clear_table`` for the caveat."""
+    affected = _datasets_on_disk(game)   # snapshot before the wipe so subscribers refresh
+    snapshot_db(get_settings().data_dir, game, reason=f"pre-clear-table:{table}")
+    try:
+        clear_table(get_settings().data_dir, game, table)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    for ds in affected:
+        changes.publish(game, ds)
+    return dbschema(game)

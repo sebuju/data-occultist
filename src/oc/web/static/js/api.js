@@ -90,6 +90,17 @@ export const backups = {
     restore: (name, stamp) => tfetch(`/api/profiles/${encodeURIComponent(name)}/backups/${encodeURIComponent(stamp)}/restore`, { method: "POST" }).then((r) => ok(r, "restore").then((x) => x.json())),
 };
 
+// Database backups: list snapshots of a game's SQLite store, take one on demand, or
+// restore one (which snapshots the current state first). Mirrors `backups` but for data.
+export const dbbackups = {
+    list: (game) => tfetch(`/api/dbbackup/${encodeURIComponent(game)}`)
+        .then((r) => (r.ok ? r.json() : { items: [] })),
+    create: (game) => tfetch(`/api/dbbackup/${encodeURIComponent(game)}/create`, { method: "POST" })
+        .then((r) => ok(r, "backup").then((x) => x.json())),
+    restore: (game, stamp) => tfetch(`/api/dbbackup/${encodeURIComponent(game)}/${encodeURIComponent(stamp)}/restore`, { method: "POST" })
+        .then((r) => ok(r, "restore").then((x) => x.json())),
+};
+
 // OCR the current layout. Pass game+capture to read that stashed image (the one
 // shown in the image node) instead of capturing the live window.
 export async function preview(profile, game, capture) {
@@ -289,6 +300,21 @@ export async function clearDataset(game, dataset) {
 export async function deleteDataset(game, dataset) {
     const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/delete`, { method: "POST" });
     if (!r.ok) throw new Error(`delete: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+
+// Drop the whole game store and leave a fresh empty one. Dataset nodes survive (profile
+// untouched) and resurrect their dataset on the next write. Returns refreshed dbschema.
+export async function dropDatabase(game) {
+    const r = await tfetch(`/api/dbschema/${encodeURIComponent(game)}/drop`, { method: "POST" });
+    if (!r.ok) throw new Error(`drop: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+
+// Empty ONE physical SQLite table (low-level). Returns refreshed dbschema.
+export async function clearDbTable(game, table) {
+    const r = await tfetch(`/api/dbschema/${encodeURIComponent(game)}/table/${encodeURIComponent(table)}/clear`, { method: "POST" });
+    if (!r.ok) throw new Error(`clear table: ${r.status} ${await r.text()}`);
     return r.json();
 }
 

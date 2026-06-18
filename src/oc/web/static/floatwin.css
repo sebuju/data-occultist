@@ -206,8 +206,9 @@
 
 /* ---- database structure panel ---------------------------------------------- */
 .db-panel { display: flex; flex-direction: column; gap: 8px; min-height: 100%; }
-.db-head { font-size: var(--fs-sm); font-weight: 600; color: var(--accent);
-    font-variant-numeric: tabular-nums; }
+.db-head { display: flex; align-items: center; gap: 8px; }
+.db-head-txt { font-size: var(--fs-sm); font-weight: 600; color: var(--accent);
+    font-variant-numeric: tabular-nums; margin-right: auto; }
 .db-sec { display: flex; flex-direction: column; gap: 4px; }
 .db-h { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.06em; color: var(--muted); }
@@ -219,16 +220,32 @@
     word-break: break-word; }
 .db-tidx { font-size: var(--fs-xs); color: var(--muted); margin-top: 1px; }
 .db-tidx:empty { display: none; }
-.db-dsrow { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 10px;
+.db-dsrow { display: flex; flex-direction: column; align-items: stretch; gap: 4px;
     background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
-.db-dsname { font-size: var(--fs-sm); font-weight: 600; color: var(--text); margin-right: auto; }
-.db-chip { display: inline-flex; align-items: baseline; gap: 4px;
+.db-dshead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.db-dsname { font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
+.db-chip { display: flex; align-items: baseline; justify-content: space-between; gap: 4px;
     font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .db-chip i { font-style: normal; font-size: 0.85em; color: var(--muted); }
 .db-chip b { font-weight: 600; }
 .db-events b  { color: var(--text); }
 .db-present b { color: var(--ok); }
 .db-batches b { color: var(--accent); }
+/* shared armed two-click button (armbtn.js) */
+.armbtn { flex: none; font-size: var(--fs-xs); padding: 1px 8px; border: 1px solid var(--line);
+    border-radius: 5px; background: var(--bg); color: var(--muted); cursor: pointer; }
+.armbtn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.armbtn[data-armed="1"] { background: var(--danger); color: var(--on-danger); border-color: var(--danger); }
+.armbtn:disabled { opacity: 0.5; cursor: default; }
+.db-trow .db-act { margin-left: auto; }   /* push the table's clear button to the row's right edge */
+.db-tname { display: flex; align-items: baseline; gap: 4px; }
+.db-acts { display: flex; gap: 4px; margin-left: auto; }   /* dataset clear+remove: always hard right */
+.db-acts .armbtn,
+.db-trow .db-act { padding: 0 5px; font-size: 0.7rem; line-height: 1.5; }   /* compact db buttons */
+/* destructive db buttons read red at rest, fill on hover/arm */
+.armbtn.db-danger { color: var(--danger); border-color: var(--danger); }
+.armbtn.db-danger:hover:not(:disabled) { background: var(--danger); color: var(--on-danger); border-color: var(--danger); }
+.armbtn.db-danger[data-armed="1"] { background: var(--danger); color: var(--on-danger); }   /* keep fill while armed */
 
 /* ---- live panel ------------------------------------------------------------ */
 .live-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }

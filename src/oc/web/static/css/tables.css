@@ -47,6 +47,16 @@
 .bk-restore { width: 100%; }
 .bk-restore.armed { background: var(--warn); color: var(--on-accent); }
 
+/* database-backups modal: a "backup now" bar above the shared list/detail grid */
+.dbbk { display: flex; flex-direction: column; height: 56vh; min-height: 0; }
+.dbbk .backups { flex: 1; min-height: 0; }
+.dbbk .bk-list { width: 240px; }   /* fewer columns than profile backups -> narrower list */
+.dbbk-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    border-bottom: 1px solid var(--line); flex: none; }
+.dbbk-stat { font-size: var(--fs-xs); }
+.bk-reason { margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: var(--fs-xs);
+    background: var(--accent-bg); color: var(--accent); vertical-align: baseline; }
+
 /* dictionary picker modal */
 .dpk { display: flex; flex-direction: column; padding: 12px; gap: 10px; }
 .dpk-new { display: flex; gap: 6px; }

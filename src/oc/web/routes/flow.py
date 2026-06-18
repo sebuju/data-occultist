@@ -97,6 +97,8 @@ def rename_dataset_route(game: str, dataset: str, to: str):
 def clear_dataset(game: str, dataset: str):
     """Empty the records by reverting every batch — the batch ledger is kept (each
     batch restorable)."""
+    from ...store.db_backup import snapshot_db
+    snapshot_db(get_settings().data_dir, game, reason=f"pre-clear:{dataset}")
     store = _store(game, dataset)
     store.clear_data()
     return _detail(store, dataset)
@@ -106,9 +108,14 @@ def clear_dataset(game: str, dataset: str):
 def delete_dataset_route(game: str, dataset: str):
     """Permanently delete a dataset's stored files (ledger + state). The profile def is
     removed separately by the UI; this stops the dataset re-spawning from disk."""
+    from ...store import changes
     from ...store.dataset_store import delete_dataset
+    from ...store.db_backup import snapshot_db
     settings = get_settings()
+    snapshot_db(settings.data_dir, game, reason=f"pre-delete:{dataset}")
     removed = delete_dataset(settings.data_dir, game, dataset)
+    if removed:
+        changes.publish(game, dataset)   # node + any data panel watching it refresh -> empty
     return {"dataset": dataset, "removed": removed}
 
 

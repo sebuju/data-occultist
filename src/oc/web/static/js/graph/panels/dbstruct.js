@@ -7,6 +7,11 @@ import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
 import { $, model } from "../state.js";
 import * as dsevents from "../dsevents.js";
+import * as api from "../../api.js";
+import { armedButton } from "../armbtn.js";
+import { openDbBackupsModal } from "../dbbackups.js";
+
+const game = () => model.profile.name;
 
 const dbState = { visible: false, x: null, y: null, w: null, h: null };
 let dbWin = null;
@@ -32,10 +37,22 @@ function buildDBStruct() {
     });
     dbWin.body.innerHTML =
         `<div class="db-panel">` +
-        `<div class="db-head"></div>` +
+        `<div class="db-head"><span class="db-head-txt"></span></div>` +
         `<div class="db-sec"><div class="db-h">tables</div><div class="db-tables"></div></div>` +
         `<div class="db-sec"><div class="db-h">datasets</div><div class="db-datasets"></div></div>` +
         `</div>`;
+    // Open the DB-backups modal (snapshots of the whole store; restore from there).
+    const bkBtn = document.createElement("button");
+    bkBtn.type = "button"; bkBtn.className = "armbtn db-bk"; bkBtn.textContent = "backups…";
+    bkBtn.title = "view / create / restore database snapshots";
+    bkBtn.addEventListener("click", () => { if (game()) openDbBackupsModal(game(), refresh); });
+    // Drop the whole store (fresh empty DB). Dataset nodes survive + resurrect on next write.
+    const drop = armedButton({
+        label: "drop", arm: "drop all?", cls: "db-drop db-danger", busy: "dropping…",
+        title: "wipe the whole store; dataset nodes survive and resurrect on next write",
+        onFire: async () => { render(await api.dropDatabase(game())); },
+    });
+    dbWin.body.querySelector(".db-head").append(bkBtn, drop);
 }
 
 function scheduleRefresh() {
@@ -64,7 +81,7 @@ function setText(el, txt) { if (el.textContent !== txt) el.textContent = txt; }
 
 function render(d) {
     if (!dbWin) return;
-    const head = dbWin.body.querySelector(".db-head");
+    const head = dbWin.body.querySelector(".db-head-txt");
     setText(head, d.db ? `${d.db} · ${fmtSize(d.size)}` : "no database yet");
 
     // ---- tables (reconcile in place) ----
@@ -114,7 +131,13 @@ function makeTableRow(name) {
     title.className = "db-tname";
     const nm = document.createElement("b"); nm.textContent = name;
     const meta = document.createElement("span"); meta.className = "db-tmeta";
-    title.append(nm, document.createTextNode(" · "), meta);
+    // clear this physical table's rows (low-level — name is fixed per reused row)
+    const clear = armedButton({
+        label: "clear", arm: "clear table?", cls: "db-act db-danger", busy: "…",
+        title: `delete every row in ${name}`,
+        onFire: async () => { render(await api.clearDbTable(game(), name)); },
+    });
+    title.append(nm, document.createTextNode(" · "), meta, clear);
     const cols = document.createElement("div"); cols.className = "db-tcols";
     const idx = document.createElement("div"); idx.className = "db-tidx";
     row.append(title, cols, idx);
@@ -126,6 +149,8 @@ function makeTableRow(name) {
 function makeDsRow(name) {
     const row = document.createElement("div");
     row.className = "db-dsrow";
+    const head = document.createElement("div");
+    head.className = "db-dshead";   // name (left) + clear/remove (top-right corner)
     const nm = document.createElement("b"); nm.className = "db-dsname"; nm.textContent = name;
     const mk = (cls, lbl) => {
         const chip = document.createElement("span");
@@ -138,7 +163,23 @@ function makeDsRow(name) {
     const [ec, events] = mk("db-events", "events");
     const [pc, present] = mk("db-present", "present");
     const [bc, batches] = mk("db-batches", "batches");
-    row.append(nm, ec, pc, bc);
+    // clear = empty this dataset's records but keep it registered; remove = delete it
+    // entirely (its graph node survives and resurrects it on the next write).
+    const clear = armedButton({
+        label: "clear", arm: "clear data?", cls: "db-act db-danger", busy: "…",
+        title: `empty ${name}'s records (keeps the dataset registered)`,
+        onFire: async () => { await api.clearDataset(game(), name); refresh(); },
+    });
+    const remove = armedButton({
+        label: "remove", arm: "remove?", cls: "db-act db-rm db-danger", busy: "…",
+        title: `delete ${name} entirely (its node survives and resurrects it)`,
+        onFire: async () => { await api.deleteDataset(game(), name); refresh(); },
+    });
+    const acts = document.createElement("div");
+    acts.className = "db-acts";
+    acts.append(clear, remove);
+    head.append(nm, acts);
+    row.append(head, ec, pc, bc);   // header, then one stat per row
     const r = { row, events, present, batches };
     dsRows.set(name, r);
     return r;
