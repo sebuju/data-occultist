@@ -17,6 +17,7 @@ from .routes import (
     activity,
     bench,
     capture,
+    dbschema,
     dictionaries,
     events,
     flow,
@@ -234,6 +235,7 @@ def create_app() -> FastAPI:
     app.include_router(bench.router)
     app.include_router(stats.router)
     app.include_router(screenshot.router)
+    app.include_router(dbschema.router)
     # Serve the single-page front-end at root.
     app.mount("/", _NoCacheStatic(directory=str(_STATIC), html=True), name="static")
     return app

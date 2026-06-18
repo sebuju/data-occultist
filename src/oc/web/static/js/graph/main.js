@@ -49,6 +49,7 @@ import {
 import { act, actState, buildActivity } from "./panels/activity.js";
 import { testWin, testState, buildTesting } from "./panels/testing.js";
 import { statsWin, statsState, buildStats } from "./panels/stats.js";
+import { dbWin, dbState, buildDBStruct } from "./panels/dbstruct.js";
 import {
   tb, tbState, buildToolbox,
   createWindowNode, createPriceNode, createTriggerNode, createDictionaryNode,
@@ -2760,6 +2761,10 @@ buildStats();
 $("statsBtn")?.classList.toggle("active", statsState.visible);
 $("statsBtn")?.addEventListener("click", () => statsWin.setVisible(!statsState.visible, true));
 
+buildDBStruct();
+$("dbstructBtn")?.classList.toggle("active", dbState.visible);
+$("dbstructBtn")?.addEventListener("click", () => dbWin.setVisible(!dbState.visible, true));
+
 buildToolbox();
 $("createBtn")?.classList.toggle("active", tbState.visible);
 $("createBtn")?.addEventListener("click", () => tb.setVisible(!tbState.visible, true));
@@ -2777,7 +2782,7 @@ $("precapBtn").addEventListener("click", () => {
 // of toggling it. Capture phase so it can pre-empt the normal toggle handler above. If the
 // panel is already open we reset in place and suppress the toggle (which would hide it); if
 // it's closed/not-built we let the toggle open it, then reset on the next tick.
-const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", nodemapBtn: "nodemap", nodelistBtn: "nodelist", activityBtn: "activity", testingBtn: "testing", statsBtn: "stats" };
+const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", nodemapBtn: "nodemap", nodelistBtn: "nodelist", activityBtn: "activity", testingBtn: "testing", statsBtn: "stats", dbstructBtn: "dbstruct" };
 for (const [btnId, panelId] of Object.entries(_PANEL_TOGGLES)) {
   $(btnId)?.addEventListener("click", (ev) => {
     if (!ev.shiftKey) return;
@@ -2795,7 +2800,7 @@ let _hiddenNodePanels = [];
 
 // Node-view floating panels belong to the node view: hide them while in pretty, restore the
 // ones that were open on return (open state remembered, never reset).
-const _NODE_PANELS = ["nodemap", "nodelist", "activity", "testing", "stats", "toolbox", "live", "precap"];
+const _NODE_PANELS = ["nodemap", "nodelist", "activity", "testing", "stats", "dbstruct", "toolbox", "live", "precap"];
 function setNodePanelsHidden(hidden) {
   if (hidden) {
     _hiddenNodePanels = [];
