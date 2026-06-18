@@ -809,8 +809,8 @@ dictionaries:
 layout:
   nodes:
     game:
-      x: -900.0
-      y: -900.0
+      x: -1400.0
+      y: -760.0
       w: 340.0
       h: 120.0
       collapsed: false
@@ -935,8 +935,8 @@ layout:
       y: 20.0
       collapsed: false
     dict:wiki:
-      x: -900.0
-      y: -760.0
+      x: -1040.0
+      y: 280.0
       w: 300.0
       h: 360.0
       collapsed: false
@@ -953,8 +953,8 @@ layout:
       h: 0.0
       collapsed: false
     ds:master:
-      x: -520.0
-      y: -900.0
+      x: -1020.0
+      y: -760.0
       w: 520.0
       h: 520.0
       collapsed: false
@@ -971,8 +971,8 @@ layout:
       h: 760.0
       collapsed: false
     price:price:
-      x: 280.0
-      y: 740.0
+      x: -180.0
+      y: 720.0
       w: 460.0
       h: 560.0
       collapsed: false
@@ -983,98 +983,98 @@ layout:
       h: 0.0
       collapsed: false
     ds:prices_live:
-      x: 280.0
-      y: 1440.0
+      x: -180.0
+      y: 1460.0
       w: 360.0
       h: 380.0
       collapsed: false
     ds:prices_statistics:
-      x: 280.0
-      y: 320.0
+      x: -180.0
+      y: 300.0
       w: 360.0
       h: 380.0
       collapsed: false
     sub:live_prices_joined:
-      x: 700.0
-      y: 1440.0
+      x: 240.0
+      y: 1460.0
       w: 600.0
       h: 900.0
       collapsed: false
     sub:statistic_prices_joined:
-      x: 800.0
-      y: 320.0
+      x: 320.0
+      y: 300.0
       w: 520.0
       h: 980.0
       collapsed: false
     price:wf_market_live:
-      x: 280.0
-      y: 1840.0
+      x: -180.0
+      y: 1860.0
       w: 360.0
       h: 220.0
       collapsed: false
     ds:prices_relic_live:
-      x: 2640.0
-      y: 3820.0
-      w: 540.0
-      h: 940.0
+      x: 1680.0
+      y: 2020.0
+      w: 380.0
+      h: 340.0
       collapsed: false
     sub:relic_rewards_live:
-      x: 1960.0
-      y: 3260.0
-      w: 880.0
+      x: 1000.0
+      y: 1460.0
+      w: 640.0
       h: 280.0
       collapsed: false
     price:relic_live:
-      x: 2220.0
-      y: 3820.0
-      w: 360.0
+      x: 1680.0
+      y: 1760.0
+      w: 380.0
       h: 240.0
       collapsed: false
     trigger:owned_refresh:
-      x: 280.0
-      y: 2080.0
+      x: -180.0
+      y: 2100.0
       w: 360.0
       h: 240.0
       collapsed: false
     trigger:relic_watch:
-      x: 2220.0
-      y: 4060.0
-      w: 280.0
+      x: 1680.0
+      y: 1460.0
+      w: 380.0
       h: 280.0
       collapsed: false
     win:relic_window:
-      x: 720.0
+      x: 1560.0
       y: 3040.0
       w: 540.0
       h: 500.0
       collapsed: false
     prev:relic_window:
-      x: 700.0
-      y: 3940.0
+      x: 1560.0
+      y: 3880.0
       w: 520.0
       h: 240.0
       collapsed: false
     det:relic_window:detect_1:
-      x: 1300.0
+      x: 2140.0
       y: 3040.0
       w: 220.0
       h: 340.0
       collapsed: false
     item:relic_window:item_3:
-      x: 620.0
-      y: 4380.0
+      x: 1140.0
+      y: 3040.0
       collapsed: false
     sub:relic_rewards_limit:
-      x: 1540.0
-      y: 4220.0
+      x: 1000.0
+      y: 1760.0
       w: 640.0
-      h: 260.0
+      h: 200.0
       collapsed: false
     ds:relics_offered:
-      x: 1540.0
-      y: 3820.0
+      x: 1000.0
+      y: 2000.0
       w: 640.0
-      h: 380.0
+      h: 360.0
       collapsed: false
     ds:relic_rewards:
       x: 900.0
@@ -1095,19 +1095,19 @@ layout:
       h: 0.0
       collapsed: false
     ds:mods:
-      x: 40.0
-      y: -900.0
+      x: -440.0
+      y: -760.0
       w: 520.0
       h: 520.0
       collapsed: false
     prev:mod_window:
-      x: -1540.0
-      y: 3920.0
-      w: 680.0
+      x: -1460.0
+      y: 4040.0
+      w: 700.0
       h: 820.0
       collapsed: false
     win:mod_window:
-      x: -1380.0
+      x: -1460.0
       y: 3040.0
       collapsed: false
     det:mod_window:detect_3:
@@ -1121,20 +1121,20 @@ layout:
       y: 3040.0
       collapsed: false
     win:equipment_window:
-      x: -1700.0
-      y: 400.0
+      x: -1680.0
+      y: 380.0
       w: 320.0
       h: 80.0
       collapsed: false
     sb:equipment_window:scrollbar:
-      x: -1160.0
-      y: 400.0
+      x: -1960.0
+      y: 1100.0
       w: 220.0
       h: 120.0
       collapsed: false
     prev:equipment_window:
       x: -1680.0
-      y: 1320.0
+      y: 1500.0
       w: 880.0
       h: 1020.0
       collapsed: false
@@ -1184,7 +1184,7 @@ layout:
       collapsed: false
     det:equipment_window:detect_1:
       x: -1960.0
-      y: 780.0
+      y: 740.0
       w: 220.0
       h: 340.0
       collapsed: false
@@ -1193,7 +1193,7 @@ layout:
       y: 20.0
       collapsed: false
     det:mod_window:detect_heading:
-      x: -1720.0
+      x: -1700.0
       y: 3040.0
       w: 220.0
       h: 340.0
@@ -1233,25 +1233,25 @@ layout:
       h: 540.0
       collapsed: false
     fld:relic_window:item_3:name:
-      x: 1020.0
-      y: 4380.0
+      x: 1140.0
+      y: 4020.0
       w: 220.0
       h: 580.0
       collapsed: false
     fld:mod_window:mod:mod_name:
-      x: -2280.0
+      x: -2300.0
       y: 3040.0
       w: 220.0
       h: 660.0
       collapsed: false
     fld:mod_window:mod:mod_drain:
-      x: -2040.0
+      x: -2060.0
       y: 3040.0
       w: 220.0
       h: 480.0
       collapsed: false
     fld:mod_window:mod:mod_count:
-      x: -2660.0
+      x: -2640.0
       y: 3040.0
       w: 320.0
       h: 600.0
@@ -1275,40 +1275,40 @@ layout:
       h: 380.0
       collapsed: false
     prev:relic_window_3:
-      x: 0.0
-      y: 3900.0
-      w: 520.0
-      h: 300.0
+      x: 220.0
+      y: 3880.0
+      w: 500.0
+      h: 240.0
       collapsed: false
     win:relic_window_3:
-      x: 0.0
+      x: 220.0
       y: 3040.0
       collapsed: false
     item:relic_window_3:item_1:
-      x: -420.0
-      y: 3240.0
+      x: -200.0
+      y: 3040.0
       collapsed: false
     det:relic_window_3:detect_3:
-      x: 0.0
-      y: 4240.0
+      x: 800.0
+      y: 3040.0
       w: 220.0
       h: 340.0
       collapsed: false
     det:relic_window_3:detect_4:
-      x: 240.0
-      y: 4240.0
+      x: 800.0
+      y: 3400.0
       w: 220.0
       h: 340.0
       collapsed: false
     fld:relic_window_3:item_1:name:
-      x: -420.0
-      y: 4260.0
+      x: -200.0
+      y: 4000.0
       w: 220.0
       h: 580.0
       collapsed: false
     det:relic_window:detect_2:
-      x: 1300.0
-      y: 3440.0
+      x: 2140.0
+      y: 3400.0
       w: 220.0
       h: 340.0
       collapsed: false
@@ -1386,10 +1386,10 @@ layout:
       - live_sellers
       widths:
         live_median: 90
-        name: 466
+        name: 263
         price_min: 87
         price_median: 96
-        live_sellers: 110
+        live_sellers: 69
       sorts:
       - col: price_min
         dir: -1
@@ -1405,21 +1405,23 @@ layout:
       widths:
         name: 131
         _batch: 54
+        _seq: 45
+        live_ask: 36
       sorts:
       - col: _seq
         dir: -1
       order:
       - _batch
-      - _seq
+      - name
       - live_ask
       - live_median
       - live_sellers
-      - name
       - price_median
       - price_min
       - slug
       - updated
       - volume
+      - _seq
     ds:relics_offered:
       order:
       - _seq
@@ -1457,7 +1459,6 @@ layout:
     title: warframe
     members:
     - game
-    - dict:wiki
     - ds:master
     - ds:mods
     outline:
@@ -1472,10 +1473,6 @@ layout:
   - id: group_11
     title: 'window: relic rewards'
     members:
-    - ds:prices_relic_live
-    - sub:relic_rewards_live
-    - price:relic_live
-    - trigger:relic_watch
     - det:relic_window_3:detect_1
     - item:relic_window_3:item_3
     - win:relic_window
@@ -1483,9 +1480,7 @@ layout:
     - det:relic_window:detect_1
     - item:relic_window:item_3
     - sub:relic_rewards_view
-    - ds:relics_offered
     - fld:relic_window:item_3:name
-    - sub:relic_rewards_limit
     - prev:relic_window_3
     - win:relic_window_3
     - item:relic_window_3:item_1
@@ -1587,6 +1582,7 @@ layout:
     - fld:equipment_window:arcane:name
     - fld:equipment_window:arcane:arcane_level
     - fld:equipment_window:arcane:count
+    - dict:wiki
     outline:
       color: '#7ddc7d'
       style: none
@@ -1596,10 +1592,28 @@ layout:
     titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
+  - id: group_20
+    title: 'price: relic'
+    members:
+    - ds:relics_offered
+    - ds:prices_relic_live
+    - sub:relic_rewards_live
+    - sub:relic_rewards_limit
+    - price:relic_live
+    - trigger:relic_watch
+    outline:
+      color: '#e6c25a'
+      style: none
+      width: 2
+    bg: '#292722'
+    titleBg: '#e6c25a'
+    titleColor: '#08121d'
+    titleAlign: left
+    titlePos: tl
   float_windows: {}
   super_groups:
   - id: sgroup_2
-    title: master
+    title: precapture
     groups:
     - group_16
     - group_19
@@ -1614,6 +1628,17 @@ layout:
     groups:
     - group_17
     - group_18
+    - group_20
+    outline:
+      color: '#3a4154'
+      style: none
+      width: 2
+    bg: '#1b1d23'
+    titleColor: ''
+  - id: sgroup_4
+    title: live
+    groups:
+    - group_11
     outline:
       color: '#3a4154'
       style: none
