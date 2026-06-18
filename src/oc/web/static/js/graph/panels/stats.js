@@ -195,14 +195,25 @@ function makeRow(k, d) {
   head.append(title, meta);
   const detail = document.createElement("div");
   detail.className = "st-detail"; detail.hidden = true;
+  // chart-range toggle: default last 20 runs, click to show all (and back). Hidden when there
+  // are <=20 samples (nothing to toggle). An armed button, not a dialog (CLAUDE.md rule 2).
+  const bar = document.createElement("div");
+  bar.className = "st-detail-bar";
+  const toggle = document.createElement("button");
+  toggle.className = "st-toggle"; toggle.type = "button"; toggle.hidden = true;
+  bar.appendChild(toggle);
   const chart = document.createElement("div");
   chart.className = "st-chart";
-  detail.appendChild(chart);
+  detail.append(bar, chart);
   row.append(head, detail);
-  const r = { row, name, runs, detail, chart, cells, expanded: false, loaded: false, node: d.node, op: d.op };
+  const r = { row, name, runs, detail, chart, toggle, cells, expanded: false, loaded: false,
+              showAll: false, node: d.node, op: d.op };
+  toggle.addEventListener("click", (ev) => { ev.stopPropagation(); r.showAll = !r.showAll; renderChart(r); statsWin?.fitHeight(); });
   statsRows.set(k, r);
   return r;
 }
+
+const STAT_LAST_N = 20;   // default chart window: the most recent N runs
 
 function setText(el, txt) { if (el.textContent !== txt) el.textContent = txt; }
 // Pick ONE time unit for a card's whole set of durations so last/avg/min/max never mix ms and s
@@ -257,9 +268,20 @@ function loadHistory(r, silent = false) {
 }
 
 // (re)draw a row's history chart from its cached samples — the SVG is sized to its host, so
-// this is re-run on panel resize to keep the chart fitting its (changed) width.
+// this is re-run on panel resize to keep the chart fitting its (changed) width. Defaults to the
+// last STAT_LAST_N runs; the per-row toggle flips to the full series (and back).
 function renderChart(r) {
-  drawChart(r.chart, { type: "line", rows: r.chartRows || [], x: "i", y: ["ms"], title: "duration (ms) per run" });
+  const all = r.chartRows || [];
+  const windowed = r.showAll ? all : all.slice(-STAT_LAST_N);
+  if (r.toggle) {
+    const more = all.length > STAT_LAST_N;
+    r.toggle.hidden = !more;   // nothing to toggle when there aren't more than the default window
+    setText(r.toggle, r.showAll ? `last ${STAT_LAST_N}` : `all ${all.length}`);
+    r.toggle.classList.toggle("on", r.showAll);
+  }
+  const title = r.showAll ? "duration (ms) per run — all"
+                          : `duration (ms) per run — last ${Math.min(STAT_LAST_N, all.length)}`;
+  drawChart(r.chart, { type: "line", rows: windowed, x: "i", y: ["ms"], title });
 }
 
 export { statsWin, statsState, buildStats, startStatsPoll, stopStatsPoll };
