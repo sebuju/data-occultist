@@ -277,16 +277,19 @@ async function _refreshDatasetNode(ds) {
   try {
     const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
     const j = await r.json();
+    const batches = j.batches || [];
+    const batchN = batches.filter((b) => !b.reverted).length;   // applied batches
     if (host) {
       const recs = j.records || [];
       const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
-      vtableFor(`ds:${ds}`, host).setData(cols, recs, { rowClass: (row) => (row.present ? "" : "gone"), expander: (row) => expandObservations(ds, row) });
+      const vt = vtableFor(`ds:${ds}`, host);
+      vt.setData(cols, recs, { rowClass: (row) => (row.present ? "" : "gone"), expander: (row) => expandObservations(ds, row) });
+      vt.setBatchCount(batchN);                   // keep the table's search-bar batch tally live too
       setTabCount(ds, ".data-n", recs.length);
     }
     if (els) {
-      const batches = j.batches || [];
       renderBatchesList(ds, batches);
-      setTabCount(ds, ".bat-n", batches.filter((b) => !b.reverted).length);
+      setTabCount(ds, ".bat-n", batchN);
     }
   } catch (e) { if (host) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; } }
 }
