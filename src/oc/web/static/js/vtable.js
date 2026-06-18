@@ -85,6 +85,11 @@ export class VTable {
     this.rowsInput.title = "rows shown at once (blank = fit)";
     this.rowsInput.placeholder = "fit";
     this.rowsInput.hidden = true;   // hidden by default — fits the container; shown only on demand
+    // hover-revealed reset: clears this table's column widths/order/sort back to defaults
+    this.resetBtn = document.createElement("button");
+    this.resetBtn.className = "vt-reset";
+    this.resetBtn.title = "reset columns (width · order · sort) to defaults";
+    this.resetBtn.textContent = "⟲";
     this.count = document.createElement("span");
     this.count.className = "vt-count muted";
     // Always-on tally at the far right of the bar: total line count (the table owns it) plus an
@@ -92,7 +97,7 @@ export class VTable {
     // precap don't, so theirs shows lines only).
     this.meta = document.createElement("span");
     this.meta.className = "vt-meta muted";
-    bar.append(this.search, this.clearBtn, this.rowsInput, this.count, this.meta);
+    bar.append(this.search, this.clearBtn, this.rowsInput, this.resetBtn, this.count, this.meta);
 
     this.head = document.createElement("div");
     this.head.className = "vt-head";
@@ -106,12 +111,11 @@ export class VTable {
     this.rowsEl = document.createElement("div");
     this.rowsEl.className = "vt-rows";
     this.scroll.append(this.spacer, this.rowsEl);
-    this.sb = document.createElement("div");
-    this.sb.className = "vt-sb";
-    this.thumb = document.createElement("div");
-    this.thumb.className = "vt-sb-thumb";
-    this.sb.append(this.thumb);
-    main.append(this.scroll, this.sb);
+    // one scrollbar primitive per axis (both built from the same class — no copy-paste bar);
+    // native bars stay hidden, these drive scrollTop/scrollLeft.
+    this.vbar = new VtScrollbar(this.scroll, "y");
+    this.hbar = new VtScrollbar(this.scroll, "x");
+    main.append(this.scroll, this.vbar.bar, this.hbar.bar);
 
     el.append(bar, this.head, main);
     this.host.appendChild(el);
@@ -132,8 +136,9 @@ export class VTable {
     this.search.addEventListener("input", () => this._onSearch());
     this.clearBtn.addEventListener("click", () => { this.search.value = ""; this._onSearch(); this.search.focus(); });
     this.rowsInput.addEventListener("input", () => { const n = parseInt(this.rowsInput.value, 10); this.pinned = n > 0 ? n : null; this._applyHeight(); });
-    this.scroll.addEventListener("scroll", () => this._schedule());
-    this._wireThumb();
+    this.resetBtn.addEventListener("click", () => this._reset());
+    // keep the (overflow-clipped) header aligned with the body's horizontal scroll, then redraw
+    this.scroll.addEventListener("scroll", () => { this._syncHead(); this._schedule(); });
     this._ro = new ResizeObserver(() => this._applyHeight());
     this._ro.observe(this.scroll);
   }
@@ -142,6 +147,7 @@ export class VTable {
 
   // ---- data ----
   setData(columns, rows, opts = {}) {
+    this._serverCols = (columns || []).slice();   // original order, for reset
     this.columns = this._applyOrder(columns || []);
     this.rowClass = opts.rowClass || null;
     this.onRowClick = opts.onRowClick || null;
@@ -202,14 +208,57 @@ export class VTable {
     this._applyWidths();
   }
 
-  // Apply per-column widths to the header + every pooled body cell. A column with a stored
-  // width is fixed (flex:0 0 w); the rest stay flexible (flex:1 1 0) and share the slack.
+  // Apply per-column widths to the header + every pooled body cell, and decide whether the
+  // table overflows horizontally. A column with a stored width is fixed (flex:0 0 w); the
+  // rest stay flexible (flex:1 1 0) and share the slack — UNTIL the fixed widths no longer
+  // leave each flexible column a readable floor. Then every column gets a pixel width and the
+  // body scrolls sideways (so a widened column never squeezes the others to nothing).
   _applyWidths() {
-    const css = (el, w) => { el.style.flex = w ? `0 0 ${w}px` : ""; el.style.width = w ? `${w}px` : ""; };
-    // a single column always flexes to fill the table — ignore any stored width for it
-    const widthOf = (c) => (this.columns.length > 1 ? this.widths[c] : undefined);
-    this.columns.forEach((c, i) => { const h = this.head.children[i]; if (h) css(h, widthOf(c)); });
-    for (const row of this.pool) row._cells.forEach((cell, i) => css(cell, widthOf(this.columns[i])));
+    const GUTTER = 9, FLEXMIN = 80;
+    const single = this.columns.length <= 1;          // a lone column always fills the table
+    const widthOf = (c) => (single ? undefined : this.widths[c]);
+    const fixed = this.columns.map(widthOf);
+    const fixedSum = fixed.reduce((s, w) => s + (w || 0), 0);
+    const nFlex = fixed.filter((w) => !w).length;
+    const avail = Math.max(0, (this.scroll.clientWidth || 0) - GUTTER);
+    const overflow = avail > 0 && fixedSum + nFlex * FLEXMIN > avail;
+    this._hScroll = overflow;
+    const apply = (el, i) => {
+      if (!el) return;
+      const w = fixed[i] || (overflow ? FLEXMIN : 0);   // flexible cols get a floor in overflow mode
+      el.style.flex = w ? `0 0 ${w}px` : "1 1 0";
+      el.style.width = w ? `${w}px` : "";
+      el.style.minWidth = w ? `${w}px` : "";
+    };
+    this.columns.forEach((c, i) => apply(this.head.children[i], i));
+    for (const row of this.pool) row._cells.forEach((cell, i) => apply(cell, i));
+    // overflow: pin the rows to the full column span so the scroll area is wider than the
+    // viewport; otherwise let them flex to the viewport (right gutter clears the vertical bar).
+    // The head stays at viewport width (NOT contentW) — widening it would overflow .vt-host and
+    // raise a second, native horizontal scrollbar. Its fixed-width cells overflow + clip, and
+    // _syncHead slides them to track the body's scroll.
+    const contentW = overflow ? fixedSum + nFlex * FLEXMIN + GUTTER : 0;
+    this.rowsEl.style.width = contentW ? `${contentW}px` : "";
+    this.rowsEl.style.right = contentW ? "auto" : "";
+    this.spacer.style.width = contentW ? `${contentW}px` : "";
+    this._syncHead();
+  }
+
+  // Match the header's horizontal scroll to the body's. The head is overflow:hidden (a fixed
+  // clip box) but its scrollLeft can still be set programmatically, so its cells slide while
+  // the clip window stays put — transforming the head instead would move the clip box too.
+  _syncHead() { this.head.scrollLeft = this._hScroll ? this.scroll.scrollLeft : 0; }
+
+  // Restore this table to its defaults: clear column widths, sort, and reorder, and wipe the
+  // persisted overrides. The reset control reveals on hover (see .vt-reset in tables.css).
+  _reset() {
+    this.widths = {};
+    this.sortCol = null; this.sortDir = 1;
+    this.columns = (this._serverCols || this.columns).slice();
+    if (this.id) _store.save(this.id, { ...(_store.load(this.id)), widths: {}, order: [], sorts: [] });
+    this._renderHead();
+    this._filter();
+    this.onReorder && this.onReorder(this.columns.slice());   // host (e.g. hide-toggle row) follows
   }
 
   // CSS scale this table is rendered at (graph nodes live inside a `scale(zoom)` transform).
@@ -488,47 +537,66 @@ export class VTable {
       row.className = "vt-row" + (this.rowClass ? " " + (this.rowClass(rec.values) || "") : "") + ((idx & 1) ? " odd" : "") + (idx === eIdx ? " vt-open" : "");
       for (let c = 0; c < this.cellCount; c++) row._cells[c].textContent = this._cell(rec.values, this.columns[c]);
     }
-    this._syncScrollbar(viewH, contentH, scrollTop);
+    this.vbar.sync(viewH, contentH);
+    this.hbar.sync(this.scroll.clientWidth, this.scroll.scrollWidth);
+    this.main.classList.toggle("vt-has-hbar", this.scroll.scrollWidth > this.scroll.clientWidth + 1);
+  }
+}
+
+// One custom scrollbar, either axis — the app hides the native bars, so this draws the thumb
+// and drives the scroll element's scrollTop/scrollLeft. Both VTable bars are instances of this
+// (no second hand-rolled bar): axis "y" or "x" picks the property names the shared body uses.
+class VtScrollbar {
+  constructor(scroll, axis) {
+    this.scroll = scroll;
+    this.axis = axis;                       // "y" | "x"
+    this.bar = document.createElement("div");
+    this.bar.className = `vt-sb vt-sb-${axis}`;
+    this.thumb = document.createElement("div");
+    this.thumb.className = "vt-sb-thumb";
+    this.bar.appendChild(this.thumb);
+    this._wire();
   }
 
-  // ---- custom scrollbar ----
-  _syncScrollbar(viewH, contentH, scrollTop) {
-    if (contentH <= viewH || !viewH) { this.sb.style.display = "none"; return; }
-    this.sb.style.display = "";
-    const trackH = viewH;
-    const thumbH = Math.max(18, trackH * viewH / contentH);
-    const maxTop = trackH - thumbH;
-    const top = (contentH - viewH) ? (scrollTop / (contentH - viewH)) * maxTop : 0;
-    this.thumb.style.height = `${thumbH}px`;
-    this.thumb.style.transform = `translateY(${top}px)`;
+  // axis-specific accessors so one body drives both bars
+  _ax() {
+    return this.axis === "y"
+      ? { pos: "scrollTop",  client: "clientHeight", content: "scrollHeight", side: "height", coord: "clientY", near: "top",  page: 0.9 }
+      : { pos: "scrollLeft", client: "clientWidth",  content: "scrollWidth",  side: "width",  coord: "clientX", near: "left", page: 0.9 };
   }
-  _wireThumb() {
-    const onDown = (ev) => {
+
+  // size + place the thumb (view = viewport px along the axis, content = total scrollable px).
+  // Hidden when everything fits.
+  sync(view, content) {
+    const a = this._ax();
+    if (content <= view + 1 || !view) { this.bar.style.display = "none"; return; }
+    this.bar.style.display = "";
+    const thumb = Math.max(18, view * view / content);
+    const off = (content - view) ? (this.scroll[a.pos] / (content - view)) * (view - thumb) : 0;
+    this.thumb.style[a.side] = `${thumb}px`;
+    this.thumb.style.transform = this.axis === "y" ? `translateY(${off}px)` : `translateX(${off}px)`;
+  }
+
+  _wire() {
+    const a = this._ax();
+    this.thumb.addEventListener("mousedown", (ev) => {
       ev.preventDefault();
-      const startY = ev.clientY, startTop = this.scroll.scrollTop;
-      const viewH = this.scroll.clientHeight, contentH = this.filtered.length * ROW_H + (this.expandedRow ? this.expandH : 0);
-      const thumbH = Math.max(18, viewH * viewH / contentH);
-      const maxTop = viewH - thumbH, maxScroll = contentH - viewH;
-      document.body.style.cursor = "default";
-      const mv = (e) => {
-        const dy = e.clientY - startY;
-        this.scroll.scrollTop = startTop + (maxTop ? (dy / maxTop) * maxScroll : 0);
-      };
-      const up = () => { document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up); document.body.style.cursor = ""; };
+      const start = ev[a.coord], startScroll = this.scroll[a.pos];
+      const view = this.scroll[a.client], content = this.scroll[a.content];
+      const thumb = Math.max(18, view * view / content);
+      const maxThumb = view - thumb, maxScroll = content - view;
+      const mv = (e) => { this.scroll[a.pos] = startScroll + (maxThumb ? ((e[a.coord] - start) / maxThumb) * maxScroll : 0); };
+      const up = () => { document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up); };
       document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
-    };
-    this.thumb.addEventListener("mousedown", onDown);
-    // click on the track jumps a page toward the click
-    this.sb.addEventListener("mousedown", (ev) => {
-      if (ev.target === this.thumb) return;
-      const rect = this.sb.getBoundingClientRect();
-      const dir = ev.clientY < rect.top + this._thumbCentre() ? -1 : 1;
-      this.scroll.scrollTop += dir * this.scroll.clientHeight * 0.9;
     });
-  }
-  _thumbCentre() {
-    const t = this.thumb.getBoundingClientRect(), s = this.sb.getBoundingClientRect();
-    return (t.top - s.top) + t.height / 2;
+    // click the track: page toward the click
+    this.bar.addEventListener("mousedown", (ev) => {
+      if (ev.target === this.thumb) return;
+      const r = this.bar.getBoundingClientRect(), t = this.thumb.getBoundingClientRect();
+      const centre = (this.axis === "y" ? t.top - r.top : t.left - r.left) + t[a.side] / 2;
+      const dir = ev[a.coord] < r[a.near] + centre ? -1 : 1;
+      this.scroll[a.pos] += dir * this.scroll[a.client] * a.page;
+    });
   }
 }
 

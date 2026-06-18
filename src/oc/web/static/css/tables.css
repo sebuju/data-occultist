@@ -74,10 +74,18 @@
   border: 1px solid var(--line); background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; }
 .vt-clear:hover { background: var(--danger); color: var(--on-danger); }
 .vt-rows-n { flex: none; width: 5ch; padding: 3px 4px; text-align: right; }
+/* hover-revealed reset: icon only, clears this table's width/order/sort overrides */
+.vt-reset { flex: none; width: 22px; height: 22px; min-height: 0; padding: 0; line-height: 1;
+  font-size: 14px; border: 1px solid var(--line); background: transparent; color: var(--muted);
+  border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity 0.12s, color 0.12s; }
+.vt-host:hover .vt-reset { opacity: 0.55; }
+.vt-reset:hover { opacity: 1; color: var(--text); background: var(--line); }
 .vt-count { flex: none; white-space: nowrap; }
 .vt-meta { flex: none; white-space: nowrap; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 
-.vt-head { display: flex; flex: none; padding-right: 9px; border-bottom: 1px solid var(--line); }
+/* overflow:hidden clips the header to the viewport; JS slides it via transform to track the
+   body's horizontal scroll (see _syncHead) */
+.vt-head { display: flex; flex: none; padding-right: 9px; border-bottom: 1px solid var(--line); overflow: hidden; }
 .vt-th { position: relative; color: var(--muted); font-weight: 400; cursor: pointer; user-select: none; }
 .vt-th:hover { color: var(--text); }
 .vt-sort { color: var(--accent); }
@@ -93,8 +101,8 @@
   pointer-events: none; z-index: 2; }
 
 .vt-main { flex: 1 1 auto; min-height: 0; position: relative; }
-.vt-scroll { position: absolute; inset: 0; overflow-y: scroll; overflow-x: hidden; scrollbar-width: none; }
-.vt-scroll::-webkit-scrollbar { width: 0; height: 0; }   /* hide native — custom one below */
+.vt-scroll { position: absolute; inset: 0; overflow: scroll; scrollbar-width: none; }
+.vt-scroll::-webkit-scrollbar { width: 0; height: 0; }   /* hide native (both axes) — custom ones below */
 .vt-spacer { width: 1px; }                                /* gives the scroll its full height */
 .vt-rows { position: absolute; top: 0; left: 0; right: 9px; }
 .vt-row { position: absolute; left: 0; right: 0; display: flex; height: 22px; align-items: center; }
@@ -114,8 +122,13 @@
 .vt-src-h:first-child { margin-top: 0; }
 .vt-row.vt-open { background: var(--neutral); }
 
-/* custom scrollbar — matches the app's native look (thumb = --line, hover --muted) */
-.vt-sb { position: absolute; top: 1px; right: 1px; bottom: 1px; width: 8px; }
-.vt-sb-thumb { position: absolute; top: 0; left: 1px; width: 6px; border-radius: 3px;
-  background: var(--line); cursor: default; }
+/* custom scrollbars (both axes, one VtScrollbar class) — match the app's native look
+   (thumb = --line, hover --muted). Native bars are hidden; these drive scrollTop/scrollLeft. */
+.vt-sb { position: absolute; }
+.vt-sb-y { top: 1px; right: 1px; bottom: 1px; width: 8px; }
+.vt-sb-x { left: 1px; right: 9px; bottom: 1px; height: 8px; }
+.vt-main.vt-has-hbar .vt-sb-y { bottom: 9px; }   /* free the corner for the horizontal bar */
+.vt-sb-thumb { position: absolute; border-radius: 3px; background: var(--line); cursor: default; }
+.vt-sb-y .vt-sb-thumb { top: 0; left: 1px; width: 6px; }
+.vt-sb-x .vt-sb-thumb { left: 0; top: 1px; height: 6px; }
 .vt-sb-thumb:hover { background: var(--muted); }
