@@ -51,12 +51,16 @@ async function _refreshDataNode(ds) {
   if (!host) return;
   try {
     const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
-    const recs = (await r.json()).records || [];
+    const payload = await r.json();
+    const recs = payload.records || [];
+    const batchN = (payload.batches || []).filter((b) => !b.reverted).length;   // applied batches (matches the bat-n badge)
     const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
-    vtableFor(`ds:${ds}`, host).setData(cols, recs, {
+    const vt = vtableFor(`ds:${ds}`, host);
+    vt.setData(cols, recs, {
       rowClass: (row) => (row.present ? "" : "gone"),
       expander: (row) => expandObservations(ds, row),   // drill into its observations inline
     });
+    vt.setBatchCount(batchN);                   // line + batch tally in the table's search bar
     setTabCount(ds, ".data-n", recs.length);   // item count on the data tab
   } catch (e) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
 }

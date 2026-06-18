@@ -75,6 +75,7 @@
 .vt-clear:hover { background: var(--danger); color: var(--on-danger); }
 .vt-rows-n { flex: none; width: 5ch; padding: 3px 4px; text-align: right; }
 .vt-count { flex: none; white-space: nowrap; }
+.vt-meta { flex: none; white-space: nowrap; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 
 .vt-head { display: flex; flex: none; padding-right: 9px; border-bottom: 1px solid var(--line); }
 .vt-th { position: relative; color: var(--muted); font-weight: 400; cursor: pointer; user-select: none; }

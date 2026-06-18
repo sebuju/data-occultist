@@ -16,6 +16,8 @@
 //   const vt = new VTable(hostEl);
 //   vt.setData(columns /* string[] */, rows /* object[] */, { rowClass(row){…} });
 
+import { colResizeDrag } from "./graph/dragresize.js";
+
 const ROW_H = 22;        // fixed row height (px) — virtualization needs a known height
 const BUFFER = 6;        // extra rows rendered above/below the viewport
 
@@ -53,6 +55,7 @@ export class VTable {
     this.expandedRow = null; // the row record (in this.rows) whose detail is open, or null
     this.expandEl = null;    // the inline detail element, or null
     this.expandH = 0;        // measured detail height (px), folded into the layout
+    this._batchCount = null;  // optional batch tally shown in the bar meta (null = not applicable)
     this._raf = null;
     this._build();
   }
@@ -84,7 +87,12 @@ export class VTable {
     this.rowsInput.hidden = true;   // hidden by default — fits the container; shown only on demand
     this.count = document.createElement("span");
     this.count.className = "vt-count muted";
-    bar.append(this.search, this.clearBtn, this.rowsInput, this.count);
+    // Always-on tally at the far right of the bar: total line count (the table owns it) plus an
+    // optional batch count the caller feeds via setBatchCount (datasets have batches; subsets/
+    // precap don't, so theirs shows lines only).
+    this.meta = document.createElement("span");
+    this.meta.className = "vt-meta muted";
+    bar.append(this.search, this.clearBtn, this.rowsInput, this.count, this.meta);
 
     this.head = document.createElement("div");
     this.head.className = "vt-head";
@@ -148,6 +156,19 @@ export class VTable {
     this._applySort();        // restore the persisted sort against the (possibly new) columns
     this._renderHead();
     this._filter();           // builds this.filtered + renders
+    this._renderMeta();       // line count follows the new data (batch count, if any, persists)
+  }
+
+  // Caller-supplied batch tally for the bar meta (null = table has no batches -> show lines only).
+  setBatchCount(n) { this._batchCount = (n == null ? null : n); this._renderMeta(); }
+
+  // Always-on right-side tally: total lines, plus batches when applicable.
+  _renderMeta() {
+    if (!this.meta) return;
+    const lines = this.rows.length;
+    const parts = [`${lines} line${lines === 1 ? "" : "s"}`];
+    if (this._batchCount != null) parts.push(`${this._batchCount} batch${this._batchCount === 1 ? "" : "es"}`);
+    this.meta.textContent = parts.join("  ·  ");
   }
 
   _renderHead() {
@@ -198,24 +219,15 @@ export class VTable {
   _scale() { const w = this.head.offsetWidth; return w ? this.head.getBoundingClientRect().width / w : 1; }
 
   _startResize(e, i) {
-    e.preventDefault();
-    e.stopPropagation();
     const name = this.columns[i];
     const th = this.head.children[i];
-    const startX = e.clientX, startW = this.widths[name] || th.offsetWidth || 80;
+    const startW = this.widths[name] || th.offsetWidth || 80;
     const scale = this._scale();   // constant during the drag
-    const move = (ev) => {
-      if (Math.abs(ev.clientX - startX) > 2) this._resized = true;   // suppress the trailing sort click
-      this.widths[name] = Math.max(36, Math.round(startW + (ev.clientX - startX) / scale));
-      this._applyWidths();
-    };
-    const up = () => {
-      document.removeEventListener("mousemove", move);
-      document.removeEventListener("mouseup", up);
-      if (this.id) _store.save(this.id, { ...(_store.load(this.id)), widths: this.widths });
-    };
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseup", up);
+    colResizeDrag(e, {
+      moved: () => { this._resized = true; },   // suppress the trailing sort click
+      onDelta: (dx) => { this.widths[name] = Math.max(36, Math.round(startW + dx / scale)); this._applyWidths(); },
+      onSettle: () => { if (this.id) _store.save(this.id, { ...(_store.load(this.id)), widths: this.widths }); },
+    });
   }
 
   // Double-click the grip: size the column to fit its header + every cell's text.

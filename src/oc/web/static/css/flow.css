@@ -111,9 +111,9 @@ a.node.win:hover { border-color: var(--accent); }
 .gn-cog svg { display: block; margin: auto; }
 .gn-cog:hover { color: var(--text); }
 .gn-cog.on { color: var(--accent); }
-.gn-cog ~ .gn-del { margin-left: 0; }   /* cog takes the auto; del sits right beside it */
-/* every header control (collapse, cog, enable toggle, group-detach, remove) appears only on
-   node hover — the header reads clean at rest; layout space is reserved so nothing shifts. */
+/* every header control (collapse, cog, enable toggle) appears only on node hover — the header
+   reads clean at rest; layout space is reserved so nothing shifts. (delete/detach moved to the
+   selection toolbar.) */
 .gn-h button { opacity: 0; transition: opacity .12s; }
 .gnode:hover .gn-h button { opacity: 1; }
 .gn-h .collapse { opacity: 1; }   /* collapse caret stays visible at rest — it's a primary toggle, not a hover-only action */
@@ -147,6 +147,8 @@ a.node.win:hover { border-color: var(--accent); }
 .sv-add { padding: 0; overflow: hidden; }
 .sv-add .sv-addin { max-width: 150px; border: 0; background: transparent; color: var(--text);
   font-size: var(--fs-sm); padding: 1px 7px; cursor: pointer;
+  appearance: none; -webkit-appearance: none;   /* drop the native dropdown caret — the pill is the affordance */
+  field-sizing: content;   /* size to the SELECTED text ("+ source…"), not the widest option */
   align-self: stretch; min-height: 0; box-sizing: border-box; }   /* fill the pill, drop the select UA min-height */
 /* the dropdown popup inherits the select's bg — transparent renders white, so set the
    options to the panel colour so they stay readable when opened */
@@ -163,6 +165,9 @@ a.node.win:hover { border-color: var(--accent); }
 /* batches sub-layout: ledger list on top, selected-batch contents + preview below */
 .bat-host { display: flex; flex-direction: column; gap: 8px; }   /* fills the node (see .nodehost) */
 .bat-list { max-height: 45%; overflow: auto; flex: 0 0 auto; }
+/* no batch selected -> .bat-detail is empty (display:none above): drop the 45% cap and let the
+   list grow into the freed space instead of leaving the bottom of the node blank */
+.bat-host:has(.bat-detail:empty) .bat-list { max-height: 100%; flex: 1 1 auto; }
 .bat-list .batrow { cursor: pointer; flex-wrap: nowrap; }
 .batmeta { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bat-list .batrow.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
@@ -194,11 +199,10 @@ a.node.win:hover { border-color: var(--accent); }
 .cc-det { display: inline-block; margin-right: 6px; white-space: nowrap; }
 .conf-sub { color: var(--muted); font-style: italic; }  /* value from an if-empty/if-number/if-text fallback, not a read */
 
-/* enabled/disabled nodes — SVG slide toggle, styled to the node palette. Sits on the
-   right beside the remove button (margin-left:auto pushes the pair; flex `gap` spaces). */
+/* enabled/disabled nodes — SVG slide toggle, styled to the node palette. Sits at the
+   right edge of the header (margin-left:auto pushes it). */
 .gn-h .gn-enable { margin: 0; margin-left: auto; flex: 0 0 auto; padding: 0; border: 0;
   background: transparent; display: inline-flex; align-items: center; cursor: pointer; }
-.gn-h .gn-enable ~ .gn-del { margin-left: 0; }   /* don't double-push; the flex gap spaces it */
 .gn-enable svg { display: block; }
 /* track + thumb take the node's own colours: --line off, --accent on */
 .gn-enable .gt-track { fill: var(--line); stroke: var(--line); transition: fill .18s ease, stroke .18s ease; }
