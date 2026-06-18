@@ -839,102 +839,102 @@ layout:
       h: 380.0
       collapsed: false
     price:price:
-      x: -200.0
-      y: 1040.0
+      x: -340.0
+      y: 920.0
       w: 360.0
       h: 180.0
       collapsed: false
     ds:prices_live:
-      x: -180.0
-      y: 1460.0
+      x: -320.0
+      y: 1340.0
       w: 360.0
       h: 380.0
       collapsed: false
     ds:prices_statistics:
-      x: -200.0
-      y: 500.0
-      w: 360.0
-      h: 380.0
+      x: -340.0
+      y: 380.0
+      w: 380.0
+      h: 440.0
       collapsed: false
     sub:live_prices_joined:
-      x: 240.0
-      y: 1460.0
+      x: 100.0
+      y: 1340.0
       w: 480.0
       h: 840.0
       collapsed: false
     sub:statistic_prices_joined:
-      x: 300.0
-      y: 500.0
+      x: 160.0
+      y: 380.0
       w: 360.0
       h: 440.0
       collapsed: false
     price:wf_market_live:
-      x: -180.0
-      y: 1860.0
+      x: -320.0
+      y: 1740.0
       w: 360.0
-      h: 220.0
+      h: 280.0
       collapsed: false
     ds:prices_relic_live:
-      x: 1360.0
-      y: 2020.0
+      x: 1220.0
+      y: 1900.0
       w: 360.0
       h: 380.0
       collapsed: false
     sub:relic_rewards_live:
-      x: 880.0
-      y: 1460.0
+      x: 740.0
+      y: 1340.0
       w: 360.0
       h: 220.0
       collapsed: false
     price:relic_live:
-      x: 1360.0
-      y: 1760.0
+      x: 1220.0
+      y: 1640.0
       w: 360.0
       h: 220.0
       collapsed: false
     trigger:owned_refresh:
-      x: -180.0
-      y: 2100.0
-      w: 280.0
+      x: -300.0
+      y: 2040.0
+      w: 340.0
       h: 260.0
       collapsed: false
     trigger:relic_watch:
-      x: 1360.0
-      y: 1460.0
+      x: 1220.0
+      y: 1340.0
       w: 280.0
       h: 280.0
       collapsed: false
     win:relic_window:
-      x: 1560.0
-      y: 3040.0
+      x: 1420.0
+      y: 2680.0
       w: 540.0
       h: 500.0
       collapsed: false
     prev:relic_window:
-      x: 1560.0
-      y: 3880.0
+      x: 1420.0
+      y: 3520.0
       w: 520.0
       h: 320.0
       collapsed: false
     det:relic_window:detect_1:
-      x: 2140.0
-      y: 3040.0
+      x: 2000.0
+      y: 2680.0
       w: 220.0
       h: 340.0
       collapsed: false
     item:relic_window:item_3:
-      x: 1140.0
-      y: 3040.0
+      x: 1000.0
+      y: 2680.0
       collapsed: false
     sub:relic_rewards_limit:
-      x: 880.0
-      y: 1700.0
+      x: 740.0
+      y: 1580.0
       w: 340.0
       h: 320.0
       collapsed: false
     ds:relics_offered:
-      x: 880.0
-      y: 2040.0
+      x: 740.0
+      y: 1920.0
       w: 360.0
       h: 380.0
       collapsed: false
@@ -1039,8 +1039,8 @@ layout:
       h: 540.0
       collapsed: false
     fld:relic_window:item_3:name:
-      x: 1140.0
-      y: 4020.0
+      x: 1000.0
+      y: 3660.0
       w: 220.0
       h: 580.0
       collapsed: false
@@ -1069,40 +1069,40 @@ layout:
       h: 180.0
       collapsed: false
     prev:relic_window_3:
-      x: 220.0
-      y: 3880.0
+      x: 80.0
+      y: 3520.0
       w: 360.0
       h: 320.0
       collapsed: false
     win:relic_window_3:
-      x: 220.0
-      y: 3040.0
+      x: 80.0
+      y: 2680.0
       collapsed: false
     item:relic_window_3:item_1:
-      x: -200.0
-      y: 3040.0
+      x: -340.0
+      y: 2680.0
       collapsed: false
     det:relic_window_3:detect_3:
-      x: 800.0
-      y: 3040.0
+      x: 660.0
+      y: 2680.0
       w: 220.0
       h: 340.0
       collapsed: false
     det:relic_window_3:detect_4:
-      x: 800.0
-      y: 3400.0
+      x: 660.0
+      y: 3040.0
       w: 220.0
       h: 340.0
       collapsed: false
     fld:relic_window_3:item_1:name:
-      x: -200.0
-      y: 4000.0
+      x: -340.0
+      y: 3660.0
       w: 220.0
       h: 580.0
       collapsed: false
     det:relic_window:detect_2:
-      x: 2140.0
-      y: 3400.0
+      x: 2000.0
+      y: 3040.0
       w: 220.0
       h: 340.0
       collapsed: false
