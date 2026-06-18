@@ -655,7 +655,7 @@ datasets:
   dedup: false
 - id: mods
   aggregate: latest
-  key_field: ''
+  key_field: mod_name
   dedup: true
 subsets:
 - id: statistic_prices_joined
@@ -811,236 +811,86 @@ layout:
     game:
       x: -1400.0
       y: -760.0
-      w: 340.0
-      h: 120.0
-      collapsed: false
-    fld:equipment:field_1:
-      x: 680.0
-      y: 340.0
-      collapsed: false
-    ds:equipment:
-      x: 1100.0
-      y: 100.0
-      collapsed: false
-    reg:equipment:item_name:
-      x: 0.0
-      y: 680.0
-      collapsed: false
-    reg:equipment:field_1:
-      x: 420.0
-      y: 880.0
-      collapsed: false
-    reg:equipment:field_2:
-      x: 60.0
-      y: 1020.0
-      collapsed: false
-    reg:equipment:field_3:
-      x: 1020.0
-      y: 0.0
-      collapsed: false
-    reg:equipment1:item_name:
-      x: 680.0
-      y: 0.0
-      collapsed: false
-    reg:equipment1:field_1:
-      x: 600.0
-      y: 120.0
-      collapsed: false
-    ds:equipment1:
-      x: 1120.0
-      y: 0.0
-      collapsed: false
-    anc:equipment:title:
-      x: 640.0
-      y: 240.0
-      collapsed: false
-    anc:equipment1:title:
-      x: 600.0
-      y: 220.0
-      collapsed: false
-    anc:equipment:anchor_1:
-      x: 0.0
-      y: 320.0
-      collapsed: false
-    anc:equipment:anchor_2:
-      x: 0.0
-      y: 400.0
-      collapsed: false
-    st:equipment:order_by_name:
-      x: 600.0
-      y: 140.0
-      collapsed: false
-    st:equipment:search:
-      x: 920.0
-      y: 320.0
-      collapsed: false
-    reg:equipment:count:
-      x: 80.0
-      y: 1020.0
-      collapsed: false
-    reg:equipment:item_count:
-      x: 0.0
-      y: 1000.0
-      collapsed: false
-    sb:equipment:scrollbar:
-      x: 1040.0
-      y: 660.0
-      collapsed: false
-    img:equipment:
-      x: 320.0
-      y: 440.0
-      collapsed: false
-    anc:equipment:detect_1:
-      x: 600.0
-      y: 240.0
-      collapsed: false
-    anc:equipment:detect_3:
-      x: 600.0
-      y: 548.0
-      collapsed: false
-    anc:equipment:detect_4:
-      x: 600.0
-      y: 718.0
-      collapsed: false
-    prev:equipment:
-      x: 960.0
-      y: 300.0
-      collapsed: false
-    anc:equipment:search:
-      x: 280.0
-      y: 240.0
-      collapsed: false
-    img:equip:
-      x: 320.0
-      y: 380.0
-      collapsed: false
-    anc:equip:detect_2:
-      x: 1220.0
-      y: 440.0
-      collapsed: false
-    anc:equip:detect_4:
-      x: 1220.0
-      y: 620.0
-      collapsed: false
-    anc:equip:detect_1:
-      x: 1220.0
-      y: 140.0
-      collapsed: false
-    dsp:equip:
-      x: 920.0
-      y: -780.0
-      collapsed: false
-    ds:equip-copy:
-      x: 900.0
-      y: 20.0
-      collapsed: false
-    dict:wiki:
-      x: -1040.0
-      y: 280.0
-      w: 300.0
-      h: 360.0
-      collapsed: false
-    sub:equip_view:
-      x: 800.0
-      y: -1680.0
       w: 0.0
       h: 0.0
       collapsed: false
-    sub:equip_view2:
-      x: 1840.0
-      y: -1040.0
+    dict:wiki:
+      x: -1380.0
+      y: -600.0
       w: 0.0
       h: 0.0
       collapsed: false
     ds:master:
       x: -1020.0
       y: -760.0
-      w: 520.0
-      h: 520.0
-      collapsed: false
-    ds:equip:
-      x: 900.0
-      y: 178.0
       w: 0.0
       h: 0.0
-      collapsed: false
-    enr:master_view:enr_1:
-      x: 2460.0
-      y: -200.0
-      w: 860.0
-      h: 760.0
       collapsed: false
     price:price:
       x: -180.0
       y: 720.0
-      w: 460.0
-      h: 560.0
-      collapsed: false
-    enr:master_view:enr_2:
-      x: 0.0
-      y: 0.0
       w: 0.0
       h: 0.0
       collapsed: false
     ds:prices_live:
       x: -180.0
       y: 1460.0
-      w: 360.0
-      h: 380.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     ds:prices_statistics:
       x: -180.0
       y: 300.0
-      w: 360.0
-      h: 380.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     sub:live_prices_joined:
       x: 240.0
       y: 1460.0
-      w: 600.0
-      h: 900.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     sub:statistic_prices_joined:
       x: 320.0
       y: 300.0
-      w: 520.0
-      h: 980.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     price:wf_market_live:
       x: -180.0
       y: 1860.0
-      w: 360.0
-      h: 220.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     ds:prices_relic_live:
       x: 1680.0
       y: 2020.0
-      w: 380.0
-      h: 340.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     sub:relic_rewards_live:
       x: 1000.0
       y: 1460.0
-      w: 640.0
-      h: 280.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     price:relic_live:
       x: 1680.0
       y: 1760.0
-      w: 380.0
-      h: 240.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     trigger:owned_refresh:
       x: -180.0
       y: 2100.0
-      w: 360.0
-      h: 240.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     trigger:relic_watch:
       x: 1680.0
       y: 1460.0
-      w: 380.0
-      h: 280.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     win:relic_window:
       x: 1560.0
@@ -1051,14 +901,14 @@ layout:
     prev:relic_window:
       x: 1560.0
       y: 3880.0
-      w: 520.0
-      h: 240.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     det:relic_window:detect_1:
       x: 2140.0
       y: 3040.0
-      w: 220.0
-      h: 340.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     item:relic_window:item_3:
       x: 1140.0
@@ -1067,54 +917,30 @@ layout:
     sub:relic_rewards_limit:
       x: 1000.0
       y: 1760.0
-      w: 640.0
-      h: 200.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     ds:relics_offered:
       x: 1000.0
       y: 2000.0
-      w: 640.0
-      h: 360.0
-      collapsed: false
-    ds:relic_rewards:
-      x: 900.0
-      y: 494.0
-      w: 0.0
-      h: 0.0
-      collapsed: false
-    sub:live_prices_joined_view:
-      x: 1560.0
-      y: 340.0
-      w: 0.0
-      h: 0.0
-      collapsed: false
-    ds:mod_window:
-      x: 900.0
-      y: 968.0
       w: 0.0
       h: 0.0
       collapsed: false
     ds:mods:
-      x: -440.0
+      x: -380.0
       y: -760.0
-      w: 520.0
-      h: 520.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     prev:mod_window:
       x: -1460.0
       y: 4040.0
-      w: 700.0
-      h: 820.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     win:mod_window:
       x: -1460.0
       y: 3040.0
-      collapsed: false
-    det:mod_window:detect_3:
-      x: -800.0
-      y: 2680.0
-      w: 0.0
-      h: 0.0
       collapsed: false
     item:mod_window:mod:
       x: -3060.0
@@ -1129,42 +955,20 @@ layout:
     sb:equipment_window:scrollbar:
       x: -1960.0
       y: 1100.0
-      w: 220.0
-      h: 120.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     prev:equipment_window:
       x: -1680.0
       y: 1500.0
-      w: 880.0
-      h: 1020.0
-      collapsed: false
-    reg:equipment_window:item_name:
-      x: 40.0
-      y: 880.0
-      collapsed: false
-    reg:equipment_window:item_count:
-      x: 40.0
-      y: 580.0
-      collapsed: false
-    item:equipment_window:item_3:
-      x: -480.0
-      y: 220.0
-      collapsed: false
-    item:equipment_window:item_2:
-      x: -60.0
-      y: 220.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     item:equipment_window:arcane:
       x: -3080.0
       y: 1560.0
       w: 380.0
       h: 1374.0
-      collapsed: false
-    item:equipment_window:item:
-      x: -560.0
-      y: 240.0
-      w: 380.0
-      h: 1132.0
       collapsed: false
     item:equipment_window:normal:
       x: -3080.0
@@ -1173,30 +977,20 @@ layout:
     det:equipment_window:detect_2:
       x: -1960.0
       y: 380.0
-      w: 220.0
-      h: 340.0
-      collapsed: false
-    det:equipment_window:detect_4:
-      x: -1960.0
-      y: 580.0
       w: 0.0
       h: 0.0
       collapsed: false
     det:equipment_window:detect_1:
       x: -1960.0
       y: 740.0
-      w: 220.0
-      h: 340.0
-      collapsed: false
-    item:equipment_window:normal1:
-      x: 300.0
-      y: 20.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     det:mod_window:detect_heading:
       x: -1700.0
       y: 3040.0
-      w: 220.0
-      h: 340.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     item:mod_window:drop_item:
       x: -3060.0
@@ -1205,80 +999,68 @@ layout:
     fld:equipment_window:normal:name:
       x: -2300.0
       y: 380.0
-      w: 220.0
-      h: 700.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     fld:equipment_window:normal:count:
       x: -2660.0
       y: 380.0
-      w: 320.0
-      h: 540.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     fld:equipment_window:arcane:name:
       x: -2040.0
       y: 1560.0
-      w: 220.0
-      h: 620.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     fld:equipment_window:arcane:arcane_level:
       x: -2660.0
       y: 1560.0
-      w: 220.0
-      h: 440.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     fld:equipment_window:arcane:count:
       x: -2400.0
       y: 1560.0
-      w: 320.0
-      h: 540.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     fld:relic_window:item_3:name:
       x: 1140.0
       y: 4020.0
-      w: 220.0
-      h: 580.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     fld:mod_window:mod:mod_name:
       x: -2300.0
       y: 3040.0
-      w: 220.0
-      h: 660.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     fld:mod_window:mod:mod_drain:
       x: -2060.0
       y: 3040.0
-      w: 220.0
-      h: 480.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     fld:mod_window:mod:mod_count:
       x: -2640.0
       y: 3040.0
-      w: 320.0
-      h: 600.0
-      collapsed: false
-    sub:relic_rewards_limit_view:
-      x: 1600.0
-      y: 4360.0
       w: 0.0
       h: 0.0
       collapsed: false
     tell:mod_window:drop_item:tell_3:
       x: -2660.0
       y: 4040.0
-      w: 220.0
-      h: 180.0
-      collapsed: false
-    ds:window_1:
-      x: 1480.0
-      y: 1160.0
-      w: 360.0
-      h: 380.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     prev:relic_window_3:
       x: 220.0
       y: 3880.0
-      w: 500.0
-      h: 240.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     win:relic_window_3:
       x: 220.0
@@ -1291,26 +1073,26 @@ layout:
     det:relic_window_3:detect_3:
       x: 800.0
       y: 3040.0
-      w: 220.0
-      h: 340.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     det:relic_window_3:detect_4:
       x: 800.0
       y: 3400.0
-      w: 220.0
-      h: 340.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     fld:relic_window_3:item_1:name:
       x: -200.0
       y: 4000.0
-      w: 220.0
-      h: 580.0
+      w: 0.0
+      h: 0.0
       collapsed: false
     det:relic_window:detect_2:
       x: 2140.0
       y: 3400.0
-      w: 220.0
-      h: 340.0
+      w: 0.0
+      h: 0.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -1461,6 +1243,7 @@ layout:
     - game
     - ds:master
     - ds:mods
+    - dict:wiki
     outline:
       color: '#c98ae6'
       style: none
@@ -1582,7 +1365,6 @@ layout:
     - fld:equipment_window:arcane:name
     - fld:equipment_window:arcane:arcane_level
     - fld:equipment_window:arcane:count
-    - dict:wiki
     outline:
       color: '#7ddc7d'
       style: none
