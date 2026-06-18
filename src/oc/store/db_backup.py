@@ -26,7 +26,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .. import backup
+from .. import backup, eventlog
 from . import changes
 from .dataset_store import _connect, _db_path
 
@@ -46,6 +46,14 @@ _GZIP_LEVEL = 6                               # default gzip; near-max ratio, fa
 
 def backup_dir(data_dir: Path | str, game: str) -> Path:
     return Path(data_dir) / game / ".backups"
+
+
+def _human(n: int) -> str:
+    if n >= 1024 * 1024:
+        return f"{n / 1024 / 1024:.1f} MB"
+    if n >= 1024:
+        return f"{n / 1024:.0f} kB"
+    return f"{n} B"
 
 
 def _meta_path(snapshot: Path) -> Path:
@@ -127,6 +135,9 @@ def snapshot_db(data_dir: Path | str, game: str, reason: str = "manual") -> Path
     meta["size"] = path.stat().st_size   # compressed size (what the dir actually costs)
     _meta_path(path).write_text(json.dumps(meta), encoding="utf-8")
     _prune(d, now)
+    eventlog.publish(
+        f"db backup · {reason} · {meta['datasets']} ds / {meta['events']} events "
+        f"· {_human(meta['size'])}", level="ok", game=game)
     return path
 
 
