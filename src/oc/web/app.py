@@ -29,6 +29,7 @@ from .routes import (
     preview,
     prices,
     profiles,
+    screenshot,
     stats,
     suggest,
     triggers,
@@ -232,6 +233,7 @@ def create_app() -> FastAPI:
     app.include_router(video.router)
     app.include_router(bench.router)
     app.include_router(stats.router)
+    app.include_router(screenshot.router)
     # Serve the single-page front-end at root.
     app.mount("/", _NoCacheStatic(directory=str(_STATIC), html=True), name="static")
     return app
