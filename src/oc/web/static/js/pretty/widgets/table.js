@@ -5,6 +5,7 @@
 
 import { resolveRows, columnsOf, dataKeyForBinding } from "../binding.js";
 import { keySubscription, el, humanize } from "./util.js";
+import { makeReorderable, arrayMove, orderColumns } from "../reorder.js";
 
 const ROW_CAP = 200;
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -37,19 +38,25 @@ export default {
     next.addEventListener("click", () => { page++; render(); });   // clamped in render
 
     const sub = keySubscription(ctx, render);
+    const editing = ctx.mode === "edit";
     let cols = [];
 
     // ONLY columns present in the data are ever shown — config is an OVERRIDE map keyed by
     // column name (hide via enabled:false, or set label/width). Columns not in the data are
     // never rendered, so stale config from a previous source can't show as "fake columns".
     function resolveCols(rows) {
+      const present = new Set(columnsOf(rows));
       const byKey = new Map((widget.config.columns || []).map((c) => [c.key, c]));
-      const out = [];
-      for (const k of columnsOf(rows)) {
+      const out = [], done = new Set();
+      const emit = (k) => {
         const c = byKey.get(k);
-        if (c && c.enabled === false) continue;
+        done.add(k);
+        if (c && c.enabled === false) return;
         out.push({ key: k, label: (c && c.label) || humanize(k), width: c && c.width });
-      }
+      };
+      // config order first (drag-reordered there), then data columns config doesn't mention
+      for (const c of (widget.config.columns || [])) if (present.has(c.key) && !done.has(c.key)) emit(c.key);
+      for (const k of columnsOf(rows)) if (!done.has(k)) emit(k);
       return out;
     }
     function syncHead(next2) {
@@ -58,10 +65,23 @@ export default {
       cols = next2; cols._sig = sig;
       headRow.textContent = ""; colg.textContent = "";
       for (const c of cols) {
-        headRow.appendChild(el("th", null, c.label));
+        const th = el("th");
+        if (editing) { const g = el("span", "pw-th-grip", "⠿"); g.title = "drag to reorder column"; th.appendChild(g); }
+        th.appendChild(el("span", "pw-th-lab", c.label));
+        headRow.appendChild(th);
         const col = el("col"); if (c.width) col.style.width = `${c.width}%`; colg.appendChild(col);
       }
     }
+    // Drag a header grip to reorder; new order is materialised into config.columns so it
+    // persists and the inspector reflects it. Edit mode only.
+    if (editing) makeReorderable(headRow, {
+      itemSel: "th", handleSel: ".pw-th-grip", axis: "x",
+      onReorder: (from, to) => {
+        const order = arrayMove(cols.map((c) => c.key), from, to);
+        widget.config.columns = orderColumns(widget.config.columns, order);
+        ctx.pretty.save(); ctx.refresh();
+      },
+    });
     const rowEls = [];
     function render() {
       const c = widget.config;
