@@ -165,6 +165,7 @@ function collectLayout() {
   const L = (model.profile.layout = model.profile.layout || {});
   const nodes = {};
   for (const [id, p] of pos) {
+    if (!nodeEls.has(id)) continue;   // orphan coord (deleted/renamed node) — don't re-persist it
     const n = { x: p.x, y: p.y };
     const sz = nodeSizes.get(id);
     if (sz) { n.w = sz.w; n.h = sz.h; }
@@ -669,17 +670,18 @@ function windowDetects(w) {
     opts.map(([v, t]) => `<option value="${v}" ${val === v ? "selected" : ""}>${t}</option>`).join("") + "</select>";
   const modeSel = sel(mode, [["all", "all"], ["any", "any"]], "wd-mode",
     `title="all = every detector must pass (AND); any = at least one passes (OR)"`);
-  // Two columns: col1 = detector name + its live status; col2 = the polarity select bound to
-  // that detector. col2 is a fixed track and the select is width:100%, so it can never overflow
-  // (the window body clips overflow). The header row labels both columns.
+  // Three columns: col1 = detector name, col2 = its live status, col3 = the polarity select
+  // bound to that detector. The select is width:100% (min-width:0), so it can never overflow
+  // (the window body clips overflow). The header row labels all three columns.
   const rows = dets.map((d) => `<div class="wd-row" data-id="${esc(d.id)}">
-      <span class="wd-left"><span class="wd-name" title="${esc(d.id)} — open this detector's node">${esc(d.id)}</span><span class="wd-status muted" data-id="${esc(d.id)}" title="live: does this detector pass its requirement on the current image"></span></span>
+      <span class="wd-name" title="${esc(d.id)} — open this detector's node">${esc(d.id)}</span>
+      <span class="wd-status muted" data-id="${esc(d.id)}" title="live: does this detector pass its requirement on the current image"></span>
       ${sel(d.negate ? "absent" : "present", [["present", "present"], ["absent", "absent"]], "wd-neg",
         `data-id="${esc(d.id)}" title="require this landmark PRESENT (positive), or ABSENT (negative — the window fails if it IS found)"`)}
     </div>`).join("");
   return `<div class="muted il-h wi-h" title="how this window's detectors decide a match">detects</div>
-    <label class="wd-mode-line muted">window matches if ${modeSel} of these pass</label>
-    <div class="wd-row wd-head muted"><span class="wd-left"><span class="wd-name">detector</span><span class="wd-status">live</span></span><span class="wd-req-h">require</span></div>
+    <label class="wd-mode-line muted">window matches if ${modeSel}</label>
+    <div class="wd-row wd-head muted"><span class="wd-name">detector</span><span class="wd-status">pass</span><span class="wd-req-h">require</span></div>
     ${rows}
     <div class="wd-verdict muted" title="whether the current capture would be recognised as this window with the settings above"></div>`;
 }
@@ -1699,20 +1701,21 @@ function removeNode(n) {
   // re-OCR only the affected window (autosave winId) — removing a region/detect/scrollbar/item
   // changes THAT window's read, never the other open windows. Node types with no window
   // (window itself / view / producer / control) pass autosave(false): no re-OCR at all.
-  if (n.type === "window") { closeImage(n.ref.id); model.removeWindow(n.ref.id); pos.delete(n.id); render(); autosave(false); }
+  if (n.type === "window") { closeImage(n.ref.id); model.removeWindow(n.ref.id); render(); autosave(false); }
   else if (n.type === "item") {
     const winId = n.win.id, itemId = n.ref.id;
-    closeItemImage(winId, itemId); model.removeItem(winId, itemId); pos.delete(n.id);
+    closeItemImage(winId, itemId); model.removeItem(winId, itemId);
     clearGrid(winId); render(); refreshImageBoxes(winId); autosave(true, winId);
   }
   else if (n.type === "region") { model.removeRegion(n.win.id, n.ref.id); render(); autosave(true, n.win.id); refreshImageBoxes(n.win.id); }
   else if (n.type === "detect") { model.removeDetect(n.win.id, n.ref.id); render(); rebuildNode(`win:${n.win.id}`); autosave(true, n.win.id); refreshImageBoxes(n.win.id); }
   else if (n.type === "scrollbar") { model.removeScrollbar(n.win.id); render(); autosave(true, n.win.id); refreshImageBoxes(n.win.id); }
-  else if (n.type === "dictionary") { model.removeDictionary(n.ref.id); pos.delete(n.id); render(); autosave(false); }
+  else if (n.type === "dictionary") { model.removeDictionary(n.ref.id); render(); autosave(false); }
   else if (n.type === "subset") { model.removeSubset(n.ref.id); render(); autosave(false); }
-  else if (n.type === "price") { model.removePriceNode(n.ref.id); pos.delete(n.id); render(); autosave(false); }
-  else if (n.type === "trigger") { model.removeTrigger(n.ref.id); pos.delete(n.id); render(); autosave(false); }
-  else if (n.type === "dataset") { model.removeDatasetDef(n.ref); pos.delete(n.id); purgeDatasetData(n.ref); render(); autosave(); }
+  else if (n.type === "price") { model.removePriceNode(n.ref.id); render(); autosave(false); }
+  else if (n.type === "trigger") { model.removeTrigger(n.ref.id); render(); autosave(false); }
+  else if (n.type === "dataset") { model.removeDatasetDef(n.ref); purgeDatasetData(n.ref); render(); autosave(); }
+  pos.delete(n.id); nodeSizes.delete(n.id); collapsed.delete(n.id);   // drop ALL live layout state for the gone node (every type, one place)
   groups.forgetNodes(new Set([n.id]));   // drop the gone node from any group
   setStatus(`deleted ${n.type} ${n.ref?.id ?? n.ref ?? ""}`.trimEnd());
 }
@@ -1778,11 +1781,17 @@ function fillNode(div, n, wire = true) {
         <path d="M5 7V4.5a3 3 0 0 1 5.9-.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
         <rect x="3.2" y="7" width="9.6" height="6.5" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5" />
       </svg></button>`;
+  // detach sits left of config (parts.head/cog) if present; else right of enable (toggle);
+  // else left of remove (del). Last two collapse: empty toggle => detach lands left of del.
+  const head = parts.head || "";
+  const ctrls = head
+    ? `${parts.title}${detach}${head}${toggle}${del}`
+    : `${parts.title}${toggle}${detach}${del}`;
   div.innerHTML = `<div class="gn-h ${parts.pulse || ""}">
       <span class="gn-disc" title="collapse/expand">${nodeIcon(n)}<button class="collapse" aria-label="collapse/expand">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
           <rect x="3.5" y="3.5" width="17" height="17" rx="5.5"/><line x1="8" y1="12" x2="16" y2="12"/><line class="cv" x1="12" y1="8" x2="12" y2="16"/>
-        </svg></button></span>${detach}${parts.title}${parts.head || ""}${toggle}${del}<span class="gn-type" aria-hidden="true">${esc(n.type === "itemfield" ? "field" : n.type === "itemtell" ? "tell" : n.type)}</span><span class="gn-pretty-dirty" title="held by a pretty override — not saved to yaml">pretty</span></div>
+        </svg></button></span>${ctrls}<span class="gn-type" aria-hidden="true">${esc(n.type === "itemfield" ? "field" : n.type === "itemtell" ? "tell" : n.type)}</span><span class="gn-pretty-dirty" title="held by a pretty override — not saved to yaml">pretty</span></div>
     <div class="gn-body">${parts.body}</div>
     <span class="gn-spin" title="working…"></span>${parts.ports || ""}`;
   div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
@@ -3296,6 +3305,9 @@ async function killStrayOcrThenBoot() {
     log("loading profile…");
     await refreshGames();
     if ($("gameSelect").value) await loadGame($("gameSelect").value);
+    // ?view=pretty (the desktop window passes it) boots into the pretty dashboard;
+    // a plain browser has no param and stays on the node view.
+    if (new URLSearchParams(location.search).get("view") === "pretty") setPrettyView(true);
     initKillGpu();
     hub.init(() => model.profile.name);   // single backend heartbeat for every panel
     hub.start();
