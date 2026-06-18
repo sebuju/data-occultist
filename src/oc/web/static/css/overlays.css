@@ -89,7 +89,7 @@
 /* during boot the log floats over the veil as bare text — no chrome, no head bar */
 .logbar.boot { z-index: 3100; background: transparent; border-top: none; }
 .logbar.boot .log-head { display: none; }
-.logbar.boot .log-body { border-top: none; }
+.logbar.boot .log-body { border-top: none; max-height: 100vh; max-height: 100dvh; }
 
 /* background-worker indicator (far right of the log head): live count + per-worker
    emergency kill. Hidden when nothing is running. */

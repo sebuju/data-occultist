@@ -12,10 +12,14 @@ function ensure() {
     if (!bar) return false;
     latest = bar.querySelector(".log-latest");
     body = bar.querySelector(".log-body");
-    bar.querySelector(".log-head").addEventListener("click", () => bar.classList.toggle("open"));
+    bar.querySelector(".log-head").addEventListener("click", () => { if (bar.classList.toggle("open")) scrollBottom(); });
     ready = true;
     for (const e of buffer.splice(0)) append(e);   // flush anything logged before DOM was ready
     return true;
+}
+
+function scrollBottom() {
+    if (body) body.scrollTop = body.scrollHeight;
 }
 
 function esc(s) {
@@ -40,6 +44,7 @@ export function setLogOpen(on) {
     if (!ensure()) return;
     bar.classList.toggle("open", !!on);
     bar.classList.toggle("boot", !!on);   // boot lifts it above the boot veil (z-index)
+    if (on) scrollBottom();
 }
 
 export function fmtDur(ms) {
