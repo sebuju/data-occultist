@@ -207,16 +207,19 @@ async function liveTick() {
     refreshLive();   // dataset counts
     const game = model.profile.name;
     if (game) {
-        // save what live mode sees: one frame per round into the live bucket (fire-and-forget;
-        // a capture failure must never stall tuning). grab returns the running {count,bytes}.
-        api.liveCaptures.grab(game).then((s) => { liveImg = s; }).catch((e) => log(`live grab failed: ${e.message || e}`, "err"));
+        let anyDet = false;   // did ANY live window detect this round? gates the frame save
         for (const w of model.profile.windows || []) {
             if (!liveOn || liveSave) break;
             if (w.live === false || w.enabled === false) continue;   // skip windows opted out of live
             await refreshDetect(w.id, true);   // sets liveRecog + refreshes the panel
+            if (liveRecog.get(w.id)) anyDet = true;
             liveFrames++;
             if (prevHost(w.id)?.dataset.ran === "1") await refreshPreview(w.id, true);
         }
+        // save what live mode sees ONLY when a window was actually detected — don't bucket blank
+        // grabs. one frame per detecting round (fire-and-forget; a capture failure mustn't stall
+        // tuning). grab returns the running {count,bytes}.
+        if (anyDet) api.liveCaptures.grab(game).then((s) => { liveImg = s; }).catch((e) => log(`live grab failed: ${e.message || e}`, "err"));
         renderLiveStats();   // recompute fps + refresh the panel after the round
     }
     if (liveOn && !liveSave) timer = setTimeout(liveTick, 200);   // next round only AFTER this one drained
@@ -233,13 +236,15 @@ function startServerCollect() {
         if (!liveOn || !liveSave) return;
         liveColStatus = s.live || null;
         liveRecog.clear(); liveDetCount.clear();
-        for (const r of (liveColStatus?.recognized || [])) {   // cumulative tally → dots + per-window count
+        for (const r of (liveColStatus?.recognized || [])) {   // cumulative tally → per-window count
             if (!r.miss && r.key.includes("/")) {
                 const wid = r.key.split("/")[0];
-                liveRecog.set(wid, true);
                 liveDetCount.set(wid, (liveDetCount.get(wid) || 0) + (r.count || 0));
             }
         }
+        // dot reflects what's detected RIGHT NOW (the current tick's window), NOT the cumulative
+        // tally — else a window detected once stays green for the whole run after it left screen.
+        if (liveColStatus?.window) liveRecog.set(liveColStatus.window, true);
         refreshLiveImgStat();   // server collector saves frames to disk — keep the saved-image stat fresh
         renderLiveWindow();
     });

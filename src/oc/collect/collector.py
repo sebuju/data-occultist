@@ -129,8 +129,9 @@ class Collector:
         # window). Single slot: ticks see one screen at a time.
         self._detect_fracs = _detect_search_fracs(profile)
         self._classify_cache: tuple[int | None, tuple[str, str | None] | None] = (None, None)
-        # optional hook fired with each captured frame (before classification) — lets a caller
-        # (e.g. live mode) persist what was grabbed without the collector knowing how to store.
+        # optional hook fired with each captured frame whose window was RECOGNISED (so live mode
+        # saves only frames it detected, not blank/occluded grabs) — lets a caller persist what
+        # was grabbed without the collector knowing how to store.
         self.on_frame = None
 
     # ---- save-gating -------------------------------------------------------
@@ -220,11 +221,11 @@ class Collector:
             return TickResult(TickStatus.not_foreground)
 
         frame = eng.capture.grab_window(win)
-        if self.on_frame is not None:
-            self.on_frame(frame)   # e.g. live mode saves the captured image
         match = self._classify(frame)
         if match is None:
             return TickResult(TickStatus.unrecognised)
+        if self.on_frame is not None:
+            self.on_frame(frame)   # e.g. live mode saves the image — only once a profile window is recognised
 
         window_id, state_id = match
         window = self._profile.window(window_id)
