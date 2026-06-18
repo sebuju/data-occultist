@@ -3140,13 +3140,30 @@ document.addEventListener("keydown", (ev) => {
     }
     const dir = NUDGE[ev.key.toLowerCase()];
     if (!dir) return;
-    // No active box but a node is selected → WASD moves the NODE, one grid step.
+    // No active box but a node is selected → WASD moves the NODE one grid step;
+    // Shift+WASD resizes it one grid step (A/D width, W/S height) — same grip the drag
+    // handle drives, so it persists + redraws edges identically.
     const rec = overlays.get(activeOverlayKey);
     if (!rec) {
         if (selectedNodeId && pos.has(selectedNodeId)) {
-            const p = pos.get(selectedNodeId);
-            p.x = snap(p.x + dir[0] * GRID); p.y = snap(p.y + dir[1] * GRID);
-            positionNode(selectedNodeId); drawEdges(); persist.layout();
+            const el = nodeEls.get(selectedNodeId);
+            if (ev.shiftKey) {
+                // collapsed nodes are header-only and item nodes follow their cutout aspect,
+                // so neither takes a height step (item still resizes width).
+                if (el && !collapsed.has(selectedNodeId)) {
+                    const type = nodeTypeOf(selectedNodeId);
+                    const cur = nodeSizes.get(selectedNodeId) || { w: el.offsetWidth, h: el.offsetHeight };
+                    if (dir[0]) el.style.width = `${Math.max(GRID, snap(cur.w + dir[0] * GRID))}px`;
+                    if (dir[1] && type !== "item") el.style.height = `${Math.max(GRID, snap(cur.h + dir[1] * GRID))}px`;
+                    nodeSizes.set(selectedNodeId, { w: el.offsetWidth, h: el.offsetHeight });
+                    el.classList.add("has-size");
+                    drawEdges(); groups.renderGroups(); persist.layout();
+                }
+            } else {
+                const p = pos.get(selectedNodeId);
+                p.x = snap(p.x + dir[0] * GRID); p.y = snap(p.y + dir[1] * GRID);
+                positionNode(selectedNodeId); drawEdges(); persist.layout();
+            }
             ev.preventDefault();
         }
         return;
