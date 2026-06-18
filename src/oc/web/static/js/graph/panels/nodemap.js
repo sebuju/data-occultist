@@ -158,6 +158,13 @@ function nmMapModel() {
     maxX = Math.max(maxX, p.x + w); maxY = Math.max(maxY, p.y + h);
     return { id, x: p.x, y: p.y, w, h };
   });
+  // Group + super-group boxes overhang their members (padding + title band, super-groups most),
+  // so fold them into the extent — else the projection clips their edges/labels (one consistent
+  // box for both the live map and the screenshot).
+  for (const b of [...groups.groupBoxes(), ...groups.superGroupBoxes()]) {
+    minX = Math.min(minX, b.box.x); minY = Math.min(minY, b.box.y);
+    maxX = Math.max(maxX, b.box.x + b.box.w); maxY = Math.max(maxY, b.box.y + b.box.h);
+  }
   const labels = new Map(model.nodes().map((n) => [n.id, nodeShort(n)]));
   return { rects, minX, minY, maxX, maxY, labels };
 }
@@ -166,7 +173,7 @@ function nmMapModel() {
 // node-label font ceiling (live = 11; screenshot lifts it so labels reach the readable floor);
 // `titleCap` the same for group headings. Returns { svg, W, H, ox, oy, s }. Pure string build,
 // no DOM and no viewport indicator (that's the live panel's job). Used by BOTH callers.
-function nmBuildMapSvg(m, s, { cap = 11, titleCap = 9, pad = 8 } = {}) {
+function nmBuildMapSvg(m, s, { cap = 11, titleCap = 9, pad = 8, css = null } = {}) {
   const { rects, minX, minY, maxX, maxY, labels } = m;
   const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
   const W = spanX * s + 2 * pad, H = spanY * s + 2 * pad;
@@ -228,7 +235,18 @@ function nmBuildMapSvg(m, s, { cap = 11, titleCap = 9, pad = 8 } = {}) {
   };
   const titleSvg = groups.superGroupBoxes().map((b) => boxTitle(b, "#cdd3dc", { bottom: true }))   // super outlines run dark -> light text, label bottom-left
     .concat(groups.groupBoxes().map((b) => boxTitle(b, b.outline?.color || "#cdd3dc", { align: b.titleAlign }))).join("");
-  const svg = `<svg class="nm-svg" width="${W.toFixed(1)}" height="${H.toFixed(1)}" viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" preserveAspectRatio="xMidYMid meet">
+  // Standalone mode (screenshot): the live map leans on the global .nm-* stylesheet, but a
+  // rasterised SVG must carry its own styling + opaque background, with CSS vars resolved to
+  // concrete values (no :root to inherit from). Live panel passes css=null and keeps using CSS.
+  const embed = css ? `<style>
+    .nm-edges path{fill:none;stroke:${css.line};stroke-width:1;vector-effect:non-scaling-stroke;}
+    .nm-group,.nm-super{stroke-width:1;vector-effect:non-scaling-stroke;}
+    .nm-n{stroke:#0006;stroke-width:0.5;opacity:0.9;}
+    .nm-n.sel{stroke:${css.accent};stroke-width:1.5;opacity:1;}
+    .nm-lbl{fill:#0b0e14;font-family:${css.mono};font-weight:700;text-anchor:middle;dominant-baseline:central;}
+    .nm-gtitle text{font-family:${css.mono};font-weight:700;dominant-baseline:text-before-edge;}
+  </style><rect x="0" y="0" width="${W.toFixed(1)}" height="${H.toFixed(1)}" fill="${css.bg}"/>` : "";
+  const svg = `<svg class="nm-svg" xmlns="http://www.w3.org/2000/svg" width="${W.toFixed(1)}" height="${H.toFixed(1)}" viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" preserveAspectRatio="xMidYMid meet">${embed}
       <g class="nm-supers">${superSvg}</g>
       <g class="nm-groups">${groupSvg}</g>
       <g class="nm-edges" transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})">${edgePaths}</g>
@@ -270,7 +288,14 @@ function nodemapShot({ floor = 13, titleCap = 16, pad = 16 } = {}) {
     if (fit > 0) minFit = Math.min(minFit, fit);
   }
   if (!Number.isFinite(minFit) || minFit <= 0) return null;
-  const { svg, W, H } = nmBuildMapSvg(m, floor / minFit, { cap: Infinity, titleCap, pad });
+  const cs = getComputedStyle(document.body);
+  const css = {
+    bg: cs.getPropertyValue("--bg").trim() || "#1c1e23",
+    line: cs.getPropertyValue("--line").trim() || "#333",
+    accent: cs.getPropertyValue("--accent").trim() || "#7aa2f7",
+    mono: cs.getPropertyValue("--font-mono").trim() || "monospace",
+  };
+  const { svg, W, H } = nmBuildMapSvg(m, floor / minFit, { cap: Infinity, titleCap, pad, css });
   return { svg, W, H };
 }
 

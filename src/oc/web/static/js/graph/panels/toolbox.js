@@ -241,21 +241,40 @@ async function screenshotViewport() {
 }
 
 // Node map: the minimap SVG overview, sized so the smallest label is 13px (nodemapShot solves
-// the scale). The .nm-* styling is global CSS, so the SVG must be ATTACHED to render — drop it
-// in an off-screen host, rasterise, remove. scale:1 (the SVG is already sized for readability).
+// the scale and returns a SELF-CONTAINED svg — inline styles + bg). Rasterised via <img>+canvas,
+// NOT domToBlob: its foreignObject path doesn't render a nested inline <svg>'s children.
 async function screenshotNodemap() {
   if (!model.profile.name) { setStatus("load a game first"); return; }
   const shot = nodemapShot({ floor: 13 });
   if (!shot) { setStatus("nothing to screenshot — no nodes"); return; }
-  const host = document.createElement("div");
-  host.style.cssText = `position:fixed; left:-99999px; top:0; width:${shot.W}px; height:${shot.H}px;`;
-  host.innerHTML = shot.svg;
-  document.body.appendChild(host);
+  const done = timed("screenshot");
   try {
-    await stashShot("nodemap", host, { width: shot.W, height: shot.H, scale: 1 });
-  } finally {
-    host.remove();
+    const blob = await svgToPngBlob(shot.svg, shot.W, shot.H);
+    const { path } = await api.stashScreenshot(model.profile.name, blob, "nodemap");
+    done();
+    setStatus(`saved ${path}`);
+  } catch (e) {
+    done(String(e.message || e), "err");
+    setStatus(`screenshot failed: ${e.message || e}`);
   }
+}
+
+// Rasterise a self-contained SVG string to a PNG Blob through an <img> + canvas. The SVG must
+// carry its own xmlns + styling (the document's CSS doesn't reach an <img>-loaded SVG).
+function svgToPngBlob(svg, W, H) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+    const img = new Image();
+    img.onload = () => {
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(W)); cv.height = Math.max(1, Math.round(H));
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url);
+      cv.toBlob((b) => b ? resolve(b) : reject(new Error("canvas toBlob failed")), "image/png");
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("SVG failed to load as image")); };
+    img.src = url;
+  });
 }
 
 export {
