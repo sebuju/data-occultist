@@ -31,6 +31,11 @@ body.pretty-mode #seltoolbar { display: none; }
 .pw-container { width: 100%; height: 100%; box-sizing: border-box; }
 .pw-container-title { font-weight: 600; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.12); }
 
+/* embedded graph panel (live / precapture / tasks) — content classes are styled globally;
+   just give the host a scroll box + the compact panel font so it fits a widget frame */
+.pw-panel { width: 100%; height: 100%; overflow: auto; box-sizing: border-box; padding: 4px; font-size: 12px; }
+.pw-panel > .live-root, .pw-panel > .act-list, .pw-panel > .precap { width: 100%; }
+
 .pw-t-table { font-size: 12px; }   /* compact default; user font-size (inline on the frame) overrides */
 .pw-tbl { border-collapse: collapse; width: 100%; }
 .pw-tbl th, .pw-tbl td { font-size: inherit; }   /* inherit so the widget's styled size reaches cells */
@@ -38,6 +43,16 @@ body.pretty-mode #seltoolbar { display: none; }
 .pw-tbl th { position: sticky; top: 0; background: #1b1f27; }
 .pw-tbl-foot { font-size: 11px; opacity: 0.7; padding: 2px 4px; display: flex; align-items: center; gap: 4px; }
 .pw-tbl-foot[hidden] { display: none; }
+/* drag-to-reorder: header grip + inspector row grip (rule 7 shared primitive, reorder.js) */
+.pw-th-grip, .pw-ro-h { cursor: grab; opacity: 0.4; user-select: none; font-size: 11px; line-height: 1; }
+.pw-th-grip { margin-right: 4px; }
+.pw-th-grip:hover, .pw-ro-h:hover { opacity: 0.85; }
+.pw-ro-h { flex: 0 0 auto; padding: 0 2px; }
+.pw-ro-drag { opacity: 0.4; }
+.pw-ro-x .pw-ro-before { box-shadow: inset 2px 0 0 0 #4ea1ff; }
+.pw-ro-x .pw-ro-after  { box-shadow: inset -2px 0 0 0 #4ea1ff; }
+.pw-ro-y .pw-ro-before { box-shadow: inset 0 2px 0 0 #4ea1ff; }
+.pw-ro-y .pw-ro-after  { box-shadow: inset 0 -2px 0 0 #4ea1ff; }
 .pw-pg { padding: 0 8px; line-height: 1.6; }
 .pw-pg:disabled { opacity: 0.35; }
 .pw-pg-lbl { min-width: 36px; text-align: center; }

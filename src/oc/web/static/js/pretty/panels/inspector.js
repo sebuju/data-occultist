@@ -7,6 +7,8 @@ import { styleEditor } from "../style_editor.js";
 import { nodeInputs, inputMeta } from "../constraints.js";
 import { sourceTokenList } from "../binding.js";
 import { el, humanize } from "../widgets/util.js";
+import { makeReorderable, arrayMove, orderColumns } from "../reorder.js";
+import { PANEL_OPTIONS } from "../widgets/panel.js";
 
 export const inspectorState = { visible: false, x: null, y: null, w: 320, h: null, collapsed: false };
 
@@ -69,6 +71,7 @@ export function buildInspector(ctx) {
     const c = w.config = w.config || {};
     if (w.type === "label") g.appendChild(row("text", txt(c.text, (v) => { c.text = v; save(); }, true)));
     if (w.type === "container") g.appendChild(row("title", txt(c.title, (v) => { c.title = v; save(); })));
+    if (w.type === "panel") g.appendChild(row("panel", sel(c.panel || "live", PANEL_OPTIONS, (v) => { c.panel = v; save(); })));
     if (w.type === "table") {
       const avail = colsFor(w.binding);
       g.appendChild(row("page size", numEl(c.pageSize ?? 50, (v) => { c.pageSize = v || 50; save(); })));
@@ -80,15 +83,26 @@ export function buildInspector(ctx) {
       c.columns = Array.isArray(c.columns) ? c.columns : [];
       const entryOf = (key) => c.columns.find((e) => e.key === key);
       const upsert = (key, patch) => { let e = entryOf(key); if (!e) { e = { key, enabled: true }; c.columns.push(e); } Object.assign(e, patch); save(); };
-      for (const key of avail) {
+      // Row order mirrors the table: config order first (drag-reordered), then any remaining
+      // available column. Rows live in their own container so the reorder primitive only sees them.
+      const cfgOrder = c.columns.map((e) => e.key).filter((k) => avail.includes(k));
+      const ordered = [...cfgOrder, ...avail.filter((k) => !cfgOrder.includes(k))];
+      const colList = el("div", "pw-col-list");
+      for (const key of ordered) {
         const e = entryOf(key);
         const cr = el("div", "pw-insp-frow");
+        const grip = el("span", "pw-ro-h", "⠿"); grip.title = "drag to reorder column";
         const tog = chk(e ? e.enabled !== false : true, (v) => upsert(key, { enabled: v })); tog.title = "show column";
         const lab = txt(e && e.label || "", (v) => upsert(key, { label: v.trim() })); lab.placeholder = humanize(key);
         const wid = numEl(e && e.width || "", (v) => upsert(key, { width: (v === "" || v <= 0) ? undefined : Math.min(100, v) })); wid.placeholder = "%"; wid.title = "width % (blank = auto)"; wid.min = 1; wid.max = 100; wid.className = "pw-col-w";
-        cr.append(tog, lab, wid);
-        g.appendChild(cr);
+        cr.append(grip, tog, lab, wid);
+        colList.appendChild(cr);
       }
+      makeReorderable(colList, {
+        itemSel: ".pw-insp-frow", handleSel: ".pw-ro-h", axis: "y",
+        onReorder: (from, to) => { arrayMove(ordered, from, to); c.columns = orderColumns(c.columns, ordered); save(); },
+      });
+      g.appendChild(colList);
     }
     if (w.type === "chart") {
       const avail = colsFor(w.binding);
