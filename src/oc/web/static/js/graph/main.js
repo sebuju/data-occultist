@@ -56,7 +56,7 @@ import {
 import { openContextMenu } from "../ctxmenu.js";
 import {
   vtables, vtableFor, refreshDataNode, refreshDatasetNode, refreshAllDataNodes, expandSubsetRow,
-  batchesState, loadBatchesNode, refreshAllBatchesNodes,
+  batchesState, batEls, loadBatchesNode, refreshAllBatchesNodes,
 } from "./panels/datanodes.js";
 import {
   pc, pcState, precapOpen, precapBusy, buildPrecap, fmtBytes,
