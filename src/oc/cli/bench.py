@@ -1,4 +1,4 @@
-"""`data-rig bench <game>` — pure-capture benchmark.
+"""`data-occultist bench <game>` — pure-capture benchmark.
 
 Hammers ``grab_window`` as fast as it can for a few seconds and reports the rate.
 No OCR, no classify, no save — this measures the *capture* path alone, which is

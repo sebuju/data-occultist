@@ -1,4 +1,4 @@
-"""FastAPI application factory for the data-rig web UI."""
+"""FastAPI application factory for the data-occultist web UI."""
 
 from __future__ import annotations
 
@@ -199,7 +199,7 @@ async def lifespan(_app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="data-rig", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="data-occultist", version="0.1.0", lifespan=lifespan)
 
     # Surface the FULL traceback of any unhandled error to the client (this is a local
     # teaching tool) AND to the server log, so a 500 isn't an opaque "Internal Server

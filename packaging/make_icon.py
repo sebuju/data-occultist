@@ -1,9 +1,9 @@
-"""Generate the data-rig .ico from the favicon glyph (rounded panel + 3 wired nodes).
+"""Generate the data-occultist .ico from the favicon glyph (rounded panel + 3 wired nodes).
 
 Re-renders the same design as src/oc/web/static/favicon.svg with Pillow at multiple
 sizes and writes a multi-resolution .ico. Run: ``python packaging/make_icon.py``.
 
-Writes two copies of the one design: assets/data-rig.ico (the desktop shortcut points
+Writes two copies of the one design: assets/data-occultist.ico (the desktop shortcut points
 here) and src/oc/web/static/favicon.ico (ships in the package so the native window can
 set its title-bar / taskbar icon at runtime).
 """
@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw
 
 _ROOT = Path(__file__).resolve().parent.parent
 _OUTS = [
-    _ROOT / "assets" / "data-rig.ico",
+    _ROOT / "assets" / "data-occultist.ico",
     _ROOT / "src" / "oc" / "web" / "static" / "favicon.ico",
 ]
 

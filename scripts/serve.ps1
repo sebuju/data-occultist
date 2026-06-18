@@ -1,5 +1,5 @@
 <#
-  Keep the data-rig web UI (and its OCR) alive.
+  Keep the data-occultist web UI (and its OCR) alive.
 
   Run this once and leave it open. It starts the server if it isn't already running,
   and restarts it whenever it exits - including when you KILL the python process by hand
@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = "SilentlyContinue"
 . (Join-Path $PSScriptRoot '_console.ps1'); Enable-AnsiColors   # render uvicorn's ANSI colors
 $root = Split-Path -Parent $PSScriptRoot           # repo root (parent of scripts\)
-$oc = Join-Path $root ".venv\Scripts\data-rig.exe" # the `data-rig` console script (has `rig`)
+$oc = Join-Path $root ".venv\Scripts\data-occultist.exe" # the `data-occultist` console script (has `rig`)
 $py = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) { $py = "python" }
 
@@ -59,7 +59,7 @@ while ($true) {
     if (Test-ServerUp) { Start-Sleep -Seconds 3; $fails = 0; continue }   # already running -> watch
 
     Stop-WedgedListener   # free the port if something dead/hung still holds it
-    Write-Host ("[serve] {0} starting data-rig web UI..." -f (Get-Date -Format HH:mm:ss))
+    Write-Host ("[serve] {0} starting data-occultist web UI..." -f (Get-Date -Format HH:mm:ss))
     Push-Location $root
     Start-Server
     Pop-Location

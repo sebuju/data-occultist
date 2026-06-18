@@ -3,14 +3,14 @@
 Wrap the same FastAPI app the browser uses in a native window via ``pywebview``
 (on Windows it renders through the Edge WebView2 runtime — pip-only, no Electron).
 Everything pywebview-related is imported lazily so a missing ``desktop`` extra only
-breaks the desktop launchers, never ``data-rig rig`` / tests / CI.
+breaks the desktop launchers, never ``data-occultist rig`` / tests / CI.
 
 Two pieces compose into the launchers:
 - ``serve_in_thread`` runs uvicorn on a daemon thread (release mode owns the server
   in-process, so closing the window can stop it and let the lifespan reap workers).
 - ``open_window`` shows the native window and blocks until the user closes it.
-``data-rig view`` uses only ``open_window`` (it attaches to a server it didn't start);
-``data-rig app`` / the shortcut uses both.
+``data-occultist view`` uses only ``open_window`` (it attaches to a server it didn't start);
+``data-occultist app`` / the shortcut uses both.
 """
 
 from __future__ import annotations
@@ -142,7 +142,7 @@ def _set_window_icon(window, ico_path) -> None:
         return
 
 
-def open_window(url: str, *, title: str = "data-rig", size: tuple[int, int] = (1400, 900)):
+def open_window(url: str, *, title: str = "data-occultist", size: tuple[int, int] = (1400, 900)):
     """Open a native window onto ``url`` and block until it is closed.
 
     pywebview's ``start()`` must own the main thread, so call this last. A missing
@@ -174,7 +174,7 @@ def open_window(url: str, *, title: str = "data-rig", size: tuple[int, int] = (1
     try:
         import ctypes
 
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("data-rig.desktop")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("data-occultist.desktop")
     except Exception:  # pragma: no cover - non-Windows / shell32 unavailable
         pass
 

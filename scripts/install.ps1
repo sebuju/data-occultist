@@ -1,5 +1,5 @@
 <#
-  install.ps1 - one-stop setup for data-rig on Windows.
+  install.ps1 - one-stop setup for data-occultist on Windows.
 
   Runs in three phases so it never interrupts you mid-work:
     1. detect   - probe Python, WebView2, NVIDIA GPU, winget (no changes made)
@@ -123,22 +123,22 @@ function Install-Winget($id, $label, $url, [switch]$Machine) {
 
 function New-AppShortcut {
   $pyw = Join-Path $venv 'Scripts\pythonw.exe'
-  $ico = Join-Path $root 'assets\data-rig.ico'
+  $ico = Join-Path $root 'assets\data-occultist.ico'
   if (-not (Test-Path $pyw)) { return }
   $dirs = @(
     [Environment]::GetFolderPath('Desktop'),
-    (Join-Path ([Environment]::GetFolderPath('Programs')) 'data-rig')
+    (Join-Path ([Environment]::GetFolderPath('Programs')) 'data-occultist')
   )
   $ws = New-Object -ComObject WScript.Shell
   $made = @()
   foreach ($d in $dirs) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
-    $lnk = $ws.CreateShortcut((Join-Path $d 'data-rig.lnk'))
+    $lnk = $ws.CreateShortcut((Join-Path $d 'data-occultist.lnk'))
     $lnk.TargetPath = $pyw
     $lnk.Arguments = '-m oc.desktop_main'
     $lnk.WorkingDirectory = $root
     if (Test-Path $ico) { $lnk.IconLocation = $ico }
-    $lnk.Description = 'data-rig (desktop)'
+    $lnk.Description = 'data-occultist (desktop)'
     $lnk.Save()
     $made += $d
   }
@@ -174,7 +174,7 @@ $useGpu = $false
 if ($Cpu)        { $useGpu = $false }
 elseif ($hasGpu) { $useGpu = Ask 'Use GPU OCR (downloads onnxruntime-gpu + CUDA wheels, ~2-3 GB)?' $true }
 
-$doShortcut = Ask 'Create a "data-rig" app shortcut on Desktop + Start menu?' $false
+$doShortcut = Ask 'Create a "data-occultist" app shortcut on Desktop + Start menu?' $false
 
 # === 3. EXECUTE (no more prompts) ===========================================
 Write-Host ''
@@ -198,7 +198,7 @@ if (-not $pyCmd) {
   $vpy = Join-Path $venv 'Scripts\python.exe'
   Info 'upgrading pip ...'
   & $vpy -m pip install --upgrade pip --quiet
-  Info 'installing data-rig (dev + desktop extras) ...'
+  Info 'installing data-occultist (dev + desktop extras) ...'
   & $vpy -m pip install -e "$root[dev,desktop]"
 
   if ($useGpu) {
@@ -210,17 +210,17 @@ if (-not $pyCmd) {
   }
 }
 
-if (-not $hasWV2 -and -not $doWebView2) { $gaps.Add('Edge WebView2 Runtime (browser UI via data-rig rig still works without it)') }
+if (-not $hasWV2 -and -not $doWebView2) { $gaps.Add('Edge WebView2 Runtime (browser UI via data-occultist rig still works without it)') }
 if ($doShortcut -and $pyCmd -and -not $gaps.Count) { New-AppShortcut }
 
 # === summary =================================================================
 Write-Host ''
 if ($gaps.Count -eq 0) {
-  Ok 'done. Launch the app via the "data-rig" shortcut (if created), or:'
+  Ok 'done. Launch the app via the "data-occultist" shortcut (if created), or:'
   Write-Host '    .\.venv\Scripts\Activate.ps1'
-  Write-Host '    data-rig rig       # browser UI at http://127.0.0.1:8000'
-  Write-Host '    data-rig app       # server + native window (from a terminal)'
-  Write-Host '    data-rig view      # native window onto an already-running server'
+  Write-Host '    data-occultist rig    # browser UI at http://127.0.0.1:8000  (alias: occ rig)'
+  Write-Host '    data-occultist app    # server + native window (from a terminal)'
+  Write-Host '    data-occultist view   # native window onto an already-running server'
   exit 0
 } else {
   Warn 'setup finished with gaps:'

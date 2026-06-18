@@ -33,7 +33,7 @@ function build() {
   // Fixed product name — NOT document.title (that carries the internal package name,
   // e.g. "oc — node view", which must never surface in the UI).
   bar.innerHTML =
-    `<span class="tb-title">data-rig</span>` +
+    `<span class="tb-title">data-occultist</span>` +
     `<span class="tb-spacer"></span>` +
     `<button class="tb-btn" data-act="min" title="minimize" aria-label="minimize">${ICON.min}</button>` +
     `<button class="tb-btn" data-act="max" title="maximize" aria-label="maximize">${ICON.max}</button>` +

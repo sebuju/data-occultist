@@ -2,11 +2,11 @@
 then kill the server when the window closes.
 
 This is what the install.ps1 desktop shortcut runs (``pythonw -m oc.desktop_main``),
-and what ``data-rig app`` runs from a terminal — same code. The server lives on an
+and what ``data-occultist app`` runs from a terminal — same code. The server lives on an
 in-process daemon thread, so closing the window (which unblocks ``open_window``)
 lets us stop it cleanly; even an unclean exit can't leave it running.
 
-Contrast with ``data-rig view``, which only attaches to a server it did not start and
+Contrast with ``data-occultist view``, which only attaches to a server it did not start and
 so never stops one.
 """
 
@@ -29,7 +29,7 @@ def run_release() -> int:
         if sys.stderr is None:
             sys.stderr = devnull
 
-    # Absolute import so this works both as `data-rig app` (installed package) and as
+    # Absolute import so this works both as `data-occultist app` (installed package) and as
     # `pythonw -m oc.desktop_main` (the install.ps1 shortcut), regardless of __main__.
     from oc.web.desktop import free_port, open_window, serve_in_thread
 

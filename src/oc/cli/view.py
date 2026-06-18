@@ -1,8 +1,8 @@
-"""`data-rig view` — open the web UI in a native window onto a RUNNING server.
+"""`data-occultist view` — open the web UI in a native window onto a RUNNING server.
 
 This launcher starts no server and stops no server: it just points a desktop window
-at an existing ``data-rig rig`` (default ``http://127.0.0.1:8000``). Closing the window
-leaves that server running — only release mode (`data-rig app` / the shortcut) owns and
+at an existing ``data-occultist rig`` (default ``http://127.0.0.1:8000``). Closing the window
+leaves that server running — only release mode (`data-occultist app` / the shortcut) owns and
 kills its own server.
 """
 

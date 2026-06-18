@@ -1,7 +1,7 @@
 [project]
-name = "data-rig"
+name = "data-occultist"
 version = "0.1.0"
-description = "data-rig: collect structured data from games via screen capture + OCR"
+description = "data-occultist: collect structured data from games via screen capture + OCR"
 requires-python = ">=3.11"
 dependencies = [
     "mss>=9.0",
@@ -20,11 +20,12 @@ dependencies = [
 ]
 
 [project.scripts]
-data-rig = "oc.cli:main"
+data-occultist = "oc.cli:main"
+occ = "oc.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.4"]
-# Native desktop window for the teaching UI (oc view / oc app / the install.ps1 shortcut).
+# Native desktop window for the teaching UI (data-occultist view / app / the install.ps1 shortcut).
 # pywebview renders via the Edge WebView2 runtime on Windows (preinstalled on Win11).
 # The shortcut runs `pythonw -m oc.desktop_main` from this venv, so the GPU OCR stack
 # the installer put here is used directly — no giant standalone bundle.

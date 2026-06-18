@@ -1,4 +1,4 @@
-# data-rig
+# data-occultist
 
 Reads structured data off game screens via OCR. Captures the game window,
 identifies which panel is on screen, OCRs the regions you marked, and writes
@@ -56,7 +56,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Cpu   # force CPU 
 It checks for Python 3.11+ and the WebView2 runtime and offers to install anything
 missing via winget; creates `.venv` and installs the package; downloads the GPU
 OCR stack (onnxruntime-gpu + CUDA wheels) when an NVIDIA card is present; and drops
-a `data-rig` shortcut on the Desktop / Start menu. It skips anything already
+a `data-occultist` shortcut on the Desktop / Start menu. It skips anything already
 present and prints a summary of what's still missing.
 
 > `.ps1` files open in Notepad on double-click (Windows blocks run-on-click), so
@@ -99,7 +99,7 @@ The same UI can run in a native window instead of a browser tab, via
 [`pywebview`](https://pywebview.flowlib.org/), which renders through the Edge
 WebView2 runtime on Windows (no Electron, no bundled browser).
 
-- **`data-rig` shortcut** — the shortcut `install.ps1` puts on the Desktop / Start
+- **`data-occultist` shortcut** — the shortcut `install.ps1` puts on the Desktop / Start
   menu. Runs `pythonw -m oc.desktop_main` from the venv (no console window, custom
   icon), so it uses the venv's GPU OCR stack. Starts the server, opens the window,
   and stops the server on close.
@@ -115,7 +115,7 @@ The CLI launchers (`app`, `view`, `rig`) are in the [CLI reference](#cli-referen
 
 ## Tutorial: your first window
 
-This walks through configuring `data-rig` to read a game panel from scratch. We'll
+This walks through configuring `data-occultist` to read a game panel from scratch. We'll
 use Warframe's inventory, but the steps are identical for any game.
 
 ### 0. Start the game and the UI
@@ -135,13 +135,13 @@ with windows, regions, detectors, datasets, and subsets branching off it.
 - Add a game profile (name it, e.g. `warframe`) — this becomes
   `config/games/warframe.yaml`.
 - Add a **window** node. A window is one recognisable panel of the game.
-- Open the window's **image** node and click **recapture** — `data-rig` grabs the
+- Open the window's **image** node and click **recapture** — `data-occultist` grabs the
   live game window and shows its client area. Because the picture *is* the client
   area, any box you draw ÷ image size **is** the fraction coordinate stored.
 
-### 2. Draw a detector so `data-rig` recognises the panel
+### 2. Draw a detector so `data-occultist` recognises the panel
 
-`data-rig` must know it's actually looking at this panel before it reads anything.
+`data-occultist` must know it's actually looking at this panel before it reads anything.
 
 - Pick the **detect** tool and draw a box around a stable label that only appears
   on this screen — e.g. the `EQUIPMENT` / `INVENTORY` heading.
@@ -150,14 +150,14 @@ with windows, regions, detectors, datasets, and subsets branching off it.
 - A window matches only when **all** its enabled detectors match. The detector
   node shows a live ✓/✗ as you edit it; recapture to re-evaluate.
 
-> A window with no detectors never matches. This is what stops `data-rig` reading
+> A window with no detectors never matches. This is what stops `data-occultist` reading
 > the wrong screen.
 
 ### 3. Mark the data area and an item template
 
 - Draw a **data area** box to constrain OCR to the list region (stray UI text
   elsewhere is then never read).
-- Draw an **item** box around a single list cell. `data-rig` freezes that cutout and
+- Draw an **item** box around a single list cell. `data-occultist` freezes that cutout and
   spawns an *item template* node. Inside it you define, **relative to the cell**:
   - **fields** — the regions to OCR (e.g. `name`, `count`), each mapped to a
     field with a type (`text`, `number`, `pips`, `diamonds`) and extraction rule.
@@ -188,7 +188,7 @@ For each field you can set:
 - Hit **preview** to OCR the current layout against the captured image and see
   exactly what each field reads, with confidence.
 - When it looks right, **save** (the UI writes the profile YAML) and start the
-  collect loop from the UI. Scroll the in-game list while it runs — `data-rig`
+  collect loop from the UI. Scroll the in-game list while it runs — `data-occultist`
   stitches rows across scrolls, dedupes by key, and writes records once they
   stabilise. Inspect results under `data/warframe/` (see
   [Where data lives](#where-data-lives)) or on the dashboard at
@@ -213,16 +213,16 @@ The UI is the primary interface. These subcommands exist for scripting and the
 desktop launchers:
 
 ```text
-data-rig detect                                   list running known games
-data-rig rig [--host H] [--port N] [--reload]   launch the web UI (browser)
-data-rig view  [--host H] [--port N]              native window onto a RUNNING server
-data-rig app                                      release: server + native window, stop on close
-data-rig capture <game> [--out capture.png]       save one screenshot of the window
-data-rig collect <game> [--once] [--interval 1.0] run the capture -> OCR -> record loop
-data-rig price   <game> [--window equipment]      warframe.market enrichment
+data-occultist detect                                   list running known games
+data-occultist rig [--host H] [--port N] [--reload]   launch the web UI (browser)
+data-occultist view  [--host H] [--port N]              native window onto a RUNNING server
+data-occultist app                                      release: server + native window, stop on close
+data-occultist capture <game> [--out capture.png]       save one screenshot of the window
+data-occultist collect <game> [--once] [--interval 1.0] run the capture -> OCR -> record loop
+data-occultist price   <game> [--window equipment]      warframe.market enrichment
            [--source warframe_market] [--name-field name]
-data-rig prices  <game> [--dataset master]        sweep market price history into a store
-data-rig profiles                                 list game profiles
+data-occultist prices  <game> [--dataset master]        sweep market price history into a store
+data-occultist profiles                                 list game profiles
 ```
 
 ## How it works
@@ -362,7 +362,7 @@ config/
   games/*.yaml    per-game profiles (authored in the UI)
 data/             collected records, history, lexicon, enrichment output
 packaging/        app icon generator (make_icon.py)
-assets/oc.ico     app icon for the desktop shortcut
+assets/data-occultist.ico  app icon for the desktop shortcut
 #install.bat      double-click wrapper for scripts/install.ps1
 #serve.bat        double-click wrapper for scripts/serve.ps1 (supervisor)
 #app.bat          double-click wrapper for scripts/app.ps1 (native webview window)

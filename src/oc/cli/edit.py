@@ -1,4 +1,4 @@
-"""`data-rig rig` — launch the web UI (FastAPI via uvicorn)."""
+"""`data-occultist rig` — launch the web UI (FastAPI via uvicorn)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ def register(sub) -> None:
 def run(args) -> int:
     import uvicorn
 
-    print(f"data-rig UI -> http://{args.host}:{args.port}")
+    print(f"data-occultist UI -> http://{args.host}:{args.port}")
     # Shutdown is clean WITHOUT a graceful-shutdown timeout: the app's lifespan chains the
     # SIGINT/SIGTERM handlers to flip a shutdown flag that every long-lived SSE stream watches
     # (see oc.web.shutdown / oc.web.sse), so the streams self-close and uvicorn's connection

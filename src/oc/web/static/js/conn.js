@@ -1,6 +1,6 @@
 // conn.js — backend connection state + an offline overlay.
 //
-// Single source of truth for "can we reach the data-rig server". api.js's tfetch()
+// Single source of truth for "can we reach the data-occultist server". api.js's tfetch()
 // reports every request's outcome here: any completed response (even a 500) proves the
 // backend is reachable; a network-level failure or timeout means it's down. While
 // offline we:

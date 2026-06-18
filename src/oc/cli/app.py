@@ -1,4 +1,4 @@
-"""`data-rig app` — release mode: start the server + native window, kill the server on close.
+"""`data-occultist app` — release mode: start the server + native window, kill the server on close.
 
 Terminal-runnable twin of the install.ps1 desktop shortcut; both call the same
 ``desktop_main.run_release``. Closing the window stops the in-process server.

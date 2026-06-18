@@ -17,7 +17,7 @@ from . import view as view_cmd
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="data-rig", description="data-rig: on-screen game data reader")
+    parser = argparse.ArgumentParser(prog="data-occultist", description="data-occultist: on-screen game data reader")
     sub = parser.add_subparsers(dest="command", required=True)
 
     detect_cmd.register(sub)
