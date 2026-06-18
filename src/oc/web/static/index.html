@@ -64,12 +64,15 @@
     <div class="topbar-pretty-tools" id="prettyTools"></div>
   </header>
 
-  <!-- Selection toolbar: fixed under the topbar, shown only while >1 node is
-       multi-selected (marquee or shift-click). Acts on the live selection. -->
+  <!-- Selection toolbar: fixed under the topbar, shown whenever a node is selected
+       (single focus, marquee, or shift-click). Acts on the live selection. -->
   <div id="seltoolbar" class="seltoolbar" hidden>
     <span id="selCount" class="sel-count">0 selected</span>
-    <button id="selGroupBtn" title="group / ungroup the selection (hotkey: g)">⬚ group</button>
-    <button id="selClearBtn" title="clear selection">clear</button>
+    <button id="selGroupBtn" title="group / ungroup the selection (hotkey: g)"><span class="sel-ic">⬚</span><span class="sel-lbl">group</span></button>
+    <button id="selDetachBtn" title="detach the selection from its group" hidden><span class="sel-ic"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M5 7V4.5a3 3 0 0 1 5.9-.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3.2" y="7" width="9.6" height="6.5" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span><span class="sel-lbl">detach</span></button>
+    <button id="selDeleteBtn" class="sel-del" title="delete the selection" hidden><span class="sel-ic"><svg class="ic-trash" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/></svg></span><span class="sel-lbl">remove</span></button>
+    <span class="sel-sep"></span>
+    <button id="selClearBtn" class="sel-icon-only" title="clear selection" aria-label="clear selection">✕</button>
   </div>
 
   <main class="graphwrap">

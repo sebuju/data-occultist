@@ -52,6 +52,7 @@ import { statsWin, statsState, buildStats } from "./panels/stats.js";
 import {
   tb, tbState, buildToolbox,
   createWindowNode, createPriceNode, createTriggerNode, createDictionaryNode,
+  createDatasetNode, createSubsetNode,
 } from "./panels/toolbox.js";
 import { openContextMenu } from "../ctxmenu.js";
 import {
@@ -186,7 +187,9 @@ function hydrateLayout() {
   const L = model.profile.layout || {};
   for (const [id, n] of Object.entries(L.nodes || {})) {
     if (Number.isFinite(n.x) && Number.isFinite(n.y)) pos.set(id, { x: n.x, y: n.y });
-    if (Number.isFinite(n.w) && Number.isFinite(n.h)) nodeSizes.set(id, { w: n.w, h: n.h });
+    // >0, not just finite: a legacy 0,0 (from the old zero-box settle bug) means "no saved
+    // size" — storing it would block the real size from ever applying (0 is falsy downstream).
+    if (n.w > 0 && n.h > 0) nodeSizes.set(id, { w: n.w, h: n.h });
     if (n.collapsed) collapsed.add(id);
   }
   pendingOpenImages = [...(L.open_images || [])];
@@ -235,7 +238,7 @@ initPersist({
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", price: "price", dict: "dictionary" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", price: "price", trigger: "trigger", dict: "dictionary" };
 function nodeTypeOf(id) { return id === "game" ? "game" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
   world: () => $("ggroups"),
@@ -247,7 +250,7 @@ groups.initGroups({
   bonds: () => (model.profile.windows || []).map((w) => ({ leader: `win:${w.id}`, follower: `prev:${w.id}` })),
   moveMembers: (ids, ev) => { const lead = ids.find((id) => pos.get(id)); if (lead) moveNodes(lead, ids.filter((x) => x !== lead), ev); },
   persist: () => persist.layout(),
-  afterChange: () => { refreshDetachIcons(); syncMultiSelect(); },
+  afterChange: () => { syncMultiSelect(); },
   // double-click a group → frame its bounding box (reuses groupBoxes() geometry)
   zoomToGroup: (gid) => { const gb = groups.groupBoxes().find((b) => b.id === gid); if (gb) panZoomToRect(gb.box); },
   // drag the group's resize grip → scale its members, gaps intact
@@ -1344,7 +1347,7 @@ function nodeParts(n) {
     .concat([`<option value="__nodedup__"${noDedup ? " selected" : ""}>no dedup (keep every read)</option>`]).join("");
   return {
     title: `<input class="gi gi-id dsrename" value="${esc(ds)}" title="dataset name" />`,
-    body: `<div class="lab-grid"><label class="flab">1→many <select class="dskey" title="the key the dataset collapses many reads on (or none)">${keyOpts}</select></label></div>
+    body: `<div class="lab-grid">1 → many<select class="dskey" title="the key the dataset collapses many reads on (or none)">${keyOpts}</select></div>
       <div class="gn-foot"><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
       <div class="ds-tabs" role="tablist">
         <button class="ds-tab on" data-tab="data" role="tab">data <span class="ds-tab-n data-n"></span></button>
@@ -1355,7 +1358,7 @@ function nodeParts(n) {
         <ul class="history bat-list"><li class="muted">loading…</li></ul>
         <div class="bat-detail muted">select a batch to see its events and what applying it changes</div>
       </div>`,
-    ports: `<span class="port out" title="drag to a view to feed it this dataset"></span>`,
+    ports: `<span class="port out" title="drag to a subset to feed it this dataset"></span>`,
   };
 }
 
@@ -1371,7 +1374,7 @@ function fmtWhen(ts) {
 // HH:MM:SS from an ISO timestamp — drops fractional seconds AND the timezone suffix (+00:00).
 function clockTime(ts) { const m = /T(\d{2}:\d{2}:\d{2})/.exec(String(ts || "")); return m ? m[1] : ""; }
 
-// ---- view node: join one or more datasets, then filter/derive/sort ----------
+// ---- subset node: join one or more datasets, then filter/derive/sort ----------
 
 const SUB_OPS = ["contains", "icontains", "eq", "ne", "nonempty", "empty", "gt", "lt", "gte", "lte", "regex"];
 
@@ -1388,12 +1391,12 @@ function _colOpts(cols, sel) {
   return `<option value=""${sel ? "" : " selected"}>—</option>` + _optList(cols, sel);
 }
 
-// Last live column set a view's join actually returned (set by refreshSubsetNode). The static
+// Last live column set a subset's join actually returned (set by refreshSubsetNode). The static
 // schema (model.subsetColumns) only knows columns declared on windows — orders/enrich columns
 // and other dataset-fed fields aren't in it, so the config must also offer what the join shows.
 const subsetLiveCols = new Map();
 
-// Every column a view's config should list: static schema ∪ live result columns ∪ hidden
+// Every column a subset's config should list: static schema ∪ live result columns ∪ hidden
 // columns. Hidden columns are STRIPPED from the live result by the backend, so without the
 // last union they'd vanish from the toggle list and could never be turned back on.
 function viewColumns(s) {
@@ -1425,7 +1428,7 @@ function hideTogglesHTML(s) {
   return toggles || '<span class="muted sub-empty">no columns yet</span>';
 }
 
-// Repaint + re-wire a view's visible/hide toggle row in place (no node rebuild).
+// Repaint + re-wire a subset's visible/hide toggle row in place (no node rebuild).
 function renderHideToggles(el, s) {
   const hides = el && el.querySelector(".sv-hides");
   if (hides) { hides.innerHTML = hideTogglesHTML(s); wireHideToggles(el, s); }
@@ -1450,10 +1453,10 @@ function wireHideToggles(host, s) {
 function subConfigHTML(s) {
   const cols = viewColumns(s);
   const inputs = model.subsetInputs(s);
-  const free = model.joinableInputs(s);   // datasets + other views (cycle-free)
+  const free = model.joinableInputs(s);   // datasets + other subsets (cycle-free)
   // sources are removable pills; the "+ join source" select sits on the SAME row as them
   const chips = inputs.map((d) => `<span class="sv-input">${esc(d)}<button class="sv-rmin danger" data-ds="${esc(d)}" title="remove input">${TRASH}</button></span>`).join("");
-  const addOpts = `<option value="">+ join source…</option>` + free.map((d) => `<option>${esc(d)}</option>`).join("");
+  const addOpts = `<option value="">+ join source</option>` + free.map((d) => `<option>${esc(d)}</option>`).join("");
   // join-on is a COLUMN dropdown, populated from the joined sources' columns once a source is
   // added (so you pick a real shared field, not a free-typed guess). Current value kept even
   // if not in the live column set yet.
@@ -1486,9 +1489,9 @@ function subConfigHTML(s) {
       <button class="ss-del danger" data-i="${i}" title="remove sort">${TRASH}</button></div>`).join("");
   return `
     <div class="sub-sec lab-grid">
-      ${labCell("sources", "datasets or views, joined on a shared field", true)}<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="sv-addin">${addOpts}</select></span></div>
+      ${labCell("sources", "datasets or subsets, joined on a shared field", true)}<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="sv-addin">${addOpts}</select></span></div>
       ${joinRow}
-      ${labCell("latest only", "only pull rows from each source's most recent collection batch (applied before everything else)")}<label class="flab"><input type="checkbox" class="sv-latest" ${s.latest_batch ? "checked" : ""}/> latest batch</label>
+      ${labCell("latest batch only", "only pull rows from each source's most recent collection batch (applied before everything else)")}<label class="flab"><input type="checkbox" class="sv-latest" ${s.latest_batch ? "checked" : ""}/></label>
       ${labCell("limit", "cap the number of result rows (0 = no limit)")}<input type="number" class="sv-limit" min="0" step="1" value="${s.limit || 0}" placeholder="0" />
       ${aggRow}</div>
     <div class="sub-sec"><div class="sub-lbl">filters <span class="muted">(all must pass)</span></div>${filters}
@@ -1502,16 +1505,16 @@ function subConfigHTML(s) {
 }
 
 function subsetParts(s) {
-  const off = !!s.config_collapsed;   // persisted on the view def (rides the profile yaml)
+  const off = !!s.config_collapsed;   // persisted on the subset def (rides the profile yaml)
   return {
-    title: `<input class="gi gi-id subrename" value="${esc(s.id)}" title="view name" />`,
+    title: `<input class="gi gi-id subrename" value="${esc(s.id)}" title="subset name" />`,
     head: `<button class="sub-cfg-tog gn-cog${off ? "" : " on"}" title="config" aria-label="toggle config">
         <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
           <path fill="currentColor" d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/>
         </svg></button>`,
     body: `<div class="sub-cfg${off ? " collapsed" : ""}">${subConfigHTML(s)}</div>
       <div class="nodehost scrollhost sub-host"><p class="muted" style="padding:8px">loading…</p></div>`,
-    ports: `<span class="port out" title="drag to another view to feed it this view's rows"></span>`,
+    ports: `<span class="port out" title="drag to another subset to feed it this subset's rows"></span>`,
   };
 }
 
@@ -1531,7 +1534,7 @@ function repaintSubsetCols(el, s) {
   }
 }
 
-// Its compute can be slow — never run two at once for one view, but a request that arrives
+// Its compute can be slow — never run two at once for one subset, but a request that arrives
 // mid-compute must re-run once after (never dropped), so a view tracking a live sweep lands on
 // the FINAL data instead of stalling on a stale mid-sweep snapshot.
 function refreshSubsetNode(id) { singleFlight(`sub:${id}`, () => _refreshSubsetNode(id)); }
@@ -1564,7 +1567,7 @@ function refreshAllSubsetNodes() {
   for (const s of model.profile.subsets || []) if (nodeEls.has(`sub:${s.id}`)) refreshSubsetNode(s.id);
 }
 
-// Refresh every view that READS from `ds` (directly or through an upstream view). Batch edits
+// Refresh every subset that READS from `ds` (directly or through an upstream subset). Batch edits
 // (revert / remove) change a dataset's contents WITHOUT appending a history event, so its ledger
 // last_ts is unchanged and refreshLive's last_ts gate misses them — callers fixing a dataset's
 // data must refresh its consumers explicitly.
@@ -1574,7 +1577,7 @@ function refreshDatasetConsumers(ds) {
 }
 
 function wireSubset(div, s) {
-  // subset edits are view-only — they never change any window's image/regions/detect, so
+  // subset edits are subset-only — they never change any window's image/regions/detect, so
   // autosave(false): persist + refresh THIS view, never re-OCR the open windows.
   const recompute = () => { autosave(false); refreshSubsetNode(s.id); };
   const restructure = () => { autosave(false); rebuildNode(`sub:${s.id}`); };   // rebuild this node's config
@@ -1731,27 +1734,6 @@ async function purgeDatasetData(ds) {
   await refreshLive();   // re-reads the dataset list (the purged name is gone from disk)
 }
 
-// Two-click confirm on an icon button: 1st click arms it (icon -> "?"), 2nd confirms.
-// Esc or a click anywhere else cancels. Listeners are torn down on confirm/cancel so a
-// re-render (which rebuilds the button) doesn't leak them.
-function wireConfirmRemove(btn, onConfirm) {
-  let armed = false;
-  const reset = () => {
-    armed = false; btn.classList.remove("armed"); btn.title = "remove (click again to confirm)";
-    document.removeEventListener("mousedown", onOutside, true);
-    document.removeEventListener("keydown", onKey, true);
-  };
-  const onOutside = (e) => { if (!btn.contains(e.target)) reset(); };
-  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); reset(); } };
-  btn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (armed) { reset(); onConfirm(); return; }
-    armed = true; btn.classList.add("armed"); btn.title = "click again to confirm remove";
-    document.addEventListener("mousedown", onOutside, true);
-    document.addEventListener("keydown", onKey, true);
-  });
-}
-
 function fillNode(div, n, wire = true) {
   const isCollapsed = collapsed.has(n.id);
   const canToggle = CAN_DISABLE.has(n.type);
@@ -1770,23 +1752,10 @@ function fillNode(div, n, wire = true) {
           <circle class="gt-thumb" cx="8" cy="8" r="5" />
         </svg></button>`
     : "";
-  const del = REMOVABLE.has(n.type) ? `<button class="gn-del" title="remove (click again to confirm)" aria-label="remove">
-      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-        <path d="M3 4.5h10M6.4 4V2.8a.8.8 0 0 1 .8-.8h1.6a.8.8 0 0 1 .8.8V4M4.8 4.5l.5 8a1 1 0 0 0 1 .95h3.4a1 1 0 0 0 1-.95l.5-8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-      </svg></button>` : "";
-  // unlock icon: detach this node from its group. Always present; shown only while the
-  // node is in a group (.in-group on the node, set by refreshDetachIcons).
-  const detach = `<button class="gn-detach" title="detach from group" aria-label="detach from group">
-      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-        <path d="M5 7V4.5a3 3 0 0 1 5.9-.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-        <rect x="3.2" y="7" width="9.6" height="6.5" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5" />
-      </svg></button>`;
-  // detach sits left of config (parts.head/cog) if present; else right of enable (toggle);
-  // else left of remove (del). Last two collapse: empty toggle => detach lands left of del.
+  // delete + detach moved to the selection toolbar (act on the selection); nodes carry
+  // neither button anymore — select a node (or several) and use the toolbar.
   const head = parts.head || "";
-  const ctrls = head
-    ? `${parts.title}${detach}${head}${toggle}${del}`
-    : `${parts.title}${toggle}${detach}${del}`;
+  const ctrls = `${parts.title}${head}${toggle}`;
   div.innerHTML = `<div class="gn-h ${parts.pulse || ""}">
       <span class="gn-disc" title="collapse/expand">${nodeIcon(n)}<button class="collapse" aria-label="collapse/expand">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
@@ -1795,11 +1764,6 @@ function fillNode(div, n, wire = true) {
     <div class="gn-body">${parts.body}</div>
     <span class="gn-spin" title="working…"></span>${parts.ports || ""}`;
   div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
-  div.querySelector(".gn-detach").addEventListener("click", (e) => { e.stopPropagation(); groups.detachNode(n.id); });
-  // a preview is bonded to its window — it has no detach button (it leaves only when the window does)
-  div.classList.toggle("in-group", n.type !== "preview" && !!groups.groupOf(n.id));
-  const delBtn = div.querySelector(".gn-del");
-  if (delBtn) wireConfirmRemove(delBtn, () => removeNode(n));
   const tog = div.querySelector(".gn-enable");
   tog?.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1822,7 +1786,7 @@ function fillNode(div, n, wire = true) {
 // each type contributes a `spec` describing what kind of node it drops onto (`target`),
 // what committing the drop does (`onDrop(targetId)`), and what an empty-canvas drop mints
 // (`onEmpty(worldPt) -> newNodeId`). Producers (window/price) feed a DATASET; datasets and
-// views feed a VIEW (subset). `selfId` blocks dropping a node onto itself.
+// subsets feed a SUBSET. `selfId` blocks dropping a node onto itself.
 function outPortSpec(n) {
   switch (n.type) {
     case "window": return {
@@ -1836,7 +1800,7 @@ function outPortSpec(n) {
       onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setPriceDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
     };
     case "dataset": return {
-      // a dataset feeds a VIEW (join) or a PRICE node (price only these items)
+      // a dataset feeds a SUBSET (join) or a PRICE node (price only these items)
       target: ["subset", "price"],
       onDrop: (id, ttype) => {
         if (ttype === "price") { if (model.addPriceSource(id, n.ref)) rebuildNode(`price:${id}`); }
@@ -1845,7 +1809,7 @@ function outPortSpec(n) {
       onEmpty: (pt) => { const id = model.addSubset(n.ref); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
     };
     case "subset": return {
-      // a view feeds another VIEW or a PRICE node (price only the rows it returns, e.g. count>0)
+      // a subset feeds another SUBSET or a PRICE node (price only the rows it returns, e.g. count>0)
       target: ["subset", "price"],
       selfId: n.ref.id,
       onDrop: (id, ttype) => {
@@ -2033,7 +1997,6 @@ function render() {
   applyView();
   openMissingItemCanvases();
   groups.renderGroups();
-  refreshDetachIcons();
   syncMultiSelect();
   renderNodeViews();
 }
@@ -2094,6 +2057,8 @@ function deselectAll() {
   activeOverlayKey = null;
   clearMultiSelect();
   groups.clearGroupSelection();   // also drop any ctrl-selected groups
+  syncMultiSelect();   // recompute toolbar visibility — clearMultiSelect skips it when the
+                       // set was already empty (single-focus deselect), leaving the bar stuck
   drawEdges();
   nmSyncSelection();
 }
@@ -2111,10 +2076,20 @@ function syncMultiSelect() {
   for (const [id, el] of nodeEls) el.classList.toggle("multisel", selected.has(id));
   const bar = $("seltoolbar"), cnt = $("selCount"), gbtn = $("selGroupBtn");
   const ng = groups.selectedGroupIds().length;   // ctrl-selected GROUPS (for super-grouping)
-  if (bar) bar.hidden = !(selected.size >= 2 || ng >= 1);
-  if (cnt) cnt.textContent = ng >= 1 ? `${ng} group${ng === 1 ? "" : "s"} selected` : `${selected.size} selected`;
+  const ids = selectionIds();                    // selected nodes (single focus OR multi-select set)
+  const nsel = ids.length;
+  if (bar) bar.hidden = !(nsel >= 1 || ng >= 1);
+  if (cnt) cnt.textContent = ng >= 1 ? `${ng} group${ng === 1 ? "" : "s"} selected` : `${nsel} selected`;
   // the button label mirrors what `g` would actually DO to this selection (group vs ungroup)
-  if (gbtn) { const s = groupBtnState(); gbtn.textContent = s.label; gbtn.title = s.title; }
+  if (gbtn) { const s = groupBtnState(); const gl = gbtn.querySelector(".sel-lbl"); if (gl) gl.textContent = s.label; else gbtn.textContent = s.label; gbtn.title = s.title; }
+  // detach shows only when something in the selection is grouped; delete only when something
+  // is removable — both act on the whole selection (their per-node buttons are gone).
+  const det = $("selDetachBtn"), del = $("selDeleteBtn");
+  if (det) det.hidden = !ids.some((id) => groups.groupOf(id));
+  if (del) {
+    del.hidden = !ids.some((id) => REMOVABLE.has(nodeTypeOf(id)));
+    if (del.dataset.armed === "1") { del.dataset.armed = "0"; const dl = del.querySelector(".sel-lbl"); if (dl) dl.textContent = del.dataset.label || dl.textContent; }
+  }
 }
 
 // Predict the group action's label/title so the toolbar button shows group vs ungroup up
@@ -2130,21 +2105,16 @@ function groupBtnState() {
       ungroup = sset.size === 1 && !loose;   // all in ONE super, none loose -> dissolve
     }
     return ungroup
-      ? { label: "⬚ ungroup", title: "dissolve the super group (hotkey: g)" }
-      : { label: "⬚ super-group", title: "super-group the selected groups (hotkey: g)" };
+      ? { label: "ungroup", title: "dissolve the super group (hotkey: g)" }
+      : { label: "super-group", title: "super-group the selected groups (hotkey: g)" };
   }
   const ids = selectionIds();
   const gset = new Set(ids.map((id) => groups.groupOf(id)).filter(Boolean));   // distinct groups in selection
   const ungrouped = ids.some((id) => !groups.groupOf(id));
-  const ungroup = ids.length >= 2 && gset.size === 1 && !ungrouped;   // all share ONE group, none loose -> ungroup
+  const ungroup = ids.length >= 1 && gset.size === 1 && !ungrouped;   // share ONE group, none loose -> ungroup/detach
   return ungroup
-    ? { label: "⬚ ungroup", title: "ungroup the selection (hotkey: g)" }
-    : { label: "⬚ group", title: "group the selection (hotkey: g)" };
-}
-
-// Show the unlock icon only on nodes that currently belong to a group.
-function refreshDetachIcons() {
-  for (const [id, el] of nodeEls) el.classList.toggle("in-group", nodeTypeOf(id) !== "preview" && !!groups.groupOf(id));
+    ? { label: "ungroup", title: "ungroup the selection (hotkey: g)" }
+    : { label: "group", title: "group the selection (hotkey: g)" };
 }
 
 let suppressNextMenu = false;   // set when a right-drag pan actually moved
@@ -2425,6 +2395,7 @@ function focusNode(id) {
   clearNodeSelections(id);   // drop any other node's inner selection
   for (const [nid, el] of nodeEls) el.classList.toggle("selected", nid === id);
   drawEdges();
+  syncMultiSelect();   // a single focused node also shows the selection toolbar (count + group/clear)
   nmSyncSelection();   // mirror the selection in the node map
 }
 
@@ -2466,6 +2437,13 @@ function snapResize(el, opts = {}) {
   }).observe(el);
   const finish = () => {
     if (!dirty) return;
+    // The window-mouseup listener outlives the node: loadGame wipes #gnodes (detaching every
+    // element) but these closures stay bound to `window`, and a hidden graph (pretty view) keeps
+    // them attached at zero size. A detached/hidden node reports offsetWidth/Height 0 — persisting
+    // that would store {w:0,h:0}, which hydrate keeps (0 is finite) but makeNodeResizable can't
+    // re-apply (0 is falsy), so every node loads at default size. Never settle a zero-box node.
+    if (!el.isConnected) { window.removeEventListener("mouseup", finish); return; }   // torn-down node: drop the leaked listener
+    if (!el.offsetWidth || !el.offsetHeight) { dirty = false; return; }                // hidden (e.g. pretty view): don't settle a zero box
     dirty = false; _resizing = false;
     if (_resizeRaf) { cancelAnimationFrame(_resizeRaf); _resizeRaf = null; }
     liveSnap();
@@ -2638,7 +2616,7 @@ async function refreshLive() {
     for (const ds in map) {
       if (prevLastTs[ds] === undefined || prevLastTs[ds] === map[ds].last_ts) continue;
       if (nodeEls.has(`ds:${ds}`)) refreshDatasetNode(ds);   // one fetch -> data tab + batches tab
-      // refresh every view that reads this dataset — directly OR through an upstream view
+      // refresh every subset that reads this dataset — directly OR through an upstream subset
       for (const s of model.profile.subsets || [])
         if (nodeEls.has(`sub:${s.id}`) && model.subsetReaches(s.id, ds)) refreshSubsetNode(s.id);
     }
@@ -2863,9 +2841,15 @@ function refreshDirtyUI() {
 // Armed two-click confirm (no blocking dialogs — rule 2), shared by both buttons.
 function armConfirm(btn, run) {
   if (!btn) return;
+  // Buttons with an icon keep it in a `.sel-ic` span; only the `.sel-lbl` text arms/disarms so
+  // the icon survives (a whole-button textContent swap would wipe the SVG). Plain buttons fall
+  // back to button textContent.
+  const lbl = btn.querySelector(".sel-lbl");
+  const get = () => (lbl ? lbl.textContent : btn.textContent);
+  const set = (t) => { if (lbl) lbl.textContent = t; else btn.textContent = t; };
   btn.addEventListener("click", () => {
-    if (btn.dataset.armed !== "1") { btn.dataset.armed = "1"; btn.dataset.label = btn.textContent; btn.textContent = "confirm"; setTimeout(() => { if (btn.dataset.armed === "1") { btn.dataset.armed = "0"; btn.textContent = btn.dataset.label; } }, 2500); return; }
-    btn.dataset.armed = "0"; btn.textContent = btn.dataset.label || btn.textContent; run();
+    if (btn.dataset.armed !== "1") { btn.dataset.armed = "1"; btn.dataset.label = get(); set("confirm"); setTimeout(() => { if (btn.dataset.armed === "1") { btn.dataset.armed = "0"; set(btn.dataset.label); } }, 2500); return; }
+    btn.dataset.armed = "0"; set(btn.dataset.label || get()); run();
   });
 }
 armConfirm($("prettyRevertBtn"), () => prettyOverrides.revertAll());
@@ -2879,6 +2863,25 @@ prettyOverrides.setOverrideHooks({
 setScrubHook(prettyOverrides.scrubForSave);
 
 $("selGroupBtn").addEventListener("click", () => groupShortcut());
+
+// Detach every selected node that's in a group. Mirrors the per-node unlock icon that
+// used to live on each node — now one toolbar action over the whole selection.
+$("selDetachBtn").addEventListener("click", () => {
+  const ids = selectionIds().filter((id) => groups.groupOf(id));
+  if (!ids.length) return;
+  groups.detachNodes(ids);
+  setStatus(`detached ${ids.length} node${ids.length === 1 ? "" : "s"}`);
+});
+
+// Delete every removable node in the selection (armed two-click — rule 2). Each goes through
+// removeNode() so undo/redo records it, same path the old per-node trash button used.
+armConfirm($("selDeleteBtn"), () => {
+  const byId = new Map(model.nodes().map((n) => [n.id, n]));
+  const targets = selectionIds().map((id) => byId.get(id)).filter((n) => n && REMOVABLE.has(n.type));
+  if (!targets.length) return;
+  for (const n of targets) removeNode(n);   // each renders + autosaves; undo records each
+  deselectAll();
+});
 
 // The current selection the group action operates on: the multi-select set if any,
 // else the single focused node.
@@ -3074,15 +3077,21 @@ window.addEventListener("contextmenu", (ev) => {
   ev.preventDefault();
   const box = $("graph").getBoundingClientRect();
   const at = { x: (ev.clientX - box.left - view.panX) / view.zoom, y: (ev.clientY - box.top - view.panY) / view.zoom };
-  const gid = groups.groupAt(at.x, at.y);   // opened over a group's box -> new node joins it
+  // A menu-created node spawns UNGROUPED. The menu can only open over empty canvas (the early
+  // return above skips .gnode/.ggroup, and group boxes are pointer-events:none), so a click never
+  // lands on a group MEMBER — the only geometric hit was a group's invisible bbox GAP, which
+  // silently absorbed the new node into a group the user didn't aim at. Drag a node into a group
+  // to add it (groups.absorb on drop); creation no longer joins by geometry.
   const ready = () => { if (model.profile.name) return true; setStatus("load a game first"); return false; };
   // icons + tints come from the ONE shared source (node_icons / graph.css --ntint) so a menu row
   // reads in the same glyph + colour as the node it mints (rule 7).
   openContextMenu(ev.clientX, ev.clientY, [
-    { icon: iconFor("window"),     title: "window",      tint: "var(--accent)",       onClick: () => ready() && createWindowNode(at, gid) },
-    { icon: iconFor("price"),      title: "price node",  tint: "var(--warn)",         onClick: () => ready() && createPriceNode(at, gid) },
-    { icon: iconFor("trigger"),    title: "trigger",     tint: "var(--trigger-line)", onClick: () => ready() && createTriggerNode(at, gid) },
-    { icon: iconFor("dictionary"), title: "dictionary",  tint: "var(--purple)",       onClick: () => ready() && createDictionaryNode(at, gid) },
+    { icon: iconFor("window"),     title: "window",      tint: "var(--accent)",       onClick: () => ready() && createWindowNode(at) },
+    { icon: iconFor("dataset"),    title: "dataset",     tint: "var(--ok)",           onClick: () => ready() && createDatasetNode(at) },
+    { icon: iconFor("subset"),     title: "subset",      tint: "var(--purple)",       onClick: () => ready() && createSubsetNode(at) },
+    { icon: iconFor("price"),      title: "price node",  tint: "var(--warn)",         onClick: () => ready() && createPriceNode(at) },
+    { icon: iconFor("trigger"),    title: "trigger",     tint: "var(--trigger-line)", onClick: () => ready() && createTriggerNode(at) },
+    { icon: iconFor("dictionary"), title: "dictionary",  tint: "var(--purple)",       onClick: () => ready() && createDictionaryNode(at) },
   ]);
 }, true);
 $("graph").addEventListener("wheel", onWheel, { passive: false });
@@ -3175,7 +3184,7 @@ async function initKillGpu() {
   });
   hub.subscribe((s) => syncKillGpu(s.ocr));
   // Live node refresh is PUSH and TARGETED: the bus names exactly which dataset changed, so we
-  // refetch THAT dataset's node (data + batches) and every view reading it DIRECTLY — never gated
+  // refetch THAT dataset's node (data + batches) and every subset reading it DIRECTLY — never gated
   // on refreshLive's /api/flow last_ts diff, which can stick (a stale last_ts) and strand the data
   // tab on old rows while the batches tab — fetched unconditionally — stays correct. A write from
   // ANY path (on_change sweep, live collection, manual edit) thus lands in the tables at once.
