@@ -38,6 +38,13 @@ export function buildPrettyTools(host, ctx, panels) {
     toggleBtns.set(panel, b);
   }
 
+  // cue-scope toggle: flip the edit-mode visual cue layer between every widget and the selection.
+  const cueTog = el("button", "pw-paneltog pw-cuetog");
+  cueTog.title = "visual cues: all widgets / selected only / none";
+  const NEXT_CUE = { all: "selected", selected: "none", none: "all" };
+  cueTog.addEventListener("click", () => { ctx.setCueScope(NEXT_CUE[ctx.cueScope] || "all"); refresh(); });
+  editTools.appendChild(cueTog);
+
   host.append(mode, pageSel, addPage, spacer, editTools);
 
   function refresh() {
@@ -50,6 +57,8 @@ export function buildPrettyTools(host, ctx, panels) {
     for (const p of pages) { const o = el("option", null, p.title); o.value = p.id; pageSel.appendChild(o); }
     pageSel.value = ctx.currentPageId();
     for (const [panel, b] of toggleBtns) b.classList.toggle("active", panel.win.state.visible);
+    cueTog.textContent = `cues: ${ctx.cueScope}`;
+    cueTog.classList.toggle("active", ctx.cueScope !== "none");
   }
   refresh();
   return { refresh };

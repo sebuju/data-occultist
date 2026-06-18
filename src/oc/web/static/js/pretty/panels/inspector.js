@@ -47,12 +47,16 @@ export function buildInspector(ctx) {
     for (const k of GEOM_FIELDS) {
       const cell = el("div", "pw-geom-cell");
       cell.appendChild(el("span", "pw-geom-lab", k));
-      const inp = el("input", "pw-geom-val"); inp.type = "number"; inp.value = gm[k];
-      inp.addEventListener("change", () => ctx.applyGeom(w.id, { [k]: Number(inp.value) }));
+      // "calc" makes the value a raw CSS calc body, so the input is free text instead of a number.
+      const isCalc = ((gm.units && gm.units[k]) || "px") === "calc";
+      const inp = el("input", "pw-geom-val"); inp.type = isCalc ? "text" : "number"; inp.value = gm[k];
+      if (isCalc) inp.placeholder = "100% - 20px";
+      inp.addEventListener("change", () => ctx.applyGeom(w.id, { [k]: isCalc ? inp.value : Number(inp.value) }));
       const us = el("select", "pw-geom-unit");
       for (const u of POS_UNITS) { const o = el("option", null, u); o.value = u; us.appendChild(o); }
       us.value = (gm.units && gm.units[k]) || "px";
-      us.addEventListener("change", () => { ctx.setUnit(w.id, k, us.value); syncGeom(w.id); });
+      // re-render (not just sync) on unit change so the input switches between number and calc text.
+      us.addEventListener("change", () => { ctx.setUnit(w.id, k, us.value); render(); });
       // a matched dimension is driven by another widget — its own value/unit no longer apply.
       if ((k === "w" && w.matchW) || (k === "h" && w.matchH)) { inp.disabled = true; us.disabled = true; cell.title = "size matched to another widget"; }
       cell.append(inp, us);
@@ -252,13 +256,30 @@ export function buildInspector(ctx) {
     // Both default to the other so existing single-point anchors keep working.
     const set = (patch) => { ctx.setAnchor(w.id, { to: a.to || "", corner: a.corner || "tl", target: a.target || a.corner || "tl", ...patch }); render(); };
     g.appendChild(row("anchor to", sel(a.to || "", toOpts, (v) => set({ to: v }))));
-    g.appendChild(row("this", cornerGrid(a.corner || "tl", (v) => set({ corner: v }))));
-    g.appendChild(row("target", cornerGrid(a.target || a.corner || "tl", (v) => set({ target: v }))));
+    // labels carry the same glyph the canvas draws at each endpoint: target = circle, this = square.
+    const markedRow = (mark, text, control) => {
+      const lab = el("span", "pw-insp-lab");
+      lab.append(el("span", `pw-anchor-mark ${mark}`), document.createTextNode(text));
+      const r = el("div", "pw-insp-row"); r.append(lab, control); return r;
+    };
+    g.appendChild(markedRow("this", "this", cornerGrid(a.corner || "tl", (v) => set({ corner: v }))));
+    g.appendChild(markedRow("target", "target", cornerGrid(a.target || a.corner || "tl", (v) => set({ target: v }))));
     // match this widget's width / height to another widget's resolved size ("—" = own size).
     const matchOpts = [{ value: "", label: "—" }, ...others.map((x) => ({ value: x.id, label: widgetName(x) }))];
     const setMatch = (key, v) => { ctx.setMatch(w.id, key, v); render(); };   // re-render so the size field's disabled state follows
-    g.appendChild(row("match w", sel(w.matchW || "", matchOpts, (v) => setMatch("matchW", v))));
-    g.appendChild(row("match h", sel(w.matchH || "", matchOpts, (v) => setMatch("matchH", v))));
+    // a row with the match-source select plus a percent of that (matched/own) size: 100 = as is.
+    const matchRow = (label, key, pctKey) => {
+      const r = el("div", "pw-insp-row pw-match-row");
+      r.appendChild(el("span", "pw-insp-lab", label));
+      r.appendChild(sel(w[key] || "", matchOpts, (v) => setMatch(key, v)));
+      const p = el("input", "pw-match-pct"); p.type = "number"; p.min = "0"; p.step = "1"; p.title = "percent of the size";
+      p.value = String(w[pctKey] ?? 100);
+      p.addEventListener("change", () => { ctx.setMatchPct(w.id, pctKey, Number(p.value)); });
+      r.append(p, el("span", "pw-match-pct-unit", "%"));
+      return r;
+    };
+    g.appendChild(matchRow("match w", "matchW", "matchWPct"));
+    g.appendChild(matchRow("match h", "matchH", "matchHPct"));
     return g;
   }
 

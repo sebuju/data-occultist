@@ -43,21 +43,41 @@ body.pretty-view .logbar:hover { transform: translateY(0); }
 .pw { position: absolute; box-sizing: border-box; color: #d8dde6; font-size: 14px; overflow: hidden; }
 .pw-content { width: 100%; height: 100%; overflow: auto; }
 .pw-surface.edit .pw { outline: 1px dashed rgba(255,255,255,0.12); }
+/* selection isn't a separate outline — the element's own dashed outline just goes bright white */
+.pw-surface.edit .pw.pw-sel { outline-color: #fff; }
 .pw-surface.edit .pw-content { pointer-events: none; }   /* edit: clicks move/select the frame */
 .pw-edit { cursor: grab; }
-.pw-sel { outline: 2px solid #4ea1ff !important; }
 /* rubber-band multi-select rectangle drawn over the empty canvas */
 .pw-marquee { position: absolute; z-index: 9000; pointer-events: none; border: 1px solid #4ea1ff; background: rgba(78,161,255,0.12); }
 /* anchor cue: the selected widget's anchor target (when not the canvas) + a line to it */
 .pw-anchor-cue { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 8000; overflow: visible; }
+/* amber = anchor (the offset pin). cyan = width. magenta = height. lighter shade = a widget's own
+   dimension; deeper shade + dashed tie = a width/height MATCH to another widget. */
 .pw-cue-line { stroke: #ffb454; stroke-width: 1; stroke-dasharray: 4 3; }
 .pw-cue-dot, .pw-cue-end { fill: #ffb454; }
 .pw-cue-lbl-bg { fill: #ffb454; }
 .pw-cue-lbl-tx { fill: #1a1206; font: 600 11px ui-monospace, monospace; }
+/* own dimensions of the selected widget */
+.pw-cue-dw { stroke: #5ad1e6; stroke-width: 1; }
+.pw-cue-dh { stroke: #e69ad1; stroke-width: 1; }
+.pw-cue-dw-lbl .pw-cue-lbl-bg { fill: #5ad1e6; }
+.pw-cue-dh-lbl .pw-cue-lbl-bg { fill: #e69ad1; }
+/* width / height match ties */
+.pw-cue-mw { stroke: #1f9fb5; stroke-width: 1.5; }
+.pw-cue-mh { stroke: #b54fc7; stroke-width: 1.5; }
+.pw-cue-mlink-w { stroke: #1f9fb5; stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.85; }
+.pw-cue-mlink-h { stroke: #b54fc7; stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.85; }
+.pw-cue-mw-lbl .pw-cue-lbl-bg { fill: #1f9fb5; }
+.pw-cue-mh-lbl .pw-cue-lbl-bg { fill: #b54fc7; }
+
+/* anchor endpoint glyphs in the inspector — match the canvas marks: target = circle, this = square */
+.pw-anchor-mark { display: inline-block; width: 9px; height: 9px; background: #ffb454; vertical-align: middle; margin-right: 5px; }
+.pw-anchor-mark.target { border-radius: 50%; }
+.pw-anchor-mark.this { border-radius: 1px; }
 
 /* compact 3x3 anchor-point picker (inspector) */
 .pw-corner-grid { display: grid; grid-template-columns: repeat(3, 14px); grid-template-rows: repeat(3, 14px); gap: 2px; }
-.pw-corner-cell { width: 14px; height: 14px; padding: 0; border: 1px solid var(--line); background: #22252c; border-radius: 2px; cursor: pointer; }
+.pw-corner-cell { width: 14px; height: 14px; padding: 0; border: 1px solid var(--line); background: #22252c; border-radius: 2px; cursor: pointer; min-height: unset !important; }
 .pw-corner-cell:hover { border-color: #ffb454; }
 .pw-corner-cell.on { background: #ffb454; border-color: #ffb454; }
 .pw-cond-hidden { opacity: 0.35; }
@@ -209,8 +229,13 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-geom-lab { flex: 0 0 auto; width: 1.2ch; text-transform: uppercase; font-size: 11px; opacity: 0.6; }
 .pw-geom-val { flex: 1 1 0; min-width: 0; width: auto; padding-left: 5px; padding-right: 2px; }
 .pw-geom-unit { flex: 0 0 auto; width: auto; padding-left: 4px; padding-right: 2px; }
-.pw-insp-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; min-height: 26px; }
-.pw-insp-lab { flex: 0 0 84px; font-size: 12px; opacity: 0.8; }
+/* labels top-align in a tall row, but a one-row-height label (min-height = the row's 26px)
+   centres its own text, so single-line rows still read as middle-aligned. */
+.pw-insp-row { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 4px; min-height: 26px; }
+.pw-insp-lab { flex: 0 0 84px; font-size: 12px; opacity: 0.8; min-height: 26px; display: flex; align-items: center; }
+/* match row: source select flex-grows, percent stays a narrow fixed field. */
+.pw-match-pct { flex: 0 0 64px !important; }
+.pw-match-pct-unit { flex: 0 0 auto; font-size: 12px; opacity: 0.6; }
 .pw-insp-row input, .pw-insp-row select, .pw-insp-row textarea { flex: 1; min-width: 0; }
 .pw-insp-row textarea { min-height: 40px; resize: vertical; }
 .pw-insp-hint { font-size: 11px; opacity: 0.5; margin-top: 2px; }

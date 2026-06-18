@@ -24,10 +24,13 @@ import { model } from "../graph/state.js";
 const pretty = new PrettyModel();
 let surface = null, toolsEl = null, panels = null, tools = null, canvasCtrl = null;
 let game = null, mode = "edit", pageId = null, selectedId = null, mounted = false;
+let cueScope = "all";   // edit-mode cue layer: "all" widgets, "selected" only, or "none"
 const selection = new Set();   // every selected widget id; selectedId is the primary (inspector) one
 
 const ctx = {
   get mode() { return mode; },
+  get cueScope() { return cueScope; },
+  setCueScope: (s) => { cueScope = ["all", "selected", "none"].includes(s) ? s : "all"; if (canvasCtrl) canvasCtrl.showAnchorCue(); },
   get game() { return game; },
   model, pretty, data, overrides, constraints,
   currentPageId: () => pageId,
@@ -44,6 +47,7 @@ const ctx = {
   applyGeom: (id, patch) => { if (canvasCtrl) canvasCtrl.setGeom(id, patch); pretty.save(); },
   setUnit: (id, k, unit) => { if (canvasCtrl) canvasCtrl.setUnit(id, k, unit); pretty.save(); },
   setMatch: (id, key, to) => { if (canvasCtrl) canvasCtrl.setMatch(id, key, to); pretty.save(); },
+  setMatchPct: (id, key, pct) => { if (canvasCtrl) canvasCtrl.setMatchPct(id, key, pct); pretty.save(); },
   geomChanged: (id) => { if (id === selectedId && panels) panels.inspector.syncGeom(id); },
   addWidget: (type) => addWidget(type),
   removeWidget: (id) => removeWidget(id),
@@ -121,6 +125,7 @@ export async function setPrettyGame(g) {
 let _hiddenPretty = [];
 export function activatePretty() {
   data.startData();
+  document.body.classList.toggle("pretty-view", mode === "view");   // restore chrome-hiding for the current mode
   for (const name of _hiddenPretty) panels[name] && panels[name].win.setVisible(true);
   _hiddenPretty = [];
   if (canvasCtrl) canvasCtrl.updateAll();
@@ -128,6 +133,8 @@ export function activatePretty() {
 }
 export function deactivatePretty() {
   data.stopData();
+  // leaving pretty: drop view-mode chrome hiding so node view never inherits hidden topbar/logbar.
+  document.body.classList.remove("pretty-view");
   _hiddenPretty = [];
   if (panels) for (const [name, p] of Object.entries(panels)) if (p.win.state.visible) { _hiddenPretty.push(name); p.win.setVisible(false); }
   if (tools) tools.refresh();
