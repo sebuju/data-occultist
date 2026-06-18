@@ -41,13 +41,27 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 button.reading::after { content: ""; display: inline-block; width: 9px; height: 9px; margin-left: 6px;
     vertical-align: -1px; border: 2px solid currentColor; border-top-color: transparent;
     border-radius: 50%; animation: spin 0.7s linear infinite; }
-/* first-load screen loader (boot veil): a thick green ring with an orange dot riding the
-   inside edge clockwise. 36dvh — owns the full-screen loading view but stays modest. */
-.loader-orbit { position: relative; height: 36dvh; aspect-ratio: 1; max-width: 90vw;
-    border-radius: 50%; border: 18px solid var(--ok); }
-.loader-orbit .arm { position: absolute; inset: 0; animation: spin 5s linear infinite; }   /* clockwise */
-.loader-orbit .dot { position: absolute; top: 1.5%; left: 50%; width: 9%; height: 9%; margin-left: -4.5%;
-    border-radius: 50%; background: var(--data); }
+/* first-load screen loader (boot veil): a bubbling cauldron (same mark as the favicon).
+   30dvh — owns the full-screen loading view but stays modest. Pure CSS animation. */
+.cauldron-loader { height: 30dvh; max-width: 90vw; aspect-ratio: 1; overflow: visible; }
+.cauldron-loader .cl-pot  { fill: #0a3d62; }
+.cauldron-loader .cl-rim  { fill: #38ada9; animation: cl-boil 1.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.cauldron-loader .cl-legs { stroke: #0a3d62; stroke-width: 3; stroke-linecap: round; fill: none; }
+.cauldron-loader .cl-bubble {
+    fill: #f7d794;
+    transform-box: fill-box; transform-origin: center;
+    animation: cl-rise 2.2s ease-in infinite;
+    animation-delay: var(--d, 0s);
+}
+/* bubbles surface at the rim, swell, rise out of the pot, and pop */
+@keyframes cl-rise {
+    0%   { transform: translateY(3px) scale(.4);  opacity: 0; }
+    18%  { opacity: 1; }
+    78%  { opacity: .9; }
+    100% { transform: translateY(-26px) scale(1.15); opacity: 0; }
+}
+/* liquid surface gently breathes so the pot reads as "boiling" even between bubbles */
+@keyframes cl-boil { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(1.06); } }
 button.primary, button.active { background: var(--accent); color: var(--on-accent); }
 button.danger { background: var(--danger); color: var(--on-danger); }
 /* the one delete/remove glyph (dom.js TRASH). Sized to the button's font, inherits its
