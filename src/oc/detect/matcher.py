@@ -102,6 +102,59 @@ def text_match_score(
     return fuzz.partial_ratio(a, b) / 100.0
 
 
+def match_detail(
+    want: str,
+    got: str,
+    *,
+    mode: str = "partial",
+    included: bool = False,
+    case_sensitive: bool = False,
+    min_chars: int = 0,
+    strip: str = "alnum",
+) -> dict:
+    """Editor-only companion to :func:`text_match_score`: returns what the read looked
+    like through the matcher's eyes so the UI can SHOW its reasoning, not just a number.
+
+    - ``got_raw``  — the OCR read as compared (outer whitespace already trimmed).
+    - ``got_norm`` — the read after ``strip`` + case-folding (what actually got matched).
+    - ``want_norm``— the target after the same normalisation.
+    - ``got_len``  — len(``got_norm``); compare against ``min_chars`` for the floor.
+    - ``span``     — ``[start, end)`` within ``got_norm`` of the characters that carried a
+                     match (so the UI highlights them), or ``None`` when nothing aligned.
+
+    NOT on the runtime path — ``text_match_score`` stays the single source of the score.
+    """
+    nw = _norm(want, strip, case_sensitive)
+    ng = _norm(got, strip, case_sensitive)
+    out = {"want_norm": nw, "got_norm": ng, "got_raw": got,
+           "min_chars": min_chars, "got_len": len(ng), "span": None}
+    if not nw or not ng or len(ng) < min_chars:
+        return out
+    if mode == "exact":
+        if nw == ng:
+            out["span"] = [0, len(ng)]
+        return out
+    if mode == "prefix":
+        a, b = (ng, nw) if included else (nw, ng)
+        k = 0
+        m = min(len(a), len(b))
+        while k < m and a[k] == b[k]:
+            k += 1
+        out["span"] = [0, min(k, len(ng))] if k else None
+        return out
+    if mode == "full":
+        out["span"] = [0, len(ng)]   # whole-string compare — every char is "in play"
+        return out
+    # partial: align the shorter inside the longer and report the region within got_norm.
+    from rapidfuzz import fuzz
+    a, b = (ng, nw) if included else (nw, ng)   # text_match_score looks for `a` inside `b`
+    al = fuzz.partial_ratio_alignment(a, b)
+    if al is not None:
+        s, e = (al.src_start, al.src_end) if included else (al.dest_start, al.dest_end)
+        out["span"] = [max(0, s), min(e, len(ng))]
+    return out
+
+
 class DetectMatcher:
     def __init__(self, ocr: OcrEngine, profile_dir: Path | str) -> None:
         self._ocr = ocr
@@ -170,6 +223,12 @@ class DetectMatcher:
                     "score": round(s, 2), "threshold": det.threshold}
         read, s = self._text_score(det, frame)
         matched = bool(det.text) and s >= det.threshold
-        return {"matched": matched, "passes": detector_passes(matched, det.negate),
-                "negate": det.negate, "read": read,
-                "score": round(s, 2), "threshold": det.threshold}
+        out = {"matched": matched, "passes": detector_passes(matched, det.negate),
+               "negate": det.negate, "read": read,
+               "score": round(s, 2), "threshold": det.threshold}
+        # editor reasoning: before/after-strip text, the min-chars count, and which chars
+        # carried the match (so the detect node can show WHY, not just a score).
+        out.update(match_detail(det.text or "", read, mode=det.match, included=det.included,
+                                case_sensitive=det.case_sensitive, min_chars=det.min_chars,
+                                strip=det.strip))
+        return out

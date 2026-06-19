@@ -16,13 +16,14 @@ from dataclasses import dataclass, field as dc_field
 import cv2
 
 from ..interfaces import OcrEngine
-from ..profile.models import FieldDef, FieldType, ItemDef, Preprocess, WindowDef
+from ..profile.models import FieldDef, FieldType, ItemDef, Preprocess, TellKind, WindowDef
 from ..types import FractionBox, Frame, OcrLine, PixelBox
 from .fields import coerce_rule, out_of_range
 from .grid import Cell, cells_for_rows, expand_cells
 from .items import (
     ItemCell,
     anchor_align,
+    grid_drift,
     locate_item_cells,
     locator_of,
     resolve_overlaps,
@@ -31,7 +32,7 @@ from .items import (
 )
 from .pips import count_filled_diamonds, count_pips
 from .preprocess import apply as apply_preprocess
-from .rows import detect_row_centers
+from .rows import fit_row_lattice
 
 _MIN_OCR_H = 96   # focused field crops shorter than this are upscaled before OCR
 
@@ -154,6 +155,20 @@ class RegionReader:
             return {}
         return dict(zip(keys, self._ocr.read_lines(crops)))
 
+    def _read_tell_boxes(self, frame: Frame, window: WindowDef, ic) -> dict:
+        """OCR each FIELDLESS ``text`` tell's own box (cell-relative) -> {tell_id:(text,conf)}.
+        A text tell bound to a field reuses that field's read for free; a fieldless one has
+        nothing to reuse, so we read its own box directly (recognition-only, batched through
+        ``_focus_reads``). Returns {} when the item has no such tell -> zero extra OCR."""
+        pending = []
+        for t in ic.item.tells:
+            if t.kind is not TellKind.text or t.field:
+                continue
+            fb = FractionBox(ic.ox + t.box.x * ic.iw, ic.oy + t.box.y * ic.ih,
+                             t.box.w * ic.iw, t.box.h * ic.ih)
+            pending.append((t.id, fb.to_pixels(frame.client.w, frame.client.h)))
+        return self._focus_reads(frame, window, pending) if pending else {}
+
     def _targets_from_cells(self, cells: list[Cell], frame: Frame):
         """Yield (cell_index, field_id, PixelBox) for every field of every cell."""
         out = []
@@ -200,7 +215,8 @@ class RegionReader:
                 centers.append((ln.box.y + ln.box.h / 2) / ch)
                 heights.append(ln.box.h / ch)
         cap = max(1, (sc.rows or 1)) + 2  # the hint is a guide, not a hard limit
-        row_ys = detect_row_centers(centers, heights, sc.row_stride, lo, hi, cap)
+        row_ys = fit_row_lattice(centers, heights, sc.row_stride, lo, hi, cap,
+                                 pitch_tol=sc.pitch_tolerance)
         return cells_for_rows(window, row_ys, ab.y + ab.h / 2)
 
     def _resolve_cells(self, frame: Frame, window: WindowDef, fields: dict[str, FieldDef]):
@@ -215,8 +231,10 @@ class RegionReader:
             cw, ch = frame.client.w, frame.client.h
             # carry text + confidence so the row locator can reject badges (numbers)
             # and OCR garbage (low confidence) instead of clustering them as rows
+            # carry the line's LEFT edge + width too, so columns can be anchored on content
+            # (align_x) instead of tiled geometrically — immune to blank data-area margins.
             lf = [((ln.box.x + ln.box.w / 2) / cw, (ln.box.y + ln.box.h / 2) / ch, ln.box.h / ch,
-                   ln.text, ln.confidence) for ln in lines]
+                   ln.text, ln.confidence, ln.box.x / cw, ln.box.w / cw) for ln in lines]
             # only the located mode needs the (cutout-OCR) anchor calibration; a static-grid
             # window tiles geometrically, so skip that work entirely
             anchors = ({} if getattr(window, "static_grid", True)
@@ -370,15 +388,26 @@ class RegionReader:
             return [r for ci, r in enumerate(records) if not r.is_empty() and not failed[ci]]
         # Item templates: keep a cell only if all its tells pass (drops popups/empties);
         # resolve template overlaps; and (when >1 template) tag which one matched.
+        # A GUARD item (no fields, but has tells — e.g. a "no relic selected" placeholder)
+        # carries no data, so its record is empty; include it in overlap resolution anyway
+        # (on its tells alone) so it can SUPPRESS a higher-or-equal cell that would otherwise
+        # misread the placeholder. It is dropped from the stored output below — it exists to
+        # win the tile, not to be saved.
         valid = [ci for ci, r in enumerate(records)
-                 if not r.is_empty() and not failed[ci]
-                 and valid_cell(frame, window, r.values, ics[ci], self._templates, fields, cell_confs[ci])]
+                 if not failed[ci]
+                 and (not r.is_empty() or (not ics[ci].item.fields and ics[ci].item.tells))
+                 and valid_cell(frame, window, r.values, ics[ci], self._templates, fields,
+                                cell_confs[ci], self._read_tell_boxes(frame, window, ics[ci]))]
         kept = resolve_overlaps(ics, valid)
         tag = len(window.items) > 1
+        out = []
         for ci in kept:
+            if not ics[ci].item.fields:   # guard item -> suppressed the tile, stores nothing
+                continue
             if tag:
                 records[ci].values["_item"] = ics[ci].item.id
-        return [records[ci] for ci in kept]
+            out.append(records[ci])
+        return out
 
     def region_signature(self, frame: Frame, window: WindowDef) -> int | None:
         """Cheap hash of the grid region's pixels, to detect an unchanged view.
@@ -456,7 +485,8 @@ class RegionReader:
                 cell["box"] = {"x": ics[ci].ox, "y": ics[ci].oy, "w": ics[ci].iw, "h": ics[ci].ih}
                 vals = {fid: f.get("value") for fid, f in cell["fields"].items()}
                 confs = {fid: f.get("confidence") for fid, f in cell["fields"].items()}
-                rep = tell_report(frame, vals, ics[ci], self._templates, confs, fields)
+                rep = tell_report(frame, vals, ics[ci], self._templates, confs, fields,
+                                  self._read_tell_boxes(frame, window, ics[ci]))
                 cell["tells"] = rep
                 cell["tells_pass"] = all(r["pass"] for r in rep)
                 # an out-of-range field drops the cell too (same as collection) — record it
@@ -483,7 +513,10 @@ class RegionReader:
             }
             for ln in lines
         ]
-        return {"cells": out, "detections": detections}
+        result = {"cells": out, "detections": detections}
+        if ics is not None:                       # located grid: how far cells drift off content
+            result["drift"] = grid_drift(ics, lines, cw, ch)
+        return result
 
     def read_cutout(self, cut, window: WindowDef, item: ItemDef, fields: dict[str, FieldDef]) -> dict:
         """Read ONE frozen item cutout as its authored cell and report what current
@@ -546,7 +579,8 @@ class RegionReader:
                                "substituted": rule, "out_of_range": oor, "box": bf}
             vals[fid], confs[fid] = value, conf
 
-        tells = tell_report(frame, vals, ic, self._templates, confs, fields)
+        tells = tell_report(frame, vals, ic, self._templates, confs, fields,
+                            self._read_tell_boxes(frame, window, ic))
         return {"fields": out_fields, "tells": tells,
                 "valid": all(t["pass"] for t in tells),
                 "cell": {"x": ox, "y": oy, "w": iw, "h": ih}}

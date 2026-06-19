@@ -1,9 +1,9 @@
 import numpy as np
 
 from oc.collect.grid import Cell
-from oc.collect.items import ItemCell, locate_item_cells, resolve_overlaps, valid_cell
+from oc.collect.items import ItemCell, grid_drift, locate_item_cells, resolve_overlaps, valid_cell
 from oc.profile.models import Box, FieldDef, ItemDef, RegionDef, Tell, TellKind, WindowDef
-from oc.types import Frame, PixelBox
+from oc.types import Frame, OcrLine, PixelBox
 
 
 def _window():
@@ -80,6 +80,82 @@ def _text_window():
                      data_area=Box(x=0.0, y=0.0, w=1.0, h=1.0), items=[item])
 
 
+def test_text_locator_ignores_count_badges():
+    # A count badge like "x20" CONTAINS a letter but is digit-dominant — a NAME (text)
+    # locator must not anchor a row on it, or every name row gains a phantom count row and
+    # the whole lattice shifts (names then read on the count line). Two real name rows + a
+    # count badge between them -> exactly two rows, anchored on the names.
+    win = _text_window()
+    lines = [
+        (0.10, 0.30, 0.02, "Meso A9 Relic", 0.95),   # a name (letter-dominant) -> anchors
+        (0.10, 0.40, 0.02, "x20", 0.90),             # a count badge (digit-dominant) -> ignored
+        (0.10, 0.55, 0.02, "Lith E2 Relic", 0.95),   # another name -> anchors
+    ]
+    frame = Frame(image=np.zeros((1000, 1000, 3), dtype=np.uint8), client=PixelBox(0, 0, 1000, 1000))
+    cells = locate_item_cells(frame, win, lines)
+    tops = sorted({round(ic.oy, 3) for ic in cells})
+    assert len(tops) == 2          # the badge did NOT invent a third row between the names
+
+
+def test_columns_found_from_content_ignore_margins():
+    # Columns must anchor on the OCR text x (align_x), NOT tile geometrically from da.x — so a
+    # blank left margin in the data area doesn't shift the grid. da starts at 0.2; the two name
+    # columns sit at left edges 0.35 and 0.60. (cx, cy, h, text, conf, lx, lw)
+    item = ItemDef(id="it", box=Box(x=0.0, y=0.0, w=0.2, h=0.25), align="bottom", align_x="left",
+                   fields=[RegionDef(id="name", box=Box(x=0.0, y=0.6, w=0.9, h=0.3), field="name", tell=True)])
+    win = WindowDef(id="w", fields=[FieldDef(id="name")], static_grid=False,
+                    data_area=Box(x=0.2, y=0.0, w=0.7, h=1.0), items=[item])
+    lines = []
+    for cy in (0.25, 0.55):
+        lines.append((0.40, cy, 0.05, "Alpha Relic", 0.95, 0.35, 0.10))
+        lines.append((0.65, cy, 0.05, "Bravo Relic", 0.95, 0.60, 0.10))
+    frame = Frame(image=np.zeros((1000, 1000, 3), dtype=np.uint8), client=PixelBox(0, 0, 1000, 1000))
+    cells = locate_item_cells(frame, win, lines)
+    xs = sorted({round(ic.ox, 2) for ic in cells})
+    assert xs == [0.35, 0.60]   # on content, not da.x (0.2) + pitch
+
+
+def test_align_x_center_anchors_on_cell_not_locator_box():
+    # align_x is where the text sits in the CELL (centre = 0.5), NOT in the locator box. With a
+    # non-centred locator box (x=0, w=0.6 -> box centre 0.3) a centred name must still place the
+    # cell so the CELL centre lands on the text. Bug was using the box centre (0.3) -> shifted.
+    item = ItemDef(id="it", box=Box(x=0.0, y=0.0, w=0.2, h=0.25), align="bottom", align_x="center",
+                   fields=[RegionDef(id="name", box=Box(x=0.0, y=0.6, w=0.6, h=0.3), field="name", tell=True)])
+    win = WindowDef(id="w", fields=[FieldDef(id="name")], static_grid=False,
+                    data_area=Box(x=0.0, y=0.0, w=1.0, h=1.0), items=[item])
+    # two columns of CENTRED names at cell-centres 0.30 and 0.60 (cx; lx=cx-0.05, lw=0.10)
+    lines = []
+    for cy in (0.25, 0.55):
+        lines.append((0.30, cy, 0.05, "Alpha Relic", 0.95, 0.25, 0.10))
+        lines.append((0.60, cy, 0.05, "Bravo Relic", 0.95, 0.55, 0.10))
+    frame = Frame(image=np.zeros((1000, 1000, 3), dtype=np.uint8), client=PixelBox(0, 0, 1000, 1000))
+    cells = locate_item_cells(frame, win, lines)
+    centers = sorted({round(ic.ox + ic.iw / 2, 2) for ic in cells})
+    assert centers == [0.30, 0.60]   # CELL centre on the text centre, not box-centre-shifted
+
+
+def test_grid_drift_zero_when_cells_land_on_content():
+    # When the located cells sit exactly on their rows+columns, the grid-drift score is ~0.
+    # Content placed on a perfect 2x2 grid (centred names); locate, then measure drift.
+    item = ItemDef(id="it", box=Box(x=0.0, y=0.0, w=0.2, h=0.2), align="center", align_x="center",
+                   fields=[RegionDef(id="name", box=Box(x=0.0, y=0.4, w=0.6, h=0.2), field="name", tell=True)])
+    win = WindowDef(id="w", fields=[FieldDef(id="name")], static_grid=False,
+                    data_area=Box(x=0.0, y=0.0, w=1.0, h=1.0), items=[item])
+    W = H = 1000
+    lw, lh = 0.10, 0.05
+    lines, lf = [], []
+    for rc in (0.30, 0.60):           # row centres
+        for cc in (0.30, 0.60):       # column centres — names CENTRED on each
+            bx, by, bw, bh = (cc - lw / 2) * W, (rc - lh / 2) * H, lw * W, lh * H
+            lines.append(OcrLine(text="Alpha Relic", box=PixelBox(int(bx), int(by), int(bw), int(bh)), confidence=0.95))
+            lf.append((cc, rc, lh, "Alpha Relic", 0.95, cc - lw / 2, lw))
+    frame = Frame(image=np.zeros((H, W, 3), dtype=np.uint8), client=PixelBox(0, 0, W, H))
+    ics = locate_item_cells(frame, win, lf)
+    d = grid_drift(ics, lines, W, H)
+    assert d["n"] == 4
+    assert d["x"]["max"] < 0.02 and d["y"]["max"] < 0.02   # cells land dead-on -> x & y drift ~0
+
+
 def test_column_anchor_out_of_bounds_falls_back_to_row_consensus():
     # ref = locator centre = 0.75 of the cell, so a row anchored at 0.1875 puts the
     # cell top at exactly 0.0. Column 1's only letter-bearing line sits one line
@@ -142,3 +218,5 @@ def test_resolve_overlaps_keeps_non_overlapping():
     # far-apart tiles never clash, both kept
     ics = [_ic(prio=0, ntells=1, ox=0.0), _ic(prio=0, ntells=1, ox=0.8)]
     assert sorted(resolve_overlaps(ics, [0, 1])) == [0, 1]
+
+

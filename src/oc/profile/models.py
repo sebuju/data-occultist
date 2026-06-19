@@ -224,7 +224,35 @@ class RegionDef(BaseModel):
     # When this field locates rows (a tell-field used as the locator): which line of a
     # wrapped name to anchor on — "top"/"center"/"bottom". Empty -> item's ``align``.
     align: str = ""
+    # Horizontal twin of ``align``: which edge of the located text fixes the COLUMN — the
+    # text's "left"/"center"/"right". Lets columns be found from content (immune to blank
+    # margins in the data area) instead of tiled geometrically. Empty -> item's ``align_x``.
+    align_x: str = ""
     enabled: bool = True  # disabled regions are skipped during reads
+
+
+class MatchMode(str, Enum):
+    """How a text detector/tell compares its ``text`` against the OCR read.
+
+    ``partial`` aligns the shorter string *anywhere inside* the longer one — loose,
+    so a read that merely contains (or is contained by) the target scores ~1.0; the
+    length guards in :func:`text_match_score` are what keep it honest. The stricter
+    modes compare the strings as wholes and so reject near-substring false matches
+    (e.g. 'WARDSI' vs 'rewards') that ``partial`` waves through.
+    """
+
+    partial = "partial"  # substring alignment (loose) — historical default
+    full = "full"        # whole-string similarity (rejects extra/missing chars)
+    exact = "exact"      # normalised equality: 1.0 or 0.0
+    prefix = "prefix"    # read must begin the target (or vice-versa if ``included``)
+
+
+class StripMode(str, Enum):
+    """What ``_norm`` removes before comparing detector/tell text to the OCR read."""
+
+    alnum = "alnum"    # keep only letters/digits (ignore spaces + punctuation)
+    spaces = "spaces"  # drop only whitespace (punctuation is significant)
+    none = "none"      # compare raw (whitespace + punctuation significant)
 
 
 class TellKind(str, Enum):
@@ -248,7 +276,7 @@ class Tell(BaseModel):
     id: str
     box: Box                       # cell-relative (0..1 within the item cell)
     kind: TellKind = TellKind.filled
-    field: str | None = None       # for ``text``: the field whose read must be non-empty
+    field: str | None = None       # for ``text``: which field's read this tell validates
     color: str | None = None       # for ``color``: hex, e.g. "#ffcc00"
     tolerance: int = 60            # for ``color``: colour distance (0..441)
     template: str | None = None    # for ``template``: PNG path relative to the profile dir
@@ -258,6 +286,19 @@ class Tell(BaseModel):
     # anchor is line-count-invariant — "top"/"center"/"bottom". Empty -> inherit the
     # item's ``align`` (legacy). Lives on the tell so each locator sets its own.
     align: str = ""
+    # Horizontal twin of ``align`` (see RegionDef.align_x): which edge of the located text
+    # fixes the COLUMN — "left"/"center"/"right". Empty -> item's ``align_x``.
+    align_x: str = ""
+    # ``text`` tell, optional target: when set, the ``field``'s read must MATCH this literal
+    # (scored like a detector, must clear ``threshold``) — not merely be non-empty. So a tell
+    # can require e.g. the name reads "Forma" specifically. Empty -> the legacy "field read
+    # something" check. The match knobs mirror DetectDef and apply only when ``text`` is set.
+    text: str | None = None
+    match: MatchMode = MatchMode.partial
+    included: bool = False
+    case_sensitive: bool = False
+    min_chars: int = 0
+    strip: StripMode = StripMode.alnum
 
 
 class KeyDef(BaseModel):
@@ -301,6 +342,9 @@ class ItemDef(BaseModel):
     # point: "top"/"center"/"bottom" line of a wrapped name. (Warframe names are bottom-
     # aligned; a centroid drifts with line count.)
     align: str = "center"
+    # Horizontal twin of ``align``: which edge of the located text fixes the COLUMN —
+    # "left"/"center"/"right". Default left (most names are left-aligned in their cell).
+    align_x: str = "left"
     # When several templates claim the same tile, the higher ``priority`` wins (e.g. a
     # specific 'arcane' over a generic 'item'). Ties fall back to tell count.
     priority: int = 0
@@ -316,30 +360,6 @@ class ItemDef(BaseModel):
     # the default (``name``). Per-template because templates sharing a window can
     # need different identities (an arcane keys on name+level, a plain item on name).
     key: KeyDef | None = None
-
-
-class MatchMode(str, Enum):
-    """How a text detector compares its ``text`` against the OCR read.
-
-    ``partial`` aligns the shorter string *anywhere inside* the longer one — loose,
-    so a read that merely contains (or is contained by) the target scores ~1.0; the
-    length guards in :func:`text_match_score` are what keep it honest. The stricter
-    modes compare the strings as wholes and so reject near-substring false matches
-    (e.g. 'WARDSI' vs 'rewards') that ``partial`` waves through.
-    """
-
-    partial = "partial"  # substring alignment (loose) — historical default
-    full = "full"        # whole-string similarity (rejects extra/missing chars)
-    exact = "exact"      # normalised equality: 1.0 or 0.0
-    prefix = "prefix"    # read must begin the target (or vice-versa if ``included``)
-
-
-class StripMode(str, Enum):
-    """What ``_norm`` removes before comparing detector text to the OCR read."""
-
-    alnum = "alnum"    # keep only letters/digits (ignore spaces + punctuation)
-    spaces = "spaces"  # drop only whitespace (punctuation is significant)
-    none = "none"      # compare raw (whitespace + punctuation significant)
 
 
 class DetectCombine(str, Enum):
@@ -378,7 +398,7 @@ class DetectDef(BaseModel):
     included: bool = False
     case_sensitive: bool = False  # False -> fold case before comparing
     min_chars: int = 0            # hard floor: reads shorter than this never match
-    strip: StripMode = StripMode.alnum  # what to ignore before comparing
+    strip: StripMode = StripMode.none  # what to ignore before comparing (default: keep everything)
     # Polarity. False (default) -> a POSITIVE detector: passes when the landmark is
     # present (score >= threshold). True -> a NEGATIVE detector: passes when the landmark
     # is ABSENT, so the window fails if this landmark IS found (e.g. "not the shop tab").
@@ -421,6 +441,10 @@ class ScrollDef(BaseModel):
     cell: Box | None = None            # first cell's box; grid tiles from here
     row_stride: float = 0.0            # fractional y-gap between row origins
     col_stride: float = 0.0            # fractional x-gap between col origins
+    # Dynamic row-lattice clamp (0..1): bound the pitch DERIVED from the live findings to
+    # the authored pitch * [1 - tol, 1 + tol]. Set (not None) marks the window as a dynamic
+    # lattice grid — rows are fitted/interpolated from findings, not taken at face value.
+    pitch_tolerance: float | None = None
     # Precapture auto-scroll, per window: whether recording this window's list auto-advances,
     # and how many wheel notches per nudge. Used when precapture classifies this window on
     # screen (replaces the old global panel controls).
@@ -692,6 +716,69 @@ class TriggerDef(BaseModel):
     volume: float = 1.0                     # playback volume for ``sound`` (0..1)
 
 
+class SourceMatch(BaseModel):
+    """One line-filter clause for a ``log_lines`` source: keep a line only when its text
+    relates to ``text`` per ``op``. Several clauses on a field all-must-hold (AND). No regex
+    — friendly, declarative ops authored in the UI, mirroring :class:`Detect`'s match modes."""
+
+    op: str = "contains"            # contains | starts_with | ends_with | equals
+    text: str = ""
+    case_sensitive: bool = False
+
+
+class SourceField(BaseModel):
+    """How ONE output column is pulled from a parsed source. No regex — declarative methods:
+
+    * ``after``   — value is the text AFTER ``anchor``, up to ``stop`` (or end of line).
+    * ``between`` — value is the text between ``anchor`` and ``end``.
+    * ``column``  — split the line by ``delim`` and take token ``index`` (negative = from end).
+    * ``whole``   — the whole (stripped) line.
+    * ``path``    — for document formats (ini/json/xml/yaml): a dotted/slashed path to the value
+      (e.g. ``Graphics.Resolution`` for ini ``[Graphics] Resolution=…``; ``a.b.c`` for json/yaml;
+      ``root/child/@attr`` for xml).
+    """
+
+    id: str
+    method: str = "after"           # after | between | column | whole | path
+    anchor: str = ""                # after: prefix to cut past;  between: start delimiter
+    end: str = ""                   # between: end delimiter
+    stop: str = ""                  # after: stop delimiter ("" -> end of line)
+    delim: str = " "                # column: token separator
+    index: int = 0                  # column: which token (negative counts from the end)
+    path: str = ""                  # path: dotted/slashed lookup for document formats
+    type: str = "text"              # text | number  (number casts the extracted value)
+    strip: bool = True              # trim surrounding whitespace from the extracted value
+
+
+class FileSourceDef(BaseModel):
+    """A *file-source producer*: locate a game file (log/config), parse it with a registered
+    format backend, and push one current record per parsed row into its output ``dataset`` — so
+    file data stores/dedups/joins/serves exactly like OCR data. The pluggable producer parallel to
+    :class:`PriceNodeDef`. Zero game knowledge: ``filename``/``path`` are profile data the UI teaches.
+
+    Reading is driven by: the node's own ``watch`` (manual button, or ``on_change`` file-watch with a
+    trailing ``throttle_s`` so the latest state always wins) AND by trigger nodes that name this id as
+    a target. Multiple sources on the same path share one internal read (see ``oc.source.reader``)."""
+
+    id: str
+    format: str = "log_lines"       # registered parser name (registry._PARSER)
+    # WHERE the file is. ``path`` (explicit) wins; else the auto-finder scans generic OS roots for
+    # ``filename`` (a glob, e.g. "EE.log" or "*.cfg") + any extra ``roots``. The glob is the only
+    # game-specific bit and it is profile data, so Python stays game-agnostic.
+    path: str = ""
+    filename: str = ""
+    roots: list[str] = Field(default_factory=list)
+    dataset: str = ""               # output dataset the parsed rows are written to
+    watch: str = "manual"           # manual | on_change (live file-watch)
+    throttle_s: float = 1.0         # on_change: trailing quiet window before a read fires
+    tail: bool = True               # log_lines: read only appended bytes since the last read
+    match: list[SourceMatch] = Field(default_factory=list)   # log_lines: which lines to keep
+    fields: list[SourceField] = Field(default_factory=list)  # how each output column is extracted
+    # How output rows are keyed/deduped in the dataset. None -> the dataset's own key (or ``name``).
+    key: KeyDef | None = None
+    enabled: bool = True
+
+
 class SubsetDef(BaseModel):
     """A derived VIEW over one or more datasets: outer-join them on a shared key, filter
     rows, add computed columns, sort, limit. Recomputed on demand, so it always reflects
@@ -798,6 +885,7 @@ class GameProfile(BaseModel):
     datasets: list[DatasetDef] = Field(default_factory=list)
     subsets: list[SubsetDef] = Field(default_factory=list)
     price_nodes: list[PriceNodeDef] = Field(default_factory=list)
+    file_sources: list[FileSourceDef] = Field(default_factory=list)
     triggers: list[TriggerDef] = Field(default_factory=list)
     dictionaries: list[DictionaryDef] = Field(default_factory=list)
     # Teach-UI node layout (positions/sizes/collapse/tables/open-images). Pure UI
@@ -842,6 +930,9 @@ class GameProfile(BaseModel):
 
     def subset_def(self, subset_id: str) -> SubsetDef | None:
         return next((s for s in self.subsets if s.id == subset_id), None)
+
+    def file_source(self, source_id: str) -> FileSourceDef | None:
+        return next((s for s in self.file_sources if s.id == source_id), None)
 
     def dataset_def(self, dataset_id: str) -> DatasetDef | None:
         return next((d for d in self.datasets if d.id == dataset_id), None)
