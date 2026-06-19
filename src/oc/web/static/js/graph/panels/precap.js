@@ -110,7 +110,7 @@ function buildPrecap() {
         const a = b.dataset.act, sid = b.dataset.sid;
         // session-list actions are locked while a worker runs
         if (precapBusy && (a === "newsess" || a === "loadsess" || a === "rensess" || a === "delsess")) return;
-        const mf = +pcNode.querySelector(".pc-frames")?.value || 300;
+        const mf = +pcNode.querySelector(".pc-frames")?.value || 1000;
         const iv = +pcNode.querySelector(".pc-interval")?.value || 0;
         const label = pcNode.querySelector(".pc-label")?.value || "";
         if (a === "recstop" || a === "cancel") { precapStopping = true; b.disabled = true; b.textContent = "stopping…"; }
@@ -332,7 +332,7 @@ function renderPrecap(node, st) {
         right.dataset.shape = shape;
         right.innerHTML = precapView === "new"
             ? `<div class="pc-opts">
-           <label class="flab">max frames <input type="number" class="pc-frames" value="300" min="1"></label>
+           <label class="flab">max frames <input type="number" class="pc-frames" value="1000" min="1"></label>
            <label class="flab">interval ms <input type="number" class="pc-interval" value="0" min="0"></label>
            <label class="flab">label <input type="text" class="pc-label" placeholder="(optional)"></label>
          </div>
