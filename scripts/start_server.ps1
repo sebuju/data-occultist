@@ -52,5 +52,16 @@ if ($Background) {
   Write-Host "server (re)started on http://127.0.0.1:$Port (background)"
 } else {
   Write-Host "server starting on http://127.0.0.1:$Port - Ctrl+C to stop"
-  & $py @uvArgs
+  # Do NOT block PS inside the child (& $py): under --reload uvicorn runs a reloader
+  # PARENT + worker child, and on Windows the parent stops honoring Ctrl+C after the
+  # first auto-reload (a known uvicorn issue) - the server looks "unkillable". Instead
+  # run detached-but-attached (-NoNewWindow keeps logs streaming) and poll from PS, so
+  # Ctrl+C interrupts our OWN Start-Sleep; the finally then force-kills the whole tree
+  # (reloader + worker), which dies even when the reloader has wedged.
+  $proc = Start-Process -FilePath $py -ArgumentList $uvArgs -WorkingDirectory $root -NoNewWindow -PassThru
+  try {
+    while (-not $proc.HasExited) { Start-Sleep -Milliseconds 250 }
+  } finally {
+    if (-not $proc.HasExited) { taskkill /PID $proc.Id /F /T | Out-Null }
+  }
 }
