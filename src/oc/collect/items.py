@@ -176,25 +176,43 @@ def _text_rows(item: ItemDef, loc_lines: list[tuple], da, pitch_tol: float | Non
 
 
 def _text_cols(item: ItemDef, loc, loc_lines: list[tuple], da, pitch_tol: float | None = None) -> list[float]:
-    """Fit a regular COLUMN lattice to the locator lines — the horizontal twin of
-    :func:`_text_rows`. Each line's anchor edge (per ``align_x``: its left/centre/right)
-    minus the locator's cell-relative x position gives a candidate cell LEFT edge; those
-    cluster into the real columns. Because the phase comes from the content, blank margins
-    in the data area don't shift the grid (the geometric ``da.x + c*pitch`` tiling did)."""
+    """Find the columns from the locator lines — the horizontal twin of :func:`_text_rows`.
+    Each line's anchor edge (per ``align_x``: its left/centre/right) minus the locator's
+    cell-relative x position gives a candidate cell LEFT edge; those cluster into the real
+    columns. Because the phase comes from the content, blank margins in the data area don't
+    shift the grid (the geometric ``da.x + c*pitch`` tiling did).
+
+    A tile can carry MORE than the name on its locator's character class — a "Crafted" badge,
+    a wrapped 2nd line — and those sit at a DIFFERENT x than the centred name. Averaging them
+    (a centroid) drags the column off the name only where the extra text exists, so identical
+    tiles land on different columns. The locator's real label is the WIDEST line in the cluster
+    (the full name); a short badge / wrapped fragment is narrower, so the widest line fixes the
+    column and the noise is ignored."""
     iw = item.box.w
     ax = anchor_align_x(item)
     # ``align_x`` is where the text sits in the CELL, not in the locator box: left edge at the
     # cell's left (0), centre at the cell centre (0.5), right edge at the cell's right (1.0).
     # cell_x (left edge) = <line's anchor edge> - xref*iw.
     xref = 1.0 if ax == "right" else (0.5 if ax == "center" else 0.0)
-    cands = []
+    cands = []  # (cell_left, line_width)
     for cx, _cy, _h, lx, lw in loc_lines:
         edge = (lx + lw) if ax == "right" else (cx if ax == "center" else lx)
-        cands.append(edge - xref * iw)
+        cands.append((edge - xref * iw, lw))
     if not cands:
         return []
-    return fit_row_lattice(cands, [iw] * len(cands), iw, da.x, da.x + da.w, None,
-                           anchor="center", pitch_tol=pitch_tol)
+    # cluster by x gap (a column pitch is one cell wide; a gap < 0.6 cell is the same column),
+    # then take the WIDEST line per column as its anchor.
+    cands.sort()
+    gap = iw * 0.6
+    cols, cluster = [], [cands[0]]
+    for c, w in cands[1:]:
+        if c - cluster[-1][0] > gap:
+            cols.append(max(cluster, key=lambda t: t[1])[0])
+            cluster = [(c, w)]
+        else:
+            cluster.append((c, w))
+    cols.append(max(cluster, key=lambda t: t[1])[0])
+    return cols
 
 
 def _column_anchor(loc_lines: list[tuple], x0: float, x1: float, lc: float, ih: float,
@@ -402,8 +420,10 @@ def locate_item_cells(frame: Frame, window: WindowDef, lines_frac, templates=Non
             out.extend(_cells_for_item(frame, item, da, lines_frac, templates, 0.5, static_grid=True, grid=grid))
         return out
 
-    # LOCATED: each template resolves its own OCR locator + anchoring inputs
-    pitch_tol = window.scroll.pitch_tolerance if window.scroll else None
+    # LOCATED: each template resolves its own OCR locator + anchoring inputs.
+    # Location does NOT use the scroll block (a separate, upcoming feature); the row/column
+    # lattice is opt-in via pitch_tol and currently off (face-value clustering).
+    pitch_tol = None
     for item in items:
         loc = locator_of(item)
         if loc is None:
