@@ -261,7 +261,14 @@ function loadHistory(r, silent = false) {
     fetch(url).then((res) => res.json()).then((d) => {
         // samples are [ts, ms, n] in time order; the chart's x is SAMPLE ORDER, not the
         // timestamp (a run-over-run trend). ts rides along only as the point's tooltip context.
-        r.chartRows = (d.samples || []).map(([ts, msv], idx) => ({ i: idx + 1, ms: msv, ts }));
+        const samples = d.samples || [];
+        r.chartRows = samples.map(([ts, msv], idx) => ({ i: idx + 1, ms: msv, ts }));
+        // The live refresh (silent) runs every poll; drawChart rebuilds the SVG, so skip it when
+        // the samples haven't changed — otherwise an open card's chart elements are recreated each
+        // tick for nothing (rule 1). The toggle/open paths call renderChart directly, unguarded.
+        const sig = `${samples.length}|${samples.length ? String(samples[samples.length - 1]) : ""}`;
+        if (silent && r._chartSig === sig) return;
+        r._chartSig = sig;
         renderChart(r);
         statsWin?.fitHeight();
     }).catch(() => { r.chart.innerHTML = `<div class="pw-chart-empty">failed</div>`; });
