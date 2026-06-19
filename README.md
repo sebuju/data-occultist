@@ -109,7 +109,7 @@ WebView2 runtime on Windows (no Electron, no bundled browser).
 The shortcut reuses the installed venv rather than bundling a packaged `.exe`,
 which would have to ship the multi-GB CUDA OCR runtime.
 
-The CLI launchers (`app`, `view`, `rig`) are in the [CLI reference](#cli-reference).
+The CLI launchers (`app`, `view`, `serve`) are in the [CLI reference](#cli-reference).
 
 ---
 
@@ -214,7 +214,7 @@ desktop launchers:
 
 ```text
 data-occultist detect                                   list running known games
-data-occultist rig [--host H] [--port N] [--reload]   launch the web UI (browser)
+data-occultist serve [--host H] [--port N] [--reload]   launch the web UI (browser)
 data-occultist view  [--host H] [--port N]              native window onto a RUNNING server
 data-occultist app                                      release: server + native window, stop on close
 data-occultist capture <game> [--out capture.png]       save one screenshot of the window

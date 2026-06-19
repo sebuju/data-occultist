@@ -3,7 +3,7 @@
 Wrap the same FastAPI app the browser uses in a native window via ``pywebview``
 (on Windows it renders through the Edge WebView2 runtime — pip-only, no Electron).
 Everything pywebview-related is imported lazily so a missing ``desktop`` extra only
-breaks the desktop launchers, never ``data-occultist rig`` / tests / CI.
+breaks the desktop launchers, never ``data-occultist serve`` / tests / CI.
 
 Two pieces compose into the launchers:
 - ``serve_in_thread`` runs uvicorn on a daemon thread (release mode owns the server

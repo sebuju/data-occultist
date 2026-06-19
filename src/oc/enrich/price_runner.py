@@ -8,7 +8,7 @@ they can't double-run. Responsibilities:
 * serialise fetching PER GAME — two concurrent sweeps would blow past warframe.market's
   rate ceiling and clobber the shared ``price_store.json``. An in-memory lock covers threads
   in one process; a **filesystem lock** (``data/<game>/.price_sweep.lock``) covers separate
-  processes (``data-occultist collect`` and ``data-occultist rig`` run independently);
+  processes (``data-occultist collect`` and ``data-occultist serve`` run independently);
 * resolve WHICH items to price: an explicit ``items`` list (on_change → just the changed
   keys), else the node's ``sources`` datasets/views, else the whole market catalogue.
 

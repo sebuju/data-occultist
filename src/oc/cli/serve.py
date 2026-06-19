@@ -1,10 +1,10 @@
-"""`data-occultist rig` — launch the web UI (FastAPI via uvicorn)."""
+"""`data-occultist serve` — launch the web UI (FastAPI via uvicorn)."""
 
 from __future__ import annotations
 
 
 def register(sub) -> None:
-    p = sub.add_parser("rig", help="launch the web UI")
+    p = sub.add_parser("serve", help="launch the web UI")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--reload", action="store_true", help="auto-reload on code change")

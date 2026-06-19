@@ -210,7 +210,7 @@ if (-not $pyCmd) {
   }
 }
 
-if (-not $hasWV2 -and -not $doWebView2) { $gaps.Add('Edge WebView2 Runtime (browser UI via data-occultist rig still works without it)') }
+if (-not $hasWV2 -and -not $doWebView2) { $gaps.Add('Edge WebView2 Runtime (browser UI via data-occultist serve still works without it)') }
 if ($doShortcut -and $pyCmd -and -not $gaps.Count) { New-AppShortcut }
 
 # === summary =================================================================
@@ -218,7 +218,7 @@ Write-Host ''
 if ($gaps.Count -eq 0) {
   Ok 'done. Launch the app via the "data-occultist" shortcut (if created), or:'
   Write-Host '    .\.venv\Scripts\Activate.ps1'
-  Write-Host '    data-occultist rig    # browser UI at http://127.0.0.1:8000  (alias: occ rig)'
+  Write-Host '    data-occultist serve    # browser UI at http://127.0.0.1:8000  (alias: occ serve)'
   Write-Host '    data-occultist app    # server + native window (from a terminal)'
   Write-Host '    data-occultist view   # native window onto an already-running server'
   exit 0

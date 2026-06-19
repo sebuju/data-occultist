@@ -12,7 +12,7 @@ from . import detect as detect_cmd
 from . import price as price_cmd
 from . import prices as prices_cmd
 from . import profiles as profiles_cmd
-from . import edit as edit_cmd
+from . import serve as serve_cmd
 from . import view as view_cmd
 
 
@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     price_cmd.register(sub)
     prices_cmd.register(sub)
     profiles_cmd.register(sub)
-    edit_cmd.register(sub)
+    serve_cmd.register(sub)
     view_cmd.register(sub)
     app_cmd.register(sub)
     return parser

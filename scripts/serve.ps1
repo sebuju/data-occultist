@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = "SilentlyContinue"
 . (Join-Path $PSScriptRoot '_console.ps1'); Enable-AnsiColors   # render uvicorn's ANSI colors
 $root = Split-Path -Parent $PSScriptRoot           # repo root (parent of scripts\)
-$oc = Join-Path $root ".venv\Scripts\data-occultist.exe" # the `data-occultist` console script (has `rig`)
+$oc = Join-Path $root ".venv\Scripts\data-occultist.exe" # the `data-occultist` console script (has `serve`)
 $py = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) { $py = "python" }
 
@@ -47,9 +47,9 @@ function Stop-WedgedListener {
 
 function Start-Server {
     if (Test-Path $oc) {
-        & $oc rig --host $BindHost --port $Port
+        & $oc serve --host $BindHost --port $Port
     } else {
-        & $py -m oc rig --host $BindHost --port $Port
+        & $py -m oc serve --host $BindHost --port $Port
     }
 }
 
