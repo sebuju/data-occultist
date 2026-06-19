@@ -41,6 +41,12 @@ import {
     setDraggingNodes, routeCache, ROUTE,
 } from "./routing.js";
 import { initFlow } from "./flow.js";
+import {
+    cancelPan, panTo, panZoomTo, panZoomToRect, zoomToNode, viewportCenterWorld,
+    applyView, resizeCanvas, updateOverlayZoom, onWheel, startPan, consumePanSuppress,
+} from "./camera.js";
+import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
+import { nodeParts, windowControls, itemLists, _colOpts, satToggleBtn } from "./node_parts.js";
 import * as dsevents from "./dsevents.js";
 import { singleFlight } from "../singleflight.js";
 import {
@@ -53,7 +59,7 @@ import { statsWin, statsState, buildStats } from "./panels/stats.js";
 import { dbWin, dbState, buildDBStruct } from "./panels/dbstruct.js";
 import {
     tb, tbState, buildToolbox,
-    createWindowNode, createPriceNode, createTriggerNode, createDictionaryNode,
+    createWindowNode, createPriceNode, createTriggerNode, createDictionaryNode, createFileSourceNode,
     createDatasetNode, createSubsetNode,
 } from "./panels/toolbox.js";
 import { openContextMenu } from "../ctxmenu.js";
@@ -81,11 +87,18 @@ import {
     liveWin, liveWinState, buildLiveWindow, renderLiveWindow, setLiveMode, setLiveSave,
 } from "./panels/livewin.js";
 
-const COLX = { game: 20, window: 300, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, dictionary: 20 };
+const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, vttable: 2300, dictionary: 20 };
+// Nodes resized on the WIDTH axis only — height always fits content (never stamped/restored).
+// item/window wrap a fixed-aspect canvas; dataset/subset/price are config-only, reworked often
+// with visibility-toggleable inputs, so a frozen height would clip or leave dead space.
+const WIDTH_ONLY_NODES = new Set(["item", "window", "dataset", "subset", "price"]);
 const FLOW_FALLBACK_MS = 15000;   // safety-net /api/flow poll; the dataset-change bus is the real mechanism
 export let live = {};             // dataset -> {present,total,last_op,last_ts} (read by datanodes/refreshLive)
 export let wire = null;           // active drag-wire {winId, x1,y1} (read by routing.drawEdges)
 export let selectedNodeId = null; // node whose line(s) are highlighted (read by routing.selClsFor)
+// Setter so modules that only IMPORT this binding (imaging.js) can update it — an imported
+// `let` is read-only in the importer, so a direct assignment there throws.
+export function setSelectedNodeId(v) { selectedNodeId = v; }
 
 // Central registry of EVERY drawing overlay lives in state.js; selection, deselection, and
 // box hotkeys are handled in ONE place here — any new overlay registers and gets
@@ -177,9 +190,11 @@ function collectLayout() {
     }
     L.nodes = nodes;
     L.open_images = [...openImages];
+    L.satellites = model.satelliteIds();       // which preview / vt-table followers are shown (opt-in)
     L.tables = L.tables || {};
     L.groups = groups.collect();
     L.super_groups = groups.collectSuper();   // groups-of-groups travel with the profile too
+    L.sub_groups = groups.collectSub();        // groups-within-a-group travel with the profile too
     // floating panels are NOT persisted (session-only) — drop any stale saved state so it's
     // cleaned from the profile on the next write.
     delete L.float_windows;
@@ -195,8 +210,10 @@ function hydrateLayout() {
         if (n.collapsed) collapsed.add(id);
     }
     pendingOpenImages = [...(L.open_images || [])];
+    model.setSatellites(L.satellites);     // restore which preview / vt-table followers are shown
     groups.hydrate(L.groups);
     groups.hydrateSuper(L.super_groups);   // after groups (super groups reference group ids)
+    groups.hydrateSub(L.sub_groups);       // after groups (sub groups reference a parent group + its nodes)
     // floating panels are session-only: never restored from the profile -> always start at their
     // defaults (all hidden). hydrate(undefined) resets each to its _default state.
     for (const [, w] of floatWins()) w.hydrate(undefined);
@@ -240,16 +257,17 @@ initPersist({
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", price: "price", trigger: "trigger", dict: "dictionary" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", price: "price", trigger: "trigger", dict: "dictionary" };
 function nodeTypeOf(id) { return id === "game" ? "game" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
     world: () => $("ggroups"),
     superWorld: () => $("sgroups"),
     nodeRect: (id) => nodeRect(id),
     nodeType: nodeTypeOf,
-    // a window's preview node is bonded to it: it shares the window's group, follows it in/out,
-    // and is never grouped on its own (so it carries no detach button).
-    bonds: () => (model.profile.windows || []).map((w) => ({ leader: `win:${w.id}`, follower: `prev:${w.id}` })),
+    // every visible satellite (a window's preview, a dataset/subset's vt-table) is bonded to its
+    // parent: it shares the parent's group, follows it in/out, and is never grouped on its own.
+    bonds: () => model.satelliteBonds(),
+    subWorld: () => $("subgroups"),
     moveMembers: (ids, ev) => { const lead = ids.find((id) => pos.get(id)); if (lead) moveNodes(lead, ids.filter((x) => x !== lead), ev); },
     persist: () => persist.layout(),
     afterChange: () => { syncMultiSelect(); },
@@ -259,98 +277,10 @@ groups.initGroups({
     startGroupResize: (gid, ev) => startGroupResize(gid, ev),
 });
 
-// All per-node UI state (position, size, collapse) is keyed by node id, so any rename
-// that changes a node id must remap every one of those maps in lockstep — otherwise the
-// node loses its saved slot and jumps. `remapNodeState` is the single place that does
-// that; the two helpers below are the only entry points (exact id, or window-prefix).
-function remapNodeState(mapId) {
-    for (const store of [pos, nodeSizes]) {        // Maps: id -> {x,y} / {w,h}
-        for (const id of [...store.keys()]) {
-            const to = mapId(id);
-            if (to && to !== id) { store.set(to, store.get(id)); store.delete(id); }
-        }
-    }
-    for (const id of [...collapsed]) {              // Set of collapsed ids
-        const to = mapId(id);
-        if (to && to !== id) { collapsed.delete(id); collapsed.add(to); }
-    }
-    groups.remapNodes(mapId);   // carry group membership across the rename (don't detach)
-}
+// Node identity / per-id state (rename + delete carry, the rename flow) lives in node_lifecycle.js
+// — see the imports at the top of this file.
 
-// A node rename must also carry that node's timing history (per-node CSV). The backend
-// rename is a file move keyed by node id; it no-ops for a node with no stats yet, so it's
-// safe to call on any tracked-type rename. Only the node types the stats store tracks.
-const _STATS_NODE_TYPES = new Set(["win", "ds", "sub", "price"]);
-function statsRenameNode(oldId, newId) {
-    const game = model.profile.name;
-    if (!game || oldId === newId || !_STATS_NODE_TYPES.has(String(oldId).split(":")[0])) return;
-    fetch(`/api/stats/${encodeURIComponent(game)}/rename`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ old: oldId, new: newId }),
-    }).catch(() => {});   // best-effort: stats history is diagnostic, never block a rename on it
-}
-
-// Carry one node's saved state to its new id after a rename, so it doesn't jump.
-function movePos(oldId, newId) {
-    if (oldId === newId) return;
-    remapNodeState((id) => (id === oldId ? newId : null));
-    statsRenameNode(oldId, newId);
-}
-
-// Renaming a window changes the id embedded in ALL its child nodes, so carry every node
-// whose window segment matches — one rename, the whole subtree stays put. Limited to the
-// window-owned node types so it can't grab a same-named dataset node (those carry
-// separately in the handler, since their stored data moves too).
-const WINDOW_NODE_TYPES = new Set(["win", "prev", "reg", "det", "item", "sb"]);
-function moveWindowPos(oldWin, newWin) {
-    if (oldWin === newWin) return;
-    statsRenameNode(`win:${oldWin}`, `win:${newWin}`);   // carry the window node's timing history
-    remapNodeState((id) => {
-        const p = id.split(":");
-        return WINDOW_NODE_TYPES.has(p[0]) && p[1] === oldWin
-            ? [p[0], newWin, ...p.slice(2)].join(":") : null;
-    });
-}
-
-const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds (rank)"]];
-const EXTRACTS = ["whole", "number", "number_before", "number_after", "text_before", "text_after"];
-const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text_after"]);
-// how the game dictionary participates in a text field's reads (FieldDef.dict_mode)
-const DICT_MODES = [
-    ["off", "off"],
-    ["correct", "correct"],
-    ["drop", "drop"],
-    ["correct_drop", "correct + drop"],
-];
-
-// Conditional fallback rules (FieldRule). `when` is a predicate on the RAW read's
-// shape; `then` substitutes a value or drops the record. Rules run in order, first
-// match wins. Generalises the old empty / if_number / if_text one-offs.
-const RULE_WHEN = [
-    ["empty", "is empty"],
-    ["no_digit", "has no digit"],
-    ["all_digit", "is all digits"],
-    ["has_digit", "has a digit"],
-    ["no_letter", "has no letter"],
-    ["all_letter", "is all letters"],
-    ["has_letter", "has a letter"],
-    ["always", "always"],
-];
-const RULE_THEN = [["set", "set value"], ["drop", "drop record"]];
-
-// <option>s for a field's dictionary picker: "all" (every enabled dictionary pooled)
-// + each named dictionary. `sel` is the field's pinned DictionaryDef.id ("" = pooled).
-function dictOptions(sel) {
-    const dicts = model.profile.dictionaries || [];
-    const opts = [`<option value="" ${!sel ? "selected" : ""}>all</option>`];
-    for (const d of dicts)
-        opts.push(`<option value="${esc(d.id)}" ${sel === d.id ? "selected" : ""}>${esc(d.name || d.id)}</option>`);
-    // pin a referenced dictionary the profile no longer lists, so the field keeps pointing at it
-    // (shown by bare id) instead of silently snapping to "all" on the next edit.
-    if (sel && !dicts.some((d) => d.id === sel))
-        opts.push(`<option value="${esc(sel)}" selected>${esc(sel)}</option>`);
-    return opts.join("");
-}
+// Node body HTML builders (windowControls/itemLists/fieldConfigBody/nodeParts/keyPrevHTML/…) live in node_parts.js
 
 // ---- layout ---------------------------------------------------------------
 
@@ -426,10 +356,6 @@ async function measureNode(n) {
 // Position a just-created node at the nearest free spot to its parent. Call BEFORE
 // render() so ensurePositions() leaves it alone.
 // world-space coords of the centre of the usable (panel-clear) viewport
-function viewportCenterWorld() {
-    const u = usableViewport();
-    return { x: (u.left + u.w / 2 - view.panX) / view.zoom, y: (u.top + u.h / 2 - view.panY) / view.zoom };
-}
 
 // Position a just-created node. Call BEFORE render() so ensurePositions() leaves it alone.
 // `srcId` is the node that SPAWNED this one (a node adding a node): the new node is placed
@@ -462,104 +388,12 @@ function inheritGroupFrom(newId, srcId) {
     if (!srcId) return;
     const g = groups.groupOf(srcId);
     if (g) groups.addToGroup(g.id, [newId]);
+    // inherit the source's SUBGROUP too, so a box drawn on a window inside a subgroup joins it
+    const sg = groups.subgroupOf(srcId);
+    if (sg) groups.addToSubgroup(sg.id, [newId]);
 }
 
-// ---- smooth pan to a node (cancelled by any user action) ------------------
-let panAnim = null;
-function cancelPan() { if (panAnim) { cancelAnimationFrame(panAnim); panAnim = null; } }
-function panTo(id) {
-    const p = pos.get(id), el = nodeEls.get(id);
-    if (!p || !el) return;
-    const u = usableViewport();   // clear of floating panels
-    const z = view.zoom, ew = el.offsetWidth, eh = el.offsetHeight;
-    const left = p.x * z + view.panX, top = p.y * z + view.panY;
-    if (left >= u.left && top >= u.top && left + ew * z <= u.left + u.w && top + eh * z <= u.top + u.h) return;  // already in the clear
-    const tx = (u.left + u.w / 2) - (p.x + ew / 2) * z;
-    const ty = (u.top + u.h / 2) - (p.y + eh / 2) * z;
-    const sx = view.panX, sy = view.panY, t0 = performance.now(), dur = 380;
-    cancelPan();
-    const step = (now) => {
-        let t = (now - t0) / dur; if (t > 1) t = 1;
-        const e = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;   // easeInOutQuad
-        view.panX = sx + (tx - sx) * e; view.panY = sy + (ty - sy) * e;
-        applyView();
-        panAnim = t < 1 ? requestAnimationFrame(step) : null;
-    };
-    panAnim = requestAnimationFrame(step);
-}
-
-// Hard zoom-in ceiling: nodes inherit the body font (--fs-md), so on-screen text = baseFont ×
-// zoom. Cap so it never renders larger than 16px — i.e. don't zoom closer than 16/baseFont.
-// Read the computed value (tracks the CSS var; no hard-coded px). Used by fit/pan-zoom-to only —
-// the manual wheel is unrestricted.
-const MAX_FONT_PX = 16;
-let _maxZoom = null;
-function maxZoom() {
-    if (_maxZoom == null) _maxZoom = MAX_FONT_PX / (parseFloat(getComputedStyle(document.body).fontSize) || 14);
-    return _maxZoom;
-}
-
-// Comfortable zoom to fit a node in the viewport, with only a small margin around it
-// (tight, not lots of empty space). Shared by double-click AND the node-map jump.
-const FIT_FILL = 0.96;   // node spans this fraction of the viewport
-const FIT_MAX = 4;       // allow zooming further in for small nodes
-function fitZoom(w, h, rect) {
-    return Math.min(maxZoom(), Math.max(0.15, Math.min(FIT_MAX, (rect.width * FIT_FILL) / w, (rect.height * FIT_FILL) / h)));
-}
-
-// The part of the graph viewport NOT covered by any visible, uncollapsed floating window —
-// so pan/zoom centres a node in clear space instead of behind a panel. Each panel clips the
-// usable box on whichever side it intrudes least (panels hug an edge, so this carves them
-// off cleanly); chained/overlapping panels just clip in turn. Returns graph-local coords.
-function usableViewport() {
-    const rect = $("graph").getBoundingClientRect();
-    let L = 0, T = 0, R = rect.width, B = rect.height;
-    for (const [, w] of floatWins()) {
-        if (w.el.hidden || w.state.collapsed) continue;
-        const r = w.el.getBoundingClientRect();
-        const l = Math.max(r.left - rect.left, L), t = Math.max(r.top - rect.top, T);
-        const rr = Math.min(r.right - rect.left, R), bb = Math.min(r.bottom - rect.top, B);
-        if (rr <= l || bb <= t) continue;   // no overlap with the current usable box
-        const fromL = rr - L, fromR = R - l, fromT = bb - T, fromB = B - t;
-        const m = Math.min(fromL, fromR, fromT, fromB);
-        if (m === fromL) L = rr; else if (m === fromR) R = l; else if (m === fromT) T = bb; else B = t;
-    }
-    // ignore the inset if it leaves no room (panels cover the viewport) — fall back to full rect
-    if (R - L < 80) { L = 0; R = rect.width; }
-    if (B - T < 80) { T = 0; B = rect.height; }
-    return { left: L, top: T, w: R - L, h: B - T };
-}
-
-// Smoothly pan AND zoom to centre a WORLD rect {x,y,w,h}. fit=true picks a comfortable zoom
-// to frame it, else keeps the current zoom. The shared core of panZoomTo (node) and the
-// group double-click jump.
-function panZoomToRect(box, { fit = true } = {}) {
-    if (!box || !box.w || !box.h) return;
-    const u = usableViewport();   // centre in the area clear of floating panels
-    const tz = fit ? fitZoom(box.w, box.h, { width: u.w, height: u.h }) : view.zoom;
-    const tx = (u.left + u.w / 2) - (box.x + box.w / 2) * tz;
-    const ty = (u.top + u.h / 2) - (box.y + box.h / 2) * tz;
-    const sx = view.panX, sy = view.panY, sz = view.zoom, t0 = performance.now(), dur = 380;
-    cancelPan();
-    const step = (now) => {
-        let t = (now - t0) / dur; if (t > 1) t = 1;
-        const e = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;   // easeInOutQuad
-        view.panX = sx + (tx - sx) * e; view.panY = sy + (ty - sy) * e; view.zoom = sz + (tz - sz) * e;
-        applyView(); updateOverlayZoom();
-        panAnim = t < 1 ? requestAnimationFrame(step) : null;
-        if (!panAnim) persist.local();
-    };
-    panAnim = requestAnimationFrame(step);
-}
-
-// Smoothly pan AND zoom to centre a node (the node-map jump).
-function panZoomTo(id, opts = {}) {
-    const el = nodeEls.get(id), p = pos.get(id);
-    if (!el || !p) return;
-    panZoomToRect({ x: p.x, y: p.y, w: el.offsetWidth || 220, h: el.offsetHeight || 80 }, opts);
-}
-
-// (size-HUD readout + aspectLabel now live in dragresize.js, shared with panels)
+// pan/zoom camera (panTo/panZoomTo/applyView/resizeCanvas/onWheel/…) lives in camera.js
 
 // ---- group resize: scale members, keep their gaps intact -------------------
 function memberBBox(snap) {
@@ -647,76 +481,9 @@ function startGroupResize(gid, ev) {
 
 // ---- render ---------------------------------------------------------------
 
-function windowControls(w) {
-    // The record key is taught per item template (key section in the item node; the teach
-    // page covers grid windows). Where records flow is shown by the wire to the dataset node.
-    // The toggles are slide-toggle flabs; the image selector / recapture / page nav live
-    // below the canvas (built in openImage). "clicks" only shows when auto-scroll is on.
-    const sc = w.scroll || {};
-    return `<label class="flab" title="item rows: static tiles the data area into a fixed grid from the cell size (no OCR for location); off locates rows by OCR (a tell/locate field) — only needed for a scroll-parked list">static grid <input type="checkbox" class="winstatic" ${w.static_grid !== false ? "checked" : ""}/></label>
-    <label class="flab" title="precapture auto-scrolls this window's list while recording it">auto-scroll <input type="checkbox" class="winscroll" data-k="autoscroll" ${sc.autoscroll ? "checked" : ""}/></label>
-    ${sc.autoscroll ? `<label class="flab" title="wheel notches sent per auto-scroll nudge">auto-scroll clicks <input type="number" class="winscroll" data-k="clicks" value="${sc.scroll_clicks ?? 1}" min="1"/></label>` : ""}
-    <label class="flab" title="attempt this window in live view">live <input type="checkbox" class="winlive" ${w.live !== false ? "checked" : ""}/></label>
-    ${windowItemOrder(w)}
-    ${windowDetects(w)}`;
-}
 
-// The window's detectors as rows below templates: how they combine (all/any) + each
-// detector's polarity (require present / require absent), with a LIVE per-row verdict and
-// an overall pass/fail for the current image. The detect NODE still edits each detector's
-// text/threshold; this section edits only the window-level match POLICY. Statuses
-// (`.wd-status`, `.wd-verdict`) are filled live by setWindowDetectStatus (reconciled in place,
-// never rebuilt per tick) and hold blank until the first detect pass returns.
-function windowDetects(w) {
-    const dets = w.detect || [];
-    if (!dets.length) return "";
-    const mode = w.detect_mode || "all";
-    const sel = (val, opts, cls, attrs = "") => `<select class="${cls}" ${attrs}>` +
-        opts.map(([v, t]) => `<option value="${v}" ${val === v ? "selected" : ""}>${t}</option>`).join("") + "</select>";
-    const modeSel = sel(mode, [["all", "all"], ["any", "any"]], "wd-mode",
-        `title="all = every detector must pass (AND); any = at least one passes (OR)"`);
-    // Three columns: col1 = detector name, col2 = its live status, col3 = the polarity select
-    // bound to that detector. The select is width:100% (min-width:0), so it can never overflow
-    // (the window body clips overflow). The header row labels all three columns.
-    const rows = dets.map((d) => `<div class="wd-row" data-id="${esc(d.id)}">
-      <span class="wd-name" title="${esc(d.id)} — open this detector's node">${esc(d.id)}</span>
-      <span class="wd-status muted" data-id="${esc(d.id)}" title="live: does this detector pass its requirement on the current image"></span>
-      ${sel(d.negate ? "absent" : "present", [["present", "present"], ["absent", "absent"]], "wd-neg",
-        `data-id="${esc(d.id)}" title="require this landmark PRESENT (positive), or ABSENT (negative — the window fails if it IS found)"`)}
-    </div>`).join("");
-    return `<div class="muted il-h wi-h" title="how this window's detectors decide a match">detects</div>
-    <label class="wd-mode-line muted">window matches if ${modeSel}</label>
-    <div class="wd-row wd-head muted"><span class="wd-name">detector</span><span class="wd-status">pass</span><span class="wd-req-h">require</span></div>
-    ${rows}
-    <div class="wd-verdict muted" title="whether the current capture would be recognised as this window with the settings above"></div>`;
-}
 
-// Item templates listed in PRIORITY order — the top row is priority 0 (the static grid's
-// base cell, which sets the grid pitch); a lower row outranks it when their cells overlap
-// the same tile. Reordering IS how priority is set; the number itself is never shown. Click
-// a name to jump to that item's node.
-function windowItemOrder(w) {
-    const items = [...(w.items || [])].sort((a, b) => (a.priority || 0) - (b.priority || 0));
-    if (!items.length) return "";
-    const rows = items.map((it, i) => `<div class="wi-row" data-id="${esc(it.id)}">
-      <span class="wi-name" title="select this item's node">${esc(it.id)}</span>
-      <button class="wimv" data-id="${esc(it.id)}" data-d="-1" ${i === 0 ? "disabled" : ""} title="move up — lower priority (top = base cell)">▲</button>
-      <button class="wimv" data-id="${esc(it.id)}" data-d="1" ${i === items.length - 1 ? "disabled" : ""} title="move down — higher priority (wins tile overlaps)">▼</button>
-    </div>`).join("");
-    return `<div class="muted il-h wi-h" title="template priority order — the top template is the base cell (sets the grid pitch); a lower template outranks it when their cells overlap the same tile">templates</div>${rows}`;
-}
 
-// The cell size (item.box w/h, window fractions) shown as editable inputs below the cutout
-// canvas. Under static grid this IS the grid pitch (column/row spacing); the cell's position
-// is unused. Editing reuses setItemCellKeepingChildren so fields/tells stay visually put.
-function cellSizeControls(it) {
-    const b = it.box || { w: 0, h: 0 };
-    const v = (n) => +(+n || 0).toFixed(4);
-    // priority-0 is the static grid's base cell; a non-0 item can match its w/h so every
-    // template tiles on the same pitch (only shown when this item isn't priority 0 itself)
-    return `<label class="flab" title="cell width as a window fraction — the static grid's column pitch">width <input type="number" class="csize" data-k="w" step="0.001" min="0.001" value="${v(b.w)}"/></label>
-    <label class="flab" title="cell height as a window fraction — the static grid's row pitch">height <input type="number" class="csize" data-k="h" step="0.001" min="0.001" value="${v(b.h)}"/></label>`;
-}
 
 // Keep the cell-size inputs in sync after a canvas cell-resize (which doesn't rebuild the node).
 function syncCellSize(winId, itemId) {
@@ -728,90 +495,9 @@ function syncCellSize(winId, itemId) {
     }
 }
 
-// One field's fallback-rule rows (FieldRule list). `cls` is the change-class the node
-// wiring listens on; `fid` (item fields) tags each control so the wiring resolves the
-// field. The value input shows only for a `set` rule (a `drop` needs none).
-function ruleRows(fd, cls, fid) {
-    const da = fid ? ` data-fid="${esc(fid)}"` : "";
-    const rules = fd.rules || [];
-    if (!rules.length) return `<div class="muted frule-empty">no rules — the read is used as-is</div>`;
-    return rules.map((r, i) => {
-        const whenOpts = RULE_WHEN.map(([v, t]) => `<option value="${v}" ${(r.when || "empty") === v ? "selected" : ""}>${t}</option>`).join("");
-        const thenOpts = RULE_THEN.map(([v, t]) => `<option value="${v}" ${(r.then || "set") === v ? "selected" : ""}>${t}</option>`).join("");
-        const showVal = (r.then || "set") === "set";
-        return `<div class="frule" data-ri="${i}">
-      <select class="rule-when" data-ri="${i}"${da} title="condition tested on the raw read">${whenOpts}</select>
-      <select class="rule-then" data-ri="${i}"${da} title="what to do when it matches">${thenOpts}</select>
-      ${showVal ? `<input class="rule-val" data-ri="${i}"${da} value="${esc(r.value || "")}" placeholder="value" title="value substituted into the field"/>` : ""}
-      <button class="rule-del danger" data-ri="${i}"${da} title="remove this rule">${TRASH}</button>
-    </div>`;
-    }).join("");
-}
 
-// The per-field config body, SHARED by the region node and the item-field node (one
-// renderer, not two copies). Inputs are grouped under .fgrp sub-headings and only the
-// ones that DO something for the current type/mode are shown. `cls` is the wiring's
-// change-class ("fset" | "ffset"); `fid` (item fields) tags each control.
-function fieldConfigBody(fd, cls, fid) {
-    const da = fid ? ` data-fid="${esc(fid)}"` : "";
-    const pips = fd.type === "pips" || fd.type === "diamonds";
-    const isText = fd.type === "text";
-    const isNum = fd.type === "number";
-    const dictOn = (fd.dict_mode || "correct") !== "off";   // dictionary actually consulted
-    const hasDicts = (model.profile.dictionaries || []).length;
-    const types = TYPES.map(([v, t]) => `<option value="${v}" ${fd.type === v ? "selected" : ""}>${t}</option>`).join("");
-    const exs = EXTRACTS.map((v) => `<option ${(fd.extract || "whole") === v ? "selected" : ""}>${v}</option>`).join("");
-    return `
-    <div class="fgrp">read</div>
-    <label class="flab" title="read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. drain '8' read as '81')">isolate <input type="checkbox" class="${cls}" data-k="isolate"${da} ${fd.isolate ? "checked" : ""}/></label>
-    <label class="flab">type <select class="${cls}" data-k="type"${da}>${types}</select></label>
-    ${pips ? "" : `<label class="flab">extract <select class="${cls}" data-k="extract"${da}>${exs}</select></label>`}
-    ${(!pips && NEEDS_SEP.has(fd.extract)) ? `<label class="flab">separator <input class="${cls}" type="text" data-k="sep"${da} value="${esc(fd.separator || "/")}"/></label>` : ""}
-    <label class="flab" title="minimum OCR confidence this field must reach — a weaker read drops the whole record (0 = use the global floor)">conf <input type="number" class="${cls}" data-k="minconf"${da} step="0.05" min="0" max="1" value="${fd.min_confidence ?? 0}"/></label>
-    ${isNum ? `<label class="flab" title="lowest plausible value — a read below this is a misread and drops the record (blank = no minimum)">min <input type="number" class="${cls}" data-k="min"${da} value="${fd.min ?? ""}" placeholder="(none)"/></label>
-    <label class="flab" title="highest plausible value — a read above this is a misread and drops the record (blank = no maximum)">max <input type="number" class="${cls}" data-k="max"${da} value="${fd.max ?? ""}" placeholder="(none)"/></label>` : ""}
-    ${isText ? `<div class="fgrp">dictionary</div>
-    <label class="flab" title="off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped">dict <select class="${cls}" data-k="dictmode"${da}>${DICT_MODES.map(([v, t]) => `<option value="${v}" ${(fd.dict_mode || "correct") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-    ${(hasDicts && dictOn) ? `<label class="flab" title="which authored dictionary this field snaps to (all = every enabled one pooled)">use dict <select class="${cls}" data-k="usedict"${da}>${dictOptions(fd.dictionary)}</select></label>` : ""}
-    <label class="flab" title="learn the dictionary from confident reads, fuzzy-correct uncertain ones">learn <input type="checkbox" class="${cls}" data-k="learn"${da} ${fd.learn ? "checked" : ""}/></label>
-    ${(fd.learn || dictOn) ? `<label class="flab" title="similarity (0-1) an uncertain read must reach to snap to a known word; higher = stricter">fuzzy <input type="number" class="${cls}" data-k="fuzzy"${da} step="0.05" min="0" max="1" value="${fd.fuzzy ?? 0.82}"/></label>` : ""}` : ""}
-    <div class="fgrp">rules <button class="ruleadd"${da} title="add a fallback rule">+ rule</button></div>
-    ${ruleRows(fd, cls, fid)}`;
-}
 
-// One item field is its OWN node (a child of its item node). It renders the shared
-// per-field config (against the window's FieldDef) plus the row-role controls (tell /
-// locate / align) that only make sense for a field inside an item template.
-function itemFieldParts(n) {
-    const f = n.ref, fd = n.field || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
-    const body = `${fieldConfigBody(fd, "ffset", f.id)}
-    <div class="fgrp">row role</div>
-    <label class="flab" title="require this field to read something — it doubles as a tell">tell <input type="checkbox" class="itell" data-fid="${f.id}" ${f.tell ? "checked" : ""}/></label>
-    ${f.tell ? `<label class="flab" title="minimum OCR confidence the read must reach (0 = any)">tell conf <input type="number" class="itellconf" data-fid="${f.id}" step="0.05" min="0" max="1" value="${f.tell_conf ?? 0}"/></label>` : ""}
-    ${f.tell && fd.type === "number" ? `<label class="flab" title="pass the tell even when the read carries text (e.g. a polarity glyph), not only a clean number">allow text <input type="checkbox" class="itelltext" data-fid="${f.id}" ${f.tell_allow_text ? "checked" : ""}/></label>` : ""}
-    <label class="flab" title="use this field to LOCATE rows (anchor the grid) — independent of tell; a reliable text field (e.g. the name) can locate without being a tell">locate <input type="checkbox" class="iloc" data-fid="${f.id}" ${f.locate ? "checked" : ""}/></label>
-    ${(f.tell || f.locate) ? `<label class="flab" title="which line of a wrapped name to anchor the row on">align <select class="itellalign" data-fid="${f.id}">${["none", "top", "center", "bottom"].map((v) => `<option ${(f.align || n.item.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>` : ""}
-    <div class="gn-foot"></div>`;
-    return { title: `<input class="gi gi-id" data-k="fldid" value="${esc(f.id)}" title="field id" />`, body };
-}
 
-// One tell is its OWN node (a child of its item node). It renders the per-tell controls that
-// used to live inline in the item node: kind, the kind-specific input (field for text, colour
-// for color), threshold, and — only when the window locates rows by OCR (static grid off) —
-// the locate toggle + its align. Mirrors itemFieldParts.
-function itemTellParts(n) {
-    const t = n.ref, it = n.item, w = n.win;
-    const staticOn = w.static_grid !== false;   // static grid tiles rows from the cell — locate is unused
-    const body = `
-    <label class="flab" title="what this tell checks">kind <span class="tt-kind">${esc(t.kind)}</span></label>
-    ${t.kind === "text" ? `<label class="flab" title="which field this tell reads to validate the cell">field <select class="tset" data-k="field">${_optList((it.fields || []).map((f) => f.field), t.field)}</select></label>` : ""}
-    ${t.kind === "color" ? `<label class="flab" title="the colour that must be present in the tell box">colour <input type="color" class="tset" data-k="color" value="${t.color || "#ffcc00"}"/></label>` : ""}
-    <label class="flab" title="pass score (0..1) the tell must reach">threshold <input type="number" class="tset" data-k="threshold" step="0.05" min="0" max="1" value="${t.threshold ?? 0.5}"/></label>
-    ${staticOn ? "" : `<label class="flab" title="use this tell to LOCATE rows (anchor the grid) — only one tell per item locates">locate <input type="checkbox" class="tloc" ${t.locate ? "checked" : ""}/></label>`}
-    ${(t.locate && !staticOn) ? `<label class="flab" title="anchor on this line of a wrapped name">align <select class="tset" data-k="align">${["none", "top", "center", "bottom"].map((v) => `<option ${(t.align || it.align || "center") === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>` : ""}
-    <div class="gn-foot"></div>`;
-    return { title: `<input class="gi gi-id" data-k="tellid" value="${esc(t.id)}" title="tell id" />`, body };
-}
 
 // Shared wiring for a field-config body's rule editor (region + item-field nodes both
 // call this). `rebuild` re-renders the node body (add/remove a rule, or a then-toggle
@@ -836,88 +522,8 @@ function wireFieldRules(div, fd, { rebuild, commit }) {
     }));
 }
 
-function itemLists(it, w) {
-    // tells are their OWN nodes now — the item lists only a compact summary (id + kind + remove);
-    // the full per-tell editor lives on each tell node (itemTellParts). Mirrors fieldsSummary below.
-    const tellsSummary = (it.tells || []).map((t) => `<div class="ti-sum" data-tid="${esc(t.id)}" title="select this tell's node">
-      <span class="ti-sum-name">${esc(t.id)}</span>
-      <span class="ti-sum-kind muted">${esc(t.kind)}</span>
-      <button class="ti-del danger" data-tid="${esc(t.id)}" title="remove">${TRASH}</button></div>`).join("");
-    // fields flagged as tells (f.tell) show here too, read-only — they're edited in the fields
-    // list below; the only action is remove, which just unchecks the field's tell flag.
-    const fieldTells = (it.fields || []).filter((f) => f.tell).map((f) => `<div class="ti-row ti-fieldtell" data-fid="${esc(f.id)}">
-      <span class="ti-kind">field</span>
-      <span class="ti-name">${esc(f.id)}</span>
-      <span class="ti-ro muted">tell · conf ${f.tell_conf ?? 0}</span>
-      <button class="ti-untell danger" data-fid="${esc(f.id)}" title="stop using this field as a tell">${TRASH}</button></div>`).join("");
-    // fields are their OWN nodes now — the item lists only a compact summary (name + remove);
-    // the full per-field editor lives on each field node (itemFieldParts).
-    const fieldsSummary = (it.fields || []).map((f) => `<div class="if-sum" data-fid="${esc(f.id)}" title="select this field's node">
-      <span class="if-sum-name">${esc(f.id)}</span>
-      <button class="if-del danger" data-fid="${esc(f.id)}" title="remove">${TRASH}</button></div>`).join("");
-    // the cutout draw-mode buttons, split by what they draw: cell under "cell", field under
-    // "fields", every tell kind under "tells". Selecting one sets the active draw kind.
-    const drawBtn = ([v, label, icon, tip]) => `<button class="tool" data-kind="${v}" title="${esc(tip || `draw ${label}`)}">${icon} ${label}</button>`;
-    // copy w/h from the priority-0 base cell — sits next to the cell draw button (non-base only)
-    const matchBtn = (it.priority || 0) === 0 ? ""
-        : `<button class="csize-match" title="copy width & height from the base cell (the top template — the static grid's base pitch)">match base</button>`;
-    const cellBtns = ITEM_KINDS.filter(([v]) => v === "bbox").map(drawBtn).join("") + matchBtn;
-    const fieldBtns = ITEM_KINDS.filter(([v]) => v === "field").map(drawBtn).join("");
-    const tellBtns = ITEM_KINDS.filter(([v]) => v !== "bbox" && v !== "field").map(drawBtn).join("");
-    return `<div class="muted il-h">cell</div>
-    <div class="il-tools">${cellBtns}</div>
-    ${cellSizeControls(it)}
-    <div class="muted il-h">tells</div>
-    <div class="il-tools">${tellBtns}</div>
-    ${(tellsSummary + fieldTells) || '<div class="muted">draw a tell on the cutout</div>'}
-    <div class="muted il-h">fields</div>
-    <div class="il-tools">${fieldBtns}</div>
-    ${fieldsSummary || '<div class="muted">draw a field on the cutout</div>'}
-    ${keySection(it, w)}
-    `;
-}
 
-// The item's record key (dedup identity): which fields identify a record, in what
-// order, joined how. Live preview = the key the LAST cutout read would store under,
-// recomputed instantly on every config edit (client mirror of the server's KeySpec);
-// the server's own key shows in the read-out after the next read.
-function keySection(it, w) {
-    const eff = model.effectiveItemKey(w.id, it.id);
-    const used = eff.fields && eff.fields.length ? eff.fields : [];
-    const fids = [...new Set((it.fields || []).map((f) => f.field))];
-    const rows = used.length
-        ? used.map((fid, i) => `<div class="key-row" data-i="${i}">
-      <select class="kfield" data-i="${i}">${(fids.includes(fid) ? fids : [fid, ...fids])
-        .map((f) => `<option ${f === fid ? "selected" : ""}>${esc(f)}</option>`).join("")}</select>
-      <button class="kmv" data-i="${i}" data-d="-1" ${i === 0 ? "disabled" : ""} title="earlier in the key">▲</button>
-      <button class="kmv" data-i="${i}" data-d="1" ${i === used.length - 1 ? "disabled" : ""} title="later in the key">▼</button>
-      <button class="kdel danger" data-i="${i}" ${used.length <= 1 ? "disabled" : ""} title="remove from the key">${TRASH}</button>
-    </div>`).join("")
-        : `<div class="key-row muted" title="no fields yet — draw a field on the cutout to key on it">—</div>`;
-    const addable = fids.filter((f) => !used.includes(f));
-    return `<div class="muted il-h" title="which fields identify a record — reads with the same key merge; a different key (e.g. another level) is its own record. A record missing any key part is dropped.">key</div>
-    <label class="flab" title="joins the parts in the stored key">separator <input class="ksep" value="${esc(eff.sep ?? "|")}" size="2"/></label>
-    ${addable.length ? `<label class="flab" title="add a field to the key">+ field <select class="kadd"><option value="">field…</option>${addable.map((f) => `<option>${esc(f)}</option>`).join("")}</select></label>` : ""}
-    <label class="flab" title="treat keys differing only in case as distinct">is case-sensitive <input type="checkbox" class="kcase" ${eff.case_sensitive ? "checked" : ""}/></label>
-    ${rows}`;
-}
 
-// The key the LAST cutout read would store under — recomputed instantly from the
-// cached read on every key-config edit (client mirror of the server's KeySpec),
-// refreshed again when the automatic cutout read lands. Empty until a read exists.
-function keyPrevHTML(winId, itemId) {
-    const it = model.item(winId, itemId), w = model.window(winId);
-    const rd = itemReads.get(`${winId}:${itemId}`);
-    if (!it || !w || !rd) return "";
-    const eff = model.effectiveItemKey(winId, itemId);
-    const vals = {};
-    for (const [k, v] of Object.entries(rd.fields || {})) vals[k] = v.value;
-    const key = buildKey(vals, eff);
-    if (key !== null) return `<b class="conf-ok">${esc(key)}</b>`;   // label ("key:") is the readout grid's job now
-    const used = eff.fields && eff.fields.length ? eff.fields : [];
-    const miss = used.find((f) => vals[f] === null || vals[f] === undefined || vals[f] === "");
-    return `<span class="tc-bad">∅ no key${miss ? ` — ${esc(miss)} read empty` : ""}</span> <span class="muted">(record dropped)</span>`;
-}
 
 // THE single update path after ANY item edit. Every item handler calls this instead of
 // hand-assembling rebuild/clear/refresh/read/save combos (which drifted and kept missing a
@@ -961,10 +567,10 @@ function wireItemControls(div, n) {
         itemChanged(winId, itemId); syncCellSize(winId, itemId);   // copy P0 w/h, reflect in inputs
     });
     div.querySelector(".gi-id").addEventListener("change", (e) => {
-        const newId = e.target.value.trim();
-        if (!model.renameItem(winId, itemId, newId)) { e.target.value = itemId; return; }
-        movePos(`item:${winId}:${itemId}`, `item:${winId}:${newId}`);
-        itemChanged(winId, newId, { render: true, reread: false });   // id only — no pixels/boxes change
+        renameNode(e.target, itemId,
+            () => model.renameItem(winId, itemId, e.target.value.trim()),
+            () => moveItemPos(winId, itemId, n.ref.id),   // carry the item AND its field/tell child nodes (no jump)
+            () => itemChanged(winId, n.ref.id, { render: true, reread: false }));   // id only — no pixels/boxes change
     });
     // a tell's full editor is its OWN node now; the item shows a summary. Removing a tell
     // drops its node (full render). Clicking a summary row pans to the tell node (below).
@@ -1069,10 +675,10 @@ function fieldChanged(winId, itemId, fid, { rebuild = false, rebuildItem = false
 function wireItemField(div, n) {
     const winId = n.win.id, itemId = n.item.id, fid = n.ref.id;
     div.querySelector(".gi-id").addEventListener("change", (e) => {
-        const newId = e.target.value.trim();
-        if (!model.renameItemField(winId, itemId, fid, newId)) { e.target.value = fid; return; }
-        movePos(`fld:${winId}:${itemId}:${fid}`, `fld:${winId}:${itemId}:${newId}`);
-        fieldChanged(winId, itemId, newId, { render: true });
+        renameNode(e.target, fid,
+            () => model.renameItemField(winId, itemId, fid, e.target.value.trim()),
+            () => movePos(`fld:${winId}:${itemId}:${fid}`, `fld:${winId}:${itemId}:${n.ref.id}`),
+            () => fieldChanged(winId, itemId, n.ref.id, { render: true }));
     });
     div.querySelectorAll(".ffset").forEach((inp) => inp.addEventListener("change", (e) => {
         const f = model.itemField(winId, itemId, fid);
@@ -1117,6 +723,10 @@ function wireItemField(div, n) {
         model.setItemFieldAlign(winId, itemId, fid, e.target.value);
         fieldChanged(winId, itemId, fid);
     });
+    div.querySelector(".itellalignx")?.addEventListener("change", (e) => {
+        model.setItemFieldAlignX(winId, itemId, fid, e.target.value);
+        fieldChanged(winId, itemId, fid);   // x-anchor changes where columns land -> re-read
+    });
 }
 
 // THE update path after a TELL-node edit (mirrors fieldChanged): a tell change affects the
@@ -1138,16 +748,24 @@ function tellChanged(winId, itemId, tid, { rebuild = false, render: doRender = f
 function wireItemTell(div, n) {
     const winId = n.win.id, itemId = n.item.id, tid = n.ref.id;
     div.querySelector(".gi-id").addEventListener("change", (e) => {
-        const newId = e.target.value.trim();
-        if (!model.renameItemTell(winId, itemId, tid, newId)) { e.target.value = tid; return; }
-        movePos(`tell:${winId}:${itemId}:${tid}`, `tell:${winId}:${itemId}:${newId}`);
-        tellChanged(winId, itemId, newId, { render: true, reread: false });   // id only — no pixels/boxes
+        renameNode(e.target, tid,
+            () => model.renameItemTell(winId, itemId, tid, e.target.value.trim()),
+            () => movePos(`tell:${winId}:${itemId}:${tid}`, `tell:${winId}:${itemId}:${n.ref.id}`),
+            () => tellChanged(winId, itemId, n.ref.id, { render: true, reread: false }));   // id only — no pixels/boxes
     });
     div.querySelectorAll(".tset").forEach((inp) => inp.addEventListener("change", (e) => {
         const k = e.target.dataset.k;
-        const v = k === "threshold" ? (+e.target.value || 0) : e.target.value;
-        model.setItemTellProp(winId, itemId, tid, k, v);
-        tellChanged(winId, itemId, tid);
+        let prop = k, v;
+        if (k === "threshold") v = +e.target.value || 0;
+        else if (k === "minchars") { prop = "min_chars"; v = Math.max(0, Math.trunc(+e.target.value) || 0); }
+        else if (k === "incl") { prop = "included"; v = e.target.checked; }
+        else if (k === "case") { prop = "case_sensitive"; v = e.target.checked; }
+        else if (k === "field") v = e.target.value || null;   // blank "—" => no field => check ANY column
+        else v = e.target.value;
+        model.setItemTellProp(winId, itemId, tid, prop, v);
+        // text empty<->set adds/removes the match knobs; mode change shows/hides "read ⊆ text"
+        // (ignored by full/exact) -> rebuild this node's body in both cases
+        tellChanged(winId, itemId, tid, (k === "text" || k === "match") ? { rebuild: true } : {});
     }));
     div.querySelector(".tloc")?.addEventListener("change", (e) => {
         // locate is single-choice across the item's tells — clear the others, set this one
@@ -1166,15 +784,15 @@ function wireWindowControls(div, n) {
         if (!model.renameWindow(oldId, newId)) { e.target.value = oldId; return; }
         // The capture binding + open image are keyed by window id — carry them across so the
         // image canvas doesn't blank on rename. Move the binding (server), drop the old-keyed
-        // canvas, then re-open under the new id (which loads from the moved binding).
+        // canvas, then re-open under the new id (which loads from the moved binding). winPage rides
+        // moveWindowPos below (remapNodeState carries every per-id store, this one included).
         const game = model.profile.name, wasOpen = openImages.has(oldId);
         try {
             const caps = await api.bindingList(game, oldId);   // all image pages move with the window
             if (caps.length) { await api.setBindings(game, newId, caps); await api.setBindings(game, oldId, []); }
-            if (winPage.has(oldId)) { winPage.set(newId, winPage.get(oldId)); winPage.delete(oldId); }
         } catch { /* binding move failed -> image just reloads empty, not fatal */ }
         if (imageCanvases.has(oldId)) closeImage(oldId);
-        moveWindowPos(oldId, newId);            // win + all child nodes
+        moveWindowPos(oldId, newId);            // win + all child nodes (pos/size/collapse/tab/winPage/…)
         const newDs = model.datasetOf(n.ref);
         if (oldDs && newDs && newDs !== oldDs) movePos(`ds:${oldDs}`, `ds:${newDs}`);
         // a rename changes only the id/wiring — no pixels or boxes change, so DON'T trigger the
@@ -1205,7 +823,7 @@ function wireWindowControls(div, n) {
         autosave(false);   // precapture-only knobs — the reader/preview never use them, so don't re-OCR
     }));
     // reorder the item-template priority list: ▲/▼ swap a template up/down, re-numbering
-    // priorities to match the new order (top = 0). The base cell may change -> reread.
+    // priorities to match the new order (top = highest, bottom = 0 base). Base may change -> reread.
     div.querySelectorAll(".wimv").forEach((b) => b.addEventListener("click", () => {
         model.moveItemPriority(n.ref.id, b.dataset.id, +b.dataset.d);
         windowItemsReordered(n.ref.id);
@@ -1239,163 +857,16 @@ function windowItemsReordered(winId) {
     autosave(true, winId);
 }
 
-function nodeParts(n) {
-    if (n.type === "game") {
-        const g = n.ref;
-        return {
-            title: `<input class="gi gi-id" data-k="name" value="${esc(g.name)}" title="game name" />`,
-            body: `
-        <label class="flab">process <input class="gi" data-k="proc" value="${esc((g.process_names || []).join(", "))}" placeholder="Warframe.x64.exe" /></label>
-        <label class="flab">title hint <input class="gi" data-k="title" value="${esc(g.window_title_hint || "")}" placeholder="Warframe" /></label>`,
-        };
-    }
-    if (n.type === "window") {
-        const w = n.ref;
-        return {
-            title: `<input class="gi gi-id" data-k="winid" value="${esc(w.id)}" />`,
-            body: `<div class="win-controls">${windowControls(w)}</div><div class="win-img"></div>`,
-            ports: `<span class="port out" title="drag to a dataset to send this window's rows there"></span>`,
-        };
-    }
-    if (n.type === "region") {
-        const f = n.field || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
-        return {
-            title: `<input class="gi gi-id" data-k="regid" value="${esc(n.ref.id)}" title="region / field id" />`,
-            body: `${fieldConfigBody(f, "fset")}
-        <div class="gn-foot"></div>`,
-        };
-    }
-    if (n.type === "detect") {
-        const a = n.ref;
-        return {
-            title: `<input class="gi gi-id" data-k="detid" value="${esc(a.id)}" title="detector: all must match to capture" />`,
-            body: `<label class="flab">text <input class="aset" data-k="text" value="${esc(a.text || "")}" placeholder="EQUIPMENT" /></label>
-        <label class="flab" title="how text is compared: partial=substring (loose); full=whole-string; exact=equal; prefix=starts-with">mode
-          <select class="aset" data-k="match">
-            <option value="partial" ${(a.match ?? "partial") === "partial" ? "selected" : ""}>partial</option>
-            <option value="full" ${a.match === "full" ? "selected" : ""}>full</option>
-            <option value="exact" ${a.match === "exact" ? "selected" : ""}>exact</option>
-            <option value="prefix" ${a.match === "prefix" ? "selected" : ""}>prefix</option>
-          </select></label>
-        <label class="flab">read ⊆ text <input type="checkbox" class="aset" data-k="incl" ${a.included ? "checked" : ""} title="partial/prefix only: match if the read word is included in this text" /></label>
-        <label class="flab">threshold <input type="number" class="aset" data-k="thr" step="0.05" min="0" max="1" value="${a.threshold ?? 0.8}" /></label>
-        <label class="flab" title="hard floor: reads shorter than this never match (kills tiny-blob false hits)">min chars <input type="number" class="aset" data-k="minchars" step="1" min="0" value="${a.min_chars ?? 0}" /></label>
-        <label class="flab" title="what to ignore before comparing">strip
-          <select class="aset" data-k="strip">
-            <option value="alnum" ${(a.strip ?? "alnum") === "alnum" ? "selected" : ""}>alnum</option>
-            <option value="spaces" ${a.strip === "spaces" ? "selected" : ""}>spaces</option>
-            <option value="none" ${a.strip === "none" ? "selected" : ""}>none</option>
-          </select></label>
-        <label class="flab">case sensitive <input type="checkbox" class="aset" data-k="case" ${a.case_sensitive ? "checked" : ""} title="off = fold case before comparing" /></label>
-        <div class="detect-status muted">◯ —</div>
-        <div class="gn-foot"></div>`,
-        };
-    }
-    if (n.type === "item") {
-        return { title: `<input class="gi gi-id" data-k="itemid" value="${esc(n.ref.id)}" title="item template" />`,
-            body: `<div class="item-img"></div><div class="item-lists">${itemLists(n.ref, n.win)}</div>` };
-    }
-    if (n.type === "itemfield") return itemFieldParts(n);
-    if (n.type === "itemtell") return itemTellParts(n);
-    if (n.type === "scrollbar") {
-        const o = n.ref.scrollbar_orientation || "vertical";
-        return {
-            title: "scrollbar",
-            body: `<label class="flab">orientation <select class="sbset" data-k="orient">
-          <option ${o === "vertical" ? "selected" : ""}>vertical</option>
-          <option ${o === "horizontal" ? "selected" : ""}>horizontal</option></select></label>
-        <div class="detect-status muted">position: —</div>
-        <div class="gn-foot"></div>`,
-        };
-    }
-    if (n.type === "preview") {
-        // live-read node — what the current layout would read from this window. Runs OCR
-        // on demand (its own button, or the image's 👁), rendered inline.
-        return {
-            title: `<span class="gi-id">${esc(n.ref.id)} preview</span>`,
-            body: `<div class="nodehost scrollhost prev-host"><p class="muted" style="padding:8px">open the window image or edit it to preview what it reads</p></div>
-        <div class="gn-foot"><button class="prevcommit" title="write these reads into the window's dataset (one revertable batch)">commit to dataset</button></div>`,
-        };
-    }
-    if (n.type === "subset") return subsetParts(n.ref);
-    if (n.type === "price") return priceParts(n.ref, model.priceSourceColumns(n.ref), model.priceJoinable(n.ref));
-    if (n.type === "trigger") return triggerParts(n.ref, model);
-    if (n.type === "dictionary") {
-        // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The
-        // terms live in config/dictionaries/<source>; this node just references that file.
-        const dict = n.ref;
-        const count = (dict.terms || []).length;
-        const src = dict.source || "—";
-        const missing = !count && dict.source;   // a referenced file that resolved to nothing
-        return {
-            title: `<input class="gi gi-id dictname" value="${esc(dict.name || dict.id)}" title="dictionary name" />`,
-            body: `<div class="muted">${count} word${count === 1 ? "" : "s"} · file <code>${esc(src)}</code>${missing ? ` <span class="warn">· file missing</span>` : ""}</div>
-        <div class="nodehost scrollhost dict-host"><textarea class="dictterms" spellcheck="false" autocomplete="off" placeholder="one word per line\nNeo V11\nSoma Prime\n…">${esc((dict.terms || []).join("\n"))}</textarea></div>
-        <div class="gn-foot"></div>`,
-        };
-    }
-    // dataset — receives/stores rows, deduped by the keys the records arrive with.
-    // The key itself is no concern of the dataset: it's taught on the item templates
-    // (or windows) that read the records.
-    const ds = n.ref;
-    const noDedup = !model.datasetDedup(ds);
-    const kf = model.datasetKeyField(ds);
-    // pin the configured key field even if the window schema doesn't (yet) list it, so a key on a
-    // field the windows don't currently declare stays selected rather than snapping to "from windows".
-    const kfields = model.datasetFields(ds);
-    const keyFields = !noDedup && kf && !kfields.includes(kf) ? [...kfields, kf] : kfields;
-    const keyOpts = ['<option value="">key: from windows</option>']
-        .concat(keyFields.map((f) => `<option value="${esc(f)}"${!noDedup && kf === f ? " selected" : ""}>key: ${esc(f)}</option>`))
-        .concat([`<option value="__nodedup__"${noDedup ? " selected" : ""}>no dedup (keep every read)</option>`]).join("");
-    const bm = model.datasetBatchMode(ds);
-    const batchOpts = [["run", "per run"], ["detection", "per detection"]]
-        .map(([v, l]) => `<option value="${v}"${bm === v ? " selected" : ""}>${l}</option>`).join("");
-    return {
-        title: `<input class="gi gi-id dsrename" value="${esc(ds)}" title="dataset name" />`,
-        body: `<div class="lab-grid">1 → many<select class="dskey" title="the key the dataset collapses many reads on (or none)">${keyOpts}</select>
-      batch<select class="dsbatch" title="how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like relic offerings)">${batchOpts}</select></div>
-      <div class="gn-foot"><button class="dsclone">clone</button><button class="dsclear danger">clear data</button></div>
-      <div class="ds-tabs" role="tablist">
-        <button class="ds-tab on" data-tab="data" role="tab">data <span class="ds-tab-n data-n"></span></button>
-        <button class="ds-tab" data-tab="batches" role="tab" title="this dataset's collection/save runs">batches <span class="ds-tab-n bat-n"></span></button>
-      </div>
-      <div class="nodehost scrollhost data-host"><p class="muted" style="padding:8px">loading…</p></div>
-      <div class="nodehost scrollhost bat-host">
-        <ul class="history bat-list"><li class="muted">loading…</li></ul>
-        <div class="bat-detail muted">select a batch to see its events and what applying it changes</div>
-      </div>`,
-        ports: `<span class="port out" title="drag to a subset to feed it this dataset"></span>`,
-    };
-}
 
 // how a key's many observations collapse to one displayed value (matches the backend)
 const AGGREGATES = ["latest", "first", "sum", "mean", "max", "min"];
 
-// Friendly timestamp for a dataset's last change: clock time if today, else date.
-function fmtWhen(ts) {
-    const t = String(ts);
-    const today = new Date().toISOString().slice(0, 10);
-    return t.slice(0, 10) === today ? t.slice(11, 16) : t.slice(0, 10);
-}
-// HH:MM:SS from an ISO timestamp — drops fractional seconds AND the timezone suffix (+00:00).
-function clockTime(ts) { const m = /T(\d{2}:\d{2}:\d{2})/.exec(String(ts || "")); return m ? m[1] : ""; }
 
 // ---- subset node: join one or more datasets, then filter/derive/sort ----------
 
 const SUB_OPS = ["contains", "icontains", "eq", "ne", "nonempty", "empty", "gt", "lt", "gte", "lte", "regex"];
 
-// Render <option>s for `opts`, marking `sel` selected, and PIN `sel` into the list when the
-// current option set doesn't include it — a saved value (renamed field, `_seq`, a column a live
-// join hasn't surfaced yet) stays selected instead of snapping to the first option and being lost
-// on the next edit. The one place every column/field dropdown gets this behaviour.
-function _optList(opts, sel) {
-    const all = sel && !opts.includes(sel) ? [...opts, sel] : opts;
-    return all.map((c) => `<option${c === sel ? " selected" : ""}>${esc(c)}</option>`).join("");
-}
 
-function _colOpts(cols, sel) {
-    return `<option value=""${sel ? "" : " selected"}>—</option>` + _optList(cols, sel);
-}
 
 // Last live column set a subset's join actually returned (set by refreshSubsetNode). The static
 // schema (model.subsetColumns) only knows columns declared on windows — orders/enrich columns
@@ -1506,26 +977,20 @@ function subConfigHTML(s) {
       ${labCell("limit", "cap the number of result rows (0 = no limit)")}<input type="number" class="sv-limit" min="0" step="1" value="${s.limit || 0}" placeholder="0" />
       ${aggRow}
       ${labCell("latest batch only", "only pull rows from each source's most recent collection batch (applied before everything else)")}<label class="flab"><input type="checkbox" class="sv-latest" ${s.latest_batch ? "checked" : ""}/></label></div>
-    <div class="sub-sec"><div class="sub-lbl">filters <span class="muted">(all must pass)</span></div>${filters}
-      <button class="sub-addf">+ filter</button></div>
-    <div class="sub-sec"><div class="sub-lbl">columns <span class="muted">({col} text · {=expr} math · mix freely)</span></div>${derived}
-      <button class="sub-addd">+ column</button></div>
-    <div class="sub-sec"><div class="sub-lbl">sort <span class="muted">(primary first; applied before limit)</span></div>${sortRows}
-      <button class="sub-adds">+ sort</button></div>
-    <div class="sub-sec"><div class="sub-lbl">visible <span class="muted">(click to hide/show)</span></div>
+    <div class="sub-sec"><div class="sub-lbl" title="all must pass">filters<button class="sub-addf" title="add filter">+</button></div>${filters}</div>
+    <div class="sub-sec"><div class="sub-lbl" title="{col} text · {=expr} math · mix freely">columns<button class="sub-addd" title="add column">+</button></div>${derived}</div>
+    <div class="sub-sec"><div class="sub-lbl" title="primary first; applied before limit">sort<button class="sub-adds" title="add sort">+</button></div>${sortRows}</div>
+    <div class="sub-sec"><div class="sub-lbl" title="click to hide/show">visible</div>
       <div class="sv-hides">${hideTogglesHTML(s)}</div></div>`;
 }
 
 function subsetParts(s) {
-    const off = !!s.config_collapsed;   // persisted on the subset def (rides the profile yaml)
+    // config is always visible now (no fold toggle); the head button toggles the records-grid
+    // satellite (vt:sub:<id>), the same opt-in follower datasets get.
     return {
         title: `<input class="gi gi-id subrename" value="${esc(s.id)}" title="subset name" />`,
-        head: `<button class="sub-cfg-tog gn-cog${off ? "" : " on"}" title="config" aria-label="toggle config">
-        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-          <path fill="currentColor" d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/>
-        </svg></button>`,
-        body: `<div class="sub-cfg${off ? " collapsed" : ""}">${subConfigHTML(s)}</div>
-      <div class="nodehost scrollhost sub-host"><p class="muted" style="padding:8px">loading…</p></div>`,
+        head: satToggleBtn(`vt:sub:${s.id}`, "vttable"),
+        body: `<div class="sub-cfg">${subConfigHTML(s)}</div>`,
         ports: `<span class="port out" title="drag to another subset to feed it this subset's rows"></span>`,
     };
 }
@@ -1551,27 +1016,29 @@ function repaintSubsetCols(el, s) {
 // the FINAL data instead of stalling on a stale mid-sweep snapshot.
 function refreshSubsetNode(id) { singleFlight(`sub:${id}`, () => _refreshSubsetNode(id)); }
 async function _refreshSubsetNode(id) {
-    const el = nodeEls.get(`sub:${id}`);
-    const host = el && el.querySelector(".sub-host");
-    if (!host) return;
+    const el = nodeEls.get(`sub:${id}`);                              // config node (hide toggles live here)
+    const host = nodeEls.get(`vt:sub:${id}`)?.querySelector(".sub-host");   // records grid — opt-in satellite
+    if (!el && !host) return;
     try {
         const r = await api.getSubset(model.profile.name, id);
-        const vt = vtableFor(`view:${id}`, host);
         const s = model.subsetDef(id);
-        // dragging a column in the table re-orders the visible/hide buttons to match, live
-        vt.onReorder = () => renderHideToggles(nodeEls.get(`sub:${id}`), s);
-        // click a row to drill into the source rows that joined to produce it (one per input)
-        vt.setData(r.columns || [], r.rows || [], { expander: (row) => expandSubsetRow(id, row) });
+        if (host) {
+            const vt = vtableFor(`view:${id}`, host);
+            // dragging a column in the table re-orders the visible/hide buttons to match, live
+            vt.onReorder = () => renderHideToggles(nodeEls.get(`sub:${id}`), s);
+            // click a row to drill into the source rows that joined to produce it (one per input)
+            vt.setData(r.columns || [], r.rows || [], { expander: (row) => expandSubsetRow(id, row) });
+        }
         // the live join may expose columns the static schema can't know (orders/enrich fields) —
         // cache them and re-render the visible/hide toggles so every actual column is listed.
         subsetLiveCols.set(id, r.columns || []);
-        if (s) { renderHideToggles(el, s); repaintSubsetCols(el, s); }
+        if (s && el) { renderHideToggles(el, s); repaintSubsetCols(el, s); }
     } catch (e) {
         // a just-added subset isn't on the backend until the profile saves (debounced) —
         // that's a transient 404, not an error; the post-save refresh fills it in.
         const msg = /\b404\b/.test(String(e.message || e)) ? "no data yet" : String(e.message || e);
         vtables.delete(`view:${id}`);
-        host.innerHTML = `<p class="muted" style="padding:8px">${esc(msg)}</p>`;
+        if (host) host.innerHTML = `<p class="muted" style="padding:8px">${esc(msg)}</p>`;
     }
 }
 
@@ -1593,17 +1060,12 @@ function wireSubset(div, s) {
     // autosave(false): persist + refresh THIS view, never re-OCR the open windows.
     const recompute = () => { autosave(false); refreshSubsetNode(s.id); };
     const restructure = () => { autosave(false); rebuildNode(`sub:${s.id}`); };   // rebuild this node's config
-
-    div.querySelector(".sub-cfg-tog")?.addEventListener("click", (e) => {
-        const off = s.config_collapsed = !s.config_collapsed;
-        div.querySelector(".sub-cfg")?.classList.toggle("collapsed", off);
-        e.currentTarget.classList.toggle("on", !off);
-        autosave(false);   // persist the fold state in the profile; no window OCR change
-    });
     div.querySelector(".subrename")?.addEventListener("change", (e) => {
         const oldId = s.id;
-        if (model.renameSubset(oldId, e.target.value)) { movePos(`sub:${oldId}`, `sub:${s.id}`); render(); autosave(false); }
-        else e.target.value = oldId;
+        renameNode(e.target, oldId,
+            () => model.renameSubset(oldId, e.target.value),
+            () => movePos(`sub:${oldId}`, `sub:${s.id}`),
+            () => { render(); autosave(false); });
     });
     div.querySelector(".sub-addf")?.addEventListener("click", () => { model.addFilter(s.id); restructure(); });
     div.querySelector(".sub-addd")?.addEventListener("click", () => { model.addDerived(s.id); restructure(); });
@@ -1665,9 +1127,11 @@ function wirePrice(div, n) {
     });
     // rename the price node (its id) — carry its saved layout slot to the new id, then re-render
     div.querySelector(".prrename")?.addEventListener("change", (e) => {
-        const oldId = n.ref.id, newId = (e.target.value || "").trim();
-        if (!model.renamePriceNode(oldId, newId)) { e.target.value = oldId; return; }
-        movePos(`price:${oldId}`, `price:${newId}`); render(); autosave(false);
+        const oldId = n.ref.id;
+        renameNode(e.target, oldId,
+            () => model.renamePriceNode(oldId, (e.target.value || "").trim()),
+            () => movePos(`price:${oldId}`, `price:${n.ref.id}`),
+            () => { render(); autosave(false); });
     });
     // add a priced-item source via the chip add-select (same input the subset uses)
     div.querySelector(".pr-addsrc")?.addEventListener("change", (e) => {
@@ -1684,9 +1148,11 @@ function wirePrice(div, n) {
 function wireTrigger(div, n) {
     const t = n.ref;
     div.querySelector(".tgrename")?.addEventListener("change", (e) => {
-        const oldId = t.id, newId = (e.target.value || "").trim();
-        if (!model.renameTrigger(oldId, newId)) { e.target.value = oldId; return; }
-        movePos(`trigger:${oldId}`, `trigger:${t.id}`); render(); autosave(false);
+        const oldId = t.id;
+        renameNode(e.target, oldId,
+            () => model.renameTrigger(oldId, (e.target.value || "").trim()),
+            () => movePos(`trigger:${oldId}`, `trigger:${t.id}`),
+            () => { render(); autosave(false); });
     });
     // kind swaps the body (interval/watch blocks) AND the edges, so rebuild this node then re-render
     div.querySelector(".tg-kind")?.addEventListener("change", (e) => {
@@ -1717,31 +1183,154 @@ function wireTrigger(div, n) {
     });
 }
 
-export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "price", "trigger"]);
-const REMOVABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "subset", "dataset", "price", "trigger"]);
+// ---- file-source node: parse a game log/config file into its dataset --------
+
+function wireSource(div, n) {
+    const s = n.ref;
+    const $ = (sel) => div.querySelector(sel);
+    const prog = $(".src-prog");
+
+    // Live preview: parse the CURRENT rules without writing. Edit-driven and debounced — NEVER a
+    // poll/timer (so it can't violate the steady-state-zero-DOM rule); the only redraws are user edits.
+    let pvTimer = null, pvCtl = null;
+    const schedulePreview = () => { clearTimeout(pvTimer); pvTimer = setTimeout(runPreview, 300); };
+    async function runPreview() {
+        if (!document.contains(div) || !model.profile.name) return;
+        pvCtl?.abort(); pvCtl = new AbortController();
+        const info = $(".src-prev-info"), host = $(".src-preview");
+        try {
+            const r = await api.sources.preview(model.profile.name, s, pvCtl.signal);
+            renderPreview(host, r.rows || []);
+            const le = r.line_ending ? ` · ${r.line_ending}` : "";
+            info.textContent = (r.path === null && !(r.rows || []).length)
+                ? (r.note || "file not found") : `${r.matched} row(s) · ${r.total} line(s)${le}`;
+        } catch (e) {
+            if (e.name === "AbortError") return;
+            info.textContent = String(e.message || e);
+        }
+    }
+    queueMicrotask(runPreview);   // initial preview on mount
+
+    $(".srcrename")?.addEventListener("change", (e) => {
+        const oldId = s.id;
+        renameNode(e.target, oldId,
+            () => model.renameFileSource(oldId, (e.target.value || "").trim()),
+            () => movePos(`src:${oldId}`, `src:${s.id}`),
+            () => { render(); autosave(false); });
+    });
+    // format/watch swap the body (extraction UI / throttle / tail) -> rebuild then re-preview
+    $(".src-format")?.addEventListener("change", (e) => { model.setSourceFormat(s.id, e.target.value); rebuildNode(n.id); autosave(false); });
+    $(".src-watch")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "watch", e.target.value); rebuildNode(n.id); autosave(false); });
+    // plain edits: store + preview, no rebuild (keep input focus)
+    $(".src-filename")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "filename", e.target.value); autosave(false); schedulePreview(); });
+    $(".src-path")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "path", e.target.value); autosave(false); schedulePreview(); });
+    $(".src-throttle")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "throttle_s", e.target.value); autosave(false); });
+    $(".src-tail")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "tail", e.target.checked); autosave(false); schedulePreview(); });
+
+    // line filters (match clauses)
+    $(".src-addm")?.addEventListener("click", () => { model.addSourceMatch(s.id); rebuildNode(n.id); autosave(false); });
+    div.querySelectorAll(".src-rmm").forEach((b) => b.addEventListener("click", () => { model.removeSourceMatch(s.id, +b.dataset.i); rebuildNode(n.id); autosave(false); }));
+    div.querySelectorAll(".mset").forEach((inp) => inp.addEventListener("change", (e) => {
+        model.setSourceMatch(s.id, +e.target.dataset.i, e.target.dataset.k,
+            e.target.type === "checkbox" ? e.target.checked : e.target.value);
+        autosave(false); schedulePreview();
+    }));
+
+    // extraction fields
+    $(".src-addf")?.addEventListener("click", () => { model.addSourceField(s.id); rebuildNode(n.id); autosave(false); });
+    div.querySelectorAll(".src-rmf").forEach((b) => b.addEventListener("click", () => { model.removeSourceField(s.id, +b.dataset.i); rebuildNode(n.id); autosave(false); }));
+    div.querySelectorAll(".fset2").forEach((inp) => inp.addEventListener("change", (e) => {
+        const k = e.target.dataset.k;
+        model.setSourceFieldProp(s.id, +e.target.dataset.i, k,
+            e.target.type === "checkbox" ? e.target.checked : e.target.value);
+        if (k === "method") { rebuildNode(n.id); autosave(false); }   // method swaps its own inputs
+        else { autosave(false); schedulePreview(); }
+    }));
+
+    // auto-find the file across generic OS locations
+    $(".src-find")?.addEventListener("click", async () => {
+        const found = $(".src-found"), host = $(".src-cands");
+        found.textContent = "searching…";
+        try {
+            const r = await api.sources.find(model.profile.name, { filename: s.filename, roots: s.roots });
+            renderCandidates($, host, found, s, n, schedulePreview, r.candidates || []);
+        } catch (e) { found.textContent = String(e.message || e); }
+    });
+    // read the file now (writes to the dataset)
+    $(".src-read")?.addEventListener("click", async () => {
+        prog.textContent = "reading…";
+        try { const r = await api.sources.read(model.profile.name, s.id); prog.textContent = `read ${r.rows} row(s) → ${r.dataset || "(no dataset)"}`; refreshLive(); }
+        catch (e) { prog.textContent = String(e.message || e); }
+    });
+    $(".src-prevbtn")?.addEventListener("click", runPreview);
+}
+
+// candidate picker for auto-find: each hit is a button that pins it as the explicit path.
+function renderCandidates($, host, found, s, n, schedulePreview, cands) {
+    found.textContent = cands.length ? `${cands.length} found` : "none found";
+    host.replaceChildren();
+    cands.slice(0, 20).forEach((c) => {
+        const b = document.createElement("button");
+        b.className = "src-cand";
+        b.textContent = `${c.path}  (${(c.size / 1024).toFixed(0)} KB)`;
+        b.title = "use this file";
+        b.addEventListener("click", () => {
+            model.setSourceProp(s.id, "path", c.path);
+            const pin = $(".src-path"); if (pin) pin.value = c.path;
+            autosave(false); schedulePreview();
+            host.replaceChildren(); found.textContent = "";
+        });
+        host.appendChild(b);
+    });
+}
+
+// small read-only preview table (capped) of the rows the current rules produce. Edit-driven
+// (never a steady-state tick), so a full innerHTML build here is fine.
+function renderPreview(host, rows) {
+    if (!host) return;
+    if (!rows.length) { host.replaceChildren(); return; }
+    const cols = [];
+    for (const r of rows) for (const k of Object.keys(r)) if (!cols.includes(k)) cols.push(k);
+    const cap = 50;
+    const head = `<tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`;
+    const body = rows.slice(0, cap).map((r) =>
+        `<tr>${cols.map((c) => `<td>${esc(r[c] == null ? "" : String(r[c]))}</td>`).join("")}</tr>`).join("");
+    host.innerHTML = `<table class="src-ptab"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "price", "trigger", "filesource"]);
+const REMOVABLE = new Set(["window", "item", "itemfield", "itemtell", "region", "detect", "scrollbar", "dictionary", "subset", "dataset", "price", "trigger", "filesource"]);
 
 // One place to remove any node; each goes through render()+autosave() so undo/redo
 // records it (autosave -> pushHistory).
+// Per-type removal as data, not a re-copied render/cleanup block: `kill` mutates the model (+ any
+// pre-render teardown like closing a live canvas); `after` is the follow-up (autosave variant +
+// side effects). The shared render + forgetNodeState (drops every per-id store) + status line run
+// ONCE for every type. re-OCR only the affected window (autosave winId) — removing a region/detect/
+// scrollbar/item changes THAT window's read, never the others; window-less types pass autosave(false).
 function removeNode(n) {
-    // re-OCR only the affected window (autosave winId) — removing a region/detect/scrollbar/item
-    // changes THAT window's read, never the other open windows. Node types with no window
-    // (window itself / view / producer / control) pass autosave(false): no re-OCR at all.
-    if (n.type === "window") { closeImage(n.ref.id); model.removeWindow(n.ref.id); render(); autosave(false); }
-    else if (n.type === "item") {
-        const winId = n.win.id, itemId = n.ref.id;
-        closeItemImage(winId, itemId); model.removeItem(winId, itemId);
-        clearGrid(winId); render(); refreshImageBoxes(winId); autosave(true, winId);
-    }
-    else if (n.type === "region") { model.removeRegion(n.win.id, n.ref.id); render(); autosave(true, n.win.id); refreshImageBoxes(n.win.id); }
-    else if (n.type === "detect") { model.removeDetect(n.win.id, n.ref.id); render(); rebuildNode(`win:${n.win.id}`); autosave(true, n.win.id); refreshImageBoxes(n.win.id); }
-    else if (n.type === "scrollbar") { model.removeScrollbar(n.win.id); render(); autosave(true, n.win.id); refreshImageBoxes(n.win.id); }
-    else if (n.type === "dictionary") { model.removeDictionary(n.ref.id); render(); autosave(false); }
-    else if (n.type === "subset") { model.removeSubset(n.ref.id); render(); autosave(false); }
-    else if (n.type === "price") { model.removePriceNode(n.ref.id); render(); autosave(false); }
-    else if (n.type === "trigger") { model.removeTrigger(n.ref.id); render(); autosave(false); }
-    else if (n.type === "dataset") { model.removeDatasetDef(n.ref); purgeDatasetData(n.ref); render(); autosave(); }
-    pos.delete(n.id); nodeSizes.delete(n.id); collapsed.delete(n.id);   // drop ALL live layout state for the gone node (every type, one place)
-    groups.forgetNodes(new Set([n.id]));   // drop the gone node from any group
+    const win = n.win?.id;
+    const PLAN = {
+        window:     { kill: () => { closeImage(n.ref.id); model.removeWindow(n.ref.id); }, after: () => autosave(false) },
+        item:       { kill: () => { closeItemImage(win, n.ref.id); model.removeItem(win, n.ref.id); clearGrid(win); }, after: () => { refreshImageBoxes(win); autosave(true, win); } },
+        region:     { kill: () => model.removeRegion(win, n.ref.id), after: () => { autosave(true, win); refreshImageBoxes(win); } },
+        detect:     { kill: () => model.removeDetect(win, n.ref.id), after: () => { rebuildNode(`win:${win}`); autosave(true, win); refreshImageBoxes(win); } },
+        scrollbar:  { kill: () => model.removeScrollbar(win), after: () => { autosave(true, win); refreshImageBoxes(win); } },
+        itemfield:  { kill: () => model.removeItemField(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
+        itemtell:   { kill: () => model.removeItemTell(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
+        dictionary: { kill: () => model.removeDictionary(n.ref.id), after: () => autosave(false) },
+        subset:     { kill: () => model.removeSubset(n.ref.id), after: () => autosave(false) },
+        price:      { kill: () => model.removePriceNode(n.ref.id), after: () => autosave(false) },
+        trigger:    { kill: () => model.removeTrigger(n.ref.id), after: () => autosave(false) },
+        filesource: { kill: () => model.removeFileSource(n.ref.id), after: () => autosave(false) },
+        dataset:    { kill: () => { model.removeDatasetDef(n.ref); purgeDatasetData(n.ref); }, after: () => autosave() },
+    };
+    const plan = PLAN[n.type];
+    if (!plan) return;
+    plan.kill();
+    render();
+    forgetNodeState(n.id);   // drop ALL live state for the gone node (one place — twin of remapNodeState)
+    plan.after();
     setStatus(`deleted ${n.type} ${n.ref?.id ?? n.ref ?? ""}`.trimEnd());
 }
 
@@ -1765,7 +1354,7 @@ function fillNode(div, n, wire = true) {
     const hasRules = (n.type === "itemfield" || n.type === "region") && (n.field?.rules?.length || 0) > 0;
     const prettyDirty = prettyOverrides.isNodeDirty(n.id);
     div.className = `gnode ${n.type}${isCollapsed ? " collapsed" : ""}${enabled ? "" : " node-disabled"}${hasRules ? " has-rules" : ""}${prettyDirty ? " pretty-dirty" : ""}`;
-    if (n.type === "dataset") { div.dataset.ds = n.ref; div.dataset.tab = dsTab.get(n.ref) || "data"; }
+    if (n.type === "dataset") div.dataset.ds = n.ref;   // out-port drop target id (tabs moved to the vt-table satellite)
     const parts = nodeParts(n);
     const toggle = canToggle
         ? `<button type="button" class="gn-enable${enabled ? " on" : ""}" role="switch" aria-checked="${enabled}" title="enabled — turn off to skip this node during detection">
@@ -1797,6 +1386,16 @@ function fillNode(div, n, wire = true) {
         const winId = n.type === "window" ? n.ref.id : n.win?.id;
         if (winId) { clearGrid(winId); refreshImageBoxes(winId); }
         autosave(on);   // disabling shouldn't trigger re-reads in other nodes
+    });
+    // satellite show/hide (preview on a window; vt-table on a dataset/subset) — one handler for
+    // every node that carries the head button. Toggling rebuilds the graph so the follower node +
+    // its dotted edge appear/disappear; a freshly shown one is parked just right of its parent.
+    div.querySelector(".gn-sat-tog")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const btn = e.currentTarget;
+        const on = model.toggleSatellite(btn.dataset.sat);
+        paintSatToggle(btn, on);   // render() keeps existing node DOM, so flip the button by hand
+        applySatellite(btn.dataset.sat, on);
     });
     if (busy.get(n.id)) div.classList.add("busy");   // preserve spinner across rebuilds
     if (!wire) return;   // measurement probe: skip side-effecting wiring (openImage, out-port drag)
@@ -1840,8 +1439,14 @@ function outPortSpec(n) {
             },
             onEmpty: (pt) => { const id = model.addSubset(n.ref.id); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
         };
+        case "filesource": return {
+            target: "dataset",
+            onDrop: (ds) => { model.setSourceDataset(n.ref.id, ds); rebuildNode(n.id); },
+            onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setSourceDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
+        };
         case "trigger": return {
-            target: "price",
+            // a trigger fires a PRICE node (sweep) or a FILE SOURCE (read)
+            target: ["price", "filesource"],
             onDrop: (pid) => { if (model.addTriggerTarget(n.ref.id, pid)) rebuildNode(n.id); },
         };
         default: return null;
@@ -1873,10 +1478,48 @@ function wirePortHandle(port, id, spec) {
 // place a (new) node at a world-space point, grid-snapped
 function placeAt(id, pt) { pos.set(id, { x: snap(pt.x), y: snap(pt.y) }); }
 
+// Park a freshly-shown satellite (preview / vt-table) just to the right of its parent, unless it
+// already has a saved slot. Only sets pos when the parent is laid out; otherwise ensurePositions
+// falls back to the type's COLX column.
+function placeSatelliteNear(satId) {
+    if (pos.has(satId)) return;
+    const r = nodeRect(model.satelliteParent(satId));
+    if (r) placeAt(satId, { x: r.x + r.w + 60, y: r.y });
+}
+
+// Update a satellite-toggle button's look to match its on/off state (render() leaves the parent
+// node's DOM in place, so the button is flipped by hand).
+function paintSatToggle(btn, on) {
+    btn.classList.toggle("on", on);
+    btn.setAttribute("aria-pressed", on);
+    const t = `${on ? "hide" : "show"} ${btn.dataset.sat.startsWith("prev:") ? "preview" : "data table"}`;
+    btn.title = t; btn.setAttribute("aria-label", t);
+}
+
+// Apply a satellite's new visibility: (re)build the graph so the follower node + its dotted edge
+// appear/disappear, seat it in its parent's group/subgroup, and persist (layout sidecar only).
+function applySatellite(satId, on) {
+    if (on) placeSatelliteNear(satId);          // set pos BEFORE render so ensurePositions keeps it
+    else groups.forgetNodes(new Set([satId]));  // hidden -> drop it from any group/subgroup (no stale member id)
+    render();
+    if (on) groups.reflowFollowers();           // shown -> seat it in its parent's group/subgroup
+    persist.layout();   // satellite visibility rides the layout sidecar, never the yaml
+}
+
+// Ensure a satellite is shown (no-op if already), syncing its parent's toggle button. Used by
+// flows that need the satellite present to render into it (e.g. the image's "preview all").
+export function showSatellite(satId) {
+    if (model.satelliteOn(satId)) return;
+    model.toggleSatellite(satId);
+    const btn = nodeEls.get(model.satelliteParent(satId))?.querySelector(".gn-sat-tog");
+    if (btn) paintSatToggle(btn, true);
+    applySatellite(satId, true);
+}
+
 // the source id a drop target commits to: a dataset node's name, or a node's bare id
 // (subset/price/trigger carry a prefixed node id in data-id).
 function targetIdOf(el, target) {
-    return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|price|trigger):/, "");
+    return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|price|trigger|src):/, "");
 }
 
 // Host node types that resize at the NODE level (their body fills them) — one consistent
@@ -1887,9 +1530,12 @@ function targetIdOf(el, target) {
 // Resize-handle opts shared by the initial build and every in-place rebuild. The grips live
 // in the node's innerHTML, so a rebuildNode() (which rewrites innerHTML via fillNode) WIPES
 // them — they must be re-added with these same opts or the node stops resizing.
-function nodeResizeOpts(div, id) {
+// `widthOnly`: item + window nodes wrap a FIXED-ASPECT canvas (cutout / captured image), so
+// they resize by WIDTH only — height follows the image aspect. Same primitive, one flag; never
+// a separate resize path (their size persists through nodeSizes like every other node).
+function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
     return {
-        both: true,
+        both: !widthOnly,
         zoom: () => view.zoom,
         // left-edge accessor: the node's world x lives in `pos` (canvas-zoomed) — lets the
         // shared bottom-left grip resize this node leftward with its right edge anchored
@@ -1899,26 +1545,30 @@ function nodeResizeOpts(div, id) {
         // reset dot: drop the user's size back to the node's natural CSS size, then snap that UP
         // to the grid. Snapping DOWN would shrink the node below its natural size and clip content,
         // so always round up — the reset size is the smallest grid-aligned box that still fits.
+        // (widthOnly nodes never stamp height — it follows the aspect.)
         onReset: () => {
-            div.style.width = ""; div.style.height = "";              // measure the natural CSS size
-            const w = snapUp(div.offsetWidth), h = snapUp(div.offsetHeight);
-            div.style.width = `${w}px`; div.style.height = `${h}px`;
+            div.style.width = ""; if (!widthOnly) div.style.height = "";   // measure the natural CSS size
+            const w = snapUp(div.offsetWidth);
+            div.style.width = `${w}px`;
+            const h = widthOnly ? div.offsetHeight : snapUp(div.offsetHeight);
+            if (!widthOnly) div.style.height = `${h}px`;
             nodeSizes.set(id, { w, h });
             drawEdges(); groups.renderGroups(); persist.layout();
         },
     };
 }
 
-// Make a node's content host (`.nodehost`) user-resizable; the node itself stays a
-// normal node (header/body identical to every other node — only the scroll box
-// resizes). Restores + persists the host size, grid-snapped on release.
-// Resize the NODE itself (its CSS resize handle), not an inner host — its body fills it.
-function makeNodeResizable(div, id) {
+// Make a node user-resizable: restore its saved size, then attach the grips (NODE itself, its
+// body fills it). Restores + persists through nodeSizes — grid-snapped on release — so a
+// rebuild, RENAME (render() destroys + rebuilds; movePos carries nodeSizes to the new id), or
+// reload all keep the user's size. `widthOnly` (item/window) restores width only; height is
+// aspect-driven, so it's never stamped inline.
+function makeNodeResizable(div, id, { widthOnly = false } = {}) {
     const s = nodeSizes.get(id);
     // a collapsed node is header-only (CSS) — never stamp its saved w/h inline, or the hard
     // inline size beats the collapsed CSS and the node renders full-height while "collapsed".
-    if (s && !collapsed.has(id)) { if (s.w) div.style.width = `${s.w}px`; if (s.h) div.style.height = `${s.h}px`; }
-    snapResize(div, nodeResizeOpts(div, id));
+    if (s && !collapsed.has(id)) { if (s.w) div.style.width = `${s.w}px`; if (!widthOnly && s.h) div.style.height = `${s.h}px`; }
+    snapResize(div, nodeResizeOpts(div, id, { widthOnly }));
 }
 
 function buildNode(n, wire = true) {
@@ -1926,35 +1576,32 @@ function buildNode(n, wire = true) {
     div.id = `node-${n.id}`;
     div.dataset.id = n.id;
     fillNode(div, n, wire);
-    // item + window nodes wrap a FIXED-ASPECT canvas (cutout / captured image): resize by
-    // WIDTH only — height follows the image aspect (a free height would clip the canvas or
-    // leave a gap). Both-axis node resize is wrong for them; the rest get it below.
-    if (n.type === "item" || n.type === "window") snapResize(div, {
-        onResize: () => { drawEdges(); groups.renderGroups(); }, zoom: () => view.zoom,
-        left: (v) => { const p = pos.get(n.id); if (v === undefined) return p ? p.x : 0; if (p) { p.x = v; positionNode(n.id); } },
-        onSettle: () => { persist.layout(); drawEdges(); groups.renderGroups(); },
-    });
-    // every other node resizes at the NODE level (its body fills it) — one consistent behaviour
-    else makeNodeResizable(div, n.id);
+    // ONE resize path for every node. `widthOnly` nodes never stamp a height — it follows the
+    // content: item/window wrap a fixed-aspect canvas; dataset/subset/price are config-only and
+    // reworked often with visibility-toggleable inputs, so a saved height would clip on rework or
+    // leave dead space. Width is still user-resizable; reset/reload always re-fit the height.
+    makeNodeResizable(div, n.id, { widthOnly: WIDTH_ONLY_NODES.has(n.type) });
     return div;
 }
+
+// window/item nodes wrap a LIVE canvas (captured image / cutout) that a full innerHTML rewrite
+// would destroy — so they rebuild only their inner controls section in place, keeping the canvas.
+// Both kinds are the same shape (host selector + body builder + re-wire); one table, not two
+// copies. A new live-canvas node type is a row here, never another `if (n.type === …)` branch.
+const _LIVE_SECTIONS = {
+    window: { sel: ".win-controls", html: (n) => windowControls(n.ref), wire: wireWindowControls },
+    item:   { sel: ".item-lists", html: (n) => itemLists(n.ref, n.win), wire: wireItemControls },
+};
 
 // Rebuild ONE node's DOM in place (used when its own layout changes, e.g. type).
 function rebuildNode(id) {
     const el = nodeEls.get(id);
     const n = model.nodes().find((x) => x.id === id);
     if (!el || !n) return;
-    // window nodes hold a live image canvas — rebuild only the controls, never the
-    // whole node, so the canvas survives.
-    if (n.type === "window") {
-        const ctl = el.querySelector(".win-controls");
-        if (ctl) { ctl.innerHTML = windowControls(n.ref); wireWindowControls(el, n); }
-        return;
-    }
-    // item nodes hold a live cutout canvas — rebuild only the lists.
-    if (n.type === "item") {
-        const lists = el.querySelector(".item-lists");
-        if (lists) { lists.innerHTML = itemLists(n.ref, n.win); wireItemControls(el, n); }
+    const live = _LIVE_SECTIONS[n.type];
+    if (live) {   // keep the live canvas: rebuild + re-wire only the controls section
+        const host = el.querySelector(live.sel);
+        if (host) { host.innerHTML = live.html(n); live.wire(el, n); }
         return;
     }
     fillNode(el, n);
@@ -2031,21 +1678,7 @@ function openMissingItemCanvases() {
                 openItemImage(w.id, it.id);
 }
 
-function applyView() {
-    $("gworld").style.transform = `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`;
-    nmUpdateViewport();   // keep the node-map's viewport indicator in sync with pan/zoom
-}
 
-function resizeCanvas() {
-    let maxX = 0, maxY = 0;
-    for (const p of pos.values()) {
-        if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
-        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-    }
-    const w = maxX + 280, h = maxY + 200;
-    for (const id of ["gworld", "gnodes"]) { const el = $(id); el.style.width = `${w}px`; el.style.height = `${h}px`; }
-    for (const id of ["gedges", "gedges-top"]) { const svg = $(id); svg.setAttribute("width", w); svg.setAttribute("height", h); }
-}
 
 // ---- pan + zoom -----------------------------------------------------------
 
@@ -2104,6 +1737,14 @@ function syncMultiSelect() {
     if (cnt) cnt.textContent = ng >= 1 ? `${ng} group${ng === 1 ? "" : "s"} selected` : `${nsel} selected`;
     // the button label mirrors what `g` would actually DO to this selection (group vs ungroup)
     if (gbtn) { const s = groupBtnState(); const gl = gbtn.querySelector(".sel-lbl"); if (gl) gl.textContent = s.label; else gbtn.textContent = s.label; gbtn.title = s.title; }
+    // subgroup shows only when the whole selection sits inside ONE group (a subgroup is scoped to a
+    // single parent group); its label mirrors what the action would do (subgroup vs ungroup).
+    const sgb = $("selSubgroupBtn");
+    if (sgb) {
+        const ss = subgroupBtnState(ids);
+        sgb.hidden = !ss;
+        if (ss) { const sl = sgb.querySelector(".sel-lbl"); if (sl) sl.textContent = ss.label; sgb.title = ss.title; }
+    }
     // detach shows only when something in the selection is grouped; delete only when something
     // is removable — both act on the whole selection (their per-node buttons are gone).
     const det = $("selDetachBtn"), del = $("selDeleteBtn");
@@ -2139,62 +1780,15 @@ function groupBtnState() {
         : { label: "group", title: "group the selection (hotkey: g)" };
 }
 
-let suppressNextMenu = false;   // set when a right-drag pan actually moved
-function startPan(ev) {
-    const s = { x: ev.clientX, y: ev.clientY, px: view.panX, py: view.panY };
-    let moved = false;
-    const mv = (e) => {
-        if (!moved && Math.hypot(e.clientX - s.x, e.clientY - s.y) < 4) return;  // ignore micro-jitter
-        if (!moved) { moved = true; $("graph").classList.add("panning"); }
-        view.panX = s.px + (e.clientX - s.x); view.panY = s.py + (e.clientY - s.y); applyView();
-    };
-    const up = () => {
-        document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
-        $("graph").classList.remove("panning");
-        suppressNextMenu = moved;   // only a real drag eats the context menu; a plain click keeps it
-        if (moved) persist.local();
-    };
-    document.addEventListener("mousemove", mv);
-    document.addEventListener("mouseup", up);
-}
 
-function updateOverlayZoom() {
-    for (const [, rec] of overlays) rec.overlay.setWorldZoom(view.zoom);   // every overlay (window + item)
-}
 
 // Is the cursor over an element whose content actually overflows and can scroll? Walk up to
 // the canvas; the wheel belongs to that element (native scroll), not to the canvas zoom.
-function scrollableUnder(target) {
-    for (let n = target; n && n.id !== "graph" && !n.classList?.contains("graphcanvas"); n = n.parentElement) {
-        if (n.classList?.contains("scrollhost")) return true;
-        const oy = getComputedStyle(n).overflowY;
-        if ((oy === "auto" || oy === "scroll") && n.scrollHeight > n.clientHeight + 1) return true;
-    }
-    return false;
-}
 
-function onWheel(ev) {
-    // Ctrl/Cmd+wheel belongs to the browser (page zoom) — don't hijack it or preventDefault.
-    if (ev.ctrlKey || ev.metaKey) return;
-    // anything scrollable under the cursor (preview/batches scrollhost, overflowing tables/lists)
-    // scrolls its own content; everywhere else the wheel zooms the canvas
-    if (scrollableUnder(ev.target)) return;
-    ev.preventDefault();
-    const rect = $("graph").getBoundingClientRect();
-    const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
-    const old = view.zoom;
-    const z = Math.max(0.15, old * (ev.deltaY < 0 ? 1.1 : 1 / 1.1));   // manual wheel: no font ceiling
-    // keep the world point under the cursor fixed
-    view.panX = mx - (mx - view.panX) * (z / old);
-    view.panY = my - (my - view.panY) * (z / old);
-    view.zoom = z;
-    applyView(); updateOverlayZoom(); persist.local();
-}
 
 
 // Double-click a node: fit it tight to the viewport and centre it (smooth, shared with
 // the node-map jump so both frame a node the same way).
-function zoomToNode(id) { panZoomTo(id, { fit: true }); }
 
 
 // ---- per-node interaction -------------------------------------------------
@@ -2336,24 +1930,35 @@ function wireNode(div, n) {
             try { await withBusy([n.id], () => api.clearDataset(model.profile.name, n.ref)); refreshLive(); refreshDataNode(n.ref); refreshAllBatchesNodes(); refreshAllSubsetNodes(); setStatus(`cleared ${n.ref}`); }
             catch (e) { setStatus(String(e.message || e)); }
         });
-        // data | history tabs: swap the visible host; the ledger loads lazily on first open
-        div.querySelectorAll(".ds-tab").forEach((tab) => tab.addEventListener("click", () => {
-            const which = tab.dataset.tab;
-            dsTab.set(n.ref, which);
-            div.dataset.tab = which;
-            div.querySelectorAll(".ds-tab").forEach((t) => t.classList.toggle("on", t === tab));
-            if (which === "batches") loadBatchesNode(n.ref);   // (re)fetch the ledger when shown
-        }));
-        queueMicrotask(() => {
-            refreshDataNode(n.ref);                              // load records into the data tab
-            loadBatchesNode(n.ref);                              // load batches now so the count + list are ready before the tab is opened
-        });
+    } else if (n.type === "vttable") {
+        // the records grid satellite: fill it once built. Subset variant carries the view host;
+        // dataset variant carries the data + batches hosts AND the data|batches selector (the tabs
+        // live ABOVE the table here, not on the dataset node).
+        const r = n.ref;
+        if (r.kind === "subset") {
+            queueMicrotask(() => refreshSubsetNode(r.id));
+        } else {
+            const cur = dsTab.get(r.ds) || "data";
+            div.dataset.tab = cur;   // CSS hides the inactive host
+            div.querySelectorAll(".ds-tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === cur));
+            // data | history tabs: pick which table shows; the ledger loads lazily on first open
+            div.querySelectorAll(".ds-tab").forEach((tab) => tab.addEventListener("click", () => {
+                const which = tab.dataset.tab;
+                dsTab.set(r.ds, which);
+                div.dataset.tab = which;
+                div.querySelectorAll(".ds-tab").forEach((t) => t.classList.toggle("on", t === tab));
+                if (which === "batches") loadBatchesNode(r.ds);   // (re)fetch the ledger when shown
+            }));
+            queueMicrotask(() => { refreshDataNode(r.ds); loadBatchesNode(r.ds); });
+        }
     } else if (n.type === "subset") {
         wireSubset(div, n.ref);
     } else if (n.type === "price") {
         wirePrice(div, n);
     } else if (n.type === "trigger") {
         wireTrigger(div, n);
+    } else if (n.type === "filesource") {
+        wireSource(div, n);
     } else if (n.type === "region") {
         const fld = n.field;
         div.addEventListener("click", (ev) => {
@@ -2361,10 +1966,11 @@ function wireNode(div, n) {
             selectWindowBox(n.win.id, n.ref.id);   // highlight this region's box on the image
         });
         div.querySelector(".gi-id").addEventListener("change", (e) => {
-            const oldId = n.ref.id, newId = e.target.value.trim();
-            if (!model.renameRegion(n.win.id, oldId, newId)) { e.target.value = oldId; return; }
-            movePos(`reg:${n.win.id}:${oldId}`, `reg:${n.win.id}:${n.ref.id}`);
-            render(); autosave(true, n.win.id); refreshImageBoxes(n.win.id);   // re-OCR only this window
+            const oldId = n.ref.id;
+            renameNode(e.target, oldId,
+                () => model.renameRegion(n.win.id, oldId, e.target.value.trim()),
+                () => movePos(`reg:${n.win.id}:${oldId}`, `reg:${n.win.id}:${n.ref.id}`),
+                () => { render(); autosave(true, n.win.id); refreshImageBoxes(n.win.id); });   // re-OCR only this window
         });
         div.querySelectorAll(".fset").forEach((inp) => inp.addEventListener("change", (e) => {
             if (!fld) return;
@@ -2392,11 +1998,11 @@ function wireNode(div, n) {
             selectWindowBox(n.win.id, n.ref.id);
         });
         div.querySelector(".gi-id").addEventListener("change", (e) => {
-            const oldId = n.ref.id, newId = e.target.value.trim();
-            if (!model.renameDetect(n.win.id, oldId, newId)) { e.target.value = oldId; return; }
-            movePos(`det:${n.win.id}:${oldId}`, `det:${n.win.id}:${n.ref.id}`);
-            render(); rebuildNode(`win:${n.win.id}`);   // window detects section lists the new id
-            autosave(true, n.win.id); refreshImageBoxes(n.win.id);   // re-OCR only this window
+            const oldId = n.ref.id;
+            renameNode(e.target, oldId,
+                () => model.renameDetect(n.win.id, oldId, e.target.value.trim()),
+                () => movePos(`det:${n.win.id}:${oldId}`, `det:${n.win.id}:${n.ref.id}`),
+                () => { render(); rebuildNode(`win:${n.win.id}`); autosave(true, n.win.id); refreshImageBoxes(n.win.id); });
         });
         div.querySelectorAll(".aset").forEach((inp) => inp.addEventListener("change", (e) => {
             const k = e.target.dataset.k;
@@ -2407,6 +2013,8 @@ function wireNode(div, n) {
             else if (k === "minchars") n.ref.min_chars = Math.max(0, Math.trunc(+e.target.value) || 0);
             else if (k === "strip") n.ref.strip = e.target.value;
             else if (k === "case") n.ref.case_sensitive = e.target.checked;
+            // mode change shows/hides "read ⊆ text" (ignored by full/exact) -> rebuild the body
+            if (k === "match") rebuildNode(n.id);
             autosave(true, n.win.id);   // a detector knob re-runs detect for ONLY this window
         }));
     } else if (n.type === "scrollbar") {
@@ -2912,6 +2520,7 @@ prettyOverrides.setOverrideHooks({
 setScrubHook(prettyOverrides.scrubForSave);
 
 $("selGroupBtn").addEventListener("click", () => groupShortcut());
+$("selSubgroupBtn")?.addEventListener("click", () => subgroupShortcut());
 
 // Detach every selected node that's in a group. Mirrors the per-node unlock icon that
 // used to live on each node — now one toolbar action over the whole selection.
@@ -2922,15 +2531,18 @@ $("selDetachBtn").addEventListener("click", () => {
     setStatus(`detached ${ids.length} node${ids.length === 1 ? "" : "s"}`);
 });
 
-// Delete every removable node in the selection (armed two-click — rule 2). Each goes through
-// removeNode() so undo/redo records it, same path the old per-node trash button used.
-armConfirm($("selDeleteBtn"), () => {
+// Delete every removable node in the selection. Each goes through removeNode() so undo/redo
+// records it, same path the old per-node trash button used. SHARED by the armed toolbar button
+// and the Delete/Backspace hotkey so both behave identically (rule 7).
+function deleteSelection() {
     const byId = new Map(model.nodes().map((n) => [n.id, n]));
     const targets = selectionIds().map((id) => byId.get(id)).filter((n) => n && REMOVABLE.has(n.type));
     if (!targets.length) return;
     for (const n of targets) removeNode(n);   // each renders + autosaves; undo records each
     deselectAll();
-});
+}
+// Toolbar: armed two-click (rule 2) — a mis-click shouldn't nuke a node.
+armConfirm($("selDeleteBtn"), deleteSelection);
 
 // The current selection the group action operates on: the multi-select set if any,
 // else the single focused node.
@@ -2972,6 +2584,44 @@ function superGroupShortcut() {
     }
     groups.clearGroupSelection();
     return true;
+}
+
+// Predict the subgroup action's label, and gate the toolbar button: a subgroup is only offered
+// when the WHOLE selection sits inside ONE group (it's scoped to a single parent group). Returns
+// null when not offerable. Mirrors the group ruleset (subgroup vs add vs ungroup).
+function subgroupBtnState(ids) {
+    if (!ids.length) return null;
+    const gset = new Set(ids.map((id) => groups.groupOf(id)).filter(Boolean));
+    if (gset.size !== 1) return null;                       // not all in exactly one group
+    const parent = [...gset][0];
+    if (!ids.every((id) => parent.members.includes(id))) return null;
+    const subs = new Set(ids.map((id) => groups.subgroupOf(id)).filter(Boolean));
+    const loose = ids.filter((id) => !groups.subgroupOf(id));
+    if (subs.size === 1 && !loose.length) return { label: "ungroup", title: "dissolve this subgroup" };
+    if (subs.size === 1 && loose.length) return { label: "subgroup", title: "add the loose nodes to the subgroup" };
+    if (ids.length === 1 && subs.size === 1) return { label: "ungroup", title: "remove from subgroup" };
+    return { label: "subgroup", title: "sub-group the selection within its group" };
+}
+
+// Sub-group the selection inside its (single) parent group, with the SAME ruleset groups use:
+//   • 1 node in a subgroup            -> detach it
+//   • 2+, all in ONE subgroup, some loose -> add the loose ones
+//   • 2+, all in ONE subgroup, none loose -> dissolve the subgroup
+//   • otherwise                       -> form a new subgroup
+function subgroupShortcut() {
+    const ids = selectionIds();
+    if (!subgroupBtnState(ids)) { setStatus("subgroup: select nodes that share one group"); return; }
+    const subs = new Set(ids.map((id) => groups.subgroupOf(id)).filter(Boolean));
+    const loose = ids.filter((id) => !groups.subgroupOf(id));
+    if (subs.size === 1) {
+        const sg = [...subs][0];
+        if (loose.length) { groups.addToSubgroup(sg.id, loose); setStatus(`added ${loose.length} to subgroup`); }
+        else { groups.detachFromSub(ids); setStatus("subgroup dissolved"); }
+    } else {
+        const sg = groups.createSubgroup(ids);
+        if (sg) { setStatus(`sub-grouped ${sg.members.length} node${sg.members.length === 1 ? "" : "s"}`); }
+        else setStatus("subgroup: nodes must share one group");
+    }
 }
 
 function groupShortcut() {
@@ -3115,7 +2765,7 @@ function startMarquee(ev) {
 // release — and thus the native contextmenu — can land on a node panel, modal, or even
 // outside #graph, where a graph-scoped listener would never see it.
 window.addEventListener("contextmenu", (ev) => {
-    if (suppressNextMenu) { ev.preventDefault(); suppressNextMenu = false; return; }   // a pan-drag just ended
+    if (consumePanSuppress()) { ev.preventDefault(); return; }   // a pan-drag just ended
     // Right-click empty canvas → add-node menu (same primitive as pretty's add-widget). The new
     // node spawns at the world point under the cursor. Clicks on nodes/groups/floating panels/
     // form controls fall through to the native menu. Capture phase + the suppress check above run
@@ -3139,6 +2789,7 @@ window.addEventListener("contextmenu", (ev) => {
         { icon: iconFor("dataset"),    title: "dataset",     tint: "var(--ok)",           onClick: () => ready() && createDatasetNode(at) },
         { icon: iconFor("subset"),     title: "subset",      tint: "var(--purple)",       onClick: () => ready() && createSubsetNode(at) },
         { icon: iconFor("price"),      title: "price node",  tint: "var(--warn)",         onClick: () => ready() && createPriceNode(at) },
+        { icon: iconFor("filesource"), title: "file source", tint: "var(--accent)",       onClick: () => ready() && createFileSourceNode(at) },
         { icon: iconFor("trigger"),    title: "trigger",     tint: "var(--trigger-line)", onClick: () => ready() && createTriggerNode(at) },
         { icon: iconFor("dictionary"), title: "dictionary",  tint: "var(--purple)",       onClick: () => ready() && createDictionaryNode(at) },
     ]);
@@ -3163,6 +2814,12 @@ document.addEventListener("keydown", (ev) => {
     // g: group / ungroup the selection (same logic as the toolbar button)
     if (ev.key.toLowerCase() === "g" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
         groupShortcut(); ev.preventDefault(); return;
+    }
+    // Delete: delete the selection (same path as the toolbar button; undo restores).
+    // No arm needed — Ctrl+Z brings it back, and a key takes intent the way a stray click doesn't.
+    if (ev.key === "Delete" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        if (!selectionIds().length) return;
+        deleteSelection(); ev.preventDefault(); return;
     }
     const dir = NUDGE[ev.key.toLowerCase()];
     if (!dir) return;
@@ -3408,10 +3065,10 @@ killStrayOcrThenBoot();
 
 // ---- exports consumed by panel modules (imported back from "./main.js") ----
 export {
-    focusNode, panZoomTo, panZoomToRect, autosave, placeNewNode, render, panTo,
-    refreshLive, clockTime,
+    focusNode, autosave, placeNewNode, render,
+    refreshLive, subsetParts,
     refreshAllSubsetNodes, refreshDatasetConsumers,
     rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,
     overlaySelected, selectWindowBox, persistBox, syncCellSize, itemChanged,
-    keyPrevHTML, addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom,
+    addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom,
 };

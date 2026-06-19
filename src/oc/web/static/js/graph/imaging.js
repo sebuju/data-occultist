@@ -12,17 +12,19 @@ import { persist } from "./persist.js";
 import * as groups from "./groups.js";
 import {
     $, setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases, overlays,
-    gridPreviews, gridReads, gridCellBoxes, itemReads, clearGrid, view,
+    gridPreviews, gridReads, gridCellBoxes, gridGuards, itemReads, clearGrid, view,
 } from "./state.js";
 import { drawEdges, freezeRouting, requestEdges } from "./routing.js";
 import { registerWorker, unregisterWorker } from "./workers.js";
 import { renderLiveWindow, liveDetCount, liveRecog } from "./panels/livewin.js";
 import {
     render, autosave, rebuildNode, focusNode, setNodeBusy, withBusy,
-    registerOverlay, unregisterOverlay, overlaySelected, selectWindowBox, selectedNodeId,
-    panZoomTo, placeNewNode, refreshLive, persistBox, syncCellSize, itemChanged,
-    keyPrevHTML, addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom,
+    registerOverlay, unregisterOverlay, overlaySelected, selectWindowBox, selectedNodeId, setSelectedNodeId,
+    placeNewNode, refreshLive, persistBox, syncCellSize, itemChanged,
+    addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom, showSatellite,
 } from "./main.js";
+import { panZoomTo } from "./camera.js";
+import { keyPrevHTML } from "./node_parts.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 
 // ---- window image / region drawing (in-graph) -----------------------------
@@ -35,7 +37,7 @@ const ITEM_KINDS = [
     ["bbox", "cell", "▣", "Draw the cell box — the repeating tile. Its size sets the grid pitch; every field and tell is positioned relative to it."],
     ["field", "field", "▦", "Draw a field box — text to OCR and store as a column of the record."],
     ["filled", "filled", "▩", "Draw a 'filled' tell — the cell counts as an item only if this box has visual content (edges/variance above the floor)."],
-    ["text", "text", "T", "Draw a 'text' tell — the cell counts only if OCR reads non-empty text here (bind it to a field)."],
+    ["text", "text", "T", "Draw a 'text' tell — the cell counts only if OCR reads here: bind a field (or leave blank for any column), and optionally require the read to match a literal."],
     ["color", "color", "◐", "Draw a 'colour' tell — the cell counts only if a taught colour is present in this box."],
     ["template", "template", "⧉", "Draw a 'template' tell — the cell counts only if a saved sub-image matches in this box."],
     ["diamonds", "diamonds", "◆", "Draw a 'diamonds' tell — the cell counts only if a rank-diamond strip (◇/◆) is present (e.g. arcanes)."],
@@ -342,6 +344,7 @@ function refreshItemBoxes(winId, itemId) {
     // flagged tell shows "⊙tell" + its align; a locating tell shows "loc" + align. After a
     // read, a tell/field-tell box also shows ✓/✗ for whether it passed.
     for (const f of it.fields || []) {
+        if (f.enabled === false) continue;   // disabled fields aren't read -> don't draw them
         const al = f.align || it.align || "center";
         const label = `${f.id}${f.tell ? ` ⊙tell·${al}${mark(f.id)}` : ""}`;
         boxes.push({ id: f.id, label, role: "field", field: f.field, ...ent.win2cut(ent.rel2win(f.box)) });
@@ -424,7 +427,7 @@ function itemReadout(res, winId, itemId) {
 
 function selectRegionNode(winId, boxId) {
     const ids = [`reg:${winId}:${boxId}`, `det:${winId}:${boxId}`, `st:${winId}:${boxId}`, `sb:${winId}:${boxId}`];
-    selectedNodeId = ids.find((id) => nodeEls.has(id)) || null;
+    setSelectedNodeId(ids.find((id) => nodeEls.has(id)) || null);
     for (const [id, el] of nodeEls) el.classList.toggle("selected", id === selectedNodeId);
     drawEdges();   // restyle the selected node's line
 }
@@ -468,6 +471,7 @@ async function refreshPreview(winId, live = false) {
         const res = await api.preview(previewProfileFor(winId), model.profile.name, cap);
         host.innerHTML = previewTable(res.cells);
         setGridFromPreview(winId, res);   // same OCR pass drives the dashed grid
+        setWindowDrift(winId, res.drift);   // grid-fit score on the window node
         done(`· ${res.device || "?"} · ${(res.cells || []).length} cells`, "ok", res.ms);
     } catch (e) {
         done(String(e.message || e), "err");
@@ -508,9 +512,10 @@ async function commitPreviewNode(winId, btn) {
 // cells, and render the combined table in the preview node. The default preview reads only
 // the page on screen; this is the explicit "all pages" view — one-shot, page state untouched.
 async function previewAll(winId, btn) {
-    const host = prevHost(winId);
     const list = await capListOf(winId);
     if (!list.length) { setStatus("no images bound to this window"); return; }
+    showSatellite(`prev:${winId}`);   // the preview node is opt-in — reveal it so the read has somewhere to render
+    const host = prevHost(winId);
     if (btn) { btn.disabled = true; btn.classList.add("reading"); }
     if (host) host.innerHTML = `<p class="muted" style="padding:8px">reading ${list.length} image${list.length === 1 ? "" : "s"}…</p>`;
     const done = timed(`OCR preview-all ${winId}`);
@@ -660,15 +665,74 @@ async function refreshDetect(winId, live = false) {
         if (detectAgain.has(winId)) { const lv = detectAgain.get(winId); detectAgain.delete(winId); refreshDetect(winId, lv); }
     }
 }
+// Wrap the [s,e) slice of `text` in a hit marker so the matched characters stand out;
+// everything outside stays plain. `span` is null when nothing aligned (no highlight).
+function hlSpan(text, span) {
+    const t = String(text ?? "");
+    if (!span || span[0] == null || span[1] == null) return esc(t);
+    const s = Math.max(0, span[0]), e = Math.min(t.length, span[1]);
+    if (e <= s) return esc(t);
+    return esc(t.slice(0, s)) + `<mark class="ds-hit">${esc(t.slice(s, e))}</mark>` + esc(t.slice(e));
+}
+
+// Two consumers share `.detect-status`: the DETECT node (rich, multi-row scaffold built in
+// node_parts) and state/scrollbar nodes (a plain div). Detect node => fill the rows; the
+// others => the legacy single line. Either way reconciles in place (no rebuild per tick).
+// Window node grid-fit score: mean / max distance the located cells drift off the content
+// they should bracket (from read_preview's `drift`). Reconciled in place — only the span's
+// text/class change. Green <1%, amber <3%, red beyond — 0 = dead on the grid.
+function setWindowDrift(winId, drift) {
+    const el = nodeEls.get(`win:${winId}`);
+    const span = el && el.querySelector(".wd-drift");
+    if (!span) return;
+    if (!drift || !drift.n) { span.textContent = "—"; span.className = "wd-drift muted"; return; }
+    const pct = (v) => `${(v * 100).toFixed(0)}%`;   // % of a CELL (1.0 = a whole cell off)
+    span.textContent = `x ${pct(drift.x.mean)}/${pct(drift.x.max)} · y ${pct(drift.y.mean)}/${pct(drift.y.max)} · ${drift.n} cells`;
+    const worst = Math.max(drift.x.max, drift.y.max);
+    span.className = "wd-drift " + (worst < 0.05 ? "conf-ok" : worst < 0.15 ? "conf-warn" : "conf-bad");
+}
+
 function setDetectStatus(nodeId, info) {
     const el = nodeEls.get(nodeId);
-    const span = el && el.querySelector(".detect-status");
-    if (!span) return;
+    const box = el && el.querySelector(".detect-status");
+    if (!box) return;
     const conf = info.score != null
         ? ` (${Math.round(info.score * 100)}%${info.threshold != null ? `/${Math.round(info.threshold * 100)}%` : ""})`
         : "";
-    span.textContent = (info.matched ? "✓ true" : "✗ false") + conf + (info.read ? ` — "${info.read}"` : "");
-    span.className = "detect-status " + (info.matched ? "conf-ok" : "conf-bad");
+    const verdict = box.querySelector(".ds-verdict");
+    if (!verdict) {   // simple consumer (state / scrollbar node): one line, as before
+        box.textContent = (info.matched ? "✓ true" : "✗ false") + conf + (info.read ? ` — "${info.read}"` : "");
+        box.className = "detect-status " + (info.matched ? "conf-ok" : "conf-bad");
+        return;
+    }
+    // rich detect node — verdict row, then before/after-strip rows + a min-chars row.
+    box.className = "detect-status";
+    verdict.textContent = (info.matched ? "✓ true" : "✗ false") + conf;
+    verdict.className = "ds-verdict " + (info.matched ? "conf-ok" : "conf-bad");
+    const before = box.querySelector(".ds-before");
+    const after = box.querySelector(".ds-after");
+    const chars = box.querySelector(".ds-chars");
+    const raw = info.got_raw, norm = info.got_norm;
+    if (norm == null) {            // template detector: no normalised text, just echo the read
+        before.hidden = true; chars.hidden = true;
+        if (info.read) { after.hidden = false; after.innerHTML = `read: <span class="ds-txt">${esc(info.read)}</span>`; }
+        else after.hidden = true;
+        return;
+    }
+    // highlight the matched characters in the AFTER (normalised) text — only on a real match
+    const afterHTML = hlSpan(norm, info.matched ? info.span : null) || "∅";
+    if (raw !== norm) {            // stripping/case folding changed the read -> show both
+        before.hidden = false; before.innerHTML = `before: <span class="ds-txt">${esc(raw || "∅")}</span>`;
+        after.hidden = false; after.innerHTML = `after: <span class="ds-txt">${afterHTML}</span>`;
+    } else {                       // no change -> one row, highlight on the read itself
+        before.hidden = true;
+        after.hidden = false; after.innerHTML = `read: <span class="ds-txt">${afterHTML}</span>`;
+    }
+    if (info.min_chars > 0) {      // show how many chars were found vs the floor
+        chars.hidden = false;
+        const ok = info.got_len >= info.min_chars;
+        chars.innerHTML = `chars: <span class="${ok ? "conf-ok" : "conf-bad"}">${info.got_len}</span> / ${info.min_chars} min`;
+    } else chars.hidden = true;
 }
 
 // Fill the window node's detects section live, reconciling in place (the rows are built once
@@ -681,6 +745,7 @@ function setWindowDetectStatus(winId, res) {
     const det = res.detect || {};
     // skip the header row's "pass" label (no data-id) — only the per-detector status spans
     for (const span of el.querySelectorAll(".wd-row:not(.wd-head) .wd-status")) {
+        if (span.closest(".wd-row").classList.contains("wd-disabled")) continue;   // keep "disabled"
         const info = det[span.dataset.id];
         if (!info) { span.textContent = ""; span.className = "wd-status muted"; continue; }
         const pass = info.passes != null ? info.passes : info.matched;
@@ -796,8 +861,9 @@ function refreshImageBoxes(winId) {
     const boxes = [];
     const da = model.dataArea(winId);
     if (da) boxes.push({ id: "__data_area", role: "data_area", ...da });
-    for (const r of model.regions(winId)) boxes.push({ id: r.id, role: "region", field: r.field, ...r.box });
-    for (const a of model.detects(winId)) boxes.push({ id: a.id, role: "detect", ...a.search });
+    // disabled regions/detectors aren't read, so don't clutter the canvas with them
+    for (const r of model.regions(winId)) if (r.enabled !== false) boxes.push({ id: r.id, role: "region", field: r.field, ...r.box });
+    for (const a of model.detects(winId)) if (a.enabled !== false) boxes.push({ id: a.id, role: "detect", ...a.search });
     // item template box is NOT drawn here — it's the authored cell at one spot, which
     // isn't where detection actually reads; the live grid (below) shows the real cells
     const sb = model.scrollbar(winId);
@@ -807,6 +873,7 @@ function refreshImageBoxes(winId) {
     // prefer the live-detected grid (rows found in the actual capture); fall back to
     // the live-detected grid (where items were actually located this capture)
     entry.overlay.setCellBoxes(gridCellBoxes.get(winId) || []);   // detected cell tiling (solid)
+    entry.overlay.setGuardCells(gridGuards.get(winId) || []);     // fieldless guard items (distinct colour)
     entry.overlay.setGridPreview(gridPreviews.get(winId) || staticFieldPreview(winId) || []);
     entry.overlay.setPreview(gridReads.get(winId) || []);   // value + confidence per cell
 }
@@ -849,14 +916,16 @@ function buildGridGuides(winId) {
         for (const x of staticGridOrigins(da.x, iw, da.x, da.x + da.w)) { cols.add(x); cols.add(x + iw); }
         for (const y of staticGridOrigins(da.y, ih, da.y, da.y + da.h)) { rows.add(y); rows.add(y + ih); }
     } else {
-        for (const it of items) {
-            const iw = it.box.w;
-            const ncols = Math.max(1, Math.round(da.w / iw)), pitch = da.w / ncols;
-            for (let c = 0; c <= ncols; c++) cols.add(da.x + c * pitch);
-            const loc = itemLocatorBox(it);   // located: show where the locator scans
-            if (loc) for (let c = 0; c < ncols; c++)
-                strips.push({ x: da.x + c * pitch + loc.x * iw, y: da.y, w: loc.w * iw, h: da.h });
-        }
+        // LOCATED: both rows AND columns come from OCR content (align_x), not geometry — so
+        // derive the guides from the DETECTED cells. Drawing columns as da.x + c*pitch (the old
+        // way) ignores content + blank margins and puts the lines far off the real cells.
+        const r4 = (v) => Math.round(v * 1e4) / 1e4;
+        const cellsD = gridCellBoxes.get(winId) || [];
+        for (const c of [...cellsD, ...(gridGuards.get(winId) || [])]) { rows.add(r4(c.y)); rows.add(r4(c.y + c.h)); }
+        for (const c of cellsD) { cols.add(r4(c.x)); cols.add(r4(c.x + c.w)); }
+        // locator scan marker per detected column (where the row anchor is read)
+        const loc = items.map(itemLocatorBox).find(Boolean);
+        if (loc) for (const c of cellsD) strips.push({ x: c.x + loc.x * c.w, w: loc.w * c.w });
     }
     return { cols: [...cols], rows: [...rows], strips, yTop: da.y, yBot: da.y + da.h, xLeft: da.x, xRight: da.x + da.w };
 }
@@ -906,9 +975,17 @@ function cellKept(c) {
 
 // Pull the detected per-field boxes + their read values out of a preview response.
 // Only kept cells, so blank/invalid slots don't scatter dashes across the image.
+// A guard cell: a VALID located item with NO fields (a detector-only template, e.g. "no
+// relic selected"). It carries no read, so cellKept rejects it — but we still want it ON the
+// canvas (distinct colour). Only valid ones: a fieldless template's locator anchors on EVERY
+// text row (it filters by char-class, not the literal), so it lands an invalid candidate on
+// every tile; drawing those would paint the whole grid orange. Show only where its tell PASSED.
+function isGuardCell(c) { return c.box && c.item && c.valid !== false && Object.keys(c.fields || {}).length === 0; }
+
 function setGridFromPreview(winId, res) {
     if (!res || !res.cells) return;
     const kept = res.cells.filter(cellKept);
+    const guards = res.cells.filter(isGuardCell);
     const boxes = kept.flatMap((c) => Object.values(c.fields).map((f) => f.box)).filter(Boolean);
     // what each cell actually read (value + confidence) — shown on the window canvas
     const reads = kept.flatMap((c) => Object.values(c.fields)
@@ -921,11 +998,16 @@ function setGridFromPreview(winId, res) {
         })));
     // which item template matched: its id centred on each cell, white on black
     reads.push(...kept.filter((c) => c.box && c.item).map((c) => ({ ...c.box, cell: c.box, text: c.item })));
+    // guard items get their id label too, so the orange box is identifiable
+    reads.push(...guards.map((c) => ({ ...c.box, cell: c.box, text: c.item })));
     // the detected CELL outlines — the tiling the reader actually found
     const cells = kept.map((c) => c.box).filter(Boolean);
+    // guard cells with their win/lose verdict so the overlay can colour them
+    const guardCells = guards.map((c) => ({ ...c.box, valid: c.valid }));
     if (boxes.length) gridPreviews.set(winId, boxes); else gridPreviews.delete(winId);
     if (reads.length) gridReads.set(winId, reads); else gridReads.delete(winId);
     if (cells.length) gridCellBoxes.set(winId, cells); else gridCellBoxes.delete(winId);
+    if (guardCells.length) gridGuards.set(winId, guardCells); else gridGuards.delete(winId);
     refreshImageBoxes(winId);
 }
 

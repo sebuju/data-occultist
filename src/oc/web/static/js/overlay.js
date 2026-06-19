@@ -53,6 +53,7 @@ export class Overlay {
         this.scale = 1;
         this.gridCells = [];        // faint preview rectangles (fractions)
         this.cellBoxes = [];        // detected CELL outlines (the tiled item cells), drawn solid
+        this.guardCells = [];       // located GUARD cells (fieldless detector items) — drawn in a distinct colour
         this.gridGuides = null;     // search structure: column dividers + locator scan strips
         this.previewItems = [];     // extracted per-cell values: {x,y,w,h,text,confidence}
         this.detections = [];       // raw OCR lines: {box:{x,y,w,h}, text, confidence}
@@ -70,6 +71,7 @@ export class Overlay {
     setWorldZoom(z) { this.worldZoom = z || 1; this.render(); }
     setGridPreview(cells) { this.gridCells = cells || []; this.render(); }
     setCellBoxes(cells) { this.cellBoxes = cells || []; this.render(); }
+    setGuardCells(cells) { this.guardCells = cells || []; this.render(); }
     setGridGuides(g) { this.gridGuides = g || null; this.render(); }
     setPreview(items) { this.previewItems = items || []; this.render(); }
     setDetections(items) { this.detections = items || []; this.render(); }
@@ -319,6 +321,22 @@ export class Overlay {
             for (const c of this.cellBoxes) ctx.strokeRect(c.x * W, c.y * H, c.w * W, c.h * H);
         }
 
+        // Guard cells: a fieldless detector item (e.g. "no relic selected") that exists only to
+        // WIN its tile and suppress a competitor. Distinct orange so it's never mistaken for a
+        // data cell; a guard that LOST overlap (didn't win) is drawn dashed + faint so it's clear
+        // it isn't acting. Filled lightly since it stores nothing and would otherwise read empty.
+        if (this.guardCells.length) {
+            ctx.lineWidth = 2.5 * u;
+            for (const c of this.guardCells) {
+                const won = c.valid !== false;
+                ctx.strokeStyle = won ? "rgba(240,140,40,0.95)" : "rgba(240,140,40,0.5)";
+                ctx.setLineDash(won ? [] : [5 * u, 4 * u]);
+                if (won) { ctx.fillStyle = "rgba(240,140,40,0.12)"; ctx.fillRect(c.x * W, c.y * H, c.w * W, c.h * H); }
+                ctx.strokeRect(c.x * W, c.y * H, c.w * W, c.h * H);
+            }
+            ctx.setLineDash([]);
+        }
+
         // Grid preview: where each field will be read across the tiled grid.
         if (this.gridCells.length) {
             ctx.strokeStyle = "rgba(90,169,230,0.9)";
@@ -386,13 +404,21 @@ export class Overlay {
         // the cells/reads/boxes instead of hiding beneath them.
         const g = this.gridGuides;
         if (g) {
-            ctx.fillStyle = "rgba(230,194,90,0.22)";          // locator scan band per column
-            for (const s of g.strips || []) ctx.fillRect(s.x * W, s.y * H, s.w * W, s.h * H);
+            // locator markers: a short amber bar straddling the data-area TOP border, marking
+            // the horizontal slice of each column where rows are anchored. A border tick — NOT
+            // a full-height fill (that washed over the content and read as a selection).
+            const yb = (g.yTop ?? 0) * H, bar = 5 * u;
+            ctx.fillStyle = "rgba(230,194,90,0.95)";
+            for (const s of g.strips || []) ctx.fillRect(s.x * W, yb - bar / 2, s.w * W, bar);
             ctx.strokeStyle = "rgba(230,194,90,0.9)";          // grid dividers
             ctx.lineWidth = 1.5 * u;
             ctx.setLineDash([3 * u, 4 * u]);
-            for (const x of g.cols || []) { ctx.beginPath(); ctx.moveTo(x * W, g.yTop * H); ctx.lineTo(x * W, g.yBot * H); ctx.stroke(); }
-            const xL = (g.xLeft ?? 0) * W, xR = (g.xRight ?? 1) * W;     // row dividers (static grid)
+            // overshoot the data-area edges by a few px so a divider stays visible even when a
+            // cell/box/read sits flush on the boundary and would otherwise occlude its end.
+            const pad = 8 * u;
+            const yT = g.yTop * H - pad, yB = g.yBot * H + pad;
+            for (const x of g.cols || []) { ctx.beginPath(); ctx.moveTo(x * W, yT); ctx.lineTo(x * W, yB); ctx.stroke(); }
+            const xL = (g.xLeft ?? 0) * W - pad, xR = (g.xRight ?? 1) * W + pad;   // row dividers (static grid)
             for (const y of g.rows || []) { ctx.beginPath(); ctx.moveTo(xL, y * H); ctx.lineTo(xR, y * H); ctx.stroke(); }
             ctx.setLineDash([]);
         }

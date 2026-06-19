@@ -56,11 +56,13 @@
 .gnode.scrollbar .gn-h { --ntint: var(--ok); }
 .gnode.item      .gn-h { --ntint: var(--record); }
 .gnode.itemfield .gn-h { --ntint: var(--accent); }
+.gnode.itemtell  .gn-h { --ntint: var(--ok); }   /* tells are pass/fail checks, like detect — match the tell edge colour */
 .gnode.dataset   .gn-h { --ntint: var(--ok); }
 .gnode.subset    .gn-h { --ntint: var(--purple); }
 .gnode.price     .gn-h { --ntint: var(--warn); }
 .gnode.dictionary .gn-h { --ntint: var(--purple); }
 .gnode.trigger   .gn-h { --ntint: var(--trigger-line); }
+.gnode.filesource .gn-h { --ntint: var(--accent); }
 .gn-h .nicon { width: 18px; height: 18px; flex: 0 0 auto; color: var(--ntint); }
 /* Nothing in the node canvas is text-selectable — kills the stray highlight that
    appears while dragging nodes around (user-select:none set on .graphcanvas above).
@@ -171,6 +173,13 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gnode .gn-row input:not([type="checkbox"]) { flex: 1 1 0; min-width: 0; }
 .detect-status { margin-top: 4px; font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .detect-status:empty::before { content: "\00a0"; }   /* hold the row height when status is empty — no layout jump */
+/* detect node: the status is a small stack of rows (verdict / before / after / chars). Each
+   row clips on its own; the before/after read text is the only thing allowed to wrap. */
+.detect-status .ds-line { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; }
+.detect-status .ds-line[hidden] { display: none; }
+.detect-status .ds-txt { white-space: normal; word-break: break-all; font-family: var(--mono, monospace); }
+/* matched characters in the after-text — the chars that carried a successful detect */
+.detect-status .ds-hit { background: var(--accent); color: var(--on-accent, #06121f); border-radius: 2px; }
 /* footer separates the action row (button base owns sizing) */
 .gn-foot { display: flex; gap: 6px; margin-top: 8px; }
 .gn-foot:empty { display: none; }   /* remove moved to the header — don't leave a gap */
@@ -354,7 +363,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .wi-row .wimv { flex: 0 0 auto; padding: 0 10px; }
 /* window node: detects section — combine mode + per-detector polarity, with a live verdict.
    Rows are three aligned columns (detector | pass | require); the wd-head row labels them.
-   min-width:0 on every flex child lets the select shrink instead of clipping past the node. */
+   min-width:0 on every flex child lets the select shrink instead of clipping past the node.
+   The window carries a data out-port dot (.port.out) pinned to its RIGHT edge at top:50%; the
+   detects section sits near that midpoint, so every full-width detect row reserves a right
+   gutter (the dot pokes ~4px inside the border) — the require select/verdict clears the dot
+   instead of rendering under it. */
+.wd-mode-line, .wd-row, .wd-verdict { padding-right: 12px; }
 .wd-mode-line { margin: 4px 0; font-size: var(--fs-sm); display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .wd-mode-line .wd-mode { flex: 0 0 auto; }
 /* three tracks: name | live status | require select. .wd-neg is width:100% inside its track
@@ -365,6 +379,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .wd-row:not(.wd-head) .wd-name:hover { background: var(--hover); }
 .wd-status { min-width: 0; white-space: nowrap; }
 .wd-neg { width: 100%; min-width: 0; }
+.wd-row.wd-disabled { opacity: 0.4; }                      /* disabled detector: greyed out */
+.wd-row.wd-disabled .wd-name { cursor: default; }
 .wd-head { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
 .wd-head .wd-req-h { text-align: center; }
 .wd-verdict { margin-top: 6px; font-size: var(--fs-sm); font-weight: 600; }
@@ -466,4 +482,51 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .sgroup-cog:hover { opacity: 1 !important; }
 /* ctrl-selected group (armed for super-grouping) */
 .ggroup.gsel { outline: 2px dashed var(--accent); outline-offset: 2px; }
+
+/* ---- sub-group layer (a group WITHIN a group; painted over the group fill, behind nodes) ---- */
+#subgroups { position: absolute; top: 0; left: 0; z-index: 0; }
+/* a faint outline rectangle; default has no fill + no title. Drag from the rim/title, configure
+   from the hover cog. overflow:hidden clips the optional title band to the rounded corners. */
+.subgroup { position: absolute; box-sizing: border-box; pointer-events: none; overflow: hidden; border-radius: 8px; }
+/* four rim strips are the ONLY interactive parts of the box, so the interior stays click-through
+   to the nodes inside; hovering any strip reveals the cog (:hover bubbles to .subgroup). */
+.sgr-rim { position: absolute; pointer-events: auto; cursor: grab; }
+.sgr-rim:active { cursor: grabbing; }
+.sgr-t { top: 0; left: 0; right: 0; height: 10px; }
+.sgr-b { bottom: 0; left: 0; right: 0; height: 10px; }
+.sgr-l { top: 0; bottom: 0; left: 0; width: 10px; }
+.sgr-r { top: 0; bottom: 0; right: 0; width: 10px; }
+/* optional title band reuses the .ggroup-title look (set via the cog); the cog sits top-right,
+   revealed on hover like the group + super-group cogs. */
+.subgroup-cog { position: absolute; top: 4px; right: 4px; z-index: 1; pointer-events: auto;
+    width: 22px; height: 20px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+    line-height: 0; background: transparent; border: 0; color: var(--text); cursor: pointer;
+    opacity: 0; transition: opacity .12s; }
+.subgroup:hover .subgroup-cog { opacity: 0.6; }
+.subgroup-cog:hover { opacity: 1 !important; }
+
+/* ---- file-source node: rule builder + live preview ---- */
+.gnode.filesource .lab-grid > .src-matches,
+.gnode.filesource .lab-grid > .src-fields { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
+.src-m, .src-f { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.src-m input[type="text"], .src-m input:not([type]), .src-f input:not([type="number"]):not([type="checkbox"]) { flex: 1 1 70px; min-width: 60px; }
+.src-f input[type="number"] { width: 56px; }
+.src-f .src-fid { flex: 0 0 84px; }
+.src-arrow { opacity: 0.6; padding: 0 2px; }
+.src-cs { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; opacity: 0.8; }
+.src-chk { display: inline-flex; align-items: center; }
+.src-addm, .src-addf { align-self: flex-start; background: transparent; border: 1px dashed var(--border);
+    color: var(--muted); border-radius: 5px; padding: 1px 8px; cursor: pointer; }
+.src-addm:hover, .src-addf:hover { color: var(--text); border-color: var(--accent); }
+.src-findrow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.src-cands { display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow: auto; margin-top: 4px; }
+.src-cand { text-align: left; background: var(--node-head); border: 1px solid var(--border); border-radius: 5px;
+    padding: 2px 6px; color: var(--text); cursor: pointer; font-size: 11px; word-break: break-all; }
+.src-cand:hover { border-color: var(--accent); }
+.src-prev-info { margin-top: 6px; font-size: 11px; }
+.src-preview { max-height: 200px; overflow: auto; margin-top: 2px; }
+.src-ptab { border-collapse: collapse; font-size: 11px; width: 100%; }
+.src-ptab th, .src-ptab td { border: 1px solid var(--border); padding: 1px 5px; text-align: left;
+    max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src-ptab th { background: var(--node-head); position: sticky; top: 0; }
 

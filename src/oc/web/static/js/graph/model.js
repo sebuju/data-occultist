@@ -8,7 +8,7 @@ import { DEFAULT_DETECT_THRESHOLD } from "../defaults.js";
 let _fieldSeq = 1;
 
 export class GraphModel {
-    constructor() { this.profile = blank(""); this.sounds = []; }   // sounds: available trigger-sound filenames (fetched once)
+    constructor() { this.profile = blank(""); this.sounds = []; this.shownSatellites = new Set(); }   // sounds: available trigger-sound filenames (fetched once); shownSatellites: ids of opt-in follower nodes (preview / vt-table) currently visible
 
     load(profile) {
         this.profile = profile || blank("");
@@ -17,6 +17,7 @@ export class GraphModel {
         this.profile.datasets = this.profile.datasets || [];
         this.profile.subsets = this.profile.subsets || [];
         this.profile.price_nodes = this.profile.price_nodes || [];
+        this.profile.file_sources = this.profile.file_sources || [];
         this.profile.triggers = this.profile.triggers || [];
         this.profile.dictionaries = this.profile.dictionaries || [];
         // a subset joins many datasets; fold a legacy single ``dataset`` into ``datasets``
@@ -28,6 +29,7 @@ export class GraphModel {
             if (!s.sort.length && s.sort_by) { s.sort = [{ field: s.sort_by, desc: !!s.sort_desc }]; s.sort_by = ""; }
         }
         for (const pn of this.profile.price_nodes) pn.sources = pn.sources || [];   // items the node prices (empty = catalogue)
+        for (const s of this.profile.file_sources) { s.match = s.match || []; s.fields = s.fields || []; s.roots = s.roots || []; }
         for (const t of this.profile.triggers) { t.watch = t.watch || []; t.targets = t.targets || []; if (t.volume == null) t.volume = 1; }
         // Item children arrive HOISTED to the window (flat ``item_fields``/``item_tells``, each
         // with an ``item`` backref) so each is its own node. Fan them back onto each item's
@@ -98,6 +100,8 @@ export class GraphModel {
             (pn.sources || []).forEach((_, i) =>                            // priced-item sources are REFs
                 sites.push({ decl: false, get: () => pn.sources[i], set: (v) => { pn.sources[i] = v; } }));
         }
+        for (const s of this.profile.file_sources || [])                  // a source DECLARES its output dataset
+            sites.push({ decl: true, get: () => s.dataset, set: (v) => { s.dataset = v; } });
         for (const s of this.profile.subsets || []) {                     // subset inputs are REFs
             sites.push({ decl: false, get: () => s.dataset, set: (v) => { s.dataset = v; } });   // legacy single
             (s.datasets || []).forEach((_, i) =>
@@ -136,13 +140,33 @@ export class GraphModel {
         return [...out];
     }
 
+    // ---- satellites (opt-in follower nodes) ---------------------------------
+    // A satellite is a companion node bonded to a parent by a dotted "img" edge — it follows the
+    // parent in/out of groups and is never grouped alone (like the window's preview). Two kinds:
+    //   • preview  — id `prev:<winId>`        parent `win:<winId>`     (window's live-read node)
+    //   • vt-table — id `vt:ds:<ds>`/`vt:sub:<id>`  parent `ds:<ds>`/`sub:<id>`  (a node's records grid)
+    // Visibility is opt-in (the user toggles each on) and rides the layout sidecar, never the yaml.
+    satelliteOn(id) { return this.shownSatellites.has(id); }
+    toggleSatellite(id) { const on = !this.shownSatellites.has(id); if (on) this.shownSatellites.add(id); else this.shownSatellites.delete(id); return on; }
+    setSatellites(arr) { this.shownSatellites = new Set(Array.isArray(arr) ? arr : []); }
+    satelliteIds() { return [...this.shownSatellites]; }
+    // Parent node id a satellite is bonded to (so groups keep them together).
+    satelliteParent(id) {
+        if (id.startsWith("vt:")) return id.slice(3);
+        if (id.startsWith("prev:")) return `win:${id.slice(5)}`;
+        return null;
+    }
+    satelliteBonds() {
+        return this.satelliteIds().map((s) => ({ leader: this.satelliteParent(s), follower: s })).filter((b) => b.leader);
+    }
+
     // ---- nodes / edges ------------------------------------------------------
 
     nodes() {
         const ns = [{ id: "game", type: "game", ref: this.profile }];
         for (const w of this.profile.windows) {
             ns.push({ id: `win:${w.id}`, type: "window", ref: w });
-            ns.push({ id: `prev:${w.id}`, type: "preview", ref: w });
+            if (this.satelliteOn(`prev:${w.id}`)) ns.push({ id: `prev:${w.id}`, type: "preview", ref: w });
             for (const r of w.regions || []) ns.push({ id: `reg:${w.id}:${r.id}`, type: "region", ref: r, win: w, field: this.fieldOf(w, r) });
             for (const d of w.detect || []) ns.push({ id: `det:${w.id}:${d.id}`, type: "detect", ref: d, win: w });
             if (w.scroll && w.scroll.scrollbar) ns.push({ id: `sb:${w.id}:scrollbar`, type: "scrollbar", ref: w.scroll, win: w });
@@ -152,9 +176,16 @@ export class GraphModel {
                 for (const t of it.tells || []) ns.push({ id: `tell:${w.id}:${it.id}:${t.id}`, type: "itemtell", ref: t, win: w, item: it });
             }
         }
-        for (const ds of this.datasets()) ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
-        for (const s of this.profile.subsets || []) ns.push({ id: `sub:${s.id}`, type: "subset", ref: s });
+        for (const ds of this.datasets()) {
+            ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
+            if (this.satelliteOn(`vt:ds:${ds}`)) ns.push({ id: `vt:ds:${ds}`, type: "vttable", ref: { kind: "dataset", ds } });
+        }
+        for (const s of this.profile.subsets || []) {
+            ns.push({ id: `sub:${s.id}`, type: "subset", ref: s });
+            if (this.satelliteOn(`vt:sub:${s.id}`)) ns.push({ id: `vt:sub:${s.id}`, type: "vttable", ref: { kind: "subset", id: s.id } });
+        }
         for (const pn of this.profile.price_nodes || []) ns.push({ id: `price:${pn.id}`, type: "price", ref: pn });
+        for (const s of this.profile.file_sources || []) ns.push({ id: `src:${s.id}`, type: "filesource", ref: s });
         for (const t of this.profile.triggers || []) ns.push({ id: `trigger:${t.id}`, type: "trigger", ref: t });
         for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
         return ns;
@@ -164,7 +195,7 @@ export class GraphModel {
         const es = [];
         for (const w of this.profile.windows) {
             es.push({ from: "game", to: `win:${w.id}`, kind: "own" });
-            es.push({ from: `win:${w.id}`, to: `prev:${w.id}`, kind: "img" });
+            if (this.satelliteOn(`prev:${w.id}`)) es.push({ from: `win:${w.id}`, to: `prev:${w.id}`, kind: "img" });
             for (const r of w.regions || []) {
                 es.push({ from: `win:${w.id}`, to: `reg:${w.id}:${r.id}`, kind: "field" });
             }
@@ -199,8 +230,15 @@ export class GraphModel {
         // a trigger FIRES its target price nodes (trigger -> price); an on_change trigger also
         // WATCHES datasets — the dashed line leaves the trigger's watch port and reaches OUT to the
         // dataset/subset it wakes on (trigger -> watched), so both control lines emanate from the trigger.
+        // a file source WRITES parsed rows into its output dataset (source -> dataset)
+        for (const s of this.profile.file_sources || [])
+            if (s.dataset) es.push({ from: `src:${s.id}`, to: `ds:${s.dataset}`, kind: "data" });
         for (const t of this.profile.triggers || []) {
-            for (const pid of t.targets || []) if (this.priceNode(pid)) es.push({ from: `trigger:${t.id}`, to: `price:${pid}`, kind: "trigger" });
+            // a target is a price node (sweep) or a file source (read) — wire to whichever owns the id
+            for (const pid of t.targets || []) {
+                if (this.priceNode(pid)) es.push({ from: `trigger:${t.id}`, to: `price:${pid}`, kind: "trigger" });
+                else if (this.fileSource(pid)) es.push({ from: `trigger:${t.id}`, to: `src:${pid}`, kind: "trigger" });
+            }
             if (t.kind === "on_change")
                 for (const w of t.watch || []) {
                     const to = this.subsetDef(w) ? `sub:${w}` : `ds:${w}`;
@@ -208,6 +246,9 @@ export class GraphModel {
                 }
         }
         for (const d of this.profile.dictionaries || []) es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
+        // vt-table satellites: a dotted "img" edge from the dataset/subset to its records grid (opt-in)
+        for (const ds of this.datasets()) if (this.satelliteOn(`vt:ds:${ds}`)) es.push({ from: `ds:${ds}`, to: `vt:ds:${ds}`, kind: "img" });
+        for (const s of this.profile.subsets || []) if (this.satelliteOn(`vt:sub:${s.id}`)) es.push({ from: `sub:${s.id}`, to: `vt:sub:${s.id}`, kind: "img" });
         return es;
     }
 
@@ -297,13 +338,14 @@ export class GraphModel {
         this.trigger(oldId).id = newId;
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "on_change", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "on_change", "on_app_start", "on_capture", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
     setTriggerSound(id, v) { const t = this.trigger(id); if (t) t.sound = v || ""; }
     setTriggerVolume(id, v) { const t = this.trigger(id); const n = parseFloat(v); if (t && !Number.isNaN(n)) t.volume = Math.max(0, Math.min(1, n)); }
     addTriggerTarget(id, pid) {
         const t = this.trigger(id);
-        if (!t || !pid || !this.priceNode(pid)) return false;
+        // a target is a price node (sweep) OR a file source (read) — accept either id
+        if (!t || !pid || !(this.priceNode(pid) || this.fileSource(pid))) return false;
         t.targets = t.targets || [];
         if (t.targets.includes(pid)) return false;
         t.targets.push(pid);
@@ -319,6 +361,72 @@ export class GraphModel {
         return true;
     }
     removeTriggerWatch(id, ds) { const t = this.trigger(id); if (t) t.watch = (t.watch || []).filter((d) => d !== ds); }
+
+    // ---- file sources: parse a game log/config file into a dataset -----------
+    fileSource(id) { return (this.profile.file_sources || []).find((s) => s.id === id) || null; }
+    addFileSource(dataset = "") {
+        this.profile.file_sources = this.profile.file_sources || [];
+        let n = 1, id = "source";
+        while (this.fileSource(id)) id = `source_${++n}`;
+        if (dataset) this.ensureDatasetDef(dataset);
+        this.profile.file_sources.push({ id, format: "log_lines", path: "", filename: "", roots: [],
+            dataset, watch: "manual", throttle_s: 1, tail: true, match: [], fields: [], enabled: true });
+        return id;
+    }
+    removeFileSource(id) { this.profile.file_sources = (this.profile.file_sources || []).filter((s) => s.id !== id); }
+    renameFileSource(oldId, newId) {
+        newId = (newId || "").trim();
+        if (!newId || newId === oldId || this.fileSource(newId)) return false;
+        this.fileSource(oldId).id = newId;
+        // a source id can be a trigger target — repoint so the wire survives the rename
+        for (const t of this.profile.triggers || []) t.targets = (t.targets || []).map((p) => (p === oldId ? newId : p));
+        return true;
+    }
+    setSourceDataset(id, ds) { const s = this.fileSource(id); if (s && ds) { s.dataset = ds; this.ensureDatasetDef(ds); } }
+    setSourceFormat(id, fmt) {
+        const s = this.fileSource(id); if (!s || !fmt) return;
+        s.format = fmt;
+        // document formats extract ONLY by path; line formats use after/between/column/whole. Keep
+        // each field's method valid for the new format so the parser doesn't silently skip it.
+        const isDoc = fmt !== "log_lines";
+        for (const f of s.fields || []) {
+            if (isDoc) f.method = "path";
+            else if (f.method === "path") f.method = "after";
+        }
+    }
+    // simple scalar props: path | filename | watch | throttle_s | tail
+    setSourceProp(id, key, val) {
+        const s = this.fileSource(id); if (!s) return;
+        if (key === "throttle_s") { const v = parseFloat(val); if (v >= 0) s.throttle_s = v; }
+        else if (key === "tail") s.tail = !!val;
+        else if (key === "watch") s.watch = val === "on_change" ? "on_change" : "manual";
+        else if (key === "path" || key === "filename") s[key] = val || "";
+    }
+    // ---- a source's line filters (match clauses) -----------------------------
+    addSourceMatch(id) { const s = this.fileSource(id); if (s) { s.match = s.match || []; s.match.push({ op: "contains", text: "", case_sensitive: false }); } }
+    removeSourceMatch(id, i) { const s = this.fileSource(id); if (s && s.match) s.match.splice(i, 1); }
+    setSourceMatch(id, i, key, val) {
+        const s = this.fileSource(id); const m = s && s.match && s.match[i]; if (!m) return;
+        if (key === "case_sensitive") m.case_sensitive = !!val; else m[key] = val ?? "";
+    }
+    // ---- a source's extraction fields ----------------------------------------
+    addSourceField(id) {
+        const s = this.fileSource(id); if (!s) return;
+        s.fields = s.fields || [];
+        let n = s.fields.length + 1, fid = `field${n}`;
+        while (s.fields.some((f) => f.id === fid)) fid = `field${++n}`;
+        // log formats default to an after-anchor pull; document formats to a path lookup
+        const isDoc = s.format !== "log_lines";
+        s.fields.push({ id: fid, method: isDoc ? "path" : "after", anchor: "", end: "", stop: "",
+            delim: " ", index: 0, path: "", type: "text", strip: true });
+    }
+    removeSourceField(id, i) { const s = this.fileSource(id); if (s && s.fields) s.fields.splice(i, 1); }
+    setSourceFieldProp(id, i, key, val) {
+        const s = this.fileSource(id); const f = s && s.fields && s.fields[i]; if (!f) return;
+        if (key === "index") { const v = parseInt(val, 10); f.index = Number.isNaN(v) ? 0 : v; }
+        else if (key === "strip") f.strip = !!val;
+        else f[key] = val ?? "";
+    }
 
     // ---- dictionaries: game-level word lists for fuzzy OCR matching ----------
     dictionary(id) { return (this.profile.dictionaries || []).find((d) => d.id === id) || null; }
@@ -650,17 +758,19 @@ export class GraphModel {
         return id;
     }
     setItemPriority(winId, id, priority) { const it = this.item(winId, id); if (it) it.priority = priority | 0; }
-    // Move an item up/down the priority order (dir -1/+1) and renumber every item's priority
-    // to match its new rank — top = 0. Renumbering keeps the list dense and contiguous so the
-    // window node's order list stays a faithful 1:1 view of priority.
+    // Move an item up/down the displayed order (dir -1/+1, where the list shows HIGHEST
+    // priority first) and renumber every item's priority to match its new rank. Renumbering
+    // keeps the list dense and contiguous so the window node's order list stays a faithful
+    // 1:1 view of priority: top of the list = highest number; bottom = 0 (the base cell).
     moveItemPriority(winId, id, dir) {
         const w = this.window(winId);
         if (!w || !w.items) return;
-        const order = [...w.items].sort((a, b) => (a.priority || 0) - (b.priority || 0));
+        const order = [...w.items].sort((a, b) => (b.priority || 0) - (a.priority || 0));   // highest first (display order)
         const i = order.findIndex((x) => x.id === id), j = i + dir;
         if (i < 0 || j < 0 || j >= order.length) return;
         [order[i], order[j]] = [order[j], order[i]];
-        order.forEach((it, k) => { it.priority = k; });   // top of the list -> priority 0
+        const n = order.length;
+        order.forEach((it, k) => { it.priority = n - 1 - k; });   // top -> highest priority, bottom -> 0 (base)
     }
     setWindowStaticGrid(winId, on) { const w = this.window(winId); if (w) w.static_grid = !!on; }
     removeItem(winId, id) {
@@ -703,6 +813,7 @@ export class GraphModel {
     setItemFieldTellAllowText(winId, itemId, fid, val) { const f = this.itemField(winId, itemId, fid); if (f) f.tell_allow_text = !!val; }
     setItemFieldLocate(winId, itemId, fid, val) { const f = this.itemField(winId, itemId, fid); if (f) f.locate = !!val; }
     setItemFieldAlign(winId, itemId, fid, align) { const f = this.itemField(winId, itemId, fid); if (f) f.align = align; }
+    setItemFieldAlignX(winId, itemId, fid, alignX) { const f = this.itemField(winId, itemId, fid); if (f) f.align_x = alignX; }
     removeItemField(winId, itemId, fid) {
         const it = this.item(winId, itemId);
         const f = this.itemField(winId, itemId, fid);
