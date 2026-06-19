@@ -18,6 +18,14 @@ const RESET_W = 300;   // every panel resets to this width (uniform), whatever i
 
 // Gap below the topbar = the same GAP, so the top margin matches the docking margin.
 const _topGap = () => (document.querySelector(".topbar")?.offsetHeight || 48) + GAP;
+// Bottom margin reserves the always-visible log bar (its head strip), so a maxed/edge-snapped
+// panel never tucks under it. In pretty view the bar slides off-screen -> reserve nothing.
+const _botGap = () => {
+    const lb = document.querySelector(".logbar");
+    const h = (lb && !document.body.classList.contains("pretty-view"))
+        ? (lb.querySelector(".log-head")?.offsetHeight || 0) : 0;
+    return h + GAP;
+};
 
 // Every visible, UNDOCKED panel is anchored TOP-RIGHT: on a window resize it keeps its
 // distance from the top (y unchanged) and from the right edge (x shifts by the width
@@ -55,7 +63,7 @@ function _otherRects(id) {
 function snapBox(id, x, y, w, h) {
     const W = window.innerWidth, H = window.innerHeight, top = _topGap();
     const xc = [GAP, W - GAP - w];             // screen left / right (GAP margin)
-    const yc = [top, H - GAP - h];             // screen top / bottom (GAP margin)
+    const yc = [top, H - _botGap() - h];       // screen top / bottom (bottom clears the log bar)
     for (const o of _otherRects(id)) {
         xc.push(o.left, o.right - w, o.left + o.w / 2 - w / 2,   // left / right / centre align
                         o.right + GAP, o.left - GAP - w);                // abut to its right / left
@@ -74,7 +82,7 @@ function snapBox(id, x, y, w, h) {
 // screen edge. axis "x" → a left|right edge value; "y" → a top|bottom edge value.
 function snapEdgeVal(id, axis, v) {
     const W = window.innerWidth, H = window.innerHeight, top = _topGap();
-    const cands = axis === "x" ? [GAP, W - GAP] : [top, H - GAP];
+    const cands = axis === "x" ? [GAP, W - GAP] : [top, H - _botGap()];
     for (const o of _otherRects(id)) {
         if (axis === "x") cands.push(o.left, o.right, o.left - GAP, o.right + GAP);
         else cands.push(o.top, o.bottom, o.top - GAP, o.bottom + GAP);
@@ -194,7 +202,7 @@ function fitChainToScreen(id) {
     const root = chainRoot(id);
     const chain = [root, ...dockDescendants(root)];
     reflowDock(root);
-    const limit = window.innerHeight - GAP;
+    const limit = window.innerHeight - _botGap();
     for (let i = chain.length - 1; i >= 1 && _chainBottom(chain) > limit; i--) {
         const w = _wins.get(chain[i]);
         if (w && !w.el.hidden && !w.state.collapsed) { w.collapse(true); reflowDock(root); }
@@ -209,7 +217,7 @@ function fitChainToScreen(id) {
 function findFreeSlot(id, w, h) {
     const W = window.innerWidth, H = window.innerHeight, top = _topGap();
     const rects = _otherRects(id);
-    const bottom = H - GAP;
+    const bottom = H - _botGap();
     for (let x = Math.max(GAP, W - w - GAP); x >= GAP; x -= w + GAP) {
         let y = top, guard = 0;
         while (guard++ < 200) {
@@ -276,7 +284,7 @@ export function createFloatWin({
     function clamp(x, y, w, h) {
         const top = _topGap();
         const maxX = Math.max(GAP, window.innerWidth - w - GAP);
-        const maxY = Math.max(top, window.innerHeight - h - GAP);
+        const maxY = Math.max(top, window.innerHeight - h - _botGap());
         return [Math.max(GAP, Math.min(maxX, x)), Math.max(top, Math.min(maxY, y))];
     }
     // prevL/prevR = my left/right edge as of the last placement — fed to reflowDock as the
@@ -315,18 +323,22 @@ export function createFloatWin({
     function fitHeight() {
         if (!autoFit || el.hidden || state.collapsed || state.userSized || !el.offsetWidth) return;
         const cur = el.offsetHeight;
+        // going height:auto removes the body's overflow, so the browser clamps its scrollTop to 0
+        // (a poll-driven fit would jump the list back to the top every tick); stash + restore it.
+        const sb = body ? body.scrollTop : 0;
         el.style.height = "auto";
         const natural = el.offsetHeight;
-        const maxH = Math.max(90, window.innerHeight - _topGap() - GAP);
+        const maxH = Math.max(90, window.innerHeight - _topGap() - _botGap());
         const target = Math.round(Math.min(maxH, natural));
         if (Math.abs(cur - target) > 1) { el.style.height = `${target}px`; state.h = target; }
         else el.style.height = `${cur}px`;   // restore a definite height (we were briefly auto)
+        if (body && body.scrollTop !== sb) body.scrollTop = sb;
     }
 
     // never restore a box bigger than the viewport (the window may have shrunk since saving)
     function applySize() {
         const maxW = Math.max(180, window.innerWidth - 8);
-        const maxH = Math.max(90, window.innerHeight - _topGap() - 8);
+        const maxH = Math.max(90, window.innerHeight - _topGap() - _botGap());
         if (Number.isFinite(state.w)) { const w = Math.min(state.w, maxW); el.style.width = `${w}px`; state.w = w; }
         // CSS-preset width (state.w null) wider than the viewport -> cap it so it never spawns off-screen.
         // Inline-only (don't write state.w), so a reset still falls back to the per-panel CSS preset.
