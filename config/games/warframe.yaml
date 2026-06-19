@@ -1302,6 +1302,10 @@ layout:
       sorts:
       - col: price
         dir: -1
+    ds:prices_live:
+      sorts:
+      - col: _batch
+        dir: -1
   open_images:
   - equipment_window
   - relic_window
