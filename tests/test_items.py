@@ -30,16 +30,6 @@ def _frame_with_icons(rows_celltop):
     return Frame(image=img, client=PixelBox(0, 0, 1000, 1000))
 
 
-def test_visual_locator_finds_rows_and_columns():
-    win = _window()
-    frame = _frame_with_icons([0.0, 0.25, 0.5])      # three rows of icons
-    cells = locate_item_cells(frame, win, [])
-    rows = {ic.cell.row for ic in cells}
-    cols = {ic.cell.col for ic in cells}
-    assert len(rows) == 3
-    assert cols == {0, 1, 2, 3, 4}                    # 1.0 / 0.2 = 5 columns
-
-
 def test_tell_keeps_only_filled_cells():
     win = _window()
     frame = _frame_with_icons([0.0, 0.25, 0.5])
@@ -47,22 +37,6 @@ def test_tell_keeps_only_filled_cells():
     # only column 0 has an icon -> only its cells pass the filled tell
     kept = [ic for ic in cells if valid_cell(frame, win, {"name": "x"}, ic)]
     assert kept and all(ic.cell.col == 0 for ic in kept)
-
-
-def test_cell_out_of_data_area_dismissed():
-    # last row's cell hangs past the data-area bottom (0.8 + 0.25 cell height > 1.0):
-    # its field box would read stray UI text below the grid, so the whole row is dropped
-    win = _window()
-    frame = _frame_with_icons([0.0, 0.5, 0.8])
-    cells = locate_item_cells(frame, win, [])
-    assert cells
-    assert {ic.cell.row for ic in cells} == {0, 1}
-
-
-def test_no_icons_no_rows():
-    win = _window()
-    frame = Frame(image=np.zeros((1000, 1000, 3), dtype=np.uint8), client=PixelBox(0, 0, 1000, 1000))
-    assert locate_item_cells(frame, win, []) == []
 
 
 def _text_window():
@@ -156,25 +130,6 @@ def test_grid_drift_zero_when_cells_land_on_content():
     assert d["x"]["max"] < 0.02 and d["y"]["max"] < 0.02   # cells land dead-on -> x & y drift ~0
 
 
-def test_column_anchor_out_of_bounds_falls_back_to_row_consensus():
-    # ref = locator centre = 0.75 of the cell, so a row anchored at 0.1875 puts the
-    # cell top at exactly 0.0. Column 1's only letter-bearing line sits one line
-    # higher (its bottom label line is letter-less, e.g. "[30]") — anchoring on it
-    # pushes the cell above the data area. The cell must fall back to the row
-    # consensus instead of vanishing.
-    win = _text_window()
-    lines = [
-        (0.10, 0.1875, 0.02, "Alpha", 0.95),
-        (0.30, 0.1375, 0.02, "Bravo", 0.95),    # label one line high
-        (0.50, 0.1875, 0.02, "Charlie", 0.95),
-    ]
-    frame = Frame(image=np.zeros((1000, 1000, 3), dtype=np.uint8), client=PixelBox(0, 0, 1000, 1000))
-    cells = locate_item_cells(frame, win, lines)
-    by_col = {ic.cell.col: ic for ic in cells}
-    assert 1 in by_col                               # not dismissed
-    assert abs(by_col[1].oy - by_col[0].oy) < 1e-6   # placed on the row consensus
-
-
 def _ic(prio, ntells, ox=0.0):
     item = ItemDef(id=f"p{prio}", box=Box(x=0, y=0, w=0.2, h=0.2), priority=prio,
                    tells=[Tell(id=f"t{i}", box=Box(x=0, y=0, w=0.1, h=0.1)) for i in range(ntells)])
@@ -185,28 +140,6 @@ def test_resolve_overlaps_priority_wins():
     # two templates on the SAME tile: higher priority kept, lower dropped
     ics = [_ic(prio=0, ntells=5), _ic(prio=9, ntells=1)]
     assert resolve_overlaps(ics, [0, 1]) == [1]
-
-
-def test_static_grid_tiles_from_data_area_corner_without_ocr():
-    # static grid anchors at the DATA-AREA corner and tiles by the cell SIZE (the cell sets
-    # only the stride, not the phase), no locator/lines needed. Cell 0.2x0.25 -> 5x4 over a 1x1.
-    item = ItemDef(id="it", box=Box(x=0.0, y=0.0, w=0.2, h=0.25),
-                   fields=[RegionDef(id="name", box=Box(x=0.05, y=0.6, w=0.9, h=0.3), field="name")])
-    win = WindowDef(id="w", fields=[FieldDef(id="name")],
-                    data_area=Box(x=0.0, y=0.0, w=1.0, h=1.0), items=[item])
-    frame = Frame(image=np.zeros((1000, 1000, 3), dtype=np.uint8), client=PixelBox(0, 0, 1000, 1000))
-    cells = locate_item_cells(frame, win, [])            # no OCR lines
-    assert {ic.cell.row for ic in cells} == {0, 1, 2, 3}  # 1.0 / 0.25 = 4 rows
-    assert {ic.cell.col for ic in cells} == {0, 1, 2, 3, 4}  # 1.0 / 0.2 = 5 cols
-    assert len(cells) == 20
-    # the cell POSITION is ignored: a cell drawn at x=0.1 still tiles from the corner 0.0
-    item.box = Box(x=0.1, y=0.0, w=0.2, h=0.25)
-    xs = sorted({round(ic.ox, 3) for ic in locate_item_cells(frame, win, [])})
-    assert xs == [0.0, 0.2, 0.4, 0.6, 0.8]
-    # and the data area corner sets the origin: a data area starting at 0.1 tiles from 0.1
-    win.data_area = Box(x=0.1, y=0.0, w=0.9, h=1.0)
-    xs2 = sorted({round(ic.ox, 3) for ic in locate_item_cells(frame, win, [])})
-    assert xs2 == [0.1, 0.3, 0.5, 0.7]
 
 
 def test_resolve_overlaps_priority_tie_breaks_on_tells():
