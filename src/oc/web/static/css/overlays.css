@@ -114,6 +114,9 @@
     color: var(--muted); user-select: none; }
 /* matches the cauldron palette: rim teal text, a faint amber-bubble glow */
 .bootveil-title { font-size: 22px; font-weight: 600; letter-spacing: 8px;
+    /* letter-spacing adds a trailing gap after the last glyph, so the flex-centred box
+       sits half a gap left of the mark above it; indent by one gap to re-centre the ink. */
+    text-indent: 8px;
     text-transform: uppercase; color: #38ada9; text-shadow: 0 0 12px rgba(247,215,148,.25); }
 
 /* full-screen block when a background OCR worker refuses to die on startup */

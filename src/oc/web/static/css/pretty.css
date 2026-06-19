@@ -43,6 +43,7 @@ body.pretty-view .pw-cauldron-mark {
 }
 .pw-cauldron-mark svg { width: 96px; height: 96px; overflow: visible; }
 .pw-cauldron-label { font-size: 11px; letter-spacing: .18em; text-transform: uppercase;
+    text-indent: .18em;   /* offset the trailing letter-spacing gap so ink re-centres under the mark */
     color: #38ada9; }
 .pw-surface { position: relative; min-width: 100%; min-height: 100%; }
 /* dots sit ON the snap lines (multiples of GRID=20): the gradient dot is centred in its 20px
