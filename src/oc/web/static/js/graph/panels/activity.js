@@ -36,6 +36,11 @@ let actData = null;          // last hub snapshot (re-rendered locally between b
 let actAt = 0;               // Date.now() of the last snapshot, used to age the countdowns
 const actRows = new Map();   // job key -> { row, title, prog }
 const actPending = new Set();   // trigger ids whose enable toggle is mid-flight (debounce until the next update)
+// job keys whose cancel was just clicked — optimistic "cancelling…" until the backend's own
+// flag (s.cancel) confirms it. Cleared on confirm or when the row leaves. Without this the
+// button's disabled/text were set once on click and never reconciled, so a recurring sweep
+// (re-fired by a trigger → same row key reused) froze the button on "cancelling…" forever.
+const actCancelReq = new Set();
 let actEmpty = null;         // the reused "nothing active" placeholder (never innerHTML)
 
 function buildActivity() {
@@ -77,6 +82,8 @@ function wireActivityClicks(root) {
         const game = model.profile.name; if (!game) return;
         const c = ev.target.closest("button[data-cancel]");
         if (c && !c.disabled) {
+            const key = c.dataset.cancel === "sweep" ? `sweep:${c.dataset.ds}` : "precap";
+            actCancelReq.add(key);   // optimistic — reconcile keeps the button on "cancelling…" until confirmed
             c.disabled = true; c.textContent = "cancelling…";
             const p = c.dataset.cancel === "sweep" ? api.prices.cancel(game, c.dataset.ds) : api.precapture.cancel(game);
             p.catch((e) => log(`cancel failed: ${e.message || e}`, "err")).finally(() => setTimeout(hub.kick, 300));   // state changed -> beat the hub
@@ -172,7 +179,7 @@ function activityJobs(data, elapsed = 0) {
     const jobs = [];
     for (const s of (data.sweeps || [])) {
         jobs.push({
-            key: `sweep:${s.dataset}`, action: { type: "cancel", kind: "sweep", ds: s.dataset },
+            key: `sweep:${s.dataset}`, action: { type: "cancel", kind: "sweep", ds: s.dataset, cancelling: !!s.cancel },
             title: `sweep · ${s.dataset}`,
             prog: `${s.done}/${s.total || "…"} · ${s.fetched} ok${s.failed ? ` · ${s.failed} failed` : ""}${s.cancel ? " · cancelling…" : ""}${s.last ? ` · ${s.last}` : ""}`,
         });
@@ -262,7 +269,7 @@ function renderActivity(data, elapsed = 0) {
     const list = actRoot;
     const jobs = activityJobs(data, elapsed);
     const want = new Set(jobs.map((j) => j.key));
-    for (const [key, r] of actRows) if (!want.has(key)) { r.row.remove(); actRows.delete(key); }
+    for (const [key, r] of actRows) if (!want.has(key)) { r.row.remove(); actRows.delete(key); actCancelReq.delete(key); }
     if (!jobs.length) {
         if (!actEmpty.isConnected) list.appendChild(actEmpty);   // reuse the placeholder, no innerHTML
         return;
@@ -287,7 +294,7 @@ function renderActivity(data, elapsed = 0) {
             }
             row.append(body);
             // enable/disable toggle (triggers only) sits just before the action button
-            let enableBtn = null;
+            let enableBtn = null, cancelBtn = null;
             if (j.enable) {
                 enableBtn = document.createElement("button");
                 enableBtn.className = "act-enable"; enableBtn.setAttribute("role", "switch");
@@ -300,17 +307,17 @@ function renderActivity(data, elapsed = 0) {
             }
             // button is stable per key (sweep/precap → cancel, trigger → fire)
             if (j.action?.type === "cancel") {
-                const btn = document.createElement("button");
-                btn.className = "act-cancel"; btn.textContent = "cancel";
-                btn.dataset.cancel = j.action.kind; if (j.action.ds) btn.dataset.ds = j.action.ds;
-                row.append(btn);
+                cancelBtn = document.createElement("button");
+                cancelBtn.className = "act-cancel"; cancelBtn.textContent = "cancel";
+                cancelBtn.dataset.cancel = j.action.kind; if (j.action.ds) cancelBtn.dataset.ds = j.action.ds;
+                row.append(cancelBtn);
             } else if (j.action?.type === "fire") {
                 const btn = document.createElement("button");
                 btn.className = "act-fire"; btn.textContent = "fire";
                 btn.dataset.fire = j.action.id;
                 row.append(btn);
             }
-            r = { row, title, prog, last, enableBtn, cls: j.cls || "" }; actRows.set(j.key, r);
+            r = { row, title, prog, last, enableBtn, cancelBtn, cls: j.cls || "" }; actRows.set(j.key, r);
         }
         // place at slot i ONLY if it isn't already there — no needless detach/reattach (which
         // flashes as a "recreate" in devtools + thrashes layout every tick)
@@ -326,6 +333,16 @@ function renderActivity(data, elapsed = 0) {
             }
             const dis = actPending.has(j.enable?.id);   // disabled while a toggle is mid-flight (debounce)
             if (r.enableBtn.disabled !== dis) r.enableBtn.disabled = dis;
+        }
+        // cancel button reflects the backend's drain state, NEVER a frozen click-time value: a
+        // confirmed cancel (j.action.cancelling) clears the optimistic flag; a fresh sweep reusing
+        // this row key reports cancelling=false → button re-enables to "cancel".
+        if (r.cancelBtn) {
+            if (j.action?.cancelling) actCancelReq.delete(j.key);   // backend confirmed → optimistic no longer needed
+            const busy = !!j.action?.cancelling || actCancelReq.has(j.key);
+            if (r.cancelBtn.disabled !== busy) r.cancelBtn.disabled = busy;
+            const ctxt = busy ? "cancelling…" : "cancel";
+            if (r.cancelBtn.textContent !== ctxt) r.cancelBtn.textContent = ctxt;
         }
         if (r.title.textContent !== j.title) r.title.textContent = j.title;
         if (r.prog.textContent !== j.prog) r.prog.textContent = j.prog;
