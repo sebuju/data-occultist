@@ -1,11 +1,10 @@
 """Shared Server-Sent-Events streaming primitive.
 
-Every SSE endpoint (dataset changes, graph flow hops, log-bar lines) is the SAME loop:
-emit a ``ready`` event, optionally backfill, then forward bus events to the client until
-the connection drops, a bounded window expires, OR the server shuts down. Only the
-per-event wire formatting (and the optional backfill) differ, so that loop lives here
-ONCE and each route is a thin caller (see :mod:`oc.web.routes.events`,
-:mod:`oc.web.routes.logstream`).
+Every SSE stream (dataset changes, graph flow hops, log-bar lines — all multiplexed on the
+ONE :mod:`oc.web.routes.events` endpoint) is the SAME loop: emit a ``ready`` event, optionally
+backfill, then forward bus events to the client until the connection drops, a bounded window
+expires, OR the server shuts down. Only the per-event wire formatting (and the optional
+backfill) differ, so that loop lives here ONCE and the route is a thin caller.
 
 Crucially the loop races each wait against :func:`oc.web.shutdown.wait_shutdown`, so a
 server-side shutdown ends the stream instantly instead of blocking uvicorn's connection

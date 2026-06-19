@@ -1,8 +1,8 @@
 // Flow blobs: small dots that travel along a graph edge when a backend stage actually wrote
-// data — orange for data, cyan for a firing trigger, teal for a watch. Driven by the
-// /api/flow-events/{game} SSE stream (one event per real per-stage hop, carrying the item
-// count). NOT a choreographed full-chain walk — each blob animates exactly the one edge that
-// the matching backend stage wrote.
+// data — orange for data, cyan for a firing trigger, teal for a watch. Driven by the SHARED
+// dsevents bus (the flow channel of the one /api/events/{game} SSE stream — see dsevents.js;
+// no dedicated flow socket), one event per real per-stage hop carrying the item count. NOT a
+// choreographed full-chain walk — each blob animates exactly the one edge the stage wrote.
 //
 // Performance contract: nothing runs at idle. The rAF loop is started on
 // the first spawned blob and STOPPED the moment the active list empties; <circle> elements are
@@ -21,7 +21,7 @@ const SVGNS = "http://www.w3.org/2000/svg";
 
 let game = null;
 let enabled = true;        // code-level toggle; default ON. UI may flip this later via setFlowEnabled.
-let ctrlStream = null;     // EventSource: control hops (trigger->price, trigger->watch)
+let flowUnsub = null;      // unsubscribe from the shared bus's FLOW channel (control + feeder hops)
 let dsUnsub = null;        // unsubscribe from the shared dataset-change bus (drives data hops)
 let layer = null;          // <svg id="gflow"> inside #gworld
 const pool = [];           // parked <circle> free-list
@@ -135,10 +135,8 @@ function step(now) {
 // that received) plus the kind ("data" orange, "trigger" cyan, "watch" teal). We animate that
 // ONE edge. This is why two windows sharing a dataset no longer both light up: only the window
 // that actually wrote emits a "data" hop, so only its edge animates.
-function onFlow(e) {
+function onFlow(d) {            // d: parsed hop from the shared bus's flow channel
     if (!enabled) return;
-    let d;
-    try { d = JSON.parse(e.data); } catch { return; }
     if (!d || !d.kind || !d.src || !d.dst) return;
     spawn(d.kind, d.src, d.dst, d.n || 1);
 }
@@ -158,16 +156,15 @@ function onData(dataset, n) {
 function openStream() {
     closeStream();
     if (!game || !enabled) return;
-    try {
-        ctrlStream = new EventSource(`/api/events/flow/${encodeURIComponent(game)}`);
-        ctrlStream.addEventListener("flow", onFlow);
-    } catch { /* EventSource unavailable -> no blobs, no harm */ }
-    // dataset writes ride the SHARED bus (one connection for the whole page); the subscription
-    // stays only while flow is enabled — onData no-ops otherwise, but unsubscribing is cleaner.
+    // BOTH channels ride the shared dsevents bus (ONE EventSource for the whole page): flow hops
+    // (control + feeder) on the flow channel, dataset writes on the dataset channel. No dedicated
+    // flow socket — a second always-on stream starves the browser's connection pool. The
+    // subscriptions stay only while flow is enabled (the handlers no-op otherwise).
+    flowUnsub = dsevents.subscribeFlow(onFlow);
     dsUnsub = dsevents.subscribe(onData);
 }
 function closeStream() {
-    if (ctrlStream) { try { ctrlStream.close(); } catch { /* */ } ctrlStream = null; }
+    if (flowUnsub) { flowUnsub(); flowUnsub = null; }
     if (dsUnsub) { dsUnsub(); dsUnsub = null; }
 }
 

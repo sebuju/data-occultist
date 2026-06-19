@@ -35,6 +35,29 @@ function tfetch(url, opts = {}, ms = LIGHT_MS) {
     });
 }
 
+// Global OCR gate. The server serializes ALL OCR on one process-wide lock (see
+// ocr/serialize.py): two OCR jobs never run at once, so firing many at once can't go
+// faster. Worse, each in-flight request HOLDS one of the browser's ~6 per-host
+// connections while it queues server-side, so a burst of OCR POSTs (preview+detect for
+// every window on load) saturates the connection pool and starves plain GETs — the
+// window image then waits seconds for a free socket even though serving it is ~4ms. So
+// cap OCR requests in flight here, mirroring the server. 2 keeps the pipe full (one
+// computing while the next uploads) without monopolising connections.
+const OCR_MAX = 2;
+let _ocrActive = 0;
+const _ocrWaiters = [];
+function _ocrRelease() {
+    _ocrActive--;
+    const next = _ocrWaiters.shift();
+    if (next) { _ocrActive++; next(); }
+}
+// Run an OCR fetch through the gate: wait for a slot, then always release (even on error).
+function tfetchOcr(url, opts = {}, ms = OCR_MS) {
+    const start = () => tfetch(url, opts, ms).finally(_ocrRelease);
+    if (_ocrActive < OCR_MAX) { _ocrActive++; return start(); }
+    return new Promise((res, rej) => _ocrWaiters.push(() => start().then(res, rej)));
+}
+
 // Throw on a non-OK response, but first dump the server's FULL error (the backend now
 // returns the real traceback) to the browser console so a 500 isn't opaque.
 async function ok(r, label) {
@@ -106,7 +129,7 @@ export const dbbackups = {
 export async function preview(profile, game, capture) {
     let url = "/api/preview";
     if (game && capture) url += `?game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}`;
-    const r = await tfetch(url, {
+    const r = await tfetchOcr(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(profile),
@@ -120,7 +143,7 @@ export async function preview(profile, game, capture) {
 export async function previewCommit(profile, game, capture) {
     let url = "/api/preview/commit";
     if (game && capture) url += `?game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}`;
-    const r = await tfetch(url, {
+    const r = await tfetchOcr(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(profile),
@@ -145,7 +168,7 @@ export async function capture(game, stash = true) {
 export async function suggest(game, search) {
     let url = `/api/suggest?game=${encodeURIComponent(game)}`;
     if (search) url += `&sx=${search.x}&sy=${search.y}&sw=${search.w}&sh=${search.h}`;
-    const r = await tfetch(url, {}, OCR_MS);
+    const r = await tfetchOcr(url, {}, OCR_MS);
     if (!r.ok) throw new Error(`suggest: ${r.status} ${await r.text()}`);
     return r.json();
 }
@@ -154,7 +177,7 @@ export async function suggest(game, search) {
 export async function detect(profile, game, capture) {
     let url = "/api/detect";
     if (game && capture) url += `?game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}`;
-    const r = await tfetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(profile) }, OCR_MS);
+    const r = await tfetchOcr(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(profile) }, OCR_MS);
     if (!r.ok) throw new Error(`detect: ${r.status}`);
     return r.json();
 }
@@ -162,7 +185,7 @@ export async function detect(profile, game, capture) {
 // Cross-check every window against every other using bound reference images:
 // { windows:[{window,capture,verdict,winner,collides_with,matches:[{window,matched,detectors}]}] }
 export async function detectCollisions(game, signal) {
-    const r = await tfetch(`/api/detect/collisions/${encodeURIComponent(game)}`, { signal }, OCR_MS);
+    const r = await tfetchOcr(`/api/detect/collisions/${encodeURIComponent(game)}`, { signal }, OCR_MS);
     if (!r.ok) throw new Error(`collisions: ${r.status}`);
     return r.json();
 }
@@ -212,7 +235,7 @@ export async function stashScreenshot(game, blob, view = "canvas") {
 // fields:{id:{raw,value,confidence,substituted,box}}, tells:[...], valid, cell }.
 export async function itemRead(profile, game, win, item) {
     const q = `game=${encodeURIComponent(game)}&win=${encodeURIComponent(win)}&item=${encodeURIComponent(item)}`;
-    const r = await tfetch(`/api/item/read?${q}`, {
+    const r = await tfetchOcr(`/api/item/read?${q}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(profile),
@@ -387,13 +410,16 @@ export const triggers = {
 // File sources: read a game log/config file into a dataset. `read` fires a read now; `preview`
 // parses the in-progress config WITHOUT writing (live editor preview); `find` auto-finds the file.
 export const sources = {
-    read: (game, id) => tfetch(`/api/sources/${_pg(game)}/${encodeURIComponent(id)}/read`, { method: "POST" }, 30_000).then((r) => ok(r, "read source").then((x) => x.json())),
+    read: (game, id, signal) => tfetch(`/api/sources/${_pg(game)}/${encodeURIComponent(id)}/read`, { method: "POST", signal }, 30_000).then((r) => ok(r, "read source").then((x) => x.json())),
     preview: (game, body, signal) => tfetch(`/api/sources/${_pg(game)}/preview`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
     }, 15_000).then((r) => ok(r, "source preview").then((x) => x.json())),
-    find: (game, body) => tfetch(`/api/sources/${_pg(game)}/find`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
+    find: (game, body, signal) => tfetch(`/api/sources/${_pg(game)}/find`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}), signal,
     }, 30_000).then((r) => ok(r, "find source").then((x) => x.json())),
+    peek: (game, path, signal) => tfetch(`/api/sources/${_pg(game)}/peek`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }), signal,
+    }, 15_000).then((r) => ok(r, "peek file").then((x) => x.json())),
 };
 
 // Activity: one poll for the floating Activity panel — every running price sweep, the
