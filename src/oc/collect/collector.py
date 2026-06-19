@@ -12,13 +12,9 @@ learned along the way is flushed on shutdown.
 from __future__ import annotations
 
 import logging
-import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
-
-import cv2
 
 from ..engine import Engine
 from ..learn.confusions import ConfusionMap
@@ -47,20 +43,6 @@ def _detect_search_fracs(profile: GameProfile) -> list:
             for d in s.detect:
                 if d.enabled:
                     out.append(d.search.to_fraction())
-    return out
-
-
-def _load_cutouts(engine: Engine, profile: GameProfile) -> dict:
-    """Frozen item cutouts {item_id: image}, so the reader can calibrate row anchors
-    to where each locator's text actually sits (same as the preview route does)."""
-    base = Path(engine.settings.captures_dir) / re.sub(r"[^A-Za-z0-9._-]", "_", profile.name) / "items"
-    out = {}
-    for w in profile.windows:
-        for it in w.items or []:
-            if it.cutout and (base / it.cutout).exists():
-                im = cv2.imread(str(base / it.cutout))
-                if im is not None:
-                    out[it.id] = im
     return out
 
 
@@ -102,7 +84,7 @@ class Collector:
         pooled, dict_map = build_dictionaries(profile, engine.corrector)
         resolver = FieldResolver(self._lexicon, engine.corrector, self._tuning.accept_confidence,
                                  confusions=self._confusions, dictionary=pooled, dictionaries=dict_map)
-        self._reader = RegionReader(engine.ocr, resolver, cutouts=_load_cutouts(engine, profile))
+        self._reader = RegionReader(engine.ocr, resolver)
 
         # Confirmers, stores, and observed-key sets are keyed by DATASET, not
         # window, so windows that share a dataset dedup against each other and

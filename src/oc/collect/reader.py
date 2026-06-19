@@ -22,10 +22,8 @@ from .fields import coerce_rule, out_of_range
 from .grid import Cell, cells_for_rows, expand_cells
 from .items import (
     ItemCell,
-    anchor_align,
     grid_drift,
     locate_item_cells,
-    locator_of,
     resolve_overlaps,
     tell_report,
     valid_cell,
@@ -62,16 +60,12 @@ def _center_in(line: OcrLine, box: PixelBox) -> bool:
 
 
 class RegionReader:
-    def __init__(self, ocr: OcrEngine, resolver=None, templates=None, cutouts=None) -> None:
+    def __init__(self, ocr: OcrEngine, resolver=None, templates=None) -> None:
         self._ocr = ocr
         self._resolver = resolver
         # {tell_id: image} for ``template`` tells; loaded by the caller (knows the
         # profile dir). None/absent -> template tells score 0.
         self._templates = templates or {}
-        # {item_id: cutout image} so the row anchor can be calibrated to where the
-        # locator's content actually sits in the frozen cell. Cached per item.
-        self._cutouts = cutouts or {}
-        self._anchor_cache: dict[str, float] = {}
 
     # ---- batched OCR -------------------------------------------------------
 
@@ -235,11 +229,7 @@ class RegionReader:
             # (align_x) instead of tiled geometrically — immune to blank data-area margins.
             lf = [((ln.box.x + ln.box.w / 2) / cw, (ln.box.y + ln.box.h / 2) / ch, ln.box.h / ch,
                    ln.text, ln.confidence, ln.box.x / cw, ln.box.w / cw) for ln in lines]
-            # only the located mode needs the (cutout-OCR) anchor calibration; a static-grid
-            # window tiles geometrically, so skip that work entirely
-            anchors = ({} if getattr(window, "static_grid", True)
-                       else {it.id: self._item_anchor(it) for it in window.items if locator_of(it)})
-            ics = locate_item_cells(frame, window, lf, self._templates, anchors)
+            ics = locate_item_cells(frame, window, lf, self._templates)
             return [ic.cell for ic in ics], lines, ics
 
         sc = window.scroll if (window.scroll and window.scroll.enabled) else None
@@ -255,53 +245,6 @@ class RegionReader:
         text_boxes = [b for _, fid, b in targets if not self._is_pip(fields.get(fid))]
         lines = self._ocr_union(frame, text_boxes, window.preprocess, clip)
         return cells, lines, None
-
-    def _item_anchor(self, item) -> float:
-        """Cell-relative y the row anchor should align to: where the ANCHORABLE TEXT
-        actually sits in the frozen cutout. Live row locating clusters the letter-
-        bearing OCR lines in the locator's x-range — whatever the locator IS. A
-        diamonds/pips locator (an arcane's rank) has no text of its own, so the lines
-        that anchor its rows are still the name's; calibrating against the locator
-        box's centre instead places the cell as if the name sat on the rank marks,
-        one label-height too high, and the rank box misses its marks. So: OCR the
-        whole cell area of the cutout and anchor on the same lines the live pass
-        would cluster."""
-        loc = locator_of(item)
-        fallback = (loc.box.y + loc.box.h / 2) if loc else 0.5
-        if item.id in self._anchor_cache:
-            return self._anchor_cache[item.id]
-        ref = fallback
-        cut = self._cutouts.get(item.id)
-        cb, ib = item.cutout_box, item.box
-        if cut is not None and cut.size and cb is not None and cb.w > 0 and cb.h > 0 and loc is not None:
-            ch, cw = cut.shape[:2]
-            # whole cell area: cell-relative -> window -> cutout fraction -> pixels
-            x0, y0 = (ib.x - cb.x) / cb.w, (ib.y - cb.y) / cb.h
-            x1, y1 = x0 + ib.w / cb.w, y0 + ib.h / cb.h
-            px0, py0 = max(0, int(x0 * cw)), max(0, int(y0 * ch))
-            px1, py1 = min(cw, int(x1 * cw)), min(ch, int(y1 * ch))
-            crop = cut[py0:py1, px0:px1]
-            ls = self._ocr.read_image(crop) if crop.size else []
-            # the lines the live locator would cluster: letter-bearing (not a numeric
-            # badge) and inside the locator's x-range of the cell
-            lx0 = px0 + loc.box.x * ib.w / cb.w * cw
-            lx1 = lx0 + loc.box.w * ib.w / cb.w * cw
-            ls = [ln for ln in ls
-                  if any(c.isalpha() for c in ln.text)
-                  and lx0 <= px0 + ln.box.x + ln.box.w / 2 <= lx1]
-            if ls:
-                # match the live row anchor: bottommost / topmost / mean line
-                align = anchor_align(item)
-                if align == "bottom":
-                    cy_cut = max((py0 + ln.box.y + ln.box.h / 2) / ch for ln in ls)
-                elif align == "top":
-                    cy_cut = min((py0 + ln.box.y) / ch for ln in ls)
-                else:
-                    cy_cut = sum((py0 + ln.box.y + ln.box.h / 2) / ch for ln in ls) / len(ls)
-                wy_text = cb.y + cy_cut * cb.h                                             # window frac
-                ref = (wy_text - ib.y) / ib.h                                              # cell-relative
-        self._anchor_cache[item.id] = ref
-        return ref
 
     # ---- public reads ------------------------------------------------------
 

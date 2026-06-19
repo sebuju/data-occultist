@@ -46,7 +46,6 @@ from ..types import Frame, FractionBox, PixelBox
 from ..capture.mss_backend import MssCaptureBackend
 from ..ocr.serialize import ocr_job
 from ..window.input import scroll_window
-from .collector import _load_cutouts
 from .reader import RegionReader
 
 
@@ -268,7 +267,7 @@ class PrecaptureSession:
         pooled, dict_map = build_dictionaries(profile, eng.corrector)
         resolver = FieldResolver(self._lexicon, eng.corrector, self._tuning.accept_confidence,
                                  confusions=self._confusions, dictionary=pooled, dictionaries=dict_map)
-        self._reader = RegionReader(eng.ocr, resolver, cutouts=_load_cutouts(eng, profile))
+        self._reader = RegionReader(eng.ocr, resolver)
         self._detect_fracs = _detect_boxes(profile)
         self._key_maps = {}
 

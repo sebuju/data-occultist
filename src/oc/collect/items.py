@@ -1,14 +1,13 @@
 """Locate and validate item instances from an :class:`ItemDef` template.
 
-Finding items, on the fly, without a fixed grid:
-
-  * columns are an even tiling of the data area by the cell width;
-  * rows come from the *locator* tell — a cheap visual tell (filled/colour/template)
-    slid down a column finds the rows with no OCR, or a text tell clusters the OCR
-    lines across every column;
-  * each (row, col) places the whole cell; fields read at cell-relative offsets. A
-    text-located cell re-anchors on its OWN column's label (tile types put their
-    label at different heights, so a row-wide anchor misplaces mixed rows).
+Finding items, on the fly, without a fixed grid. Each item's locator field (its name,
+usually) back-projects every eligible OCR line — honouring the authored ``align`` /
+``align_x`` edge — to the cell ORIGIN that would put the anchor on that line. Those
+origins are gap-clustered per axis (items always form a regular grid, so a gap wider than
+half a cell is a new column/row); each cluster median is a grid line. Per cell the
+align-extreme line is kept (so a wrapped second line never drags the anchor), and the cell
+is emitted there. :func:`resolve_overlaps` then keeps ONE item per location; priority only
+breaks that tie, never drives location.
 
 A detected cell is kept only when *all* the item's tells pass (:func:`valid_cell`),
 so floating tooltips and empty slots are discarded.
@@ -26,7 +25,6 @@ from ..types import Frame, FractionBox
 from . import tells as telldet
 from .grid import Cell
 from .pips import count_diamonds, count_pips
-from .rows import fit_row_lattice
 
 _LOC_MIN_CONF = 0.7   # text-locator lines below this are OCR garbage, not names
 
@@ -92,49 +90,6 @@ def _crop(frame: Frame, fb: FractionBox) -> np.ndarray:
     return frame.image[pb.y : pb.y + pb.h, pb.x : pb.x + pb.w]
 
 
-def _peaks(ys: list[float], scores: list[float], thr: float, min_dist: float) -> list[float]:
-    """Cluster the contiguous above-threshold band around each row into ONE peak.
-
-    Sliding a window over an icon makes a wide high-score plateau, so picking raw
-    maxima would split one row into several. Instead, group above-threshold samples
-    whose gap is < ``min_dist`` and take each group's score-weighted centre."""
-    hits = sorted((y, s) for y, s in zip(ys, scores) if s >= thr)
-    if not hits:
-        return []
-    groups, cur = [], [hits[0]]
-    for y, s in hits[1:]:
-        if y - cur[-1][0] > min_dist:
-            groups.append(cur)
-            cur = [(y, s)]
-        else:
-            cur.append((y, s))
-    groups.append(cur)
-    out = []
-    for g in groups:
-        wsum = sum(s for _, s in g)
-        out.append(sum(y * s for y, s in g) / wsum if wsum else g[0][0])
-    return out
-
-
-def _visual_rows(frame: Frame, item: ItemDef, loc, da, templates) -> list[float]:
-    """Slide the locator tell's region down column 0 and pick the rows where it fires."""
-    iw, ih = item.box.w, item.box.h
-    lx = da.x + loc.box.x * iw          # column 0 sits at the data-area's left edge
-    lw, lh = loc.box.w * iw, loc.box.h * ih
-    tmpl = templates.get(loc.id) if templates else None
-    step = max(1.0 / frame.client.h, ih * 0.05)
-
-    ys, scores = [], []
-    y = da.y
-    while y + lh <= da.y + da.h:
-        crop = _crop(frame, FractionBox(lx, y, lw, lh))
-        ys.append(y + lh / 2)
-        scores.append(telldet.visual_score(loc, crop, tmpl))
-        y += step
-    # cluster gap a few slide-steps wide: merges one row's plateau, keeps rows apart
-    return _peaks(ys, scores, loc.threshold, max(step * 3, ih * 0.15))
-
-
 def _loc_lines(item: ItemDef, loc, lines_frac, da, numeric: bool = False, min_conf: float = _LOC_MIN_CONF) -> list[tuple]:
     """The OCR lines eligible to anchor rows AND columns: confident lines of the locator's
     CHARACTER CLASS anywhere inside the data area. Returns (cx, cy, h, lx, lw) — centre,
@@ -161,78 +116,6 @@ def _loc_lines(item: ItemDef, loc, lines_frac, da, numeric: bool = False, min_co
         lw = box[1] if len(box) > 1 else 0.0         # line width (frac)
         out.append((cx, cy, h, lx, lw))
     return out
-
-
-def _text_rows(item: ItemDef, loc_lines: list[tuple], da, pitch_tol: float | None = None) -> list[float]:
-    """Fit a regular row lattice to the eligible locator lines (every column).
-
-    Clusters the lines into candidate rows, then lays a regular pitch+phase grid over
-    the data area so a row whose name is occluded/low-confidence still gets a cell, and
-    off-lattice OCR noise never invents a phantom row (see :func:`fit_row_lattice`)."""
-    centers = [t[1] for t in loc_lines]
-    heights = [t[2] for t in loc_lines]
-    return fit_row_lattice(centers, heights, item.box.h, da.y, da.y + da.h, None,
-                           anchor=anchor_align(item), pitch_tol=pitch_tol)
-
-
-def _text_cols(item: ItemDef, loc, loc_lines: list[tuple], da, pitch_tol: float | None = None) -> list[float]:
-    """Find the columns from the locator lines — the horizontal twin of :func:`_text_rows`.
-    Each line's anchor edge (per ``align_x``: its left/centre/right) minus the locator's
-    cell-relative x position gives a candidate cell LEFT edge; those cluster into the real
-    columns. Because the phase comes from the content, blank margins in the data area don't
-    shift the grid (the geometric ``da.x + c*pitch`` tiling did).
-
-    A tile can carry MORE than the name on its locator's character class — a "Crafted" badge,
-    a wrapped 2nd line — and those sit at a DIFFERENT x than the centred name. Averaging them
-    (a centroid) drags the column off the name only where the extra text exists, so identical
-    tiles land on different columns. The locator's real label is the WIDEST line in the cluster
-    (the full name); a short badge / wrapped fragment is narrower, so the widest line fixes the
-    column and the noise is ignored."""
-    iw = item.box.w
-    ax = anchor_align_x(item)
-    # ``align_x`` is where the text sits in the CELL, not in the locator box: left edge at the
-    # cell's left (0), centre at the cell centre (0.5), right edge at the cell's right (1.0).
-    # cell_x (left edge) = <line's anchor edge> - xref*iw.
-    xref = 1.0 if ax == "right" else (0.5 if ax == "center" else 0.0)
-    cands = []  # (cell_left, line_width)
-    for cx, _cy, _h, lx, lw in loc_lines:
-        edge = (lx + lw) if ax == "right" else (cx if ax == "center" else lx)
-        cands.append((edge - xref * iw, lw))
-    if not cands:
-        return []
-    # cluster by x gap (a column pitch is one cell wide; a gap < 0.6 cell is the same column),
-    # then take the WIDEST line per column as its anchor.
-    cands.sort()
-    gap = iw * 0.6
-    cols, cluster = [], [cands[0]]
-    for c, w in cands[1:]:
-        if c - cluster[-1][0] > gap:
-            cols.append(max(cluster, key=lambda t: t[1])[0])
-            cluster = [(c, w)]
-        else:
-            cluster.append((c, w))
-    cols.append(max(cluster, key=lambda t: t[1])[0])
-    return cols
-
-
-def _column_anchor(loc_lines: list[tuple], x0: float, x1: float, lc: float, ih: float,
-                   align: str) -> float | None:
-    """Re-anchor ONE cell to the locator text actually in ITS column.
-
-    A row-wide anchor assumes every tile puts its label at the same height, but tile
-    types differ (an arcane's name sits above its rank diamonds; a plain item's name
-    sits lower) — so a row anchored from one type misplaces the other's boxes and the
-    label falls outside its field box. The lines in this column within half a cell of
-    the row anchor are the cell's own label; anchor on them. None -> no text here,
-    keep the row anchor."""
-    band = [(cy, h) for cx, cy, h, *_ in loc_lines if x0 <= cx <= x1 and abs(cy - lc) <= ih * 0.5]
-    if not band:
-        return None
-    if align == "top":
-        return min(cy - h / 2 for cy, h in band)
-    if align == "bottom":
-        return max(cy for cy, _ in band)
-    return sum(cy for cy, _ in band) / len(band)
 
 
 def _cell_in_bounds(item: ItemDef, cell_x: float, cell_y: float, da, iw: float | None = None, ih: float | None = None, clip_right: bool = False) -> bool:
@@ -282,76 +165,6 @@ def static_grid_origins(o0: float, step: float, lo: float, hi: float) -> list[fl
     return out
 
 
-def _cells_for_item(frame: Frame, item: ItemDef, da, lines_frac, templates, ref: float, loc_numeric: bool = False, loc_conf: float = _LOC_MIN_CONF, static_grid: bool = True, grid=None, pitch_tol: float | None = None) -> list[ItemCell]:
-    """Locate this item's cells across the data area.
-
-    STATIC mode (default): tile from a shared grid (``grid`` = (xs, ys, giw, gih)) formed from
-    the window's lowest-priority cell, so every template aligns to the same cells. With no
-    shared grid, tile from this item's own authored cell. No OCR. LOCATED mode: rows come
-    from the OCR locator and ``ref`` is the cell-relative y its content anchors to."""
-    iw, ih = item.box.w, item.box.h
-    if iw <= 0 or ih <= 0 or da.w <= 0 or da.h <= 0:
-        return []
-    # static cells are placed on the SHARED grid (its cell size), so all templates line up;
-    # located cells use this item's own cell size.
-    giw, gih = (grid[2], grid[3]) if grid else (iw, ih)
-
-    def emit(out, ri, c, cell_x, cell_y, cw, ch):
-        # located cells may clip the right edge (cell width = pitch incl. next-column margin)
-        if not _cell_in_bounds(item, cell_x, cell_y, da, cw, ch, clip_right=not static_grid):
-            return                          # a box outside the data area reads stray UI text
-        boxes = {
-            f.field: FractionBox(cell_x + f.box.x * cw, cell_y + f.box.y * ch,
-                                 f.box.w * cw, f.box.h * ch)
-            for f in item.fields
-        }
-        out.append(ItemCell(Cell(row=ri, col=c, boxes=boxes), cell_x, cell_y, cw, ch, item))
-
-    out: list[ItemCell] = []
-    if static_grid:
-        # anchor at the data-area corner (its top-left), tile by the cell size — the cell's
-        # position is NOT used as a phase
-        xs = grid[0] if grid else static_grid_origins(da.x, iw, da.x, da.x + da.w)
-        ys = grid[1] if grid else static_grid_origins(da.y, ih, da.y, da.y + da.h)
-        for ri, cell_y in enumerate(ys):
-            for c, cell_x in enumerate(xs):
-                emit(out, ri, c, cell_x, cell_y, giw, gih)
-        return out
-
-    loc = locator_of(item)
-    if loc is None:
-        return []
-    loc_lines = None
-    if _is_visual_loc(loc):
-        # visual locators have no text to cluster into columns -> tile columns geometrically
-        loc_anchors = _visual_rows(frame, item, loc, da, templates)
-        ncols = max(1, round(da.w / iw))
-        col_xs = [da.x + c * (da.w / ncols) for c in range(ncols)]
-    else:
-        loc_lines = _loc_lines(item, loc, lines_frac, da, numeric=loc_numeric, min_conf=loc_conf)
-        loc_anchors = _text_rows(item, loc_lines, da, pitch_tol)
-        col_xs = _text_cols(item, loc, loc_lines, da, pitch_tol)   # columns FROM CONTENT
-    align = anchor_align(item)
-    for ri, lc in enumerate(loc_anchors):
-        for c, cell_x in enumerate(col_xs):
-            anchor_y = lc
-            if loc_lines is not None:
-                # per-cell re-anchor: this column's own label, not the row consensus
-                la = _column_anchor(loc_lines, cell_x + loc.box.x * iw,
-                                    cell_x + (loc.box.x + loc.box.w) * iw, lc, ih, align)
-                if la is not None:
-                    anchor_y = la
-            cell_y = anchor_y - ref * ih    # align the locator's true content to the detected row
-            if anchor_y != lc and not _cell_in_bounds(item, cell_x, cell_y, da, clip_right=True):
-                # The column re-anchor only sees letter-bearing lines, so a label whose
-                # BOTTOM line is letter-less (e.g. "Akbronco Prime" over "[30]") anchors
-                # one line high and pushes the cell out of bounds. The row consensus
-                # still has it right — retry there before dismissing the tile.
-                cell_y = lc - ref * ih
-            emit(out, ri, c, cell_x, cell_y, iw, ih)
-    return out
-
-
 def grid_drift(ics: list[ItemCell], lines, cw: float, ch: float) -> dict:
     """How far the located cells sit from the content they should bracket — a grid-fit score.
 
@@ -389,56 +202,179 @@ def grid_drift(ics: list[ItemCell], lines, cw: float, ch: float) -> dict:
         dys.append(abs(act_y - exp_y) / ic.ih)
     if not dxs:
         return {"x": {"mean": 0.0, "max": 0.0}, "y": {"mean": 0.0, "max": 0.0}, "n": 0}
-    agg = lambda v: {"mean": round(sum(v) / len(v), 4), "max": round(max(v), 4)}
+
+    def agg(v):
+        return {"mean": round(sum(v) / len(v), 4), "max": round(max(v), 4)}
+
     return {"x": agg(dxs), "y": agg(dys), "n": len(dxs)}
 
 
-def locate_item_cells(frame: Frame, window: WindowDef, lines_frac, templates=None, anchors=None) -> list[ItemCell]:
-    """Located cells for every item template defined on the window, concatenated.
+def _xref(ax: str) -> float:
+    """Where ``align_x`` puts the anchor edge in the cell: right=1, centre=0.5, left=0."""
+    return 1.0 if ax == "right" else (0.5 if ax == "center" else 0.0)
 
-    ``anchors`` maps item id -> calibrated cell-relative anchor (RegionReader fills it
-    by OCR-ing the cutout). Falls back to the locator tell's centre when absent."""
+
+def _origin_x(item: ItemDef, cw: float, cx: float, lx: float, lw: float) -> float:
+    """Cell LEFT edge that lands the anchor text's ``align_x`` edge on this line."""
+    ax = anchor_align_x(item)
+    edge = (lx + lw) if ax == "right" else (cx if ax == "center" else lx)
+    return edge - _xref(ax) * cw
+
+
+def _origin_y(item: ItemDef, ch: float, cy: float, h: float, ref: float) -> float:
+    """Cell TOP edge that lands the anchor line's ``align`` edge at the cell-relative ``ref``."""
+    ay = anchor_align(item)
+    anchor_y = (cy - h / 2) if ay == "top" else (cy + h / 2) if ay == "bottom" else cy
+    return anchor_y - ref * ch
+
+
+def _anchor_ref(item: ItemDef, loc) -> float:
+    """The cell-relative y the anchor's ``align`` edge sits at — the twin of the edge
+    :func:`_origin_y` reads off each line. ``align`` is authored, so honour it: top -> the
+    locator box's top, bottom -> its bottom, centre -> its centre."""
+    ay = anchor_align(item)
+    b = loc.box
+    return b.y if ay == "top" else (b.y + b.h if ay == "bottom" else b.y + b.h / 2)
+
+
+def _clusters(vals: list[float], min_gap: float) -> list[float]:
+    """Sorted cluster centres (medians): a gap wider than ``min_gap`` starts a new cluster.
+    The grid is regular, so half a cell is the natural separator — points closer than that
+    are the same column/row, points farther apart are distinct ones."""
+    if not vals:
+        return []
+    s = sorted(vals)
+    groups: list[list[float]] = [[s[0]]]
+    for v in s[1:]:
+        if v - groups[-1][-1] > min_gap:
+            groups.append([v])
+        else:
+            groups[-1].append(v)
+    return [_median(g) for g in groups]
+
+
+def _median(vals: list[float]) -> float:
+    s = sorted(vals)
+    n = len(s)
+    m = n // 2
+    return s[m] if n % 2 else (s[m - 1] + s[m]) / 2
+
+
+def _emit(item: ItemDef, ri: int, ci: int, cell_x: float, cell_y: float,
+          cw: float, ch: float) -> ItemCell:
+    """Build one candidate cell: the item's fields placed at cell-relative offsets."""
+    boxes = {
+        f.field: FractionBox(cell_x + f.box.x * cw, cell_y + f.box.y * ch,
+                             f.box.w * cw, f.box.h * ch)
+        for f in item.fields
+    }
+    return ItemCell(Cell(row=ri, col=ci, boxes=boxes), cell_x, cell_y, cw, ch, item)
+
+
+def locate_item_cells(frame: Frame, window: WindowDef, lines_frac, templates=None, anchors=None) -> list[ItemCell]:
+    """Located cells for every item template, found by gap-clustering the OCR content.
+
+    Each template's locator field back-projects every eligible (in-bounds) anchor line to
+    the cell origin its authored ``align``/``align_x`` edge implies; those origins are
+    gap-clustered per axis into the grid's columns and rows. Per cell the align-extreme line
+    is kept (so a wrapped second line never drags the anchor). ``anchors`` is accepted for
+    signature compatibility but unused — v2 anchors on the authored align edge, not on a
+    cutout calibration that would snap to the line centre and override the alignment.
+    """
     if not window.items or window.data_area is None:
         return []
     da = window.data_area.to_fraction()
     items = [it for it in window.items if it.enabled]
     if not items:
         return []
-    out: list[ItemCell] = []
 
-    # Row-finding mode is per WINDOW (all its item templates share the data-area grid).
-    if getattr(window, "static_grid", True):
-        # ONE grid for the whole window: anchored at the data-area corner, tiled by the
-        # LOWEST-priority item's cell SIZE (the generic base sets only the pitch, not the
-        # position). Every template reads at those cells; resolve_overlaps picks the winner.
-        base = min(items, key=lambda it: it.priority)
-        giw, gih = base.box.w, base.box.h
-        xs = static_grid_origins(da.x, giw, da.x, da.x + da.w)
-        ys = static_grid_origins(da.y, gih, da.y, da.y + da.h)
-        grid = (xs, ys, giw, gih)
-        for item in items:
-            out.extend(_cells_for_item(frame, item, da, lines_frac, templates, 0.5, static_grid=True, grid=grid))
-        return out
+    # ONE grid for the whole window: pitch = the lowest-priority ("base") cell size. Every
+    # template places its fields at this size; resolve_overlaps picks one item per location.
+    base = min(items, key=lambda it: it.priority)
+    giw, gih = base.box.w, base.box.h
+    if giw <= 0 or gih <= 0 or da.w <= 0 or da.h <= 0:
+        return []
 
-    # LOCATED: each template resolves its own OCR locator + anchoring inputs.
-    # Location does NOT use the scroll block (a separate, upcoming feature); the row/column
-    # lattice is opt-in via pitch_tol and currently off (face-value clustering).
-    pitch_tol = None
+    # Per template: locator, whether it is visual (no text to cluster), and the back-projected
+    # cell origins of its eligible lines — but ONLY lines whose placed cell is IN BOUNDS. A
+    # relic tile carries a status badge ("Crafted"/"Owned") ABOVE the name, also letter-
+    # dominant and inside the data area; back-projected as a name it lands a cell off the top
+    # of the data area. Gating on bounds here drops it before it can skew the grid.
+    info: dict[str, tuple] = {}
     for item in items:
         loc = locator_of(item)
         if loc is None:
             continue
-        # a NUMBER-typed field locator (e.g. a mod's drain) anchors rows on its digits, not
-        # letters — so the line filter keeps digit lines instead of rejecting them as badges
-        fid = getattr(loc, "field", None)
-        fdef = next((f for f in window.fields if f.id == fid), None) if fid else None
-        loc_numeric = bool(fdef and fdef.type is FieldType.number)
-        # the locator's OWN confidence input governs which lines anchor rows — its tell_conf
-        # when set (>0), else the default floor.
-        tc = getattr(loc, "tell_conf", 0.0) or 0.0
-        loc_conf = tc if tc > 0 else _LOC_MIN_CONF
-        ref = (anchors or {}).get(item.id, loc.box.y + loc.box.h / 2)
-        out.extend(_cells_for_item(frame, item, da, lines_frac, templates, ref, loc_numeric, loc_conf, static_grid=False, pitch_tol=pitch_tol))
+        visual = _is_visual_loc(loc)
+        ref = _anchor_ref(item, loc)
+        pts: list[tuple[float, float]] = []
+        if not visual:
+            fid = getattr(loc, "field", None)
+            fdef = next((f for f in window.fields if f.id == fid), None) if fid else None
+            numeric = bool(fdef and fdef.type is FieldType.number)
+            tc = getattr(loc, "tell_conf", 0.0) or 0.0
+            conf = tc if tc > 0 else _LOC_MIN_CONF
+            for cx, cy, h, lx, lw in _loc_lines(item, loc, lines_frac, da, numeric=numeric, min_conf=conf):
+                cox = _origin_x(item, giw, cx, lx, lw)
+                coy = _origin_y(item, gih, cy, h, ref)
+                if _cell_in_bounds(item, cox, coy, da, giw, gih, clip_right=True):
+                    pts.append((cox, coy))
+        info[item.id] = (loc, visual, pts)
+
+    def _nearest(v: float, arr: list[float]) -> int:
+        return min(range(len(arr)), key=lambda k: abs(arr[k] - v))
+
+    # Derive the grid by GAP-CLUSTERING the content origins (a gap > half a cell = a new
+    # column/row); cluster centres are the real grid lines, straight from the content.
+    text_items = [it for it in items if it.id in info and not info[it.id][1] and info[it.id][2]]
+    col_centers = _clusters([cox for it in text_items for cox, _ in info[it.id][2]], giw * 0.5)
+    row_centers = _clusters([coy for it in text_items for _, coy in info[it.id][2]], gih * 0.5)
+
+    # Snap each line to its (row, col); keep ONE line per cell by the authored vertical align
+    # (bottom -> bottommost line, so a wrapped 2nd line never drags the anchor off the name's
+    # bottom edge; top -> topmost; centre -> median). The column/row line is the MEDIAN of
+    # those anchors, so every column shares one x and every row one y — a solid grid.
+    col_buf: dict[int, list[float]] = {}
+    row_buf: dict[int, list[float]] = {}
+    occ: dict[str, set] = {}
+    for it in text_items:
+        ay = anchor_align(it)
+        groups: dict[tuple[int, int], list[tuple[float, float]]] = {}
+        for cox, coy in info[it.id][2]:
+            ri, ci = _nearest(coy, row_centers), _nearest(cox, col_centers)
+            groups.setdefault((ri, ci), []).append((cox, coy))
+        for (ri, ci), lst in groups.items():
+            if ay == "bottom":
+                rx, ry = max(lst, key=lambda p: p[1])
+            elif ay == "top":
+                rx, ry = min(lst, key=lambda p: p[1])
+            else:
+                rx, ry = _median([p[0] for p in lst]), _median([p[1] for p in lst])
+            col_buf.setdefault(ci, []).append(rx)
+            row_buf.setdefault(ri, []).append(ry)
+            occ.setdefault(it.id, set()).add((ri, ci))
+    col_line = {k: _median(v) for k, v in col_buf.items()}
+    row_line = {k: _median(v) for k, v in row_buf.items()}
+
+    out: list[ItemCell] = []
+    for it in text_items:
+        for ri, ci in sorted(occ.get(it.id, ())):
+            cx, cy = col_line[ci], row_line[ri]
+            # cells may clip the right edge (cell width carries the next-column margin)
+            if _cell_in_bounds(it, cx, cy, da, giw, gih, clip_right=True):
+                out.append(_emit(it, ri, ci, cx, cy, giw, gih))
+
+    # Visual locators carry no text to cluster: tile the data area geometrically and let the
+    # reader's pip/diamond validation keep the real cells (the old static-grid behaviour).
+    visual_items = [it for it in items if it.id in info and info[it.id][1]]
+    if visual_items:
+        xs = static_grid_origins(da.x, giw, da.x, da.x + da.w)
+        ys = static_grid_origins(da.y, gih, da.y, da.y + da.h)
+        for it in visual_items:
+            for ri, cy in enumerate(ys):
+                for ci, cx in enumerate(xs):
+                    if _cell_in_bounds(it, cx, cy, da, giw, gih, clip_right=True):
+                        out.append(_emit(it, ri, ci, cx, cy, giw, gih))
     return out
 
 

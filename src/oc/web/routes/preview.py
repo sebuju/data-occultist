@@ -179,22 +179,13 @@ def _window_reader(engine, profile, game, capture):
     frame = _frame_for(engine, profile, game, capture)
     window = profile.windows[0]
     fields = {f.id: f for f in profile.fields_for(window)}
-    # load each item's frozen cutout so the row anchor can be calibrated to where the
-    # locator's text actually sits in it (keeps every field box at its authored place)
-    cutouts = {}
-    for it in window.items or []:
-        if it.cutout:
-            cp = captures_store.cutout_path(get_settings().captures_dir, game or profile.name, it.cutout)
-            ci = cv2.imread(str(cp)) if cp else None
-            if ci is not None:
-                cutouts[it.id] = ci
     # read-only resolver: applies the game's dictionaries (exact then fuzzy) so the
     # preview shows the SAME snapped values the collector would, but never learns/mutates.
     lex = Lexicon.for_game(get_settings().data_dir, profile.name)
     pooled, dict_map = build_dictionaries(profile, engine.corrector)
     resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
                              dictionary=pooled, dictionaries=dict_map, learn_enabled=False)
-    reader = RegionReader(engine.ocr, resolver, cutouts=cutouts)
+    reader = RegionReader(engine.ocr, resolver)
     return frame, window, fields, reader
 
 
