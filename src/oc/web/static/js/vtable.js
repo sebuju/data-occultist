@@ -139,11 +139,18 @@ export class VTable {
         this.resetBtn.addEventListener("click", () => this._reset());
         // keep the (overflow-clipped) header aligned with the body's horizontal scroll, then redraw
         this.scroll.addEventListener("scroll", () => { this._syncHead(); this._schedule(); });
-        this._ro = new ResizeObserver(() => this._applyHeight());
+        // _applyHeight -> _render mutates layout (spacer/rows sizing); running it synchronously
+        // inside the observer trips "ResizeObserver loop completed with undelivered notifications"
+        // (worst when the host is too small to fit a row). Defer to the next frame, coalescing
+        // bursts, to break the feedback loop — same pattern as pretty/canvas.js.
+        this._ro = new ResizeObserver(() => {
+            if (this._roRaf) return;
+            this._roRaf = requestAnimationFrame(() => { this._roRaf = null; this._applyHeight(); });
+        });
         this._ro.observe(this.scroll);
     }
 
-    destroy() { this._ro.disconnect(); if (this._raf) cancelAnimationFrame(this._raf); this.el.remove(); }
+    destroy() { this._ro.disconnect(); if (this._raf) cancelAnimationFrame(this._raf); if (this._roRaf) cancelAnimationFrame(this._roRaf); this.el.remove(); }
 
     // ---- data ----
     setData(columns, rows, opts = {}) {

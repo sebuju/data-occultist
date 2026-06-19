@@ -75,9 +75,17 @@
 .dpk-used { color: var(--accent); }
 
 /* ---- VTable: virtualized, searchable data table ------------------------- */
-.vt-host { overflow: auto; }
+/* The host must NOT scroll: .vt fills it (height:100%) and virtualizes with its own custom
+   bars. A native outer scrollbar here feeds back into the ResizeObserver (watches .vt-scroll):
+   1px overflow -> ~15px native bar -> host narrows -> scroll narrows -> RO fires -> re-render
+   removes the overflow -> bar gone -> widens -> RO fires... = idle size flicker. Clip instead.
+   Overrides .nodehost { overflow:auto } (tables.css loads after flow.css). */
+.vt-host { overflow: hidden; }
 .vt-modal-host { display: flex; flex-direction: column; height: 62vh; min-height: 240px; }
-.vt { display: flex; flex-direction: column; height: 100%; min-height: 0; font-size: var(--fs-sm); }
+.vt { display: flex; flex-direction: column; height: 100%; min-height: 0; font-size: var(--fs-sm);
+    container-type: inline-size; }
+/* too narrow to fit the bar controls -> keep only the search box (clear/rows/reset/count/meta drop) */
+@container (max-width: 200px) { .vt-bar > :not(.vt-search) { display: none; } }
 .vt-bar { display: flex; align-items: center; gap: 9px; flex: none; margin: 6px 0px 9px 0px; }
 .vt-search { flex: 1; min-width: 0; padding: 3px 6px; font-size: var(--fs-sm); }
 .vt-clear { flex: none; width: 22px; height: 22px; min-height: 0; padding: 0; line-height: 1;

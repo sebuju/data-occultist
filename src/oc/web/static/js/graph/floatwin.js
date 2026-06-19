@@ -381,18 +381,25 @@ export function createFloatWin({
     function markSized() { el.classList.toggle("fw-sized", !!state.userSized); }
     markSized();
 
-    // CSS-resize / programmatic size changes: re-fit + persist (debounced)
-    let rt = null, _obsW = el.offsetWidth;
+    // CSS-resize / programmatic size changes: re-fit + persist (debounced). onResize/fitHeight
+    // mutate el's own size, so running them synchronously in the observer trips "ResizeObserver
+    // loop completed with undelivered notifications". Defer to the next frame (coalescing bursts)
+    // to break the feedback loop — same pattern as vtable.js / pretty/canvas.js.
+    let rt = null, _obsW = el.offsetWidth, roRaf = 0;
     new ResizeObserver(() => {
-        if (el.hidden || state.collapsed || !el.offsetWidth) return;
-        const widthChanged = Math.abs(el.offsetWidth - _obsW) > 0.5;
-        _obsW = el.offsetWidth;
-        stashSize();
-        reflowDock(id, null, prevL, prevR);   // height/width changed -> slide docked panels (using my pre-resize edges)
-        prevL = el.offsetLeft; prevR = prevL + el.offsetWidth;
-        onResize && onResize();
-        if (widthChanged) fitHeight();   // a width change rewraps the content -> re-fit the height to it
-        clearTimeout(rt); rt = setTimeout(save, 300);
+        if (roRaf) return;
+        roRaf = requestAnimationFrame(() => {
+            roRaf = 0;
+            if (el.hidden || state.collapsed || !el.offsetWidth) return;
+            const widthChanged = Math.abs(el.offsetWidth - _obsW) > 0.5;
+            _obsW = el.offsetWidth;
+            stashSize();
+            reflowDock(id, null, prevL, prevR);   // height/width changed -> slide docked panels (using my pre-resize edges)
+            prevL = el.offsetLeft; prevR = prevL + el.offsetWidth;
+            onResize && onResize();
+            if (widthChanged) fitHeight();   // a width change rewraps the content -> re-fit the height to it
+            clearTimeout(rt); rt = setTimeout(save, 300);
+        });
     }).observe(el);
 
     // collapse/expand: shrink to just the header buttons (visibility is the topbar button's
