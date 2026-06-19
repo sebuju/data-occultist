@@ -68,6 +68,11 @@ def record_start(game: str, max_frames: int = 300, interval_ms: int = 0, label: 
     # auto-scroll is per-window now (ScrollDef.autoscroll/scroll_clicks); start_recording reads
     # it off the window it classifies on screen.
     s.start_recording(max_frames=max_frames, interval_ms=interval_ms, label=label)
+    try:   # a precapture recording counts as a capture start -> fire on_capture triggers
+        from ..source_sched import fire_capture
+        fire_capture(game, get_settings())
+    except Exception:   # noqa: BLE001 - a lifecycle fire must never break recording
+        pass
     return s.status()
 
 

@@ -24,7 +24,7 @@ data-occultist = "oc.cli:main"
 occ = "oc.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.4"]
+dev = ["pytest>=8.0", "ruff>=0.4", "httpx2>=2.0"]
 # Native desktop window for the teaching UI (data-occultist view / app / the install.ps1 shortcut).
 # pywebview renders via the Edge WebView2 runtime on Windows (preinstalled on Win11).
 # The shortcut runs `pythonw -m oc.desktop_main` from this venv, so the GPU OCR stack

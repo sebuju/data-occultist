@@ -55,7 +55,17 @@ def start(game: str, interval: float = 1.0):
     s = _session(game, create=True)
     _refresh_profile(game, s)   # pick up profile edits made since the last run
     s.start(interval=interval)
+    _fire_on_capture(game)
     return s.status()
+
+
+def _fire_on_capture(game: str) -> None:
+    """Fire any on_capture triggers — a live session counts as a capture start."""
+    try:
+        from ..source_sched import fire_capture
+        fire_capture(game, get_settings())
+    except Exception:   # noqa: BLE001 - a lifecycle fire must never break capture start
+        pass
 
 
 @router.post("/{game}/stop")

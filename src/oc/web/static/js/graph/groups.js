@@ -120,7 +120,8 @@ export function hydrate(arr) {
 export function clear() {
     closePopover(); closeSuperPopover();
     groups = []; seq = 0; superGroups = []; sseq = 0; selectedGroups.clear();
-    renderGroups();   // renders the (now empty) super layer too
+    subGroups = []; subseq = 0;
+    renderGroups();   // renders the (now empty) super + sub layers too
 }
 
 // ---- membership edits -----------------------------------------------------
@@ -154,6 +155,7 @@ export function createGroup(memberIds) {
 export function disband(groupId) {
     groups = groups.filter((g) => g.id !== groupId);
     forgetGroups(new Set([groupId]));   // drop it from any super group too
+    subGroups = subGroups.filter((sg) => sg.parent !== groupId);   // its subgroups go with it
     closePopover();
     renderGroups(); ctx.persist(); ctx.afterChange();
 }
@@ -188,6 +190,13 @@ function reconcileFollowers() {
     return changed;
 }
 
+// Re-seat every bonded follower onto its leader's group (used after a satellite is toggled on,
+// so a newly-shown follower joins its parent's group immediately instead of on the next edit).
+export function reflowFollowers() {
+    if (reconcileFollowers()) { reconcileSubFollowers(); pruneEmpty(); renderGroups(); ctx.persist(); ctx.afterChange(); }
+    else if (reconcileSubFollowers()) { renderSubGroups(); ctx.persist(); }
+}
+
 // Add nodes to an existing group, pulling each out of any prior group first (a node
 // belongs to at most one group).
 export function addToGroup(groupId, nodeIds) {
@@ -218,6 +227,9 @@ export function absorb(ids) {
         changed = true;
     }
     if (reconcileFollowers()) changed = true;   // a window that joined drags its preview along; a preview dropped alone snaps back to its window
+    // subgroup inheritance: a node dropped inside a subgroup's rectangle (within its own group)
+    // joins that subgroup — the drag-drop counterpart of the toolbar action.
+    if (absorbSub(ids)) changed = true;
     if (changed) { pruneEmpty(); renderGroups(); ctx.persist(); ctx.afterChange(); }
     return changed;
 }
@@ -227,17 +239,45 @@ function boxContains(g, x, y) {
     return !!box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
 }
 
+// After a drop, attach a dragged node whose centre landed inside a subgroup box to that subgroup —
+// but only if the node is in that subgroup's PARENT group (a subgroup never reaches outside it).
+function absorbSub(ids) {
+    let changed = false;
+    for (const id of ids) {
+        const r = ctx.nodeRect(id);
+        if (!r) continue;
+        const g = groupOf(id);
+        if (!g) continue;
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+        const target = subGroups.find((sg) => sg.parent === g.id && !sg.members.includes(id) && subBoxContains(sg, cx, cy));
+        if (!target) continue;
+        const prev = subgroupOf(id);
+        if (prev) prev.members = prev.members.filter((m) => m !== id);
+        target.members.push(id);
+        changed = true;
+    }
+    if (reconcileSubFollowers()) changed = true;
+    return changed;
+}
+function subBoxContains(sg, x, y) {
+    const box = subBox(sg, sg._titleH || 0);
+    return !!box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
+}
+
 // Drop groups left empty (all members removed/deleted), forgetting them from super groups.
 function pruneEmpty() {
     const gone = groups.filter((g) => !g.members.length).map((g) => g.id);
     groups = groups.filter((g) => g.members.length);
     if (gone.length) forgetGroups(new Set(gone));
+    reconcileSub();           // a subgroup's members ⊆ its parent group — re-clamp after any membership edit
+    reconcileSubFollowers();  // a satellite follows its parent into/out of a subgroup
 }
 
 // Called by main when nodes are removed, so a deleted node never lingers in a group.
 export function forgetNodes(idsGone) {
     let changed = false;
     for (const g of groups) { const n = g.members.length; g.members = g.members.filter((m) => !idsGone.has(m)); if (g.members.length !== n) changed = true; }
+    for (const sg of subGroups) { const n = sg.members.length; sg.members = sg.members.filter((m) => !idsGone.has(m)); if (sg.members.length !== n) changed = true; }
     if (changed) { pruneEmpty(); renderGroups(); ctx.persist(); }
 }
 
@@ -245,6 +285,7 @@ export function forgetNodes(idsGone) {
 // node rename carries its group membership instead of detaching it. Caller re-renders.
 export function remapNodes(mapId) {
     for (const g of groups) g.members = g.members.map((id) => mapId(id) || id);
+    for (const sg of subGroups) sg.members = sg.members.map((id) => mapId(id) || id);
 }
 
 // ---- geometry -------------------------------------------------------------
@@ -304,6 +345,7 @@ export function renderGroups() {
         placeTitle(tel, g.titleAlign);
     }
     renderSuperGroups();   // super-group boxes hug these group boxes — keep them in lockstep
+    renderSubGroups();     // sub-group boxes hug a subset of a group's nodes — same render pass
 }
 
 function buildBoxEl(g) {
@@ -356,43 +398,46 @@ function onTitlePress(gid, ev) {
     });
 }
 
-// ---- options popover ------------------------------------------------------
+// ---- options popover (shared by groups AND subgroups — rule 7) -------------
+// A group and a subgroup have the SAME styling shape ({title, outline, bg, titleBg, titleColor,
+// titleAlign}) and the SAME option panel, so ONE builder serves both. The only differences are
+// the disband label, the owner element clicks may stay open over, and whether the fill is stored
+// with alpha (groups, legacy) or pre-blended opaque (subgroups — no transparent colours).
 
 function closePopover() { if (openPopover) { openPopover.el.remove(); openPopover = null; document.removeEventListener("mousedown", onOutside, true); } }
+function onOutside(e) { if (openPopover && !e.target.closest(".ggroup-pop") && !e.target.closest(openPopover.ownerSel)) closePopover(); }
 
-function onOutside(e) { if (openPopover && !e.target.closest(".ggroup-pop") && !e.target.closest(".ggroup-title")) closePopover(); }
-
-function togglePopover(gid, ev) {
-    if (openPopover?.groupId === gid) { closePopover(); return; }
+// `target` is the group/subgroup record (mutated live). `commitFn` re-renders the right layer.
+function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband, opaqueBg }) {
+    if (openPopover?.id === id) { closePopover(); return; }
     closePopover();
-    const g = byId(gid);
-    if (!g) return;
+    const t = target;
     const pop = document.createElement("div");
     pop.className = "ggroup-pop";
     pop.innerHTML = `
-    <label class="flab"><span class="gp-lab">title</span><input class="gp-title" value="${escAttr(g.title)}" /></label>
+    <label class="flab"><span class="gp-lab">title</span><input class="gp-title" value="${escAttr(t.title)}" /></label>
     <div class="flab"><span class="gp-lab">scheme</span>
       <div class="gp-schemes">${SCHEMES.map((s, i) => `<button class="gp-scheme" data-i="${i}" title="${s.name}" style="background:${s.titleBg || s.bg};border-color:${s.outline === "#2c313c" ? "#4a515f" : s.outline}"></button>`).join("")}</div>
     </div>
     <label class="flab"><span class="gp-lab">outline</span>
       <select class="gp-style">
-        ${["solid", "dashed", "dotted", "none"].map((s) => `<option value="${s}" ${g.outline.style === s ? "selected" : ""}>${s}</option>`).join("")}
+        ${["solid", "dashed", "dotted", "none"].map((s) => `<option value="${s}" ${t.outline.style === s ? "selected" : ""}>${s}</option>`).join("")}
       </select>
-      <input type="color" class="gp-ocolor" value="${hex6(g.outline.color)}" title="outline color" />
+      <input type="color" class="gp-ocolor" value="${hex6(t.outline.color)}" title="outline color" />
     </label>
     <label class="flab"><span class="gp-lab">background</span>
-      <input type="range" class="gp-bga" min="0" max="100" value="${alphaPct(g.bg)}" title="fill opacity" />
-      <input type="color" class="gp-bg" value="${hex6(g.bg)}" title="fill color" /></label>
+      <input type="range" class="gp-bga" min="0" max="100" value="${alphaPct(t.bg)}" title="fill opacity" />
+      <input type="color" class="gp-bg" value="${hex6(t.bg)}" title="fill color" /></label>
     <label class="flab"><span class="gp-lab">title bg</span>
-      <input type="color" class="gp-tbg" value="${hex6(g.titleBg || "#1d2027")}" title="title background" /></label>
+      <input type="color" class="gp-tbg" value="${hex6(t.titleBg || "#1d2027")}" title="title background" /></label>
     <label class="flab"><span class="gp-lab">title text</span>
-      <input type="color" class="gp-tcolor" value="${hex6(g.titleColor || "#d7dbe2")}" title="title text color" /></label>
+      <input type="color" class="gp-tcolor" value="${hex6(t.titleColor || "#d7dbe2")}" title="title text color" /></label>
     <label class="flab"><span class="gp-lab">align</span>
       <select class="gp-pos">
-        ${["left", "center", "right"].map((v) => `<option value="${v}" ${g.titleAlign === v ? "selected" : ""}>${v}</option>`).join("")}
+        ${["left", "center", "right"].map((v) => `<option value="${v}" ${t.titleAlign === v ? "selected" : ""}>${v}</option>`).join("")}
       </select>
     </label>
-    <button class="gp-disband danger">disband group</button>`;
+    <button class="gp-disband danger">${disbandLabel}</button>`;
     // anchor near the click (screen space — it's fixed-position), then clamp fully on-screen so
     // no part spills out of bounds (measured after it's in the DOM).
     pop.style.left = `${ev.clientX}px`; pop.style.top = `${ev.clientY + 8}px`;
@@ -400,30 +445,42 @@ function togglePopover(gid, ev) {
     const M = 8, r = pop.getBoundingClientRect();
     pop.style.left = `${Math.max(M, Math.min(ev.clientX, window.innerWidth - r.width - M))}px`;
     pop.style.top = `${Math.max(M, Math.min(ev.clientY + 8, window.innerHeight - r.height - M))}px`;
-    openPopover = { groupId: gid, el: pop };
+    openPopover = { id, el: pop, ownerSel };
 
-    const commit = () => { renderGroups(); ctx.persist(); };
-    pop.querySelector(".gp-title").addEventListener("input", (e) => { g.title = e.target.value; commit(); });
-    pop.querySelector(".gp-style").addEventListener("change", (e) => { g.outline.style = e.target.value; commit(); });
-    pop.querySelector(".gp-ocolor").addEventListener("input", (e) => { g.outline.color = e.target.value; commit(); });
-    const applyBg = () => { g.bg = withAlpha(pop.querySelector(".gp-bg").value, +pop.querySelector(".gp-bga").value); commit(); };
+    // a fill chosen here is stored opaque (pre-blended) for subgroups so nothing ever goes
+    // translucent; groups keep their legacy alpha fill.
+    const mkBg = (hex, pct) => (opaqueBg ? blendOnBg(hex, pct) : withAlpha(hex, pct));
+    const commit = () => { renderGroups(); ctx.persist(); };   // renderGroups paints the sub + super layers too
+    pop.querySelector(".gp-title").addEventListener("input", (e) => { t.title = e.target.value; commit(); });
+    pop.querySelector(".gp-style").addEventListener("change", (e) => { t.outline.style = e.target.value; commit(); });
+    pop.querySelector(".gp-ocolor").addEventListener("input", (e) => { t.outline.color = e.target.value; commit(); });
+    const applyBg = () => { t.bg = mkBg(pop.querySelector(".gp-bg").value, +pop.querySelector(".gp-bga").value); commit(); };
     pop.querySelector(".gp-bg").addEventListener("input", applyBg);
     pop.querySelector(".gp-bga").addEventListener("input", applyBg);
-    pop.querySelector(".gp-tbg").addEventListener("input", (e) => { g.titleBg = e.target.value; commit(); });
-    pop.querySelector(".gp-tcolor").addEventListener("input", (e) => { g.titleColor = e.target.value; commit(); });
-    pop.querySelector(".gp-pos").addEventListener("change", (e) => { g.titleAlign = e.target.value; commit(); });
+    pop.querySelector(".gp-tbg").addEventListener("input", (e) => { t.titleBg = e.target.value; commit(); });
+    pop.querySelector(".gp-tcolor").addEventListener("input", (e) => { t.titleColor = e.target.value; commit(); });
+    pop.querySelector(".gp-pos").addEventListener("change", (e) => { t.titleAlign = e.target.value; commit(); });
     // a premade scheme sets fill + outline + title colours at once, and syncs the pickers
     pop.querySelectorAll(".gp-scheme").forEach((b) => b.addEventListener("click", () => {
         const s = SCHEMES[+b.dataset.i];
-        g.bg = s.bg; g.outline.color = s.outline; g.outline.style = s.style; g.titleBg = s.titleBg; g.titleColor = s.titleColor;
-        pop.querySelector(".gp-bg").value = hex6(s.bg); pop.querySelector(".gp-bga").value = alphaPct(s.bg);
+        t.bg = opaqueBg ? blendOnBg(s.titleBg || s.outline, 16) : s.bg;
+        t.outline.color = s.outline; t.outline.style = s.style; t.titleBg = s.titleBg; t.titleColor = s.titleColor;
+        pop.querySelector(".gp-bg").value = hex6(t.bg); pop.querySelector(".gp-bga").value = alphaPct(t.bg);
         pop.querySelector(".gp-ocolor").value = hex6(s.outline); pop.querySelector(".gp-style").value = s.style;
         pop.querySelector(".gp-tbg").value = hex6(s.titleBg || "#1d2027"); pop.querySelector(".gp-tcolor").value = hex6(s.titleColor || "#d7dbe2");
         commit();
     }));
-    pop.querySelector(".gp-disband").addEventListener("click", () => disband(gid));
-
+    pop.querySelector(".gp-disband").addEventListener("click", () => onDisband());
     setTimeout(() => document.addEventListener("mousedown", onOutside, true), 0);
+}
+
+function togglePopover(gid, ev) {
+    const g = byId(gid);
+    if (!g) return;
+    openOptionsPopover(`group:${gid}`, g, ev, {
+        ownerSel: ".ggroup-title", disbandLabel: "disband group", opaqueBg: false,
+        onDisband: () => disband(gid),
+    });
 }
 
 // ---- super groups: a group OF groups -------------------------------------
@@ -660,4 +717,238 @@ function blendOnBg(hex, pct) {
     const h = hex6(hex), a = Math.round((pct / 100) * 255) / 255;
     const ch = (i) => Math.round(parseInt(h.slice(1 + i * 2, 3 + i * 2), 16) * a + GLOBAL_BG[i] * (1 - a));
     return `#${[0, 1, 2].map((i) => ch(i).toString(16).padStart(2, "0")).join("")}`;
+}
+
+// ---- sub groups: a group WITHIN a group -----------------------------------
+// A subgroup owns a SUBSET of one group's nodes (its `parent`). It nests DOWN (vs a super group,
+// which nests up). Default look: a faint outline rectangle, NO title and NO fill — configurable
+// from a cogwheel (full group options; any chosen fill is stored OPAQUE, never translucent).
+// Formed only from the toolbar over nodes that all already share ONE group. Pure layout, like
+// groups — travels in profile.layout.sub_groups. Rendered in its own #subgroups layer, painted
+// ABOVE the group fill but behind the nodes. Dragged from its border (rim) or its title band.
+
+const SUB_PAD = 16;            // tight gap between members and the subgroup outline (nested -> smaller than PAD)
+const SUB_RIM = 10;            // width of the draggable border strips (world px)
+const SUB_DEF_OUTLINE = "#3a4154";
+const SUB_DEF_BG = "";         // "" = no fill painted (default has no background)
+
+let subGroups = [];            // [{ id, parent, title, members[], outline{color,style,width}, bg, titleBg, titleColor, titleAlign }]
+let subseq = 0;
+
+const subById = (id) => subGroups.find((sg) => sg.id === id);
+export function allSubGroups() { return subGroups; }
+export function subgroupOf(nodeId) { return subGroups.find((sg) => sg.members.includes(nodeId)) || null; }
+
+// Id of the innermost subgroup whose box contains world point (x,y) — used so a node created
+// inside a subgroup joins it (mirrors groupAt for groups).
+export function subGroupAt(x, y) {
+    let best = null, bestArea = Infinity;
+    for (const sg of subGroups) {
+        const box = subBox(sg);
+        if (!box || x < box.x || x > box.x + box.w || y < box.y || y > box.y + box.h) continue;
+        const area = box.w * box.h;
+        if (area < bestArea) { bestArea = area; best = sg.id; }
+    }
+    return best;
+}
+
+// ---- membership edits -----------------------------------------------------
+
+export function createSubgroup(memberIds) {
+    const ids = [...new Set(memberIds)].filter((id) => ctx.nodeRect(id));
+    if (!ids.length) return null;
+    // every member must already share ONE group — the subgroup is scoped to that group
+    const gset = new Set(ids.map((id) => groupOf(id)).filter(Boolean));
+    if (gset.size !== 1) return null;
+    const parent = [...gset][0];
+    if (!ids.every((id) => parent.members.includes(id))) return null;
+    for (const id of ids) { const sg = subgroupOf(id); if (sg) sg.members = sg.members.filter((m) => m !== id); }
+    const sid = `subgroup_${++subseq}`;
+    const sg = {
+        id: sid, parent: parent.id, title: "", members: ids,
+        outline: { color: SUB_DEF_OUTLINE, style: "solid", width: 1 }, bg: SUB_DEF_BG,
+        titleBg: "", titleColor: "", titleAlign: "left",
+    };
+    subGroups.push(sg);
+    reconcileSubFollowers();   // a member window's preview / a dataset's vt-table joins the subgroup too
+    pruneEmptySub();
+    renderSubGroups(); ctx.persist(); ctx.afterChange();
+    return sg;
+}
+
+export function disbandSub(sid) {
+    subGroups = subGroups.filter((sg) => sg.id !== sid);
+    closeSubPopover();
+    renderSubGroups(); ctx.persist(); ctx.afterChange();
+}
+
+// Pull nodes out of whatever subgroup holds them (toolbar "ungroup" when a subgroup is the target).
+export function detachFromSub(nodeIds) {
+    let changed = false;
+    for (const id of nodeIds) { const sg = subgroupOf(id); if (sg) { sg.members = sg.members.filter((m) => m !== id); changed = true; } }
+    if (reconcileSubFollowers()) changed = true;
+    if (changed) { pruneEmptySub(); renderSubGroups(); ctx.persist(); ctx.afterChange(); }
+}
+
+export function addToSubgroup(sid, nodeIds) {
+    const sg = subById(sid);
+    if (!sg) return;
+    const parent = byId(sg.parent);
+    const add = [...new Set(nodeIds)].filter((id) => ctx.nodeRect(id) && !sg.members.includes(id) && parent && parent.members.includes(id));
+    if (!add.length) return;
+    for (const id of add) { const p = subgroupOf(id); if (p) p.members = p.members.filter((m) => m !== id); }
+    sg.members.push(...add);
+    reconcileSubFollowers();
+    pruneEmptySub(); renderSubGroups(); ctx.persist(); ctx.afterChange();
+}
+
+function pruneEmptySub() { subGroups = subGroups.filter((sg) => sg.members.length); }
+
+// A subgroup's members must stay ⊆ its parent group's members, and its parent must still exist.
+// Drop orphaned members (a node that left the parent group ungroups from the subgroup too) and
+// any subgroup whose parent vanished or that emptied out. Returns true if anything changed.
+function reconcileSub() {
+    let changed = false;
+    for (const sg of subGroups) {
+        const parent = byId(sg.parent);
+        const keep = parent ? sg.members.filter((m) => parent.members.includes(m)) : [];
+        if (keep.length !== sg.members.length) { sg.members = keep; changed = true; }
+    }
+    const before = subGroups.length;
+    subGroups = subGroups.filter((sg) => byId(sg.parent) && sg.members.length);
+    if (subGroups.length !== before) changed = true;
+    return changed;
+}
+
+// A bonded follower (preview / vt-table) has no subgroup of its own — it sits in exactly its
+// leader's subgroup, following it in and out. Mirrors reconcileFollowers for the group tier.
+function reconcileSubFollowers() {
+    if (!ctx.bonds) return false;
+    let changed = false;
+    for (const { leader, follower } of ctx.bonds()) {
+        const ls = subgroupOf(leader), fs = subgroupOf(follower);
+        if (ls === fs) continue;
+        if (fs) { fs.members = fs.members.filter((m) => m !== follower); changed = true; }
+        if (ls && !ls.members.includes(follower)) { ls.members.push(follower); changed = true; }
+    }
+    return changed;
+}
+
+// ---- persistence ----------------------------------------------------------
+export function collectSub() {
+    return subGroups.map((sg) => ({
+        id: sg.id, parent: sg.parent, title: sg.title, members: [...sg.members],
+        outline: { ...sg.outline }, bg: sg.bg, titleBg: sg.titleBg, titleColor: sg.titleColor, titleAlign: sg.titleAlign,
+    }));
+}
+export function hydrateSub(arr) {
+    closeSubPopover();
+    subGroups = (arr || []).map((sg) => ({
+        id: sg.id, parent: sg.parent, title: sg.title || "",
+        members: Array.isArray(sg.members) ? [...sg.members] : [],
+        outline: { color: sg.outline?.color || SUB_DEF_OUTLINE, style: sg.outline?.style || "solid", width: sg.outline?.width || 1 },
+        bg: sg.bg || SUB_DEF_BG, titleBg: sg.titleBg || "", titleColor: sg.titleColor || "", titleAlign: sg.titleAlign || "left",
+    })).filter((sg) => sg.parent && sg.members.length);
+    subseq = subGroups.reduce((m, sg) => { const n = /^subgroup_(\d+)$/.exec(sg.id); return n ? Math.max(m, +n[1]) : m; }, 0);
+    reconcileSub();
+}
+
+// ---- geometry -------------------------------------------------------------
+function subBox(sg, titleH = sg._titleH || 0) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const id of sg.members) {
+        const r = ctx.nodeRect(id);
+        if (!r) continue;
+        minX = Math.min(minX, r.x); minY = Math.min(minY, r.y);
+        maxX = Math.max(maxX, r.x + r.w); maxY = Math.max(maxY, r.y + r.h);
+    }
+    if (!Number.isFinite(minX)) return null;
+    return { x: minX - SUB_PAD, y: minY - SUB_PAD - titleH, w: (maxX - minX) + SUB_PAD * 2, h: (maxY - minY) + SUB_PAD * 2 + titleH };
+}
+
+// world boxes for external renderers (node map)
+export function subGroupBoxes() {
+    return subGroups.map((sg) => ({ id: sg.id, title: sg.title, outline: { ...sg.outline }, bg: sg.bg, bandH: sg._titleH || 0, box: subBox(sg) }))
+        .filter((x) => x.box);
+}
+
+// ---- rendering ------------------------------------------------------------
+export function renderSubGroups() {
+    const layer = ctx.subWorld && ctx.subWorld();
+    if (!layer) return;
+    const live = new Set(subGroups.map((sg) => sg.id));
+    for (const el of [...layer.children]) if (!live.has(el.dataset.subid)) el.remove();
+    for (const sg of subGroups) {
+        let el = layer.querySelector(`.subgroup[data-subid="${sg.id}"]`);
+        if (!el) { el = buildSubEl(sg); layer.appendChild(el); }
+        // optional title band: rendered only when a title is set (default has none -> no band)
+        let tel = el.querySelector(".subgroup-title");
+        if (sg.title) {
+            if (!tel) { tel = buildSubTitleEl(sg); el.insertBefore(tel, el.firstChild); }
+            tel.querySelector(".ggt-label").textContent = sg.title;
+            tel.style.background = sg.titleBg || "";
+            tel.style.color = sg.titleColor || "";
+            placeTitle(tel, sg.titleAlign);
+            sg._titleH = tel.offsetHeight || TITLE_H;
+        } else { if (tel) tel.remove(); sg._titleH = 0; }
+        const box = subBox(sg, sg._titleH || 0);
+        if (!box) { el.remove(); continue; }
+        el.style.left = `${box.x}px`; el.style.top = `${box.y}px`;
+        el.style.width = `${box.w}px`; el.style.height = `${box.h}px`;
+        el.style.background = sg.bg || "";              // "" -> no fill (transparent box, default)
+        el.style.borderColor = sg.outline.color;
+        el.style.borderStyle = sg.outline.style;
+        el.style.borderWidth = `${sg.outline.style === "none" ? 0 : sg.outline.width}px`;
+    }
+}
+
+function buildSubEl(sg) {
+    const el = document.createElement("div");
+    el.className = "subgroup";
+    el.dataset.subid = sg.id;
+    // four border strips make the rim draggable WITHOUT covering the interior (nodes stay clickable);
+    // hovering any strip reveals the cog (CSS :hover bubbles to .subgroup even though the box is
+    // pointer-events:none). The cog opens the shared options panel.
+    for (const side of ["t", "r", "b", "l"]) {
+        const rim = document.createElement("div");
+        rim.className = `sgr-rim sgr-${side}`;
+        rim.addEventListener("mousedown", (ev) => onSubPress(sg.id, ev));
+        el.appendChild(rim);
+    }
+    const cog = document.createElement("button");
+    cog.className = "subgroup-cog";
+    cog.title = "subgroup settings"; cog.setAttribute("aria-label", "subgroup settings");
+    cog.innerHTML = COG_SVG;
+    cog.addEventListener("mousedown", (ev) => ev.stopPropagation());
+    cog.addEventListener("click", (ev) => { ev.stopPropagation(); toggleSubPopover(sg.id, ev); });
+    el.appendChild(cog);
+    return el;
+}
+
+function buildSubTitleEl(sg) {
+    const tel = document.createElement("div");
+    tel.className = "ggroup-title subgroup-title";   // reuse the group title look
+    tel.dataset.subid = sg.id;
+    tel.innerHTML = `<span class="ggt-label"></span>`;
+    tel.addEventListener("mousedown", (ev) => onSubPress(sg.id, ev));
+    return tel;
+}
+
+function onSubPress(sid, ev) {
+    if (ev.button !== 0) return;
+    ev.stopPropagation();
+    const sg = subById(sid);
+    if (!sg) return;
+    const stop = beginDrag(ev, { threshold: DRAG_THRESH, onStart: () => { stop(); ctx.moveMembers(sg.members, ev); } });
+}
+
+// ---- sub-group options popover (shared builder) ---------------------------
+function closeSubPopover() { closePopover(); }   // group + subgroup share the one openPopover slot
+function toggleSubPopover(sid, ev) {
+    const sg = subById(sid);
+    if (!sg) return;
+    openOptionsPopover(`subgroup:${sid}`, sg, ev, {
+        ownerSel: ".subgroup-cog", disbandLabel: "remove subgroup", opaqueBg: true,
+        onDisband: () => disbandSub(sid),
+    });
 }

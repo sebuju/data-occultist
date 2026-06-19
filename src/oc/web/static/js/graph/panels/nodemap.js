@@ -10,7 +10,8 @@ import {
     $, model, pos, nodeEls, view, nw, nh,
 } from "../state.js";
 import { buildLinks, routeCache, ROUTE } from "../routing.js";
-import { selectedNodeId, focusNode, panZoomTo, panZoomToRect } from "../main.js";
+import { selectedNodeId, focusNode } from "../main.js";
+import { panZoomTo, panZoomToRect } from "../camera.js";
 
 const NM_TYPE = { win: "window", prev: "preview", reg: "region", det: "detect",
     sb: "scrollbar", item: "item", fld: "itemfield", ds: "dataset", sub: "subset",
@@ -206,10 +207,12 @@ function nmBuildMapSvg(m, s, { cap = 11, titleCap = 9, pad = 8, css = null } = {
         const style = b.outline.style;
         const stroke = style === "none" ? "none" : b.outline.color;
         const dash = style === "dashed" ? ` stroke-dasharray="4 3"` : style === "dotted" ? ` stroke-dasharray="1 3"` : "";
-        return `<rect class="${cls}" data-${cls === "nm-super" ? "sgid" : "gid"}="${esc(b.id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${b.bg}" stroke="${stroke}"${dash}><title>${esc(b.title)}</title></rect>`;
+        const da = cls === "nm-super" ? "sgid" : cls === "nm-sub" ? "subid" : "gid";
+        return `<rect class="${cls}" data-${da}="${esc(b.id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${b.bg || "none"}" stroke="${stroke}"${dash}><title>${esc(b.title)}</title></rect>`;
     };
     const superSvg = groups.superGroupBoxes().map((sp) => boxSvg(sp, "nm-super")).join("");
     const groupSvg = groups.groupBoxes().map((gp) => boxSvg(gp, "nm-group")).join("");
+    const subSvg = groups.subGroupBoxes().map((sp) => boxSvg(sp, "nm-sub")).join("");
     // Group / super-group NAME as a title BAR: an opaque dark plate + coloured text (same idiom
     // as the canvas labels). Drawn ABOVE the nodes so it's never hidden, but the solid plate makes
     // it read as a deliberate header. Placement MIRRORS the live canvas: group titles align
@@ -240,7 +243,7 @@ function nmBuildMapSvg(m, s, { cap = 11, titleCap = 9, pad = 8, css = null } = {
     // concrete values (no :root to inherit from). Live panel passes css=null and keeps using CSS.
     const embed = css ? `<style>
     .nm-edges path{fill:none;stroke:${css.line};stroke-width:1;vector-effect:non-scaling-stroke;}
-    .nm-group,.nm-super{stroke-width:1;vector-effect:non-scaling-stroke;}
+    .nm-group,.nm-super,.nm-sub{stroke-width:1;vector-effect:non-scaling-stroke;}
     .nm-n{stroke:#0006;stroke-width:0.5;opacity:0.9;}
     .nm-n.sel{stroke:${css.accent};stroke-width:1.5;opacity:1;}
     .nm-lbl{fill:#0b0e14;font-family:${css.mono};font-weight:700;text-anchor:middle;dominant-baseline:central;}
@@ -249,6 +252,7 @@ function nmBuildMapSvg(m, s, { cap = 11, titleCap = 9, pad = 8, css = null } = {
     const svg = `<svg class="nm-svg" xmlns="http://www.w3.org/2000/svg" width="${W.toFixed(1)}" height="${H.toFixed(1)}" viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" preserveAspectRatio="xMidYMid meet">${embed}
       <g class="nm-supers">${superSvg}</g>
       <g class="nm-groups">${groupSvg}</g>
+      <g class="nm-subs">${subSvg}</g>
       <g class="nm-edges" transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})">${edgePaths}</g>
       <g class="nm-nodes">${rects.map(node).join("")}</g>
       <g class="nm-titles">${titleSvg}</g></svg>`;

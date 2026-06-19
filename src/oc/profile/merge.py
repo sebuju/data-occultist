@@ -40,6 +40,9 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
     price_nodes = {p.id: p for p in existing.price_nodes}
     for p in incoming.price_nodes:
         price_nodes[p.id] = p
+    file_sources = {s.id: s for s in existing.file_sources}
+    for s in incoming.file_sources:
+        file_sources[s.id] = s
     triggers = {t.id: t for t in existing.triggers}
     for t in incoming.triggers:
         triggers[t.id] = t
@@ -58,6 +61,7 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
         subsets=list(subsets.values()),
         dictionaries=list(dictionaries.values()),
         price_nodes=list(price_nodes.values()),
+        file_sources=list(file_sources.values()),
         triggers=list(triggers.values()),
         layout=layout,
     )

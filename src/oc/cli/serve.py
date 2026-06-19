@@ -8,13 +8,22 @@ def register(sub) -> None:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--reload", action="store_true", help="auto-reload on code change")
+    p.add_argument("--verbose-access", action="store_true",
+                   help="log every request, including static-asset GETs (default hides them)")
     p.set_defaults(func=run)
 
 
 def run(args) -> int:
+    import os
+
     import uvicorn
 
     print(f"data-occultist UI -> http://{args.host}:{args.port}")
+    # The static-asset GET flood is filtered out of the access log by the app's lifespan
+    # (oc.web.logfilter), which applies on every launch path including the --reload worker. This
+    # env var is how the opt-out reaches that worker subprocess (it inherits the parent env).
+    if getattr(args, "verbose_access", False):
+        os.environ["OCC_VERBOSE_ACCESS"] = "1"
     # Shutdown is clean WITHOUT a graceful-shutdown timeout: the app's lifespan chains the
     # SIGINT/SIGTERM handlers to flip a shutdown flag that every long-lived SSE stream watches
     # (see oc.web.shutdown / oc.web.sse), so the streams self-close and uvicorn's connection

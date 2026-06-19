@@ -7,17 +7,18 @@ import { openModal } from "../../modal.js";
 import { VTable } from "../../vtable.js";
 import { singleFlight } from "../../singleflight.js";
 import { nodeEls, setStatus, model } from "../state.js";
-import { refreshLive, clockTime, refreshDatasetConsumers } from "../main.js";
+import { refreshLive, refreshDatasetConsumers } from "../main.js";
+import { clockTime } from "../node_parts.js";
 
 // ---- dataset records (rendered inline in the dataset node body) ----
 
 function dataHost(ds) {
-    const el = nodeEls.get(`ds:${ds}`);
+    const el = nodeEls.get(`vt:ds:${ds}`);   // records grid lives in the opt-in vt-table satellite
     return el && el.querySelector(".data-host");
 }
-// refresh every dataset node that currently exists (after save / clear / live change)
+// refresh every dataset whose vt-table satellite is currently shown (after save / clear / live change)
 function refreshAllDataNodes() {
-    for (const ds of model.datasets()) if (nodeEls.has(`ds:${ds}`)) refreshDataNode(ds);
+    for (const ds of model.datasets()) if (nodeEls.has(`vt:ds:${ds}`)) refreshDataNode(ds);
 }
 // One VTable per data/subset node host (virtualized + searchable). Recreated if the host
 // element was rebuilt by a node re-render.
@@ -34,9 +35,10 @@ function vtableFor(key, host) {
 
 const VT_META = ["present", "first_seen", "last_seen", "key", "_count"];   // not shown as columns
 
-// Show a count badge on a dataset node's tab (data → item count, batches → batch count).
+// Show a count badge on the vt-table satellite's tab (data → item count, batches → batch count).
+// The tabs + badges live ABOVE the table on the satellite now.
 function setTabCount(ds, sel, n) {
-    const el = nodeEls.get(`ds:${ds}`)?.querySelector(sel);
+    const el = nodeEls.get(`vt:ds:${ds}`)?.querySelector(sel);
     if (el) el.textContent = n != null ? `${n}` : "";
 }
 
@@ -154,7 +156,7 @@ async function showRecordMany(ds, key, count) {
 const batchesState = new Map();   // ds -> { sel, events } (selection + event cache per node)
 
 function batEls(ds) {
-    const el = nodeEls.get(`ds:${ds}`);   // batches live in the merged dataset node's history tab
+    const el = nodeEls.get(`vt:ds:${ds}`);   // batches host lives in the vt-table satellite's batches tab
     return el && { list: el.querySelector(".bat-list"), detail: el.querySelector(".bat-detail") };
 }
 function batState(ds) {
@@ -175,9 +177,9 @@ async function loadBatchesNode(ds) {
     } catch (e) { els.list.innerHTML = `<li class="muted">${esc(String(e))}</li>`; }
 }
 
-// refresh every batches node that currently exists
+// refresh every batches host that currently exists (i.e. whose vt-table satellite is shown)
 function refreshAllBatchesNodes() {
-    for (const ds of model.datasets()) if (nodeEls.has(`ds:${ds}`)) loadBatchesNode(ds);
+    for (const ds of model.datasets()) if (nodeEls.has(`vt:ds:${ds}`)) loadBatchesNode(ds);
 }
 
 function renderBatchesList(ds, batches) {

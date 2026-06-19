@@ -55,13 +55,34 @@ if ($Background) {
   # Do NOT block PS inside the child (& $py): under --reload uvicorn runs a reloader
   # PARENT + worker child, and on Windows the parent stops honoring Ctrl+C after the
   # first auto-reload (a known uvicorn issue) - the server looks "unkillable". Instead
-  # run detached-but-attached (-NoNewWindow keeps logs streaming) and poll from PS, so
-  # Ctrl+C interrupts our OWN Start-Sleep; the finally then force-kills the whole tree
-  # (reloader + worker), which dies even when the reloader has wedged.
-  $proc = Start-Process -FilePath $py -ArgumentList $uvArgs -WorkingDirectory $root -NoNewWindow -PassThru
+  # run detached and poll from PS, so Ctrl+C interrupts our OWN Start-Sleep; the finally
+  # then force-kills the whole tree (reloader + worker), which dies even when the
+  # reloader has wedged.
+  #
+  # Do NOT use -NoNewWindow: when the child shares our console handles, uvicorn's reloader
+  # fails to RESPAWN the worker after the first auto-reload (it shuts the worker down but
+  # the new one never starts - the server silently dies on the first edit). Redirecting the
+  # child's stdout/stderr to temp logs and tailing them ourselves keeps reload reliable AND
+  # still streams the logs live to this console.
+  $outLog = Join-Path $env:TEMP "oc-serve-$Port.out.log"
+  $errLog = Join-Path $env:TEMP "oc-serve-$Port.err.log"
+  Set-Content -Path $outLog -Value '' -NoNewline; Set-Content -Path $errLog -Value '' -NoNewline
+  # -WindowStyle Hidden: give the child its OWN (hidden) console. Without it the child pops
+  # a visible python console window; with -NoNewWindow (shared console) the reload respawn
+  # breaks - Hidden is the third option: separate console, no window, reload intact.
+  $proc = Start-Process -FilePath $py -ArgumentList $uvArgs -WorkingDirectory $root -PassThru `
+            -WindowStyle Hidden -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+  # Stream both logs to the console as they grow; open shared-read so we never lock the writer.
+  $readers = @($outLog, $errLog) | ForEach-Object {
+    $fs = [System.IO.File]::Open($_, 'Open', 'Read', 'ReadWrite')
+    New-Object System.IO.StreamReader($fs)
+  }
+  function Drain-Logs { foreach ($r in $readers) { while (($line = $r.ReadLine()) -ne $null) { Write-Host $line } } }
   try {
-    while (-not $proc.HasExited) { Start-Sleep -Milliseconds 250 }
+    while (-not $proc.HasExited) { Drain-Logs; Start-Sleep -Milliseconds 250 }
+    Drain-Logs   # flush the tail after the process exits
   } finally {
+    foreach ($r in $readers) { $r.Dispose() }
     if (-not $proc.HasExited) { taskkill /PID $proc.Id /F /T | Out-Null }
   }
 }

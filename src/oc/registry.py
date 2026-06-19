@@ -27,6 +27,7 @@ from .interfaces import (
     Enricher,
     OcrEngine,
     ProcessDetector,
+    SourceParser,
     WindowClassifier,
     WindowProvider,
 )
@@ -40,6 +41,7 @@ _OCR: dict[str, type[OcrEngine]] = {}
 _CLASSIFIER: dict[str, type[WindowClassifier]] = {}
 _CORRECTOR: dict[str, type[Corrector]] = {}
 _ENRICHER: dict[str, type[Enricher]] = {}
+_PARSER: dict[str, type[SourceParser]] = {}
 
 # Modules that, when imported, self-register their backends. Add new backend
 # modules here (or rely on plugins importing them) so names resolve.
@@ -55,6 +57,11 @@ _IMPL_MODULES = (
     "oc.learn.difflib_corrector",
     "oc.enrich.warframe_market",
     "oc.enrich.relic",
+    "oc.source.parsers.log_lines",
+    "oc.source.parsers.ini",
+    "oc.source.parsers.json",
+    "oc.source.parsers.xml",
+    "oc.source.parsers.yaml",
 )
 
 
@@ -92,6 +99,10 @@ def register_corrector(name: str):
 
 def register_enricher(name: str):
     return _register(_ENRICHER, name)
+
+
+def register_parser(name: str):
+    return _register(_PARSER, name)
 
 
 _loaded = False
@@ -154,3 +165,13 @@ def build_corrector(name: str, **opts) -> Corrector:
 
 def build_enricher(name: str, **opts) -> Enricher:
     return _build(_ENRICHER, "enricher", name, **opts)
+
+
+def build_parser(name: str, **opts) -> SourceParser:
+    return _build(_PARSER, "parser", name, **opts)
+
+
+def parser_names() -> list[str]:
+    """Registered source-parser format names (after discovery)."""
+    _ensure_loaded()
+    return sorted(_PARSER)

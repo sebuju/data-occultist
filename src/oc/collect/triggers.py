@@ -5,12 +5,17 @@ A :class:`TriggerDef` says *when* to price; this runner turns that into calls to
 fires the moment a watched window reads new rows) and is independent of any window — interval
 triggers fire on schedule even with no game running.
 
-Three kinds:
+Kinds:
 
-* ``interval``  — fire every ``interval_s`` seconds (:meth:`tick`, called each loop pass).
-* ``on_change`` — fire when a watched dataset gains records (:meth:`on_change`), pricing ONLY
+* ``interval``     — fire every ``interval_s`` seconds (:meth:`tick`, called each loop pass).
+* ``on_change``    — fire when a watched dataset gains records (:meth:`on_change`), pricing ONLY
   those changed keys (resolved to slugs) so a relic-reward read prices ~4 items, not the world.
-* ``manual``    — never auto-fires (the sweep button drives it); declared only for wiring.
+* ``on_app_start`` — fire once when the teach/web app boots (:meth:`fire_app_start`).
+* ``on_capture``   — fire when a capture session starts, live OR precapture (:meth:`fire_capture`).
+* ``manual``       — never auto-fires (the sweep button drives it); declared only for wiring.
+
+A trigger ``target`` is a price-node id OR a file-source id: pricing nodes sweep the market,
+file sources read a log/config file. The runner dispatches by which kind owns the id.
 
 ``fire`` and ``clock`` are injectable so the scheduling logic is unit-testable without sleeping
 or hitting the network.
@@ -97,6 +102,28 @@ class TriggerRunner:
                 fired.append(t.id)
         return fired
 
+    # ---- one-shot lifecycle kinds (app boot / capture start) ---------------
+
+    def fire_app_start(self) -> list[str]:
+        """Fire every enabled ``on_app_start`` trigger once (called when the web app boots)."""
+        return self._fire_kind("on_app_start", "app start")
+
+    def fire_capture(self) -> list[str]:
+        """Fire every enabled ``on_capture`` trigger (called when a live/precapture session starts)."""
+        return self._fire_kind("on_capture", "capture start")
+
+    def _fire_kind(self, kind: str, why: str) -> list[str]:
+        fired: list[str] = []
+        for t in self._profile.triggers:
+            if not t.enabled or t.kind != kind:
+                continue
+            logev(f"trigger {t.id} fired ({why})", level="run", game=self._profile.name)
+            slog(f"trigger {t.id} fired ({why})", game=self._profile.name)
+            self._fire_targets(t, items=None)
+            record_fire(self._data_dir, self._profile.name, t.id)
+            fired.append(t.id)
+        return fired
+
     # ---- on_change ---------------------------------------------------------
 
     def on_change(self, dataset: str | None, changed_records: list[dict]) -> list[str]:
@@ -156,10 +183,26 @@ class TriggerRunner:
         return inventory_slugs(records, "name", self._resolve)
 
     def _fire_targets(self, trigger, items) -> None:
-        by_id = {p.id: p for p in self._profile.price_nodes}
-        for pid in trigger.targets:
-            fire_target(self._profile.name, by_id.get(pid), items,
-                        trigger_id=trigger.id, fire=self._fire)
+        """Dispatch each target id by what owns it: a price node sweeps, a file source reads."""
+        by_price = {p.id: p for p in self._profile.price_nodes}
+        by_source = {s.id: s for s in self._profile.file_sources}
+        for tid in trigger.targets:
+            if tid in by_price:
+                fire_target(self._profile.name, by_price[tid], items,
+                            trigger_id=trigger.id, fire=self._fire)
+            elif tid in by_source:
+                self._read_source(by_source[tid], trigger.id)
+
+    def _read_source(self, source, trigger_id: str) -> None:
+        """Fire a file-source target: read it and emit the trigger->source control pulse. A
+        misbehaving read must never crash the loop / a request."""
+        from ..source.runner import read_source
+        try:
+            read_source(self._profile.name, source, self._data_dir, profile=self._profile)
+            publish_flow(self._profile.name, "trigger", f"trigger:{trigger_id}",
+                         f"src:{source.id}", 1)
+        except Exception:   # noqa: BLE001
+            pass
 
     def _default_fire(self, price_node, items) -> None:
         start_sweep(self._data_dir, self._profile.name, price_node,

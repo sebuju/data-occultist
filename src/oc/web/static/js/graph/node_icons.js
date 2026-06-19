@@ -22,6 +22,8 @@ const INNER = {
     subset: `<path d="M4 8h6l4 4h6M4 16h6l2-2"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>`,
     price: `<circle cx="12" cy="12" r="8"/><path d="M12 8v8M10 10.5c0-1 1-1.5 2-1.5s2 .6 2 1.5-1 1.3-2 1.5-2 .6-2 1.5 1 1.5 2 1.5 2-.5 2-1.5"/>`,
     dictionary: `<path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/><path d="M5 18a2 2 0 0 1 2-2h11"/><line x1="9" y1="8" x2="14" y2="8"/>`,
+    // file source: a document with a folded corner + log lines (it reads a game log/config file)
+    filesource: `<path d="M6 3h7l5 5v13H6z"/><path d="M13 3v5h5"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/><line x1="9" y1="18" x2="13" y2="18"/>`,
     // trigger has two looks, chosen by kind: a bolt for "on change", a clock for "interval".
     trigger_change: `<path d="M13 3L5 13h6l-1 8 8-10h-6z" fill="currentColor" stroke="none"/>`,
     trigger_timer: `<circle cx="12" cy="13" r="7"/><path d="M12 9.5V13l2.5 1.5"/><path d="M9 3h6M12 3v3"/>`,

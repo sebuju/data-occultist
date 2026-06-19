@@ -10,7 +10,8 @@ import { persist } from "../persist.js";
 import { $, model, nodeEls } from "../state.js";
 import { since } from "../../datefmt.js";
 import { liveAgo, stopAgo } from "../../ago.js";
-import { autosave, panZoomTo } from "../main.js";
+import { autosave } from "../main.js";
+import { panZoomTo } from "../camera.js";
 import { playSound } from "../sound.js";
 
 // ---- activity panel (live sweeps + precapture) ----------------------------

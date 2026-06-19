@@ -20,6 +20,7 @@ export function renderWindow(container, model, ctx) {
       <label>cols <input type="number" id="w-cols" min="1" value="${g.cols}" /></label>
       <label>row Δy <input type="number" id="w-rs" step="0.001" value="${g.rowStride}" /></label>
       <label>col Δx <input type="number" id="w-cs" step="0.001" value="${g.colStride}" /></label>
+      <label title="dynamic row lattice: bound the pitch derived from live findings to authored ± this fraction (0..1). Empty = static rows (face-value clustering). Set it to fit/interpolate rows on a scrolled list.">pitch tol <input type="number" id="w-pt" step="0.01" min="0" max="1" value="${g.pitchTolerance ?? ""}" placeholder="static" /></label>
     </div>
     <button id="w-derive" title="Set strides from the two nearest region boxes">Derive strides from boxes</button>
   `);
@@ -33,6 +34,7 @@ export function renderWindow(container, model, ctx) {
     q("#w-cols").addEventListener("input", (e) => { model.grid.cols = +e.target.value || 1; ctx.refreshOverlay(); });
     q("#w-rs").addEventListener("input", (e) => { model.grid.rowStride = +e.target.value || 0; ctx.refreshOverlay(); });
     q("#w-cs").addEventListener("input", (e) => { model.grid.colStride = +e.target.value || 0; ctx.refreshOverlay(); });
+    q("#w-pt").addEventListener("input", (e) => { const v = e.target.value.trim(); model.grid.pitchTolerance = v === "" ? null : (+v || 0); ctx.refreshOverlay(); });
     q("#w-derive").addEventListener("click", () => { deriveStrides(model); ctx.refresh(); });
     mount(container, fs);
 }

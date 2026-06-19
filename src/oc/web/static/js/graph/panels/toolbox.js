@@ -12,7 +12,8 @@ import { openDictionaryPicker } from "../dict_picker.js";
 import { nodemapShot } from "./nodemap.js";
 import * as groups from "../groups.js";
 import { $, setStatus, model } from "../state.js";
-import { placeNewNode, render, autosave, panTo } from "../main.js";
+import { placeNewNode, render, autosave } from "../main.js";
+import { panTo } from "../camera.js";
 
 // ---- node-creation toolbox ------------------------------------------------
 // Top-level node creation (window / price / trigger / dictionary) lives in this floating
@@ -57,6 +58,13 @@ async function createTriggerNode(at = null, group = null) {
     await placeNewNode(`trigger:${id}`, "trigger", null, at); render();
     if (group) groups.addToGroup(group, [`trigger:${id}`]);
     autosave(false); if (!at) panTo(`trigger:${id}`);   // new node changes nothing open windows OCR
+}
+async function createFileSourceNode(at = null, group = null) {
+    const id = model.addFileSource();   // reads a game log/config file into a dataset (wired after)
+    if (!id) return;
+    await placeNewNode(`src:${id}`, "filesource", null, at); render();
+    if (group) groups.addToGroup(group, [`src:${id}`]);
+    autosave(false); if (!at) panTo(`src:${id}`);   // new node changes nothing open windows OCR
 }
 function createDictionaryNode(at = null, group = null) {
     const place = async (id) => {
@@ -294,7 +302,7 @@ function svgToPngBlob(svg, W, H) {
 
 export {
     tb, tbState, createWindowNode, createPriceNode, createTriggerNode,
-    createDictionaryNode, createDatasetNode, createSubsetNode,
+    createDictionaryNode, createDatasetNode, createSubsetNode, createFileSourceNode,
     buildToolbox, COLLIDE_VERDICTS, collisionReportHTML,
     runCollisionCheck,
 };

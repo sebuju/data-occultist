@@ -384,6 +384,18 @@ export const triggers = {
     fire: (game, id) => tfetch(`/api/triggers/${_pg(game)}/${encodeURIComponent(id)}/fire`, { method: "POST" }, 30_000).then((r) => ok(r, "fire trigger").then((x) => x.json())),
 };
 
+// File sources: read a game log/config file into a dataset. `read` fires a read now; `preview`
+// parses the in-progress config WITHOUT writing (live editor preview); `find` auto-finds the file.
+export const sources = {
+    read: (game, id) => tfetch(`/api/sources/${_pg(game)}/${encodeURIComponent(id)}/read`, { method: "POST" }, 30_000).then((r) => ok(r, "read source").then((x) => x.json())),
+    preview: (game, body, signal) => tfetch(`/api/sources/${_pg(game)}/preview`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
+    }, 15_000).then((r) => ok(r, "source preview").then((x) => x.json())),
+    find: (game, body) => tfetch(`/api/sources/${_pg(game)}/find`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
+    }, 30_000).then((r) => ok(r, "find source").then((x) => x.json())),
+};
+
 // Activity: one poll for the floating Activity panel — every running price sweep, the
 // precapture worker (when busy), and the enabled triggers + their next-fire countdown.
 // Returns { sweeps:[...], precapture: status|null, triggers:[...] }.

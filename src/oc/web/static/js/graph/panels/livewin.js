@@ -9,7 +9,8 @@ import { $, setStatus, model, nodeEls } from "../state.js";
 import { registerWorker, unregisterWorker } from "../workers.js";
 import { pc, pcState, precapOpen, precapBusy, fmtBytes } from "./precap.js";
 import { prevHost, refreshDetect, refreshPreview } from "../imaging.js";
-import { refreshLive, panZoomTo } from "../main.js";
+import { refreshLive } from "../main.js";
+import { panZoomTo } from "../camera.js";
 
 let timer = null;
 // live floating panel state — declared BEFORE buildLiveWindow() runs at module-eval

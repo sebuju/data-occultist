@@ -65,7 +65,7 @@ a.node.win:hover { border-color: var(--accent); }
    tables never blow the node up. ONE look + ONE behaviour, no per-kind panel code. */
 /* host nodes (dataset/preview/batches/dictionary/subset): the NODE itself resizes and
    its body + content host fill it. ONE behaviour — no separate resize handle inside. */
-.gnode.dataset, .gnode.preview, .gnode.dictionary, .gnode.subset, .gnode.price {
+.gnode.dataset, .gnode.preview, .gnode.dictionary, .gnode.subset, .gnode.price, .gnode.vttable {
     display: flex; flex-direction: column; resize: none; overflow: hidden; min-width: 280px; }
 /* trigger node: compact, fixed; out-port must show so it can be wired to a price node */
 .gnode.trigger { width: 280px; overflow: visible; }
@@ -74,28 +74,36 @@ a.node.win:hover { border-color: var(--accent); }
 .pr-src button { border: none; background: none; color: var(--muted); cursor: pointer; padding: 0; line-height: 1; }
 .pr-src button:hover { color: var(--warn); }
 .pr-srcs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 4px 0; font-size: var(--fs-sm); }
-.gnode.dataset { width: 360px; height: 380px; }
+/* config-only nodes FIT their content (height:auto): they're reworked often and carry
+   visibility-toggleable inputs, so a fixed height would clip on rework or leave dead space.
+   Still user-resizable (grips stamp an inline height; reset clears back to the content fit). */
+.gnode.dataset { width: 360px; height: auto; }
+.gnode.subset { width: 360px; height: auto; min-width: 320px; }
+.gnode.price { width: 360px; height: auto; }
+/* nodes wrapping a fillable scroll host (records grid / preview table / term textarea) keep a
+   default height so the inner viewport isn't 0 — height:auto would collapse them; resize to taste. */
 .gnode.preview { width: 360px; height: 320px; }
 .gnode.dictionary { width: 300px; height: 360px; }
-.gnode.subset { width: 360px; height: 440px; min-width: 320px; }
-.gnode.price { width: 360px; height: auto; }   /* config-only now (no chart/movers) -> fit content */
 /* nodes with an out-port dot at their right edge (price, dataset, view): node-level clipping
    would cut the port in half, so clip the BODY instead and let the node (hence the port) overflow */
 .gnode.price, .gnode.dataset, .gnode.subset { overflow: visible; }
 .gnode.price > .gn-body, .gnode.dataset > .gn-body, .gnode.subset > .gn-body { overflow: auto; }   /* scroll when too small instead of squishing/clipping */
 .gnode.dataset > .gn-body, .gnode.preview > .gn-body,
-.gnode.dictionary > .gn-body, .gnode.subset > .gn-body, .gnode.price > .gn-body {
+.gnode.dictionary > .gn-body, .gnode.subset > .gn-body, .gnode.price > .gn-body,
+.gnode.vttable > .gn-body {
     flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-/* dataset node: [data | history] tabs swap which host fills the body */
-.ds-tabs { display: flex; gap: 4px; margin-top: 6px; flex: 0 0 auto; }
+/* vt-table satellite: the records grid split out of its dataset/subset (dotted edge to parent) */
+.gnode.vttable { width: 420px; height: 360px; min-width: 280px; }
+.gnode.vttable[data-tab="data"] .bat-host { display: none; }
+.gnode.vttable[data-tab="batches"] .data-host { display: none; }
+/* vt-table satellite (dataset): [data | history] tabs sit ABOVE the table and pick which host shows */
+.ds-tabs { display: flex; gap: 4px; margin-bottom: 6px; flex: 0 0 auto; }
 .ds-tab { flex: 1 1 0; padding: 2px 0; font-size: var(--fs-sm); background: var(--bg);
     border: 1px solid var(--line); border-radius: 6px; color: var(--muted); cursor: pointer; }
 .ds-tab:hover { color: var(--text); }
 .ds-tab.on { background: var(--accent-bg); border-color: var(--accent); color: var(--text); }
 .ds-tab-n { margin-left: 2px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .ds-tab-n:empty { display: none; }
-.gnode.dataset[data-tab="data"] .bat-host { display: none; }
-.gnode.dataset[data-tab="batches"] .data-host { display: none; }
 /* keep the dataset controls compact — don't stretch the agg select / buttons full width */
 .gnode.dataset .ds-agg { display: flex; align-items: center; gap: 6px; }
 .gnode.dataset .ds-agg select { flex: 0 0 auto; width: auto; }
@@ -103,8 +111,6 @@ a.node.win:hover { border-color: var(--accent); }
 /* subset config editors */
 .sub-of { margin-left: 6px; font-size: var(--fs-sm); }
 .sub-cfg { margin-top: 4px; width: 100%; box-sizing: border-box; }   /* bounded -> rows wrap, don't overflow */
-.sub-cfg.collapsed { display: none; }
-.sub-cfg.collapsed + .sub-host { margin-top: 0; }
 .gn-cog { margin-left: auto; flex: 0 0 auto; width: 22px; height: 22px; min-height: 0; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
     background: transparent; border: 0; color: var(--muted); line-height: 0; cursor: pointer; }
@@ -119,13 +125,14 @@ a.node.win:hover { border-color: var(--accent); }
 .gn-h .collapse { opacity: 1; }   /* collapse caret stays visible at rest — it's a primary toggle, not a hover-only action */
 .sub-sec { margin-top: 6px; }
 .sub-cfg > .sub-sec:first-child { margin-top: 0; }
-.sub-lbl { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; }
+.sub-lbl { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; }
 .sub-empty { font-size: var(--fs-sm); padding: 1px 2px; }
-.sub-addf, .sub-addd, .sub-adds { margin-top: 4px; }
+/* + buttons now sit inline after the section label — sized to the label height, not a wide row */
+.sub-addf, .sub-addd, .sub-adds { padding: 0 7px; font-size: var(--fs-sm); width: 16px; height: 16px; min-height: unset; }
 .sv-hides { display: flex; flex-wrap: wrap; gap: 4px; }
 .sv-hide { font-size: var(--fs-sm); padding: 1px 6px; }
 .sv-hide.off { opacity: 0.5; text-decoration: line-through; }
-.sub-row { display: flex; align-items: center; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+.sub-row { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
 .sub-row:hover { filter: brightness(1.25); background-color: #ffffff12; }
 .sub-row select, .sub-row input { min-width: 0; }
 .sub-row select { max-width: 140px; }
@@ -137,6 +144,8 @@ a.node.win:hover { border-color: var(--accent); }
 /* the view's sources/join-on/limit/many-> rows now build on the shared `.lab-grid` primitive
    (graph.css) instead of a per-row `.sub-row .flab` — labels line up in col 1, inputs fill col 2. */
 .sub-row button.danger { flex: 0 0 auto; padding: 0 6px; }
+.sub-row > span.muted { align-self: center; }
+.sub-row > select:is(.ss-dir, .sf-op) { width: fit-content; }
 .sv-inputs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
 .sv-input { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 7px; box-sizing: border-box;
     min-height: 22px;   /* pin chip + add-select to one height so the select's UA min never makes them differ */

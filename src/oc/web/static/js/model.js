@@ -26,7 +26,7 @@ export class EditorModel {
 
         this.fields = [];           // {id, type, pattern, learn, fuzzy}
         this.states = [];           // {id, kind, valid_for_save}
-        this.grid = { enabled: false, rows: 1, cols: 1, rowStride: 0, colStride: 0 };
+        this.grid = { enabled: false, rows: 1, cols: 1, rowStride: 0, colStride: 0, pitchTolerance: null };
         this.preprocess = { mode: "none", colors: [], tolerance: 60, scale: 1 };
         this.boxes = [];            // {id, role, x,y,w,h, field?, text?, stateId?, threshold?}
         this.selectedId = null;
@@ -130,6 +130,7 @@ export class EditorModel {
                 scrollbar: scrollbarBox,
                 rows: this.grid.rows, cols: this.grid.cols,
                 row_stride: this.grid.rowStride, col_stride: this.grid.colStride,
+                pitch_tolerance: this.grid.pitchTolerance,
                 cell: first ? { x: first.x, y: first.y, w: first.w, h: first.h } : null,
             };
         }
@@ -197,6 +198,7 @@ export class EditorModel {
                 enabled: (win.scroll.rows || 1) > 1 || (win.scroll.cols || 1) > 1,
                 rows: win.scroll.rows || 1, cols: win.scroll.cols || 1,
                 rowStride: win.scroll.row_stride || 0, colStride: win.scroll.col_stride || 0,
+                pitchTolerance: win.scroll.pitch_tolerance ?? null,
             };
             if (win.scroll.scrollbar) {
                 this.boxes.push({ id: "scrollbar", role: "scrollbar", ...win.scroll.scrollbar });

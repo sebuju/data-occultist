@@ -11,6 +11,7 @@ Everything here is in *client fractions* (0..1) so it's resolution independent.
 
 from __future__ import annotations
 
+import math
 from statistics import median
 
 
@@ -55,3 +56,64 @@ def detect_row_centers(
             cluster.append((c, h))
     rows.append(band(cluster))
     return rows[:max_rows] if max_rows else rows
+
+
+def fit_row_lattice(
+    centers_y: list[float],
+    heights: list[float],
+    expected_pitch: float,
+    lo: float,
+    hi: float,
+    max_rows: int | None = None,
+    anchor: str = "center",
+    pitch_tol: float | None = None,
+) -> list[float]:
+    """Fit a regular pitch+phase lattice to the detected rows, then emit every lattice
+    position spanning ``[lo, hi]``.
+
+    The findings are *evidence*, not the grid: :func:`detect_row_centers` clusters the
+    OCR lines into candidate rows, but a scrolled/consumed list leaves gaps (an occluded
+    name drops its whole row) and noise (a stray line invents a phantom row). So we
+    estimate the row pitch and phase from the candidate bands and lay a regular grid over
+    the data area — filling rows that had no finding and rejecting bands that don't sit on
+    the lattice.
+
+    ``pitch_tol`` (0..1) is the opt-in switch: it both turns the lattice ON and clamps the
+    derived pitch to ``expected_pitch * [1 - tol, 1 + tol]``. ``None`` means the window is
+    static — the candidate bands are returned at face value (legacy clustering), unchanged.
+    With fewer than two bands there's no measurable pitch either way, so a single finding
+    stays a single row (never speculatively tiled).
+
+    ``expected_pitch`` is the authored row pitch (the clamp centre and the clustering gap seed).
+    """
+    bands = detect_row_centers(centers_y, heights, expected_pitch, lo, hi, None, anchor)
+    if pitch_tol is None or len(bands) < 2:
+        return bands[:max_rows] if max_rows else bands
+
+    diffs = [b - a for a, b in zip(bands, bands[1:])]
+    # Seed from the authored pitch when given (robust against missing rows), else the
+    # smallest observed gap (two adjacent rows ~= one pitch).
+    seed = expected_pitch if expected_pitch and expected_pitch > 0 else min(diffs)
+    if seed <= 0:
+        return bands
+    # Refine: a ~2x gap is one skipped row, so divide each diff by its row-count k and
+    # take the median per-row pitch. One pass of re-binning settles a rough seed.
+    pitch = seed
+    for _ in range(2):
+        per_row = [d / max(1, round(d / pitch)) for d in diffs]
+        pitch = median(per_row)
+        if pitch <= 0:
+            return bands
+
+    if pitch_tol is not None and expected_pitch and expected_pitch > 0:
+        pitch = min(max(pitch, expected_pitch * (1 - pitch_tol)), expected_pitch * (1 + pitch_tol))
+
+    # Least-squares phase: index each band to its nearest lattice line, then average the
+    # residuals. A phantom off-lattice band only nudges the phase, it never adds a row.
+    base = bands[0]
+    phase = base + sum(b - (base + round((b - base) / pitch) * pitch) for b in bands) / len(bands)
+
+    k_lo = math.ceil((lo - phase) / pitch)
+    k_hi = math.floor((hi - phase) / pitch)
+    out = [phase + k * pitch for k in range(k_lo, k_hi + 1)]
+    return out[:max_rows] if max_rows else out

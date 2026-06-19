@@ -13,6 +13,7 @@ from fastapi import APIRouter
 
 from ...enrich.price_runner import active_sweeps, recent_blocked
 from ..deps import get_settings
+from ..source_sched import sources as source_status
 from ..trigger_sched import schedule as trigger_schedule
 from .live import _sessions as _live_sessions
 from .ocr import ocr_state
@@ -40,6 +41,8 @@ def activity(game: str) -> dict:
         lst = ls.status()
         if lst.get("running"):
             live = lst
+    settings = get_settings()
     return {"sweeps": active_sweeps(game), "blocked": recent_blocked(game),
             "precapture": precap, "live": live,
-            "triggers": trigger_schedule(game, get_settings()), "ocr": ocr_state()}
+            "triggers": trigger_schedule(game, settings),
+            "sources": source_status(game, settings), "ocr": ocr_state()}

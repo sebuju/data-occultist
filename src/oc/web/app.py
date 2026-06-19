@@ -33,6 +33,7 @@ from .routes import (
     profiles,
     screenshot,
     sounds,
+    sources,
     stats,
     suggest,
     triggers,
@@ -119,9 +120,19 @@ def _install_shutdown_signals() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    import os
+
     from .shutdown import bind_loop, signal_shutdown
     bind_loop(asyncio.get_running_loop())
     _install_shutdown_signals()
+    # Quieten the static-asset GET flood in uvicorn's access log on every launch path (serve,
+    # --reload worker, desktop, bare uvicorn). OCC_VERBOSE_ACCESS=1 (the serve --verbose-access
+    # flag) keeps every line.
+    try:
+        from .logfilter import install as _install_access_filter
+        _install_access_filter(verbose=os.environ.get("OCC_VERBOSE_ACCESS") == "1")
+    except Exception:  # noqa: BLE001 - log tidiness must never break startup
+        pass
     # Kill any precapture OCR worker that somehow outlived a prior run before doing
     # anything else — no stray thread should keep hammering the GPU at startup.
     try:
@@ -155,6 +166,12 @@ async def lifespan(_app: FastAPI):
     try:
         from .trigger_sched import start as _start_triggers
         _start_triggers(get_settings())
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
+    # Watch on_change file sources (trailing-throttle reads) and fire on_app_start triggers.
+    try:
+        from .source_sched import start as _start_sources
+        _start_sources(get_settings())
     except Exception:  # noqa: BLE001 - best-effort
         pass
     # Fire on_change triggers for ANY dataset write in this process (form, sweep, preview,
@@ -237,6 +254,7 @@ def create_app() -> FastAPI:
     app.include_router(prices.router)
     app.include_router(activity.router)
     app.include_router(triggers.router)
+    app.include_router(sources.router)
     app.include_router(sounds.router)
     app.include_router(dictionaries.router)
     app.include_router(pretty.router)

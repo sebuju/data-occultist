@@ -146,6 +146,23 @@ class Enricher(ABC):
     def enrich(self, values: dict) -> dict: ...
 
 
+class SourceParser(ABC):
+    """Turn a game file's text into record dicts, per a file-source node's extraction rules.
+
+    A producer parallel to OCR: it reads a log/config file rather than the screen. ``stream``
+    marks a line-oriented parser (a log — many records, tailable by byte offset) versus a
+    whole-document parser (ini/json/xml/yaml — the file is one structured value). ``match`` and
+    ``fields`` are the node's rules (lists of :class:`SourceMatch` / :class:`SourceField`); they
+    are passed in rather than imported here so this module stays free of the profile models.
+    """
+
+    stream: bool = False
+
+    @abstractmethod
+    def parse(self, text: str, match, fields) -> list[dict]:
+        """Parse ``text`` into a list of ``{field_id: value}`` records using the rules."""
+
+
 class WindowClassifier(ABC):
     """Decide which profile-defined window (and state) a frame shows.
 

@@ -5,7 +5,8 @@
 // and targets can also be added from the dropdowns here. Rendering only — wiring is in main.js.
 import { esc, TRASH, labCell } from "../dom.js";
 
-const KINDS = [["interval", "interval (periodic)"], ["on_change", "on change (live)"], ["manual", "manual only"]];
+const KINDS = [["interval", "interval (periodic)"], ["on_change", "on change (live)"],
+    ["on_app_start", "on app start"], ["on_capture", "on capture start"], ["manual", "manual only"]];
 
 // removable source pill — same look as a subset's join-source pills (.sv-input). `rmCls`
 // is the wiring hook (tg-rmwatch / tg-rmtarget); `attr` carries the id back to the handler.
@@ -38,11 +39,13 @@ export function triggerParts(t, model) {
             );
     }
 
-    // targets: drag the out-port to a price node OR pick one here (same source-row UI as watch)
+    // targets: drag the out-port to a price node / file source OR pick one here (same source-row UI
+    // as watch). A target is a price-node id (sweep) or a file-source id (read a log/config file).
     const haveT = new Set(t.targets || []);
-    const popts = (model.profile.price_nodes || []).map((p) => p.id)
-        .filter((p) => !haveT.has(p)).map((p) => `<option>${esc(p)}</option>`).join("");
-    const targets = labCell("fires", "price nodes this trigger fires", true)
+    const tgtIds = [...(model.profile.price_nodes || []).map((p) => p.id),
+                    ...(model.profile.file_sources || []).map((s) => s.id)];
+    const popts = tgtIds.filter((p) => !haveT.has(p)).map((p) => `<option>${esc(p)}</option>`).join("");
+    const targets = labCell("fires", "price nodes (sweep) or file sources (read) this trigger fires", true)
         + srcInputs(
             (t.targets || []).map((p) => srcChip(p, "data-p", "tg-rmtarget")).join(""),
             "tg-addfire",
