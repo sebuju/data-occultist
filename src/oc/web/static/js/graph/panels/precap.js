@@ -356,14 +356,16 @@ function renderPrecap(node, st) {
     const stats = [];
     if (recLive || procLive) stats.push(`${st.frames} frames`);
     if (procLive) stats.push(`${st.processed} processed`, `${st.read || 0} read`, `${st.fps} /s`);
+    // one stat per row (.pc-bar is a column) — each counter, timing, window/state, and
+    // warning/error is its own line instead of a single ·-joined run
+    const barRows = stats.map((s) => `<span class="muted">${s}</span>`);
+    if (procLive) barRows.push(`<span class="muted">${tm.ms_per_frame || 0} ms/frame (${esc(tm.device || "cpu")})</span>`);
+    if (procLive && st.window) barRows.push(`<span class="conf-good" title="window/state recognised this frame">${esc(st.window)}/${esc(st.state)}</span>`);
+    if (recPaused) barRows.push(`<span class="conf-warn">${PAUSE} auto-scroll reached the list end — resume to retry, or uncheck it</span>`);
+    if (st.warning) barRows.push(`<span class="conf-warn">${WARN} ${esc(st.warning)}</span>`);
+    if (st.error) barRows.push(`<span class="conf-bad">${esc(st.error)}</span>`);
     const bar = right.querySelector(".pc-bar");   // absent in the new-session pane
-    if (bar) bar.innerHTML = `
-    ${stats.length ? `<span class="muted">${stats.join(" · ")}</span>` : ""}
-    ${procLive ? `<span class="muted">· ${tm.ms_per_frame || 0} ms/frame (${esc(tm.device || "cpu")})</span>` : ""}
-    ${procLive && st.window ? `<span class="conf-good" title="window/state recognised this frame">· ${esc(st.window)}/${esc(st.state)}</span>` : ""}
-    ${recPaused ? `<span class="conf-warn">${PAUSE} auto-scroll reached the list end — resume to retry, or uncheck it</span>` : ""}
-    ${st.warning ? `<span class="conf-warn">${WARN} ${esc(st.warning)}</span>` : ""}
-    ${st.error ? `<span class="conf-bad">${esc(st.error)}</span>` : ""}`;
+    if (bar) bar.innerHTML = barRows.join("");
     // recognition tally: per-window/state frame counts (the "" key is a miss — no window matched)
     const recogEl = right.querySelector(".pc-recog");
     if (recogEl) {
