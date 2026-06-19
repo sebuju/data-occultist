@@ -647,6 +647,122 @@ windows:
     enabled: true
     item: item_1
   item_tells: []
+- id: relic_select
+  dataset: dataset
+  fields:
+  - id: name
+    type: text
+    extract: whole
+    separator: /
+    rules: []
+    dict_mode: correct
+    dictionary: ''
+    learn: false
+    fuzzy: 0.82
+    min_confidence: 0.0
+    isolate: false
+  - id: count
+    type: number
+    extract: number
+    separator: /
+    rules: []
+    dict_mode: correct
+    dictionary: ''
+    learn: false
+    fuzzy: 0.82
+    min_confidence: 0.4
+    isolate: false
+  data_area:
+    x: 0.049214731724955926
+    y: 0.17390890803051354
+    w: 0.4093065932805556
+    h: 0.7388998688922372
+  detect:
+  - id: detect_1
+    enabled: true
+    search:
+      x: 0.1463177951226922
+      y: 0.036483291198062776
+      w: 0.16718097397844214
+      h: 0.050204210400661656
+    text: fissure
+    threshold: 0.8
+    match: partial
+    included: false
+    case_sensitive: false
+    min_chars: 4
+    strip: alnum
+    negate: false
+  detect_mode: all
+  states: []
+  regions: []
+  items:
+  - id: relic_item
+    enabled: true
+    box:
+      x: 0.1564117043481357
+      y: 0.3719764718972616
+      w: 0.10581042034997297
+      h: 0.18851351829852364
+    cutout: item-20260619-063410-523943.png
+    cutout_box:
+      x: 0.14395769833606104
+      y: 0.35069043565609326
+      w: 0.1312781742480591
+      h: 0.24713487140350532
+    align: center
+    priority: 0
+  static_grid: false
+  scroll:
+    enabled: true
+    scrollbar:
+      x: 0.4643023141788923
+      y: 0.1848082736964338
+      w: 0.004
+      h: 0.7211404858286108
+    scrollbar_orientation: vertical
+    rows: 1
+    cols: 1
+    row_stride: 0.0
+    col_stride: 0.0
+    autoscroll: false
+    scroll_clicks: 1
+  preprocess:
+    mode: none
+    colors: []
+    tolerance: 60
+    scale: 1.0
+  live: true
+  item_fields:
+  - id: name
+    box:
+      x: 0.0
+      y: 0.6572103881163107
+      w: 0.8294214296156744
+      h: 0.16697240876153593
+    field: name
+    tell: true
+    tell_conf: 0.5
+    tell_allow_text: false
+    locate: true
+    align: bottom
+    enabled: true
+    item: relic_item
+  - id: count
+    box:
+      x: 0.005776053972939599
+      y: 0.01033132602424181
+      w: 0.24640756341679232
+      h: 0.15129716038121385
+    field: count
+    tell: false
+    tell_conf: 0.5
+    tell_allow_text: false
+    locate: false
+    align: bottom
+    enabled: true
+    item: relic_item
+  item_tells: []
 datasets:
 - id: master
   aggregate: latest
@@ -678,6 +794,11 @@ datasets:
   key_field: ''
   dedup: true
   batch_mode: run
+- id: dataset
+  aggregate: latest
+  key_field: ''
+  dedup: true
+  batch_mode: detection
 subsets:
 - id: statistic_prices_joined
   dataset: ''
@@ -761,7 +882,9 @@ subsets:
   - updated
   - live_sellers
   enrich: []
-  sort: []
+  sort:
+  - field: price_min
+    desc: true
   sort_by: ''
   sort_desc: true
   latest_batch: true
@@ -782,7 +905,11 @@ subsets:
   hidden_columns:
   - _seq
   - key
-  enrich: []
+  enrich:
+  - id: relic_contents_1
+    type: relic_contents
+    source_field: name
+    enabled: true
   sort: []
   sort_by: ''
   sort_desc: false
@@ -940,26 +1067,26 @@ layout:
       h: 220.0
       collapsed: false
     ds:prices_relic_live:
-      x: 1220.0
-      y: 1920.0
+      x: 1240.0
+      y: 2220.0
       w: 360.0
       h: 360.0
       collapsed: false
     sub:relic_rewards_live:
-      x: 1660.0
-      y: 1320.0
+      x: 1640.0
+      y: 1620.0
       w: 380.0
       h: 960.0
       collapsed: false
     price:relic_live:
-      x: 1220.0
-      y: 1680.0
+      x: 1240.0
+      y: 1980.0
       w: 360.0
       h: 220.0
       collapsed: false
     trigger:relic_watch:
-      x: 1220.0
-      y: 1320.0
+      x: 1240.0
+      y: 1620.0
       w: 360.0
       h: 340.0
       collapsed: false
@@ -987,9 +1114,9 @@ layout:
       collapsed: false
     sub:relic_rewards_limit:
       x: 740.0
-      y: 1320.0
+      y: 1280.0
       w: 440.0
-      h: 220.0
+      h: 260.0
       collapsed: false
     ds:relics_offered:
       x: 740.0
@@ -1172,16 +1299,60 @@ layout:
       h: 320.0
       collapsed: false
     sub:relic_rewards_price_from_stored:
-      x: 740.0
-      y: 980.0
-      w: 440.0
+      x: 1640.0
+      y: 1280.0
+      w: 380.0
       h: 300.0
       collapsed: false
     trigger:trigger:
-      x: 1220.0
-      y: 980.0
-      w: 340.0
+      x: 1240.0
+      y: 1280.0
+      w: 360.0
       h: 320.0
+      collapsed: false
+    ds:dataset:
+      x: 980.0
+      y: 4620.0
+      w: 360.0
+      h: 380.0
+      collapsed: false
+    win:relic_select:
+      x: 120.0
+      y: 4700.0
+      collapsed: false
+    prev:relic_select:
+      x: 120.0
+      y: 5560.0
+      w: 760.0
+      h: 540.0
+      collapsed: false
+    det:relic_select:detect_1:
+      x: 980.0
+      y: 5020.0
+      w: 220.0
+      h: 340.0
+      collapsed: false
+    sb:relic_select:scrollbar:
+      x: 1200.0
+      y: 5500.0
+      w: 220.0
+      h: 120.0
+      collapsed: false
+    item:relic_select:relic_item:
+      x: -280.0
+      y: 4700.0
+      collapsed: false
+    fld:relic_select:relic_item:name:
+      x: 850.0
+      y: 20.0
+      w: 220.0
+      h: 660.0
+      collapsed: false
+    fld:relic_select:relic_item:count:
+      x: 850.0
+      y: 188.0
+      w: 220.0
+      h: 480.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -1261,9 +1432,7 @@ layout:
         price_min: 87
         price_median: 96
         live_sellers: 69
-      sorts:
-      - col: price_min
-        dir: -1
+      sorts: []
     view:relic_rewards_limit:
       widths:
         key: 52
@@ -1311,6 +1480,7 @@ layout:
   - relic_window
   - mod_window
   - relic_window_3
+  - relic_select
   groups:
   - id: group_9
     title: warframe

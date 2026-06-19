@@ -133,7 +133,14 @@ class Enricher(ABC):
     Runs as a *post-processing* step over saved records (never in the capture
     loop), so network latency or outages can't compromise capture robustness.
     Returns a dict of extra fields to merge, or ``{}`` on failure.
+
+    ``live_safe`` marks an enricher cheap enough to run inside the live view
+    refresh (e.g. a local cached-table lookup). It stays ``False`` for anything
+    that touches the network — those run only on the explicit enrich pass, never
+    in the per-poll :func:`oc.enrich.subset.compute_view`.
     """
+
+    live_safe: bool = False
 
     @abstractmethod
     def enrich(self, values: dict) -> dict: ...

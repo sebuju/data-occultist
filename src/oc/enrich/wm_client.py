@@ -151,6 +151,23 @@ def online_sell_prices(orders: list[dict]) -> list[float]:
     )
 
 
+_ITEMS_V2_PATH = "/v2/items/{slug}"
+
+
+def fetch_item_ducats(slug: str, timeout: float = 30.0) -> int | None:
+    """Ducat value for ``slug`` from the v2 item endpoint (``data.ducats``).
+
+    Returns ``None`` when the item isn't on the market (an untradeable reward like
+    Forma 404s) or carries no ducat value. Raises the usual :data:`NET_ERRORS` on a
+    transport fault for the caller to swallow. v1's single-item endpoint is retired
+    (404s like the v1 catalogue), so this uses v2 — whose ``slug`` is the same string
+    the v1 statistics endpoint takes."""
+    payload = _get(_ITEMS_V2_PATH.format(slug=urllib.parse.quote(slug, safe="")), timeout)
+    data = payload.get("data") or {}
+    ducats = data.get("ducats")
+    return int(ducats) if isinstance(ducats, (int, float)) else None
+
+
 def fetch_statistics(slug: str, timeout: float = 30.0) -> dict:
     """Price statistics for ``slug``: ``{statistics_closed, statistics_live}`` each
     holding ``48hours`` and ``90days`` arrays of daily candles. Raises on failure."""

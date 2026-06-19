@@ -140,6 +140,32 @@ def _derive_cell(template: str, row: dict):
     return render_template(text, row)
 
 
+def _apply_live_enrich(rows: list[dict], rules) -> None:
+    """Merge LIVE-SAFE enrichers' columns into each row, in place.
+
+    Each enabled :class:`EnrichRule` is built once (not per row); only enrichers whose
+    ``live_safe`` is true run here — network ones (e.g. ``warframe_market``) are skipped
+    so a per-poll view refresh never touches the network. An enricher that fails to build
+    (unknown name / bad opts) is quietly dropped, like a missing derived column."""
+    if not rules:
+        return
+    from ..registry import build_enricher
+
+    enrichers = []
+    for rule in rules:
+        if not getattr(rule, "enabled", True) or not getattr(rule, "type", ""):
+            continue
+        try:
+            e = build_enricher(rule.type, source_field=getattr(rule, "source_field", "name"))
+        except (KeyError, TypeError):
+            continue
+        if getattr(e, "live_safe", False):
+            enrichers.append(e)
+    for row in rows:
+        for e in enrichers:
+            row.update(e.enrich(row))
+
+
 def apply_derived(row: dict, derived: list[DerivedColumn]) -> None:
     """Add each derived column to the row in order, so a later column can reference an
     earlier one."""
@@ -215,6 +241,7 @@ def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
     rows = _join(inputs, sub.join_field or "name", getattr(sub, "join_mode", "outer") or "outer")
     for row in rows:
         apply_derived(row, sub.derived)
+    _apply_live_enrich(rows, getattr(sub, "enrich", None) or [])
     rows = [r for r in rows if all(match_rule(r, f) for f in sub.filters if f.field)]
     # multi-column sort (primary first), applied BEFORE limit. Folds the legacy single
     # sort_by/sort_desc in when no `sort` list is set. A stable sort applied from the LAST
