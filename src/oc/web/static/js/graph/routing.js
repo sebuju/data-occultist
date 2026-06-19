@@ -74,9 +74,9 @@ function selClsFor(aId, bId) {
 // Build the descriptor for every line. `aId`/`bId` name each rect's owner (used to
 // fan endpoints that share a node side); `ra`/`rb` are the world rects.
 // A data edge always leaves its source node's `.port.out` handle. Every source that draws
-// one — window, price, dataset, view (subset) — anchors its data line at the port dot and
-// gets the animated flow. (Keep this prefix set in sync with `outPortSpec`.)
-const PORT_OUT_SRC = ["win:", "price:", "ds:", "sub:"];
+// one — window, price, dataset, view (subset), file source — anchors its data line at the port
+// dot and gets the animated flow. (Keep this prefix set in sync with `outPortSpec`.)
+const PORT_OUT_SRC = ["win:", "price:", "ds:", "sub:", "src:"];
 // a data edge leaves its source's out-port; a trigger's control edges (fires + watch) leave the
 // trigger's out-ports too — `fires` from the RIGHT `.port.out`, `watch` from the LEFT `.port.pwatch`.
 const fromPortOut = (aId, kind) =>

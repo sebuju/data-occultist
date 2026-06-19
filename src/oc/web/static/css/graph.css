@@ -112,7 +112,9 @@
 .gn-h .gn-enable { position: relative; z-index: 1; }
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap; }
 .gnode input.gi { width: 100%; }
-.gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; border: unset; background: transparent; margin-left: -35px; padding-left: 35px; }
+.gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; border: unset; background: transparent; margin-left: -35px; padding-left: 35px;
+    cursor: inherit; }   /* click-to-arm: it's a drag handle until the 2nd click focuses it, so don't show the text I-beam until editing */
+.gnode input.gi-id:focus { cursor: text; }
 input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gnode .big { font-size: var(--fs-xl); }
 /* labelled field controls — label + input in a 2-col grid so every input
@@ -296,6 +298,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .img-foot .imgall { margin-left: auto; }   /* preview-all always sits at the right */
 .img-pages { display: inline-flex; align-items: center; gap: 4px; }
 .img-pages[hidden] { display: none; }
+/* draw-layer toggles under the canvas: one .flab checkbox per row */
+.img-layers { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.img-layers .flab { font-size: var(--fs-sm); }
 .img-pageind { font-size: var(--fs-sm); color: var(--muted); min-width: 28px; text-align: center; }
 .imgpg { padding: 2px 8px; }
 
@@ -515,14 +520,25 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .src-arrow { opacity: 0.6; padding: 0 2px; }
 .src-cs { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; opacity: 0.8; }
 .src-chk { display: inline-flex; align-items: center; }
-.src-addm, .src-addf { align-self: flex-start; background: transparent; border: 1px dashed var(--border);
-    color: var(--muted); border-radius: 5px; padding: 1px 8px; cursor: pointer; }
-.src-addm:hover, .src-addf:hover { color: var(--text); border-color: var(--accent); }
+.src-addm, .src-addf { align-self: flex-start; }
 .src-findrow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.src-cands { display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow: auto; margin-top: 4px; }
-.src-cand { text-align: left; background: var(--node-head); border: 1px solid var(--border); border-radius: 5px;
-    padding: 2px 6px; color: var(--text); cursor: pointer; font-size: 11px; word-break: break-all; }
-.src-cand:hover { border-color: var(--accent); }
+.src-found { word-break: break-all; }
+
+/* auto-find modal: list (left) + content preview (right) */
+.find-modal { display: grid; grid-template-columns: minmax(280px, 38%) 1fr; gap: 10px; height: 100%; min-height: 0; padding: 12px; }
+.find-list { display: flex; flex-direction: column; gap: 2px; overflow: auto; min-height: 0; }
+.find-status { padding: 8px; }
+.find-item { display: flex; flex-direction: column; gap: 1px; text-align: left; background: var(--node-head);
+    border: 1px solid var(--border); border-radius: 5px; padding: 4px 8px; color: var(--text); cursor: pointer; }
+.find-item:hover { border-color: var(--accent); }
+.find-item.sel { border-color: var(--accent); background: var(--node-head-sel, var(--node-head)); }
+.find-path { font-size: 11px; word-break: break-all; }
+.find-meta { font-size: 10px; }
+.find-view { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.find-vhead { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.find-vpath { flex: 1; font-size: 11px; word-break: break-all; color: var(--muted); }
+.find-use { white-space: nowrap; background: var(--accent); color: var(--bg); border: none; border-radius: 5px; padding: 3px 10px; cursor: pointer; }
+.find-pre { flex: 1; margin: 0; overflow: auto; padding: 8px; font-size: 11px; white-space: pre; }
 .src-prev-info { margin-top: 6px; font-size: 11px; }
 .src-preview { max-height: 200px; overflow: auto; margin-top: 2px; }
 .src-ptab { border-collapse: collapse; font-size: 11px; width: 100%; }

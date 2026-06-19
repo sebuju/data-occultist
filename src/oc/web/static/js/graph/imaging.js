@@ -12,7 +12,7 @@ import { persist } from "./persist.js";
 import * as groups from "./groups.js";
 import {
     $, setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases, overlays,
-    gridPreviews, gridReads, gridCellBoxes, gridGuards, itemReads, clearGrid, view,
+    gridPreviews, gridReads, gridCellBoxes, gridGuards, gridDetections, itemReads, clearGrid, view,
 } from "./state.js";
 import { drawEdges, freezeRouting, requestEdges } from "./routing.js";
 import { registerWorker, unregisterWorker } from "./workers.js";
@@ -129,7 +129,8 @@ async function openImage(winId, nodeEl = null) {
       <button class="imgbtn" title="choose which stashed images this window uses">${CAMERA}<span class="imgbtn-lbl">images</span></button>
       <button class="imgcap" title="capture the live window into the current page">recapture</button>
       <button class="imgall" title="preview data read from ALL of this window's images">preview all</button>
-    </div>`;
+    </div>
+    ${imgLayersHTML()}`;
     const canvas = host.querySelector("canvas");
     const kindOf = () => host.querySelector(".tool.active")?.dataset.kind || "region";
     const overlay = new Overlay(canvas, {
@@ -177,6 +178,8 @@ async function openImage(winId, nodeEl = null) {
     host.querySelector(".imgcap").addEventListener("click", () => loadImage(winId, true));   // recapture re-reads
     host.querySelector(".imgall").addEventListener("click", (e) => previewAll(winId, e.currentTarget));
     host.querySelectorAll(".imgpg").forEach((b) => b.addEventListener("click", () => stepWinPage(winId, +b.dataset.d)));
+    host.querySelectorAll(".imglayer").forEach((c) => c.addEventListener("change", (e) =>
+        overlay.setVisible({ [e.target.dataset.k]: e.target.checked })));   // toggle a draw layer on the canvas
     if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
     await loadImage(winId, false);   // its onload now refreshes detect once the pixels are in
     drawEdges();
@@ -876,6 +879,22 @@ function refreshImageBoxes(winId) {
     entry.overlay.setGuardCells(gridGuards.get(winId) || []);     // fieldless guard items (distinct colour)
     entry.overlay.setGridPreview(gridPreviews.get(winId) || staticFieldPreview(winId) || []);
     entry.overlay.setPreview(gridReads.get(winId) || []);   // value + confidence per cell
+    entry.overlay.setDetections(gridDetections.get(winId) || []);   // raw OCR lines (opt-in layer)
+}
+
+// Draw-layer toggles under the window canvas: one checkbox per row, each gating a draw layer
+// in the overlay. raw OCR (every line the engine found, taught or not) is opt-in / default off.
+const IMG_LAYERS = [
+    ["regions", "regions", "taught OCR regions + data-area/scrollbar boxes"],
+    ["detects", "detectors", "detector landmark boxes + their live pass/fail"],
+    ["cells", "cells", "the cell tiling the reader actually found"],
+    ["grid", "grid", "field grid preview + column/locator guides"],
+    ["reads", "reads", "what OCR pulled from each cell, tinted by confidence"],
+    ["raw", "raw OCR", "every raw line the engine found, independent of the taught boxes"],
+];
+function imgLayersHTML() {
+    return `<div class="img-layers" title="which overlays draw on the capture">${IMG_LAYERS.map(([k, label, tip]) =>
+        `<label class="flab" title="${esc(tip)}">${esc(label)} <input type="checkbox" class="imglayer" data-k="${k}"${k === "raw" ? "" : " checked"}/></label>`).join("")}</div>`;
 }
 
 // The cell-relative box the reader scans for a row anchor — mirrors locator_of() server-side:
@@ -1008,6 +1027,8 @@ function setGridFromPreview(winId, res) {
     if (reads.length) gridReads.set(winId, reads); else gridReads.delete(winId);
     if (cells.length) gridCellBoxes.set(winId, cells); else gridCellBoxes.delete(winId);
     if (guardCells.length) gridGuards.set(winId, guardCells); else gridGuards.delete(winId);
+    const dets = res.detections || [];   // raw OCR lines (the opt-in "raw OCR" layer)
+    if (dets.length) gridDetections.set(winId, dets); else gridDetections.delete(winId);
     refreshImageBoxes(winId);
 }
 

@@ -7,6 +7,7 @@ import * as hub from "../hub.js";
 import { esc, TRASH, CAMERA, PAUSE, labCell } from "../dom.js";
 import { nodeIcon, iconFor } from "./node_icons.js";
 import { openModal } from "../modal.js";
+import { since } from "../datefmt.js";
 import { Overlay } from "../overlay.js";
 import { log, timed, setLogOpen, mirrorConsole } from "../log.js";
 
@@ -1247,41 +1248,93 @@ function wireSource(div, n) {
         else { autosave(false); schedulePreview(); }
     }));
 
-    // auto-find the file across generic OS locations
-    $(".src-find")?.addEventListener("click", async () => {
-        const found = $(".src-found"), host = $(".src-cands");
-        found.textContent = "searching…";
+    // auto-find the file across generic OS locations — opens a modal that runs the search,
+    // lists hits, previews a clicked file's contents, and pins the chosen one as the path.
+    $(".src-find")?.addEventListener("click", () => openFindModal($, s, schedulePreview));
+    // read the file now (writes to the dataset). The button doubles as cancel: while a read is in
+    // flight it carries `.reading` (CSS appends a spinner) and a second click aborts the request.
+    let readCtl = null;
+    $(".src-read")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        if (readCtl) { readCtl.abort(); return; }   // second click = cancel
+        readCtl = new AbortController();
+        btn.classList.add("reading"); prog.textContent = "reading…";
         try {
-            const r = await api.sources.find(model.profile.name, { filename: s.filename, roots: s.roots });
-            renderCandidates($, host, found, s, n, schedulePreview, r.candidates || []);
-        } catch (e) { found.textContent = String(e.message || e); }
-    });
-    // read the file now (writes to the dataset)
-    $(".src-read")?.addEventListener("click", async () => {
-        prog.textContent = "reading…";
-        try { const r = await api.sources.read(model.profile.name, s.id); prog.textContent = `read ${r.rows} row(s) → ${r.dataset || "(no dataset)"}`; refreshLive(); }
-        catch (e) { prog.textContent = String(e.message || e); }
+            const r = await api.sources.read(model.profile.name, s.id, readCtl.signal);
+            prog.textContent = `read ${r.rows} row(s) → ${r.dataset || "(no dataset)"}`; refreshLive();
+        } catch (err) {
+            prog.textContent = err.name === "AbortError" ? "cancelled" : String(err.message || err);
+        } finally {
+            btn.classList.remove("reading"); readCtl = null;
+        }
     });
     $(".src-prevbtn")?.addEventListener("click", runPreview);
 }
 
-// candidate picker for auto-find: each hit is a button that pins it as the explicit path.
-function renderCandidates($, host, found, s, n, schedulePreview, cands) {
-    found.textContent = cands.length ? `${cands.length} found` : "none found";
-    host.replaceChildren();
-    cands.slice(0, 20).forEach((c) => {
-        const b = document.createElement("button");
-        b.className = "src-cand";
-        b.textContent = `${c.path}  (${(c.size / 1024).toFixed(0)} KB)`;
-        b.title = "use this file";
-        b.addEventListener("click", () => {
-            model.setSourceProp(s.id, "path", c.path);
-            const pin = $(".src-path"); if (pin) pin.value = c.path;
-            autosave(false); schedulePreview();
-            host.replaceChildren(); found.textContent = "";
-        });
-        host.appendChild(b);
+// Auto-find picker (modal): runs the search, lists hits on the left, previews a clicked file's
+// contents on the right, and pins the chosen one as the explicit path. Closing the modal aborts
+// the search AND any in-flight content peek (handle.signal + onClose). All user-driven — never a
+// poll/tick, so a full innerHTML build per click is fine.
+function openFindModal($, s, schedulePreview) {
+    if (!model.profile.name) return;
+    const wrap = document.createElement("div");
+    wrap.className = "find-modal";
+    wrap.innerHTML = `<div class="find-list"><div class="find-status muted">searching…</div></div>
+      <div class="find-view"><div class="find-status muted">select a file to preview its contents</div></div>`;
+    const listEl = wrap.querySelector(".find-list");
+    const viewEl = wrap.querySelector(".find-view");
+
+    let viewCtl = null;
+    const handle = openModal({
+        title: `auto-find${s.filename ? ": " + esc(s.filename) : ""}`, size: "large",
+        node: wrap, onClose: () => viewCtl?.abort(),    // handle.signal aborts find; this aborts the peek
     });
+
+    const choose = (path) => {
+        model.setSourceProp(s.id, "path", path);
+        const pin = $(".src-path"); if (pin) pin.value = path;
+        const found = $(".src-found"); if (found) found.textContent = path;
+        autosave(false); schedulePreview();
+        handle.close();
+    };
+
+    async function showFile(c, btn) {
+        listEl.querySelectorAll(".find-item.sel").forEach((x) => x.classList.remove("sel"));
+        btn.classList.add("sel");
+        viewCtl?.abort(); viewCtl = new AbortController();
+        viewEl.innerHTML = `<div class="find-vhead"><span class="find-vpath">${esc(c.path)}</span>
+          <button class="find-use">use this file</button></div><pre class="find-pre muted">loading…</pre>`;
+        viewEl.querySelector(".find-use").addEventListener("click", () => choose(c.path));
+        try {
+            const r = await api.sources.peek(model.profile.name, c.path, viewCtl.signal);
+            const pre = viewEl.querySelector(".find-pre");
+            pre.classList.remove("muted");
+            pre.textContent = (r.text || "") + (r.truncated ? "\n…(truncated)" : "");
+        } catch (e) {
+            if (e.name === "AbortError") return;
+            const pre = viewEl.querySelector(".find-pre"); if (pre) pre.textContent = String(e.message || e);
+        }
+    }
+
+    (async () => {
+        try {
+            const r = await api.sources.find(model.profile.name, { filename: s.filename, roots: s.roots }, handle.signal);
+            const cands = r.candidates || [];
+            if (!cands.length) { listEl.innerHTML = `<div class="find-status muted">none found</div>`; return; }
+            listEl.replaceChildren();
+            cands.slice(0, 50).forEach((c) => {
+                const b = document.createElement("button");
+                b.className = "find-item";
+                b.innerHTML = `<span class="find-path">${esc(c.path)}</span>
+                  <span class="find-meta muted">${(c.size / 1024).toFixed(0)} KB · ${esc(since(new Date(c.mtime * 1000).toISOString()))}</span>`;
+                b.addEventListener("click", () => showFile(c, b));
+                listEl.appendChild(b);
+            });
+        } catch (e) {
+            if (e.name === "AbortError") return;
+            listEl.innerHTML = `<div class="find-status muted">${esc(String(e.message || e))}</div>`;
+        }
+    })();
 }
 
 // small read-only preview table (capped) of the rows the current rules produce. Edit-driven

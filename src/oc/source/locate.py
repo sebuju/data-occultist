@@ -17,6 +17,13 @@ _MAX_DEPTH = 4       # how deep below each root to descend
 _MAX_HITS = 60       # stop after this many matches (the UI shows a pick list, not a census)
 
 
+def expand(p: str) -> str:
+    """Expand ``%VAR%``/``$VAR`` env vars and a leading ``~`` in a user-supplied path/root.
+    On Windows ``os.environ`` is case-insensitive, so ``%LocalAppData%`` resolves like
+    ``%LOCALAPPDATA%``. Unset vars are left verbatim (expandvars' own behaviour)."""
+    return os.path.expanduser(os.path.expandvars(p)) if p else p
+
+
 def _env_dir(*names) -> list[str]:
     out = []
     for n in names:
@@ -80,7 +87,7 @@ def find_candidates(filename_glob: str, roots=None, *, limit: int = _MAX_HITS) -
     ``*.cfg``), newest first. Each: ``{path, mtime, size}``."""
     if not filename_glob:
         return []
-    search = [str(r) for r in (roots or [])] + default_roots()
+    search = [expand(str(r)) for r in (roots or [])] + default_roots()
     glob = filename_glob.lower()
     hits: list[dict] = []
     seen_paths: set[str] = set()
@@ -115,6 +122,6 @@ def resolve_path(source) -> str | None:
     """The concrete file a source reads: its explicit ``path`` if set, else the newest
     auto-find hit for ``filename`` (+ the source's extra ``roots``). ``None`` if neither finds one."""
     if getattr(source, "path", ""):
-        return source.path
+        return expand(source.path)
     cands = find_candidates(getattr(source, "filename", ""), getattr(source, "roots", None))
     return cands[0]["path"] if cands else None

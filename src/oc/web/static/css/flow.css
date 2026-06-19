@@ -225,7 +225,7 @@ a.node.win:hover { border-color: var(--accent); }
 .tc-warn { color: var(--warn); }
 .tc-bad { color: var(--danger); }
 .prev-rej td { opacity: 0.62; }
-.prev-sep td { padding: 0; height: 2px; background: var(--accent); opacity: 0.5; }   /* rule between images in preview-all */
+.prev-sep td { padding: 0; height: 2px; background: var(--muted); opacity: 0.5; }   /* rule between images in preview-all */
 .tell-chip { display: inline-block; padding: 0 5px; margin: 1px; border-radius: 3px;
     font-size: var(--fs-xs); border: 1px solid currentColor; white-space: nowrap; }
 .tell-chip.tc-ok { background: #7ddc7d1f; }

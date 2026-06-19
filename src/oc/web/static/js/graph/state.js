@@ -36,6 +36,7 @@ export const gridPreviews = new Map();   // winId -> live-detected field boxes (
 export const gridReads = new Map();      // winId -> per-cell read values {x,y,w,h,text,confidence}
 export const gridCellBoxes = new Map();  // winId -> detected CELL outlines (solid), the tiling found
 export const gridGuards = new Map();     // winId -> located GUARD cells (fieldless detector items, e.g. "no relic"), drawn distinctly
+export const gridDetections = new Map(); // winId -> raw OCR lines {box,text,confidence} the engine found (opt-in overlay layer)
 export const itemReads = new Map();      // "winId:itemId" -> last cutout read {fields,tells,valid,cell}
 
 // Live dataset counts (from the heartbeat) + change-detection bookkeeping.
@@ -45,7 +46,7 @@ export const dsTab = new Map();          // dataset -> "data" | "history" (which
 
 // Invalidate every detected-grid layer for a window at once (kept in lock-step so a stale
 // cell outline can't linger after the others clear).
-export function clearGrid(winId) { gridPreviews.delete(winId); gridReads.delete(winId); gridCellBoxes.delete(winId); gridGuards.delete(winId); }
+export function clearGrid(winId) { gridPreviews.delete(winId); gridReads.delete(winId); gridCellBoxes.delete(winId); gridGuards.delete(winId); gridDetections.delete(winId); }
 
 // Node rect geometry from the live DOM (border-box). Foundational helpers shared by
 // routing, placement, marquee and the node map — all read straight off `nodeEls`.

@@ -82,10 +82,9 @@ export function sourceParts(s) {
       ${throttle}${tail}
       ${matchBlock}${fields}</div>
       <div class="src-findrow"><button class="src-find" title="search common game/config locations for the filename">⌕ auto-find</button><span class="src-found muted"></span></div>
-      <div class="src-cands"></div>
       <div class="src-prev-info muted"></div>
       <div class="src-preview"></div>
-      <div class="gn-foot"><button class="src-read" title="read the file now and write rows to the dataset">↻ read now</button>
+      <div class="gn-foot"><button class="src-read" title="read the file now and write rows to the dataset (click again to cancel)">read now</button>
         <button class="src-prevbtn" title="preview what the current rules produce (without writing)">preview</button>
         <span class="src-prog muted"></span></div>`;
 

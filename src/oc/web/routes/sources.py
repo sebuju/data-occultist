@@ -8,12 +8,14 @@ node's config is a normal profile save (it persists in the YAML like any other n
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Body, HTTPException
 
 from ...profile import list_profiles, load_profile
 from ...profile.models import FileSourceDef
 from ...registry import build_parser, parser_names
-from ...source.locate import find_candidates, resolve_path
+from ...source.locate import expand, find_candidates, resolve_path
 from ...source.reader import default_reader
 from ...source.runner import read_source
 from ..deps import get_settings
@@ -60,6 +62,29 @@ def find(game: str, body: dict = Body(default={})):
     filename = (body.get("filename") or "").strip()
     roots = body.get("roots") or []
     return {"candidates": find_candidates(filename, roots)}
+
+
+_PEEK_BYTES = 256 * 1024   # head of a candidate to show in the auto-find picker
+
+
+@router.post("/{game}/peek")
+def peek(game: str, body: dict = Body(...)):
+    """Return the head of a candidate file's raw text (auto-find picker preview). ``body.path`` is an
+    absolute path from /find; env-vars/``~`` are still expanded so a hand-typed path also works."""
+    _profile_or_404(game)
+    raw = (body.get("path") or "").strip()
+    path = expand(raw)
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="file not found")
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            chunk = fh.read(_PEEK_BYTES)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    text = chunk.decode("utf-8", errors="replace")
+    return {"path": path, "text": text, "size": size,
+            "truncated": size > len(chunk), "line_ending": _line_ending(path)}
 
 
 @router.post("/{game}/preview")

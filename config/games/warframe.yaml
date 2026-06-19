@@ -589,7 +589,7 @@ windows:
     x: 0.2472434730244972
     y: 0.20376497562167278
     w: 0.5058830248532007
-    h: 0.2248650993910934
+    h: 0.23199946324364978
   detect:
   - id: detect_3
     enabled: true
@@ -821,7 +821,7 @@ windows:
     color: null
     tolerance: 60
     template: null
-    threshold: 0.5
+    threshold: 0.9
     locate: true
     align: ''
     align_x: center
@@ -868,6 +868,11 @@ datasets:
   key_field: ''
   dedup: true
   batch_mode: detection
+- id: dataset_2
+  aggregate: latest
+  key_field: ''
+  dedup: false
+  batch_mode: run
 subsets:
 - id: statistic_prices_joined
   dataset: ''
@@ -1045,7 +1050,68 @@ price_nodes:
   sources:
   - relic_rewards_limit
   source_field: name
-file_sources: []
+file_sources:
+- id: source
+  format: log_lines
+  path: '%LocalAppData%\Warframe\EE.log'
+  filename: ''
+  roots: []
+  dataset: dataset_2
+  watch: manual
+  throttle_s: 1.0
+  tail: true
+  match:
+  - op: contains
+    text: '[Info]'
+    case_sensitive: false
+  fields:
+  - id: time
+    method: column
+    anchor: ''
+    end: ''
+    stop: ''
+    delim: ' '
+    index: 0
+    path: ''
+    type: number
+    strip: true
+  - id: source
+    method: column
+    anchor: ''
+    end: ''
+    stop: ''
+    delim: ' '
+    index: 1
+    path: ''
+    type: text
+    strip: true
+  - id: severity
+    method: between
+    anchor: '['
+    end: ']'
+    stop: ''
+    delim: ' '
+    index: 0
+    path: ''
+    type: text
+    strip: true
+  - id: message
+    method: after
+    anchor: ']: '
+    end: ''
+    stop: ''
+    delim: ' '
+    index: 0
+    path: ''
+    type: text
+    strip: true
+  key:
+    fields:
+    - time
+    - message
+    sep: '|'
+    case_sensitive: false
+  enabled: true
 triggers:
 - id: owned_refresh
   kind: interval
@@ -1164,7 +1230,7 @@ layout:
       x: 1420.0
       y: 2820.0
       w: 540.0
-      h: 810.0
+      h: 1078.0
       collapsed: false
     det:relic_window:detect_1:
       x: 2000.0
@@ -1200,7 +1266,7 @@ layout:
       x: -1460.0
       y: 3040.0
       w: 520.0
-      h: 832.0
+      h: 1100.0
       collapsed: false
     item:mod_window:mod:
       x: -3060.0
@@ -1212,7 +1278,7 @@ layout:
       x: -1680.0
       y: 380.0
       w: 320.0
-      h: 781.0
+      h: 1081.0
       collapsed: false
     sb:equipment_window:scrollbar:
       x: -1960.0
@@ -1320,7 +1386,7 @@ layout:
       x: 60.0
       y: 2820.0
       w: 520.0
-      h: 799.0
+      h: 1067.0
       collapsed: false
     item:relic_window_3:item_1:
       x: -360.0
@@ -1380,7 +1446,7 @@ layout:
       x: 940.0
       y: 4920.0
       w: 520.0
-      h: 795.0
+      h: 1063.0
       collapsed: false
     det:relic_select:detect_1:
       x: 1800.0
@@ -1432,7 +1498,7 @@ layout:
       collapsed: false
     prev:relic_select:
       x: 960.0
-      y: 5760.0
+      y: 6060.0
       w: 360.0
       h: 320.0
       collapsed: false
@@ -1441,6 +1507,30 @@ layout:
       y: 2300.0
       w: 420.0
       h: 360.0
+      collapsed: false
+    src:source:
+      x: -2520.0
+      y: -1440.0
+      w: 700.0
+      h: 1380.0
+      collapsed: false
+    ds:dataset_2:
+      x: -1680.0
+      y: -1200.0
+      w: 360.0
+      h: 157.0
+      collapsed: false
+    prev:relic_window_3:
+      x: 80.0
+      y: 3960.0
+      w: 520.0
+      h: 680.0
+      collapsed: false
+    vt:ds:dataset_2:
+      x: -1260.0
+      y: -1400.0
+      w: 640.0
+      h: 460.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -1803,4 +1893,6 @@ layout:
   - vt:ds:master
   - prev:relic_select
   - vt:ds:prices_relic_live
+  - prev:relic_window_3
+  - vt:ds:dataset_2
   sub_groups: []

@@ -58,6 +58,9 @@ export class Overlay {
         this.previewItems = [];     // extracted per-cell values: {x,y,w,h,text,confidence}
         this.detections = [];       // raw OCR lines: {box:{x,y,w,h}, text, confidence}
         this.detectStatus = {};     // live detector outcomes by box id: {matched, score?, threshold?}
+        // Which draw layers paint (toggled by the checkboxes under the window canvas). raw OCR
+        // (every line the engine found, independent of the taught boxes) is opt-in / default off.
+        this.vis = { regions: true, detects: true, cells: true, grid: true, reads: true, raw: false };
         this.autoFit = true;        // keep fit-to-width until the user manually zooms
         this.worldZoom = 1;         // outer graph zoom, so UI sizes stay constant on screen
         this._bind();
@@ -76,6 +79,7 @@ export class Overlay {
     setPreview(items) { this.previewItems = items || []; this.render(); }
     setDetections(items) { this.detections = items || []; this.render(); }
     setDetectStatus(map) { this.detectStatus = map || {}; this.render(); }   // colour/tint detect boxes by live match
+    setVisible(partial) { Object.assign(this.vis, partial || {}); this.render(); }   // toggle which draw layers paint
 
     setImage(img) {
         this.img = img;
@@ -315,7 +319,7 @@ export class Overlay {
 
         // Detected cell structure: solid outline of each tiled item cell, so the grid the
         // reader actually found is visible (drawn under the dashed per-field boxes).
-        if (this.cellBoxes.length) {
+        if (this.vis.cells && this.cellBoxes.length) {
             ctx.strokeStyle = "rgba(125,220,125,0.95)";
             ctx.lineWidth = 2.5 * u;
             for (const c of this.cellBoxes) ctx.strokeRect(c.x * W, c.y * H, c.w * W, c.h * H);
@@ -325,7 +329,7 @@ export class Overlay {
         // WIN its tile and suppress a competitor. Distinct orange so it's never mistaken for a
         // data cell; a guard that LOST overlap (didn't win) is drawn dashed + faint so it's clear
         // it isn't acting. Filled lightly since it stores nothing and would otherwise read empty.
-        if (this.guardCells.length) {
+        if (this.vis.cells && this.guardCells.length) {
             ctx.lineWidth = 2.5 * u;
             for (const c of this.guardCells) {
                 const won = c.valid !== false;
@@ -338,7 +342,7 @@ export class Overlay {
         }
 
         // Grid preview: where each field will be read across the tiled grid.
-        if (this.gridCells.length) {
+        if (this.vis.grid && this.gridCells.length) {
             ctx.strokeStyle = "rgba(90,169,230,0.9)";
             ctx.lineWidth = 1.5 * u;
             ctx.setLineDash([5 * u, 3 * u]);
@@ -349,7 +353,7 @@ export class Overlay {
         // Preview read-outs: what OCR pulled from each cell, tinted by confidence. A
         // substituted value (an "if empty"/"if number"/"if text" fallback fired) is
         // config, not a read — neutral tint and the rule's name instead of a %.
-        for (const p of this.previewItems) {
+        if (this.vis.reads) for (const p of this.previewItems) {
             if (p.cell) {
                 // a cell-level tag (the matched item template's id): centred on the cell,
                 // white on black — no confidence fill, it isn't a read
@@ -370,17 +374,21 @@ export class Overlay {
         }
 
         // Raw OCR detections: exactly what OCR found and where (independent of boxes).
-        for (const d of this.detections) {
+        if (this.vis.raw) for (const d of this.detections) {
             const x = d.box.x * W, y = d.box.y * H, dw = d.box.w * W, dh = d.box.h * H;
             ctx.strokeStyle = "rgba(201,138,230,0.9)";
             ctx.lineWidth = 1 * u;
             ctx.setLineDash([3 * u, 2 * u]);
             ctx.strokeRect(x, y, dw, dh);
             ctx.setLineDash([]);
+            // text above the box; geometry (window fractions as %) below it
+            const b = d.box, p = (v) => (v * 100).toFixed(1);
             this._label(d.text, x, y, "#c98ae6", labelFs);
+            this._label(`x${p(b.x)} y${p(b.y)} w${p(b.w)} h${p(b.h)}`, x, y + dh, "#c98ae6", labelFs);
         }
 
         for (const b of this.boxes) {
+            if (b.role === "detect" ? !this.vis.detects : !this.vis.regions) continue;
             // a detect box carries its LIVE outcome: green/✓ when matched, red/✗ when not (a
             // faint fill so the verdict reads at a glance, with score% on the label)
             const st = b.role === "detect" ? this.detectStatus[b.id] : null;
@@ -402,7 +410,7 @@ export class Overlay {
         // Search structure (drawn LAST, on top of everything): the columns the reader tiles the
         // data area into + the locator scan strip in each — so the grid clues stay visible over
         // the cells/reads/boxes instead of hiding beneath them.
-        const g = this.gridGuides;
+        const g = this.vis.grid ? this.gridGuides : null;
         if (g) {
             // locator markers: a short amber bar straddling the data-area TOP border, marking
             // the horizontal slice of each column where rows are anchored. A border tick — NOT
