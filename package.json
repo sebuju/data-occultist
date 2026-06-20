@@ -1,0 +1,16 @@
+{
+  "name": "data-occultist-web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev-only tooling for the web UI front-end (lint). The app ships no build step.",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint \"src/oc/web/static/js/**/*.js\"",
+    "lint:fix": "eslint --fix \"src/oc/web/static/js/**/*.js\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "eslint": "^9.13.0",
+    "globals": "^15.11.0"
+  }
+}
