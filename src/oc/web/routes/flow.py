@@ -186,39 +186,16 @@ def _subset(game: str, subset: str):
     return profile, sub
 
 
-def _input_rows(profile, game: str, input_id: str, stack: frozenset, cache: dict,
-                aggregate: str = "latest") -> list[dict]:
-    """Rows for one subset input. A dataset input -> its stored records aggregated by the
-    CONSUMING subset's ``aggregate`` policy; a SUBSET input -> that subset computed first
-    (recursively, with ITS own aggregate), so its derived columns are available here.
-    `stack` holds the subsets currently being computed -> a cycle resolves to no rows instead
-    of recursing forever. `cache` memoises by (input, aggregate) so a shared upstream
-    computes once per policy."""
-    ck = (input_id, aggregate)
-    if ck in cache:
-        return cache[ck]
-    sub = profile.subset_def(input_id)
-    if sub is None:                                   # a plain dataset
-        store = _store(game, input_id, aggregate)
-        # records() off the fingerprinted state cache — NO forced ledger parse. The cache's src
-        # (history size+mtime) invalidates on any append, so _load reparses whenever the ledger
-        # moved; when it hasn't, the cache is provably current and a subset can't lag it. Parsing
-        # the full ledger here (ensure_loaded) cost ~870ms on a 44MB/101k-event dataset for no
-        # gain — the heal it provided only ever fired on an already-poisoned cache.
-        rows = store.records()
-    elif input_id in stack:                           # cycle -> stop
-        rows = []
-    else:
-        rows = _compute_subset_rows(profile, game, sub, stack | {input_id}, cache)
-    cache[ck] = rows
-    return rows
+def _flow_fetch(game: str):
+    """A ``fetch_dataset(dataset_id, aggregate)`` for :func:`compute_view_rows` — a plain
+    dataset's records aggregated by the CONSUMING subset's ``aggregate`` policy.
 
-
-def _compute_subset_rows(profile, game: str, sub, stack: frozenset, cache: dict) -> list[dict]:
-    from ...enrich.subset import compute_view
-    agg = getattr(sub, "aggregate", "latest") or "latest"
-    inputs = [(i, _input_rows(profile, game, i, stack, cache, agg)) for i in sub.inputs()]
-    return compute_view(inputs, sub)["rows"]
+    records() off the fingerprinted state cache — NO forced ledger parse. The cache's src
+    (history size+mtime) invalidates on any append, so _load reparses whenever the ledger
+    moved; when it hasn't, the cache is provably current and a subset can't lag it. Parsing
+    the full ledger here (ensure_loaded) cost ~870ms on a 44MB/101k-event dataset for no
+    gain — the heal it provided only ever fired on an already-poisoned cache."""
+    return lambda ds, agg: _store(game, ds, agg).records()
 
 
 @router.get("/{game}/subset/{subset}")
@@ -227,15 +204,12 @@ def subset_view(game: str, subset: str):
     then filter + derive + sort. View inputs are computed first (dependency order), so an
     upstream view's derived columns feed downstream. Recomputed from current records, so it
     tracks updates. Input cycles resolve to empty rather than looping."""
-    from ...enrich.subset import compute_view
+    from ...enrich.subset import compute_view_rows
     from ...store import stats_store
     profile, sub = _subset(game, subset)
-    cache: dict = {}
-    agg = getattr(sub, "aggregate", "latest") or "latest"
     # Time the whole top-level recompute (nested inputs included) — this is the cost that
     # grows as the source datasets grow. Nested views aren't timed separately (no double-count).
     with stats_store.time_block(game, f"sub:{subset}", "rc",
                                 n_fn=lambda: len(result.get("rows", []))):
-        inputs = [(i, _input_rows(profile, game, i, frozenset({subset}), cache, agg)) for i in sub.inputs()]
-        result = compute_view(inputs, sub)
+        result = compute_view_rows(profile, subset, _flow_fetch(game))
     return {"subset": subset, "datasets": sub.inputs(), **result}

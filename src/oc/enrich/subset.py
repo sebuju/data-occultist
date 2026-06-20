@@ -271,6 +271,44 @@ def compute_subset(records: list[dict], sub: SubsetDef) -> dict:
     return compute_view([(sub.dataset or "", records)], sub)
 
 
+def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
+    """Compute a subset's full ``{columns, rows}`` view, recursing through subset inputs.
+
+    The ONE place the subset dependency walk lives — the web flow, the price runner, and the
+    trigger change-gate all call this so the recursion (cycle guard, per-``(input, aggregate)``
+    memo, ``compute_view`` glue) never drifts between them. The only thing that genuinely
+    differs per caller — how a PLAIN dataset's rows are fetched (web store vs. ``store_for``,
+    with/without a ``present`` filter) — is injected:
+
+    ``fetch_dataset(dataset_id, aggregate) -> list[dict]`` returns the raw stored records for
+    one plain dataset. A subset input is computed recursively with ITS own ``aggregate`` so its
+    derived columns are available upstream; a cycle resolves to no rows."""
+    cache: dict = {}
+
+    def input_rows(input_id: str, stack: frozenset, aggregate: str) -> list[dict]:
+        ck = (input_id, aggregate)
+        if ck in cache:
+            return cache[ck]
+        sub = profile.subset_def(input_id)
+        if sub is None:                                   # a plain dataset
+            rows = fetch_dataset(input_id, aggregate)
+        elif input_id in stack:                           # cycle -> stop
+            rows = []
+        else:
+            a = getattr(sub, "aggregate", "latest") or "latest"
+            inputs = [(i, input_rows(i, stack | {input_id}, a)) for i in sub.inputs()]
+            rows = compute_view(inputs, sub)["rows"]
+        cache[ck] = rows
+        return rows
+
+    sub = profile.subset_def(subset_id)
+    if sub is None:
+        return {"columns": [], "rows": []}
+    agg = getattr(sub, "aggregate", "latest") or "latest"
+    inputs = [(i, input_rows(i, frozenset({subset_id}), agg)) for i in sub.inputs()]
+    return compute_view(inputs, sub)
+
+
 def _sort_key(v):
     """Sort numerically when the value is a number, else lexicographically. Blanks rank
     LOWEST (bucket -1) so an unpriced row sinks to the bottom on a descending sort, rather
