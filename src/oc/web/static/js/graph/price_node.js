@@ -4,7 +4,7 @@
 // to inventory (and charting them) is a view's job.
 import * as api from "../api.js";
 import { isOnline } from "../conn.js";
-import { esc, TRASH, labCell } from "../dom.js";
+import { h, frag, TRASH, labCell } from "../dom.js";
 import { log } from "../log.js";
 
 // Elapsed between two ISO instants (end defaults to now) as "m:ss" / "h:mm:ss".
@@ -20,34 +20,41 @@ const elapsed = (start, end) => {
 // the sweep/cancel controls. No chart or movers — that's a view's job.
 export function priceParts(pn, cols = [], free = []) {
     const mode = pn.mode === "orders" ? "orders" : "statistics";
-    const opt = (v, label) => `<option value="${v}"${v === mode ? " selected" : ""}>${label}</option>`;
+    const opt = (v, label) => h("option", { value: v, selected: v === mode }, label);
     const hasSrc = (pn.sources || []).length;
     // priced-item sources use the SAME chip + add-select input the subset's sources use.
     // same chip + add-select look as subset/trigger sources: shared .sv-* classes for style,
     // pr-* classes are the wiring hooks.
-    const chips = (pn.sources || []).map((s) => `<span class="sv-input">${esc(s)}<button class="sv-rmin danger pr-rmsrc" data-ds="${esc(s)}" title="stop pricing this source">${TRASH}</button></span>`).join("");
-    const addOpts = `<option value="">+ source</option>${free.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join("")}`;
-    const srcs = `${labCell("prices", "datasets/subsets whose items to price (empty = whole market catalogue)", true)}<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="sv-addin pr-addsrc">${addOpts}</select></span></div>`;
+    const chips = (pn.sources || []).map((s) =>
+        h("span", { class: "sv-input" }, s,
+            h("button", { class: "sv-rmin danger pr-rmsrc", dataset: { ds: s }, title: "stop pricing this source" }, TRASH())));
+    const addOpts = [h("option", { value: "" }, "+ source"), free.map((d) => h("option", { value: d }, d))];
+    const srcs = frag(
+        labCell("prices", "datasets/subsets whose items to price (empty = whole market catalogue)", true),
+        h("div", { class: "sv-inputs" }, chips,
+            h("span", { class: "sv-input sv-add" }, h("select", { class: "sv-addin pr-addsrc" }, addOpts))));
     // which source column names the item to price (resolved to a market slug). Only relevant
     // when sourcing from datasets/subsets (the whole-catalogue sweep needs no key).
     const nf = pn.source_field || "name";
-    const nfOpts = [...new Set([nf, ...cols])].map((c) => `<option${c === nf ? " selected" : ""}>${esc(c)}</option>`).join("");
+    const nfOpts = [...new Set([nf, ...cols])].map((c) => h("option", { selected: c === nf }, c));
     const keyFld = hasSrc
-        ? `${labCell("price by", "which source column names the item to price (it's resolved to a market slug)")}<select class="enr-keyfld-sel">${nfOpts}</select>`
-        : "";
-    const head = `<div class="enr-sum muted">↻ sweep to price the market</div>
-      <div class="lab-grid">${labCell("source", "what each sweep stores: full daily history or a live now-snapshot")}<select class="enr-mode">${opt("statistics", "statistics (history)")}${opt("orders", "live orders (now)")}</select>
-      ${srcs}
-      ${keyFld}</div>
-      <div class="gn-foot">
-        <button class="enr-refresh">↻ sweep prices</button>
-        <button class="enr-cancel warn" hidden>cancel</button>
-        <span class="enr-prog livestats"></span>
-      </div>`;
+        ? frag(labCell("price by", "which source column names the item to price (it's resolved to a market slug)"),
+            h("select", { class: "enr-keyfld-sel" }, nfOpts))
+        : null;
+    const head = frag(
+        h("div", { class: "enr-sum muted" }, "↻ sweep to price the market"),
+        h("div", { class: "lab-grid" },
+            labCell("source", "what each sweep stores: full daily history or a live now-snapshot"),
+            h("select", { class: "enr-mode" }, opt("statistics", "statistics (history)"), opt("orders", "live orders (now)")),
+            srcs, keyFld),
+        h("div", { class: "gn-foot" },
+            h("button", { class: "enr-refresh" }, "↻ sweep prices"),
+            h("button", { class: "enr-cancel warn", hidden: true }, "cancel"),
+            h("span", { class: "enr-prog livestats" })));
     return {
-        title: `<input class="gi gi-id prrename" value="${esc(pn.id)}" title="rename price node" />`,
+        title: h("input", { class: "gi gi-id prrename", value: pn.id, title: "rename price node" }),
         body: head,
-        ports: `<span class="port out" title="drag to a dataset to push prices there"></span>`,
+        ports: h("span", { class: "port out", title: "drag to a dataset to push prices there" }),
     };
 }
 
@@ -60,7 +67,7 @@ export function wirePriceNode(div, game, dataset, mode = "statistics", onDone = 
     async function loadSummary() {
         try {
             const s = await api.prices.summary(game, dataset);
-            $(".enr-sum").innerHTML = `<strong>${s.slugs}</strong> items priced`;
+            $(".enr-sum").replaceChildren(h("strong", String(s.slugs)), " items priced");
             reflectStatus(s.status || { running: false });
         } catch (e) { $(".enr-sum").textContent = String(e.message || e); }
     }

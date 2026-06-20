@@ -1,7 +1,7 @@
 // Window image / region drawing, item cutouts, OCR read pipeline (preview + detect + grid).
 // Extracted from main.js verbatim.
 import * as api from "../api.js";
-import { esc, CAMERA } from "../dom.js";
+import { h, frag, CAMERA } from "../dom.js";
 import { openModal } from "../modal.js";
 import { openCaptureModal } from "./panels/precap.js";
 import { log, timed } from "../log.js";
@@ -24,7 +24,7 @@ import {
     addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom, showSatellite,
 } from "./main.js";
 import { panZoomTo } from "./camera.js";
-import { keyPrevHTML } from "./node_parts.js";
+import { keyPrevNode } from "./node_parts.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 
 // ---- window image / region drawing (in-graph) -----------------------------
@@ -96,7 +96,7 @@ async function stepWinPage(winId, d) {
 
 function closeImage(winId) {
     const e = imageCanvases.get(winId);
-    if (e && e.host) e.host.innerHTML = "";
+    if (e && e.host) e.host.replaceChildren();
     imageCanvases.delete(winId);
     unregisterOverlay(`win:${winId}`);
     openImages.delete(winId);
@@ -121,16 +121,22 @@ async function openImage(winId, nodeEl = null) {
     const prev = imageCanvases.get(winId);
     if (prev && prev.host === host) return;   // surface already built on THIS host — leave it
     if (prev) { unregisterOverlay(`win:${winId}`); imageCanvases.delete(winId); openImages.delete(winId); }
-    host.innerHTML = `<div class="imgtools">
-      <span class="tools">${KINDS.map(([v, label, icon]) => `<button class="tool" data-kind="${v}" title="draw ${label}">${icon} ${label}</button>`).join("")}</span></div>
-    <div class="canvas-wrap"><canvas></canvas></div>
-    <div class="img-foot">
-      <span class="img-pages" hidden><button class="imgpg" data-d="-1" title="previous image">‹</button><span class="img-pageind"></span><button class="imgpg" data-d="1" title="next image">›</button></span>
-      <button class="imgbtn" title="choose which stashed images this window uses">${CAMERA}<span class="imgbtn-lbl">images</span></button>
-      <button class="imgcap" title="capture the live window into the current page">recapture</button>
-      <button class="imgall" title="preview data read from ALL of this window's images">preview all</button>
-    </div>
-    ${imgLayersHTML()}`;
+    host.replaceChildren(
+        h("div", { class: "imgtools" },
+            h("span", { class: "tools" },
+                KINDS.map(([v, label, icon]) =>
+                    h("button", { class: "tool", dataset: { kind: v }, title: `draw ${label}` }, `${icon} ${label}`)))),
+        h("div", { class: "canvas-wrap" }, h("canvas")),
+        h("div", { class: "img-foot" },
+            h("span", { class: "img-pages", hidden: true },
+                h("button", { class: "imgpg", dataset: { d: "-1" }, title: "previous image" }, "‹"),
+                h("span", { class: "img-pageind" }),
+                h("button", { class: "imgpg", dataset: { d: "1" }, title: "next image" }, "›")),
+            h("button", { class: "imgbtn", title: "choose which stashed images this window uses" },
+                CAMERA(), h("span", { class: "imgbtn-lbl" }, "images")),
+            h("button", { class: "imgcap", title: "capture the live window into the current page" }, "recapture"),
+            h("button", { class: "imgall", title: "preview data read from ALL of this window's images" }, "preview all")),
+        imgLayers());
     const canvas = host.querySelector("canvas");
     const kindOf = () => host.querySelector(".tool.active")?.dataset.kind || "region";
     const overlay = new Overlay(canvas, {
@@ -208,7 +214,7 @@ async function createItemFromGeom(winId, geom) {
 function closeItemImage(winId, itemId) {
     const key = `${winId}:${itemId}`;
     const e = itemCanvases.get(key);
-    if (e && e.host) e.host.innerHTML = "";
+    if (e && e.host) e.host.replaceChildren();
     itemCanvases.delete(key);
     itemReads.delete(key);
     clearTimeout(itemReadTimers.get(key)); itemReadTimers.delete(key); itemReadAgain.delete(key);
@@ -241,8 +247,9 @@ function openItemImage(winId, itemId) {
     if (!it || !it.cutout_box) return;
     // draw-mode buttons live in the node body now (itemLists: cell/field + tell sections);
     // this host is just the readout + cutout canvas.
-    host.innerHTML = `<div class="item-readout muted" title="what the current setup reads + the key it stores under"></div>
-    <div class="canvas-wrap"><canvas></canvas></div>`;
+    host.replaceChildren(
+        h("div", { class: "item-readout muted", title: "what the current setup reads + the key it stores under" }),
+        h("div", { class: "canvas-wrap" }, h("canvas")));
     const canvas = host.querySelector("canvas");
     const cb = it.cutout_box;
     // Give the cutout box its true aspect up front (it's a crop of the window image) so it
@@ -388,17 +395,17 @@ async function runItemRead(winId, itemId) {
     itemReadBusy.add(key);
     const node = nodeEls.get(`item:${winId}:${itemId}`);
     const out = node?.querySelector(".item-readout");
-    if (out && !out.innerHTML) out.innerHTML = "reading…";
+    if (out && !out.childElementCount && !out.textContent) out.replaceChildren("reading…");
     const done = timed(`item read ${key}`);
     try {
         const res = await api.itemRead(previewProfileFor(winId), model.profile.name, winId, itemId);
         itemReads.set(key, res);
         refreshItemBoxes(winId, itemId);
-        if (out) out.innerHTML = itemReadout(res, winId, itemId);
+        if (out) out.replaceChildren(itemReadout(res, winId, itemId));
         done(`· ${res.device || "?"} · ${res.valid ? "valid" : "rejected"}`, "ok", res.ms);
     } catch (e) {
         done(String(e.message || e), "err");
-        if (out) out.innerHTML = `<span class="tc-bad">${esc(String(e.message || e))}</span>`;
+        if (out) out.replaceChildren(h("span", { class: "tc-bad" }, String(e.message || e)));
     } finally {
         itemReadBusy.delete(key);
         if (itemReadAgain.has(key)) { itemReadAgain.delete(key); runItemRead(winId, itemId); }
@@ -410,22 +417,29 @@ async function runItemRead(winId, itemId) {
 // column and every label/value lines up. One `row()` builds a grid line for fields, key, AND
 // tells alike, so they all share the columns.
 function itemReadout(res, winId, itemId) {
-    const status = res.valid ? '<span class="tc-ok">✓ valid</span>' : '<span class="tc-bad">✗ rejected</span>';
-    const row = (label, valueHtml) => `<span class="ir-k">${label}</span><span class="ir-c">:</span><span class="ir-v">${valueHtml}</span>`;
+    const status = res.valid
+        ? h("span", { class: "tc-ok" }, "✓ valid")
+        : h("span", { class: "tc-bad" }, "✗ rejected");
+    // one 3-col grid line: label · ":" · value. `label`/`value` are nodes (or strings).
+    const row = (label, value) => frag(
+        h("span", { class: "ir-k" }, label),
+        h("span", { class: "ir-c" }, ":"),
+        h("span", { class: "ir-v" }, value));
     const fields = Object.entries(res.fields || {}).map(([k, v]) => {
         const cls = v.substituted ? "conf-sub" : v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
-        return row(esc(k), `<b class="${cls}">${esc(String(v.value ?? "∅"))}</b>`);
-    }).join("");
-    const kv = keyPrevHTML(winId, itemId);   // the record key this read would store under
-    const key = kv ? row("key", kv) : "";
+        return row(k, h("b", { class: cls }, String(v.value ?? "∅")));
+    });
+    const kv = keyPrevNode(winId, itemId);   // the record key this read would store under (a node, or null)
+    const key = kv ? row("key", kv) : null;
     // each tell is its OWN readout row (id : ✓/✗ score) so it aligns in the same columns as the
     // fields, instead of a separate full-width chip band.
-    const tells = (res.tells || []).map((t) => {
-        const thr = t.threshold == null ? "" : `<span class="muted">/${esc(String(t.threshold))}</span>`;
-        const title = t.detail ? ` title="${esc(t.detail)}"` : "";
-        return row(`<span${title}>${esc(t.id)}</span>`, `<span class="${t.pass ? "tc-ok" : "tc-bad"}">${t.pass ? "✓" : "✗"} ${esc(String(t.score))}${thr}</span>`);
-    }).join("");
-    return `<div class="ir-row">${status}</div>${fields}${key}${tells}`;
+    const tells = (res.tells || []).map((t) =>
+        row(
+            h("span", { title: t.detail || null }, t.id),
+            h("span", { class: t.pass ? "tc-ok" : "tc-bad" },
+                `${t.pass ? "✓" : "✗"} ${String(t.score)}`,
+                t.threshold == null ? null : h("span", { class: "muted" }, `/${String(t.threshold)}`))));
+    return frag(h("div", { class: "ir-row" }, status), fields, key, tells);
 }
 
 function selectRegionNode(winId, boxId) {
@@ -467,18 +481,18 @@ async function refreshPreview(winId, live = false) {
     if (previewBusy.has(winId)) { previewAgain.set(winId, live); return; }   // already reading → re-run once after
     previewBusy.add(winId);
     setReadBusy(winId, true);
-    if (!live) host.innerHTML = `<p class="muted" style="padding:8px">reading…</p>`;
+    if (!live) host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, "reading…"));
     const done = timed(`OCR preview ${winId}`);
     try {
         const cap = live ? null : await curCapOf(winId);   // the page on screen (live grabs fresh)
         const res = await api.preview(previewProfileFor(winId), model.profile.name, cap);
-        host.innerHTML = previewTable(res.cells);
+        host.replaceChildren(previewTable(res.cells));
         setGridFromPreview(winId, res);   // same OCR pass drives the dashed grid
         setWindowDrift(winId, res.drift);   // grid-fit score on the window node
         done(`· ${res.device || "?"} · ${(res.cells || []).length} cells`, "ok", res.ms);
     } catch (e) {
         done(String(e.message || e), "err");
-        host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`;
+        host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, String(e.message || e)));
     } finally {
         previewBusy.delete(winId);
         if (previewAgain.has(winId)) {   // a click landed mid-read → run once more (button stays busy, no flicker)
@@ -520,7 +534,7 @@ async function previewAll(winId, btn) {
     showSatellite(`prev:${winId}`);   // the preview node is opt-in — reveal it so the read has somewhere to render
     const host = prevHost(winId);
     if (btn) { btn.disabled = true; btn.classList.add("reading"); }
-    if (host) host.innerHTML = `<p class="muted" style="padding:8px">reading ${list.length} image${list.length === 1 ? "" : "s"}…</p>`;
+    if (host) host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, `reading ${list.length} image${list.length === 1 ? "" : "s"}…`));
     const done = timed(`OCR preview-all ${winId}`);
     try {
         const game = model.profile.name, cells = [];
@@ -531,11 +545,11 @@ async function previewAll(winId, btn) {
             for (const c of res.cells || []) { c._img = img; cells.push(c); }   // tag rows by source image so the table can rule between images
             img++;
         }
-        if (host) host.innerHTML = previewTable(cells);
+        if (host) host.replaceChildren(previewTable(cells));
         done(`· ${list.length} images · ${cells.length} cells`, "ok", srvMs);
     } catch (e) {
         done(String(e.message || e), "err");
-        if (host) host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e.message || e))}</p>`;
+        if (host) host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, String(e.message || e)));
     } finally {
         if (btn) { btn.disabled = false; btn.classList.remove("reading"); }
     }
@@ -543,9 +557,9 @@ async function previewAll(winId, btn) {
 
 function tellChip(t) {
     // one tell's outcome: "id score/threshold" tinted by pass/fail
-    const thr = t.threshold == null ? "" : `<span class="muted">/${t.threshold}</span>`;
-    const title = t.detail ? ` title="${esc(t.detail)}"` : "";
-    return `<span class="tell-chip ${t.pass ? "tc-ok" : "tc-bad"}"${title}>${esc(t.id)} ${t.score}${thr}</span>`;
+    return h("span", { class: `tell-chip ${t.pass ? "tc-ok" : "tc-bad"}`, title: t.detail || null },
+        `${t.id} ${t.score}`,
+        t.threshold == null ? null : h("span", { class: "muted" }, `/${t.threshold}`));
 }
 
 // "empty" -> "if empty", "if_number" -> "if number" — the badge shown instead of a
@@ -553,25 +567,26 @@ function tellChip(t) {
 const subLabel = (r) => `if ${String(r).replace(/^if_/, "").replace(/_/g, " ")}`;
 
 function previewCell(v) {
-    if (!v) return "<td>—</td>";
+    if (!v) return h("td", "—");
     if (v.substituted) {
-        return `<td class="conf-sub" title="${esc(v.raw || "(empty)")} → ${subLabel(v.substituted)}">${esc(v.value ?? "∅")}</td>`;
+        return h("td", { class: "conf-sub", title: `${v.raw || "(empty)"} → ${subLabel(v.substituted)}` }, String(v.value ?? "∅"));
     }
     const cls = v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
-    return `<td class="${cls}" title="${esc(v.raw || "")}">${esc(v.value ?? "∅")}</td>`;
+    return h("td", { class: cls, title: v.raw || "" }, String(v.value ?? "∅"));
 }
 
 // Render rows, inserting a separator <tr> whenever the source image (`_img`, set by
 // previewAll) changes — never before the first group. Rows without `_img` (the normal
 // single-image preview) all share one group, so no separators appear.
-function sepRows(cells, cols, rowHtml) {
+function sepRows(cells, cols, rowFn) {
     let prev;
+    // each entry is [separator-or-null, row]; h() flattens the nested arrays and skips the nulls.
     return cells.map((c) => {
         const sep = c._img !== undefined && prev !== undefined && c._img !== prev
-            ? `<tr class="prev-sep"><td colspan="${cols}"></td></tr>` : "";
+            ? h("tr", { class: "prev-sep" }, h("td", { colspan: cols })) : null;
         prev = c._img;
-        return sep + rowHtml(c);
-    }).join("");
+        return [sep, rowFn(c)];
+    });
 }
 
 function previewTable(cells) {
@@ -579,34 +594,45 @@ function previewTable(cells) {
     const hasItems = all.some((c) => Array.isArray(c.tells));
     if (!hasItems) {
         const kept = all.filter(cellKept);
-        if (!kept.length) return `<p class="muted" style="padding:8px">0 rows</p>`;
+        if (!kept.length) return h("p", { class: "muted", style: "padding:8px" }, "0 rows");
         const fieldIds = [...new Set(kept.flatMap((c) => Object.keys(c.fields)))];
-        const head = fieldIds.map((f) => `<th>${esc(f)}</th>`).join("");
+        const head = fieldIds.map((f) => h("th", f));
         const rows = sepRows(kept.slice(0, 200), fieldIds.length,
-            (c) => `<tr>${fieldIds.map((f) => previewCell(c.fields[f])).join("")}</tr>`);
-        return `<div class="prev-count muted">${kept.length} row${kept.length === 1 ? "" : "s"}</div>
-      <table class="grid-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+            (c) => h("tr", fieldIds.map((f) => previewCell(c.fields[f]))));
+        return frag(
+            h("div", { class: "prev-count muted" }, `${kept.length} row${kept.length === 1 ? "" : "s"}`),
+            h("table", { class: "grid-table" },
+                h("thead", h("tr", head)),
+                h("tbody", rows)));
     }
 
     // item-template diagnostics: show EVERY cell that read something (so rejected arcanes
     // are visible), with its template, status, reject reason, and per-tell scores.
     const read = all.filter((c) => Object.values(c.fields).some((f) => f && f.value !== null && f.value !== "" && f.value !== undefined));
-    if (!read.length) return `<p class="muted" style="padding:8px">0 cells read any data</p>`;
+    if (!read.length) return h("p", { class: "muted", style: "padding:8px" }, "0 cells read any data");
     // group by source image first (so preview-all keeps each image's rows together + ruled),
     // then valid-first within each image; single-image previews have one group → unchanged.
     read.sort((a, b) => ((a._img || 0) - (b._img || 0)) || (b.valid === true) - (a.valid === true));
     const fieldIds = [...new Set(read.flatMap((c) => Object.keys(c.fields)))];
-    const head = `<th></th><th>item</th>${fieldIds.map((f) => `<th>${esc(f)}</th>`).join("")}<th>tells</th><th>reason</th>`;
+    const head = [h("th"), h("th", "item"), ...fieldIds.map((f) => h("th", f)), h("th", "tells"), h("th", "reason")];
     const rows = sepRows(read.slice(0, 300), fieldIds.length + 4, (c) => {
-        const status = c.valid ? '<span class="tc-ok">✓</span>'
-            : c.tells_pass ? '<span class="tc-warn">◌</span>' : '<span class="tc-bad">✗</span>';
-        const fcols = fieldIds.map((f) => previewCell(c.fields[f])).join("");
-        const tells = (c.tells || []).map(tellChip).join(" ");
-        return `<tr class="${c.valid ? "" : "prev-rej"}"><td>${status}</td><td>${esc(c.item || "")}</td>${fcols}<td>${tells}</td><td class="muted">${esc(c.reason || "")}</td></tr>`;
+        const status = c.valid ? h("span", { class: "tc-ok" }, "✓")
+            : c.tells_pass ? h("span", { class: "tc-warn" }, "◌") : h("span", { class: "tc-bad" }, "✗");
+        // join tell chips with a literal space text node between each (was " " in the old string)
+        const tells = (c.tells || []).flatMap((t, i) => i ? [" ", tellChip(t)] : [tellChip(t)]);
+        return h("tr", { class: c.valid ? null : "prev-rej" },
+            h("td", status),
+            h("td", c.item || ""),
+            fieldIds.map((f) => previewCell(c.fields[f])),
+            h("td", tells),
+            h("td", { class: "muted" }, c.reason || ""));
     });
     const nValid = read.filter((c) => c.valid).length;
-    return `<div class="prev-count muted">${nValid} kept · ${read.length} read · ✓ kept, ◌ tells pass but lost overlap, ✗ tell failed</div>
-    <table class="grid-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+    return frag(
+        h("div", { class: "prev-count muted" }, `${nValid} kept · ${read.length} read · ✓ kept, ◌ tells pass but lost overlap, ✗ tell failed`),
+        h("table", { class: "grid-table" },
+            h("thead", h("tr", head)),
+            h("tbody", rows)));
 }
 
 async function prefillDetectText(winId, detectId) {
@@ -672,10 +698,10 @@ async function refreshDetect(winId, live = false) {
 // everything outside stays plain. `span` is null when nothing aligned (no highlight).
 function hlSpan(text, span) {
     const t = String(text ?? "");
-    if (!span || span[0] == null || span[1] == null) return esc(t);
+    if (!span || span[0] == null || span[1] == null) return t;
     const s = Math.max(0, span[0]), e = Math.min(t.length, span[1]);
-    if (e <= s) return esc(t);
-    return esc(t.slice(0, s)) + `<mark class="ds-hit">${esc(t.slice(s, e))}</mark>` + esc(t.slice(e));
+    if (e <= s) return t;
+    return frag(t.slice(0, s), h("mark", { class: "ds-hit" }, t.slice(s, e)), t.slice(e));
 }
 
 // Two consumers share `.detect-status`: the DETECT node (rich, multi-row scaffold built in
@@ -718,23 +744,23 @@ function setDetectStatus(nodeId, info) {
     const raw = info.got_raw, norm = info.got_norm;
     if (norm == null) {            // template detector: no normalised text, just echo the read
         before.hidden = true; chars.hidden = true;
-        if (info.read) { after.hidden = false; after.innerHTML = `read: <span class="ds-txt">${esc(info.read)}</span>`; }
+        if (info.read) { after.hidden = false; after.replaceChildren("read: ", h("span", { class: "ds-txt" }, info.read)); }
         else after.hidden = true;
         return;
     }
     // highlight the matched characters in the AFTER (normalised) text — only on a real match
-    const afterHTML = hlSpan(norm, info.matched ? info.span : null) || "∅";
+    const afterNode = hlSpan(norm, info.matched ? info.span : null) || "∅";
     if (raw !== norm) {            // stripping/case folding changed the read -> show both
-        before.hidden = false; before.innerHTML = `before: <span class="ds-txt">${esc(raw || "∅")}</span>`;
-        after.hidden = false; after.innerHTML = `after: <span class="ds-txt">${afterHTML}</span>`;
+        before.hidden = false; before.replaceChildren("before: ", h("span", { class: "ds-txt" }, raw || "∅"));
+        after.hidden = false; after.replaceChildren("after: ", h("span", { class: "ds-txt" }, afterNode));
     } else {                       // no change -> one row, highlight on the read itself
         before.hidden = true;
-        after.hidden = false; after.innerHTML = `read: <span class="ds-txt">${afterHTML}</span>`;
+        after.hidden = false; after.replaceChildren("read: ", h("span", { class: "ds-txt" }, afterNode));
     }
     if (info.min_chars > 0) {      // show how many chars were found vs the floor
         chars.hidden = false;
         const ok = info.got_len >= info.min_chars;
-        chars.innerHTML = `chars: <span class="${ok ? "conf-ok" : "conf-bad"}">${info.got_len}</span> / ${info.min_chars} min`;
+        chars.replaceChildren("chars: ", h("span", { class: ok ? "conf-ok" : "conf-bad" }, String(info.got_len)), ` / ${info.min_chars} min`);
     } else chars.hidden = true;
 }
 
@@ -892,9 +918,12 @@ const IMG_LAYERS = [
     ["reads", "reads", "what OCR pulled from each cell, tinted by confidence"],
     ["raw", "raw OCR", "every raw line the engine found, independent of the taught boxes"],
 ];
-function imgLayersHTML() {
-    return `<div class="img-layers" title="which overlays draw on the capture">${IMG_LAYERS.map(([k, label, tip]) =>
-        `<label class="flab" title="${esc(tip)}">${esc(label)} <input type="checkbox" class="imglayer" data-k="${k}"${k === "raw" ? "" : " checked"}/></label>`).join("")}</div>`;
+function imgLayers() {
+    return h("div", { class: "img-layers", title: "which overlays draw on the capture" },
+        IMG_LAYERS.map(([k, label, tip]) =>
+            h("label", { class: "flab", title: tip },
+                `${label} `,
+                h("input", { type: "checkbox", class: "imglayer", dataset: { k }, checked: k !== "raw" }))));
 }
 
 // The cell-relative box the reader scans for a row anchor — mirrors locator_of() server-side:

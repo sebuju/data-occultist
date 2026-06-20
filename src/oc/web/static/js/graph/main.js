@@ -4,7 +4,7 @@
 import * as api from "../api.js";
 import * as conn from "../conn.js";
 import * as hub from "../hub.js";
-import { esc, TRASH, CAMERA, PAUSE, labCell } from "../dom.js";
+import { h, frag, svg, TRASH, CAMERA, PAUSE, labCell } from "../dom.js";
 import { nodeIcon, iconFor } from "./node_icons.js";
 import { openModal } from "../modal.js";
 import { since } from "../datefmt.js";
@@ -281,7 +281,7 @@ groups.initGroups({
 // Node identity / per-id state (rename + delete carry, the rename flow) lives in node_lifecycle.js
 // — see the imports at the top of this file.
 
-// Node body HTML builders (windowControls/itemLists/fieldConfigBody/nodeParts/keyPrevHTML/…) live in node_parts.js
+// Node body builders (windowControls/itemLists/fieldConfigBody/nodeParts/keyPrevNode/…) live in node_parts.js
 
 // ---- layout ---------------------------------------------------------------
 
@@ -609,7 +609,7 @@ function wireItemControls(div, n) {
         itemChanged(winId, itemId, { rebuild: true, reread: false });   // record identity only — no OCR change
         const out = div.querySelector(".item-readout");   // key lives in the readout now; refresh it now (the re-read is debounced)
         const rd = itemReads.get(`${winId}:${itemId}`);
-        if (out && rd) out.innerHTML = itemReadout(rd, winId, itemId);
+        if (out && rd) out.replaceChildren(itemReadout(rd, winId, itemId));
     };
     div.querySelectorAll(".kfield").forEach((s) => s.addEventListener("change", (e) =>
         keyEdit((k) => { k.fields[+e.target.dataset.i] = e.target.value; })));
@@ -899,17 +899,20 @@ function viewDisplayColumns(s) {
     return out;
 }
 
-function hideTogglesHTML(s) {
+function hideToggleNodes(s) {
     const hidden = new Set(s.hidden_columns || []);
-    const toggles = viewDisplayColumns(s).map((c) => `<button class="sv-hide${hidden.has(c) ? " off" : ""}" data-col="${esc(c)}"
-      title="${hidden.has(c) ? "show" : "hide"} column">${esc(c)}</button>`).join("");
-    return toggles || '<span class="muted sub-empty">no columns yet</span>';
+    const cols = viewDisplayColumns(s);
+    if (!cols.length) return h("span", { class: "muted sub-empty" }, "no columns yet");
+    return cols.map((c) => h("button", {
+        class: `sv-hide${hidden.has(c) ? " off" : ""}`, dataset: { col: c },
+        title: `${hidden.has(c) ? "show" : "hide"} column`,
+    }, c));
 }
 
 // Repaint + re-wire a subset's visible/hide toggle row in place (no node rebuild).
 function renderHideToggles(el, s) {
     const hides = el && el.querySelector(".sv-hides");
-    if (hides) { hides.innerHTML = hideTogglesHTML(s); wireHideToggles(el, s); }
+    if (hides) { hides.replaceChildren(hideToggleNodes(s)); wireHideToggles(el, s); }
 }
 
 // Wire the visible/hide toggles. Standalone (not closed over wireSubset) so refreshSubsetNode
@@ -928,71 +931,84 @@ function wireHideToggles(host, s) {
     }));
 }
 
-function subConfigHTML(s) {
+function subConfigNode(s) {
     const cols = viewColumns(s);
     const inputs = model.subsetInputs(s);
     const free = model.joinableInputs(s);   // datasets + other subsets (cycle-free)
     // sources are removable pills; the "+ join source" select sits on the SAME row as them
-    const chips = inputs.map((d) => `<span class="sv-input">${esc(d)}<button class="sv-rmin danger" data-ds="${esc(d)}" title="remove input">${TRASH}</button></span>`).join("");
-    const addOpts = `<option value="">+ join source</option>` + free.map((d) => `<option>${esc(d)}</option>`).join("");
+    const chips = inputs.map((d) => h("span", { class: "sv-input" }, d,
+        h("button", { class: "sv-rmin danger", dataset: { ds: d }, title: "remove input" }, TRASH())));
+    const addOpts = [h("option", { value: "" }, "+ join source"), free.map((d) => h("option", d))];
     // join-on is a COLUMN dropdown, populated from the joined sources' columns once a source is
     // added (so you pick a real shared field, not a free-typed guess). Current value kept even
     // if not in the live column set yet.
     const jf = s.join_field || "name";
-    const joinOpts = [...new Set([jf, ...cols])].map((c) => `<option${c === jf ? " selected" : ""}>${esc(c)}</option>`).join("");
+    const joinOpts = [...new Set([jf, ...cols])].map((c) => h("option", { selected: c === jf }, c));
     // join-on only matters when 2+ sources are combined; with a single source there's nothing
     // to join across, so hide the row entirely (the field still persists for when a source is added)
     const joinRow = inputs.length > 1
-        ? `${labCell("join on", "shared field the sources are joined on")}<select class="sv-join">${joinOpts}</select>`
-        : "";
+        ? frag(labCell("join on", "shared field the sources are joined on"), h("select", { class: "sv-join" }, joinOpts))
+        : null;
     // outer (keep every key) vs inner (only keys present in every source) — only matters with 2+ sources
     const jmode = model.subsetJoinMode(s.id);
     const joinModeRow = inputs.length > 1
-        ? `${labCell("join", "outer = keep every key; inner = only keys present in every source")}<select class="sv-jmode"><option value="outer"${jmode === "outer" ? " selected" : ""}>outer (all keys)</option><option value="inner"${jmode === "inner" ? " selected" : ""}>inner (in every source)</option></select>`
-        : "";
-    const aggOpts = AGGREGATES.map((a) => `<option${a === model.subsetAggregate(s.id) ? " selected" : ""}>${a}</option>`).join("");
+        ? frag(labCell("join", "outer = keep every key; inner = only keys present in every source"),
+            h("select", { class: "sv-jmode" },
+                h("option", { value: "outer", selected: jmode === "outer" }, "outer (all keys)"),
+                h("option", { value: "inner", selected: jmode === "inner" }, "inner (in every source)")))
+        : null;
+    const aggOpts = AGGREGATES.map((a) => h("option", { selected: a === model.subsetAggregate(s.id) }, a));
     // the "many →" collapse only does anything when an INPUT dataset dedups (a no-dedup dataset
     // already serves one row per read) — show it only then.
     const showAgg = model.subsetInputs(s).some((inp) => !model.subsetDef(inp) && model.datasetDedup(inp));
-    const aggRow = showAgg ? `${labCell("many →", "how each key's many observations collapse to one value")}<select class="sv-agg">${aggOpts}</select>` : "";
-    const filters = (s.filters || []).map((f, i) => `<div class="sub-row" data-i="${i}">
-      <select class="sf-field" data-i="${i}">${_colOpts(cols, f.field)}</select>
-      <select class="sf-op" data-i="${i}">${SUB_OPS.map((o) => `<option${o === f.op ? " selected" : ""}>${o}</option>`).join("")}</select>
-      <input class="sf-val" data-i="${i}" value="${esc(f.value || "")}" placeholder="value" />
-      <button class="sf-del danger" data-i="${i}" title="remove filter">${TRASH}</button></div>`).join("");
-    const derived = (s.derived || []).map((d, i) => `<div class="sub-row" data-i="${i}">
-      <input class="sd-name" data-i="${i}" value="${esc(d.name || "")}" placeholder="new column" />
-      <span class="muted">=</span>
-      <input class="sd-tpl" data-i="${i}" value="${esc(d.template || "")}" placeholder="{=count*price_median} plat" />
-      <button class="sd-del danger" data-i="${i}" title="remove column">${TRASH}</button></div>`).join("");
+    const aggRow = showAgg ? frag(labCell("many →", "how each key's many observations collapse to one value"), h("select", { class: "sv-agg" }, aggOpts)) : null;
+    const filters = (s.filters || []).map((f, i) => h("div", { class: "sub-row", dataset: { i } },
+        h("select", { class: "sf-field", dataset: { i } }, _colOpts(cols, f.field)),
+        h("select", { class: "sf-op", dataset: { i } }, SUB_OPS.map((o) => h("option", { selected: o === f.op }, o))),
+        h("input", { class: "sf-val", dataset: { i }, value: f.value || "", placeholder: "value" }),
+        h("button", { class: "sf-del danger", dataset: { i }, title: "remove filter" }, TRASH())));
+    const derived = (s.derived || []).map((d, i) => h("div", { class: "sub-row", dataset: { i } },
+        h("input", { class: "sd-name", dataset: { i }, value: d.name || "", placeholder: "new column" }),
+        h("span", { class: "muted" }, "="),
+        h("input", { class: "sd-tpl", dataset: { i }, value: d.template || "", placeholder: "{=count*price_median} plat" }),
+        h("button", { class: "sd-del danger", dataset: { i }, title: "remove column" }, TRASH())));
     // multi-column sort: primary row first, each a column + direction; applied before limit
-    const sortRows = (s.sort || []).map((so, i) => `<div class="sub-row" data-i="${i}">
-      <select class="ss-field" data-i="${i}">${_colOpts(cols, so.field)}</select>
-      <select class="ss-dir" data-i="${i}"><option value="asc"${so.desc ? "" : " selected"}>asc</option><option value="desc"${so.desc ? " selected" : ""}>desc</option></select>
-      <button class="ss-del danger" data-i="${i}" title="remove sort">${TRASH}</button></div>`).join("");
-    return `
-    <div class="sub-sec lab-grid">
-      ${labCell("sources", "datasets or subsets, joined on a shared field", true)}<div class="sv-inputs">${chips}<span class="sv-input sv-add"><select class="sv-addin">${addOpts}</select></span></div>
-      ${joinRow}
-      ${joinModeRow}
-      ${labCell("limit", "cap the number of result rows (0 = no limit)")}<input type="number" class="sv-limit" min="0" step="1" value="${s.limit || 0}" placeholder="0" />
-      ${aggRow}
-      ${labCell("latest batch only", "only pull rows from each source's most recent collection batch (applied before everything else)")}<label class="flab"><input type="checkbox" class="sv-latest" ${s.latest_batch ? "checked" : ""}/></label></div>
-    <div class="sub-sec"><div class="sub-lbl" title="all must pass">filters<button class="sub-addf" title="add filter">+</button></div>${filters}</div>
-    <div class="sub-sec"><div class="sub-lbl" title="{col} text · {=expr} math · mix freely">columns<button class="sub-addd" title="add column">+</button></div>${derived}</div>
-    <div class="sub-sec"><div class="sub-lbl" title="primary first; applied before limit">sort<button class="sub-adds" title="add sort">+</button></div>${sortRows}</div>
-    <div class="sub-sec"><div class="sub-lbl" title="click to hide/show">visible</div>
-      <div class="sv-hides">${hideTogglesHTML(s)}</div></div>`;
+    const sortRows = (s.sort || []).map((so, i) => h("div", { class: "sub-row", dataset: { i } },
+        h("select", { class: "ss-field", dataset: { i } }, _colOpts(cols, so.field)),
+        h("select", { class: "ss-dir", dataset: { i } },
+            h("option", { value: "asc", selected: !so.desc }, "asc"),
+            h("option", { value: "desc", selected: !!so.desc }, "desc")),
+        h("button", { class: "ss-del danger", dataset: { i }, title: "remove sort" }, TRASH())));
+    return frag(
+        h("div", { class: "sub-sec lab-grid" },
+            labCell("sources", "datasets or subsets, joined on a shared field", true),
+            h("div", { class: "sv-inputs" }, chips,
+                h("span", { class: "sv-input sv-add" }, h("select", { class: "sv-addin" }, addOpts))),
+            joinRow, joinModeRow,
+            labCell("limit", "cap the number of result rows (0 = no limit)"),
+            h("input", { type: "number", class: "sv-limit", min: "0", step: "1", value: s.limit || 0, placeholder: "0" }),
+            aggRow,
+            labCell("latest batch only", "only pull rows from each source's most recent collection batch (applied before everything else)"),
+            h("label", { class: "flab" }, h("input", { type: "checkbox", class: "sv-latest", checked: !!s.latest_batch }))),
+        h("div", { class: "sub-sec" },
+            h("div", { class: "sub-lbl", title: "all must pass" }, "filters", h("button", { class: "sub-addf", title: "add filter" }, "+")), filters),
+        h("div", { class: "sub-sec" },
+            h("div", { class: "sub-lbl", title: "{col} text · {=expr} math · mix freely" }, "columns", h("button", { class: "sub-addd", title: "add column" }, "+")), derived),
+        h("div", { class: "sub-sec" },
+            h("div", { class: "sub-lbl", title: "primary first; applied before limit" }, "sort", h("button", { class: "sub-adds", title: "add sort" }, "+")), sortRows),
+        h("div", { class: "sub-sec" },
+            h("div", { class: "sub-lbl", title: "click to hide/show" }, "visible"),
+            h("div", { class: "sv-hides" }, hideToggleNodes(s))));
 }
 
 function subsetParts(s) {
     // config is always visible now (no fold toggle); the head button toggles the records-grid
     // satellite (vt:sub:<id>), the same opt-in follower datasets get.
     return {
-        title: `<input class="gi gi-id subrename" value="${esc(s.id)}" title="subset name" />`,
+        title: h("input", { class: "gi gi-id subrename", value: s.id, title: "subset name" }),
         head: satToggleBtn(`vt:sub:${s.id}`, "vttable"),
-        body: `<div class="sub-cfg">${subConfigHTML(s)}</div>`,
-        ports: `<span class="port out" title="drag to another subset to feed it this subset's rows"></span>`,
+        body: h("div", { class: "sub-cfg" }, subConfigNode(s)),
+        ports: h("span", { class: "port out", title: "drag to another subset to feed it this subset's rows" }),
     };
 }
 
@@ -1007,7 +1023,7 @@ function repaintSubsetCols(el, s) {
     el._colsig = sig;
     for (const sel of el.querySelectorAll(".ss-field, .sf-field, .sv-join")) {
         const v = sel.value;
-        sel.innerHTML = _colOpts(cols, v);
+        sel.replaceChildren(..._colOpts(cols, v));
         sel.value = v;
     }
 }
@@ -1039,7 +1055,7 @@ async function _refreshSubsetNode(id) {
         // that's a transient 404, not an error; the post-save refresh fills it in.
         const msg = /\b404\b/.test(String(e.message || e)) ? "no data yet" : String(e.message || e);
         vtables.delete(`view:${id}`);
-        if (host) host.innerHTML = `<p class="muted" style="padding:8px">${esc(msg)}</p>`;
+        if (host) host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, msg));
     }
 }
 
@@ -1274,19 +1290,16 @@ function wireSource(div, n) {
 // Auto-find picker (modal): runs the search, lists hits on the left, previews a clicked file's
 // contents on the right, and pins the chosen one as the explicit path. Closing the modal aborts
 // the search AND any in-flight content peek (handle.signal + onClose). All user-driven — never a
-// poll/tick, so a full innerHTML build per click is fine.
+// poll/tick, so a full rebuild per click is fine.
 function openFindModal($, s, schedulePreview) {
     if (!model.profile.name) return;
-    const wrap = document.createElement("div");
-    wrap.className = "find-modal";
-    wrap.innerHTML = `<div class="find-list"><div class="find-status muted">searching…</div></div>
-      <div class="find-view"><div class="find-status muted">select a file to preview its contents</div></div>`;
-    const listEl = wrap.querySelector(".find-list");
-    const viewEl = wrap.querySelector(".find-view");
+    const listEl = h("div", { class: "find-list" }, h("div", { class: "find-status muted" }, "searching…"));
+    const viewEl = h("div", { class: "find-view" }, h("div", { class: "find-status muted" }, "select a file to preview its contents"));
+    const wrap = h("div", { class: "find-modal" }, listEl, viewEl);
 
     let viewCtl = null;
     const handle = openModal({
-        title: `auto-find${s.filename ? ": " + esc(s.filename) : ""}`, size: "large",
+        title: `auto-find${s.filename ? ": " + s.filename : ""}`, size: "large",
         node: wrap, onClose: () => viewCtl?.abort(),    // handle.signal aborts find; this aborts the peek
     });
 
@@ -1302,9 +1315,11 @@ function openFindModal($, s, schedulePreview) {
         listEl.querySelectorAll(".find-item.sel").forEach((x) => x.classList.remove("sel"));
         btn.classList.add("sel");
         viewCtl?.abort(); viewCtl = new AbortController();
-        viewEl.innerHTML = `<div class="find-vhead"><span class="find-vpath">${esc(c.path)}</span>
-          <button class="find-use">use this file</button></div><pre class="find-pre muted">loading…</pre>`;
-        viewEl.querySelector(".find-use").addEventListener("click", () => choose(c.path));
+        viewEl.replaceChildren(
+            h("div", { class: "find-vhead" },
+                h("span", { class: "find-vpath" }, c.path),
+                h("button", { class: "find-use", onClick: () => choose(c.path) }, "use this file")),
+            h("pre", { class: "find-pre muted" }, "loading…"));
         try {
             const r = await api.sources.peek(model.profile.name, c.path, viewCtl.signal);
             const pre = viewEl.querySelector(".find-pre");
@@ -1320,35 +1335,33 @@ function openFindModal($, s, schedulePreview) {
         try {
             const r = await api.sources.find(model.profile.name, { filename: s.filename, roots: s.roots }, handle.signal);
             const cands = r.candidates || [];
-            if (!cands.length) { listEl.innerHTML = `<div class="find-status muted">none found</div>`; return; }
-            listEl.replaceChildren();
-            cands.slice(0, 50).forEach((c) => {
-                const b = document.createElement("button");
-                b.className = "find-item";
-                b.innerHTML = `<span class="find-path">${esc(c.path)}</span>
-                  <span class="find-meta muted">${(c.size / 1024).toFixed(0)} KB · ${esc(since(new Date(c.mtime * 1000).toISOString()))}</span>`;
+            if (!cands.length) { listEl.replaceChildren(h("div", { class: "find-status muted" }, "none found")); return; }
+            listEl.replaceChildren(...cands.slice(0, 50).map((c) => {
+                const b = h("button", { class: "find-item" },
+                    h("span", { class: "find-path" }, c.path),
+                    h("span", { class: "find-meta muted" }, `${(c.size / 1024).toFixed(0)} KB · ${since(new Date(c.mtime * 1000).toISOString())}`));
                 b.addEventListener("click", () => showFile(c, b));
-                listEl.appendChild(b);
-            });
+                return b;
+            }));
         } catch (e) {
             if (e.name === "AbortError") return;
-            listEl.innerHTML = `<div class="find-status muted">${esc(String(e.message || e))}</div>`;
+            listEl.replaceChildren(h("div", { class: "find-status muted" }, String(e.message || e)));
         }
     })();
 }
 
 // small read-only preview table (capped) of the rows the current rules produce. Edit-driven
-// (never a steady-state tick), so a full innerHTML build here is fine.
+// (never a steady-state tick), so a full rebuild here is fine.
 function renderPreview(host, rows) {
     if (!host) return;
     if (!rows.length) { host.replaceChildren(); return; }
     const cols = [];
     for (const r of rows) for (const k of Object.keys(r)) if (!cols.includes(k)) cols.push(k);
     const cap = 50;
-    const head = `<tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`;
-    const body = rows.slice(0, cap).map((r) =>
-        `<tr>${cols.map((c) => `<td>${esc(r[c] == null ? "" : String(r[c]))}</td>`).join("")}</tr>`).join("");
-    host.innerHTML = `<table class="src-ptab"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+    host.replaceChildren(h("table", { class: "src-ptab" },
+        h("thead", h("tr", cols.map((c) => h("th", c)))),
+        h("tbody", rows.slice(0, cap).map((r) =>
+            h("tr", cols.map((c) => h("td", r[c] == null ? "" : String(r[c]))))))));
 }
 
 export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "price", "trigger", "filesource"]);
@@ -1409,24 +1422,34 @@ function fillNode(div, n, wire = true) {
     div.className = `gnode ${n.type}${isCollapsed ? " collapsed" : ""}${enabled ? "" : " node-disabled"}${hasRules ? " has-rules" : ""}${prettyDirty ? " pretty-dirty" : ""}`;
     if (n.type === "dataset") div.dataset.ds = n.ref;   // out-port drop target id (tabs moved to the vt-table satellite)
     const parts = nodeParts(n);
+    // the enable slide-toggle (gn-enable) — only on toggleable node types; null otherwise. Its
+    // .gn-enable class / aria-checked / state class are read by the post-build wiring below.
     const toggle = canToggle
-        ? `<button type="button" class="gn-enable${enabled ? " on" : ""}" role="switch" aria-checked="${enabled}" title="enabled — turn off to skip this node during detection">
-        <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
-          <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
-          <circle class="gt-thumb" cx="8" cy="8" r="5" />
-        </svg></button>`
-        : "";
+        ? h("button", {
+            type: "button", class: `gn-enable${enabled ? " on" : ""}`, role: "switch",
+            "aria-checked": String(enabled), title: "enabled — turn off to skip this node during detection",
+        }, svg("svg", { viewBox: "0 0 28 16", width: "28", height: "16", "aria-hidden": "true" },
+            svg("rect", { class: "gt-track", x: "1", y: "1", width: "26", height: "14", rx: "7" }),
+            svg("circle", { class: "gt-thumb", cx: "8", cy: "8", r: "5" })))
+        : null;
     // delete + detach moved to the selection toolbar (act on the selection); nodes carry
     // neither button anymore — select a node (or several) and use the toolbar.
-    const head = parts.head || "";
-    const ctrls = `${parts.title}${head}${toggle}`;
-    div.innerHTML = `<div class="gn-h ${parts.pulse || ""}">
-      <span class="gn-disc" title="collapse/expand">${nodeIcon(n)}<button class="collapse" aria-label="collapse/expand">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-          <rect x="3.5" y="3.5" width="17" height="17" rx="5.5"/><line x1="8" y1="12" x2="16" y2="12"/><line class="cv" x1="12" y1="8" x2="12" y2="16"/>
-        </svg></button></span>${ctrls}<span class="gn-type" aria-hidden="true">${esc(n.type === "itemfield" ? "field" : n.type === "itemtell" ? "tell" : n.type)}</span><span class="gn-pretty-dirty" title="held by a pretty override — not saved to yaml">pretty</span></div>
-    <div class="gn-body">${parts.body}</div>
-    <span class="gn-spin" title="working…"></span>${parts.ports || ""}`;
+    const typeLabel = n.type === "itemfield" ? "field" : n.type === "itemtell" ? "tell" : n.type;
+    div.replaceChildren(
+        h("div", { class: `gn-h ${parts.pulse || ""}` },
+            h("span", { class: "gn-disc", title: "collapse/expand" },
+                nodeIcon(n),
+                h("button", { class: "collapse", "aria-label": "collapse/expand" },
+                    svg("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "aria-hidden": "true" },
+                        svg("rect", { x: "3.5", y: "3.5", width: "17", height: "17", rx: "5.5" }),
+                        svg("line", { x1: "8", y1: "12", x2: "16", y2: "12" }),
+                        svg("line", { class: "cv", x1: "12", y1: "8", x2: "12", y2: "16" })))),
+            parts.title, parts.head, toggle,
+            h("span", { class: "gn-type", "aria-hidden": "true" }, typeLabel),
+            h("span", { class: "gn-pretty-dirty", title: "held by a pretty override — not saved to yaml" }, "pretty")),
+        h("div", { class: "gn-body" }, parts.body),
+        h("span", { class: "gn-spin", title: "working…" }),
+        parts.ports);
     div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
     const tog = div.querySelector(".gn-enable");
     tog?.addEventListener("click", (e) => {
@@ -1581,8 +1604,8 @@ function targetIdOf(el, target) {
 // (its height follows the cutout aspect). item is special-cased in buildNode.
 
 // Resize-handle opts shared by the initial build and every in-place rebuild. The grips live
-// in the node's innerHTML, so a rebuildNode() (which rewrites innerHTML via fillNode) WIPES
-// them — they must be re-added with these same opts or the node stops resizing.
+// inside the node's DOM, so a rebuildNode() (which replaces the node's children via fillNode)
+// WIPES them — they must be re-added with these same opts or the node stops resizing.
 // `widthOnly`: item + window nodes wrap a FIXED-ASPECT canvas (cutout / captured image), so
 // they resize by WIDTH only — height follows the image aspect. Same primitive, one flag; never
 // a separate resize path (their size persists through nodeSizes like every other node).
@@ -1637,13 +1660,14 @@ function buildNode(n, wire = true) {
     return div;
 }
 
-// window/item nodes wrap a LIVE canvas (captured image / cutout) that a full innerHTML rewrite
+// window/item nodes wrap a LIVE canvas (captured image / cutout) that a full node rebuild
 // would destroy — so they rebuild only their inner controls section in place, keeping the canvas.
 // Both kinds are the same shape (host selector + body builder + re-wire); one table, not two
 // copies. A new live-canvas node type is a row here, never another `if (n.type === …)` branch.
+// `build` returns a NODE/frag for the controls section (replaceChildren'd into `sel`).
 const _LIVE_SECTIONS = {
-    window: { sel: ".win-controls", html: (n) => windowControls(n.ref), wire: wireWindowControls },
-    item:   { sel: ".item-lists", html: (n) => itemLists(n.ref, n.win), wire: wireItemControls },
+    window: { sel: ".win-controls", build: (n) => windowControls(n.ref), wire: wireWindowControls },
+    item:   { sel: ".item-lists", build: (n) => itemLists(n.ref, n.win), wire: wireItemControls },
 };
 
 // Rebuild ONE node's DOM in place (used when its own layout changes, e.g. type).
@@ -1654,11 +1678,11 @@ function rebuildNode(id) {
     const live = _LIVE_SECTIONS[n.type];
     if (live) {   // keep the live canvas: rebuild + re-wire only the controls section
         const host = el.querySelector(live.sel);
-        if (host) { host.innerHTML = live.html(n); live.wire(el, n); }
+        if (host) { host.replaceChildren(live.build(n)); live.wire(el, n); }
         return;
     }
     fillNode(el, n);
-    // fillNode rewrote innerHTML, wiping the resize grips — re-add them. The ResizeObserver +
+    // fillNode rewrote the node's DOM, wiping the resize grips — re-add them. The ResizeObserver +
     // mouseup listeners from the initial snapResize stay bound to `el` (reused across rebuild);
     // only the grip DOM needs restoring, with grid snap (matching snapResize's `{...opts,snap:true}`).
     // (window + item already returned above; every remaining node type is freely resizable.)
@@ -1750,7 +1774,7 @@ function clearNodeSelections(keepId = null) {
         st.sel = null;
         const els = batEls(ds);
         if (els) {
-            els.detail.innerHTML = "";
+            els.detail.replaceChildren();
             els.list.querySelectorAll(".batrow.sel").forEach((li) => li.classList.remove("sel"));
         }
     }
@@ -2356,7 +2380,7 @@ function updateDatasetNodes() {
 
 async function refreshGames(select) {
     const names = await api.listProfiles();
-    $("gameSelect").innerHTML = names.map((n) => `<option>${n}</option>`).join("");
+    $("gameSelect").replaceChildren(...names.map((n) => h("option", n)));
     if (select && names.includes(select)) $("gameSelect").value = select;
 }
 
@@ -2395,7 +2419,7 @@ async function loadGame(name) {
     done();
     model.load(profile);
     nodeEls.clear();
-    $("gnodes").innerHTML = "";
+    $("gnodes").replaceChildren();
     for (const winId of [...imageCanvases.keys()]) closeImage(winId);
     batchesState.clear();   // batches render inline per node; drop stale selection state
     selected.clear();       // drop any multi-selection from the previous game
@@ -2431,7 +2455,7 @@ function createGame(name) {
     name = (name || "").trim();
     if (!name) { setStatus("enter a name"); return false; }
     model.load({ name, process_names: [], window_title_hint: null, fields: [], windows: [] });
-    pos.clear(); nodeEls.clear(); $("gnodes").innerHTML = "";
+    pos.clear(); nodeEls.clear(); $("gnodes").replaceChildren();
     render(); autosave();
     refreshGames(name);
     return true;
@@ -2701,32 +2725,27 @@ $("selClearBtn").addEventListener("click", () => deselectAll());
 // Settings modal (cog): new-game creation, OCR controls, and a backups section — all
 // built fresh per-open and wired here (no persistent holder; the modal owns its DOM).
 $("settingsBtn")?.addEventListener("click", () => {
-    const wrap = document.createElement("div");
-    wrap.className = "settings";
-    wrap.innerHTML = `
-    <section class="set-sec">
-      <h4>general</h4>
-      <div class="set-row">
-        <input id="newGameName" placeholder="new game name" />
-        <button id="newGameBtn">create</button>
-      </div>
-    </section>
-    <section class="set-sec">
-      <h4>OCR</h4>
-      <label class="set-row" title="OCR device — GPU needs onnxruntime-gpu + CUDA. Auto: CPU for editing, GPU for the precapture batch.">
-        <span>device</span>
-        <select id="ocrDevice"><option value="auto">Auto (CPU; GPU for precapture)</option><option value="cpu">CPU</option><option value="gpu">GPU</option></select>
-      </label>
-      <label class="set-row" title="downscale big frames before OCR — faster + far less GPU memory">
-        <span>downscale</span>
-        <select id="ocrScale">
-          <option value="1">1× full</option>
-          <option value="2">½ (¼ pixels)</option>
-          <option value="4">¼ (1/16 pixels)</option>
-        </select>
-      </label>
-    </section>
-    <section class="set-sec set-backups"><h4>backups</h4><div></div></section>`;
+    const wrap = h("div", { class: "settings" },
+        h("section", { class: "set-sec" },
+            h("h4", "general"),
+            h("div", { class: "set-row" },
+                h("input", { id: "newGameName", placeholder: "new game name" }),
+                h("button", { id: "newGameBtn" }, "create"))),
+        h("section", { class: "set-sec" },
+            h("h4", "OCR"),
+            h("label", { class: "set-row", title: "OCR device — GPU needs onnxruntime-gpu + CUDA. Auto: CPU for editing, GPU for the precapture batch." },
+                h("span", "device"),
+                h("select", { id: "ocrDevice" },
+                    h("option", { value: "auto" }, "Auto (CPU; GPU for precapture)"),
+                    h("option", { value: "cpu" }, "CPU"),
+                    h("option", { value: "gpu" }, "GPU"))),
+            h("label", { class: "set-row", title: "downscale big frames before OCR — faster + far less GPU memory" },
+                h("span", "downscale"),
+                h("select", { id: "ocrScale" },
+                    h("option", { value: "1" }, "1× full"),
+                    h("option", { value: "2" }, "½ (¼ pixels)"),
+                    h("option", { value: "4" }, "¼ (1/16 pixels)")))),
+        h("section", { class: "set-sec set-backups" }, h("h4", "backups"), h("div")));
 
     const name = model.profile.name;
     const handle = openModal({ title: "settings", size: "medium", node: wrap });
@@ -2748,7 +2767,7 @@ $("settingsBtn")?.addEventListener("click", () => {
             signal: handle.signal, close: handle.close,
         });
     } else {
-        bkHost.innerHTML = `<div class="muted bk-pad">load a game to see its backups</div>`;
+        bkHost.replaceChildren(h("div", { class: "muted bk-pad" }, "load a game to see its backups"));
     }
 });
 $("graph").addEventListener("mousedown", (ev) => {
@@ -3042,13 +3061,15 @@ async function bootSettle(maxMs = 30000, quietMs = 600) {
 // one is ever shown at a time (an existing card is replaced).
 function blockOverlay({ title, lines = [], actions = [] }) {
     document.querySelector(".startup-halt")?.remove();
-    const o = document.createElement("div");
-    o.className = "startup-halt";
-    const body = lines.map((l) => `<p${l.muted ? ' class="muted"' : ""}>${esc(l.text)}</p>`).join("");
-    o.innerHTML = `<div class="startup-halt-box"><h3>${esc(title)}</h3>${body}
-    <div class="halt-actions">${actions.map((a, i) =>
-      `<button class="startup-halt-retry${a.primary ? "" : " ghost"}" data-i="${i}">${esc(a.label)}</button>`).join("")}</div></div>`;
-    actions.forEach((a, i) => o.querySelector(`[data-i="${i}"]`).addEventListener("click", () => { o.remove(); a.run(); }));
+    const o = h("div", { class: "startup-halt" },
+        h("div", { class: "startup-halt-box" },
+            h("h3", title),
+            lines.map((l) => h("p", { class: l.muted ? "muted" : null }, l.text)),
+            h("div", { class: "halt-actions" },
+                actions.map((a) => h("button", {
+                    class: `startup-halt-retry${a.primary ? "" : " ghost"}`,
+                    onClick: () => { o.remove(); a.run(); },
+                }, a.label)))));
     document.body.appendChild(o);
     return o;
 }
