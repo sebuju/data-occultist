@@ -3,6 +3,8 @@
 // node-view (add node) and pretty studio (add widget) build their right-click menus on this —
 // do NOT fork a second copy — one shared primitive.
 
+import { h } from "./dom.js";
+
 let _menu = null;
 function closeContextMenu() {
     if (!_menu) return;
@@ -26,7 +28,9 @@ function openContextMenu(clientX, clientY, items) {
         const b = document.createElement("button");
         b.className = "ctx-item";
         if (it.tint) b.style.setProperty("--ctx-tint", it.tint);
-        b.innerHTML = `<span class="ctx-ic">${it.icon || "▫"}</span><span class="ctx-lbl">${it.title}</span>`;
+        b.append(
+            h("span", { class: "ctx-ic" }, it.icon || "▫"),
+            h("span", { class: "ctx-lbl" }, it.title));
         b.addEventListener("click", () => { closeContextMenu(); it.onClick(); });
         menu.appendChild(b);
     }

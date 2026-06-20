@@ -15,11 +15,14 @@
 // moves the window on mouse-MOVE after a press, so a static click never drags.
 
 import { initWindowResize } from "./desktop_resize.js";
+import { h, svg } from "./dom.js";
 
 const ICON = {
-    min: '<svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg>',
-    max: '<svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7"/></svg>',
-    close: '<svg viewBox="0 0 12 12"><line x1="3" y1="3" x2="9" y2="9"/><line x1="9" y1="3" x2="3" y2="9"/></svg>',
+    min: () => svg("svg", { viewBox: "0 0 12 12" }, svg("line", { x1: "2", y1: "6", x2: "10", y2: "6" })),
+    max: () => svg("svg", { viewBox: "0 0 12 12" }, svg("rect", { x: "2.5", y: "2.5", width: "7", height: "7" })),
+    close: () => svg("svg", { viewBox: "0 0 12 12" },
+        svg("line", { x1: "3", y1: "3", x2: "9", y2: "9" }),
+        svg("line", { x1: "9", y1: "3", x2: "3", y2: "9" })),
 };
 
 let built = false;
@@ -32,12 +35,12 @@ function build() {
     bar.className = "titlebar pywebview-drag-region";
     // Fixed product name — NOT document.title (that carries the internal package name,
     // e.g. "oc — node view", which must never surface in the UI).
-    bar.innerHTML =
-        `<span class="tb-title">data-occultist</span>` +
-        `<span class="tb-spacer"></span>` +
-        `<button class="tb-btn" data-act="min" title="minimize" aria-label="minimize">${ICON.min}</button>` +
-        `<button class="tb-btn" data-act="max" title="maximize" aria-label="maximize">${ICON.max}</button>` +
-        `<button class="tb-btn tb-close" data-act="close" title="close" aria-label="close">${ICON.close}</button>`;
+    bar.replaceChildren(
+        h("span", { class: "tb-title" }, "data-occultist"),
+        h("span", { class: "tb-spacer" }),
+        h("button", { class: "tb-btn", "data-act": "min", title: "minimize", "aria-label": "minimize" }, ICON.min()),
+        h("button", { class: "tb-btn", "data-act": "max", title: "maximize", "aria-label": "maximize" }, ICON.max()),
+        h("button", { class: "tb-btn tb-close", "data-act": "close", title: "close", "aria-label": "close" }, ICON.close()));
 
     bar.addEventListener("click", (e) => {
         const btn = e.target.closest(".tb-btn");

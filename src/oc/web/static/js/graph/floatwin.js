@@ -5,6 +5,7 @@
 // the bookkeeping that lets layout persistence collect/hydrate panels generically.
 
 import { makeDraggable, addResizeGrips } from "./dragresize.js";
+import { h } from "../dom.js";
 
 // Registry of live panels by id. Panels are SESSION-ONLY (not persisted): hydrateLayout resets
 // them all to their hidden defaults on load; nothing writes their state back to the profile.
@@ -244,14 +245,14 @@ function _syncDockMarks() {
 
 // opts:
 //   id, title           — element id + header text
-//   headerExtra         — extra header HTML (e.g. a mode-toggle button), wired by the caller
+//   headerExtra         — extra header node(s) (e.g. a mode-toggle button), wired by the caller
 //   state               — the persistent {visible,x,y,w,h,…} object (the panel owns it)
 //   bothAxes            — resize height too? boolean or () => boolean (false = width only)
 //   onResize            — called live during resize and on relevant size changes
 //   onShow / onHide     — visibility transitions (e.g. start/stop polling, render)
 //   onPersist           — schedule a save of state (main passes () => persist.layout())
 export function createFloatWin({
-    id, title = "", headerExtra = "", state,
+    id, title = "", headerExtra = null, state,
     bothAxes = false, onResize = null, onShow = null, onHide = null, onPersist = null,
     autoFit = true,   // height auto-fits the content; width is the only preset/user-sized axis.
                                         // Panels with their own height logic (the node map's aspect fit) pass false.
@@ -260,12 +261,12 @@ export function createFloatWin({
     if (state.dock === undefined) state.dock = null;   // { to, dx } when docked below another panel
     const el = document.createElement("div");
     el.id = id; el.className = "floatwin"; el.hidden = !state.visible;
-    el.innerHTML = `<div class="fw-head">
-      <span class="fw-title">${title}</span>
-      ${headerExtra}
-      <button class="fw-collapse" title="collapse / expand">▴</button>
-    </div>
-    <div class="fw-body"></div>`;
+    el.replaceChildren(
+        h("div", { class: "fw-head" },
+            h("span", { class: "fw-title" }, title),
+            headerExtra,
+            h("button", { class: "fw-collapse", title: "collapse / expand" }, "▴")),
+        h("div", { class: "fw-body" }));
     document.body.appendChild(el);
     // any interaction with this panel raises it above the others (capture, so it fires even
     // when an inner handler stops propagation).

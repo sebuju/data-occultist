@@ -10,6 +10,8 @@
 //   * and let every poller halt (they check isOnline()) so nothing hammers a dead
 //     server or mutates the DOM while we're blind.
 
+import { h } from "./dom.js";
+
 const HEALTH_URL = "/api/ocr/device";   // cheapest always-present GET; also serve.ps1's up-probe
 const PROBE_MS = 2500;                   // auto-retry cadence while offline
 
@@ -84,16 +86,14 @@ function ensureEl() {
     // Heading states only what we KNOW (a request didn't get a response); the cause
     // line below shows the actual failing request/error rather than guessing whether
     // the server is "down". The probe decides reachable-vs-not and auto-dismisses.
-    el.innerHTML = `<div class="startup-halt-box">
-    <h3>No response from the backend</h3>
-    <p>A request failed and the server isn't answering the health check yet. It may be
-       busy, restarting, or unreachable.</p>
-    <p class="muted offline-reason"></p>
-    <p class="muted">Retrying automatically — all updates are paused until it answers.</p>
-    <button class="startup-halt-retry" type="button">retry now</button></div>`;
-    btn = el.querySelector(".startup-halt-retry");
-    reasonEl = el.querySelector(".offline-reason");
-    btn.addEventListener("click", retryNow);
+    reasonEl = h("p", { class: "muted offline-reason" });
+    btn = h("button", { class: "startup-halt-retry", type: "button", onClick: retryNow }, "retry now");
+    el.replaceChildren(h("div", { class: "startup-halt-box" },
+        h("h3", "No response from the backend"),
+        h("p", "A request failed and the server isn't answering the health check yet. It may be busy, restarting, or unreachable."),
+        reasonEl,
+        h("p", { class: "muted" }, "Retrying automatically — all updates are paused until it answers."),
+        btn));
     document.body.appendChild(el);
 }
 

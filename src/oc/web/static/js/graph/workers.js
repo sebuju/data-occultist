@@ -15,7 +15,7 @@ function registerWorker(id, label, kill) {
 }
 function unregisterWorker(id) { if (workers.delete(id)) renderWorkers(); }
 
-// Reconcile the indicator IN PLACE — never rebuild innerHTML (the precapture poll
+// Reconcile the indicator IN PLACE — never rebuild the whole subtree (the precapture poll
 // re-registers every 700ms; rebuilding would restart the spinner animation and churn
 // the buttons every tick). Fixed spinner + count are made once; buttons are reused.
 let wkSpin = null, wkCount = null;

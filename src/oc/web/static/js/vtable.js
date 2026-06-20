@@ -17,6 +17,7 @@
 //   vt.setData(columns /* string[] */, rows /* object[] */, { rowClass(row){…} });
 
 import { colResizeDrag } from "./graph/dragresize.js";
+import { h } from "./dom.js";
 
 const ROW_H = 22;        // fixed row height (px) — virtualization needs a known height
 const BUFFER = 6;        // extra rows rendered above/below the viewport
@@ -415,7 +416,8 @@ export class VTable {
         this.expandedRow = rec;
         this.expandEl = document.createElement("div");
         this.expandEl.className = "vt-detail";
-        this.expandEl.innerHTML = `<div class="vt-detail-inner"><p class="muted" style="padding:6px">loading…</p></div>`;
+        this.expandEl.replaceChildren(
+            h("div", { class: "vt-detail-inner" }, h("p", { class: "muted", style: "padding:6px" }, "loading…")));
         this.rowsEl.appendChild(this.expandEl);
         this._measureExpand();
         this._render();

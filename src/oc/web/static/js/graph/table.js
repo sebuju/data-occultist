@@ -1,7 +1,7 @@
 // Enhance a rendered <table class="grid-table"> with click-to-sort headers and
 // drag-to-resize columns. Column identity is the header TEXT (robust to column
 // reordering); state survives the frequent re-renders the poll loop does. Called after
-// each innerHTML build.
+// each table (re)build.
 //
 // Sort: left-click a header cycles none → desc → asc → none. Shift-click ADDS a column
 // to the sort (multi-key, in click order). The sort indicator overlays the header

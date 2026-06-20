@@ -1,8 +1,10 @@
+import { h } from "./dom.js";
+
 // Tiny modal manager: stackable overlays with a title bar, close button,
 // backdrop-click and Esc to dismiss. Returns a handle with close().
 //
-// openModal({ title, size, node, html, onClose, canClose }) — provide either `node`
-// (an element) or `html` for the body. size: "large" | "data" | "medium".
+// openModal({ title, size, node, onClose, canClose }) — `node` is the body element.
+// size: "large" | "data" | "medium".
 // `canClose` is an optional guard: when it returns false, USER dismissal (Esc /
 // backdrop / ×) is blocked. handle.close() always closes (programmatic).
 //
@@ -23,20 +25,20 @@ function dismissTop() {
 
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") dismissTop(); });
 
-export function openModal({ title = "", size = "medium", node = null, html = "", onClose = null, canClose = null } = {}) {
+export function openModal({ title = "", size = "medium", node = null, onClose = null, canClose = null } = {}) {
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop";
 
     const modal = document.createElement("div");
     modal.className = `modal ${size}`;
-    modal.innerHTML = `
-    <div class="modal-h">
-      <span class="modal-title">${title}</span>
-      <button class="modal-x" title="close (Esc)">×</button>
-    </div>
-    <div class="modal-body"></div>`;
-    const body = modal.querySelector(".modal-body");
-    if (node) body.appendChild(node); else body.innerHTML = html;
+    const closeBtn = h("button", { class: "modal-x", title: "close (Esc)" }, "×");
+    const body = h("div", { class: "modal-body" });
+    modal.append(
+        h("div", { class: "modal-h" },
+            h("span", { class: "modal-title" }, title),
+            closeBtn),
+        body);
+    if (node) body.appendChild(node);
 
     backdrop.appendChild(modal);
     document.body.appendChild(backdrop);
@@ -64,7 +66,7 @@ export function openModal({ title = "", size = "medium", node = null, html = "",
     };
 
     backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) handle.dismiss(); });
-    modal.querySelector(".modal-x").addEventListener("click", () => handle.dismiss());
+    closeBtn.addEventListener("click", () => handle.dismiss());
     stack.push(handle);
     return handle;
 }

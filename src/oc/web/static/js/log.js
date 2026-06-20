@@ -2,6 +2,8 @@
 // scrollable history. `timed(label)` logs a "…" line and returns a done() that logs
 // the same label with the elapsed, human-readable duration.
 
+import { h } from "./dom.js";
+
 const MAX = 500;
 let bar = null, latest = null, body = null, ready = false;
 const buffer = [];
@@ -22,17 +24,13 @@ function scrollBottom() {
     if (body) body.scrollTop = body.scrollHeight;
 }
 
-function esc(s) {
-    return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-}
-
 function append({ ts, msg, level }) {
     latest.textContent = msg;
     latest.className = `log-latest lvl-${level}`;
     const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 30;
     const row = document.createElement("div");
     row.className = `log-row lvl-${level}`;
-    row.innerHTML = `<span class="log-ts">${ts}</span>${esc(msg)}`;
+    row.replaceChildren(h("span", { class: "log-ts" }, ts), String(msg));
     body.appendChild(row);
     while (body.children.length > MAX) body.removeChild(body.firstChild);
     if (atBottom) body.scrollTop = body.scrollHeight;
