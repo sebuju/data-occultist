@@ -182,7 +182,7 @@ export class VTable {
     _renderMeta() {
         if (!this.meta) return;
         const lines = this.rows.length;
-        const parts = [`${lines} line${lines === 1 ? "" : "s"}`];
+        const parts = [`${lines} row${lines === 1 ? "" : "s"}`];
         if (this._batchCount != null) parts.push(`${this._batchCount} batch${this._batchCount === 1 ? "" : "es"}`);
         this.meta.textContent = parts.join("  ·  ");
     }
