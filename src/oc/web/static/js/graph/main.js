@@ -916,6 +916,102 @@ function wireHideToggles(host, s) {
     }));
 }
 
+// Client mirror of oc.store.textnorm.norm_text — same step order (lower -> strip punct -> drop
+// whole words -> collapse whitespace), so the join-settings preview matches what the backend keys on.
+function normPreview(jn, value) {
+    let s = String(value || "");
+    if (jn.case_insensitive) s = s.toLowerCase();
+    if (jn.strip_punct) s = s.replace(/[^\w\s]+/g, " ");
+    const words = jn.strip_words || [];
+    if (words.length) {
+        const drop = new Set(words.map((w) => (jn.case_insensitive ? w.toLowerCase() : w)));
+        s = s.split(/\s+/).filter(Boolean).filter((t) => !drop.has(jn.case_insensitive ? t.toLowerCase() : t)).join(" ");
+    }
+    if (jn.collapse_ws) s = s.replace(/\s+/g, " ").trim();
+    return s;
+}
+
+// One source's per-source join config (a block within the subset's "sources" grid). Each input
+// carries its OWN join field / match-norm / many->one aggregate / required flag. Returns null when
+// the source has nothing to configure (a single non-dedup dataset source) so no empty block shows.
+//   • `joined` (2+ sources) -> show join-on column, required, and match knobs (once a field is set);
+//   • a dataset source that dedups -> show its "many →" collapse;
+//   • a subset source / no-dedup dataset -> no aggregate row (it already serves one row per key).
+function sourceCfgNode(s, ds, joined) {
+    const isView = !!model.subsetDef(ds);
+    const src = model.subsetSource(s.id, ds) || {};
+    const jf = src.join_field || "";
+    const showAgg = !isView && model.datasetDedup(ds);
+    if (!joined && !showAgg) return null;   // single non-dedup source: nothing to configure
+    const cols = model.inputColumns(ds);
+    // source header spans BOTH grid columns (gspan), a full-width band above its settings
+    const rows = [h("span", { class: "lab lab-top gspan sv-src-h", title: "this source's settings" }, ds)];
+    // "many ->" is the read/collapse policy, NOT a join input — render it FIRST, above the join config,
+    // so it doesn't read as a join knob.
+    if (showAgg) {
+        const aggOpts = AGGREGATES.map((a) => h("option", { value: a, selected: a === model.sourceAggregate(s.id, ds) }, AGG_LABEL[a] || a));
+        rows.push(labCell("many →", "how this source's many observations collapse to one value"),
+            h("select", { class: "sv-sagg", dataset: { ds } }, aggOpts));
+    }
+    if (joined) {
+        const joinOpts = [h("option", { value: "", selected: !jf }, "(no join)"),
+            ...[...new Set([jf, ...cols])].filter(Boolean).map((c) => h("option", { value: c, selected: c === jf }, c))];
+        rows.push(labCell("join on", "this source's column used as the join key; (no join) stacks its rows"),
+            h("select", { class: "sv-sjoin", dataset: { ds } }, joinOpts));
+        if (jf) {
+            rows.push(labCell("required", "key must exist in this source (inner-style); off = optional outer fill"),
+                h("label", { class: "flab" }, h("input", { type: "checkbox", class: "sv-sreq", dataset: { ds }, checked: !!src.required })));
+            const jn = model.sourceJoinNorm(s.id, ds);
+            const ckRow = (lbl, title, cls, on) => frag(labCell(lbl, title),
+                h("label", { class: "flab" }, h("input", { type: "checkbox", class: cls, dataset: { ds }, checked: !!on })));
+            rows.push(
+                ckRow("ignore case", "fold case before matching", "sn-ci", jn.case_insensitive),
+                ckRow("strip punctuation", "drop punctuation (collapse to spaces)", "sn-punct", jn.strip_punct),
+                ckRow("collapse spaces", "runs of whitespace -> one space, trimmed", "sn-ws", jn.collapse_ws),
+                labCell("drop words", "whole words removed from this side; space- or comma-separated"),
+                h("input", { type: "text", class: "sn-words", dataset: { ds }, value: (jn.strip_words || []).join(" "), placeholder: "e.g. relic" }));
+            // live worked example: a REAL sample join value from this source, transformed by the knobs
+            // above. Filled async (fillNormSamples) since the sample is fetched; updates in place as the
+            // knobs change. Shows a "no data" note when the source has no value to preview.
+            rows.push(labCell("example", "how these settings canonicalise a real join value from this source"),
+                h("span", { class: "sv-norm-eg", dataset: { ds, jf } }, h("span", { class: "muted" }, "loading…")));
+        }
+    }
+    return frag(...rows);
+}
+
+// Repaint ONE source's worked example in place from the current knobs + the cached sample
+// (`el._sample`, set by fillNormSamples). `_sample === undefined` -> still loading; `null` -> the
+// source had no value to preview; a string -> show `"raw" → normalised`. Event-driven (knob/keystroke),
+// never a steady-state poll, so replaceChildren here is fine.
+function renderNormEg(el, sid) {
+    const ds = el.dataset.ds;
+    const jn = model.sourceJoinNorm(sid, ds);
+    if (el._sample === undefined) { el.replaceChildren(h("span", { class: "muted" }, "loading example…")); return; }
+    if (el._sample === null) { el.replaceChildren(h("span", { class: "muted" }, `no ${el.dataset.jf} data to preview`)); return; }
+    el.replaceChildren(`${el._sample} → ${normPreview(jn, el._sample) || "∅"}`);
+}
+
+// Fetch a real sample join value for every source's worked example, then render each. The sample is
+// the first non-empty value in the source's join column (its own rows for a dataset, computed rows
+// for a subset). Failures / empty sources resolve to the "no data" state, never an error.
+async function fillNormSamples(div, s) {
+    const game = encodeURIComponent(model.profile.name);
+    await Promise.all([...div.querySelectorAll(".sv-norm-eg")].map(async (el) => {
+        const ds = el.dataset.ds, jf = el.dataset.jf;
+        let sample = null;
+        try {
+            const isView = !!model.subsetDef(ds);
+            const url = `/api/flow/${game}/${isView ? "subset" : "dataset"}/${encodeURIComponent(ds)}`;
+            const data = await (await fetch(url)).json();
+            const recs = isView ? (data.rows || []) : (data.records || []);
+            for (const r of recs) { const v = r[jf]; if (v != null && String(v).trim() !== "") { sample = String(v); break; } }
+        } catch { /* leave null -> "no data" */ }
+        el._sample = sample;
+        renderNormEg(el, s.id);
+    }));
+}
+
 function subConfigNode(s) {
     const cols = viewColumns(s);
     const inputs = model.subsetInputs(s);
@@ -924,49 +1020,10 @@ function subConfigNode(s) {
     const chips = inputs.map((d) => h("span", { class: "sv-input" }, d,
         h("button", { class: "sv-rmin danger", dataset: { ds: d }, title: "remove input" }, TRASH())));
     const addOpts = [h("option", { value: "" }, "+ join source"), free.map((d) => h("option", d))];
-    // join-on is a COLUMN dropdown, populated from the joined sources' columns once a source is
-    // added (so you pick a real shared field, not a free-typed guess). Current value kept even
-    // if not in the live column set yet.
-    // join-on only matters when 2+ sources are combined; with a single source there's nothing
-    // to join across, so hide the row entirely (the field still persists for when a source is added).
-    // "(no join)" (empty) just stacks the sources; the join/match rows below only apply once a
-    // join field is picked, so they stay hidden until then.
+    // join is PER-SOURCE now: each input carries its own join column, match-norm, many->one
+    // collapse, and required flag (see model JoinSource). One config block per source.
     const joined = inputs.length > 1;
-    const jf = s.join_field || "";
-    const joinOpts = [h("option", { value: "", selected: !jf }, "(no join)"),
-        ...[...new Set([jf, ...cols])].filter(Boolean).map((c) => h("option", { value: c, selected: c === jf }, c))];
-    const joinRow = joined
-        ? frag(labCell("join on", "shared field the sources are joined on; (no join) just stacks them"),
-            h("select", { class: "sv-join" }, joinOpts))
-        : null;
-    // the join mode + match knobs only mean something once a join field is set
-    const hasJoin = joined && !!jf;
-    // outer (keep every key) vs inner (only keys present in every source)
-    const jmode = model.subsetJoinMode(s.id);
-    const joinModeRow = hasJoin
-        ? frag(labCell("join", "outer = keep every key; inner = only keys present in every source"),
-            h("select", { class: "sv-jmode" },
-                h("option", { value: "outer", selected: jmode === "outer" }, "outer (all keys)"),
-                h("option", { value: "inner", selected: jmode === "inner" }, "inner (in every source)")))
-        : null;
-    // match: canonicalise each side's join value before matching, so near-match keys still join
-    // (e.g. "Axi A1 Relic" vs "AXI A1"). One row per knob, like the other config rows.
-    const jn = model.subsetJoinNorm(s.id);
-    const ckRow = (lbl, title, cls, on) => frag(labCell(lbl, title),
-        h("label", { class: "flab" }, h("input", { type: "checkbox", class: cls, checked: !!on })));
-    const matchRows = hasJoin
-        ? frag(
-            ckRow("ignore case", "fold case before matching", "jn-ci", jn.case_insensitive),
-            ckRow("strip punctuation", "drop punctuation (collapse to spaces)", "jn-punct", jn.strip_punct),
-            ckRow("collapse spaces", "runs of whitespace -> one space, trimmed", "jn-ws", jn.collapse_ws),
-            labCell("drop words", "whole words removed from both sides; space- or comma-separated"),
-            h("input", { type: "text", class: "jn-words", value: (jn.strip_words || []).join(" "), placeholder: "e.g. relic" }))
-        : null;
-    const aggOpts = AGGREGATES.map((a) => h("option", { value: a, selected: a === model.subsetAggregate(s.id) }, AGG_LABEL[a] || a));
-    // the "many →" collapse only does anything when an INPUT dataset dedups (a no-dedup dataset
-    // already serves one row per read) — show it only then.
-    const showAgg = model.subsetInputs(s).some((inp) => !model.subsetDef(inp) && model.datasetDedup(inp));
-    const aggRow = showAgg ? frag(labCell("many →", "how each key's many observations collapse to one value"), h("select", { class: "sv-agg" }, aggOpts)) : null;
+    const srcCfgs = inputs.map((ds) => sourceCfgNode(s, ds, joined)).filter(Boolean);
     const filters = (s.filters || []).map((f, i) => h("div", { class: "sub-row", dataset: { i } },
         h("select", { class: "sf-field", dataset: { i } }, _colOpts(cols, f.field)),
         h("select", { class: "sf-op", dataset: { i } }, SUB_OPS.map((o) => h("option", { selected: o === f.op }, o))),
@@ -986,13 +1043,15 @@ function subConfigNode(s) {
         h("button", { class: "ss-del danger", dataset: { i }, title: "remove sort" }, TRASH())));
     return frag(
         h("div", { class: "sub-sec lab-grid" },
-            labCell("sources", "datasets or subsets, joined on a shared field", true),
+            labCell("sources", "datasets or subsets; each joins on its own field", true),
             h("div", { class: "sv-inputs" }, chips,
                 h("span", { class: "sv-input sv-add" }, h("select", { class: "sv-addin" }, addOpts))),
-            joinRow, joinModeRow, matchRows,
+            ...srcCfgs,
+            // close the per-source section so the view-level rows below (limit, latest batch) don't
+            // read as part of the last source's block
+            ...(srcCfgs.length ? [h("div", { class: "gspan sv-sec-end" })] : []),
             labCell("limit", "cap the number of result rows (0 = no limit)"),
             h("input", { type: "number", class: "sv-limit", min: "0", step: "1", value: s.limit || 0, placeholder: "0" }),
-            aggRow,
             labCell("latest batch only", "only pull rows from each source's most recent collection batch (applied before everything else)"),
             h("label", { class: "flab" }, h("input", { type: "checkbox", class: "sv-latest", checked: !!s.latest_batch }))),
         h("div", { class: "sub-sec" },
@@ -1026,7 +1085,7 @@ function repaintSubsetCols(el, s) {
     const sig = cols.join("|");
     if (el._colsig === sig) return;
     el._colsig = sig;
-    for (const sel of el.querySelectorAll(".ss-field, .sf-field, .sv-join")) {
+    for (const sel of el.querySelectorAll(".ss-field, .sf-field")) {
         const v = sel.value;
         sel.replaceChildren(..._colOpts(cols, v));
         sel.value = v;
@@ -1107,16 +1166,25 @@ function wireSubset(div, s) {
     div.querySelectorAll(".sv-rmin").forEach((b) => b.addEventListener("click", () => {
         model.removeSubsetInput(s.id, b.dataset.ds); render(); restructure();
     }));
-    // setting/clearing the join field toggles the join-mode + match rows, so rebuild the node
-    // (wireSubset re-queues a refresh); restructure, not recompute
-    div.querySelector(".sv-join")?.addEventListener("change", (e) => { model.setJoinField(s.id, e.target.value.trim()); restructure(); });
-    div.querySelector(".sv-jmode")?.addEventListener("change", (e) => { model.setSubsetJoinMode(s.id, e.target.value); recompute(); });
-    div.querySelector(".sv-agg")?.addEventListener("change", (e) => { model.setSubsetAggregate(s.id, e.target.value); recompute(); });
-    // match (join_norm): each knob re-canonicalises the join keys, so just recompute the view
-    div.querySelector(".jn-ci")?.addEventListener("change", (e) => { model.setJoinNorm(s.id, { case_insensitive: e.target.checked }); recompute(); });
-    div.querySelector(".jn-punct")?.addEventListener("change", (e) => { model.setJoinNorm(s.id, { strip_punct: e.target.checked }); recompute(); });
-    div.querySelector(".jn-ws")?.addEventListener("change", (e) => { model.setJoinNorm(s.id, { collapse_ws: e.target.checked }); recompute(); });
-    div.querySelector(".jn-words")?.addEventListener("change", (e) => { model.setJoinStripWords(s.id, e.target.value); recompute(); });
+    // PER-SOURCE join config — each control carries its source id in dataset.ds. Setting/clearing a
+    // source's join field toggles its required + match rows, so rebuild the node (restructure);
+    // the other knobs just re-canonicalise/recompute the view.
+    div.querySelectorAll(".sv-sjoin").forEach((el) => el.addEventListener("change", (e) => { model.setSourceJoinField(s.id, el.dataset.ds, e.target.value.trim()); restructure(); }));
+    div.querySelectorAll(".sv-sreq").forEach((el) => el.addEventListener("change", (e) => { model.setSourceRequired(s.id, el.dataset.ds, e.target.checked); recompute(); }));
+    div.querySelectorAll(".sv-sagg").forEach((el) => el.addEventListener("change", (e) => { model.setSourceAggregate(s.id, el.dataset.ds, e.target.value); recompute(); }));
+    // norm knobs re-render the worked example IN PLACE (realtime) — no node rebuild, no refetch (the
+    // sample is cached on the eg element) — then recompute() refreshes the actual joined view.
+    const egFor = (ds) => div.querySelector(`.sv-norm-eg[data-ds="${CSS.escape(ds)}"]`);
+    const previewNorm = (ds) => { const eg = egFor(ds); if (eg) renderNormEg(eg, s.id); };
+    div.querySelectorAll(".sn-ci").forEach((el) => el.addEventListener("change", (e) => { model.setSourceJoinNorm(s.id, el.dataset.ds, { case_insensitive: e.target.checked }); previewNorm(el.dataset.ds); recompute(); }));
+    div.querySelectorAll(".sn-punct").forEach((el) => el.addEventListener("change", (e) => { model.setSourceJoinNorm(s.id, el.dataset.ds, { strip_punct: e.target.checked }); previewNorm(el.dataset.ds); recompute(); }));
+    div.querySelectorAll(".sn-ws").forEach((el) => el.addEventListener("change", (e) => { model.setSourceJoinNorm(s.id, el.dataset.ds, { collapse_ws: e.target.checked }); previewNorm(el.dataset.ds); recompute(); }));
+    // drop-words: preview live on every keystroke (input); commit the view recompute on blur (change)
+    div.querySelectorAll(".sn-words").forEach((el) => {
+        el.addEventListener("input", () => { model.setSourceStripWords(s.id, el.dataset.ds, el.value); previewNorm(el.dataset.ds); });
+        el.addEventListener("change", () => { model.setSourceStripWords(s.id, el.dataset.ds, el.value); recompute(); });
+    });
+    fillNormSamples(div, s);   // fetch each source's real sample value, then render its example
     div.querySelector(".sv-latest")?.addEventListener("change", (e) => { model.setSubsetLatestBatch(s.id, e.target.checked); recompute(); });
     div.querySelector(".sv-limit")?.addEventListener("change", (e) => { model.setSubsetLimit(s.id, e.target.value); e.target.value = s.limit || 0; recompute(); });
 

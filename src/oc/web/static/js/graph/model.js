@@ -20,10 +20,9 @@ export class GraphModel {
         this.profile.file_sources = this.profile.file_sources || [];
         this.profile.triggers = this.profile.triggers || [];
         this.profile.dictionaries = this.profile.dictionaries || [];
-        // a subset joins many datasets; fold a legacy single ``dataset`` into ``datasets``
+        // a subset joins many sources, each carrying its own join config (JoinSource)
         for (const s of this.profile.subsets) {
-            s.datasets = s.datasets || [];
-            if (s.dataset && !s.datasets.includes(s.dataset)) { s.datasets.unshift(s.dataset); s.dataset = ""; }
+            s.sources = s.sources || [];
             s.sort = s.sort || [];
             // fold a legacy single-column sort into the multi-column list
             if (!s.sort.length && s.sort_by) { s.sort = [{ field: s.sort_by, desc: !!s.sort_desc }]; s.sort_by = ""; }
@@ -102,11 +101,9 @@ export class GraphModel {
         }
         for (const s of this.profile.file_sources || [])                  // a source DECLARES its output dataset
             sites.push({ decl: true, get: () => s.dataset, set: (v) => { s.dataset = v; } });
-        for (const s of this.profile.subsets || []) {                     // subset inputs are REFs
-            sites.push({ decl: false, get: () => s.dataset, set: (v) => { s.dataset = v; } });   // legacy single
-            (s.datasets || []).forEach((_, i) =>
-                sites.push({ decl: false, get: () => s.datasets[i], set: (v) => { s.datasets[i] = v; } }));
-        }
+        for (const s of this.profile.subsets || [])                       // each subset source is a REF
+            (s.sources || []).forEach((_, i) =>
+                sites.push({ decl: false, get: () => s.sources[i].dataset, set: (v) => { s.sources[i].dataset = v; } }));
         for (const t of this.profile.triggers || [])                      // on_change watch are REFs
             (t.watch || []).forEach((_, i) =>
                 sites.push({ decl: false, get: () => t.watch[i], set: (v) => { t.watch[i] = v; } }));
@@ -516,8 +513,15 @@ export class GraphModel {
 
     // ---- subsets: join one or more datasets, then filter/derive/sort ----------
     subsetDef(id) { return (this.profile.subsets || []).find((s) => s.id === id) || null; }
-    // a subset's source datasets (joined on join_field), in order
-    subsetInputs(s) { return (s && s.datasets && s.datasets.length) ? s.datasets : (s && s.dataset ? [s.dataset] : []); }
+    // a subset's source dataset/subset ids (each source joins on its own field), in order
+    subsetInputs(s) { return (s && s.sources || []).map((src) => src.dataset).filter(Boolean); }
+    // the JoinSource entry for one input id (its per-source join_field/norm/aggregate/required)
+    subsetSource(id, ds) { const s = this.subsetDef(id); return s ? (s.sources || []).find((src) => src.dataset === ds) || null : null; }
+    // a fresh JoinSource with sane defaults (joins on `name`, latest, optional/outer)
+    _newSource(ds) {
+        return { dataset: ds, join_field: "name", aggregate: "latest", required: false,
+            join_norm: { case_insensitive: true, strip_punct: false, collapse_ws: true, strip_words: [] } };
+    }
     // `ds` (optional) seeds the subset's first input + name. Omitted (e.g. minted from the
     // canvas add-node menu) -> a standalone, input-less subset named "subset" the user wires later.
     addSubset(ds = null) {
@@ -525,8 +529,7 @@ export class GraphModel {
         let n = 1, id = base;
         while (this.subsetDef(id)) id = ds ? `${ds}_view${++n}` : `subset_${++n}`;
         (this.profile.subsets = this.profile.subsets || []).push({
-            id, dataset: "", datasets: ds ? [ds] : [], join_field: "", join_mode: "outer",
-            join_norm: { case_insensitive: true, strip_punct: false, collapse_ws: true, strip_words: [] },
+            id, sources: ds ? [this._newSource(ds)] : [],
             filters: [], derived: [], hidden_columns: [], enrich: [], sort: [], sort_by: "", sort_desc: false, latest_batch: false, limit: 0,
         });
         return id;
@@ -559,49 +562,51 @@ export class GraphModel {
         const s = this.subsetDef(id);
         if (!s || !ds || ds === id) return false;
         if (this.subsetDef(ds) && this.subsetReaches(ds, id)) return false;   // ds already depends on id -> cycle
-        s.datasets = s.datasets || [];
-        if (s.datasets.includes(ds)) return false;
-        s.datasets.push(ds);
+        s.sources = s.sources || [];
+        if (s.sources.some((src) => src.dataset === ds)) return false;
+        s.sources.push(this._newSource(ds));
         return true;
     }
     removeSubsetInput(id, ds) {
         const s = this.subsetDef(id);
-        if (s) s.datasets = (s.datasets || []).filter((d) => d !== ds);
+        if (s) s.sources = (s.sources || []).filter((src) => src.dataset !== ds);
     }
-    // "" = no join (sources just stacked); a non-empty value joins on that field
-    setJoinField(id, field) { const s = this.subsetDef(id); if (s) s.join_field = field || ""; }
-    // outer = keep every key; inner = keep only keys present in every joined source
-    subsetJoinMode(id) { const s = this.subsetDef(id); return (s && s.join_mode) || "outer"; }
-    setSubsetJoinMode(id, mode) { const s = this.subsetDef(id); if (s) s.join_mode = mode === "inner" ? "inner" : "outer"; }
-    // join_norm: how each source's join value is canonicalised before matching (bridges near-match keys)
-    subsetJoinNorm(id) {
-        const s = this.subsetDef(id), n = (s && s.join_norm) || {};
+    // ---- per-source join config (each input carries its own) ----------------
+    // "" = this source does NOT join (its rows stack standalone); else it joins on that column
+    setSourceJoinField(id, ds, field) { const src = this.subsetSource(id, ds); if (src) src.join_field = field || ""; }
+    // required = key must be present in this source (inner-style); optional = outer gap-fill
+    setSourceRequired(id, ds, on) { const src = this.subsetSource(id, ds); if (src) src.required = !!on; }
+    // join_norm: how THIS source's join value is canonicalised before matching (bridges near-match keys)
+    sourceJoinNorm(id, ds) {
+        const n = (this.subsetSource(id, ds) || {}).join_norm || {};
         return { case_insensitive: n.case_insensitive !== false, strip_punct: !!n.strip_punct,
             collapse_ws: n.collapse_ws !== false, strip_words: n.strip_words || [] };
     }
-    setJoinNorm(id, patch) { const s = this.subsetDef(id); if (s) s.join_norm = { ...this.subsetJoinNorm(id), ...patch }; }
+    setSourceJoinNorm(id, ds, patch) { const src = this.subsetSource(id, ds); if (src) src.join_norm = { ...this.sourceJoinNorm(id, ds), ...patch }; }
     // parse the free-typed words box (space/comma separated) into a deduped list
-    setJoinStripWords(id, str) {
+    setSourceStripWords(id, ds, str) {
         const words = [...new Set(String(str || "").split(/[\s,]+/).filter(Boolean))];
-        this.setJoinNorm(id, { strip_words: words });
+        this.setSourceJoinNorm(id, ds, { strip_words: words });
     }
-    // how a dataset input's MANY observations collapse to one value when THIS subset reads it
-    subsetAggregate(id) { const s = this.subsetDef(id); return (s && s.aggregate) || "latest"; }
-    setSubsetAggregate(id, agg) { const s = this.subsetDef(id); if (s) s.aggregate = agg || "latest"; }
+    // how THIS source's MANY observations collapse to one value when the subset reads it
+    sourceAggregate(id, ds) { const src = this.subsetSource(id, ds); return (src && src.aggregate) || "latest"; }
+    setSourceAggregate(id, ds, agg) { const src = this.subsetSource(id, ds); if (src) src.aggregate = agg || "latest"; }
     // only pull rows from each source's most recent collection batch (applied first)
     setSubsetLatestBatch(id, on) { const s = this.subsetDef(id); if (s) s.latest_batch = !!on; }
     // cap the number of result rows (0 = no limit)
     setSubsetLimit(id, n) { const s = this.subsetDef(id); if (s) s.limit = Math.max(0, Math.floor(+n || 0)); }
-    // swap one of a subset's source inputs for another (the row-select edit), preserving order
+    // swap one of a subset's source inputs for another (the row-select edit), preserving order +
+    // the slot's per-source join config (only the dataset id changes)
     replaceSubsetInput(id, oldDs, newDs) {
         const s = this.subsetDef(id);
         if (!s || oldDs === newDs) return false;
-        if (!this.addSubsetInput(id, newDs)) return false;   // refuses cycles/dupes/self
-        // addSubsetInput appended newDs; drop oldDs and move newDs into oldDs's slot
-        s.datasets = s.datasets || [];
-        const i = s.datasets.indexOf(oldDs);
-        s.datasets = s.datasets.filter((d) => d !== oldDs && d !== newDs);
-        if (i >= 0) s.datasets.splice(i, 0, newDs); else s.datasets.push(newDs);
+        if (newDs === id) return false;
+        if (this.subsetDef(newDs) && this.subsetReaches(newDs, id)) return false;   // cycle
+        s.sources = s.sources || [];
+        if (s.sources.some((src) => src.dataset === newDs)) return false;           // dupe
+        const src = s.sources.find((x) => x.dataset === oldDs);
+        if (!src) return false;
+        src.dataset = newDs;
         return true;
     }
     // columns a subset can reference: every input's columns + this subset's derived names. A
@@ -623,6 +628,8 @@ export class GraphModel {
         for (const d of s.derived || []) if (d.name) add(d.name);
         return out;
     }
+    // the columns ONE input (dataset or subset) contributes — used to pick that source's join field
+    inputColumns(id) { return this.subsetDef(id) ? this.subsetColumns(id) : this.datasetFields(id); }
     // sources a subset can still add as an input: datasets + OTHER subsets, minus its current
     // inputs, itself, and any subset that already depends on it (would form a cycle).
     joinableInputs(s) {

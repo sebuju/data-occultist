@@ -116,14 +116,15 @@ async function expandSubsetRow(sid, row) {
     const node = document.createElement("div");
     node.className = "vt-detail-inner";
     const s = model.subsetDef(sid);
-    const jf = (s && s.join_field) || "name";
-    const jv = String(row[jf] ?? "").trim().toLowerCase();
-    if (!jv) { node.replaceChildren(h("p", { class: "muted" }, "no ", h("code", jf), " value to trace")); return node; }
     const inputs = model.subsetInputs(s);
     const game = encodeURIComponent(model.profile.name);
-    const matchJv = (r) => String(r[jf] ?? "").trim().toLowerCase() === jv;
     const blocks = await Promise.all(inputs.map(async (inp) => {
         const isView = !!model.subsetDef(inp);
+        // each source joins on its OWN field — match this input's rows against the view row by it
+        const jf = (model.subsetSource(sid, inp) || {}).join_field || "name";
+        const jv = String(row[jf] ?? "").trim().toLowerCase();
+        const matchJv = (r) => String(r[jf] ?? "").trim().toLowerCase() === jv;
+        if (!jv) return h("div", { class: "vt-src-h muted" }, `${inp} — no ${jf} value to trace`);
         try {
             if (isView) {   // views have no observations — show the matching computed row(s)
                 const data = await (await fetch(`/api/flow/${game}/subset/${encodeURIComponent(inp)}`)).json();

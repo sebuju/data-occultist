@@ -129,6 +129,8 @@ a.node.win:hover { border-color: var(--accent); }
 .sub-empty { font-size: var(--fs-sm); padding: 1px 2px; }
 /* + buttons now sit inline after the section label — sized to the label height, not a wide row */
 .sub-addf, .sub-addd, .sub-adds { padding: 0 7px; font-size: var(--fs-sm); width: 16px; height: 16px; min-height: unset; }
+/* per-source join worked example: raw value -> normalised, reflecting the knobs above it */
+.sv-norm-eg { font-size: var(--fs-sm); color: var(--muted); margin-top: 4px; word-break: break-word; }
 .sv-hides { display: flex; flex-wrap: wrap; gap: 4px; }
 .sv-hide { font-size: var(--fs-sm); padding: 1px 6px; }
 .sv-hide.off { opacity: 0.5; text-decoration: line-through; }
