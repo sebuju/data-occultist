@@ -33,6 +33,18 @@ let raf = 0;
 // the ONE source of edge geometry, exported from routing.js so flow.js and routing don't fork
 // link-key/route-cache logic (one shared primitive).
 
+// The routed polyline for a hop, in the hop's OWN direction. Routes are cached directionally
+// (keyed `from to`), but a flow hop can run EITHER way along an edge — a "watch" pulse travels
+// watched-node -> trigger, the reverse of how the watch edge is drawn (trigger -> watched). So
+// when the forward route is missing, fall back to the edge's reverse and flip its points, so the
+// blob still rides the real routed path (following live re-routing) just in the other direction.
+function routedPolyline(src, dst) {
+    const fwd = edgeGeometry(src, dst);
+    if (fwd) return fwd;
+    const rev = edgeGeometry(dst, src);
+    return rev ? rev.slice().reverse() : null;
+}
+
 // Cumulative arc length of a polyline + a point at distance `d` along it.
 function polyLength(pts) {
     let L = 0;
@@ -89,7 +101,7 @@ function retire(b) {
 function spawn(kind, src, dst, n) {
     if (!enabled) return;
     if (!ensureLayer()) return;
-    const pts = edgeGeometry(src, dst);
+    const pts = routedPolyline(src, dst);
     if (!pts) return;                       // edge not drawn/routed yet — skip silently
     const count = Math.min(n, CAP);
     const len = polyLength(pts);
@@ -116,7 +128,7 @@ function step(now) {
     for (let i = blobs.length - 1; i >= 0; i--) {
         const b = blobs[i];
         if (b.delay > 0) { b.delay -= dt; continue; }   // still staggered in
-        const pts = edgeGeometry(b.src, b.dst);          // re-read: follows live re-routing
+        const pts = routedPolyline(b.src, b.dst);        // re-read: follows live re-routing (either direction)
         if (!pts) { retire(b); blobs.splice(i, 1); continue; }
         b.t += dt / b.dur;
         if (b.t >= 1) { retire(b); blobs.splice(i, 1); continue; }
