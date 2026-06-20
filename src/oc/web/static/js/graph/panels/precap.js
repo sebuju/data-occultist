@@ -144,6 +144,7 @@ function buildPrecap() {
                 return;
             }
             b.dataset.armed = "0";
+            precapPage = "list"; precapView = null;   // deleted session is gone -> back to the list
             _pcSessAct(api.precapture.deleteSession(game, sid, pcSig));
         }
         else if (a === "rensess") beginRename(b.closest(".pc-sess"), sid);
