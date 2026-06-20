@@ -1086,13 +1086,13 @@ layout:
       x: 100.0
       y: 1320.0
       w: 480.0
-      h: 553.0
+      h: 613.0
       collapsed: false
     sub:statistic_prices_joined:
       x: 100.0
       y: 380.0
       w: 480.0
-      h: 488.0
+      h: 560.0
       collapsed: false
     price:wf_market_live:
       x: -320.0
@@ -1110,7 +1110,7 @@ layout:
       x: 1640.0
       y: 1840.0
       w: 380.0
-      h: 436.0
+      h: 514.0
       collapsed: false
     price:relic_live:
       x: 1240.0
@@ -1128,7 +1128,7 @@ layout:
       x: 740.0
       y: 1280.0
       w: 440.0
-      h: 317.0
+      h: 327.0
       collapsed: false
     ds:relics_offered:
       x: 740.0
@@ -1152,7 +1152,7 @@ layout:
       x: -3060.0
       y: 3040.0
       w: 380.0
-      h: 968.0
+      h: 987.0
       collapsed: false
     win:equipment_window:
       x: -1680.0
@@ -1170,13 +1170,13 @@ layout:
       x: -3080.0
       y: 1560.0
       w: 380.0
-      h: 1205.0
+      h: 1223.0
       collapsed: false
     item:equipment_window:normal:
       x: -3080.0
       y: 380.0
       w: 380.0
-      h: 1080.0
+      h: 1098.0
       collapsed: false
     det:equipment_window:detect_2:
       x: -1960.0
@@ -1200,7 +1200,7 @@ layout:
       x: -3060.0
       y: 4040.0
       w: 380.0
-      h: 844.0
+      h: 885.0
       collapsed: false
     fld:equipment_window:normal:name:
       x: -2300.0
@@ -1266,7 +1266,7 @@ layout:
       x: -300.0
       y: 3060.0
       w: 380.0
-      h: 980.0
+      h: 1020.0
       collapsed: false
     det:relic_window_3:detect_3:
       x: 700.0
@@ -1296,7 +1296,7 @@ layout:
       x: 1640.0
       y: 1280.0
       w: 400.0
-      h: 510.0
+      h: 569.0
       collapsed: false
     trigger:trigger:
       x: 1240.0
@@ -1332,7 +1332,7 @@ layout:
       x: 1780.0
       y: 3100.0
       w: 380.0
-      h: 1097.0
+      h: 1115.0
       collapsed: false
     fld:relic_select:relic_item:name:
       x: 1540.0
@@ -1356,7 +1356,7 @@ layout:
       x: 1360.0
       y: 3840.0
       w: 380.0
-      h: 942.0
+      h: 983.0
       collapsed: false
     tell:relic_select:guard:tell_no_relic:
       x: 1080.0
@@ -1380,7 +1380,7 @@ layout:
       x: -2520.0
       y: -1440.0
       w: 700.0
-      h: 1380.0
+      h: 780.0
       collapsed: false
     ds:dataset_2:
       x: -1780.0
