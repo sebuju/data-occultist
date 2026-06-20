@@ -29,6 +29,7 @@ stays the default.
 from __future__ import annotations
 
 import threading
+import time
 
 import numpy as np
 import win32gui
@@ -50,16 +51,33 @@ class _Session:
         self._control = None
         self._closed = False
 
+        # draw_border=False asks WGC to suppress the Win11 yellow capture border, but the
+        # border TOGGLE is a Win11-era feature: on Windows 10 the Graphics Capture API
+        # rejects any explicit value ("Toggling the capture border is not supported... on
+        # this platform") and the start throws. Win10 draws no capture border anyway, so we
+        # start with the suppress request and, if it's the unsupported-toggle error, retry
+        # with draw_border=None (let the OS default stand). Same defensive retry covers
+        # cursor_capture, which some platforms likewise can't toggle.
+        try:
+            self._control = self._start(title, draw_border=False, cursor_capture=False)
+        except Exception as exc:  # noqa: BLE001
+            # Win10 can't toggle the border (or cursor) -> retry once with both at the OS
+            # default. If THAT still fails it's a real error (missing window etc.) -> raise.
+            if "not supported" not in str(exc).lower():
+                raise
+            self._control = self._start(title, draw_border=None, cursor_capture=None)
+
+    def _start(self, title: str, *, draw_border, cursor_capture):
         cap = WindowsCapture(
-            cursor_capture=False,   # cursor must never land in an OCR'd region
-            draw_border=False,      # suppress the Win11 yellow capture border
+            cursor_capture=cursor_capture,  # cursor must never land in an OCR'd region
+            draw_border=draw_border,        # suppress the Win11 yellow capture border
             window_name=title,
         )
         # Assign handlers directly: the @event decorator keys off the function's
         # __name__, and start_free_threaded only checks the two slots are set.
         cap.frame_handler = self._on_frame
         cap.closed_handler = self._on_closed
-        self._control = cap.start_free_threaded()
+        return cap.start_free_threaded()
 
     def _on_frame(self, frame, _capture_control) -> None:
         # frame_buffer is a view over native memory valid only for this call -> copy.
@@ -76,13 +94,36 @@ class _Session:
         with self._lock:
             return self._latest, self._seq
 
+    def wait_first(self, timeout: float = 0.5) -> bool:
+        """Block (bounded) until the first frame is delivered. WGC streams asynchronously,
+        so a grab right after start has nothing yet; a single-shot caller (``collect --once``)
+        would read an empty frame. Returns True if a frame arrived within ``timeout``."""
+        deadline = time.perf_counter() + timeout
+        while time.perf_counter() < deadline:
+            with self._lock:
+                if self._latest is not None:
+                    return True
+            if self._closed:
+                return False
+            time.sleep(0.005)
+        with self._lock:
+            return self._latest is not None
+
     def stop(self) -> None:
         if self._control is not None:
+            ctrl, self._control = self._control, None
             try:
-                self._control.stop()
+                ctrl.stop()
+                # Join the native capture thread before returning. If it's still running at
+                # interpreter exit it crashes finalization ("Fatal Python error: ... import
+                # state already initialized"). Bounded so a wedged thread can't hang exit.
+                wait = getattr(ctrl, "wait", None)
+                if callable(wait):
+                    t = threading.Thread(target=wait, daemon=True)
+                    t.start()
+                    t.join(1.0)
             except Exception:
                 pass
-            self._control = None
 
 
 def _client_crop(hwnd: int, win: WindowInfo, frame_w: int, frame_h: int) -> PixelBox:
@@ -111,6 +152,15 @@ class WgcCaptureBackend(CaptureBackend):
     def __init__(self) -> None:
         self._session: _Session | None = None
         self._mss = None   # lazy fallback for arbitrary screen-region grabs
+        # Belt-and-suspenders: a live WGC session runs a free-threaded NATIVE capture
+        # thread; if it's still alive when the interpreter finalizes it crashes exit
+        # ("Fatal Python error: ... import state already initialized"). Callers SHOULD
+        # close() (the collector does), but a one-shot CLI that just grabs and returns
+        # (e.g. `oc capture`) easily forgets. atexit guarantees the thread is joined no
+        # matter who forgot — close() stays idempotent so an explicit close isn't doubled.
+        import atexit
+
+        atexit.register(self.close)
 
     def _ensure_session(self, title: str) -> _Session:
         s = self._session
@@ -119,6 +169,9 @@ class WgcCaptureBackend(CaptureBackend):
         if s is not None:
             s.stop()
         self._session = _Session(title)
+        # Give the fresh stream a moment to deliver its first frame so the very next
+        # grab returns real pixels (a single-shot tick has no retry to fall back on).
+        self._session.wait_first()
         return self._session
 
     @property

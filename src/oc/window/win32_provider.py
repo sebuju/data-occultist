@@ -60,10 +60,11 @@ class Win32WindowProvider(WindowProvider):
                 break
         return self._to_info(best) if best else None
 
-    def find_by_title(self, title_substring: str) -> WindowInfo | None:
+    def find_by_title(self, title_substring: str, exact: bool = False) -> WindowInfo | None:
         needle = title_substring.lower()
         for hwnd in self._enum():
-            if needle in win32gui.GetWindowText(hwnd).lower():
+            t = win32gui.GetWindowText(hwnd).lower()
+            if (t == needle) if exact else (needle in t):
                 return self._to_info(hwnd)
         return None
 
