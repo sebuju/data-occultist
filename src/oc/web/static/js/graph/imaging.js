@@ -2,24 +2,20 @@
 // Extracted from main.js verbatim.
 import * as api from "../api.js";
 import { h, frag, CAMERA } from "../dom.js";
-import { openModal } from "../modal.js";
 import { openCaptureModal } from "./panels/precap.js";
-import { log, timed } from "../log.js";
-import { openDictionaryPicker } from "./dict_picker.js";
-import { enhanceTable } from "./table.js";
+import { timed } from "../log.js";
 import { Overlay } from "../overlay.js";
 import { persist } from "./persist.js";
 import * as groups from "./groups.js";
 import {
-    $, setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases, overlays,
+    setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases,
     gridPreviews, gridReads, gridCellBoxes, gridGuards, gridDetections, itemReads, clearGrid, view,
 } from "./state.js";
-import { drawEdges, freezeRouting, requestEdges } from "./routing.js";
-import { registerWorker, unregisterWorker } from "./workers.js";
+import { drawEdges } from "./routing.js";
 import { renderLiveWindow, liveDetCount, liveRecog } from "./panels/livewin.js";
 import {
-    render, autosave, rebuildNode, focusNode, setNodeBusy, withBusy,
-    registerOverlay, unregisterOverlay, overlaySelected, selectWindowBox, selectedNodeId, setSelectedNodeId,
+    render, autosave, rebuildNode, setNodeBusy, withBusy,
+    registerOverlay, unregisterOverlay, overlaySelected, selectedNodeId, setSelectedNodeId,
     placeNewNode, refreshLive, persistBox, syncCellSize, itemChanged,
     addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom, showSatellite,
 } from "./main.js";

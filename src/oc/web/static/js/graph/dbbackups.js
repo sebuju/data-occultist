@@ -29,7 +29,6 @@ export function buildDbBackups(host, game, { onRestored = null, signal = null } 
     );
 
     const byStamp = new Map();   // stamp -> meta (the list carries everything the detail shows)
-    let armedStamp = null;
 
     function rowNode(m) {
         const summ = `${m.datasets || 0} ds · ${m.events || 0} events`;
@@ -43,7 +42,6 @@ export function buildDbBackups(host, game, { onRestored = null, signal = null } 
 
     function renderList(items) {
         byStamp.clear();
-        armedStamp = null;
         if (!items.length) {
             listEl.replaceChildren(h("div", { class: "muted bk-pad" }, "no backups yet"));
             return;
@@ -71,7 +69,6 @@ export function buildDbBackups(host, game, { onRestored = null, signal = null } 
 
     function select(stamp, rowEl) {
         listEl.querySelectorAll(".bk-row").forEach((r) => r.classList.toggle("sel", r === rowEl));
-        armedStamp = null;
         const m = byStamp.get(stamp);
         if (!m) return;
         const rows = [

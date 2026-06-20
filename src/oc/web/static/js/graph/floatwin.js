@@ -118,7 +118,7 @@ function _wouldCycle(selfId, parentId) {
 // with the parent's right edge and it sits GAP px under the parent's bottom. The child keeps
 // its OWN width — docks never resize each other to match. Chains work (each placed child
 // reflows its own children via place()). (`oldL`/`oldR` accepted for call-site compat, unused.)
-function reflowDock(id, seen, oldL, oldR) {   // eslint-disable-line no-unused-vars
+function reflowDock(id, seen, oldL, oldR) {
     seen = seen || new Set();
     if (seen.has(id)) return;
     seen.add(id);

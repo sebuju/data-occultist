@@ -735,7 +735,6 @@ function blendOnBg(hex, pct) {
 // ABOVE the group fill but behind the nodes. Dragged from its border (rim) or its title band.
 
 const SUB_PAD = 16;            // tight gap between members and the subgroup outline (nested -> smaller than PAD)
-const SUB_RIM = 10;            // width of the draggable border strips (world px)
 const SUB_DEF_OUTLINE = "#3a4154";
 const SUB_DEF_BG = "";         // "" = no fill painted (default has no background)
 

@@ -24,7 +24,6 @@ const C = {
     faceStick: 50,   // bias to keep a connector's previous face (hysteresis) — < bendCost, so a
                                       // clearly better route still switches, but ties/small margins don't flicker
 };
-const GBAND = 10;  // a segment within this of a group border (parallel) counts as riding it
 const PORT_MIN = 12;     // hard floor between fanned out-port dots on one face (dot is 8px) — no overlap
 const PORT_MARGIN = 12;  // keep the fan this far inside the face corners
 
