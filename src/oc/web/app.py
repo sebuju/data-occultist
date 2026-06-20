@@ -43,14 +43,21 @@ from .routes import (
 _STATIC = Path(__file__).parent / "static"
 
 
-class _NoCacheStatic(StaticFiles):
-    """Serve the front-end with caching disabled. This is a local, frequently-edited
-    teaching tool — a browser holding an old .js/.css after an edit causes confusing
-    version skew. Tiny files on local disk, so re-fetching every load costs nothing."""
+class _RevalidateStatic(StaticFiles):
+    """Serve the front-end cacheable but always-revalidated. This is a local,
+    frequently-edited teaching tool — a browser holding an old .js/.css after an edit
+    causes confusing version skew, so caching must never be silent. ``no-cache`` (note:
+    means "cache but revalidate before every use", NOT "don't cache") gives us both: the
+    browser keeps the file but re-checks it each load. StaticFiles already emits
+    ``ETag``/``Last-Modified`` from mtime and answers the conditional request with an
+    empty ``304 Not Modified`` when unchanged, so an unedited asset costs a tiny
+    revalidation ping instead of a full re-transfer, while an edited one is served fresh
+    at once (zero skew). Relative ES-module imports each revalidate themselves, so this
+    needs no version stamps or import map."""
 
     async def get_response(self, path, scope):
         resp = await super().get_response(path, scope)
-        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp.headers["Cache-Control"] = "no-cache"
         return resp
 
 
@@ -294,7 +301,7 @@ def create_app() -> FastAPI:
     app.include_router(dbschema.router)
     app.include_router(dbbackup.router)
     # Serve the single-page front-end at root.
-    app.mount("/", _NoCacheStatic(directory=str(_STATIC), html=True), name="static")
+    app.mount("/", _RevalidateStatic(directory=str(_STATIC), html=True), name="static")
     return app
 
 
