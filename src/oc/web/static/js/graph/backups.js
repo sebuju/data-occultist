@@ -136,7 +136,7 @@ function infoNode(profile) {
         ["items", windows.reduce((a, w) => a + (w.items || []).length, 0)],
         ["datasets", (profile.datasets || []).length],
         ["subsets", (profile.subsets || []).length],
-        ["price nodes", (profile.price_nodes || []).length],
+        ["producers", (profile.producers || []).length],
         ["dictionaries", (profile.dictionaries || []).length],
         ["placed nodes", Object.keys(profile.layout?.nodes || {}).length],
     ];

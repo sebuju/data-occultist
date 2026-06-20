@@ -1,9 +1,9 @@
 // One node-input PATH grammar, shared by constraints / overrides / bindings — and kept in
 // lock-step with the Python side (oc/runtime/overrides.py). Dotted segments; a segment is a
-// plain attribute (`interval_s`) or a list element addressed by its `id` (`price_nodes[p1]`):
+// plain attribute (`interval_s`) or a list element addressed by its `id` (`producers[p1]`):
 //
 //   triggers[t1].interval_s
-//   price_nodes[p1].throttle
+//   producers[p1].throttle
 //   windows[equipment].fields[name].min_confidence
 //
 // Resolution walks the live profile object (the shared GraphModel.profile), so a value read

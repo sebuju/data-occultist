@@ -229,11 +229,11 @@ class TriggerRunner:
         Projecting to ``columns`` makes the sig track only the watched data. ``None`` on any
         compute error."""
         from ..enrich.subset import compute_view_rows
-        from ..store import store_for
+        from ..store import rows_at, store_for
         try:
-            fetch = lambda ds, agg: store_for(  # noqa: E731
+            fetch = lambda ds, agg: rows_at(store_for(  # noqa: E731
                 self._data_dir, self._profile.name, ds, profile=self._profile,
-                aggregate=agg).records()
+                aggregate="latest" if agg == "all" else agg), agg)
             view = compute_view_rows(self._profile, sid, fetch)
             cols = view["columns"]
             visible = [{c: r.get(c) for c in cols} for r in view["rows"]]
@@ -262,12 +262,12 @@ class TriggerRunner:
         return inventory_slugs(records, "name", self._resolve)
 
     def _fire_targets(self, trigger, items) -> None:
-        """Dispatch each target id by what owns it: a price node sweeps, a file source reads."""
-        by_price = {p.id: p for p in self._profile.price_nodes}
+        """Dispatch each target id by what owns it: a producer sweeps/refreshes, a file source reads."""
+        by_producer = {p.id: p for p in self._profile.producers}
         by_source = {s.id: s for s in self._profile.file_sources}
         for tid in trigger.targets:
-            if tid in by_price:
-                fire_target(self._profile.name, by_price[tid], items,
+            if tid in by_producer:
+                fire_target(self._profile.name, by_producer[tid], items,
                             trigger_id=trigger.id, fire=self._fire)
             elif tid in by_source:
                 self._read_source(by_source[tid], trigger.id)
@@ -308,7 +308,7 @@ def fire_target(game: str, price_node, items, *, trigger_id: str,
         return False
     try:
         fire(price_node, items)
-        publish_flow(game, "trigger", f"trigger:{trigger_id}", f"price:{price_node.id}", 1)
+        publish_flow(game, "trigger", f"trigger:{trigger_id}", f"producer:{price_node.id}", 1)
         return True
     except Exception:   # a misbehaving fire must never crash the collector loop / a request
         return False

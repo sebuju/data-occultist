@@ -321,7 +321,7 @@ def backup_meta(path: Path) -> dict:
         "items": sum(len(w.get("items") or []) for w in (raw.get("windows") or [])),
         "datasets": len(raw.get("datasets") or []),
         "subsets": len(raw.get("subsets") or []),
-        "price_nodes": len(raw.get("price_nodes") or []),
+        "producers": len(raw.get("producers") or []),
         "dictionaries": len(raw.get("dictionaries") or []),
     }
     return {"stamp": stamp, "iso": iso, "size": path.stat().st_size, "counts": counts}

@@ -84,7 +84,7 @@ export function renameNode(input, oldId, doRename, move, post) {
 // A node rename must also carry that node's timing history (per-node CSV). The backend
 // rename is a file move keyed by node id; it no-ops for a node with no stats yet, so it's
 // safe to call on any tracked-type rename. Only the node types the stats store tracks.
-const _STATS_NODE_TYPES = new Set(["win", "ds", "sub", "price"]);
+const _STATS_NODE_TYPES = new Set(["win", "ds", "sub", "producer"]);
 function statsRenameNode(oldId, newId) {
     const game = model.profile.name;
     if (!game || oldId === newId || !_STATS_NODE_TYPES.has(String(oldId).split(":")[0])) return;

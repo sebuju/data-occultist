@@ -93,7 +93,7 @@ def schedule(game: str, settings) -> list[dict]:
         now = runner._clock()
         from ..collect.triggers import read_fires
         fires = read_fires(settings.data_dir, game)
-        by_id = {p.id: p for p in profile.price_nodes}
+        by_id = {p.id: p for p in profile.producers}
         out: list[dict] = []
         for t in profile.triggers:
             targets = [{"id": pid, "dataset": by_id[pid].dataset,

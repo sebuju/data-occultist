@@ -1,13 +1,17 @@
-"""Relic-contents enricher: table build, reward formatting, and live-safe wiring.
+"""Relic-rewards producer: table build, row flattening, and the producer write path.
 
-All offline — the network fetchers are injected, so no HTTP and no GPU/game needed.
+All offline — the network fetchers are injected/monkeypatched, so no HTTP and no GPU/game
+needed.
 """
 
-import pytest
-
 from oc.enrich import relic
-from oc.enrich.subset import compute_view
-from oc.profile.models import EnrichRule, SubsetDef
+from oc.interfaces import ProducerCtx
+from oc.profile.models import ProducerDef
+from oc.store import KeySpec, store_for
+
+# The relic producer keys (name, item, state); write and read must agree (in production this
+# comes from the dataset's key_map_for) so a re-keyed read doesn't collapse rows.
+_KEY = KeySpec(fields=("name", "item", "state"))
 
 _RAW = {"relics": [
     {"tier": "Axi", "relicName": "A1", "state": "Intact", "rewards": [
@@ -22,65 +26,60 @@ _RAW = {"relics": [
 _DUCATS = {"akstiletto_prime_barrel": 25, "nikana_prime_blueprint": 15}
 
 
-@pytest.fixture
-def built_table(tmp_path, monkeypatch):
-    """Build the relic table from the fixture into a temp cache and reset module state."""
-    monkeypatch.setattr(relic, "_cache_path", lambda: tmp_path / "relic_table.json")
-    monkeypatch.setattr(relic, "_cache", None, raising=False)
-    monkeypatch.setattr(relic, "_cache_mtime", None, raising=False)
-    relic.build_relic_table(
-        force=True, fetch_relics=lambda: _RAW,
-        fetch_ducats=lambda slug: _DUCATS.get(slug))
-    return tmp_path
+def _build():
+    return relic.build_relic_table(
+        fetch_relics=lambda: _RAW, fetch_ducats=lambda slug: _DUCATS.get(slug))
 
 
-def test_build_skips_relicless_and_keys_by_display_name(built_table):
-    table = relic._load()
+def test_build_skips_relicless_and_keys_by_display_name():
+    table = _build()
     assert list(table) == ["AXI A1"]            # Requiem entry (no relicName) dropped
     assert set(table["AXI A1"]) == {"Intact", "Radiant"}
 
 
-def test_enrich_default_intact_with_rarity_chance_ducats(built_table):
-    out = relic.RelicContentsEnricher(source_field="name").enrich({"name": "Axi A1"})
-    assert out["relic_contents"] == "3"
-    # untradeable Forma falls back to 0 ducats; real parts get market ducats
-    assert "Forma Blueprint (Common, 25.33%, 0d)" in out["relic_rewards"]
-    assert "Akstiletto Prime Barrel (Uncommon, 11%, 25d)" in out["relic_rewards"]
+def test_reward_rows_flatten_per_relic_reward_state():
+    rows = relic.relic_reward_rows(_build())
+    # 3 Intact rewards + 1 Radiant reward = 4 rows; name is the RELIC, item is the reward
+    assert len(rows) == 4
+    intact = {r["item"]: r for r in rows if r["state"] == "Intact"}
+    assert intact["Akstiletto Prime Barrel"] == {
+        "name": "AXI A1", "item": "Akstiletto Prime Barrel", "rarity": "Uncommon",
+        "chance": 11, "ducats": 25, "state": "Intact"}
+    # untradeable Forma falls back to 0 ducats
+    assert intact["Forma Blueprint"]["ducats"] == 0
+    # same reward in a different state is its OWN row
+    radiant = [r for r in rows if r["state"] == "Radiant"]
+    assert radiant == [{"name": "AXI A1", "item": "Nikana Prime Blueprint", "rarity": "Rare",
+                        "chance": 10, "ducats": 15, "state": "Radiant"}]
 
 
-def test_name_normalisation_matches_noisy_ocr(built_table):
-    out = relic.RelicContentsEnricher().enrich({"name": "axi a1 relic"})
-    assert out["relic_contents"] == "3"
+def test_producer_writes_keyed_rows_to_dataset(tmp_path, monkeypatch):
+    # the producer's run() builds via the module fetchers, so patch those (not build args)
+    monkeypatch.setattr(relic, "_fetch_relics_json", lambda: _RAW)
+    monkeypatch.setattr(relic, "fetch_item_ducats", lambda slug: _DUCATS.get(slug))
+
+    node = ProducerDef(id="relic_rewards", type="relic", dataset="relic_rewards", throttle=0)
+    summary = relic.RelicProducer().run(ProducerCtx(
+        data_dir=str(tmp_path), game="warframe", node=node, dataset="relic_rewards", key=_KEY))
+    assert summary["fetched"] == 4
+
+    rows = store_for(str(tmp_path), "warframe", "relic_rewards", key=_KEY).records()
+    keys = {(r["name"], r["item"], r["state"]) for r in rows}
+    assert ("AXI A1", "Nikana Prime Blueprint", "Intact") in keys
+    assert ("AXI A1", "Nikana Prime Blueprint", "Radiant") in keys   # state keeps them distinct
+    assert len(rows) == 4
 
 
-def test_state_knob_selects_radiant(built_table):
-    out = relic.RelicContentsEnricher(state="Radiant").enrich({"name": "Axi A1"})
-    assert out["relic_contents"] == "1"
-    assert "Nikana Prime Blueprint (Rare, 10%, 15d)" == out["relic_rewards"]
+def test_producer_cancel_stops_ducat_resolution(tmp_path, monkeypatch):
+    monkeypatch.setattr(relic, "_fetch_relics_json", lambda: _RAW)
+    monkeypatch.setattr(relic, "fetch_item_ducats", lambda slug: _DUCATS.get(slug))
 
-
-def test_unknown_relic_returns_empty(built_table):
-    assert relic.RelicContentsEnricher().enrich({"name": "Lith Z9"}) == {}
-
-
-def test_missing_cache_degrades_without_blocking(tmp_path, monkeypatch):
-    monkeypatch.setattr(relic, "_cache_path", lambda: tmp_path / "absent.json")
-    monkeypatch.setattr(relic, "_cache", None, raising=False)
-    monkeypatch.setattr(relic, "_ensure_built", lambda: None)   # don't spawn a build thread
-    out = relic.RelicContentsEnricher().enrich({"name": "Axi A1"})
-    assert out == {"relic_contents": "(no data yet)", "relic_rewards": ""}
-
-
-def test_compute_view_runs_live_safe_skips_network(built_table):
-    sub = SubsetDef(
-        id="t", datasets=["relics_offered"], join_field="name",
-        enrich=[
-            EnrichRule(id="r", type="relic_contents", source_field="name", enabled=True),
-            EnrichRule(id="m", type="warframe_market", source_field="name", enabled=True),
-        ])
-    view = compute_view([("relics_offered", [{"name": "Axi A1"}])], sub)
-    assert "relic_rewards" in view["columns"]
-    row = view["rows"][0]
-    assert row["relic_contents"] == "3"
-    # the network enricher must NOT run inside the live view
-    assert not any(k.startswith("wm_") for k in row)
+    node = ProducerDef(id="relic_rewards", type="relic", dataset="relic_rewards", throttle=0)
+    # cancelled from the start -> the table is incomplete, so NOTHING is written (don't pollute
+    # the dataset with a half-fetched table) and the summary reports nothing fetched.
+    summary = relic.RelicProducer().run(ProducerCtx(
+        data_dir=str(tmp_path), game="warframe", node=node, dataset="relic_rewards",
+        key=_KEY, should_stop=lambda: True))
+    assert summary["fetched"] == 0
+    rows = store_for(str(tmp_path), "warframe", "relic_rewards", key=_KEY).records()
+    assert rows == []

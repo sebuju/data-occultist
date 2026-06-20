@@ -15,10 +15,10 @@ import { panZoomTo, panZoomToRect } from "../camera.js";
 
 const NM_TYPE = { win: "window", prev: "preview", reg: "region", det: "detect",
     sb: "scrollbar", item: "item", fld: "itemfield", ds: "dataset", sub: "subset",
-    price: "price", dict: "dictionary" };
+    producer: "producer", dict: "dictionary" };
 const NM_COLOR = { game: "#7aa2f7", window: "#9ece6a", preview: "#56b6c2", region: "#e0af68",
     detect: "#bb9af7", scrollbar: "#f7768e", item: "#7dcfff", itemfield: "#e0af68", dataset: "#e5c07b",
-    subset: "#73daca", price: "#ff9e64", dictionary: "#c98ae6" };
+    subset: "#73daca", producer: "#ff9e64", dictionary: "#c98ae6" };
 const nmTypeOf = (id) => (id === "game" ? "game" : NM_TYPE[id.split(":")[0]] || "node");
 const nmColor = (id) => NM_COLOR[nmTypeOf(id)] || "#9aa5ce";
 
@@ -34,7 +34,7 @@ function nodeLabel(n) {
         case "itemfield": return n.ref.id + (n.field ? ` → ${n.field.id}` : "");
         case "dataset": return n.ref;
         case "subset": return n.ref.id;
-        case "price": return n.ref.id;
+        case "producer": return n.ref.id;
         case "dictionary": return n.ref.name || n.ref.id;
         default: return n.id;
     }

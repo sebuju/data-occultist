@@ -16,7 +16,7 @@ export class GraphModel {
         this.profile.fields = this.profile.fields || [];
         this.profile.datasets = this.profile.datasets || [];
         this.profile.subsets = this.profile.subsets || [];
-        this.profile.price_nodes = this.profile.price_nodes || [];
+        this.profile.producers = this.profile.producers || [];
         this.profile.file_sources = this.profile.file_sources || [];
         this.profile.triggers = this.profile.triggers || [];
         this.profile.dictionaries = this.profile.dictionaries || [];
@@ -28,7 +28,7 @@ export class GraphModel {
             // fold a legacy single-column sort into the multi-column list
             if (!s.sort.length && s.sort_by) { s.sort = [{ field: s.sort_by, desc: !!s.sort_desc }]; s.sort_by = ""; }
         }
-        for (const pn of this.profile.price_nodes) pn.sources = pn.sources || [];   // items the node prices (empty = catalogue)
+        for (const pn of this.profile.producers) pn.sources = pn.sources || [];   // items the node prices (empty = catalogue)
         for (const s of this.profile.file_sources) { s.match = s.match || []; s.fields = s.fields || []; s.roots = s.roots || []; }
         for (const t of this.profile.triggers) { t.watch = t.watch || []; t.targets = t.targets || []; if (t.volume == null) t.volume = 1; }
         // Item children arrive HOISTED to the window (flat ``item_fields``/``item_tells``, each
@@ -95,7 +95,7 @@ export class GraphModel {
                 sites.push({ decl: true, get: () => this.datasetOf(w), set: (v) => { w.dataset = v; } });
         for (const d of this.profile.datasets || [])
             sites.push({ decl: true, get: () => d.id, set: (v) => { d.id = v; } });
-        for (const pn of this.profile.price_nodes || []) {
+        for (const pn of this.profile.producers || []) {
             sites.push({ decl: true, get: () => pn.dataset, set: (v) => { pn.dataset = v; } });
             (pn.sources || []).forEach((_, i) =>                            // priced-item sources are REFs
                 sites.push({ decl: false, get: () => pn.sources[i], set: (v) => { pn.sources[i] = v; } }));
@@ -131,13 +131,32 @@ export class GraphModel {
         return true;
     }
     // field ids available to a dataset = the fields of every window feeding it
+    // every column a dataset's records can carry — from ALL its feeders: window fields, file-source
+    // fields, and producer output columns. (Was windows-only, so producer/source-fed datasets
+    // offered no key field to pick.)
     datasetFields(id) {
         const out = new Set();
         for (const w of this.profile.windows) {
             if (this.datasetOf(w) !== id) continue;
             for (const f of w.fields || []) out.add(f.id);
         }
+        for (const s of this.profile.file_sources || []) {
+            if (s.dataset !== id) continue;
+            for (const f of s.fields || []) out.add(f.id);
+        }
+        for (const p of this.profile.producers || []) {
+            if (p.dataset !== id) continue;
+            this.producerColumns(p).forEach((c) => out.add(c));
+        }
         return [...out];
+    }
+    // The output columns a producer writes, by backend type — ONE source of truth for the key
+    // picker and the subset column list (a producer dataset isn't fed by windows, so its columns
+    // can't be read off a schema). relic writes reward rows; warframe_market writes price snapshots.
+    producerColumns(pn) {
+        if (!pn) return [];
+        if (pn.type === "relic") return ["name", "item", "rarity", "chance", "ducats", "state"];
+        return ["name", "slug", "price_min", "price_median", "volume", "live_ask", "live_median", "live_sellers"];
     }
 
     // ---- satellites (opt-in follower nodes) ---------------------------------
@@ -184,7 +203,7 @@ export class GraphModel {
             ns.push({ id: `sub:${s.id}`, type: "subset", ref: s });
             if (this.satelliteOn(`vt:sub:${s.id}`)) ns.push({ id: `vt:sub:${s.id}`, type: "vttable", ref: { kind: "subset", id: s.id } });
         }
-        for (const pn of this.profile.price_nodes || []) ns.push({ id: `price:${pn.id}`, type: "price", ref: pn });
+        for (const pn of this.profile.producers || []) ns.push({ id: `producer:${pn.id}`, type: "producer", ref: pn });
         for (const s of this.profile.file_sources || []) ns.push({ id: `src:${s.id}`, type: "filesource", ref: s });
         for (const t of this.profile.triggers || []) ns.push({ id: `trigger:${t.id}`, type: "trigger", ref: t });
         for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
@@ -217,14 +236,14 @@ export class GraphModel {
                 const from = this.subsetDef(inp) ? `sub:${inp}` : `ds:${inp}`;
                 es.push({ from, to: `sub:${s.id}`, kind: "data" });
             }
-        // a price producer WRITES into its output dataset (producer -> dataset), and READS its
-        // item list from any wired source dataset/subset (source -> producer); empty = whole catalogue.
-        for (const pn of this.profile.price_nodes || []) {
-            es.push({ from: `price:${pn.id}`, to: `ds:${pn.dataset}`, kind: "data" });
+        // a producer WRITES into its output dataset (producer -> dataset, only once wired), and READS
+        // its item list from any wired source dataset/subset (source -> producer); empty = whole catalogue.
+        for (const pn of this.profile.producers || []) {
+            if (pn.dataset) es.push({ from: `producer:${pn.id}`, to: `ds:${pn.dataset}`, kind: "data" });
             for (const src of pn.sources || []) {
                 if (src === pn.dataset) continue;   // never wire a node to its own output
                 const from = this.subsetDef(src) ? `sub:${src}` : `ds:${src}`;
-                es.push({ from, to: `price:${pn.id}`, kind: "data" });
+                es.push({ from, to: `producer:${pn.id}`, kind: "data" });
             }
         }
         // a trigger FIRES its target price nodes (trigger -> price); an on_change trigger also
@@ -236,7 +255,7 @@ export class GraphModel {
         for (const t of this.profile.triggers || []) {
             // a target is a price node (sweep) or a file source (read) — wire to whichever owns the id
             for (const pid of t.targets || []) {
-                if (this.priceNode(pid)) es.push({ from: `trigger:${t.id}`, to: `price:${pid}`, kind: "trigger" });
+                if (this.producerNode(pid)) es.push({ from: `trigger:${t.id}`, to: `producer:${pid}`, kind: "trigger" });
                 else if (this.fileSource(pid)) es.push({ from: `trigger:${t.id}`, to: `src:${pid}`, kind: "trigger" });
             }
             if (t.kind === "on_change")
@@ -264,45 +283,61 @@ export class GraphModel {
         return [...set];
     }
 
-    // ---- price producers: write market snapshots into an output dataset ------
-    priceNode(id) { return (this.profile.price_nodes || []).find((p) => p.id === id) || null; }
-    addPriceNode(dataset = "prices") {
-        this.profile.price_nodes = this.profile.price_nodes || [];
-        let n = 1, id = "price";
-        while (this.priceNode(id)) id = `price_${++n}`;
-        this.ensureDatasetDef(dataset);
-        this.profile.price_nodes.push({ id, type: "warframe_market", mode: "statistics", dataset, throttle: 0.4, enabled: true });
+    // ---- producers: fetch external data into an output dataset ----------------
+    producerNode(id) { return (this.profile.producers || []).find((p) => p.id === id) || null; }
+    // a fresh producer is born UNWIRED — no output dataset (the user drags its out-port to one,
+    // or onto empty canvas to mint one). Never auto-create/attach a dataset here.
+    addProducer(dataset = "", type = "warframe_market") {
+        this.profile.producers = this.profile.producers || [];
+        let n = 1, id = "producer";
+        while (this.producerNode(id)) id = `producer_${++n}`;
+        if (dataset) this.ensureDatasetDef(dataset);
+        const pn = { id, type, mode: "statistics", dataset, throttle: 0.4, enabled: true, sources: [] };
+        this._applyProducerDefaultKey(pn);   // relic needs its (name,item,state) key from birth
+        this.profile.producers.push(pn);
         return id;
     }
-    removePriceNode(id) { this.profile.price_nodes = (this.profile.price_nodes || []).filter((p) => p.id !== id); }
-    renamePriceNode(oldId, newId) {
+    removeProducer(id) { this.profile.producers = (this.profile.producers || []).filter((p) => p.id !== id); }
+    renameProducer(oldId, newId) {
         newId = (newId || "").trim();
-        if (!newId || newId === oldId || this.priceNode(newId)) return false;
-        this.priceNode(oldId).id = newId;
+        if (!newId || newId === oldId || this.producerNode(newId)) return false;
+        this.producerNode(oldId).id = newId;
         return true;
     }
-    setPriceDataset(id, ds) {
-        const pn = this.priceNode(id);
+    // the producer backend (registry._PRODUCER): warframe_market | relic. Switching it rebuilds the node.
+    setProducerType(id, type) {
+        const pn = this.producerNode(id);
+        if (pn && type) { pn.type = type; this._applyProducerDefaultKey(pn); }
+    }
+    // a backend may need a specific output key. relic writes one row per (relic, reward, state),
+    // so it MUST key on all three or every reward/state of a relic collapses into one row; market
+    // snapshots key by name (the default), so carry no explicit key.
+    _applyProducerDefaultKey(pn) {
+        if (pn.type === "relic") pn.key = { fields: ["name", "item", "state"], sep: "|", case_sensitive: false };
+        else delete pn.key;
+    }
+    setProducerDataset(id, ds) {
+        const pn = this.producerNode(id);
         if (pn && ds) { pn.dataset = ds; this.ensureDatasetDef(ds); }
     }
-    setPriceMode(id, mode) {
-        const pn = this.priceNode(id);
+    setProducerMode(id, mode) {
+        const pn = this.producerNode(id);
         if (pn && (mode === "statistics" || mode === "orders")) pn.mode = mode;
     }
-    // a node's priced-item sources (datasets/subsets). Empty = the whole catalogue. A node may
-    // not source its own output dataset (a self-loop). Returns true when the wire was added.
-    addPriceSource(id, ds) {
-        const pn = this.priceNode(id);
+    // a warframe_market node's priced-item sources (datasets/subsets). Empty = the whole catalogue.
+    // A node may not source its own output dataset (a self-loop). Returns true when the wire was added.
+    addProducerSource(id, ds) {
+        const pn = this.producerNode(id);
         if (!pn || !ds || ds === pn.dataset) return false;
         pn.sources = pn.sources || [];
         if (pn.sources.includes(ds)) return false;
         pn.sources.push(ds);
         return true;
     }
-    removePriceSource(id, ds) { const pn = this.priceNode(id); if (pn) pn.sources = (pn.sources || []).filter((d) => d !== ds); }
-    // datasets + subsets a price node can still add as a priced-item source (minus current ones
+    removeProducerSource(id, ds) { const pn = this.producerNode(id); if (pn) pn.sources = (pn.sources || []).filter((d) => d !== ds); }
+    // datasets + subsets a producer can still add as a priced-item source (minus current ones
     // and its own output dataset) — feeds the same chip/add-select input the subset uses.
-    priceJoinable(pn) {
+    producerJoinable(pn) {
         const cur = new Set(pn.sources || []);
         const out = [];
         for (const d of this.datasets()) if (!cur.has(d) && d !== pn.dataset) out.push(d);
@@ -310,9 +345,9 @@ export class GraphModel {
         return out;
     }
     // which source column names the item to price (resolved to a market slug). Default "name".
-    setPriceSourceField(id, f) { const pn = this.priceNode(id); if (pn) pn.source_field = f || "name"; }
-    // columns available across a price node's source datasets/subsets (for the name-field picker)
-    priceSourceColumns(pn) {
+    setProducerSourceField(id, f) { const pn = this.producerNode(id); if (pn) pn.source_field = f || "name"; }
+    // columns available across a producer's source datasets/subsets (for the name-field picker)
+    producerSourceColumns(pn) {
         const out = [];
         const add = (c) => { if (c && !out.includes(c)) out.push(c); };
         for (const src of (pn.sources || [])) {
@@ -345,7 +380,7 @@ export class GraphModel {
     addTriggerTarget(id, pid) {
         const t = this.trigger(id);
         // a target is a price node (sweep) OR a file source (read) — accept either id
-        if (!t || !pid || !(this.priceNode(pid) || this.fileSource(pid))) return false;
+        if (!t || !pid || !(this.producerNode(pid) || this.fileSource(pid))) return false;
         t.targets = t.targets || [];
         if (t.targets.includes(pid)) return false;
         t.targets.push(pid);
@@ -490,7 +525,8 @@ export class GraphModel {
         let n = 1, id = base;
         while (this.subsetDef(id)) id = ds ? `${ds}_view${++n}` : `subset_${++n}`;
         (this.profile.subsets = this.profile.subsets || []).push({
-            id, dataset: "", datasets: ds ? [ds] : [], join_field: "name", join_mode: "outer",
+            id, dataset: "", datasets: ds ? [ds] : [], join_field: "", join_mode: "outer",
+            join_norm: { case_insensitive: true, strip_punct: false, collapse_ws: true, strip_words: [] },
             filters: [], derived: [], hidden_columns: [], enrich: [], sort: [], sort_by: "", sort_desc: false, latest_batch: false, limit: 0,
         });
         return id;
@@ -532,10 +568,23 @@ export class GraphModel {
         const s = this.subsetDef(id);
         if (s) s.datasets = (s.datasets || []).filter((d) => d !== ds);
     }
-    setJoinField(id, field) { const s = this.subsetDef(id); if (s) s.join_field = field || "name"; }
+    // "" = no join (sources just stacked); a non-empty value joins on that field
+    setJoinField(id, field) { const s = this.subsetDef(id); if (s) s.join_field = field || ""; }
     // outer = keep every key; inner = keep only keys present in every joined source
     subsetJoinMode(id) { const s = this.subsetDef(id); return (s && s.join_mode) || "outer"; }
     setSubsetJoinMode(id, mode) { const s = this.subsetDef(id); if (s) s.join_mode = mode === "inner" ? "inner" : "outer"; }
+    // join_norm: how each source's join value is canonicalised before matching (bridges near-match keys)
+    subsetJoinNorm(id) {
+        const s = this.subsetDef(id), n = (s && s.join_norm) || {};
+        return { case_insensitive: n.case_insensitive !== false, strip_punct: !!n.strip_punct,
+            collapse_ws: n.collapse_ws !== false, strip_words: n.strip_words || [] };
+    }
+    setJoinNorm(id, patch) { const s = this.subsetDef(id); if (s) s.join_norm = { ...this.subsetJoinNorm(id), ...patch }; }
+    // parse the free-typed words box (space/comma separated) into a deduped list
+    setJoinStripWords(id, str) {
+        const words = [...new Set(String(str || "").split(/[\s,]+/).filter(Boolean))];
+        this.setJoinNorm(id, { strip_words: words });
+    }
     // how a dataset input's MANY observations collapse to one value when THIS subset reads it
     subsetAggregate(id) { const s = this.subsetDef(id); return (s && s.aggregate) || "latest"; }
     setSubsetAggregate(id, agg) { const s = this.subsetDef(id); if (s) s.aggregate = agg || "latest"; }
@@ -556,9 +605,9 @@ export class GraphModel {
         return true;
     }
     // columns a subset can reference: every input's columns + this subset's derived names. A
-    // dataset input contributes its window fields (+ known price columns); a SUBSET input
-    // contributes its own output columns (recursively, so an upstream subset's derived columns
-    // are visible downstream). `_seen` guards against an input cycle.
+    // dataset input contributes its feeders' columns (datasetFields: windows/sources/producers); a
+    // SUBSET input contributes its own output columns (recursively, so an upstream subset's derived
+    // columns are visible downstream). `_seen` guards against an input cycle.
     subsetColumns(id, _seen) {
         const s = this.subsetDef(id);
         if (!s) return [];
@@ -569,10 +618,7 @@ export class GraphModel {
         const add = (c) => { if (c && !out.includes(c)) out.push(c); };
         for (const inp of this.subsetInputs(s)) {
             if (this.subsetDef(inp)) { this.subsetColumns(inp, _seen).forEach(add); continue; }   // subset input
-            this.datasetFields(inp).forEach(add);
-            // price datasets aren't fed by windows, so expose their known snapshot columns
-            if ((this.profile.price_nodes || []).some((p) => p.dataset === inp))
-                ["name", "slug", "price_min", "price_median", "volume", "live_ask", "live_median", "live_sellers"].forEach(add);
+            this.datasetFields(inp).forEach(add);   // includes producer/source columns now
         }
         for (const d of s.derived || []) if (d.name) add(d.name);
         return out;
@@ -612,6 +658,17 @@ export class GraphModel {
     }
     removeWindow(id) { this.profile.windows = this.profile.windows.filter((w) => w.id !== id); }
     window(id) { return this.profile.windows.find((w) => w.id === id); }
+    // The single "follow the lines" resolver: which window's detect/OCR an edit can change.
+    // Returns the owning window id for any window-structural node (the window itself, or any
+    // region/detect/scrollbar/item/field/tell/preview under it), or null for a data-plane /
+    // game node (ds/sub/producer/src/trigger/dict) or a bare id with no live window. This is
+    // the ONLY place an edit maps to a re-fire scope — drives every autosave refresh (main.js).
+    windowOf(id) {
+        if (!id || typeof id !== "string") return null;
+        if (this.window(id)) return id;                  // a bare window id resolves to itself
+        const m = /^(?:win|prev|reg|det|sb|item|fld|tell):([^:]+)/.exec(id);
+        return m && this.window(m[1]) ? m[1] : null;     // validate the window still exists
+    }
     // whether the live view attempts this window (default true)
     setWindowLive(id, on) { const w = this.window(id); if (w) w.live = !!on; }
 

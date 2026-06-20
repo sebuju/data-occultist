@@ -57,7 +57,12 @@ const INNER = {
         P("M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6"),
     ],
     subset: () => [P("M4 8h6l4 4h6M4 16h6l2-2"), C("19", "12", "1.6", fill)],
-    price: () => [C("12", "12", "8"), P("M12 8v8M10 10.5c0-1 1-1.5 2-1.5s2 .6 2 1.5-1 1.3-2 1.5-2 .6-2 1.5 1 1.5 2 1.5 2-.5 2-1.5")],
+    // producer: a cloud with a down-arrow — it FETCHES external data and produces records.
+    producer: () => [
+        P("M6.5 19h10a3.5 3.5 0 0 0 .4-6.98 5 5 0 0 0-9.65-.7A4 4 0 0 0 6.5 19z"),
+        svg("line", { x1: "12", y1: "4", x2: "12", y2: "11" }),
+        P("M9 8.5 12 11.5 15 8.5"),
+    ],
     dictionary: () => [
         P("M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"), P("M5 18a2 2 0 0 1 2-2h11"),
         svg("line", { x1: "9", y1: "8", x2: "14", y2: "8" }),

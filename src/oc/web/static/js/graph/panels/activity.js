@@ -112,7 +112,7 @@ function wireActivityClicks(root) {
             t.enabled = !(t.enabled !== false);
             const live = (actData?.triggers || []).find((x) => x.id === t.id);
             if (live) live.enabled = t.enabled;
-            autosave(false);                 // persist; a disabled toggle changes nothing others re-read
+            autosave(null);                  // persist; a disabled toggle changes nothing others re-read
             if (actData) renderActivity(actData, 0);
             // poll ONLY after the save has actually landed (flush the debounce), so the server's
             // schedule already reflects the new enabled state — no stale flip-back. Clearing the

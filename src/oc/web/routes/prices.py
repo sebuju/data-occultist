@@ -16,7 +16,7 @@ from fastapi import APIRouter
 from ...enrich.price_runner import cancel_sweep, start_sweep, sweep_status
 from ...profile import list_profiles
 from ...runtime import load_live_profile
-from ...profile.models import PriceNodeDef
+from ...profile.models import ProducerDef
 from ...store import PriceStore
 from ..deps import get_settings
 
@@ -46,29 +46,30 @@ def _profile(game: str):
     return None
 
 
-def _price_node(profile, dataset: str, mode: str, throttle: float) -> PriceNodeDef:
-    """The configured price node feeding ``dataset`` (its ``sources`` decide what gets
-    priced), or an ephemeral whole-catalogue node when none is taught — preserving the
-    original behaviour for a dataset with no price node."""
+def _producer_for(profile, dataset: str, *, type: str, mode: str, throttle: float) -> ProducerDef:
+    """The configured producer feeding ``dataset`` (its ``type``/``sources`` decide what it
+    fetches), or an ephemeral node when none is taught — preserving the original behaviour
+    for a dataset with no producer."""
     if profile is not None:
-        for pn in profile.price_nodes:
+        for pn in profile.producers:
             if pn.dataset == dataset:
                 return pn
-    return PriceNodeDef(id=dataset, dataset=dataset, mode=mode, throttle=throttle)
+    return ProducerDef(id=dataset, dataset=dataset, type=type, mode=mode, throttle=throttle)
 
 
 # ---- background sweep (orchestrated in enrich.price_runner) -----------------
 
 @router.post("/{game}/refresh")
-def refresh(game: str, dataset: str = "prices", mode: str = "statistics", throttle: float = 0.4,
+def refresh(game: str, dataset: str = "prices", type: str = "warframe_market",
+            mode: str = "statistics", throttle: float = 0.4,
             timeout: float = 30.0, limit: int = 0, workers: int = 6):
-    """Start a background producer sweep of ``dataset`` (``mode`` = statistics | orders).
-    The node's ``sources`` decide what's priced (owned gear, relic rewards, …); with no
-    sources it sweeps the whole catalogue. A second call while this node is running is a
-    no-op; if a DIFFERENT node in the same game (or process) is sweeping, returns
+    """Start a background producer sweep of ``dataset``. For ``warframe_market`` the node's
+    ``sources`` decide what's priced (``mode`` = statistics | orders), whole catalogue if none;
+    other ``type``s (e.g. ``relic``) refresh their own data. A second call while this node is
+    running is a no-op; if a DIFFERENT node in the same game (or process) is sweeping, returns
     ``blocked`` instead of starting (one sweep/game)."""
     profile = _profile(game)
-    pn = _price_node(profile, dataset, mode, throttle)
+    pn = _producer_for(profile, dataset, type=type, mode=mode, throttle=throttle)
     state = start_sweep(get_settings().data_dir, game, pn, profile=profile,
                         timeout=timeout, limit=limit, workers=workers)
     return state.public()
@@ -107,9 +108,10 @@ def item(game: str, slug: str):
 
 @router.get("/{game}/summary")
 def summary(game: str, dataset: str = "prices"):
-    """What the price node shows: stored-slug count, top movers, and sweep status. Reads
-    the tiny index sidecar (never parses the full candle store), so it stays fast even
-    mid-sweep with a huge catalogue."""
+    """A producer's OWN status (not its output dataset's contents — that's the dataset node's
+    job). For ``warframe_market`` it also reports the stored-slug count + top movers it has
+    accumulated, from the tiny index sidecar (never parses the full candle store, so it stays
+    fast mid-sweep). Other producers report just the sweep status."""
     idx = PriceStore.read_index(get_settings().data_dir, game)
     return {
         "game": game, "dataset": dataset,

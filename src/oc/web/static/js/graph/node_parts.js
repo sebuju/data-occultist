@@ -14,7 +14,7 @@ import { h, frag, svg, TRASH } from "../dom.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
 import { ITEM_KINDS } from "./imaging.js";
-import { priceParts } from "./price_node.js";
+import { producerParts } from "./producer_node.js";
 import { sourceParts } from "./source_node.js";
 import { triggerParts } from "./trigger_node.js";
 import { subsetParts } from "./main.js";
@@ -506,7 +506,7 @@ export function nodeParts(n) {
         };
     }
     if (n.type === "subset") return subsetParts(n.ref);
-    if (n.type === "price") return priceParts(n.ref, model.priceSourceColumns(n.ref), model.priceJoinable(n.ref));
+    if (n.type === "producer") return producerParts(n.ref, model.producerSourceColumns(n.ref), model.producerJoinable(n.ref));
     if (n.type === "filesource") return sourceParts(n.ref);
     if (n.type === "trigger") return triggerParts(n.ref, model);
     if (n.type === "dictionary") {
@@ -535,12 +535,14 @@ export function nodeParts(n) {
     const ds = n.ref;
     const noDedup = !model.datasetDedup(ds);
     const kf = model.datasetKeyField(ds);
-    // pin the configured key field even if the window schema doesn't (yet) list it, so a key on a
-    // field the windows don't currently declare stays selected rather than snapping to "from windows".
+    // pin the configured key field even if the feeder schema doesn't (yet) list it, so a key on a
+    // field the feeders don't currently declare stays selected rather than snapping to the auto default.
     const kfields = model.datasetFields(ds);
     const keyFields = !noDedup && kf && !kfields.includes(kf) ? [...kfields, kf] : kfields;
     const keyOpts = [
-        h("option", { value: "" }, "key: from windows"),
+        // empty = no dataset-level override; key comes from whatever feeds it (a window's/item's
+        // key, a file source's, or a producer's — e.g. the relic producer's name|item|state).
+        h("option", { value: "" }, "key: auto"),
         keyFields.map((f) => h("option", { value: f, selected: !noDedup && kf === f }, `key: ${f}`)),
         h("option", { value: "__nodedup__", selected: noDedup }, "no dedup (keep every read)"),
     ];

@@ -37,9 +37,9 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
     dictionaries = {d.id: d for d in existing.dictionaries}
     for d in incoming.dictionaries:
         dictionaries[d.id] = d
-    price_nodes = {p.id: p for p in existing.price_nodes}
-    for p in incoming.price_nodes:
-        price_nodes[p.id] = p
+    producers = {p.id: p for p in existing.producers}
+    for p in incoming.producers:
+        producers[p.id] = p
     file_sources = {s.id: s for s in existing.file_sources}
     for s in incoming.file_sources:
         file_sources[s.id] = s
@@ -60,7 +60,7 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
         datasets=list(datasets.values()),
         subsets=list(subsets.values()),
         dictionaries=list(dictionaries.values()),
-        price_nodes=list(price_nodes.values()),
+        producers=list(producers.values()),
         file_sources=list(file_sources.values()),
         triggers=list(triggers.values()),
         layout=layout,

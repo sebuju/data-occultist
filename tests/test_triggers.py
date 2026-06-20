@@ -8,16 +8,16 @@ DatasetStore with a stubbed name->slug resolver.
 from oc import eventlog
 from oc.collect.triggers import TriggerRunner, read_subset_sigs
 from oc.enrich.price_runner import gather_source_items
-from oc.profile.models import GameProfile, PriceNodeDef, SubsetDef, TriggerDef
+from oc.profile.models import GameProfile, ProducerDef, SubsetDef, TriggerDef
 from oc.store import DatasetStore, KeySpec
 
 
 def _profile():
     return GameProfile(
         name="g",
-        price_nodes=[
-            PriceNodeDef(id="live", dataset="prices_live", mode="orders", sources=["master"]),
-            PriceNodeDef(id="relic", dataset="prices_relic", mode="orders", sources=["relic_rewards"]),
+        producers=[
+            ProducerDef(id="live", dataset="prices_live", mode="orders", sources=["master"]),
+            ProducerDef(id="relic", dataset="prices_relic", mode="orders", sources=["relic_rewards"]),
         ],
         triggers=[
             TriggerDef(id="periodic", kind="interval", interval_s=60, targets=["live"]),
@@ -101,7 +101,7 @@ def _join_profile():
     # volatile timestamp the view HIDES — rewritten every price refresh but not user-visible.
     return GameProfile(
         name="g",
-        price_nodes=[PriceNodeDef(id="px", dataset="prices_out", mode="orders", sources=["folio"])],
+        producers=[ProducerDef(id="px", dataset="prices_out", mode="orders", sources=["folio"])],
         subsets=[SubsetDef(id="folio", datasets=["inv", "prices"], join_field="name",
                            join_mode="inner", hidden_columns=["updated"])],
         triggers=[TriggerDef(id="watch", kind="on_change", watch=["folio"], targets=["px"])],

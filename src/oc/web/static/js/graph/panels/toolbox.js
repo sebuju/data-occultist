@@ -42,35 +42,35 @@ async function createWindowNode(at = null, group = null) {
     render();
     if (group) groups.addToGroup(group, [`win:${id}`]);
     // a brand-new empty window has no image/regions/detect of its own and changes nothing
-    // other windows read — autosave(false) so it never re-OCRs the open windows.
-    autosave(false); if (!at) panTo(`win:${id}`);
+    // other windows read — autosave(null) so it never re-OCRs the open windows.
+    autosave(null); if (!at) panTo(`win:${id}`);
 }
-async function createPriceNode(at = null, group = null) {
-    const id = model.addPriceNode();   // independent producer -> "prices" dataset
+async function createProducerNode(at = null, group = null) {
+    const id = model.addProducer();   // born unwired — the user drags its out-port to a dataset
     if (!id) return;
-    await placeNewNode(`price:${id}`, "price", null, at); render();
-    if (group) groups.addToGroup(group, [`price:${id}`]);
-    autosave(false); if (!at) panTo(`price:${id}`);   // new node changes nothing open windows OCR
+    await placeNewNode(`producer:${id}`, "producer", null, at); render();
+    if (group) groups.addToGroup(group, [`producer:${id}`]);
+    autosave(null); if (!at) panTo(`producer:${id}`);   // new node changes nothing open windows OCR
 }
 async function createTriggerNode(at = null, group = null) {
     const id = model.addTrigger();   // fires price-node sweeps on a condition
     if (!id) return;
     await placeNewNode(`trigger:${id}`, "trigger", null, at); render();
     if (group) groups.addToGroup(group, [`trigger:${id}`]);
-    autosave(false); if (!at) panTo(`trigger:${id}`);   // new node changes nothing open windows OCR
+    autosave(null); if (!at) panTo(`trigger:${id}`);   // new node changes nothing open windows OCR
 }
 async function createFileSourceNode(at = null, group = null) {
     const id = model.addFileSource();   // reads a game log/config file into a dataset (wired after)
     if (!id) return;
     await placeNewNode(`src:${id}`, "filesource", null, at); render();
     if (group) groups.addToGroup(group, [`src:${id}`]);
-    autosave(false); if (!at) panTo(`src:${id}`);   // new node changes nothing open windows OCR
+    autosave(null); if (!at) panTo(`src:${id}`);   // new node changes nothing open windows OCR
 }
 function createDictionaryNode(at = null, group = null) {
     const place = async (id) => {
         await placeNewNode(`dict:${id}`, "dictionary", null, at); render();
         if (group) groups.addToGroup(group, [`dict:${id}`]);
-        autosave(false); if (!at) panTo(`dict:${id}`);   // new node changes nothing open windows OCR
+        autosave(null); if (!at) panTo(`dict:${id}`);   // new node changes nothing open windows OCR
     };
     openDictionaryPicker({
         used: new Set((model.profile.dictionaries || []).map((d) => d.source)),
@@ -96,14 +96,14 @@ async function createDatasetNode(at = null, group = null) {
     if (!ds) return;
     await placeNewNode(`ds:${ds}`, "dataset", null, at); render();
     if (group) groups.addToGroup(group, [`ds:${ds}`]);
-    autosave(false); if (!at) panTo(`ds:${ds}`);   // empty dataset changes nothing open windows OCR
+    autosave(null); if (!at) panTo(`ds:${ds}`);   // empty dataset changes nothing open windows OCR
 }
 async function createSubsetNode(at = null, group = null) {
     const id = model.addSubset();   // input-less view; user wires a source dataset/view after
     if (!id) return;
     await placeNewNode(`sub:${id}`, "subset", null, at); render();
     if (group) groups.addToGroup(group, [`sub:${id}`]);
-    autosave(false); if (!at) panTo(`sub:${id}`);   // empty view changes nothing open windows OCR
+    autosave(null); if (!at) panTo(`sub:${id}`);   // empty view changes nothing open windows OCR
 }
 
 function buildToolbox() {
@@ -315,7 +315,7 @@ function svgToPngBlob(svg, W, H) {
 }
 
 export {
-    tb, tbState, createWindowNode, createPriceNode, createTriggerNode,
+    tb, tbState, createWindowNode, createProducerNode, createTriggerNode,
     createDictionaryNode, createDatasetNode, createSubsetNode, createFileSourceNode,
     buildToolbox, COLLIDE_VERDICTS, collisionReportNode,
     runCollisionCheck,

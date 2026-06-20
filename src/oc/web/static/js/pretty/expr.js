@@ -3,7 +3,7 @@
 // recursive-descent parser over a fixed operator grammar, with `{{...}}` tokens resolved live
 // through a caller-supplied `resolve(inner)`:
 //
-//   "{{ node:price_nodes[p1].enabled }} && {{ widget:filter }} != ''"
+//   "{{ node:producers[p1].enabled }} && {{ widget:filter }} != ''"
 //   "{{ dataset:prices.count }} > 0"
 //
 // Supported: || && == != < <= > >= + - * / % ! ( ) , numbers, 'strings', true/false/null.

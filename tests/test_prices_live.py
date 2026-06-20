@@ -15,7 +15,7 @@ import pytest
 from oc.enrich import wm_client
 from oc.enrich.price_runner import start_sweep
 from oc.enrich.wm_client import NET_ERRORS, fetch_orders
-from oc.profile.models import GameProfile, PriceNodeDef
+from oc.profile.models import GameProfile, ProducerDef
 from oc.store import DatasetStore, KeySpec
 
 pytestmark = pytest.mark.network
@@ -76,8 +76,8 @@ def test_start_sweep_prices_only_its_sources(market, tmp_path):
         ds.record_seen({"name": nm})
     ds.save()
 
-    pn = PriceNodeDef(id="live", dataset="prices_live", mode="orders", sources=["master"])
-    profile = GameProfile(name="g", datasets=[{"id": "master"}, {"id": "prices_live"}], price_nodes=[pn])
+    pn = ProducerDef(id="live", dataset="prices_live", mode="orders", sources=["master"])
+    profile = GameProfile(name="g", datasets=[{"id": "master"}, {"id": "prices_live"}], producers=[pn])
     # lowercased name resolves straight to the mod's slug — no catalogue fetch needed
     state = start_sweep(tmp_path, "g", pn, profile=profile, resolve=lambda n: n.lower(), workers=2)
     _wait(state)

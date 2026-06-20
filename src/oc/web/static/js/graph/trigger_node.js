@@ -46,14 +46,14 @@ export function triggerParts(t, model) {
             ));
     }
 
-    // targets: drag the out-port to a price node / file source OR pick one here (same source-row UI
-    // as watch). A target is a price-node id (sweep) or a file-source id (read a log/config file).
+    // targets: drag the out-port to a producer / file source OR pick one here (same source-row UI
+    // as watch). A target is a producer id (sweep/refresh) or a file-source id (read a log/config file).
     const haveT = new Set(t.targets || []);
-    const tgtIds = [...(model.profile.price_nodes || []).map((p) => p.id),
+    const tgtIds = [...(model.profile.producers || []).map((p) => p.id),
                     ...(model.profile.file_sources || []).map((s) => s.id)];
     const popts = tgtIds.filter((p) => !haveT.has(p)).map((p) => h("option", p));
     const targets = frag(
-        labCell("fires", "price nodes (sweep) or file sources (read) this trigger fires", true),
+        labCell("fires", "producers (sweep/refresh) or file sources (read) this trigger fires", true),
         srcInputs(
             (t.targets || []).map((p) => srcChip(p, "p", "tg-rmtarget")),
             "tg-addfire",

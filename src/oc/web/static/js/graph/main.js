@@ -11,7 +11,7 @@ import { since } from "../datefmt.js";
 import { log, timed, setLogOpen, mirrorConsole } from "../log.js";
 
 mirrorConsole();   // surface uncaught errors + console.error/warn in the log bar (no devtools needed)
-import { wirePriceNode } from "./price_node.js";
+import { wireProducerNode } from "./producer_node.js";
 import { GRID, snap, snapUp, showSizeHud, hideSizeHud, addResizeGrips, beginDrag } from "./dragresize.js";
 import { floatWins } from "./floatwin.js";
 import { playSound } from "./sound.js";
@@ -54,7 +54,7 @@ import { statsWin, statsState, buildStats } from "./panels/stats.js";
 import { dbWin, dbState, buildDBStruct } from "./panels/dbstruct.js";
 import {
     tb, tbState, buildToolbox,
-    createWindowNode, createPriceNode, createTriggerNode, createDictionaryNode, createFileSourceNode,
+    createWindowNode, createProducerNode, createTriggerNode, createDictionaryNode, createFileSourceNode,
     createDatasetNode, createSubsetNode,
 } from "./panels/toolbox.js";
 import { openContextMenu } from "../ctxmenu.js";
@@ -81,11 +81,13 @@ import {
     liveWin, liveWinState, buildLiveWindow, renderLiveWindow,
 } from "./panels/livewin.js";
 
-const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, vttable: 2300, dictionary: 20 };
+const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, producer: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, vttable: 2300, dictionary: 20 };
 // Nodes resized on the WIDTH axis only — height always fits content (never stamped/restored).
 // item/window wrap a fixed-aspect canvas; dataset/subset/price are config-only, reworked often
 // with visibility-toggleable inputs, so a frozen height would clip or leave dead space.
-const WIDTH_ONLY_NODES = new Set(["item", "window", "dataset", "subset", "price"]);
+// Only the fixed-aspect canvas nodes are width-only (height follows their image aspect).
+// Every other node — incl. the config nodes (dataset/subset/producer) — is freely resizable.
+const WIDTH_ONLY_NODES = new Set(["item", "window"]);
 const FLOW_FALLBACK_MS = 15000;   // safety-net /api/flow poll; the dataset-change bus is the real mechanism
 export let live = {};             // dataset -> {present,total,last_op,last_ts} (read by datanodes/refreshLive)
 export let wire = null;           // active drag-wire {winId, x1,y1} (read by routing.drawEdges)
@@ -158,14 +160,22 @@ $("logWorkers").addEventListener("click", (ev) => {
 
 // ---- autosave + layout persistence (all IO goes through persist.js) --------
 
-function autosave(refresh = true, winId = null) {
+// autosave(changed): persist the profile, then re-run detect/OCR ONLY for the window the edit
+// can affect — resolved by following the graph (model.windowOf). Pass the edited node's id (a
+// window id, or any reg/det/sb/item/fld/tell id under it). A data-plane node id (ds/sub/
+// producer/src/trigger/dict) or null/omitted resolves to no window -> nothing re-fires. This
+// is the safe default: a forgotten arg persists only, it can never fan out to all windows.
+// A genuine all-windows refresh (image load/recapture/page nav) calls refreshOpen*(null)
+// DIRECTLY (imaging.js) — autosave is no longer one of those callers.
+function autosave(changed = null) {
     if (!model.profile.name) return;
-    persist.content();         // debounced profile save; onContentSaved fires on success
-    if (refresh) {             // a disabled node's edit passes false: it changes nothing others read
-        refreshOpenPreviews(winId);   // update open preview nodes after edits (winId: only that window)
-        refreshOpenDetect(winId);     // update detector/state true-false after edits
+    persist.content();                 // debounced profile save; onContentSaved fires on success
+    const win = model.windowOf(changed);
+    if (win) {                         // edit lies in this window's subgraph -> re-read just it
+        refreshOpenPreviews(win);
+        refreshOpenDetect(win);
     }
-    pushHistory();             // record this change for undo/redo
+    pushHistory();                     // record this change for undo/redo
 }
 
 // Live node-layout state (positions/sizes/collapse/open-images) ↔ the profile. persist
@@ -251,7 +261,7 @@ initPersist({
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", price: "price", trigger: "trigger", dict: "dictionary" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", dict: "dictionary" };
 function nodeTypeOf(id) { return id === "game" ? "game" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
     world: () => $("ggroups"),
@@ -518,7 +528,7 @@ function itemChanged(winId, itemId, { rebuild = false, render: doRender = false,
         clearGrid(winId);                // detected window grid is now stale
         scheduleItemRead(winId, itemId); // re-read the cutout -> readout + box tints
     }
-    autosave(reread, winId);           // persist; re-run this window's preview/detect only when reread
+    autosave(reread ? winId : null);           // persist; re-run this window's preview/detect only when reread
 }
 
 // Wire an item node's id + tells/fields lists (rebuildNode re-binds these,
@@ -642,7 +652,7 @@ function fieldChanged(winId, itemId, fid, { rebuild = false, rebuildItem = false
     refreshImageBoxes(winId);
     clearGrid(winId);
     scheduleItemRead(winId, itemId);
-    autosave(true, winId);
+    autosave(winId);
 }
 
 // Wire one item-field node: the per-field config that used to live inline in the item node.
@@ -715,7 +725,7 @@ function tellChanged(winId, itemId, tid, { rebuild = false, render: doRender = f
     refreshItemBoxes(winId, itemId);
     refreshImageBoxes(winId);
     if (reread) { clearGrid(winId); scheduleItemRead(winId, itemId); }
-    autosave(reread, winId);
+    autosave(reread ? winId : null);
 }
 
 // Wire one tell node: the per-tell controls that used to live inline in the item node.
@@ -770,14 +780,14 @@ function wireWindowControls(div, n) {
         const newDs = model.datasetOf(n.ref);
         if (oldDs && newDs && newDs !== oldDs) movePos(`ds:${oldDs}`, `ds:${newDs}`);
         // a rename changes only the id/wiring — no pixels or boxes change, so DON'T trigger the
-        // all-open-windows detect/preview refresh (autosave(false)). The reopened image below
+        // all-open-windows detect/preview refresh (autosave(null)). The reopened image below
         // re-detects just the renamed window.
-        render(); autosave(false);
+        render(); autosave(null);
         if (wasOpen) await openImage(newId);    // restore the image against the moved binding
     });
     div.querySelector(".winlive")?.addEventListener("change", (e) => {
         model.setWindowLive(n.ref.id, e.target.checked);
-        autosave(false);          // a live-view flag changes nothing other nodes re-read
+        autosave(null);          // a live-view flag changes nothing other nodes re-read
         renderLiveWindow();       // reflect in the live panel's window list
     });
     div.querySelector(".winstatic")?.addEventListener("change", (e) => {
@@ -786,7 +796,7 @@ function wireWindowControls(div, n) {
         // static toggles whether OCR locate applies — re-bind item nodes so their locate
         // radios enable/disable to match (rebuildNode keeps each item's live cutout canvas)
         for (const it of model.window(n.ref.id)?.items || []) rebuildNode(`item:${n.ref.id}:${it.id}`);
-        refreshImageBoxes(n.ref.id); autosave();   // redraw guides; re-detect on next preview
+        refreshImageBoxes(n.ref.id); autosave(n.ref.id);   // redraw guides; re-detect this window only
     });
     div.querySelectorAll(".winscroll").forEach((inp) => inp.addEventListener("change", (e) => {
         const k = e.target.dataset.k;
@@ -794,7 +804,7 @@ function wireWindowControls(div, n) {
             model.setScrollAutoscroll(n.ref.id, e.target.checked);
             rebuildNode(`win:${n.ref.id}`);   // show/hide the "auto-scroll clicks" flab
         } else if (k === "clicks") model.setScrollClicks(n.ref.id, Math.max(1, +e.target.value || 1));
-        autosave(false);   // precapture-only knobs — the reader/preview never use them, so don't re-OCR
+        autosave(null);   // precapture-only knobs — the reader/preview never use them, so don't re-OCR
     }));
     // reorder the item-template priority list: ▲/▼ swap a template up/down, re-numbering
     // priorities to match the new order (top = highest, bottom = 0 base). Base may change -> reread.
@@ -807,12 +817,12 @@ function wireWindowControls(div, n) {
         panZoomTo(`item:${n.ref.id}:${el.closest(".wi-row").dataset.id}`);
     }));
     // detects section: combine mode + per-detector polarity. Both change the live verdict, so
-    // autosave(true, winId) re-runs detect for ONLY this window (refreshes .wd-status/.wd-verdict).
+    // autosave(winId) re-runs detect for ONLY this window (refreshes .wd-status/.wd-verdict).
     div.querySelector(".wd-mode")?.addEventListener("change", (e) => {
-        model.setDetectMode(n.ref.id, e.target.value); autosave(true, n.ref.id);
+        model.setDetectMode(n.ref.id, e.target.value); autosave(n.ref.id);
     });
     div.querySelectorAll(".wd-neg").forEach((sel) => sel.addEventListener("change", (e) => {
-        model.setDetectNegate(n.ref.id, e.target.dataset.id, e.target.value === "absent"); autosave(true, n.ref.id);
+        model.setDetectNegate(n.ref.id, e.target.dataset.id, e.target.value === "absent"); autosave(n.ref.id);
     }));
     // click a detect name -> jump to its detect node (where its text/threshold live)
     div.querySelectorAll(".wd-row .wd-name").forEach((el) => el.addEventListener("click", () => {
@@ -828,12 +838,14 @@ function windowItemsReordered(winId) {
     for (const it of model.window(winId)?.items || []) rebuildNode(`item:${winId}:${it.id}`);
     clearGrid(winId);
     refreshImageBoxes(winId);
-    autosave(true, winId);
+    autosave(winId);
 }
 
 
 // how a key's many observations collapse to one displayed value (matches the backend)
-const AGGREGATES = ["latest", "first", "sum", "mean", "max", "min"];
+const AGGREGATES = ["latest", "first", "sum", "mean", "max", "min", "all"];
+// friendly labels for the "many →" options (value stays the policy string)
+const AGG_LABEL = { all: "all (no collapse)" };
 
 
 // ---- subset node: join one or more datasets, then filter/derive/sort ----------
@@ -899,7 +911,7 @@ function wireHideToggles(host, s) {
         const nowHidden = (s.hidden_columns || []).includes(b.dataset.col);
         b.classList.toggle("off", nowHidden);                       // instant feedback, no node rebuild
         b.title = nowHidden ? "show column" : "hide column";
-        autosave(false);   // hiding a view column changes nothing any window OCRs
+        autosave(null);   // hiding a view column changes nothing any window OCRs
         refreshSubsetNode(s.id);
     }));
 }
@@ -915,22 +927,42 @@ function subConfigNode(s) {
     // join-on is a COLUMN dropdown, populated from the joined sources' columns once a source is
     // added (so you pick a real shared field, not a free-typed guess). Current value kept even
     // if not in the live column set yet.
-    const jf = s.join_field || "name";
-    const joinOpts = [...new Set([jf, ...cols])].map((c) => h("option", { selected: c === jf }, c));
     // join-on only matters when 2+ sources are combined; with a single source there's nothing
-    // to join across, so hide the row entirely (the field still persists for when a source is added)
-    const joinRow = inputs.length > 1
-        ? frag(labCell("join on", "shared field the sources are joined on"), h("select", { class: "sv-join" }, joinOpts))
+    // to join across, so hide the row entirely (the field still persists for when a source is added).
+    // "(no join)" (empty) just stacks the sources; the join/match rows below only apply once a
+    // join field is picked, so they stay hidden until then.
+    const joined = inputs.length > 1;
+    const jf = s.join_field || "";
+    const joinOpts = [h("option", { value: "", selected: !jf }, "(no join)"),
+        ...[...new Set([jf, ...cols])].filter(Boolean).map((c) => h("option", { value: c, selected: c === jf }, c))];
+    const joinRow = joined
+        ? frag(labCell("join on", "shared field the sources are joined on; (no join) just stacks them"),
+            h("select", { class: "sv-join" }, joinOpts))
         : null;
-    // outer (keep every key) vs inner (only keys present in every source) — only matters with 2+ sources
+    // the join mode + match knobs only mean something once a join field is set
+    const hasJoin = joined && !!jf;
+    // outer (keep every key) vs inner (only keys present in every source)
     const jmode = model.subsetJoinMode(s.id);
-    const joinModeRow = inputs.length > 1
+    const joinModeRow = hasJoin
         ? frag(labCell("join", "outer = keep every key; inner = only keys present in every source"),
             h("select", { class: "sv-jmode" },
                 h("option", { value: "outer", selected: jmode === "outer" }, "outer (all keys)"),
                 h("option", { value: "inner", selected: jmode === "inner" }, "inner (in every source)")))
         : null;
-    const aggOpts = AGGREGATES.map((a) => h("option", { selected: a === model.subsetAggregate(s.id) }, a));
+    // match: canonicalise each side's join value before matching, so near-match keys still join
+    // (e.g. "Axi A1 Relic" vs "AXI A1"). One row per knob, like the other config rows.
+    const jn = model.subsetJoinNorm(s.id);
+    const ckRow = (lbl, title, cls, on) => frag(labCell(lbl, title),
+        h("label", { class: "flab" }, h("input", { type: "checkbox", class: cls, checked: !!on })));
+    const matchRows = hasJoin
+        ? frag(
+            ckRow("ignore case", "fold case before matching", "jn-ci", jn.case_insensitive),
+            ckRow("strip punctuation", "drop punctuation (collapse to spaces)", "jn-punct", jn.strip_punct),
+            ckRow("collapse spaces", "runs of whitespace -> one space, trimmed", "jn-ws", jn.collapse_ws),
+            labCell("drop words", "whole words removed from both sides; space- or comma-separated"),
+            h("input", { type: "text", class: "jn-words", value: (jn.strip_words || []).join(" "), placeholder: "e.g. relic" }))
+        : null;
+    const aggOpts = AGGREGATES.map((a) => h("option", { value: a, selected: a === model.subsetAggregate(s.id) }, AGG_LABEL[a] || a));
     // the "many →" collapse only does anything when an INPUT dataset dedups (a no-dedup dataset
     // already serves one row per read) — show it only then.
     const showAgg = model.subsetInputs(s).some((inp) => !model.subsetDef(inp) && model.datasetDedup(inp));
@@ -957,7 +989,7 @@ function subConfigNode(s) {
             labCell("sources", "datasets or subsets, joined on a shared field", true),
             h("div", { class: "sv-inputs" }, chips,
                 h("span", { class: "sv-input sv-add" }, h("select", { class: "sv-addin" }, addOpts))),
-            joinRow, joinModeRow,
+            joinRow, joinModeRow, matchRows,
             labCell("limit", "cap the number of result rows (0 = no limit)"),
             h("input", { type: "number", class: "sv-limit", min: "0", step: "1", value: s.limit || 0, placeholder: "0" }),
             aggRow,
@@ -1007,8 +1039,12 @@ function repaintSubsetCols(el, s) {
 function refreshSubsetNode(id) { singleFlight(`sub:${id}`, () => _refreshSubsetNode(id)); }
 async function _refreshSubsetNode(id) {
     const el = nodeEls.get(`sub:${id}`);                              // config node (hide toggles live here)
-    const host = nodeEls.get(`vt:sub:${id}`)?.querySelector(".sub-host");   // records grid — opt-in satellite
+    const vtId = `vt:sub:${id}`;
+    const host = nodeEls.get(vtId)?.querySelector(".sub-host");       // records grid — opt-in satellite
     if (!el && !host) return;
+    // spin the records-grid satellite while its rows are being recomputed (only when it's shown)
+    const vtShown = !!host;
+    if (vtShown) setNodeBusy(vtId, true);
     try {
         const r = await api.getSubset(model.profile.name, id);
         const s = model.subsetDef(id);
@@ -1029,6 +1065,8 @@ async function _refreshSubsetNode(id) {
         const msg = /\b404\b/.test(String(e.message || e)) ? "no data yet" : String(e.message || e);
         vtables.delete(`view:${id}`);
         if (host) host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, msg));
+    } finally {
+        if (vtShown) setNodeBusy(vtId, false);
     }
 }
 
@@ -1047,15 +1085,15 @@ function refreshDatasetConsumers(ds) {
 
 function wireSubset(div, s) {
     // subset edits are subset-only — they never change any window's image/regions/detect, so
-    // autosave(false): persist + refresh THIS view, never re-OCR the open windows.
-    const recompute = () => { autosave(false); refreshSubsetNode(s.id); };
-    const restructure = () => { autosave(false); rebuildNode(`sub:${s.id}`); };   // rebuild this node's config
+    // autosave(null): persist + refresh THIS view, never re-OCR the open windows.
+    const recompute = () => { autosave(null); refreshSubsetNode(s.id); };
+    const restructure = () => { autosave(null); rebuildNode(`sub:${s.id}`); };   // rebuild this node's config
     div.querySelector(".subrename")?.addEventListener("change", (e) => {
         const oldId = s.id;
         renameNode(e.target, oldId,
             () => model.renameSubset(oldId, e.target.value),
             () => movePos(`sub:${oldId}`, `sub:${s.id}`),
-            () => { render(); autosave(false); });
+            () => { render(); autosave(null); });
     });
     div.querySelector(".sub-addf")?.addEventListener("click", () => { model.addFilter(s.id); restructure(); });
     div.querySelector(".sub-addd")?.addEventListener("click", () => { model.addDerived(s.id); restructure(); });
@@ -1069,9 +1107,16 @@ function wireSubset(div, s) {
     div.querySelectorAll(".sv-rmin").forEach((b) => b.addEventListener("click", () => {
         model.removeSubsetInput(s.id, b.dataset.ds); render(); restructure();
     }));
-    div.querySelector(".sv-join")?.addEventListener("change", (e) => { model.setJoinField(s.id, e.target.value.trim()); recompute(); });
+    // setting/clearing the join field toggles the join-mode + match rows, so rebuild the node
+    // (wireSubset re-queues a refresh); restructure, not recompute
+    div.querySelector(".sv-join")?.addEventListener("change", (e) => { model.setJoinField(s.id, e.target.value.trim()); restructure(); });
     div.querySelector(".sv-jmode")?.addEventListener("change", (e) => { model.setSubsetJoinMode(s.id, e.target.value); recompute(); });
     div.querySelector(".sv-agg")?.addEventListener("change", (e) => { model.setSubsetAggregate(s.id, e.target.value); recompute(); });
+    // match (join_norm): each knob re-canonicalises the join keys, so just recompute the view
+    div.querySelector(".jn-ci")?.addEventListener("change", (e) => { model.setJoinNorm(s.id, { case_insensitive: e.target.checked }); recompute(); });
+    div.querySelector(".jn-punct")?.addEventListener("change", (e) => { model.setJoinNorm(s.id, { strip_punct: e.target.checked }); recompute(); });
+    div.querySelector(".jn-ws")?.addEventListener("change", (e) => { model.setJoinNorm(s.id, { collapse_ws: e.target.checked }); recompute(); });
+    div.querySelector(".jn-words")?.addEventListener("change", (e) => { model.setJoinStripWords(s.id, e.target.value); recompute(); });
     div.querySelector(".sv-latest")?.addEventListener("change", (e) => { model.setSubsetLatestBatch(s.id, e.target.checked); recompute(); });
     div.querySelector(".sv-limit")?.addEventListener("change", (e) => { model.setSubsetLimit(s.id, e.target.value); e.target.value = s.limit || 0; recompute(); });
 
@@ -1098,38 +1143,43 @@ function wireSubset(div, s) {
     queueMicrotask(() => refreshSubsetNode(s.id));
 }
 
-// ---- price producer node: sweeps the market into its output dataset ---------
+// ---- producer node: fetches external data into its output dataset -----------
 
-function wirePrice(div, n) {
-    // the producer panel (sweep config + controls, stored count). The out-port
+function wireProducer(div, n) {
+    // the producer panel (refresh config + controls, stored count). The out-port
     // (drag to a dataset) is wired generically by wireOutPort.
-    // when a sweep ends (or is cancelled), refresh the dataset it feeds so its new batch shows
-    wirePriceNode(div, model.profile.name, n.ref.dataset, n.ref.mode || "statistics", () => {
-        refreshLive(); refreshDataNode(n.ref.dataset); loadBatchesNode(n.ref.dataset);
-    }, hub.kick);   // sweep start/cancel -> beat the hub so the tasks panel refreshes now
+    // when a refresh ends (or is cancelled), refresh the dataset it feeds so its new batch shows
+    wireProducerNode(div, model.profile.name, n.ref.dataset, n.ref.mode || "statistics",
+        n.ref.type || "warframe_market", () => {
+            refreshLive(); refreshDataNode(n.ref.dataset); loadBatchesNode(n.ref.dataset);
+        }, hub.kick);   // refresh start/cancel -> beat the hub so the tasks panel refreshes now
+    // backend picker (warframe_market | relic). Switching swaps the body, so rebuild.
+    div.querySelector(".prtype")?.addEventListener("change", (e) => {
+        model.setProducerType(n.ref.id, e.target.value); rebuildNode(n.id); drawEdges(); autosave(null);
+    });
     // source toggle: statistics (history) vs live orders (now). Mode swaps the body, so rebuild.
     div.querySelector(".enr-mode")?.addEventListener("change", (e) => {
-        model.setPriceMode(n.ref.id, e.target.value); rebuildNode(n.id); autosave(false);
+        model.setProducerMode(n.ref.id, e.target.value); rebuildNode(n.id); autosave(null);
     });
     // which source column names the item to price (next sweep uses it — no rebuild)
     div.querySelector(".enr-keyfld-sel")?.addEventListener("change", (e) => {
-        model.setPriceSourceField(n.ref.id, e.target.value); autosave(false);
+        model.setProducerSourceField(n.ref.id, e.target.value); autosave(null);
     });
-    // rename the price node (its id) — carry its saved layout slot to the new id, then re-render
+    // rename the producer node (its id) — carry its saved layout slot to the new id, then re-render
     div.querySelector(".prrename")?.addEventListener("change", (e) => {
         const oldId = n.ref.id;
         renameNode(e.target, oldId,
-            () => model.renamePriceNode(oldId, (e.target.value || "").trim()),
-            () => movePos(`price:${oldId}`, `price:${n.ref.id}`),
-            () => { render(); autosave(false); });
+            () => model.renameProducer(oldId, (e.target.value || "").trim()),
+            () => movePos(`producer:${oldId}`, `producer:${n.ref.id}`),
+            () => { render(); autosave(null); });
     });
     // add a priced-item source via the chip add-select (same input the subset uses)
     div.querySelector(".pr-addsrc")?.addEventListener("change", (e) => {
-        if (e.target.value && model.addPriceSource(n.ref.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(false); }
+        if (e.target.value && model.addProducerSource(n.ref.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); }
     });
     // unwire a priced-item source — rebuild the node so the chip goes too, and redraw the edge
     div.querySelectorAll(".pr-rmsrc").forEach((b) => b.addEventListener("click", () => {
-        model.removePriceSource(n.ref.id, b.dataset.ds); rebuildNode(n.id); drawEdges(); autosave(false);
+        model.removeProducerSource(n.ref.id, b.dataset.ds); rebuildNode(n.id); drawEdges(); autosave(null);
     }));
 }
 
@@ -1142,29 +1192,29 @@ function wireTrigger(div, n) {
         renameNode(e.target, oldId,
             () => model.renameTrigger(oldId, (e.target.value || "").trim()),
             () => movePos(`trigger:${oldId}`, `trigger:${t.id}`),
-            () => { render(); autosave(false); });
+            () => { render(); autosave(null); });
     });
     // kind swaps the body (interval/watch blocks) AND the edges, so rebuild this node then re-render
     div.querySelector(".tg-kind")?.addEventListener("change", (e) => {
-        model.setTriggerKind(t.id, e.target.value); rebuildNode(n.id); render(); autosave(false);
+        model.setTriggerKind(t.id, e.target.value); rebuildNode(n.id); render(); autosave(null);
     });
-    div.querySelector(".tg-interval")?.addEventListener("change", (e) => { model.setTriggerInterval(t.id, e.target.value); autosave(false); });
-    div.querySelector(".tg-sound")?.addEventListener("change", (e) => { model.setTriggerSound(t.id, e.target.value); autosave(false); });
+    div.querySelector(".tg-interval")?.addEventListener("change", (e) => { model.setTriggerInterval(t.id, e.target.value); autosave(null); });
+    div.querySelector(".tg-sound")?.addEventListener("change", (e) => { model.setTriggerSound(t.id, e.target.value); autosave(null); });
     // volume slider: `input` (not change) so the % label tracks the live drag; autosave coalesces the writes
     div.querySelector(".tg-volume")?.addEventListener("input", (e) => {
         model.setTriggerVolume(t.id, e.target.value);
         const n = div.querySelector(".tg-volnum"); if (n) n.textContent = `${Math.round((model.trigger(t.id)?.volume ?? 1) * 100)}%`;
-        autosave(false);
+        autosave(null);
     });
     // ▶ audition the currently-selected sound at the current volume (also unlocks browser autoplay for later auto-fires)
     div.querySelector(".tg-sound-preview")?.addEventListener("click", () => { playSound(div.querySelector(".tg-sound")?.value, model.trigger(t.id)?.volume ?? 1); });
     // rebuildNode (not render) re-renders THIS node's chips — render() only builds NEW nodes,
     // so an in-place chip add/remove wouldn't show. drawEdges() drops/adds the trigger's edges
     // (watch source→trigger and trigger→price) so a chip change reflects on the canvas live.
-    div.querySelector(".tg-addwatch")?.addEventListener("change", (e) => { if (model.addTriggerWatch(t.id, e.target.value)) { rebuildNode(t.id); drawEdges(); autosave(false); } });
-    div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNode(t.id); drawEdges(); autosave(false); } });
-    div.querySelectorAll(".tg-rmwatch").forEach((b) => b.addEventListener("click", () => { model.removeTriggerWatch(t.id, b.dataset.ds); rebuildNode(t.id); drawEdges(); autosave(false); }));
-    div.querySelectorAll(".tg-rmtarget").forEach((b) => b.addEventListener("click", () => { model.removeTriggerTarget(t.id, b.dataset.p); rebuildNode(t.id); drawEdges(); autosave(false); }));
+    div.querySelector(".tg-addwatch")?.addEventListener("change", (e) => { if (model.addTriggerWatch(t.id, e.target.value)) { rebuildNode(t.id); drawEdges(); autosave(null); } });
+    div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNode(t.id); drawEdges(); autosave(null); } });
+    div.querySelectorAll(".tg-rmwatch").forEach((b) => b.addEventListener("click", () => { model.removeTriggerWatch(t.id, b.dataset.ds); rebuildNode(t.id); drawEdges(); autosave(null); }));
+    div.querySelectorAll(".tg-rmtarget").forEach((b) => b.addEventListener("click", () => { model.removeTriggerTarget(t.id, b.dataset.p); rebuildNode(t.id); drawEdges(); autosave(null); }));
     div.querySelector(".tg-fire")?.addEventListener("click", async () => {
         const prog = div.querySelector(".tg-prog");
         prog.textContent = "firing…";
@@ -1206,35 +1256,35 @@ function wireSource(div, n) {
         renameNode(e.target, oldId,
             () => model.renameFileSource(oldId, (e.target.value || "").trim()),
             () => movePos(`src:${oldId}`, `src:${s.id}`),
-            () => { render(); autosave(false); });
+            () => { render(); autosave(null); });
     });
     // format/watch swap the body (extraction UI / throttle / tail) -> rebuild then re-preview
-    $(".src-format")?.addEventListener("change", (e) => { model.setSourceFormat(s.id, e.target.value); rebuildNode(n.id); autosave(false); });
-    $(".src-watch")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "watch", e.target.value); rebuildNode(n.id); autosave(false); });
+    $(".src-format")?.addEventListener("change", (e) => { model.setSourceFormat(s.id, e.target.value); rebuildNode(n.id); autosave(null); });
+    $(".src-watch")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "watch", e.target.value); rebuildNode(n.id); autosave(null); });
     // plain edits: store + preview, no rebuild (keep input focus)
-    $(".src-filename")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "filename", e.target.value); autosave(false); schedulePreview(); });
-    $(".src-path")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "path", e.target.value); autosave(false); schedulePreview(); });
-    $(".src-throttle")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "throttle_s", e.target.value); autosave(false); });
-    $(".src-tail")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "tail", e.target.checked); autosave(false); schedulePreview(); });
+    $(".src-filename")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "filename", e.target.value); autosave(null); schedulePreview(); });
+    $(".src-path")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "path", e.target.value); autosave(null); schedulePreview(); });
+    $(".src-throttle")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "throttle_s", e.target.value); autosave(null); });
+    $(".src-tail")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "tail", e.target.checked); autosave(null); schedulePreview(); });
 
     // line filters (match clauses)
-    $(".src-addm")?.addEventListener("click", () => { model.addSourceMatch(s.id); rebuildNode(n.id); autosave(false); });
-    div.querySelectorAll(".src-rmm").forEach((b) => b.addEventListener("click", () => { model.removeSourceMatch(s.id, +b.dataset.i); rebuildNode(n.id); autosave(false); }));
+    $(".src-addm")?.addEventListener("click", () => { model.addSourceMatch(s.id); rebuildNode(n.id); autosave(null); });
+    div.querySelectorAll(".src-rmm").forEach((b) => b.addEventListener("click", () => { model.removeSourceMatch(s.id, +b.dataset.i); rebuildNode(n.id); autosave(null); }));
     div.querySelectorAll(".mset").forEach((inp) => inp.addEventListener("change", (e) => {
         model.setSourceMatch(s.id, +e.target.dataset.i, e.target.dataset.k,
             e.target.type === "checkbox" ? e.target.checked : e.target.value);
-        autosave(false); schedulePreview();
+        autosave(null); schedulePreview();
     }));
 
     // extraction fields
-    $(".src-addf")?.addEventListener("click", () => { model.addSourceField(s.id); rebuildNode(n.id); autosave(false); });
-    div.querySelectorAll(".src-rmf").forEach((b) => b.addEventListener("click", () => { model.removeSourceField(s.id, +b.dataset.i); rebuildNode(n.id); autosave(false); }));
+    $(".src-addf")?.addEventListener("click", () => { model.addSourceField(s.id); rebuildNode(n.id); autosave(null); });
+    div.querySelectorAll(".src-rmf").forEach((b) => b.addEventListener("click", () => { model.removeSourceField(s.id, +b.dataset.i); rebuildNode(n.id); autosave(null); }));
     div.querySelectorAll(".fset2").forEach((inp) => inp.addEventListener("change", (e) => {
         const k = e.target.dataset.k;
         model.setSourceFieldProp(s.id, +e.target.dataset.i, k,
             e.target.type === "checkbox" ? e.target.checked : e.target.value);
-        if (k === "method") { rebuildNode(n.id); autosave(false); }   // method swaps its own inputs
-        else { autosave(false); schedulePreview(); }
+        if (k === "method") { rebuildNode(n.id); autosave(null); }   // method swaps its own inputs
+        else { autosave(null); schedulePreview(); }
     }));
 
     // auto-find the file across generic OS locations — opens a modal that runs the search,
@@ -1280,7 +1330,7 @@ function openFindModal($, s, schedulePreview) {
         model.setSourceProp(s.id, "path", path);
         const pin = $(".src-path"); if (pin) pin.value = path;
         const found = $(".src-found"); if (found) found.textContent = path;
-        autosave(false); schedulePreview();
+        autosave(null); schedulePreview();
         handle.close();
     };
 
@@ -1337,8 +1387,8 @@ function renderPreview(host, rows) {
             h("tr", cols.map((c) => h("td", r[c] == null ? "" : String(r[c]))))))));
 }
 
-export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "price", "trigger", "filesource"]);
-const REMOVABLE = new Set(["window", "item", "itemfield", "itemtell", "region", "detect", "scrollbar", "dictionary", "subset", "dataset", "price", "trigger", "filesource"]);
+export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource"]);
+const REMOVABLE = new Set(["window", "item", "itemfield", "itemtell", "region", "detect", "scrollbar", "dictionary", "subset", "dataset", "producer", "trigger", "filesource"]);
 
 // One place to remove any node; each goes through render()+autosave() so undo/redo
 // records it (autosave -> pushHistory).
@@ -1346,23 +1396,23 @@ const REMOVABLE = new Set(["window", "item", "itemfield", "itemtell", "region", 
 // pre-render teardown like closing a live canvas); `after` is the follow-up (autosave variant +
 // side effects). The shared render + forgetNodeState (drops every per-id store) + status line run
 // ONCE for every type. re-OCR only the affected window (autosave winId) — removing a region/detect/
-// scrollbar/item changes THAT window's read, never the others; window-less types pass autosave(false).
+// scrollbar/item changes THAT window's read, never the others; window-less types pass autosave(null).
 function removeNode(n) {
     const win = n.win?.id;
     const PLAN = {
-        window:     { kill: () => { closeImage(n.ref.id); model.removeWindow(n.ref.id); }, after: () => autosave(false) },
-        item:       { kill: () => { closeItemImage(win, n.ref.id); model.removeItem(win, n.ref.id); clearGrid(win); }, after: () => { refreshImageBoxes(win); autosave(true, win); } },
-        region:     { kill: () => model.removeRegion(win, n.ref.id), after: () => { autosave(true, win); refreshImageBoxes(win); } },
-        detect:     { kill: () => model.removeDetect(win, n.ref.id), after: () => { rebuildNode(`win:${win}`); autosave(true, win); refreshImageBoxes(win); } },
-        scrollbar:  { kill: () => model.removeScrollbar(win), after: () => { autosave(true, win); refreshImageBoxes(win); } },
+        window:     { kill: () => { closeImage(n.ref.id); model.removeWindow(n.ref.id); }, after: () => autosave(null) },
+        item:       { kill: () => { closeItemImage(win, n.ref.id); model.removeItem(win, n.ref.id); clearGrid(win); }, after: () => { refreshImageBoxes(win); autosave(win); } },
+        region:     { kill: () => model.removeRegion(win, n.ref.id), after: () => { autosave(win); refreshImageBoxes(win); } },
+        detect:     { kill: () => model.removeDetect(win, n.ref.id), after: () => { rebuildNode(`win:${win}`); autosave(win); refreshImageBoxes(win); } },
+        scrollbar:  { kill: () => model.removeScrollbar(win), after: () => { autosave(win); refreshImageBoxes(win); } },
         itemfield:  { kill: () => model.removeItemField(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
         itemtell:   { kill: () => model.removeItemTell(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
-        dictionary: { kill: () => model.removeDictionary(n.ref.id), after: () => autosave(false) },
-        subset:     { kill: () => model.removeSubset(n.ref.id), after: () => autosave(false) },
-        price:      { kill: () => model.removePriceNode(n.ref.id), after: () => autosave(false) },
-        trigger:    { kill: () => model.removeTrigger(n.ref.id), after: () => autosave(false) },
-        filesource: { kill: () => model.removeFileSource(n.ref.id), after: () => autosave(false) },
-        dataset:    { kill: () => { model.removeDatasetDef(n.ref); purgeDatasetData(n.ref); }, after: () => autosave() },
+        dictionary: { kill: () => model.removeDictionary(n.ref.id), after: () => autosave(null) },
+        subset:     { kill: () => model.removeSubset(n.ref.id), after: () => autosave(null) },
+        producer:   { kill: () => model.removeProducer(n.ref.id), after: () => autosave(null) },
+        trigger:    { kill: () => model.removeTrigger(n.ref.id), after: () => autosave(null) },
+        filesource: { kill: () => model.removeFileSource(n.ref.id), after: () => autosave(null) },
+        dataset:    { kill: () => { model.removeDatasetDef(n.ref); purgeDatasetData(n.ref); }, after: () => autosave(null) },
     };
     const plan = PLAN[n.type];
     if (!plan) return;
@@ -1434,7 +1484,7 @@ function fillNode(div, n, wire = true) {
         div.classList.toggle("node-disabled", !on);
         const winId = n.type === "window" ? n.ref.id : n.win?.id;
         if (winId) { clearGrid(winId); refreshImageBoxes(winId); }
-        autosave(on);   // disabling shouldn't trigger re-reads in other nodes
+        autosave(winId);   // window id (or undefined for data-plane) -> scoped; re-fires only on enable
     });
     // satellite show/hide (preview on a window; vt-table on a dataset/subset) — one handler for
     // every node that carries the head button. Toggling rebuilds the graph so the follower node +
@@ -1464,27 +1514,29 @@ function outPortSpec(n) {
             onDrop: (ds) => model.setDataset(n.ref.id, ds),
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setDataset(n.ref.id, ds); return `ds:${ds}`; },
         };
-        case "price": return {
+        case "producer": return {
             target: "dataset",
-            onDrop: (ds) => { model.setPriceDataset(n.ref.id, ds); rebuildNode(n.id); },
-            onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setPriceDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
+            onDrop: (ds) => { model.setProducerDataset(n.ref.id, ds); rebuildNode(n.id); },
+            onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setProducerDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
         };
         case "dataset": return {
-            // a dataset feeds a SUBSET (join) or a PRICE node (price only these items)
-            target: ["subset", "price"],
+            // a dataset feeds a SUBSET (join) or a PRODUCER node (price only these items)
+            target: ["subset", "producer"],
             onDrop: (id, ttype) => {
-                if (ttype === "price") { if (model.addPriceSource(id, n.ref)) rebuildNode(`price:${id}`); }
-                else if (model.addSubsetInput(id, n.ref)) refreshSubsetNode(id);
+                if (ttype === "producer") { if (model.addProducerSource(id, n.ref)) rebuildNode(`producer:${id}`); }
+                // rebuild the subset node (its sources chips + join-on list), not just refresh the
+                // vtable — same as the in-panel add (.sv-addin); rebuild re-queues the refresh.
+                else if (model.addSubsetInput(id, n.ref)) rebuildNode(`sub:${id}`);
             },
             onEmpty: (pt) => { const id = model.addSubset(n.ref); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
         };
         case "subset": return {
-            // a subset feeds another SUBSET or a PRICE node (price only the rows it returns, e.g. count>0)
-            target: ["subset", "price"],
+            // a subset feeds another SUBSET or a PRODUCER node (price only the rows it returns, e.g. count>0)
+            target: ["subset", "producer"],
             selfId: n.ref.id,
             onDrop: (id, ttype) => {
-                if (ttype === "price") { if (model.addPriceSource(id, n.ref.id)) rebuildNode(`price:${id}`); }
-                else if (model.addSubsetInput(id, n.ref.id)) refreshSubsetNode(id);
+                if (ttype === "producer") { if (model.addProducerSource(id, n.ref.id)) rebuildNode(`producer:${id}`); }
+                else if (model.addSubsetInput(id, n.ref.id)) rebuildNode(`sub:${id}`);
             },
             onEmpty: (pt) => { const id = model.addSubset(n.ref.id); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
         };
@@ -1494,8 +1546,8 @@ function outPortSpec(n) {
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setSourceDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
         };
         case "trigger": return {
-            // a trigger fires a PRICE node (sweep) or a FILE SOURCE (read)
-            target: ["price", "filesource"],
+            // a trigger fires a PRODUCER node (sweep/refresh) or a FILE SOURCE (read)
+            target: ["producer", "filesource"],
             onDrop: (pid) => { if (model.addTriggerTarget(n.ref.id, pid)) rebuildNode(n.id); },
         };
         default: return null;
@@ -1568,7 +1620,7 @@ export function showSatellite(satId) {
 // the source id a drop target commits to: a dataset node's name, or a node's bare id
 // (subset/price/trigger carry a prefixed node id in data-id).
 function targetIdOf(el, target) {
-    return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|price|trigger|src):/, "");
+    return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|producer|trigger|src):/, "");
 }
 
 // Host node types that resize at the NODE level (their body fills them) — one consistent
@@ -1625,10 +1677,10 @@ function buildNode(n, wire = true) {
     div.id = `node-${n.id}`;
     div.dataset.id = n.id;
     fillNode(div, n, wire);
-    // ONE resize path for every node. `widthOnly` nodes never stamp a height — it follows the
-    // content: item/window wrap a fixed-aspect canvas; dataset/subset/price are config-only and
-    // reworked often with visibility-toggleable inputs, so a saved height would clip on rework or
-    // leave dead space. Width is still user-resizable; reset/reload always re-fit the height.
+    // ONE resize path for every node. `widthOnly` nodes (item/window) never stamp a height — it
+    // follows their fixed-aspect canvas. Every other node is freely resizable: the grip stamps an
+    // inline height, reset/reload re-fits to content (height:auto for config nodes), and the body
+    // scrolls if dragged smaller than its content.
     makeNodeResizable(div, n.id, { widthOnly: WIDTH_ONLY_NODES.has(n.type) });
     return div;
 }
@@ -1908,7 +1960,7 @@ function wireNode(div, n) {
             if (k === "name") model.profile.name = v.trim();
             else if (k === "proc") model.profile.process_names = v.split(",").map((s) => s.trim()).filter(Boolean);
             else if (k === "title") model.profile.window_title_hint = v.trim() || null;
-            autosave(false);   // process/title/name affect window LOCATION, not stashed-image OCR
+            autosave(null);   // process/title/name affect window LOCATION, not stashed-image OCR
         }));
         // node creation moved to the floating "create" toolbox (see buildToolbox)
     } else if (n.type === "dictionary") {
@@ -1919,11 +1971,11 @@ function wireNode(div, n) {
             n.ref.name = newName;
             const newId = newName.replace(/[^A-Za-z0-9._-]+/g, "_");
             if (newId !== oldId && model.renameDictionary(oldId, newId)) movePos(`dict:${oldId}`, `dict:${newId}`);
-            render(); autosave();
+            render(); autosave(null);
         });
         div.querySelector(".dictterms")?.addEventListener("change", (e) => {
             n.ref.terms = e.target.value.split("\n").map((s) => s.trim()).filter(Boolean);
-            rebuildNode(n.id); autosave();   // refresh the word count
+            rebuildNode(n.id); autosave(null);   // refresh the word count
         });
     } else if (n.type === "window") {
         wireWindowControls(div, n);   // out-port wiring is handled generically in wireOutPort
@@ -1939,7 +1991,7 @@ function wireNode(div, n) {
             render();   // migrate the live DOM node to the new id NOW (its drag wiring binds the new
                                     // id) — refreshLive below skips render when the dataset SET is unchanged, which
                                     // it is after an in-place rename, so the node would otherwise keep the old id
-            autosave();
+            autosave(null);
             // CRITICAL: commit the renamed profile to disk BEFORE the server rename + refreshLive.
             // autosave() is debounced, so without this flush /api/flow reads the STALE profile that
             // still declares oldId -> noteDatasets re-adds it to _extraDatasets -> a ghost dataset
@@ -1950,24 +2002,24 @@ function wireNode(div, n) {
             } catch (err) {
                 model.renameDataset(newId, oldId);   // roll back the profile rename; data didn't move
                 movePos(`ds:${newId}`, `ds:${oldId}`);
-                e.target.value = oldId; setStatus(String(err.message || err)); autosave();
+                e.target.value = oldId; setStatus(String(err.message || err)); autosave(null);
                 await persist.flush();   // commit the rollback too, so refreshLive doesn't resurrect newId
                 render(); return;
             }
             await refreshLive();   // re-reads the dataset list (now under the new name) and re-renders
         });
-        div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(false); });
+        div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(null); });
         div.querySelector(".dskey")?.addEventListener("change", async (e) => {
             const v = e.target.value;
             if (v === "__nodedup__") model.setDatasetDedup(n.ref, false);
             else model.setDatasetKeyField(n.ref, v);
-            autosave();
+            autosave(null);
             await persist.flush();   // re-key on disk before re-reading
             refreshDataNode(n.ref); refreshAllSubsetNodes();
         });
         div.querySelector(".dsbatch")?.addEventListener("change", (e) => {
             model.setDatasetBatchMode(n.ref, e.target.value);
-            autosave();
+            autosave(null);
         });
         const clearBtn = div.querySelector(".dsclear");
         clearBtn?.addEventListener("click", async () => {
@@ -2003,8 +2055,8 @@ function wireNode(div, n) {
         }
     } else if (n.type === "subset") {
         wireSubset(div, n.ref);
-    } else if (n.type === "price") {
-        wirePrice(div, n);
+    } else if (n.type === "producer") {
+        wireProducer(div, n);
     } else if (n.type === "trigger") {
         wireTrigger(div, n);
     } else if (n.type === "filesource") {
@@ -2020,7 +2072,7 @@ function wireNode(div, n) {
             renameNode(e.target, oldId,
                 () => model.renameRegion(n.win.id, oldId, e.target.value.trim()),
                 () => movePos(`reg:${n.win.id}:${oldId}`, `reg:${n.win.id}:${n.ref.id}`),
-                () => { render(); autosave(true, n.win.id); refreshImageBoxes(n.win.id); });   // re-OCR only this window
+                () => { render(); autosave(n.win.id); refreshImageBoxes(n.win.id); });   // re-OCR only this window
         });
         div.querySelectorAll(".fset").forEach((inp) => inp.addEventListener("change", (e) => {
             if (!fld) return;
@@ -2036,11 +2088,11 @@ function wireNode(div, n) {
             else if (k === "max") fld.max = e.target.value === "" ? null : +e.target.value;
             else if (k === "dictmode") { fld.dict_mode = e.target.value; rebuildNode(n.id); }  // toggles use-dict/fuzzy
             else if (k === "usedict") { fld.dictionary = e.target.value || ""; render(); }   // redraw the muted dict link
-            autosave(true, n.win?.id);   // plain value edits: no DOM rebuild; re-OCR only this window
+            autosave(n.win?.id);   // plain value edits: no DOM rebuild; re-OCR only this window
         }));
         if (fld) wireFieldRules(div, fld, {
-            rebuild: () => { rebuildNode(n.id); autosave(true, n.win?.id); },
-            commit: () => autosave(true, n.win?.id),
+            rebuild: () => { rebuildNode(n.id); autosave(n.win?.id); },
+            commit: () => autosave(n.win?.id),
         });
     } else if (n.type === "detect") {
         div.addEventListener("click", (ev) => {
@@ -2052,7 +2104,7 @@ function wireNode(div, n) {
             renameNode(e.target, oldId,
                 () => model.renameDetect(n.win.id, oldId, e.target.value.trim()),
                 () => movePos(`det:${n.win.id}:${oldId}`, `det:${n.win.id}:${n.ref.id}`),
-                () => { render(); rebuildNode(`win:${n.win.id}`); autosave(true, n.win.id); refreshImageBoxes(n.win.id); });
+                () => { render(); rebuildNode(`win:${n.win.id}`); autosave(n.win.id); refreshImageBoxes(n.win.id); });
         });
         div.querySelectorAll(".aset").forEach((inp) => inp.addEventListener("change", (e) => {
             const k = e.target.dataset.k;
@@ -2065,7 +2117,7 @@ function wireNode(div, n) {
             else if (k === "case") n.ref.case_sensitive = e.target.checked;
             // mode change shows/hides "read ⊆ text" (ignored by full/exact) -> rebuild the body
             if (k === "match") rebuildNode(n.id);
-            autosave(true, n.win.id);   // a detector knob re-runs detect for ONLY this window
+            autosave(n.win.id);   // a detector knob re-runs detect for ONLY this window
         }));
     } else if (n.type === "scrollbar") {
         div.addEventListener("click", (ev) => {
@@ -2074,7 +2126,7 @@ function wireNode(div, n) {
         });
         div.querySelectorAll(".sbset").forEach((inp) => inp.addEventListener("change", (e) => {
             if (e.target.dataset.k === "orient") model.setScrollbarOrientation(n.win.id, e.target.value);
-            autosave(true, n.win.id);   // re-OCR only this window
+            autosave(n.win.id);   // re-OCR only this window
         }));
     } else if (n.type === "item") {
         wireItemControls(div, n);
@@ -2260,7 +2312,7 @@ export function startWire(srcId, ev, spec) {
         ? toWorld({ clientX: pr.left + pr.width / 2, clientY: pr.top + pr.height / 2 })
         : { x: p.x + (spec.side === "L" ? 0 : nw(srcId)), y: p.y + nh(srcId) / 2 };
     wire = { x1: start.x, y1: start.y, x2: start.x, y2: start.y };
-    // a spec may accept ONE target type ("subset") or SEVERAL (["subset","price"]) — match any.
+    // a spec may accept ONE target type ("subset") or SEVERAL (["subset","producer"]) — match any.
     const targets = Array.isArray(spec.target) ? spec.target : [spec.target];
     const sel = targets.map((t) => `.gnode.${t}`).join(",");
     const onMove = (e) => { const w = toWorld(e); wire.x2 = w.x; wire.y2 = w.y; drawEdges(); };
@@ -2273,10 +2325,10 @@ export function startWire(srcId, ev, spec) {
         if (target) {
             const ttype = targets.find((t) => target.matches(`.gnode.${t}`));
             const tid = targetIdOf(target, ttype);
-            if (tid != null && tid !== spec.selfId) { spec.onDrop(tid, ttype); render(); autosave(); return; }
+            if (tid != null && tid !== spec.selfId) { spec.onDrop(tid, ttype); render(); autosave(null); return; }
         } else if (dragged && !overNode && spec.onEmpty) {   // empty canvas (not over another node) -> mint a node
             const newId = spec.onEmpty(toWorld(e));
-            render(); autosave(); if (newId) panTo(newId);
+            render(); autosave(null); if (newId) panTo(newId);
             return;
         }
         render();
@@ -2429,7 +2481,7 @@ function createGame(name) {
     if (!name) { setStatus("enter a name"); return false; }
     model.load({ name, process_names: [], window_title_hint: null, fields: [], windows: [] });
     pos.clear(); nodeEls.clear(); $("gnodes").replaceChildren();
-    render(); autosave();
+    render(); autosave(null);
     refreshGames(name);
     return true;
 }
@@ -2841,7 +2893,7 @@ window.addEventListener("contextmenu", (ev) => {
         { icon: iconFor("window"),     title: "window",      tint: "var(--accent)",       onClick: () => ready() && createWindowNode(at) },
         { icon: iconFor("dataset"),    title: "dataset",     tint: "var(--ok)",           onClick: () => ready() && createDatasetNode(at) },
         { icon: iconFor("subset"),     title: "subset",      tint: "var(--purple)",       onClick: () => ready() && createSubsetNode(at) },
-        { icon: iconFor("price"),      title: "price node",  tint: "var(--warn)",         onClick: () => ready() && createPriceNode(at) },
+        { icon: iconFor("producer"),   title: "producer node",  tint: "var(--warn)",      onClick: () => ready() && createProducerNode(at) },
         { icon: iconFor("filesource"), title: "file source", tint: "var(--accent)",       onClick: () => ready() && createFileSourceNode(at) },
         { icon: iconFor("trigger"),    title: "trigger",     tint: "var(--trigger-line)", onClick: () => ready() && createTriggerNode(at) },
         { icon: iconFor("dictionary"), title: "dictionary",  tint: "var(--purple)",       onClick: () => ready() && createDictionaryNode(at) },
@@ -2920,7 +2972,7 @@ document.addEventListener("keydown", (ev) => {
     rec.persist(b);
     rec.refresh();
     ov.render();        // reflect the nudge on the overlay immediately
-    drawEdges(); autosave(true, rec.winId);   // nudging a box re-OCRs ONLY its window
+    drawEdges(); autosave(rec.winId);   // nudging a box re-OCRs ONLY its window
     ev.preventDefault();
 });
 

@@ -27,9 +27,9 @@ def _profile_or_404(game: str):
 
 @router.get("/{game}")
 def list_triggers(game: str):
-    """Each trigger plus the live sweep status of every price node it targets."""
+    """Each trigger plus the live sweep status of every producer it targets."""
     profile = _profile_or_404(game)
-    by_id = {p.id: p for p in profile.price_nodes}
+    by_id = {p.id: p for p in profile.producers}
     out = []
     for t in profile.triggers:
         targets = [{"id": pid, "dataset": by_id[pid].dataset,
@@ -48,7 +48,7 @@ def fire_trigger(game: str, trigger_id: str):
     trig = next((t for t in profile.triggers if t.id == trigger_id), None)
     if trig is None:
         raise HTTPException(status_code=404, detail=f"No trigger {trigger_id!r}")
-    by_id = {p.id: p for p in profile.price_nodes}
+    by_id = {p.id: p for p in profile.producers}
     data_dir = get_settings().data_dir
     # SAME funnel the collector uses (fire_target): skip-if-sweeping + the trigger->price control
     # pulse, so a manual fire behaves identically to an automatic one — no path drifts.

@@ -59,7 +59,7 @@
 .gnode.itemtell  .gn-h { --ntint: var(--ok); }   /* tells are pass/fail checks, like detect — match the tell edge colour */
 .gnode.dataset   .gn-h { --ntint: var(--ok); }
 .gnode.subset    .gn-h { --ntint: var(--purple); }
-.gnode.price     .gn-h { --ntint: var(--warn); }
+.gnode.producer  .gn-h { --ntint: var(--warn); }
 .gnode.dictionary .gn-h { --ntint: var(--purple); }
 .gnode.trigger   .gn-h { --ntint: var(--trigger-line); }
 .gnode.filesource .gn-h { --ntint: var(--accent); }

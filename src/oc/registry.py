@@ -27,6 +27,7 @@ from .interfaces import (
     Enricher,
     OcrEngine,
     ProcessDetector,
+    ProducerSource,
     SourceParser,
     WindowClassifier,
     WindowProvider,
@@ -41,6 +42,7 @@ _OCR: dict[str, type[OcrEngine]] = {}
 _CLASSIFIER: dict[str, type[WindowClassifier]] = {}
 _CORRECTOR: dict[str, type[Corrector]] = {}
 _ENRICHER: dict[str, type[Enricher]] = {}
+_PRODUCER: dict[str, type[ProducerSource]] = {}
 _PARSER: dict[str, type[SourceParser]] = {}
 
 # Modules that, when imported, self-register their backends. Add new backend
@@ -56,6 +58,7 @@ _IMPL_MODULES = (
     "oc.learn.rapidfuzz_corrector",
     "oc.learn.difflib_corrector",
     "oc.enrich.warframe_market",
+    "oc.enrich.wm_producer",
     "oc.enrich.relic",
     "oc.source.parsers.log_lines",
     "oc.source.parsers.ini",
@@ -99,6 +102,10 @@ def register_corrector(name: str):
 
 def register_enricher(name: str):
     return _register(_ENRICHER, name)
+
+
+def register_producer(name: str):
+    return _register(_PRODUCER, name)
 
 
 def register_parser(name: str):
@@ -165,6 +172,16 @@ def build_corrector(name: str, **opts) -> Corrector:
 
 def build_enricher(name: str, **opts) -> Enricher:
     return _build(_ENRICHER, "enricher", name, **opts)
+
+
+def build_producer(name: str, **opts) -> ProducerSource:
+    return _build(_PRODUCER, "producer", name, **opts)
+
+
+def producer_names() -> list[str]:
+    """Registered producer-backend names (after discovery), for the node's type picker."""
+    _ensure_loaded()
+    return sorted(_PRODUCER)
 
 
 def build_parser(name: str, **opts) -> SourceParser:

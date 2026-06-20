@@ -2,7 +2,7 @@
 
 from oc.store.dataset_store import DatasetStore, replay
 from oc.store.change import ChangeEvent, ChangeOp
-from oc.store.keys import KeySpec
+from oc.store.keys import KeyMap, KeySpec
 
 
 def _store(tmp_path):
@@ -162,6 +162,23 @@ def test_rekey_when_key_config_changes(tmp_path):
     # and re-key by a different field entirely
     s3 = DatasetStore(tmp_path, "g", "d", key=KeySpec(("n",)))
     assert {r["key"] for r in s3.records()} == {"1", "2"}
+
+
+def test_toggling_dedup_off_invalidates_cached_state(tmp_path):
+    # Two same-key reads collapse to ONE deduped record (and materialise `current`).
+    s = DatasetStore(tmp_path, "g", "d")
+    s.record_seen({"name": "Arcane Aegis", "n": 1})
+    s.record_seen({"name": "Arcane Aegis", "n": 2})   # same key -> merged
+    assert s.present_count == 1
+    # Re-open with 1->many OFF (dedup=False). The spec changed, so the stale deduped
+    # `current` must be invalidated even though no_dedup skips the per-event re-key:
+    # every observation is now its OWN record.
+    s2 = DatasetStore(tmp_path, "g", "d", key=KeyMap(dedup=False))
+    assert s2.present_count == 2
+    assert sorted(r["n"] for r in s2.records()) == [1, 2]
+    # And back ON re-keys to one again (round-trips, raw values never destroyed).
+    s3 = DatasetStore(tmp_path, "g", "d")
+    assert s3.present_count == 1
 
 
 def test_replay_pure_function():

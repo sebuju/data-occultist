@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from ...profile import list_profiles
 from ...runtime import load_live_profile
-from ...store import inspect, store_for
+from ...store import inspect, rows_at, store_for
 from ...store.dataset_store import DatasetStore
 from ..deps import get_settings
 
@@ -194,8 +194,11 @@ def _flow_fetch(game: str):
     (history size+mtime) invalidates on any append, so _load reparses whenever the ledger
     moved; when it hasn't, the cache is provably current and a subset can't lag it. Parsing
     the full ledger here (ensure_loaded) cost ~870ms on a 44MB/101k-event dataset for no
-    gain — the heal it provided only ever fired on an already-poisoned cache."""
-    return lambda ds, agg: _store(game, ds, agg).records()
+    gain — the heal it provided only ever fired on an already-poisoned cache.
+
+    ``agg == "all"`` is the no-collapse opt-out: open at ``latest`` (so the materialisation
+    doesn't churn) and return every observation via :func:`rows_at`."""
+    return lambda ds, agg: rows_at(_store(game, ds, "latest" if agg == "all" else agg), agg)
 
 
 @router.get("/{game}/subset/{subset}")

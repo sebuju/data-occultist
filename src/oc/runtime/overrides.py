@@ -9,11 +9,11 @@ restart drops them. The only way one reaches disk is an explicit user "save pret
 
 Path grammar (shared with the front-end ``pretty/overrides.js``): ``.``-separated segments,
 where a segment is either a plain attribute (``interval_s``) or a list element addressed by
-its ``id`` (``price_nodes[p1]``). Examples::
+its ``id`` (``producers[p1]``). Examples::
 
     triggers[t1].interval_s
-    price_nodes[p1].throttle
-    price_nodes[p1].enabled
+    producers[p1].throttle
+    producers[p1].enabled
     windows[equipment].fields[name].min_confidence
 
 A path that no longer resolves (the node was renamed/removed) is skipped, never an error —

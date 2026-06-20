@@ -148,7 +148,7 @@ async function openImage(winId, nodeEl = null) {
             // park the new node right BESIDE its window (srcId) before render() so ensurePositions
             // leaves it alone — no autoplacement into a far column.
             if (newNode) await placeNewNode(newNode, k, `win:${winId}`);
-            render(); refreshImageBoxes(winId); autosave(true, winId);   // re-OCR only this window
+            render(); refreshImageBoxes(winId); autosave(winId);   // re-OCR only this window
             if (newDetect) rebuildNode(`win:${winId}`);   // add the new detector to the window's detects section
             if (newNode) inheritGroupFrom(newNode, `win:${winId}`);   // box drawn on a grouped window → join its group
             if (newDetect) prefillDetectText(winId, newDetect);
@@ -162,7 +162,7 @@ async function openImage(winId, nodeEl = null) {
             else if (r === "item") { model.setItemBox(winId, box.id, box); refreshItemBoxes(winId, box.id); }
             else model.setRegionBox(winId, box.id, box);
             clearGrid(winId);   // layout changed → detected grid is stale
-            refreshImageBoxes(winId); drawEdges(); autosave(true, winId);   // re-OCR only this window
+            refreshImageBoxes(winId); drawEdges(); autosave(winId);   // re-OCR only this window
         },
         onSelect: (id) => overlaySelected(`win:${winId}`, id),
     });
@@ -201,7 +201,7 @@ async function createItemFromGeom(winId, geom) {
     clearGrid(winId);
     // park beside its window before render() so ensurePositions skips it — no autoplacement.
     await placeNewNode(`item:${winId}:${itemId}`, "item", `win:${winId}`);
-    render(); refreshImageBoxes(winId); autosave(true, winId);   // re-OCR only this window
+    render(); refreshImageBoxes(winId); autosave(winId);   // re-OCR only this window
     inheritGroupFrom(`item:${winId}:${itemId}`, `win:${winId}`);   // box drawn on a grouped window → join its group
     drawEdges();   // edge to the window drawn immediately
     openItemImage(winId, itemId);
@@ -275,7 +275,7 @@ function openItemImage(winId, itemId) {
                 addFieldToItemGroup(winId, itemId, fid);
                 groups.renderGroups();
                 refreshItemBoxes(winId, itemId); refreshImageBoxes(winId);
-                clearGrid(winId); scheduleItemRead(winId, itemId); autosave(true, winId);
+                clearGrid(winId); scheduleItemRead(winId, itemId); autosave(winId);
                 panZoomTo(`fld:${winId}:${itemId}:${fid}`);
                 return;
             }
@@ -291,7 +291,7 @@ function openItemImage(winId, itemId) {
             addTellToItemGroup(winId, itemId, tid);
             groups.renderGroups();
             refreshItemBoxes(winId, itemId); refreshImageBoxes(winId);
-            clearGrid(winId); scheduleItemRead(winId, itemId); autosave(true, winId);
+            clearGrid(winId); scheduleItemRead(winId, itemId); autosave(winId);
             panZoomTo(`tell:${winId}:${itemId}:${tid}`);
         },
         onChange: (box) => {                        // box in cutout fractions + role/id
@@ -639,7 +639,7 @@ async function prefillDetectText(winId, detectId) {
         const a = model.detect(winId, detectId);
         if (a && !a.text && info && info.read && info.read !== "(template)") {
             a.text = info.read;
-            render(); autosave(true, winId);   // re-detect only this window
+            render(); autosave(winId);   // re-detect only this window
         }
     } catch { /* ignore */ }
 }

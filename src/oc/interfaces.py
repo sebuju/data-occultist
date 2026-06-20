@@ -9,7 +9,8 @@ implementation can be swapped by changing a name in ``settings.yaml``.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 from .types import Frame, OcrLine, PixelBox, ProcessInfo, WindowInfo
 
@@ -144,6 +145,48 @@ class Enricher(ABC):
 
     @abstractmethod
     def enrich(self, values: dict) -> dict: ...
+
+
+@dataclass
+class ProducerCtx:
+    """Everything a :class:`ProducerSource` needs for one refresh. Built by the producer
+    runner around the sweep gate, so a backend stays free of the orchestration (locking,
+    status sidecar, threading). ``node`` is the producer's :class:`~oc.profile.models.ProducerDef`
+    (duck-typed here — backends read ``dataset``/``throttle``/``mode``/``sources``/``source_field``)
+    so this module needs no profile-model import.
+
+    ``on_item(done, total, slug, name, ok)`` fires per completed unit of work (for progress);
+    ``should_stop()`` is polled to abort a cancelled refresh promptly. ``items`` is an explicit
+    work list (e.g. an on_change trigger's changed keys) or ``None`` to let the backend decide.
+    """
+
+    data_dir: str
+    game: str
+    node: object
+    dataset: str
+    key: object | None = None
+    profile: object | None = None
+    items: list | None = None
+    timeout: float = 30.0
+    limit: int = 0
+    workers: int = 6
+    on_item: Callable[[int, int, str, str, bool], None] | None = None
+    should_stop: Callable[[], bool] | None = None
+
+
+class ProducerSource(ABC):
+    """A network *producer* fired on a schedule/trigger: it fetches external data and writes
+    current records into an output dataset — the producer pattern parallel to OCR capture and
+    file sources. Heavy + cancellable, so it runs only on an explicit refresh (the manual button
+    or a trigger), never in the capture loop. Selected by name (``ProducerDef.type`` ->
+    ``registry._PRODUCER``): e.g. ``warframe_market`` (per-item market snapshots) or ``relic``
+    (relic -> reward rows)."""
+
+    @abstractmethod
+    def run(self, ctx: ProducerCtx) -> dict:
+        """Run one refresh: fetch + write rows into ``ctx.dataset``. Emit progress via
+        ``ctx.on_item`` and abort promptly when ``ctx.should_stop()`` turns true. Returns a
+        small summary dict (e.g. ``{"total", "fetched", "failed"}``)."""
 
 
 class SourceParser(ABC):

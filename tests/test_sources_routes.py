@@ -59,7 +59,9 @@ def env(tmp_path, monkeypatch):
     # routes bind get_settings into their own namespace at import — patch it THERE
     monkeypatch.setattr("oc.web.routes.sources.get_settings", lambda: settings)
 
-    client = TestClient(create_app())
+    # create_app() guards routes behind a loopback-only middleware (rejects non-loopback peers
+    # with 403); give the TestClient a loopback client host so requests reach the routes.
+    client = TestClient(create_app(), client=("127.0.0.1", 50000))
     return client, log, data_dir
 
 

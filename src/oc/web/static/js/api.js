@@ -410,7 +410,7 @@ export const prices = {
     portfolio: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/portfolio?dataset=${encodeURIComponent(dataset)}`).then((r) => ok(r, "portfolio").then((x) => x.json())),
     item: (game, slug) => tfetch(`/api/prices/${_pg(game)}/item/${encodeURIComponent(slug)}`).then((r) => ok(r, "price item").then((x) => x.json())),
     movers: (game, days = 7, threshold = 0.15) => tfetch(`/api/prices/${_pg(game)}/movers?days=${days}&threshold=${threshold}`).then((r) => ok(r, "movers").then((x) => x.json())),
-    refresh: (game, dataset, mode = "statistics") => tfetch(`/api/prices/${_pg(game)}/refresh?dataset=${encodeURIComponent(dataset)}&mode=${encodeURIComponent(mode)}`, { method: "POST" }, 30_000).then((r) => ok(r, "price refresh").then((x) => x.json())),
+    refresh: (game, dataset, mode = "statistics", type = "warframe_market") => tfetch(`/api/prices/${_pg(game)}/refresh?dataset=${encodeURIComponent(dataset)}&mode=${encodeURIComponent(mode)}&type=${encodeURIComponent(type)}`, { method: "POST" }, 30_000).then((r) => ok(r, "producer refresh").then((x) => x.json())),
     cancel: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/cancel?dataset=${encodeURIComponent(dataset)}`, { method: "POST" }).then((r) => ok(r, "cancel sweep")).then((r) => r.json()),
     status: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/status?dataset=${encodeURIComponent(dataset)}`).then((r) => r.json()),
 };

@@ -26,12 +26,12 @@ export function nodeInputs(model) {
         add(`trigger:${id}`, id, `triggers[${id}].kind`, "kind", ENUM("interval", "on_change", "manual"));
         add(`trigger:${id}`, id, `triggers[${id}].interval_s`, "interval (s)", N(1, null, 1));
     }
-    for (const pn of p.price_nodes || []) {
+    for (const pn of p.producers || []) {
         const id = pn.id;
-        add(`price:${id}`, id, `price_nodes[${id}].enabled`, "enabled", BOOL);
-        add(`price:${id}`, id, `price_nodes[${id}].mode`, "mode", ENUM("statistics", "orders"));
-        add(`price:${id}`, id, `price_nodes[${id}].throttle`, "throttle (s)", N(0, null, 0.05));
-        add(`price:${id}`, id, `price_nodes[${id}].source_field`, "source field", STR);
+        add(`producer:${id}`, id, `producers[${id}].enabled`, "enabled", BOOL);
+        add(`producer:${id}`, id, `producers[${id}].mode`, "mode", ENUM("statistics", "orders"));
+        add(`producer:${id}`, id, `producers[${id}].throttle`, "throttle (s)", N(0, null, 0.05));
+        add(`producer:${id}`, id, `producers[${id}].source_field`, "source field", STR);
     }
     for (const w of p.windows || []) {
         const wid = w.id;
@@ -72,7 +72,7 @@ export function inputMeta(model, path) {
 // Map an input path to the graph node(s) it belongs to — for the "pretty-dirty" badge.
 export function nodeIdsForPath(model, path) {
     let m = /^triggers\[(.+?)\]/.exec(path); if (m) return [`trigger:${m[1]}`];
-    m = /^price_nodes\[(.+?)\]/.exec(path); if (m) return [`price:${m[1]}`];
+    m = /^producers\[(.+?)\]/.exec(path); if (m) return [`producer:${m[1]}`];
     m = /^subsets\[(.+?)\]/.exec(path); if (m) return [`sub:${m[1]}`];
     m = /^datasets\[(.+?)\]/.exec(path); if (m) return [`ds:${m[1]}`];
     m = /^windows\[(.+?)\]\.items\[(.+?)\]/.exec(path); if (m) return [`item:${m[1]}:${m[2]}`];

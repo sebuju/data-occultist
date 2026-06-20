@@ -10,7 +10,7 @@ def _profile():
         "name": "g",
         "windows": [{"id": "equipment", "dataset": "inv",
                      "fields": [{"id": "name", "min_confidence": 0.5}]}],
-        "price_nodes": [{"id": "p1", "dataset": "prices", "throttle": 0.4, "enabled": True}],
+        "producers": [{"id": "p1", "dataset": "prices", "throttle": 0.4, "enabled": True}],
         "triggers": [{"id": "t1", "kind": "interval", "interval_s": 300}],
         "subsets": [{"id": "v1", "datasets": ["inv"], "limit": 0}],
     })
@@ -19,15 +19,15 @@ def _profile():
 def test_apply_override_resolves_paths_and_coerces_types():
     ov.clear_override("g")
     ov.set_override("g", "triggers[t1].interval_s", "60")            # string -> float
-    ov.set_override("g", "price_nodes[p1].enabled", "false")          # string -> bool
-    ov.set_override("g", "price_nodes[p1].throttle", 1.5)
+    ov.set_override("g", "producers[p1].enabled", "false")          # string -> bool
+    ov.set_override("g", "producers[p1].throttle", 1.5)
     ov.set_override("g", "windows[equipment].fields[name].min_confidence", 0.9)
     ov.set_override("g", "subsets[v1].limit", 25)
     p = _profile()
     ov.apply_overrides(p, "g")
     assert p.triggers[0].interval_s == 60.0
-    assert p.price_nodes[0].enabled is False
-    assert p.price_nodes[0].throttle == 1.5
+    assert p.producers[0].enabled is False
+    assert p.producers[0].throttle == 1.5
     assert p.windows[0].fields[0].min_confidence == 0.9
     assert p.subsets[0].limit == 25
     ov.clear_override("g")
@@ -36,7 +36,7 @@ def test_apply_override_resolves_paths_and_coerces_types():
 def test_stale_override_path_is_skipped_not_raised():
     ov.clear_override("g")
     ov.set_override("g", "triggers[GONE].interval_s", 99)       # no such trigger
-    ov.set_override("g", "price_nodes[p1].nope", 1)              # no such attribute
+    ov.set_override("g", "producers[p1].nope", 1)              # no such attribute
     p = _profile()
     ov.apply_overrides(p, "g")   # must not raise
     assert p.triggers[0].interval_s == 300.0
@@ -46,10 +46,10 @@ def test_stale_override_path_is_skipped_not_raised():
 def test_clear_override_one_and_all():
     ov.clear_override("g")
     ov.set_override("g", "triggers[t1].interval_s", 60)
-    ov.set_override("g", "price_nodes[p1].throttle", 2)
+    ov.set_override("g", "producers[p1].throttle", 2)
     ov.clear_override("g", "triggers[t1].interval_s")
     assert "triggers[t1].interval_s" not in ov.get_overrides("g")
-    assert "price_nodes[p1].throttle" in ov.get_overrides("g")
+    assert "producers[p1].throttle" in ov.get_overrides("g")
     ov.clear_override("g")
     assert ov.get_overrides("g") == {}
 

@@ -41,8 +41,9 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-# how a key's MANY observations collapse to one displayed value (per-dataset choice)
-AGGREGATES = ("latest", "first", "sum", "mean", "max", "min")
+# how a key's MANY observations collapse to one displayed value (per-dataset choice).
+# "all" is the opt-OUT: don't collapse — emit every observation as its own row.
+AGGREGATES = ("latest", "first", "sum", "mean", "max", "min", "all")
 
 # row plumbing, not data columns — hidden from a dataset's column preview / stripped before
 # a record's values are re-recorded (e.g. as a reconcile remove).
@@ -129,6 +130,16 @@ def aggregate_records(records: list[dict], policy: str = "latest") -> dict:
         else:
             out[k] = latest.get(k)
     return out
+
+
+def rows_at(store, aggregate: str, *, present_only: bool = False) -> list[dict]:
+    """Rows a VIEW sees from one dataset store under its chosen aggregate. ``"all"`` returns
+    every observation (no collapse — :meth:`DatasetStore.all_records`); any other policy returns
+    the keyed/collapsed :meth:`DatasetStore.records`. ``present_only`` drops removed rows (a
+    pricing source must not re-price a sold item). The ONE place the "all" opt-out is honoured,
+    so the web view, trigger change-gate, and any future reader stay in lockstep."""
+    rows = store.all_records() if aggregate == "all" else store.records()
+    return [r for r in rows if r.get("present", True)] if present_only else rows
 
 
 def replay(events: list[ChangeEvent], reverted: set[int],
@@ -354,18 +365,24 @@ class DatasetStore:
 
     def _maybe_rekey(self, stored_meta: str | None) -> None:
         """When the dataset was last keyed under a different spec, recompute every event's
-        ``key`` column from its raw values with the CURRENT spec (the ledger re-keys itself).
-        No-op for no_dedup (records are keyed per-event, not by value)."""
-        if self._no_dedup or stored_meta == self._key_meta_json():
+        ``key`` column from its raw values with the CURRENT spec (the ledger re-keys itself)
+        and bump ``rev`` so the cached ``current`` materialisation rebuilds on the next read.
+
+        For ``no_dedup`` the per-event keys (``#id``) don't depend on the spec, so the key
+        column is left alone — but a spec change (e.g. toggling 1->many OFF, or editing the
+        key while it's off) must STILL persist the new meta and bump ``rev``; otherwise the
+        stale deduped ``current`` survives the toggle and the view never re-materialises."""
+        if stored_meta == self._key_meta_json():
             return
-        rows = self._conn.execute(
-            "SELECT id, values_json FROM events WHERE dataset=?", (self._dataset,)).fetchall()
         self._conn.execute("BEGIN IMMEDIATE")
         try:
-            for r in rows:
-                k = self._key.build(json.loads(r["values_json"]))
-                self._conn.execute("UPDATE events SET key=? WHERE dataset=? AND id=?",
-                                   (k, self._dataset, r["id"]))
+            if not self._no_dedup:
+                rows = self._conn.execute(
+                    "SELECT id, values_json FROM events WHERE dataset=?", (self._dataset,)).fetchall()
+                for r in rows:
+                    k = self._key.build(json.loads(r["values_json"]))
+                    self._conn.execute("UPDATE events SET key=? WHERE dataset=? AND id=?",
+                                       (k, self._dataset, r["id"]))
             self._conn.execute("UPDATE datasets SET key_meta=?, rev=rev+1 WHERE dataset=?",
                                (self._key_meta_json(), self._dataset))
             self._conn.execute("COMMIT")
@@ -779,7 +796,11 @@ class DatasetStore:
         row = c.execute("SELECT cnt, values_json, maxbatch FROM current WHERE dataset=? AND key=?",
                         (self._dataset, key)).fetchone()
         if row is None:
-            c.execute("INSERT INTO current(dataset,key,present,first_seen,last_seen,values_json,cnt,seq,maxbatch) "
+            # OR REPLACE: `current` is a rebuildable cache, not source of truth. A phantom row
+            # (leftover after an event delete before its rebuild, or a cross-process write racing
+            # the SELECT above under autocommit) must self-heal here, never throw a fatal
+            # UNIQUE-constraint that kills the writing thread. Matches _recompute_current_key.
+            c.execute("INSERT OR REPLACE INTO current(dataset,key,present,first_seen,last_seen,values_json,cnt,seq,maxbatch) "
                       "VALUES(?,?,1,?,?,?,1,?,?)",
                       (self._dataset, key, ev.ts, ev.ts, json.dumps(values, default=str), ev.id, ev.batch))
         else:
@@ -838,6 +859,20 @@ class DatasetStore:
         rows = self._current_records()
         rows.sort(key=lambda r: (not r["present"], r["key"]))
         return rows[:limit] if limit and limit > 0 else rows
+
+    def all_records(self, limit: int = 0) -> list[dict]:
+        """Every non-reverted observation as its OWN row (no per-key collapse) — the 'many'
+        side a view's aggregate would otherwise reduce to one. Oldest→newest; carries the same
+        bookkeeping cols (``key``/``_batch``/``_seq``/…) as :meth:`records` so views treat it
+        identically. ``limit<=0`` means no cap."""
+        rows = self._conn.execute(
+            "SELECT id, key, batch, ts, values_json FROM events "
+            "WHERE dataset=? AND reverted=0 AND op!='remove' ORDER BY id"
+            + (" LIMIT ?" if limit and limit > 0 else ""),
+            (self._dataset, limit) if limit and limit > 0 else (self._dataset,)).fetchall()
+        return [{"key": r["key"], "present": True, "first_seen": r["ts"], "last_seen": r["ts"],
+                 "_count": 1, "_seq": r["id"], "_batch": r["batch"],
+                 **json.loads(r["values_json"])} for r in rows]
 
     def key_of(self, values: dict) -> str | None:
         """The record's dedup key under this store's spec, or ``None`` if unkeyable."""

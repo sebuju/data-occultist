@@ -7,7 +7,7 @@ import { openModal } from "../../modal.js";
 import { VTable } from "../../vtable.js";
 import { singleFlight } from "../../singleflight.js";
 import { nodeEls, setStatus, model } from "../state.js";
-import { refreshLive, refreshDatasetConsumers } from "../main.js";
+import { refreshLive, refreshDatasetConsumers, setNodeBusy } from "../main.js";
 import { clockTime } from "../node_parts.js";
 
 // ---- dataset records (rendered inline in the dataset node body) ----
@@ -64,6 +64,7 @@ function refreshDataNode(ds) { singleFlight(_dnKey(ds), () => _refreshDataNode(d
 async function _refreshDataNode(ds) {
     const host = dataHost(ds);
     if (!host) return;
+    setNodeBusy(`vt:ds:${ds}`, true);   // spin the records-grid satellite while it recomputes
     try {
         const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
         const payload = await r.json();
@@ -78,6 +79,7 @@ async function _refreshDataNode(ds) {
         vt.setBatchCount(batchN);                   // line + batch tally in the table's search bar
         setTabCount(ds, ".data-n", recs.length);   // item count on the data tab
     } catch (e) { vtables.delete(`ds:${ds}`); host.replaceChildren(mutedP(String(e), true)); }
+    finally { setNodeBusy(`vt:ds:${ds}`, false); }
 }
 
 // Inline drill-down: a dataset record aggregates "many" observations under its key — fetch
@@ -339,6 +341,7 @@ function refreshDatasetNode(ds) { singleFlight(_dnKey(ds), () => _refreshDataset
 async function _refreshDatasetNode(ds) {
     const host = dataHost(ds), els = batEls(ds);
     if (!host && !els) return;
+    setNodeBusy(`vt:ds:${ds}`, true);   // spin the records-grid satellite while it recomputes
     try {
         const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
         const j = await r.json();
@@ -357,6 +360,7 @@ async function _refreshDatasetNode(ds) {
             setTabCount(ds, ".bat-n", batchN);
         }
     } catch (e) { if (host) { vtables.delete(`ds:${ds}`); host.replaceChildren(mutedP(String(e), true)); } }
+    finally { setNodeBusy(`vt:ds:${ds}`, false); }
 }
 
 export {

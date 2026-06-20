@@ -667,31 +667,39 @@ class EnrichRule(BaseModel):
     enabled: bool = True
 
 
-class PriceNodeDef(BaseModel):
-    """A standalone price *producer*: it sweeps a market source and pushes one current
-    snapshot record per item into its output ``dataset`` (so prices live in a dataset
-    like any other data, joinable by a view). Time-series history stays in the price
-    store. The only game-specific, pluggable producer — Warframe's allowed exception."""
+class ProducerDef(BaseModel):
+    """A standalone *producer*: fired on a schedule/trigger, it fetches external data and
+    pushes current records into its output ``dataset`` (so the data lives in a dataset like
+    any other, joinable by a view). The pluggable kind is chosen by ``type`` (registry
+    ._PRODUCER): ``warframe_market`` sweeps the market and writes one price snapshot per item
+    (daily candles also accumulate in the price store); ``relic`` writes one row per
+    (relic, reward, state). The only game-specific, pluggable producers — Warframe's
+    allowed exception."""
 
     id: str
-    type: str = "warframe_market"   # registered price source
-    # What this producer fetches per item: ``statistics`` (daily candles -> history,
-    # movers, 48h live median) or ``orders`` (live lowest online SELL right now, no
+    type: str = "warframe_market"   # registered producer backend (registry._PRODUCER)
+    # warframe_market only — what it fetches per item: ``statistics`` (daily candles ->
+    # history, movers, 48h live median) or ``orders`` (live lowest online SELL right now, no
     # history). Pick per node; run two nodes (two datasets) for both, joined in a view.
     mode: str = "statistics"        # "statistics" | "orders"
-    dataset: str = "prices"         # output dataset the snapshots are written to
+    dataset: str = "prices"         # output dataset the records are written to
     throttle: float = 0.4           # seconds between requests during a sweep
     enabled: bool = True
-    # Which items to price. EMPTY = the whole market catalogue (the original producer
-    # behaviour). When set, the node prices only the names found in these source
+    # warframe_market only — which items to price. EMPTY = the whole market catalogue (the
+    # original behaviour). When set, the node prices only the names found in these source
     # datasets/views (e.g. wire an inventory dataset in to price just owned gear, or a
     # relic-reward dataset to price just this run's rewards). Wired in the graph UI as
     # input edges; resolved to slugs via the catalogue resolver before a sweep.
     sources: list[str] = Field(default_factory=list)
-    # Which column on the source rows names the item to price (resolved to a market
-    # slug). Default ``name``; selectable in the UI when a source's item names live
+    # warframe_market only — which source column names the item to price (resolved to a
+    # market slug). Default ``name``; selectable in the UI when a source's item names live
     # under a different column.
     source_field: str = "name"
+    # How this producer's output rows are keyed/deduped in the dataset — its own
+    # :class:`KeyDef` (e.g. relic rewards key on ``relic|item|state``). None -> ``name``
+    # (the market-snapshot default). The producer MUST feed :meth:`GameProfile.key_map_for`
+    # so the write key matches the read key, else the ledger re-keys to NULL on open.
+    key: KeyDef | None = None
 
 
 class TriggerDef(BaseModel):
@@ -754,7 +762,7 @@ class FileSourceDef(BaseModel):
     """A *file-source producer*: locate a game file (log/config), parse it with a registered
     format backend, and push one current record per parsed row into its output ``dataset`` — so
     file data stores/dedups/joins/serves exactly like OCR data. The pluggable producer parallel to
-    :class:`PriceNodeDef`. Zero game knowledge: ``filename``/``path`` are profile data the UI teaches.
+    :class:`ProducerDef`. Zero game knowledge: ``filename``/``path`` are profile data the UI teaches.
 
     Reading is driven by: the node's own ``watch`` (manual button, or ``on_change`` file-watch with a
     trailing ``throttle_s`` so the latest state always wins) AND by trigger nodes that name this id as
@@ -779,6 +787,19 @@ class FileSourceDef(BaseModel):
     enabled: bool = True
 
 
+class JoinNorm(BaseModel):
+    """Teachable canonicalisation applied to each source's ``join_field`` value BEFORE the
+    join matches, so near-match keys (``"Axi A1 Relic"`` vs ``"AXI A1"``) collapse to one.
+    Generic — any near-match join configures it; game-specific words (e.g. ``relic``) live
+    here in YAML, never in Python. The default (case-insensitive + collapse whitespace)
+    equals the old ``.strip().lower()`` join, so existing exact joins are unaffected."""
+
+    case_insensitive: bool = True   # fold case before matching
+    strip_punct: bool = False       # drop punctuation (collapse to spaces)
+    collapse_ws: bool = True        # runs of whitespace -> one space, trimmed
+    strip_words: list[str] = Field(default_factory=list)   # whole words to remove (e.g. "relic")
+
+
 class SubsetDef(BaseModel):
     """A derived VIEW over one or more datasets: outer-join them on a shared key, filter
     rows, add computed columns, sort, limit. Recomputed on demand, so it always reflects
@@ -788,12 +809,15 @@ class SubsetDef(BaseModel):
     dataset: str = ""               # legacy single source (kept; folds into ``datasets``)
     datasets: list[str] = Field(default_factory=list)   # sources to join (on ``join_field``)
     join_field: str = "name"        # field the datasets are joined on
+    # how each source's join_field value is canonicalised before matching (bridges near-match keys)
+    join_norm: JoinNorm = Field(default_factory=JoinNorm)
     # ``outer`` keeps every key (gaps filled from later inputs); ``inner`` keeps only keys
     # present in EVERY joined source (intersection). Ignored for a single source.
     join_mode: str = "outer"
     # How each dataset input's MANY observations per key collapse to one value when this
     # view reads them — the view's call, not the dataset's (one dataset can feed two views
-    # that want latest vs sum). ``latest|first|sum|mean|max|min``.
+    # that want latest vs sum). ``latest|first|sum|mean|max|min``, or ``all`` to NOT collapse
+    # (emit every observation as its own row).
     aggregate: str = "latest"
     filters: list[FilterRule] = Field(default_factory=list)
     derived: list[DerivedColumn] = Field(default_factory=list)
@@ -884,7 +908,7 @@ class GameProfile(BaseModel):
     windows: list[WindowDef] = Field(default_factory=list)
     datasets: list[DatasetDef] = Field(default_factory=list)
     subsets: list[SubsetDef] = Field(default_factory=list)
-    price_nodes: list[PriceNodeDef] = Field(default_factory=list)
+    producers: list[ProducerDef] = Field(default_factory=list)
     file_sources: list[FileSourceDef] = Field(default_factory=list)
     triggers: list[TriggerDef] = Field(default_factory=list)
     dictionaries: list[DictionaryDef] = Field(default_factory=list)
@@ -933,6 +957,9 @@ class GameProfile(BaseModel):
 
     def file_source(self, source_id: str) -> FileSourceDef | None:
         return next((s for s in self.file_sources if s.id == source_id), None)
+
+    def producer(self, producer_id: str) -> ProducerDef | None:
+        return next((p for p in self.producers if p.id == producer_id), None)
 
     def dataset_def(self, dataset_id: str) -> DatasetDef | None:
         return next((d for d in self.datasets if d.id == dataset_id), None)
@@ -985,12 +1012,21 @@ class GameProfile(BaseModel):
             return KeySpec((s.fields[0].id,))
         return KeySpec(())
 
+    @staticmethod
+    def _producer_default_spec(p: ProducerDef) -> KeySpec:
+        """The spec keying a producer's output rows: its own ``key``, else ``name`` (the
+        market-snapshot default — a warframe_market node keys by item name). Like the file
+        source, a producer is a writer of the dataset, so its key must agree with
+        ``key_map_for`` or the ledger re-keys to NULL when next opened to read."""
+        return p.key.spec() if p.key is not None else KeySpec()
+
     def _key_defaults(self, dataset_id: str) -> list[KeySpec]:
         """Default specs (for records not tagged with an item template), one per PRODUCER
         feeding the dataset — each window's effective default (its ``key``, first region
-        field, or single-item default) then each file source's (its ``key`` or first field).
-        File sources are producers too, so their key must count or a source-only dataset
-        falls back to ``name`` and disagrees with what the source writes."""
+        field, or single-item default), each file source's (its ``key`` or first field), and
+        each producer's (its ``key`` or ``name``). Producers/sources are writers too, so their
+        key must count or a producer-only dataset falls back to ``name`` and disagrees with
+        what was written."""
         out: list[KeySpec] = []
         for w in self.windows:
             if w.dataset_id != dataset_id:
@@ -1000,6 +1036,10 @@ class GameProfile(BaseModel):
             if s.dataset != dataset_id:
                 continue
             out.append(self._source_default_spec(s))
+        for p in self.producers:
+            if p.dataset != dataset_id:
+                continue
+            out.append(self._producer_default_spec(p))
         return out
 
     def key_map_for(self, dataset_id: str) -> KeyMap:
