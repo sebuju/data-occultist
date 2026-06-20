@@ -51,36 +51,65 @@ def publish(game: str, dataset: str, records: list | None = None) -> None:
 class OnChangeFirer:
     """A bus subscriber that fires ``on_change`` triggers for changed datasets, coalescing a
     burst of per-record publishes (a collection tick / a sweep writes many rows) into ONE
-    ``on_change`` call per dataset after a short quiet window. ``runner_for(game)`` returns a
-    :class:`oc.collect.triggers.TriggerRunner` (or None) for that game."""
+    ``on_change`` call per dataset. ``runner_for(game)`` returns a
+    :class:`oc.collect.triggers.TriggerRunner` (or None) for that game.
 
-    def __init__(self, runner_for: Callable[[str], object], delay: float = 0.25) -> None:
+    Coalescing has two layers, because a trailing quiet window alone is not enough — a price
+    sweep writes one row per market request (throttled SLOWER than any sane quiet window), so a
+    pure time window would let every row escape into its own ``on_change`` and fire the trigger
+    once per row. So while ``busy(game, dataset)`` reports a write is still in flight for that
+    dataset (a running sweep), firing is DEFERRED and the records accumulate; the trigger fires
+    exactly once when the dataset goes quiet. ``busy`` is injected (default: never busy) so this
+    store-level module stays decoupled from the sweep machinery."""
+
+    def __init__(self, runner_for: Callable[[str], object], delay: float = 0.25,
+                 busy: Callable[[str, str], bool] | None = None) -> None:
         self._runner_for = runner_for
         self._delay = delay
+        self._busy = busy
         self._pending: dict[tuple[str, str], list] = {}
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
+
+    def _arm_locked(self) -> None:
+        """(Re)start the trailing-window timer. Caller holds ``self._lock``."""
+        if self._timer is not None:
+            self._timer.cancel()
+        self._timer = threading.Timer(self._delay, self._flush)
+        self._timer.daemon = True
+        self._timer.start()
 
     def __call__(self, game: str, dataset: str, records: list) -> None:
         if not records or not dataset:
             return
         with self._lock:
             self._pending.setdefault((game, dataset), []).extend(records)
-            if self._timer is not None:
-                self._timer.cancel()
-            self._timer = threading.Timer(self._delay, self._flush)
-            self._timer.daemon = True
-            self._timer.start()
+            self._arm_locked()
 
     def _flush(self) -> None:
         with self._lock:
             pending = self._pending
             self._pending = {}
             self._timer = None
+        deferred: dict[tuple[str, str], list] = {}
         for (game, dataset), recs in pending.items():
+            if self._busy is not None:
+                try:
+                    if self._busy(game, dataset):
+                        deferred[(game, dataset)] = recs   # a write's still in flight -> wait it out
+                        continue
+                except Exception:  # noqa: BLE001 - a bad predicate must not drop the fire
+                    pass
             try:
                 runner = self._runner_for(game)
                 if runner is not None:
                     runner.on_change(dataset, recs)
             except Exception:  # noqa: BLE001 - firing is best-effort
                 pass
+        if deferred:
+            # nothing settled yet — keep the records and re-check after another window
+            with self._lock:
+                for k, v in deferred.items():
+                    self._pending.setdefault(k, []).extend(v)
+                if self._timer is None:
+                    self._arm_locked()
