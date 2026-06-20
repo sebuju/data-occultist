@@ -973,15 +973,33 @@ class GameProfile(BaseModel):
             return self._item_default_spec(w.items[0], w)
         return KeySpec(())
 
+    @staticmethod
+    def _source_default_spec(s: FileSourceDef) -> KeySpec:
+        """The spec keying a file source's rows: its own ``key``, else its FIRST output
+        field, else empty/unkeyable. Mirrors the window/item defaults so a dataset fed by
+        a file source resolves the SAME key whether opened to write (source key) or read
+        (``key_map_for``) — otherwise the two fight and re-key the ledger to NULL on open."""
+        if s.key is not None:
+            return s.key.spec()
+        if s.fields:
+            return KeySpec((s.fields[0].id,))
+        return KeySpec(())
+
     def _key_defaults(self, dataset_id: str) -> list[KeySpec]:
-        """Default specs (for records not tagged with an item template), one per
-        window feeding the dataset, in window order — each window's effective default
-        (its ``key``, first region field, or single-item default)."""
+        """Default specs (for records not tagged with an item template), one per PRODUCER
+        feeding the dataset — each window's effective default (its ``key``, first region
+        field, or single-item default) then each file source's (its ``key`` or first field).
+        File sources are producers too, so their key must count or a source-only dataset
+        falls back to ``name`` and disagrees with what the source writes."""
         out: list[KeySpec] = []
         for w in self.windows:
             if w.dataset_id != dataset_id:
                 continue
             out.append(self._window_default_spec(w))
+        for s in self.file_sources:
+            if s.dataset != dataset_id:
+                continue
+            out.append(self._source_default_spec(s))
         return out
 
     def key_map_for(self, dataset_id: str) -> KeyMap:

@@ -100,6 +100,25 @@ def test_key_conflict_when_window_defaults_disagree():
     assert p.key_map_for("ds").default == KeySpec(("name",))
 
 
+def test_file_source_key_drives_dataset_keymap():
+    # A dataset fed only by a file source must resolve the SAME key the source writes with —
+    # else the write key and read key fight and re-key the ledger to NULL on open (regression).
+    from oc.profile.models import FileSourceDef, SourceField
+    p = GameProfile(name="g", file_sources=[
+        FileSourceDef(id="log", dataset="ds", key=KeyDef(fields=["time", "message"]),
+                      fields=[SourceField(id="time"), SourceField(id="message")])])
+    km = p.key_map_for("ds")
+    assert km.fields_used() == ["time", "message"]
+    assert km.build({"time": "3.07", "message": "hi"}) == "3.07|hi"
+
+
+def test_file_source_without_key_falls_back_to_first_field():
+    from oc.profile.models import FileSourceDef, SourceField
+    p = GameProfile(name="g", file_sources=[
+        FileSourceDef(id="log", dataset="ds", fields=[SourceField(id="line"), SourceField(id="extra")])])
+    assert p.key_map_for("ds").default == KeySpec(("line",))
+
+
 def test_migration_synthesizes_window_key_from_old_shapes():
     raw = {
         "name": "g",
