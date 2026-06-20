@@ -4,25 +4,19 @@
 import * as api from "../api.js";
 import * as conn from "../conn.js";
 import * as hub from "../hub.js";
-import { h, frag, svg, TRASH, CAMERA, PAUSE, labCell } from "../dom.js";
+import { h, frag, svg, TRASH, labCell } from "../dom.js";
 import { nodeIcon, iconFor } from "./node_icons.js";
 import { openModal } from "../modal.js";
 import { since } from "../datefmt.js";
-import { Overlay } from "../overlay.js";
 import { log, timed, setLogOpen, mirrorConsole } from "../log.js";
 
 mirrorConsole();   // surface uncaught errors + console.error/warn in the log bar (no devtools needed)
-import { GraphModel } from "./model.js";
-import { routeGraph, polylinePath } from "./route.js";
-import { buildKey } from "../keys.js";
-import { priceParts, wirePriceNode } from "./price_node.js";
+import { wirePriceNode } from "./price_node.js";
 import { GRID, snap, snapUp, showSizeHud, hideSizeHud, addResizeGrips, beginDrag } from "./dragresize.js";
-import { createFloatWin, floatWins } from "./floatwin.js";
-import { triggerParts } from "./trigger_node.js";
+import { floatWins } from "./floatwin.js";
 import { playSound } from "./sound.js";
-import { openDictionaryPicker } from "./dict_picker.js";
-import { enhanceTable, setTableStore } from "./table.js";
-import { VTable, setVTableStore } from "../vtable.js";
+import { setTableStore } from "./table.js";
+import { setVTableStore } from "../vtable.js";
 import { initPersist, persist, setScrubHook } from "./persist.js";
 import * as prettyOverrides from "../pretty/overrides.js";
 import { buildBackups } from "./backups.js";
@@ -33,18 +27,18 @@ import { openLogStream } from "../logstream.js";
 initTitlebar();   // custom window chrome — no-op outside the desktop window
 
 import {
-    $, setStatus, model, pos, nodeEls, collapsed, view, selected, nodeSizes, openImages, winPage,
-    imageCanvases, itemCanvases, busy, overlays, gridPreviews, gridReads, gridCellBoxes,
+    $, setStatus, model, pos, nodeEls, collapsed, view, selected, nodeSizes, openImages,
+    imageCanvases, itemCanvases, busy, overlays,
     itemReads, prevPresent, prevLastTs, dsTab, clearGrid, nw, nh,
 } from "./state.js";
 import {
-    drawEdges, requestEdges, flushEdges, buildLinks, nodeRect, freezeRouting,
-    setDraggingNodes, routeCache, ROUTE,
+    drawEdges, requestEdges, flushEdges, nodeRect, freezeRouting,
+    setDraggingNodes,
 } from "./routing.js";
 import { initFlow } from "./flow.js";
 import {
     cancelPan, panTo, panZoomTo, panZoomToRect, zoomToNode, viewportCenterWorld,
-    applyView, resizeCanvas, updateOverlayZoom, onWheel, startPan, consumePanSuppress,
+    applyView, resizeCanvas, onWheel, startPan, consumePanSuppress,
 } from "./camera.js";
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
 import { nodeParts, windowControls, itemLists, _colOpts, satToggleBtn } from "./node_parts.js";
@@ -52,7 +46,7 @@ import * as dsevents from "./dsevents.js";
 import { singleFlight } from "../singleflight.js";
 import {
     nmState, nlState, buildNodeMap, buildNodeList, setNodeMapVisible, setNodeListVisible,
-    nmSyncSelection, renderNodeViews, nmUpdateViewport,
+    nmSyncSelection, renderNodeViews,
 } from "./panels/nodemap.js";
 import { act, actState, buildActivity } from "./panels/activity.js";
 import { testWin, testState, buildTesting } from "./panels/testing.js";
@@ -65,27 +59,26 @@ import {
 } from "./panels/toolbox.js";
 import { openContextMenu } from "../ctxmenu.js";
 import {
-    vtables, vtableFor, refreshDataNode, refreshDatasetNode, refreshAllDataNodes, expandSubsetRow,
+    vtables, vtableFor, refreshDataNode, refreshDatasetNode, expandSubsetRow,
     batchesState, batEls, loadBatchesNode, refreshAllBatchesNodes,
 } from "./panels/datanodes.js";
 import {
-    pc, pcState, precapOpen, precapBusy, buildPrecap, fmtBytes,
+    pc, pcState, buildPrecap,
 } from "./panels/precap.js";
 import { pushHistory, resetHistory, undo, redo } from "./history.js";
-import { workers, registerWorker, unregisterWorker } from "./workers.js";
+import { workers, unregisterWorker } from "./workers.js";
 import {
-    KINDS, ITEM_KINDS, updateImageLabel, closeImage, openImage, createItemFromGeom,
+    closeImage, openImage,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
-    itemReadTimers, itemReadBusy, itemReadAgain, scheduleItemRead, runItemRead, itemReadout,
-    prevHost, previewProfileFor, previewBusy, previewAgain, setReadBusy, refreshPreview,
-    commitPreviewNode, tellChip, subLabel, previewCell, previewTable, prefillDetectText,
-    detectBusy, detectAgain, refreshDetect, setDetectStatus, detectT, _detectPending,
-    _detectAll, refreshOpenDetect, previewT, _previewPending, _previewAll, refreshOpenPreviews,
-    loadImage, refreshImageBoxes, itemLocatorBox, staticGridOrigins, buildGridGuides,
-    staticFieldPreview, refreshGridPreview, cellKept, setGridFromPreview, selectRegionNode,
+    scheduleItemRead, itemReadout,
+    previewBusy, previewAgain,
+    commitPreviewNode,
+    detectBusy, detectAgain, _detectPending,
+    _detectAll, refreshOpenDetect, _previewPending, _previewAll, refreshOpenPreviews,
+    refreshImageBoxes, selectRegionNode,
 } from "./imaging.js";
 import {
-    liveWin, liveWinState, buildLiveWindow, renderLiveWindow, setLiveMode, setLiveSave,
+    liveWin, liveWinState, buildLiveWindow, renderLiveWindow,
 } from "./panels/livewin.js";
 
 const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, price: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, vttable: 2300, dictionary: 20 };
@@ -310,26 +303,6 @@ function ensurePositions() {
 
 // The node an edge points AT this one from (its logical parent), for placing a new node
 // next to where it belongs.
-
-// Closest free (non-overlapping) slot in a column to `nearY`. Used to drop a brand-new
-// node beside its parent instead of at the far bottom of its column. `w`/`h` are the new
-// node's REAL measured size (see measureNode) so the gap test fits the actual box, not a
-// guess. `joinGroupId` is the group the node is ABOUT to join — its box is excluded from
-// the obstacles so the node is allowed to land inside it (every other group still repels).
-function freeSpot(x, nearY, w = 240, h = 160, joinGroupId = null) {
-    const GAP = 18, STEP = 20;
-    const rects = [];
-    for (const [id, p] of pos) if (Number.isFinite(p.x)) rects.push({ x: p.x, y: p.y, w: nw(id), h: nh(id) });
-    for (const g of groups.groupBoxes()) if (g.id !== joinGroupId) rects.push(g.box);   // a new node must not land inside a (foreign) group
-    const free = (y) => !rects.some((o) =>
-        x < o.x + o.w + GAP && x + w + GAP > o.x && y < o.y + o.h + GAP && y + h + GAP > o.y);
-    for (let d = 0; d <= 8000; d += STEP) {
-        for (const y of (d ? [nearY + d, nearY - d] : [nearY])) {
-            if (y >= 0 && free(y)) return { x, y: snap(y) };
-        }
-    }
-    return { x, y: Math.max(0, snap(nearY)) };
-}
 
 // Build a brand-new node OFFSCREEN purely to read its real border-box size, then discard it.
 // Built UNWIRED (wire=false): wireNode side-effects (window openImage() registering into
@@ -912,7 +885,7 @@ function hideToggleNodes(s) {
 // Repaint + re-wire a subset's visible/hide toggle row in place (no node rebuild).
 function renderHideToggles(el, s) {
     const hides = el && el.querySelector(".sv-hides");
-    if (hides) { hides.replaceChildren(hideToggleNodes(s)); wireHideToggles(el, s); }
+    if (hides) { hides.replaceChildren(...[hideToggleNodes(s)].flat()); wireHideToggles(el, s); }
 }
 
 // Wire the visible/hide toggles. Standalone (not closed over wireSubset) so refreshSubsetNode
@@ -1449,7 +1422,7 @@ function fillNode(div, n, wire = true) {
             h("span", { class: "gn-pretty-dirty", title: "held by a pretty override — not saved to yaml" }, "pretty")),
         h("div", { class: "gn-body" }, parts.body),
         h("span", { class: "gn-spin", title: "working…" }),
-        parts.ports);
+        ...(parts.ports ? [parts.ports] : []));   // vttable nodes have no ports — replaceChildren would stringify undefined to a "undefined" text node
     div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
     const tog = div.querySelector(".gn-enable");
     tog?.addEventListener("click", (e) => {
@@ -2732,6 +2705,11 @@ $("settingsBtn")?.addEventListener("click", () => {
                 h("input", { id: "newGameName", placeholder: "new game name" }),
                 h("button", { id: "newGameBtn" }, "create"))),
         h("section", { class: "set-sec" },
+            h("h4", "capture"),
+            h("label", { class: "set-row", title: "How frames are grabbed from the game window. WGC reads the DWM-composited surface (no per-grab game re-render); PrintWindow re-renders the window each grab; MSS grabs the screen region. Options come from the live registry." },
+                h("span", "backend"),
+                h("select", { id: "captureBackend" }))),
+        h("section", { class: "set-sec" },
             h("h4", "OCR"),
             h("label", { class: "set-row", title: "OCR device — GPU needs onnxruntime-gpu + CUDA. Auto: CPU for editing, GPU for the precapture batch." },
                 h("span", "device"),
@@ -2755,6 +2733,9 @@ $("settingsBtn")?.addEventListener("click", () => {
     const submitGame = () => { if (createGame(ngName.value)) handle.close(); };
     wrap.querySelector("#newGameBtn").addEventListener("click", submitGame);
     ngName.addEventListener("keydown", (e) => { if (e.key === "Enter") submitGame(); });
+
+    // capture backend
+    wireCaptureControls(wrap);
 
     // OCR device + downscale
     wireOcrControls(wrap);
@@ -2998,6 +2979,30 @@ async function initKillGpu() {
 }
 
 // Wire the OCR device + downscale selects inside a freshly-built settings modal.
+// Friendly labels for the registry backend names; an unknown name falls back to itself,
+// so a newly-registered backend still shows (just without a hand-written blurb).
+const CAPTURE_LABELS = {
+    wgc: "WGC (composited, no re-render)",
+    printwindow: "PrintWindow (re-renders window)",
+    mss: "MSS (screen region)",
+};
+
+async function wireCaptureControls(root) {
+    const sel = root.querySelector("#captureBackend");
+    if (!sel) return;
+    try {
+        const st = await api.captureBackend.getBackend();
+        sel.replaceChildren(...(st.names || []).map((n) =>
+            h("option", { value: n }, CAPTURE_LABELS[n] || n)));
+        sel.value = st.name;
+        sel.addEventListener("change", async () => {
+            const done = timed(`capture backend → ${sel.value}`);
+            try { const r = await api.captureBackend.setBackend(sel.value); if (r.name) sel.value = r.name; done(); }
+            catch (e) { done(String(e.message || e), "err"); }
+        });
+    } catch { /* ignore */ }
+}
+
 async function wireOcrControls(root) {
     const sel = root.querySelector("#ocrDevice");
     if (!sel) return;

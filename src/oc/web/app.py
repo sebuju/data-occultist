@@ -17,6 +17,7 @@ from .routes import (
     activity,
     bench,
     capture,
+    capture_backend,
     dbbackup,
     dbschema,
     dictionaries,
@@ -69,8 +70,10 @@ def _warm() -> None:
         import numpy as np
 
         from .deps import get_engine
+        from .routes.capture_backend import apply_persisted as apply_capture
         from .routes.ocr import apply_persisted
 
+        apply_capture()     # restore the saved capture backend (overrides settings.yaml baseline)
         apply_persisted()   # restore the saved CPU/GPU choice before warming the model
         ocr = get_engine().ocr
         ocr.read_image(np.zeros((32, 64, 3), dtype=np.uint8))
@@ -177,6 +180,7 @@ async def lifespan(_app: FastAPI):
     # precapture, live collection, batch restore) via the dataset change bus.
     try:
         from ..collect.triggers import TriggerRunner
+        from ..enrich.price_runner import sweep_status
         from ..runtime import load_live_profile
         from ..store.changes import OnChangeFirer, subscribe
 
@@ -186,7 +190,8 @@ async def lifespan(_app: FastAPI):
                 return TriggerRunner(profile, get_settings().data_dir) if profile.triggers else None
             except Exception:  # noqa: BLE001
                 return None
-        subscribe(OnChangeFirer(_runner_for))
+        # defer firing while a sweep is still writing the dataset -> one fire per sweep, not per row
+        subscribe(OnChangeFirer(_runner_for, busy=lambda g, ds: bool(sweep_status(g, ds).get("running"))))
     except Exception:  # noqa: BLE001 - best-effort
         pass
     # Daily-on-change database backup: any dataset write may trigger a snapshot if the
@@ -242,6 +247,7 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=500, content={"detail": str(exc), "traceback": tb})
 
     app.include_router(capture.router)
+    app.include_router(capture_backend.router)
     app.include_router(profiles.router)
     app.include_router(flow.router)
     app.include_router(preview.router)
