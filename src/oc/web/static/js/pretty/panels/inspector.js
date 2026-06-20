@@ -10,6 +10,7 @@ import { el, humanize } from "../widgets/util.js";
 import { makeReorderable, arrayMove, orderColumns, setColumnProp } from "../reorder.js";
 import { PANEL_OPTIONS } from "../widgets/panel.js";
 import { POS_UNITS } from "../canvas.js";
+import { svg } from "../../dom.js";
 
 export const inspectorState = { visible: false, x: null, y: null, w: 320, h: null, collapsed: false };
 
@@ -29,7 +30,11 @@ export function buildInspector(ctx) {
         h.appendChild(el("span", "pw-insp-h-lab", label));
         if (onReset) {
             const b = el("button", "pw-insp-h-reset"); b.title = `reset ${label}`;
-            b.innerHTML = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.2V5h-2.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            b.appendChild(svg("svg", { viewBox: "0 0 16 16", width: "12", height: "12", "aria-hidden": "true" },
+                svg("path", {
+                    d: "M13 8a5 5 0 1 1-1.6-3.7M13 2.2V5h-2.8",
+                    fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round",
+                })));
             b.addEventListener("click", (e) => { e.stopPropagation(); onReset(); });
             h.appendChild(b);
         }

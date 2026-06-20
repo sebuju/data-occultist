@@ -16,6 +16,7 @@ import { widgetDef } from "./widgets/index.js";
 import { evaluate, tokensIn } from "./expr.js";
 import { resolveToken, subKeyForToken } from "./binding.js";
 import { keySubscription, el } from "./widgets/util.js";
+import { svg } from "../dom.js";
 
 // nine anchor points: vertical t/m/b × horizontal l/c/r → fraction of the target box.
 const FX = { l: 0, c: 0.5, r: 1 };
@@ -411,7 +412,7 @@ export function renderPage(surface, page, ctx) {
         const svg = ensureCueSvg();
         const boxes = resolveBoxes();
         svg.setAttribute("width", surface.scrollWidth); svg.setAttribute("height", surface.scrollHeight);
-        svg.style.display = ""; svg.innerHTML = "";
+        svg.style.display = ""; svg.replaceChildren();
         const sel = (ctx.selectionIds && ctx.selectionIds()) || new Set();
         const selOnly = ctx.cueScope === "selected";
         const list = [...recs.values()];
@@ -457,7 +458,11 @@ export function renderPage(surface, page, ctx) {
         // hover trashcan -> delete with standard armed two-click confirm (rule 2)
         const del = el("button", "pw-del");
         del.title = "delete widget (click again to confirm)";
-        del.innerHTML = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3 4.5h10M6.4 4V2.8a.8.8 0 0 1 .8-.8h1.6a.8.8 0 0 1 .8.8V4M4.8 4.5l.5 8a1 1 0 0 0 1 .95h3.4a1 1 0 0 0 1-.95l.5-8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        del.appendChild(svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
+            svg("path", {
+                d: "M3 4.5h10M6.4 4V2.8a.8.8 0 0 1 .8-.8h1.6a.8.8 0 0 1 .8.8V4M4.8 4.5l.5 8a1 1 0 0 0 1 .95h3.4a1 1 0 0 0 1-.95l.5-8",
+                fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round", "stroke-linejoin": "round",
+            })));
         del.addEventListener("mousedown", (ev) => { ev.stopPropagation(); ev.preventDefault(); });   // don't start a drag/select
         del.addEventListener("click", (ev) => {
             ev.stopPropagation();
