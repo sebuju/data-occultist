@@ -502,20 +502,31 @@ class PrecaptureSession:
 
     # ---- recording ---------------------------------------------------------
 
+    def _scroll_cfg_for_frame(self, frame) -> tuple[bool, int]:
+        """Classify the window shown in ``frame`` and return its ``(autoscroll, clicks)``.
+        The ON-SCREEN window decides — so recording can start on any screen and auto-scroll
+        engages once the user reaches a window configured for it (and disengages when they
+        leave). Best-effort: no match / no scroll config -> auto-scroll off."""
+        try:
+            match = self._engine.classifier.classify(frame, self._profile)
+            wd = next((w for w in self._profile.windows if w.id == match[0]), None) if match else None
+            sc = wd.scroll if wd else None
+            if sc and sc.enabled and sc.autoscroll:
+                return True, max(1, int(sc.scroll_clicks or 1))
+        except Exception:  # pragma: no cover - a classify hiccup must not break recording
+            pass
+        return False, _AUTOSCROLL_CLICKS
+
     def _apply_window_autoscroll(self) -> None:
-        """Auto-scroll settings now live PER WINDOW. Classify whatever window is on screen and
-        adopt its ``scroll.autoscroll`` + ``scroll_clicks`` for this recording (best-effort:
-        no window / no match / no scroll config -> auto-scroll stays off)."""
+        """Seed auto-scroll from whatever window is on screen at record start (best-effort).
+        The record loop re-reads this live every settled frame, so it's only the initial
+        status value — recording started off the equipment screen will still pick auto-scroll
+        up once the user navigates there."""
         on, clicks = False, _AUTOSCROLL_CLICKS
         try:
             win = self._locator.locate(self._profile)
             if win is not None:
-                frame = self._engine.capture.grab_window(win)
-                match = self._engine.classifier.classify(frame, self._profile)
-                wd = next((w for w in self._profile.windows if w.id == match[0]), None) if match else None
-                sc = wd.scroll if wd else None
-                if sc and sc.enabled and sc.autoscroll:
-                    on, clicks = True, max(1, int(sc.scroll_clicks or 1))
+                on, clicks = self._scroll_cfg_for_frame(self._engine.capture.grab_window(win))
         except Exception:  # pragma: no cover - record start must not die on a classify hiccup
             pass
         self.set_autoscroll(on, clicks)
@@ -571,6 +582,7 @@ class PrecaptureSession:
         idle = max(interval, 0.5)
         barren = 0                            # consecutive auto-scrolls that surfaced nothing new
         pending_scroll = False                # a scroll was sent, awaiting its result
+        scroll_sig: int | None = None         # detect-region sig the auto-scroll cfg was read at
         try:
             while not self._stop.is_set():
                 with self._lock:
@@ -600,6 +612,15 @@ class PrecaptureSession:
                 thumb = _thumb(stale_src)
                 settled = prev_thumb is not None and _changed_cells(thumb, prev_thumb) < _THUMB_MIN_CELLS
                 new_view = saved_thumb is None or _changed_cells(thumb, saved_thumb) >= _THUMB_MIN_CELLS
+                # Live-adopt the on-screen window's auto-scroll config: only on a SETTLED view
+                # (never mid-animation) and only re-classify when the detect anchors changed
+                # (a scroll keeps them fixed, so this stays cheap). Lets recording begin off the
+                # target screen and engage auto-scroll the moment the user reaches it.
+                if settled:
+                    sig = self._signature(frame, self._detect_fracs)
+                    if sig is None or sig != scroll_sig:
+                        scroll_sig = sig
+                        self.set_autoscroll(*self._scroll_cfg_for_frame(frame))
                 # Auto-scroll drives capture and can only scroll a focused window, so while
                 # it's on only save frames the user is actively scrolling (foreground). Manual
                 # recording keeps backgrounded capture (now the real surface via PrintWindow).
