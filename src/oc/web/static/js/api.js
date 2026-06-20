@@ -252,6 +252,13 @@ export const ocr = {
     releaseGpu: () => tfetch("/api/ocr/release", { method: "POST" }).then((r) => r.json()),
 };
 
+// Capture backend (wgc/printwindow/mss). Returns { name, names } — names is the live
+// registry list, so a backend that fails to import simply never appears in the dropdown.
+export const captureBackend = {
+    getBackend: () => tfetch("/api/capture/backend").then((r) => r.json()),
+    setBackend: (name) => tfetch(`/api/capture/backend?name=${encodeURIComponent(name)}`, { method: "POST" }).then((r) => r.json()),
+};
+
 // Testing harness: a recorded video as a stand-in for the live game window.
 // status/seek/step/enable/close return the same status blob:
 // { loaded, name, index, count, fps, enabled, width, height }.
@@ -306,9 +313,17 @@ export const precapture = {
 // Live collection: run the real collector pipeline server-side, writing to datasets.
 // Status { running, frames, written, fps, window, state, recognized:[{key,count,miss}] }.
 export const live = {
-    start: (game, interval, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/start?interval=${interval || 1}`, { method: "POST", signal }).then((r) => r.json()),
+    // interval omitted (null/undefined) => server uses tuning.collect_interval; a number
+    // overrides it (the live panel's frame limiter — min seconds between collector reads).
+    start: (game, interval, signal) => {
+        let url = `/api/live/${encodeURIComponent(game)}/start`;
+        if (interval != null && Number.isFinite(interval)) url += `?interval=${encodeURIComponent(interval)}`;
+        return tfetch(url, { method: "POST", signal }).then((r) => r.json());
+    },
     stop: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/stop`, { method: "POST", signal }).then((r) => ok(r, "live stop")).then((r) => r.json()),
     status: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
+    // The collector's default frame-limiter interval (seconds) from settings — seeds the panel.
+    defaults: () => tfetch("/api/live/defaults").then((r) => r.json()),
 };
 
 // Wipe a dataset's stored records + ledger.

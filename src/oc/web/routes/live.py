@@ -50,8 +50,15 @@ def _refresh_profile(game: str, s: LiveSession) -> None:
         s.update_profile(load_live_profile(settings.profiles_dir, game))
 
 
+@router.get("/defaults")
+def defaults():
+    """The collector's default frame-limiter interval (seconds) from settings, so the live
+    panel can seed its input. A literal path — no collision with ``/{game}/...`` routes."""
+    return {"interval": get_settings().tuning.collect_interval}
+
+
 @router.post("/{game}/start")
-def start(game: str, interval: float = 1.0):
+def start(game: str, interval: float | None = None):
     s = _session(game, create=True)
     _refresh_profile(game, s)   # pick up profile edits made since the last run
     s.start(interval=interval)

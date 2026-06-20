@@ -56,12 +56,14 @@ class LiveSession:
         t = self._thread
         return bool(t is not None and t.is_alive())
 
-    def start(self, interval: float = 1.0) -> None:
+    def start(self, interval: float | None = None) -> None:
         if self.is_running():
             return
+        if interval is None:
+            interval = self._engine.settings.tuning.collect_interval
         self._join_prev()
         with self._lock:
-            self._interval = max(0.1, float(interval))
+            self._interval = max(0.0, float(interval))
             self._recog = {}
             self._written = 0
             self._frames = 0

@@ -12,7 +12,8 @@ from ..store.changes import OnChangeFirer, subscribe
 def register(sub) -> None:
     p = sub.add_parser("collect", help="run the data collection loop")
     p.add_argument("game", help="profile name")
-    p.add_argument("--interval", type=float, default=1.0, help="seconds between ticks")
+    p.add_argument("--interval", type=float, default=None,
+                   help="seconds between ticks (default: tuning.collect_interval)")
     p.add_argument("--once", action="store_true", help="run a single tick and exit")
     p.set_defaults(func=run)
 
@@ -36,12 +37,16 @@ def run(args) -> int:
     # on_change triggers fire off the dataset change bus now (not inline in the loop), so any
     # write announces itself. Register the firer for this game.
     if profile.triggers:
+        from ..enrich.price_runner import sweep_status
         runner = TriggerRunner(profile, engine.settings.data_dir)
-        subscribe(OnChangeFirer(lambda _g: runner))
+        # defer firing while a sweep is still writing the dataset -> one fire per sweep, not per row
+        subscribe(OnChangeFirer(lambda _g: runner,
+                                busy=lambda g, ds: bool(sweep_status(g, ds).get("running"))))
     if args.once:
         _print_tick(collector.tick())
         collector.close()
         return 0
-    print(f"Collecting {args.game} every {args.interval}s. Ctrl+C to stop.")
+    interval = args.interval if args.interval is not None else engine.settings.tuning.collect_interval
+    print(f"Collecting {args.game} every {interval}s. Ctrl+C to stop.")
     collector.run(interval=args.interval, on_tick=_print_tick)
     return 0

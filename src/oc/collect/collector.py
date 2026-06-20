@@ -315,8 +315,11 @@ class Collector:
         from .triggers import TriggerRunner
         return TriggerRunner(self._profile, self._engine.settings.data_dir)
 
-    def run(self, interval: float = 1.0, on_tick=None, should_stop=None) -> None:
+    def run(self, interval: float | None = None, on_tick=None, should_stop=None) -> None:
         """Loop ticks until interrupted. ``on_tick(TickResult)`` is called each pass.
+
+        ``interval`` — seconds slept between ticks (the throttle). ``None`` falls back to
+        ``tuning.collect_interval`` so the loop rate is a setting, not a hard-coded 1.0.
 
         ``should_stop`` — optional predicate checked before every tick AND in place of the
         plain ``sleep``, so a worker thread can end the loop promptly (the CLI relies on
@@ -325,6 +328,8 @@ class Collector:
         After each tick, triggers are evaluated: ``on_change`` triggers fire for records
         this tick added/updated (pricing only those keys), and ``interval`` triggers fire
         when due. Sweeps run in their own background threads, so capture never blocks."""
+        if interval is None:
+            interval = self._tuning.collect_interval
         triggers = self._build_triggers()
         try:
             while not (should_stop and should_stop()):
@@ -352,6 +357,15 @@ class Collector:
     def close(self) -> None:
         self._lexicon.save()
         self._confusions.save()
+        # Stop any backend that owns a live thread (e.g. WGC runs a free-threaded native
+        # capture thread). Left running, it touches Python during interpreter finalization
+        # -> "Fatal Python error: ... import state already initialized" on exit. Best-effort.
+        cap_close = getattr(self._engine.capture, "close", None)
+        if callable(cap_close):
+            try:
+                cap_close()
+            except Exception:
+                pass
         if self._explicit_sink is not None:
             self._explicit_sink.close()
         # Optionally log removals: keys in a store but not seen this run. Only when

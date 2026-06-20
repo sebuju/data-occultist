@@ -5,9 +5,9 @@ import * as hub from "../../hub.js";
 import { log } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
-import { $, setStatus, model, nodeEls } from "../state.js";
+import { $, setStatus, model } from "../state.js";
 import { registerWorker, unregisterWorker } from "../workers.js";
-import { pc, pcState, precapOpen, precapBusy, fmtBytes } from "./precap.js";
+import { pc, precapOpen, precapBusy, fmtBytes } from "./precap.js";
 import { prevHost, refreshDetect, refreshPreview } from "../imaging.js";
 import { refreshLive } from "../main.js";
 import { panZoomTo } from "../camera.js";
@@ -39,6 +39,10 @@ let liveFrames = 0, liveT0 = 0, liveFps = 0;
 // real pipeline (confirm_frames -> dedup -> store -> triggers). When live + disarmed, only
 // the read-only client detect/preview loop runs (tuning, no writes).
 let liveSave = true;
+// Frame limiter: minimum seconds between collector reads. null = use the server's settings
+// default (tuning.collect_interval); a number overrides it. Changeable while live is on —
+// the server collector is restarted in place so the new limit takes effect immediately.
+let liveInterval = null;
 let liveColStatus = null;   // latest server collector status (from the heartbeat) while collecting
 let liveColUnsub = null;    // hub subscription active while the server collector runs
 let liveImg = { count: 0, bytes: 0 };   // saved live-image stat (live tuning saves one frame/round)
@@ -84,6 +88,9 @@ function mountLive(adapter) {
                     h("button", { class: "act-enable live-save", role: "switch", "aria-checked": "true", title: "save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)" },
                         switchSvg()),
                     h("span", { class: "live-save-lbl" }, "save to datasets"))),
+            h("div", { class: "live-row live-int-row" },
+                h("span", { class: "live-int-lbl", title: "frame limiter — minimum seconds between collector reads. Lower = faster (more CPU/GPU). Blank = settings default. Applies live while collecting." }, "limit (s)"),
+                h("input", { class: "live-int-in", type: "number", min: "0", step: "0.1", placeholder: "1.0", title: "minimum seconds between reads; blank uses the settings default" })),
             h("div", { class: "live-wins" }),
             h("div", { class: "live-row live-imgs" },
                 h("span", { class: "live-imgstat muted" }, " "),
@@ -105,6 +112,22 @@ function mountLive(adapter) {
             if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch((e) => log(`clear live images failed: ${e.message || e}`, "err"));
         });
         if (model.profile.name) api.liveCaptures.stats(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
+        // frame-limiter input: commit on change/blur. Blank -> null -> server uses its default.
+        // While collecting, restart the server collector so the new limit applies immediately.
+        const intIn = liveRoot.querySelector(".live-int-in");
+        const commitInterval = () => {
+            const v = parseFloat(intIn.value);
+            const next = Number.isFinite(v) && v >= 0 ? v : null;
+            if (next === null) intIn.value = "";
+            if (next === liveInterval) return;
+            liveInterval = next;
+            if (liveOn && liveSave) { stopServerCollect(); startServerCollect(); }   // re-arm with the new limit
+        };
+        intIn.addEventListener("change", commitInterval);
+        // seed the placeholder with the settings default so the user sees what blank means
+        api.live.defaults().then((d) => {
+            if (d && Number.isFinite(d.interval)) intIn.placeholder = String(d.interval);
+        }).catch(() => {});
     }
     if (liveRoot.parentElement !== adapter.host) adapter.host.appendChild(liveRoot);
 }
@@ -235,7 +258,7 @@ function startServerCollect() {
     const game = model.profile.name;
     if (!game) return;
     liveColStatus = null;
-    api.live.start(game).catch((e) => setStatus(String(e.message || e)));
+    api.live.start(game, liveInterval).catch((e) => setStatus(String(e.message || e)));
     if (!liveColUnsub) liveColUnsub = hub.subscribe((s) => {
         if (!liveOn || !liveSave) return;
         liveColStatus = s.live || null;

@@ -2,9 +2,10 @@
 # Change a name here (and ensure a module registers it) to swap a backend.
 # A bare string is shorthand for {name: <str>, options: {}}.
 
-capture: printwindow  # oc.capture.*    -> grabs pixels. printwindow = window-targeted
-                      #   (works backgrounded/occluded); mss = screen-region (needs
-                      #   the window visible on top).
+capture: wgc          # oc.capture.*    -> grabs pixels. wgc = DWM-composited (no per-grab
+                      #   game re-render hitch; works backgrounded/occluded; capped at
+                      #   monitor refresh). printwindow = window-targeted but forces a
+                      #   fresh render each grab. mss = screen-region (window must be on top).
 window: win32       # oc.window.*       -> locates the game window (Windows)
 process: psutil     # oc.process.*      -> finds the running game
 ocr: rapidocr       # oc.ocr.*          -> reads text from regions
@@ -15,6 +16,8 @@ tuning:
   accept_confidence: 0.88   # >= this: trust + learn the term
   min_confidence: 0.50      # worst-field floor; below -> drop record
   confirm_frames: 2         # stable frames required before saving (anti-popup)
+  collect_interval: 1.0     # seconds between collection ticks (the throttle); lower
+                            #   for faster-changing views, 0 = tick as fast as possible
   require_foreground: false  # true only if using screen-region capture
 
 profiles_dir: config/games
