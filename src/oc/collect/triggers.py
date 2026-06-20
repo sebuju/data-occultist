@@ -23,6 +23,7 @@ or hitting the network.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Callable
@@ -64,6 +65,37 @@ def record_fire(data_dir, game: str, trigger_id: str) -> None:
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(d), encoding="utf-8")
+    except OSError:
+        pass
+
+
+# ---- watched-subset output signatures ------------------------------------------------
+# A subset (a join over several datasets) only meaningfully "changed" when its COMPUTED rows
+# change — not when any source it reads is touched. We hash each watched subset's output and
+# remember it here so an on_change trigger watching a subset fires only on a real change.
+
+def _sigs_path(data_dir, game: str) -> Path:
+    return Path(data_dir) / game / ".subset_sigs.json"
+
+
+def read_subset_sigs(data_dir, game: str) -> dict:
+    """``{subset_id: sha256_hex}`` of each watched subset's last-seen output, or ``{}``."""
+    p = _sigs_path(data_dir, game)
+    if not p.exists():
+        return {}
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def write_subset_sigs(data_dir, game: str, sigs: dict) -> None:
+    """Persist subset output signatures (so a restart doesn't re-fire on the first change)."""
+    p = _sigs_path(data_dir, game)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(sigs), encoding="utf-8")
     except OSError:
         pass
 
@@ -128,13 +160,25 @@ class TriggerRunner:
 
     def on_change(self, dataset: str | None, changed_records: list[dict]) -> list[str]:
         """Fire on_change triggers watching ``dataset``, pricing only ``changed_records``.
-        Returns fired trigger ids."""
+        Returns fired trigger ids.
+
+        A DIRECT dataset watch fires whenever the dataset changes (the records ARE new). A
+        SUBSET watch fires only when the subset's COMPUTED output actually changes — a source
+        update that leaves the join byte-for-byte identical (e.g. a price for an item the
+        inventory doesn't hold) is NOT a change to the watched data, so it must not fire."""
         if not dataset or not changed_records:
             return []
         fired: list[str] = []
         items = None
+        sig_changed: dict[str, bool] = {}   # watched subset id -> did its output change (this flush)
+        stored = read_subset_sigs(self._data_dir, self._profile.name)
+        new_sigs: dict[str, str] = {}       # subset id -> fresh sig to persist
         for t in self._profile.triggers:
-            if not t.enabled or t.kind != "on_change" or not self._watches(t, dataset):
+            if not t.enabled or t.kind != "on_change":
+                continue
+            justifying = [w for w in t.watch
+                          if self._watch_justifies(w, dataset, stored, sig_changed, new_sigs)]
+            if not justifying:
                 continue
             if items is None:
                 items = self._items_for(changed_records)
@@ -142,26 +186,61 @@ class TriggerRunner:
                   f"{len(items)} to price)", level="run", game=self._profile.name)
             slog(f"trigger {t.id} <- {dataset} changed ({len(changed_records)} rows, "
                  f"{len(items)} to price)", game=self._profile.name)
-            # animate the watch hop trigger -> watched dataset/view (a control pulse)
-            for w in t.watch:
-                if w == dataset or self._subset_reaches(w, dataset, set()):
-                    node = f"sub:{w}" if self._profile.subset_def(w) else f"ds:{w}"
-                    publish_flow(self._profile.name, "watch", f"trigger:{t.id}", node, 1)
+            # animate the watch hop watched dataset/view -> trigger (the change that fired it
+            # flows INTO the trigger), only for the watches that actually justified this fire
+            for w in justifying:
+                node = f"sub:{w}" if self._profile.subset_def(w) else f"ds:{w}"
+                publish_flow(self._profile.name, "watch", node, f"trigger:{t.id}", 1)
             self._fire_targets(t, items=items)
             record_fire(self._data_dir, self._profile.name, t.id)
             fired.append(t.id)
+        if new_sigs:
+            write_subset_sigs(self._data_dir, self._profile.name, {**stored, **new_sigs})
         return fired
 
     # ---- helpers -----------------------------------------------------------
 
-    def _watches(self, trigger, dataset: str) -> bool:
-        """Does ``trigger`` watch ``dataset`` — directly, or via a watched VIEW that reads it
-        (a view can be wired into a trigger's watch, so a change to any of its source datasets
-        should fire it)."""
-        for w in trigger.watch:
-            if w == dataset or self._subset_reaches(w, dataset, set()):
-                return True
-        return False
+    def _watch_justifies(self, w: str, dataset: str, stored: dict,
+                         sig_changed: dict, new_sigs: dict) -> bool:
+        """Does watch ``w`` justify firing for a change to ``dataset``?
+        A direct dataset match always does; a subset only if its output changed (memoised in
+        ``sig_changed`` per flush, fresh sig staged into ``new_sigs`` to persist)."""
+        if w == dataset:
+            return True
+        if not self._subset_reaches(w, dataset, set()):
+            return False
+        if w not in sig_changed:
+            cur = self._subset_sig(w)
+            # cur is None only on a compute error -> fall back to firing (old always-fire
+            # behaviour), and don't poison the stored baseline with a bad sig.
+            sig_changed[w] = cur is None or stored.get(w) != cur
+            if cur is not None:
+                new_sigs[w] = cur
+        return sig_changed[w]
+
+    def _subset_sig(self, sid: str) -> str | None:
+        """Hash of subset ``sid``'s VISIBLE output — only the columns the view actually shows.
+
+        Crucially the hash is over the projected (column-restricted) rows, NOT the raw row dicts:
+        ``compute_view`` strips bookkeeping cols (``present``/``_batch``/…) but a row still carries
+        every JOINED column, including ones the subset HID (``updated``, ``live_median``, …). A
+        price refresh rewrites such hidden timestamps every few seconds without changing anything
+        the user sees — hashing the full dict would flip the sig and fire the trigger constantly.
+        Projecting to ``columns`` makes the sig track only the watched data. ``None`` on any
+        compute error."""
+        from ..enrich.subset import compute_view_rows
+        from ..store import store_for
+        try:
+            fetch = lambda ds, agg: store_for(  # noqa: E731
+                self._data_dir, self._profile.name, ds, profile=self._profile,
+                aggregate=agg).records()
+            view = compute_view_rows(self._profile, sid, fetch)
+            cols = view["columns"]
+            visible = [{c: r.get(c) for c in cols} for r in view["rows"]]
+            blob = json.dumps(visible, sort_keys=True, default=str).encode("utf-8")
+            return hashlib.sha256(blob).hexdigest()
+        except Exception:  # noqa: BLE001 - a bad compute must never crash the firer
+            return None
 
     def _subset_reaches(self, sid: str, dataset: str, seen: set) -> bool:
         """Does view ``sid`` read ``dataset`` through its (transitive) inputs?"""

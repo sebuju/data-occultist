@@ -6,9 +6,9 @@ DatasetStore with a stubbed name->slug resolver.
 """
 
 from oc import eventlog
-from oc.collect.triggers import TriggerRunner
+from oc.collect.triggers import TriggerRunner, read_subset_sigs
 from oc.enrich.price_runner import gather_source_items
-from oc.profile.models import GameProfile, PriceNodeDef, TriggerDef
+from oc.profile.models import GameProfile, PriceNodeDef, SubsetDef, TriggerDef
 from oc.store import DatasetStore, KeySpec
 
 
@@ -94,6 +94,54 @@ def test_trigger_sound_defaults_empty_and_roundtrips():
     reloaded = GameProfile.model_validate(p.model_dump())
     assert reloaded.triggers[0].sound == "chirp.wav"
     assert reloaded.triggers[0].volume == 0.4
+
+
+def _join_profile():
+    # a trigger watching a SUBSET that inner-joins inventory + prices on name. `updated` is a
+    # volatile timestamp the view HIDES — rewritten every price refresh but not user-visible.
+    return GameProfile(
+        name="g",
+        price_nodes=[PriceNodeDef(id="px", dataset="prices_out", mode="orders", sources=["folio"])],
+        subsets=[SubsetDef(id="folio", datasets=["inv", "prices"], join_field="name",
+                           join_mode="inner", hidden_columns=["updated"])],
+        triggers=[TriggerDef(id="watch", kind="on_change", watch=["folio"], targets=["px"])],
+    )
+
+
+def _ds(tmp_path, name):
+    return DatasetStore(tmp_path, "g", name, key=KeySpec(fields=("name",)))
+
+
+def test_on_change_subset_fires_only_when_joined_output_changes(tmp_path):
+    # inventory holds Soma Prime; prices initially has Soma Prime @ 10
+    inv = _ds(tmp_path, "inv")
+    inv.begin_batch(); inv.record_seen({"name": "Soma Prime", "count": 2}); inv.save()
+    prices = _ds(tmp_path, "prices")
+    prices.begin_batch(); prices.record_seen({"name": "Soma Prime", "price": 10, "updated": "t1"}); prices.save()
+
+    calls = []
+    tr = TriggerRunner(_join_profile(), tmp_path,
+                       fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    tr._resolve = lambda n: n
+
+    # first change -> no baseline sig yet -> fires once and records the baseline
+    assert tr.on_change("prices", [{"name": "Soma Prime", "price": 10}]) == ["watch"]
+    assert read_subset_sigs(tmp_path, "g")  # baseline persisted
+
+    # a price for an item NOT in inventory -> inner join drops it -> joined output unchanged
+    prices.begin_batch(); prices.record_seen({"name": "Dagger", "price": 5}); prices.save()
+    assert tr.on_change("prices", [{"name": "Dagger", "price": 5}]) == []   # must NOT fire
+
+    # only the HIDDEN `updated` timestamp changes (a price refresh) -> visible output identical
+    # -> must NOT fire (regression: hashing full row dicts fired here every few seconds)
+    prices.begin_batch(); prices.record_seen({"name": "Soma Prime", "updated": "t2"}); prices.save()
+    assert tr.on_change("prices", [{"name": "Soma Prime", "updated": "t2"}]) == []
+
+    # the watched item's VISIBLE price actually changes -> joined row changes -> fires
+    prices.begin_batch(); prices.record_seen({"name": "Soma Prime", "price": 20}); prices.save()
+    assert tr.on_change("prices", [{"name": "Soma Prime", "price": 20}]) == ["watch"]
+
+    assert calls == ["px", "px"]   # fired twice total (baseline + real change), not on the no-ops
 
 
 def test_gather_source_items_from_dataset(tmp_path):
