@@ -44,6 +44,7 @@ const actPending = new Set();   // trigger ids whose enable toggle is mid-flight
 // (re-fired by a trigger → same row key reused) froze the button on "cancelling…" forever.
 const actCancelReq = new Set();
 let actEmpty = null;         // the reused "nothing active" placeholder (never innerHTML)
+let actSpin = null;          // the reused first-load spinner, shown until the first snapshot lands
 
 function buildActivity() {
     if (act) return;
@@ -73,6 +74,7 @@ function mountActivity(adapter) {
     if (!actRoot) {
         actRoot = document.createElement("div"); actRoot.className = "act-list";
         actEmpty = document.createElement("div"); actEmpty.className = "act-empty"; actEmpty.textContent = "nothing active";
+        actSpin = document.createElement("div"); actSpin.className = "st-spin"; actSpin.textContent = "loading…";
         wireActivityClicks(actRoot);
     }
     if (actRoot.parentElement !== adapter.host) adapter.host.appendChild(actRoot);
@@ -145,6 +147,14 @@ function deactivateActivity() {
 // kept name for back-compat with any external callers
 const stopActivityPoll = deactivateActivity;
 
+// Show the first-load spinner ONLY before any snapshot has rendered — once a beat lands
+// (rows or the "nothing active" placeholder), renderActivity removes it and a steady poll over
+// existing rows leaves it gone (zero DOM churn). No-op if the hub already replayed a snapshot.
+function showActLoading() {
+    if (!actRoot || actData || actRows.size || actEmpty?.isConnected) return;
+    if (!actSpin.isConnected) { actRoot.appendChild(actSpin); fitActivityHeight(); }
+}
+
 // any interval trigger whose countdown has just hit zero since the last fetch -> it fired,
 // so the server state changed and a refresh is due (don't wait out the cadence)
 function actDueForRefresh(elapsed) {
@@ -163,6 +173,7 @@ function activateActivity() {
         actData = s; actAt = Date.now(); renderActivity(actData, 0);
     });
     hub.kick();   // immediate beat on open
+    showActLoading();   // spinner until the first snapshot lands (no-op if the hub already replayed one)
     // Local ticker: re-render the cached payload so the "fires in …" countdowns keep ticking
     // between beats (no server hit), and beat the hub the instant a countdown elapses so the
     // fired trigger's new schedule lands promptly.
@@ -267,6 +278,7 @@ function updateTriggerNodes(data) {
 
 function renderActivity(data, elapsed = 0) {
     if (!actRoot) return;
+    if (actSpin?.isConnected) actSpin.remove();   // first snapshot landed -> spinner done (one-shot; later ticks no-op)
     updateTriggerNodes(data);
     const list = actRoot;
     const jobs = activityJobs(data, elapsed);

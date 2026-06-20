@@ -18,6 +18,7 @@ just the gate + state + item-source resolution around :func:`sweep_catalogue`.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -153,28 +154,75 @@ def _release_file_lock(path: Path) -> None:
         pass
 
 
+# ---- cross-process sweep status ---------------------------------------------
+
+# A sweep usually runs in the `collect` process while the web UI is a SEPARATE `serve`
+# process; each only knows its OWN in-memory `_runners`, so a collector sweep is invisible
+# to the serve Activity panel (the "task started before the page loaded" never shows). The
+# per-game file lock already serialises sweeps to ONE per game across all processes, so a
+# single status sidecar carries that running sweep's progress for any process to read.
+_STATUS_STALE = 30.0   # seconds without an update before a status file is treated as a dead process
+
+
+def _status_path(data_dir, game: str) -> Path:
+    return Path(data_dir) / game / ".sweep_status.json"
+
+
+def _write_sweep_status(data_dir, game: str, state: SweepState) -> None:
+    """Publish this process's running sweep so other processes' panels can show it. Atomic
+    (temp + replace) so a concurrent reader never sees a torn file. Best-effort."""
+    p = _status_path(data_dir, game)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"pid": os.getpid(), "updated": time.time(), "state": state.public()}
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(p)
+    except OSError:
+        pass
+
+
+def _clear_sweep_status(data_dir, game: str) -> None:
+    """Remove the status file at sweep end — only if THIS process wrote it (don't clobber a
+    sweep another process just started)."""
+    p = _status_path(data_dir, game)
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if d.get("pid") == os.getpid():
+            p.unlink()
+    except (OSError, json.JSONDecodeError):
+        pass
+
+
+def _foreign_sweep(data_dir, game: str) -> dict | None:
+    """The running sweep owned by ANOTHER live process (a fresh status file), or None. Our own
+    sweeps come from in-memory ``_runners`` instead, so a same-pid file is ignored. A stale file
+    (writer died mid-sweep) is pruned so a crashed sweep doesn't haunt the panel."""
+    p = _status_path(data_dir, game)
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if d.get("pid") == os.getpid():
+        return None
+    if time.time() - d.get("updated", 0) > _STATUS_STALE:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+        return None
+    st = d.get("state") or {}
+    return st if st.get("running") else None
+
+
 # ---- item-source resolution -------------------------------------------------
 
-def _source_rows(data_dir, game: str, profile, input_id: str,
-                 stack: frozenset, cache: dict) -> list[dict]:
-    """Present records for one price-node source. A dataset id -> its stored records; a
-    VIEW id -> that view computed first (so filters/derived columns apply, e.g. count>0).
-    Cycles resolve to no rows. Mirrors the web flow's ``_input_rows`` without web deps."""
-    if input_id in cache:
-        return cache[input_id]
-    sub = profile.subset_def(input_id) if profile else None
-    if sub is None:                                   # a plain dataset
-        ds = store_for(data_dir, game, input_id, profile=profile)
-        rows = [r for r in ds.records() if r.get("present", True)]
-    elif input_id in stack:                           # cycle -> stop
-        rows = []
-    else:
-        from .subset import compute_view
-        inputs = [(i, _source_rows(data_dir, game, profile, i, stack | {input_id}, cache))
-                  for i in sub.inputs()]
-        rows = compute_view(inputs, sub)["rows"]
-    cache[input_id] = rows
-    return rows
+def _present_fetch(data_dir, game: str, profile):
+    """A ``fetch_dataset(dataset_id, aggregate)`` for :func:`compute_view_rows` — a plain
+    dataset's PRESENT records only (a sold/removed item must not be re-priced). Ignores the
+    aggregate (a price node reads the dataset's default), preserving prior behaviour."""
+    return lambda ds, _agg: [r for r in store_for(data_dir, game, ds, profile=profile).records()
+                             if r.get("present", True)]
 
 
 def _resolver(data_dir, game: str, resolve):
@@ -190,11 +238,15 @@ def gather_source_items(data_dir, game: str, profile, sources: list[str],
     """``(slug, name)`` pairs for every item across a node's ``sources`` (datasets/views),
     de-duped by slug. ``name_field`` is the column holding the item name (selectable per
     price node). Names that don't resolve to a market slug are dropped."""
+    from .subset import compute_view_rows
     resolve = _resolver(data_dir, game, resolve)
+    fetch = _present_fetch(data_dir, game, profile)
     rows: list[dict] = []
-    cache: dict = {}
     for s in sources:
-        rows.extend(_source_rows(data_dir, game, profile, s, frozenset(), cache))
+        # A bare dataset source -> its present rows directly; a VIEW source -> computed (so its
+        # filters/derived columns apply, e.g. count>0), recursing through the shared primitive.
+        sub = profile.subset_def(s) if profile else None
+        rows.extend(compute_view_rows(profile, s, fetch)["rows"] if sub else fetch(s, None))
     return inventory_slugs(rows, name_field or "name", resolve)
 
 
@@ -206,8 +258,10 @@ def _run_sweep(data_dir, game: str, price_node, *, profile, key, resolve, items,
     dataset = price_node.dataset
     state = _runner(game, dataset).state
     _t0 = time.perf_counter()
+    _last_pub = 0.0   # throttle the cross-process status write to ~1/s (not every item)
 
     def on_item(done, total, slug, name, ok):
+        nonlocal _last_pub
         state.total = total
         state.done = done
         state.last = name
@@ -215,8 +269,13 @@ def _run_sweep(data_dir, game: str, price_node, *, profile, key, resolve, items,
             state.fetched += 1
         else:
             state.failed += 1
+        now = time.monotonic()
+        if now - _last_pub >= 1.0:
+            _last_pub = now
+            _write_sweep_status(data_dir, game, state)   # refresh progress for other processes
 
     try:
+        _write_sweep_status(data_dir, game, state)   # publish immediately so the panel shows it at once
         # Item source: explicit `items` (e.g. on_change changed keys) > the node's
         # `sources` datasets/views > the whole catalogue (items stays None).
         if items is None and getattr(price_node, "sources", None):
@@ -237,6 +296,7 @@ def _run_sweep(data_dir, game: str, price_node, *, profile, key, resolve, items,
             # Source-aware data hop: the sweep wrote `fetched` snapshots from THIS price node
             # into its output dataset. One pulse at sweep end (not per item) keeps it un-chatty.
             publish_flow(game, "data", f"price:{price_node.id}", f"ds:{dataset}", state.fetched)
+        _clear_sweep_status(data_dir, game)   # sweep done -> stop advertising it cross-process
         _release_file_lock(lock_path)
         gate.release()
 
@@ -304,10 +364,19 @@ def sweep_status(game: str, dataset: str) -> dict:
     return runner.state.public() if runner.state else {"running": False, "total": 0, "done": 0}
 
 
-def active_sweeps(game: str) -> list[dict]:
-    """Every currently-running sweep for ``game`` (one per dataset). For the Activity panel."""
-    return [r.state.public() for (g, _ds), r in _runners.items()
-            if g == game and r.state and r.state.running]
+def active_sweeps(game: str, data_dir=None) -> list[dict]:
+    """Every currently-running sweep for ``game`` (one per dataset). For the Activity panel.
+
+    In-memory runners cover sweeps started in THIS process; ``data_dir`` (when given) also
+    surfaces a sweep running in ANOTHER process — the common case where the web ``serve`` panel
+    must show a sweep the ``collect`` process started before the page was loaded."""
+    out = [r.state.public() for (g, _ds), r in _runners.items()
+           if g == game and r.state and r.state.running]
+    if data_dir is not None:
+        foreign = _foreign_sweep(data_dir, game)
+        if foreign and not any(s.get("dataset") == foreign.get("dataset") for s in out):
+            out.append(foreign)
+    return out
 
 
 def _note_blocked(game: str, dataset: str, mode: str, reason: str) -> SweepState:

@@ -42,7 +42,7 @@ def activity(game: str) -> dict:
         if lst.get("running"):
             live = lst
     settings = get_settings()
-    return {"sweeps": active_sweeps(game), "blocked": recent_blocked(game),
+    return {"sweeps": active_sweeps(game, settings.data_dir), "blocked": recent_blocked(game),
             "precapture": precap, "live": live,
             "triggers": trigger_schedule(game, settings),
             "sources": source_status(game, settings), "ocr": ocr_state()}
