@@ -106,7 +106,7 @@
 .vt-head { display: flex; flex: none; padding-right: 9px; border-bottom: 1px solid var(--line); overflow: hidden; }
 .vt-th { position: relative; color: var(--muted); font-weight: 400; cursor: pointer; user-select: none; }
 .vt-th:hover { color: var(--text); }
-.vt-sort { color: var(--accent); }
+.vt-sort { position: absolute; top: 0; right: 4px; color: var(--accent); font-size: 8px; line-height: 1; pointer-events: none; }
 .vt-grip { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 1; }
 .vt-grip::after { content: ""; position: absolute; top: 0; right: 3px; width: 1px; height: 100%; background: var(--line); }
 .vt-grip:hover::after { width: 2px; background: var(--accent); }

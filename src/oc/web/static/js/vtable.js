@@ -26,7 +26,9 @@ const BUFFER = 6;        // extra rows rendered above/below the viewport
 // is often empty when set via separate CSS properties).
 function fontOf(el) {
     const s = getComputedStyle(el);
-    return `${s.fontStyle} ${s.fontWeight} ${s.fontSize}/${s.lineHeight} ${s.fontFamily}`;
+    // No `/line-height` — canvas `ctx.font` rejects the shorthand if it's present and
+    // silently falls back to 10px sans-serif, making every measurement too narrow.
+    return `${s.fontStyle} ${s.fontWeight} ${s.fontSize} ${s.fontFamily}`;
 }
 
 // Per-table column widths persist (by table id) so they travel with the profile, mirroring
@@ -192,6 +194,7 @@ export class VTable {
             h.className = "vt-cell vt-th";
             h.dataset.c = i;
             h.textContent = c;
+            h.title = c;
             h.addEventListener("mousedown", (e) => {   // drag the header to reorder columns
                 if (e.button !== 0 || e.target.classList.contains("vt-grip")) return;
                 this._startReorder(e, i);
@@ -199,7 +202,7 @@ export class VTable {
             if (this.sortCol === i) {
                 const s = document.createElement("span");
                 s.className = "vt-sort";
-                s.textContent = this.sortDir === 1 ? " ▲" : " ▼";
+                s.textContent = this.sortDir === 1 ? "▲" : "▼";
                 h.appendChild(s);
             }
             // a lone column always spans the whole table — no width to set, so no resize grip
@@ -295,22 +298,21 @@ export class VTable {
         if (this.id) _store.save(this.id, { ...(_store.load(this.id)), widths: this.widths });
     }
 
-    // Natural width that fits column `name`: the widest of its header and all (filtered) cell
-    // values, measured via canvas so it's independent of the table's current fixed layout.
-    // Clamped; header gets extra room for the sort-icon/grip overlay.
+    // Natural width that fits column `name`'s DATA: the widest cell value (header text is
+    // allowed to clip), measured via canvas so it's independent of the current fixed layout.
     _measureCol(name) {
         const cv = VTable._cv || (VTable._cv = document.createElement("canvas"));
         const ctx = cv.getContext("2d");
         const th = this.head.children[this.columns.indexOf(name)];
         const bodyCell = this.pool.find((r) => r.style.display !== "none")?._cells[0];
-        ctx.font = fontOf(th || this.head);
-        let max = ctx.measureText(name).width + 18;        // header text + icon/grip overlay room
+        // fit the data only — header text is allowed to clip/ellipsis
+        let max = 0;
         ctx.font = fontOf(bodyCell || th || this.head);
         for (const rec of this.rows) {
             const w = ctx.measureText(this._cell(rec.values, name)).width;
             if (w > max) max = w;
         }
-        return Math.min(600, Math.max(36, Math.ceil(max) + 12));   // cell padding/slack, clamped
+        return Math.min(600, Math.max(36, Math.ceil(max) + 8));   // vt-cell padding (0 4px), clamped
     }
 
     // ---- column reorder (drag a header) ----
@@ -544,7 +546,11 @@ export class VTable {
             row.style.display = "";
             row.style.transform = `translateY(${yOf(idx)}px)`;
             row.className = "vt-row" + (this.rowClass ? " " + (this.rowClass(rec.values) || "") : "") + ((idx & 1) ? " odd" : "") + (idx === eIdx ? " vt-open" : "");
-            for (let c = 0; c < this.cellCount; c++) row._cells[c].textContent = this._cell(rec.values, this.columns[c]);
+            for (let c = 0; c < this.cellCount; c++) {
+                const v = this._cell(rec.values, this.columns[c]);
+                row._cells[c].textContent = v;
+                row._cells[c].title = v;
+            }
         }
         this.vbar.sync(viewH, contentH);
         this.hbar.sync(this.scroll.clientWidth, this.scroll.scrollWidth);
