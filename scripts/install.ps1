@@ -126,6 +126,7 @@ function New-AppShortcut {
   $ico = Join-Path $root 'assets\data-occultist.ico'
   if (-not (Test-Path $pyw)) { return }
   $dirs = @(
+    $root,                                          # repo-root data-occultist.lnk (replaces #app.bat)
     [Environment]::GetFolderPath('Desktop'),
     (Join-Path ([Environment]::GetFolderPath('Programs')) 'data-occultist')
   )

@@ -33,6 +33,9 @@ playground/
 .trash/
 scripts/*.csv
 
+# Generated, machine-specific app shortcut (paths are absolute)
+*.lnk
+
 # IDE / OS
 .vscode/
 .idea/
