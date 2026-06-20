@@ -182,7 +182,7 @@ export function buildInspector(ctx) {
         if (w.type === "control") {
             const inputs = nodeInputs(ctx.model).map((i) => ({ value: i.path, label: `${i.nodeLabel} · ${i.label}` }));
             const meta = inputMeta(ctx.model, w.path);   // the constraint actually applied — prefill its defaults
-            const dfltLabel = (/\.([A-Za-z_]\w*)$/.exec(w.path || "") || [, ""])[1].replace(/_/g, " ");
+            const dfltLabel = (/\.([A-Za-z_]\w*)$/.exec(w.path || "") || ["", ""])[1].replace(/_/g, " ");
             g.appendChild(row("input", sel(w.path, [{ value: "", label: "—" }, ...inputs], (v) => { w.path = v; save(); })));
             g.appendChild(row("control", sel(c.presentation, [{ value: "", label: "auto" }, "slider", "number", "select", "toggle", "radio", "stepper"], (v) => { c.presentation = v; save(); })));
             g.appendChild(row("label", txt(c.label ?? dfltLabel, (v) => { c.label = v; save(); })));
