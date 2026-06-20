@@ -229,8 +229,31 @@ async def lifespan(_app: FastAPI):
         pass
 
 
+def _is_loopback(host: str | None) -> bool:
+    """True only for loopback clients (127.0.0.0/8, ::1, IPv4-mapped ::ffff:127.x)."""
+    if not host:
+        return False
+    import ipaddress
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="data-occultist", version="0.1.0", lifespan=lifespan)
+
+    # Defense-in-depth: this is a local teaching tool with no auth and full-traceback error
+    # bodies. We default-bind to 127.0.0.1, but if someone binds 0.0.0.0 (or a proxy forwards
+    # in), reject any request whose peer isn't loopback BEFORE it reaches a route. No headers
+    # are trusted (X-Forwarded-For etc. are spoofable) — only the real TCP peer.
+    from fastapi.responses import PlainTextResponse
+
+    @app.middleware("http")
+    async def _localhost_only(request: Request, call_next):  # noqa: ANN202
+        if not _is_loopback(request.client.host if request.client else None):
+            return PlainTextResponse("forbidden: localhost only", status_code=403)
+        return await call_next(request)
 
     # Surface the FULL traceback of any unhandled error to the client (this is a local
     # teaching tool) AND to the server log, so a 500 isn't an opaque "Internal Server
