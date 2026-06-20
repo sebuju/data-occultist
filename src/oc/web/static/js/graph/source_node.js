@@ -77,11 +77,11 @@ export function sourceParts(s) {
     const body = `<div class="lab-grid">
       ${labCell("format", "how the file is parsed")}<select class="src-format">${fmtOpts}</select>
       ${labCell("filename", "filename to auto-find — a glob, e.g. EE.log or *.cfg")}<input class="src-filename" value="${esc(s.filename || "")}" placeholder="EE.log" />
-      ${labCell("path", "explicit file path (overrides auto-find)")}<input class="src-path" value="${esc(s.path || "")}" placeholder="(auto-find by filename)" />
+      ${labCell("path", "explicit file path (overrides auto-find)")}<div class="src-pathrow"><input class="src-path" value="${esc(s.path || "")}" placeholder="(auto-find by filename)" /><button class="src-find" title="search common game/config locations for the filename">⌕ auto-find</button></div>
       ${labCell("read", "when to read: a manual button, or whenever the file changes")}<select class="src-watch">${watchOpts}</select>
       ${throttle}${tail}
       ${matchBlock}${fields}</div>
-      <div class="src-findrow"><button class="src-find" title="search common game/config locations for the filename">⌕ auto-find</button><span class="src-found muted"></span></div>
+      <div class="src-found muted"></div>
       <div class="src-prev-info muted"></div>
       <div class="src-preview"></div>
       <div class="gn-foot"><button class="src-read" title="read the file now and write rows to the dataset (click again to cancel)">read now</button>

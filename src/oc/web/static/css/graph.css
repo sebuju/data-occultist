@@ -513,16 +513,19 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* ---- file-source node: rule builder + live preview ---- */
 .gnode.filesource .lab-grid > .src-matches,
 .gnode.filesource .lab-grid > .src-fields { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
-.src-m, .src-f { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.src-m, .src-f { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
 .src-m input[type="text"], .src-m input:not([type]), .src-f input:not([type="number"]):not([type="checkbox"]) { flex: 1 1 70px; min-width: 60px; }
 .src-f input[type="number"] { width: 56px; }
 .src-f .src-fid { flex: 0 0 84px; }
+.src-f .src-ftype { flex: 0 0 auto; width: auto; }
 .src-arrow { opacity: 0.6; padding: 0 2px; }
 .src-cs { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; opacity: 0.8; }
 .src-chk { display: inline-flex; align-items: center; }
 .src-addm, .src-addf { align-self: flex-start; }
-.src-findrow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.src-found { word-break: break-all; }
+.src-pathrow { display: flex; align-items: center; gap: 6px; }
+.src-pathrow .src-path { flex: 1 1 auto; min-width: 40px; }
+.src-pathrow .src-find { flex: 0 0 auto; white-space: nowrap; }
+.src-found { word-break: break-all; margin-top: 6px; }
 
 /* auto-find modal: list (left) + content preview (right) */
 .find-modal { display: grid; grid-template-columns: minmax(280px, 38%) 1fr; gap: 10px; height: 100%; min-height: 0; padding: 12px; }
