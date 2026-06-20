@@ -2,7 +2,7 @@
 // Extracted from main.js verbatim.
 import * as api from "../../api.js";
 import * as hub from "../../hub.js";
-import { esc, TRASH, CAMERA, WARN, PAUSE, STAR } from "../../dom.js";
+import { h, frag, TRASH, CAMERA, WARN, PAUSE, STAR } from "../../dom.js";
 import { openModal } from "../../modal.js";
 import { log } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
@@ -62,7 +62,7 @@ function buildPrecap() {
     if (pc) return;
     pcNode = document.createElement("div");
     pcNode.className = "precap";
-    pcNode.innerHTML = `<p class="muted" style="padding:12px">loading…</p>`;
+    pcNode.replaceChildren(h("p", { class: "muted", style: "padding:12px" }, "loading…"));
     pc = createFloatWin({
         id: "precap", title: "precapture", state: pcState, bothAxes: true,
         onShow: () => { mountPrecap(winAdapter); showPrecap(); }, onHide: hidePrecap, onPersist: () => persist.layout(),
@@ -140,7 +140,7 @@ function buildPrecap() {
         else if (a === "delsess") {
             if (b.dataset.armed !== "1") {   // inline confirm — no blocking dialog (armed two-click)
                 b.dataset.armed = "1"; b.textContent = "delete?"; b.classList.add("armed");
-                setTimeout(() => { b.dataset.armed = "0"; b.innerHTML = TRASH; b.classList.remove("armed"); }, 2500);
+                setTimeout(() => { b.dataset.armed = "0"; b.replaceChildren(TRASH()); b.classList.remove("armed"); }, 2500);
                 return;
             }
             b.dataset.armed = "0";
@@ -235,7 +235,10 @@ function renderPrecapData(dataEl, datasets) {
         }
         dataEl.appendChild(e.section);   // (re)append in server order
         const meta = `${d.count} row${d.count === 1 ? "" : "s"}`;
-        if (e.label._meta !== meta) { e.label.innerHTML = `<b>${esc(d.dataset)}</b> <span class="muted">${esc(meta)}</span>`; e.label._meta = meta; }
+        if (e.label._meta !== meta) {
+            e.label._meta = meta;
+            e.label.replaceChildren(h("b", d.dataset), " ", h("span", { class: "muted" }, meta));
+        }
         const rows = d.sample || [];
         const sig = `${d.count}|${JSON.stringify(rows)}`;   // skip setData when nothing changed (poll churn)
         if (e._sig === sig) continue;
@@ -299,13 +302,15 @@ function renderPrecap(node, st) {
     // Paged skeleton built ONCE — list page = session list; detail page = back bar + the
     // selected pane. One page is shown at a time (precapPage); the back button returns to list.
     if (!node.querySelector(".pc-main")) {
-        node.innerHTML = `<div class="pc-main">
-        <div class="pc-page pc-page-list"><div class="pc-left"></div></div>
-        <div class="pc-page pc-page-detail">
-          <div class="pc-detail-head"><button class="pc-back" data-act="back" title="back to sessions">←</button><span class="pc-detail-title"></span><button class="pc-detail-del danger" data-act="delsess" title="delete session" hidden>${TRASH}</button></div>
-          <div class="pc-right"></div>
-        </div>
-      </div>`;
+        node.replaceChildren(
+            h("div", { class: "pc-main" },
+                h("div", { class: "pc-page pc-page-list" }, h("div", { class: "pc-left" })),
+                h("div", { class: "pc-page pc-page-detail" },
+                    h("div", { class: "pc-detail-head" },
+                        h("button", { class: "pc-back", dataset: { act: "back" }, title: "back to sessions" }, "←"),
+                        h("span", { class: "pc-detail-title" }),
+                        h("button", { class: "pc-detail-del danger", dataset: { act: "delsess" }, title: "delete session", hidden: true }, TRASH())),
+                    h("div", { class: "pc-right" }))));
     }
     const onList = precapPage === "list";
     node.querySelector(".pc-page-list").hidden = !onList;
@@ -330,18 +335,21 @@ function renderPrecap(node, st) {
     const shape = `${precapView}|${recording}|${busyRun}`;
     if (right.dataset.shape !== shape) {
         right.dataset.shape = shape;
-        right.innerHTML = precapView === "new"
-            ? `<div class="pc-opts">
-           <label class="flab">max frames <input type="number" class="pc-frames" value="1000" min="1"></label>
-           <label class="flab">interval ms <input type="number" class="pc-interval" value="0" min="0"></label>
-           <label class="flab">label <input type="text" class="pc-label" placeholder="(optional)"></label>
-         </div>
-         <div class="pc-ctl"></div>`
-            : `<div class="pc-bar"></div>
-         <div class="pc-ctl"></div>
-         <div class="pc-progress"><div class="pc-fill"></div></div>
-         <div class="pc-recog"></div>
-         <div class="pc-data"></div>`;
+        if (precapView === "new") {
+            right.replaceChildren(
+                h("div", { class: "pc-opts" },
+                    h("label", { class: "flab" }, "max frames ", h("input", { type: "number", class: "pc-frames", value: "1000", min: "1" })),
+                    h("label", { class: "flab" }, "interval ms ", h("input", { type: "number", class: "pc-interval", value: "0", min: "0" })),
+                    h("label", { class: "flab" }, "label ", h("input", { type: "text", class: "pc-label", placeholder: "(optional)" }))),
+                h("div", { class: "pc-ctl" }));
+        } else {
+            right.replaceChildren(
+                h("div", { class: "pc-bar" }),
+                h("div", { class: "pc-ctl" }),
+                h("div", { class: "pc-progress" }, h("div", { class: "pc-fill" })),
+                h("div", { class: "pc-recog" }),
+                h("div", { class: "pc-data" }));
+        }
     }
 
     const tm = st.timing || {};
@@ -358,20 +366,20 @@ function renderPrecap(node, st) {
     if (procLive) stats.push(`${st.processed} processed`, `${st.read || 0} read`, `${st.fps} /s`);
     // one stat per row (.pc-bar is a column) — each counter, timing, window/state, and
     // warning/error is its own line instead of a single ·-joined run
-    const barRows = stats.map((s) => `<span class="muted">${s}</span>`);
-    if (procLive) barRows.push(`<span class="muted">${tm.ms_per_frame || 0} ms/frame (${esc(tm.device || "cpu")})</span>`);
-    if (procLive && st.window) barRows.push(`<span class="conf-good" title="window/state recognised this frame">${esc(st.window)}/${esc(st.state)}</span>`);
-    if (recPaused) barRows.push(`<span class="conf-warn">${PAUSE} auto-scroll reached the list end — resume to retry, or uncheck it</span>`);
-    if (st.warning) barRows.push(`<span class="conf-warn">${WARN} ${esc(st.warning)}</span>`);
-    if (st.error) barRows.push(`<span class="conf-bad">${esc(st.error)}</span>`);
+    const barRows = stats.map((s) => h("span", { class: "muted" }, s));
+    if (procLive) barRows.push(h("span", { class: "muted" }, `${tm.ms_per_frame || 0} ms/frame (${tm.device || "cpu"})`));
+    if (procLive && st.window) barRows.push(h("span", { class: "conf-good", title: "window/state recognised this frame" }, `${st.window}/${st.state}`));
+    if (recPaused) barRows.push(h("span", { class: "conf-warn" }, PAUSE(), " auto-scroll reached the list end — resume to retry, or uncheck it"));
+    if (st.warning) barRows.push(h("span", { class: "conf-warn" }, WARN(), " ", st.warning));
+    if (st.error) barRows.push(h("span", { class: "conf-bad" }, st.error));
     const bar = right.querySelector(".pc-bar");   // absent in the new-session pane
-    if (bar) bar.innerHTML = barRows.join("");
+    if (bar) bar.replaceChildren(...barRows);
     // recognition tally: per-window/state frame counts (the "" key is a miss — no window matched)
     const recogEl = right.querySelector(".pc-recog");
     if (recogEl) {
         const rec = st.recognized || [];
-        recogEl.innerHTML = rec.map((r) =>
-            `<span class="pc-recog-chip${r.miss ? " miss" : ""}">${r.miss ? "no match" : esc(r.key)} · ${r.count}</span>`).join("");
+        recogEl.replaceChildren(...rec.map((r) =>
+            h("span", { class: "pc-recog-chip" + (r.miss ? " miss" : "") }, `${r.miss ? "no match" : r.key} · ${r.count}`)));
     }
     // progress bar matters only WHILE processing — gone once done so it doesn't linger
     const prog = right.querySelector(".pc-progress");
@@ -385,30 +393,33 @@ function renderPrecap(node, st) {
 
     const justSaved = phase === "saved";
     const anyRun = recording || busyRun;   // any worker running -> save/delete locked
-    let ctl;
+    const recBtn = (act, glyph, label) =>
+        h("button", { dataset: { act } }, h("span", { class: "ic ic-rec" }, glyph), " " + label);
+    let ctlNodes;
     if (precapView === "new") {
         // recording immediately flips to the loaded pane, so the new pane is just the trigger
-        ctl = `<button data-act="record"><span class="ic ic-rec">●</span> record</button>`;
+        ctlNodes = [recBtn("record", "●", "record")];
     } else {
-        const proc = precapStopping ? `<button disabled>stopping…</button>`
-            : recording ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>`
-            : processing ? `<button data-act="pause">‖ pause</button>`
-            : paused ? `<button data-act="resume">► resume</button>${recPaused ? `<button data-act="recstop"><span class="ic ic-rec">■</span> stop recording</button>` : ""}`
-            : `<button data-act="process" ${canProcess ? "" : "disabled"}>process${st.frames ? ` ${st.frames}` : ""}</button>`;
+        const proc = precapStopping ? h("button", { disabled: true }, "stopping…")
+            : recording ? recBtn("recstop", "■", "stop recording")
+            : processing ? h("button", { dataset: { act: "pause" } }, "‖ pause")
+            : paused ? frag(h("button", { dataset: { act: "resume" } }, "► resume"), recPaused ? recBtn("recstop", "■", "stop recording") : null)
+            : h("button", { dataset: { act: "process" }, disabled: !canProcess }, `process${st.frames ? ` ${st.frames}` : ""}`);
         // auto-scroll hit the list end -> the recording is done; offer stop, not discard
-        const cancel = busyRun && !precapStopping && !recPaused ? `<button data-act="cancel" class="warn">cancel</button>` : "";
+        const cancel = busyRun && !precapStopping && !recPaused ? h("button", { dataset: { act: "cancel" }, class: "warn" }, "cancel") : null;
         // commit only makes sense when nothing's running AND processing has staged records —
         // hide it entirely while a worker is active or before the precapture's been processed
         // (keep showing it right after a commit for the "committed" feedback).
-        const save = (anyRun || (!staged && !justSaved)) ? ""
-            : `<button data-act="save" class="${justSaved ? "pc-saved" : ""}" ${(staged && !precapStopping && !justSaved) ? "" : "disabled"}>${justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`}</button>`;
-        ctl = `${proc}${cancel}${save}`;
+        const save = (anyRun || (!staged && !justSaved)) ? null
+            : h("button", { dataset: { act: "save" }, class: justSaved ? "pc-saved" : null, disabled: !(staged && !precapStopping && !justSaved) },
+                justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`);
+        ctlNodes = [proc, cancel, save];
     }
     const ctlEl = right.querySelector(".pc-ctl");
     // don't clobber a live INPUT the user is editing (the clicks field) on a poll tick;
     // a focused button must NOT block the rebuild (else post-save state wouldn't render)
     const editing = ctlEl.contains(document.activeElement) && document.activeElement.matches("input");
-    if (!editing) ctlEl.innerHTML = ctl;
+    if (!editing) ctlEl.replaceChildren(...ctlNodes.filter(Boolean));
 
     const data = right.querySelector(".pc-data");
     if (data) renderPrecapData(data, st.datasets);
@@ -484,8 +495,13 @@ function renderPrecapLeft(left, st) {
             const nm = s.label || fmtCaptureTime(s.id);
             if (r.name.textContent !== nm) r.name.textContent = nm;
         }
-        const meta = `${s.frames}f · ${fmtBytes(s.bytes || 0)} · ${s.records || 0} rec${s.saved_at ? ' · <span class="tc-ok">committed</span>' : ""}`;
-        if (r.meta._html !== meta) { r.meta.innerHTML = meta; r.meta._html = meta; }   // touch DOM only on change
+        const committed = !!s.saved_at;
+        const sig = `${s.frames}|${s.bytes || 0}|${s.records || 0}|${committed ? 1 : 0}`;   // value sig: touch DOM only on change
+        if (r.meta._sig !== sig) {
+            r.meta._sig = sig;
+            const txt = `${s.frames}f · ${fmtBytes(s.bytes || 0)} · ${s.records || 0} rec`;
+            r.meta.replaceChildren(frag(txt, committed ? " · " : null, committed ? h("span", { class: "tc-ok" }, "committed") : null));
+        }
         r.ren.disabled = precapBusy;
     }
     // header shows the total image size across every session (touch DOM only on change)
@@ -516,7 +532,7 @@ function fmtCaptureTime(name) {
 async function openCaptureModal(winId) {
     const game = model.profile.name;
     const node = document.createElement("div");
-    node.innerHTML = `<p class="muted" style="padding:12px">loading…</p>`;
+    node.replaceChildren(h("p", { class: "muted", style: "padding:12px" }, "loading…"));
     const modal = openModal({ title: `${winId} — choose images`, size: "data", node });
     // load the picked pages, flip to page 0, and refresh the canvas + label
     const apply = async (names) => {
@@ -551,58 +567,58 @@ async function openCaptureModal(winId) {
             }
             return wins;
         };
+        const onCapNew = async () => {
+            modal.close();
+            try {
+                const c = await api.capture(game);            // fresh grab → appended as a new last page
+                const list = await api.bindingList(game, winId);
+                list.push(c.name);
+                await api.setBindings(game, winId, list);
+                winPage.set(winId, list.length - 1);
+                if (!imageCanvases.has(winId)) await openImage(winId);
+                else await loadImage(winId, false);
+                updateImageLabel(winId);
+            } catch (e) { setStatus(String(e.message || e)); }
+        };
         const draw = () => {
             const lead = leadName();
             const grid = caps.map((name) => {
                 const wins = usedBy(name), label = wins.join(", ");
                 const isFirst = name === lead;
-                return `
-        <button class="cap-cell ${sel.has(name) ? "sel" : ""} ${wins.length ? "used" : ""} ${isFirst ? "is-first" : ""}" data-name="${esc(name)}" title="${esc(name)}">
-          <img loading="lazy" src="${api.captureUrl(game, name)}" alt="" />
-          <span class="cap-first ${isFirst ? "on" : ""}" title="${isFirst ? "first image (page 1)" : "make this the first image"}" aria-label="make first image">${STAR}</span>
-          <span class="cap-time">${esc(fmtCaptureTime(name))}</span>
-          <span class="cap-wins" title="${esc(label)}">${esc(label)}</span>
-        </button>`;
-            }).join("");
-            node.innerHTML = `<div class="cap-head"><button class="cap-new">${CAMERA} capture new</button>
-          <span class="muted">${sel.size} of ${caps.length} selected</span><span class="spacer"></span>
-          <button class="cap-use" ${sel.size ? "" : "disabled"}>use ${sel.size || ""}</button></div>
-        ${caps.length ? `<div class="cap-grid">${grid}</div>` : '<p class="cap-empty">no stashed captures yet</p>'}`;
-            // toggle a cell in/out of the selection (modal redraw on click is fine — not a poll)
-            node.querySelectorAll(".cap-cell").forEach((b) => b.addEventListener("click", () => {
-                const nm = b.dataset.name;
-                if (sel.has(nm)) sel.delete(nm); else sel.add(nm);
-                draw();
-            }));
-            // star: pin this image as the lead (page 0). Selects it if it wasn't, and stops the
-            // click from also toggling the cell off.
-            node.querySelectorAll(".cap-first").forEach((s) => s.addEventListener("click", (e) => {
-                e.stopPropagation();
-                first = s.closest(".cap-cell").dataset.name;
-                sel.add(first);
-                draw();
-            }));
-            node.querySelector(".cap-use")?.addEventListener("click", async () => {
-                await apply(orderedSel());   // lead first, then listing order (newest first)
-                modal.close();
+                return h("button", {
+                    class: "cap-cell" + (sel.has(name) ? " sel" : "") + (wins.length ? " used" : "") + (isFirst ? " is-first" : ""),
+                    dataset: { name }, title: name,
+                    // toggle a cell in/out of the selection (modal redraw on click is fine — not a poll)
+                    onClick: () => { if (sel.has(name)) sel.delete(name); else sel.add(name); draw(); },
+                },
+                    h("img", { loading: "lazy", src: api.captureUrl(game, name), alt: "" }),
+                    // star: pin this image as the lead (page 0). Selects it if it wasn't, and stops the
+                    // click from also toggling the cell off.
+                    h("span", {
+                        class: "cap-first" + (isFirst ? " on" : ""),
+                        title: isFirst ? "first image (page 1)" : "make this the first image",
+                        "aria-label": "make first image",
+                        onClick: (e) => { e.stopPropagation(); first = name; sel.add(first); draw(); },
+                    }, STAR()),
+                    h("span", { class: "cap-time" }, fmtCaptureTime(name)),
+                    h("span", { class: "cap-wins", title: label }, label));
             });
-            node.querySelector(".cap-new").addEventListener("click", async () => {
-                modal.close();
-                try {
-                    const c = await api.capture(game);            // fresh grab → appended as a new last page
-                    const list = await api.bindingList(game, winId);
-                    list.push(c.name);
-                    await api.setBindings(game, winId, list);
-                    winPage.set(winId, list.length - 1);
-                    if (!imageCanvases.has(winId)) await openImage(winId);
-                    else await loadImage(winId, false);
-                    updateImageLabel(winId);
-                } catch (e) { setStatus(String(e.message || e)); }
-            });
+            node.replaceChildren(
+                h("div", { class: "cap-head" },
+                    h("button", { class: "cap-new", onClick: onCapNew }, CAMERA(), " capture new"),
+                    h("span", { class: "muted" }, `${sel.size} of ${caps.length} selected`),
+                    h("span", { class: "spacer" }),
+                    h("button", {
+                        class: "cap-use", disabled: !sel.size,
+                        onClick: async () => { await apply(orderedSel()); modal.close(); },   // lead first, then listing order
+                    }, `use ${sel.size || ""}`)),
+                caps.length
+                    ? h("div", { class: "cap-grid" }, grid)
+                    : h("p", { class: "cap-empty" }, "no stashed captures yet"));
         };
         draw();
     } catch (e) {
-        node.innerHTML = `<p class="muted" style="padding:12px">${esc(String(e))}</p>`;
+        node.replaceChildren(h("p", { class: "muted", style: "padding:12px" }, String(e)));
     }
 }
 

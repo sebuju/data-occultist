@@ -4,6 +4,7 @@
 // never a copy). Refreshed on open and on any dataset-change push (dsevents); rows reconcile
 // in place via keyed maps — no innerHTML per tick (CLAUDE.md rule 1).
 import { createFloatWin } from "../floatwin.js";
+import { h } from "../../dom.js";
 import { persist } from "../persist.js";
 import { $, model } from "../state.js";
 import * as dsevents from "../dsevents.js";
@@ -35,12 +36,12 @@ function buildDBStruct() {
         },
         onPersist: () => persist.layout(),
     });
-    dbWin.body.innerHTML =
-        `<div class="db-panel">` +
-        `<div class="db-head"><span class="db-head-txt"></span></div>` +
-        `<div class="db-sec"><div class="db-h">tables</div><div class="db-tables"></div></div>` +
-        `<div class="db-sec"><div class="db-h">datasets</div><div class="db-datasets"></div></div>` +
-        `</div>`;
+    dbWin.body.replaceChildren(
+        h("div", { class: "db-panel" },
+            h("div", { class: "db-head" }, h("span", { class: "db-head-txt" })),
+            h("div", { class: "db-sec" }, h("div", { class: "db-h" }, "tables"), h("div", { class: "db-tables" })),
+            h("div", { class: "db-sec" }, h("div", { class: "db-h" }, "datasets"), h("div", { class: "db-datasets" })),
+        ));
     // Open the DB-backups modal (snapshots of the whole store; restore from there).
     const bkBtn = document.createElement("button");
     bkBtn.type = "button"; bkBtn.className = "armbtn db-bk"; bkBtn.textContent = "backups…";

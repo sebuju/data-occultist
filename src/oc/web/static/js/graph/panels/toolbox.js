@@ -2,7 +2,7 @@
 // trigger / dictionary) plus the window-collision cross-check. Extracted from main.js
 // verbatim.
 import * as api from "../../api.js";
-import { esc, WARN, CAMERA } from "../../dom.js";
+import { h, WARN, CAMERA } from "../../dom.js";
 import { openModal } from "../../modal.js";
 import { log, timed } from "../../log.js";
 import { domToBlob } from "../../vendor/dom-to-image.js";
@@ -119,12 +119,14 @@ function buildToolbox() {
     });
     // Node creation (window / price / trigger / dictionary) moved to the canvas right-click
     // add-node menu (see main.js); the toolbox keeps the cross-cutting tools.
-    tb.body.innerHTML = `<div class="tb-list">
-    <button class="tb-btn" data-create="collisions" title="run each window's bound image through every window's detectors — report which windows false-match each other">${WARN} check window collisions</button>
-    <button class="tb-btn" data-create="shot-canvas" title="render the WHOLE node canvas (every node/edge/group, any zoom) to a PNG, stashed under .trash/">${CAMERA} screenshot canvas</button>
-    <button class="tb-btn" data-create="shot-viewport" title="capture just the CURRENT on-screen view (current pan/zoom) to a PNG, stashed under .trash/">${CAMERA} screenshot viewport</button>
-    <button class="tb-btn" data-create="shot-nodemap" title="render the node MAP (minimap overview) to a PNG sized so the smallest label is 13px, stashed under .trash/">${CAMERA} screenshot node map</button>
-  </div>`;
+    const tbBtn = (create, title, icon, label) =>
+        h("button", { class: "tb-btn", dataset: { create }, title }, icon, " ", label);
+    tb.body.replaceChildren(
+        h("div", { class: "tb-list" },
+            tbBtn("collisions", "run each window's bound image through every window's detectors — report which windows false-match each other", WARN(), "check window collisions"),
+            tbBtn("shot-canvas", "render the WHOLE node canvas (every node/edge/group, any zoom) to a PNG, stashed under .trash/", CAMERA(), "screenshot canvas"),
+            tbBtn("shot-viewport", "capture just the CURRENT on-screen view (current pan/zoom) to a PNG, stashed under .trash/", CAMERA(), "screenshot viewport"),
+            tbBtn("shot-nodemap", "render the node MAP (minimap overview) to a PNG sized so the smallest label is 13px, stashed under .trash/", CAMERA(), "screenshot node map")));
     tb.body.addEventListener("click", (ev) => {
         const b = ev.target.closest("[data-create]");
         if (!b) return;
@@ -137,53 +139,65 @@ function buildToolbox() {
 }
 
 // Verdict copy + class for the collision report. One source of truth for both.
+// `label` is a node-factory (fresh nodes per call — a DOM node lives in one place only).
 const COLLIDE_VERDICTS = {
-    ok:            ["✓ ok",            "conf-ok",   "only this window matched its image"],
-    collision:     [`${WARN} collision`, "conf-warn", "another window also fully matched — ambiguous"],
-    misclassified: ["✗ misclassified", "conf-bad",  "another window WINS the tie-break — classify picks the wrong one"],
-    self_no_match: ["✗ self no-match",  "conf-bad",  "this window's own image doesn't match it — detectors too strict/disabled"],
-    no_image:      ["– no image",       "muted",     "no bound capture to test — open the window node and bind one"],
+    ok:            [() => "✓ ok",                       "conf-ok",   "only this window matched its image"],
+    collision:     [() => [WARN(), " collision"],       "conf-warn", "another window also fully matched — ambiguous"],
+    misclassified: [() => "✗ misclassified",            "conf-bad",  "another window WINS the tie-break — classify picks the wrong one"],
+    self_no_match: [() => "✗ self no-match",            "conf-bad",  "this window's own image doesn't match it — detectors too strict/disabled"],
+    no_image:      [() => "– no image",                 "muted",     "no bound capture to test — open the window node and bind one"],
 };
 
-function collisionReportHTML(data) {
+function collisionReportNode(data) {
     const wins = data.windows || [];
-    if (!wins.length) return `<p class="muted" style="padding:12px">no windows to check</p>`;
+    if (!wins.length) return h("p", { class: "muted", style: "padding:12px" }, "no windows to check");
     const bad = wins.filter((w) => w.verdict !== "ok" && w.verdict !== "no_image").length;
     const head = bad
-        ? `<p class="conf-warn" style="margin:0 0 8px">${bad} window(s) collide — a frame could classify to the wrong window.</p>`
-        : `<p class="conf-ok" style="margin:0 0 8px">no collisions — every window matches only its own image.</p>`;
+        ? h("p", { class: "conf-warn", style: "margin:0 0 8px" }, `${bad} window(s) collide — a frame could classify to the wrong window.`)
+        : h("p", { class: "conf-ok", style: "margin:0 0 8px" }, "no collisions — every window matches only its own image.");
     const rows = wins.map((w) => {
-        const [label, cls, tip] = COLLIDE_VERDICTS[w.verdict] || ["?", "muted", ""];
+        const [label, cls, tip] = COLLIDE_VERDICTS[w.verdict] || [() => "?", "muted", ""];
         // for a colliding/misclassified window, show WHICH windows also matched + their detector scores
         const offenders = (w.matches || []).filter((m) => m.matched && m.window !== w.window);
         const detail = offenders.map((m) => {
             const dets = (m.detectors || []).map((d) =>
-                `<span class="cc-det ${d.matched ? "conf-ok" : "conf-bad"}">${esc(d.id)} ${Math.round((d.score || 0) * 100)}%/${Math.round((d.threshold || 0) * 100)}%${d.read ? ` "${esc(d.read)}"` : ""}</span>`).join(" ");
-            return `<div class="cc-off">↳ also matched <b>${esc(m.window)}</b> ${dets}</div>`;
-        }).join("");
-        const win = w.winner && w.winner !== w.window ? ` <span class="muted">→ classifies as ${esc(w.winner)}</span>` : "";
-        return `<div class="cc-row">
-      <div class="cc-head"><span class="${cls}" title="${esc(tip)}">${label}</span> <b>${esc(w.window)}</b>${win}
-        ${w.capture ? `<span class="muted cc-cap">${esc(w.capture)}</span>` : ""}</div>
-      ${detail}</div>`;
-    }).join("");
-    return `<div class="cc-wrap">${head}<div class="cc-list">${rows}</div></div>`;
+                h("span", { class: "cc-det " + (d.matched ? "conf-ok" : "conf-bad") },
+                    `${d.id} ${Math.round((d.score || 0) * 100)}%/${Math.round((d.threshold || 0) * 100)}%${d.read ? ` "${d.read}"` : ""}`));
+            return h("div", { class: "cc-off" }, "↳ also matched ", h("b", m.window), " ", ...intersperse(dets, " "));
+        });
+        const win = w.winner && w.winner !== w.window
+            ? h("span", { class: "muted" }, ` → classifies as ${w.winner}`) : null;
+        return h("div", { class: "cc-row" },
+            h("div", { class: "cc-head" },
+                h("span", { class: cls, title: tip }, label()), " ", h("b", w.window), win,
+                w.capture ? [" ", h("span", { class: "muted cc-cap" }, w.capture)] : null),
+            detail);
+    });
+    return h("div", { class: "cc-wrap" }, head, h("div", { class: "cc-list" }, rows));
+}
+
+// Join an array of nodes with a separator (string/node) between each — like Array.join
+// but keeping live nodes instead of stringifying. Used to space inline detector chips.
+function intersperse(items, sep) {
+    const out = [];
+    items.forEach((it, i) => { if (i) out.push(sep); out.push(it); });
+    return out;
 }
 
 async function runCollisionCheck() {
     if (!model.profile.name) { setStatus("load a game first"); return; }
     const m = openModal({ title: "window collisions", size: "medium",
-        html: `<p class="muted" style="padding:12px">checking…</p>` });
-    const body = m.body || m.el?.querySelector(".modal-body");
+        node: h("p", { class: "muted", style: "padding:12px" }, "checking…") });
+    const body = m.body;
     const done = timed("collision check");
     try {
         const data = await api.detectCollisions(model.profile.name, m.signal);   // GET; whole-profile cross-check
         done();
-        if (body) body.innerHTML = collisionReportHTML(data);
+        if (body) body.replaceChildren(collisionReportNode(data));
     } catch (e) {
         if (e.name === "AbortError") return;   // modal closed mid-fetch
         done(String(e.message || e), "err");
-        if (body) body.innerHTML = `<p class="conf-bad" style="padding:12px">${esc(String(e.message || e))}</p>`;
+        if (body) body.replaceChildren(h("p", { class: "conf-bad", style: "padding:12px" }, String(e.message || e)));
     }
 }
 
@@ -303,6 +317,6 @@ function svgToPngBlob(svg, W, H) {
 export {
     tb, tbState, createWindowNode, createPriceNode, createTriggerNode,
     createDictionaryNode, createDatasetNode, createSubsetNode, createFileSourceNode,
-    buildToolbox, COLLIDE_VERDICTS, collisionReportHTML,
+    buildToolbox, COLLIDE_VERDICTS, collisionReportNode,
     runCollisionCheck,
 };

@@ -14,6 +14,7 @@
 // its nodes — dragging a member (or the whole group) just re-renders.
 
 import { beginDrag } from "./dragresize.js";   // shared drag-loop primitive
+import { h, svg } from "../dom.js";
 
 const PAD = 40;          // uniform gap between members and the group outline (all 4 sides,
                                                   // incl. between the title band's bottom and the first node) — two GRID
@@ -21,6 +22,13 @@ const PAD = 40;          // uniform gap between members and the group outline (a
                                                   // routed connectors have room to run inside the group edge without crowding
 const TITLE_H = 24;      // fallback title height until the real one is measured (world px)
 const DRAG_THRESH = 4;   // px before a title press becomes a move (else it's a click)
+
+// The ONE cogwheel glyph (group / super-group / sub-group settings buttons all use it). A node
+// can live in only one place, so this is a FACTORY returning a fresh svg each call; `size` is the
+// square px the path renders at (groups 13, super/sub 15).
+const COG = (size) =>
+    svg("svg", { viewBox: "0 0 16 16", width: size, height: size, "aria-hidden": "true" },
+        svg("path", { fill: "currentColor", d: "M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z" }));
 
 let ctx = null;
 let groups = [];         // [{ id, title, members[], outline{color,style,width}, bg, titleAlign }]
@@ -367,14 +375,11 @@ function buildTitleEl(g) {
     const tel = document.createElement("div");
     tel.className = "ggroup-title";
     tel.dataset.gid = g.id;
-    tel.innerHTML = `<span class="ggt-label"></span>
-    <button class="ggt-cog" title="group settings" aria-label="group settings">
-      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>
-    </button>`;
+    const cog = h("button", { class: "ggt-cog", title: "group settings", "aria-label": "group settings" }, COG(13));
+    tel.append(h("span", { class: "ggt-label" }), cog);
     // press the title: a real drag moves the whole group (click alone does nothing now —
     // settings live behind the cog so a stray click can't pop the options panel)
     tel.addEventListener("mousedown", (ev) => onTitlePress(g.id, ev));
-    const cog = tel.querySelector(".ggt-cog");
     cog.addEventListener("mousedown", (ev) => ev.stopPropagation());           // don't start a group drag
     cog.addEventListener("click", (ev) => { ev.stopPropagation(); togglePopover(g.id, ev); });
     return tel;
@@ -414,30 +419,30 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
     const t = target;
     const pop = document.createElement("div");
     pop.className = "ggroup-pop";
-    pop.innerHTML = `
-    <label class="flab"><span class="gp-lab">title</span><input class="gp-title" value="${escAttr(t.title)}" /></label>
-    <div class="flab"><span class="gp-lab">scheme</span>
-      <div class="gp-schemes">${SCHEMES.map((s, i) => `<button class="gp-scheme" data-i="${i}" title="${s.name}" style="background:${s.titleBg || s.bg};border-color:${s.outline === "#2c313c" ? "#4a515f" : s.outline}"></button>`).join("")}</div>
-    </div>
-    <label class="flab"><span class="gp-lab">outline</span>
-      <select class="gp-style">
-        ${["solid", "dashed", "dotted", "none"].map((s) => `<option value="${s}" ${t.outline.style === s ? "selected" : ""}>${s}</option>`).join("")}
-      </select>
-      <input type="color" class="gp-ocolor" value="${hex6(t.outline.color)}" title="outline color" />
-    </label>
-    <label class="flab"><span class="gp-lab">background</span>
-      <input type="range" class="gp-bga" min="0" max="100" value="${alphaPct(t.bg)}" title="fill opacity" />
-      <input type="color" class="gp-bg" value="${hex6(t.bg)}" title="fill color" /></label>
-    <label class="flab"><span class="gp-lab">title bg</span>
-      <input type="color" class="gp-tbg" value="${hex6(t.titleBg || "#1d2027")}" title="title background" /></label>
-    <label class="flab"><span class="gp-lab">title text</span>
-      <input type="color" class="gp-tcolor" value="${hex6(t.titleColor || "#d7dbe2")}" title="title text color" /></label>
-    <label class="flab"><span class="gp-lab">align</span>
-      <select class="gp-pos">
-        ${["left", "center", "right"].map((v) => `<option value="${v}" ${t.titleAlign === v ? "selected" : ""}>${v}</option>`).join("")}
-      </select>
-    </label>
-    <button class="gp-disband danger">${disbandLabel}</button>`;
+    pop.append(
+        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "title"),
+            h("input", { class: "gp-title", value: t.title })),
+        h("div", { class: "flab" }, h("span", { class: "gp-lab" }, "scheme"),
+            h("div", { class: "gp-schemes" },
+                SCHEMES.map((s, i) => h("button", { class: "gp-scheme", dataset: { i }, title: s.name,
+                    style: `background:${s.titleBg || s.bg};border-color:${s.outline === "#2c313c" ? "#4a515f" : s.outline}` })))),
+        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "outline"),
+            h("select", { class: "gp-style" },
+                ["solid", "dashed", "dotted", "none"].map((s) =>
+                    h("option", { value: s, selected: t.outline.style === s }, s))),
+            h("input", { type: "color", class: "gp-ocolor", value: hex6(t.outline.color), title: "outline color" })),
+        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "background"),
+            h("input", { type: "range", class: "gp-bga", min: "0", max: "100", value: alphaPct(t.bg), title: "fill opacity" }),
+            h("input", { type: "color", class: "gp-bg", value: hex6(t.bg), title: "fill color" })),
+        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "title bg"),
+            h("input", { type: "color", class: "gp-tbg", value: hex6(t.titleBg || "#1d2027"), title: "title background" })),
+        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "title text"),
+            h("input", { type: "color", class: "gp-tcolor", value: hex6(t.titleColor || "#d7dbe2"), title: "title text color" })),
+        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "align"),
+            h("select", { class: "gp-pos" },
+                ["left", "center", "right"].map((v) =>
+                    h("option", { value: v, selected: t.titleAlign === v }, v)))),
+        h("button", { class: "gp-disband danger" }, disbandLabel));
     // anchor near the click (screen space — it's fixed-position), then clamp fully on-screen so
     // no part spills out of bounds (measured after it's in the DOM).
     pop.style.left = `${ev.clientX}px`; pop.style.top = `${ev.clientY + 8}px`;
@@ -493,7 +498,6 @@ const SUPER_PAD = 44;          // gap between member groups and the super outlin
 const SUPER_LABEL_BAND = 112;  // taller bottom pad so the huge bottom-left label always clears the groups
 const SUPER_DEF_OUTLINE = "#3a4154";
 const SUPER_DEF_BG = "#1b1d23";   // barely-there fill, opaque (was #aab4d8 @ 4% over #15171c)
-const COG_SVG = `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>`;
 
 let superGroups = [];          // [{ id, title, groups[], outline{color,style,width}, bg, titleColor }]
 let sseq = 0;
@@ -621,10 +625,9 @@ function buildSuperEl(sg) {
     // cog + huge label, both pinned bottom-left (each ABSOLUTE so the giant label never shifts
     // the cog). The box is pointer-events:none so the canvas shows through; only the cog + label
     // are interactive (drag the super group, open settings).
-    el.innerHTML = `<button class="sgroup-cog" title="super group settings" aria-label="super group settings">${COG_SVG}</button>
-      <span class="sgroup-label"></span>`;
-    const label = el.querySelector(".sgroup-label");
-    const cog = el.querySelector(".sgroup-cog");
+    const cog = h("button", { class: "sgroup-cog", title: "super group settings", "aria-label": "super group settings" }, COG(15));
+    const label = h("span", { class: "sgroup-label" });
+    el.append(cog, label);
     label.addEventListener("mousedown", (ev) => onSuperPress(sg.id, ev));
     // the cog drags too (press + move) but a plain click opens settings
     cog.addEventListener("mousedown", (ev) => {
@@ -658,19 +661,24 @@ function toggleSuperPopover(sid, ev) {
     if (!sg) return;
     const pop = document.createElement("div");
     pop.className = "ggroup-pop";
-    pop.innerHTML = `
-    <label class="flab"><span class="gp-lab">title</span><input class="gp-title" value="${escAttr(sg.title)}" /></label>
-    <div class="flab"><span class="gp-lab">scheme</span>
-      <div class="gp-schemes">${SCHEMES.map((s, i) => `<button class="gp-scheme" data-i="${i}" title="${s.name}" style="background:${s.titleBg || s.bg};border-color:${s.outline === "#2c313c" ? "#4a515f" : s.outline}"></button>`).join("")}</div></div>
-    <label class="flab"><span class="gp-lab">outline</span>
-      <select class="gp-style">${["solid", "dashed", "dotted", "none"].map((s) => `<option value="${s}" ${sg.outline.style === s ? "selected" : ""}>${s}</option>`).join("")}</select>
-      <input type="color" class="gp-ocolor" value="${hex6(sg.outline.color)}" title="outline color" /></label>
-    <label class="flab"><span class="gp-lab">background</span>
-      <input type="range" class="gp-bga" min="0" max="100" value="${alphaPct(sg.bg)}" title="fill opacity" />
-      <input type="color" class="gp-bg" value="${hex6(sg.bg)}" title="fill color" /></label>
-    <label class="flab"><span class="gp-lab">label</span>
-      <input type="color" class="gp-tcolor" value="${hex6(sg.titleColor || "#aab4d8")}" title="label color" /></label>
-    <button class="gp-disband danger">disband super group</button>`;
+    pop.append(
+        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "title"),
+            h("input", { class: "gp-title", value: sg.title })),
+        h("div", { class: "flab" }, h("span", { class: "gp-lab" }, "scheme"),
+            h("div", { class: "gp-schemes" },
+                SCHEMES.map((s, i) => h("button", { class: "gp-scheme", dataset: { i }, title: s.name,
+                    style: `background:${s.titleBg || s.bg};border-color:${s.outline === "#2c313c" ? "#4a515f" : s.outline}` })))),
+        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "outline"),
+            h("select", { class: "gp-style" },
+                ["solid", "dashed", "dotted", "none"].map((s) =>
+                    h("option", { value: s, selected: sg.outline.style === s }, s))),
+            h("input", { type: "color", class: "gp-ocolor", value: hex6(sg.outline.color), title: "outline color" })),
+        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "background"),
+            h("input", { type: "range", class: "gp-bga", min: "0", max: "100", value: alphaPct(sg.bg), title: "fill opacity" }),
+            h("input", { type: "color", class: "gp-bg", value: hex6(sg.bg), title: "fill color" })),
+        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "label"),
+            h("input", { type: "color", class: "gp-tcolor", value: hex6(sg.titleColor || "#aab4d8"), title: "label color" })),
+        h("button", { class: "gp-disband danger" }, "disband super group"));
     pop.style.left = `${ev.clientX}px`; pop.style.top = `${ev.clientY + 8}px`;
     document.body.appendChild(pop);
     const M = 8, r = pop.getBoundingClientRect();
@@ -702,7 +710,6 @@ function toggleSuperPopover(sid, ev) {
 
 // ---- color helpers (store as #rrggbb + 2-hex alpha so <input type=color> round-trips) ----
 
-function escAttr(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 function hex6(c) { const m = /^#([0-9a-f]{6})/i.exec(c || ""); return m ? `#${m[1]}` : "#5aa9e6"; }
 // opacity % for the slider: an 8-digit colour carries it in its alpha byte; a 6-digit
 // (opaque) colour — every scheme/default is opaque now — is full opacity (100).
@@ -918,7 +925,7 @@ function buildSubEl(sg) {
     const cog = document.createElement("button");
     cog.className = "subgroup-cog";
     cog.title = "subgroup settings"; cog.setAttribute("aria-label", "subgroup settings");
-    cog.innerHTML = COG_SVG;
+    cog.append(COG(15));
     cog.addEventListener("mousedown", (ev) => ev.stopPropagation());
     cog.addEventListener("click", (ev) => { ev.stopPropagation(); toggleSubPopover(sg.id, ev); });
     el.appendChild(cog);
@@ -929,7 +936,7 @@ function buildSubTitleEl(sg) {
     const tel = document.createElement("div");
     tel.className = "ggroup-title subgroup-title";   // reuse the group title look
     tel.dataset.subid = sg.id;
-    tel.innerHTML = `<span class="ggt-label"></span>`;
+    tel.append(h("span", { class: "ggt-label" }));
     tel.addEventListener("mousedown", (ev) => onSubPress(sg.id, ev));
     return tel;
 }

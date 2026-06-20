@@ -9,6 +9,7 @@ import { persist } from "../persist.js";
 import { $, model } from "../state.js";
 import { liveAgo, stopAgo } from "../../ago.js";
 import { drawChart } from "../../pretty/chart_draw.js";
+import { h } from "../../dom.js";
 
 const statsState = { visible: false, x: null, y: null, w: null, h: null };
 let statsWin = null;
@@ -47,7 +48,8 @@ function buildStats() {
         onResize: () => { for (const r of statsRows.values()) if (r.expanded && r.loaded) renderChart(r); },
         onPersist: () => persist.layout(),
     });
-    statsWin.body.innerHTML = `<div class="st-panel"><div class="st-list"></div></div>`;
+    statsWin.body.replaceChildren(
+        h("div", { class: "st-panel" }, h("div", { class: "st-list" })));
     statsEmpty = document.createElement("div");
     statsEmpty.className = "st-empty"; statsEmpty.textContent = "no timing yet";
     statsSpin = document.createElement("div");
@@ -256,7 +258,7 @@ function loadHistory(r, silent = false) {
     const game = model.profile.name;
     if (!game) return;
     r.loaded = true;
-    if (!silent) r.chart.innerHTML = `<div class="pw-chart-empty">loading…</div>`;
+    if (!silent) r.chart.replaceChildren(h("div", { class: "pw-chart-empty" }, "loading…"));
     const url = `/api/stats/${encodeURIComponent(game)}/node/${encodeURIComponent(r.node)}/history?op=${encodeURIComponent(r.op)}`;
     fetch(url).then((res) => res.json()).then((d) => {
         // samples are [ts, ms, n] in time order; the chart's x is SAMPLE ORDER, not the
@@ -271,7 +273,7 @@ function loadHistory(r, silent = false) {
         r._chartSig = sig;
         renderChart(r);
         statsWin?.fitHeight();
-    }).catch(() => { r.chart.innerHTML = `<div class="pw-chart-empty">failed</div>`; });
+    }).catch(() => { r.chart.replaceChildren(h("div", { class: "pw-chart-empty" }, "failed")); });
 }
 
 // (re)draw a row's history chart from its cached samples — the SVG is sized to its host, so

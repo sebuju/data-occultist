@@ -5,6 +5,7 @@ import * as api from "../../api.js";
 import * as conn from "../../conn.js";
 import { log, timed } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
+import { h } from "../../dom.js";
 import { persist } from "../persist.js";
 import { $, model } from "../state.js";
 
@@ -64,30 +65,31 @@ function buildTesting() {
         onHide: () => { $("testingBtn")?.classList.toggle("active", false); testStopPlay(); },
         onPersist: () => persist.layout(),
     });
-    testWin.body.innerHTML = `<div class="test-panel">
-    <input type="file" class="test-file" accept="video/*" />
-    <div class="test-name">no video loaded</div>
-    <div class="test-bar">
-      <button class="test-ctl test-back" title="step back one frame">◀</button>
-      <button class="test-ctl test-play" title="play / pause">▶ play</button>
-      <button class="test-ctl test-fwd" title="step forward one frame">▶</button>
-    </div>
-    <input type="range" class="test-ctl test-seek" min="0" max="0" value="0" />
-    <div class="test-frame">– / –</div>
-    <label class="test-feed"><input type="checkbox" class="test-ctl test-feed-cb" /> feed live mode from video</label>
-    <div class="test-hint">enable feed, open a window, then turn on <b>live</b> to OCR each frame.</div>
-    <div class="test-sep"></div>
-    <div class="test-cap">
-      <div class="test-cap-head">capture rate
-        <select class="test-cap-be" title="capture backend to measure"></select>
-        <button class="test-cap-run">measure</button>
-      </div>
-      <div class="test-cap-out">– not measured –</div>
-      <div class="test-hint"><b>grabs/s</b> = how fast capture returns. <b>frames/s</b> = real new frames
-        (WGC is capped at the monitor refresh; a static screen yields ~0). PrintWindow forces a game
-        re-render per grab — WGC does not.</div>
-    </div>
-  </div>`;
+    testWin.body.replaceChildren(
+        h("div", { class: "test-panel" },
+            h("input", { type: "file", class: "test-file", accept: "video/*" }),
+            h("div", { class: "test-name" }, "no video loaded"),
+            h("div", { class: "test-bar" },
+                h("button", { class: "test-ctl test-back", title: "step back one frame" }, "◀"),
+                h("button", { class: "test-ctl test-play", title: "play / pause" }, "▶ play"),
+                h("button", { class: "test-ctl test-fwd", title: "step forward one frame" }, "▶"),
+            ),
+            h("input", { type: "range", class: "test-ctl test-seek", min: "0", max: "0", value: "0" }),
+            h("div", { class: "test-frame" }, "– / –"),
+            h("label", { class: "test-feed" },
+                h("input", { type: "checkbox", class: "test-ctl test-feed-cb" }), " feed live mode from video"),
+            h("div", { class: "test-hint" }, "enable feed, open a window, then turn on ", h("b", "live"), " to OCR each frame."),
+            h("div", { class: "test-sep" }),
+            h("div", { class: "test-cap" },
+                h("div", { class: "test-cap-head" }, "capture rate",
+                    h("select", { class: "test-cap-be", title: "capture backend to measure" }),
+                    h("button", { class: "test-cap-run" }, "measure"),
+                ),
+                h("div", { class: "test-cap-out" }, "– not measured –"),
+                h("div", { class: "test-hint" }, h("b", "grabs/s"), " = how fast capture returns. ", h("b", "frames/s"),
+                    " = real new frames (WGC is capped at the monitor refresh; a static screen yields ~0). PrintWindow forces a game re-render per grab — WGC does not."),
+            ),
+        ));
     const b = testWin.body;
     b.querySelector(".test-file").addEventListener("change", async (ev) => {
         const f = ev.target.files?.[0];
@@ -126,7 +128,7 @@ function buildTesting() {
 // Capture-rate tester (lives in the testing panel). Populates the backend dropdown
 // once from /api/bench/backends (so wgc only shows when windows-capture is installed),
 // then "measure" runs a short server-side grab benchmark and prints the rate. All
-// click-driven — no poll — so a plain innerHTML write of the small result is fine.
+// click-driven — no poll — so a one-shot rebuild of the small result is fine.
 let benchBackendsLoaded = false;
 function wireCaptureBench(b) {
     const sel = b.querySelector(".test-cap-be");
@@ -155,10 +157,14 @@ function wireCaptureBench(b) {
             const r = await api.bench.run(game, sel.value, 3);
             const cap = r.captured ? `${r.captured[0]}×${r.captured[1]}` : "?";
             const fps = r.frames_per_s == null
-                ? `frames/s = grabs/s (fresh frame per grab)`
-                : `frames/s = <b>${r.frames_per_s}</b> (${r.frames} distinct${r.frames_per_s < 1 ? " — static screen" : ""})`;
-            out.innerHTML = `<b>${r.backend}</b> @ ${cap}<br>`
-                + `grabs/s = <b>${r.grabs_per_s}</b> (${r.ms_per_grab} ms/grab)<br>${fps}`;
+                ? ["frames/s = grabs/s (fresh frame per grab)"]
+                : ["frames/s = ", h("b", String(r.frames_per_s)),
+                    ` (${r.frames} distinct${r.frames_per_s < 1 ? " — static screen" : ""})`];
+            out.replaceChildren(
+                h("b", String(r.backend)), ` @ ${cap}`, h("br"),
+                "grabs/s = ", h("b", String(r.grabs_per_s)), ` (${r.ms_per_grab} ms/grab)`, h("br"),
+                ...fps,
+            );
             done();
         } catch (e) { out.textContent = String(e.message || e); done(String(e.message || e), "err"); }
         finally { run.disabled = false; }

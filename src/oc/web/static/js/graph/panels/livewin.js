@@ -11,6 +11,7 @@ import { pc, pcState, precapOpen, precapBusy, fmtBytes } from "./precap.js";
 import { prevHost, refreshDetect, refreshPreview } from "../imaging.js";
 import { refreshLive } from "../main.js";
 import { panZoomTo } from "../camera.js";
+import { h, svg } from "../../dom.js";
 
 let timer = null;
 // live floating panel state — declared BEFORE buildLiveWindow() runs at module-eval
@@ -67,24 +68,26 @@ function mountLive(adapter) {
     A = adapter;
     if (!liveRoot) {
         liveRoot = document.createElement("div"); liveRoot.className = "live-root";
-        liveRoot.innerHTML = `
-      <div class="live-row">
-        <label class="live-toggle"><button class="act-enable live-switch" role="switch" aria-checked="false" title="enable / disable live mode">
-            <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
-              <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
-              <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
-          </button><span class="live-switch-lbl">live mode</span></label>
-        <span class="live-stats muted"></span>
-      </div>
-      <div class="live-row">
-        <label class="live-toggle"><button class="act-enable live-save" role="switch" aria-checked="true" title="save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)">
-            <svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
-              <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
-              <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>
-          </button><span class="live-save-lbl">save to datasets</span></label>
-      </div>
-      <div class="live-wins"></div>
-      <div class="live-row live-imgs"><span class="live-imgstat muted">&nbsp;</span><button class="live-clear" data-armed="0" title="delete every saved live image">clear</button></div>`;
+        const switchSvg = () =>
+            svg("svg", { viewBox: "0 0 28 16", width: "28", height: "16", "aria-hidden": "true" },
+                svg("rect", { class: "gt-track", x: "1", y: "1", width: "26", height: "14", rx: "7" }),
+                svg("circle", { class: "gt-thumb", cx: "8", cy: "8", r: "5" }));
+        liveRoot.replaceChildren(
+            h("div", { class: "live-row" },
+                h("label", { class: "live-toggle" },
+                    h("button", { class: "act-enable live-switch", role: "switch", "aria-checked": "false", title: "enable / disable live mode" },
+                        switchSvg()),
+                    h("span", { class: "live-switch-lbl" }, "live mode")),
+                h("span", { class: "live-stats muted" })),
+            h("div", { class: "live-row" },
+                h("label", { class: "live-toggle" },
+                    h("button", { class: "act-enable live-save", role: "switch", "aria-checked": "true", title: "save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)" },
+                        switchSvg()),
+                    h("span", { class: "live-save-lbl" }, "save to datasets"))),
+            h("div", { class: "live-wins" }),
+            h("div", { class: "live-row live-imgs" },
+                h("span", { class: "live-imgstat muted" }, " "),
+                h("button", { class: "live-clear", dataset: { armed: "0" }, title: "delete every saved live image" }, "clear")));
         liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
         // click a window row -> navigate to its window node on the graph (no-op in pretty)
         liveRoot.querySelector(".live-wins").addEventListener("click", (ev) => {

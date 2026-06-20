@@ -2,7 +2,7 @@
 // view-row drill-downs, and the per-node batches ledger (list + detail/preview).
 // Extracted from main.js verbatim.
 import * as api from "../../api.js";
-import { esc } from "../../dom.js";
+import { h, frag } from "../../dom.js";
 import { openModal } from "../../modal.js";
 import { VTable } from "../../vtable.js";
 import { singleFlight } from "../../singleflight.js";
@@ -27,13 +27,26 @@ function vtableFor(key, host) {
     let vt = vtables.get(key);
     if (vt && vt.host === host) return vt;
     if (vt) vt.destroy();
-    host.innerHTML = "";
+    host.replaceChildren();
     vt = new VTable(host, key);
     vtables.set(key, vt);
     return vt;
 }
 
 const VT_META = ["present", "first_seen", "last_seen", "key", "_count"];   // not shown as columns
+
+// A `<p class="muted">` message node (error / empty / loading). `pad` adds the 8px inset some
+// hosts want. The ONE muted-message factory so these never drift.
+const mutedP = (msg, pad = false) => h("p", { class: "muted", style: pad ? "padding:8px" : null }, msg);
+
+// A read-only data table: <table class="grid-table zebra ...">. `cols` = header cells; each
+// `rows` entry is rendered as one <tr> of <td> cells via `cell(row, col)` (defaults to the
+// value at that column, "" for null). `extra` appends to the class list.
+function dataTable(cols, rows, extra = "vt-detail-tbl", cell = (r, c) => (r[c] == null ? "" : String(r[c]))) {
+    return h("table", { class: `grid-table zebra ${extra}` },
+        h("thead", h("tr", cols.map((c) => h("th", String(c))))),
+        h("tbody", rows.map((r) => h("tr", cols.map((c) => h("td", cell(r, c)))))));
+}
 
 // Show a count badge on the vt-table satellite's tab (data → item count, batches → batch count).
 // The tabs + badges live ABOVE the table on the satellite now.
@@ -64,7 +77,7 @@ async function _refreshDataNode(ds) {
         });
         vt.setBatchCount(batchN);                   // line + batch tally in the table's search bar
         setTabCount(ds, ".data-n", recs.length);   // item count on the data tab
-    } catch (e) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
+    } catch (e) { vtables.delete(`ds:${ds}`); host.replaceChildren(mutedP(String(e), true)); }
 }
 
 // Inline drill-down: a dataset record aggregates "many" observations under its key — fetch
@@ -73,28 +86,24 @@ async function expandObservations(ds, row) {
     const node = document.createElement("div");
     node.className = "vt-detail-inner";
     const key = row && row.key;
-    if (!key) { node.innerHTML = `<p class="muted">no key</p>`; return node; }
+    if (!key) { node.replaceChildren(mutedP("no key")); return node; }
     try {
         const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}/observations?key=${encodeURIComponent(key)}`);
         const obs = (await r.json()).observations || [];
         const cols = [...new Set(obs.flatMap((o) => Object.keys(o)))];
-        const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
-        const rows = obs.map((o) => `<tr>${cols.map((c) => `<td>${esc(o[c] == null ? "" : String(o[c]))}</td>`).join("")}</tr>`).join("");
-        node.innerHTML = `<div class="vt-detail-lbl">${obs.length} observation${obs.length === 1 ? "" : "s"} · ${esc(key)}</div>
-      <table class="grid-table zebra vt-detail-tbl"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
-    } catch (e) { node.innerHTML = `<p class="muted">${esc(String(e.message || e))}</p>`; }
+        node.replaceChildren(
+            h("div", { class: "vt-detail-lbl" }, `${obs.length} observation${obs.length === 1 ? "" : "s"} · ${key}`),
+            dataTable(cols, obs));
+    } catch (e) { node.replaceChildren(mutedP(String(e.message || e))); }
     return node;
 }
 
-// One source block in a view-row drill-down: a labelled table of `rows` (label is already
-// escaped). Columns = union of keys minus the store's bookkeeping fields.
+// One source block in a view-row drill-down: a labelled table of `rows`. Returns a DocumentFragment
+// (header + table). Columns = union of keys minus the store's bookkeeping fields.
 function srcBlock(label, rows) {
-    if (!rows.length) return `<div class="vt-src-h muted">${label} — no rows</div>`;
+    if (!rows.length) return h("div", { class: "vt-src-h muted" }, `${label} — no rows`);
     const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((c) => !VT_META.includes(c));
-    const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
-    const body = rows.map((r) => `<tr>${cols.map((c) => `<td>${esc(r[c] == null ? "" : String(r[c]))}</td>`).join("")}</tr>`).join("");
-    return `<div class="vt-src-h">${label}</div>
-    <table class="grid-table zebra vt-detail-tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    return frag(h("div", { class: "vt-src-h" }, label), dataTable(cols, rows));
 }
 
 // Inline drill-down for a VIEW row: per joined input, the RAW observations (the 'many' that
@@ -107,7 +116,7 @@ async function expandSubsetRow(sid, row) {
     const s = model.subsetDef(sid);
     const jf = (s && s.join_field) || "name";
     const jv = String(row[jf] ?? "").trim().toLowerCase();
-    if (!jv) { node.innerHTML = `<p class="muted">no <code>${esc(jf)}</code> value to trace</p>`; return node; }
+    if (!jv) { node.replaceChildren(h("p", { class: "muted" }, "no ", h("code", jf), " value to trace")); return node; }
     const inputs = model.subsetInputs(s);
     const game = encodeURIComponent(model.profile.name);
     const matchJv = (r) => String(r[jf] ?? "").trim().toLowerCase() === jv;
@@ -116,12 +125,12 @@ async function expandSubsetRow(sid, row) {
         try {
             if (isView) {   // views have no observations — show the matching computed row(s)
                 const data = await (await fetch(`/api/flow/${game}/subset/${encodeURIComponent(inp)}`)).json();
-                return srcBlock(`${esc(inp)} (view)`, (data.rows || []).filter(matchJv));
+                return srcBlock(`${inp} (view)`, (data.rows || []).filter(matchJv));
             }
             // dataset: find the matching record(s), then drill each one's observations (the 'many')
             const data = await (await fetch(`/api/flow/${game}/dataset/${encodeURIComponent(inp)}`)).json();
             const match = (data.records || []).filter(matchJv);
-            if (!match.length) return `<div class="vt-src-h muted">${esc(inp)} — no matching record</div>`;
+            if (!match.length) return h("div", { class: "vt-src-h muted" }, `${inp} — no matching record`);
             const obs = [];
             for (const rec of match) {
                 if (rec.key == null) continue;
@@ -129,10 +138,10 @@ async function expandSubsetRow(sid, row) {
                 obs.push(...(od.observations || []));
             }
             const seen = obs.length ? obs : match;   // fall back to the record itself if it has no key
-            return srcBlock(`${esc(inp)} · ${obs.length} observation${obs.length === 1 ? "" : "s"}`, seen);
-        } catch (e) { return `<div class="vt-src-h muted">${esc(inp)} — ${esc(String(e.message || e))}</div>`; }
+            return srcBlock(`${inp} · ${obs.length} observation${obs.length === 1 ? "" : "s"}`, seen);
+        } catch (e) { return h("div", { class: "vt-src-h muted" }, `${inp} — ${String(e.message || e)}`); }
     }));
-    node.innerHTML = blocks.join("") || `<p class="muted">no sources</p>`;
+    node.replaceChildren(...(blocks.length ? blocks : [mutedP("no sources")]));
     return node;
 }
 
@@ -148,7 +157,7 @@ async function showRecordMany(ds, key, count) {
         const obs = (await r.json()).observations || [];
         const cols = [...new Set(obs.flatMap((o) => Object.keys(o)))];
         new VTable(node).setData(cols, obs);
-    } catch (e) { node.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; }
+    } catch (e) { node.replaceChildren(mutedP(String(e), true)); }
 }
 
 // ---- batches node (ledger + per-batch contents/preview, embedded in the node) ----
@@ -174,7 +183,7 @@ async function loadBatchesNode(ds) {
         const batches = (await r.json()).batches || [];
         renderBatchesList(ds, batches);
         setTabCount(ds, ".bat-n", batches.filter((b) => !b.reverted).length);   // applied batch count (reverted/unapplied excluded)
-    } catch (e) { els.list.innerHTML = `<li class="muted">${esc(String(e))}</li>`; }
+    } catch (e) { els.list.replaceChildren(h("li", { class: "muted" }, String(e))); }
 }
 
 // refresh every batches host that currently exists (i.e. whose vt-table satellite is shown)
@@ -182,47 +191,95 @@ function refreshAllBatchesNodes() {
     for (const ds of model.datasets()) if (nodeEls.has(`vt:ds:${ds}`)) loadBatchesNode(ds);
 }
 
+// Per-batch display string for the .batmeta line ("+2 ~1 −3 · 7 · a, b, c …").
+function batMeta(b) {
+    const parts = [b.adds ? `+${b.adds}` : "", b.updates ? `~${b.updates}` : "", b.removes ? `−${b.removes}` : ""].filter(Boolean).join(" ");
+    const keys = (b.keys || []).slice(0, 4).join(", ") + (b.count > 4 ? " …" : "");
+    return `${parts} · ${b.count} · ${keys}`;
+}
+
+// Build one <li class="batrow"> ONCE, wiring its row/checkbox/remove handlers at build time
+// (so the reconcile never re-binds). Returned alongside the mutable refs the reconcile updates.
+function buildBatchRow(ds, b) {
+    const st = batState(ds);
+    const time = h("span", { class: "muted" }, clockTime(b.ts));
+    const num = h("b", `#${b.batch}`);
+    const meta = h("span", { class: "muted batmeta", title: batMeta(b) }, batMeta(b));
+    const toggle = h("input", {
+        type: "checkbox", class: "led-toggle", dataset: { batch: b.batch }, checked: !b.reverted,
+        onChange: async () => {
+            toggle.disabled = true;
+            try {
+                await api.revertDatasetBatch(model.profile.name, ds, +toggle.dataset.batch, !toggle.checked);
+                refreshLive(); refreshDataNode(ds); loadBatchesNode(ds); refreshDatasetConsumers(ds);   // views reading ds are stale (a revert doesn't bump last_ts)
+            } catch (e) { toggle.disabled = false; toggle.checked = !toggle.checked; setStatus(String(e.message || e)); }
+        },
+    });
+    const app = h("label", { class: "led-apply", title: "apply this batch to the dataset (uncheck to revert it)" }, toggle, " applied");
+    const rm = h("button", {
+        class: "led-remove danger", dataset: { batch: b.batch }, title: "permanently delete this batch from the ledger",
+        onClick: async () => {
+            if (rm.dataset.armed !== "1") { rm.dataset.armed = "1"; rm.textContent = "sure?"; setTimeout(() => { rm.dataset.armed = "0"; rm.textContent = "remove"; }, 2500); return; }
+            rm.disabled = true; rm.classList.add("reading");   // spinner while the ledger deletes + nodes refresh
+            try {
+                if (st.sel === +rm.dataset.batch) { st.sel = null; batEls(ds)?.detail.replaceChildren(); }
+                await api.removeDatasetBatch(model.profile.name, ds, +rm.dataset.batch);
+                refreshLive(); refreshDataNode(ds); loadBatchesNode(ds); refreshDatasetConsumers(ds);   // views reading ds are stale (loadBatchesNode re-renders this list — button gone)
+            } catch (e) { rm.disabled = false; rm.classList.remove("reading"); setStatus(String(e.message || e)); }
+        },
+    }, "remove");
+    const li = h("li", {
+        class: `batrow ${b.reverted ? "reverted" : ""}${st.sel === b.batch ? " sel" : ""}`, dataset: { batch: b.batch },
+        // toggle detail on row click (but not when hitting the checkbox/remove): a second click on
+        // the open row closes its detail.
+        onClick: (ev) => {
+            if (ev.target.closest(".led-apply,.led-remove")) return;
+            const cur = batEls(ds); if (!cur) return;
+            const bn = +li.dataset.batch;
+            if (st.sel === bn) { st.sel = null; cur.detail.replaceChildren(); li.classList.remove("sel"); }
+            else selectBatch(ds, bn);
+        },
+    }, time, " ", num, " ", meta, " ", app, " ", rm);
+    return { li, meta, toggle, reverted: b.reverted, sel: st.sel === b.batch };
+}
+
+// In-place keyed reconcile (CLAUDE.md rule 1; canonical: renderActivity in activity.js). Steady
+// state mutates the DOM zero times. Rows live in `els.list._rows` (Map<batch, {li, meta, toggle,…}>).
 function renderBatchesList(ds, batches) {
     const els = batEls(ds);
     if (!els) return;
     const st = batState(ds);
+    const list = els.list;
     els.list.parentElement?.classList.toggle("bat-empty", !batches.length);   // drop the box framing when empty
-    if (!batches.length) { els.list.innerHTML = '<li class="muted">no batches yet</li>'; els.detail.innerHTML = ""; st.sel = null; return; }
-    els.list.innerHTML = batches.map((b) => {
-        const parts = [b.adds ? `+${b.adds}` : "", b.updates ? `~${b.updates}` : "", b.removes ? `−${b.removes}` : ""].filter(Boolean).join(" ");
-        const keys = (b.keys || []).slice(0, 4).join(", ") + (b.count > 4 ? " …" : "");
-        const app = `<label class="led-apply" title="apply this batch to the dataset (uncheck to revert it)"><input type="checkbox" class="led-toggle" data-batch="${b.batch}"${b.reverted ? "" : " checked"}> applied</label>`;
-        const rm = `<button class="led-remove danger" data-batch="${b.batch}" title="permanently delete this batch from the ledger">remove</button>`;
-        return `<li class="batrow ${b.reverted ? "reverted" : ""}${st.sel === b.batch ? " sel" : ""}" data-batch="${b.batch}">
-      <span class="muted">${esc(clockTime(b.ts))}</span> <b>#${b.batch}</b>
-      <span class="muted batmeta" title="${parts} · ${b.count} · ${esc(keys)}">${parts} · ${b.count} · ${esc(keys)}</span> ${app} ${rm}</li>`;
-    }).join("");
-    // toggle detail on row click (but not when hitting the checkbox/remove): a second click on
-    // the open row closes its detail.
-    els.list.querySelectorAll(".batrow").forEach((li) => li.addEventListener("click", (ev) => {
-        if (ev.target.closest(".led-apply,.led-remove")) return;
-        const b = +li.dataset.batch;
-        if (st.sel === b) { st.sel = null; els.detail.innerHTML = ""; li.classList.remove("sel"); }
-        else selectBatch(ds, b);
-    }));
-    els.list.querySelectorAll(".led-toggle").forEach((cb) => cb.addEventListener("change", async () => {
-        cb.disabled = true;
-        try {
-            await api.revertDatasetBatch(model.profile.name, ds, +cb.dataset.batch, !cb.checked);
-            refreshLive(); refreshDataNode(ds); loadBatchesNode(ds); refreshDatasetConsumers(ds);   // views reading ds are stale (a revert doesn't bump last_ts)
-        } catch (e) { cb.disabled = false; cb.checked = !cb.checked; setStatus(String(e.message || e)); }
-    }));
-    els.list.querySelectorAll(".led-remove").forEach((b) => b.addEventListener("click", async () => {
-        if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "sure?"; setTimeout(() => { b.dataset.armed = "0"; b.textContent = "remove"; }, 2500); return; }
-        b.disabled = true; b.classList.add("reading");   // spinner while the ledger deletes + nodes refresh
-        try {
-            if (st.sel === +b.dataset.batch) { st.sel = null; els.detail.innerHTML = ""; }
-            await api.removeDatasetBatch(model.profile.name, ds, +b.dataset.batch);
-            refreshLive(); refreshDataNode(ds); loadBatchesNode(ds); refreshDatasetConsumers(ds);   // views reading ds are stale (loadBatchesNode re-renders this list — button gone)
-        } catch (e) { b.disabled = false; b.classList.remove("reading"); setStatus(String(e.message || e)); }
-    }));
+    if (!list._rows) list._rows = new Map();
+    const rows = list._rows;
+    if (!batches.length) {
+        rows.clear();
+        list.replaceChildren(h("li", { class: "muted" }, "no batches yet"));
+        list._empty = true;
+        els.detail.replaceChildren(); st.sel = null; return;
+    }
+    if (list._empty) { list.replaceChildren(); list._empty = false; }   // clear the placeholder once
+    const want = new Set(batches.map((b) => b.batch));
+    for (const [k, r] of rows) if (!want.has(k)) { r.li.remove(); rows.delete(k); }
+    let i = 0;
+    for (const b of batches) {
+        let r = rows.get(b.batch);
+        if (!r) { r = buildBatchRow(ds, b); rows.set(b.batch, r); }
+        // place at slot i ONLY if it isn't already there — no needless detach/reattach.
+        const at = list.children[i];
+        if (at !== r.li) list.insertBefore(r.li, at || null);
+        i++;
+        // update changed text + classes ONLY when changed.
+        const meta = batMeta(b);
+        if (r.meta.textContent !== meta) { r.meta.textContent = meta; r.meta.title = meta; }
+        if (r.toggle.disabled) r.toggle.disabled = false;   // authoritative refetch clears a mid-flight toggle's busy state
+        if (r.reverted !== b.reverted) { r.li.classList.toggle("reverted", b.reverted); r.toggle.checked = !b.reverted; r.reverted = b.reverted; }
+        const sel = st.sel === b.batch;
+        if (r.sel !== sel) { r.li.classList.toggle("sel", sel); r.sel = sel; }
+    }
     if (st.sel != null && batches.some((b) => b.batch === st.sel)) selectBatch(ds, st.sel);
-    else if (st.sel != null) { st.sel = null; els.detail.innerHTML = ""; }
+    else if (st.sel != null) { st.sel = null; els.detail.replaceChildren(); }
 }
 
 async function selectBatch(ds, batch) {
@@ -231,10 +288,12 @@ async function selectBatch(ds, batch) {
     const st = batState(ds);
     st.sel = batch;
     els.list.querySelectorAll(".batrow").forEach((li) => li.classList.toggle("sel", +li.dataset.batch === batch));
-    els.detail.innerHTML = '<p class="muted">loading…</p>';
+    // keep the keyed-row cache in sync so the next reconcile doesn't re-toggle `sel`.
+    if (els.list._rows) for (const [k, r] of els.list._rows) r.sel = (k === batch);
+    els.detail.replaceChildren(mutedP("loading…"));
     try {
         renderBatchDetail(ds, await api.batchDetail(model.profile.name, ds, batch));
-    } catch (e) { els.detail.innerHTML = `<p class="muted">${esc(String(e))}</p>`; }
+    } catch (e) { els.detail.replaceChildren(mutedP(String(e))); }
 }
 
 function renderBatchDetail(ds, bd) {
@@ -244,22 +303,26 @@ function renderBatchDetail(ds, bd) {
     const preview = bd.preview || [];
 
     // preview — what applying this batch changes in the dataset (read-only diff table)
-    const pvRows = preview.map((p) => {
-        if (p.kind === "add") return `<tr class="pv-add"><td>add</td><td>${esc(p.key)}</td><td>${esc(fmtVals(p.after))}</td></tr>`;
-        if (p.kind === "remove") return `<tr class="pv-remove"><td>remove</td><td>${esc(p.key)}</td><td>${esc(fmtVals(p.before))}</td></tr>`;
-        const diff = Object.entries(p.changed || {}).map(([f, [o, nv]]) => `${esc(f)}: ${esc(o ?? "∅")} → ${esc(nv ?? "∅")}`).join("; ");
-        return `<tr class="pv-update"><td>update</td><td>${esc(p.key)}</td><td>${diff}</td></tr>`;
-    }).join("");
+    const pvRow = (p) => {
+        if (p.kind === "add") return h("tr", { class: "pv-add" }, h("td", "add"), h("td", p.key), h("td", fmtVals(p.after)));
+        if (p.kind === "remove") return h("tr", { class: "pv-remove" }, h("td", "remove"), h("td", p.key), h("td", fmtVals(p.before)));
+        const diff = Object.entries(p.changed || {}).map(([f, [o, nv]]) => `${f}: ${o ?? "∅"} → ${nv ?? "∅"}`).join("; ");
+        return h("tr", { class: "pv-update" }, h("td", "update"), h("td", p.key), h("td", diff));
+    };
     const pvTable = preview.length
-        ? `<table class="grid-table zebra pv-table"><thead><tr><th>change</th><th>key</th><th>detail</th></tr></thead><tbody>${pvRows}</tbody></table>`
-        : '<p class="muted">applying this batch changes nothing</p>';
+        ? h("table", { class: "grid-table zebra pv-table" },
+            h("thead", h("tr", h("th", "change"), h("th", "key"), h("th", "detail"))),
+            h("tbody", preview.map(pvRow)))
+        : mutedP("applying this batch changes nothing");
 
     // event contents — read-only VTable (search/sort/resize), no editing
-    els.detail.innerHTML = `<h4 class="ds-h">Batch #${bd.batch} · ${events.length} events</h4>
-    <div class="bat-ev-host"></div>
-    <h4 class="ds-h">Applying this batch would…</h4>${pvTable}`;
-    const evHost = els.detail.querySelector(".bat-ev-host");
-    if (!events.length) { evHost.innerHTML = '<p class="muted" style="padding:8px">no events</p>'; return; }
+    const evHost = h("div", { class: "bat-ev-host" });
+    els.detail.replaceChildren(
+        h("h4", { class: "ds-h" }, `Batch #${bd.batch} · ${events.length} events`),
+        evHost,
+        h("h4", { class: "ds-h" }, "Applying this batch would…"),
+        pvTable);
+    if (!events.length) { evHost.replaceChildren(mutedP("no events", true)); return; }
     const cols = ["id", "op", ...new Set(events.flatMap((e) => Object.keys(e.values || {})))];
     const rows = events.map((e) => ({ id: e.id, op: e.op, reverted: e.reverted, ...(e.values || {}) }));
     vtableFor(`bat:${ds}`, evHost).setData(cols, rows, { rowClass: (row) => (row.reverted ? "reverted" : "") });
@@ -293,7 +356,7 @@ async function _refreshDatasetNode(ds) {
             renderBatchesList(ds, batches);
             setTabCount(ds, ".bat-n", batchN);
         }
-    } catch (e) { if (host) { vtables.delete(`ds:${ds}`); host.innerHTML = `<p class="muted" style="padding:8px">${esc(String(e))}</p>`; } }
+    } catch (e) { if (host) { vtables.delete(`ds:${ds}`); host.replaceChildren(mutedP(String(e), true)); } }
 }
 
 export {

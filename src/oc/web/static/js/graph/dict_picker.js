@@ -9,23 +9,20 @@
 
 import * as api from "../api.js";
 import { openModal } from "../modal.js";
-import { esc } from "../dom.js";
+import { h } from "../dom.js";
 
 export function openDictionaryPicker({ used = new Set(), onPick, onCreate } = {}) {
     const node = document.createElement("div");
     node.className = "dpk";
-    node.innerHTML = `
-    <div class="dpk-new">
-      <input class="dpk-name" placeholder="new dictionary name" autocomplete="off" spellcheck="false" />
-      <button class="dpk-create">create blank</button>
-    </div>
-    <div class="dpk-sub muted">or reference an existing word list</div>
-    <div class="dpk-list"><div class="muted dpk-pad">loading…</div></div>`;
+    const nameEl = h("input", { class: "dpk-name", placeholder: "new dictionary name", autocomplete: "off", spellcheck: false });
+    const createEl = h("button", { class: "dpk-create" }, "create blank");
+    const listEl = h("div", { class: "dpk-list" }, h("div", { class: "muted dpk-pad" }, "loading…"));
+    node.replaceChildren(
+        h("div", { class: "dpk-new" }, nameEl, createEl),
+        h("div", { class: "dpk-sub muted" }, "or reference an existing word list"),
+        listEl,
+    );
     const handle = openModal({ title: "add dictionary", size: "medium", node });
-
-    const listEl = node.querySelector(".dpk-list");
-    const nameEl = node.querySelector(".dpk-name");
-    const createEl = node.querySelector(".dpk-create");
 
     const create = () => {
         const name = nameEl.value.trim();
@@ -39,19 +36,24 @@ export function openDictionaryPicker({ used = new Set(), onPick, onCreate } = {}
 
     api.dictionaries.list().then((items) => {
         if (handle.signal.aborted) return;
-        if (!items.length) { listEl.innerHTML = `<div class="muted dpk-pad">no term files yet — create one above</div>`; return; }
-        listEl.innerHTML = items.map((it) => rowHtml(it, used.has(it.source))).join("");
-        listEl.querySelectorAll("[data-source]").forEach((el) =>
-            el.addEventListener("click", () => { handle.close(); onPick?.(el.dataset.source); }));
-    }).catch((e) => { listEl.innerHTML = `<div class="warn dpk-pad">${esc(String(e.message || e))}</div>`; });
+        if (!items.length) { listEl.replaceChildren(h("div", { class: "muted dpk-pad" }, "no term files yet — create one above")); return; }
+        listEl.replaceChildren(...items.map((it) => rowNode(it, used.has(it.source), handle, onPick)));
+    }).catch((e) => { listEl.replaceChildren(h("div", { class: "warn dpk-pad" }, String(e.message || e))); });
 
     return handle;
 }
 
-function rowHtml(it, inUse) {
+function rowNode(it, inUse, handle, onPick) {
     const n = it.count || 0;
-    return `<div class="dpk-row" data-source="${esc(it.source)}">
-    <span class="dpk-src">${esc(it.source)}</span>
-    <span class="dpk-meta muted">${n} word${n === 1 ? "" : "s"}${inUse ? ` · <span class="dpk-used">in use</span>` : ""}</span>
-  </div>`;
+    return h("div", {
+        class: "dpk-row", dataset: { source: it.source },
+        onClick: () => { handle.close(); onPick?.(it.source); },
+    },
+        h("span", { class: "dpk-src" }, it.source),
+        h("span", { class: "dpk-meta muted" },
+            `${n} word${n === 1 ? "" : "s"}`,
+            inUse ? " · " : null,
+            inUse ? h("span", { class: "dpk-used" }, "in use") : null,
+        ),
+    );
 }

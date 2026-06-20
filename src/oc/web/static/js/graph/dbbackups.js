@@ -6,7 +6,7 @@
 
 import * as api from "../api.js";
 import { openModal } from "../modal.js";
-import { esc } from "../dom.js";
+import { h } from "../dom.js";
 import { fmtDateTime, since } from "../datefmt.js";
 import { liveAgo } from "../ago.js";
 import { armedButton } from "./armbtn.js";
@@ -19,41 +19,38 @@ const fmtSize = (n) =>
 // goes away; `onRestored` fires after a successful restore (e.g. to refresh the DB panel).
 export function buildDbBackups(host, game, { onRestored = null, signal = null } = {}) {
     host.classList.add("dbbk");
-    host.innerHTML = `
-    <div class="dbbk-bar"><button class="dbbk-now">backup now</button><span class="dbbk-stat muted"></span></div>
-    <div class="backups">
-      <div class="bk-list"><div class="muted bk-pad">loading…</div></div>
-      <div class="bk-detail"><div class="muted bk-pad">select a backup to preview</div></div>
-    </div>`;
-    const listEl = host.querySelector(".bk-list");
-    const detailEl = host.querySelector(".bk-detail");
-    const statEl = host.querySelector(".dbbk-stat");
-    const nowBtn = host.querySelector(".dbbk-now");
+    const nowBtn = h("button", { class: "dbbk-now" }, "backup now");
+    const statEl = h("span", { class: "dbbk-stat muted" });
+    const listEl = h("div", { class: "bk-list" }, h("div", { class: "muted bk-pad" }, "loading…"));
+    const detailEl = h("div", { class: "bk-detail" }, h("div", { class: "muted bk-pad" }, "select a backup to preview"));
+    host.replaceChildren(
+        h("div", { class: "dbbk-bar" }, nowBtn, statEl),
+        h("div", { class: "backups" }, listEl, detailEl),
+    );
 
     const byStamp = new Map();   // stamp -> meta (the list carries everything the detail shows)
     let armedStamp = null;
 
-    function rowHtml(m) {
+    function rowNode(m) {
         const summ = `${m.datasets || 0} ds · ${m.events || 0} events`;
-        const tag = m.reason ? `<span class="bk-reason">${esc(m.reason)}</span>` : "";
-        return `<div class="bk-row" data-stamp="${esc(m.stamp)}">
-      <div class="bk-when" title="${esc(fmtDateTime(m.iso))}">${esc(since(m.iso))}${tag}</div>
-      <div class="bk-meta muted">${esc(fmtDateTime(m.iso))} · ${summ} · ${fmtSize(m.size)}</div>
-    </div>`;
+        return h("div", { class: "bk-row", dataset: { stamp: m.stamp } },
+            h("div", { class: "bk-when", title: fmtDateTime(m.iso) },
+                since(m.iso),
+                m.reason ? h("span", { class: "bk-reason" }, m.reason) : null),
+            h("div", { class: "bk-meta muted" }, `${fmtDateTime(m.iso)} · ${summ} · ${fmtSize(m.size)}`),
+        );
     }
 
     function renderList(items) {
         byStamp.clear();
         armedStamp = null;
         if (!items.length) {
-            listEl.innerHTML = `<div class="muted bk-pad">no backups yet</div>`;
+            listEl.replaceChildren(h("div", { class: "muted bk-pad" }, "no backups yet"));
             return;
         }
-        const tmp = document.createElement("div");
-        tmp.innerHTML = items.map(rowHtml).join("");
-        listEl.innerHTML = "";
-        [...tmp.children].forEach((row, i) => {
-            const m = items[i];
+        listEl.replaceChildren();
+        items.forEach((m) => {
+            const row = rowNode(m);
             byStamp.set(m.stamp, m);
             row.addEventListener("click", () => select(m.stamp, row));
             const when = row.querySelector(".bk-when");
@@ -68,7 +65,7 @@ export function buildDbBackups(host, game, { onRestored = null, signal = null } 
             if (signal?.aborted) return;
             renderList(res.items || []);
         } catch (e) {
-            listEl.innerHTML = `<div class="warn bk-pad">${esc(String(e.message || e))}</div>`;
+            listEl.replaceChildren(h("div", { class: "warn bk-pad" }, String(e.message || e)));
         }
     }
 
@@ -85,10 +82,14 @@ export function buildDbBackups(host, game, { onRestored = null, signal = null } 
             ["size", fmtSize(m.size)],
             ["taken", fmtDateTime(m.iso)],
         ];
-        detailEl.innerHTML = `
-      <div class="bk-info"><table class="bk-info-tbl"><tbody>${rows
-            .map(([k, v]) => `<tr><td class="muted">${k}</td><td>${esc(String(v))}</td></tr>`).join("")}</tbody></table></div>
-      <div class="bk-foot"></div>`;
+        const foot = h("div", { class: "bk-foot" });
+        detailEl.replaceChildren(
+            h("div", { class: "bk-info" },
+                h("table", { class: "bk-info-tbl" },
+                    h("tbody", ...rows.map(([k, v]) =>
+                        h("tr", h("td", { class: "muted" }, k), h("td", String(v))))))),
+            foot,
+        );
         const restore = armedButton({
             label: "restore this version", arm: "click again to restore", cls: "bk-restore",
             busy: "restoring…", title: "overwrite the live store with this snapshot",
@@ -99,7 +100,7 @@ export function buildDbBackups(host, game, { onRestored = null, signal = null } 
                 statEl.textContent = `restored ${since(m.iso)}`;
             },
         });
-        detailEl.querySelector(".bk-foot").append(restore);
+        foot.append(restore);
     }
 
     nowBtn.addEventListener("click", async () => {
@@ -125,7 +126,7 @@ export function buildDbBackups(host, game, { onRestored = null, signal = null } 
 // Standalone DB-backups modal — thin wrapper over buildDbBackups.
 export function openDbBackupsModal(game, onRestored) {
     const node = document.createElement("div");
-    const handle = openModal({ title: `database backups · ${esc(game)}`, size: "data", node });
+    const handle = openModal({ title: `database backups · ${game}`, size: "data", node });
     buildDbBackups(node, game, { onRestored, signal: handle.signal });
     return handle;
 }

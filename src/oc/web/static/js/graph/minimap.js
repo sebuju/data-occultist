@@ -5,6 +5,7 @@
 // router; this is an at-a-glance preview). Reuses the .nm-* CSS of the live minimap.
 
 import { GraphModel } from "./model.js";
+import { h, svg } from "../dom.js";
 
 const NM_COLOR = {
     game: "#7aa2f7", window: "#9ece6a", preview: "#56b6c2", region: "#e0af68",
@@ -12,8 +13,6 @@ const NM_COLOR = {
     subset: "#73daca", price: "#ff9e64", trigger: "#e0af68", dictionary: "#c98ae6",
 };
 const DEFAULT_W = 160, DEFAULT_H = 70;   // size for nodes whose layout didn't store one
-
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 function shortLabel(n) {
     if (n.type === "game") return n.ref?.name || "game";
@@ -39,7 +38,7 @@ export function renderMiniMap(container, profile) {
         return p && Number.isFinite(p.x) && Number.isFinite(p.y);
     });
     if (!placed.length) {
-        container.innerHTML = `<div class="nm-empty">no placed nodes in this backup</div>`;
+        container.replaceChildren(h("div", { class: "nm-empty" }, "no placed nodes in this backup"));
         return;
     }
 
@@ -65,8 +64,8 @@ export function renderMiniMap(container, profile) {
         .filter((e) => center.has(e.from) && center.has(e.to))
         .map((e) => {
             const a = center.get(e.from), b = center.get(e.to);
-            return `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" />`;
-        }).join("");
+            return svg("line", { x1: a.x.toFixed(1), y1: a.y.toFixed(1), x2: b.x.toFixed(1), y2: b.y.toFixed(1) });
+        });
 
     // Group boxes behind the nodes. Read from layout data (no live DOM) and hug members with
     // the same PAD/TITLE_H geometry groups.js uses, so the preview matches the live map.
@@ -78,25 +77,43 @@ export function renderMiniMap(container, profile) {
             const r = rectById.get(id); if (!r) continue;
             nx = Math.min(nx, r.x); ny = Math.min(ny, r.y); mx = Math.max(mx, r.x + r.w); my = Math.max(my, r.y + r.h);
         }
-        if (!Number.isFinite(nx)) return "";
+        if (!Number.isFinite(nx)) return null;
         const bx = nx - GPAD, by = ny - GPAD - GTITLE_H, bw = (mx - nx) + GPAD * 2, bh = (my - ny) + GPAD * 2 + GTITLE_H;
-        const x = X(bx), y = Y(by), w = bw * s, h = bh * s;
+        const x = X(bx), y = Y(by), w = bw * s, hh = bh * s;
         const style = g.outline?.style || "solid";
         const stroke = style === "none" ? "none" : (g.outline?.color || "#333333");
-        const dash = style === "dashed" ? ` stroke-dasharray="4 3"` : style === "dotted" ? ` stroke-dasharray="1 3"` : "";
-        return `<rect class="nm-group" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${g.bg || "#1c1e231f"}" stroke="${stroke}"${dash}><title>${esc(g.title || g.id)}</title></rect>`;
-    }).join("");
+        const dash = style === "dashed" ? "4 3" : style === "dotted" ? "1 3" : null;
+        return svg("rect", {
+            class: "nm-group", x: x.toFixed(1), y: y.toFixed(1), width: w.toFixed(1), height: hh.toFixed(1),
+            rx: "2", fill: g.bg || "#1c1e231f", stroke, "stroke-dasharray": dash,
+        }, svg("title", g.title || g.id));
+    });
 
     const nodeSvg = rects.map((r) => {
         const bw = Math.max(2, r.w * s), bh = Math.max(2, r.h * s);
         const x = X(r.x), y = Y(r.y), cx = x + bw / 2, cy = y + bh / 2;
         const f = fit(r.label, bw, bh);
         const text = f.fs >= 3
-            ? `<text class="nm-lbl" x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" font-size="${f.fs.toFixed(1)}"${f.vertical ? ` transform="rotate(90 ${cx.toFixed(1)} ${cy.toFixed(1)})"` : ""}>${esc(r.label)}</text>`
-            : "";
-        return `<rect class="nm-n" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${NM_COLOR[r.type] || "#9aa5ce"}"><title>${esc(r.label)}</title></rect>${text}`;
-    }).join("");
+            ? svg("text", {
+                class: "nm-lbl", x: cx.toFixed(1), y: cy.toFixed(1), "font-size": f.fs.toFixed(1),
+                transform: f.vertical ? `rotate(90 ${cx.toFixed(1)} ${cy.toFixed(1)})` : null,
+            }, r.label)
+            : null;
+        return [
+            svg("rect", {
+                class: "nm-n", x: x.toFixed(1), y: y.toFixed(1), width: bw.toFixed(1), height: bh.toFixed(1),
+                rx: "1.5", fill: NM_COLOR[r.type] || "#9aa5ce",
+            }, svg("title", r.label)),
+            text,
+        ];
+    });
 
-    container.innerHTML = `<svg class="nm-svg" width="${availW}" height="${availH}" viewBox="0 0 ${availW} ${availH}" preserveAspectRatio="xMidYMid meet">
-    <g class="nm-groups">${groupSvg}</g><g class="nm-edges">${edges}</g><g class="nm-nodes">${nodeSvg}</g></svg>`;
+    container.replaceChildren(
+        svg("svg", {
+            class: "nm-svg", width: availW, height: availH,
+            viewBox: `0 0 ${availW} ${availH}`, preserveAspectRatio: "xMidYMid meet",
+        },
+            svg("g", { class: "nm-groups" }, groupSvg),
+            svg("g", { class: "nm-edges" }, edges),
+            svg("g", { class: "nm-nodes" }, nodeSvg)));
 }

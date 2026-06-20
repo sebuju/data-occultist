@@ -5,7 +5,7 @@
 
 import * as api from "../api.js";
 import { openModal } from "../modal.js";
-import { esc } from "../dom.js";
+import { h } from "../dom.js";
 import { renderMiniMap } from "./minimap.js";
 import { fmtDateTime, since } from "../datefmt.js";
 import { liveAgo } from "../ago.js";
@@ -18,11 +18,9 @@ const fmtSize = (n) => (n >= 1024 ? `${(n / 1024).toFixed(1)} kB` : `${n || 0} B
 // itself. Used both standalone (openBackupsModal) and as a settings-modal section.
 export function buildBackups(host, name, { onRestored = null, signal = null, close = null } = {}) {
     host.classList.add("backups");
-    host.innerHTML = `
-    <div class="bk-list"><div class="muted bk-pad">loading…</div></div>
-    <div class="bk-detail"><div class="muted bk-pad">select a backup to preview</div></div>`;
-    const listEl = host.querySelector(".bk-list");
-    const detailEl = host.querySelector(".bk-detail");
+    const listEl = h("div", { class: "bk-list" }, h("div", { class: "muted bk-pad" }, "loading…"));
+    const detailEl = h("div", { class: "bk-detail" }, h("div", { class: "muted bk-pad" }, "select a backup to preview"));
+    host.replaceChildren(listEl, detailEl);
 
     // Lazy list: the server PARSES only the page it returns (counts need a YAML load), so
     // we fetch 10 newest on open and pull the next 10 as the user scrolls near the bottom.
@@ -30,14 +28,12 @@ export function buildBackups(host, name, { onRestored = null, signal = null, clo
     const PAGE = 10;
     let total = 0, loaded = 0, busy = false, end = false;
     function appendRows(items) {
-        const tmp = document.createElement("div");
-        tmp.innerHTML = items.map(rowHtml).join("");
-        const rows = [...tmp.children];
-        rows.forEach((row, idx) => {
+        items.forEach((m) => {
+            const row = rowNode(m);
             row.addEventListener("click", () => select(row.dataset.stamp, row));
             // the "ago" label ticks optimistically (1s) so it never sits stale while the modal is open
             const when = row.querySelector(".bk-when");
-            if (when && items[idx]) liveAgo(when, items[idx].iso);
+            if (when) liveAgo(when, m.iso);
             listEl.appendChild(row);
         });
     }
@@ -51,14 +47,14 @@ export function buildBackups(host, name, { onRestored = null, signal = null, clo
             const items = Array.isArray(res) ? res.slice(loaded, loaded + PAGE) : (res.items || []);
             total = Array.isArray(res) ? res.length : (res.total || 0);
             if (loaded === 0) {
-                if (!items.length) { listEl.innerHTML = `<div class="muted bk-pad">no backups yet</div>`; end = true; return; }
-                listEl.innerHTML = "";
+                if (!items.length) { listEl.replaceChildren(h("div", { class: "muted bk-pad" }, "no backups yet")); end = true; return; }
+                listEl.replaceChildren();
             }
             appendRows(items);
             loaded += items.length;
             if (!items.length || loaded >= total) end = true;
         } catch (e) {
-            if (loaded === 0) listEl.innerHTML = `<div class="warn bk-pad">${esc(String(e.message || e))}</div>`;
+            if (loaded === 0) listEl.replaceChildren(h("div", { class: "warn bk-pad" }, String(e.message || e)));
         } finally { busy = false; }
     }
     listEl.addEventListener("scroll", () => {
@@ -71,16 +67,18 @@ export function buildBackups(host, name, { onRestored = null, signal = null, clo
     async function select(stamp, rowEl) {
         listEl.querySelectorAll(".bk-row").forEach((r) => r.classList.toggle("sel", r === rowEl));
         armed = null;
-        detailEl.innerHTML = `<div class="muted bk-pad">loading…</div>`;
+        detailEl.replaceChildren(h("div", { class: "muted bk-pad" }, "loading…"));
         let profile;
         try { profile = await api.backups.get(name, stamp); }
-        catch (e) { detailEl.innerHTML = `<div class="warn bk-pad">${esc(String(e.message || e))}</div>`; return; }
+        catch (e) { detailEl.replaceChildren(h("div", { class: "warn bk-pad" }, String(e.message || e))); return; }
         if (signal?.aborted) return;
 
-        detailEl.innerHTML = `
-      <div class="bk-preview"></div>
-      <div class="bk-info">${infoHtml(profile)}</div>
-      <div class="bk-foot"><button class="bk-restore">restore this version</button></div>`;
+        const btn = h("button", { class: "bk-restore" }, "restore this version");
+        detailEl.replaceChildren(
+            h("div", { class: "bk-preview" }),
+            h("div", { class: "bk-info" }, infoNode(profile)),
+            h("div", { class: "bk-foot" }, btn),
+        );
         // defer one frame so the freshly-inserted preview box has a measured size
         // (renderMiniMap reads getBoundingClientRect) before drawing into it.
         requestAnimationFrame(() => {
@@ -89,7 +87,6 @@ export function buildBackups(host, name, { onRestored = null, signal = null, clo
             if (host) renderMiniMap(host, profile);
         });
 
-        const btn = detailEl.querySelector(".bk-restore");
         btn.addEventListener("click", async () => {
             if (armed !== stamp) {   // first click arms; the label asks for confirmation
                 armed = stamp;
@@ -113,25 +110,26 @@ export function buildBackups(host, name, { onRestored = null, signal = null, clo
 // Standalone backups modal — thin wrapper over buildBackups.
 export function openBackupsModal(name, onRestored) {
     const node = document.createElement("div");
-    const handle = openModal({ title: `backups · ${esc(name)}`, size: "large", node });
+    const handle = openModal({ title: `backups · ${name}`, size: "large", node });
     buildBackups(node, name, { onRestored, signal: handle.signal, close: handle.close });
     return handle;
 }
 
-function rowHtml(m) {
+function rowNode(m) {
     const c = m.counts || {};
     const summ = [
         c.windows ? `${c.windows} win` : null,
         c.datasets ? `${c.datasets} ds` : null,
         c.subsets ? `${c.subsets} subset` : null,
     ].filter(Boolean).join(" · ");
-    return `<div class="bk-row" data-stamp="${esc(m.stamp)}">
-    <div class="bk-when" title="${esc(fmtDateTime(m.iso))}">${esc(since(m.iso))}</div>
-    <div class="bk-meta muted">${esc(fmtDateTime(m.iso))} · ${c.nodes || 0} nodes${summ ? ` · ${esc(summ)}` : ""} · ${fmtSize(m.size)}</div>
-  </div>`;
+    return h("div", { class: "bk-row", dataset: { stamp: m.stamp } },
+        h("div", { class: "bk-when", title: fmtDateTime(m.iso) }, since(m.iso)),
+        h("div", { class: "bk-meta muted" },
+            `${fmtDateTime(m.iso)} · ${c.nodes || 0} nodes${summ ? ` · ${summ}` : ""} · ${fmtSize(m.size)}`),
+    );
 }
 
-function infoHtml(profile) {
+function infoNode(profile) {
     const windows = profile.windows || [];
     const rows = [
         ["windows", windows.length],
@@ -142,6 +140,7 @@ function infoHtml(profile) {
         ["dictionaries", (profile.dictionaries || []).length],
         ["placed nodes", Object.keys(profile.layout?.nodes || {}).length],
     ];
-    return `<table class="bk-info-tbl"><tbody>${rows
-    .map(([k, v]) => `<tr><td class="muted">${k}</td><td>${v}</td></tr>`).join("")}</tbody></table>`;
+    return h("table", { class: "bk-info-tbl" },
+        h("tbody", ...rows.map(([k, v]) =>
+            h("tr", h("td", { class: "muted" }, k), h("td", String(v))))));
 }

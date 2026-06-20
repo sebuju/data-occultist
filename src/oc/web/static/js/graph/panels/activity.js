@@ -13,6 +13,7 @@ import { liveAgo, stopAgo } from "../../ago.js";
 import { autosave } from "../main.js";
 import { panZoomTo } from "../camera.js";
 import { playSound } from "../sound.js";
+import { svg } from "../../dom.js";
 
 // ---- activity panel (live sweeps + precapture) ----------------------------
 // A floating window listing every running background job for the current game — price
@@ -301,9 +302,10 @@ function renderActivity(data, elapsed = 0) {
                 enableBtn.className = "act-enable"; enableBtn.setAttribute("role", "switch");
                 enableBtn.dataset.enable = j.enable.id;
                 enableBtn.title = "enable / disable this trigger";
-                enableBtn.innerHTML = `<svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">
-          <rect class="gt-track" x="1" y="1" width="26" height="14" rx="7" />
-          <circle class="gt-thumb" cx="8" cy="8" r="5" /></svg>`;
+                enableBtn.append(
+                    svg("svg", { viewBox: "0 0 28 16", width: "28", height: "16", "aria-hidden": "true" },
+                        svg("rect", { class: "gt-track", x: "1", y: "1", width: "26", height: "14", rx: "7" }),
+                        svg("circle", { class: "gt-thumb", cx: "8", cy: "8", r: "5" })));
                 row.append(enableBtn);
             }
             // button is stable per key (sweep/precap → cancel, trigger → fire)

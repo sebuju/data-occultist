@@ -1,7 +1,7 @@
 // Node-map / node-list floating panel — a miniature overview of the graph (map mode:
 // scaled svg of every node + edge with a draggable viewport indicator; list mode: an
 // edge-tree outline grouped by super-group/group). Extracted from main.js verbatim.
-import { esc } from "../../dom.js";
+import { h, svg } from "../../dom.js";
 import { polylinePath } from "../route.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
@@ -170,10 +170,11 @@ function nmMapModel() {
     return { rects, minX, minY, maxX, maxY, labels };
 }
 
-// Build the map <svg> markup projecting world coords at scale `s` (pad px margin). `cap` is the
+// Build the map <svg> projecting world coords at scale `s` (pad px margin). `cap` is the
 // node-label font ceiling (live = 11; screenshot lifts it so labels reach the readable floor);
-// `titleCap` the same for group headings. Returns { svg, W, H, ox, oy, s }. Pure string build,
-// no DOM and no viewport indicator (that's the live panel's job). Used by BOTH callers.
+// `titleCap` the same for group headings. Returns { svg, W, H, ox, oy, s } where `svg` is a live
+// SVG element (screenshot serialises it to a string). No viewport indicator (the live panel's
+// job). Used by BOTH callers.
 function nmBuildMapSvg(m, s, { cap = 11, titleCap = 9, pad = 8, css = null } = {}) {
     const { rects, minX, minY, maxX, maxY, labels } = m;
     const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
@@ -187,32 +188,42 @@ function nmBuildMapSvg(m, s, { cap = 11, titleCap = 9, pad = 8, css = null } = {
         const c = routeCache.get(l.key);
         const pts = (c && c.pts && c.pts.length >= 2) ? c.pts : [l.p1, l.p2];
         const d = polylinePath(pts, ROUTE.corners, ROUTE.radius);
-        return d && !d.includes("NaN") ? `<path d="${d}" />` : "";
-    }).join("");
+        return d && !d.includes("NaN") ? svg("path", { d }) : null;
+    }).filter(Boolean);
     const node = (r) => {
         const bw = Math.max(2, r.w * s), bh = Math.max(2, r.h * s);
         const x = X(r.x), y = Y(r.y), cx = x + bw / 2, cy = y + bh / 2;
         const lbl = labels.get(r.id) || r.id;
-        const rect = `<rect class="nm-n${r.id === selectedNodeId ? " sel" : ""}" data-id="${esc(r.id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${nmColor(r.id)}"><title>${esc(lbl)}</title></rect>`;
+        const rect = svg("rect", {
+            class: "nm-n" + (r.id === selectedNodeId ? " sel" : ""), "data-id": r.id,
+            x: x.toFixed(1), y: y.toFixed(1), width: bw.toFixed(1), height: bh.toFixed(1), rx: "1.5", fill: nmColor(r.id),
+        }, svg("title", lbl));
         // size the label to fit; rotate it 90° when that lets it be bigger; hide if it'd be unreadable
         const f = nmFit(lbl, bw, bh, cap);
         const text = f.fs >= 3
-            ? `<text class="nm-lbl" x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" font-size="${f.fs.toFixed(1)}"${f.vertical ? ` transform="rotate(90 ${cx.toFixed(1)} ${cy.toFixed(1)})"` : ""}>${esc(lbl)}</text>`
-            : "";
-        return rect + text;
+            ? svg("text", {
+                class: "nm-lbl", x: cx.toFixed(1), y: cy.toFixed(1), "font-size": f.fs.toFixed(1),
+                transform: f.vertical ? `rotate(90 ${cx.toFixed(1)} ${cy.toFixed(1)})` : null,
+            }, lbl)
+            : null;
+        return [rect, text];
     };
     // Group + super-group boxes (behind everything), hugging their members like the live layer.
     const boxSvg = (b, cls) => {
         const x = X(b.box.x), y = Y(b.box.y), w = b.box.w * s, h = b.box.h * s;
         const style = b.outline.style;
         const stroke = style === "none" ? "none" : b.outline.color;
-        const dash = style === "dashed" ? ` stroke-dasharray="4 3"` : style === "dotted" ? ` stroke-dasharray="1 3"` : "";
+        const dash = style === "dashed" ? "4 3" : style === "dotted" ? "1 3" : null;
         const da = cls === "nm-super" ? "sgid" : cls === "nm-sub" ? "subid" : "gid";
-        return `<rect class="${cls}" data-${da}="${esc(b.id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${b.bg || "none"}" stroke="${stroke}"${dash}><title>${esc(b.title)}</title></rect>`;
+        return svg("rect", {
+            class: cls, [`data-${da}`]: b.id,
+            x: x.toFixed(1), y: y.toFixed(1), width: w.toFixed(1), height: h.toFixed(1),
+            rx: "2", fill: b.bg || "none", stroke, "stroke-dasharray": dash,
+        }, svg("title", b.title));
     };
-    const superSvg = groups.superGroupBoxes().map((sp) => boxSvg(sp, "nm-super")).join("");
-    const groupSvg = groups.groupBoxes().map((gp) => boxSvg(gp, "nm-group")).join("");
-    const subSvg = groups.subGroupBoxes().map((sp) => boxSvg(sp, "nm-sub")).join("");
+    const superSvg = groups.superGroupBoxes().map((sp) => boxSvg(sp, "nm-super"));
+    const groupSvg = groups.groupBoxes().map((gp) => boxSvg(gp, "nm-group"));
+    const subSvg = groups.subGroupBoxes().map((sp) => boxSvg(sp, "nm-sub"));
     // Group / super-group NAME as a title BAR: an opaque dark plate + coloured text (same idiom
     // as the canvas labels). Drawn ABOVE the nodes so it's never hidden, but the solid plate makes
     // it read as a deliberate header. Placement MIRRORS the live canvas: group titles align
@@ -221,58 +232,70 @@ function nmBuildMapSvg(m, s, { cap = 11, titleCap = 9, pad = 8, css = null } = {
     // text always fits the space the box gives it; font shrinks too, and the title hides (hover
     // <title> still names it) when it'd be too small to read.
     const boxTitle = (b, col, { align = "left", bottom = false } = {}) => {
-        if (!b.title) return "";
+        if (!b.title) return null;
         const bx = X(b.box.x), by = Y(b.box.y), w = b.box.w * s, h = b.box.h * s, len = b.title.length;
         // Cap by WIDTH only — the reserved title band scales to ~2px on the mini-map, so capping the
         // font to it (bandH*s) drove fs negative and hid EVERY heading. The plate is opaque and drawn
         // last (nm-titles on top), so a fixed readable size sitting slightly over the first node row
         // is fine — that's the canvas title-bar idiom. Hide only when too narrow to read.
         const fs = Math.min(titleCap, (w - 6) / Math.max(1, len * 0.58));
-        if (fs < 4) return "";
+        if (fs < 4) return null;
         const tw = Math.min(w, len * fs * 0.58 + 6), th = fs + 3;
         const tx = align === "center" ? bx + (w - tw) / 2 : align === "right" ? bx + w - tw : bx;
         const ty = bottom ? by + h - th : by;
-        return `<g class="nm-gtitle">`
-            + `<rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${tw.toFixed(1)}" height="${th.toFixed(1)}" rx="1.5" fill="rgba(8,11,16,0.72)"/>`
-            + `<text x="${(tx + 3).toFixed(1)}" y="${(ty + 1.5).toFixed(1)}" font-size="${fs.toFixed(1)}" fill="${col}">${esc(b.title)}</text></g>`;
+        return svg("g", { class: "nm-gtitle" },
+            svg("rect", { x: tx.toFixed(1), y: ty.toFixed(1), width: tw.toFixed(1), height: th.toFixed(1), rx: "1.5", fill: "rgba(8,11,16,0.72)" }),
+            svg("text", { x: (tx + 3).toFixed(1), y: (ty + 1.5).toFixed(1), "font-size": fs.toFixed(1), fill: col }, b.title));
     };
     const titleSvg = groups.superGroupBoxes().map((b) => boxTitle(b, "#cdd3dc", { bottom: true }))   // super outlines run dark -> light text, label bottom-left
-        .concat(groups.groupBoxes().map((b) => boxTitle(b, b.outline?.color || "#cdd3dc", { align: b.titleAlign }))).join("");
+        .concat(groups.groupBoxes().map((b) => boxTitle(b, b.outline?.color || "#cdd3dc", { align: b.titleAlign })));
     // Standalone mode (screenshot): the live map leans on the global .nm-* stylesheet, but a
     // rasterised SVG must carry its own styling + opaque background, with CSS vars resolved to
     // concrete values (no :root to inherit from). Live panel passes css=null and keeps using CSS.
-    const embed = css ? `<style>
+    const embed = css ? [
+        svg("style", `
     .nm-edges path{fill:none;stroke:${css.line};stroke-width:1;vector-effect:non-scaling-stroke;}
     .nm-group,.nm-super,.nm-sub{stroke-width:1;vector-effect:non-scaling-stroke;}
     .nm-n{stroke:#0006;stroke-width:0.5;opacity:0.9;}
     .nm-n.sel{stroke:${css.accent};stroke-width:1.5;opacity:1;}
     .nm-lbl{fill:#0b0e14;font-family:${css.mono};font-weight:700;text-anchor:middle;dominant-baseline:central;}
     .nm-gtitle text{font-family:${css.mono};font-weight:700;dominant-baseline:text-before-edge;}
-  </style><rect x="0" y="0" width="${W.toFixed(1)}" height="${H.toFixed(1)}" fill="${css.bg}"/>` : "";
-    const svg = `<svg class="nm-svg" xmlns="http://www.w3.org/2000/svg" width="${W.toFixed(1)}" height="${H.toFixed(1)}" viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" preserveAspectRatio="xMidYMid meet">${embed}
-      <g class="nm-supers">${superSvg}</g>
-      <g class="nm-groups">${groupSvg}</g>
-      <g class="nm-subs">${subSvg}</g>
-      <g class="nm-edges" transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})">${edgePaths}</g>
-      <g class="nm-nodes">${rects.map(node).join("")}</g>
-      <g class="nm-titles">${titleSvg}</g></svg>`;
-    return { svg, W, H, ox, oy, s };
+  `),
+        svg("rect", { x: "0", y: "0", width: W.toFixed(1), height: H.toFixed(1), fill: css.bg }),
+    ] : null;
+    const el = svg("svg", {
+        class: "nm-svg", xmlns: "http://www.w3.org/2000/svg",
+        width: W.toFixed(1), height: H.toFixed(1), viewBox: `0 0 ${W.toFixed(1)} ${H.toFixed(1)}`,
+        preserveAspectRatio: "xMidYMid meet",
+    },
+        embed,
+        svg("g", { class: "nm-supers" }, superSvg),
+        svg("g", { class: "nm-groups" }, groupSvg),
+        svg("g", { class: "nm-subs" }, subSvg),
+        svg("g", { class: "nm-edges", transform: `translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})` }, edgePaths),
+        svg("g", { class: "nm-nodes" }, rects.map(node)),
+        svg("g", { class: "nm-titles" }, titleSvg),
+    );
+    return { svg: el, W, H, ox, oy, s };
 }
 
 function nmRenderMap(body) {
     const m = nmMapModel();
-    if (!m) { body.innerHTML = `<div class="nm-empty">no nodes</div>`; nmTransform = null; return; }
+    if (!m) { body.replaceChildren(h("div", { class: "nm-empty" }, "no nodes")); nmTransform = null; return; }
     // Resizing drives WIDTH only; the panel height is then locked to the content's aspect
     // (nmFitPanelHeight) so the map always fills the panel exactly — no empty space.
     const availW = Math.max(120, (body.clientWidth || 276) - 12), PAD = 8;
     const spanX = Math.max(1, m.maxX - m.minX);
     const s = (availW - 2 * PAD) / spanX;   // fit to width; height follows
-    const { svg, W, H, ox, oy } = nmBuildMapSvg(m, s, { cap: 11, pad: PAD });
+    const { svg: svgEl, W, H, ox, oy } = nmBuildMapSvg(m, s, { cap: 11, pad: PAD });
     nmTransform = { ox, oy, s };
     // The viewport indicator is a plain DIV moved with a CSS transform (compositor-only) — it
     // must NOT be an SVG element whose geometry attributes are rewritten each pan frame, since
     // that forces a layout, and with this huge DOM each layout is ~3ms (the pan lag).
-    body.innerHTML = `<div class="nm-wrap" style="width:${W.toFixed(1)}px;height:${H.toFixed(1)}px;">${svg}<div class="nm-vp"></div></div>`;
+    body.replaceChildren(
+        h("div", { class: "nm-wrap", style: `width:${W.toFixed(1)}px;height:${H.toFixed(1)}px;` },
+            svgEl, h("div", { class: "nm-vp" })),
+    );
     nmUpdateViewport();
     nmFitPanelHeight(H);   // shrink/grow the panel height to the content -> no empty space
 }
@@ -299,8 +322,10 @@ function nodemapShot({ floor = 13, titleCap = 16, pad = 16 } = {}) {
         accent: cs.getPropertyValue("--accent").trim() || "#7aa2f7",
         mono: cs.getPropertyValue("--font-mono").trim() || "monospace",
     };
-    const { svg, W, H } = nmBuildMapSvg(m, floor / minFit, { cap: Infinity, titleCap, pad, css });
-    return { svg, W, H };
+    const { svg: svgEl, W, H } = nmBuildMapSvg(m, floor / minFit, { cap: Infinity, titleCap, pad, css });
+    // Serialise to a self-contained string — svgToPngBlob rasterises it through an <img>+canvas,
+    // which loads a string blob (the live DOM element can't be handed over directly).
+    return { svg: new XMLSerializer().serializeToString(svgEl), W, H };
 }
 
 // Lock the panel height to the map content (map mode) so resizing width never leaves a
@@ -386,29 +411,33 @@ function nmRenderList(body) {
     }
 
     // Allow wrapping after every non-alphanumeric char (':', '→', '▸', '_', space, …) so long
-    // labels break at their separators instead of overflowing. Escape per-char so the injected
-    // <wbr> tags survive (esc() on the whole string would mangle them).
-    const wbr = (s) => [...String(s)].map((c) => esc(c) + (/[\p{L}\p{N}]/u.test(c) ? "" : "<wbr>")).join("");
+    // labels break at their separators instead of overflowing — emit a real <wbr> after each.
+    const wbr = (s) => [...String(s)].flatMap((c) => /[\p{L}\p{N}]/u.test(c) ? [c] : [c, h("wbr")]);
     // Right-edge affordances (both ABSOLUTE so they never reflow the row): a hover-only
     // collapse/expand toggle for any row with children, and a hidden-count badge while collapsed.
     const afford = (r) => {
-        if (!r.kids) return "";
+        if (!r.kids) return [];
         const collapsed = nlCollapsed.has(r.key);
         // one caret glyph (▸), rotated 90° when expanded — so it never points the wrong way
-        return `<button class="nm-collapse${collapsed ? "" : " open"}" data-key="${esc(r.key)}" title="${collapsed ? "expand" : "collapse"}">▸</button>`
-            + (collapsed ? `<span class="nm-hidden" title="${r.kids} hidden">${r.kids}</span>` : "");
+        return [
+            h("button", { class: "nm-collapse" + (collapsed ? "" : " open"), dataset: { key: r.key }, title: collapsed ? "expand" : "collapse" }, "▸"),
+            collapsed ? h("span", { class: "nm-hidden", title: `${r.kids} hidden` }, String(r.kids)) : null,
+        ];
     };
-    const rowHTML = (r) => {
+    const rowNode = (r) => {
         const depth = r.depth || 0;   // CSS computes padding-left from --nm-depth (see floatwin.css)
         const folded = nlCollapsed.has(r.key) ? " nm-folded" : "";
-        if (r.kind === "super") return `<div class="nm-row nm-super-row${folded}" data-sgid="${esc(r.sgid)}" title="zoom to super group" style="--nm-depth:${depth}">
-        <span class="nm-gswatch nm-sswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${wbr(r.label)}${afford(r)}</div>`;
-        if (r.kind === "group") return `<div class="nm-row nm-grp${folded}" data-gid="${esc(r.gid)}" title="zoom to group" style="--nm-depth:${depth}">
-        <span class="nm-gswatch" style="border-color:${r.color || "#9aa5ce"}"></span>${wbr(r.label)}${afford(r)}</div>`;
-        return `<div class="nm-row${r.id === selectedNodeId ? " sel" : ""}${folded}" data-id="${esc(r.id)}" style="--nm-depth:${depth}">
-        <span class="nm-dot" style="background:${NM_COLOR[r.type] || "#9aa5ce"}"></span>${wbr(r.label)}${afford(r)}</div>`;
+        if (r.kind === "super") return h("div", { class: "nm-row nm-super-row" + folded, dataset: { sgid: r.sgid }, title: "zoom to super group", style: `--nm-depth:${depth}` },
+            h("span", { class: "nm-gswatch nm-sswatch", style: `border-color:${r.color || "#9aa5ce"}` }), ...wbr(r.label), ...afford(r));
+        if (r.kind === "group") return h("div", { class: "nm-row nm-grp" + folded, dataset: { gid: r.gid }, title: "zoom to group", style: `--nm-depth:${depth}` },
+            h("span", { class: "nm-gswatch", style: `border-color:${r.color || "#9aa5ce"}` }), ...wbr(r.label), ...afford(r));
+        return h("div", { class: "nm-row" + (r.id === selectedNodeId ? " sel" : "") + folded, dataset: { id: r.id }, style: `--nm-depth:${depth}` },
+            h("span", { class: "nm-dot", style: `background:${NM_COLOR[r.type] || "#9aa5ce"}` }), ...wbr(r.label), ...afford(r));
     };
-    body.innerHTML = `<div class="nm-list">${visible.map(rowHTML).join("") || `<div class="nm-empty">no nodes</div>`}</div>`;
+    body.replaceChildren(
+        h("div", { class: "nm-list" },
+            visible.length ? visible.map(rowNode) : h("div", { class: "nm-empty" }, "no nodes")),
+    );
 }
 
 // Cache the graph viewport box — nmUpdateViewport runs every pan FRAME, and reading
