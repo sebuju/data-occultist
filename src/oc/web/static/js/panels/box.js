@@ -1,5 +1,5 @@
 // Selected-box panel: label the active box. Fields shown depend on the role.
-import { fieldset, mount, esc } from "../dom.js";
+import { fieldset, mount, h, frag } from "../dom.js";
 
 const ROLES = [
     ["region", "region (data field)"],
@@ -13,42 +13,43 @@ export function renderBox(container, model, ctx) {
     const b = model.selected;
     if (!b) { container.replaceChildren(); return; }
 
-    const roleOpts = ROLES.map(([v, t]) => `<option value="${v}" ${b.role === v ? "selected" : ""}>${t}</option>`).join("");
-    const fieldOpts = model.fields.map((f) => `<option value="${esc(f.id)}" ${b.field === f.id ? "selected" : ""}>${esc(f.id)}</option>`).join("");
-    const stateOpts = model.states.map((s) => `<option value="${esc(s.id)}" ${b.stateId === s.id ? "selected" : ""}>${esc(s.id)}</option>`).join("");
-
-    const fs = fieldset("Selected box", `
-    <label>role <select id="b-role">${roleOpts}</select></label>
-    <label>id <input id="b-id" value="${esc(b.id)}" /></label>
-    <label class="r-region">field
-      <select id="b-field"><option value="">— pick / type —</option>${fieldOpts}</select>
-      <input id="b-field-new" placeholder="or new field id" value="${esc(b.field)}" />
-    </label>
-    <label class="r-detect r-state">match text <input id="b-text" value="${esc(b.text)}" placeholder="EQUIPMENT" /></label>
-    <label class="r-detect r-state">mode
-      <select id="b-mode">
-        <option value="partial" ${(b.match ?? "partial") === "partial" ? "selected" : ""}>partial (substring, loose)</option>
-        <option value="full" ${b.match === "full" ? "selected" : ""}>full (whole-string)</option>
-        <option value="exact" ${b.match === "exact" ? "selected" : ""}>exact (equal)</option>
-        <option value="prefix" ${b.match === "prefix" ? "selected" : ""}>prefix (starts-with)</option>
-      </select>
-    </label>
-    <label class="r-detect r-state">threshold <input type="number" id="b-thr" step="0.01" min="0" max="1" value="${b.threshold ?? 0.8}" /></label>
-    <label class="r-detect r-state">min chars <input type="number" id="b-minchars" step="1" min="0" value="${b.min_chars ?? 0}" /></label>
-    <label class="r-detect r-state">strip
-      <select id="b-strip">
-        <option value="alnum" ${(b.strip ?? "alnum") === "alnum" ? "selected" : ""}>alnum (ignore spaces+punct)</option>
-        <option value="spaces" ${b.strip === "spaces" ? "selected" : ""}>spaces only</option>
-        <option value="none" ${b.strip === "none" ? "selected" : ""}>none (raw)</option>
-      </select>
-    </label>
-    <label class="r-detect r-state inline"><input type="checkbox" id="b-incl" ${b.included ? "checked" : ""} /> read inside text (included)</label>
-    <label class="r-detect r-state inline"><input type="checkbox" id="b-case" ${b.case_sensitive ? "checked" : ""} /> case sensitive</label>
-    <label class="r-state">state
-      <select id="b-state"><option value="">— pick —</option>${stateOpts}</select>
-    </label>
-    <div class="row"><button id="b-del" class="danger">Delete box</button></div>
-  `);
+    const body = frag(
+        h("label", "role ", h("select", { id: "b-role" },
+            ROLES.map(([v, t]) => h("option", { value: v, selected: b.role === v }, t)))),
+        h("label", "id ", h("input", { id: "b-id", value: b.id })),
+        h("label", { class: "r-region" }, "field",
+            h("select", { id: "b-field" },
+                h("option", { value: "" }, "— pick / type —"),
+                model.fields.map((f) => h("option", { value: f.id, selected: b.field === f.id }, f.id))),
+            h("input", { id: "b-field-new", placeholder: "or new field id", value: b.field })),
+        h("label", { class: "r-detect r-state" }, "match text ",
+            h("input", { id: "b-text", value: b.text, placeholder: "EQUIPMENT" })),
+        h("label", { class: "r-detect r-state" }, "mode",
+            h("select", { id: "b-mode" },
+                h("option", { value: "partial", selected: (b.match ?? "partial") === "partial" }, "partial (substring, loose)"),
+                h("option", { value: "full", selected: b.match === "full" }, "full (whole-string)"),
+                h("option", { value: "exact", selected: b.match === "exact" }, "exact (equal)"),
+                h("option", { value: "prefix", selected: b.match === "prefix" }, "prefix (starts-with)"))),
+        h("label", { class: "r-detect r-state" }, "threshold ",
+            h("input", { type: "number", id: "b-thr", step: "0.01", min: "0", max: "1", value: b.threshold ?? 0.8 })),
+        h("label", { class: "r-detect r-state" }, "min chars ",
+            h("input", { type: "number", id: "b-minchars", step: "1", min: "0", value: b.min_chars ?? 0 })),
+        h("label", { class: "r-detect r-state" }, "strip",
+            h("select", { id: "b-strip" },
+                h("option", { value: "alnum", selected: (b.strip ?? "alnum") === "alnum" }, "alnum (ignore spaces+punct)"),
+                h("option", { value: "spaces", selected: b.strip === "spaces" }, "spaces only"),
+                h("option", { value: "none", selected: b.strip === "none" }, "none (raw)"))),
+        h("label", { class: "r-detect r-state inline" },
+            h("input", { type: "checkbox", id: "b-incl", checked: b.included }), " read inside text (included)"),
+        h("label", { class: "r-detect r-state inline" },
+            h("input", { type: "checkbox", id: "b-case", checked: b.case_sensitive }), " case sensitive"),
+        h("label", { class: "r-state" }, "state",
+            h("select", { id: "b-state" },
+                h("option", { value: "" }, "— pick —"),
+                model.states.map((s) => h("option", { value: s.id, selected: b.stateId === s.id }, s.id)))),
+        h("div", { class: "row" }, h("button", { id: "b-del", class: "danger" }, "Delete box")),
+    );
+    const fs = fieldset("Selected box", body, "Selected box");
     fs.dataset.role = b.role;
 
     const q = (s) => fs.querySelector(s);

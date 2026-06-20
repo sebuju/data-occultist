@@ -1,6 +1,6 @@
 // Fields panel (window-specific schema). Each field: text / number / pips, a
 // declarative extract strategy (no regex), and dictionary learning + fuzzy.
-import { fieldset, mount, esc, TRASH } from "../dom.js";
+import { fieldset, mount, h, frag, TRASH } from "../dom.js";
 
 const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips (dots)"]];
 const EXTRACTS = [
@@ -12,30 +12,35 @@ const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text
 
 export function renderFields(container, model, ctx) {
     const rows = model.fields.map((f, i) => {
-        const typeOpts = TYPES.map(([v, t]) => `<option value="${v}" ${f.type === v ? "selected" : ""}>${t}</option>`).join("");
-        const exOpts = EXTRACTS.map(([v, t]) => `<option value="${v}" ${(f.extract || "whole") === v ? "selected" : ""}>${t}</option>`).join("");
-        const sepHidden = NEEDS_SEP.has(f.extract) && f.type !== "pips" ? "" : "hidden";
-        const exHidden = f.type === "pips" ? "hidden" : "";
-        return `<tr data-i="${i}">
-      <td><input class="f-id" value="${esc(f.id)}" /></td>
-      <td><select class="f-type">${typeOpts}</select></td>
-      <td>
-        <select class="f-ex" ${exHidden}>${exOpts}</select>
-        <input class="f-sep" value="${esc(f.separator || "/")}" style="width:4ch" ${sepHidden} />
-        ${f.type === "pips" ? '<span class="muted">counts dots</span>' : ""}
-      </td>
-      <td><input type="checkbox" class="f-learn" ${f.learn ? "checked" : ""} title="learn the dictionary from confident reads" /></td>
-      <td><input type="number" class="f-fz" step="0.05" min="0" max="1" value="${f.fuzzy ?? 0.82}"
-            title="similarity (0-1) to snap a noisy read to a known word; higher = stricter" /></td>
-      <td><button class="f-del danger" title="remove">${TRASH}</button></td></tr>`;
-    }).join("");
+        const sepHidden = !(NEEDS_SEP.has(f.extract) && f.type !== "pips");
+        const exHidden = f.type === "pips";
+        return h("tr", { dataset: { i } },
+            h("td", h("input", { class: "f-id", value: f.id })),
+            h("td", h("select", { class: "f-type" },
+                TYPES.map(([v, t]) => h("option", { value: v, selected: f.type === v }, t)))),
+            h("td",
+                h("select", { class: "f-ex", hidden: exHidden },
+                    EXTRACTS.map(([v, t]) => h("option", { value: v, selected: (f.extract || "whole") === v }, t))),
+                h("input", { class: "f-sep", value: f.separator || "/", style: "width:4ch", hidden: sepHidden }),
+                f.type === "pips" ? h("span", { class: "muted" }, "counts dots") : null),
+            h("td", h("input", { type: "checkbox", class: "f-learn", checked: f.learn, title: "learn the dictionary from confident reads" })),
+            h("td", h("input", { type: "number", class: "f-fz", step: "0.05", min: "0", max: "1", value: f.fuzzy ?? 0.82,
+                title: "similarity (0-1) to snap a noisy read to a known word; higher = stricter" })),
+            h("td", h("button", { class: "f-del danger", title: "remove" }, TRASH())),
+        );
+    });
 
-    const fs = fieldset("Fields (this window)", `
-    <table class="grid-table">
-      <thead><tr><th>id</th><th>type</th><th>extract</th><th>learn</th><th>fuzzy</th><th></th></tr></thead>
-      <tbody>${rows}</tbody></table>
-    <div class="row"><input id="f-new" placeholder="new field id" /><button id="f-add">Add field</button></div>
-  `, "fields");
+    const body = frag(
+        h("table", { class: "grid-table" },
+            h("thead", h("tr",
+                h("th", "id"), h("th", "type"), h("th", "extract"),
+                h("th", "learn"), h("th", "fuzzy"), h("th"))),
+            h("tbody", rows)),
+        h("div", { class: "row" },
+            h("input", { id: "f-new", placeholder: "new field id" }),
+            h("button", { id: "f-add" }, "Add field")),
+    );
+    const fs = fieldset("Fields (this window)", body, "fields");
 
     fs.querySelectorAll("tbody tr").forEach((tr) => {
         const f = model.fields[+tr.dataset.i];

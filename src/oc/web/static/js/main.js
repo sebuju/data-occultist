@@ -4,7 +4,7 @@
 import * as api from "./api.js";
 import { Overlay } from "./overlay.js";
 import { EditorModel } from "./model.js";
-import { collapse } from "./dom.js";
+import { collapse, h } from "./dom.js";
 import { renderWindow } from "./panels/window.js";
 import { renderStates } from "./panels/states.js";
 import { renderBox } from "./panels/box.js";
@@ -150,7 +150,7 @@ function capItem(url, label, onPick) {
 async function renderCapLive() {
     const names = await api.listCaptures(game).catch(() => []);
     capLive.replaceChildren();
-    if (!names.length) { capLive.innerHTML = `<div class="cap-empty">no stashed captures</div>`; return; }
+    if (!names.length) { capLive.replaceChildren(h("div", { class: "cap-empty" }, "no stashed captures")); return; }
     for (const n of names) {
         capLive.appendChild(capItem(api.captureUrl(game, n), n.replace(/\.jpg$/, ""), () => {
             showImage(api.captureUrl(game, n), `loaded ${n}`);
@@ -161,18 +161,15 @@ async function renderCapLive() {
 }
 
 async function renderCapPrecap() {
-    capPrecap.innerHTML = `<div class="cap-empty">loading…</div>`;
+    capPrecap.replaceChildren(h("div", { class: "cap-empty" }, "loading…"));
     const r = await api.precapture.sessions(game).catch(() => ({ sessions: [] }));
     const sessions = r.sessions || [];
     capPrecap.replaceChildren();
-    if (!sessions.length) { capPrecap.innerHTML = `<div class="cap-empty">no precapture sessions</div>`; return; }
+    if (!sessions.length) { capPrecap.replaceChildren(h("div", { class: "cap-empty" }, "no precapture sessions")); return; }
     for (const s of sessions) {
-        const grp = document.createElement("div"); grp.className = "cap-grp";
         const shown = Math.min(s.frames || 0, CAP_THUMBS);
         const more = (s.frames || 0) > shown ? ` · +${s.frames - shown} more` : "";
-        const h = document.createElement("div"); h.className = "cap-grp-h";
-        h.textContent = `${s.label || s.id} · ${s.frames || 0}f${more}`;
-        const grid = document.createElement("div"); grid.className = "cap-grid";
+        const grid = h("div", { class: "cap-grid" });
         for (let i = 0; i < shown; i++) {
             const url = api.precaptureFrameUrl(game, s.id, i);
             grid.appendChild(capItem(url, `#${i}`, () => {   // a precapture frame loads as the image (no bind)
@@ -180,7 +177,9 @@ async function renderCapPrecap() {
                 openCapPicker(false);
             }));
         }
-        grp.append(h, grid); capPrecap.appendChild(grp);
+        capPrecap.appendChild(h("div", { class: "cap-grp" },
+            h("div", { class: "cap-grp-h" }, `${s.label || s.id} · ${s.frames || 0}f${more}`),
+            grid));
     }
 }
 
@@ -291,8 +290,9 @@ async function init() {
     }
     const windows = (profile.windows || []).map((w) => w.id);
     const want = params.get("window") || windows[0] || "equipment";
-    $("windowSelect").innerHTML = windows.map((w) => `<option ${w === want ? "selected" : ""}>${w}</option>`).join("")
-        || `<option>${want}</option>`;
+    $("windowSelect").replaceChildren(...(windows.length
+        ? windows.map((w) => h("option", { selected: w === want }, w))
+        : [h("option", want)]));
     await refreshCaptures();
     loadWindow(want);   // also auto-loads the window's bound stash
     loaded = true;      // enable autosave only after the initial load

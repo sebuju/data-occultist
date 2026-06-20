@@ -1,7 +1,7 @@
 // Text appearance panel: teach how the region's text looks so OCR can clean it.
 // `color` masks the taught text colour(s) (pick with the eyedropper) to crisp
 // black-on-white; threshold/invert/scale cover the rest. Hit Preview to see the effect.
-import { fieldset, mount, esc, TRASH } from "../dom.js";
+import { fieldset, mount, h, frag, TRASH } from "../dom.js";
 
 const MODES = [
     ["none", "none"],
@@ -12,30 +12,30 @@ const MODES = [
 
 export function renderAppearance(container, model, ctx) {
     const pp = model.preprocess;
-    const modeOpts = MODES.map(([v, t]) => `<option value="${v}" ${pp.mode === v ? "selected" : ""}>${t}</option>`).join("");
-    const chips = pp.colors.map((c, i) => `
-    <span class="chip" style="border-color:${esc(c)}">
-      <span class="sw" style="background:${esc(c)}"></span>${esc(c)}
-      <button class="chip-x" data-i="${i}" title="remove">${TRASH}</button>
-    </span>`).join("") || `<span class="muted">no colours yet</span>`;
+    const chips = pp.colors.length
+        ? pp.colors.map((c, i) => h("span", { class: "chip", style: `border-color:${c}` },
+            h("span", { class: "sw", style: `background:${c}` }), c,
+            h("button", { class: "chip-x", dataset: { i }, title: "remove" }, TRASH())))
+        : h("span", { class: "muted" }, "no colours yet");
 
-    const showColor = pp.mode === "color" ? "" : "hidden";
-    const fs = fieldset("Text appearance", `
-    <label>preprocess <select id="pp-mode">${modeOpts}</select></label>
-    <div id="pp-color" ${showColor}>
-      <div class="chips">${chips}</div>
-      <div class="row">
-        <button id="pp-pick">⊙ pick from image</button>
-        <input id="pp-hex" placeholder="#ffffff" style="width:9ch" />
-        <button id="pp-add">add</button>
-      </div>
-      <label>tolerance <input type="range" id="pp-tol" min="10" max="200" value="${pp.tolerance}" />
-        <span class="muted">${pp.tolerance}</span></label>
-    </div>
-    <label>upscale <input type="number" id="pp-scale" step="0.5" min="1" max="4" value="${pp.scale}" />
-      <span class="muted">(helps small fonts)</span></label>
-    <p class="hint">Pick the text colour, choose “keep text colour(s)”, then Preview.</p>
-  `);
+    const body = frag(
+        h("label", "preprocess ", h("select", { id: "pp-mode" },
+            MODES.map(([v, t]) => h("option", { value: v, selected: pp.mode === v }, t)))),
+        h("div", { id: "pp-color", hidden: pp.mode !== "color" },
+            h("div", { class: "chips" }, chips),
+            h("div", { class: "row" },
+                h("button", { id: "pp-pick" }, "⊙ pick from image"),
+                h("input", { id: "pp-hex", placeholder: "#ffffff", style: "width:9ch" }),
+                h("button", { id: "pp-add" }, "add")),
+            h("label", "tolerance ",
+                h("input", { type: "range", id: "pp-tol", min: "10", max: "200", value: pp.tolerance }),
+                h("span", { class: "muted" }, pp.tolerance))),
+        h("label", "upscale ",
+            h("input", { type: "number", id: "pp-scale", step: "0.5", min: "1", max: "4", value: pp.scale }),
+            h("span", { class: "muted" }, "(helps small fonts)")),
+        h("p", { class: "hint" }, "Pick the text colour, choose “keep text colour(s)”, then Preview."),
+    );
+    const fs = fieldset("Text appearance", body, "Text appearance");
 
     const q = (s) => fs.querySelector(s);
     q("#pp-mode").addEventListener("change", (e) => { pp.mode = e.target.value; ctx.refresh(); });
