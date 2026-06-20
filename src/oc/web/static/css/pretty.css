@@ -181,7 +181,7 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 
 /* node ⇄ pretty toggle (lives in the main topbar, left side) — prominent, not a skinny chip */
 .pw-viewtoggle { display: inline-flex; border: 1px solid rgba(255,255,255,0.22); border-radius: 8px; overflow: hidden; margin: 0 10px; }
-.pw-viewtoggle .vt { border: none; background: transparent; color: inherit; padding: 7px 20px; font-weight: 600; letter-spacing: 0.02em; cursor: pointer; transition: background 0.12s; }
+.pw-viewtoggle .vt { border: none; background: transparent; color: inherit; padding: 7px 28px; font-weight: 600; letter-spacing: 0.02em; cursor: pointer; transition: background 0.12s; }
 .pw-viewtoggle .vt:hover { background: rgba(255,255,255,0.08); }
 .pw-viewtoggle .vt.active { background: #4ea1ff; color: #06121f; }
 .pw-viewtoggle .vt + .vt { border-left: 1px solid rgba(255,255,255,0.18); }
