@@ -1109,7 +1109,7 @@ layout:
     sub:relic_rewards_live:
       x: 1880.0
       y: 2040.0
-      w: 400.0
+      w: 420.0
       h: 410.0
       collapsed: false
     price:relic_live:
@@ -1137,7 +1137,7 @@ layout:
       h: 157.0
       collapsed: false
     ds:mods:
-      x: -380.0
+      x: -160.0
       y: -760.0
       w: 360.0
       h: 157.0

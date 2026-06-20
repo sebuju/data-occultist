@@ -268,7 +268,8 @@ def list_profiles(profiles_dir: Path | str) -> list[str]:
     d = Path(profiles_dir)
     if not d.exists():
         return []
-    return sorted(p.stem for p in d.glob("*.yaml"))
+    # `<game>.pretty.yaml` is the pretty-layout sidecar, not a game profile -> skip it
+    return sorted(p.stem for p in d.glob("*.yaml") if not p.name.endswith(".pretty.yaml"))
 
 
 # ---- versioned backups -----------------------------------------------------------
