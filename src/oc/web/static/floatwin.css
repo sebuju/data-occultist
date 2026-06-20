@@ -312,10 +312,11 @@
     background: var(--warn); color: var(--on-accent); }
 .pc-sess-new { text-align: left; margin-bottom: 4px; }
 .pc-sess-new.active { outline: 1px solid var(--accent); border-radius: 4px; }
-.pc-opts { display: flex; flex-wrap: wrap; gap: 14px; }
-.pc-opts .flab { display: flex; align-items: center; gap: 6px; }
-.pc-opts input[type="number"] { width: 8ch; }
-.pc-opts input.pc-label { width: 14ch; }
+/* one option per row, label column + input column shared across rows so every label and
+   every input lines up (each .flab dissolves into the grid via display:contents). */
+.pc-opts { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 10px; }
+.pc-opts .flab { display: contents; }
+.pc-opts input[type="number"], .pc-opts input.pc-label { width: 100%; min-width: 0; }
 /* controls stack one per row */
 .pc-ctl { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
 /* recognised window/state during processing + a tally with a distinct misses row */
