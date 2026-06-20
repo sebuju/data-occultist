@@ -23,7 +23,8 @@ import operator
 import re
 from functools import lru_cache
 
-from ..profile.models import DerivedColumn, FilterRule, SortRule, SubsetDef
+from ..profile.models import DerivedColumn, FilterRule, JoinNorm, SortRule, SubsetDef
+from ..store.textnorm import norm_text
 
 _PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 _INLINE_MATH = re.compile(r"\{=([^{}]+)\}")   # an inline arithmetic block within a text template
@@ -189,43 +190,76 @@ def _latest_batch_only(recs: list[dict]) -> list[dict]:
     return [r for r in recs if r.get("_batch") == top]
 
 
-def _join(inputs: list[tuple[str, list[dict]]], join_field: str, mode: str = "outer") -> list[dict]:
-    """Join the source datasets on ``join_field`` (case-insensitive), unioning columns.
-    ``outer`` (default) keeps every key — a row without a join value stays standalone, and
-    later inputs fill gaps. ``inner`` keeps only keys present in EVERY source (intersection);
-    unjoinable rows are dropped. Earlier inputs win column collisions (their non-empty value
-    is kept); later inputs fill gaps."""
+def _merge_rows(combo) -> dict:
+    """Union the columns of one matched row per source. Earlier sources win a non-empty
+    collision; later sources only fill a missing/empty cell."""
+    out: dict = {}
+    for row in combo:
+        for k, v in row.items():
+            if k not in out or out.get(k) in (None, ""):
+                out[k] = v
+    return out
+
+
+def _join(inputs: list[tuple[str, list[dict]]], join_field: str, mode: str = "outer",
+          norm: JoinNorm | None = None) -> list[dict]:
+    """Join the source datasets on ``join_field``, unioning columns. Each side's join value
+    is canonicalised through ``norm`` (a :class:`JoinNorm`; defaults to case-insensitive +
+    whitespace-collapse) so near-match keys still join.
+
+    This is a real relational join: it PRESERVES multiplicity. If a key has N rows in one
+    source and M in another, the key yields N*M output rows (the cross product). So an
+    ``all``-aggregate (no-collapse) or no-dedup source keeps every observation when joined,
+    rather than coalescing to one row. With one row per key on every side (the usual case —
+    sources aggregate to one) a key is just one merged row, unchanged.
+
+    ``outer`` (default) keeps every key — a source missing the key contributes one empty
+    placeholder so the others' rows still surface; a row with no join value stays standalone.
+    ``inner`` keeps only keys present in EVERY source (intersection); unjoinable rows are
+    dropped. Earlier inputs win column collisions (their non-empty value is kept)."""
+    from itertools import product
+
+    norm = norm or JoinNorm()
+    strip = lambda rec: {k: v for k, v in rec.items() if k not in _HIDDEN}   # noqa: E731
     # A single source isn't joined — pass its rows through 1:1 (stripping bookkeeping cols).
-    # Joining by ``join_field`` would collapse same-key rows, which is wrong for a no-dedup
-    # dataset that intentionally keeps many rows per name.
     if len(inputs) == 1:
-        return [{k: v for k, v in rec.items() if k not in _HIDDEN} for rec in inputs[0][1]]
-    merged: dict[str, dict] = {}
-    order: list[str] = []
-    seen_in: dict[str, set] = {}   # join key -> set of source ids that contributed it (inner mode)
-    for idx, (ds_id, recs) in enumerate(inputs):
+        return [strip(rec) for rec in inputs[0][1]]
+
+    def kof(row) -> str:
+        return norm_text(row.get(join_field, ""), lower=norm.case_insensitive,
+                         strip_punct=norm.strip_punct, collapse_ws=norm.collapse_ws,
+                         strip_words=tuple(norm.strip_words))
+
+    per_source: list[dict[str, list[dict]]] = []   # source idx -> {key -> [rows]}
+    standalones: list[dict] = []                    # rows with no join value (outer only)
+    key_order: list[str] = []
+    seen: set[str] = set()
+    for _ds_id, recs in inputs:
+        groups: dict[str, list[dict]] = {}
         for rec in recs:
-            row = {k: v for k, v in rec.items() if k not in _HIDDEN}
-            kv = str(row.get(join_field, "")).strip().lower()
-            if not kv:                                   # unjoinable -> its own row
-                key = f"\x00{ds_id}\x00{len(order)}"
-                merged[key] = row
-                order.append(key)
+            row = strip(rec)
+            k = kof(row)
+            if not k:
+                standalones.append(row)             # unjoinable -> its own row
                 continue
-            seen_in.setdefault(kv, set()).add(idx)
-            if kv in merged:
-                base = merged[kv]
-                for k, v in row.items():
-                    if k not in base or base.get(k) in (None, ""):
-                        base[k] = v
-            else:
-                merged[kv] = row
-                order.append(kv)
-    if mode == "inner":
-        # keep only real join keys (not the unjoinable \x00-prefixed standalones) seen in EVERY source
-        n = len(inputs)
-        order = [k for k in order if k in seen_in and len(seen_in[k]) == n]
-    return [merged[k] for k in order]
+            groups.setdefault(k, []).append(row)
+            if k not in seen:
+                seen.add(k)
+                key_order.append(k)
+        per_source.append(groups)
+
+    out: list[dict] = []
+    for k in key_order:
+        if mode == "inner" and not all(k in gs for gs in per_source):
+            continue
+        # each source contributes its matching rows; a source missing the key (outer) pairs in
+        # one empty placeholder so the present sources' rows still appear.
+        lists = [gs.get(k) or [{}] for gs in per_source]
+        for combo in product(*lists):
+            out.append(_merge_rows(combo))
+    if mode != "inner":
+        out.extend(standalones)
+    return out
 
 
 def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
@@ -238,7 +272,11 @@ def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
     # rest of the pipeline only ever sees the latest pass.
     if getattr(sub, "latest_batch", False):
         inputs = [(ds, _latest_batch_only(recs)) for ds, recs in inputs]
-    rows = _join(inputs, sub.join_field or "name", getattr(sub, "join_mode", "outer") or "outer")
+    # no join_field -> no join: the sources are just stacked (every row standalone), so the
+    # inner/outer mode is moot — force outer or inner would drop every (keyless) row.
+    jfield = sub.join_field or ""
+    jmode = (getattr(sub, "join_mode", "outer") or "outer") if jfield else "outer"
+    rows = _join(inputs, jfield, jmode, getattr(sub, "join_norm", None))
     for row in rows:
         apply_derived(row, sub.derived)
     _apply_live_enrich(rows, getattr(sub, "enrich", None) or [])

@@ -2,9 +2,10 @@
 
 from oc.profile.loader import load_profile, save_profile
 from oc.profile.models import (
-    DerivedColumn, EnrichRule, FilterRule, GameProfile, SubsetDef,
+    DerivedColumn, EnrichRule, FilterRule, GameProfile, JoinNorm, SubsetDef,
 )
 from oc.enrich.subset import compute_subset, compute_view
+from oc.store.textnorm import norm_text
 
 
 def _records():
@@ -120,6 +121,75 @@ def test_store_records_expose_latest_batch(tmp_path):
     s.begin_batch(); s.record_seen({"name": "B"})
     by = {r["name"]: r for r in s.records()}
     assert by["A"]["_batch"] == 1 and by["B"]["_batch"] == 2
+
+
+def test_norm_text_canonicalises():
+    # default: lower + collapse whitespace (== the old .strip().lower() join, plus internal ws)
+    assert norm_text("  Axi   A1 ") == "axi a1"
+    # the relics-vs-relic_contents bridge: strip punctuation + the stray word "relic"
+    assert norm_text("Axi A1 Relic", strip_punct=True, strip_words=("relic",)) == "axi a1"
+    assert norm_text("AXI A1", strip_punct=True, strip_words=("relic",)) == "axi a1"
+    # case-sensitive keeps case and only matches exact-case words
+    assert norm_text("Lith B4", lower=False) == "Lith B4"
+
+
+def test_join_norm_bridges_near_match_keys():
+    # relics-side name keeps the word "Relic" + original case; producer side is _norm'd "AXI A1"
+    relics = [{"name": "Axi A1 Relic", "count": 3, "present": True}]
+    contents = [{"name": "AXI A1", "item": "Nikana Prime Blueprint", "present": True}]
+    norm = JoinNorm(strip_punct=True, strip_words=["relic"])
+    sub = SubsetDef(id="rwc", datasets=["relics", "relic_contents"], join_field="name",
+                    join_mode="inner", join_norm=norm)
+    out = compute_view([("relics", relics), ("relic_contents", contents)], sub)
+    assert len(out["rows"]) == 1                                  # joined into ONE row
+    row = out["rows"][0]
+    assert row["count"] == 3 and row["item"] == "Nikana Prime Blueprint"   # both sides merged
+
+
+def test_default_join_norm_leaves_exact_joins_unchanged():
+    # without configured knobs the join behaves like the old case-insensitive exact match
+    a = [{"name": "Acceltra Prime", "count": 2, "present": True}]
+    b = [{"name": "acceltra prime", "price_median": 48, "present": True}]
+    sub = SubsetDef(id="v", datasets=["a", "b"], join_field="name")
+    rows = compute_view([("a", a), ("b", b)], sub)["rows"]
+    assert len(rows) == 1 and rows[0]["price_median"] == 48       # case folded, still one row
+
+
+def test_join_norm_round_trips_through_profile(tmp_path):
+    p = GameProfile(name="g", subsets=[SubsetDef(
+        id="rwc", datasets=["relics", "relic_contents"], join_field="name", join_mode="inner",
+        join_norm=JoinNorm(strip_punct=True, strip_words=["relic"]),
+    )])
+    save_profile(tmp_path, p)
+    s = load_profile(tmp_path, "g").subset_def("rwc")
+    assert s.join_norm.strip_punct is True and s.join_norm.strip_words == ["relic"]
+    assert s.join_norm.case_insensitive is True                   # default preserved
+
+
+def test_join_preserves_multiplicity_one_to_many():
+    # a key with many rows on one side x one on the other -> one output row PER many-side row
+    # (no collapse), each carrying the one-side's columns
+    relics = [{"name": "Axi A1", "tier": "Axi"}]
+    contents = [{"name": "Axi A1", "item": "Nikana BP"}, {"name": "Axi A1", "item": "Braton Stock"}]
+    sub = SubsetDef(id="rwc", datasets=["relics", "contents"], join_field="name", join_mode="inner")
+    out = compute_view([("relics", relics), ("contents", contents)], sub)
+    assert len(out["rows"]) == 2                                      # not collapsed to 1
+    assert sorted(r["item"] for r in out["rows"]) == ["Braton Stock", "Nikana BP"]
+    assert all(r["tier"] == "Axi" for r in out["rows"])              # relic col attached to each
+
+
+def test_all_aggregate_emits_every_observation(tmp_path):
+    # "all" is the no-collapse opt-out: each observation stays its own row
+    from oc.store.dataset_store import DatasetStore, rows_at
+    s = DatasetStore(tmp_path, "g", "ds")
+    s.begin_batch(); s.record_seen({"name": "A", "price": 10})
+    s.begin_batch(); s.record_seen({"name": "A", "price": 20})   # same key -> 2nd observation
+    s.begin_batch(); s.record_seen({"name": "B", "price": 5})
+    assert len(s.records()) == 2                                 # A collapsed to one (latest)
+    allr = s.all_records()
+    assert len(allr) == 3                                        # A's two obs both kept
+    assert sorted(r["price"] for r in allr if r["name"] == "A") == [10, 20]
+    assert len(rows_at(s, "all")) == 3 and len(rows_at(s, "latest")) == 2
 
 
 def test_subset_round_trips_through_profile(tmp_path):

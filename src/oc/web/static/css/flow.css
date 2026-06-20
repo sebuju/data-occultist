@@ -65,7 +65,7 @@ a.node.win:hover { border-color: var(--accent); }
    tables never blow the node up. ONE look + ONE behaviour, no per-kind panel code. */
 /* host nodes (dataset/preview/batches/dictionary/subset): the NODE itself resizes and
    its body + content host fill it. ONE behaviour — no separate resize handle inside. */
-.gnode.dataset, .gnode.preview, .gnode.dictionary, .gnode.subset, .gnode.price, .gnode.vttable {
+.gnode.dataset, .gnode.preview, .gnode.dictionary, .gnode.subset, .gnode.producer, .gnode.vttable {
     display: flex; flex-direction: column; resize: none; overflow: hidden; min-width: 280px; }
 /* trigger node: compact, fixed; out-port must show so it can be wired to a price node */
 .gnode.trigger { width: 280px; overflow: visible; }
@@ -79,17 +79,17 @@ a.node.win:hover { border-color: var(--accent); }
    Still user-resizable (grips stamp an inline height; reset clears back to the content fit). */
 .gnode.dataset { width: 360px; height: auto; }
 .gnode.subset { width: 360px; height: auto; min-width: 320px; }
-.gnode.price { width: 360px; height: auto; }
+.gnode.producer { width: 360px; height: auto; }
 /* nodes wrapping a fillable scroll host (records grid / preview table / term textarea) keep a
    default height so the inner viewport isn't 0 — height:auto would collapse them; resize to taste. */
 .gnode.preview { width: 360px; height: 320px; }
 .gnode.dictionary { width: 300px; height: 360px; }
-/* nodes with an out-port dot at their right edge (price, dataset, view): node-level clipping
+/* nodes with an out-port dot at their right edge (producer, dataset, view): node-level clipping
    would cut the port in half, so clip the BODY instead and let the node (hence the port) overflow */
-.gnode.price, .gnode.dataset, .gnode.subset { overflow: visible; }
-.gnode.price > .gn-body, .gnode.dataset > .gn-body, .gnode.subset > .gn-body { overflow: auto; }   /* scroll when too small instead of squishing/clipping */
+.gnode.producer, .gnode.dataset, .gnode.subset { overflow: visible; }
+.gnode.producer > .gn-body, .gnode.dataset > .gn-body, .gnode.subset > .gn-body { overflow: auto; }   /* scroll when too small instead of squishing/clipping */
 .gnode.dataset > .gn-body, .gnode.preview > .gn-body,
-.gnode.dictionary > .gn-body, .gnode.subset > .gn-body, .gnode.price > .gn-body,
+.gnode.dictionary > .gn-body, .gnode.subset > .gn-body, .gnode.producer > .gn-body,
 .gnode.vttable > .gn-body {
     flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 /* vt-table satellite: the records grid split out of its dataset/subset (dotted edge to parent) */
@@ -292,13 +292,12 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 /* one-line, ellipsised — a long line must never wrap */
 .enr-sum { font-size: var(--fs-sm); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
 .enr-sum strong { color: var(--text); font-variant-numeric: tabular-nums; }
-/* the price node's source-mode + price-by rows now build on `.lab-grid` (graph.css). */
-.gnode.price .gn-foot { flex-wrap: nowrap; align-items: center; flex: none; }
-.gnode.price .enr-refresh { flex: 0 0 auto; }   /* don't stretch the sweep button to full width */
-.enr-cancel.busy { display: inline-flex; align-items: center; gap: 6px; }
-.enr-cancel.busy::before { content: ""; width: 11px; height: 11px; border-radius: 50%;
-    border: 2px solid currentColor; border-top-color: transparent; animation: spin 0.7s linear infinite; }
-.enr-prog { font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
+/* the producer node's backend/source/price-by rows now build on `.lab-grid` (graph.css). */
+.gnode.producer .gn-foot { flex-wrap: nowrap; align-items: center; flex: none; }
+.gnode.producer .enr-refresh { flex: 0 0 auto; }   /* don't stretch the refresh button to full width */
+/* the cancel button's busy spinner is the canonical `button.reading::after` (controls.css). */
+.enr-prog { font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0; margin-top: 4px; }   /* sits on its own line BELOW the buttons */
 .enr-of { margin-bottom: 6px; }
 
 /* flow blobs: small dots traveling node->node along graph edges on live activity. Colour by
