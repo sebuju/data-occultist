@@ -2,10 +2,16 @@
 
 from oc.profile.loader import load_profile, save_profile
 from oc.profile.models import (
-    DerivedColumn, EnrichRule, FilterRule, GameProfile, JoinNorm, SubsetDef,
+    DerivedColumn, EnrichRule, FilterRule, GameProfile, JoinNorm, JoinSource, SubsetDef,
 )
 from oc.enrich.subset import compute_subset, compute_view
 from oc.store.textnorm import norm_text
+
+
+def _src(dataset, join_field="name", required=False, aggregate="latest", join_norm=None):
+    """One JoinSource with terse defaults — the per-source join config a view input carries."""
+    return JoinSource(dataset=dataset, join_field=join_field, required=required,
+                      aggregate=aggregate, join_norm=join_norm or JoinNorm())
 
 
 def _records():
@@ -18,7 +24,7 @@ def _records():
 
 def test_filter_derive_sort_limit():
     sub = SubsetDef(
-        id="arc", dataset="equip",
+        id="arc", sources=[_src("equip")],
         filters=[FilterRule(field="rank", op="gte", value="1")],
         derived=[DerivedColumn(name="display", template="{name} [{rank}]")],
         sort_by="rank", sort_desc=True, limit=1,
@@ -31,7 +37,7 @@ def test_filter_derive_sort_limit():
 
 
 def test_text_filter_ops():
-    sub = SubsetDef(id="v", dataset="d", filters=[FilterRule(field="name", op="icontains", value="a")])
+    sub = SubsetDef(id="v", sources=[_src("d")], filters=[FilterRule(field="name", op="icontains", value="a")])
     keys = {row["name"] for row in compute_subset(_records(), sub)["rows"]}
     assert keys == {"Amesha", "Vitality"}                # both contain 'a'/'A'
 
@@ -40,7 +46,7 @@ def test_view_joins_datasets_on_key_with_arithmetic_derived():
     inv = [{"name": "Acceltra Prime", "count": 2, "present": True},
            {"name": "Junk", "count": 5, "present": True}]
     prices = [{"name": "Acceltra Prime", "slug": "acceltra_prime_set", "price_median": 48}]
-    sub = SubsetDef(id="folio", datasets=["master", "prices"], join_field="name",
+    sub = SubsetDef(id="folio", sources=[_src("master"), _src("prices")],
                     derived=[DerivedColumn(name="value", template="={count}*{price_median}")],
                     sort_by="value", sort_desc=True)
     out = compute_view([("master", inv), ("prices", prices)], sub)
@@ -55,7 +61,7 @@ def test_inline_math_mixes_static_text():
     inv = [{"name": "Acceltra Prime", "count": 2, "present": True},
            {"name": "Junk", "count": 5, "present": True}]
     prices = [{"name": "Acceltra Prime", "slug": "acceltra_prime_set", "price_median": 48}]
-    sub = SubsetDef(id="folio", datasets=["master", "prices"], join_field="name",
+    sub = SubsetDef(id="folio", sources=[_src("master"), _src("prices")],
                     derived=[DerivedColumn(name="worth", template="{=count*price_median} plat")])
     rows = {r["name"]: r for r in compute_view([("master", inv), ("prices", prices)], sub)["rows"]}
     assert rows["Acceltra Prime"]["worth"] == "96 plat"   # math evaluated, literal text kept
@@ -65,7 +71,7 @@ def test_inline_math_mixes_static_text():
 def test_leading_equals_still_pure_math():
     inv = [{"name": "X", "count": 2, "present": True}]
     prices = [{"name": "X", "price_median": 48}]
-    sub = SubsetDef(id="v", datasets=["m", "p"], join_field="name",
+    sub = SubsetDef(id="v", sources=[_src("m"), _src("p")],
                     derived=[DerivedColumn(name="value", template="={count}*{price_median}")])
     rows = compute_view([("m", inv), ("p", prices)], sub)["rows"]
     assert rows[0]["value"] == 96                         # back-compat: numeric, not a string
@@ -76,10 +82,10 @@ def test_view_feeding_view_chains_derived_columns():
     # mirroring how flow.py resolves a view input before the view that joins it (calc order).
     inv = [{"name": "A", "count": 3, "present": True}]
     prices = [{"name": "A", "price_median": 10}]
-    up = SubsetDef(id="up", datasets=["inv", "prices"], join_field="name",
+    up = SubsetDef(id="up", sources=[_src("inv"), _src("prices")],
                    derived=[DerivedColumn(name="value", template="={count}*{price_median}")])
     up_rows = compute_view([("inv", inv), ("prices", prices)], up)["rows"]
-    down = SubsetDef(id="down", datasets=["up"], join_field="name",
+    down = SubsetDef(id="down", sources=[_src("up")],
                      derived=[DerivedColumn(name="label", template="{=value*2} pl")])
     out = compute_view([("up", up_rows)], down)
     row = out["rows"][0]
@@ -91,7 +97,7 @@ def test_latest_batch_keeps_only_newest_batch_rows():
     recs = [{"name": "Old", "_batch": 1, "present": True},
             {"name": "Mid", "_batch": 1, "present": True},
             {"name": "New", "_batch": 2, "present": True}]
-    sub = SubsetDef(id="v", dataset="d", latest_batch=True)
+    sub = SubsetDef(id="v", sources=[_src("d")], latest_batch=True)
     rows = compute_subset(recs, sub)["rows"]
     assert {r["name"] for r in rows} == {"New"}              # batch 1 dropped
     assert "_batch" not in rows[0]                            # bookkeeping col stays hidden
@@ -100,7 +106,7 @@ def test_latest_batch_keeps_only_newest_batch_rows():
 def test_latest_batch_off_keeps_all():
     recs = [{"name": "Old", "_batch": 1, "present": True},
             {"name": "New", "_batch": 2, "present": True}]
-    rows = compute_subset(recs, SubsetDef(id="v", dataset="d"))["rows"]
+    rows = compute_subset(recs, SubsetDef(id="v", sources=[_src("d")]))["rows"]
     assert {r["name"] for r in rows} == {"Old", "New"}
 
 
@@ -108,7 +114,7 @@ def test_latest_batch_applied_before_limit():
     # apply order: latest-batch FIRST, then limit — so limit counts only newest-batch rows
     recs = [{"name": "a", "_batch": 1, "present": True}, {"name": "b", "_batch": 1, "present": True},
             {"name": "c", "_batch": 2, "present": True}, {"name": "d", "_batch": 2, "present": True}]
-    sub = SubsetDef(id="v", dataset="d", latest_batch=True, limit=10)
+    sub = SubsetDef(id="v", sources=[_src("d")], latest_batch=True, limit=10)
     rows = compute_subset(recs, sub)["rows"]
     assert {r["name"] for r in rows} == {"c", "d"}           # only batch 2 survived, limit didn't pull batch 1
 
@@ -133,37 +139,62 @@ def test_norm_text_canonicalises():
     assert norm_text("Lith B4", lower=False) == "Lith B4"
 
 
-def test_join_norm_bridges_near_match_keys():
-    # relics-side name keeps the word "Relic" + original case; producer side is _norm'd "AXI A1"
+def test_per_source_join_norm_bridges_near_match_keys():
+    # each source canonicalises its OWN value: relics-side keeps "Relic" + case, contents side is plain
     relics = [{"name": "Axi A1 Relic", "count": 3, "present": True}]
     contents = [{"name": "AXI A1", "item": "Nikana Prime Blueprint", "present": True}]
     norm = JoinNorm(strip_punct=True, strip_words=["relic"])
-    sub = SubsetDef(id="rwc", datasets=["relics", "relic_contents"], join_field="name",
-                    join_mode="inner", join_norm=norm)
+    sub = SubsetDef(id="rwc", sources=[
+        _src("relics", required=True, join_norm=norm),
+        _src("relic_contents", required=True, join_norm=norm)])
     out = compute_view([("relics", relics), ("relic_contents", contents)], sub)
     assert len(out["rows"]) == 1                                  # joined into ONE row
     row = out["rows"][0]
     assert row["count"] == 3 and row["item"] == "Nikana Prime Blueprint"   # both sides merged
 
 
+def test_per_source_join_fields_differ():
+    # sources may key DIFFERENT columns — they still join when normalised values agree
+    inv = [{"name": "Acceltra Prime", "count": 2, "present": True}]
+    prices = [{"item_name": "acceltra prime", "price_median": 48, "present": True}]
+    sub = SubsetDef(id="v", sources=[_src("inv", join_field="name"),
+                                     _src("prices", join_field="item_name")])
+    rows = compute_view([("inv", inv), ("prices", prices)], sub)["rows"]
+    assert len(rows) == 1 and rows[0]["price_median"] == 48 and rows[0]["count"] == 2
+
+
 def test_default_join_norm_leaves_exact_joins_unchanged():
     # without configured knobs the join behaves like the old case-insensitive exact match
     a = [{"name": "Acceltra Prime", "count": 2, "present": True}]
     b = [{"name": "acceltra prime", "price_median": 48, "present": True}]
-    sub = SubsetDef(id="v", datasets=["a", "b"], join_field="name")
+    sub = SubsetDef(id="v", sources=[_src("a"), _src("b")])
     rows = compute_view([("a", a), ("b", b)], sub)["rows"]
     assert len(rows) == 1 and rows[0]["price_median"] == 48       # case folded, still one row
 
 
+def test_required_narrows_to_inner_optional_keeps_outer():
+    # an optional source gap-fills (outer); marking it required drops keys it lacks (inner)
+    a = [{"name": "X", "count": 1, "present": True}, {"name": "Y", "count": 2, "present": True}]
+    b = [{"name": "X", "price": 10, "present": True}]
+    outer = SubsetDef(id="o", sources=[_src("a"), _src("b")])               # nothing required
+    inner = SubsetDef(id="i", sources=[_src("a", required=True), _src("b", required=True)])
+    outer_rows = {r["name"] for r in compute_view([("a", a), ("b", b)], outer)["rows"]}
+    inner_rows = {r["name"] for r in compute_view([("a", a), ("b", b)], inner)["rows"]}
+    assert outer_rows == {"X", "Y"}                                  # Y kept, price gap-filled
+    assert inner_rows == {"X"}                                       # Y dropped (absent in b)
+
+
 def test_join_norm_round_trips_through_profile(tmp_path):
-    p = GameProfile(name="g", subsets=[SubsetDef(
-        id="rwc", datasets=["relics", "relic_contents"], join_field="name", join_mode="inner",
-        join_norm=JoinNorm(strip_punct=True, strip_words=["relic"]),
-    )])
+    p = GameProfile(name="g", subsets=[SubsetDef(id="rwc", sources=[
+        _src("relics", required=True, join_norm=JoinNorm(strip_punct=True, strip_words=["relic"])),
+        _src("relic_contents", required=True, join_norm=JoinNorm(strip_punct=True, strip_words=["relic"])),
+    ])])
     save_profile(tmp_path, p)
     s = load_profile(tmp_path, "g").subset_def("rwc")
-    assert s.join_norm.strip_punct is True and s.join_norm.strip_words == ["relic"]
-    assert s.join_norm.case_insensitive is True                   # default preserved
+    src0 = s.sources[0]
+    assert src0.join_norm.strip_punct is True and src0.join_norm.strip_words == ["relic"]
+    assert src0.required is True
+    assert src0.join_norm.case_insensitive is True               # default preserved
 
 
 def test_join_preserves_multiplicity_one_to_many():
@@ -171,7 +202,7 @@ def test_join_preserves_multiplicity_one_to_many():
     # (no collapse), each carrying the one-side's columns
     relics = [{"name": "Axi A1", "tier": "Axi"}]
     contents = [{"name": "Axi A1", "item": "Nikana BP"}, {"name": "Axi A1", "item": "Braton Stock"}]
-    sub = SubsetDef(id="rwc", datasets=["relics", "contents"], join_field="name", join_mode="inner")
+    sub = SubsetDef(id="rwc", sources=[_src("relics", required=True), _src("contents", required=True)])
     out = compute_view([("relics", relics), ("contents", contents)], sub)
     assert len(out["rows"]) == 2                                      # not collapsed to 1
     assert sorted(r["item"] for r in out["rows"]) == ["Braton Stock", "Nikana BP"]
@@ -194,7 +225,7 @@ def test_all_aggregate_emits_every_observation(tmp_path):
 
 def test_subset_round_trips_through_profile(tmp_path):
     p = GameProfile(name="g", subsets=[SubsetDef(
-        id="arc", dataset="equip",
+        id="arc", sources=[_src("equip")],
         filters=[FilterRule(field="rank", op="gte", value="1")],
         derived=[DerivedColumn(name="display", template="{name} [{rank}]")],
         enrich=[EnrichRule(type="warframe_market", source_field="name")],
@@ -203,5 +234,5 @@ def test_subset_round_trips_through_profile(tmp_path):
     back = load_profile(tmp_path, "g")
     assert len(back.subsets) == 1
     s = back.subset_def("arc")
-    assert s.dataset == "equip" and s.derived[0].template == "{name} [{rank}]"
+    assert s.sources[0].dataset == "equip" and s.derived[0].template == "{name} [{rank}]"
     assert s.enrich[0].type == "warframe_market"

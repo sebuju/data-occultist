@@ -1,10 +1,10 @@
 """Compute a subset (:class:`SubsetDef`) over one or more datasets.
 
-A subset outer-joins its source datasets on a shared key (``join_field``, default
-``name``), then filters rows, adds computed columns, sorts, and limits. It holds no
-state — recomputed from the current records each call, so it always reflects the latest
-stored data. Joining inventory to a producer's price dataset (then deriving
-``value = count*price_median``) is the canonical use.
+A subset joins its sources — each on its OWN key (a per-source ``join_field`` + ``join_norm``),
+each collapsing its own many->one (``aggregate``), each optionally ``required`` — then filters
+rows, adds computed columns, sorts, and limits. It holds no state — recomputed from the current
+records each call, so it always reflects the latest stored data. Joining inventory to a
+producer's price dataset (then deriving ``value = count*price_median``) is the canonical use.
 
 Derived columns are ``{column}`` templates. A template beginning with ``=`` is evaluated
 as ARITHMETIC over its numeric placeholders (e.g. ``={count}*{price_median}``); any
@@ -23,7 +23,7 @@ import operator
 import re
 from functools import lru_cache
 
-from ..profile.models import DerivedColumn, FilterRule, JoinNorm, SortRule, SubsetDef
+from ..profile.models import DerivedColumn, FilterRule, JoinNorm, JoinSource, SortRule, SubsetDef
 from ..store.textnorm import norm_text
 
 _PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
@@ -201,11 +201,10 @@ def _merge_rows(combo) -> dict:
     return out
 
 
-def _join(inputs: list[tuple[str, list[dict]]], join_field: str, mode: str = "outer",
-          norm: JoinNorm | None = None) -> list[dict]:
-    """Join the source datasets on ``join_field``, unioning columns. Each side's join value
-    is canonicalised through ``norm`` (a :class:`JoinNorm`; defaults to case-insensitive +
-    whitespace-collapse) so near-match keys still join.
+def _join(pairs: list[tuple[JoinSource, list[dict]]]) -> list[dict]:
+    """Join the sources, unioning columns. Each source canonicalises ITS OWN ``join_field``
+    value through ITS OWN :class:`JoinNorm` to the shared join key — so sources keying
+    different columns still match when their normalised values agree.
 
     This is a real relational join: it PRESERVES multiplicity. If a key has N rows in one
     source and M in another, the key yields N*M output rows (the cross product). So an
@@ -213,32 +212,36 @@ def _join(inputs: list[tuple[str, list[dict]]], join_field: str, mode: str = "ou
     rather than coalescing to one row. With one row per key on every side (the usual case —
     sources aggregate to one) a key is just one merged row, unchanged.
 
-    ``outer`` (default) keeps every key — a source missing the key contributes one empty
-    placeholder so the others' rows still surface; a row with no join value stays standalone.
-    ``inner`` keeps only keys present in EVERY source (intersection); unjoinable rows are
-    dropped. Earlier inputs win column collisions (their non-empty value is kept)."""
+    Per-source ``required`` replaces the old global inner/outer mode: with NO source required
+    the join is a full OUTER (every key kept; a source missing the key pairs in one empty
+    placeholder so the present sources' rows still surface, and a row with no join value stays
+    standalone). Marking sources required narrows the output to keys present in EVERY required
+    source (all required == the old ``inner``); standalones are dropped when any source is
+    required. Earlier sources win column collisions (their non-empty value is kept)."""
     from itertools import product
 
-    norm = norm or JoinNorm()
     strip = lambda rec: {k: v for k, v in rec.items() if k not in _HIDDEN}   # noqa: E731
     # A single source isn't joined — pass its rows through 1:1 (stripping bookkeeping cols).
-    if len(inputs) == 1:
-        return [strip(rec) for rec in inputs[0][1]]
+    if len(pairs) == 1:
+        return [strip(rec) for rec in pairs[0][1]]
 
-    def kof(row) -> str:
-        return norm_text(row.get(join_field, ""), lower=norm.case_insensitive,
-                         strip_punct=norm.strip_punct, collapse_ws=norm.collapse_ws,
-                         strip_words=tuple(norm.strip_words))
+    def kof(row, src: JoinSource) -> str:
+        if not src.join_field:
+            return ""
+        n = src.join_norm or JoinNorm()
+        return norm_text(row.get(src.join_field, ""), lower=n.case_insensitive,
+                         strip_punct=n.strip_punct, collapse_ws=n.collapse_ws,
+                         strip_words=tuple(n.strip_words))
 
     per_source: list[dict[str, list[dict]]] = []   # source idx -> {key -> [rows]}
     standalones: list[dict] = []                    # rows with no join value (outer only)
     key_order: list[str] = []
     seen: set[str] = set()
-    for _ds_id, recs in inputs:
+    for src, recs in pairs:
         groups: dict[str, list[dict]] = {}
         for rec in recs:
             row = strip(rec)
-            k = kof(row)
+            k = kof(row, src)
             if not k:
                 standalones.append(row)             # unjoinable -> its own row
                 continue
@@ -248,35 +251,36 @@ def _join(inputs: list[tuple[str, list[dict]]], join_field: str, mode: str = "ou
                 key_order.append(k)
         per_source.append(groups)
 
+    required = [bool(src.required) for src, _ in pairs]
+    strict = any(required)
     out: list[dict] = []
     for k in key_order:
-        if mode == "inner" and not all(k in gs for gs in per_source):
+        # drop the key if a REQUIRED source lacks it (all-required == old inner; mixed narrows)
+        if any(req and k not in gs for req, gs in zip(required, per_source)):
             continue
-        # each source contributes its matching rows; a source missing the key (outer) pairs in
+        # each source contributes its matching rows; an optional source missing the key pairs in
         # one empty placeholder so the present sources' rows still appear.
         lists = [gs.get(k) or [{}] for gs in per_source]
         for combo in product(*lists):
             out.append(_merge_rows(combo))
-    if mode != "inner":
+    if not strict:
         out.extend(standalones)
     return out
 
 
 def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
-    """Return ``{columns, rows}`` for a view over its joined source datasets.
+    """Return ``{columns, rows}`` for a view over its joined sources.
 
-    ``inputs`` is ``[(dataset_id, records), ...]`` — the datasets the view joins (on
-    ``sub.join_field``). Latest-batch -> merge -> derive -> filter -> sort -> limit, so
-    filters and sort can reference joined and derived columns alike."""
+    ``inputs`` is ``[(dataset_id, records), ...]`` aligned by index with ``sub.sources`` — the
+    sources the view joins (each on its OWN ``join_field``). Latest-batch -> merge -> derive ->
+    filter -> sort -> limit, so filters and sort can reference joined and derived columns alike."""
     # latest-batch first: trim each source to its most recent batch BEFORE the join, so the
     # rest of the pipeline only ever sees the latest pass.
     if getattr(sub, "latest_batch", False):
         inputs = [(ds, _latest_batch_only(recs)) for ds, recs in inputs]
-    # no join_field -> no join: the sources are just stacked (every row standalone), so the
-    # inner/outer mode is moot — force outer or inner would drop every (keyless) row.
-    jfield = sub.join_field or ""
-    jmode = (getattr(sub, "join_mode", "outer") or "outer") if jfield else "outer"
-    rows = _join(inputs, jfield, jmode, getattr(sub, "join_norm", None))
+    # pair each source's join config with its records (aligned by position) and join.
+    pairs = [(src, recs) for src, (_ds, recs) in zip(sub.sources, inputs)]
+    rows = _join(pairs)
     for row in rows:
         apply_derived(row, sub.derived)
     _apply_live_enrich(rows, getattr(sub, "enrich", None) or [])
@@ -305,8 +309,9 @@ def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
 
 
 def compute_subset(records: list[dict], sub: SubsetDef) -> dict:
-    """Back-compat single-dataset view over already-fetched ``records``."""
-    return compute_view([(sub.dataset or "", records)], sub)
+    """Single-source view over already-fetched ``records`` (``sub`` must have one source)."""
+    ds = sub.sources[0].dataset if sub.sources else ""
+    return compute_view([(ds, records)], sub)
 
 
 def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
@@ -319,8 +324,9 @@ def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
     with/without a ``present`` filter) — is injected:
 
     ``fetch_dataset(dataset_id, aggregate) -> list[dict]`` returns the raw stored records for
-    one plain dataset. A subset input is computed recursively with ITS own ``aggregate`` so its
-    derived columns are available upstream; a cycle resolves to no rows."""
+    one plain dataset, aggregated per the consuming SOURCE's ``aggregate``. A subset input is
+    computed recursively (each of ITS sources carries its own aggregate) so its derived columns
+    are available upstream; a cycle resolves to no rows."""
     cache: dict = {}
 
     def input_rows(input_id: str, stack: frozenset, aggregate: str) -> list[dict]:
@@ -333,8 +339,8 @@ def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
         elif input_id in stack:                           # cycle -> stop
             rows = []
         else:
-            a = getattr(sub, "aggregate", "latest") or "latest"
-            inputs = [(i, input_rows(i, stack | {input_id}, a)) for i in sub.inputs()]
+            inputs = [(src.dataset, input_rows(src.dataset, stack | {input_id}, src.aggregate or "latest"))
+                      for src in sub.sources]
             rows = compute_view(inputs, sub)["rows"]
         cache[ck] = rows
         return rows
@@ -342,8 +348,8 @@ def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
     sub = profile.subset_def(subset_id)
     if sub is None:
         return {"columns": [], "rows": []}
-    agg = getattr(sub, "aggregate", "latest") or "latest"
-    inputs = [(i, input_rows(i, frozenset({subset_id}), agg)) for i in sub.inputs()]
+    inputs = [(src.dataset, input_rows(src.dataset, frozenset({subset_id}), src.aggregate or "latest"))
+              for src in sub.sources]
     return compute_view(inputs, sub)
 
 

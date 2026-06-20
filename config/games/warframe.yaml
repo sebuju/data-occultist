@@ -791,18 +791,25 @@ datasets:
   batch_mode: run
 subsets:
 - id: statistic_prices_joined
-  dataset: ''
-  datasets:
-  - master
-  - prices_statistics
-  join_field: name
-  join_norm:
-    case_insensitive: true
-    strip_punct: false
-    collapse_ws: true
-    strip_words: []
-  join_mode: outer
-  aggregate: latest
+  sources:
+  - dataset: master
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+  - dataset: prices_statistics
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
   filters:
   - field: slug
     op: nonempty
@@ -824,18 +831,25 @@ subsets:
   limit: 0
   config_collapsed: true
 - id: live_prices_joined
-  dataset: ''
-  datasets:
-  - master
-  - prices_live
-  join_field: name
-  join_norm:
-    case_insensitive: true
-    strip_punct: false
-    collapse_ws: true
-    strip_words: []
-  join_mode: outer
-  aggregate: latest
+  sources:
+  - dataset: master
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+  - dataset: prices_live
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
   filters:
   - field: slug
     op: nonempty
@@ -861,17 +875,16 @@ subsets:
   limit: 0
   config_collapsed: true
 - id: relic_rewards_live
-  dataset: ''
-  datasets:
-  - prices_relic_live
-  join_field: name
-  join_norm:
-    case_insensitive: true
-    strip_punct: false
-    collapse_ws: true
-    strip_words: []
-  join_mode: outer
-  aggregate: latest
+  sources:
+  - dataset: prices_relic_live
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
   filters: []
   derived:
   - name: price
@@ -898,18 +911,25 @@ subsets:
   limit: 0
   config_collapsed: false
 - id: relic_rewards_limit
-  dataset: ''
-  datasets:
-  - relics_offered
-  - relic_rewards
-  join_field: name
-  join_norm:
-    case_insensitive: true
-    strip_punct: false
-    collapse_ws: true
-    strip_words: []
-  join_mode: inner
-  aggregate: latest
+  sources:
+  - dataset: relics_offered
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
+  - dataset: relic_rewards
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
   filters:
   - field: name
     op: nonempty
@@ -926,18 +946,25 @@ subsets:
   limit: 4
   config_collapsed: true
 - id: relic_rewards_price_from_stored
-  dataset: ''
-  datasets:
-  - relic_rewards_limit
-  - prices_live
-  join_field: name
-  join_norm:
-    case_insensitive: true
-    strip_punct: false
-    collapse_ws: true
-    strip_words: []
-  join_mode: inner
-  aggregate: latest
+  sources:
+  - dataset: relic_rewards_limit
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
+  - dataset: prices_live
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
   filters: []
   derived:
   - name: price
@@ -964,19 +991,27 @@ subsets:
   limit: 0
   config_collapsed: true
 - id: relics_with_content
-  dataset: ''
-  datasets:
-  - relics
-  - relic_contents
-  join_field: name
-  join_norm:
-    case_insensitive: true
-    strip_punct: true
-    collapse_ws: true
-    strip_words:
-    - relic
-  join_mode: inner
-  aggregate: all
+  sources:
+  - dataset: relics
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: true
+      collapse_ws: true
+      strip_words:
+      - relic
+    aggregate: all
+    required: true
+  - dataset: relic_contents
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: true
+      collapse_ws: true
+      strip_words:
+      - relic
+    aggregate: all
+    required: true
   filters:
   - field: state
     op: eq
@@ -997,18 +1032,25 @@ subsets:
   limit: 0
   config_collapsed: false
 - id: relics_with_content_view
-  dataset: ''
-  datasets:
-  - relics_with_content
-  - prices_live_with_item
-  join_field: item
-  join_norm:
-    case_insensitive: true
-    strip_punct: false
-    collapse_ws: true
-    strip_words: []
-  join_mode: inner
-  aggregate: latest
+  sources:
+  - dataset: relics_with_content
+    join_field: item
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
+  - dataset: prices_live
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
   filters: []
   derived: []
   hidden_columns:
@@ -1023,30 +1065,6 @@ subsets:
   - updated
   - ducats
   - live_median
-  enrich: []
-  sort: []
-  sort_by: ''
-  sort_desc: false
-  latest_batch: false
-  limit: 0
-  config_collapsed: false
-- id: prices_live_with_item
-  dataset: ''
-  datasets:
-  - prices_live
-  join_field: ''
-  join_norm:
-    case_insensitive: true
-    strip_punct: false
-    collapse_ws: true
-    strip_words: []
-  join_mode: outer
-  aggregate: latest
-  filters: []
-  derived:
-  - name: item
-    template: '{name}'
-  hidden_columns: []
   enrich: []
   sort: []
   sort_by: ''
@@ -1622,7 +1640,7 @@ layout:
     vt:ds:relic_contents:
       x: 1780.0
       y: 5000.0
-      w: 1260.0
+      w: 920.0
       h: 600.0
       collapsed: false
     ds:relics:
@@ -1641,7 +1659,7 @@ layout:
       x: 2820.0
       y: 4320.0
       w: 360.0
-      h: 660.0
+      h: 1100.0
       collapsed: false
     vt:sub:relics_with_content:
       x: 3240.0
@@ -1650,13 +1668,13 @@ layout:
       h: 360.0
       collapsed: false
     sub:relics_with_content_view:
-      x: 3180.0
-      y: 3240.0
-      w: 360.0
-      h: 720.0
+      x: 3200.0
+      y: 3100.0
+      w: 380.0
+      h: 980.0
       collapsed: false
     vt:sub:relics_with_content_view:
-      x: 3580.0
+      x: 3740.0
       y: 3240.0
       w: 860.0
       h: 800.0
@@ -1664,12 +1682,8 @@ layout:
     ds:dataset:
       x: 900.0
       y: 20.0
-      collapsed: false
-    sub:prices_live_with_item:
-      x: 3100.0
-      y: 2460.0
       w: 360.0
-      h: 440.0
+      h: 160.0
       collapsed: false
   tables:
     warframe:ds:master:

@@ -800,25 +800,40 @@ class JoinNorm(BaseModel):
     strip_words: list[str] = Field(default_factory=list)   # whole words to remove (e.g. "relic")
 
 
+class JoinSource(BaseModel):
+    """One input to a subset view: a source dataset (or upstream subset) PLUS how that source
+    joins. Per-source so heterogeneous sources combine cleanly — each names its OWN join
+    column, canonicalises its OWN value, collapses its OWN many->one, and declares whether it
+    is required. The canonical join key is the canonicalised ``join_field`` value, so two
+    sources keying different columns (``name`` vs ``item_name``) still match when their
+    normalised values agree."""
+
+    dataset: str = ""               # source dataset id (or an upstream subset id)
+    # THIS source's column whose canonicalised value is the shared join key. ``""`` -> this
+    # source does NOT join (its rows stack in standalone).
+    join_field: str = "name"
+    # how THIS source's join value is canonicalised before matching (bridges near-match keys)
+    join_norm: JoinNorm = Field(default_factory=JoinNorm)
+    # How THIS source's MANY observations per key collapse to one value when the view reads it —
+    # the view's call, not the dataset's. ``latest|first|sum|mean|max|min``, or ``all`` to NOT
+    # collapse (emit every observation as its own row). Moot for a subset input (it computes its own).
+    aggregate: str = "latest"
+    # Required => the join key MUST be present in this source for an output row (inner-style).
+    # When NO source is required the join is a full outer (every key kept, gaps filled); marking
+    # sources required narrows to keys present in all of them (the old ``inner`` = all required).
+    required: bool = False
+
+
 class SubsetDef(BaseModel):
-    """A derived VIEW over one or more datasets: outer-join them on a shared key, filter
+    """A derived VIEW over one or more sources: join them on each source's own key, filter
     rows, add computed columns, sort, limit. Recomputed on demand, so it always reflects
     the latest stored records."""
 
     id: str
-    dataset: str = ""               # legacy single source (kept; folds into ``datasets``)
-    datasets: list[str] = Field(default_factory=list)   # sources to join (on ``join_field``)
-    join_field: str = "name"        # field the datasets are joined on
-    # how each source's join_field value is canonicalised before matching (bridges near-match keys)
-    join_norm: JoinNorm = Field(default_factory=JoinNorm)
-    # ``outer`` keeps every key (gaps filled from later inputs); ``inner`` keeps only keys
-    # present in EVERY joined source (intersection). Ignored for a single source.
-    join_mode: str = "outer"
-    # How each dataset input's MANY observations per key collapse to one value when this
-    # view reads them — the view's call, not the dataset's (one dataset can feed two views
-    # that want latest vs sum). ``latest|first|sum|mean|max|min``, or ``all`` to NOT collapse
-    # (emit every observation as its own row).
-    aggregate: str = "latest"
+    # The sources to join, in order. Each carries its OWN join field / norm / aggregate /
+    # required flag (see :class:`JoinSource`) — join is source-specific, not one global rule.
+    # Earlier sources win column collisions.
+    sources: list[JoinSource] = Field(default_factory=list)
     filters: list[FilterRule] = Field(default_factory=list)
     derived: list[DerivedColumn] = Field(default_factory=list)
     hidden_columns: list[str] = Field(default_factory=list)  # result columns to omit from the view
@@ -834,12 +849,11 @@ class SubsetDef(BaseModel):
     config_collapsed: bool = False  # UI: the view's config block is folded away (persists per game)
 
     def inputs(self) -> list[str]:
-        """Source datasets to join, de-duplicated in order. Folds the legacy single
-        ``dataset`` in so old profiles keep working."""
+        """Source dataset/subset ids to join, de-duplicated in order."""
         out: list[str] = []
-        for d in ([self.dataset] if self.dataset else []) + list(self.datasets):
-            if d and d not in out:
-                out.append(d)
+        for src in self.sources:
+            if src.dataset and src.dataset not in out:
+                out.append(src.dataset)
         return out
 
 
