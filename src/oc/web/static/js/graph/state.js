@@ -26,6 +26,12 @@ export const imageCanvases = new Map();  // winId -> { wrap, overlay, canvas } (
 export const itemCanvases = new Map();   // `winId:itemId` -> { host, canvas, overlay, + coord maps }
 export const busy = new Map();           // node id -> active-work count (drives the spinner)
 
+// Boot phase: true while a game is loading (images reopening, first reads). The auto-fired
+// detect/preview/item reads on STASHED images consult the server OCR cache while this is set,
+// so a warm boot never touches the OCR engine (no cold-start / lock-contention variance). A
+// holder object (not a `let`) so every module reads the live value off the shared reference.
+export const boot = { phase: false };
+
 // Central registry of EVERY drawing overlay, so selection, deselection, and box hotkeys
 // are handled in ONE place — any new overlay just registers here and gets cross-deselect
 // + WASD for free. rec = { overlay, kind, winId, itemId?, persist(box), refresh() }.

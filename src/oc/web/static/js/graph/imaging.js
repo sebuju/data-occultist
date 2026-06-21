@@ -9,7 +9,7 @@ import { persist } from "./persist.js";
 import * as groups from "./groups.js";
 import {
     setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases,
-    gridPreviews, gridReads, gridCellBoxes, gridGuards, gridDetections, itemReads, clearGrid, view,
+    gridPreviews, gridReads, gridCellBoxes, gridGuards, gridDetections, itemReads, clearGrid, view, boot,
 } from "./state.js";
 import { drawEdges } from "./routing.js";
 import { renderLiveWindow, liveDetCount, liveRecog } from "./panels/livewin.js";
@@ -394,7 +394,7 @@ async function runItemRead(winId, itemId) {
     if (out && !out.childElementCount && !out.textContent) out.replaceChildren("reading…");
     const done = timed(`item read ${key}`);
     try {
-        const res = await api.itemRead(previewProfileFor(winId), model.profile.name, winId, itemId);
+        const res = await api.itemRead(previewProfileFor(winId), model.profile.name, winId, itemId, boot.phase);
         itemReads.set(key, res);
         refreshItemBoxes(winId, itemId);
         if (out) out.replaceChildren(itemReadout(res, winId, itemId));
@@ -481,7 +481,9 @@ async function refreshPreview(winId, live = false) {
     const done = timed(`OCR preview ${winId}`);
     try {
         const cap = live ? null : await curCapOf(winId);   // the page on screen (live grabs fresh)
-        const res = await api.preview(previewProfileFor(winId), model.profile.name, cap);
+        // On boot, serve the unchanged stashed image from the server OCR cache (no engine touch);
+        // a live read or a post-boot edit always re-OCRs fresh.
+        const res = await api.preview(previewProfileFor(winId), model.profile.name, cap, boot.phase && !live);
         host.replaceChildren(previewTable(res.cells));
         setGridFromPreview(winId, res);   // same OCR pass drives the dashed grid
         setWindowDrift(winId, res.drift);   // grid-fit score on the window node
@@ -660,7 +662,7 @@ async function refreshDetect(winId, live = false) {
         await withBusy(ids, async () => {
             try {
                 const cap = live ? null : await curCapOf(winId);   // the page on screen (live grabs fresh)
-                const res = await api.detect(previewProfileFor(winId), model.profile.name, cap);
+                const res = await api.detect(previewProfileFor(winId), model.profile.name, cap, boot.phase && !live);
                 const dstatus = {};   // mirror onto the window canvas: colour/tint each detect box by its verdict
                 for (const [aid, info] of Object.entries(res.detect || {})) { setDetectStatus(`det:${winId}:${aid}`, info); dstatus[aid] = info; }
                 for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);

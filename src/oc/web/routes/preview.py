@@ -8,6 +8,8 @@ exactly what each box gets out of the image before saving.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import cv2
 from fastapi import APIRouter, HTTPException, Query
 
@@ -23,10 +25,30 @@ from ...store import store_for
 from ...store.flow_events import publish_flow
 from ...types import Frame, PixelBox
 from .. import captures_store
-from ..deps import get_engine, get_locator, get_settings
+from ..deps import get_engine, get_locator, get_ocr_cache, get_settings
+from ..ocr_cache import cache_key
 from ..video_source import get_video_source
 
 router = APIRouter(prefix="/api", tags=["preview"])
+
+
+def _lex_mtime(game: str) -> float:
+    """Mtime of the game's lexicon — folded into read caches so a learned/edited
+    dictionary (which changes a read's substitutions) invalidates stale entries."""
+    p = Path(get_settings().data_dir) / game / "lexicon.json"
+    return p.stat().st_mtime if p.exists() else 0.0
+
+
+def _ocr_cache_for(game, image_id, config, prefer_cache):
+    """Resolve the per-game OCR cache and this read's key. Returns ``(cache, key,
+    hit)`` where ``hit`` is a cached payload when ``prefer_cache`` and present, else
+    None. ``cache``/``key`` are None when caching doesn't apply (no stashed image)."""
+    if not (game and image_id):
+        return None, None, None   # live grab -> pixels vary, never cache
+    cache = get_ocr_cache(game)
+    key = cache_key(image_id, config)
+    hit = cache.get(key) if prefer_cache else None
+    return cache, key, hit
 
 
 def _frame_for(engine, profile, game, capture):
@@ -57,13 +79,20 @@ def _frame_for(engine, profile, game, capture):
 
 
 @router.post("/detect")
-def detect(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None)):
+def detect(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None),
+           prefer_cache: bool = Query(False)):
     """Evaluate each window detector + state against the image: matched + what it read."""
     if not profile.windows:
         return {"detect": {}, "states": {}}
+    window = profile.windows[0]
+    # Cache on the stashed image + the detectors that act on it (no fields/lexicon — detect
+    # is template/text matching only). A box/detector edit changes the dump → fresh read.
+    cfg = {"window": window.model_dump(mode="json")}
+    cache, key, hit = _ocr_cache_for(game, capture, cfg, prefer_cache)
+    if hit is not None:
+        return {**hit, "cached": True}
     engine = get_engine()
     frame = _frame_for(engine, profile, game, capture)
-    window = profile.windows[0]
     matcher = DetectMatcher(engine.ocr, str(get_settings().profiles_dir))
 
     # one job: run the whole detect pass without interleaving with another OCR job
@@ -96,9 +125,13 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
                 "conf": d["conf"],
             }
 
-    return {"detect": detect, "states": states, "scrollbar": scrollbar,
-            "window": {"pass": window_pass, "mode": window.detect_mode},
-            "device": getattr(engine.ocr, "device", "cpu"), "ms": round(job.ms)}
+    result = {"detect": detect, "states": states, "scrollbar": scrollbar,
+              "window": {"pass": window_pass, "mode": window.detect_mode},
+              "device": getattr(engine.ocr, "device", "cpu"), "ms": round(job.ms)}
+    if cache is not None:
+        cache.put(key, result)
+        cache.save()
+    return result
 
 
 def _window_match(matcher, win, frame):
@@ -208,11 +241,22 @@ def _cell_values(cell):
 
 
 @router.post("/preview")
-def preview(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None)):
+def preview(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None),
+            prefer_cache: bool = Query(False)):
     """OCR the current regions. If ``game``+``capture`` are given, read that stashed
     image (the one shown in the image node); otherwise capture the live window."""
     if not profile.windows:
         raise HTTPException(status_code=400, detail="profile has no window")
+    window = profile.windows[0]
+    # Cache on the stashed image + everything that shapes the read: the window boxes/grid,
+    # the fields, the resolver's accept floor, and the lexicon mtime (substitutions depend on it).
+    cfg = {"window": window.model_dump(mode="json"),
+           "fields": [f.model_dump(mode="json") for f in profile.fields],
+           "accept": get_settings().tuning.accept_confidence,
+           "lex": _lex_mtime(game) if game else 0.0}
+    cache, key, hit = _ocr_cache_for(game, capture, cfg, prefer_cache)
+    if hit is not None:
+        return {**hit, "cached": True}
     engine = get_engine()
     frame, window, result = _read_window(engine, profile, game, capture)
     # the dedup key each cell would store under — same spec the collector resolves,
@@ -222,8 +266,12 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
         km = profile.key_map_for(window.dataset_id)
         for cell in result["cells"]:
             cell["key"] = km.build(_cell_values(cell))
-    return {"client": [frame.client.w, frame.client.h],
-            "device": getattr(engine.ocr, "device", "cpu"), **result}
+    out = {"client": [frame.client.w, frame.client.h],
+           "device": getattr(engine.ocr, "device", "cpu"), **result}
+    if cache is not None:
+        cache.put(key, out)
+        cache.save()
+    return out
 
 
 @router.post("/preview/commit")
@@ -273,7 +321,8 @@ def preview_commit(profile: GameProfile, game: str | None = Query(None), capture
 
 
 @router.post("/item/read")
-def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...), item: str = Query(...)):
+def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...), item: str = Query(...),
+              prefer_cache: bool = Query(False)):
     """Read ONE item's frozen cutout with the current (unsaved) settings and report
     what it extracts: per-field value/confidence + per-tell pass/score + validity. This
     is the same read the collector runs on a located cell, scoped to the reference crop
@@ -286,6 +335,13 @@ def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...
         raise HTTPException(status_code=404, detail="item not found")
     if not it.cutout:
         raise HTTPException(status_code=400, detail="item has no cutout")
+    # Cache on the immutable cutout image + the window/fields/dictionary that drive the read.
+    cfg = {"window": window.model_dump(mode="json"),
+           "fields": [f.model_dump(mode="json") for f in profile.fields],
+           "accept": get_settings().tuning.accept_confidence, "lex": _lex_mtime(game)}
+    cache, key, hit = _ocr_cache_for(game, f"{it.cutout}\x00{item}", cfg, prefer_cache)
+    if hit is not None:
+        return {**hit, "cached": True}
     cp = captures_store.cutout_path(get_settings().captures_dir, game, it.cutout)
     cut = cv2.imread(str(cp)) if cp else None
     if cut is None:
@@ -304,5 +360,9 @@ def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...
     # the dedup key this read would store under (None = unkeyable, e.g. a part empty)
     spec = (it.key or window.key or KeyDef()).spec()
     vals = {fid: f.get("value") for fid, f in result["fields"].items()}
-    return {"cutout": [w, h], "key": spec.build(vals), "key_fields": list(spec.fields),
-            "device": getattr(engine.ocr, "device", "cpu"), "ms": round(job.ms), **result}
+    out = {"cutout": [w, h], "key": spec.build(vals), "key_fields": list(spec.fields),
+           "device": getattr(engine.ocr, "device", "cpu"), "ms": round(job.ms), **result}
+    if cache is not None:
+        cache.put(key, out)
+        cache.save()
+    return out
