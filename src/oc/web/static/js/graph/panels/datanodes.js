@@ -60,14 +60,21 @@ function setTabCount(ds, sel, n) {
 // after (the LATEST request wins) — never dropped, so the final write of a live sweep lands.
 const _dnKey = (ds) => `dn:${ds}`;
 
-function refreshDataNode(ds) { singleFlight(_dnKey(ds), () => _refreshDataNode(ds)); }
-async function _refreshDataNode(ds) {
+// `pre` (an already-fetched dataset detail, e.g. from the one-shot boot batch) renders without a
+// network round-trip; omit it for the live path and it fetches its own.
+async function _datasetPayload(ds, pre) {
+    if (pre) return pre;
+    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
+    return r.json();
+}
+
+function refreshDataNode(ds, pre = null) { singleFlight(_dnKey(ds), () => _refreshDataNode(ds, pre)); }
+async function _refreshDataNode(ds, pre) {
     const host = dataHost(ds);
     if (!host) return;
     setNodeBusy(`vt:ds:${ds}`, true);   // spin the records-grid satellite while it recomputes
     try {
-        const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
-        const payload = await r.json();
+        const payload = await _datasetPayload(ds, pre);
         const recs = payload.records || [];
         const batchN = (payload.batches || []).filter((b) => !b.reverted).length;   // applied batches (matches the bat-n badge)
         const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
@@ -178,12 +185,11 @@ function batState(ds) {
 
 // (re)fetch the ledger and paint it into the node body — called on build and whenever
 // the dataset's batches change (save / revert / edit / remove). No refresh button.
-async function loadBatchesNode(ds) {
+async function loadBatchesNode(ds, pre = null) {
     const els = batEls(ds);
     if (!els) return;
     try {
-        const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`);
-        const batches = (await r.json()).batches || [];
+        const batches = (await _datasetPayload(ds, pre)).batches || [];
         renderBatchesList(ds, batches);
         setTabCount(ds, ".bat-n", batches.filter((b) => !b.reverted).length);   // applied batch count (reverted/unapplied excluded)
     } catch (e) { els.list.replaceChildren(h("li", { class: "muted" }, String(e))); }

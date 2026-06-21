@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ...profile import list_profiles
 from ...runtime import load_live_profile
@@ -216,3 +217,54 @@ def subset_view(game: str, subset: str):
                                 n_fn=lambda: len(result.get("rows", []))):
         result = compute_view_rows(profile, subset, _flow_fetch(game))
     return {"subset": subset, "datasets": sub.inputs(), **result}
+
+
+class _DetailsReq(BaseModel):
+    datasets: list[str] = []
+    subsets: list[str] = []
+
+
+@router.post("/{game}/details")
+def flow_details(game: str, req: _DetailsReq):
+    """One round-trip for the graph boot: every requested dataset's detail + subset's view at
+    once. A single ``store`` memo is shared across the whole batch, so a dataset that feeds its
+    own node AND several views opens/parses once instead of once per consumer (the per-node
+    fan-out — and the same source fetched once per view — collapses to one request)."""
+    from ...enrich.subset import compute_view_rows
+    from ...store import stats_store
+    settings = get_settings()
+    if game not in list_profiles(settings.profiles_dir):
+        raise HTTPException(status_code=404, detail=f"No profile {game!r}")
+    profile = load_live_profile(settings.profiles_dir, game)
+
+    memo: dict[tuple[str, str | None], DatasetStore] = {}
+    def store(ds: str, aggregate: str | None = None) -> DatasetStore:
+        k = (ds, aggregate)
+        if k not in memo:
+            memo[k] = store_for(settings.data_dir, game, ds, profile=profile, aggregate=aggregate)
+        return memo[k]
+
+    datasets: dict[str, dict] = {}
+    for ds in dict.fromkeys(req.datasets):   # dedupe, keep order
+        try:
+            datasets[ds] = _detail(store(ds), ds)
+        except Exception:
+            continue   # a bad / disk-only id must not sink the rest of the batch
+
+    # subset rows aggregate by the CONSUMING view's policy (mirrors _flow_fetch) — share the memo
+    def fetch(d, agg):
+        return rows_at(store(d, "latest" if agg == "all" else agg), agg)
+    subsets: dict[str, dict] = {}
+    for sid in dict.fromkeys(req.subsets):
+        sub = profile.subset_def(sid)
+        if sub is None:
+            continue
+        result: dict = {"rows": []}
+        try:
+            with stats_store.time_block(game, f"sub:{sid}", "rc",
+                                        n_fn=lambda: len(result.get("rows", []))):
+                result = compute_view_rows(profile, sid, fetch)
+            subsets[sid] = {"subset": sid, "datasets": sub.inputs(), **result}
+        except Exception:
+            continue
+    return {"datasets": datasets, "subsets": subsets}
