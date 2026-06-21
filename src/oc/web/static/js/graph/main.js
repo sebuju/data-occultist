@@ -29,7 +29,7 @@ initTitlebar();   // custom window chrome — no-op outside the desktop window
 import {
     $, setStatus, model, pos, nodeEls, collapsed, view, selected, nodeSizes, openImages,
     imageCanvases, itemCanvases, busy, overlays,
-    itemReads, prevPresent, prevLastTs, dsTab, clearGrid, nw, nh,
+    itemReads, prevPresent, prevLastTs, dsTab, clearGrid, nw, nh, boot,
 } from "./state.js";
 import {
     drawEdges, requestEdges, flushEdges, nodeRect, freezeRouting,
@@ -89,6 +89,11 @@ const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, producer: 7
 // Every other node — incl. the config nodes (dataset/subset/producer) — is freely resizable.
 const WIDTH_ONLY_NODES = new Set(["item", "window"]);
 const FLOW_FALLBACK_MS = 15000;   // safety-net /api/flow poll; the dataset-change bus is the real mechanism
+// One-shot boot prefetch: every dataset detail + subset view fetched in a SINGLE /details request
+// before the nodes are built, so each node renders from this map instead of firing its own fetch
+// (collapses the per-node fan-out — and the same source dataset fetched once per consumer — into
+// one request). Null except during a game load; the live path fetches per-node as before.
+let _bootDetails = null;
 export let live = {};             // dataset -> {present,total,last_op,last_ts} (read by datanodes/refreshLive)
 export let wire = null;           // active drag-wire {winId, x1,y1} (read by routing.drawEdges)
 export let selectedNodeId = null; // node whose line(s) are highlighted (read by routing.selClsFor)
@@ -1002,8 +1007,10 @@ async function fillNormSamples(div, s) {
         let sample = null;
         try {
             const isView = !!model.subsetDef(ds);
-            const url = `/api/flow/${game}/${isView ? "subset" : "dataset"}/${encodeURIComponent(ds)}`;
-            const data = await (await fetch(url)).json();
+            // boot batch already carries every source's rows — sample from it (no extra fetch); the
+            // live path (post-boot edits) has no prefetch and fetches the one source it needs.
+            const cached = isView ? _bootDetails?.subsets?.[ds] : _bootDetails?.datasets?.[ds];
+            const data = cached || await (await fetch(`/api/flow/${game}/${isView ? "subset" : "dataset"}/${encodeURIComponent(ds)}`)).json();
             const recs = isView ? (data.rows || []) : (data.records || []);
             for (const r of recs) { const v = r[jf]; if (v != null && String(v).trim() !== "") { sample = String(v); break; } }
         } catch { /* leave null -> "no data" */ }
@@ -1095,8 +1102,10 @@ function repaintSubsetCols(el, s) {
 // Its compute can be slow — never run two at once for one subset, but a request that arrives
 // mid-compute must re-run once after (never dropped), so a view tracking a live sweep lands on
 // the FINAL data instead of stalling on a stale mid-sweep snapshot.
-function refreshSubsetNode(id) { singleFlight(`sub:${id}`, () => _refreshSubsetNode(id)); }
-async function _refreshSubsetNode(id) {
+// `pre` (an already-computed view, e.g. from the one-shot boot batch) renders without a network
+// round-trip; omit it for the live path and it fetches its own.
+function refreshSubsetNode(id, pre = null) { singleFlight(`sub:${id}`, () => _refreshSubsetNode(id, pre)); }
+async function _refreshSubsetNode(id, pre) {
     const el = nodeEls.get(`sub:${id}`);                              // config node (hide toggles live here)
     const vtId = `vt:sub:${id}`;
     const host = nodeEls.get(vtId)?.querySelector(".sub-host");       // records grid — opt-in satellite
@@ -1105,7 +1114,7 @@ async function _refreshSubsetNode(id) {
     const vtShown = !!host;
     if (vtShown) setNodeBusy(vtId, true);
     try {
-        const r = await api.getSubset(model.profile.name, id);
+        const r = pre || await api.getSubset(model.profile.name, id);
         const s = model.subsetDef(id);
         if (host) {
             const vt = vtableFor(`view:${id}`, host);
@@ -1184,7 +1193,7 @@ function wireSubset(div, s) {
         el.addEventListener("input", () => { model.setSourceStripWords(s.id, el.dataset.ds, el.value); previewNorm(el.dataset.ds); });
         el.addEventListener("change", () => { model.setSourceStripWords(s.id, el.dataset.ds, el.value); recompute(); });
     });
-    fillNormSamples(div, s);   // fetch each source's real sample value, then render its example
+    fillNormSamples(div, s);   // sample each source's real join value, then render its example
     div.querySelector(".sv-latest")?.addEventListener("change", (e) => { model.setSubsetLatestBatch(s.id, e.target.checked); recompute(); });
     div.querySelector(".sv-limit")?.addEventListener("change", (e) => { model.setSubsetLimit(s.id, e.target.value); e.target.value = s.limit || 0; recompute(); });
 
@@ -1208,7 +1217,7 @@ function wireSubset(div, s) {
     wireHideToggles(div, s);
     // sort/limit removed — the table sorts itself (click a column header)
 
-    queueMicrotask(() => refreshSubsetNode(s.id));
+    queueMicrotask(() => refreshSubsetNode(s.id, _bootDetails?.subsets?.[s.id] || null));
 }
 
 // ---- producer node: fetches external data into its output dataset -----------
@@ -2106,7 +2115,8 @@ function wireNode(div, n) {
         // live ABOVE the table here, not on the dataset node).
         const r = n.ref;
         if (r.kind === "subset") {
-            queueMicrotask(() => refreshSubsetNode(r.id));
+            const pre = _bootDetails?.subsets?.[r.id] || null;
+            queueMicrotask(() => refreshSubsetNode(r.id, pre));
         } else {
             const cur = dsTab.get(r.ds) || "data";
             div.dataset.tab = cur;   // CSS hides the inactive host
@@ -2119,7 +2129,8 @@ function wireNode(div, n) {
                 div.querySelectorAll(".ds-tab").forEach((t) => t.classList.toggle("on", t === tab));
                 if (which === "batches") loadBatchesNode(r.ds);   // (re)fetch the ledger when shown
             }));
-            queueMicrotask(() => { refreshDataNode(r.ds); loadBatchesNode(r.ds); });
+            const pre = _bootDetails?.datasets?.[r.ds] || null;
+            queueMicrotask(() => { refreshDataNode(r.ds, pre); loadBatchesNode(r.ds, pre); });
         }
     } else if (n.type === "subset") {
         wireSubset(div, n.ref);
@@ -2487,6 +2498,7 @@ async function refreshGames(select) {
 
 async function loadGame(name) {
     if (!name) return;
+    boot.phase = true;   // reopened images read the server OCR cache (no engine touch) until the load settles
     await persist.flush();   // commit any pending save before switching games
     const done = timed(`load game ${name}`);
     let opened;
@@ -2518,6 +2530,12 @@ async function loadGame(name) {
     selected.clear();       // drop any multi-selection from the previous game
     hydrateLayout();        // restore node positions/sizes/collapse/open-images from the profile
     applyLocal(local);      // restore canvas zoom/pan + minimap from the per-device sidecar
+    // Prefetch every node's data in ONE request before building the nodes, so each node renders
+    // from `_bootDetails` instead of firing its own fetch (and a dataset feeding many views is
+    // fetched once, not once per consumer). Best-effort: on failure nodes fall back to per-node fetch.
+    try {
+        _bootDetails = await api.flowDetails(name, model.datasets(), (model.profile.subsets || []).map((s) => s.id));
+    } catch { _bootDetails = null; }
     render();
     await prettyOverrides.initOverrides(name);   // layer this game's transient pretty overrides onto the model
     refreshDirtyUI();
@@ -2529,6 +2547,7 @@ async function loadGame(name) {
     // set is empty and we'd save open_images:[], stranding every window's canvas on next load.
     await Promise.all(pendingOpenImages.map((winId) => (model.window(winId) ? openImage(winId) : null)));
     pendingOpenImages = [];
+    _bootDetails = null;   // node build (+ its queued refreshes) consumed it; live refreshes fetch fresh
     groupOrphanChildren("itemfield");   // pull each item's field nodes into the item's group (idempotent)
     groupOrphanChildren("itemtell");    // …and its tell nodes
     drawEdges();                        // reflect any new group membership in the routing
@@ -2542,7 +2561,11 @@ async function loadGame(name) {
     setStatus(`loaded ${name}`);
 }
 
-$("gameSelect").addEventListener("change", (e) => loadGame(e.target.value));
+$("gameSelect").addEventListener("change", async (e) => {
+    await loadGame(e.target.value);
+    await bootSettle();   // let the reopened images' cached reads drain, then re-OCR fresh on edits
+    boot.phase = false;
+});
 // Mint a blank game profile. Called from the settings modal's "new game" section.
 function createGame(name) {
     name = (name || "").trim();
@@ -3245,6 +3268,7 @@ async function killStrayOcrThenBoot() {
         hub.start();
         log("first read…");
         await bootSettle();
+        boot.phase = false;   // boot OCR drained -> later reads/edits re-OCR fresh (cache write-through)
     } catch (e) {
         if (!conn.isOnline()) { veil.drop(); return; }   // dropped mid-boot -> offline overlay handles it
         log(String(e.message || e), "err");   // boot hiccup: show the page anyway

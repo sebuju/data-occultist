@@ -126,9 +126,10 @@ export const dbbackups = {
 
 // OCR the current layout. Pass game+capture to read that stashed image (the one
 // shown in the image node) instead of capturing the live window.
-export async function preview(profile, game, capture) {
+export async function preview(profile, game, capture, preferCache = false) {
     let url = "/api/preview";
     if (game && capture) url += `?game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}`;
+    if (preferCache) url += `${url.includes("?") ? "&" : "?"}prefer_cache=1`;
     const r = await tfetchOcr(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -174,9 +175,10 @@ export async function suggest(game, search) {
 }
 
 // Evaluate detectors/states against the image: { detect:{id:{matched,read}}, states:{...} }.
-export async function detect(profile, game, capture) {
+export async function detect(profile, game, capture, preferCache = false) {
     let url = "/api/detect";
     if (game && capture) url += `?game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}`;
+    if (preferCache) url += `${url.includes("?") ? "&" : "?"}prefer_cache=1`;
     const r = await tfetchOcr(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(profile) }, OCR_MS);
     if (!r.ok) throw new Error(`detect: ${r.status}`);
     return r.json();
@@ -233,8 +235,9 @@ export async function stashScreenshot(game, blob, view = "canvas") {
 
 // Read one item's frozen cutout with the current settings -> { cutout:[w,h],
 // fields:{id:{raw,value,confidence,substituted,box}}, tells:[...], valid, cell }.
-export async function itemRead(profile, game, win, item) {
-    const q = `game=${encodeURIComponent(game)}&win=${encodeURIComponent(win)}&item=${encodeURIComponent(item)}`;
+export async function itemRead(profile, game, win, item, preferCache = false) {
+    let q = `game=${encodeURIComponent(game)}&win=${encodeURIComponent(win)}&item=${encodeURIComponent(item)}`;
+    if (preferCache) q += "&prefer_cache=1";
     const r = await tfetchOcr(`/api/item/read?${q}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -463,6 +466,19 @@ export const sounds = {
 export async function getSubset(game, subset) {
     const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/subset/${encodeURIComponent(subset)}`);
     if (!r.ok) throw new Error(`subset: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+
+// One round-trip for many nodes' data: every listed dataset's detail + subset's view, computed
+// server-side sharing one store per dataset (so a dataset feeding several views parses once).
+// Returns { datasets: {id: detail}, subsets: {id: view} }. Used by the boot prefetch.
+export async function flowDetails(game, datasets, subsets) {
+    const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/details`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ datasets: datasets || [], subsets: subsets || [] }),
+    });
+    if (!r.ok) throw new Error(`details: ${r.status} ${await r.text()}`);
     return r.json();
 }
 
