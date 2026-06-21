@@ -34,10 +34,19 @@ const outDir = (s) => (faceOut[s][0] !== 0 ? (faceOut[s][0] > 0 ? "E" : "W") : (
 const inDirOf = (s) => (faceOut[s][0] !== 0 ? (faceOut[s][0] > 0 ? "W" : "E") : (faceOut[s][1] > 0 ? "N" : "S"));
 const rev = (d) => (d === "N" ? "S" : d === "S" ? "N" : d === "E" ? "W" : "E");
 
-function segHitsHard(ax, ay, bx, by, rects, eps) {
+// Shared empty group-set so the (very common) no-group edge doesn't allocate a Set per option.
+// astar guards `e.gset && e.gset.size`, so an empty shared set is read-only-safe.
+const EMPTY = new Set();
+const mkSet = (a) => (a.length ? new Set(a) : EMPTY);
+
+// `hb` = flat obstacle bounds {n, x0,y0,x1,y1} (typed arrays), prebuilt once per routeGraph call.
+// Reading flats in the O(N^3) inner loop avoids object-property chasing and recomputing x+w / y+h
+// on every iteration — same overlap test, identical result as the old per-rect-object scan.
+function segHitsHard(ax, ay, bx, by, hb, eps) {
     eps = eps == null ? 1 : eps;
     const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx), y0 = Math.min(ay, by), y1 = Math.max(ay, by);
-    for (const r of rects) if (x1 > r.x + eps && x0 < r.x + r.w - eps && y1 > r.y + eps && y0 < r.y + r.h - eps) return true;
+    const n = hb.n, rx0 = hb.x0, ry0 = hb.y0, rx1 = hb.x1, ry1 = hb.y1;
+    for (let i = 0; i < n; i++) if (x1 > rx0[i] + eps && x0 < rx1[i] - eps && y1 > ry0[i] + eps && y0 < ry1[i] - eps) return true;
     return false;
 }
 function softList(ax, ay, bx, by, soft) {
@@ -46,18 +55,18 @@ function softList(ax, ay, bx, by, soft) {
     return out;
 }
 // the 1-bend L (or straight) options A=(ax,ay)->B=(bx,by) that clear all hard rects
-function edgeOpts(ax, ay, bx, by, rects, soft) {
+function edgeOpts(ax, ay, bx, by, hb, soft) {
     const out = [], len = Math.abs(ax - bx) + Math.abs(ay - by);
     if (len < 0.5) return out;
     const dh = bx > ax ? "E" : "W", dv = by > ay ? "S" : "N";
-    if (Math.abs(ax - bx) < 0.5) { if (!segHitsHard(ax, ay, bx, by, rects)) out.push({ d1: dv, d2: dv, corner: null, len, gset: new Set(softList(ax, ay, bx, by, soft)) }); return out; }
-    if (Math.abs(ay - by) < 0.5) { if (!segHitsHard(ax, ay, bx, by, rects)) out.push({ d1: dh, d2: dh, corner: null, len, gset: new Set(softList(ax, ay, bx, by, soft)) }); return out; }
+    if (Math.abs(ax - bx) < 0.5) { if (!segHitsHard(ax, ay, bx, by, hb)) out.push({ d1: dv, d2: dv, corner: null, len, gset: mkSet(softList(ax, ay, bx, by, soft)) }); return out; }
+    if (Math.abs(ay - by) < 0.5) { if (!segHitsHard(ax, ay, bx, by, hb)) out.push({ d1: dh, d2: dh, corner: null, len, gset: mkSet(softList(ax, ay, bx, by, soft)) }); return out; }
     const c1 = [bx, ay];
-    if (!segHitsHard(ax, ay, c1[0], c1[1], rects) && !segHitsHard(c1[0], c1[1], bx, by, rects))
-        out.push({ d1: dh, d2: dv, corner: c1, len, gset: new Set(softList(ax, ay, c1[0], c1[1], soft).concat(softList(c1[0], c1[1], bx, by, soft))) });
+    if (!segHitsHard(ax, ay, c1[0], c1[1], hb) && !segHitsHard(c1[0], c1[1], bx, by, hb))
+        out.push({ d1: dh, d2: dv, corner: c1, len, gset: mkSet(softList(ax, ay, c1[0], c1[1], soft).concat(softList(c1[0], c1[1], bx, by, soft))) });
     const c2 = [ax, by];
-    if (!segHitsHard(ax, ay, c2[0], c2[1], rects) && !segHitsHard(c2[0], c2[1], bx, by, rects))
-        out.push({ d1: dv, d2: dh, corner: c2, len, gset: new Set(softList(ax, ay, c2[0], c2[1], soft).concat(softList(c2[0], c2[1], bx, by, soft))) });
+    if (!segHitsHard(ax, ay, c2[0], c2[1], hb) && !segHitsHard(c2[0], c2[1], bx, by, hb))
+        out.push({ d1: dv, d2: dh, corner: c2, len, gset: mkSet(softList(ax, ay, c2[0], c2[1], soft).concat(softList(c2[0], c2[1], bx, by, soft))) });
     return out;
 }
 
@@ -109,6 +118,10 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     const prevSides = opts.prevSides || null;
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const rects = nodes.map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h, id: n.id }));
+    // flat obstacle bounds, built once — fed to every segHitsHard in the O(N^3) build (see edgeOpts)
+    const RN = rects.length, rx0 = new Float64Array(RN), ry0 = new Float64Array(RN), rx1 = new Float64Array(RN), ry1 = new Float64Array(RN);
+    for (let i = 0; i < RN; i++) { const r = rects[i]; rx0[i] = r.x; ry0[i] = r.y; rx1[i] = r.x + r.w; ry1[i] = r.y + r.h; }
+    const HB = { n: RN, x0: rx0, y0: ry0, x1: rx1, y1: ry1 };
     const m = C.clearance, PADG = 18;
     const soft = [], groupOfNode = new Map();
     for (const grp of (groups || [])) {
@@ -125,7 +138,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     const baseAdj = Array.from({ length: baseN }, () => []);
     for (let i = 0; i < baseN; i++) for (let j = i + 1; j < baseN; j++) {
         const A = WP[i], B = WP[j];
-        for (const e of edgeOpts(A[0], A[1], B[0], B[1], rects, soft)) {
+        for (const e of edgeOpts(A[0], A[1], B[0], B[1], HB, soft)) {
             baseAdj[i].push({ to: j, d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset });
             baseAdj[j].push({ to: i, d1: rev(e.d2), d2: rev(e.d1), corner: e.corner, len: e.len, gset: e.gset });
         }
@@ -139,7 +152,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
         const pp = {}, pe = {};
         for (const f of FACES) {
             const sp = faceCenter(n, f); pp[f] = sp; const od = outDir(f), list = [];
-            for (let i = 0; i < baseN; i++) { const W = WP[i]; for (const e of edgeOpts(sp[0], sp[1], W[0], W[1], rects, soft)) if (e.d1 === od) list.push({ to: i, d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset }); }
+            for (let i = 0; i < baseN; i++) { const W = WP[i]; for (const e of edgeOpts(sp[0], sp[1], W[0], W[1], HB, soft)) if (e.d1 === od) list.push({ to: i, d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset }); }
             pe[f] = list;
         }
         portPos.set(n.id, pp); portEdges.set(n.id, pe);
@@ -165,7 +178,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
         for (const f of FACES) { const id = inDirOf(f); add(dstIdx[f], { to: D0, d1: id, d2: id, corner: null, len: prev && prev.d2 !== f ? C.faceStick : 0, gset: EMPTY }); }
         for (const f of FACES) for (const e of peA[f]) add(srcIdx[f], e);
         for (const g of FACES) for (const e of peB[g]) add(e.to, { to: dstIdx[g], d1: rev(e.d2), d2: rev(e.d1), corner: e.corner, len: e.len, gset: e.gset });
-        for (const f of FACES) { const sp = ppA[f], od = outDir(f); for (const g of FACES) { const dp = ppB[g], id = inDirOf(g); for (const e of edgeOpts(sp[0], sp[1], dp[0], dp[1], rects, soft)) if (e.d1 === od && e.d2 === id) add(srcIdx[f], { to: dstIdx[g], d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset }); } }
+        for (const f of FACES) { const sp = ppA[f], od = outDir(f); for (const g of FACES) { const dp = ppB[g], id = inDirOf(g); for (const e of edgeOpts(sp[0], sp[1], dp[0], dp[1], HB, soft)) if (e.d1 === od && e.d2 === id) add(srcIdx[f], { to: dstIdx[g], d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset }); } }
         const edgesOf = (i) => (i < baseN ? (overlay.has(i) ? baseAdj[i].concat(overlay.get(i)) : baseAdj[i]) : (overlay.get(i) || []));
         const chain = astar(WP, edgesOf, S0, D0, own);
         if (chain && chain.length >= 3) {
