@@ -313,14 +313,31 @@ let drawSig = "";   // link signature for THIS draw (compared against the route 
 // is recomputed and painted in the same frame the node moves — the line stays glued to the
 // node (smooth) instead of trailing it by a frame. Per-frame routing cost is accepted.
 let draggingNodes = false;
+// Is a point still sitting on (or within a few px of) a node rect? A routed endpoint sits ON its
+// node's edge; once that node is dragged away, the cached endpoint floats off it -> not onRect.
+const onRect = (p, r, mar = 3) =>
+    !!p && !!r && p[0] >= r.x - mar && p[0] <= r.x + r.w + mar && p[1] >= r.y - mar && p[1] <= r.y + r.h + mar;
 function drawEdges() {
     const svg = $("gedges"), top = $("gedges-top");
     const links = buildLinks();
     drawSig = ROUTE.enabled ? linksSig(links) : "";   // change-gate: from the geometric facing ports
     // adopt the routed result's chosen faces/ports so the port dots + freshness check line up with
     // the painted path (the router, not the facing default, owns a routed line's endpoints).
-    for (const l of links) { const c = routeCache.get(l.key); if (c && c.p1) { l.p1 = c.p1; l.d1 = c.d1; l.p2 = c.p2; l.d2 = c.d2; } }
-    placePortDots(links);   // move each out-port dot onto where its line actually starts
+    for (const l of links) {
+        const c = routeCache.get(l.key);
+        if (!c || !c.p1) continue;
+        const curP1 = l.p1, curD1 = l.d1, curP2 = l.p2, curD2 = l.d2;   // node-glued facing ports (pre-adopt)
+        l.p1 = c.p1; l.d1 = c.d1; l.p2 = c.p2; l.d2 = c.d2;
+        // On a SKIPPED drag frame the cached route is stale: an endpoint whose node has moved no longer
+        // touches it. Re-glue just that end to the node's current port (keep the other end's routed port)
+        // so the line — and its end/start cap — follows the node. `_reglue` => paint a cheap elbow below;
+        // the routed path returns on the next route pass. (skip=0 => no skipped frames => never trips.)
+        if (draggingNodes && c.pts && c.pts.length >= 2) {
+            if (!onRect(c.pts[0], l.ra)) { l.p1 = curP1; l.d1 = curD1; l._reglue = true; }
+            if (!onRect(c.pts[c.pts.length - 1], l.rb)) { l.p2 = curP2; l.d2 = curD2; l._reglue = true; }
+        }
+    }
+    placePortDots(links);   // move each out-port dot onto where its line actually starts (regated end too)
     const used = new Set();
     // node ids that are turned off — any line touching one is greyed (carries no live data)
     const disSet = new Set();
@@ -330,7 +347,9 @@ function drawEdges() {
         const el = edgeEl(l.key, (l.top || l.over) ? top : svg);
         el.setAttribute("class", l.cls + (disSet.has(l.aId) || disSet.has(l.bId) ? " dis-edge" : ""));
         const c = routeCache.get(l.key);
-        if (c && c.pts.length >= 2) {                            // have a routed path for this line
+        if (l._reglue) {                                        // stale routed end this frame: glue an elbow to the moved node
+            setBezier(el, l);
+        } else if (c && c.pts.length >= 2) {                    // have a routed path for this line
             if (tweenRoutes && geoChanged(el, c.pts)) startMorph(el, c.pts);
             else if (!el._raf && geoChanged(el, c.pts)) setRouted(el, c.pts);   // only redraw if it changed; leave morphs alone
         } else if (!el.getAttribute("d")) {
@@ -362,9 +381,13 @@ function requestEdges() {
     if (_edgeRaf) return;   // a redraw is already queued; it'll read the newest positions when it runs
     _edgeRaf = requestAnimationFrame(() => {
         _edgeRaf = 0;
-        // While dragging, route IN this frame (runRouting computes the route then paints) so the
-        // line is current the same frame the node moves. Otherwise just paint + defer routing to rAF.
-        if (draggingNodes) runRouting(); else drawEdges();
+        // While dragging, route IN this frame (runRouting computes the route then paints) so the line
+        // is current the same frame the node moves — BUT only on frames the perf budget allows: route
+        // on frame 0 then every (skip+1)th frame, painting the node movement on the skipped ones. On a
+        // cheap graph skip is 0 (routes every frame, as before); on a heavy one it backs off.
+        if (draggingNodes) {
+            if (_dragFrame++ % (dragFrameSkip() + 1) === 0) runRouting(); else drawEdges();
+        } else drawEdges();
     });
 }
 function flushEdges() {   // force the final frame now (drop on settle) — cancels any pending rAF
@@ -385,6 +408,8 @@ const ROUTE = {
     cell: 10,           // grid resolution (world px) — fine enough to squeeze a line between two others
     clearWanted: 5,     // cells of breathing room a line prefers around nodes
     radius: 14,         // corner rounding for "curve"
+    budgetMs: 32,       // target cost of one route pass during a drag; at/under this, route EVERY frame
+                        // (skip nothing). Over it, frames are skipped so a heavy graph still drags smooth
 };
 // internal handles: tweak ROUTE in the console, __reroute() to force a recompute
 // (e.g. after flipping __route.corners to "square").
@@ -397,6 +422,24 @@ const SVGNS = "http://www.w3.org/2000/svg";
 let routeCache = new Map();     // link key -> { pts:[[x,y]…], sig } (sig = its own deps)
 let routeHash = "";             // global layout signature of the last pass (cheap change gate)
 let routeRaf = null;            // pending requestAnimationFrame handle (one in flight at a time)
+
+// Adaptive drag cadence: routing cost scales ~O(N^3), so on a big graph one pass blows the frame
+// budget. Instead of routing every drag frame, measure the last few passes and skip frames in
+// proportion to how far over ROUTE.budgetMs the average sits — the node keeps dragging, lines just
+// re-route every Kth frame (and snap clean on settle). Samples persist across drags so the very
+// first frame of the next drag is already informed.
+const ROUTE_SAMPLES = 5;        // perf window: last N route-pass durations
+const MAX_SKIP = 8;             // hard cap on frames skipped between routed frames
+let _routeMs = [];              // ring of recent routeGraph() durations (ms)
+let _dragFrame = 0;             // frames since the current drag began (drives the skip counter)
+function recordRouteMs(ms) { _routeMs.push(ms); if (_routeMs.length > ROUTE_SAMPLES) _routeMs.shift(); }
+function dragFrameSkip() {
+    if (!_routeMs.length) return 0;
+    let s = 0; for (const v of _routeMs) s += v;
+    const avg = s / _routeMs.length;
+    if (avg <= ROUTE.budgetMs) return 0;   // fits the frame budget -> route every frame, skip nothing
+    return Math.min(MAX_SKIP, Math.ceil(avg / ROUTE.budgetMs) - 1);
+}
 
 // Everything physical is an obstacle: nodes AND panels. Lines weave around all of
 // them, not just the two rects they connect.
@@ -420,6 +463,8 @@ function linksSig(links) {
 
 function scheduleRouting() {
     if (!ROUTE.enabled) return;
+    if (draggingNodes) return;           // drag drives its own (frame-skipped) routing via requestEdges;
+                                         // don't let a skipped frame's drawEdges queue a reroute behind it
     if (routingFrozen) return;           // OCR in progress -> don't re-route (lines would wiggle)
     if (drawSig === routeHash) return;   // routes already current (drawSig set in drawEdges)
     if (routeRaf) return;                // one recompute already queued for the next frame
@@ -448,7 +493,9 @@ function runRouting() {
         for (const n of nodes) if (PORT_OUT_SRC.some((p) => n.id.startsWith(p)) || n.id.startsWith("trigger:")) outPorts.set(n.id, "R");
         const prevSides = new Map();
         for (const [k, c] of routeCache) if (c.d1) prevSides.set(k, { d1: c.d1, d2: c.d2 });
+        const _t0 = performance.now();
         const res = routeGraph(nodes, grps, edges, { prevSides, outPorts, config: { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell } });
+        recordRouteMs(performance.now() - _t0);   // feeds the adaptive drag frame-skip
         const fresh = new Map();
         for (const l of links) { const r = res.get(l.key); if (r && r.pts && r.pts.length >= 2) fresh.set(l.key, r); }
         routeCache = fresh;                 // also drops keys for links that vanished
@@ -475,7 +522,7 @@ function freezeRouting() {
 
 // main.js owns the drag interaction; it flips this flag so drawEdges routes synchronously
 // per frame while a node is dragged (line stays glued to the node).
-export function setDraggingNodes(v) { draggingNodes = v; }
+export function setDraggingNodes(v) { draggingNodes = v; if (v) _dragFrame = 0; }
 
 // World-space routed polyline for the edge between two node ids (the same key buildLinks uses,
 // `${from} ${to}`), or null if that edge isn't drawn/routed yet. The ONE accessor for an edge's
