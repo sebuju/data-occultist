@@ -87,17 +87,25 @@ def _resolve_ducats(items, fetch_ducats=None, *, throttle: float = 0.0,
 
 
 def relic_reward_rows(table: dict) -> list[dict]:
-    """Flatten the nested table into one row per ``(relic, reward, state)`` — the producer's
-    output records: ``{name, item, rarity, chance, ducats, state}``. ``name`` is the RELIC (so
-    the rows join an offered-relics dataset on ``name``); ``item`` is the reward (priceable via a
-    warframe_market node sourcing this dataset with ``source_field: item``)."""
+    """Flatten the nested table into one row per ``(relic, reward)`` — the producer's output
+    records: ``{name, item, rarity, ducats}``. ``name`` is the RELIC (so the rows join an
+    offered-relics dataset on ``name``); ``item`` is the reward (priceable via a warframe_market
+    node sourcing this dataset with ``source_field: item``). State and per-state drop chance are
+    intentionally dropped: the same reward is identical across states bar its ``chance``, so we
+    dedup to one row per ``(name, item)`` (chance can be recomputed from relics.json if needed)."""
     rows: list[dict] = []
+    seen: set[tuple[str, str]] = set()
     for relic, states in table.items():
-        for state, rewards in states.items():
+        for rewards in states.values():
             for r in rewards:
+                item = r.get("item", "")
+                key = (relic, item)
+                if key in seen:
+                    continue
+                seen.add(key)
                 rows.append({
-                    "name": relic, "item": r.get("item", ""), "rarity": r.get("rarity", ""),
-                    "chance": r.get("chance"), "ducats": r.get("ducats", 0), "state": state,
+                    "name": relic, "item": item, "rarity": r.get("rarity", ""),
+                    "ducats": r.get("ducats", 0),
                 })
     return rows
 
@@ -150,7 +158,7 @@ class RelicProducer(ProducerSource):
             return {"total": 0, "fetched": 0, "failed": 0}
         rows = relic_reward_rows(table)
         store = store_for(ctx.data_dir, ctx.game, ctx.dataset, profile=ctx.profile,
-                          key=ctx.key or KeySpec(fields=("name", "item", "state")))
+                          key=ctx.key or KeySpec(fields=("name", "item")))
         store.begin_batch()
         for row in rows:
             store.record_seen(row)

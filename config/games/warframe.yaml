@@ -1012,18 +1012,13 @@ subsets:
       - relic
     aggregate: all
     required: true
-  filters:
-  - field: state
-    op: eq
-    value: Intact
+  filters: []
   derived: []
   hidden_columns:
   - count
   - _item
-  - state
   - _seq
   - key
-  - chance
   enrich: []
   sort: []
   sort_by: ''
@@ -1057,8 +1052,6 @@ subsets:
   - _item
   - _seq
   - key
-  - chance
-  - state
   - slug
   - live_ask
   - price_median
@@ -1111,7 +1104,6 @@ producers:
     fields:
     - name
     - item
-    - state
     sep: '|'
     case_sensitive: false
 - id: producer
@@ -1543,8 +1535,8 @@ layout:
       collapsed: false
     prev:relic_select:
       x: 2160.0
-      y: 4280.0
-      w: 360.0
+      y: 4260.0
+      w: 500.0
       h: 320.0
       collapsed: false
     src:source:
@@ -1629,7 +1621,7 @@ layout:
       x: 1800.0
       y: 4780.0
       w: 360.0
-      h: 160.0
+      h: 180.0
       collapsed: false
     ds:relic_contents:
       x: 2240.0
@@ -1649,23 +1641,11 @@ layout:
       w: 360.0
       h: 160.0
       collapsed: false
-    vt:ds:relics:
-      x: 3240.0
-      y: 4120.0
-      w: 420.0
-      h: 360.0
-      collapsed: false
     sub:relics_with_content:
       x: 2820.0
       y: 4320.0
       w: 360.0
       h: 1100.0
-      collapsed: false
-    vt:sub:relics_with_content:
-      x: 3240.0
-      y: 4500.0
-      w: 420.0
-      h: 360.0
       collapsed: false
     sub:relics_with_content_view:
       x: 3200.0
@@ -1674,10 +1654,10 @@ layout:
       h: 980.0
       collapsed: false
     vt:sub:relics_with_content_view:
-      x: 3740.0
-      y: 3240.0
+      x: 3600.0
+      y: 3100.0
       w: 860.0
-      h: 800.0
+      h: 980.0
       collapsed: false
     ds:dataset:
       x: 900.0
@@ -2041,8 +2021,6 @@ layout:
     - sub:relics_with_content
     - vt:sub:dataset_view
     - vt:ds:relic_contents
-    - vt:ds:relics
-    - vt:sub:relics_with_content
     - sub:relics_with_content_view
     - vt:sub:relics_with_content_view
     outline:
@@ -2127,7 +2105,5 @@ layout:
   - vt:sub:live_prices_joined
   - vt:sub:statistic_prices_joined
   - vt:ds:relic_contents
-  - vt:ds:relics
-  - vt:sub:relics_with_content
   - vt:sub:relics_with_content_view
   sub_groups: []
