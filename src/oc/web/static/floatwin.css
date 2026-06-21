@@ -223,7 +223,11 @@
 .db-dsrow { display: flex; flex-direction: column; align-items: stretch; gap: 4px;
     background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
 .db-dshead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.db-dsname { font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
+.db-dsname { font-size: var(--fs-sm); font-weight: 600; color: var(--text); cursor: pointer; }
+.db-dsname:hover { text-decoration: underline; }
+.db-dsname.missing { color: var(--danger, #e5484d); text-decoration: none; }
+.db-dsmiss { font-style: normal; font-size: var(--fs-xs); color: var(--danger, #e5484d);
+    margin-left: 6px; margin-right: auto; }
 .db-chip { display: flex; align-items: baseline; justify-content: space-between; gap: 4px;
     font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .db-chip i { font-style: normal; font-size: 0.85em; color: var(--muted); }

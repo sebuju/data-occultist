@@ -6,11 +6,13 @@
 import { createFloatWin } from "../floatwin.js";
 import { h } from "../../dom.js";
 import { persist } from "../persist.js";
-import { $, model } from "../state.js";
+import { $, model, nodeEls } from "../state.js";
 import * as dsevents from "../dsevents.js";
 import * as api from "../../api.js";
 import { armedButton } from "../armbtn.js";
 import { openDbBackupsModal } from "../dbbackups.js";
+import { focusNode } from "../main.js";
+import { panZoomTo } from "../camera.js";
 
 const game = () => model.profile.name;
 
@@ -153,6 +155,25 @@ function makeDsRow(name) {
     const head = document.createElement("div");
     head.className = "db-dshead";   // name (left) + clear/remove (top-right corner)
     const nm = document.createElement("b"); nm.className = "db-dsname"; nm.textContent = name;
+    nm.title = "jump to this dataset's node";
+    // inline "no node" note — created hidden, shown when a click hits a missing node
+    const miss = document.createElement("i"); miss.className = "db-dsmiss"; miss.hidden = true;
+    miss.textContent = "no node for this dataset";
+    // click name -> pan/zoom + select the ds:<name> node; if it has no node, flash red + tell
+    nm.addEventListener("click", () => {
+        const id = `ds:${name}`;
+        if (nodeEls.has(id)) {
+            nm.classList.remove("missing"); miss.hidden = true;
+            if (r.missTimer) { clearTimeout(r.missTimer); r.missTimer = null; }
+            focusNode(id); panZoomTo(id);
+            return;
+        }
+        nm.classList.add("missing"); miss.hidden = false;
+        if (r.missTimer) clearTimeout(r.missTimer);
+        r.missTimer = setTimeout(() => {
+            nm.classList.remove("missing"); miss.hidden = true; r.missTimer = null;
+        }, 2500);
+    });
     const mk = (cls, lbl) => {
         const chip = document.createElement("span");
         chip.className = `db-chip ${cls}`;
@@ -179,9 +200,9 @@ function makeDsRow(name) {
     const acts = document.createElement("div");
     acts.className = "db-acts";
     acts.append(clear, remove);
-    head.append(nm, acts);
+    head.append(nm, miss, acts);
     row.append(head, ec, pc, bc);   // header, then one stat per row
-    const r = { row, events, present, batches };
+    const r = { row, events, present, batches, missTimer: null };
     dsRows.set(name, r);
     return r;
 }
