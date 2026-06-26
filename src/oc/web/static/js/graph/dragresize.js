@@ -56,6 +56,7 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
         g.className = `rz-grip rz-${side[0]}grip`; g.title = "resize";
         el.appendChild(g);
         g.addEventListener("mousedown", (ev) => {
+            if (ev.button !== 0) return;   // left button only — right/middle never starts a resize
             ev.preventDefault(); ev.stopPropagation();
             const allowH = typeof both === "function" ? both() : both;   // may depend on live state
             const z = zoom() || 1, sx = ev.clientX, sy = ev.clientY;
@@ -116,6 +117,7 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
 // is BOTH clickable and draggable (collapse caret, title input) can tell a click from a
 // drag. Returns a `stop()` that tears the loop down (used to hand off to another drag).
 export function beginDrag(ev, { threshold = 0, cursor = "", onStart = null, onMove = null, onSettle = null } = {}) {
+    if (ev.button != null && ev.button !== 0) return () => {};   // left button only; no-op stop() so callers don't crash
     const sx = ev.clientX, sy = ev.clientY;
     let active = false;
     const activate = () => {
