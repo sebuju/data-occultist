@@ -28,6 +28,33 @@ function dirElbowPts(x1, y1, d1, x2, y2, d2) {
     return [[x1, y1], s1, corner, s2, [x2, y2]];
 }
 
+// Orthogonal stub from a port `p` exiting along direction `d` to a FREE interior point `q`
+// (no target direction). Like dirElbowPts but only one end is a real port — used to bridge a
+// moved node's new port back onto an existing routed polyline. Ends exactly ON `q`.
+function orthoConnect(p, d, q, k = 16) {
+    const a = _DIROFF[d] || [0, 0];
+    const s = [p[0] + a[0] * k, p[1] + a[1] * k];   // stub out of the port along its facing dir
+    const corner = a[0] !== 0 ? [q[0], s[1]] : [s[0], q[1]];   // one right angle to reach q
+    return [p, s, corner, q];
+}
+
+// Lazy reglue: keep the cached routed polyline `pts` (the OLD line) and only re-attach the end(s)
+// whose node moved this frame. The far (stationary) end and the whole routed body stay put; the
+// moved end rubber-bands to its new port via a cheap orthogonal stub. The proper A* route returns
+// on the next routed frame. `head`/`tail` say which end drifted (both for a multi-node drag).
+function lazyReglue(pts, l, head, tail) {
+    if (!pts || pts.length < 2) return null;   // nothing to preserve -> caller falls back to the elbow
+    let out = pts.slice();
+    if (head) {   // splice the leading stub: [newPort ..stub.. ] + body from pts[1] onward
+        out = [...orthoConnect(l.p1, l.d1, out[1]).slice(0, -1), ...out.slice(1)];
+    }
+    if (tail) {   // splice the trailing stub: body up to pts[n-2] (kept anchor) + reversed [ ..stub.. newPort]
+        const n = out.length;
+        if (n >= 2) out = [...out.slice(0, n - 1), ...orthoConnect(l.p2, l.d2, out[n - 2]).reverse().slice(1)];
+    }
+    return out;
+}
+
 // Resample a polyline to n+1 points spread evenly by arc length — so two shapes with
 // different vertex counts can be lerped point-for-point during a morph.
 function resamplePoly(pts, n) {
@@ -284,6 +311,12 @@ function setBezier(el, l) {   // name kept (one caller); draws an ORTHOGONAL elb
     el._routed = false;
     el.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
 }
+function setLazy(el, pts) {   // paint a ready polyline (the lazy reglue body) as a non-routed path
+    cancelMorph(el);
+    el._geo = pts;
+    el._routed = false;
+    el.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
+}
 
 const MORPH_MS = 150, MORPH_N = 32;
 function startMorph(el, toPts) {
@@ -330,11 +363,15 @@ function drawEdges() {
         l.p1 = c.p1; l.d1 = c.d1; l.p2 = c.p2; l.d2 = c.d2;
         // On a SKIPPED drag frame the cached route is stale: an endpoint whose node has moved no longer
         // touches it. Re-glue just that end to the node's current port (keep the other end's routed port)
-        // so the line — and its end/start cap — follows the node. `_reglue` => paint a cheap elbow below;
-        // the routed path returns on the next route pass. (skip=0 => no skipped frames => never trips.)
+        // so the line — and its end/start cap — follows the node. Then keep the OLD routed body and only
+        // rubber-band the moved end onto it (`_lazyPts`), so the line lazy-follows the node instead of
+        // collapsing to a crude elbow each skipped frame; the proper A* path returns on the next route
+        // pass. (skip=0 => no skipped frames => never trips. A multi-node drag can move BOTH ends.)
         if (draggingNodes && c.pts && c.pts.length >= 2) {
-            if (!onRect(c.pts[0], l.ra)) { l.p1 = curP1; l.d1 = curD1; l._reglue = true; }
-            if (!onRect(c.pts[c.pts.length - 1], l.rb)) { l.p2 = curP2; l.d2 = curD2; l._reglue = true; }
+            const head = !onRect(c.pts[0], l.ra), tail = !onRect(c.pts[c.pts.length - 1], l.rb);
+            if (head) { l.p1 = curP1; l.d1 = curD1; }
+            if (tail) { l.p2 = curP2; l.d2 = curD2; }
+            if (head || tail) l._lazyPts = lazyReglue(c.pts, l, head, tail);
         }
     }
     placePortDots(links);   // move each out-port dot onto where its line actually starts (regated end too)
@@ -347,8 +384,8 @@ function drawEdges() {
         const el = edgeEl(l.key, (l.top || l.over) ? top : svg);
         el.setAttribute("class", l.cls + (disSet.has(l.aId) || disSet.has(l.bId) ? " dis-edge" : ""));
         const c = routeCache.get(l.key);
-        if (l._reglue) {                                        // stale routed end this frame: glue an elbow to the moved node
-            setBezier(el, l);
+        if (l._lazyPts) {                                       // stale routed end this frame: lazy-follow the moved node, keep the old body
+            setLazy(el, l._lazyPts);
         } else if (c && c.pts.length >= 2) {                    // have a routed path for this line
             if (tweenRoutes && geoChanged(el, c.pts)) startMorph(el, c.pts);
             else if (!el._raf && geoChanged(el, c.pts)) setRouted(el, c.pts);   // only redraw if it changed; leave morphs alone
