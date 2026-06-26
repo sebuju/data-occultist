@@ -1493,11 +1493,30 @@ function removeNode(n) {
     };
     const plan = PLAN[n.type];
     if (!plan) return;
+    // Every node WIRED to this one shows the link in its own body (a producer's source chip, a
+    // subset's input row, a trigger's target/watch chip). render() only BUILDS missing nodes — it
+    // never re-fills an existing node — so those connected bodies keep the stale chip after the model
+    // ref is cleared. Capture the neighbours from the live edges BEFORE kill, rebuild the survivors
+    // AFTER, so a removal updates every connected party, not just the wire.
+    const neighbours = neighbourIds(n.id);
     plan.kill();
     render();
     forgetNodeState(n.id);   // drop ALL live state for the gone node (one place — twin of remapNodeState)
+    for (const id of neighbours) if (nodeEls.has(id)) rebuildNode(id);
     plan.after();
     setStatus(`deleted ${n.type} ${n.ref?.id ?? n.ref ?? ""}`.trimEnd());
+}
+
+// Node ids wired to `id` in EITHER direction, from the current model edges. Caller must read this
+// BEFORE mutating the model, while the edges to the doomed node still exist.
+function neighbourIds(id) {
+    const out = new Set();
+    for (const e of model.edges()) {
+        if (e.from === id) out.add(e.to);
+        else if (e.to === id) out.add(e.from);
+    }
+    out.delete(id);
+    return out;
 }
 
 // Purge a dataset's stored files so removing its node doesn't leave it re-spawning from
@@ -1915,7 +1934,8 @@ function syncMultiSelect() {
     if (bar) bar.hidden = !(nsel >= 1 || ng >= 1);
     if (cnt) cnt.textContent = ng >= 1 ? `${ng} group${ng === 1 ? "" : "s"} selected` : `${nsel} selected`;
     // the button label mirrors what `g` would actually DO to this selection (group vs ungroup)
-    if (gbtn) { const s = groupBtnState(); const gl = gbtn.querySelector(".sel-lbl"); if (gl) gl.textContent = s.label; else gbtn.textContent = s.label; gbtn.title = s.title; }
+    const gstate = groupBtnState();
+    if (gbtn) { const gl = gbtn.querySelector(".sel-lbl"); if (gl) gl.textContent = gstate.label; else gbtn.textContent = gstate.label; gbtn.title = gstate.title; }
     // subgroup shows only when the whole selection sits inside ONE group (a subgroup is scoped to a
     // single parent group); its label mirrors what the action would do (subgroup vs ungroup).
     const sgb = $("selSubgroupBtn");
@@ -1924,10 +1944,13 @@ function syncMultiSelect() {
         sgb.hidden = !ss;
         if (ss) { const sl = sgb.querySelector(".sel-lbl"); if (sl) sl.textContent = ss.label; sgb.title = ss.title; }
     }
-    // detach shows only when something in the selection is grouped; delete only when something
-    // is removable — both act on the whole selection (their per-node buttons are gone).
+    // detach shows only when something in the selection is grouped AND the group button isn't
+    // already offering "ungroup" — when it is (whole selection == one full group), detach would do
+    // the exact same detachNodes(ids), so two buttons would mean one action. detach's reason to
+    // exist is the mixed selection (some loose / many groups), where the group button flips to
+    // "group"/"add" instead; there it's the only way to pull the grouped ones OUT.
     const det = $("selDetachBtn"), del = $("selDeleteBtn");
-    if (det) det.hidden = !ids.some((id) => groups.groupOf(id));
+    if (det) det.hidden = gstate.label === "ungroup" || !ids.some((id) => groups.groupOf(id));
     if (del) {
         del.hidden = !ids.some((id) => REMOVABLE.has(nodeTypeOf(id)));
         if (del.dataset.armed === "1") { del.dataset.armed = "0"; const dl = del.querySelector(".sel-lbl"); if (dl) dl.textContent = del.dataset.label || dl.textContent; }

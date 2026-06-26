@@ -117,6 +117,25 @@ export class GraphModel {
         for (const st of this._datasetSites()) if (!st.decl && st.get() === oldId) st.set(newId);
     }
 
+    // SSOT for every site that REFERENCES a producer / file-source id — a trigger's `targets`
+    // list is the only one. Mirrors _datasetSites: rename repoints through it, delete clears
+    // through it, so a producer/source can never leave a dangling trigger wire on either path.
+    _targetSites() {
+        const sites = [];
+        for (const t of this.profile.triggers || [])
+            (t.targets || []).forEach((_, i) =>
+                sites.push({ get: () => t.targets[i], set: (v) => { t.targets[i] = v; } }));
+        return sites;
+    }
+    _repointTargets(oldId, newId) {
+        for (const st of this._targetSites()) if (st.get() === oldId) st.set(newId);
+    }
+    // delete-twin of _repointTargets: blank every target holding `id`, then prune the empties.
+    _dropTarget(id) {
+        this._repointTargets(id, "");
+        for (const t of this.profile.triggers || []) t.targets = (t.targets || []).filter(Boolean);
+    }
+
     // Rename a dataset: repoint EVERY site (declarations + references) holding the old id, so
     // the old name cannot linger and resurface as a duplicate node.
     renameDataset(oldId, newId) {
@@ -294,11 +313,12 @@ export class GraphModel {
         this.profile.producers.push(pn);
         return id;
     }
-    removeProducer(id) { this.profile.producers = (this.profile.producers || []).filter((p) => p.id !== id); }
+    removeProducer(id) { this.profile.producers = (this.profile.producers || []).filter((p) => p.id !== id); this._dropTarget(id); }
     renameProducer(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.producerNode(newId)) return false;
         this.producerNode(oldId).id = newId;
+        this._repointTargets(oldId, newId);   // a trigger may target this producer — carry its wire
         return true;
     }
     // the producer backend (registry._PRODUCER): warframe_market | relic. Switching it rebuilds the node.
@@ -405,13 +425,12 @@ export class GraphModel {
             dataset, watch: "manual", throttle_s: 1, tail: true, match: [], fields: [], enabled: true });
         return id;
     }
-    removeFileSource(id) { this.profile.file_sources = (this.profile.file_sources || []).filter((s) => s.id !== id); }
+    removeFileSource(id) { this.profile.file_sources = (this.profile.file_sources || []).filter((s) => s.id !== id); this._dropTarget(id); }
     renameFileSource(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.fileSource(newId)) return false;
         this.fileSource(oldId).id = newId;
-        // a source id can be a trigger target — repoint so the wire survives the rename
-        for (const t of this.profile.triggers || []) t.targets = (t.targets || []).map((p) => (p === oldId ? newId : p));
+        this._repointTargets(oldId, newId);   // a source id can be a trigger target — carry its wire
         return true;
     }
     setSourceDataset(id, ds) { const s = this.fileSource(id); if (s && ds) { s.dataset = ds; this.ensureDatasetDef(ds); } }
@@ -503,18 +522,23 @@ export class GraphModel {
     }
     removeDatasetDef(id) { this.profile.datasets = (this.profile.datasets || []).filter((d) => d.id !== id); }
 
-    // Fully delete a dataset: drop its def AND unwire every feeder/reference still holding
-    // the id, so datasets() (and the server's used_datasets) can't re-derive the node.
-    // Mirrors renameDataset's _datasetSites() sweep — the inverse of repoint is "clear".
-    removeDataset(id) {
-        this.removeDatasetDef(id);                        // drop the def object first...
-        for (const st of this._datasetSites())            // ...then blank every remaining holder
-            if (st.get() === id) st.set("");              // decl: unwire window/producer/source; ref: emptied
-        // prune the now-empty entries out of the list-shaped ref sites
+    // Unwire every site holding a removed dataset/subset id (declarations AND references) and
+    // prune the now-empty list entries — the inverse of renameDataset's repoint sweep. SHARED by
+    // dataset and subset deletion: a subset id lives in the very same ref sites a dataset does, so
+    // one sweep keeps every connected party (window/producer/source/subset/trigger) consistent.
+    _unwireDataset(id) {
+        for (const st of this._datasetSites()) if (st.get() === id) st.set("");   // decl: unwire feeder; ref: emptied
         for (const pn of this.profile.producers || []) pn.sources = (pn.sources || []).filter(Boolean);
         for (const s of this.profile.subsets || []) s.sources = (s.sources || []).filter((src) => src.dataset);
         for (const t of this.profile.triggers || []) t.watch = (t.watch || []).filter(Boolean);
         if (this._extraDatasets) this._extraDatasets = this._extraDatasets.filter((x) => x !== id);
+    }
+
+    // Fully delete a dataset: drop its def AND unwire every feeder/reference still holding
+    // the id, so datasets() (and the server's used_datasets) can't re-derive the node.
+    removeDataset(id) {
+        this.removeDatasetDef(id);   // drop the def object first...
+        this._unwireDataset(id);     // ...then unwire every remaining holder
     }
 
     // mint a fresh empty dataset (e.g. dragging a producer's wire onto empty canvas)
@@ -548,7 +572,13 @@ export class GraphModel {
         });
         return id;
     }
-    removeSubset(id) { this.profile.subsets = (this.profile.subsets || []).filter((s) => s.id !== id); }
+    // Delete a subset: drop its def, then unwire it from every connected party. A subset can feed
+    // other subsets, producers, and trigger watches (the same ref sites a dataset uses), so removal
+    // must clear those refs or they dangle to a node that no longer exists.
+    removeSubset(id) {
+        this.profile.subsets = (this.profile.subsets || []).filter((s) => s.id !== id);
+        this._unwireDataset(id);
+    }
     renameSubset(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.subsetDef(newId)) return false;
