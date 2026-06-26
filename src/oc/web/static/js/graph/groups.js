@@ -320,6 +320,15 @@ function placeTitle(tel, align) {
     tel.style.justifyContent = align === "center" ? "center" : align === "right" ? "flex-end" : "flex-start";
 }
 
+// A subgroup title sits OUTSIDE the box, just above its top edge (shrink-wrapped, no background).
+// Vertical is CSS-anchored (bottom:100%, same as the cog) so the two share one line; align only
+// moves the tag left/center/right.
+function placeSubTitle(tel, align) {
+    tel.style.left = align === "center" ? "50%" : align === "right" ? "auto" : "4px";
+    tel.style.right = align === "right" ? "4px" : "auto";
+    tel.style.transform = align === "center" ? "translateX(-50%)" : "none";
+}
+
 // ---- rendering ------------------------------------------------------------
 // Boxes live in #ggroups (behind nodes); each box owns its title band as a CHILD, so the box
 // clips the band flush and it stays hit-testable for drag + the options popover.
@@ -413,7 +422,7 @@ function closePopover() { if (openPopover) { openPopover.el.remove(); openPopove
 function onOutside(e) { if (openPopover && !e.target.closest(".ggroup-pop") && !e.target.closest(openPopover.ownerSel)) closePopover(); }
 
 // `target` is the group/subgroup record (mutated live). `commitFn` re-renders the right layer.
-function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband, opaqueBg }) {
+function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband, opaqueBg, defaults }) {
     if (openPopover?.id === id) { closePopover(); return; }
     closePopover();
     const t = target;
@@ -424,8 +433,12 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
             h("input", { class: "gp-title", value: t.title })),
         h("div", { class: "flab" }, h("span", { class: "gp-lab" }, "scheme"),
             h("div", { class: "gp-schemes" },
-                SCHEMES.map((s, i) => h("button", { class: "gp-scheme", dataset: { i }, title: s.name,
-                    style: `background:${s.titleBg || s.bg};border-color:${s.outline === "#2c313c" ? "#4a515f" : s.outline}` })))),
+                SCHEMES.map((s, i) => h("button", { class: `gp-scheme${opaqueBg ? " gp-scheme-border" : ""}`, dataset: { i }, title: s.name,
+                    // subgroups recolour the BORDER (not a fill), so their swatches are a dark chip
+                    // ringed in the scheme colour — visibly different from the group fill swatches.
+                    style: opaqueBg
+                        ? `background:var(--bg);border-color:${s.outline === "#2c313c" ? "#4a515f" : s.outline}`
+                        : `background:${s.titleBg || s.bg};border-color:${s.outline === "#2c313c" ? "#4a515f" : s.outline}` })))),
         h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "outline"),
             h("select", { class: "gp-style" },
                 ["solid", "dashed", "dotted", "none"].map((s) =>
@@ -442,7 +455,9 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
             h("select", { class: "gp-pos" },
                 ["left", "center", "right"].map((v) =>
                     h("option", { value: v, selected: t.titleAlign === v }, v)))),
-        h("button", { class: "gp-disband danger" }, disbandLabel));
+        h("div", { class: "gp-btns" },
+            h("button", { class: "gp-reset" }, "reset to default"),
+            h("button", { class: "gp-disband danger" }, disbandLabel)));
     // anchor near the click (screen space — it's fixed-position), then clamp fully on-screen so
     // no part spills out of bounds (measured after it's in the DOM).
     pop.style.left = `${ev.clientX}px`; pop.style.top = `${ev.clientY + 8}px`;
@@ -468,13 +483,34 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
     // a premade scheme sets fill + outline + title colours at once, and syncs the pickers
     pop.querySelectorAll(".gp-scheme").forEach((b) => b.addEventListener("click", () => {
         const s = SCHEMES[+b.dataset.i];
-        t.bg = opaqueBg ? blendOnBg(s.titleBg || s.outline, 16) : s.bg;
-        t.outline.color = s.outline; t.outline.style = s.style; t.titleBg = s.titleBg; t.titleColor = s.titleColor;
-        pop.querySelector(".gp-bg").value = hex6(t.bg); pop.querySelector(".gp-bga").value = alphaPct(t.bg);
-        pop.querySelector(".gp-ocolor").value = hex6(s.outline); pop.querySelector(".gp-style").value = s.style;
+        // subgroups (opaqueBg) wear the scheme on the BORDER + legend, NOT as a fill — leave bg empty
+        // and force a visible outline (schemes ship style:"none", which only reads on a filled group).
+        if (opaqueBg) {
+            // subgroup: faint scheme-tinted FILL, no title band — title is accent-coloured text on the canvas
+            t.bg = blendOnBg(s.outline, 12); t.outline.style = "solid";
+            t.outline.color = s.outline; t.titleBg = ""; t.titleColor = s.titleBg || s.outline;
+        } else {
+            t.bg = s.bg; t.outline.style = s.style;
+            t.outline.color = s.outline; t.titleBg = s.titleBg; t.titleColor = s.titleColor;
+        }
+        pop.querySelector(".gp-bg").value = hex6(t.bg || "#1d2027"); pop.querySelector(".gp-bga").value = alphaPct(t.bg);
+        pop.querySelector(".gp-ocolor").value = hex6(s.outline); pop.querySelector(".gp-style").value = t.outline.style;
         pop.querySelector(".gp-tbg").value = hex6(s.titleBg || "#1d2027"); pop.querySelector(".gp-tcolor").value = hex6(s.titleColor || "#d7dbe2");
         commit();
     }));
+    // reset every styling field (NOT the title text) back to this tier's defaults, then resync pickers
+    pop.querySelector(".gp-reset").addEventListener("click", () => {
+        t.outline = { ...defaults.outline };
+        t.bg = defaults.bg; t.titleBg = defaults.titleBg; t.titleColor = defaults.titleColor; t.titleAlign = defaults.titleAlign;
+        pop.querySelector(".gp-style").value = t.outline.style;
+        pop.querySelector(".gp-ocolor").value = hex6(t.outline.color);
+        pop.querySelector(".gp-bg").value = hex6(t.bg || "#1d2027");
+        pop.querySelector(".gp-bga").value = alphaPct(t.bg);
+        pop.querySelector(".gp-tbg").value = hex6(t.titleBg || "#1d2027");
+        pop.querySelector(".gp-tcolor").value = hex6(t.titleColor || "#d7dbe2");
+        pop.querySelector(".gp-pos").value = t.titleAlign;
+        commit();
+    });
     pop.querySelector(".gp-disband").addEventListener("click", () => onDisband());
     setTimeout(() => document.addEventListener("mousedown", onOutside, true), 0);
 }
@@ -484,6 +520,7 @@ function togglePopover(gid, ev) {
     if (!g) return;
     openOptionsPopover(`group:${gid}`, g, ev, {
         ownerSel: ".ggroup-title", disbandLabel: "disband group", opaqueBg: false,
+        defaults: { outline: { color: DEF_OUTLINE, style: "none", width: 2 }, bg: DEF_BG, titleBg: "", titleColor: "", titleAlign: "left" },
         onDisband: () => disband(gid),
     });
 }
@@ -678,7 +715,9 @@ function toggleSuperPopover(sid, ev) {
             h("input", { type: "color", class: "gp-bg", value: hex6(sg.bg), title: "fill color" })),
         h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "label"),
             h("input", { type: "color", class: "gp-tcolor", value: hex6(sg.titleColor || "#aab4d8"), title: "label color" })),
-        h("button", { class: "gp-disband danger" }, "disband super group"));
+        h("div", { class: "gp-btns" },
+            h("button", { class: "gp-reset" }, "reset to default"),
+            h("button", { class: "gp-disband danger" }, "disband super group")));
     pop.style.left = `${ev.clientX}px`; pop.style.top = `${ev.clientY + 8}px`;
     document.body.appendChild(pop);
     const M = 8, r = pop.getBoundingClientRect();
@@ -704,6 +743,15 @@ function toggleSuperPopover(sid, ev) {
         pop.querySelector(".gp-tcolor").value = hex6(sg.titleColor || "#aab4d8");
         commit();
     }));
+    pop.querySelector(".gp-reset").addEventListener("click", () => {
+        sg.outline = { color: SUPER_DEF_OUTLINE, style: "none", width: 2 }; sg.bg = SUPER_DEF_BG; sg.titleColor = "";
+        pop.querySelector(".gp-style").value = sg.outline.style;
+        pop.querySelector(".gp-ocolor").value = hex6(sg.outline.color);
+        pop.querySelector(".gp-bg").value = hex6(sg.bg);
+        pop.querySelector(".gp-bga").value = alphaPct(sg.bg);
+        pop.querySelector(".gp-tcolor").value = hex6(sg.titleColor || "#aab4d8");
+        commit();
+    });
     pop.querySelector(".gp-disband").addEventListener("click", () => disbandSuper(sid));
     setTimeout(() => document.addEventListener("mousedown", onSuperOutside, true), 0);
 }
@@ -734,9 +782,10 @@ function blendOnBg(hex, pct) {
 // groups — travels in profile.layout.sub_groups. Rendered in its own #subgroups layer, painted
 // ABOVE the group fill but behind the nodes. Dragged from its border (rim) or its title band.
 
-const SUB_PAD = 16;            // tight gap between members and the subgroup outline (nested -> smaller than PAD)
+const SUB_PAD = 10;            // half a GRID step: lands the subgroup outline BETWEEN grid snaps (half-step
+                                                          // offset from the on-grid group outline) so the two read as different tiers
 const SUB_DEF_OUTLINE = "#3a4154";
-const SUB_DEF_BG = "";         // "" = no fill painted (default has no background)
+const SUB_DEF_BG = blendOnBg(SUB_DEF_OUTLINE, 12);   // faint OPAQUE tint so the region pops off the canvas
 
 let subGroups = [];            // [{ id, parent, title, members[], outline{color,style,width}, bg, titleBg, titleColor, titleAlign }]
 let subseq = 0;
@@ -887,24 +936,26 @@ export function renderSubGroups() {
     for (const sg of subGroups) {
         let el = layer.querySelector(`.subgroup[data-subid="${sg.id}"]`);
         if (!el) { el = buildSubEl(sg); layer.appendChild(el); }
-        // optional title band: rendered only when a title is set (default has none -> no band)
+        // optional title: a legend-style tag straddling the TOP border (not a full band) — rendered
+        // only when a title is set. It never reserves box height (sits on the line, in the rim gap).
         let tel = el.querySelector(".subgroup-title");
         if (sg.title) {
             if (!tel) { tel = buildSubTitleEl(sg); el.insertBefore(tel, el.firstChild); }
             tel.querySelector(".ggt-label").textContent = sg.title;
             tel.style.background = sg.titleBg || "";
             tel.style.color = sg.titleColor || "";
-            placeTitle(tel, sg.titleAlign);
-            sg._titleH = tel.offsetHeight || TITLE_H;
-        } else { if (tel) tel.remove(); sg._titleH = 0; }
-        const box = subBox(sg, sg._titleH || 0);
+            placeSubTitle(tel, sg.titleAlign);
+        } else if (tel) tel.remove();
+        sg._titleH = 0;   // legend straddles the top border; never grows the box
+        const box = subBox(sg, 0);
         if (!box) { el.remove(); continue; }
         el.style.left = `${box.x}px`; el.style.top = `${box.y}px`;
         el.style.width = `${box.w}px`; el.style.height = `${box.h}px`;
-        el.style.background = sg.bg || "";              // "" -> no fill (transparent box, default)
-        el.style.borderColor = sg.outline.color;
-        el.style.borderStyle = sg.outline.style;
-        el.style.borderWidth = `${sg.outline.style === "none" ? 0 : sg.outline.width}px`;
+        // a subgroup is a FILL-only region now: no border, no glow (both clashed with node connector
+        // lines, which come solid AND dashed). The faint tinted fill alone marks the area.
+        el.style.background = sg.bg || "";
+        el.style.border = "0";
+        el.style.boxShadow = "none";
     }
 }
 
@@ -924,7 +975,7 @@ function buildSubEl(sg) {
     const cog = document.createElement("button");
     cog.className = "subgroup-cog";
     cog.title = "subgroup settings"; cog.setAttribute("aria-label", "subgroup settings");
-    cog.append(COG(15));
+    cog.append(COG(9));
     cog.addEventListener("mousedown", (ev) => ev.stopPropagation());
     cog.addEventListener("click", (ev) => { ev.stopPropagation(); toggleSubPopover(sg.id, ev); });
     el.appendChild(cog);
@@ -955,6 +1006,7 @@ function toggleSubPopover(sid, ev) {
     if (!sg) return;
     openOptionsPopover(`subgroup:${sid}`, sg, ev, {
         ownerSel: ".subgroup-cog", disbandLabel: "remove subgroup", opaqueBg: true,
+        defaults: { outline: { color: SUB_DEF_OUTLINE, style: "solid", width: 1 }, bg: SUB_DEF_BG, titleBg: "", titleColor: "", titleAlign: "left" },
         onDisband: () => disbandSub(sid),
     });
 }

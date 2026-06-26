@@ -467,7 +467,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .ggroup-pop input[type="text"], .ggroup-pop .gp-title, .ggroup-pop select { flex: 1; min-width: 0; }
 .ggroup-pop input[type="range"] { flex: 1; min-width: 0; }
 .ggroup-pop input[type="color"] { flex: 0 0 auto; width: 28px; height: 22px; padding: 0; border: 1px solid var(--line); background: none; }
-.ggroup-pop .gp-disband { margin-top: 4px; }
+.ggroup-pop .gp-btns { display: flex; gap: 6px; margin-top: 4px; }
+.ggroup-pop .gp-btns button { flex: 1; min-width: 0; }
 /* premade scheme swatches */
 .gp-schemes { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
 .gp-scheme { width: 22px; height: 22px; padding: 0; border-radius: 5px; border: 1.5px solid var(--line);
@@ -496,8 +497,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* ---- sub-group layer (a group WITHIN a group; painted over the group fill, behind nodes) ---- */
 #subgroups { position: absolute; top: 0; left: 0; z-index: 0; }
 /* a faint outline rectangle; default has no fill + no title. Drag from the rim/title, configure
-   from the hover cog. overflow:hidden clips the optional title band to the rounded corners. */
-.subgroup { position: absolute; box-sizing: border-box; pointer-events: none; overflow: hidden; border-radius: 8px; }
+   from the hover cog. overflow:visible so the legend-style title can straddle the top border. */
+.subgroup { position: absolute; box-sizing: border-box; pointer-events: none; overflow: visible; border-radius: 8px; }
 /* four rim strips are the ONLY interactive parts of the box, so the interior stays click-through
    to the nodes inside; hovering any strip reveals the cog (:hover bubbles to .subgroup). */
 .sgr-rim { position: absolute; pointer-events: auto; cursor: grab; }
@@ -506,14 +507,25 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .sgr-b { bottom: 0; left: 0; right: 0; height: 10px; }
 .sgr-l { top: 0; bottom: 0; left: 0; width: 10px; }
 .sgr-r { top: 0; bottom: 0; right: 0; width: 10px; }
-/* optional title band reuses the .ggroup-title look (set via the cog); the cog sits top-right,
-   revealed on hover like the group + super-group cogs. */
-.subgroup-cog { position: absolute; top: 4px; right: 4px; z-index: 1; pointer-events: auto;
-    width: 22px; height: 20px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+/* optional title: a shrink-wrapped tag sitting OUTSIDE the box, just above its top edge — no
+   background. Overrides the inherited .ggroup-title band look. placeSubTitle() sets the position. */
+.subgroup-title { right: auto; width: auto; display: inline-flex; align-items: center; box-sizing: border-box;
+    top: auto; bottom: 100%; height: 16px;
+    padding: 0 4px; background: none; border-radius: 0;
+    font-size: var(--fs-sm); line-height: 1; letter-spacing: 0.1em; overflow: visible; text-overflow: clip; }
+/* the cog sits OUTSIDE the box, just above its top-right corner (the interior is full of nodes that
+   sit on a higher layer and would occlude it). Revealed on hover like the group + super cogs. */
+.subgroup-cog { position: absolute; top: auto; bottom: 100%; right: 2px; box-sizing: border-box; z-index: 1; pointer-events: auto;
+    width: 16px; height: 16px; min-height: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center;
     line-height: 0; background: transparent; border: 0; color: var(--text); cursor: pointer;
     opacity: 0; transition: opacity .12s; }
 .subgroup:hover .subgroup-cog { opacity: 0.6; }
 .subgroup-cog:hover { opacity: 1 !important; }
+/* the gear svg sits inline by default -> baseline descender gap nudges it up inside the button;
+   block-display + middle align kills that so the button box alone places it (lines up with title). */
+.subgroup-cog svg { display: block; vertical-align: middle; }
+/* subgroup scheme swatch: a dark chip ringed in the scheme colour (border, not fill) */
+.gp-scheme-border { border-width: 2.5px; }
 
 /* ---- file-source node: rule builder + live preview ---- */
 .gnode.filesource .lab-grid > .src-matches,
