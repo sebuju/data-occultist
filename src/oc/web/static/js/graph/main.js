@@ -1489,7 +1489,7 @@ function removeNode(n) {
         producer:   { kill: () => model.removeProducer(n.ref.id), after: () => autosave(null) },
         trigger:    { kill: () => model.removeTrigger(n.ref.id), after: () => autosave(null) },
         filesource: { kill: () => model.removeFileSource(n.ref.id), after: () => autosave(null) },
-        dataset:    { kill: () => { model.removeDatasetDef(n.ref); purgeDatasetData(n.ref); }, after: () => autosave(null) },
+        dataset:    { kill: () => { model.removeDataset(n.ref); purgeDatasetData(n.ref); }, after: () => autosave(null) },
     };
     const plan = PLAN[n.type];
     if (!plan) return;
@@ -1501,9 +1501,9 @@ function removeNode(n) {
 }
 
 // Purge a dataset's stored files so removing its node doesn't leave it re-spawning from
-// disk on the next live refresh. A dataset node is standalone (not owned by anything) but
-// is re-derived from any window still wired to it — such a node reappears (empty) until
-// that window is rewired/removed.
+// disk on the next live refresh. The profile-side feeders (windows/producers/sources) are
+// already unwired by model.removeDataset, so the id can't re-derive client- or server-side;
+// this just clears the on-disk records that purge-on-delete is for.
 async function purgeDatasetData(ds) {
     delete live[ds];
     try { await api.deleteDataset(model.profile.name, ds); }

@@ -503,6 +503,20 @@ export class GraphModel {
     }
     removeDatasetDef(id) { this.profile.datasets = (this.profile.datasets || []).filter((d) => d.id !== id); }
 
+    // Fully delete a dataset: drop its def AND unwire every feeder/reference still holding
+    // the id, so datasets() (and the server's used_datasets) can't re-derive the node.
+    // Mirrors renameDataset's _datasetSites() sweep — the inverse of repoint is "clear".
+    removeDataset(id) {
+        this.removeDatasetDef(id);                        // drop the def object first...
+        for (const st of this._datasetSites())            // ...then blank every remaining holder
+            if (st.get() === id) st.set("");              // decl: unwire window/producer/source; ref: emptied
+        // prune the now-empty entries out of the list-shaped ref sites
+        for (const pn of this.profile.producers || []) pn.sources = (pn.sources || []).filter(Boolean);
+        for (const s of this.profile.subsets || []) s.sources = (s.sources || []).filter((src) => src.dataset);
+        for (const t of this.profile.triggers || []) t.watch = (t.watch || []).filter(Boolean);
+        if (this._extraDatasets) this._extraDatasets = this._extraDatasets.filter((x) => x !== id);
+    }
+
     // mint a fresh empty dataset (e.g. dragging a producer's wire onto empty canvas)
     addDataset(base = "dataset") {
         let n = 1, id = base;
