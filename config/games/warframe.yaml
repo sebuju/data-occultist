@@ -1234,8 +1234,8 @@ layout:
       h: 260.0
       collapsed: false
     ds:prices_relic_live:
-      x: 2140.0
-      y: 2760.0
+      x: 2540.0
+      y: 2620.0
       w: 360.0
       h: 160.0
       collapsed: false
@@ -1534,8 +1534,8 @@ layout:
       h: 220.0
       collapsed: false
     vt:sub:relic_rewards_live:
-      x: 2980.0
-      y: 2160.0
+      x: 3020.0
+      y: 2140.0
       w: 440.0
       h: 200.0
       collapsed: false
@@ -1552,14 +1552,14 @@ layout:
       h: 580.0
       collapsed: false
     producer:producer:
-      x: 3300.0
-      y: 4480.0
-      w: 360.0
+      x: 3680.0
+      y: 4460.0
+      w: 300.0
       h: 180.0
       collapsed: false
     ds:relic_contents:
       x: 3680.0
-      y: 4480.0
+      y: 4680.0
       w: 300.0
       h: 180.0
       collapsed: false
@@ -1586,6 +1586,12 @@ layout:
       y: 3260.0
       w: 860.0
       h: 980.0
+      collapsed: false
+    'ds:':
+      x: 900.0
+      y: 20.0
+      w: 360.0
+      h: 160.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -2023,4 +2029,18 @@ layout:
   - vt:sub:live_prices_joined
   - vt:sub:statistic_prices_joined
   - vt:sub:relics_with_content_view
-  sub_groups: []
+  sub_groups:
+  - id: subgroup_1
+    parent: group_22
+    title: relic
+    members:
+    - ds:relic_contents
+    - producer:producer
+    outline:
+      color: '#e6c25a'
+      style: solid
+      width: 1
+    bg: '#2e2c24'
+    titleBg: ''
+    titleColor: '#e6c25a'
+    titleAlign: left
