@@ -73,6 +73,82 @@ def test_reconcile_marks_removed(tmp_path):
     assert s.present_count == 1
 
 
+def test_present_keys(tmp_path):
+    s = _store(tmp_path)
+    s.record_seen({"name": "Serration"})
+    s.record_seen({"name": "Vitality"})
+    assert s.present_keys() == {"serration", "vitality"}
+    s.remove_keys({"vitality"})
+    assert s.present_keys() == {"serration"}
+
+
+def test_remove_keys_soft(tmp_path):
+    s = _store(tmp_path)
+    s.record_seen({"name": "Serration", "rank": 5})
+    removed = s.remove_keys({"serration"})
+    assert [e.key for e in removed] == ["serration"]
+    assert s.present_count == 0
+    s.remove_keys({"serration"})           # already absent -> no-op
+    assert s.present_count == 0
+    # soft: the last observation survives in history for a non-present read
+    row = next(r for r in s.records() if r["key"] == "serration")
+    assert row["present"] is False and row["rank"] == 5
+
+
+def test_remove_keys_empty_noop(tmp_path):
+    s = _store(tmp_path)
+    s.record_seen({"name": "Serration"})
+    assert s.remove_keys(set()) == []
+    assert s.present_count == 1
+
+
+def test_positions_roundtrip_and_on_records(tmp_path):
+    s = _store(tmp_path)
+    s.record_seen({"name": "Lith G1"})
+    s.record_seen({"name": "Meso F2"})
+    s.set_positions({"lith_g1": 0.25, "meso_f2": 0.8})
+    assert s.positions() == {"lith_g1": 0.25, "meso_f2": 0.8}
+    s.set_positions({"lith_g1": 0.4})                  # upsert one
+    assert s.positions()["lith_g1"] == 0.4
+    rows = {r["key"]: r["_pos"] for r in s.records()}
+    assert rows["lith_g1"] == 0.4 and rows["meso_f2"] == 0.8
+    # positions survive a reopen (own table, not rebuilt with `current`)
+    assert DatasetStore(tmp_path, "game", "mods").positions()["meso_f2"] == 0.8
+
+
+def test_pos_not_a_data_column(tmp_path):
+    s = _store(tmp_path)
+    s.record_seen({"name": "Lith G1"})
+    s.set_positions({"lith_g1": 0.25})
+    assert "_pos" not in s.summary()["columns"]   # plumbing, not a record field
+
+
+def test_remove_keys_drops_position(tmp_path):
+    s = _store(tmp_path)
+    s.record_seen({"name": "Lith G1"})
+    s.set_positions({"lith_g1": 0.25})
+    s.remove_keys({"lith_g1"})
+    assert s.positions() == {}                    # a gone key's position is meaningless
+
+
+def test_positions_follow_rename_and_delete(tmp_path):
+    s = _store(tmp_path)
+    s.record_seen({"name": "Lith G1"})
+    s.set_positions({"lith_g1": 0.25})
+    assert rename_dataset(tmp_path, "game", "mods", "relics") is True
+    assert DatasetStore(tmp_path, "game", "relics").positions() == {"lith_g1": 0.25}
+    delete_dataset(tmp_path, "game", "relics")
+    assert DatasetStore(tmp_path, "game", "relics").positions() == {}
+
+
+def test_clear_data_drops_positions(tmp_path):
+    s = _store(tmp_path)
+    s.record_seen({"name": "Lith G1"})
+    s.set_positions({"lith_g1": 0.25})
+    s.clear_data()
+    assert s.positions() == {}
+
+
 def test_readd_after_removal(tmp_path):
     s = _store(tmp_path)
     s.record_seen({"name": "Serration"})

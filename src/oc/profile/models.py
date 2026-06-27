@@ -244,7 +244,7 @@ class MatchMode(str, Enum):
     partial = "partial"  # substring alignment (loose) — historical default
     full = "full"        # whole-string similarity (rejects extra/missing chars)
     exact = "exact"      # normalised equality: 1.0 or 0.0
-    prefix = "prefix"    # read must begin the target (or vice-versa if ``included``)
+    prefix = "prefix"    # read must begin with the target
 
 
 class StripMode(str, Enum):
@@ -261,6 +261,7 @@ class TellKind(str, Enum):
     filled = "filled"      # the region has visual content (variance/edges above floor)
     text = "text"          # OCR finds non-empty text in the region
     color = "color"        # a taught colour is present in the region
+    border = "border"      # a taught colour rides the box's PERIMETER band (not its fill) — e.g. a rarity frame
     template = "template"  # a saved sub-image matches in the region
     diamonds = "diamonds"  # a rank-diamond strip is present (◇/◆), e.g. only arcanes have one
 
@@ -277,9 +278,17 @@ class Tell(BaseModel):
     box: Box                       # cell-relative (0..1 within the item cell)
     kind: TellKind = TellKind.filled
     field: str | None = None       # for ``text``: which field's read this tell validates
-    color: str | None = None       # for ``color``: hex, e.g. "#ffcc00"
-    tolerance: int = 60            # for ``color``: colour distance (0..441)
+    color: str | None = None       # for ``color``/``border``: hex, e.g. "#ffcc00"
+    tolerance: int = 60            # for ``color``/``border``: colour distance (0..441)
+    # for ``border``: thickness of the sampled perimeter band, as a fraction (0..1) of the
+    # box's SHORTER side — so the ring scales with resolution. The score is the share of
+    # near-colour pixels within that band only (the fill is ignored).
+    width: float = 0.2
     template: str | None = None    # for ``template``: PNG path relative to the profile dir
+    # for ``template``: how far the live crop is grown beyond the tell box (per side, as a
+    # fraction of the box) before matching, so ``matchTemplate`` can SLIDE to find the saved
+    # sub-image even when the OCR-located cell drifts a few px. 0 = match in the exact box only.
+    margin: float = 0.25
     threshold: float = 0.5         # score a tell must reach to pass (per-kind meaning)
     locate: bool = False           # use this tell to find row positions
     # When this tell locates rows: which line of a wrapped name to anchor on, so the
@@ -295,7 +304,6 @@ class Tell(BaseModel):
     # something" check. The match knobs mirror DetectDef and apply only when ``text`` is set.
     text: str | None = None
     match: MatchMode = MatchMode.partial
-    included: bool = False
     case_sensitive: bool = False
     min_chars: int = 0
     strip: StripMode = StripMode.alnum
@@ -392,10 +400,6 @@ class DetectDef(BaseModel):
     # (_migrate_detect_thresholds), so the magic number lives in exactly one place.
     threshold: float
     match: MatchMode = MatchMode.partial  # how text is compared (see MatchMode)
-    # Match direction for ``partial``/``prefix``: False -> detect text must appear in
-    # the OCR read; True -> accept when the OCR read is contained within the detect
-    # text (looser). Ignored by ``full``/``exact``.
-    included: bool = False
     case_sensitive: bool = False  # False -> fold case before comparing
     min_chars: int = 0            # hard floor: reads shorter than this never match
     strip: StripMode = StripMode.none  # what to ignore before comparing (default: keep everything)
@@ -426,6 +430,21 @@ class StateDef(BaseModel):
     valid_for_save: bool = True
 
 
+class ScrollSample(BaseModel):
+    """One scroll-calibration reference: a scrollbar crop at a known scroll position.
+
+    ``img`` is the cutout as a data URL (PNG); ``rows`` is how many rows the viewport top has
+    moved down from the top of the list at this scroll; ``pos`` is the thumb position (0..1)
+    read from the crop by ``scroll_detail`` (filled server-side); ``conf`` its confidence.
+    """
+
+    img: str = ""
+    rows: int = 0
+    pos: float | None = None
+    conf: float | None = None
+    px: int | None = None     # thumb top offset within the crop, in cutout pixels (display only)
+
+
 class ScrollDef(BaseModel):
     """Describes a scrollable grid so rows can be stitched across scrolls.
 
@@ -445,6 +464,15 @@ class ScrollDef(BaseModel):
     # the authored pitch * [1 - tol, 1 + tol]. Set (not None) marks the window as a dynamic
     # lattice grid — rows are fitted/interpolated from findings, not taken at face value.
     pitch_tolerance: float | None = None
+    # Scroll calibration, authored explicitly from cutouts (no live learning). Each cutout is a
+    # crop of the scrollbar at a known scroll, tagged with how many rows the viewport has moved
+    # from the top; ``pos`` is the thumb position read from that crop. Fitting the cutouts gives
+    # ``calib_gain`` = rows of content per full thumb travel = slope of (rows_from_top vs pos) =
+    # the scrollable row count. The collector maps a row to its scroll-invariant index as
+    # ``pos*calib_gain + ypos*rows_on_screen``, where rows_on_screen is MEASURED live from the
+    # frame's row spacing (a continuous list has no fixed pages, so it isn't authored).
+    calib_samples: list[ScrollSample] = []
+    calib_gain: float | None = None     # rows-per-thumb-travel, fit from the cutouts
     # Precapture auto-scroll, per window: whether recording this window's list auto-advances,
     # and how many wheel notches per nudge. Used when precapture classifies this window on
     # screen (replaces the old global panel controls).
@@ -603,6 +631,13 @@ class DatasetDef(BaseModel):
     #                 gap. For transient per-event screens (e.g. relic offerings) where each
     #                 appearance is a distinct set, not an update of the last one.
     batch_mode: str = "run"
+    # Whether a run ever REMOVES keys to track the game emptying out:
+    #   "accumulate" (default) — keys only ever add/update; a run never removes.
+    #   "mirror" — keep the dataset == live game state. As the user scrolls, a key whose
+    #              last-seen scroll position is in the CURRENT visible slice but is not read
+    #              (over confirm_frames clean frames) is removed (soft). A partial/occluded
+    #              frame contributes no evidence, so it can never cause a false removal.
+    sync_mode: str = "accumulate"
 
 
 class DictionaryDef(BaseModel):
@@ -988,6 +1023,12 @@ class GameProfile(BaseModel):
         (``batch_mode: detection``) rather than one batch per run."""
         d = self.dataset_def(dataset_id)
         return bool(d and d.batch_mode == "detection")
+
+    def sync_mode_for(self, dataset_id: str) -> str:
+        """``"mirror"`` when the dataset tracks removals (keys absent from the visible
+        scroll slice are removed), else ``"accumulate"`` (add/update only)."""
+        d = self.dataset_def(dataset_id)
+        return "mirror" if (d and d.sync_mode == "mirror") else "accumulate"
 
     @staticmethod
     def _item_default_spec(it: ItemDef, w: WindowDef | None) -> KeySpec:

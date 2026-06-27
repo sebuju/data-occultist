@@ -24,6 +24,17 @@ def test_dataset_def_lookup():
     assert p.dataset_def("missing") is None
 
 
+def test_sync_mode_for():
+    p = GameProfile(name="g", datasets=[
+        DatasetDef(id="relics", sync_mode="mirror"),
+        DatasetDef(id="mods")])
+    assert p.sync_mode_for("relics") == "mirror"
+    assert p.sync_mode_for("mods") == "accumulate"      # default
+    assert p.sync_mode_for("missing") == "accumulate"   # unknown dataset
+    assert DatasetDef(id="x").sync_mode == "accumulate"
+    assert DatasetDef(id="x", sync_mode="mirror").model_dump()["sync_mode"] == "mirror"
+
+
 def test_dataset_def_legacy_key_fields_gone():
     # legacy dataset keying (strip/case) moved to the item/window long ago
     d = DatasetDef(id="loot")

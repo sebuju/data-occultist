@@ -12,7 +12,10 @@ from pathlib import Path
 
 import cv2
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
+from ...collect.commit import commit_records
+from ...collect.items import item_templates
 from ...collect.reader import RegionReader
 from ...detect.matcher import DetectMatcher, combine_passes
 from ...learn.dictionary import build_dictionaries
@@ -20,6 +23,7 @@ from ...learn.lexicon import Lexicon
 from ...learn.resolver import FieldResolver
 from ...ocr.serialize import ocr_job
 from ...profile import GameProfile, KeyDef, list_profiles
+from ...profile.models import DetectCombine
 from ...runtime import load_live_profile
 from ...store import store_for
 from ...store.flow_events import publish_flow
@@ -134,6 +138,35 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
     return result
 
 
+class _ScrollPosBody(BaseModel):
+    image: str            # PNG data URL (or bare base64) of a scrollbar cutout
+    orientation: str = "vertical"
+
+
+@router.post("/scroll/pos")
+def scroll_pos(body: _ScrollPosBody):
+    """Read the thumb position (0..1 over the reachable track) from a scrollbar cutout. The
+    teaching UI posts crops captured at known scroll offsets; each cutout's ``pos`` plus its
+    rows-from-top is one calibration sample (see the scrollbar node's cutout tool)."""
+    import base64
+
+    import numpy as np
+
+    from ...collect.scrollbar import scroll_detail
+    data = body.image.split(",", 1)[-1]            # tolerate a data: URL prefix
+    try:
+        raw = base64.b64decode(data)
+    except Exception as exc:
+        raise HTTPException(400, "bad base64 image") from exc
+    img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+    if img is None or img.size == 0:
+        raise HTTPException(400, "could not decode image")
+    d = scroll_detail(img, body.orientation)
+    if d is None:
+        return {"pos": None, "conf": 0.0}
+    return {"pos": d["pos"], "conf": d["conf"], "thumb_px": d["thumb_px"], "thumb_len": d["thumb_len"]}
+
+
 def _window_match(matcher, win, frame):
     """Evaluate a window's ENABLED detectors against a frame. Returns (matched, evs).
     Mirrors the classifier: each detector passes per its polarity, combined by detect_mode."""
@@ -141,6 +174,17 @@ def _window_match(matcher, win, frame):
     evs = [{"id": d.id, **matcher.evaluate(d, frame)} for d in dets]
     matched = combine_passes([e["passes"] for e in evs], win.detect_mode) if evs else False
     return matched, evs
+
+
+def _window_fit(evs, mode) -> float:
+    """Aggregate 0..1 fit of a window's detector evals — the tie-break the classifier uses
+    to pick the BEST-fitting window among those that pass. Mirrors ``_window_score`` in the
+    classifier: a ``negate`` detector contributes ``1 - score`` (how absent its landmark is),
+    the window is the WEAKEST contributor under ``all`` mode and the STRONGEST under ``any``."""
+    if not evs:
+        return 0.0
+    contribs = [(1.0 - e["score"]) if e.get("negate") else e["score"] for e in evs]
+    return max(contribs) if mode == DetectCombine.any else min(contribs)
 
 
 @router.get("/detect/collisions/{game}")
@@ -186,9 +230,12 @@ def detect_collisions(game: str):
                 if matched or v.id == w.id:   # always include the owner so self-miss shows
                     matches.append({"window": v.id, "matched": matched,
                                     "ndet": len([d for d in v.detect if d.enabled]),
+                                    "score": _window_fit(evs, v.detect_mode),
                                     "detectors": evs})
         matched_ids = [m["window"] for m in matches if m["matched"]]
-        winner = max((m for m in matches if m["matched"]), key=lambda m: m["ndet"], default=None)
+        # best fit wins (mirror classifier): highest aggregate score, then most detectors.
+        winner = max((m for m in matches if m["matched"]),
+                     key=lambda m: (m["score"], m["ndet"]), default=None)
         winner_id = winner["window"] if winner else None
         collides = [i for i in matched_ids if i != w.id]
         if w.id not in matched_ids:
@@ -218,7 +265,9 @@ def _window_reader(engine, profile, game, capture):
     pooled, dict_map = build_dictionaries(profile, engine.corrector)
     resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
                              dictionary=pooled, dictionaries=dict_map, learn_enabled=False)
-    reader = RegionReader(engine.ocr, resolver)
+    templates = item_templates([window], captures_store.cutout_loader(
+        get_settings().captures_dir, game or profile.name))
+    reader = RegionReader(engine.ocr, resolver, templates)
     return frame, window, fields, reader
 
 
@@ -268,6 +317,19 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
             cell["key"] = km.build(_cell_values(cell))
     out = {"client": [frame.client.w, frame.client.h],
            "device": getattr(engine.ocr, "device", "cpu"), **result}
+    # scrollbar thumb position from this same image — drives the window canvas row-index labels
+    # (the collector maps a row's index from this pos + the static cutout gain).
+    sc = window.scroll
+    if sc and sc.scrollbar:
+        from ...collect.scrollbar import scroll_detail
+        box = sc.scrollbar.to_fraction().to_pixels(frame.client.w, frame.client.h)
+        crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
+        d = scroll_detail(crop, sc.scrollbar_orientation)
+        if d is not None:
+            vertical = sc.scrollbar_orientation != "horizontal"
+            out["scrollbar"] = {"pos": d["pos"],
+                                "px": (box.y if vertical else box.x) + d["thumb_px"],
+                                "conf": d["conf"]}
     if cache is not None:
         cache.put(key, out)
         cache.save()
@@ -304,12 +366,7 @@ def preview_commit(profile: GameProfile, game: str | None = Query(None), capture
                 "low_conf": low_conf, "cells": len(records), "ms": round(job.ms)}
     store = store_for(get_settings().data_dir, profile.name, dataset, profile=profile)
     store.begin_batch()   # this commit is one revertable batch
-    written = no_key = 0
-    for rec in gated:
-        if store.record_seen(rec.values) is not None:
-            written += 1
-        else:
-            no_key += 1
+    written, no_key, _changed = commit_records(store, gated)   # the SAME write path collection uses
     store.save()
     if written:
         # Source-aware data hop: this commit came from THIS window, so animate only its edge.
@@ -353,7 +410,8 @@ def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...
     pooled, dict_map = build_dictionaries(profile, engine.corrector)
     resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
                              dictionary=pooled, dictionaries=dict_map, learn_enabled=False)
-    reader = RegionReader(engine.ocr, resolver)
+    templates = item_templates([window], lambda _name: cut)   # the cutout IS this item's reference
+    reader = RegionReader(engine.ocr, resolver, templates)
     with ocr_job(engine.ocr) as job:
         result = reader.read_cutout(cut, window, it, fields)
     h, w = cut.shape[:2]

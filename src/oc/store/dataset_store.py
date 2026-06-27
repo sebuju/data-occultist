@@ -47,7 +47,7 @@ AGGREGATES = ("latest", "first", "sum", "mean", "max", "min", "all")
 
 # row plumbing, not data columns — hidden from a dataset's column preview / stripped before
 # a record's values are re-recorded (e.g. as a reconcile remove).
-_PLUMBING = ("key", "present", "first_seen", "last_seen", "removed_at", "_count", "_seq", "_batch")
+_PLUMBING = ("key", "present", "first_seen", "last_seen", "removed_at", "_count", "_seq", "_batch", "_pos")
 
 _DB_NAME = "store.sqlite"
 
@@ -82,6 +82,12 @@ CREATE TABLE IF NOT EXISTS current (
   cnt         INTEGER,
   seq         INTEGER,
   maxbatch    INTEGER,
+  PRIMARY KEY (dataset, key)
+);
+CREATE TABLE IF NOT EXISTS positions (
+  dataset TEXT NOT NULL,
+  key     TEXT NOT NULL,
+  pos     REAL NOT NULL,
   PRIMARY KEY (dataset, key)
 );
 """
@@ -231,6 +237,7 @@ def rename_dataset(data_dir: Path | str, game: str, old: str, new: str) -> bool:
         n1 = conn.execute("UPDATE events SET dataset=? WHERE dataset=?", (new, old)).rowcount
         n2 = conn.execute("UPDATE datasets SET dataset=? WHERE dataset=?", (new, old)).rowcount
         conn.execute("UPDATE current SET dataset=? WHERE dataset=?", (new, old))
+        conn.execute("UPDATE positions SET dataset=? WHERE dataset=?", (new, old))
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -250,6 +257,7 @@ def delete_dataset(data_dir: Path | str, game: str, dataset: str) -> bool:
             n1 = conn.execute("DELETE FROM events WHERE dataset=?", (dataset,)).rowcount
             n2 = conn.execute("DELETE FROM datasets WHERE dataset=?", (dataset,)).rowcount
             conn.execute("DELETE FROM current WHERE dataset=?", (dataset,))
+            conn.execute("DELETE FROM positions WHERE dataset=?", (dataset,))
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
@@ -306,7 +314,7 @@ def drop_database(data_dir: Path | str, game: str) -> list[str]:
         names = [r[0] for r in conn.execute("SELECT dataset FROM datasets ORDER BY dataset")]
         conn.execute("BEGIN IMMEDIATE")
         try:
-            for t in ("events", "current", "datasets"):
+            for t in ("events", "current", "datasets", "positions"):
                 conn.execute(f"DELETE FROM {t}")
             conn.execute("COMMIT")
         except Exception:
@@ -560,27 +568,58 @@ class DatasetStore:
         self._announce([dict(merged)])
         return ev
 
-    def reconcile(self, present_keys: set[str]) -> list[ChangeEvent]:
-        """Mark stored keys absent from a *complete* pass as removed.
+    def present_keys(self) -> set[str]:
+        """The keys currently present (``present=1``) — what a live mirror reconciles against."""
+        return {r["key"] for r in self._current_records() if r.get("present", True)}
 
-        ``present_keys`` must already be normalised. Only call when confident the pass saw
-        the whole dataset, else occlusion logs false removals."""
+    def remove_keys(self, keys: set[str]) -> list[ChangeEvent]:
+        """Soft-remove a given set of keys: flip each absent (``present=0``) and log a
+        ``remove`` event, keeping its last observation. A key not present is skipped."""
+        if not keys:
+            return []
         events: list[ChangeEvent] = []
         for row in self._current_records():   # _ensure_current() inside -> current is valid here
             if not row.get("present", True):
                 continue
             key = row["key"]
-            if key in present_keys:
+            if key not in keys:
                 continue
             vals = {k: v for k, v in row.items() if k not in _PLUMBING}
             events.append(self._insert(ChangeOp.remove, key, vals))
             # a remove just flips the key absent; its values stay (the last observation)
             self._conn.execute("UPDATE current SET present=0 WHERE dataset=? AND key=?",
                                (self._dataset, key))
+            # a gone key's learned scroll position is meaningless -> drop it
+            self._conn.execute("DELETE FROM positions WHERE dataset=? AND key=?",
+                               (self._dataset, key))
         if events:
             self._stamp_current()
             self._announce([])
         return events
+
+    def reconcile(self, present_keys: set[str]) -> list[ChangeEvent]:
+        """Mark stored keys absent from a *complete* pass as removed.
+
+        ``present_keys`` must already be normalised. Only call when confident the pass saw
+        the whole dataset, else occlusion logs false removals."""
+        return self.remove_keys(self.present_keys() - present_keys)
+
+    # ---- scroll positions (mirror datasets) --------------------------------
+
+    def positions(self) -> dict[str, float]:
+        """Each key's last-seen scroll position (0..1), learned by mirror-sync. Empty for a
+        dataset that has never been mirrored. Survives the ``current`` rebuild (own table)."""
+        return {r["key"]: r["pos"] for r in self._conn.execute(
+            "SELECT key, pos FROM positions WHERE dataset=?", (self._dataset,)).fetchall()}
+
+    def set_positions(self, mapping: dict[str, float]) -> None:
+        """Upsert learned scroll positions. Pure metadata: no event, no ``rev`` bump — it must
+        not trigger a ``current`` rebuild or a change-bus fire (it isn't a record change)."""
+        if not mapping:
+            return
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO positions(dataset, key, pos) VALUES(?,?,?)",
+            [(self._dataset, k, float(v)) for k, v in mapping.items()])
 
     # ---- ledger / revert ---------------------------------------------------
 
@@ -617,6 +656,7 @@ class DatasetStore:
         try:
             c.execute("DELETE FROM events WHERE dataset=?", (self._dataset,))
             c.execute("DELETE FROM current WHERE dataset=?", (self._dataset,))
+            c.execute("DELETE FROM positions WHERE dataset=?", (self._dataset,))
             c.execute("UPDATE datasets SET next_id=1, batch=0, rev=rev+1, cur_rev=-1 WHERE dataset=?",
                       (self._dataset,))
             c.execute("COMMIT")
@@ -832,9 +872,11 @@ class DatasetStore:
 
     def _current_records(self) -> list[dict]:
         self._ensure_current()
+        posmap = self.positions()   # learned scroll position per key (mirror datasets); {} otherwise
         return [{"key": r["key"], "present": bool(r["present"]),
                  "first_seen": r["first_seen"], "last_seen": r["last_seen"],
                  "_count": r["cnt"], "_seq": r["seq"], "_batch": r["maxbatch"],
+                 "_pos": (round(posmap[r["key"]], 3) if r["key"] in posmap else None),
                  **json.loads(r["values_json"])}
                 for r in self._conn.execute(
                     "SELECT key,present,first_seen,last_seen,values_json,cnt,seq,maxbatch "

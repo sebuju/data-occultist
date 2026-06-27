@@ -40,6 +40,41 @@ class Record:
     values: dict[str, object] = dc_field(default_factory=dict)
     confidence: float = 1.0
     corrected: list[str] = dc_field(default_factory=list)
+    # Position of this record's cell as fractions (0..1) of the window's data_area: ``ypos``
+    # vertical (0 = top of the visible list, 1 = bottom), ``xpos`` horizontal (0 = left col,
+    # 1 = right col). Lets a scrolling consumer place a row in the grid — ypos + the scrollbar
+    # give a scroll-invariant list position, xpos pins the column. None when no data_area.
+    ypos: float | None = None
+    xpos: float | None = None
+
+    def is_empty(self) -> bool:
+        return all(v in (None, "") for v in self.values.values())
+
+
+@dataclass
+class _FieldRead:
+    """One field's read in a cell — everything both the collector and the preview need."""
+    raw: str | None              # the raw OCR text (None for pip fields)
+    conf: float
+    value: object                # extracted/resolved value
+    substituted: object          # the fired fallback's value, else None (None => a genuine read)
+    out_of_range: bool
+    box: PixelBox                # where the field was read (image pixels)
+    pip_unit: str | None = None  # "pips"/"filled" for visual-count fields, else None
+
+
+@dataclass
+class _CellRead:
+    """One cell read from a single OCR pass — the shared product of :meth:`RegionReader._read_cells`
+    that both :meth:`read` (collection) and :meth:`read_preview` (teaching UI) are built on, so
+    the two can never drift apart (CLAUDE.md rule 7)."""
+    values: dict[str, object] = dc_field(default_factory=dict)
+    corrected: list[str] = dc_field(default_factory=list)
+    confidence: float = 0.0      # worst genuine-read field conf (0 if nothing seen)
+    saw: bool = False            # any field produced text
+    failed: bool = False         # a field tripped its min_confidence or plausibility range
+    confs: dict[str, float] = dc_field(default_factory=dict)        # field_id -> conf (seen text only)
+    fields: dict[str, _FieldRead] = dc_field(default_factory=dict)  # field_id -> read detail
 
     def is_empty(self) -> bool:
         return all(v in (None, "") for v in self.values.values())
@@ -264,18 +299,39 @@ class RegionReader:
             return None
         return window.data_area.to_fraction().to_pixels(frame.client.w, frame.client.h)
 
-    def read(self, frame: Frame, window: WindowDef, fields: dict[str, FieldDef]) -> list[Record]:
+    @staticmethod
+    def _data_yfrac(window: WindowDef, cy: float) -> float | None:
+        """A cell-centre's window-fraction y mapped to 0..1 within the data_area (top..bottom).
+        None when no data_area is configured (then a row has no list position)."""
+        da = window.data_area
+        if da is None or not da.h:
+            return None
+        return min(1.0, max(0.0, (cy - da.y) / da.h))
+
+    @staticmethod
+    def _data_xfrac(window: WindowDef, cx: float) -> float | None:
+        """A cell-centre's window-fraction x mapped to 0..1 within the data_area (left..right)."""
+        da = window.data_area
+        if da is None or not da.w:
+            return None
+        return min(1.0, max(0.0, (cx - da.x) / da.w))
+
+    def _read_cells(self, frame: Frame, window: WindowDef, fields: dict[str, FieldDef]):
+        """The SINGLE read core both collection (:meth:`read`) and the teaching preview
+        (:meth:`read_preview`) are built on, so they can never diverge (CLAUDE.md rule 7).
+
+        Locates the cells, runs ONE OCR pass (plus a batched focus-read of the boxes it
+        missed), resolves every field, and returns ``(cells, lines, ics, [_CellRead])`` — the
+        raw read with confidence/flags/per-field detail. Neither gating nor presentation
+        happens here; each caller layers its own on top.
+        """
         cells, lines, ics = self._resolve_cells(frame, window, fields)
         targets = self._targets_from_cells(cells, frame)
-        n_cells = len(cells)
-        records = [Record() for _ in range(n_cells)]
-        worst = [1.0] * n_cells
-        saw = [False] * n_cells
-        failed = [False] * n_cells   # a field read below its own min_confidence drops the cell
-        cell_confs = [dict() for _ in range(n_cells)]   # per-cell {field_id: conf} for tell gating
+        n = len(cells)
+        cr = [_CellRead() for _ in range(n)]
 
-        # first gather every field from the single detection pass; queue the item-field
-        # boxes it missed, then read them all in ONE batched recognition pass
+        # gather every field from the single detection pass; queue the boxes it missed, then
+        # read them all in ONE batched recognition pass.
         base, pending = {}, []
         for ci, field_id, box in targets:
             fdef = fields.get(field_id)
@@ -288,47 +344,70 @@ class RegionReader:
                 pending.append(((ci, field_id), box))
         focus = self._focus_reads(frame, window, pending) if pending else {}
 
+        worst = [1.0] * n
         for ci, field_id, box in targets:
             fdef = fields.get(field_id)
-            rec = records[ci]
+            c = cr[ci]
             if self._is_pip(fdef):
-                rec.values[field_id] = self._pip_value(frame, box, fdef)
-                saw[ci] = True
+                cnt = self._pip_value(frame, box, fdef)
+                unit = "filled" if fdef.type is FieldType.diamonds else "pips"
+                c.values[field_id] = cnt
+                c.saw = True
+                c.fields[field_id] = _FieldRead(raw=f"{cnt} {unit}", conf=0.99, value=cnt,
+                                                substituted=None, out_of_range=False, box=box,
+                                                pip_unit=unit)
                 continue
             text, conf = focus.get((ci, field_id)) or base[(ci, field_id)]
-            substituted = False
+            substituted = None
             if self._resolver and fdef:
                 resolved = self._resolver.resolve(fdef, text, conf)
-                rec.values[field_id] = resolved.value
-                substituted = resolved.substituted is not None
+                value = resolved.value
+                substituted = resolved.substituted
                 if resolved.corrected:
-                    rec.corrected.append(field_id)
+                    c.corrected.append(field_id)
             elif fdef:
-                rec.values[field_id], rule = coerce_rule(fdef, text)
-                substituted = rule is not None
+                value, substituted = coerce_rule(fdef, text)
             else:
-                rec.values[field_id] = text or None
+                value = text or None
+            c.values[field_id] = value
+            # out-of-range only counts for a GENUINE read (a fired fallback's value is authored)
+            oor = substituted is None and bool(fdef) and out_of_range(fdef, value)
+            c.fields[field_id] = _FieldRead(raw=text, conf=conf, value=value,
+                                            substituted=substituted, out_of_range=oor, box=box)
             if text:
-                saw[ci] = True
-                cell_confs[ci][field_id] = conf   # so a field-tell's tell_conf can gate
-                if not substituted:
-                    # a fired fallback's value is authored config, not this read — the
-                    # garbage OCR that triggered it must not sink the whole record
+                c.saw = True
+                c.confs[field_id] = conf   # so a field-tell's tell_conf can gate
+                if substituted is None:
+                    # garbage OCR that triggered a fallback must not sink the whole record
                     worst[ci] = min(worst[ci], conf)
-                    # per-field confidence floor: a genuine read below the field's own bar
-                    # drops the whole cell (an authored fallback bypasses it, like worst above)
                     mc = getattr(fdef, "min_confidence", 0.0) or 0.0
                     if mc and conf < mc:
-                        failed[ci] = True
-                    # plausibility range: an out-of-range number is a misread (a glyph fused
-                    # onto the digits), so drop the cell rather than store a wrong value
-                    if fdef and out_of_range(fdef, rec.values[field_id]):
-                        failed[ci] = True
+                        c.failed = True
+                    if oor:   # a glyph fused onto the digits — drop the cell, don't store it
+                        c.failed = True
+        for ci, c in enumerate(cr):
+            c.confidence = worst[ci] if c.saw else 0.0
+        return cells, lines, ics, cr
 
-        for ci, rec in enumerate(records):
-            rec.confidence = worst[ci] if saw[ci] else 0.0
+    def read(self, frame: Frame, window: WindowDef, fields: dict[str, FieldDef]) -> list[Record]:
+        cells, lines, ics, cr = self._read_cells(frame, window, fields)
+        records: list[Record] = []
+        for ci, c in enumerate(cr):
+            rec = Record(values=dict(c.values), confidence=c.confidence, corrected=list(c.corrected))
+            # Position of the cell within the data_area, so a scrolling consumer can place this
+            # row in the grid. Item cells carry their origin/size; a static grid cell takes the
+            # mean centre of its field boxes.
+            if ics is not None:
+                rec.ypos = self._data_yfrac(window, ics[ci].oy + ics[ci].ih / 2)
+                rec.xpos = self._data_xfrac(window, ics[ci].ox + ics[ci].iw / 2)
+            else:
+                bs = list(cells[ci].boxes.values())
+                if bs:
+                    rec.ypos = self._data_yfrac(window, sum(b.y + b.h / 2 for b in bs) / len(bs))
+                    rec.xpos = self._data_xfrac(window, sum(b.x + b.w / 2 for b in bs) / len(bs))
+            records.append(rec)
         if ics is None:
-            return [r for ci, r in enumerate(records) if not r.is_empty() and not failed[ci]]
+            return [r for ci, r in enumerate(records) if not r.is_empty() and not cr[ci].failed]
         # Item templates: keep a cell only if all its tells pass (drops popups/empties);
         # resolve template overlaps; and (when >1 template) tag which one matched.
         # A GUARD item (no fields, but has tells — e.g. a "no relic selected" placeholder)
@@ -336,11 +415,11 @@ class RegionReader:
         # (on its tells alone) so it can SUPPRESS a higher-or-equal cell that would otherwise
         # misread the placeholder. It is dropped from the stored output below — it exists to
         # win the tile, not to be saved.
-        valid = [ci for ci, r in enumerate(records)
-                 if not failed[ci]
-                 and (not r.is_empty() or (not ics[ci].item.fields and ics[ci].item.tells))
-                 and valid_cell(frame, window, r.values, ics[ci], self._templates, fields,
-                                cell_confs[ci], self._read_tell_boxes(frame, window, ics[ci]))]
+        valid = [ci for ci, c in enumerate(cr)
+                 if not c.failed
+                 and (not records[ci].is_empty() or (not ics[ci].item.fields and ics[ci].item.tells))
+                 and valid_cell(frame, window, records[ci].values, ics[ci], self._templates, fields,
+                                c.confs, self._read_tell_boxes(frame, window, ics[ci]))]
         kept = resolve_overlaps(ics, valid)
         tag = len(window.items) > 1
         out = []
@@ -373,52 +452,30 @@ class RegionReader:
         - ``detections``: every raw OCR line (text, box as client fractions, conf),
           i.e. exactly what OCR found and where, independent of the region boxes.
         """
-        cells, lines, ics = self._resolve_cells(frame, window, fields)
-        targets = self._targets_from_cells(cells, frame)
+        cells, lines, ics, cr = self._read_cells(frame, window, fields)
         cw, ch = frame.client.w, frame.client.h
 
-        base, pending = {}, []   # gather from the detection pass; batch what it missed
-        for ci, field_id, box in targets:
-            fdef = fields.get(field_id)
-            if self._is_pip(fdef):
-                continue
-            tc = self._gather(lines, box)
-            base[(ci, field_id)] = tc
-            # isolate: always crop-read this box alone; else focus-read only the misses
-            if (fdef and fdef.isolate) or (not tc[0] and ics is not None):
-                pending.append(((ci, field_id), box))
-        focus = self._focus_reads(frame, window, pending) if pending else {}
+        def asfrac(b):
+            return {"x": b.x / cw, "y": b.y / ch, "w": b.w / cw, "h": b.h / ch}
 
-        out = [{"row": c.row, "col": c.col, "fields": {}} for c in cells]
-        for ci, field_id, box in targets:
-            fdef = fields.get(field_id)
-            def asfrac(b):
-                return {"x": b.x / cw, "y": b.y / ch, "w": b.w / cw, "h": b.h / ch}
-            if self._is_pip(fdef):
-                cnt = self._pip_value(frame, box, fdef)
-                unit = "filled" if fdef.type is FieldType.diamonds else "pips"
-                out[ci]["fields"][field_id] = {"raw": f"{cnt} {unit}", "value": cnt, "confidence": 0.99, "box": asfrac(box)}
-                continue
-            text, conf = focus.get((ci, field_id)) or base[(ci, field_id)]
-            # apply the resolver (dictionary snap, read-only) when one is set, so the
-            # preview shows the same value the collector would; else just coerce.
-            if self._resolver and fdef:
-                resolved = self._resolver.resolve(fdef, text, conf)
-                value, rule = resolved.value, resolved.substituted
-            elif fdef:
-                value, rule = coerce_rule(fdef, text)
-            else:
-                value, rule = text or None, None
-            # out-of-range numbers are kept VISIBLE in the preview (so the author sees the
-            # "81" misread) but flagged — the cell is dropped below, mirroring collection
-            oor = rule is None and bool(fdef) and out_of_range(fdef, value)
-            # the box is shown where it was DEFINED (cell-relative), not snapped to data
-            out[ci]["fields"][field_id] = {"raw": text, "value": value, "confidence": round(conf, 3),
-                                           "substituted": rule, "out_of_range": oor, "box": asfrac(box)}
+        out = []
+        for ci, c in enumerate(cr):
+            flds: dict[str, dict] = {}
+            for fid, fr in c.fields.items():
+                d = {"raw": fr.raw, "value": fr.value, "confidence": round(fr.conf, 3),
+                     "box": asfrac(fr.box)}
+                if fr.pip_unit is None:
+                    # out-of-range numbers stay VISIBLE in the preview (so the author sees the
+                    # "81" misread) but flagged — the cell is dropped below, mirroring collection
+                    d["substituted"] = fr.substituted
+                    d["out_of_range"] = fr.out_of_range
+                flds[fid] = d
+            out.append({"row": cells[ci].row, "col": cells[ci].col, "fields": flds})
 
         # mark which cells survive (tells pass AND win overlap resolution), record which
         # template matched, and attach per-tell diagnostics + the reject reason so the
-        # UI shows exactly why each cell is kept or dropped
+        # UI shows exactly why each cell is kept or dropped. Same gates and confidences as
+        # ``read`` (both ride ``_read_cells``), so the preview is what collection would store.
         if ics is not None:
             valid = []
             for ci, cell in enumerate(out):
@@ -427,8 +484,7 @@ class RegionReader:
                 # cell-level labels (e.g. the item's name) on the tile
                 cell["box"] = {"x": ics[ci].ox, "y": ics[ci].oy, "w": ics[ci].iw, "h": ics[ci].ih}
                 vals = {fid: f.get("value") for fid, f in cell["fields"].items()}
-                confs = {fid: f.get("confidence") for fid, f in cell["fields"].items()}
-                rep = tell_report(frame, vals, ics[ci], self._templates, confs, fields,
+                rep = tell_report(frame, vals, ics[ci], self._templates, cr[ci].confs, fields,
                                   self._read_tell_boxes(frame, window, ics[ci]))
                 cell["tells"] = rep
                 cell["tells_pass"] = all(r["pass"] for r in rep)

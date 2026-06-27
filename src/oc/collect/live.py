@@ -37,6 +37,8 @@ class LiveSession:
         self._written = 0                  # records added/updated this run
         self._frames = 0                   # ticks processed
         self._cur: tuple[str | None, str | None] = (None, None)
+        self._scroll: tuple[float, float] | None = None   # latest mirror visible row-index span
+        self._scroll_meta: dict | None = None             # latest mirror calibration snapshot
         self._t0 = 0.0
         self._error: str | None = None
 
@@ -68,6 +70,8 @@ class LiveSession:
             self._written = 0
             self._frames = 0
             self._cur = (None, None)
+            self._scroll = None
+            self._scroll_meta = None
             self._error = None
             self._t0 = time.monotonic()
             self._stop.clear()
@@ -94,7 +98,7 @@ class LiveSession:
     def _loop(self) -> None:
         try:
             collector = Collector(self._engine, self._profile)
-            collector.on_frame = self._save_frame   # persist each RECOGNISED frame (live images)
+            collector.on_frame = self._save_frame   # persist a frame only when a record was written
             # Collector.run owns the trigger loop + flushes via close() on the way out.
             collector.run(self._interval, on_tick=self._on_tick, should_stop=self._stop.is_set)
         except Exception as exc:  # pragma: no cover - defensive
@@ -102,9 +106,10 @@ class LiveSession:
                 self._error = str(exc)
 
     def _save_frame(self, frame) -> None:
-        """Save one recognised frame into the game's live/ image bucket — the same bucket the
-        read-only tuning loop writes to, so collecting mode also keeps its images. Best-effort:
-        an encode/disk hiccup must never disturb collection."""
+        """Save one frame into the game's live/ image bucket — the same bucket the read-only
+        tuning loop writes to. Only called on a tick that WROTE a record, so the bucket fills
+        with frames that produced data, not every recognised grab. Best-effort: an encode/disk
+        hiccup must never disturb collection."""
         try:
             import cv2
 
@@ -122,6 +127,8 @@ class LiveSession:
             self._written += result.new
             if result.status is TickStatus.saved:
                 self._cur = (result.window_id, result.state_id)
+                self._scroll = result.scroll   # None unless a mirror dataset read its scrollbar
+                self._scroll_meta = result.scroll_meta
                 key = f"{result.window_id}/{result.state_id}"
             else:
                 self._cur = (None, None)
@@ -138,9 +145,12 @@ class LiveSession:
                 "running": running,
                 "frames": self._frames,
                 "written": self._written,
+                "interval": self._interval,   # frame limiter (seconds); lets a reloaded UI restore the limit input
                 "fps": round(self._frames / elapsed, 1) if running else 0.0,
                 "window": self._cur[0],
                 "state": self._cur[1],
+                "scroll": list(self._scroll) if self._scroll else None,   # [vlo,vhi] row-index span, or null
+                "scroll_meta": self._scroll_meta,   # {total,viewport,gain,confident,pinned} or null
                 "recognized": [{"key": k, "count": n, "miss": k in ("", "unrecognised", "no_window")}
                                for k, n in sorted(self._recog.items(), key=lambda kv: kv[1], reverse=True)],
                 "error": self._error,
