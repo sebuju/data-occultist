@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS positions (
   dataset TEXT NOT NULL,
   key     TEXT NOT NULL,
   pos     REAL NOT NULL,
+  xpos    REAL,
   PRIMARY KEY (dataset, key)
 );
 """
@@ -97,6 +98,10 @@ CREATE TABLE IF NOT EXISTS positions (
 # at, so a steady-state read is a plain SELECT and only a write triggers a rebuild.
 _DATASET_COLS = ("rev INTEGER NOT NULL DEFAULT 0", "cur_rev INTEGER NOT NULL DEFAULT -1",
                  "cur_agg TEXT")
+# positions columns added after the base schema (so an already-created DB gains them too):
+# xpos is the slot's column (0..1 of data_area width) — persisted alongside the row index so
+# a carried-over key's full slot is known across runs (else mirror removal can't judge it).
+_POSITION_COLS = ("xpos REAL",)
 
 
 def _num(v):
@@ -104,6 +109,16 @@ def _num(v):
         return float(str(v).strip())
     except (TypeError, ValueError):
         return None
+
+
+def _fmt_pos(slot: tuple[float | None, float] | None) -> str | None:
+    """The ``_pos`` display for a learned grid slot ``(xpos, vpos)``: the row INDEX (a whole
+    number — the discrete list position) then the column (a 0..1 horizontal fraction) when
+    it's known (legacy rows have no column). ``None`` when not mirrored."""
+    if slot is None:
+        return None
+    x, v = slot
+    return f"({int(round(v))}, {round(x, 3)})" if x is not None else f"({int(round(v))},)"
 
 
 def aggregate_records(records: list[dict], policy: str = "latest") -> dict:
@@ -207,11 +222,12 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(_SCHEMA)
-    for col in _DATASET_COLS:
-        try:
-            conn.execute(f"ALTER TABLE datasets ADD COLUMN {col}")
-        except sqlite3.OperationalError:
-            pass   # column already exists
+    for table, cols in (("datasets", _DATASET_COLS), ("positions", _POSITION_COLS)):
+        for col in cols:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass   # column already exists
     return conn
 
 
@@ -606,20 +622,24 @@ class DatasetStore:
 
     # ---- scroll positions (mirror datasets) --------------------------------
 
-    def positions(self) -> dict[str, float]:
-        """Each key's last-seen scroll position (0..1), learned by mirror-sync. Empty for a
-        dataset that has never been mirrored. Survives the ``current`` rebuild (own table)."""
-        return {r["key"]: r["pos"] for r in self._conn.execute(
-            "SELECT key, pos FROM positions WHERE dataset=?", (self._dataset,)).fetchall()}
+    def positions(self) -> dict[str, tuple[float | None, float]]:
+        """Each key's last-seen grid slot ``(xpos, vpos)`` — ``xpos`` the column (0..1 of
+        data_area width), ``vpos`` the scroll-invariant row index — learned by mirror-sync.
+        ``xpos`` is ``None`` for legacy rows written before the column was persisted. Empty
+        for a dataset that has never been mirrored. Survives the ``current`` rebuild (own
+        table)."""
+        return {r["key"]: (r["xpos"], r["pos"]) for r in self._conn.execute(
+            "SELECT key, pos, xpos FROM positions WHERE dataset=?", (self._dataset,)).fetchall()}
 
-    def set_positions(self, mapping: dict[str, float]) -> None:
-        """Upsert learned scroll positions. Pure metadata: no event, no ``rev`` bump — it must
-        not trigger a ``current`` rebuild or a change-bus fire (it isn't a record change)."""
+    def set_positions(self, mapping: dict[str, tuple[float, float]]) -> None:
+        """Upsert learned grid slots ``{key: (xpos, vpos)}``. Pure metadata: no event, no
+        ``rev`` bump — it must not trigger a ``current`` rebuild or a change-bus fire (it
+        isn't a record change)."""
         if not mapping:
             return
         self._conn.executemany(
-            "INSERT OR REPLACE INTO positions(dataset, key, pos) VALUES(?,?,?)",
-            [(self._dataset, k, float(v)) for k, v in mapping.items()])
+            "INSERT OR REPLACE INTO positions(dataset, key, pos, xpos) VALUES(?,?,?,?)",
+            [(self._dataset, k, float(v), float(x)) for k, (x, v) in mapping.items()])
 
     # ---- ledger / revert ---------------------------------------------------
 
@@ -872,11 +892,11 @@ class DatasetStore:
 
     def _current_records(self) -> list[dict]:
         self._ensure_current()
-        posmap = self.positions()   # learned scroll position per key (mirror datasets); {} otherwise
+        posmap = self.positions()   # learned slot (xpos, vpos) per key (mirror datasets); {} otherwise
         return [{"key": r["key"], "present": bool(r["present"]),
                  "first_seen": r["first_seen"], "last_seen": r["last_seen"],
                  "_count": r["cnt"], "_seq": r["seq"], "_batch": r["maxbatch"],
-                 "_pos": (round(posmap[r["key"]], 3) if r["key"] in posmap else None),
+                 "_pos": _fmt_pos(posmap.get(r["key"])),   # "row · col" (row index primary, column 0..1)
                  **json.loads(r["values_json"])}
                 for r in self._conn.execute(
                     "SELECT key,present,first_seen,last_seen,values_json,cnt,seq,maxbatch "

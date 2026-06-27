@@ -75,13 +75,16 @@ class SliceSync:
                 self._absence[k] = n
         return gone
 
-    def pos_map(self) -> dict[str, float]:
-        """The learned key -> row-index map (for persistence / the table column)."""
-        return {k: v for k, (_x, v) in self._cell.items()}
+    def pos_map(self) -> dict[str, tuple[float | None, float]]:
+        """The learned key -> ``(xpos, vpos)`` slot map (for persistence / the table column)."""
+        return dict(self._cell)
 
-    def seed(self, pos: dict[str, float]) -> None:
-        """Restore row indices learned on a previous run (column unknown until re-seen, so a
-        seeded key isn't a removal candidate until read again — safe, never false-removes)."""
-        for k, v in pos.items():
+    def seed(self, pos: dict[str, tuple[float | None, float]]) -> None:
+        """Restore the slots ``{key: (xpos, vpos)}`` learned on a previous run, so a relic
+        that's gone between runs is a removal candidate the moment a DIFFERENT relic is read
+        in its slot (a still-present relic is re-read first -> excluded -> safe). ``xpos`` may
+        be ``None`` for legacy rows (pre-column persistence); such a key stays non-removable
+        until read again, exactly as before."""
+        for k, slot in pos.items():
             if k not in self._cell:
-                self._cell[k] = (None, v)
+                self._cell[k] = slot

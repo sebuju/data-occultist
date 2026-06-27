@@ -401,8 +401,9 @@ class Collector:
                     if gone:
                         store.remove_keys(gone)
                     if fresh and read_cells:
-                        # _pos column + next run: the same integer row indices slice_sync just used
-                        store.set_positions({k: v for k, (_x, v) in read_cells.items()})
+                        # _pos column + next run: the same (column, row-index) slots slice_sync
+                        # just used — column persisted so a gone relic stays a removal candidate.
+                        store.set_positions(read_cells)
 
         # Persist the frame image only when this tick actually WROTE a record (live mode
         # saves the grab) — a recognised-but-nothing-new frame produces no screenshot.

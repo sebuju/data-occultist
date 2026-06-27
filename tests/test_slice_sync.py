@@ -77,8 +77,16 @@ def test_confirm_resets_when_relic_reappears():
 def test_pos_map_and_seed():
     ss = SliceSync(confirm_frames=1)
     _obs(ss, 2.0, 6.0, {"x": (0.3, 4.0)}, ["x"])
-    assert ss.pos_map() == {"x": 4.0}                  # row index only
+    assert ss.pos_map() == {"x": (0.3, 4.0)}           # full (column, row index) slot
     ss2 = SliceSync(confirm_frames=1)
-    ss2.seed({"x": 4.0})
-    # seeded key has no known column yet -> not removable until read again (safe)
-    assert ss2.observe(0.0, 10.0, {"y": (0.3, 4.0)}, {"x"}, True) == set()
+    ss2.seed({"x": (0.3, 4.0)})
+    # seeded with its real column -> a DIFFERENT relic read in x's exact slot removes it
+    # (this is the cross-run fix: a relic gone between runs no longer lingers)
+    assert ss2.observe(0.0, 10.0, {"y": (0.3, 4.0)}, {"x"}, True) == {"x"}
+
+
+def test_seed_legacy_no_column_not_removed():
+    # legacy rows persisted before the column existed seed as (None, vpos) -> still safe
+    ss = SliceSync(confirm_frames=1)
+    ss.seed({"x": (None, 4.0)})
+    assert ss.observe(0.0, 10.0, {"y": (0.3, 4.0)}, {"x"}, True) == set()

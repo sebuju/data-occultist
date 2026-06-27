@@ -106,27 +106,27 @@ def test_positions_roundtrip_and_on_records(tmp_path):
     s = _store(tmp_path)
     s.record_seen({"name": "Lith G1"})
     s.record_seen({"name": "Meso F2"})
-    s.set_positions({"lith_g1": 0.25, "meso_f2": 0.8})
-    assert s.positions() == {"lith_g1": 0.25, "meso_f2": 0.8}
-    s.set_positions({"lith_g1": 0.4})                  # upsert one
-    assert s.positions()["lith_g1"] == 0.4
-    rows = {r["key"]: r["_pos"] for r in s.records()}
-    assert rows["lith_g1"] == 0.4 and rows["meso_f2"] == 0.8
+    s.set_positions({"lith_g1": (0.1, 3.0), "meso_f2": (0.5, 7.0)})   # (xpos, vpos row index)
+    assert s.positions() == {"lith_g1": (0.1, 3.0), "meso_f2": (0.5, 7.0)}
+    s.set_positions({"lith_g1": (0.1, 5.0)})           # upsert one
+    assert s.positions()["lith_g1"] == (0.1, 5.0)
+    rows = {r["key"]: r["_pos"] for r in s.records()}   # _pos shows "(row, col)" (int vpos, xpos)
+    assert rows["lith_g1"] == "(5, 0.1)" and rows["meso_f2"] == "(7, 0.5)"
     # positions survive a reopen (own table, not rebuilt with `current`)
-    assert DatasetStore(tmp_path, "game", "mods").positions()["meso_f2"] == 0.8
+    assert DatasetStore(tmp_path, "game", "mods").positions()["meso_f2"] == (0.5, 7.0)
 
 
 def test_pos_not_a_data_column(tmp_path):
     s = _store(tmp_path)
     s.record_seen({"name": "Lith G1"})
-    s.set_positions({"lith_g1": 0.25})
+    s.set_positions({"lith_g1": (0.1, 0.25)})
     assert "_pos" not in s.summary()["columns"]   # plumbing, not a record field
 
 
 def test_remove_keys_drops_position(tmp_path):
     s = _store(tmp_path)
     s.record_seen({"name": "Lith G1"})
-    s.set_positions({"lith_g1": 0.25})
+    s.set_positions({"lith_g1": (0.1, 0.25)})
     s.remove_keys({"lith_g1"})
     assert s.positions() == {}                    # a gone key's position is meaningless
 
@@ -134,9 +134,9 @@ def test_remove_keys_drops_position(tmp_path):
 def test_positions_follow_rename_and_delete(tmp_path):
     s = _store(tmp_path)
     s.record_seen({"name": "Lith G1"})
-    s.set_positions({"lith_g1": 0.25})
+    s.set_positions({"lith_g1": (0.1, 0.25)})
     assert rename_dataset(tmp_path, "game", "mods", "relics") is True
-    assert DatasetStore(tmp_path, "game", "relics").positions() == {"lith_g1": 0.25}
+    assert DatasetStore(tmp_path, "game", "relics").positions() == {"lith_g1": (0.1, 0.25)}
     delete_dataset(tmp_path, "game", "relics")
     assert DatasetStore(tmp_path, "game", "relics").positions() == {}
 
@@ -144,7 +144,7 @@ def test_positions_follow_rename_and_delete(tmp_path):
 def test_clear_data_drops_positions(tmp_path):
     s = _store(tmp_path)
     s.record_seen({"name": "Lith G1"})
-    s.set_positions({"lith_g1": 0.25})
+    s.set_positions({"lith_g1": (0.1, 0.25)})
     s.clear_data()
     assert s.positions() == {}
 
