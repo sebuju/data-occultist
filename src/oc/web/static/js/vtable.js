@@ -22,6 +22,17 @@ import { h } from "./dom.js";
 const ROW_H = 22;        // fixed row height (px) — virtualization needs a known height
 const BUFFER = 6;        // extra rows rendered above/below the viewport
 
+// Compare two cell strings for sorting. When BOTH are full numbers (incl. decimals like
+// "0.05" / "0.006"), compare as floats — Intl's numeric collation splits digit-runs and
+// ranks "0.05" below "0.006" (it reads the fractional "05" vs "006" as 5 vs 6). Otherwise
+// fall back to natural string collation (numeric:true gives "item2" < "item10").
+const _numRe = /^[+-]?(\d+\.?\d*|\.\d+)$/;
+function cmpCell(a, b) {
+    const ta = a.trim(), tb = b.trim();
+    if (_numRe.test(ta) && _numRe.test(tb)) return parseFloat(ta) - parseFloat(tb);
+    return ta.localeCompare(tb, undefined, { numeric: true, sensitivity: "base" });
+}
+
 // CSS font shorthand for canvas text measurement (built from parts — the `font` shorthand
 // is often empty when set via separate CSS properties).
 function fontOf(el) {
@@ -453,7 +464,7 @@ export class VTable {
         if (this.sortCol == null) return;
         const col = this.columns[this.sortCol], dir = this.sortDir, cell = this._cell;
         this.filtered = this.filtered.slice().sort((a, b) =>
-            dir * String(cell(a.values, col)).localeCompare(String(cell(b.values, col)), undefined, { numeric: true, sensitivity: "base" }));
+            dir * cmpCell(String(cell(a.values, col)), String(cell(b.values, col))));
     }
 
     // ---- search ----

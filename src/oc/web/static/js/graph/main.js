@@ -41,7 +41,7 @@ import {
     applyView, resizeCanvas, onWheel, startPan, consumePanSuppress,
 } from "./camera.js";
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
-import { nodeParts, windowControls, itemLists, _colOpts, satToggleBtn } from "./node_parts.js";
+import { nodeParts, windowControls, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved } from "./node_parts.js";
 import * as dsevents from "./dsevents.js";
 import { singleFlight } from "../singleflight.js";
 import {
@@ -75,10 +75,10 @@ import {
     commitPreviewNode,
     detectBusy, detectAgain, _detectPending,
     _detectAll, refreshOpenDetect, _previewPending, _previewAll, refreshOpenPreviews,
-    refreshImageBoxes, selectRegionNode,
+    refreshImageBoxes, refreshGridPreview, selectRegionNode,
 } from "./imaging.js";
 import {
-    liveWin, liveWinState, buildLiveWindow, renderLiveWindow,
+    liveWin, liveWinState, buildLiveWindow, renderLiveWindow, syncLiveFromServer,
 } from "./panels/livewin.js";
 
 const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, producer: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, vttable: 2300, dictionary: 20 };
@@ -746,12 +746,15 @@ function wireItemTell(div, n) {
         const k = e.target.dataset.k;
         let prop = k, v;
         if (k === "threshold") v = +e.target.value || 0;
+        else if (k === "width") v = Math.max(0, Math.min(0.5, +e.target.value || 0));
+        else if (k === "margin") v = Math.max(0, Math.min(1, +e.target.value || 0));
         else if (k === "minchars") { prop = "min_chars"; v = Math.max(0, Math.trunc(+e.target.value) || 0); }
-        else if (k === "incl") { prop = "included"; v = e.target.checked; }
         else if (k === "case") { prop = "case_sensitive"; v = e.target.checked; }
         else if (k === "field") v = e.target.value || null;   // blank "—" => no field => check ANY column
         else v = e.target.value;
         model.setItemTellProp(winId, itemId, tid, prop, v);
+        // margin grows the search crop — redraw this template tell's reference preview to show it
+        if (k === "margin" && n.ref.kind === "template") drawTellTemplateRef(div, n);
         // text empty<->set adds/removes the match knobs; mode change shows/hides "read ⊆ text"
         // (ignored by full/exact) -> rebuild this node's body in both cases
         tellChanged(winId, itemId, tid, (k === "text" || k === "match") ? { rebuild: true } : {});
@@ -762,6 +765,74 @@ function wireItemTell(div, n) {
         model.setItemTellProp(winId, itemId, tid, "locate", e.target.checked);
         tellChanged(winId, itemId, tid, { render: true });   // align dropdown + sibling tell nodes
     });
+    if (n.ref.kind === "template") drawTellTemplateRef(div, n);
+}
+
+// A 'template' tell matches a saved sub-image: the tell box cropped from the item's frozen
+// cutout. Draw that exact crop into the tell node so the user sees its reference (mirrors the
+// cell-rel→cutout-fraction mapping the reader uses in read_cutout / item_templates).
+function drawTellTemplateRef(div, n) {
+    const cv = div.querySelector(".tt-ref-canvas");
+    const it = n.item, t = n.ref;
+    if (!cv || !it.cutout || !it.cutout_box) return;
+    const cb = it.cutout_box, ib = it.box;
+    if (!(cb.w > 0 && cb.h > 0 && ib.w > 0 && ib.h > 0)) return;
+    const iw = ib.w / cb.w, ih = ib.h / cb.h;          // cell size in cutout fractions
+    const ox = (ib.x - cb.x) / cb.w, oy = (ib.y - cb.y) / cb.h;
+    const fx = ox + t.box.x * iw, fy = oy + t.box.y * ih, fw = t.box.w * iw, fh = t.box.h * ih;
+    const m = Math.max(0, t.margin ?? 0.25);           // search margin (per side, fraction of the box)
+    const img = new Image();
+    img.onload = () => {
+        const W = img.naturalWidth, H = img.naturalHeight;
+        // the actual tell box, in source pixels — this is what template matching saves/compares
+        const bx = fx * W, by = fy * H, bw = Math.max(1, fw * W), bh = Math.max(1, fh * H);
+        // the search region the live reader scans = box grown by the margin on every side, clamped
+        // to the image. The box is drawn as an outline inside it so the margin band is visible.
+        const ex = Math.max(0, bx - bw * m), ey = Math.max(0, by - bh * m);
+        const eR = Math.min(W, bx + bw * (1 + m)), eB = Math.min(H, by + bh * (1 + m));
+        const sx = Math.round(ex), sy = Math.round(ey);
+        const sw = Math.max(1, Math.round(eR) - sx), sh = Math.max(1, Math.round(eB) - sy);
+        // supersample the backing to ~>=220px wide at an INTEGER scale, so the pixel-art crop
+        // stays crisp AND the dimension label drawn on top is legible (not 30px-tall text)
+        const scale = Math.max(1, Math.ceil(220 / sw));
+        const BW = sw * scale, BH = sh * scale;
+        cv.width = BW; cv.height = BH;
+        const ctx = cv.getContext("2d");
+        ctx.imageSmoothingEnabled = false;                          // nearest-neighbour: keep the crop pixelated
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, BW, BH);
+        // outline the actual box inside the margin-grown crop (skip when margin is 0 — box == crop)
+        if (m > 0) {
+            ctx.imageSmoothingEnabled = true;
+            ctx.strokeStyle = "rgba(120,180,255,0.95)";
+            ctx.lineWidth = Math.max(1, scale);
+            ctx.strokeRect((bx - sx) * scale + ctx.lineWidth / 2, (by - sy) * scale + ctx.lineWidth / 2,
+                bw * scale - ctx.lineWidth, bh * scale - ctx.lineWidth);
+        }
+        // the crop's NATIVE pixel size (what template matching actually compares), bottom-left
+        ctx.imageSmoothingEnabled = true;                           // smooth glyphs
+        const txt = `${Math.round(bw)}×${Math.round(bh)}`, fs = Math.max(9, Math.round(BW * 0.05)), pad = fs * 0.3;
+        ctx.font = `${fs}px system-ui`;
+        const tw = ctx.measureText(txt).width, plateH = fs + pad * 2;
+        ctx.fillStyle = "rgba(0,0,0,0.65)";
+        ctx.fillRect(0, BH - plateH, tw + pad * 2, plateH);         // readable plate behind the text
+        ctx.fillStyle = "#fff";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(txt, pad, BH - pad);
+    };
+    img.src = api.cutoutUrl(model.profile.name, it.cutout);
+}
+
+// Redraw the live reference crop for every template tell of an item — called when the CELL or a
+// tell box resizes/moves (which shifts the crop region), so each tell node's preview tracks its
+// box without a full node rebuild. Cheap: only template tells, and the cutout image is cached.
+function refreshItemTemplateRefs(winId, itemId) {
+    const it = model.item(winId, itemId), w = model.window(winId);
+    if (!it || !w) return;
+    for (const t of it.tells || []) {
+        if (t.kind !== "template") continue;
+        const el = nodeEls.get(`tell:${winId}:${itemId}:${t.id}`);
+        if (el) drawTellTemplateRef(el, { item: it, ref: t, win: w });
+    }
 }
 
 // Wire the window node's controls (extracted so rebuildNode can re-bind them
@@ -1544,16 +1615,13 @@ function fillNode(div, n, wire = true) {
     // the enable slide-toggle (gn-enable) — only on toggleable node types; null otherwise. Its
     // .gn-enable class / aria-checked / state class are read by the post-build wiring below.
     const toggle = canToggle
-        ? h("button", {
-            type: "button", class: `gn-enable${enabled ? " on" : ""}`, role: "switch",
-            "aria-checked": String(enabled), title: "enabled — turn off to skip this node during detection",
-        }, svg("svg", { viewBox: "0 0 28 16", width: "28", height: "16", "aria-hidden": "true" },
-            svg("rect", { class: "gt-track", x: "1", y: "1", width: "26", height: "14", rx: "7" }),
-            svg("circle", { class: "gt-thumb", cx: "8", cy: "8", r: "5" })))
+        ? slideToggle({ on: enabled, cls: "gn-enable", title: "enabled — turn off to skip this node during detection" })
         : null;
     // delete + detach moved to the selection toolbar (act on the selection); nodes carry
     // neither button anymore — select a node (or several) and use the toolbar.
-    const typeLabel = n.type === "itemfield" ? "field" : n.type === "itemtell" ? "tell" : n.type;
+    const typeLabel = n.type === "itemfield" ? "field"
+        : n.type === "itemtell" ? `tell: ${n.ref.kind}`   // merge the kind into the type tag -> "TELL: TEXT"
+        : n.type;
     div.replaceChildren(
         h("div", { class: `gn-h ${parts.pulse || ""}` },
             h("span", { class: "gn-disc", title: "collapse/expand" },
@@ -2121,6 +2189,10 @@ function wireNode(div, n) {
             model.setDatasetBatchMode(n.ref, e.target.value);
             autosave(null);
         });
+        div.querySelector(".dssync")?.addEventListener("change", (e) => {
+            model.setDatasetSyncMode(n.ref, e.target.value);
+            autosave(null);
+        });
         const clearBtn = div.querySelector(".dsclear");
         clearBtn?.addEventListener("click", async () => {
             if (clearBtn.dataset.armed !== "1") {   // inline confirm (no blocking dialogs)
@@ -2141,6 +2213,15 @@ function wireNode(div, n) {
             const pre = _bootDetails?.subsets?.[r.id] || null;
             queueMicrotask(() => refreshSubsetNode(r.id, pre));
         } else {
+            const rmTog = div.querySelector(".vt-showrm");   // "show removed" header slide toggle
+            rmTog?.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const on = rmTog.getAttribute("aria-checked") !== "true";
+                rmTog.setAttribute("aria-checked", on);
+                rmTog.classList.toggle("on", on);
+                vtShowRemoved.set(r.ds, on);
+                refreshDataNode(r.ds);   // re-filter the table (and the data-tab count) to match
+            });
             const cur = dsTab.get(r.ds) || "data";
             div.dataset.tab = cur;   // CSS hides the inactive host
             div.querySelectorAll(".ds-tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === cur));
@@ -2212,7 +2293,6 @@ function wireNode(div, n) {
             const k = e.target.dataset.k;
             if (k === "text") n.ref.text = e.target.value;
             else if (k === "thr") n.ref.threshold = +e.target.value;
-            else if (k === "incl") n.ref.included = e.target.checked;
             else if (k === "match") n.ref.match = e.target.value;
             else if (k === "minchars") n.ref.min_chars = Math.max(0, Math.trunc(+e.target.value) || 0);
             else if (k === "strip") n.ref.strip = e.target.value;
@@ -2223,13 +2303,10 @@ function wireNode(div, n) {
         }));
     } else if (n.type === "scrollbar") {
         div.addEventListener("click", (ev) => {
-            if (ev.target.closest("input,select,button")) return;
+            if (ev.target.closest("input,select,button,.sb-cut")) return;
             selectWindowBox(n.win.id, "scrollbar");
         });
-        div.querySelectorAll(".sbset").forEach((inp) => inp.addEventListener("change", (e) => {
-            if (e.target.dataset.k === "orient") model.setScrollbarOrientation(n.win.id, e.target.value);
-            autosave(n.win.id);   // re-OCR only this window
-        }));
+        wireScrollbar(div, n);
     } else if (n.type === "item") {
         wireItemControls(div, n);
     } else if (n.type === "itemfield") {
@@ -2237,6 +2314,75 @@ function wireNode(div, n) {
     } else if (n.type === "itemtell") {
         wireItemTell(div, n);
     }
+}
+
+// Scrollbar node: orientation + visible-rows, the cutout list (rows-from-top, remove,
+// drag-reorder), capture, and auto-learn. All calibration knobs are collector-only -> save
+// without re-OCR.
+function wireScrollbar(div, n) {
+    const winId = n.win.id;
+    // re-fit the gain from the cutouts after any change, refresh the node, save, and re-read the
+    // window image so its row-index labels update (works even with the preview node closed).
+    const relearn = () => { model.learnScrollGain(winId); rebuildNode(n.id); autosave(null); refreshGridPreview(winId); };
+    div.querySelectorAll(".sbset").forEach((inp) => inp.addEventListener("change", (e) => {
+        if (e.target.dataset.k === "orient") { model.setScrollbarOrientation(winId, e.target.value); autosave(winId); }
+    }));
+    div.querySelectorAll(".sbcut[data-k='rows']").forEach((inp) => inp.addEventListener("change", (e) => {
+        model.setScrollSampleRows(winId, +e.target.dataset.i, e.target.value); relearn();
+    }));
+    div.querySelectorAll(".sbcut-rm").forEach((b) => b.addEventListener("click", () => {
+        model.removeScrollSample(winId, +b.dataset.i); relearn();
+    }));
+    div.querySelector(".sb-capture")?.addEventListener("click", () =>
+        captureScrollCutout(n).catch((err) => setStatus(String(err.message || err), "err")));
+    wireCutoutDrag(div, n);
+}
+
+// Crop the scrollbar region out of the open window image into a new cutout, ask the server for
+// the thumb position, and add it as a calibration sample.
+async function captureScrollCutout(n) {
+    const winId = n.win.id;
+    const src = imageCanvases.get(winId)?.overlay?.img;   // the raw window image (client area)
+    if (!src || !src.naturalWidth) throw new Error("open the window image first (scroll it to a known position)");
+    const box = model.scrollbar(winId);
+    if (!box) throw new Error("draw a scrollbar box first");
+    const cw = src.naturalWidth, ch = src.naturalHeight;
+    const sx = Math.max(0, Math.round(box.x * cw)), sy = Math.max(0, Math.round(box.y * ch));
+    const sw = Math.max(1, Math.round(box.w * cw)), sh = Math.max(1, Math.round(box.h * ch));
+    const off = document.createElement("canvas");
+    off.width = sw; off.height = sh;
+    off.getContext("2d").drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh);
+    const img = off.toDataURL("image/png");
+    const orientation = model.window(winId)?.scroll?.scrollbar_orientation || "vertical";
+    let pos = null, conf = null, px = null;
+    try { const r = await api.scrollPos(img, orientation); pos = r.pos; conf = r.conf; px = r.thumb_px; }
+    catch (e) { setStatus(`thumb read failed: ${e.message || e}`, "warn"); }
+    model.addScrollSample(winId, { img, rows: 0, pos, conf, px });
+    model.learnScrollGain(winId);             // re-fit with the new cutout
+    rebuildNode(`sb:${winId}:scrollbar`);
+    autosave(null);
+    refreshGridPreview(winId);                // re-read the window image -> row-index labels update
+}
+
+// HTML5 drag-reorder of the cutout rows (drop onto another row moves before it).
+function wireCutoutDrag(div, n) {
+    const list = div.querySelector(".sb-cuts");
+    if (!list) return;
+    let from = null;
+    list.querySelectorAll(".sb-cut").forEach((row) => {
+        row.addEventListener("dragstart", (e) => { from = +row.dataset.i; e.dataTransfer.effectAllowed = "move"; });
+        row.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; });
+        row.addEventListener("drop", (e) => {
+            e.preventDefault();
+            const to = +row.dataset.i;
+            if (from != null && from !== to) {
+                model.moveScrollSample(n.win.id, from, to);
+                model.learnScrollGain(n.win.id);   // reorder is cosmetic for the fit, but keep it in sync
+                rebuildNode(n.id); autosave(null);
+            }
+            from = null;
+        });
+    });
 }
 
 // Focus ANY node (click or drag). Drops box selection so WASD targets the node,
@@ -2577,6 +2723,7 @@ async function loadGame(name) {
     resetHistory();   // fresh undo/redo baseline for this game
     if (migrated) persist.layout();   // lock in node layout imported from legacy localStorage
     refreshLive();
+    syncLiveFromServer();   // adopt a server collector still running from before a page reload (toggle reflects it)
     openLogStream(name);   // mirror server activity (trigger watches/fires, API fetches) into the log bar
     dsevents.setGame(name);   // (re)point the shared dataset-change bus (drives node refresh + flow blobs)
     initFlow(name);   // (re)point the flow-blob stream at this game (clears any prior blobs)
@@ -3317,4 +3464,5 @@ export {
     rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,
     overlaySelected, selectWindowBox, persistBox, syncCellSize, itemChanged,
     addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom,
+    refreshItemTemplateRefs,
 };

@@ -187,6 +187,22 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .detect-status .ds-txt { white-space: normal; word-break: break-all; font-family: var(--mono, monospace); }
 /* matched characters in the after-text — the chars that carried a successful detect */
 .detect-status .ds-hit { background: var(--accent); color: var(--on-accent, #06121f); border-radius: 2px; }
+/* scrollbar node: calibration as a small labelled stack (one metric per row) */
+.sb-calib { margin-top: 6px; font-size: var(--fs-sm); }
+.sb-calib .sbc-row { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); }
+.sb-calib .sbc-row > span { color: var(--text); font-variant-numeric: tabular-nums; }
+/* scroll-calibration cutouts: a draggable list of scrollbar crops, each with rows-from-top */
+.sb-h { margin-top: 12px; margin-bottom: 4px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; }
+.sb-cuts { display: flex; flex-direction: column; gap: 4px; }
+.sb-cut { display: flex; align-items: flex-start; gap: 8px; padding: 4px; border: 1px solid var(--line); border-radius: 4px; cursor: grab; }
+.sb-cut:active { cursor: grabbing; }
+.sb-cut-img { height: 160px; width: auto; min-width: 10px; object-fit: contain; background: #000; border: 1px solid var(--line); border-radius: 2px; image-rendering: pixelated; }
+.sb-cut-body { flex: 1; min-width: 0; }
+.sb-cut-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.sb-cut-top .flab { margin: 0; }
+.sb-cut-pos { font-size: var(--fs-xs); margin-top: 4px; }
+.sb-cut-acts { display: flex; gap: 6px; margin-top: 6px; }
+.sbcut-rm { padding: 0 4px; flex: none; }
 /* footer separates the action row (button base owns sizing) */
 .gn-foot { display: flex; gap: 6px; margin-top: 8px; }
 .gn-foot:empty { display: none; }   /* remove moved to the header — don't leave a gap */
@@ -333,6 +349,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .if-sum:hover, .ti-sum:hover { background: var(--line); }
 .if-sum .if-sum-name, .ti-sum .ti-sum-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ti-sum .ti-sum-kind { flex: 0 0 auto; font-size: var(--fs-xs); }   /* the tell's kind, dimmed */
+/* template tell: the saved reference sub-image (the tell box cropped from the item cutout) */
+.tt-ref { display: flex; flex-direction: column; gap: 3px; }
+.tt-ref-canvas { width: 100%; height: auto; image-rendering: pixelated; cursor: default;
+    border: 1px solid var(--line); border-radius: 3px; background: #0003; }
 /* readout: 3-col grid (label · ":" · value) — the colon sits in its OWN column so every
    label and value lines up regardless of label width */
 .item-readout { display: grid; grid-template-columns: auto auto 1fr; gap: 0 6px; margin-top: 6px; font-size: var(--fs-sm); line-height: 1.5; }
@@ -395,6 +415,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .wd-head .wd-req-h { text-align: center; }
 .wd-verdict { margin-top: 6px; font-size: var(--fs-sm); font-weight: 600; }
 .wd-verdict:empty { display: none; }
+/* cross-window verdict (does this window WIN classify, or does a sibling steal it) sits
+   under the self-match line; lighter weight so the self-match stays the primary read. */
+.wd-collide { margin-top: 2px; padding-right: 12px; font-size: var(--fs-sm); font-weight: 500; }
+.wd-collide:empty { display: none; }
 .key-prev:empty { display: none; }
 .key-sec { margin: 6px 0; }
 .prev-count { padding: 4px 8px; font-size: var(--fs-sm); }

@@ -8,7 +8,15 @@ import { VTable } from "../../vtable.js";
 import { singleFlight } from "../../singleflight.js";
 import { nodeEls, setStatus, model } from "../state.js";
 import { refreshLive, refreshDatasetConsumers, setNodeBusy } from "../main.js";
-import { clockTime } from "../node_parts.js";
+import { clockTime, vtShowRemoved } from "../node_parts.js";
+
+// Drop removed (present===false) rows unless this dataset's "show removed" toggle is on.
+const visibleRecs = (ds, recs) => (vtShowRemoved.get(ds) ? recs : recs.filter((r) => r.present !== false));
+// Show the "show removed" header toggle only when the dataset actually has removed rows.
+function syncShowRemovedToggle(ds, recs) {
+    const tog = nodeEls.get(`vt:ds:${ds}`)?.querySelector(".vt-showrm");
+    if (tog) tog.hidden = !recs.some((r) => r.present === false);
+}
 
 // ---- dataset records (rendered inline in the dataset node body) ----
 
@@ -75,7 +83,9 @@ async function _refreshDataNode(ds, pre) {
     setNodeBusy(`vt:ds:${ds}`, true);   // spin the records-grid satellite while it recomputes
     try {
         const payload = await _datasetPayload(ds, pre);
-        const recs = payload.records || [];
+        const raw = payload.records || [];
+        syncShowRemovedToggle(ds, raw);
+        const recs = visibleRecs(ds, raw);
         const batchN = (payload.batches || []).filter((b) => !b.reverted).length;   // applied batches (matches the bat-n badge)
         const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
         const vt = vtableFor(`ds:${ds}`, host);
@@ -245,8 +255,12 @@ function buildBatchRow(ds, b) {
             if (ev.target.closest(".led-apply,.led-remove")) return;
             const cur = batEls(ds); if (!cur) return;
             const bn = +li.dataset.batch;
-            if (st.sel === bn) { st.sel = null; cur.detail.replaceChildren(); li.classList.remove("sel"); }
-            else selectBatch(ds, bn);
+            if (st.sel === bn) {
+                st.sel = null;
+                li.classList.remove("sel");
+                const r = cur.list._rows?.get(bn); if (r) r.sel = false;   // keep keyed cache in sync (next reconcile won't re-toggle)
+                cur.detail.replaceChildren(mutedP("select a batch to see its events and what applying it changes"));
+            } else selectBatch(ds, bn);
         },
     }, time, " ", num, " ", meta, " ", app, " ", rm);
     return { li, meta, toggle, reverted: b.reverted, sel: st.sel === b.batch };
@@ -287,11 +301,14 @@ function renderBatchesList(ds, batches) {
         const sel = st.sel === b.batch;
         if (r.sel !== sel) { r.li.classList.toggle("sel", sel); r.sel = sel; }
     }
-    if (st.sel != null && batches.some((b) => b.batch === st.sel)) selectBatch(ds, st.sel);
+    if (st.sel != null && batches.some((b) => b.batch === st.sel)) selectBatch(ds, st.sel, { refresh: true });
     else if (st.sel != null) { st.sel = null; els.detail.replaceChildren(); }
 }
 
-async function selectBatch(ds, batch) {
+// `refresh` = the selection didn't change, we're just re-pulling the detail because the ledger
+// moved (line-300 reconcile). In that case DON'T flash "loading…" over the panel that's already
+// shown, and DON'T fight a selection the user changed while the fetch was in flight.
+async function selectBatch(ds, batch, { refresh = false } = {}) {
     const els = batEls(ds);
     if (!els) return;
     const st = batState(ds);
@@ -299,10 +316,12 @@ async function selectBatch(ds, batch) {
     els.list.querySelectorAll(".batrow").forEach((li) => li.classList.toggle("sel", +li.dataset.batch === batch));
     // keep the keyed-row cache in sync so the next reconcile doesn't re-toggle `sel`.
     if (els.list._rows) for (const [k, r] of els.list._rows) r.sel = (k === batch);
-    els.detail.replaceChildren(mutedP("loading…"));
+    if (!refresh) els.detail.replaceChildren(mutedP("loading…"));   // fresh open only — a refresh keeps the old detail until the new one lands
     try {
-        renderBatchDetail(ds, await api.batchDetail(model.profile.name, ds, batch));
-    } catch (e) { els.detail.replaceChildren(mutedP(String(e))); }
+        const bd = await api.batchDetail(model.profile.name, ds, batch);
+        if (st.sel !== batch) return;   // selection changed/cleared while awaiting — drop this stale result
+        renderBatchDetail(ds, bd);
+    } catch (e) { if (st.sel === batch) els.detail.replaceChildren(mutedP(String(e))); }
 }
 
 function renderBatchDetail(ds, bd) {
@@ -355,7 +374,9 @@ async function _refreshDatasetNode(ds) {
         const batches = j.batches || [];
         const batchN = batches.filter((b) => !b.reverted).length;   // applied batches
         if (host) {
-            const recs = j.records || [];
+            const raw = j.records || [];
+            syncShowRemovedToggle(ds, raw);
+            const recs = visibleRecs(ds, raw);
             const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
             const vt = vtableFor(`ds:${ds}`, host);
             vt.setData(cols, recs, { rowClass: (row) => (row.present ? "" : "gone"), expander: (row) => expandObservations(ds, row) });

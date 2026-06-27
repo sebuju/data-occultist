@@ -81,6 +81,10 @@ export class GraphModel {
     // time the feeding window is freshly detected — transient per-event screens like relic offerings).
     datasetBatchMode(id) { const d = this.datasetDef(id); return (d && d.batch_mode) || "run"; }
     setDatasetBatchMode(id, m) { this.ensureDatasetDef(id).batch_mode = m === "detection" ? "detection" : "run"; }
+    // Whether a run removes keys to mirror the game emptying out: "accumulate" (add/update only)
+    // or "mirror" (a key gone from its visible scroll slice is removed — needs the window's scrollbar).
+    datasetSyncMode(id) { const d = this.datasetDef(id); return (d && d.sync_mode) || "accumulate"; }
+    setDatasetSyncMode(id, m) { this.ensureDatasetDef(id).sync_mode = m === "mirror" ? "mirror" : "accumulate"; }
     // SINGLE SOURCE OF TRUTH for every place a dataset id is stored, as live get/set accessors.
     // `decl: true` sites DECLARE a dataset's existence (a node literally IS this dataset);
     // ref sites merely point at one (a consumer). EVERYTHING that lists or renames datasets
@@ -820,6 +824,42 @@ export class GraphModel {
     setScrollbarOrientation(winId, o) { const w = this.window(winId); if (w && w.scroll) w.scroll.scrollbar_orientation = o; }
     setScrollAutoscroll(winId, on) { const w = this.window(winId); if (!w) return; w.scroll = w.scroll || { rows: 1, cols: 1 }; w.scroll.autoscroll = !!on; }
     setScrollClicks(winId, n) { const w = this.window(winId); if (!w) return; w.scroll = w.scroll || { rows: 1, cols: 1 }; w.scroll.scroll_clicks = n; }
+    // ---- scroll calibration (cutout samples; no live learning) --------------
+    _scrollOf(winId) { const w = this.window(winId); if (!w) return null; w.scroll = w.scroll || { rows: 1, cols: 1 }; return w.scroll; }
+    addScrollSample(winId, sample) {  // { img, rows, pos, conf }
+        const sc = this._scrollOf(winId); if (!sc) return;
+        (sc.calib_samples = sc.calib_samples || []).push(sample);
+    }
+    removeScrollSample(winId, i) {
+        const sc = this._scrollOf(winId); if (!sc || !sc.calib_samples) return;
+        sc.calib_samples.splice(i, 1);
+    }
+    moveScrollSample(winId, from, to) {  // reorder by drag
+        const sc = this._scrollOf(winId); const a = sc && sc.calib_samples; if (!a) return;
+        if (from < 0 || from >= a.length || to < 0 || to >= a.length) return;
+        a.splice(to, 0, a.splice(from, 1)[0]);
+    }
+    setScrollSampleRows(winId, i, rows) {
+        const sc = this._scrollOf(winId); const s = sc && sc.calib_samples && sc.calib_samples[i];
+        if (s) s.rows = Math.max(0, Math.round(+rows) || 0);
+    }
+    // Fit gain = rows of content per full thumb travel = slope of (rows vs pos), least squares
+    // through the samples that have a pos. Returns the gain (and stores it), or null if <2 usable.
+    learnScrollGain(winId) {
+        const sc = this._scrollOf(winId); if (!sc) return null;
+        const fail = () => { delete sc.calib_gain; return null; };   // not enough/ill-posed -> uncalibrated
+        const pts = (sc.calib_samples || []).filter((s) => s.pos != null).map((s) => [+s.pos, +s.rows]);
+        if (pts.length < 2) return fail();
+        const n = pts.length;
+        const sx = pts.reduce((a, [x]) => a + x, 0), sy = pts.reduce((a, [, y]) => a + y, 0);
+        const sxx = pts.reduce((a, [x]) => a + x * x, 0), sxy = pts.reduce((a, [x, y]) => a + x * y, 0);
+        const denom = n * sxx - sx * sx;
+        if (Math.abs(denom) < 1e-9) return fail();
+        const slope = (n * sxy - sx * sy) / denom;
+        if (!(slope > 0)) return fail();
+        sc.calib_gain = Math.round(slope * 10) / 10;
+        return sc.calib_gain;
+    }
     removeScrollbar(winId) { const w = this.window(winId); if (w && w.scroll) delete w.scroll.scrollbar; }
 
     // ---- data area (bounds OCR) ---------------------------------------------
@@ -997,7 +1037,7 @@ export class GraphModel {
             field = (inside && inside.field) || (it.fields[0] && it.fields[0].field) || null;
         }
         it.tells.push({ id, box: { x: box.x, y: box.y, w: box.w, h: box.h }, kind: k,
-            field, color: null, tolerance: 60, template: null, threshold: 0.5, locate: first });
+            field, color: null, tolerance: 60, width: 0.2, template: null, margin: 0.25, threshold: 0.5, locate: first });
         return id;
     }
     itemTell(winId, itemId, tid) { const it = this.item(winId, itemId); return it && (it.tells || []).find((t) => t.id === tid); }

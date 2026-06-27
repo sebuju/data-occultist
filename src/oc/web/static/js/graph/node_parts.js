@@ -34,6 +34,24 @@ export function satToggleBtn(satId, kind) {
     }, kind === "preview" ? SAT_EYE() : SAT_GRID());
 }
 
+// SVG track+thumb shared by every header slide toggle (enable switch, vt-table "show removed").
+// The off/on look (--line vs --accent, thumb slides right) is driven by the `.gn-slide` CSS.
+const SLIDE_THUMB = () => svg("svg", { viewBox: "0 0 28 16", width: "28", height: "16", "aria-hidden": "true" },
+    svg("rect", { class: "gt-track", x: "1", y: "1", width: "26", height: "14", rx: "7" }),
+    svg("circle", { class: "gt-thumb", cx: "8", cy: "8", r: "5" }));
+// A header slide toggle (role=switch). `cls` = caller class for positioning/wiring; optional
+// `label`; `hidden` starts it display:none (revealed later, e.g. once data shows it's relevant).
+export function slideToggle({ on, title, cls = "", label = "", hidden = false }) {
+    return h("button", {
+        type: "button", class: `gn-slide ${cls}${on ? " on" : ""}`.trim(), role: "switch",
+        "aria-checked": String(on), title, hidden,
+    }, label ? h("span", { class: "gn-slide-lbl" }, label) : null, SLIDE_THUMB());
+}
+
+// per-dataset "show removed (no-longer-present) rows" flag for the vt-table satellite (default
+// off). Toggle lives in the satellite header; datanodes reads this to filter present===false rows.
+export const vtShowRemoved = new Map();
+
 export const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds (rank)"]];
 export const EXTRACTS = ["whole", "number", "number_before", "number_after", "text_before", "text_after"];
 export const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text_after"]);
@@ -94,6 +112,43 @@ export function windowControls(w) {
         (w.items || []).length && h("div", { class: "wi-drift muted", title: "how far located cells sit from the content they should bracket, split by axis — x and y as avg/max % of a CELL (25% = a quarter-cell off). 0 = dead-on; high = cells drift off their columns (x) or rows (y). Filled by the read." },
             "grid drift: ", h("span", { class: "wd-drift" }, "—")),
         windowDetects(w));
+}
+
+// Scrollbar node: orientation + the cutout-based scroll-calibration tool. Each cutout is a
+// crop of the scrollbar at a known scroll, tagged with rows-from-top; "auto learn" fits the
+// gain from them. The calculated total/visible/gain stack is static (from the profile), not
+// live. Handlers (capture/remove/reorder/learn) live in main.js wireScrollbar.
+function scrollbarParts(n) {
+    const sc = n.ref;                                  // the window's scroll object
+    const o = sc.scrollbar_orientation || "vertical";
+    const samples = sc.calib_samples || [];
+    const gain = sc.calib_gain;
+    const usable = samples.filter((s) => s.pos != null).length;
+    const cut = (s, i) => h("div", { class: "sb-cut", draggable: "true", dataset: { i } },
+        h("img", { class: "sb-cut-img", src: s.img || "", alt: "" }),
+        h("div", { class: "sb-cut-body" },
+            h("div", { class: "sb-cut-top" },
+                h("label", { class: "flab" }, "rows from top ",
+                    h("input", { type: "number", class: "sbcut", dataset: { k: "rows", i }, value: s.rows ?? 0, min: "0" })),
+                h("button", { class: "sbcut-rm danger", dataset: { i }, title: "remove cutout" }, TRASH())),
+            h("div", { class: "sb-cut-pos muted" }, s.pos != null ? `thumb ${(s.pos * 100).toFixed(2)}% · ${s.px ?? "?"}px` : "thumb —")));
+    return frag(
+        h("label", { class: "flab" }, "orientation ",
+            h("select", { class: "sbset", dataset: { k: "orient" } },
+                h("option", { selected: o === "vertical" }, "vertical"),
+                h("option", { selected: o === "horizontal" }, "horizontal"))),
+        h("div", { class: "sb-h muted", title: "capture the scrollbar at known scroll offsets, tag each with how many rows it has moved down from the top — the gain is fit automatically. Drag to reorder." }, "cutouts"),
+        h("div", { class: "sb-cuts" }, samples.length
+            ? samples.map(cut)
+            : h("p", { class: "muted", style: "margin:2px 0" }, "no cutouts — open the window image, scroll, capture")),
+        h("div", { class: "sb-cut-acts" },
+            h("button", { class: "sb-capture", title: "crop the scrollbar from the open window image into a new cutout" }, "capture cutout")),
+        h("div", { class: "detect-status muted" }, "position: —"),
+        h("div", { class: "sb-calib" },
+            h("div", { class: "sbc-row", title: "scrollable rows = rows of content per full thumb travel, fit from the cutouts" },
+                "rows ", h("span", { class: "sbc-gain" }, gain != null ? `${gain}` : "—")),
+            h("div", { class: "sbc-row" }, "cutouts ", h("span", {}, `${usable}/${samples.length}`))),
+        h("div", { class: "gn-foot" }));
 }
 
 // One <select> built from [value,label] option pairs, marking `val` selected.
@@ -286,6 +341,8 @@ export function itemTellParts(n) {
             "width ", h("input", { type: "number", class: "tset", dataset: { k: "width" }, step: "0.02", min: "0", max: "0.5", value: t.width ?? 0.2 })),
         t.kind === "template" && h("div", { class: "tt-ref", title: "the saved sub-image this tell matches — the tell box cropped from the item's frozen cutout" },
             it.cutout ? h("canvas", { class: "tt-ref-canvas" }) : h("div", { class: "muted" }, "no cutout yet")),
+        t.kind === "template" && h("label", { class: "flab", title: "search margin: how far the live crop grows beyond the box (per side, as a fraction of the box) so the saved image is found even when the located cell drifts a few px. 0 = match the exact box only." },
+            "margin ", h("input", { type: "number", class: "tset", dataset: { k: "margin" }, step: "0.05", min: "0", max: "1", value: t.margin ?? 0.25 })),
         h("label", { class: "flab", title: t.kind === "text" ? "pass score (0..1) the read-vs-text match must reach (when text is set)" : "pass score (0..1) the tell must reach" },
             "threshold ", h("input", { type: "number", class: "tset", dataset: { k: "threshold" }, step: "0.05", min: "0", max: "1", value: t.threshold ?? 0.5 })),
         !staticOn && h("label", { class: "flab", title: "use this tell to LOCATE rows (anchor the grid) — only one tell per item locates" },
@@ -458,19 +515,7 @@ export function nodeParts(n) {
     }
     if (n.type === "itemfield") return itemFieldParts(n);
     if (n.type === "itemtell") return itemTellParts(n);
-    if (n.type === "scrollbar") {
-        const o = n.ref.scrollbar_orientation || "vertical";
-        return {
-            title: "scrollbar",
-            body: frag(
-                h("label", { class: "flab" }, "orientation ",
-                    h("select", { class: "sbset", dataset: { k: "orient" } },
-                        h("option", { selected: o === "vertical" }, "vertical"),
-                        h("option", { selected: o === "horizontal" }, "horizontal"))),
-                h("div", { class: "detect-status muted" }, "position: —"),
-                h("div", { class: "gn-foot" })),
-        };
-    }
+    if (n.type === "scrollbar") return { title: "scrollbar", body: scrollbarParts(n) };
     if (n.type === "preview") {
         // live-read node — what the current layout would read from this window. Runs OCR
         // on demand (its own button, or the image's 👁), rendered inline.
@@ -497,6 +542,7 @@ export function nodeParts(n) {
         }
         return {
             title: h("span", { class: "gi-id" }, `${r.ds} data`),
+            head: slideToggle({ on: vtShowRemoved.get(r.ds) || false, cls: "vt-showrm", label: "removed", hidden: true, title: "show removed (no-longer-present) rows in the table + counts" }),
             body: frag(
                 h("div", { class: "ds-tabs", role: "tablist" },
                     h("button", { class: "ds-tab on", dataset: { tab: "data" }, role: "tab" }, "data ", h("span", { class: "ds-tab-n data-n" })),

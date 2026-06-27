@@ -223,6 +223,16 @@ export async function itemCutout(game, capture, box) {
 export function cutoutUrl(game, name) {
     return `/api/item/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
+// Read the scrollbar thumb position (0..1) from a cutout PNG data URL — one scroll-calibration
+// sample. Returns { pos, conf, thumb_px, thumb_len } (pos null if no thumb found).
+export async function scrollPos(image, orientation = "vertical") {
+    const r = await tfetch("/api/scroll/pos", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image, orientation }),
+    });
+    if (!r.ok) throw new Error(`scroll pos: ${r.status} ${await r.text()}`);
+    return r.json();
+}
 
 // POST a rendered node-canvas PNG (Blob) -> stashed under .trash/ on the server.
 // `view` ("canvas" whole graph | "viewport" on-screen) tags the saved filename.
@@ -325,8 +335,6 @@ export const live = {
     },
     stop: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/stop`, { method: "POST", signal }).then((r) => ok(r, "live stop")).then((r) => r.json()),
     status: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
-    // The collector's default frame-limiter interval (seconds) from settings — seeds the panel.
-    defaults: () => tfetch("/api/live/defaults").then((r) => r.json()),
 };
 
 // Wipe a dataset's stored records + ledger.

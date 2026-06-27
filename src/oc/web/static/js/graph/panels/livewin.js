@@ -39,10 +39,10 @@ let liveFrames = 0, liveT0 = 0, liveFps = 0;
 // real pipeline (confirm_frames -> dedup -> store -> triggers). When live + disarmed, only
 // the read-only client detect/preview loop runs (tuning, no writes).
 let liveSave = true;
-// Frame limiter: minimum seconds between collector reads. null = use the server's settings
-// default (tuning.collect_interval); a number overrides it. Changeable while live is on —
-// the server collector is restarted in place so the new limit takes effect immediately.
-let liveInterval = null;
+// Frame limiter: minimum SECONDS between collector reads (the panel input is in ms and
+// converts). 0 = as fast as possible (no throttle) — the live default. Changeable while live
+// is on — the server collector is restarted in place so the new limit takes effect immediately.
+let liveInterval = 0;
 let liveColStatus = null;   // latest server collector status (from the heartbeat) while collecting
 let liveColUnsub = null;    // hub subscription active while the server collector runs
 let liveImg = { count: 0, bytes: 0 };   // saved live-image stat (live tuning saves one frame/round)
@@ -89,8 +89,8 @@ function mountLive(adapter) {
                         switchSvg()),
                     h("span", { class: "live-save-lbl" }, "save to datasets"))),
             h("div", { class: "live-row live-int-row" },
-                h("span", { class: "live-int-lbl", title: "frame limiter — minimum seconds between collector reads. Lower = faster (more CPU/GPU). Blank = settings default. Applies live while collecting." }, "limit (s)"),
-                h("input", { class: "live-int-in", type: "number", min: "0", step: "0.1", placeholder: "1.0", title: "minimum seconds between reads; blank uses the settings default" })),
+                h("span", { class: "live-int-lbl", title: "frame limiter — minimum milliseconds between collector reads. 0 (or blank) = as fast as possible (more CPU/GPU). Applies live while collecting." }, "limit (ms)"),
+                h("input", { class: "live-int-in", type: "number", min: "0", step: "10", placeholder: "0", title: "minimum milliseconds between reads; 0 = as fast as possible" })),
             h("div", { class: "live-wins" }),
             h("div", { class: "live-row live-imgs" },
                 h("span", { class: "live-imgstat muted" }, " "),
@@ -112,22 +112,19 @@ function mountLive(adapter) {
             if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch((e) => log(`clear live images failed: ${e.message || e}`, "err"));
         });
         if (model.profile.name) api.liveCaptures.stats(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
-        // frame-limiter input: commit on change/blur. Blank -> null -> server uses its default.
-        // While collecting, restart the server collector so the new limit applies immediately.
+        // frame-limiter input (milliseconds): commit on change/blur. Blank/0 -> 0s -> as fast
+        // as possible. While collecting, restart the server collector so the new limit applies now.
         const intIn = liveRoot.querySelector(".live-int-in");
-        const commitInterval = () => {
-            const v = parseFloat(intIn.value);
-            const next = Number.isFinite(v) && v >= 0 ? v : null;
-            if (next === null) intIn.value = "";
+        const commitInterval = async () => {
+            const ms = parseFloat(intIn.value);
+            const next = Number.isFinite(ms) && ms > 0 ? ms / 1000 : 0;   // ms -> seconds; blank/0/neg = fastest
+            if (next === 0) intIn.value = "";
             if (next === liveInterval) return;
             liveInterval = next;
-            if (liveOn && liveSave) { stopServerCollect(); startServerCollect(); }   // re-arm with the new limit
+            // re-arm with the new limit: await teardown FIRST so start can't race the stop
+            if (liveOn && liveSave) { await stopServerCollect(); startServerCollect(); }
         };
         intIn.addEventListener("change", commitInterval);
-        // seed the placeholder with the settings default so the user sees what blank means
-        api.live.defaults().then((d) => {
-            if (d && Number.isFinite(d.interval)) intIn.placeholder = String(d.interval);
-        }).catch(() => {});
     }
     if (liveRoot.parentElement !== adapter.host) adapter.host.appendChild(liveRoot);
 }
@@ -159,8 +156,14 @@ function renderLiveWindow() {
     // blank when off (the switch already conveys that). No processing/idle flip — it toggled
     // every round (OCR vs the 200ms gap) and just flickered.
     const collecting = liveOn && liveSave;
+    // mirror datasets report the current visible row-index span [vlo,vhi] + calibration -> show live
+    const sc = collecting ? liveColStatus?.scroll : null;
+    const scm = collecting ? liveColStatus?.scroll_meta : null;
+    const scTxt = sc
+        ? ` · rows ${Math.round(sc[0])}–${Math.round(sc[1])}${scm && scm.total ? ` / ${Math.round(scm.total)}` : ""}`
+        : "";
     const stTxt = !liveOn ? ""
-        : collecting ? `${liveColStatus?.written ?? 0} saved · ${(liveColStatus?.fps ?? 0).toFixed(1)}/s`
+        : collecting ? `${liveColStatus?.written ?? 0} saved · ${(liveColStatus?.fps ?? 0).toFixed(1)}/s${scTxt}`
         : `${liveFps.toFixed(1)} img/s`;
     if (st && st.textContent !== stTxt) st.textContent = stTxt;
     // saved-live-image stat (touch DOM only on change)
@@ -254,12 +257,11 @@ async function liveTick() {
 
 // Server-side collector (the real pipeline): started when live + save are both on. The
 // heartbeat carries its status; we mirror recognized windows into liveRecog for the dots.
-function startServerCollect() {
-    const game = model.profile.name;
-    if (!game) return;
-    liveColStatus = null;
-    api.live.start(game, liveInterval).catch((e) => setStatus(String(e.message || e)));
-    if (!liveColUnsub) liveColUnsub = hub.subscribe((s) => {
+// Subscribe to the heartbeat and mirror the server collector's status into the panel. Used
+// both when STARTING a collector and when ADOPTING one that's already running (page reload).
+function subscribeCollector() {
+    if (liveColUnsub) return;
+    liveColUnsub = hub.subscribe((s) => {
         if (!liveOn || !liveSave) return;
         liveColStatus = s.live || null;
         liveRecog.clear(); liveDetCount.clear();
@@ -275,7 +277,40 @@ function startServerCollect() {
         refreshLiveImgStat();   // server collector saves frames to disk — keep the saved-image stat fresh
         renderLiveWindow();
     });
+}
+
+function startServerCollect() {
+    const game = model.profile.name;
+    if (!game) return;
+    liveColStatus = null;
+    api.live.start(game, liveInterval).catch((e) => setStatus(String(e.message || e)));
+    subscribeCollector();
     hub.kick();   // beat now so collection status shows immediately
+}
+
+// Page reload while a server collector is mid-run: the LiveSession survives on the SERVER, but
+// the freshly-booted client has liveOn=false so the toggle reads "off" while collection runs.
+// Re-query status and ADOPT the running collector (subscribe to the heartbeat WITHOUT restarting
+// it) so the UI reflects reality. Only the armed/server path is recoverable — the read-only
+// tuning loop is purely client-side and leaves no server state to resume.
+async function syncLiveFromServer() {
+    const game = model.profile.name;
+    if (!game || liveOn) return;   // already on (user toggled before sync landed) → leave it
+    let st;
+    try { st = await api.live.status(game); } catch { return; }
+    if (!st?.running || liveOn) return;   // re-check liveOn: the await may have raced a user toggle
+    liveOn = true; liveSave = true;
+    liveColStatus = st;
+    if (Number.isFinite(st.interval) && st.interval > 0) {   // restore the frame-limiter input
+        liveInterval = st.interval;
+        const intIn = liveRoot?.querySelector(".live-int-in");
+        if (intIn) intIn.value = String(Math.round(st.interval * 1000));
+    }
+    registerWorker("live", "live collection", () => setLiveMode(false));
+    showLiveStats(true);
+    subscribeCollector();
+    hub.kick();
+    renderLiveWindow();   // reflect the adopted toggle
 }
 // Throttled saved-image stat refresh — the heartbeat fires often, but stat() globs the live/
 // dir, so re-fetch at most every ~5s. Without this the armed (server-collector) path never
@@ -292,10 +327,13 @@ function refreshLiveImgStat(force = false) {
 function stopServerCollect() {
     const game = model.profile.name;
     if (liveColUnsub) { liveColUnsub(); liveColUnsub = null; }
-    if (game) api.live.stop(game).catch((e) => log(`live stop failed: ${e.message || e}`, "err"));
+    // the server stop joins the worker before responding -> await this before any restart so a
+    // re-arm (e.g. an interval change) can't race the teardown and leave collection stopped.
+    const done = game ? api.live.stop(game).catch((e) => log(`live stop failed: ${e.message || e}`) || null) : Promise.resolve();
     liveColStatus = null;
     refreshLiveImgStat(true);   // final count after the run stops
     hub.kick();
+    return done;
 }
 
 function setLiveMode(on) {
@@ -328,8 +366,8 @@ function setLiveSave(on) {
     liveSave = on;
     if (liveOn) {
         if (timer) { clearTimeout(timer); timer = null; }   // stop the client loop either way
-        if (on) { stopServerCollect(); startServerCollect(); }   // (re)start the collector
-        else { stopServerCollect(); liveTick(); }                // back to read-only tuning
+        if (on) { stopServerCollect().then(startServerCollect); }   // await teardown, then (re)start
+        else { stopServerCollect(); liveTick(); }                  // back to read-only tuning
         registerWorker("live", on ? "live collection" : "live view", () => setLiveMode(false));
         log(on ? "live saving armed" : "live saving disarmed", on ? "run" : undefined);
     }
@@ -341,5 +379,5 @@ export {
     buildLiveWindow, mountLive, activateLive, deactivateLive,
     renderLiveWindow, renderLiveWinList, fitLivePanelHeight,
     showLiveStats, renderLiveStats, liveTick, startServerCollect, stopServerCollect,
-    setLiveMode, setLiveSave,
+    setLiveMode, setLiveSave, syncLiveFromServer,
 };

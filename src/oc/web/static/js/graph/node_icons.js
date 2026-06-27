@@ -57,6 +57,13 @@ const INNER = {
         P("M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6"),
     ],
     subset: () => [P("M4 8h6l4 4h6M4 16h6l2-2"), C("19", "12", "1.6", fill)],
+    // vttable: a records grid — header row underlined, one column divider, body row lines.
+    vttable: () => [
+        svg("rect", { x: "4", y: "5", width: "16", height: "14", rx: "2" }),
+        svg("line", { x1: "4", y1: "9.5", x2: "20", y2: "9.5" }),
+        svg("line", { x1: "4", y1: "14.25", x2: "20", y2: "14.25" }),
+        svg("line", { x1: "11.5", y1: "9.5", x2: "11.5", y2: "19" }),
+    ],
     // producer: a cloud with a down-arrow — it FETCHES external data and produces records.
     producer: () => [
         P("M6.5 19h10a3.5 3.5 0 0 0 .4-6.98 5 5 0 0 0-9.65-.7A4 4 0 0 0 6.5 19z"),

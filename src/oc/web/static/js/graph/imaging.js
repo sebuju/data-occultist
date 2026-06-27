@@ -378,6 +378,7 @@ function refreshItemBoxes(winId, itemId) {
         if (t.kind === "border") {   // draw the sampled perimeter band (semi-transparent) in the taught colour
             box.border = { width: t.width ?? 0.2, color: t.color || "#ffcc00" };
         }
+        if (t.kind === "template" && (t.margin ?? 0) > 0) box.searchMargin = t.margin;   // dashed slide region
         if (loc) {   // a locating tell anchors the cell -> draw its snap point (align x/y) as an arrow
             box.align = t.align || it.align || "center";
             box.alignX = t.align_x || it.align_x || "center";
@@ -1124,6 +1125,36 @@ function setGridFromPreview(winId, res) {
     reads.push(...kept.filter((c) => c.box && c.item).map((c) => ({ ...c.box, cell: c.box, text: c.item })));
     // guard items get their id label too, so the orange box is identifiable
     reads.push(...guards.map((c) => ({ ...c.box, cell: c.box, text: c.item })));
+    // Row-index overlay: when the scrollbar is calibrated, label each row with its computed
+    // scroll-invariant index = pos*gain + ypos*rows_on_screen (rows_on_screen from the live row
+    // pitch). Confirms the calibration visually right on the window canvas.
+    const win = model.window(winId), da = win?.data_area, gain = win?.scroll?.calib_gain;
+    const pos = res.scrollbar?.pos;
+    if (gain != null && pos != null && da && da.h > 0) {
+        const rowLeft = new Map();   // row-center y (window frac) -> leftmost cell/field box
+        for (const c of kept) {
+            // item cells may have no cell-level box — fall back to the first field box
+            const box = c.box || Object.values(c.fields || {}).map((f) => f.box).find(Boolean);
+            if (!box) continue;
+            const cy = +(box.y + box.h / 2).toFixed(4);
+            const cur = rowLeft.get(cy);
+            if (!cur || box.x < cur.x) rowLeft.set(cy, box);
+        }
+        const ysorted = [...rowLeft.entries()].sort((a, b) => a[0] - b[0]);
+        const yposes = ysorted.map(([cy]) => (cy - da.y) / da.h);
+        const gaps = yposes.slice(1).map((y, i) => y - yposes[i]).filter((g) => g > 1e-3).sort((a, b) => a - b);
+        // rows on screen = 1/pitch; fall back to one row's height when only a single row was found
+        const pitch = gaps.length ? gaps[Math.floor(gaps.length / 2)]
+            : (rowLeft.size ? ([...rowLeft.values()][0].h / da.h) : null);
+        const visible = pitch ? 1 / pitch : null;
+        if (visible) for (const [cy, box] of rowLeft) {
+            const ypos = Math.min(1, Math.max(0, (cy - da.y) / da.h));
+            // ypos is the row CENTER, so its coordinate is ~0.5 rows in; floor = rows fully above
+            const idx = Math.floor(pos * gain + ypos * visible);
+            const w = Math.min(0.045, box.x) || 0.03;
+            reads.push({ cell: { x: Math.max(0, box.x - w), y: box.y, w, h: box.h }, text: `#${idx}` });
+        }
+    }
     // the detected CELL outlines — the tiling the reader actually found
     const cells = kept.map((c) => c.box).filter(Boolean);
     // guard cells with their win/lose verdict so the overlay can colour them

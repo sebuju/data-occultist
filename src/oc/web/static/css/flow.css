@@ -210,16 +210,19 @@ a.node.win:hover { border-color: var(--accent); }
 .cc-det { display: inline-block; margin-right: 6px; white-space: nowrap; }
 .conf-sub { color: var(--muted); font-style: italic; }  /* value from an if-empty/if-number/if-text fallback, not a read */
 
-/* enabled/disabled nodes — SVG slide toggle, styled to the node palette. Sits at the
-   right edge of the header (margin-left:auto pushes it). */
-.gn-h .gn-enable { margin: 0; margin-left: auto; flex: 0 0 auto; padding: 0; border: 0;
-    background: transparent; display: inline-flex; align-items: center; cursor: pointer; }
-.gn-enable svg { display: block; }
+/* header slide toggles (enable switch, vt-table "show removed") — SVG track+thumb styled to the
+   node palette. `gn-enable`/`vt-showrm` sit at the right edge of the header (margin-left:auto). */
+.gn-h .gn-slide { margin: 0; padding: 0; border: 0; background: transparent;
+    display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+    color: var(--muted); font-size: 11px; }
+.gn-h .gn-enable, .gn-h .vt-showrm { margin-left: auto; flex: 0 0 auto; }
+.gn-slide svg { display: block; }
+.gn-slide-lbl { white-space: nowrap; }
 /* track + thumb take the node's own colours: --line off, --accent on */
-.gn-enable .gt-track { fill: var(--line); stroke: var(--line); transition: fill .18s ease, stroke .18s ease; }
-.gn-enable .gt-thumb { fill: var(--muted); transition: transform .18s ease, fill .18s ease; }
-.gn-enable.on .gt-track { fill: color-mix(in srgb, var(--accent) 35%, transparent); stroke: var(--accent); }
-.gn-enable.on .gt-thumb { fill: var(--accent); transform: translateX(12px); }   /* slide right */
+.gn-slide .gt-track { fill: var(--line); stroke: var(--line); transition: fill .18s ease, stroke .18s ease; }
+.gn-slide .gt-thumb { fill: var(--muted); transition: transform .18s ease, fill .18s ease; }
+.gn-slide.on .gt-track { fill: color-mix(in srgb, var(--accent) 35%, transparent); stroke: var(--accent); }
+.gn-slide.on .gt-thumb { fill: var(--accent); transform: translateX(12px); }   /* slide right */
 .gnode.node-disabled { filter: grayscale(1); }
 
 /* item-template preview diagnostics */
