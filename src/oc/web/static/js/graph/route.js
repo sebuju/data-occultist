@@ -262,11 +262,13 @@ function nudge(lines, byId, rects, outPorts) {
     }
     for (const ln of lines) ln.pts = simplify(ln._pts);
 }
-// Lay out the endpoints of every port line (pinSrc set) along the face each touches: the source end
-// where it LEAVES a node and the destination end where it ARRIVES. Per face, endpoints are ordered by
-// where their far end sits (so stubs don't cross) and spread one laneGap apart, kept inside the face
-// and floored at PORT_MIN so dots never overlap. An idle out-port dot sits dead-centre of its face, so
-// arriving lines on that same face are kept clear of the centre. Structural lines (no pinSrc) untouched.
+// Lay out the endpoints of EVERY line along the face each touches: the source end where it LEAVES a
+// node and the destination end where it ARRIVES. Per face, endpoints are ordered by where their far end
+// sits (so stubs don't cross) and spread one laneGap apart, kept inside the face and floored at PORT_MIN
+// so dots never overlap. A face with a SINGLE endpoint keeps its routed coordinate (port ends stay
+// centred as before; structural ends are left exactly where routed) — only 2+ endpoints sharing a face
+// redistribute. An idle out-port dot sits dead-centre of its face, so lines on that same face are kept
+// clear of the centre.
 function fanFaceEnds(lines, byId, outPorts) {
     const groups = new Map();   // "<node id>\x00<side>" -> endpoints touching that face
     const push = (nodeId, side, ln, end, other) => {
@@ -274,7 +276,8 @@ function fanFaceEnds(lines, byId, outPorts) {
         (groups.get(k) || groups.set(k, []).get(k)).push({ ln, end, other });
     };
     for (const ln of lines) {
-        if (!ln.pinSrc) continue;   // only port lines fan; structural lines keep their routed ends
+        // every line (port AND structural) registers both ends, so endpoints sharing a face
+        // co-distribute and never collapse onto one point. A lone endpoint keeps its routed coord below.
         push(ln.from, ln.srcSide, ln, "src", center(byId.get(ln.to)));
         push(ln.to, ln.dstSide, ln, "dst", center(byId.get(ln.from)));
     }
@@ -285,40 +288,29 @@ function fanFaceEnds(lines, byId, outPorts) {
         const lo = horiz ? nd.y : nd.x, span = horiz ? nd.h : nd.w, mid = lo + span / 2;
         arr.sort((a, b) => (horiz ? a.other[1] - b.other[1] : a.other[0] - b.other[0]));
         const n = arr.length;
-        let coords;
-        if (n < 2) coords = [mid];
-        else {
-            const pref = Math.min(span - PORT_MARGIN, (n - 1) * C.laneGap);
-            const spread = Math.max(0, pref, (n - 1) * PORT_MIN);
-            coords = arr.map((_, i) => mid - spread / 2 + (i * spread) / (n - 1));
+        const clamp = (c) => Math.max(lo + 4, Math.min(lo + span - 4, c));
+        // a node with an idle out-port on THIS face parks a (non-endpoint) dot at the centre — keep lines
+        // off it. A real PORT line leaving the face owns the dot (its own start); a structural src does not.
+        const reserveMid = outPorts.get(nodeId) === side && !arr.some((e) => e.end === "src" && e.ln.pinSrc);
+        if (n < 2) {
+            // lone endpoint: port ends keep the canonical centred position; structural ends keep their
+            // ROUTED coord (never force-centred). Either way, an end under an idle out-port dot is nudged clear.
+            const e = arr[0], p = e.ln._pts; if (!p || p.length < 2) continue;
+            const last = e.end === "dst", i = last ? p.length - 1 : 0;
+            const cur = horiz ? p[i][1] : p[i][0];
+            let c = e.ln.pinSrc ? mid : cur;
+            if (reserveMid && Math.abs(c - mid) < PORT_MIN) c = mid + PORT_MIN;
+            if (e.ln.pinSrc || Math.abs(c - cur) > 0.5) setEnd(p, side, clamp(c), last);
+            continue;
         }
-        // a node with an idle out-port on THIS face parks its dot at the centre — push arriving lines off it
-        const reserveMid = outPorts.get(nodeId) === side && !arr.some((e) => e.end === "src");
+        const pref = Math.min(span - PORT_MARGIN, (n - 1) * C.laneGap);
+        const spread = Math.max(0, pref, (n - 1) * PORT_MIN);
+        const coords = arr.map((_, i) => mid - spread / 2 + (i * spread) / (n - 1));
         for (let i = 0; i < n; i++) {
             let c = coords[i];
             if (reserveMid && Math.abs(c - mid) < PORT_MIN) c = mid + (c >= mid ? PORT_MIN : -PORT_MIN);
-            c = Math.max(lo + 4, Math.min(lo + span - 4, c));
-            setEnd(arr[i].ln._pts, side, c, arr[i].end === "dst");
+            setEnd(arr[i].ln._pts, side, clamp(c), arr[i].end === "dst");
         }
-    }
-    // Structural lines (no pinSrc) keep their routed ends — EXCEPT a SOURCE end that landed on an
-    // IDLE out-port dot. A window's bonded-preview line leaves the same RIGHT face the window parks
-    // its (hover-only) out-port dot on; with no dataset there's no port line to fan against, so the
-    // routed stub sits dead-centre, right under the empty dot — making the line look like it starts
-    // FROM the empty out-port. Nudge such a source end clear of the dot (the dot itself stays put).
-    for (const ln of lines) {
-        if (ln.pinSrc) continue;                               // port lines already laid out above
-        const side = ln.srcSide;
-        if (outPorts.get(ln.from) !== side) continue;          // node has no out-port on this face
-        const arr = groups.get(ln.from + "\x00" + side);
-        if (arr && arr.some((e) => e.end === "src")) continue; // a real port line owns the dot -> not idle
-        const nd = byId.get(ln.from), p = ln._pts;
-        if (!nd || !p || p.length < 2) continue;
-        const horiz = side === "L" || side === "R";
-        const lo = horiz ? nd.y : nd.x, span = horiz ? nd.h : nd.w, mid = lo + span / 2;
-        const cur = horiz ? p[0][1] : p[0][0];
-        if (Math.abs(cur - mid) >= PORT_MIN) continue;         // already clear of the dot
-        setEnd(p, side, Math.max(lo + 4, Math.min(lo + span - 4, mid + PORT_MIN)), false);
     }
 }
 // keep a fanned port endpoint within its node face span (perp coord already correct)
