@@ -472,6 +472,7 @@ export class VTable {
         const q = this.search.value;
         this.clearBtn.hidden = !q;
         this.pred = compileQuery(q);
+        this.scroll.scrollTop = 0;   // a new query is a new result set — jump to the top
         this._filter();
     }
     _filter() {
@@ -482,7 +483,6 @@ export class VTable {
         // count is a search result — only meaningful while filtering; hide it when nothing's searched
         this.count.hidden = !this.pred;
         this.count.textContent = this.pred ? `${shown} / ${total}` : "";
-        this.scroll.scrollTop = 0;
         this._applyHeight();
     }
 
