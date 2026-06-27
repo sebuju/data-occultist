@@ -25,7 +25,25 @@ from ..collect.fields import coerce_rule
 from ..interfaces import Corrector
 from ..profile.models import DictMode, FieldDef, FieldType
 from .dictionary import _norm
+from .glyphs import glyph_fold
 from .lexicon import Lexicon
+
+
+def _fold_map(wmap: dict[str, str]) -> dict[str, str]:
+    """``glyph_fold(word) -> canonical`` over the digit-bearing words of ``wmap``,
+    dropping folds that more than one word shares (ambiguous -> never snap). Lets a
+    relic code read 'AG' snap to 'A9' even though the fuzzy ratio is too low and the
+    confusion map has never seen the flip (see :mod:`oc.learn.glyphs`)."""
+    seen: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for key, canonical in wmap.items():
+        if not any(c.isdigit() for c in key):
+            continue
+        fold = glyph_fold(key)
+        if fold in seen and seen[fold] != canonical:
+            ambiguous.add(fold)
+        seen.setdefault(fold, canonical)
+    return {f: c for f, c in seen.items() if f not in ambiguous}
 
 
 @dataclass
@@ -59,13 +77,14 @@ class FieldResolver:
         self._dict = dictionary          # pooled Dictionary, used when a field pins none
         self._dict_map = dictionaries or {}   # id -> Dictionary, a field pins one via FieldDef.dictionary
         self._learn = learn_enabled      # False => read-only (e.g. teaching preview): never mutate
-        # field id -> (lexicon term count, word map, lowercase word list). The
-        # dictionary is fixed and the lexicon only grows, so a stale entry is detected
-        # by the count alone — without this every resolve rebuilds a thousand-word map.
-        self._word_cache: dict[str, tuple[int, dict[str, str], list[str]]] = {}
+        # field id -> (lexicon term count, word map, lowercase word list, fold map).
+        # The dictionary is fixed and the lexicon only grows, so a stale entry is
+        # detected by the count alone — without this every resolve rebuilds a
+        # thousand-word map.
+        self._word_cache: dict[str, tuple[int, dict[str, str], list[str], dict[str, str]]] = {}
         # cache the non-learning word vocabulary per Dictionary object (fields may use
         # different ones now), keyed by object id since each dictionary is fixed.
-        self._dict_words: dict[int, tuple[dict[str, str], list[str]]] = {}
+        self._dict_words: dict[int, tuple[dict[str, str], list[str], dict[str, str]]] = {}
 
     def _dict_for(self, field: FieldDef):
         """The Dictionary this field reads against: its pinned one
@@ -74,26 +93,26 @@ class FieldResolver:
             return self._dict_map[field.dictionary]
         return self._dict
 
-    def _words(self, field: FieldDef) -> tuple[dict[str, str], list[str]]:
-        """The field's word vocabulary: ``norm -> canonical`` plus a lowercase list
-        for fuzzy matching — the dictionary's words (unless the field's dict mode is
-        off), joined by the words of the field's learned terms (when it learns).
-        Cached."""
+    def _words(self, field: FieldDef) -> tuple[dict[str, str], list[str], dict[str, str]]:
+        """The field's word vocabulary: ``norm -> canonical``, a lowercase list for
+        fuzzy matching, and a glyph-fold map (digit-bearing codes) — the dictionary's
+        words (unless the field's dict mode is off), joined by the words of the field's
+        learned terms (when it learns). Cached."""
         d = self._dict_for(field)
         use_dict = d and field.dict_mode is not DictMode.off
         dmap = d.word_map if use_dict else {}
         if not field.learn:
             if not use_dict:
-                return {}, []
+                return {}, [], {}
             cached = self._dict_words.get(id(d))
             if cached is None:
-                cached = (dmap, [w.lower() for w in dmap.values()])
+                cached = (dmap, [w.lower() for w in dmap.values()], _fold_map(dmap))
                 self._dict_words[id(d)] = cached
             return cached
         lterms = self._lex.terms(field.id)
         cached = self._word_cache.get(field.id)
         if cached is not None and cached[0] == len(lterms):
-            return cached[1], cached[2]
+            return cached[1], cached[2], cached[3]
         wmap = dict(dmap)
         for t in lterms:
             for wd in t.split():
@@ -101,14 +120,15 @@ class FieldResolver:
                 if key:
                     wmap.setdefault(key, wd)
         wlist = [w.lower() for w in wmap.values()]
-        self._word_cache[field.id] = (len(lterms), wmap, wlist)
-        return wmap, wlist
+        fmap = _fold_map(wmap)
+        self._word_cache[field.id] = (len(lterms), wmap, wlist, fmap)
+        return wmap, wlist, fmap
 
     def _correct_words(self, field: FieldDef, text: str, confidence: float):
         """Correct ``text`` one word at a time against the vocabulary's words.
         Returns ``(result, changed, worst_score, any_unknown)`` — ``any_unknown``
         is True when a letter-bearing word matched nothing (the drop modes' gate)."""
-        wmap, wlist = self._words(field)
+        wmap, wlist, fmap = self._words(field)
         # Confident read: only a near-identical word may snap (one bad character,
         # case). Uncertain read: the field's fuzzy threshold. correct_drop always
         # uses the field threshold — its gate is "must match", not "prefer the read".
@@ -130,6 +150,13 @@ class FieldResolver:
             if joined is not None:
                 out.append(joined)
                 changed = True
+                continue
+            fold = fmap.get(glyph_fold(key))  # relic code glyph flip: 'AG' -> 'A9'
+            if fold is not None:
+                out.append(fold)
+                changed = True
+                if self._confusions and self._learn:
+                    self._confusions.learn(tok, fold)
                 continue
             cand = self._confusions.normalize(tok) if self._confusions else tok
             m = self._corrector.best(cand.lower(), wlist, cutoff=cutoff) if wlist else None
@@ -172,7 +199,7 @@ class FieldResolver:
         if mode is DictMode.drop:
             # validation only, nothing rewritten: every letter-bearing word must
             # already be vocabulary or the read is dropped (and never learned)
-            wmap, _ = self._words(field)
+            wmap, _, _ = self._words(field)
             if any(_norm(t) not in wmap for t in text.split() if any(c.isalpha() for c in t)):
                 return ResolvedField(None)
             result, changed, score, unknown = text, False, 1.0, False

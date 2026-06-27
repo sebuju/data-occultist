@@ -182,6 +182,28 @@ def test_numeric_tokens_pass_through_word_correction(tmp_path):
     assert res.corrected is True
 
 
+def test_glyph_confused_code_snaps_to_known(tmp_path):
+    # relic refinement codes are short alnum tokens where a g<->9 / l<->1 flip
+    # halves the fuzzy ratio (too low to snap) and the confusion map has never seen
+    # it. glyph-folding matches digit-bearing words visually.
+    _, resolver = _dict_resolver(tmp_path, ["Meso A9", "Neo V11", "Axi G1"])
+    field = FieldDef(id="name", fuzzy=0.9)
+
+    assert resolver.resolve(field, "Meso AG", confidence=0.5).value == "Meso A9"
+    assert resolver.resolve(field, "neo vll", confidence=0.5).value == "Neo V11"
+    res = resolver.resolve(field, "Axi Gl", confidence=0.5)
+    assert res.value == "Axi G1" and res.corrected is True
+
+
+def test_glyph_fold_ambiguous_is_left_alone(tmp_path):
+    # two known codes fold the same ('B2' and '82' -> '82'): ambiguous, no snap
+    _, resolver = _dict_resolver(tmp_path, ["Meso B2", "Meso 82"])
+    field = FieldDef(id="name", fuzzy=0.95)
+
+    res = resolver.resolve(field, "Meso BZ", confidence=0.3)   # 'BZ' folds to '82'
+    assert res.value == "Meso BZ" and res.corrected is False
+
+
 # ---- dict modes -------------------------------------------------------------
 
 def test_mode_correct_keeps_unmatched_words(tmp_path):
