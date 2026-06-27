@@ -52,7 +52,6 @@ def text_match_score(
     got: str,
     *,
     mode: str = "partial",
-    included: bool = False,
     case_sensitive: bool = False,
     min_chars: int = 0,
     strip: str = "alnum",
@@ -61,17 +60,17 @@ def text_match_score(
 
     ``mode`` picks how strictly the two are compared:
 
-    - ``partial`` (default) — ``partial_ratio`` aligns the shorter string anywhere
-      inside the longer, so a read that merely *contains* (or, with ``included``, is
-      contained by) the target scores ~1.0. Two length guards keep that honest:
-      a read far LONGER than the target caught a paragraph (wrong screen); a read far
-      SHORTER is a fragment/noise (a 3-char "war" sits inside "reward"). This mode is
-      loose: 'WARDSI' still scores ~0.9 against 'rewards' off the shared "wards".
+    - ``partial`` (default) — ``partial_ratio`` aligns the shorter string anywhere inside
+      the longer, so a read that merely *contains* the target scores ~1.0. Loose by design:
+      'WARDSI' still scores ~0.9 against 'rewards' off the shared "wards". No hidden length
+      bounds — if a read is too loose, raise ``min_chars`` or pick ``full``/``prefix``. What
+      separates the right window from a coincidental substring is best-fit classify (the window
+      whose detectors score HIGHEST wins), not a per-detector cap.
     - ``full`` — whole-string ``ratio``; extra/missing chars both cost, so 'WARDSI' vs
       'rewards' drops to ~0.77 and is rejected at the usual 0.8 floor.
     - ``exact`` — normalised equality only (1.0 or 0.0).
-    - ``prefix`` — the read must begin the target (or the target begins the read when
-      ``included``); a near-prefix scores by similarity of the leading slice.
+    - ``prefix`` — the read must begin with the target; a near-prefix scores by similarity
+      of the leading slice.
 
     ``case_sensitive`` and ``strip`` feed :func:`_norm`. ``min_chars`` is a hard floor
     on the normalised read length — below it nothing matches, deterministically killing
@@ -87,19 +86,14 @@ def text_match_score(
     if mode == "exact":
         return 1.0 if nw == ng else 0.0
     if mode == "prefix":
-        a, b = (ng, nw) if included else (nw, ng)   # does b start with a?
-        if b.startswith(a):
+        if ng.startswith(nw):   # does the read begin with the target?
             return 1.0
-        return fuzz.ratio(a, b[: len(a)]) / 100.0
+        return fuzz.ratio(nw, ng[: len(nw)]) / 100.0
     if mode == "full":
         return fuzz.ratio(nw, ng) / 100.0
-    # partial (default): keep the length guards that reject paragraphs/fragments.
-    if len(ng) > max(len(nw) * 3, len(nw) + 8):
-        return 0.0
-    if len(ng) < 0.75 * len(nw):   # fragment, not the landmark
-        return 0.0
-    a, b = (ng, nw) if included else (nw, ng)   # look for a inside b
-    return fuzz.partial_ratio(a, b) / 100.0
+    # partial (default): is the target somewhere in the read? No length guards — best-fit
+    # classify decides which window wins, not a hidden per-detector cap.
+    return fuzz.partial_ratio(nw, ng) / 100.0
 
 
 def match_detail(
@@ -107,7 +101,6 @@ def match_detail(
     got: str,
     *,
     mode: str = "partial",
-    included: bool = False,
     case_sensitive: bool = False,
     min_chars: int = 0,
     strip: str = "alnum",
@@ -128,30 +121,29 @@ def match_detail(
     ng = _norm(got, strip, case_sensitive)
     out = {"want_norm": nw, "got_norm": ng, "got_raw": got,
            "min_chars": min_chars, "got_len": len(ng), "span": None}
-    if not nw or not ng or len(ng) < min_chars:
+    if not nw or not ng:
+        return out
+    if len(ng) < min_chars:
         return out
     if mode == "exact":
         if nw == ng:
             out["span"] = [0, len(ng)]
         return out
     if mode == "prefix":
-        a, b = (ng, nw) if included else (nw, ng)
         k = 0
-        m = min(len(a), len(b))
-        while k < m and a[k] == b[k]:
+        m = min(len(nw), len(ng))
+        while k < m and nw[k] == ng[k]:   # how far the read matches the target from the start
             k += 1
         out["span"] = [0, min(k, len(ng))] if k else None
         return out
     if mode == "full":
         out["span"] = [0, len(ng)]   # whole-string compare — every char is "in play"
         return out
-    # partial: align the shorter inside the longer and report the region within got_norm.
+    # partial: align the target inside the read and report the matched region within got_norm.
     from rapidfuzz import fuzz
-    a, b = (ng, nw) if included else (nw, ng)   # text_match_score looks for `a` inside `b`
-    al = fuzz.partial_ratio_alignment(a, b)
+    al = fuzz.partial_ratio_alignment(nw, ng)   # text_match_score looks for `nw` inside `ng`
     if al is not None:
-        s, e = (al.src_start, al.src_end) if included else (al.dest_start, al.dest_end)
-        out["span"] = [max(0, s), min(e, len(ng))]
+        out["span"] = [max(0, al.dest_start), min(al.dest_end, len(ng))]
     return out
 
 
@@ -191,7 +183,7 @@ class DetectMatcher:
         read = text.strip()
         score = text_match_score(
             det.text or "", read,
-            mode=det.match, included=det.included,
+            mode=det.match,
             case_sensitive=det.case_sensitive, min_chars=det.min_chars, strip=det.strip,
         )
         return read, score
@@ -228,7 +220,7 @@ class DetectMatcher:
                "score": round(s, 2), "threshold": det.threshold}
         # editor reasoning: before/after-strip text, the min-chars count, and which chars
         # carried the match (so the detect node can show WHY, not just a score).
-        out.update(match_detail(det.text or "", read, mode=det.match, included=det.included,
+        out.update(match_detail(det.text or "", read, mode=det.match,
                                 case_sensitive=det.case_sensitive, min_chars=det.min_chars,
                                 strip=det.strip))
         return out

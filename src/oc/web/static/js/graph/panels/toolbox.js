@@ -14,6 +14,7 @@ import * as groups from "../groups.js";
 import { $, setStatus, model } from "../state.js";
 import { placeNewNode, render, autosave } from "../main.js";
 import { panTo } from "../camera.js";
+import { collisionReportNode } from "../collisions.js";
 
 // ---- node-creation toolbox ------------------------------------------------
 // Top-level node creation (window / price / trigger / dictionary) lives in this floating
@@ -136,52 +137,6 @@ function buildToolbox() {
         else if (b.dataset.create === "shot-viewport") screenshotViewport();
         else if (b.dataset.create === "shot-nodemap") screenshotNodemap();
     });
-}
-
-// Verdict copy + class for the collision report. One source of truth for both.
-// `label` is a node-factory (fresh nodes per call — a DOM node lives in one place only).
-const COLLIDE_VERDICTS = {
-    ok:            [() => "✓ ok",                       "conf-ok",   "only this window matched its image"],
-    collision:     [() => [WARN(), " collision"],       "conf-warn", "another window also fully matched — ambiguous"],
-    misclassified: [() => "✗ misclassified",            "conf-bad",  "another window WINS the tie-break — classify picks the wrong one"],
-    self_no_match: [() => "✗ self no-match",            "conf-bad",  "this window's own image doesn't match it — detectors too strict/disabled"],
-    no_image:      [() => "– no image",                 "muted",     "no bound capture to test — open the window node and bind one"],
-};
-
-function collisionReportNode(data) {
-    const wins = data.windows || [];
-    if (!wins.length) return h("p", { class: "muted", style: "padding:12px" }, "no windows to check");
-    const bad = wins.filter((w) => w.verdict !== "ok" && w.verdict !== "no_image").length;
-    const head = bad
-        ? h("p", { class: "conf-warn", style: "margin:0 0 8px" }, `${bad} window(s) collide — a frame could classify to the wrong window.`)
-        : h("p", { class: "conf-ok", style: "margin:0 0 8px" }, "no collisions — every window matches only its own image.");
-    const rows = wins.map((w) => {
-        const [label, cls, tip] = COLLIDE_VERDICTS[w.verdict] || [() => "?", "muted", ""];
-        // for a colliding/misclassified window, show WHICH windows also matched + their detector scores
-        const offenders = (w.matches || []).filter((m) => m.matched && m.window !== w.window);
-        const detail = offenders.map((m) => {
-            const dets = (m.detectors || []).map((d) =>
-                h("span", { class: "cc-det " + (d.matched ? "conf-ok" : "conf-bad") },
-                    `${d.id} ${Math.round((d.score || 0) * 100)}%/${Math.round((d.threshold || 0) * 100)}%${d.read ? ` "${d.read}"` : ""}`));
-            return h("div", { class: "cc-off" }, "↳ also matched ", h("b", m.window), " ", ...intersperse(dets, " "));
-        });
-        const win = w.winner && w.winner !== w.window
-            ? h("span", { class: "muted" }, ` → classifies as ${w.winner}`) : null;
-        return h("div", { class: "cc-row" },
-            h("div", { class: "cc-head" },
-                h("span", { class: cls, title: tip }, label()), " ", h("b", w.window), win,
-                w.capture ? [" ", h("span", { class: "muted cc-cap" }, w.capture)] : null),
-            detail);
-    });
-    return h("div", { class: "cc-wrap" }, head, h("div", { class: "cc-list" }, rows));
-}
-
-// Join an array of nodes with a separator (string/node) between each — like Array.join
-// but keeping live nodes instead of stringifying. Used to space inline detector chips.
-function intersperse(items, sep) {
-    const out = [];
-    items.forEach((it, i) => { if (i) out.push(sep); out.push(it); });
-    return out;
 }
 
 async function runCollisionCheck() {
@@ -317,6 +272,5 @@ function svgToPngBlob(svg, W, H) {
 export {
     tb, tbState, createWindowNode, createProducerNode, createTriggerNode,
     createDictionaryNode, createDatasetNode, createSubsetNode, createFileSourceNode,
-    buildToolbox, COLLIDE_VERDICTS, collisionReportNode,
-    runCollisionCheck,
+    buildToolbox, runCollisionCheck,
 };

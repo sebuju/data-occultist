@@ -40,8 +40,6 @@ export function renderBox(container, model, ctx) {
                 h("option", { value: "spaces", selected: b.strip === "spaces" }, "spaces only"),
                 h("option", { value: "none", selected: b.strip === "none" }, "none (raw)"))),
         h("label", { class: "r-detect r-state inline" },
-            h("input", { type: "checkbox", id: "b-incl", checked: b.included }), " read inside text (included)"),
-        h("label", { class: "r-detect r-state inline" },
             h("input", { type: "checkbox", id: "b-case", checked: b.case_sensitive }), " case sensitive"),
         h("label", { class: "r-state" }, "state",
             h("select", { id: "b-state" },
@@ -64,7 +62,6 @@ export function renderBox(container, model, ctx) {
     q("#b-thr").addEventListener("input", (e) => { b.threshold = +e.target.value; });
     q("#b-minchars").addEventListener("input", (e) => { b.min_chars = Math.max(0, Math.trunc(+e.target.value) || 0); });
     q("#b-strip").addEventListener("change", (e) => { b.strip = e.target.value; });
-    q("#b-incl").addEventListener("change", (e) => { b.included = e.target.checked; });
     q("#b-case").addEventListener("change", (e) => { b.case_sensitive = e.target.checked; });
     q("#b-state").addEventListener("change", (e) => { b.stateId = e.target.value; });
     q("#b-del").addEventListener("click", () => { model.remove(b.id); ctx.refresh(); });

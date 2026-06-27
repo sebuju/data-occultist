@@ -1,4 +1,5 @@
-"""Detect text matching dismisses over-long reads; a window needs ALL detectors."""
+"""Detect text matching: partial is pure substring fit (no hidden length guards); a window
+needs ALL its detectors, and the BEST-fitting passing window wins classify."""
 
 from types import SimpleNamespace
 
@@ -8,14 +9,14 @@ from oc.profile.models import Box, DetectDef, GameProfile, WindowDef
 
 
 def test_clean_match_scores_high():
-    assert text_match_score("INVENTORY / SELL", "INVTNTORYSELL", included=True) >= 0.8
+    assert text_match_score("INVENTORY / SELL", "INVTNTORYSELL") >= 0.8
 
 
-def test_long_read_is_dismissed():
-    # the box read a paragraph that merely contains the target -> not the landmark
+def test_long_read_still_matches_partial():
+    # no hidden length guard: a read that CONTAINS the target scores high. Whether this is
+    # "the landmark" or a coincidental substring is decided by best-fit classify, not here.
     blob = "search" + "x" * 80
-    assert text_match_score("search", blob) == 0.0
-    assert text_match_score("search", blob, included=True) == 0.0
+    assert text_match_score("search", blob) >= 0.8
 
 
 def test_short_fragment_still_matches():
@@ -24,12 +25,12 @@ def test_short_fragment_still_matches():
     assert text_match_score("search", "searchbar") >= 0.8
 
 
-def test_tiny_substring_is_dismissed():
-    # a near-empty box reads a 2-3 char blob that happens to sit inside the target;
-    # partial_ratio would score it ~1.0, so the too-short guard must reject it
-    assert text_match_score("reward", "war") == 0.0
-    assert text_match_score("reward", "re", included=True) == 0.0
-    assert text_match_score("inventory", "in") == 0.0
+def test_tiny_substring_matches_partial_only_min_chars_floors():
+    # partial_ratio aligns a tiny blob inside the target -> high score (no too-short guard);
+    # the ONLY explicit floor is min_chars, which deterministically kills the blob.
+    assert text_match_score("reward", "war") >= 0.8
+    assert text_match_score("reward", "war", min_chars=4) == 0.0
+    assert text_match_score("inventory", "in", min_chars=4) == 0.0
 
 
 def test_empty_is_zero():
@@ -56,11 +57,9 @@ def test_exact_mode_is_all_or_nothing():
 
 
 def test_prefix_mode():
-    # included=False: the detect text begins the read (read may have trailing junk)
+    # the detect text begins the read (read may have trailing junk)
     assert text_match_score("equipment", "EQUIPMENT UPGRADE", mode="prefix") == 1.0
     assert text_match_score("equipment", "loadout", mode="prefix") < 0.8
-    # included=True: the read is a prefix of the detect text (truncated read)
-    assert text_match_score("inventory", "INV", mode="prefix", included=True) == 1.0
 
 
 def test_min_chars_floor():
@@ -81,14 +80,24 @@ def test_strip_mode_keeps_punctuation():
     assert text_match_score("a / b", "a/b", mode="exact", strip="spaces") == 1.0
 
 
-def _classifier_with(matched: dict):
+def _stub_matcher(matched: dict, scores: dict | None = None):
+    """A matcher whose verdict/score are looked up per detector id. ``matches`` drives
+    candidacy; ``score`` (defaults to 1.0 matched / 0.0 not) drives the best-fit tie-break."""
+    scores = scores or {}
+    return SimpleNamespace(
+        matches=lambda det, frame: matched.get(det.id, False),
+        score=lambda det, frame: scores.get(det.id, 1.0 if matched.get(det.id) else 0.0),
+    )
+
+
+def _classifier_with(matched: dict, scores: dict | None = None):
     win = WindowDef(id="equip", detect=[
         DetectDef(id="a", search=Box(x=0, y=0, w=0.1, h=0.1), text="inventory", threshold=0.8),
         DetectDef(id="b", search=Box(x=0.2, y=0, w=0.1, h=0.1), text="name", threshold=0.8),
     ])
     profile = GameProfile(name="g", windows=[win])
     clf = DetectClassifier.__new__(DetectClassifier)
-    clf._matcher = SimpleNamespace(matches=lambda det, frame: matched.get(det.id, False))
+    clf._matcher = _stub_matcher(matched, scores)
     return clf, profile
 
 
@@ -106,5 +115,28 @@ def test_window_with_no_detectors_never_matches():
     win = WindowDef(id="x")  # no detectors
     profile = GameProfile(name="g", windows=[win])
     clf = DetectClassifier.__new__(DetectClassifier)
-    clf._matcher = SimpleNamespace(matches=lambda a, f: True)
+    clf._matcher = _stub_matcher({}, {})
+    clf._matcher.matches = lambda a, f: True
     assert clf.classify(frame=None, profile=profile) is None
+
+
+def test_best_fit_window_wins_over_more_detectors_and_file_order():
+    # both windows PASS, but the second one (fewer detectors, later in file) fits BETTER.
+    # The old tie-break (most detectors, then file order) would pick `loose`; best-fit picks
+    # `tight` because its detector scores higher.
+    loose = WindowDef(id="loose", detect=[
+        DetectDef(id="la", search=Box(x=0, y=0, w=0.1, h=0.1), text="refine", threshold=0.8),
+        DetectDef(id="lb", search=Box(x=0.2, y=0, w=0.1, h=0.1), text="void", threshold=0.8),
+    ])
+    tight = WindowDef(id="tight", detect=[
+        DetectDef(id="ta", search=Box(x=0, y=0, w=0.1, h=0.1), text="refinement", threshold=0.8),
+    ])
+    profile = GameProfile(name="g", windows=[loose, tight])
+    clf = DetectClassifier.__new__(DetectClassifier)
+    # both pass their thresholds, but `tight` matches its landmark exactly (1.0) while `loose`
+    # only caught coincidental substrings (0.85 worst detector).
+    clf._matcher = _stub_matcher(
+        {"la": True, "lb": True, "ta": True},
+        {"la": 0.85, "lb": 0.9, "ta": 1.0},
+    )
+    assert clf.classify(frame=None, profile=profile) == ("tight", None)
