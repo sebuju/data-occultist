@@ -19,9 +19,15 @@ def _first_number(text: str) -> str | None:
 
 
 def _split(text: str, sep: str) -> tuple[str, str]:
+    """Split on the first occurrence of ``sep``, case-insensitively (OCR casing is
+    unreliable, so a word separator like "Rank" must still match "RANK"). The
+    returned halves keep the text's original casing. No match -> all on the left,
+    mirroring ``str.partition``."""
     sep = sep or "/"
-    left, _, right = text.partition(sep)
-    return left.strip(), right.strip()
+    idx = text.lower().find(sep.lower())
+    if idx < 0:
+        return text.strip(), ""
+    return text[:idx].strip(), text[idx + len(sep):].strip()
 
 
 def _apply_extract(field: FieldDef, text: str) -> str | None:

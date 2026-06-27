@@ -33,6 +33,14 @@ def test_extract_text_before_separator():
     assert coerce(f, "Serration (maxed)") == "Serration"
 
 
+def test_extract_word_separator_is_case_insensitive():
+    # OCR casing is unreliable: a word separator "Rank" must still split "RANK"
+    f = FieldDef(id="name", extract=Extract.text_before, separator="Rank")
+    assert coerce(f, "Serration RANK 5") == "Serration"
+    g = FieldDef(id="max", type=FieldType.number, extract=Extract.number_after, separator="of")
+    assert coerce(g, "5 OF 30") == 30
+
+
 def test_empty_fallback_when_no_number_present():
     # "empty" fires when no NUMBER was detected — nothing read, or OCR junk off a
     # marker icon sharing the box (digitless = no number was rendered)
