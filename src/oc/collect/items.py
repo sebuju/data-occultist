@@ -90,6 +90,16 @@ def _crop(frame: Frame, fb: FractionBox) -> np.ndarray:
     return frame.image[pb.y : pb.y + pb.h, pb.x : pb.x + pb.w]
 
 
+def _expand_box(fb: FractionBox, margin: float) -> FractionBox:
+    """Grow a box by ``margin`` (fraction of its own size) on every side, clamped to [0,1] —
+    the search region a template tell slides its saved sub-image within."""
+    x0 = max(0.0, fb.x - fb.w * margin)
+    y0 = max(0.0, fb.y - fb.h * margin)
+    x1 = min(1.0, fb.x + fb.w * (1 + margin))
+    y1 = min(1.0, fb.y + fb.h * (1 + margin))
+    return FractionBox(x0, y0, x1 - x0, y1 - y0)
+
+
 def _loc_lines(item: ItemDef, loc, lines_frac, da, numeric: bool = False, min_conf: float = _LOC_MIN_CONF) -> list[tuple]:
     """The OCR lines eligible to anchor rows AND columns: confident lines of the locator's
     CHARACTER CLASS anywhere inside the data area. Returns (cx, cy, h, lx, lw) — centre,
@@ -118,26 +128,30 @@ def _loc_lines(item: ItemDef, loc, lines_frac, da, numeric: bool = False, min_co
     return out
 
 
-def _cell_in_bounds(item: ItemDef, cell_x: float, cell_y: float, da, iw: float | None = None, ih: float | None = None, clip_right: bool = False) -> bool:
+def _cell_in_bounds(item: ItemDef, cell_x: float, cell_y: float, da, iw: float | None = None, ih: float | None = None, clip_x: bool = False) -> bool:
     """Every field AND tell box of the placed cell must sit inside the data area.
     A row half-scrolled off the grid (or a misplaced anchor) pushes boxes outside,
     where they read unrelated UI text — dismiss the whole cell instead. ``iw``/``ih`` are the
     placed cell dimensions (default the item's own box; a shared static grid passes its own).
 
-    ``clip_right`` (located mode): allow boxes to overflow the RIGHT edge. A cell's width
-    carries the margin toward the NEXT column, so the last column's wide name box reaches
-    past a tightly-drawn right edge even though the content sits inside — that's expected
-    clipping, not an off-grid cell. The other three edges stay strict (a partial bottom row
-    or a misplaced anchor must still be dismissed)."""
+    ``clip_x`` (located mode): allow boxes to overflow BOTH horizontal edges. A cell's width
+    carries the margin toward the neighbouring column, so a wide / ``align_x: center`` name box
+    reaches past a tightly-drawn edge even though the content sits inside — that's expected
+    clipping, not an off-grid cell. It is symmetric: the FIRST column's centred box overhangs
+    the LEFT edge exactly as the last column's overhangs the right, so both are tolerated (else
+    the leftmost column is silently dropped though its anchor is in-bounds). The anchor line
+    itself is already gated to the data area (see ``_loc_lines``), so this admits no off-grid
+    cell. Top/bottom stay strict — a partial bottom row / misplaced anchor must still be
+    dismissed. A static grid (``clip_x=False``) stays strict on all four edges."""
     iw = item.box.w if iw is None else iw
     ih = item.box.h if ih is None else ih
     ex, ey = 0.02 * iw, 0.02 * ih           # authoring slack: boxes drawn to the edge
     boxes = [f.box for f in item.fields] + [t.box for t in item.tells]
     for b in boxes:
         x, y = cell_x + b.x * iw, cell_y + b.y * ih
-        if (x < da.x - ex or y < da.y - ey
-                or (not clip_right and x + b.w * iw > da.x + da.w + ex)
-                or y + b.h * ih > da.y + da.h + ey):
+        if y < da.y - ey or y + b.h * ih > da.y + da.h + ey:     # top/bottom always strict
+            return False
+        if not clip_x and (x < da.x - ex or x + b.w * iw > da.x + da.w + ex):
             return False
     return True
 
@@ -195,7 +209,7 @@ def grid_drift(ics: list[ItemCell], lines, cw: float, ch: float) -> dict:
         lx, ly, lw, lh = min(cand, key=lambda t: abs(t[1] + t[3] / 2 - cyc))
         ax, ay = anchor_align_x(ic.item), anchor_align(ic.item)
         act_x = (lx + lw) if ax == "right" else (lx if ax == "left" else lx + lw / 2)
-        exp_x = ic.ox + (1.0 if ax == "right" else 0.0 if ax == "left" else 0.5) * ic.iw
+        exp_x = ic.ox + _box_xref(loc.box, ax) * ic.iw   # the locator box's edge, twin of exp_y
         act_y = ly if ay == "top" else (ly + lh if ay == "bottom" else ly + lh / 2)
         exp_y = by + (0.0 if ay == "top" else bh if ay == "bottom" else bh / 2)
         dxs.append(abs(act_x - exp_x) / ic.iw)   # CELL units, per axis
@@ -209,16 +223,23 @@ def grid_drift(ics: list[ItemCell], lines, cw: float, ch: float) -> dict:
     return {"x": agg(dxs), "y": agg(dys), "n": len(dxs)}
 
 
-def _xref(ax: str) -> float:
-    """Where ``align_x`` puts the anchor edge in the cell: right=1, centre=0.5, left=0."""
-    return 1.0 if ax == "right" else (0.5 if ax == "center" else 0.0)
+def _box_xref(box, ax: str) -> float:
+    """Where the locator's OWN box puts its ``align_x`` edge, in cell-relative units:
+    right -> box right (``x+w``), centre -> box centre (``x+w/2``), left -> box left (``x``).
+
+    This is the horizontal twin of :func:`_anchor_ref` (which reads the box's vertical edge).
+    Using the box edge — not an idealised 0/0.5/1 — is what lands the locator FIELD'S OWN box
+    back on the line it located: a name box drawn off-centre in the cell (e.g. centre at 0.39,
+    not 0.5) must re-place at 0.39, else every read sits a constant fraction off the text."""
+    return (box.x + box.w) if ax == "right" else (box.x if ax == "left" else box.x + box.w / 2)
 
 
-def _origin_x(item: ItemDef, cw: float, cx: float, lx: float, lw: float) -> float:
-    """Cell LEFT edge that lands the anchor text's ``align_x`` edge on this line."""
+def _origin_x(item: ItemDef, loc, cw: float, cx: float, lx: float, lw: float) -> float:
+    """Cell LEFT edge that lands the anchor text's ``align_x`` edge on this line, with the
+    locator box's own x-offset honoured (so the located field's box re-lands on the text)."""
     ax = anchor_align_x(item)
     edge = (lx + lw) if ax == "right" else (cx if ax == "center" else lx)
-    return edge - _xref(ax) * cw
+    return edge - _box_xref(loc.box, ax) * cw
 
 
 def _origin_y(item: ItemDef, ch: float, cy: float, h: float, ref: float) -> float:
@@ -315,9 +336,9 @@ def locate_item_cells(frame: Frame, window: WindowDef, lines_frac, templates=Non
             tc = getattr(loc, "tell_conf", 0.0) or 0.0
             conf = tc if tc > 0 else _LOC_MIN_CONF
             for cx, cy, h, lx, lw in _loc_lines(item, loc, lines_frac, da, numeric=numeric, min_conf=conf):
-                cox = _origin_x(item, giw, cx, lx, lw)
+                cox = _origin_x(item, loc, giw, cx, lx, lw)
                 coy = _origin_y(item, gih, cy, h, ref)
-                if _cell_in_bounds(item, cox, coy, da, giw, gih, clip_right=True):
+                if _cell_in_bounds(item, cox, coy, da, giw, gih, clip_x=True):
                     pts.append((cox, coy))
         info[item.id] = (loc, visual, pts)
 
@@ -361,7 +382,7 @@ def locate_item_cells(frame: Frame, window: WindowDef, lines_frac, templates=Non
         for ri, ci in sorted(occ.get(it.id, ())):
             cx, cy = col_line[ci], row_line[ri]
             # cells may clip the right edge (cell width carries the next-column margin)
-            if _cell_in_bounds(it, cx, cy, da, giw, gih, clip_right=True):
+            if _cell_in_bounds(it, cx, cy, da, giw, gih, clip_x=True):
                 out.append(_emit(it, ri, ci, cx, cy, giw, gih))
 
     # Visual locators carry no text to cluster: tile the data area geometrically and let the
@@ -373,7 +394,7 @@ def locate_item_cells(frame: Frame, window: WindowDef, lines_frac, templates=Non
         for it in visual_items:
             for ri, cy in enumerate(ys):
                 for ci, cx in enumerate(xs):
-                    if _cell_in_bounds(it, cx, cy, da, giw, gih, clip_right=True):
+                    if _cell_in_bounds(it, cx, cy, da, giw, gih, clip_x=True):
                         out.append(_emit(it, ri, ci, cx, cy, giw, gih))
     return out
 
@@ -432,7 +453,7 @@ def _tell_result(frame: Frame, values: dict, ic: ItemCell, t, templates=None, co
             read = "" if val is None else str(val)
             src = "any"
         if want:
-            score = text_match_score(want, read, mode=t.match, included=t.included,
+            score = text_match_score(want, read, mode=t.match,
                                      case_sensitive=t.case_sensitive, min_chars=t.min_chars, strip=t.strip)
             return {"id": t.id, "kind": t.kind.value, "field": t.field,
                     "score": round(float(score), 3), "threshold": t.threshold,
@@ -444,6 +465,12 @@ def _tell_result(frame: Frame, values: dict, ic: ItemCell, t, templates=None, co
                 "score": score, "threshold": None, "pass": ok, "detail": f"{src}={read!r}"}
     fb = FractionBox(ic.ox + t.box.x * ic.iw, ic.oy + t.box.y * ic.ih,
                      t.box.w * ic.iw, t.box.h * ic.ih)
+    # template tells match a SAVED sub-image: grow the live crop by ``margin`` per side so
+    # matchTemplate can slide to the icon even when the located cell drifts a few px (the saved
+    # template stays the exact box, so a bigger crop = more search slack, not a scale change).
+    m = getattr(t, "margin", 0.0) or 0.0
+    if t.kind is TellKind.template and m > 0:
+        fb = _expand_box(fb, m)
     tmpl = templates.get(t.id) if templates else None
     score = telldet.visual_score(t, _crop(frame, fb), tmpl)
     return {"id": t.id, "kind": t.kind.value, "field": None,
@@ -510,3 +537,37 @@ def valid_cell(frame: Frame, window: WindowDef, values: dict, ic: ItemCell, temp
     ``tell_reads`` carries the OCR of fieldless text tells' own boxes."""
     return all(r["pass"] for r in cell_results(frame, values, ic, templates, confs=confs,
                                                fields=fields, tell_reads=tell_reads))
+
+
+def item_templates(windows, load_cutout) -> dict:
+    """Reference images for every ``template`` tell across ``windows``: ``{tell_id: crop}``.
+
+    A ``template`` tell scores by matching a saved sub-image inside the cell. That sub-image
+    is the tell's own box on the item's frozen cutout — so the reference is built here by
+    cropping the cutout at the SAME cell-relative→cutout-fraction mapping the reader uses
+    (:meth:`RegionReader.read_cutout`), guaranteeing a self-match of ~1.0 and that the
+    reference is never larger than the runtime crop (which would force ``matchTemplate`` to 0).
+
+    ``load_cutout(name)`` returns the cutout image (BGR ndarray) or None. A template tell whose
+    item has no cutout, or whose box falls outside it, is skipped — it scores 0 (correctly
+    absent, never silently wrong). Without this dict, EVERY template tell scores 0."""
+    out: dict = {}
+    for w in windows:
+        for it in (w.items or []):
+            tmpls = [t for t in it.tells if t.kind is TellKind.template]
+            cb, ib = it.cutout_box, it.box
+            if not (tmpls and it.cutout and cb and cb.w > 0 and cb.h > 0 and ib.w > 0 and ib.h > 0):
+                continue
+            img = load_cutout(it.cutout)
+            if img is None:
+                continue
+            ch, cw = img.shape[:2]
+            iw, ih = ib.w / cb.w, ib.h / cb.h          # cell size in cutout fractions
+            ox, oy = (ib.x - cb.x) / cb.w, (ib.y - cb.y) / cb.h
+            for t in tmpls:
+                fb = FractionBox(ox + t.box.x * iw, oy + t.box.y * ih, t.box.w * iw, t.box.h * ih)
+                pb = fb.to_pixels(cw, ch)
+                crop = img[pb.y : pb.y + pb.h, pb.x : pb.x + pb.w]
+                if crop.size and crop.shape[0] >= 2 and crop.shape[1] >= 2:
+                    out[t.id] = crop.copy()
+    return out

@@ -4,6 +4,7 @@ Each tell is tested in a pixel crop of a cell-relative region:
 
   * ``filled``   — variance/edge energy in the crop (an icon vs an empty gap);
   * ``color``    — fraction of pixels near a taught colour;
+  * ``border``   — like ``color`` but only on the box's perimeter band (a frame/outline);
   * ``template`` — best normalised match of a saved sub-image;
   * ``text``     — handled by the reader (a field's OCR read must be non-empty).
 
@@ -37,19 +38,52 @@ def filled_score(crop: np.ndarray) -> float:
     return float(min(1.0, gray.std() / 64.0))
 
 
-def color_score(crop: np.ndarray, hex_color: str | None, tolerance: int) -> float:
+def _color_mask(crop: np.ndarray, hex_color: str | None, tolerance: int) -> np.ndarray | None:
+    """Boolean mask of pixels within ``tolerance`` BGR distance of ``hex_color`` — the
+    shared colour-presence primitive both ``color`` (whole fill) and ``border`` (perimeter
+    band only) score on. None when there's nothing to test."""
     if crop is None or crop.size == 0 or not hex_color:
-        return 0.0
+        return None
     bgr = np.array(hex_to_bgr(hex_color), dtype=np.float32)
     dist = np.linalg.norm(crop.astype(np.float32) - bgr, axis=2)
-    return float((dist < tolerance).mean())
+    return dist < tolerance
+
+
+def color_score(crop: np.ndarray, hex_color: str | None, tolerance: int) -> float:
+    near = _color_mask(crop, hex_color, tolerance)
+    return float(near.mean()) if near is not None else 0.0
+
+
+def border_score(crop: np.ndarray, hex_color: str | None, tolerance: int, width: float) -> float:
+    """Colour presence on the box's PERIMETER band only (a rarity frame, a selection
+    outline), not its fill. ``width`` is the band thickness as a fraction of the box's
+    shorter side; the score is the share of near-colour pixels within that ring."""
+    near = _color_mask(crop, hex_color, tolerance)
+    if near is None:
+        return 0.0
+    h, w = near.shape
+    band = max(1, int(round((width or 0.0) * min(h, w))))
+    if band * 2 >= min(h, w):     # band swallows the whole box -> it's just a color tell
+        return float(near.mean())
+    ring = np.zeros((h, w), dtype=bool)
+    ring[:band, :] = ring[-band:, :] = ring[:, :band] = ring[:, -band:] = True
+    return float(near[ring].mean())
 
 
 def template_score(crop: np.ndarray, template: np.ndarray | None) -> float:
     if crop is None or template is None or crop.size == 0 or template.size == 0:
         return 0.0
-    if crop.shape[0] < template.shape[0] or crop.shape[1] < template.shape[1]:
-        return 0.0
+    ch, cw = crop.shape[:2]
+    th, tw = template.shape[:2]
+    # matchTemplate requires template <= crop. Rows here are OCR-located (not a fixed grid),
+    # so a located cell is a few px smaller/larger than the authoring cutout frame-to-frame.
+    # A template authored a hair larger than the live crop would otherwise hard-fail to 0
+    # (the old guard) — making the tell flicker. Shrink the template to fit (aspect-preserving)
+    # instead of dropping the read, so the match degrades gracefully rather than vanishing.
+    if th > ch or tw > cw:
+        scale = min(ch / th, cw / tw)
+        nw, nh = max(1, int(tw * scale)), max(1, int(th * scale))
+        template = cv2.resize(template, (nw, nh), interpolation=cv2.INTER_AREA)
     res = cv2.matchTemplate(crop, template, cv2.TM_CCOEFF_NORMED)
     return float(res.max())
 
@@ -70,6 +104,8 @@ def visual_score(tell: Tell, crop: np.ndarray, template: np.ndarray | None = Non
         return filled_score(crop)
     if tell.kind is TellKind.color:
         return color_score(crop, tell.color, tell.tolerance)
+    if tell.kind is TellKind.border:
+        return border_score(crop, tell.color, tell.tolerance, tell.width)
     if tell.kind is TellKind.template:
         return template_score(crop, template)
     if tell.kind is TellKind.diamonds:

@@ -46,6 +46,8 @@ from ..types import Frame, FractionBox, PixelBox
 from ..capture.mss_backend import MssCaptureBackend
 from ..ocr.serialize import ocr_job
 from ..window.input import scroll_window
+from . import settle
+from .items import item_templates
 from .reader import RegionReader
 
 
@@ -73,10 +75,6 @@ def _sig(image: np.ndarray) -> int:
     return hash(image[::sy, ::sx].tobytes())
 
 
-_THUMB = 48          # frame thumbnail side for the perceptual diff
-_THUMB_TOL = 16      # per-cell brightness delta that counts as "changed"
-_THUMB_MIN_CELLS = 10  # below this many changed cells -> nothing real moved (cursor/noise)
-
 # Auto-scroll: while recording, nudge the game's list down once the view settles so the
 # user needn't scroll by hand. A kept frame means the last nudge surfaced new content; a
 # settled view with nothing new means the nudge did nothing. Give up after this many
@@ -84,21 +82,6 @@ _THUMB_MIN_CELLS = 10  # below this many changed cells -> nothing real moved (cu
 # flag — recording continues, and the user can re-enable it if it stopped too early.
 _AUTOSCROLL_CLICKS = 1       # wheel notches per nudge (small step keeps cross-scroll overlap)
 _AUTOSCROLL_GIVE_UP = 3      # barren nudges in a row -> pause recording (list end reached)
-
-# Drop the bottom strip before the staleness diff: the game's perf/FPS overlay lives there
-# and ticks every frame, which would defeat the "two identical grabs" settle test. Only the
-# thumbnail is cropped — the SAVED frame stays full so region fractions are unaffected.
-_STALE_CROP_PX = 50
-
-
-def _thumb(image: np.ndarray) -> np.ndarray:
-    gray = image.max(axis=2) if image.ndim == 3 else image
-    return cv2.resize(gray, (_THUMB, _THUMB), interpolation=cv2.INTER_AREA)
-
-
-def _changed_cells(a: np.ndarray, b: np.ndarray) -> int:
-    return int((cv2.absdiff(a, b) > _THUMB_TOL).sum())
-
 
 def _detect_boxes(profile: GameProfile) -> list[FractionBox]:
     """Every region used for window/state detection — detectors on windows and states."""
@@ -267,7 +250,10 @@ class PrecaptureSession:
         pooled, dict_map = build_dictionaries(profile, eng.corrector)
         resolver = FieldResolver(self._lexicon, eng.corrector, self._tuning.accept_confidence,
                                  confusions=self._confusions, dictionary=pooled, dictionaries=dict_map)
-        self._reader = RegionReader(eng.ocr, resolver)
+        from ..web import captures_store
+        templates = item_templates(profile.windows,
+                                   captures_store.cutout_loader(eng.settings.captures_dir, profile.name))
+        self._reader = RegionReader(eng.ocr, resolver, templates)
         self._detect_fracs = _detect_boxes(profile)
         self._key_maps = {}
 
@@ -608,10 +594,9 @@ class PrecaptureSession:
                 frame = self._grab_frame(win, fg)   # mss when on top, else PrintWindow's own surface
                 img = frame.image
                 # crop the perf-overlay strip off the bottom for the staleness diff only
-                stale_src = img[: img.shape[0] - _STALE_CROP_PX] if img.shape[0] > _STALE_CROP_PX else img
-                thumb = _thumb(stale_src)
-                settled = prev_thumb is not None and _changed_cells(thumb, prev_thumb) < _THUMB_MIN_CELLS
-                new_view = saved_thumb is None or _changed_cells(thumb, saved_thumb) >= _THUMB_MIN_CELLS
+                thumb = settle.thumb(img, crop_px=settle.CROP_PX)
+                settled = settle.is_settled(thumb, prev_thumb)
+                new_view = saved_thumb is None or settle.changed_cells(thumb, saved_thumb) >= settle.MIN_CELLS
                 # Live-adopt the on-screen window's auto-scroll config: only on a SETTLED view
                 # (never mid-animation) and only re-classify when the detect anchors changed
                 # (a scroll keeps them fixed, so this stays cheap). Lets recording begin off the

@@ -401,9 +401,12 @@ export class Overlay {
                 ctx.fillRect(b.x * W, b.y * H, b.w * W, b.h * H);
             }
             ctx.strokeRect(b.x * W, b.y * H, b.w * W, b.h * H);
+            if (b.border) this._borderBand(b, W, H);   // a 'border' tell: tint the sampled perimeter band
+            if (b.searchMargin) this._searchRegion(b, W, H, u, color);   // a 'template' tell: dashed slide region
             let label = b.label || b.id || b.role;
             if (st) label += `  ${st.matched ? "✓" : "✗"}${st.score != null ? ` ${Math.round(st.score * 100)}%` : ""}`;
             this._label(label, b.x * W, b.y * H, color, labelFs);
+            this._alignArrow(b, W, H, u, color);   // anchor snap point (align x/y) drawn, not written
             if (isActive && !this.op) this._drawHandles(b, W, H, u);   // hide handles while dragging
         }
 
@@ -438,6 +441,34 @@ export class Overlay {
             ctx.strokeRect(x * W, y * H, Math.abs(this.op.x1 - this.op.x0) * W, Math.abs(this.op.y1 - this.op.y0) * H);
             ctx.setLineDash([]);
         }
+    }
+
+    // Draw the box's anchor snap point (where the located cell pins to the OCR line) as an
+    // arrow instead of writing "·bottom" in the label: a shaft from the box centre to the
+    // edge/corner picked by alignX (left/center/right) × align (top/center/bottom), with a
+    // head at that point. A centre×centre anchor has no direction, so it's a dot. Boxes that
+    // carry no align (the cell bbox, plain fields) draw nothing.
+    _alignArrow(b, W, H, u, color) {
+        if (!b.align && !b.alignX) return;
+        const fx = b.alignX === "left" ? 0 : b.alignX === "right" ? 1 : 0.5;
+        const fy = b.align === "top" ? 0 : b.align === "bottom" ? 1 : 0.5;
+        const ctx = this.ctx;
+        const cx = (b.x + b.w / 2) * W, cy = (b.y + b.h / 2) * H;
+        const tx = (b.x + fx * b.w) * W, ty = (b.y + fy * b.h) * H;
+        ctx.save();
+        ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineWidth = 1.6 * u; ctx.setLineDash([]);
+        if (fx === 0.5 && fy === 0.5) {            // anchor = box centre: a dot, no direction
+            ctx.beginPath(); ctx.arc(cx, cy, 3 * u, 0, Math.PI * 2); ctx.fill();
+            ctx.restore(); return;
+        }
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(tx, ty); ctx.stroke();   // shaft
+        const ang = Math.atan2(ty - cy, tx - cx), hl = 7 * u, ha = 0.5;          // arrowhead at the snap point
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(tx - hl * Math.cos(ang - ha), ty - hl * Math.sin(ang - ha));
+        ctx.lineTo(tx - hl * Math.cos(ang + ha), ty - hl * Math.sin(ang + ha));
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
     }
 
     // ``fs`` is the font size in backing px (content-scaled, capped — see lfs). Drawn at
@@ -479,6 +510,49 @@ export class Overlay {
         ctx.fillText(text, cx, cy + (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2);
         ctx.textAlign = "left";            // restore defaults for the other label paths
         ctx.textBaseline = "bottom";
+    }
+
+    // A 'border' tell samples only the box's PERIMETER band (thickness = width × shorter side),
+    // not its fill. Show exactly that: a faint full-box wash + a stronger fill on the ring that's
+    // actually checked, both in the taught colour — so the user sees where the colour must ride.
+    _borderBand(b, W, H) {
+        const ctx = this.ctx;
+        const x = b.x * W, y = b.y * H, bw = b.w * W, bh = b.h * H;
+        const t = Math.max(1, (b.border.width || 0) * Math.min(bw, bh));   // band px (mirrors border_score)
+        const [r, g, bl] = this._hexRgb(b.border.color);
+        ctx.save();
+        ctx.fillStyle = `rgba(${r},${g},${bl},0.14)`;         // faint wash over the ignored fill
+        ctx.fillRect(x, y, bw, bh);
+        ctx.fillStyle = `rgba(${r},${g},${bl},0.45)`;         // the sampled ring, drawn as 4 bands
+        if (t * 2 >= Math.min(bw, bh)) { ctx.fillRect(x, y, bw, bh); }   // band swallows the box -> whole fill
+        else {
+            ctx.fillRect(x, y, bw, t);                 // top
+            ctx.fillRect(x, y + bh - t, bw, t);        // bottom
+            ctx.fillRect(x, y + t, t, bh - 2 * t);     // left
+            ctx.fillRect(x + bw - t, y + t, t, bh - 2 * t);   // right
+        }
+        ctx.restore();
+    }
+
+    // A 'template' tell grows its crop by `searchMargin` (fraction of the box, per side) so the
+    // saved sub-image can SLIDE to absorb a few px of cell-location drift. Show that slide region
+    // as a faint dashed rect around the solid tell box — clamped to the image like the reader does.
+    _searchRegion(b, W, H, u, color) {
+        const m = b.searchMargin;
+        const x0 = Math.max(0, b.x - b.w * m), y0 = Math.max(0, b.y - b.h * m);
+        const x1 = Math.min(1, b.x + b.w * (1 + m)), y1 = Math.min(1, b.y + b.h * (1 + m));
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.strokeStyle = color; ctx.globalAlpha = 0.55; ctx.lineWidth = 1 * u;
+        ctx.setLineDash([4 * u, 3 * u]);
+        ctx.strokeRect(x0 * W, y0 * H, (x1 - x0) * W, (y1 - y0) * H);
+        ctx.restore();
+    }
+
+    _hexRgb(hex) {
+        const h = String(hex || "#ffcc00").replace("#", "");
+        const s = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+        return [parseInt(s.slice(0, 2), 16) || 0, parseInt(s.slice(2, 4), 16) || 0, parseInt(s.slice(4, 6), 16) || 0];
     }
 
     _drawHandles(b, W, H, u) {

@@ -89,23 +89,26 @@ def test_columns_found_from_content_ignore_margins():
     assert xs == [0.35, 0.60]   # on content, not da.x (0.2) + pitch
 
 
-def test_align_x_center_anchors_on_cell_not_locator_box():
-    # align_x is where the text sits in the CELL (centre = 0.5), NOT in the locator box. With a
-    # non-centred locator box (x=0, w=0.6 -> box centre 0.3) a centred name must still place the
-    # cell so the CELL centre lands on the text. Bug was using the box centre (0.3) -> shifted.
+def test_align_x_center_lands_locator_box_on_content():
+    # align_x re-lands the LOCATOR FIELD'S OWN box on the line it located — its text IS that
+    # line, so the read box must sit on it (the horizontal twin of align, which already re-lands
+    # the box's vertical edge). With a non-centred locator box (x=0, w=0.6 -> box centre 0.3) a
+    # centred name places the cell so the BOX centre lands on the text. (Old behaviour pinned the
+    # CELL centre instead, leaving every read a constant fraction off the text -> visible drift.)
     item = ItemDef(id="it", box=Box(x=0.0, y=0.0, w=0.2, h=0.25), align="bottom", align_x="center",
                    fields=[RegionDef(id="name", box=Box(x=0.0, y=0.6, w=0.6, h=0.3), field="name", tell=True)])
     win = WindowDef(id="w", fields=[FieldDef(id="name")], static_grid=False,
                     data_area=Box(x=0.0, y=0.0, w=1.0, h=1.0), items=[item])
-    # two columns of CENTRED names at cell-centres 0.30 and 0.60 (cx; lx=cx-0.05, lw=0.10)
+    # two columns of names centred at 0.30 and 0.60 (cx; lx=cx-0.05, lw=0.10)
     lines = []
     for cy in (0.25, 0.55):
         lines.append((0.30, cy, 0.05, "Alpha Relic", 0.95, 0.25, 0.10))
         lines.append((0.60, cy, 0.05, "Bravo Relic", 0.95, 0.55, 0.10))
     frame = Frame(image=np.zeros((1000, 1000, 3), dtype=np.uint8), client=PixelBox(0, 0, 1000, 1000))
     cells = locate_item_cells(frame, win, lines)
-    centers = sorted({round(ic.ox + ic.iw / 2, 2) for ic in cells})
-    assert centers == [0.30, 0.60]   # CELL centre on the text centre, not box-centre-shifted
+    nb = item.fields[0].box                      # locator box centre = x + w/2 = 0.3 of the cell
+    box_centers = sorted({round(ic.ox + (nb.x + nb.w / 2) * ic.iw, 2) for ic in cells})
+    assert box_centers == [0.30, 0.60]           # the locator field's box re-lands on its text
 
 
 def test_grid_drift_zero_when_cells_land_on_content():

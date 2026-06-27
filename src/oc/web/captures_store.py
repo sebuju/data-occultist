@@ -99,6 +99,18 @@ def cutout_path(captures_dir: Path | str, game: str, name: str) -> Path | None:
     return p if p.exists() else None
 
 
+def cutout_loader(captures_dir: Path | str, game: str):
+    """Return ``name -> BGR ndarray | None`` for a game's frozen item cutouts — the loader
+    that feeds template tells their reference sub-image (see ``items.item_templates``)."""
+    import cv2
+
+    def load(name: str):
+        p = cutout_path(captures_dir, game, name)
+        return cv2.imread(str(p)) if p else None
+
+    return load
+
+
 # ---- per-window stash bindings (which stash a window opens with) ----------
 
 def _bindings_path(captures_dir: Path | str, game: str) -> Path:
