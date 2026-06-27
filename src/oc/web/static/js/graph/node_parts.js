@@ -104,8 +104,10 @@ const optSel = (val, opts, cls, props = {}) =>
 // detector's polarity (require present / require absent), with a LIVE per-row verdict and
 // an overall pass/fail for the current image. The detect NODE still edits each detector's
 // text/threshold; this section edits only the window-level match POLICY. Statuses
-// (`.wd-status`, `.wd-verdict`) are filled live by setWindowDetectStatus (reconciled in place,
-// never rebuilt per tick) and hold blank until the first detect pass returns.
+// (`.wd-status`, `.wd-verdict`, `.wd-collide`) are filled live by setWindowDetectStatus
+// (reconciled in place, never rebuilt per tick) and hold blank until the first detect pass
+// returns. `.wd-collide` is the cross-window verdict (does this window WIN classify, or does a
+// sibling also match / steal the tie-break) — sourced from the whole-profile collision check.
 export function windowDetects(w) {
     const dets = w.detect || [];
     if (!dets.length) return null;
@@ -131,7 +133,8 @@ export function windowDetects(w) {
             h("span", { class: "wd-status" }, "pass"),
             h("span", { class: "wd-req-h" }, "require")),
         rows,
-        h("div", { class: "wd-verdict muted", title: "whether the current capture would be recognised as this window with the settings above" }));
+        h("div", { class: "wd-verdict muted", title: "whether the current capture would be recognised as this window with the settings above" }),
+        h("div", { class: "wd-collide", title: "cross-window: detection picks ONE winner across all windows — does this window actually win, or does a sibling also match / steal it" }));
 }
 
 // Item templates listed in PRIORITY order, HIGHEST first — the top row wins when cells
@@ -195,7 +198,7 @@ export function fieldConfigBody(fd, cls, fid) {
     const hasDicts = (model.profile.dictionaries || []).length;
     return frag(
         h("div", { class: "fgrp" }, "read"),
-        h("label", { class: "flab", title: "read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. drain '8' read as '81')" },
+        h("label", { class: "flab", title: "read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. an '8' read as '81')" },
             "isolate ", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate })),
         h("label", { class: "flab" }, "type ",
             h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, t)))),
@@ -240,7 +243,7 @@ export function itemFieldParts(n) {
             "tell ", h("input", { type: "checkbox", class: "itell", dataset: { fid: f.id }, checked: !!f.tell })),
         f.tell && h("label", { class: "flab", title: "minimum OCR confidence the read must reach (0 = any)" },
             "tell conf ", h("input", { type: "number", class: "itellconf", dataset: { fid: f.id }, step: "0.05", min: "0", max: "1", value: f.tell_conf ?? 0 })),
-        (f.tell && fd.type === "number") && h("label", { class: "flab", title: "pass the tell even when the read carries text (e.g. a polarity glyph), not only a clean number" },
+        (f.tell && fd.type === "number") && h("label", { class: "flab", title: "pass the tell even when the read carries text (e.g. a unit symbol or glyph), not only a clean number" },
             "allow text ", h("input", { type: "checkbox", class: "itelltext", dataset: { fid: f.id }, checked: !!f.tell_allow_text })),
         h("label", { class: "flab", title: "use this field to LOCATE rows (anchor the grid) — independent of tell; a reliable text field (e.g. the name) can locate without being a tell" },
             "locate ", h("input", { type: "checkbox", class: "iloc", dataset: { fid: f.id }, checked: !!f.locate })),
@@ -263,7 +266,6 @@ export function itemTellParts(n) {
     const tset = (k, opts, cur, def) => h("select", { class: "tset", dataset: { k } },
         opts.map((v) => h("option", { value: v, selected: (cur ?? def) === v }, v)));
     const body = frag(
-        h("label", { class: "flab", title: "what this tell checks" }, "kind ", h("span", { class: "tt-kind" }, t.kind)),
         t.kind === "text" && frag(
             h("label", { class: "flab", title: "which field's read this tell checks. Leave blank (—) to check ANY column's read — the tell isn't tied to one field." },
                 "checks ", h("select", { class: "tset", dataset: { k: "field" } }, _colOpts((it.fields || []).map((f) => f.field), t.field))),
@@ -272,16 +274,18 @@ export function itemTellParts(n) {
             (t.text || "").trim() && frag(
                 h("label", { class: "flab", title: "how text is compared: partial=substring (loose); full=whole-string; exact=equal; prefix=starts-with" },
                     "mode ", tset("match", ["partial", "full", "exact", "prefix"], t.match, "partial")),
-                ["partial", "prefix"].includes(t.match ?? "partial") && h("label", { class: "flab", title: "match if the read word is included in this text (instead of the text in the read)" },
-                    "read ⊆ text ", h("input", { type: "checkbox", class: "tset", dataset: { k: "incl" }, checked: !!t.included })),
                 h("label", { class: "flab", title: "hard floor: reads shorter than this never match (kills tiny-blob false hits)" },
                     "min chars ", h("input", { type: "number", class: "tset", dataset: { k: "minchars" }, step: "1", min: "0", value: t.min_chars ?? 0 })),
                 h("label", { class: "flab", title: "what to ignore before comparing" },
                     "strip ", tset("strip", ["alnum", "spaces", "none"], t.strip, "alnum")),
                 h("label", { class: "flab", title: "off = fold case before comparing" },
                     "case sensitive ", h("input", { type: "checkbox", class: "tset", dataset: { k: "case" }, checked: !!t.case_sensitive })))),
-        t.kind === "color" && h("label", { class: "flab", title: "the colour that must be present in the tell box" },
+        (t.kind === "color" || t.kind === "border") && h("label", { class: "flab", title: t.kind === "border" ? "the colour that must ride the box's perimeter band" : "the colour that must be present in the tell box" },
             "colour ", h("input", { type: "color", class: "tset", dataset: { k: "color" }, value: t.color || "#ffcc00" })),
+        t.kind === "border" && h("label", { class: "flab", title: "thickness of the sampled perimeter band, as a fraction (0..1) of the box's shorter side. Only this ring is checked for the colour; the fill is ignored." },
+            "width ", h("input", { type: "number", class: "tset", dataset: { k: "width" }, step: "0.02", min: "0", max: "0.5", value: t.width ?? 0.2 })),
+        t.kind === "template" && h("div", { class: "tt-ref", title: "the saved sub-image this tell matches — the tell box cropped from the item's frozen cutout" },
+            it.cutout ? h("canvas", { class: "tt-ref-canvas" }) : h("div", { class: "muted" }, "no cutout yet")),
         h("label", { class: "flab", title: t.kind === "text" ? "pass score (0..1) the read-vs-text match must reach (when text is set)" : "pass score (0..1) the tell must reach" },
             "threshold ", h("input", { type: "number", class: "tset", dataset: { k: "threshold" }, step: "0.05", min: "0", max: "1", value: t.threshold ?? 0.5 })),
         !staticOn && h("label", { class: "flab", title: "use this tell to LOCATE rows (anchor the grid) — only one tell per item locates" },
@@ -427,8 +431,6 @@ export function nodeParts(n) {
                         h("option", { value: "full", selected: a.match === "full" }, "full"),
                         h("option", { value: "exact", selected: a.match === "exact" }, "exact"),
                         h("option", { value: "prefix", selected: a.match === "prefix" }, "prefix"))),
-                ["partial", "prefix"].includes(a.match ?? "partial") && h("label", { class: "flab" },
-                    "read ⊆ text ", h("input", { type: "checkbox", class: "aset", dataset: { k: "incl" }, checked: !!a.included, title: "match if the read word is included in this text (instead of the text in the read)" })),
                 h("label", { class: "flab" }, "threshold ",
                     h("input", { type: "number", class: "aset", dataset: { k: "thr" }, step: "0.05", min: "0", max: "1", value: a.threshold ?? 0.8 })),
                 h("label", { class: "flab", title: "hard floor: reads shorter than this never match (kills tiny-blob false hits)" },
@@ -549,6 +551,9 @@ export function nodeParts(n) {
     const bm = model.datasetBatchMode(ds);
     const batchOpts = [["run", "per run"], ["detection", "per detection"]]
         .map(([v, l]) => h("option", { value: v, selected: bm === v }, l));
+    const sm = model.datasetSyncMode(ds);
+    const syncOpts = [["accumulate", "accumulate"], ["mirror", "mirror (sync removals)"]]
+        .map(([v, l]) => h("option", { value: v, selected: sm === v }, l));
     return {
         title: h("input", { class: "gi gi-id dsrename", value: ds, title: "dataset name" }),
         head: satToggleBtn(`vt:ds:${ds}`, "vttable"),
@@ -557,7 +562,9 @@ export function nodeParts(n) {
                 "1 → many",
                 h("select", { class: "dskey", title: "the key the dataset collapses many reads on (or none)" }, keyOpts),
                 "batch",
-                h("select", { class: "dsbatch", title: "how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like relic offerings)" }, batchOpts)),
+                h("select", { class: "dsbatch", title: "how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like a timed offer / pop-up)" }, batchOpts),
+                "sync",
+                h("select", { class: "dssync", title: "accumulate: only add/update. mirror: keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)." }, syncOpts)),
             h("div", { class: "gn-foot" },
                 h("button", { class: "dsclone" }, "clone"),
                 h("button", { class: "dsclear danger" }, "clear data"))),

@@ -18,10 +18,12 @@ import {
     registerOverlay, unregisterOverlay, overlaySelected, selectedNodeId, setSelectedNodeId,
     placeNewNode, refreshLive, persistBox, syncCellSize, itemChanged,
     addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom, showSatellite,
+    refreshItemTemplateRefs,
 } from "./main.js";
 import { panZoomTo } from "./camera.js";
 import { keyPrevNode } from "./node_parts.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
+import { verdictBadge } from "./collisions.js";
 
 // ---- window image / region drawing (in-graph) -----------------------------
 
@@ -35,8 +37,9 @@ const ITEM_KINDS = [
     ["filled", "filled", "▩", "Draw a 'filled' tell — the cell counts as an item only if this box has visual content (edges/variance above the floor)."],
     ["text", "text", "T", "Draw a 'text' tell — the cell counts only if OCR reads here: bind a field (or leave blank for any column), and optionally require the read to match a literal."],
     ["color", "color", "◐", "Draw a 'colour' tell — the cell counts only if a taught colour is present in this box."],
+    ["border", "border", "▭", "Draw a 'border' tell — like colour, but the taught colour must ride the box's PERIMETER band (a rarity frame / selection outline), not its fill."],
     ["template", "template", "⧉", "Draw a 'template' tell — the cell counts only if a saved sub-image matches in this box."],
-    ["diamonds", "diamonds", "◆", "Draw a 'diamonds' tell — the cell counts only if a rank-diamond strip (◇/◆) is present (e.g. arcanes)."],
+    ["diamonds", "diamonds", "◆", "Draw a 'diamonds' tell — the cell counts only if a rank-diamond strip (◇/◆) is present (e.g. a rank-pip row)."],
 ];
 
 // A window's bound image pages + which one the canvas currently shows.
@@ -273,6 +276,7 @@ function openItemImage(winId, itemId) {
                 await placeNewNode(`fld:${winId}:${itemId}:${fid}`, "itemfield", `item:${winId}:${itemId}`);
                 render();
                 addFieldToItemGroup(winId, itemId, fid);
+                rebuildNode(`item:${winId}:${itemId}`);   // refresh the item node's fields summary (render keeps existing bodies)
                 groups.renderGroups();
                 refreshItemBoxes(winId, itemId); refreshImageBoxes(winId);
                 clearGrid(winId); scheduleItemRead(winId, itemId); autosave(winId);
@@ -289,6 +293,7 @@ function openItemImage(winId, itemId) {
             await placeNewNode(`tell:${winId}:${itemId}:${tid}`, "itemtell", `item:${winId}:${itemId}`);
             render();
             addTellToItemGroup(winId, itemId, tid);
+            rebuildNode(`item:${winId}:${itemId}`);   // refresh the item node's tells summary (render keeps existing bodies)
             groups.renderGroups();
             refreshItemBoxes(winId, itemId); refreshImageBoxes(winId);
             clearGrid(winId); scheduleItemRead(winId, itemId); autosave(winId);
@@ -300,6 +305,10 @@ function openItemImage(winId, itemId) {
             else if (box.role === "field") model.setItemFieldBox(winId, itemId, box.id, win2rel(w));
             else model.setItemTellBox(winId, itemId, box.id, win2rel(w));
             itemChanged(winId, itemId);              // box moved/resized — no DOM rebuild
+            // a moved cell (remaps every tell) or a moved template tell shifts the crop region —
+            // redraw the live reference preview on each affected template tell node
+            if (box.role === "bbox" || model.itemTell(winId, itemId, box.id)?.kind === "template")
+                refreshItemTemplateRefs(winId, itemId);
             if (box.role === "bbox") syncCellSize(winId, itemId);   // reflect new cell size in the inputs
         },
         onSelect: (id) => overlaySelected(`item:${winId}:${itemId}`, id),
@@ -347,20 +356,33 @@ function refreshItemBoxes(winId, itemId) {
     };
     const boxes = [{ id: "__bbox", role: "bbox", ...ent.win2cut(it.box) }];   // the tiling cell
     // label fields/tells with their role so the cutout shows what each box does: a field
-    // flagged tell shows "⊙tell" + its align; a locating tell shows "loc" + align. After a
-    // read, a tell/field-tell box also shows ✓/✗ for whether it passed.
+    // flagged tell shows "⊙tell"; a locating tell shows "loc". Their anchor (align x/y) is
+    // drawn as an arrow on the box (see Overlay._alignArrow), not written in the label. After
+    // a read, a tell/field-tell box also shows ✓/✗ for whether it passed.
     for (const f of it.fields || []) {
         if (f.enabled === false) continue;   // disabled fields aren't read -> don't draw them
-        const al = f.align || it.align || "center";
-        const label = `${f.id}${f.tell ? ` ⊙tell·${al}${mark(f.id)}` : ""}`;
-        boxes.push({ id: f.id, label, role: "field", field: f.field, ...ent.win2cut(ent.rel2win(f.box)) });
+        const label = `${f.id}${f.tell ? ` ⊙tell${mark(f.id)}` : ""}`;
+        const box = { id: f.id, label, role: "field", field: f.field, ...ent.win2cut(ent.rel2win(f.box)) };
+        if (f.tell) {   // a field-tell anchors the located cell -> draw its snap point (align x/y)
+            box.align = f.align || it.align || "center";
+            box.alignX = f.align_x || it.align_x || "center";
+        }
+        boxes.push(box);
     }
     // static grid tiles rows from the cell — OCR row-location is unused, so don't advertise "loc"
     const staticOn = model.window(winId)?.static_grid !== false;
     for (const t of it.tells || []) {
-        const al = t.align || it.align || "center";
-        const label = `${t.id}${(t.locate && !staticOn) ? ` loc·${al}` : ""}${mark(t.id)}`;
-        boxes.push({ id: t.id, label, role: t.kind === "text" ? "detect" : "scrollbar", ...ent.win2cut(ent.rel2win(t.box)) });
+        const loc = t.locate && !staticOn;
+        const label = `${t.id}${loc ? " loc" : ""}${mark(t.id)}`;
+        const box = { id: t.id, label, role: t.kind === "text" ? "detect" : "scrollbar", ...ent.win2cut(ent.rel2win(t.box)) };
+        if (t.kind === "border") {   // draw the sampled perimeter band (semi-transparent) in the taught colour
+            box.border = { width: t.width ?? 0.2, color: t.color || "#ffcc00" };
+        }
+        if (loc) {   // a locating tell anchors the cell -> draw its snap point (align x/y) as an arrow
+            box.align = t.align || it.align || "center";
+            box.alignX = t.align_x || it.align_x || "center";
+        }
+        boxes.push(box);
     }
     ent.overlay.setBoxes(boxes);
     // the extracted field values, drawn over their boxes tinted by confidence (same as the
@@ -783,9 +805,64 @@ function setWindowDetectStatus(winId, res) {
     const verdict = el.querySelector(".wd-verdict");
     if (verdict) {
         const w = res.window;
-        if (!w) { verdict.textContent = ""; verdict.className = "wd-verdict muted"; return; }
-        verdict.textContent = w.pass ? "✓ would match this window" : "✗ would not match";
-        verdict.className = "wd-verdict " + (w.pass ? "conf-ok" : "conf-bad");
+        if (!w) { verdict.textContent = ""; verdict.className = "wd-verdict muted"; }
+        else {
+            verdict.textContent = w.pass ? "✓ would match this window" : "✗ would not match";
+            verdict.className = "wd-verdict " + (w.pass ? "conf-ok" : "conf-bad");
+        }
+    }
+    setWindowCollideStatus(winId);   // cross-window outcome (cached; cheap, sig-guarded)
+}
+
+// Detection is a cross-window contest: classify() runs EVERY window's detectors against
+// the frame and keeps one winner, so a window can match its own image yet lose to a
+// sibling. The self-match line (.wd-verdict) can't see that — this fills the .wd-collide
+// line from the whole-profile collision check so a misclassified window is obvious at
+// author time. Cached in collisionByWin, refreshed on the same trigger as detect.
+const collisionByWin = new Map();   // winId -> {window, verdict, winner, collides_with, matches}
+
+function setWindowCollideStatus(winId) {
+    const el = nodeEls.get(`win:${winId}`);
+    if (!el) return;
+    const span = el.querySelector(".wd-collide");
+    if (!span) return;
+    const entry = collisionByWin.get(winId);
+    // only rebuild the badge when the verdict actually changes (poll/detect repaints a lot)
+    const sig = entry ? `${entry.verdict}|${entry.winner || ""}|${(entry.collides_with || []).join(",")}` : "";
+    if (span.dataset.sig === sig) return;
+    span.dataset.sig = sig;
+    // nothing to add: no collision data yet, no bound image, or the window doesn't match
+    // its OWN page (the .wd-verdict line already reports that self-miss).
+    if (!entry || entry.verdict === "no_image" || entry.verdict === "self_no_match") {
+        span.replaceChildren(); span.className = "wd-collide"; span.title = ""; return;
+    }
+    const { label, cls, tip, winner } = verdictBadge(entry);   // shared verdict vocabulary
+    const others = entry.collides_with || [];
+    const parts = [label()];
+    if (winner) parts.push(` → classifies as ${winner}`);            // misclassified: a sibling wins
+    else if (entry.verdict === "collision" && others.length) parts.push(` (${others.join(", ")})`);
+    span.replaceChildren(...parts.flat());
+    span.className = "wd-collide " + cls;
+    span.title = tip;
+}
+
+// Whole-profile cross-check. OCR-heavy, so coalesce like refreshDetect: at most one in
+// flight, a single queued re-run. Repaints every open window node's collide badge.
+let collisionBusy = false;
+let collisionAgain = false;
+async function refreshCollisions() {
+    if (!model.profile.name) return;
+    if (collisionBusy) { collisionAgain = true; return; }
+    collisionBusy = true;
+    try {
+        const data = await api.detectCollisions(model.profile.name);
+        collisionByWin.clear();
+        for (const w of data.windows || []) collisionByWin.set(w.window, w);
+        for (const id of imageCanvases.keys()) setWindowCollideStatus(id);
+    } catch { /* ignore — badge just stays stale */ }
+    finally {
+        collisionBusy = false;
+        if (collisionAgain) { collisionAgain = false; refreshCollisions(); }
     }
 }
 // Scoped re-OCR: an edit to ONE window (its items/boxes/detectors) should only re-read THAT
@@ -804,6 +881,7 @@ function refreshOpenDetect(winId = null) {
             if (model.window(id)?.enabled !== false) refreshDetect(id);   // skip disabled windows
         }
         _detectPending.clear();
+        refreshCollisions();   // cross-window verdict tracks the same edits (coalesced)
     }, 700);
 }
 
