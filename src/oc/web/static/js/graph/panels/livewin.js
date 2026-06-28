@@ -168,8 +168,10 @@ function renderLiveWindow() {
     if (st && st.textContent !== stTxt) st.textContent = stTxt;
     // saved-live-image stat (touch DOM only on change)
     const ist = liveRoot.querySelector(".live-imgstat");
-    const itxt = liveImg.count ? `${liveImg.count} imgs · ${fmtBytes(liveImg.bytes)} saved` : "no live images saved";
+    const itxt = liveImg.count ? `${liveImg.count} imgs · ${fmtBytes(liveImg.bytes)}` : "";
     if (ist && ist.textContent !== itxt) ist.textContent = itxt;
+    const clrBtn = liveRoot.querySelector(".live-clear");
+    if (clrBtn) clrBtn.hidden = !liveImg.count;   // nothing saved -> hide clear
     const clr = liveRoot.querySelector(".live-clear");
     if (clr) clr.disabled = !liveImg.count;
     renderLiveWinList();
