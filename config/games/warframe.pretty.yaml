@@ -1,15 +1,16 @@
 version: 1
 theme:
   bg: '#000000'
+  border_w: 0
 pages:
 - id: main
   title: Main
   style: {}
   widgets:
   - id: tb_relic_result
-    x: 0.65
-    y: 120
-    w: clamp(500px, 50dvw, 1000px)
+    x: 0
+    y: 4
+    w: 986
     h: 120
     z: 8
     style:
@@ -58,15 +59,17 @@ pages:
       src: subset
       id: relic_rewards_price_from_stored
     anchor:
-      to: ''
+      to: hd_main
       corner: tc
-      target: tc
+      target: bc
     units:
-      x: dvw
-      w: calc
+      x: px
+      w: px
+      y: px
+    matchW: hd_main
   - id: pn_sess
     x: 0
-    y: 3
+    y: 4
     w: 34.51
     h: 300
     z: 2
@@ -76,21 +79,28 @@ pages:
       radius: 4
       padding: 6
     conditions:
-      rules: []
+      rules:
+      - effect: show
+        source: activity:live
+        op: ==
+        value: '0'
+        state: both
+      visible_when: '{{activity:live}} == 0'
+      enabled_when: ''
     type: panel
     config:
       panel: precap
     anchor:
-      to: pn_tasks
-      corner: tr
-      target: br
+      to: hd_prec
+      corner: tl
+      target: bl
     units:
       w: dvw
-      y: dvh
-    matchW: tb_relic_result
+      y: px
+    matchW: game_name
   - id: pn_live
     x: 0
-    y: 3.64
+    y: 4
     w: 16.93
     h: 280
     z: 3
@@ -111,6 +121,7 @@ pages:
     units:
       w: dvw
       h: px
+      y: px
     matchW: hd_l
   - id: pn_tasks
     x: 0
@@ -134,11 +145,13 @@ pages:
       target: br
     units:
       w: dvw
+      x: px
+      y: px
     matchW: pn_live
     matchH: pn_live
   - id: hd_r
     x: 0
-    y: 3
+    y: 64
     w: 16.28
     h: 20
     z: 5
@@ -150,16 +163,17 @@ pages:
     config:
       text: Tasks
     anchor:
-      to: tb_relic_result
+      to: game_name
       corner: tr
       target: br
     units:
       w: dvw
-      y: dvh
+      y: px
+      x: px
     matchW: hd_l
   - id: hd_l
     x: 0
-    y: 3
+    y: 65
     w: 16
     h: 20
     z: 6
@@ -174,47 +188,416 @@ pages:
       text: Live
     units:
       w: dvw
-      y: dvh
+      y: px
     anchor:
-      to: tb_relic_result
+      to: game_name
       corner: tl
       target: bl
-    matchW: tb_relic_result
     matchWPct: 48
+    matchW: game_name
   - id: hd_main
     x: 0
-    y: -4
+    y: 30
     w: 240
     h: 20
     z: 7
     style: {}
     conditions:
-      rules: []
+      rules:
+      - effect: match
+        source: tb_relic_result
+        op: nonempty
+        value: ''
+        state: show
       visible_when: ''
       enabled_when: ''
     type: label
     config:
       text: Relic results
     units:
-      x: dvw
+      x: px
+      y: px
     anchor:
-      to: tb_relic_result
-      corner: bl
-      target: tl
-    matchW: tb_relic_result
-  - id: w1
-    x: 2204
-    y: 135
-    w: 240
-    h: 44
+      to: pn_live
+      corner: tl
+      target: bl
+    matchW: game_name
+  - id: game_name
+    x: 50
+    y: 100
+    w: clamp(500px, 50dvw, 1000px)
+    h: 50
     z: 8
+    style:
+      font_size: 36
+      border_w: 1
+      border_style: solid
+      border_w_top: 0
+      border_w_right: 0
+      border_w_left: 0
+      align: left
+    conditions:
+      rules: []
+    type: label
+    config:
+      text: WARFRAME
+    units:
+      w: calc
+      x: '%'
+      h: px
+    anchor:
+      to: ''
+      corner: tc
+      target: tl
+    onAllPages: true
+  - id: hd_prec
+    x: 0
+    y: 30
+    w: 240
+    h: 20
+    z: 9
+    style:
+      border_w: 0
+    conditions:
+      rules:
+      - effect: match
+        source: pn_sess
+        op: nonempty
+        value: ''
+        state: both
+      visible_when: ''
+      enabled_when: ''
+    type: label
+    config:
+      text: Precapture
+    matchW: game_name
+    anchor:
+      to: pn_live
+      corner: tl
+      target: bl
+  - id: btn_page_prime
+    x: 10
+    y: 0
+    w: 100
+    h: 40
+    z: 10
+    style:
+      align: left
+      padding: 0
+      fill: true
+      alignH: center
+    conditions:
+      rules:
+      - effect: show
+        source: ''
+        op: nonempty
+        value: ''
+      visible_when: ''
+      enabled_when: ''
+    type: button
+    config:
+      action: switch_page
+      target: ''
+      value: ''
+      page: page1
+      label: Prime Parts
+      alignH: center
+      fill: true
+    anchor:
+      to: btn_page_main
+      corner: tl
+      target: tr
+    onAllPages: true
+    matchW: btn_page_main
+    matchH: btn_page_main
+  - id: btn_page_live
+    x: 10
+    y: 0
+    w: 100
+    h: 40
+    z: 10
+    style:
+      align: left
+      padding: 0
+      fill: true
+      alignH: center
+    conditions:
+      rules:
+      - effect: show
+        source: ''
+        op: nonempty
+        value: ''
+      visible_when: ''
+      enabled_when: ''
+    type: button
+    config:
+      action: switch_page
+      target: ''
+      value: ''
+      page: page2
+      label: Live
+      alignH: center
+      fill: true
+    anchor:
+      to: btn_page_prime
+      corner: tl
+      target: tr
+    onAllPages: true
+    matchW: btn_page_main
+    matchH: btn_page_main
+- id: page1
+  title: Prime Parts
+  style: {}
+  widgets:
+  - id: btn_page_main
+    x: 0
+    y: 9
+    w: 100
+    h: 28
+    z: 11
+    style:
+      fill: true
+    conditions:
+      rules: []
+    type: button
+    config:
+      action: switch_page
+      target: ''
+      value: ''
+      page: main
+      label: Main
+      alignH: left
+      alignV: middle
+      fill: true
+    anchor:
+      to: game_name
+      corner: tl
+      target: bl
+    onAllPages: true
+  - id: w2
+    x: 0
+    y: 4
+    w: 1000
+    h: 1140
+    z: 12
+    style: {}
+    conditions:
+      rules: []
+    type: table
+    config:
+      columns:
+      - key: arcane_level
+        enabled: false
+      - key: _seq
+        enabled: false
+      - key: key
+        enabled: false
+      - key: price_median
+        enabled: false
+      - key: volume
+        enabled: false
+      - key: live_ask
+        enabled: false
+      - key: live_median
+        enabled: false
+      - key: live_sellers
+        enabled: false
+      - key: slug
+        enabled: false
+      - key: name
+        enabled: true
+        width: 35
+      - key: count
+        enabled: true
+        width: 10
+      - key: price_min
+        enabled: true
+        width: 10
+      - key: updated
+        enabled: true
+        width: 20
+      pageSize: 20
+      paging: true
+      sortField: price_min
+      sortDesc: true
+    binding:
+      src: subset
+      id: master_prime_parts
+    anchor:
+      to: w3
+      corner: tl
+      target: bl
+    matchW: game_name
+  - id: w3
+    x: 0
+    y: 65
+    w: 240
+    h: 20
+    z: 13
     style: {}
     conditions:
       rules: []
     type: label
     config:
-      text: Label
-- id: page1
-  title: Page
+      text: 'Prime parts (total: {{subset:master_prime_parts}})'
+    anchor:
+      to: game_name
+      corner: tl
+      target: bl
+- id: page2
+  title: Live
   style: {}
-  widgets: []
+  widgets:
+  - id: w1
+    x: 0
+    y: 65
+    w: 240
+    h: 20
+    z: 13
+    style: {}
+    conditions:
+      rules: []
+    type: label
+    config:
+      text: Relic results
+    anchor:
+      to: game_name
+      corner: tl
+      target: bl
+  - id: w4
+    x: 0
+    y: 4
+    w: 780
+    h: 120
+    z: 8
+    style:
+      font_size: 12
+      radius: 4
+      border_color: '#242424'
+      border_w: 0
+      padding: 0
+      opacity: 1
+    conditions:
+      rules: []
+      visible_when: ''
+      enabled_when: ''
+    type: table
+    config:
+      columns:
+      - key: slug
+        enabled: false
+      - key: _seq
+        enabled: false
+      - key: live_sellers
+        enabled: false
+      - key: live_median
+        enabled: false
+      - key: price_min
+        enabled: false
+      - key: live_ask
+        enabled: false
+      - key: volume
+        enabled: false
+      - key: price_median
+        enabled: false
+      - key: key
+        enabled: false
+      - key: updated
+        enabled: false
+      - key: name
+        enabled: true
+      - key: price
+        enabled: true
+        width: 25
+      pageSize: 4
+      sortDesc: true
+      sortField: price
+      paging: false
+    binding:
+      src: subset
+      id: relic_rewards_price_from_stored
+    anchor:
+      to: w1
+      corner: tl
+      target: bl
+    units:
+      x: px
+      w: px
+      y: px
+    matchW: game_name
+  - id: w5
+    x: 0
+    y: 235
+    w: 240
+    h: 20
+    z: 13
+    style: {}
+    conditions:
+      rules: []
+    type: label
+    config:
+      text: Best relic select
+    anchor:
+      to: game_name
+      corner: tl
+      target: bl
+  - id: w6
+    x: 0
+    y: 4
+    w: 780
+    h: 240
+    z: 8
+    style:
+      font_size: 12
+      radius: 4
+      border_color: '#242424'
+      border_w: 0
+      padding: 0
+      opacity: 1
+    conditions:
+      rules: []
+      visible_when: ''
+      enabled_when: ''
+    type: table
+    config:
+      columns:
+      - key: key
+        enabled: false
+      - key: updated
+        enabled: false
+      - key: _seq
+        enabled: false
+      - key: rarity
+        enabled: false
+      - key: price_median
+        enabled: false
+      - key: volume
+        enabled: false
+      - key: live_sellers
+        enabled: false
+      - key: live_median
+        enabled: false
+      - key: live_ask
+        enabled: false
+      - key: slug
+        enabled: false
+      - key: state
+        enabled: false
+      - key: chance
+        enabled: false
+      pageSize: 10
+      sortDesc: true
+      sortField: price_min
+      paging: false
+    binding:
+      src: subset
+      id: contents_with_price
+    anchor:
+      to: w5
+      corner: tl
+      target: bl
+    units:
+      x: px
+      w: px
+      y: px
+    matchW: game_name
