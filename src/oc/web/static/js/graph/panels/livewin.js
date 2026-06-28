@@ -285,7 +285,11 @@ function startServerCollect() {
     const game = model.profile.name;
     if (!game) return;
     liveColStatus = null;
-    api.live.start(game, liveInterval).catch((e) => setStatus(String(e.message || e)));
+    // Optimistic beat for instant "starting" feedback, then an AUTHORITATIVE beat once the server
+    // has actually started: the immediate kick races the worker and usually reads live=false, which
+    // would schedule the hub at IDLE cadence (~3s) — so activity:live-gated elements lagged badly.
+    // Requesting a beat on resolution flips them as soon as the worker is up.
+    api.live.start(game, liveInterval).then(() => hub.kick()).catch((e) => setStatus(String(e.message || e)));
     subscribeCollector();
     hub.kick();   // beat now so collection status shows immediately
 }
@@ -334,7 +338,8 @@ function stopServerCollect() {
     const done = game ? api.live.stop(game).catch((e) => log(`live stop failed: ${e.message || e}`) || null) : Promise.resolve();
     liveColStatus = null;
     refreshLiveImgStat(true);   // final count after the run stops
-    hub.kick();
+    hub.kick();                       // optimistic beat
+    done.then(() => hub.kick());      // authoritative beat once the worker is joined and live reads false
     return done;
 }
 
