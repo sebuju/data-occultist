@@ -444,10 +444,17 @@ export function createFloatWin({
         screenClamp: true, margin: GAP, bottomMargin: _botGap,   // resize stops above the log bar, not under it
         left: (v) => { if (v === undefined) return el.offsetLeft; const x = Math.max(4, v); el.style.left = `${x}px`; state.x = x; },
         snapEdge: (axis, v) => snapEdgeVal(id, axis, v),   // align resize edges to other panels
-        onSettle: () => { state.userSized = true; markSized(); stashSize(); save(); },   // manual size -> stop auto-fitting
+        // height ownership flips ONLY when the height axis actually moved — a width-only resize must
+        // leave a content-driven panel (autoFit:false, e.g. inspector) height-auto, not pin state.h.
+        // state.sized (any axis) gates the reset dot so a width-only resize still gets it.
+        onSettle: ({ w = false, h = false } = {}) => {
+            if (h) state.userSized = true;   // manual height -> stop auto-fitting
+            if (w || h) state.sized = true;
+            markSized(); stashSize(); save();
+        },
         // reset dot: drop the user's WIDTH back to the panel's preset (CSS default); height re-fits
         onReset: () => {
-            state.userSized = false;
+            state.userSized = false; state.sized = false;
             state.w = RESET_W; state.h = null;   // width -> uniform preset (300); height -> auto-fit
             el.style.width = ""; el.style.height = "";
             applySize(); markSized();
@@ -456,7 +463,7 @@ export function createFloatWin({
         },
     });
     // reset dot is shown only once the panel carries a user-set size (CSS gates on .fw-sized)
-    function markSized() { el.classList.toggle("fw-sized", !!state.userSized); }
+    function markSized() { el.classList.toggle("fw-sized", !!(state.userSized || state.sized)); }
     markSized();
 
     // CSS-resize / programmatic size changes: re-fit + persist (debounced). onResize/fitHeight
@@ -526,7 +533,7 @@ export function createFloatWin({
         if (on) {
             if (_embedHost) unembed();   // opening in the graph reclaims the body from any pretty embed
             if (reset) {
-                state.collapsed = !!_default.collapsed; state.userSized = false;
+                state.collapsed = !!_default.collapsed; state.userSized = false; state.sized = false;
                 state.w = RESET_W; state.h = null;   // width -> uniform preset (300); height -> auto-fit
                 el.style.width = ""; el.style.height = "";
             }
@@ -594,7 +601,7 @@ export function createFloatWin({
     function resetBox() {
         state.w = RESET_W; state.h = null;   // width -> uniform preset (300); height -> auto-fit
         state.collapsed = !!_default.collapsed; state.dock = _default.dock || null;
-        state.userSized = false;
+        state.userSized = false; state.sized = false;
         el.style.width = ""; el.style.height = "";
         applySize(); applyCollapsed(); markSized();
         onResize && onResize(); fitHeight();

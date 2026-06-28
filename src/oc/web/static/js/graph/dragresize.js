@@ -64,6 +64,7 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
             const startT = el.offsetTop;
             const rect = screenClamp ? el.getBoundingClientRect() : null;   // fixed-edge anchor in viewport px
             let lastW = startW, lastH = startH;
+            let movedW = false, movedH = false;   // which axes actually changed across the whole drag
             document.body.style.cursor = side === "left" ? "nesw-resize" : "nwse-resize";
             const mv = (e) => {
                 let w = Math.max(1, q(side === "left" ? startW - (e.clientX - sx) / z : startW + (e.clientX - sx) / z));
@@ -85,18 +86,20 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
                     w = Math.min(w, Math.max(1, maxW));
                     if (allowH) h = Math.min(h, Math.max(1, (window.innerHeight - bm) - rect.top));
                 }
-                // only act on a REAL size step (else snapped sub-grid moves churn resize+reroute)
-                if (w === lastW && (!allowH || h === lastH)) return;
+                // only act on a REAL size step (else snapped sub-grid moves churn resize+reroute),
+                // and write only the dimension that actually changed (don't touch the other axis)
+                const dw = w !== lastW, dh = allowH && h !== lastH;
+                if (!dw && !dh) return;
                 lastW = w; lastH = h;
-                el.style.width = `${w}px`;
-                if (allowH) el.style.height = `${h}px`;
+                if (dw) { el.style.width = `${w}px`; movedW = true; }
+                if (dh) { el.style.height = `${h}px`; movedH = true; }
                 if (side === "left") left(startL - (el.offsetWidth - startW));   // anchor right edge
                 showSizeHud(el.offsetWidth, el.offsetHeight, e.clientX, e.clientY);   // live W×H readout
                 onResize && onResize();
             };
             const up = () => {
                 document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
-                document.body.style.cursor = ""; hideSizeHud(); onSettle && onSettle();
+                document.body.style.cursor = ""; hideSizeHud(); onSettle && onSettle({ w: movedW, h: movedH });
             };
             document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
         });
