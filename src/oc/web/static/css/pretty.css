@@ -278,9 +278,9 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 /* sources token showing its live value on hover */
 .pw-src-tok.pw-src-val { background: #2a3550; color: #cfe3ff; }
 
-/* studio panels default to AUTO height (fit all their inputs); a viewport cap keeps a tall
-   one on-screen — the .fw-body then scrolls instead of overflowing. */
-#pretty-palette, #pretty-inspector, #pretty-sources, #pretty-theme { max-height: calc(100vh - 64px); }
+/* studio panels are content-height (autoFit:false); the viewport height cap that keeps a tall one
+   on-screen now lives on the shared `.floatwin` rule (floatwin.css) so EVERY panel reserves the same
+   --fw-top/--fw-bot margins — nothing pretty-specific here anymore. */
 /* body flex-BASIS auto (not the default 0): in an auto-height panel a basis-0 flex child
    collapses to 0 (no free space to grow into) — THE inspector "height resets to nothing" bug.
    With auto basis the body is its content height; when the panel hits max-height it shrinks
@@ -331,8 +331,14 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-insp-add { font-size: 11px; }
 .pw-insp-flab { flex: 1; font-size: 12px; opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pw-cond-row { flex-wrap: nowrap; }
-.pw-cond-row select { flex: 1 1 0; min-width: 0; }
+.pw-cond-row select { min-width: 0; }
+/* fixed-width selects: never grow, never shrink-clip */
+.pw-cond-row .pw-cond-effect,
+.pw-cond-row .pw-cond-state,
+.pw-cond-row .pw-cond-op { flex: 0 0 fit-content; }
+.pw-cond-row .pw-cond-grow { flex: 0 0 fit-content; }     /* the ONE select that fills remaining space */
 .pw-cond-row input[type="text"] { flex: 0 1 64px; min-width: 0; }
+.pw-cond-row .pw-cond-cur { flex: 0 0 auto; font-size: 11px; opacity: 0.6; white-space: nowrap; max-width: 64px; overflow: hidden; text-overflow: ellipsis; }
 .pw-cond-row .pw-insp-del { flex: 0 0 auto; }
 .pw-col-w { width: 48px; flex: 0 0 auto; }
 

@@ -17,33 +17,85 @@ const GAP = 8;    // padding between abutting panels — ALSO the screen-edge + 
                                     // so a panel docked to the edge sits the same distance in as a docked child.
 const RESET_W = 300;   // every panel resets to this width (uniform), whatever its default
 
-// Gap below the topbar = the same GAP, so the top margin matches the docking margin.
+// ---- usable-area reserves: the SINGLE source of every layout margin -------------------------
+// One truth for "where a floating panel may live": the topbar up top, the log bar below (its full
+// height when expanded, head strip when collapsed, nothing when slid off-screen in pretty view), a
+// GAP to the screen edges. clamp / snap / findFreeSlot / fitHeight / applySize ALL derive from
+// these — no place re-spells "innerHeight - topbar - logbar" — and they're published as CSS vars
+// so CSS-sized panels (max-height) reserve EXACTLY what the JS does.
 const _topGap = () => (document.querySelector(".topbar")?.offsetHeight || 48) + GAP;
-// Bottom margin reserves the always-visible log bar (its head strip), so a maxed/edge-snapped
-// panel never tucks under it. In pretty view the bar slides off-screen -> reserve nothing.
 const _botGap = () => {
     const lb = document.querySelector(".logbar");
-    const h = (lb && !document.body.classList.contains("pretty-view"))
-        ? (lb.querySelector(".log-head")?.offsetHeight || 0) : 0;
+    if (!lb || document.body.classList.contains("pretty-view")) return GAP;
+    const h = lb.classList.contains("open")
+        ? lb.offsetHeight                                       // expanded: clear the full bar
+        : (lb.querySelector(".log-head")?.offsetHeight || 0);   // collapsed: just the head strip
     return h + GAP;
 };
+// The usable rectangle edges (px), derived once from the reserves above.
+const _usableTop = () => _topGap();
+const _usableBottom = () => window.innerHeight - _botGap();
+const _usableLeft = () => GAP;
+const _usableRight = () => window.innerWidth - GAP;
+const _usableW = () => Math.max(180, _usableRight() - _usableLeft());
+const _usableH = () => Math.max(90, _usableBottom() - _usableTop());
 
-// Every visible, UNDOCKED panel is anchored TOP-RIGHT: on a window resize it keeps its
-// distance from the top (y unchanged) and from the right edge (x shifts by the width
-// delta), so panels ride the right side instead of drifting away from it. Docked children
-// follow their parent through reflowDock, so they're skipped. ONE shared listener drives
-// every panel — not a per-panel copy.
+// Mirror the reserves onto <html> as CSS vars so CSS-capped panels reserve the SAME margins the JS
+// clamp does (the open-log case included). Written synchronously wherever the area changes.
+function _publishMargins() {
+    const s = document.documentElement.style;
+    s.setProperty("--fw-top", `${_usableTop()}px`);
+    s.setProperty("--fw-bot", `${_botGap()}px`);
+    s.setProperty("--fw-gap", `${GAP}px`);
+}
+
+// ---- one layout watcher ---------------------------------------------------------------------
+// The SINGLE place that keeps panels inside the usable area when it changes: the window resizes, the
+// topbar swaps tools (height change: node <-> pretty), or the log bar opens/collapses. It republishes
+// the reserve vars SYNCHRONOUSLY (so CSS-capped panels reshrink at once, even when rAF is throttled
+// on a backgrounded tab) and rAF-coalesces the heavier per-panel re-place. Every visible, UNDOCKED
+// panel is anchored TOP-RIGHT (x shifts by the width delta, y unchanged); docked chains follow via
+// their root's place()->reflowDock, so they're skipped here.
 let _prevW = window.innerWidth;
-window.addEventListener("resize", () => {
-    const dw = window.innerWidth - _prevW;
-    _prevW = window.innerWidth;
-    for (const [, w] of _wins) {
+function _reflowPanels(dw) {
+    for (const [id, w] of _wins) {
         if (w.el.hidden || w.state.dock) continue;
-        w.place(w.el.offsetLeft + dw, w.el.offsetTop);   // x+dw = right-anchor; same y = top-anchor
+        w.place(w.el.offsetLeft + (dw || 0), w.el.offsetTop);
         w.onResize && w.onResize();
-        w.fitHeight && w.fitHeight();   // viewport changed -> re-fit (the max-height cap may have moved)
+        w.fitHeight && w.fitHeight();   // usable area moved -> re-fit (the cap may have shifted)
     }
-});
+    // A dock chain may now overrun the (possibly shrunken) usable area — the log opened, the window
+    // shrank, or a member's content grew. Collapse trailing members until each chain fits; a no-op
+    // when it already does. Runs once per chain root (docked members were skipped above).
+    for (const [id, w] of _wins) if (!w.el.hidden && !w.state.dock) fitChainToScreen(id);
+}
+let _reflowRaf = 0;
+function _scheduleReflow() {
+    _publishMargins();                       // sync: CSS caps update immediately
+    if (_reflowRaf) return;
+    _reflowRaf = requestAnimationFrame(() => { _reflowRaf = 0; _reflowPanels(0); });
+}
+(function installLayoutWatcher() {
+    _publishMargins();   // seed the vars before first paint
+    window.addEventListener("resize", () => {
+        const dw = window.innerWidth - _prevW; _prevW = window.innerWidth;
+        _publishMargins();
+        _reflowPanels(dw);               // user-paced -> run now (no coalescing needed)
+    });
+    // Observe the bars that resize the usable area without a window resize. RO catches size changes;
+    // a class MutationObserver (fires on a microtask, even backgrounded) catches the log's open/
+    // collapse + boot->normal transitions where the pixel size doesn't change but the reserve does.
+    // The topbar only needs the RO (its height changes when tools swap; its class toggles constantly).
+    const watch = (sel, watchClass) => {
+        const el = document.querySelector(sel);
+        if (!el) return;
+        if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => _scheduleReflow()).observe(el);
+        if (watchClass && typeof MutationObserver !== "undefined")
+            new MutationObserver(() => _scheduleReflow()).observe(el, { attributes: true, attributeFilter: ["class"] });
+    };
+    watch(".logbar", true);
+    watch(".topbar", false);
+})();
 
 // Rects of the OTHER visible panels (the things to snap against).
 function _otherRects(id) {
@@ -62,9 +114,9 @@ function _otherRects(id) {
 //   • ABUT — sit exactly GAP px from another panel's facing edge (clean padding)
 //   • SCREEN — hug the viewport edges (below the topbar)
 function snapBox(id, x, y, w, h) {
-    const W = window.innerWidth, H = window.innerHeight, top = _topGap();
-    const xc = [GAP, W - GAP - w];             // screen left / right (GAP margin)
-    const yc = [top, H - _botGap() - h];       // screen top / bottom (bottom clears the log bar)
+    const top = _usableTop();
+    const xc = [_usableLeft(), _usableRight() - w];   // screen left / right (GAP margin)
+    const yc = [top, _usableBottom() - h];            // screen top / bottom (bottom clears the log bar)
     for (const o of _otherRects(id)) {
         xc.push(o.left, o.right - w, o.left + o.w / 2 - w / 2,   // left / right / centre align
                         o.right + GAP, o.left - GAP - w);                // abut to its right / left
@@ -82,8 +134,7 @@ function snapBox(id, x, y, w, h) {
 // Snap a single moving edge (resize) to a nearby panel edge (align) / GAP-offset (abut) /
 // screen edge. axis "x" → a left|right edge value; "y" → a top|bottom edge value.
 function snapEdgeVal(id, axis, v) {
-    const W = window.innerWidth, H = window.innerHeight, top = _topGap();
-    const cands = axis === "x" ? [GAP, W - GAP] : [top, H - _botGap()];
+    const cands = axis === "x" ? [_usableLeft(), _usableRight()] : [_usableTop(), _usableBottom()];
     for (const o of _otherRects(id)) {
         if (axis === "x") cands.push(o.left, o.right, o.left - GAP, o.right + GAP);
         else cands.push(o.top, o.bottom, o.top - GAP, o.bottom + GAP);
@@ -203,7 +254,7 @@ function fitChainToScreen(id) {
     const root = chainRoot(id);
     const chain = [root, ...dockDescendants(root)];
     reflowDock(root);
-    const limit = window.innerHeight - _botGap();
+    const limit = _usableBottom();
     for (let i = chain.length - 1; i >= 1 && _chainBottom(chain) > limit; i--) {
         const w = _wins.get(chain[i]);
         if (w && !w.el.hidden && !w.state.collapsed) { w.collapse(true); reflowDock(root); }
@@ -216,10 +267,9 @@ function fitChainToScreen(id) {
 // left instead of stacking on top of each other. Falls back to top-right (clamped) only when
 // no column has room. Used when a hidden panel is reopened with no saved position.
 function findFreeSlot(id, w, h) {
-    const W = window.innerWidth, H = window.innerHeight, top = _topGap();
+    const top = _usableTop(), left = _usableLeft(), right = _usableRight(), bottom = _usableBottom();
     const rects = _otherRects(id);
-    const bottom = H - _botGap();
-    for (let x = Math.max(GAP, W - w - GAP); x >= GAP; x -= w + GAP) {
+    for (let x = Math.max(left, right - w); x >= left; x -= w + GAP) {
         let y = top, guard = 0;
         while (guard++ < 200) {
             const hit = rects.find((o) => x < o.right && x + w > o.left && y < o.bottom && y + h > o.top);
@@ -228,7 +278,11 @@ function findFreeSlot(id, w, h) {
         }
         if (y + h <= bottom) return [x, y];   // fits in this column -> done
     }
-    return [Math.max(GAP, W - w - GAP), top];   // every column full -> top-right (clamp keeps it on-screen)
+    // every column full -> cascade-offset from the top-right by the count of open panels, so
+    // overflow panels stair-step (each title bar stays grabbable) instead of stacking on the exact
+    // same spot. place() clamps it back on-screen.
+    const step = (rects.length % 8) * (SNAP * 3);
+    return [Math.max(left, right - w - step), top + step];
 }
 
 // Raise the just-touched panel above the others: only one carries `fw-focused` (z above
@@ -283,10 +337,10 @@ export function createFloatWin({
 
     // Keep the panel fully on-screen and below the topbar (never off-screen / over the bar).
     function clamp(x, y, w, h) {
-        const top = _topGap();
-        const maxX = Math.max(GAP, window.innerWidth - w - GAP);
-        const maxY = Math.max(top, window.innerHeight - h - _botGap());
-        return [Math.max(GAP, Math.min(maxX, x)), Math.max(top, Math.min(maxY, y))];
+        const top = _usableTop(), left = _usableLeft();
+        const maxX = Math.max(left, _usableRight() - w);
+        const maxY = Math.max(top, _usableBottom() - h);
+        return [Math.max(left, Math.min(maxX, x)), Math.max(top, Math.min(maxY, y))];
     }
     // prevL/prevR = my left/right edge as of the last placement — fed to reflowDock as the
     // "before" edges so docked children can tell if they were right-aligned to me.
@@ -305,8 +359,8 @@ export function createFloatWin({
     // "saved" and pin the panel atop existing ones until its first hide). place() needs them
     // finite to clamp, so set, place, then clear.
     const _hadSaved = Number.isFinite(state.x) && Number.isFinite(state.y);
-    place(_hadSaved ? state.x : window.innerWidth - (state.w || 288) - 8,
-                _hadSaved ? state.y : 56);
+    place(_hadSaved ? state.x : _usableRight() - (state.w || 288),
+                _hadSaved ? state.y : _usableTop());
     if (!_hadSaved) { state.x = null; state.y = null; }
 
     // record the panel's current box into state (skip the 0×0 hidden size + the short
@@ -335,17 +389,22 @@ export function createFloatWin({
         const sb = body ? body.scrollTop : 0;
         el.style.height = "auto";
         const natural = el.offsetHeight;
-        const maxH = Math.max(90, window.innerHeight - _topGap() - _botGap());
-        const target = Math.round(Math.min(maxH, natural));
-        if (Math.abs(cur - target) > 1) { el.style.height = `${target}px`; state.h = target; }
-        else el.style.height = `${cur}px`;   // restore a definite height (we were briefly auto)
+        const target = Math.round(Math.min(_usableH(), natural));
+        if (Math.abs(cur - target) > 1) {
+            el.style.height = `${target}px`; state.h = target;
+            // Content grew/shrank (often async, AFTER the panel was first placed). Re-clamp so the new
+            // bottom never tucks under the log bar / off the screen edge: an undocked panel re-places
+            // in spot; a docked one re-fits its whole chain (collapsing trailing members if it now
+            // overruns the usable area).
+            if (state.dock) fitChainToScreen(id);
+            else if (Number.isFinite(state.x) && Number.isFinite(state.y)) place(state.x, state.y);
+        } else el.style.height = `${cur}px`;   // restore a definite height (we were briefly auto)
         if (body && body.scrollTop !== sb) body.scrollTop = sb;
     }
 
     // never restore a box bigger than the viewport (the window may have shrunk since saving)
     function applySize() {
-        const maxW = Math.max(180, window.innerWidth - 8);
-        const maxH = Math.max(90, window.innerHeight - _topGap() - _botGap());
+        const maxW = _usableW(), maxH = _usableH();
         if (Number.isFinite(state.w)) { const w = Math.min(state.w, maxW); el.style.width = `${w}px`; state.w = w; }
         // CSS-preset width (state.w null) wider than the viewport -> cap it so it never spawns off-screen.
         // Inline-only (don't write state.w), so a reset still falls back to the per-panel CSS preset.
@@ -539,7 +598,7 @@ export function createFloatWin({
         el.style.width = ""; el.style.height = "";
         applySize(); applyCollapsed(); markSized();
         onResize && onResize(); fitHeight();
-        place(window.innerWidth - (el.offsetWidth || 288) - GAP, _topGap());
+        place(_usableRight() - (el.offsetWidth || 288), _usableTop());
         _syncDockMarks();
         save();
     }

@@ -7,8 +7,13 @@
     position: fixed; z-index: 40;
     min-width: 180px; overflow: hidden;
     display: flex; flex-direction: column;
-    background: var(--float-panel); border: 1px solid var(--float-line); 
+    background: var(--float-panel); border: 1px solid var(--float-line);
     box-shadow: 0 6px 24px #0008; font-size: var(--fs-sm); user-select: none;
+    /* Universal height cap: never taller than the usable area (viewport minus the topbar and the
+       log bar). The reserves come from the SINGLE source in floatwin.js (--fw-top/--fw-bot, kept
+       live as the log opens/collapses); the .fw-body then scrolls instead of overflowing. Fallbacks
+       apply before the JS publishes. autoFit panels size to content UNDER this cap via fitHeight. */
+    max-height: calc(100dvh - var(--fw-top, 56px) - var(--fw-bot, 40px));
 }
 .floatwin[hidden] { display: none; }
 .fw-head {
