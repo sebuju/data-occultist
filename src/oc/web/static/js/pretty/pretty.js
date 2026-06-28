@@ -15,6 +15,8 @@ import { buildPalette } from "./panels/palette.js";
 import { buildInspector } from "./panels/inspector.js";
 import { buildSources } from "./panels/sources.js";
 import { buildTheme } from "./panels/theme.js";
+import { buildPages } from "./panels/pages.js";
+import { buildElements } from "./panels/elements.js";
 import { buildPrettyTools } from "./topbar.js";
 import { el } from "./widgets/util.js";
 import { openContextMenu } from "../ctxmenu.js";
@@ -24,13 +26,13 @@ import { model } from "../graph/state.js";
 const pretty = new PrettyModel();
 let surface = null, toolsEl = null, panels = null, tools = null, canvasCtrl = null;
 let game = null, mode = "edit", pageId = null, selectedId = null, mounted = false;
-let cueScope = "all";   // edit-mode cue layer: "all" widgets, "selected" only, or "none"
+let cueScope = "all";   // edit-mode cue layer: "all" widgets, or "selected" only (hover-preview when none selected)
 const selection = new Set();   // every selected widget id; selectedId is the primary (inspector) one
 
 const ctx = {
     get mode() { return mode; },
     get cueScope() { return cueScope; },
-    setCueScope: (s) => { cueScope = ["all", "selected", "none"].includes(s) ? s : "all"; if (canvasCtrl) canvasCtrl.showAnchorCue(); },
+    setCueScope: (s) => { cueScope = ["all", "selected"].includes(s) ? s : "all"; if (canvasCtrl) canvasCtrl.showAnchorCue(); },
     get game() { return game; },
     model, pretty, data, overrides, constraints,
     currentPageId: () => pageId,
@@ -51,8 +53,13 @@ const ctx = {
     geomChanged: (id) => { if (id === selectedId && panels) panels.inspector.syncGeom(id); },
     addWidget: (type) => addWidget(type),
     removeWidget: (id) => removeWidget(id),
+    renameWidget: (oldId, newId) => renameWidget(oldId, newId),
+    highlightWidget: (id) => { if (canvasCtrl) canvasCtrl.highlight(id); },
     switchPage: (id) => switchPage(id),
     addPage: () => { switchPage(pretty.addPage()); tools && tools.refresh(); },
+    removePage: (id) => removePage(id),
+    renamePage: (id, title) => { pretty.renamePage(id, title); if (tools) tools.refresh(); },
+    reorderPages: (ids) => { pretty.reorderPages(ids); if (tools) tools.refresh(); },
     setMode: (m) => setMode(m),
     bindDataToSelected: (src, id) => bindData(src, id),
     bindPathToSelected: (path) => bindPath(path),
@@ -70,6 +77,8 @@ export async function mountPretty(container, toolsHost, g) {
             inspector: buildInspector(ctx),
             sources: buildSources(ctx),
             theme: buildTheme(ctx),
+            pages: buildPages(ctx),
+            elements: buildElements(ctx),
         };
         tools = buildPrettyTools(toolsEl, ctx, panels);
         // Click anywhere that is NOT a widget, a floating panel, or the edit-tools deselects.
@@ -149,6 +158,7 @@ function renderCurrent() {
     pageId = page ? page.id : null;
     canvasCtrl = page ? renderPage(surface, page, ctx) : null;
     if (canvasCtrl && selection.size) { canvasCtrl.select(selection); canvasCtrl.showAnchorCue(selectedId); }
+    if (panels && panels.elements) panels.elements.refresh();   // list follows add/remove/rename/page
 }
 
 function restyleWidget(id) {
@@ -181,6 +191,7 @@ function syncSelection() {
     if (canvasCtrl) { canvasCtrl.select(selection); canvasCtrl.showAnchorCue(selectedId); }
     const w = selectedId ? pretty.widget(pageId, selectedId) : null;
     if (panels) { if (w) panels.inspector.show(w); else panels.inspector.clear(); }
+    if (panels && panels.elements) panels.elements.refresh();   // active row tracks the selection
     if (tools) tools.refresh();
 }
 
@@ -189,6 +200,7 @@ function deselect() {
     selection.clear(); selectedId = null;
     if (canvasCtrl) { canvasCtrl.select(null); canvasCtrl.showAnchorCue(null); }
     if (panels) panels.inspector.clear();
+    if (panels && panels.elements) panels.elements.refresh();
 }
 
 function nudge(dx, dy) {
@@ -254,11 +266,32 @@ function removeWidget(id) {
     renderCurrent();
 }
 
+// Rename a widget id (the model repoints every reference). Carry the selection over to the new id
+// and re-render so the canvas/inspector follow it. Returns false if the model rejected the id.
+function renameWidget(oldId, newId) {
+    if (!pretty.renameWidget(oldId, newId)) return false;
+    if (selection.has(oldId)) { selection.delete(oldId); selection.add(newId); }
+    if (selectedId === oldId) selectedId = newId;
+    renderCurrent();
+    syncSelection();
+    return true;
+}
+
 function switchPage(id) {
     pageId = id; selection.clear(); selectedId = null;
     if (panels) panels.inspector.clear();
     renderCurrent();
     if (tools) tools.refresh();
+    if (panels && panels.pages) panels.pages.refresh();
+}
+
+// Delete a page (model refuses the last one). If it was the current page, fall to the first
+// remaining one so the surface never points at a dropped page.
+function removePage(id) {
+    if (!pretty.removePage(id)) return false;
+    if (pageId === id) switchPage(pretty.firstPageId());
+    else { if (tools) tools.refresh(); if (panels && panels.pages) panels.pages.refresh(); }
+    return true;
 }
 
 function setMode(m) {

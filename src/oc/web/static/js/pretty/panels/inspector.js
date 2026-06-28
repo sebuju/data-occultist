@@ -336,7 +336,22 @@ export function buildInspector(ctx) {
         if (!current) { body.appendChild(el("div", "pw-insp-empty", "select a widget")); return; }
         const w = current;
         const head = el("div", "pw-insp-head");
-        head.appendChild(el("span", "pw-insp-type", `${w.type} · ${w.id}`));
+        head.appendChild(el("span", "pw-insp-type", `${w.type} ·`));
+        // editable id: rename commits on Enter/blur; the model repoints every reference. A rejected
+        // id (empty / duplicate / token-unsafe) snaps back and flashes.
+        const idIn = el("input", "pw-insp-id"); idIn.value = w.id; idIn.spellcheck = false;
+        idIn.title = "rename this element (updates all references to it)";
+        const commitId = () => {
+            const v = idIn.value.trim();
+            if (v === w.id) { idIn.value = w.id; return; }
+            if (!ctx.renameWidget(w.id, v)) { idIn.value = w.id; idIn.classList.add("bad"); setTimeout(() => idIn.classList.remove("bad"), 1000); }
+        };
+        idIn.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); idIn.blur(); }
+            else if (e.key === "Escape") { e.preventDefault(); idIn.value = w.id; idIn.blur(); }
+        });
+        idIn.addEventListener("blur", commitId);
+        head.appendChild(idIn);
         const del = el("button", "pw-insp-remove", "delete");
         del.addEventListener("click", () => {
             if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "confirm"; setTimeout(() => { del.dataset.armed = "0"; del.textContent = "delete"; }, 2500); return; }

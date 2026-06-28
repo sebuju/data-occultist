@@ -52,6 +52,9 @@ export function applyStyle(el, style) {
     set("margin", px(s.margin));
     set("boxShadow", s.shadow);
     set("opacity", s.opacity == null || s.opacity === "" ? null : String(s.opacity));
+    // mark whether a real border is drawn, so edit-mode selection/hover can outline ONLY the
+    // borderless elements (a bordered one already reads as framed — see pretty.css).
+    el.classList.toggle("pw-bordered", !!s.border_w);
 }
 
 // The EFFECTIVE style of a rendered element (getComputedStyle -> our Style shape), used to

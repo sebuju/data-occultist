@@ -47,7 +47,7 @@ export function hideSizeHud() { if (_sizeHud) _sizeHud.style.display = "none"; }
 // edges — its anchored top + fixed corner stay put, so only the moving edge/bottom is limited,
 // leaving `margin` px clear. Graph nodes leave it off (they live in zoomed/panned canvas space,
 // not viewport space, so a viewport clamp would be meaningless there).
-export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onSettle = null, snapEdge = null, onReset = null, screenClamp = false, margin = 0 } = {}) {
+export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onSettle = null, snapEdge = null, onReset = null, screenClamp = false, margin = 0, bottomMargin = null } = {}) {
     if (el.querySelector(":scope > .rz-grip")) return;   // once only
     const q = (v) => (snapGrid ? snapUp(v) : v);   // grid-step nodes (round up); panels resize smoothly
     for (const side of ["left", "right"]) {
@@ -76,11 +76,14 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
                 }
                 // hard screen-bounds clamp (final authority, after snapping): the right/left grip's
                 // fixed edge (rect.right / rect.left) + the fixed top stay put, so cap the growing
-                // dimensions to keep `margin` px clear of the viewport edges.
+                // dimensions to keep `margin` px clear of the viewport edges. The BOTTOM uses
+                // `bottomMargin` when given (caller reserves e.g. the log bar) so a tall panel stops
+                // above it instead of being drawn under it.
                 if (rect) {
+                    const bm = bottomMargin == null ? margin : (typeof bottomMargin === "function" ? bottomMargin() : bottomMargin);
                     const maxW = side === "left" ? rect.right - margin : (window.innerWidth - margin) - rect.left;
                     w = Math.min(w, Math.max(1, maxW));
-                    if (allowH) h = Math.min(h, Math.max(1, (window.innerHeight - margin) - rect.top));
+                    if (allowH) h = Math.min(h, Math.max(1, (window.innerHeight - bm) - rect.top));
                 }
                 // only act on a REAL size step (else snapped sub-grid moves churn resize+reroute)
                 if (w === lastW && (!allowH || h === lastH)) return;

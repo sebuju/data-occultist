@@ -382,7 +382,7 @@ export function createFloatWin({
     // style; the observer fires), so grips only need to persist on settle.
     addResizeGrips(el, {
         both: bothAxes,   // height IS manually resizable; a manual resize sets userSized -> stops the auto-fit
-        screenClamp: true, margin: GAP,   // never let a resize push the panel off-screen
+        screenClamp: true, margin: GAP, bottomMargin: _botGap,   // resize stops above the log bar, not under it
         left: (v) => { if (v === undefined) return el.offsetLeft; const x = Math.max(4, v); el.style.left = `${x}px`; state.x = x; },
         snapEdge: (axis, v) => snapEdgeVal(id, axis, v),   // align resize edges to other panels
         onSettle: () => { state.userSized = true; markSized(); stashSize(); save(); },   // manual size -> stop auto-fitting

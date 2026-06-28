@@ -47,6 +47,14 @@ export class PrettyModel {
         return true;
     }
     renamePage(id, title) { const p = this.page(id); if (p) { p.title = title; this.save(); } }
+    // Reorder pages to match `ids` (a permutation of the current page ids). Any page omitted from
+    // `ids` is kept, appended in its original order, so a stale list can never drop a page.
+    reorderPages(ids) {
+        const byId = new Map(this.doc.pages.map((p) => [p.id, p]));
+        const next = ids.map((id) => byId.get(id)).filter(Boolean);
+        for (const p of this.doc.pages) if (!next.includes(p)) next.push(p);
+        if (next.length === this.doc.pages.length) { this.doc.pages = next; this.save(); }
+    }
 
     // ---- widgets ----------------------------------------------------------------------
     widgets(pageId) { const p = this.page(pageId); return p ? p.widgets : []; }
@@ -66,6 +74,34 @@ export class PrettyModel {
         const p = this.page(pageId);
         if (p) p.widgets = p.widgets.filter((w) => w.id !== wid);
         this.save();
+    }
+    // Rename a widget id, REPOINTING every reference so nothing breaks: other widgets' anchor.to /
+    // matchW / matchH, and every {{widget:<id>}} token in any string field (labels, conditions, ...).
+    // Widget ids are globally unique, so this works across all pages. Refuses an empty, duplicate, or
+    // token-unsafe id (chars that would break {{widget:id}} parsing). Returns true on success.
+    renameWidget(oldId, newId) {
+        newId = (newId || "").trim();
+        if (!newId || newId === oldId || /[\s{}|:.]/.test(newId)) return false;
+        const all = this.doc.pages.flatMap((p) => p.widgets);
+        if (all.some((w) => w.id === newId)) return false;
+        const target = all.find((w) => w.id === oldId);
+        if (!target) return false;
+        target.id = newId;
+        // replace `widget:<oldId>` tokens anywhere a string is held (\b stops it matching w3 inside w33)
+        const re = new RegExp(`\\bwidget:${oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g");
+        const rep = `widget:${newId}`;
+        const walk = (o) => {
+            if (Array.isArray(o)) { for (let i = 0; i < o.length; i++) { if (typeof o[i] === "string") o[i] = o[i].replace(re, rep); else if (o[i] && typeof o[i] === "object") walk(o[i]); } }
+            else if (o && typeof o === "object") { for (const k of Object.keys(o)) { const v = o[k]; if (typeof v === "string") o[k] = v.replace(re, rep); else if (v && typeof v === "object") walk(v); } }
+        };
+        for (const w of all) {
+            if (w.anchor && w.anchor.to === oldId) w.anchor.to = newId;
+            if (w.matchW === oldId) w.matchW = newId;
+            if (w.matchH === oldId) w.matchH = newId;
+            walk(w);
+        }
+        this.save();
+        return true;
     }
     // mutate a widget then persist (caller edits the object in place first, or passes a patch)
     touch() { this.save(); }

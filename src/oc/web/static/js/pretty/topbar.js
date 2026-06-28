@@ -1,6 +1,7 @@
 // The Pretty topbar tools (the placeholder that replaces .topbar-tools in pretty view): a
-// view/edit mode switch, the page selector + add-page, and toggles for the studio panels
-// (palette / inspector / sources / theme). Panel toggles show only in edit mode.
+// view/edit mode switch and toggles for the studio panels (pages / inspector / sources / theme).
+// Page management (switch / add / rename / reorder / delete) lives in the pages panel now. Panel
+// toggles show only in edit mode.
 
 import { el } from "./widgets/util.js";
 
@@ -13,15 +14,10 @@ export function buildPrettyTools(host, ctx, panels) {
     bEdit.addEventListener("click", () => ctx.setMode("edit"));
     mode.append(bView, bEdit);
 
-    const pageSel = el("select", "pw-pagesel");
-    pageSel.addEventListener("change", () => ctx.switchPage(pageSel.value));
-    const addPage = el("button", "pw-addpage", "+ page");
-    addPage.addEventListener("click", () => ctx.addPage());
-
     const spacer = el("span", "spacer");
     const editTools = el("div", "pw-edittools");
     const toggles = [
-        ["inspector", panels.inspector], ["sources", panels.sources], ["theme", panels.theme],
+        ["pages", panels.pages], ["elements", panels.elements], ["inspector", panels.inspector], ["sources", panels.sources], ["theme", panels.theme],
     ];
     const toggleBtns = new Map();
     for (const [label, panel] of toggles) {
@@ -40,25 +36,20 @@ export function buildPrettyTools(host, ctx, panels) {
 
     // cue-scope toggle: flip the edit-mode visual cue layer between every widget and the selection.
     const cueTog = el("button", "pw-paneltog pw-cuetog");
-    cueTog.title = "visual cues: all widgets / selected only / none";
-    const NEXT_CUE = { all: "selected", selected: "none", none: "all" };
+    cueTog.title = "visual cues: all widgets / selected only";
+    const NEXT_CUE = { all: "selected", selected: "all" };
     cueTog.addEventListener("click", () => { ctx.setCueScope(NEXT_CUE[ctx.cueScope] || "all"); refresh(); });
     editTools.appendChild(cueTog);
 
-    host.append(mode, pageSel, addPage, spacer, editTools);
+    host.append(mode, spacer, editTools);
 
     function refresh() {
         bView.classList.toggle("active", ctx.mode === "view");
         bEdit.classList.toggle("active", ctx.mode === "edit");
         editTools.hidden = ctx.mode !== "edit";
-        addPage.hidden = ctx.mode !== "edit";
-        const pages = ctx.pretty.pages();
-        pageSel.textContent = "";
-        for (const p of pages) { const o = el("option", null, p.title); o.value = p.id; pageSel.appendChild(o); }
-        pageSel.value = ctx.currentPageId();
         for (const [panel, b] of toggleBtns) b.classList.toggle("active", panel.win.state.visible);
         cueTog.textContent = `cues: ${ctx.cueScope}`;
-        cueTog.classList.toggle("active", ctx.cueScope !== "none");
+        cueTog.classList.toggle("active", ctx.cueScope === "all");
     }
     refresh();
     return { refresh };
