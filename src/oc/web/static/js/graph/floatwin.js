@@ -299,9 +299,15 @@ export function createFloatWin({
         prevL = cx; prevR = cx + el.offsetWidth;
         reflowDock(id, seen, oldL, oldR);   // drag anything docked below me along (chains too)
     }
-    // initial placement: saved, else top-right under the topbar
-    place(Number.isFinite(state.x) ? state.x : window.innerWidth - (state.w || 288) - 8,
-                Number.isFinite(state.y) ? state.y : 56);
+    // initial placement: saved, else top-right under the topbar. With no SAVED coords this is
+    // just a provisional spot for the (hidden) frame — null state.x/y back out afterwards so the
+    // first setVisible runs findFreeSlot (place() writes state.x/y, which would otherwise look
+    // "saved" and pin the panel atop existing ones until its first hide). place() needs them
+    // finite to clamp, so set, place, then clear.
+    const _hadSaved = Number.isFinite(state.x) && Number.isFinite(state.y);
+    place(_hadSaved ? state.x : window.innerWidth - (state.w || 288) - 8,
+                _hadSaved ? state.y : 56);
+    if (!_hadSaved) { state.x = null; state.y = null; }
 
     // record the panel's current box into state (skip the 0×0 hidden size + the short
     // collapsed height, which would otherwise overwrite the real expanded box)
