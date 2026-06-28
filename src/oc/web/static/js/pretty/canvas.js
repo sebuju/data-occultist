@@ -86,7 +86,8 @@ export function renderPage(surface, page, ctx) {
     let cueSvg = null;        // the edit-mode relationship overlay (declared early — drawAnchorCue runs below)
     let hoverId = null;       // widget hovered in edit mode — drives cue preview when nothing is selected
 
-    for (const widget of page.widgets) build(widget);   // build() self-registers into `recs`
+    // build the page's OWN widgets PLUS any shared onto it from other pages (resolved by the model).
+    for (const widget of ctx.currentWidgets()) build(widget);   // build() self-registers into `recs`
     placeAll();
     // NB: the edit-mode cue layer (drawAnchorCue) is drawn near the end of setup, not here — it reads
     // the SVGNS const + cue helpers declared further down, so calling it this early would TDZ.
@@ -127,6 +128,11 @@ export function renderPage(surface, page, ctx) {
 
         let inst = { update() {}, destroy() {} };
         if (def) { try { inst = def.create(host, widget, ctx) || inst; } catch (e) { host.textContent = String(e.message || e); } }
+        // Stable marker on the content host: every widget's create() REPLACES the host class with its
+        // own (pw-label / pw-button-host / …), so re-add a class the canvas owns. Edit-mode gating
+        // (clicks select/drag the frame until selected, then the content turns interactive) keys off
+        // this — see .pw-host rules in pretty.css.
+        host.classList.add("pw-host");
 
         // reactive conditions
         const condSub = keySubscription(ctx, () => applyConditions(rec));
@@ -501,12 +507,15 @@ export function renderPage(surface, page, ctx) {
         if (ctx.mode !== "edit") { if (cueSvg) cueSvg.style.display = "none"; return; }
         const svg = ensureCueSvg();
         const boxes = resolveBoxes();
-        // Size the cue layer purely from the resolved WIDGET geometry — never from the surface's
+        // Size the cue layer's BOX purely from the resolved WIDGET geometry — never from the surface's
         // client/scroll size. The SVG is a child of the surface and .pw-surface is min-height:100% of
         // the scrollable #pretty, so any size read off the surface moves with the scrollbars: feeding
-        // it back into the SVG made the scrollbar flash and pinned the CPU in a bistable RO loop. Widget
-        // boxes are fixed px (scrollbar-independent), so this is stable AND never exceeds what the
-        // widgets already demand (no phantom overflow). Empty page -> 0×0 (nothing to draw).
+        // it back into the SVG box made the scrollbar flash and pinned the CPU in a bistable RO loop.
+        // Widget boxes are fixed px (scrollbar-independent), so this is stable AND never exceeds what the
+        // widgets already demand (no phantom LAYOUT overflow -> no scrollbars). Cue ink that dodges PAST
+        // a widget toward the page edge is allowed to paint outside this box: overflow:visible on the svg
+        // makes that VISUAL overflow, which (unlike a bigger box) does NOT extend #pretty's scroll area.
+        // Empty page -> 0×0 (nothing to draw).
         let cw = 0, ch = 0;
         for (const b of boxes.values()) { cw = Math.max(cw, b.left + b.w); ch = Math.max(ch, b.top + b.h); }
         svg.setAttribute("width", Math.ceil(cw)); svg.setAttribute("height", Math.ceil(ch));
@@ -702,6 +711,9 @@ export function renderPage(surface, page, ctx) {
 
     return {
         updateAll() { for (const rec of recs.values()) try { rec.inst.update && rec.inst.update(); } catch { /* guard */ } },
+        // re-run one widget's content update (e.g. after a style edit a widget applies itself, like the
+        // button's alignH/alignV/fill placement) without rebuilding the whole canvas.
+        updateOne(id) { const rec = recs.get(id); if (rec) try { rec.inst.update && rec.inst.update(); } catch { /* guard */ } },
         select(sel) {
             const ids = sel instanceof Set ? sel : sel ? new Set([sel]) : new Set();
             for (const rec of recs.values()) rec.frame.classList.toggle("pw-sel", ids.has(rec.widget.id));
@@ -736,6 +748,9 @@ export function renderPage(surface, page, ctx) {
                 if (unitOf(w, k) === "calc") w[k] = String(v);        // freeform expression
                 else if (Number.isFinite(v)) w[k] = v;
             }
+            // stacking order: clamp 1-100 so widgets never out-stack the floating panels (the surface
+            // isolates its own stacking context anyway, but a bounded field keeps the z space sane).
+            if ("z" in patch && Number.isFinite(patch.z)) w.z = Math.max(1, Math.min(100, Math.round(patch.z)));
             placeAll(); drawAnchorCue();
             if (("w" in patch) || ("h" in patch)) { try { rec.inst.update && rec.inst.update(); } catch { /* */ } }
         },

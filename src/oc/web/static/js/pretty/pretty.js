@@ -26,7 +26,7 @@ import { model } from "../graph/state.js";
 const pretty = new PrettyModel();
 let surface = null, toolsEl = null, panels = null, tools = null, canvasCtrl = null;
 let game = null, mode = "edit", pageId = null, selectedId = null, mounted = false;
-let cueScope = "all";   // edit-mode cue layer: "all" widgets, or "selected" only (hover-preview when none selected)
+let cueScope = "selected";   // edit-mode cue layer default: "selected" only (hover-preview when none selected); "all" shows every widget
 const selection = new Set();   // every selected widget id; selectedId is the primary (inspector) one
 
 const ctx = {
@@ -36,7 +36,7 @@ const ctx = {
     get game() { return game; },
     model, pretty, data, overrides, constraints,
     currentPageId: () => pageId,
-    currentWidgets: () => pretty.widgets(pageId),
+    currentWidgets: () => pretty.widgetsForPage(pageId),
     selectedWidget: () => (selectedId ? pretty.widget(pageId, selectedId) : null),
     selectionIds: () => selection,
     requestSave: () => pretty.save(),
@@ -55,12 +55,14 @@ const ctx = {
     geomChanged: (id) => { if (id === selectedId && panels) panels.inspector.syncGeom(id); },
     addWidget: (type) => addWidget(type),
     removeWidget: (id) => removeWidget(id),
+    cloneWidget: (id) => cloneWidget(id),
+    rehomeWidget: (id, toPageId) => rehomeWidget(id, toPageId),
     renameWidget: (oldId, newId) => renameWidget(oldId, newId),
     highlightWidget: (id) => { if (canvasCtrl) canvasCtrl.highlight(id); },
     switchPage: (id) => switchPage(id),
     addPage: () => { switchPage(pretty.addPage()); tools && tools.refresh(); },
     removePage: (id) => removePage(id),
-    renamePage: (id, title) => { pretty.renamePage(id, title); if (tools) tools.refresh(); },
+    renamePage: (id, title) => { const ok = pretty.renamePage(id, title); if (ok && tools) tools.refresh(); return ok; },
     reorderPages: (ids) => { pretty.reorderPages(ids); if (tools) tools.refresh(); },
     setMode: (m) => setMode(m),
     bindDataToSelected: (src, id) => bindData(src, id),
@@ -172,6 +174,8 @@ function restyleWidget(id) {
     const w = pretty.widget(pageId, id);
     const frame = surface.querySelector(`.pw[data-id="${id}"]`);
     if (w && frame) applyStyle(frame, mergeStyle(pretty.theme(), w.style));
+    // let the widget re-apply any style it reads itself (e.g. button align/fill placement on its host).
+    if (canvasCtrl) canvasCtrl.updateOne(id);
 }
 
 // Select a widget. `additive` (shift-click / shift-marquee) toggles it in/out of the current
@@ -271,6 +275,22 @@ function removeWidget(id) {
     selection.delete(id); if (selectedId === id) selectedId = [...selection].pop() || null;
     if (panels && !selectedId) panels.inspector.clear();   // drop the inspector if nothing's left selected
     renderCurrent();
+}
+
+function cloneWidget(id) {
+    const copy = pretty.cloneWidget(id);
+    if (!copy) return;
+    renderCurrent();
+    selectWidget(copy.id);   // focus the new clone so it can be edited/moved straight away
+}
+
+function rehomeWidget(id, toPageId) {
+    if (!pretty.rehomeWidget(id, toPageId)) return;
+    renderCurrent();
+    // if the widget no longer renders on the current page (rehomed away, not shared here), drop the
+    // selection + inspector; otherwise keep it focused.
+    if (!pretty.widget(pageId, id)) { selection.delete(id); if (selectedId === id) selectedId = null; if (panels) panels.inspector.clear(); if (panels && panels.elements) panels.elements.refresh(); }
+    else syncSelection();
 }
 
 // Rename a widget id (the model repoints every reference). Carry the selection over to the new id

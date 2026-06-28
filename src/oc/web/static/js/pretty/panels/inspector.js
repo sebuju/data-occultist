@@ -69,6 +69,14 @@ export function buildInspector(ctx) {
             geomRefs[k] = { inp, us };
             g.appendChild(cell);
         }
+        // z (stacking order) — a plain integer, no unit; sits below w/h in the same 2-col grid.
+        const zc = el("div", "pw-geom-cell");
+        zc.appendChild(el("span", "pw-geom-lab", "z"));
+        const zin = el("input", "pw-geom-val"); zin.type = "number"; zin.step = "1"; zin.min = "1"; zin.max = "100"; zin.value = w.z ?? 1;
+        zin.title = "stacking order 1-100 (higher is on top; floating panels always sit above)";
+        zin.addEventListener("change", () => { const v = Math.max(1, Math.min(100, Math.round(Number(zin.value) || 1))); zin.value = v; ctx.applyGeom(w.id, { z: v }); });
+        zc.appendChild(zin);
+        g.appendChild(zc);
         return g;
     }
     function syncGeom(id) {
@@ -225,6 +233,47 @@ export function buildInspector(ctx) {
                 g.appendChild(row("value", txt(c.value, (v) => { c.value = v; save(); })));
             } else if (c.action === "switch_page") g.appendChild(row("page", sel(c.page, [{ value: "", label: "—" }, ...ctx.pretty.pages().map((p) => ({ value: p.id, label: p.title }))], (v) => { c.page = v; save(); })));
             g.appendChild(row("label", txt(c.label, (v) => { c.label = v; save(); })));
+            // NB: button placement (align h/v, fill) is a STYLE concern — see styleExtras() in the style group.
+        }
+        return g;
+    }
+
+    // Widget-type-specific STYLE controls appended into the style group, stored in w.style (not config)
+    // and applied live via restyle (which re-runs the widget's update()). Button: placement within its
+    // frame — align horizontally / vertically, or fill it.
+    function styleExtras(w, group) {
+        if (w.type !== "button") return;
+        const s = w.style = w.style || {};
+        const set = (k, v) => { if (v === "" || v == null || v === false) delete s[k]; else s[k] = v; ctx.pretty.save(); ctx.restyle(w.id); };
+        group.appendChild(row("align h", sel(s.alignH || "left", ["left", "center", "right"], (v) => set("alignH", v))));
+        group.appendChild(row("align v", sel(s.alignV || "middle", ["top", "middle", "bottom"], (v) => set("alignV", v))));
+        group.appendChild(row("fill", chk(s.fill, (v) => set("fill", v))));
+    }
+
+    // ---- pages (sharing): which pages this widget appears on ------------------------------
+    // A widget lives on its HOME page (always shown) and can be SHARED onto others: "all pages" or a
+    // per-page checklist. The SAME object renders on each, so edits propagate. Un-checking a page (or
+    // deleting the widget while viewing a shared page) just detaches it there; its home copy survives.
+    function pagesEditor(w) {
+        const g = el("div", "pw-insp-grp");
+        const commit = () => { ctx.refresh(); render(); };   // reflect on canvas (if current page is a target) + refresh toggles
+        g.appendChild(hdr("pages", () => { ctx.pretty.setShareAll(w.id, false); commit(); }));   // reset -> home only
+        const homeId = ctx.pretty.homePageId(w.id);
+        const all = !!w.onAllPages;
+        // rehome: move which page OWNS this element. Picking another page moves it there (and may drop
+        // it from the current view, which clears the inspector).
+        const others = ctx.pretty.pages().filter((p) => p.id !== homeId);
+        if (others.length) {
+            const homeTitle = (ctx.pretty.page(homeId) || {}).title || homeId;
+            g.appendChild(row("home page", sel(homeId, [{ value: homeId, label: `${homeTitle} (home)` }, ...others.map((p) => ({ value: p.id, label: p.title }))], (v) => { if (v !== homeId) ctx.rehomeWidget(w.id, v); })));
+        }
+        g.appendChild(row("all pages", chk(all, (v) => { ctx.pretty.setShareAll(w.id, v); commit(); })));
+        for (const p of ctx.pretty.pages()) {
+            if (p.id === homeId) { g.appendChild(row(p.title, el("span", "pw-insp-hint", "home"))); continue; }
+            const on = all || (Array.isArray(w.pages) && w.pages.includes(p.id));
+            const c = chk(on, (v) => { ctx.pretty.setShare(w.id, p.id, v); commit(); });
+            if (all) c.disabled = true;   // "all pages" already covers every page
+            g.appendChild(row(p.title, c));
         }
         return g;
     }
@@ -424,6 +473,10 @@ export function buildInspector(ctx) {
         });
         idIn.addEventListener("blur", commitId);
         head.appendChild(idIn);
+        const clone = el("button", "pw-insp-clone", "clone");
+        clone.title = "duplicate this element (new id)";
+        clone.addEventListener("click", () => ctx.cloneWidget(w.id));
+        head.appendChild(clone);
         const del = el("button", "pw-insp-remove", "delete");
         del.addEventListener("click", () => {
             if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "confirm"; setTimeout(() => { del.dataset.armed = "0"; del.textContent = "delete"; }, 2500); return; }
@@ -435,6 +488,7 @@ export function buildInspector(ctx) {
         body.appendChild(geomEditor(w));
         if (["table", "chart"].includes(w.type)) body.appendChild(bindingEditor(w));
         body.appendChild(configEditor(w));
+        if (ctx.pretty.pages().length > 1) body.appendChild(pagesEditor(w));   // sharing only matters with >1 page
         body.appendChild(anchorEditor(w));
         body.appendChild(conditionsEditor(w));
 
@@ -442,6 +496,7 @@ export function buildInspector(ctx) {
         styleGrp.appendChild(hdr("style", () => { w.style = {}; ctx.pretty.save(); ctx.restyle(w.id); render(); }));
         const seHost = el("div");
         styleGrp.appendChild(seHost);
+        styleExtras(w, styleGrp);   // widget-type-specific style controls (e.g. button placement)
         body.appendChild(styleGrp);
         styleEditor(seHost, w.style = w.style || {}, () => { ctx.pretty.save(); ctx.restyle(w.id); }, { effective: ctx.effectiveStyle(w.id) });
         // height is content-driven via CSS (.fw-body flex-basis:auto) — no JS measurement.
