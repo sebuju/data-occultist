@@ -7,8 +7,8 @@ pages:
   style: {}
   widgets:
   - id: tb_relic_result
-    x: 0
-    y: 100
+    x: 0.65
+    y: 120
     w: clamp(500px, 50dvw, 1000px)
     h: 120
     z: 8
@@ -21,14 +21,14 @@ pages:
     conditions:
       rules:
       - effect: show
+        source: activity:live
+        op: ==
+        value: '1'
+      - effect: match
         source: ''
         op: nonempty
         value: ''
-      - effect: show
-        source: ''
-        op: nonempty
-        value: ''
-      visible_when: ''
+      visible_when: '{{activity:live}} == 1'
       enabled_when: ''
     type: table
     config:
@@ -93,9 +93,9 @@ pages:
     matchW: tb_relic_result
   - id: pn_live
     x: 0
-    y: 4
-    w: 15.63
-    h: 260
+    y: 3.64
+    w: 16.93
+    h: 280
     z: 3
     style:
       border_w: 1
@@ -142,7 +142,7 @@ pages:
   - id: hd_r
     x: 0
     y: 3
-    w: 14.32
+    w: 16.28
     h: 20
     z: 5
     style:
@@ -193,6 +193,8 @@ pages:
     style: {}
     conditions:
       rules: []
+      visible_when: ''
+      enabled_when: ''
     type: label
     config:
       text: Relic results
@@ -203,6 +205,18 @@ pages:
       corner: bl
       target: tl
     matchW: tb_relic_result
+  - id: w1
+    x: 2204
+    y: 135
+    w: 240
+    h: 44
+    z: 8
+    style: {}
+    conditions:
+      rules: []
+    type: label
+    config:
+      text: Label
 - id: page1
   title: Page
   style: {}

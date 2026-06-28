@@ -5,7 +5,7 @@
 import { createFloatWin } from "../../graph/floatwin.js";
 import { styleEditor } from "../style_editor.js";
 import { nodeInputs, inputMeta } from "../constraints.js";
-import { sourceTokenList } from "../binding.js";
+import { sourceTokenList, resolveToken, subKeyForToken } from "../binding.js";
 import { el, humanize } from "../widgets/util.js";
 import { makeReorderable, arrayMove, orderColumns, setColumnProp } from "../reorder.js";
 import { PANEL_OPTIONS } from "../widgets/panel.js";
@@ -17,6 +17,7 @@ export const inspectorState = { visible: false, x: null, y: null, w: 320, h: nul
 export function buildInspector(ctx) {
     const win = createFloatWin({ id: "pretty-inspector", title: "inspector", state: inspectorState, bothAxes: true, autoFit: false });
     let current = null;
+    let condSubs = [];   // live current-value read-outs in the conditions editor; torn down each render
 
     function show(widget) { current = widget; win.setVisible(true); render(); }   // visible BEFORE render so height measures right
     function clear() { current = null; render(); }
@@ -289,8 +290,11 @@ export function buildInspector(ctx) {
     }
 
     const OPS = ["==", "!=", ">", "<", ">=", "<=", "nonempty", "empty"];
-    // Compile the structured rule list -> the visible_when / enabled_when expr strings the
-    // canvas evaluates. Rules of the same effect are AND-ed.
+    const EFFECTS = ["show", "enable", "match"];
+    const MATCH_STATES = ["show", "enabled", "both"];
+    // Compile the structured rule list -> the visible_when / enabled_when expr strings the canvas
+    // evaluates. Rules of the same effect are AND-ed. "match" rules are NOT compiled to expressions —
+    // they mirror another element's RESOLVED state and are applied live in canvas (resolvedCond).
     function compileConditions(w) {
         const term = (r) => {
             if (!r.source) return "";
@@ -301,9 +305,29 @@ export function buildInspector(ctx) {
             return `{{${r.source}}} ${r.op} ${val}`;
         };
         const show = [], en = [];
-        for (const r of (w.conditions.rules || [])) { const t = term(r); if (t) (r.effect === "enable" ? en : show).push(t); }
+        for (const r of (w.conditions.rules || [])) {
+            if (r.effect === "match") continue;   // mirrored live in canvas, not an expression
+            const t = term(r); if (t) (r.effect === "enable" ? en : show).push(t);
+        }
         w.conditions.visible_when = show.join(" && ");
         w.conditions.enabled_when = en.join(" && ");
+    }
+
+    // Known value domain for a source token, so the value picker is a dropdown of EXPECTED values
+    // (e.g. activity:live is 0/1, a bool node-input is true/false) instead of a guess-the-value box.
+    // null -> no known domain, fall back to a free-text input.
+    function valueDomain(source) {
+        if (!source) return null;
+        if (source.startsWith("activity:")) {
+            const what = source.slice("activity:".length);
+            return ["live", "precapture", "running"].includes(what) ? ["1", "0"] : null;   // sweeps/triggers are counts
+        }
+        if (source.startsWith("node:")) {
+            const meta = inputMeta(ctx.model, source.slice(5));
+            if (meta.kind === "bool") return ["true", "false"];
+            if (meta.kind === "enum") return meta.options.map(String);
+        }
+        return null;
     }
 
     function conditionsEditor(w) {
@@ -311,15 +335,53 @@ export function buildInspector(ctx) {
         g.appendChild(hdr("conditions", () => { w.conditions = { rules: [], visible_when: "", enabled_when: "" }; save(); }));
         w.conditions = w.conditions || {}; w.conditions.rules = w.conditions.rules || [];
         const srcOpts = [{ value: "", label: "—" }, ...sourceTokenList(ctx.model, ctx.currentWidgets())];
+        const elemOpts = [{ value: "", label: "—" }, ...ctx.currentWidgets().filter((x) => x.id !== w.id).map((x) => ({ value: x.id, label: widgetName(x) }))];
         const recompile = () => { compileConditions(w); ctx.pretty.save(); ctx.refresh(); render(); };
+
+        // Live read-out of what a rule currently resolves to, parked between the value box and the
+        // delete button — so the value you compare against (or the element you mirror) is never a
+        // guess. Updates in place on the source's heartbeat; no inspector re-render.
+        function currentVal(rule) {
+            const span = el("span", "pw-cond-cur"); span.title = "current value";
+            const paint = () => {
+                let v;
+                if (rule.effect === "match") {
+                    const st = rule.source ? ctx.condState(rule.source) : null;
+                    v = !st ? "" : ((rule.state === "enabled" ? st.enabled : rule.state === "show" ? st.visible : (st.visible && st.enabled)) ? "1" : "0");
+                } else {
+                    v = rule.source ? resolveToken(ctx, rule.source) : "";
+                }
+                span.textContent = (v === "" || v == null) ? "—" : `= ${v}`;
+            };
+            paint();
+            const key = rule.effect === "match" ? "activity" : subKeyForToken(rule.source);
+            if (key) condSubs.push(ctx.data.subscribe(key, paint));
+            return span;
+        }
+
+        // sel + a class, so every select in the row is individually styleable/addressable:
+        //   .pw-cond-effect  effect (show/enable/match)   — fixed width, never grows
+        //   .pw-cond-state   match state (show/enabled/both) — fixed width, never grows
+        //   .pw-cond-op      comparison op                 — fixed width, never grows
+        //   .pw-cond-grow    the source/element picker      — the ONE select that fills the row
+        const csel = (cls, value, options, onChange) => { const s = sel(value, options, onChange); s.classList.add(cls); return s; };
         w.conditions.rules.forEach((rule, i) => {
             const fr = el("div", "pw-insp-frow pw-cond-row");
-            fr.append(
-                sel(rule.effect || "show", ["show", "enable"], (v) => { rule.effect = v; recompile(); }),
-                sel(rule.source || "", srcOpts, (v) => { rule.source = v; recompile(); }),
-                sel(rule.op || "nonempty", OPS, (v) => { rule.op = v; recompile(); }),
-            );
-            if (!["nonempty", "empty"].includes(rule.op || "nonempty")) fr.appendChild(txt(rule.value || "", (v) => { rule.value = v; recompile(); }));
+            fr.appendChild(csel("pw-cond-effect", rule.effect || "show", EFFECTS, (v) => { rule.effect = v; recompile(); }));
+            if (rule.effect === "match") {
+                fr.appendChild(csel("pw-cond-grow", rule.source || "", elemOpts, (v) => { rule.source = v; recompile(); }));
+                fr.appendChild(csel("pw-cond-state", rule.state || "both", MATCH_STATES, (v) => { rule.state = v; recompile(); }));
+            } else {
+                fr.appendChild(csel("pw-cond-grow", rule.source || "", srcOpts, (v) => { rule.source = v; recompile(); }));
+                fr.appendChild(csel("pw-cond-op", rule.op || "nonempty", OPS, (v) => { rule.op = v; recompile(); }));
+                if (!["nonempty", "empty"].includes(rule.op || "nonempty")) {
+                    const dom = valueDomain(rule.source);
+                    fr.appendChild(dom
+                        ? sel(rule.value ?? "", [{ value: "", label: "—" }, ...dom.map((d) => ({ value: String(d), label: String(d) }))], (v) => { rule.value = v; recompile(); })
+                        : txt(rule.value || "", (v) => { rule.value = v; recompile(); }));
+                }
+            }
+            fr.appendChild(currentVal(rule));
             const del = el("button", "pw-insp-del", "×"); del.addEventListener("click", () => { w.conditions.rules.splice(i, 1); recompile(); });
             fr.appendChild(del);
             g.appendChild(fr);
@@ -332,6 +394,7 @@ export function buildInspector(ctx) {
     function render() {
         const body = win.body;
         body.textContent = "";
+        condSubs.forEach((u) => { try { u(); } catch { /* */ } }); condSubs = [];
         geomRefs = null;
         if (!current) { body.appendChild(el("div", "pw-insp-empty", "select a widget")); return; }
         const w = current;

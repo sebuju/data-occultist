@@ -13,7 +13,7 @@
 import { makeDraggable, addResizeGrips, GRID, snap } from "../graph/dragresize.js";
 import { applyStyle, mergeStyle } from "./style.js";
 import { widgetDef } from "./widgets/index.js";
-import { evaluate, tokensIn } from "./expr.js";
+import { evaluate, tokensIn, truthy } from "./expr.js";
 import { resolveToken, subKeyForToken } from "./binding.js";
 import { keySubscription, el } from "./widgets/util.js";
 import { svg } from "../dom.js";
@@ -96,10 +96,20 @@ export function renderPage(surface, page, ctx) {
     // resizes widgets, which can resize the surface again — running it synchronously inside the
     // observer trips "ResizeObserver loop completed with undelivered notifications", so defer to the
     // next frame (coalescing bursts) to break the feedback loop.
-    let roFrame = 0;
+    let roFrame = 0, _roW = -1, _roH = -1;
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
         if (roFrame) return;
-        roFrame = requestAnimationFrame(() => { roFrame = 0; placeAll(); drawAnchorCue(); });
+        roFrame = requestAnimationFrame(() => {
+            roFrame = 0;
+            // Only react to a REAL surface-size change. .pw-surface is min-height/width:100% of #pretty,
+            // so a scrollbar toggling #pretty's client size resizes the surface and re-fires this RO —
+            // redrawing the cue, which can re-toggle the scrollbar (a flashing, CPU-pinning loop). Bail
+            // when the size is unchanged so the loop can't sustain itself.
+            const w = Math.round(surface.offsetWidth), h = Math.round(surface.offsetHeight);
+            if (w === _roW && h === _roH) return;
+            _roW = w; _roH = h;
+            placeAll(); drawAnchorCue();
+        });
     }) : null;
     ro && ro.observe(surface);
 
@@ -487,7 +497,15 @@ export function renderPage(surface, page, ctx) {
         if (ctx.mode !== "edit") { if (cueSvg) cueSvg.style.display = "none"; return; }
         const svg = ensureCueSvg();
         const boxes = resolveBoxes();
-        svg.setAttribute("width", surface.scrollWidth); svg.setAttribute("height", surface.scrollHeight);
+        // Size the cue layer purely from the resolved WIDGET geometry — never from the surface's
+        // client/scroll size. The SVG is a child of the surface and .pw-surface is min-height:100% of
+        // the scrollable #pretty, so any size read off the surface moves with the scrollbars: feeding
+        // it back into the SVG made the scrollbar flash and pinned the CPU in a bistable RO loop. Widget
+        // boxes are fixed px (scrollbar-independent), so this is stable AND never exceeds what the
+        // widgets already demand (no phantom overflow). Empty page -> 0×0 (nothing to draw).
+        let cw = 0, ch = 0;
+        for (const b of boxes.values()) { cw = Math.max(cw, b.left + b.w); ch = Math.max(ch, b.top + b.h); }
+        svg.setAttribute("width", Math.ceil(cw)); svg.setAttribute("height", Math.ceil(ch));
         svg.style.display = ""; svg.replaceChildren();
         labelQ = [];   // collect every cue's labels, then lay them out together (below)
         const sel = (ctx.selectionIds && ctx.selectionIds()) || new Set();
@@ -521,16 +539,53 @@ export function renderPage(surface, page, ctx) {
         flushLabels(svg);   // labels last so they sit above every line, dodging caps + each other
     }
 
-    function wireConditions(rec) {
+    // A widget's REAL (non-match) show/enable from its compiled visible_when / enabled_when.
+    function realCond(w) {
+        const c = w.conditions || {};
+        const resolve = (inner) => resolveToken(ctx, inner);
+        return {
+            visible: truthy(evaluate(c.visible_when, resolve, true)),
+            enabled: truthy(evaluate(c.enabled_when, resolve, true)),
+        };
+    }
+    // Resolved show/enable for a widget: its own real conditions AND-ed with every "match" rule it
+    // carries. A match rule mirrors another element's RESOLVED show/enable, so ONE authored condition
+    // can drive many elements. Real conditions resolve first, then matches; recursion is cycle-guarded
+    // exactly like resolveBoxes handles matchW/matchH — a match loop falls back to the element's own
+    // real state instead of recursing forever.
+    function resolvedCond(id, seen) {
+        const rec = recs.get(id);
+        if (!rec) return { visible: true, enabled: true };
+        let { visible, enabled } = realCond(rec.widget);
+        for (const r of (rec.widget.conditions?.rules || [])) {
+            if (r.effect !== "match" || !r.source || r.source === id) continue;
+            if (!recs.has(r.source) || seen.has(r.source)) continue;
+            const t = resolvedCond(r.source, new Set(seen).add(id));
+            const st = r.state || "both";
+            if (st === "show" || st === "both") visible = visible && t.visible;
+            if (st === "enabled" || st === "both") enabled = enabled && t.enabled;
+        }
+        return { visible, enabled };
+    }
+    // Every {{token}} this widget's conditions depend on — INCLUDING those of any match target
+    // (transitively, cycle-guarded), so a matcher re-evaluates the instant the source it mirrors flips.
+    function condTokens(id, seen, out) {
+        const rec = recs.get(id);
+        if (!rec) return out;
         const c = rec.widget.conditions || {};
-        const inners = [...tokensIn(c.visible_when || ""), ...tokensIn(c.enabled_when || "")];
+        for (const inner of [...tokensIn(c.visible_when || ""), ...tokensIn(c.enabled_when || "")]) out.add(inner);
+        for (const r of (c.rules || [])) {
+            if (r.effect === "match" && r.source && r.source !== id && recs.has(r.source) && !seen.has(r.source))
+                condTokens(r.source, new Set(seen).add(id), out);
+        }
+        return out;
+    }
+    function wireConditions(rec) {
+        const inners = [...condTokens(rec.widget.id, new Set(), new Set())];
         rec.condSub.sync(inners.map(subKeyForToken).filter(Boolean));
     }
     function applyConditions(rec) {
-        const c = rec.widget.conditions || {};
-        const resolve = (inner) => resolveToken(ctx, inner);
-        const visible = evaluate(c.visible_when, resolve, true);
-        const enabled = evaluate(c.enabled_when, resolve, true);
+        const { visible, enabled } = resolvedCond(rec.widget.id, new Set());
         // in edit mode never hide (so you can still select/move a conditionally-hidden widget) —
         // dim it instead so the rule is visible while authoring.
         if (ctx.mode === "edit") {
@@ -651,6 +706,7 @@ export function renderPage(surface, page, ctx) {
         highlight(id) { for (const rec of recs.values()) rec.frame.classList.toggle("pw-hl", rec.widget.id === id); },
         placeAll,
         boxes: () => resolveBoxes(),   // resolved {left,top,w,h} per id — used for marquee hit-testing
+        condState: (id) => resolvedCond(id, new Set()),   // resolved {visible,enabled} — for the inspector's match read-out
         reanchor,
         showAnchorCue,
         // px nudge (WASD) -> back into each field's unit

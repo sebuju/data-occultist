@@ -46,6 +46,7 @@ const ctx = {
     selectWidget: (id, additive) => selectWidget(id, additive),
     setAnchor: (id, anchor) => { if (canvasCtrl) canvasCtrl.reanchor(id, anchor); },
     geomOf: (id) => (canvasCtrl ? canvasCtrl.geom(id) : null),
+    condState: (id) => (canvasCtrl ? canvasCtrl.condState(id) : null),
     applyGeom: (id, patch) => { if (canvasCtrl) canvasCtrl.setGeom(id, patch); pretty.save(); },
     setUnit: (id, k, unit) => { if (canvasCtrl) canvasCtrl.setUnit(id, k, unit); pretty.save(); },
     setMatch: (id, key, to) => { if (canvasCtrl) canvasCtrl.setMatch(id, key, to); pretty.save(); },
