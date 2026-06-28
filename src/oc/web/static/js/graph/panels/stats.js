@@ -26,7 +26,9 @@ const DUR_METRICS = [["last_ms", "last"], ["avg_ms", "avg"], ["min_ms", "min"], 
 // op-code -> display order of its type bucket + heading label. Cards group under these; the
 // order here is the order the buckets render in. Mirrors stats_store.OPS.
 const OP_GROUPS = [
-    ["tk", "ticks"], ["oc", "ocr"], ["rp", "replays"], ["rc", "recomputes"], ["sw", "sweeps"], ["fr", "frames"],
+    ["tk", "ticks"], ["oc", "ocr"], ["cp", "capture"], ["st", "settle"], ["cl", "classify"],
+    ["sg", "signature"], ["cf", "confirm"], ["cm", "commit"],
+    ["rp", "replays"], ["rc", "recomputes"], ["sw", "sweeps"], ["fr", "frames"],
 ];
 const GROUP_RANK = new Map(OP_GROUPS.map(([op], i) => [op, i]));
 const GROUP_LABEL = new Map(OP_GROUPS);

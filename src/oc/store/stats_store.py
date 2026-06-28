@@ -49,6 +49,12 @@ _FLUSH_ROWS = 64           # ...or flush sooner once this many rows are buffered
 OPS = {
     "tk": "tick",        # win: — one whole collection pass
     "oc": "ocr",         # win: — OCR inference only (the dominant cost)
+    "cp": "capture",     # win: — window grab (capture backend)
+    "st": "settle",      # win: — settle thumbnail + staleness diff
+    "cl": "classify",    # win: — window/state classification pass
+    "sg": "signature",   # win: — grid-region change hash (OCR-skip gate)
+    "cf": "confirm",     # win: — temporal confirmation gate
+    "cm": "commit",      # win: — store write + flow/mirror bookkeeping
     "rp": "replay",      # ds:  — ledger replay
     "rc": "recompute",   # sub: — view recompute
     "sw": "sweep",       # price: — one price sweep

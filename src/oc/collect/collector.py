@@ -247,7 +247,9 @@ class Collector:
         if self._tuning.require_foreground and not eng.window.is_foreground(win):
             return TickResult(TickStatus.not_foreground)
 
+        _tcp = time.perf_counter()
         frame = eng.capture.grab_window(win)
+        t_capture = (time.perf_counter() - _tcp) * 1000.0
         # Settle gate: only OCR a frame that has STOPPED moving. A grab taken mid-scroll
         # or mid-animation is blurred/half-drawn and reads as garbage; require this grab
         # to match the previous one within the noise floor (precapture gates the same way).
@@ -257,12 +259,16 @@ class Collector:
         # but proceed on the FIRST grab (no predecessor to compare) so a single-shot
         # ``collect --once`` still reads; any stray blurred frame that slips through is
         # caught by the confirmer, which needs the SAME read twice before it saves.
+        _ts = time.perf_counter()
         th = settle.thumb(frame.image, crop_px=settle.CROP_PX)
         if th is not None:
             prev, self._settle_thumb = self._settle_thumb, th
             if prev is not None and not settle.is_settled(th, prev):
                 return TickResult(TickStatus.moving)
+        t_settle = (time.perf_counter() - _ts) * 1000.0
+        _tc = time.perf_counter()
         match = self._classify(frame)
+        t_classify = (time.perf_counter() - _tc) * 1000.0
         if match is None:
             return TickResult(TickStatus.unrecognised)
 
@@ -273,8 +279,17 @@ class Collector:
         if not self._state_allows_save(window, state_id):
             return TickResult(TickStatus.state_invalid, window_id=window_id, state_id=state_id)
 
+        # Per-stage timing: capture + settle + classify were measured above (windowless
+        # until now); emit them under this window now that it's recognised + save-worthy.
+        stats_store.record_timing(self._profile.name, f"win:{window_id}", "cp", t_capture)
+        stats_store.record_timing(self._profile.name, f"win:{window_id}", "st", t_settle)
+        stats_store.record_timing(self._profile.name, f"win:{window_id}", "cl", t_classify)
+
         # Skip OCR when the grid region is pixel-identical to the last tick.
+        _tg = time.perf_counter()
         sig = self._reader.region_signature(frame, window)
+        stats_store.record_timing(self._profile.name, f"win:{window_id}", "sg",
+                                  (time.perf_counter() - _tg) * 1000.0)
         cached = self._frame_cache.get(window_id)
         cache_hit = sig is not None and cached is not None and cached[0] == sig
         if cache_hit:
@@ -324,8 +339,12 @@ class Collector:
             self._last_seen_tick[dataset] = self._tick_no
 
         confirmer = self._confirmer_for(window)         # shared per dataset
+        _tcf = time.perf_counter()
         confirmed = confirmer.observe(kept)             # temporal stability gate
+        stats_store.record_timing(self._profile.name, f"win:{window_id}", "cf",
+                                  (time.perf_counter() - _tcf) * 1000.0, n=len(kept))
 
+        _tcm = time.perf_counter()
         new = 0
         changed: list[dict] = []
         tick_scroll: tuple[float, float] | None = None   # mirror datasets: current visible slice
@@ -404,6 +423,9 @@ class Collector:
                         # _pos column + next run: the same (column, row-index) slots slice_sync
                         # just used — column persisted so a gone relic stays a removal candidate.
                         store.set_positions(read_cells)
+
+        stats_store.record_timing(self._profile.name, f"win:{window_id}", "cm",
+                                  (time.perf_counter() - _tcm) * 1000.0, n=new)
 
         # Persist the frame image only when this tick actually WROTE a record (live mode
         # saves the grab) — a recognised-but-nothing-new frame produces no screenshot.
