@@ -5,6 +5,7 @@
 
 import { createFloatWin } from "../../graph/floatwin.js";
 import { el } from "../widgets/util.js";
+import { svg } from "../../dom.js";
 
 export const pagesState = { visible: false, x: null, y: null, w: 300, h: null, collapsed: false };
 
@@ -35,9 +36,17 @@ export function buildPages(ctx) {
 
         const grip = el("span", "pw-pages-grip", "⠿"); grip.title = "drag to reorder";
         const name = el("button", "pw-pages-name", p.title);
-        name.title = "click to switch · double-click to rename";
+        name.title = "click to switch";
         name.addEventListener("click", () => { ctx.switchPage(p.id); refresh(); });
-        name.addEventListener("dblclick", (e) => { e.preventDefault(); beginRename(r, p, name); });
+
+        // rename: a pencil button (matches the rest of the UI's explicit controls — no double-click).
+        const edit = el("button", "pw-pages-edit"); edit.title = "rename page";
+        edit.appendChild(svg("svg", { viewBox: "0 0 16 16", width: "12", height: "12", "aria-hidden": "true" },
+            svg("path", {
+                d: "M11.5 2.5l2 2L6 12l-2.5.5L4 10l7.5-7.5zM10.5 3.5l2 2",
+                fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round", "stroke-linejoin": "round",
+            })));
+        edit.addEventListener("click", (e) => { e.stopPropagation(); beginRename(r, p, name); });
 
         // delete: armed two-click (no blocking confirm — rule 2). Disabled when it's the last page.
         const del = el("button", "pw-pages-del");
@@ -50,18 +59,29 @@ export function buildPages(ctx) {
                 if (ctx.removePage(p.id)) refresh();
             });
         }
-        r.append(grip, name, del);
+        r.append(grip, name, edit, del);
         return r;
     }
 
-    // inline rename: swap the name button for an input, commit on Enter/blur, cancel on Escape.
+    // inline rename: swap the name button for an input. Enter commits; a rejected name (empty or a
+    // COLLISION with another page) flashes and stays open to fix. Escape / blur-while-invalid cancels.
     function beginRename(r, p, name) {
         const inp = el("input", "pw-pages-rename"); inp.value = p.title; inp.spellcheck = false;
         let done = false;
-        const commit = () => { if (done) return; done = true; const v = inp.value.trim(); if (v) ctx.renamePage(p.id, v); refresh(); };
-        const cancel = () => { if (done) return; done = true; refresh(); };
-        inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } else if (e.key === "Escape") { e.preventDefault(); cancel(); } });
-        inp.addEventListener("blur", commit);
+        const close = () => { if (done) return; done = true; refresh(); };
+        // try to apply the typed name; true = handled (committed or unchanged), false = rejected.
+        const tryCommit = () => {
+            const v = inp.value.trim();
+            if (v === p.title) { close(); return true; }       // no change
+            if (!v || !ctx.renamePage(p.id, v)) return false;   // empty or name collision -> reject
+            close(); return true;
+        };
+        inp.addEventListener("input", () => inp.classList.remove("bad"));
+        inp.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); if (!tryCommit()) { inp.classList.add("bad"); inp.select(); } }
+            else if (e.key === "Escape") { e.preventDefault(); close(); }
+        });
+        inp.addEventListener("blur", () => { if (!tryCommit()) close(); });   // invalid on blur -> just cancel (revert)
         r.replaceChild(inp, name); inp.focus(); inp.select();
     }
 

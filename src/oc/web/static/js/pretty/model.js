@@ -46,7 +46,20 @@ export class PrettyModel {
         this.save();
         return true;
     }
-    renamePage(id, title) { const p = this.page(id); if (p) { p.title = title; this.save(); } }
+    // Rename a page's display title. The page `id` (the stable reference held by switch_page buttons
+    // and widgets' share lists) never changes, so every reference stays valid; all UIs read `title`
+    // live, so the new name shows everywhere at once. Refuses an empty title or one that COLLIDES with
+    // another page's title (case-insensitive) so two pages can't share a name. Returns true on success.
+    renamePage(id, title) {
+        title = (title || "").trim();
+        const p = this.page(id);
+        if (!p || !title) return false;
+        const low = title.toLowerCase();
+        if (this.doc.pages.some((pg) => pg.id !== id && (pg.title || "").trim().toLowerCase() === low)) return false;
+        p.title = title;
+        this.save();
+        return true;
+    }
     // Reorder pages to match `ids` (a permutation of the current page ids). Any page omitted from
     // `ids` is kept, appended in its original order, so a stale list can never drop a page.
     reorderPages(ids) {
@@ -57,8 +70,49 @@ export class PrettyModel {
     }
 
     // ---- widgets ----------------------------------------------------------------------
-    widgets(pageId) { const p = this.page(pageId); return p ? p.widgets : []; }
-    widget(pageId, wid) { return this.widgets(pageId).find((w) => w.id === wid) || null; }
+    // A widget is STORED on exactly one page (its "home"). It may additionally be SHARED onto other
+    // pages: `onAllPages` shows it everywhere; else `pages` is an allowlist of extra page ids. The
+    // home page always shows it. The same object renders on each page, so an edit reflects everywhere.
+    widgets(pageId) { const p = this.page(pageId); return p ? p.widgets : []; }   // home-stored only
+    homePageId(wid) { const p = this.doc.pages.find((pg) => pg.widgets.some((w) => w.id === wid)); return p ? p.id : null; }
+    _showsOn(w, pageId) { return !!w.onAllPages || (Array.isArray(w.pages) && w.pages.includes(pageId)); }
+    // Every widget that should RENDER on `pageId`: the page's own widgets, plus any widget shared onto
+    // it from another page. De-duped by id (a home widget is never re-added as a share).
+    widgetsForPage(pageId) {
+        const home = this.widgets(pageId);
+        const seen = new Set(home.map((w) => w.id));
+        const shared = [];
+        for (const p of this.doc.pages) {
+            if (p.id === pageId) continue;
+            for (const w of p.widgets) if (!seen.has(w.id) && this._showsOn(w, pageId)) { shared.push(w); seen.add(w.id); }
+        }
+        return [...home, ...shared];
+    }
+    // lookup spans the RESOLVED set so a shared widget is found while viewing a page it's shared onto.
+    widget(pageId, wid) { return this.widgetsForPage(pageId).find((w) => w.id === wid) || null; }
+    // Toggle whether widget `wid` shows on `pageId` (never its home page — that's implicit). `on` adds,
+    // else removes. Editing one page out of an `onAllPages` widget first expands it to an explicit list.
+    setShare(wid, pageId, on) {
+        const w = this.doc.pages.flatMap((p) => p.widgets).find((x) => x.id === wid);
+        if (!w) return;
+        const homeId = this.homePageId(wid);
+        if (pageId === homeId) return;   // home is always shown; nothing to toggle
+        if (w.onAllPages) {   // expand "all" to an explicit allowlist (every page except home) so one can be removed
+            w.onAllPages = false;
+            w.pages = this.doc.pages.map((p) => p.id).filter((id) => id !== homeId);
+        }
+        w.pages = Array.isArray(w.pages) ? w.pages : [];
+        if (on) { if (!w.pages.includes(pageId)) w.pages.push(pageId); }
+        else w.pages = w.pages.filter((id) => id !== pageId);
+        this.save();
+    }
+    setShareAll(wid, on) {
+        const w = this.doc.pages.flatMap((p) => p.widgets).find((x) => x.id === wid);
+        if (!w) return;
+        if (on) { w.onAllPages = true; delete w.pages; }
+        else { w.onAllPages = false; w.pages = []; }
+        this.save();
+    }
     addWidget(pageId, widget) {
         const p = this.page(pageId);
         if (!p) return null;
@@ -70,10 +124,49 @@ export class PrettyModel {
         this.save();
         return w;
     }
+    // Move which page OWNS `wid` (its home) to `toPageId`. The widget object (with its style/config/
+    // conditions/share state) moves intact; only its storage page changes. Drops the new home from the
+    // widget's share list (the home always shows, so listing it would be redundant). Returns true.
+    rehomeWidget(wid, toPageId) {
+        const from = this.doc.pages.find((p) => p.widgets.some((w) => w.id === wid));
+        const to = this.page(toPageId);
+        if (!from || !to || from.id === toPageId) return false;
+        const w = from.widgets.find((x) => x.id === wid);
+        from.widgets = from.widgets.filter((x) => x.id !== wid);
+        if (Array.isArray(w.pages)) w.pages = w.pages.filter((id) => id !== toPageId);
+        to.widgets.push(w);
+        this.save();
+        return true;
+    }
+    // Remove `wid` as seen from `pageId`. On its HOME page this DELETES the widget (so it disappears
+    // from every page it was shared onto). On a page it's only SHARED onto, this UN-SHARES it from that
+    // page (the widget itself survives on its home). So "delete" from a shared instance just detaches it.
     removeWidget(pageId, wid) {
-        const p = this.page(pageId);
+        const homeId = this.homePageId(wid);
+        if (homeId && homeId !== pageId) { this.setShare(wid, pageId, false); return; }
+        const p = this.page(homeId || pageId);
         if (p) p.widgets = p.widgets.filter((w) => w.id !== wid);
         this.save();
+    }
+    // Duplicate a widget onto its OWN home page with a fresh, non-colliding id. The copy is a deep
+    // clone (style/config/conditions/anchor/pages all carried), nudged down-right so it doesn't sit
+    // exactly on the original. References the clone holds (anchor.to / matchW / {{widget:id}} tokens)
+    // point at the SAME targets as the original — only the clone's own id is new. Returns the copy.
+    cloneWidget(wid) {
+        const homeId = this.homePageId(wid);
+        const p = this.page(homeId);
+        if (!p) return null;
+        const src = p.widgets.find((w) => w.id === wid);
+        if (!src) return null;
+        const all = this.doc.pages.flatMap((pg) => pg.widgets);
+        const id = uid("w", (w) => w.id, all);
+        const copy = JSON.parse(JSON.stringify(src));
+        copy.id = id;
+        if (typeof copy.x === "number") copy.x += 20;   // offset only when numeric (calc/% strings stay put)
+        if (typeof copy.y === "number") copy.y += 20;
+        p.widgets.push(copy);
+        this.save();
+        return copy;
     }
     // Rename a widget id, REPOINTING every reference so nothing breaks: other widgets' anchor.to /
     // matchW / matchH, and every {{widget:<id>}} token in any string field (labels, conditions, ...).
