@@ -45,7 +45,11 @@ body.pretty-view .pw-cauldron-mark {
 .pw-cauldron-label { font-size: 11px; letter-spacing: .18em; text-transform: uppercase;
     text-indent: .18em;   /* offset the trailing letter-spacing gap so ink re-centres under the mark */
     color: #38ada9; }
-.pw-surface { position: relative; min-width: 100%; min-height: 100%; }
+/* isolate: the surface forms its OWN stacking context, so every widget z (clamped 1-100) AND the
+   cue layer (z 8000, above all widgets) stay CONTAINED — the whole surface then composites below the
+   body-level floating panels (.floatwin z 40+), which therefore always sit on top without any per-z
+   juggling. Cues end up above elements but below floatwins, as required. */
+.pw-surface { position: relative; min-width: 100%; min-height: 100%; isolation: isolate; }
 /* dots sit ON the snap lines (multiples of GRID=20): the gradient dot is centred in its 20px
    tile (at 10,10), so shift the pattern half a cell to land each dot at 0/20/40 — where a
    dragged widget's top-left snaps. Keep background-size in sync with GRID in dragresize.js. */
@@ -61,15 +65,22 @@ body.pretty-view .pw-cauldron-mark {
 .pw-surface.edit .pw-edit:not(.pw-bordered).pw-sel:hover { outline: 1px dashed rgba(255,255,255,1.0); outline-offset: -1px; }
 /* transient highlight when hovering an element row in the elements panel (amber, always shown) */
 .pw-surface.edit .pw.pw-hl { outline: 2px solid #ffb454; outline-offset: 1px; box-shadow: 0 0 12px 2px rgba(255,180,84,0.5); }
-.pw-surface.edit .pw-content { pointer-events: none; }   /* edit: clicks move/select the frame */
+/* edit: an UNSELECTED widget's content is inert so a click selects/drags the frame; once SELECTED
+   the content turns interactive (click its button, type in its form). So first click selects, the
+   next acts. (.pw-host is re-added by canvas build() since widgets replace the host class.) */
+.pw-surface.edit .pw-host { pointer-events: none; }
+.pw-surface.edit .pw-sel .pw-host { pointer-events: auto; }
 .pw-edit { cursor: grab; }
 /* rubber-band multi-select rectangle drawn over the empty canvas */
 .pw-marquee { position: absolute; z-index: 9000; pointer-events: none; border: 1px solid #4ea1ff; background: rgba(78,161,255,0.12); }
 /* anchor cue: the selected widget's anchor target (when not the canvas) + a line to it */
-/* clip cue ink to the surface: with overflow visible, lines/caps/leader labels/glow that paint past
-   the board edge inflate #pretty's scroll area and spawn scrollbars edit mode doesn't need. The svg
-   is sized to the full scroll surface, so clipping only trims ink that fell OUTSIDE the board. */
-.pw-anchor-cue { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 8000; overflow: hidden; }
+/* overflow:VISIBLE — cues (dimension chips, leader labels, glow) routinely dodge PAST a widget toward
+   the page edge; clipping them is exactly the bug (they vanish on the right). The svg BOX is sized to
+   the widget bounding box (see drawAnchorCue), so ink that paints past it is VISUAL overflow, which —
+   unlike a bigger box — never extends #pretty's scrollable (layout) overflow, so it can't spawn the
+   scrollbars / RO oscillation. (The old hidden+scroll-surface sizing misattributed a box-sizing RO
+   loop to ink; the box is now widget-sized, so the clip is unnecessary AND harmful.) */
+.pw-anchor-cue { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 8000; overflow: visible; }
 /* amber = anchor (the offset pin). cyan = width. magenta = height. lighter shade = a widget's own
    dimension; deeper shade + dashed tie = a width/height MATCH to another widget. */
 .pw-cue-line { stroke: #ffb454; stroke-width: 1; stroke-dasharray: 4 3; }
@@ -131,7 +142,10 @@ g.pw-cue-hot .pw-cue-lbl-tx { font-weight: 700; }
 /* ---- widgets ---- */
 /* grid (not flex) so inherited text-align actually positions the text, while align-content
    keeps it vertically centred */
-.pw-label { display: grid; align-content: center; height: 100%; padding: 2px 4px; white-space: pre-wrap; }
+/* align-content centres vertically; grid-template-columns:1fr makes the single (anonymous) text
+   item span the FULL width, so the inherited `text-align` (style `align` field) can move the text
+   left/center/right. Without 1fr the implicit column is content-width and text-align has no room. */
+.pw-label { display: grid; grid-template-columns: 1fr; align-content: center; height: 100%; padding: 2px 4px; white-space: pre-wrap; }
 .pw-container { width: 100%; height: 100%; box-sizing: border-box; }
 .pw-container-title { font-weight: 600; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.12); }
 
@@ -196,9 +210,11 @@ g.pw-cue-hot .pw-cue-lbl-tx { font-weight: 700; }
 .pw-form-submit { align-self: flex-start; margin-top: 2px; }
 .pw-form-msg { font-size: 11px; opacity: 0.7; }
 
-.pw-button-host { display: flex; align-items: center; gap: 6px; height: 100%; padding: 4px 6px; box-sizing: border-box; }
+.pw-button-host { position: relative; display: flex; align-items: center; gap: 6px; height: 100%; box-sizing: border-box; }
 .pw-button { padding: 4px 12px; }
-.pw-button-msg { font-size: 11px; opacity: 0.7; }
+/* transient status sits OUT of flow (absolute corner overlay) so it never takes row space — else its
+   box + gap stop the `fill` button from truly filling, and it shifts the button when it appears. */
+.pw-button-msg { position: absolute; right: 6px; bottom: 2px; pointer-events: none; font-size: 11px; opacity: 0.7; }
 
 /* ---- pretty topbar tools (placeholder replacing .topbar-tools) ---- */
 .topbar-pretty-tools { display: none; align-items: center; gap: 6px; flex: 1; }
@@ -223,6 +239,9 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-pages-name:hover { background: rgba(255,255,255,0.06); }
 .pw-pages-rename { flex: 1; min-width: 0; background: #11141a; border: 1px solid #4ea1ff; color: inherit;
     border-radius: 3px; padding: 1px 4px; font: inherit; }
+.pw-pages-rename.bad { border-color: #f7768e; }   /* rejected (empty / name collision) */
+.pw-pages-edit { border: none; background: transparent; color: var(--muted); cursor: pointer; padding: 2px 5px; border-radius: 3px; line-height: 0; display: inline-flex; align-items: center; }
+.pw-pages-edit:hover { color: #4ea1ff; background: rgba(78,161,255,0.12); }
 .pw-pages-del { border: none; background: transparent; color: var(--muted); cursor: pointer; padding: 2px 5px; border-radius: 3px; line-height: 1; }
 .pw-pages-del:hover:not(:disabled) { color: #f7768e; background: rgba(247,118,142,0.12); }
 .pw-pages-del.armed { background: #f7768e; color: #06121f; }
@@ -303,7 +322,7 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-insp-id:hover { border-color: rgba(255,255,255,0.15); }
 .pw-insp-id:focus { border-color: #4ea1ff; outline: none; background: #0d1016; }
 .pw-insp-id.bad { border-color: #f7768e; }
-.pw-insp-remove { font-size: 11px; }
+.pw-insp-remove, .pw-insp-clone { font-size: 11px; }
 .pw-insp-grp { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.07); }
 .pw-insp-h { display: flex; align-items: center; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55; margin-bottom: 4px; }
 .pw-insp-h-lab { flex: 1 1 auto; }
@@ -382,3 +401,9 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-se-toggle, .pw-se-aln { min-width: 26px; }
 .pw-se-toggle.on, .pw-se-aln.on { background: #4ea1ff; color: #06121f; }
 .pw-se-align { display: inline-flex; gap: 2px; }
+/* per-side border editor: the row wraps so the side switcher + width/colour/style controls flow to a
+   second line in the narrow inspector; the side switcher (all/T/R/B/L) picks which side they edit. */
+.pw-se-border { flex-wrap: wrap; }
+.pw-se-sides { display: inline-flex; gap: 2px; }
+.pw-se-side { min-width: 22px; }
+.pw-se-side.on { background: #4ea1ff; color: #06121f; }
