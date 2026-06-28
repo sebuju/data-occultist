@@ -1842,12 +1842,6 @@ layout:
       w: 360.0
       h: 1100.0
       collapsed: false
-    'ds:':
-      x: 1360.0
-      y: -60.0
-      w: 360.0
-      h: 200.0
-      collapsed: false
     vt:ds:relics_offered:
       x: 1140.0
       y: 7860.0

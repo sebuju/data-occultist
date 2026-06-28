@@ -603,8 +603,10 @@ class WindowDef(BaseModel):
     @property
     def dataset_id(self) -> str | None:
         """The dataset this window feeds, or ``None`` when it has none (records
-        discarded). No implicit window-id fallback."""
-        return self.dataset
+        discarded). No implicit window-id fallback. A blank/empty ``dataset``
+        (e.g. left after unwiring) counts as no dataset — matching the UI's
+        ``datasetOf`` — so reads are discarded, never written to a ``""`` sink."""
+        return self.dataset or None
 
 
 class DatasetDef(BaseModel):

@@ -43,7 +43,9 @@ def flow(game: str):
     # Datasets from the profile plus any already on disk. The resolved key map is
     # only needed to OPEN the store (replay re-keys from raw values) — the dataset
     # itself reports nothing about keys; they're taught on the windows/items.
-    names = sorted(used_datasets | set(inspect.list_datasets(settings.data_dir, game)))
+    # Drop any blank id: a window left unwired (dataset "") or a legacy ""-sink on disk
+    # must never surface as a ghost "empty dataset" node.
+    names = sorted(n for n in (used_datasets | set(inspect.list_datasets(settings.data_dir, game))) if n)
     datasets = [inspect.summarize(settings.data_dir, game, n, profile.key_map_for(n),
                                   profile.aggregate_for(n))
                 for n in names]
