@@ -54,15 +54,22 @@ body.pretty-view .pw-cauldron-mark {
 /* ---- widget frame ---- */
 .pw { position: absolute; box-sizing: border-box; color: #d8dde6; font-size: 14px; overflow: hidden; }
 .pw-content { width: 100%; height: 100%; overflow: auto; }
-.pw-surface.edit .pw { outline: 1px dashed rgba(255,255,255,0.12); }
-/* selection isn't a separate outline — the element's own dashed outline just goes bright white */
-.pw-surface.edit .pw.pw-sel { outline-color: #fff; }
+/* Edit-mode selection / hover outline — drawn ONLY for borderless elements (a bordered one already
+   reads as framed, so it gets no extra outline). pw-bordered is toggled by applyStyle. */
+.pw-surface.edit .pw-edit:not(.pw-bordered):hover { outline: 1px dashed rgba(255,255,255,0.55); outline-offset: -1px; }
+.pw-surface.edit .pw:not(.pw-bordered).pw-sel,
+.pw-surface.edit .pw-edit:not(.pw-bordered).pw-sel:hover { outline: 1px dashed rgba(255,255,255,1.0); outline-offset: -1px; }
+/* transient highlight when hovering an element row in the elements panel (amber, always shown) */
+.pw-surface.edit .pw.pw-hl { outline: 2px solid #ffb454; outline-offset: 1px; box-shadow: 0 0 12px 2px rgba(255,180,84,0.5); }
 .pw-surface.edit .pw-content { pointer-events: none; }   /* edit: clicks move/select the frame */
 .pw-edit { cursor: grab; }
 /* rubber-band multi-select rectangle drawn over the empty canvas */
 .pw-marquee { position: absolute; z-index: 9000; pointer-events: none; border: 1px solid #4ea1ff; background: rgba(78,161,255,0.12); }
 /* anchor cue: the selected widget's anchor target (when not the canvas) + a line to it */
-.pw-anchor-cue { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 8000; overflow: visible; }
+/* clip cue ink to the surface: with overflow visible, lines/caps/leader labels/glow that paint past
+   the board edge inflate #pretty's scroll area and spawn scrollbars edit mode doesn't need. The svg
+   is sized to the full scroll surface, so clipping only trims ink that fell OUTSIDE the board. */
+.pw-anchor-cue { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 8000; overflow: hidden; }
 /* amber = anchor (the offset pin). cyan = width. magenta = height. lighter shade = a widget's own
    dimension; deeper shade + dashed tie = a width/height MATCH to another widget. */
 .pw-cue-line { stroke: #ffb454; stroke-width: 1; stroke-dasharray: 4 3; }
@@ -77,10 +84,32 @@ body.pretty-view .pw-cauldron-mark {
 /* width / height match ties */
 .pw-cue-mw { stroke: #1f9fb5; stroke-width: 1.5; }
 .pw-cue-mh { stroke: #b54fc7; stroke-width: 1.5; }
-.pw-cue-mlink-w { stroke: #1f9fb5; stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.85; }
-.pw-cue-mlink-h { stroke: #b54fc7; stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.85; }
-.pw-cue-mw-lbl .pw-cue-lbl-bg { fill: #1f9fb5; }
-.pw-cue-mh-lbl .pw-cue-lbl-bg { fill: #b54fc7; }
+/* a match tie reuses the SAME colour as that element's own width/height cue (cyan = width,
+   magenta = height), so a "matched W" reads as the same hue as a plain width cue. */
+.pw-cue-mlink-w { stroke: #5ad1e6; stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.85; }
+.pw-cue-mlink-h { stroke: #e69ad1; stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.85; }
+.pw-cue-mw-lbl .pw-cue-lbl-bg { fill: #5ad1e6; }
+.pw-cue-mh-lbl .pw-cue-lbl-bg { fill: #e69ad1; }
+/* match labels carry an element ID (text, not a number) — white reads as a name, distinct from the
+   dark numeric dimension/anchor chips */
+.pw-cue-mw-lbl .pw-cue-lbl-tx, .pw-cue-mh-lbl .pw-cue-lbl-tx { fill: #fff; }
+.pw-cue-mcap-w { fill: #5ad1e6; }
+.pw-cue-mcap-h { fill: #e69ad1; }
+/* leader tether from a displaced label back to its line (fallback colour; cues pass their own) */
+.pw-cue-leader { stroke: rgba(255,255,255,0.45); stroke-width: 1; }
+/* the leader is always dotted (overrides the cue colour class's solid dash), so it reads as a
+   tether, not another cue line */
+.pw-cue-leaderline { stroke-dasharray: 1 3 !important; stroke-linecap: round; }
+
+/* the hovered / selected widget's cues "pop": thicker lines at full opacity with a soft white
+   glow, caps haloed, labels outlined + bolder — so the focused element stands out from the rest
+   of the "all"-scope cue layer. Hue/dash stay (cue type still reads); only emphasis changes. */
+line.pw-cue-hot { stroke-width: 2.5; opacity: 1; filter: drop-shadow(0 0 3px rgba(255,255,255,.55)); }
+.pw-cue-leaderline.pw-cue-hot { stroke-width: 1.25; filter: none; }   /* tether stays quiet */
+.pw-cue-dot.pw-cue-hot, .pw-cue-end.pw-cue-hot,
+.pw-cue-mcap-w.pw-cue-hot, .pw-cue-mcap-h.pw-cue-hot { filter: drop-shadow(0 0 3px rgba(255,255,255,.6)); }
+g.pw-cue-hot .pw-cue-lbl-bg { stroke: #fff; stroke-width: 1; filter: drop-shadow(0 0 4px rgba(255,255,255,.5)); }
+g.pw-cue-hot .pw-cue-lbl-tx { font-weight: 700; }
 
 /* anchor endpoint glyphs in the inspector — match the canvas marks: target = circle, this = square */
 .pw-anchor-mark { display: inline-block; width: 9px; height: 9px; background: #ffb454; vertical-align: middle; margin-right: 5px; }
@@ -173,15 +202,51 @@ body.pretty-view .pw-cauldron-mark {
 body.pretty-mode .topbar-tools { display: none; }
 body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-modeswitch { display: inline-flex; border: 1px solid rgba(255,255,255,0.18); border-radius: 6px; overflow: hidden; }
-.pw-mode { border: none; background: transparent; padding: 3px 12px; color: inherit; cursor: pointer; }
+.pw-mode { border: none; background: transparent; padding: 3px 12px; color: inherit; cursor: pointer; border-radius: 0; }
 .pw-mode.active { background: #4ea1ff; color: #06121f; }
 .pw-edittools { display: inline-flex; gap: 10px; }
 /* panel toggles use the same base button + .active look as the node-view topbar buttons */
-.pw-pagesel { max-width: 160px; }
+
+/* ---- pages panel (the page manager floatwin) ---- */
+.pw-pages-list { display: flex; flex-direction: column; gap: 3px; }
+.pw-pages-row { display: flex; align-items: center; gap: 4px; padding: 2px 4px; border-radius: 4px;
+    border: 1px solid transparent; background: rgba(255,255,255,0.03); }
+.pw-pages-row.active { border-color: #4ea1ff; background: rgba(78,161,255,0.12); }
+.pw-pages-row.dragging { opacity: 0.5; }
+.pw-pages-row.drop-into { border-color: #ffb454; }
+.pw-pages-grip { cursor: grab; color: var(--muted); user-select: none; font-size: 12px; line-height: 1; }
+.pw-pages-name { flex: 1; text-align: left; border: none; background: transparent; color: inherit;
+    cursor: pointer; padding: 2px 4px; border-radius: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-pages-name:hover { background: rgba(255,255,255,0.06); }
+.pw-pages-rename { flex: 1; min-width: 0; background: #11141a; border: 1px solid #4ea1ff; color: inherit;
+    border-radius: 3px; padding: 1px 4px; font: inherit; }
+.pw-pages-del { border: none; background: transparent; color: var(--muted); cursor: pointer; padding: 2px 5px; border-radius: 3px; line-height: 1; }
+.pw-pages-del:hover:not(:disabled) { color: #f7768e; background: rgba(247,118,142,0.12); }
+.pw-pages-del.armed { background: #f7768e; color: #06121f; }
+.pw-pages-del:disabled { opacity: 0.3; cursor: default; }
+.pw-pages-add { margin-top: 6px; width: 100%; padding: 3px; background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; color: inherit; cursor: pointer; }
+.pw-pages-add:hover { background: rgba(255,255,255,0.1); }
+
+/* ---- elements panel (the element list floatwin) ---- */
+.pw-el-list { display: flex; flex-direction: column; gap: 3px; }
+.pw-el-empty { opacity: 0.5; font-size: 12px; padding: 4px; }
+.pw-el-row { display: flex; align-items: center; gap: 4px; padding: 2px 4px; border-radius: 4px;
+    border: 1px solid transparent; background: rgba(255,255,255,0.03); }
+.pw-el-row:hover { background: rgba(255,180,84,0.1); border-color: rgba(255,180,84,0.35); }
+.pw-el-row.active { border-color: #4ea1ff; background: rgba(78,161,255,0.12); }
+.pw-el-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; text-align: left;
+    border: none; background: transparent; color: inherit; cursor: pointer; padding: 2px 4px; border-radius: 3px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-el-lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-el-id { margin-left: auto; font-size: 11px; opacity: 0.55; font-family: var(--font-mono); }
+.pw-el-del { border: none; background: transparent; color: var(--muted); cursor: pointer; padding: 2px 5px; border-radius: 3px; line-height: 1; }
+.pw-el-del:hover { color: #f7768e; background: rgba(247,118,142,0.12); }
+.pw-el-del.armed { background: #f7768e; color: #06121f; }
 
 /* node ⇄ pretty toggle (lives in the main topbar, left side) — prominent, not a skinny chip */
 .pw-viewtoggle { display: inline-flex; border: 1px solid rgba(255,255,255,0.22); border-radius: 8px; overflow: hidden; margin: 0 10px; }
-.pw-viewtoggle .vt { border: none; background: transparent; color: inherit; padding: 7px 28px; font-weight: 600; letter-spacing: 0.02em; cursor: pointer; transition: background 0.12s; }
+.pw-viewtoggle .vt { border: none; background: transparent; color: inherit; padding: 7px 28px; font-weight: 600; letter-spacing: 0.02em; cursor: pointer; transition: background 0.12s; border-radius: 0; }
 .pw-viewtoggle .vt:hover { background: rgba(255,255,255,0.08); }
 .pw-viewtoggle .vt.active { background: #4ea1ff; color: #06121f; }
 .pw-viewtoggle .vt + .vt { border-left: 1px solid rgba(255,255,255,0.18); }
@@ -202,6 +267,9 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 /* per-widget hover delete (edit mode): a red trashcan, top-right, armed two-click confirm */
 .pw-del { position: absolute; top: 3px; right: 3px; z-index: 6; display: none; padding: 2px; line-height: 0;
     background: rgba(20,22,27,0.88); border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; color: #f7768e; cursor: pointer; }
+/* let the hover remove-button escape the frame's overflow:hidden (small widgets would clip it);
+   inner content keeps its own clip via .pw-content, so only absolute chrome (the del) spills. */
+.pw-edit:hover { overflow: visible; }
 .pw-edit:hover > .pw-del { display: inline-flex; }
 .pw-del.armed { background: #f7768e; color: #06121f; }
 
@@ -225,8 +293,13 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-pal-ic { width: 18px; text-align: center; opacity: 0.8; }
 
 /* ---- inspector ---- */
-.pw-insp-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.1); }
-.pw-insp-type { font-size: 12px; opacity: 0.8; }
+.pw-insp-head { display: flex; gap: 6px; justify-content: space-between; align-items: center; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.pw-insp-type { font-size: 12px; opacity: 0.8; white-space: nowrap; }
+.pw-insp-id { flex: 1; min-width: 0; font: inherit; font-size: 12px; background: #11141a; color: inherit;
+    border: 1px solid transparent; border-radius: 3px; padding: 1px 5px; min-height: 26px; box-sizing: border-box; }
+.pw-insp-id:hover { border-color: rgba(255,255,255,0.15); }
+.pw-insp-id:focus { border-color: #4ea1ff; outline: none; background: #0d1016; }
+.pw-insp-id.bad { border-color: #f7768e; }
 .pw-insp-remove { font-size: 11px; }
 .pw-insp-grp { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.07); }
 .pw-insp-h { display: flex; align-items: center; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55; margin-bottom: 4px; }

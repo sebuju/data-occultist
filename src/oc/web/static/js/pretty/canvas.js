@@ -84,6 +84,7 @@ export function renderPage(surface, page, ctx) {
     applyStyle(surface, mergeStyle(ctx.pretty.theme(), page.style));   // page-level style (theme defaults under it)
     const recs = new Map();   // widget id -> record
     let cueSvg = null;        // the edit-mode relationship overlay (declared early — drawAnchorCue runs below)
+    let hoverId = null;       // widget hovered in edit mode — drives cue preview when nothing is selected
 
     for (const widget of page.widgets) recs.set(widget.id, build(widget));
     placeAll();
@@ -271,61 +272,105 @@ export function renderPage(surface, page, ctx) {
     // Anchor endpoints are told apart by SHAPE, not size (same footprint): the target's anchor point
     // is a circle, the widget's own anchored corner ("this") is a square. The inspector shows the same
     // two glyphs next to its target / this pickers (see .pw-anchor-mark).
+    // EVERY cue cap is the SAME CAP×CAP footprint — square caps, circle caps (diameter == side), and
+    // the dimension-line end ticks (length == CAP) all share one size, so no cap is bigger/smaller
+    // than another. No per-cap scaling.
+    const CAP = 6;
     function cueMark(cx, cy, shape, cls) {
         if (shape === "square") {
-            const s = 8, r = document.createElementNS(SVGNS, "rect");
-            r.setAttribute("x", cx - s / 2); r.setAttribute("y", cy - s / 2);
-            r.setAttribute("width", s); r.setAttribute("height", s);
+            const r = document.createElementNS(SVGNS, "rect");
+            r.setAttribute("x", cx - CAP / 2); r.setAttribute("y", cy - CAP / 2);
+            r.setAttribute("width", CAP); r.setAttribute("height", CAP);
             r.setAttribute("class", cls);
             return r;
         }
         const c = document.createElementNS(SVGNS, "circle");
-        c.setAttribute("cx", cx); c.setAttribute("cy", cy); c.setAttribute("r", 4.5);
+        c.setAttribute("cx", cx); c.setAttribute("cy", cy); c.setAttribute("r", CAP / 2);
         c.setAttribute("class", cls);
         return c;
     }
-    // A distance chip centred on (cx, cy): text sized via getBBox, solid rect sized behind it.
-    // `leg` = { axis, len } of the line it labels: when the chip's along-line extent would fill (or
-    // overrun) that short gap it'd swallow the line, so shift it clear to the line's right side.
-    function cueLabel(svg, cx, cy, text, leg, cls) {
+    // ---- cue label layout -------------------------------------------------------------
+    // Labels are QUEUED while a draw runs, then laid out together by flushLabels so they can keep
+    // off the end caps, dodge each other (stagger), and grow a leader line back to home whenever
+    // they can't sit on their own line. Each request:
+    //   { cx, cy }  home centre (on the line)        text       cls        chip colour class
+    //   axis        "h" flat / "v" rotated up the line
+    //   p1, p2      the line's endpoints (its caps)  capClear   px to keep off those caps
+    //   leaderCls   class for the home->chip tether when the chip is displaced
+    let labelQ = [];
+    function queueLabel(opts) { labelQ.push(opts); }
+    function makeChip(svg, cx, cy, text, cls, hot) {
         const g = document.createElementNS(SVGNS, "g");
-        if (cls) g.setAttribute("class", cls);   // recolours the chip per what it measures (see CSS)
+        const gc = (cls || "") + (hot ? " pw-cue-hot" : "");
+        if (gc.trim()) g.setAttribute("class", gc.trim());   // recolours the chip per what it measures (see CSS); pw-cue-hot makes it pop
         const rect = document.createElementNS(SVGNS, "rect");
         rect.setAttribute("class", "pw-cue-lbl-bg"); rect.setAttribute("rx", "2");
         const t = document.createElementNS(SVGNS, "text");
         t.setAttribute("class", "pw-cue-lbl-tx");
-        t.setAttribute("text-anchor", "middle");
-        t.setAttribute("dominant-baseline", "central");
-        t.setAttribute("x", cx); t.setAttribute("y", cy);
-        t.textContent = text;
+        t.setAttribute("text-anchor", "middle"); t.setAttribute("dominant-baseline", "central");
+        t.setAttribute("x", cx); t.setAttribute("y", cy); t.textContent = text;
         g.appendChild(rect); g.appendChild(t); svg.appendChild(g);   // appended so getBBox resolves
         const bb = t.getBBox(), px = 4, py = 2;
         rect.setAttribute("x", bb.x - px); rect.setAttribute("y", bb.y - py);
         rect.setAttribute("width", bb.width + px * 2); rect.setAttribute("height", bb.height + py * 2);
-        if (leg) {
-            const along = leg.axis === "h" ? bb.width + px * 2 : bb.height + py * 2;
-            if (along >= leg.len) g.setAttribute("transform", `translate(${bb.width / 2 + px + 3},0)`);
+        return { g, w: bb.width + px * 2, h: bb.height + py * 2 };
+    }
+    // Lay out every queued label. A chip sits on its line (centred, opaque, hiding that span) only if
+    // it FITS between the caps and nothing's there already; otherwise it's pushed PERPENDICULAR — past
+    // the caps, toward the nearer page edge — and stepped further out until it clears earlier chips
+    // (stagger). A displaced chip gets a leader line back to its home point on the line.
+    // Normalise a line angle (radians) to (-90°, 90°] so text reads along the line without flipping
+    // upside-down — a leg at 170° lays its glyph at -10°, still parallel to the line.
+    function readableAngle(a) {
+        while (a > Math.PI / 2) a -= Math.PI;
+        while (a <= -Math.PI / 2) a += Math.PI;
+        return a;
+    }
+    function flushLabels(svg) {
+        const placed = [];
+        const chips = [];   // every chip <g>, re-appended last so NO line (incl. leaders) covers a label
+        const W = +svg.getAttribute("width") || window.innerWidth, H = +svg.getAttribute("height") || window.innerHeight;
+        const overlaps = (r) => placed.some((q) => r.x < q.x + q.w && r.x + r.w > q.x && r.y < q.y + q.h && r.y + r.h > q.y);
+        for (const L of labelQ) {
+            const { g, w, h } = makeChip(svg, L.cx, L.cy, L.text, L.cls, L.hot);
+            chips.push(g);
+            // angle the glyph sits at: explicit L.angle (match ties — along the diagonal), else the
+            // axis shorthand ("v" = up the line = -90°, "h"/default = flat).
+            const ang = readableAngle(L.angle != null ? L.angle : (L.axis === "v" ? -Math.PI / 2 : 0));
+            const ca = Math.cos(ang), sa = Math.sin(ang);
+            const along = w, across = h;   // text reads ALONG the line; thickness is across it
+            // AABB of the chip rotated by `ang`, centre shifted (dx,dy) from home
+            const hx = (w * Math.abs(ca) + h * Math.abs(sa)) / 2;
+            const hy = (w * Math.abs(sa) + h * Math.abs(ca)) / 2;
+            const box = (dx, dy) => ({ x: L.cx + dx - hx, y: L.cy + dy - hy, w: 2 * hx, h: 2 * hy });
+            const segLen = Math.hypot(L.p2.x - L.p1.x, L.p2.y - L.p1.y);
+            const fits = along + 2 * L.capClear <= segLen;
+            let dx = 0, dy = 0, displaced = false;
+            if (!fits || overlaps(box(0, 0))) {
+                displaced = true;
+                // push PERPENDICULAR to the line; pick the side that leans toward the nearer page edges
+                const px = -sa, py = ca;
+                const sign = (px * (L.cx < W / 2 ? -1 : 1) + py * (L.cy < H / 2 ? -1 : 1)) >= 0 ? 1 : -1;
+                const base = across / 2 + L.capClear + 2, step = across + 4;
+                let k = 0;
+                do { const off = sign * (base + k * step); dx = px * off; dy = py * off; k++; }
+                while (overlaps(box(dx, dy)) && k < 40);
+            }
+            let tr = "";
+            if (dx || dy) tr += `translate(${dx} ${dy}) `;   // screen-space shift OUTERMOST...
+            if (ang) tr += `rotate(${ang * 180 / Math.PI} ${L.cx} ${L.cy})`;   // ...then orient the glyph in place
+            if (tr) g.setAttribute("transform", tr.trim());
+            placed.push(box(dx, dy));
+            if (displaced) svg.insertBefore(cueLine(L.cx, L.cy, L.cx + dx, L.cy + dy, `${L.leaderCls || "pw-cue-leader"} pw-cue-leaderline${L.hot ? " pw-cue-hot" : ""}`), g);
         }
-        return { w: bb.width + px * 2, h: bb.height + py * 2 };   // chip size, for callers that size off the label
+        for (const g of chips) svg.appendChild(g);   // lift all chips above every line drawn this pass
+        labelQ = [];
     }
     const distLabel = (w, k) => `${r2(Math.abs(w[k] ?? 0))}${unitOf(w, k)}`;
-    // A dimension-span bar with end caps — reads as "this length". axis "h" spans a..b at y=fixed;
-    // axis "v" spans a..b at x=fixed.
-    function cueBar(svg, axis, a, b, fixed, cls) {
-        if (axis === "h") {
-            svg.appendChild(cueLine(a, fixed, b, fixed, cls));
-            svg.appendChild(cueLine(a, fixed - 4, a, fixed + 4, cls));
-            svg.appendChild(cueLine(b, fixed - 4, b, fixed + 4, cls));
-        } else {
-            svg.appendChild(cueLine(fixed, a, fixed, b, cls));
-            svg.appendChild(cueLine(fixed - 4, a, fixed + 4, a, cls));
-            svg.appendChild(cueLine(fixed - 4, b, fixed + 4, b, cls));
-        }
-    }
     // One widget's anchor cue: the offset rectangle (legs P->Q) + endpoint dots, amber. Selected
     // widgets also carry the per-leg distance labels; unselected ones draw a dim line so every
     // anchor is visible without flooding the canvas with chips.
-    function drawAnchorCueOne(svg, rec, boxes, sel) {
+    function drawAnchorCueOne(svg, rec, boxes, sel, hot) {
         const w = rec.widget, a = w.anchor;
         if (!a || !a.to || !recs.has(a.to)) return;
         const sb = boxes.get(w.id), tb = boxes.get(a.to);
@@ -333,8 +378,9 @@ export function renderPage(surface, page, ctx) {
         const sf = anchorFrac(a.corner), tf = anchorFrac(a.target || a.corner);
         const P = { x: tb.left + tf.fx * tb.w, y: tb.top + tf.fy * tb.h };   // target's anchor point
         const Q = { x: sb.left + sf.fx * sb.w, y: sb.top + sf.fy * sb.h };   // widget's anchored corner
-        const lc = sel ? "pw-cue-line" : "pw-cue-line pw-cue-dim";
-        const dim = sel ? "" : " pw-cue-dim";
+        const H = hot ? " pw-cue-hot" : "";
+        const lc = (sel ? "pw-cue-line" : "pw-cue-line pw-cue-dim") + H;
+        const dim = (sel ? "" : " pw-cue-dim") + H;
         // two legs at P and two at Q complete the offset rectangle; the second of each pair is dropped
         // when its gap is too tiny to separate from the first (and its label).
         const NEAR = 22;
@@ -342,84 +388,116 @@ export function renderPage(surface, page, ctx) {
         const hLeg = { axis: "h", len: Math.abs(Q.x - P.x) }, vLeg = { axis: "v", len: Math.abs(Q.y - P.y) };
         if (Q.x !== P.x) {
             svg.appendChild(cueLine(P.x, P.y, Q.x, P.y, lc));
-            if (sel) cueLabel(svg, (P.x + Q.x) / 2, P.y, distLabel(w, "x"), hLeg);
+            if (sel) queueLabel({ cx: (P.x + Q.x) / 2, cy: P.y, text: distLabel(w, "x"), cls: null, hot, axis: "h", p1: { x: P.x, y: P.y }, p2: { x: Q.x, y: P.y }, capClear: 6, leaderCls: "pw-cue-line" });
             if (farY) {
                 svg.appendChild(cueLine(P.x, Q.y, Q.x, Q.y, lc));
-                if (sel) cueLabel(svg, (P.x + Q.x) / 2, Q.y, distLabel(w, "x"), hLeg);
+                if (sel) queueLabel({ cx: (P.x + Q.x) / 2, cy: Q.y, text: distLabel(w, "x"), cls: null, hot, axis: "h", p1: { x: P.x, y: Q.y }, p2: { x: Q.x, y: Q.y }, capClear: 6, leaderCls: "pw-cue-line" });
             }
         }
         if (Q.y !== P.y) {
             svg.appendChild(cueLine(P.x, P.y, P.x, Q.y, lc));
-            if (sel) cueLabel(svg, P.x, (P.y + Q.y) / 2, distLabel(w, "y"), vLeg);
+            if (sel) queueLabel({ cx: P.x, cy: (P.y + Q.y) / 2, text: distLabel(w, "y"), cls: null, hot, axis: "v", p1: { x: P.x, y: P.y }, p2: { x: P.x, y: Q.y }, capClear: 6, leaderCls: "pw-cue-line" });
             if (farX) {
                 svg.appendChild(cueLine(Q.x, P.y, Q.x, Q.y, lc));
-                if (sel) cueLabel(svg, Q.x, (P.y + Q.y) / 2, distLabel(w, "y"), vLeg);
+                if (sel) queueLabel({ cx: Q.x, cy: (P.y + Q.y) / 2, text: distLabel(w, "y"), cls: null, hot, axis: "v", p1: { x: Q.x, y: P.y }, p2: { x: Q.x, y: Q.y }, capClear: 6, leaderCls: "pw-cue-line" });
             }
         }
         svg.appendChild(cueMark(P.x, P.y, "circle", "pw-cue-dot" + dim));   // target's anchor point = circle
         svg.appendChild(cueMark(Q.x, Q.y, "square", "pw-cue-end" + dim));   // widget's own corner ("this") = square
     }
     // A widget's own width (cyan, bottom edge) and height (magenta, right edge) as labels only — the
-    // chip text alone reads clearly, so no spans/bars are drawn.
-    function drawDimCue(svg, rec, boxes) {
-        const b = boxes.get(rec.widget.id); if (!b) return;
-        // each tick sits just below its label and runs TWICE the label's size along its own axis.
-        const wcx = b.left + b.w / 2, wcy = b.top + b.h;     // width label: centred on bottom edge
-        const wl = cueLabel(svg, wcx, wcy, `${r2(b.w)}`, null, "pw-cue-dw-lbl");
-        const wy = wcy + wl.h / 2 + 2;
-        svg.appendChild(cueLine(wcx - wl.w, wy, wcx + wl.w, wy, "pw-cue-dw"));        // horizontal, length = 2x label width
-        const hcx = b.left + b.w, hcy = b.top + b.h / 2;     // height label: centred on right edge
-        const hl = cueLabel(svg, hcx, hcy, `${r2(b.h)}`, null, "pw-cue-dh-lbl");
-        const hy = hcy + hl.h / 2 + 2;
-        svg.appendChild(cueLine(hcx, hy, hcx, hy + hl.h * 2, "pw-cue-dh"));           // vertical, length = 2x label height
+    // chip text alone reads clearly, so no spans/bars are drawn. A dimension MATCHED to another widget
+    // is already labelled by the match cue (mw/mh), so its own-size label is skipped (no duplicate).
+    function drawDimCue(svg, rec, boxes, hot) {
+        const w = rec.widget, b = boxes.get(w.id); if (!b) return;
+        const H = hot ? " pw-cue-hot" : "";
+        const hasMW = w.matchW && w.matchW !== w.id && recs.has(w.matchW);
+        const hasMH = w.matchH && w.matchH !== w.id && recs.has(w.matchH);
+        // each cue is a dimension line spanning the widget's ACTUAL size along the measured edge
+        // (width on the bottom edge, height on the right edge), split around the centred chip. Edges
+        // come from frameEdges so the line traces the painted frame (left/top rounded), pixel-exact.
+        const e = frameEdges(b);
+        if (!hasMW) {                                            // width: full line on the bottom edge + caps
+            const y = e.B, cx = (e.L + e.R) / 2;
+            svg.appendChild(cueLine(e.L, y, e.R, y, "pw-cue-dw" + H));
+            svg.appendChild(cueLine(e.L, y - CAP / 2, e.L, y + CAP / 2, "pw-cue-dw" + H));   // left end cap
+            svg.appendChild(cueLine(e.R, y - CAP / 2, e.R, y + CAP / 2, "pw-cue-dw" + H));   // right end cap
+            queueLabel({ cx, cy: y, text: `${r2(b.w)}`, cls: "pw-cue-dw-lbl", hot, axis: "h", p1: { x: e.L, y }, p2: { x: e.R, y }, capClear: 6, leaderCls: "pw-cue-dw" });
+        }
+        if (!hasMH) {                                            // height: full line on the right edge + caps
+            const x = e.R, cy = (e.T + e.B) / 2;
+            svg.appendChild(cueLine(x, e.T, x, e.B, "pw-cue-dh" + H));
+            svg.appendChild(cueLine(x - CAP / 2, e.T, x + CAP / 2, e.T, "pw-cue-dh" + H));   // top end cap
+            svg.appendChild(cueLine(x - CAP / 2, e.B, x + CAP / 2, e.B, "pw-cue-dh" + H));   // bottom end cap
+            queueLabel({ cx: x, cy, text: `${r2(b.h)}`, cls: "pw-cue-dh-lbl", hot, axis: "v", p1: { x, y: e.T }, p2: { x, y: e.B }, capClear: 6, leaderCls: "pw-cue-dh" });
+        }
     }
-    // Visualise a width/height match: span the matched edge on BOTH source and dependent, link their
-    // midpoints with a dashed tie, and label with the axis (+ percent when not 100). Width = cyan on
-    // top edges; height = magenta on left edges.
-    // Box edges aligned to how placeAll paints the frame (left/top rounded, w/h kept), so cue lines
-    // trace the visible element edge instead of sitting a sub-pixel off it.
+    // Visualise a width/height match as a single dashed tie running between the two elements'
+    // NEAREST facing edges (not centre-to-centre), labelled with the matched element's id (+ percent
+    // when not 100). Width tie = cyan, height tie = magenta.
+    // Box edges aligned to how placeAll paints the frame (left/top rounded, w/h kept).
     const frameEdges = (bx) => { const L = Math.round(bx.left), T = Math.round(bx.top); return { L, T, R: L + bx.w, B: T + bx.h }; };
-    function drawMatchCue(svg, rec, boxes) {
-        const w = rec.widget, db = boxes.get(w.id); if (!db) return;
-        const pctSuffix = (k) => { const v = Number(w[k] ?? 100) || 100; return v === 100 ? "" : `·${r2(v)}%`; };
-        if (w.matchW && w.matchW !== w.id && recs.has(w.matchW)) {
-            const sb = boxes.get(w.matchW);
-            if (sb) {
-                const d = frameEdges(db), s = frameEdges(sb);
-                cueBar(svg, "h", d.L, d.R, d.T, "pw-cue-mw");   // dependent's top edge
-                cueBar(svg, "h", s.L, s.R, s.T, "pw-cue-mw");   // source's top edge
-                svg.appendChild(cueLine((d.L + d.R) / 2, d.T, (s.L + s.R) / 2, s.T, "pw-cue-mlink-w"));
-                cueLabel(svg, (d.L + d.R) / 2, d.T, `w${pctSuffix("matchWPct")}`, null, "pw-cue-mw-lbl");
-            }
+    // shortest connector between two axis-aligned boxes: if their X ranges overlap it's a vertical
+    // segment between the facing horizontal edges (at the overlap's mid-x); if Y ranges overlap,
+    // horizontal between the facing vertical edges; otherwise the nearest corners.
+    function edgeConnector(a, b) {
+        const ox = Math.max(a.L, b.L) < Math.min(a.R, b.R);
+        const oy = Math.max(a.T, b.T) < Math.min(a.B, b.B);
+        if (ox) {
+            const x = (Math.max(a.L, b.L) + Math.min(a.R, b.R)) / 2;
+            if (a.B <= b.T) return [x, a.B, x, b.T];
+            if (b.B <= a.T) return [x, a.T, x, b.B];
+            return [x, (a.T + a.B) / 2, x, (b.T + b.B) / 2];   // overlap both axes — degenerate
         }
-        if (w.matchH && w.matchH !== w.id && recs.has(w.matchH)) {
-            const sb = boxes.get(w.matchH);
-            if (sb) {
-                const d = frameEdges(db), s = frameEdges(sb);
-                cueBar(svg, "v", d.T, d.B, d.L, "pw-cue-mh");   // dependent's left edge
-                cueBar(svg, "v", s.T, s.B, s.L, "pw-cue-mh");   // source's left edge
-                svg.appendChild(cueLine(d.L, (d.T + d.B) / 2, s.L, (s.T + s.B) / 2, "pw-cue-mlink-h"));
-                cueLabel(svg, d.L, (d.T + d.B) / 2, `h${pctSuffix("matchHPct")}`, null, "pw-cue-mh-lbl");
-            }
+        if (oy) {
+            const y = (Math.max(a.T, b.T) + Math.min(a.B, b.B)) / 2;
+            if (a.R <= b.L) return [a.R, y, b.L, y];
+            if (b.R <= a.L) return [a.L, y, b.R, y];
+            return [(a.L + a.R) / 2, y, (b.L + b.R) / 2, y];
         }
+        const ax = a.R <= b.L ? a.R : a.L, bx = b.R <= a.L ? b.R : b.L;
+        const ay = a.B <= b.T ? a.B : a.T, by = b.B <= a.T ? b.B : b.T;
+        return [ax, ay, bx, by];
     }
-    // In edit mode, draw the relationship layer: matches (under), then anchors (selected last so its
-    // labels sit on top), then the selected widget's own dimensions. ctx.cueScope "selected" limits
-    // every cue to the selected widget(s); "all" shows every widget's (others' anchors dimmed). Outside
-    // edit mode the layer is hidden.
+    function drawMatchCue(svg, rec, boxes, hot) {
+        const w = rec.widget, db = boxes.get(w.id); if (!db) return;
+        const H = hot ? " pw-cue-hot" : "";
+        const pctSuffix = (k) => { const v = Number(w[k] ?? 100) || 100; return v === 100 ? "" : `·${r2(v)}%`; };
+        const tie = (srcId, lineCls, lblCls, capCls, pctKey) => {
+            const sb = boxes.get(srcId); if (!sb) return;
+            const [x1, y1, x2, y2] = edgeConnector(frameEdges(db), frameEdges(sb));
+            svg.appendChild(cueLine(x1, y1, x2, y2, lineCls + H));
+            svg.appendChild(cueMark(x1, y1, "square", capCls + H));   // start cap = square (this widget's end)
+            svg.appendChild(cueMark(x2, y2, "circle", capCls + H));   // end cap = sphere (matched element's end)
+            queueLabel({ cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, text: `${srcId}${pctSuffix(pctKey)}`, cls: lblCls, hot, angle: Math.atan2(y2 - y1, x2 - x1), p1: { x: x1, y: y1 }, p2: { x: x2, y: y2 }, capClear: 9, leaderCls: lineCls });
+        };
+        if (w.matchW && w.matchW !== w.id && recs.has(w.matchW)) tie(w.matchW, "pw-cue-mlink-w", "pw-cue-mw-lbl", "pw-cue-mcap-w", "matchWPct");
+        if (w.matchH && w.matchH !== w.id && recs.has(w.matchH)) tie(w.matchH, "pw-cue-mlink-h", "pw-cue-mh-lbl", "pw-cue-mcap-h", "matchHPct");
+    }
+    // In edit mode, draw the relationship layer: matches (under), then anchors, then each widget's
+    // own dimensions. cueScope "all" shows EVERY widget's cues fully; "selected" limits the layer to
+    // the selected widget(s) — or, when nothing is selected, the one currently hovered (preview).
+    // Every drawn widget is "bright" (labels on); there is no dimmed pass. Hidden outside edit mode.
     function drawAnchorCue() {
-        if (ctx.mode !== "edit" || ctx.cueScope === "none") { if (cueSvg) cueSvg.style.display = "none"; return; }
+        if (ctx.mode !== "edit") { if (cueSvg) cueSvg.style.display = "none"; return; }
         const svg = ensureCueSvg();
         const boxes = resolveBoxes();
         svg.setAttribute("width", surface.scrollWidth); svg.setAttribute("height", surface.scrollHeight);
         svg.style.display = ""; svg.replaceChildren();
+        labelQ = [];   // collect every cue's labels, then lay them out together (below)
         const sel = (ctx.selectionIds && ctx.selectionIds()) || new Set();
-        const selOnly = ctx.cueScope === "selected";
         const list = [...recs.values()];
-        for (const rec of list) if (!selOnly || sel.has(rec.widget.id)) drawMatchCue(svg, rec, boxes);
-        if (!selOnly) for (const rec of list) if (!sel.has(rec.widget.id)) drawAnchorCueOne(svg, rec, boxes, false);
-        for (const rec of list) if (sel.has(rec.widget.id)) drawAnchorCueOne(svg, rec, boxes, true);
-        for (const rec of list) if (!selOnly || sel.has(rec.widget.id)) drawDimCue(svg, rec, boxes);   // dims: all (or selected only)
+        // which widgets get the (full) cue layer
+        const show = (id) => ctx.cueScope === "all" || sel.has(id) || (!sel.size && id === hoverId);
+        const shown = list.filter((rec) => show(rec.widget.id));
+        // a widget's cues "pop" (pw-cue-hot) when selected/hovered — but ONLY in "all" scope, where
+        // they must stand out from the rest of the layer. In "selected" scope only the focused cues
+        // are drawn anyway, so there's nothing to stand out from.
+        const hot = (id) => ctx.cueScope === "all" && (sel.has(id) || id === hoverId);
+        for (const rec of shown) drawMatchCue(svg, rec, boxes, hot(rec.widget.id));
+        for (const rec of shown) drawAnchorCueOne(svg, rec, boxes, true, hot(rec.widget.id));
+        for (const rec of shown) drawDimCue(svg, rec, boxes, hot(rec.widget.id));
+        flushLabels(svg);   // labels last so they sit above every line, dodging caps + each other
     }
 
     function wireConditions(rec) {
@@ -447,6 +525,21 @@ export function renderPage(surface, page, ctx) {
     function wireEdit(rec) {
         const { frame, widget } = rec;
         frame.classList.add("pw-edit");
+        // hover preview: when nothing is selected, hovering a widget shows ITS cues (so you can
+        // inspect a relationship without committing a selection). No redraw while a selection owns
+        // the layer, or in "all" scope where every widget is already drawn.
+        // In "selected" scope, hovering with nothing selected previews that widget's cues. In "all"
+        // scope every widget is already drawn, but a hover still redraws so the hovered widget's cues
+        // light up (pw-cue-hot). A selection owns the layer, so no hover redraw while one exists.
+        frame.addEventListener("mouseenter", () => {
+            hoverId = widget.id;
+            if (!ctx.selectionIds().size) drawAnchorCue();
+        });
+        frame.addEventListener("mouseleave", () => {
+            if (hoverId !== widget.id) return;
+            hoverId = null;
+            if (!ctx.selectionIds().size) drawAnchorCue();
+        });
         // Click selects: shift toggles into the current group; a plain click on an already-selected
         // widget keeps the group (so it can be dragged in tandem), else it becomes the sole selection.
         frame.addEventListener("mousedown", (ev) => {
@@ -533,6 +626,8 @@ export function renderPage(surface, page, ctx) {
             const ids = sel instanceof Set ? sel : sel ? new Set([sel]) : new Set();
             for (const rec of recs.values()) rec.frame.classList.toggle("pw-sel", ids.has(rec.widget.id));
         },
+        // transient highlight (elements panel hover): flag one frame, clear the rest. null clears all.
+        highlight(id) { for (const rec of recs.values()) rec.frame.classList.toggle("pw-hl", rec.widget.id === id); },
         placeAll,
         boxes: () => resolveBoxes(),   // resolved {left,top,w,h} per id — used for marquee hit-testing
         reanchor,
