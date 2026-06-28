@@ -18,16 +18,13 @@ pages:
       border_color: '#242424'
       border_w: 0
       padding: 0
+      opacity: 1
     conditions:
       rules:
       - effect: show
         source: activity:live
         op: ==
         value: '1'
-      - effect: match
-        source: ''
-        op: nonempty
-        value: ''
       visible_when: '{{activity:live}} == 1'
       enabled_when: ''
     type: table

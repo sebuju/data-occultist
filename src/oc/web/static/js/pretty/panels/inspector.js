@@ -290,8 +290,15 @@ export function buildInspector(ctx) {
     }
 
     const OPS = ["==", "!=", ">", "<", ">=", "<=", "nonempty", "empty"];
-    const EFFECTS = ["show", "enable", "match"];
-    const MATCH_STATES = ["show", "enabled", "both"];
+    // One merged effect select. The rule keeps its {effect, state} shape (canvas + compileConditions
+    // read it); the select flattens the "match" cases into one list. "match X" -> effect:"match",
+    // state:X. State labels (show/enabled/both) match the resolved-state keys the canvas mirrors.
+    const EFFECT_OPTS = ["show", "enable", "match show", "match enabled", "match both"];
+    const effectValue = (r) => (r.effect === "match" ? `match ${r.state || "both"}` : (r.effect || "show"));
+    const setEffect = (r, v) => {
+        if (v.startsWith("match ")) { r.effect = "match"; r.state = v.slice(6); }
+        else { r.effect = v; }
+    };
     // Compile the structured rule list -> the visible_when / enabled_when expr strings the canvas
     // evaluates. Rules of the same effect are AND-ed. "match" rules are NOT compiled to expressions —
     // they mirror another element's RESOLVED state and are applied live in canvas (resolvedCond).
@@ -336,7 +343,11 @@ export function buildInspector(ctx) {
         w.conditions = w.conditions || {}; w.conditions.rules = w.conditions.rules || [];
         const srcOpts = [{ value: "", label: "—" }, ...sourceTokenList(ctx.model, ctx.currentWidgets())];
         const elemOpts = [{ value: "", label: "—" }, ...ctx.currentWidgets().filter((x) => x.id !== w.id).map((x) => ({ value: x.id, label: widgetName(x) }))];
-        const recompile = () => { compileConditions(w); ctx.pretty.save(); ctx.refresh(); render(); };
+        // Re-apply conditions in place (re-wire subscriptions + re-evaluate), NOT a full canvas
+        // rebuild: ctx.refresh() destroys + recreates every widget, which tears down any EMBEDDED
+        // panel (e.g. the live panel) -> unembed -> onHide -> stops the live collector. Conditions
+        // need none of that; like style/anchor/geom edits, they patch the live widgets directly.
+        const recompile = () => { compileConditions(w); ctx.pretty.save(); ctx.recondition(); render(); };
 
         // Live read-out of what a rule currently resolves to, parked between the value box and the
         // delete button — so the value you compare against (or the element you mirror) is never a
@@ -360,17 +371,15 @@ export function buildInspector(ctx) {
         }
 
         // sel + a class, so every select in the row is individually styleable/addressable:
-        //   .pw-cond-effect  effect (show/enable/match)   — fixed width, never grows
-        //   .pw-cond-state   match state (show/enabled/both) — fixed width, never grows
+        //   .pw-cond-effect  effect (show/enable/match show/match enabled/match both) — fixed width
         //   .pw-cond-op      comparison op                 — fixed width, never grows
         //   .pw-cond-grow    the source/element picker      — the ONE select that fills the row
         const csel = (cls, value, options, onChange) => { const s = sel(value, options, onChange); s.classList.add(cls); return s; };
         w.conditions.rules.forEach((rule, i) => {
             const fr = el("div", "pw-insp-frow pw-cond-row");
-            fr.appendChild(csel("pw-cond-effect", rule.effect || "show", EFFECTS, (v) => { rule.effect = v; recompile(); }));
+            fr.appendChild(csel("pw-cond-effect", effectValue(rule), EFFECT_OPTS, (v) => { setEffect(rule, v); recompile(); }));
             if (rule.effect === "match") {
                 fr.appendChild(csel("pw-cond-grow", rule.source || "", elemOpts, (v) => { rule.source = v; recompile(); }));
-                fr.appendChild(csel("pw-cond-state", rule.state || "both", MATCH_STATES, (v) => { rule.state = v; recompile(); }));
             } else {
                 fr.appendChild(csel("pw-cond-grow", rule.source || "", srcOpts, (v) => { rule.source = v; recompile(); }));
                 fr.appendChild(csel("pw-cond-op", rule.op || "nonempty", OPS, (v) => { rule.op = v; recompile(); }));

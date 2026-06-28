@@ -47,6 +47,7 @@ const ctx = {
     setAnchor: (id, anchor) => { if (canvasCtrl) canvasCtrl.reanchor(id, anchor); },
     geomOf: (id) => (canvasCtrl ? canvasCtrl.geom(id) : null),
     condState: (id) => (canvasCtrl ? canvasCtrl.condState(id) : null),
+    recondition: () => { if (canvasCtrl) canvasCtrl.recondition(); },
     applyGeom: (id, patch) => { if (canvasCtrl) canvasCtrl.setGeom(id, patch); pretty.save(); },
     setUnit: (id, k, unit) => { if (canvasCtrl) canvasCtrl.setUnit(id, k, unit); pretty.save(); },
     setMatch: (id, key, to) => { if (canvasCtrl) canvasCtrl.setMatch(id, key, to); pretty.save(); },
@@ -138,7 +139,12 @@ export function activatePretty() {
     document.body.classList.toggle("pretty-view", mode === "view");   // restore chrome-hiding for the current mode
     for (const name of _hiddenPretty) panels[name] && panels[name].win.setVisible(true);
     _hiddenPretty = [];
-    if (canvasCtrl) canvasCtrl.updateAll();
+    if (canvasCtrl) {
+        canvasCtrl.updateAll();      // refresh widget CONTENT now data is live
+        canvasCtrl.recondition();    // ...and re-evaluate conditions: the canvas was built (and conditions
+                                     // first applied) BEFORE startData, so the initial pass saw an empty
+                                     // data cache. Re-apply now that activity/status/rows are available.
+    }
     if (tools) tools.refresh();
 }
 export function deactivatePretty() {

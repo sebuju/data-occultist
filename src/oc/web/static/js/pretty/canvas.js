@@ -86,7 +86,7 @@ export function renderPage(surface, page, ctx) {
     let cueSvg = null;        // the edit-mode relationship overlay (declared early — drawAnchorCue runs below)
     let hoverId = null;       // widget hovered in edit mode — drives cue preview when nothing is selected
 
-    for (const widget of page.widgets) recs.set(widget.id, build(widget));
+    for (const widget of page.widgets) build(widget);   // build() self-registers into `recs`
     placeAll();
     // NB: the edit-mode cue layer (drawAnchorCue) is drawn near the end of setup, not here — it reads
     // the SVGNS const + cue helpers declared further down, so calling it this early would TDZ.
@@ -131,6 +131,10 @@ export function renderPage(surface, page, ctx) {
         // reactive conditions
         const condSub = keySubscription(ctx, () => applyConditions(rec));
         const rec = { widget, frame, host, inst, def, condSub };
+        // Register BEFORE wiring/applying: resolvedCond (and match-rule target lookups) read `recs`,
+        // so the rec must be in it first — otherwise the initial applyConditions resolves against a
+        // missing rec, defaults to visible:true, and the condition silently never applies on build.
+        recs.set(widget.id, rec);
         wireConditions(rec);
         applyConditions(rec);
 
@@ -707,6 +711,10 @@ export function renderPage(surface, page, ctx) {
         placeAll,
         boxes: () => resolveBoxes(),   // resolved {left,top,w,h} per id — used for marquee hit-testing
         condState: (id) => resolvedCond(id, new Set()),   // resolved {visible,enabled} — for the inspector's match read-out
+        // Re-wire + re-evaluate every widget's conditions in place after the rules were edited — so a
+        // condition change applies WITHOUT a full rebuild (which would tear down embedded panels and
+        // stop the live collector). Re-wiring all is cheap and keeps match dependencies consistent.
+        recondition() { for (const rec of recs.values()) { wireConditions(rec); applyConditions(rec); } },
         reanchor,
         showAnchorCue,
         // px nudge (WASD) -> back into each field's unit

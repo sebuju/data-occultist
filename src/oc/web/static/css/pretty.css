@@ -121,7 +121,10 @@ g.pw-cue-hot .pw-cue-lbl-tx { font-weight: 700; }
 .pw-corner-cell { width: 14px; height: 14px; padding: 0; border: 1px solid var(--line); background: #22252c; border-radius: 2px; cursor: pointer; min-height: unset !important; }
 .pw-corner-cell:hover { border-color: #ffb454; }
 .pw-corner-cell.on { background: #ffb454; border-color: #ffb454; }
-.pw-cond-hidden { opacity: 0.35; }
+/* edit-mode "this element is conditionally hidden" cue: dim it. !important so the cue wins over a
+   widget's OWN inline opacity (applyStyle writes opacity inline) — else a widget with opacity:1
+   reads as fully shown even while its condition is false. (View mode hides it outright instead.) */
+.pw-cond-hidden { opacity: 0.35 !important; }
 .pw-cond-disabled { outline-color: #f7768e; }
 .pw-disabled { opacity: 0.5; pointer-events: none; }
 
@@ -334,9 +337,8 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-cond-row select { min-width: 0; }
 /* fixed-width selects: never grow, never shrink-clip */
 .pw-cond-row .pw-cond-effect,
-.pw-cond-row .pw-cond-state,
 .pw-cond-row .pw-cond-op { flex: 0 0 fit-content; }
-.pw-cond-row .pw-cond-grow { flex: 0 0 fit-content; }     /* the ONE select that fills remaining space */
+.pw-cond-row .pw-cond-grow { flex: 1 1 auto; }     /* the ONE select that fills remaining space */
 .pw-cond-row input[type="text"] { flex: 0 1 64px; min-width: 0; }
 .pw-cond-row .pw-cond-cur { flex: 0 0 auto; font-size: 11px; opacity: 0.6; white-space: nowrap; max-width: 64px; overflow: hidden; text-overflow: ellipsis; }
 .pw-cond-row .pw-insp-del { flex: 0 0 auto; }
