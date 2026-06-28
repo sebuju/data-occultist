@@ -7,10 +7,10 @@ pages:
   style: {}
   widgets:
   - id: w3
-    x: -2.6
+    x: 0
     y: 100
     w: clamp(500px, 50dvw, 1000px)
-    h: 140
+    h: 120
     z: 8
     style:
       font_size: 12
@@ -201,3 +201,8 @@ pages:
       to: w3
       corner: bl
       target: tl
+    matchW: w3
+- id: page1
+  title: Page
+  style: {}
+  widgets: []
