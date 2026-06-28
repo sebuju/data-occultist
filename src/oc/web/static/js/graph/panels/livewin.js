@@ -40,9 +40,10 @@ let liveFrames = 0, liveT0 = 0, liveFps = 0;
 // the read-only client detect/preview loop runs (tuning, no writes).
 let liveSave = true;
 // Frame limiter: minimum SECONDS between collector reads (the panel input is in ms and
-// converts). 0 = as fast as possible (no throttle) — the live default. Changeable while live
-// is on — the server collector is restarted in place so the new limit takes effect immediately.
-let liveInterval = 0;
+// converts). 0 = as fast as possible (no throttle). Default 0.2s (200ms) — a sane frame limiter
+// that keeps CPU/GPU sane. Changeable while live is on — the server collector is restarted in place
+// so the new limit takes effect immediately.
+let liveInterval = 0.2;
 let liveColStatus = null;   // latest server collector status (from the heartbeat) while collecting
 let liveColUnsub = null;    // hub subscription active while the server collector runs
 let liveImg = { count: 0, bytes: 0 };   // saved live-image stat (live tuning saves one frame/round)
@@ -90,7 +91,7 @@ function mountLive(adapter) {
                     h("span", { class: "live-save-lbl" }, "save to datasets"))),
             h("div", { class: "live-row live-int-row" },
                 h("span", { class: "live-int-lbl", title: "frame limiter — minimum milliseconds between collector reads. 0 (or blank) = as fast as possible (more CPU/GPU). Applies live while collecting." }, "limit (ms)"),
-                h("input", { class: "live-int-in", type: "number", min: "0", step: "10", placeholder: "0", title: "minimum milliseconds between reads; 0 = as fast as possible" })),
+                h("input", { class: "live-int-in", type: "number", min: "0", step: "10", value: "200", placeholder: "0", title: "minimum milliseconds between reads; 0 = as fast as possible" })),
             h("div", { class: "live-wins" }),
             h("div", { class: "live-row live-imgs" },
                 h("span", { class: "live-imgstat muted" }, " "),

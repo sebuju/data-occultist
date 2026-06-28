@@ -54,6 +54,8 @@ function nextDelay() {
     return IDLE_MS;
 }
 
+let pendingKick = false;   // a kick() arrived mid-beat -> beat again the instant this one ends
+
 async function tick() {
     timer = null;
     const game = gameFn();
@@ -66,6 +68,10 @@ async function tick() {
         } catch { /* tfetch already told conn; just retry on the next beat */ }
         finally { inFlight = false; }
     }
+    // A kick that landed while the fetch was in flight (e.g. toggling live mode) must NOT wait out
+    // the cadence (up to 3s when idle) — serve it now with a fresh beat so the UI reflects the new
+    // server state immediately.
+    if (pendingKick) { pendingKick = false; stop(); tick(); return; }
     schedule();
 }
 
@@ -80,7 +86,11 @@ export function start() { if (!timer && !inFlight) tick(); }
 // Stop the heartbeat (subscribers stay registered; start() resumes).
 export function stop() { if (timer) { clearTimeout(timer); timer = null; } }
 
-// Force a beat NOW — call after a user action that changed server state (start a sweep,
-// fire a trigger, switch game) so the UI reflects it without waiting out the cadence.
-// Coalesces: a no-op while a beat is already in flight.
-export function kick() { if (inFlight) return; stop(); tick(); }
+// Force a beat NOW — call after a user action that changed server state (start a sweep, fire a
+// trigger, toggle live mode) so the UI reflects it without waiting out the cadence. If a beat is
+// already in flight its snapshot may pre-date the change, so QUEUE a fresh beat for when it ends
+// rather than no-op'ing (which would leave the change unseen until the next cadence tick).
+export function kick() {
+    if (inFlight) { pendingKick = true; return; }
+    stop(); tick();
+}
