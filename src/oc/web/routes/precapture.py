@@ -119,6 +119,16 @@ def rename_session(game: str, sid: str, label: str = ""):
     return {"sessions": s.list_sessions(), "status": s.status()}
 
 
+@router.delete("/{game}/sessions")
+def delete_all_sessions(game: str):
+    """Remove every saved session for this game. Refused while a worker runs."""
+    s = _session(game, create=True)
+    if s.is_running():
+        raise HTTPException(status_code=409, detail="stop the worker before clearing sessions")
+    s.delete_all_sessions()
+    return {"sessions": s.list_sessions(), "status": s.status()}
+
+
 @router.delete("/{game}/sessions/{sid}")
 def delete_session(game: str, sid: str):
     s = _session(game, create=True)

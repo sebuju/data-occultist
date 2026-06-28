@@ -5,7 +5,7 @@
 /* ---- generic shell --------------------------------------------------------- */
 .floatwin {
     position: fixed; z-index: 40;
-    min-width: 180px; min-height: 90px; overflow: hidden;
+    min-width: 180px; overflow: hidden;
     display: flex; flex-direction: column;
     background: var(--float-panel); border: 1px solid var(--float-line); 
     box-shadow: 0 6px 24px #0008; font-size: var(--fs-sm); user-select: none;
@@ -263,8 +263,10 @@
 .live-int-lbl { flex: none; white-space: nowrap; color: var(--text); font-weight: 600; }
 .live-int-in { flex: 1; min-width: 0; }
 .live-imgs { margin: 6px 0 0; }   /* the saved-images stat row, below the window list */
-.live-clear { flex: none; font-size: var(--fs-xs); padding: 1px 8px; }
-.live-clear[data-armed="1"] { background: var(--danger); color: var(--on-danger); }
+.live-clear { flex: none; font-size: var(--fs-xs); padding: 1px 8px; border: 0;
+    background: var(--danger); color: var(--on-danger); }
+.live-clear:hover { filter: brightness(1.12); }
+.live-clear[data-armed="1"] { background: var(--warn); color: var(--on-accent); }
 .live-clear:disabled { opacity: 0.4; cursor: default; }
 .live-wins { display: flex; flex-direction: column; gap: 4px; }
 .live-win .act-title { font-weight: 500; }
@@ -295,7 +297,7 @@
 
 /* ---- precapture (now floating, was a centred modal) ------------------------ */
 #precap .fw-body { padding: 0; }
-.precap { padding: 12px; display: flex; flex-direction: column; gap: 10px; height: 100%; }
+.precap { padding: 6px; display: flex; flex-direction: column; gap: 10px; height: 100%; }
 /* processing stats stack one per row (was a single ·-joined line) */
 .pc-bar { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
 /* paged layout: list page = session list; detail page = back bar + the selected pane.
@@ -318,7 +320,7 @@
 /* armed (first click): widen for the "delete?" label + warn colour until the 2nd click */
 .pc-detail-del.armed { width: auto; padding: 0 8px; font-size: var(--fs-xs);
     background: var(--warn); color: var(--on-accent); }
-.pc-sess-new { text-align: left; margin-bottom: 4px; }
+.pc-sess-new { text-align: left; }
 .pc-sess-new.active { outline: 1px solid var(--accent); border-radius: 4px; }
 /* one option per row, label column + input column shared across rows so every label and
    every input lines up (each .flab dissolves into the grid via display:contents). */
@@ -333,10 +335,19 @@
     background: var(--bg); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
 .pc-recog-chip.miss { color: var(--warn); border-color: var(--warn); }
 /* saved-session list */
-.pc-sess-h { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+.pc-sess-h { font-size: var(--fs-xs); }
+/* footer pinned at the bottom of the list page: total size + clear-all, justified to the right */
+.pc-sess-foot { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.pc-sess-foot[hidden], .pc-sess-rows[hidden] { display: none; }   /* no sessions -> collapse both */
+.pc-sess-clear { flex: none; height: 22px; padding: 0 8px; font-size: var(--fs-xs); border: 0; line-height: 1;
+    background: var(--danger); color: var(--on-danger); border-radius: 4px; cursor: pointer; }
+.pc-sess-clear:hover { filter: brightness(1.12); }
+.pc-sess-clear[disabled] { opacity: 0.5; cursor: default; }
+/* armed (first click): warn colour until the 2nd click confirms */
+.pc-sess-clear.armed { background: var(--warn); color: var(--on-accent); }
 /* session rows fill the remaining panel height and scroll; the rendered window grows as you
    scroll toward the bottom (see renderPrecapLeft). */
-.pc-sess-rows { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
+.pc-sess-rows { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; margin-top: 4px; }
 .pc-sess { display: grid; grid-template-columns: 1fr auto; column-gap: 6px; align-items: center; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
 .pc-sess:hover { background: var(--line); }
 .pc-sess.active { outline: 1px solid var(--accent); outline-offset: -1px; }

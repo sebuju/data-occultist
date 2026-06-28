@@ -394,6 +394,21 @@ class PrecaptureSession:
             self._session = dirs[0].name
             self._rehydrate()
 
+    def delete_all_sessions(self) -> None:
+        """Remove every saved session from disk and clear the active one. No-op while a
+        worker runs (the caller gates on busy), so frames in flight are never yanked."""
+        self._join_prev()
+        for p in list(self._session_dirs()):
+            try:
+                for f in p.iterdir():
+                    f.unlink()
+                p.rmdir()
+            except OSError:
+                pass
+        with self._lock:
+            self._reset_locked()
+            self._session = None
+
     def rename_session(self, sid: str, label: str) -> None:
         target = self._base / _safe(sid)
         if not target.is_dir():

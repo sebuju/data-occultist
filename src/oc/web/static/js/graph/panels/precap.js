@@ -109,7 +109,7 @@ function buildPrecap() {
         const game = model.profile.name; if (!game) return;
         const a = b.dataset.act, sid = b.dataset.sid;
         // session-list actions are locked while a worker runs
-        if (precapBusy && (a === "newsess" || a === "loadsess" || a === "rensess" || a === "delsess")) return;
+        if (precapBusy && (a === "newsess" || a === "loadsess" || a === "rensess" || a === "delsess" || a === "clearsess")) return;
         const mf = +pcNode.querySelector(".pc-frames")?.value || 1000;
         const iv = +pcNode.querySelector(".pc-interval")?.value || 0;
         const label = pcNode.querySelector(".pc-label")?.value || "";
@@ -146,6 +146,16 @@ function buildPrecap() {
             b.dataset.armed = "0";
             precapPage = "list"; precapView = null;   // deleted session is gone -> back to the list
             _pcSessAct(api.precapture.deleteSession(game, sid, pcSig));
+        }
+        else if (a === "clearsess") {
+            if (b.dataset.armed !== "1") {   // inline confirm — armed two-click, no blocking dialog
+                b.dataset.armed = "1"; b.textContent = "clear all?"; b.classList.add("armed");
+                setTimeout(() => { b.dataset.armed = "0"; b.textContent = "clear"; b.classList.remove("armed"); }, 2500);
+                return;
+            }
+            b.dataset.armed = "0"; b.textContent = "clear"; b.classList.remove("armed");
+            precapPage = "list"; precapView = null;   // every session gone -> back to the list
+            _pcSessAct(api.precapture.deleteAllSessions(game, pcSig));
         }
         else if (a === "rensess") beginRename(b.closest(".pc-sess"), sid);
         // worker state just changed -> beat the hub now so the tasks panel + precap indicator
@@ -445,16 +455,22 @@ function renderPrecapLeft(left, st) {
         left._new = document.createElement("button");
         left._new.className = "pc-sess-new"; left._new.dataset.act = "newsess";
         left._new.title = "record a new session"; left._new.textContent = "＋ new session";
-        const h = document.createElement("div");
-        h.className = "pc-sess-h muted"; h.textContent = "sessions";
-        left.append(left._new, h);
-        left._head = h;           // header carries the all-sessions total image size
         // rows live in their own scroll box that FILLS the panel height; we render a window of
         // the newest sessions and grow it (load more) as the user scrolls toward the bottom, so
-        // a huge session list never builds hundreds of rows up front. (＋new + header stay above.)
+        // a huge session list never builds hundreds of rows up front. (＋new on top, footer below.)
         left._rowsBox = document.createElement("div");
         left._rowsBox.className = "pc-sess-rows";
-        left.appendChild(left._rowsBox);
+        // footer pinned at the BOTTOM, right-justified: the all-sessions total size + a clear-all
+        // button (armed two-click). Header text carries the running total image size.
+        left._head = document.createElement("span");
+        left._head.className = "pc-sess-h muted"; left._head.textContent = "sessions";
+        left._clear = document.createElement("button");
+        left._clear.className = "pc-sess-clear danger"; left._clear.dataset.act = "clearsess";
+        left._clear.title = "remove all sessions"; left._clear.textContent = "clear";
+        left._foot = document.createElement("div");
+        left._foot.className = "pc-sess-foot";
+        left._foot.append(left._head, left._clear);
+        left.append(left._new, left._rowsBox, left._foot);
         left._rows = new Map();   // sid -> { row, load, ren }
         left._renderN = PC_FIRST;  // how many rows are currently rendered (grows on scroll)
         left._rowsBox.addEventListener("scroll", () => {
@@ -505,10 +521,16 @@ function renderPrecapLeft(left, st) {
         }
         r.ren.disabled = precapBusy;
     }
-    // header shows the total image size across every session (touch DOM only on change)
+    // footer shows the total image size across every session (touch DOM only on change)
     const total = precapSessions.reduce((a, s) => a + (s.bytes || 0), 0);
-    const htxt = precapSessions.length ? `sessions · ${fmtBytes(total)}` : "sessions";
+    const htxt = precapSessions.length ? `${precapSessions.length} sessions · ${fmtBytes(total)}` : "";
     if (left._head.textContent !== htxt) left._head.textContent = htxt;
+    left._clear.disabled = precapBusy;
+    left._clear.hidden = !precapSessions.length;   // nothing to clear -> hide it
+    // no sessions -> collapse the rows box + footer entirely (nothing to show)
+    const empty = !precapSessions.length;
+    left._rowsBox.hidden = empty;
+    left._foot.hidden = empty;
 }
 
 // Human-readable byte size (1 KB = 1024 B). Whole numbers for B and >=100;

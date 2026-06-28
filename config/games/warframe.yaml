@@ -1462,7 +1462,7 @@ layout:
       x: -1460.0
       y: 3040.0
       w: 520.0
-      h: 1119.0
+      h: 1100.0
       collapsed: false
     item:mod_window:mod:
       x: -3060.0
@@ -1474,7 +1474,7 @@ layout:
       x: -1680.0
       y: 380.0
       w: 320.0
-      h: 1100.0
+      h: 1081.0
       collapsed: false
     sb:equipment_window:scrollbar:
       x: -1960.0
@@ -1582,7 +1582,7 @@ layout:
       x: 480.0
       y: 5260.0
       w: 520.0
-      h: 1082.0
+      h: 1063.0
       collapsed: false
     sb:relic_select:scrollbar:
       x: 1040.0
@@ -1702,7 +1702,7 @@ layout:
       x: 280.0
       y: 2920.0
       w: 520.0
-      h: 1115.0
+      h: 1097.0
       collapsed: false
     sb:relic_refinement:scrollbar:
       x: 840.0
@@ -1726,7 +1726,7 @@ layout:
       x: 220.0
       y: 7640.0
       w: 520.0
-      h: 1052.0
+      h: 1033.0
       collapsed: false
     item:relic_rewards:item_1:
       x: -220.0
@@ -2181,7 +2181,7 @@ layout:
     titleAlign: left
     titlePos: tl
   - id: group_19
-    title: 'window: equipments'
+    title: 'window: equipment'
     members:
     - win:equipment_window
     - prev:equipment_window

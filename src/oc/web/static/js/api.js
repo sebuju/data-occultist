@@ -321,6 +321,7 @@ export const precapture = {
     loadSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/load`, signal),
     renameSession: (game, sid, label, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/rename?label=${encodeURIComponent(label || "")}`, signal),
     deleteSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}`, signal, "DELETE"),
+    deleteAllSessions: (game, signal) => _pre(game, "sessions", signal, "DELETE"),
 };
 
 // Live collection: run the real collector pipeline server-side, writing to datasets.
