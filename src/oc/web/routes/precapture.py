@@ -62,12 +62,18 @@ def _refresh_profile(game: str, s: PrecaptureSession) -> None:
 
 
 @router.post("/{game}/record/start")
-def record_start(game: str, max_frames: int = 300, interval_ms: int = 0, label: str = ""):
+def record_start(game: str, max_frames: int = 300, interval_ms: int = 0, label: str = "",
+                 auto_process: bool = False):
     s = _session(game, create=True)
     _refresh_profile(game, s)
+    # auto-process rolls straight into OCR when the recording self-ends — pre-pick the batch
+    # device the same way process/start does, since no manual process click will set it.
+    if auto_process:
+        s.batch_device = "gpu" if read_mode() == "auto" else None
     # auto-scroll is per-window now (ScrollDef.autoscroll/scroll_clicks); start_recording reads
     # it off the window it classifies on screen.
-    s.start_recording(max_frames=max_frames, interval_ms=interval_ms, label=label)
+    s.start_recording(max_frames=max_frames, interval_ms=interval_ms, label=label,
+                      auto_process=auto_process)
     try:   # a precapture recording counts as a capture start -> fire on_capture triggers
         from ..source_sched import fire_capture
         fire_capture(game, get_settings())

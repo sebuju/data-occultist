@@ -118,7 +118,7 @@ function buildPrecap() {
         else if (a === "newsess") { precapView = "new"; precapPage = "detail"; if (precapLast) _pcDraw(precapLast); }
         // recordStart creates+persists a new session server-side, so leave the "new" pane at
         // once and show it as the active loaded session (its row appears via loadSessions)
-        else if (a === "record") { precapView = "loaded"; _pcRun(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, pcSig); _pcLoadSessions(); return st; }); }
+        else if (a === "record") { const ap = !!pcNode.querySelector(".pc-autoproc")?.checked; precapView = "loaded"; _pcRun(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, ap, pcSig); _pcLoadSessions(); return st; }); }
         else if (a === "recstop") _pcRun(() => api.precapture.recordStop(game, pcSig));
         else if (a === "process") _pcRun(() => api.precapture.processStart(game, pcSig));
         else if (a === "pause") _pcRun(() => api.precapture.pause(game, true, pcSig));
@@ -351,7 +351,8 @@ function renderPrecap(node, st) {
                 h("div", { class: "pc-opts" },
                     h("label", { class: "flab" }, "max frames ", h("input", { type: "number", class: "pc-frames", value: "1000", min: "1" })),
                     h("label", { class: "flab" }, "interval ms ", h("input", { type: "number", class: "pc-interval", value: "0", min: "0" })),
-                    h("label", { class: "flab" }, "label ", h("input", { type: "text", class: "pc-label", placeholder: "(optional)" }))),
+                    h("label", { class: "flab" }, "label ", h("input", { type: "text", class: "pc-label", placeholder: "(optional)" })),
+                    h("label", { class: "flab" }, h("input", { type: "checkbox", class: "pc-autoproc" }), " auto-process when auto-scroll ends")),
                 h("div", { class: "pc-ctl" }));
         } else {
             right.replaceChildren(
@@ -380,6 +381,7 @@ function renderPrecap(node, st) {
     const barRows = stats.map((s) => h("span", { class: "muted" }, s));
     if (procLive) barRows.push(h("span", { class: "muted" }, `${tm.ms_per_frame || 0} ms/frame (${tm.device || "cpu"})`));
     if (procLive && st.window) barRows.push(h("span", { class: "conf-good", title: "window/state recognised this frame" }, `${st.window}/${st.state}`));
+    if (recLive && st.auto_process) barRows.push(h("span", { class: "muted" }, "auto-process when auto-scroll ends"));
     if (recPaused) barRows.push(h("span", { class: "conf-warn" }, PAUSE(), " auto-scroll reached the list end — resume to retry, or uncheck it"));
     if (st.warning) barRows.push(h("span", { class: "conf-warn" }, WARN(), " ", st.warning));
     if (st.error) barRows.push(h("span", { class: "conf-bad" }, st.error));

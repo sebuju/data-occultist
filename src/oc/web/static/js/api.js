@@ -307,7 +307,7 @@ export const bench = {
 const _pre = (game, path, signal, method = "POST", ms) =>
     tfetch(`/api/precapture/${encodeURIComponent(game)}/${path}`, { method, signal }, ms).then((r) => r.json());
 export const precapture = {
-    recordStart: (game, maxFrames, intervalMs, label, signal) => _pre(game, `record/start?max_frames=${maxFrames}&interval_ms=${intervalMs}&label=${encodeURIComponent(label || "")}`, signal),
+    recordStart: (game, maxFrames, intervalMs, label, autoProcess, signal) => _pre(game, `record/start?max_frames=${maxFrames}&interval_ms=${intervalMs}&label=${encodeURIComponent(label || "")}&auto_process=${!!autoProcess}`, signal),
     recordStop: (game, signal) => _pre(game, "record/stop", signal),
     processStart: (game, signal) => _pre(game, "process/start", signal),
     pause: (game, on, signal) => _pre(game, `process/pause?on=${on}`, signal),

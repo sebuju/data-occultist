@@ -133,6 +133,48 @@ def test_recording_skips_identical_frames(tmp_path):
     assert len(s._frames) == 3
 
 
+def _settled_grabber(seed):
+    # two distinct, each settled (sent twice) so the record loop keeps BOTH; once the
+    # sequence drains it repeats the last (== last kept -> dropped), so the run ends on
+    # max_frames rather than starving for new frames.
+    from oc.types import Frame, PixelBox
+    rng = np.random.default_rng(seed)
+    a = rng.integers(0, 255, (50, 70, 3), dtype=np.uint8)
+    b = rng.integers(0, 255, (50, 70, 3), dtype=np.uint8)
+    seq = [a, a, b, b]
+    def grab(win):
+        return Frame(image=seq.pop(0) if seq else b, client=PixelBox(0, 0, 70, 50))
+    return grab
+
+
+def test_auto_process_runs_ocr_when_recording_self_ends(tmp_path):
+    # auto_process on + a natural end (max_frames) -> recording rolls straight into OCR
+    s = _session(tmp_path, [Record(values={"item_name": "Adra"}, confidence=0.9)])
+    s._engine.capture.grab_window = _settled_grabber(11)
+    s._locator = SimpleNamespace(locate=lambda profile: object())
+    s._engine.window.is_foreground = lambda win: True
+    s._auto_process = True
+    s._phase = Phase.recording
+    s._record_loop(max_frames=2, interval=0)   # 2 frames kept -> max_frames -> auto-process
+    assert s._thread is not None
+    s._thread.join(timeout=10)
+    st = s.status()
+    assert st["phase"] == Phase.done.value           # processed, not left at "recorded"
+    assert st["processed"] == 2
+    assert st["datasets"] and st["datasets"][0]["dataset"] == "equip"
+
+
+def test_no_auto_process_leaves_recording_recorded(tmp_path):
+    # auto_process off -> a self-ended recording stops at "recorded" (no OCR launched)
+    s = _session(tmp_path, [Record(values={"item_name": "Adra"}, confidence=0.9)])
+    s._engine.capture.grab_window = _settled_grabber(12)
+    s._locator = SimpleNamespace(locate=lambda profile: object())
+    s._phase = Phase.recording
+    s._record_loop(max_frames=2, interval=0)
+    assert s._thread is None
+    assert s.status()["phase"] == Phase.recorded.value
+
+
 def test_recording_skips_cursor_only_moves(tmp_path):
     s = PrecaptureSession(_engine(tmp_path), _profile())
     from oc.types import Frame, PixelBox

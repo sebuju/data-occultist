@@ -211,6 +211,9 @@ class PrecaptureSession:
         self._pause = threading.Event()
         self._autoscroll = threading.Event()   # live-toggled; drives the record loop's scroll
         self._scroll_clicks = _AUTOSCROLL_CLICKS   # wheel notches per nudge (live-adjustable)
+        # when set, a recording that ENDS ON ITS OWN (auto-scroll list-end or max_frames)
+        # immediately launches processing — record -> process with no manual stop/process click
+        self._auto_process = False
         self._worker_kind: str | None = None   # "recording" | "processing" — restores phase on resume
         self._thread: threading.Thread | None = None
         # "auto" device policy: set to "gpu" by the web layer to run the PROCESSING batch on
@@ -532,7 +535,8 @@ class PrecaptureSession:
             pass
         self.set_autoscroll(on, clicks)
 
-    def start_recording(self, max_frames: int = 300, interval_ms: int = 0, label: str = "") -> None:
+    def start_recording(self, max_frames: int = 300, interval_ms: int = 0, label: str = "",
+                        auto_process: bool = False) -> None:
         with self._lock:
             if self._phase in (Phase.recording, Phase.processing):
                 return
@@ -541,6 +545,7 @@ class PrecaptureSession:
         with self._lock:
             self._session = self._new_session_id()   # each recording is its own session
             self._reset_locked()
+            self._auto_process = auto_process
             self._dir.mkdir(parents=True, exist_ok=True)
             self._phase = Phase.recording
             self._worker_kind = "recording"
@@ -584,10 +589,12 @@ class PrecaptureSession:
         barren = 0                            # consecutive auto-scrolls that surfaced nothing new
         pending_scroll = False                # a scroll was sent, awaiting its result
         scroll_sig: int | None = None         # detect-region sig the auto-scroll cfg was read at
+        natural_end = False                   # loop ended on its own (max_frames / list-end), not a user stop
         try:
             while not self._stop.is_set():
                 with self._lock:
                     if len(self._frames) >= max_frames:
+                        natural_end = True
                         break
                 if self._pause.is_set():        # paused (e.g. auto-scroll hit the list end)
                     while self._pause.is_set() and not self._stop.is_set():
@@ -660,6 +667,9 @@ class PrecaptureSession:
                             if barren >= _AUTOSCROLL_GIVE_UP:
                                 barren = 0
                                 pending_scroll = False
+                                if self._auto_process:     # list end -> end recording, then process
+                                    natural_end = True
+                                    break
                                 self.pause(True)       # list end reached -> pause, don't uncheck
                             else:
                                 scrolled = scroll_window(win, self._scroll_clicks)   # retry
@@ -681,6 +691,12 @@ class PrecaptureSession:
                 if self._phase in (Phase.recording, Phase.paused):
                     self._phase = Phase.recorded
                 self._t_end = time.monotonic()   # freeze the recording clock (fps stops drifting)
+                # auto-process: a self-ended recording with frames rolls straight into OCR.
+                # Launch OUTSIDE the lock (and never via start_processing -> _join_prev, which
+                # would join this very thread) — _launch_processing just spawns the next worker.
+                launch = self._auto_process and natural_end and self._frame_count() > 0
+            if launch:
+                self._launch_processing()
 
     def set_autoscroll(self, on: bool, clicks: int | None = None) -> None:
         """Live-toggle auto-scroll (and optionally its wheel-notch step). Unchecking mid-
@@ -703,6 +719,14 @@ class PrecaptureSession:
             if self._phase in (Phase.recording, Phase.processing) or not self._frame_count():
                 return
         self._join_prev()   # bury any lingering worker BEFORE clearing _stop (see _join_prev)
+        self._launch_processing()
+
+    def _launch_processing(self) -> None:
+        """Spawn the processing worker (reset counters / pick resume cursor / start thread).
+
+        The ONE place a processing thread is started — shared by ``start_processing`` (manual,
+        which joins the prior worker first) and the auto-process path inside ``_record_loop``'s
+        finally (which must NOT join, as that would join its own dying thread)."""
         with self._lock:
             # A rehydrated half-done run (the OCR checkpoint survived a process kill)
             # resumes at the saved cursor with its staged records intact. Any other
@@ -1078,6 +1102,7 @@ class PrecaptureSession:
                 "session": self._session,
                 "autoscroll": self._autoscroll.is_set(),
                 "scroll_clicks": self._scroll_clicks,
+                "auto_process": self._auto_process,
                 "kind": self._worker_kind,
                 "label": meta.get("label", ""),
                 "saved_at": meta.get("saved_at"),
