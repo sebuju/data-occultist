@@ -3,7 +3,7 @@
 // style) and the theme panel (document defaults) — never copied (rule 7). No blocking
 // dialogs; every control is inline (rule 2).
 
-import { STYLE_FIELDS, FONT_CHOICES } from "./style.js";
+import { STYLE_FIELDS, FONT_CHOICES, BORDER_SIDES } from "./style.js";
 import { el } from "./widgets/util.js";
 
 const ALIGNS = ["left", "center", "right", "justify"];
@@ -20,37 +20,67 @@ export function styleEditor(host, style, onChange, opts = {}) {
     const change = () => onChange && onChange();
     const setv = (k, v) => { if (v === "" || v == null) delete style[k]; else style[k] = v; change(); };
 
-    // Fields that ride inline on another field's row, not their own: B/I/U on the size row,
-    // border colour + style on the border-width row.
-    const SKIP = new Set(["bold", "italic", "underline", "border_color", "border_style"]);
+    // Fields that ride inline on another field's row, not their own: B/I/U on the size row.
+    // border_w/color/style are owned wholesale by the custom borderRow (below), so all three skip
+    // the generic loop.
+    const SKIP = new Set(["bold", "italic", "underline", "border_w", "border_color", "border_style"]);
     const toggleBtn = (key, label) => {
         const b = el("button", "pw-se-toggle", label);
         b.classList.toggle("on", !!disp(key));
         b.addEventListener("click", () => { const on = !disp(key); b.classList.toggle("on", on); setv(key, on || ""); });
         return b;
     };
-    const colorMini = (key) => {
-        const c = el("input", "pw-se-cmini"); c.type = "color"; c.title = "border colour"; c.value = toHex(disp(key)) || "#000000";
-        c.addEventListener("input", () => setv(key, c.value));
-        return c;
-    };
-    const selectMini = (key, options) => {
-        const s = el("select"); s.title = "border style";
-        for (const o of ["", ...options]) { const op = el("option", null, o || "(none)"); op.value = o; s.appendChild(op); }
-        s.value = disp(key) || "";
-        s.addEventListener("change", () => setv(key, s.value));
-        return s;
+
+    // The border editor: one row whose width/colour/style controls retarget to the active SIDE. A
+    // side button (all / T R B L) picks the scope; "all" edits the shared base keys, a side edits its
+    // `border_*_<side>` override (shown value falls back base -> effective so it reads what's in force,
+    // but only writes the per-side key on change). Clearing a side's width reverts it to the base.
+    const borderRow = () => {
+        const row = el("div", "pw-se-row pw-se-border");
+        row.appendChild(el("span", "pw-se-lab", "border"));
+        let side = null;   // null = all sides (base keys)
+        const bk = (prop) => (side ? `border_${prop}_${side}` : `border_${prop}`);
+        const show = (prop) => {
+            if (side) { const v = style[`border_${prop}_${side}`]; if (v !== undefined) return v; }
+            const b = style[`border_${prop}`];
+            return b !== undefined ? b : eff[`border_${prop}`];
+        };
+        const wn = el("input", "pw-se-num"); wn.type = "number"; wn.min = 0; wn.max = 40; wn.title = "width";
+        wn.addEventListener("change", () => setv(bk("w"), wn.value === "" ? "" : Number(wn.value)));
+        const cm = el("input", "pw-se-cmini"); cm.type = "color"; cm.title = "border colour";
+        cm.addEventListener("input", () => setv(bk("color"), cm.value));
+        const stOpts = (STYLE_FIELDS.find((x) => x.key === "border_style") || {}).options || [];
+        const ss = el("select"); ss.title = "border style";
+        for (const o of ["", ...stOpts]) { const op = el("option", null, o || "(none)"); op.value = o; ss.appendChild(op); }
+        ss.addEventListener("change", () => setv(bk("style"), ss.value));
+        const sync = () => { wn.value = show("w") ?? ""; cm.value = toHex(show("color")) || "#000000"; ss.value = show("style") || ""; };
+        const sw = el("div", "pw-se-sides");
+        const btns = new Map();
+        const pick = (sv) => { side = sv; btns.forEach((b, k) => b.classList.toggle("on", k === sv)); sync(); };
+        [["all", null], ...BORDER_SIDES.map((s) => [s[0].toUpperCase(), s])].forEach(([lab, sv]) => {
+            const b = el("button", "pw-se-side", lab); b.title = sv ? `${sv} side` : "all sides";
+            b.classList.toggle("on", sv === side);
+            b.addEventListener("click", () => pick(sv));
+            btns.set(sv, b); sw.appendChild(b);
+        });
+        sync();
+        row.append(sw, wn, cm, ss);
+        return row;
     };
 
     for (const f of STYLE_FIELDS) {
+        if (f.key === "border_w") { host.appendChild(borderRow()); continue; }   // custom border block
         if (SKIP.has(f.key)) continue;
         const row = el("div", "pw-se-row");
         row.appendChild(el("span", "pw-se-lab", f.label));
         const cur = disp(f.key);
 
         if (f.kind === "color") {
-            const c = el("input"); c.type = "color"; c.value = toHex(cur) || "#000000";
-            const t = el("input", "pw-se-text"); t.type = "text"; t.placeholder = "—"; t.value = cur || "";
+            // a transparent effective value (e.g. an unset fill computes to rgba(0,0,0,0)) is NO colour,
+            // not black — show it empty so the field reads as "no fill" and never serialises black.
+            const shown = isTransparent(cur) ? "" : cur;
+            const c = el("input"); c.type = "color"; c.value = toHex(shown) || "#000000";
+            const t = el("input", "pw-se-text"); t.type = "text"; t.placeholder = "—"; t.value = shown || "";
             c.addEventListener("input", () => { t.value = c.value; setv(f.key, c.value); });
             t.addEventListener("change", () => setv(f.key, t.value.trim()));
             const clr = el("button", "pw-se-clear", "×"); clr.title = "clear";
@@ -69,8 +99,6 @@ export function styleEditor(host, style, onChange, opts = {}) {
             row.appendChild(n);
             // B I U live on the size row
             if (f.key === "font_size") row.append(toggleBtn("bold", "B"), toggleBtn("italic", "I"), toggleBtn("underline", "U"));
-            // border colour + style live on the border-width row
-            if (f.key === "border_w") row.append(colorMini("border_color"), selectMini("border_style", (STYLE_FIELDS.find((x) => x.key === "border_style") || {}).options || []));
         } else if (f.kind === "range01") {
             const r = el("input"); r.type = "range"; r.min = 0; r.max = 1; r.step = 0.05; r.value = cur ?? 1;
             const out = el("span", "pw-se-out", String(cur ?? 1));
@@ -105,8 +133,18 @@ export function styleEditor(host, style, onChange, opts = {}) {
     }
 }
 
+// A fully-transparent value (the keyword, or any rgba/hsla with alpha 0) means NO colour — an unset
+// fill computes to rgba(0,0,0,0), which must NOT read back as black.
+function isTransparent(v) {
+    if (typeof v !== "string") return false;
+    const s = v.trim().toLowerCase();
+    if (s === "transparent") return true;
+    const m = s.match(/^(?:rgba|hsla)\([^)]*,\s*([0-9.]+)\s*\)$/);
+    return !!m && Number(m[1]) === 0;
+}
+
 function toHex(v) {
-    if (typeof v !== "string") return null;
+    if (typeof v !== "string" || isTransparent(v)) return null;
     if (/^#[0-9a-f]{6}$/i.test(v)) return v;
     if (/^#[0-9a-f]{3}$/i.test(v)) return `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`;
     const m = v.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);   // computed colours come back as rgb()

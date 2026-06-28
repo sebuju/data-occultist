@@ -26,6 +26,11 @@ export const STYLE_FIELDS = [
 
 const px = (v) => (v == null || v === "" ? null : (typeof v === "number" ? `${v}px` : String(v)));
 
+// Border is resolved per side so a style can frame any subset of edges. These pair each logical
+// side with its CSS longhand; the per-side override keys are `border_{w,color,style}_<side>`.
+export const BORDER_SIDES = ["top", "right", "bottom", "left"];
+const CSS_SIDE = { top: "borderTop", right: "borderRight", bottom: "borderBottom", left: "borderLeft" };
+
 // Merge a theme's defaults under a widget/page style (style wins per key).
 export function mergeStyle(theme, style) {
     return { ...(theme || {}), ...(style || {}) };
@@ -44,17 +49,31 @@ export function applyStyle(el, style) {
     set("fontStyle", s.italic ? "italic" : (s.italic === false ? "normal" : ""));
     set("textDecoration", s.underline ? "underline" : (s.underline === false ? "none" : ""));
     set("textAlign", s.align);
-    // border: only when a width is set, so a bare colour doesn't draw a 0-width line
-    if (s.border_w) el.style.border = `${px(s.border_w)} ${s.border_style || "solid"} ${s.border_color || "currentColor"}`;
-    else set("border", null);
+    // border: each side resolves width/style/colour from a per-side override (border_w_top, …),
+    // falling back to the shared base (border_w / border_style / border_color). A side draws ONLY
+    // when its resolved width is truthy (a bare colour never draws a 0-width line); a per-side width
+    // of 0 explicitly suppresses that one side even while the base draws the others. Always longhand
+    // (never the `border` shorthand) so the four sides stay independently set/cleared each apply.
+    let anyBorder = false;
+    for (const side of BORDER_SIDES) {
+        const w = s[`border_w_${side}`] ?? s.border_w;
+        if (w) {
+            const st = (s[`border_style_${side}`] ?? s.border_style) || "solid";
+            const col = (s[`border_color_${side}`] ?? s.border_color) || "currentColor";
+            el.style[CSS_SIDE[side]] = `${px(w)} ${st} ${col}`;
+            anyBorder = true;
+        } else {
+            el.style[CSS_SIDE[side]] = "";
+        }
+    }
     set("borderRadius", px(s.radius));
     set("padding", px(s.padding));
     set("margin", px(s.margin));
     set("boxShadow", s.shadow);
     set("opacity", s.opacity == null || s.opacity === "" ? null : String(s.opacity));
-    // mark whether a real border is drawn, so edit-mode selection/hover can outline ONLY the
+    // mark whether ANY border side is drawn, so edit-mode selection/hover can outline ONLY the
     // borderless elements (a bordered one already reads as framed — see pretty.css).
-    el.classList.toggle("pw-bordered", !!s.border_w);
+    el.classList.toggle("pw-bordered", anyBorder);
 }
 
 // The EFFECTIVE style of a rendered element (getComputedStyle -> our Style shape), used to

@@ -12,12 +12,13 @@ export default {
     type: "button",
     title: "Button",
     icon: "⏺",
-    defaults: () => ({ config: { action: "fire_trigger", target: "", value: "", page: "", label: "Run" }, w: 140, h: 44 }),
+    defaults: () => ({ config: { action: "fire_trigger", target: "", value: "", page: "", label: "Run" }, style: { alignH: "left", alignV: "middle", fill: false }, w: 140, h: 44 }),
     create(host, widget, ctx) {
         host.className = "pw-button-host";
         const c = widget.config || {};
         const btn = el("button", "pw-button", c.label || "Run");
         const msg = el("span", "pw-button-msg");
+        applyPlacement(host, btn, widget.style || {});
         btn.addEventListener("click", async () => {
             btn.disabled = true; msg.textContent = "";
             try {
@@ -29,6 +30,21 @@ export default {
             finally { btn.disabled = false; setTimeout(() => { msg.textContent = ""; }, 2000); }
         });
         host.append(btn, msg);
-        return { update() {}, destroy() {} };
+        // re-apply placement on update so STYLE edits (alignH/alignV/fill) take effect live via restyle,
+        // without a full canvas rebuild (label changes still need a rebuild — they live in config).
+        return { update() { applyPlacement(host, btn, widget.style || {}); }, destroy() {} };
     },
 };
+
+// Placement of the button within its (frame-filling) host — a STYLE concern, not config: justify-content
+// = horizontal, align-items = vertical; `fill` stretches the button to the whole host (both axes), so the
+// align picks only matter when it doesn't fill. Set deterministically (clears when toggled off). Defaults
+// reproduce the old look (left / middle / no-fill).
+function applyPlacement(host, btn, st) {
+    const H = { left: "flex-start", center: "center", right: "flex-end" };
+    const V = { top: "flex-start", middle: "center", bottom: "flex-end" };
+    host.style.justifyContent = H[st.alignH] || "flex-start";
+    host.style.alignItems = V[st.alignV] || "center";
+    btn.style.flex = st.fill ? "1 1 auto" : "";
+    btn.style.alignSelf = st.fill ? "stretch" : "";
+}
