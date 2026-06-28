@@ -459,11 +459,14 @@ export function renderPage(surface, page, ctx) {
         const ay = a.B <= b.T ? a.B : a.T, by = b.B <= a.T ? b.B : b.T;
         return [ax, ay, bx, by];
     }
-    function drawMatchCue(svg, rec, boxes, hot) {
+    // `only` (optional Set): when given, draw ONLY ties whose matched id is in it — used to show a
+    // connected widget's tie INTO the selection without its unrelated matches.
+    function drawMatchCue(svg, rec, boxes, hot, only) {
         const w = rec.widget, db = boxes.get(w.id); if (!db) return;
         const H = hot ? " pw-cue-hot" : "";
         const pctSuffix = (k) => { const v = Number(w[k] ?? 100) || 100; return v === 100 ? "" : `·${r2(v)}%`; };
         const tie = (srcId, lineCls, lblCls, capCls, pctKey) => {
+            if (only && !only.has(srcId)) return;
             const sb = boxes.get(srcId); if (!sb) return;
             const [x1, y1, x2, y2] = edgeConnector(frameEdges(db), frameEdges(sb));
             svg.appendChild(cueLine(x1, y1, x2, y2, lineCls + H));
@@ -475,9 +478,11 @@ export function renderPage(surface, page, ctx) {
         if (w.matchH && w.matchH !== w.id && recs.has(w.matchH)) tie(w.matchH, "pw-cue-mlink-h", "pw-cue-mh-lbl", "pw-cue-mcap-h", "matchHPct");
     }
     // In edit mode, draw the relationship layer: matches (under), then anchors, then each widget's
-    // own dimensions. cueScope "all" shows EVERY widget's cues fully; "selected" limits the layer to
-    // the selected widget(s) — or, when nothing is selected, the one currently hovered (preview).
-    // Every drawn widget is "bright" (labels on); there is no dimmed pass. Hidden outside edit mode.
+    // own dimensions. cueScope "all" shows EVERY widget's cues fully. "selected" shows the focus
+    // widget(s) — the selection, or the hovered one when nothing is selected — with their FULL cue
+    // set, PLUS the connecting cue of any OTHER widget that points at the focus (its anchor.to or a
+    // width/height match), so a relationship reads from both ends. Connected widgets contribute only
+    // that one tie, not their own dimensions. Every drawn cue is bright; no dimmed pass.
     function drawAnchorCue() {
         if (ctx.mode !== "edit") { if (cueSvg) cueSvg.style.display = "none"; return; }
         const svg = ensureCueSvg();
@@ -487,16 +492,32 @@ export function renderPage(surface, page, ctx) {
         labelQ = [];   // collect every cue's labels, then lay them out together (below)
         const sel = (ctx.selectionIds && ctx.selectionIds()) || new Set();
         const list = [...recs.values()];
-        // which widgets get the (full) cue layer
-        const show = (id) => ctx.cueScope === "all" || sel.has(id) || (!sel.size && id === hoverId);
-        const shown = list.filter((rec) => show(rec.widget.id));
-        // a widget's cues "pop" (pw-cue-hot) when selected/hovered — but ONLY in "all" scope, where
-        // they must stand out from the rest of the layer. In "selected" scope only the focused cues
-        // are drawn anyway, so there's nothing to stand out from.
-        const hot = (id) => ctx.cueScope === "all" && (sel.has(id) || id === hoverId);
-        for (const rec of shown) drawMatchCue(svg, rec, boxes, hot(rec.widget.id));
-        for (const rec of shown) drawAnchorCueOne(svg, rec, boxes, true, hot(rec.widget.id));
-        for (const rec of shown) drawDimCue(svg, rec, boxes, hot(rec.widget.id));
+        const all = ctx.cueScope === "all";
+        // focus = the widget(s) whose relationships we expand: the selection, or the hover preview.
+        const focus = sel.size ? sel : (hoverId ? new Set([hoverId]) : new Set());
+        // a widget gets its FULL cue set when in "all" scope or when it IS a focus widget.
+        const primary = (id) => all || focus.has(id);
+        // a NON-focus widget connects to the focus via its anchor target or a width/height match.
+        const anchorsFocus = (w) => w.anchor && w.anchor.to && focus.has(w.anchor.to);
+        const matchesFocus = (w) => (w.matchW && w.matchW !== w.id && focus.has(w.matchW)) ||
+            (w.matchH && w.matchH !== w.id && focus.has(w.matchH));
+        // cues "pop" (pw-cue-hot) only in "all" scope, where a selected/hovered widget must stand out
+        // from the rest of the layer. In "selected" scope only the relevant cues are drawn anyway.
+        const hot = (id) => all && (sel.has(id) || id === hoverId);
+        for (const rec of list) {
+            const w = rec.widget;
+            if (primary(w.id)) drawMatchCue(svg, rec, boxes, hot(w.id));
+            else if (focus.size && matchesFocus(w)) drawMatchCue(svg, rec, boxes, false, focus);   // tie INTO focus only
+        }
+        for (const rec of list) {
+            const w = rec.widget;
+            if (primary(w.id)) drawAnchorCueOne(svg, rec, boxes, true, hot(w.id));
+            else if (focus.size && anchorsFocus(w)) drawAnchorCueOne(svg, rec, boxes, true, false);
+        }
+        for (const rec of list) {
+            const w = rec.widget;
+            if (primary(w.id)) drawDimCue(svg, rec, boxes, hot(w.id));   // own size: focus widgets only
+        }
         flushLabels(svg);   // labels last so they sit above every line, dodging caps + each other
     }
 

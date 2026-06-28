@@ -90,9 +90,9 @@ body.pretty-view .pw-cauldron-mark {
 .pw-cue-mlink-h { stroke: #e69ad1; stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.85; }
 .pw-cue-mw-lbl .pw-cue-lbl-bg { fill: #5ad1e6; }
 .pw-cue-mh-lbl .pw-cue-lbl-bg { fill: #e69ad1; }
-/* match labels carry an element ID (text, not a number) — white reads as a name, distinct from the
-   dark numeric dimension/anchor chips */
-.pw-cue-mw-lbl .pw-cue-lbl-tx, .pw-cue-mh-lbl .pw-cue-lbl-tx { fill: #fff; }
+/* match labels carry an element ID (text, not a number) — italic reads as a name, distinct from
+   the upright numeric dimension/anchor chips (dark text, same as the rest) */
+.pw-cue-mw-lbl .pw-cue-lbl-tx, .pw-cue-mh-lbl .pw-cue-lbl-tx { font-style: italic; }
 .pw-cue-mcap-w { fill: #5ad1e6; }
 .pw-cue-mcap-h { fill: #e69ad1; }
 /* leader tether from a displaced label back to its line (fallback colour; cues pass their own) */
