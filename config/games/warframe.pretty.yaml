@@ -6,7 +6,7 @@ pages:
   title: Main
   style: {}
   widgets:
-  - id: w3
+  - id: tb_relic_result
     x: 0
     y: 100
     w: clamp(500px, 50dvw, 1000px)
@@ -67,7 +67,7 @@ pages:
     units:
       x: dvw
       w: calc
-  - id: w1
+  - id: pn_sess
     x: 0
     y: 3
     w: 34.51
@@ -84,14 +84,14 @@ pages:
     config:
       panel: precap
     anchor:
-      to: w4
+      to: pn_tasks
       corner: tr
       target: br
     units:
       w: dvw
       y: dvh
-    matchW: w3
-  - id: w2
+    matchW: tb_relic_result
+  - id: pn_live
     x: 0
     y: 4
     w: 15.63
@@ -108,13 +108,14 @@ pages:
     config:
       panel: live
     anchor:
-      to: w6
+      to: hd_l
       corner: tl
       target: bl
     units:
       w: dvw
-    matchW: w6
-  - id: w4
+      h: px
+    matchW: hd_l
+  - id: pn_tasks
     x: 0
     y: 4
     w: 16
@@ -131,14 +132,14 @@ pages:
     config:
       panel: activity
     anchor:
-      to: w5
+      to: hd_r
       corner: tr
       target: br
     units:
       w: dvw
-    matchW: w6
-    matchH: w2
-  - id: w5
+    matchW: pn_live
+    matchH: pn_live
+  - id: hd_r
     x: 0
     y: 3
     w: 14.32
@@ -152,14 +153,14 @@ pages:
     config:
       text: Tasks
     anchor:
-      to: w3
+      to: tb_relic_result
       corner: tr
       target: br
     units:
       w: dvw
       y: dvh
-    matchW: w6
-  - id: w6
+    matchW: hd_l
+  - id: hd_l
     x: 0
     y: 3
     w: 16
@@ -178,12 +179,12 @@ pages:
       w: dvw
       y: dvh
     anchor:
-      to: w3
+      to: tb_relic_result
       corner: tl
       target: bl
-    matchW: w3
+    matchW: tb_relic_result
     matchWPct: 48
-  - id: w7
+  - id: hd_main
     x: 0
     y: -4
     w: 240
@@ -198,10 +199,10 @@ pages:
     units:
       x: dvw
     anchor:
-      to: w3
+      to: tb_relic_result
       corner: bl
       target: tl
-    matchW: w3
+    matchW: tb_relic_result
 - id: page1
   title: Page
   style: {}

@@ -1387,20 +1387,20 @@ dictionaries:
 layout:
   nodes:
     game:
-      x: -1040.0
-      y: -540.0
+      x: -880.0
+      y: -720.0
       w: 340.0
       h: 140.0
       collapsed: false
     dict:wiki:
-      x: -1400.0
-      y: -760.0
+      x: -1240.0
+      y: -940.0
       w: 300.0
       h: 360.0
       collapsed: false
     ds:master:
-      x: -1040.0
-      y: -760.0
+      x: -880.0
+      y: -940.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -1453,8 +1453,8 @@ layout:
       h: 200.0
       collapsed: false
     ds:mods:
-      x: -140.0
-      y: -760.0
+      x: 20.0
+      y: -940.0
       w: 360.0
       h: 160.0
       collapsed: false
@@ -1609,8 +1609,8 @@ layout:
       h: 480.0
       collapsed: false
     vt:ds:master:
-      x: -600.0
-      y: -760.0
+      x: -440.0
+      y: -940.0
       w: 420.0
       h: 360.0
       collapsed: false
@@ -1633,20 +1633,20 @@ layout:
       h: 320.0
       collapsed: false
     src:source:
-      x: -3320.0
-      y: -760.0
+      x: 520.0
+      y: -940.0
       w: 700.0
       h: 780.0
       collapsed: false
     ds:dataset_2:
-      x: -2580.0
-      y: -760.0
+      x: 1260.0
+      y: -940.0
       w: 360.0
       h: 160.0
       collapsed: false
     vt:ds:dataset_2:
-      x: -2200.0
-      y: -760.0
+      x: 1640.0
+      y: -940.0
       w: 640.0
       h: 460.0
       collapsed: false
@@ -1669,14 +1669,14 @@ layout:
       h: 580.0
       collapsed: false
     producer:producer:
-      x: 1840.0
-      y: 1320.0
+      x: 80.0
+      y: -400.0
       w: 300.0
       h: 180.0
       collapsed: false
     ds:relic_contents:
-      x: 1840.0
-      y: 1520.0
+      x: 80.0
+      y: -200.0
       w: 300.0
       h: 200.0
       collapsed: false
@@ -2326,6 +2326,7 @@ layout:
     groups:
     - group_9
     - group_24
+    - group_27
     outline:
       color: '#3a4154'
       style: none
