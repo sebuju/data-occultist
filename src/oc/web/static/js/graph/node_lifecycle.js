@@ -51,7 +51,8 @@ function remapNodeState(mapId) {
         const to = mapId(`win:${k}`);
         if (to && to !== `win:${k}`) { winPage.set(to.slice(4), winPage.get(k)); winPage.delete(k); }
     }
-    groups.remapNodes(mapId);   // carry group membership across the rename (don't detach)
+    groups.remapNodes(mapAny);  // carry group membership across the rename (don't detach) — mapAny so a
+                                // parent's satellite member (vt:/prev:) rides along, else the records grid orphans
 }
 
 // Drop EVERY per-node-id live state slice for a removed node — the delete-twin of remapNodeState.
