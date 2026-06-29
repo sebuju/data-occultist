@@ -22,8 +22,9 @@
     --black: #000;
 
     /* semantic / status */
-    --accent: #5aa9e6;        /* selection, primary actions, regions (blue) */
-    --accent-bg: #5aa9e615;   /* selection, primary actions, regions (blue) */
+    --accent: #5aa9e6;        /* primary actions, regions (blue) */
+    --accent-bg: #5aa9e615;   /* primary actions, regions (blue) */
+    --sel: #ffffff;           /* graph SELECTION only (node border/outline, selected edges/ports) */
     --danger: #e6685a;        /* destructive, errors (red) */
     --ok: #7ddc7d;            /* success / high confidence (green) */
     --warn: #e6c25a;          /* caution / medium confidence (amber) */

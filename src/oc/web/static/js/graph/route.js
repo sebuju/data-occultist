@@ -20,6 +20,11 @@ const C = {
     clearance: 22,   // routing margin around each node => gutter width for waypoints
     bendCost: 70,    // penalty per 90-degree bend (vs 1 unit of length)
     groupCross: 240, // soft penalty per group box a segment passes through (not its own)
+    headCross: 9000, // soft penalty per group TITLE band crossed — far heavier than groupCross so
+                                      // wires detour around headings unless there's truly no alternative
+    headBand: 46,    // height (px) of a group's FULL colored title banner (CSS .ggroup-title:
+                                      // padding 9*2 + ~24 line for --fs-xl 20px), added as its own soft rect so
+                                      // wires bias off the whole banner — not just the text (0 disables)
     laneGap: 12,     // separation between bundled parallel wires
     faceStick: 50,   // bias to keep a connector's previous face (hysteresis) — < bendCost, so a
                                       // clearly better route still switches, but ties/small margins don't flicker
@@ -72,7 +77,7 @@ function edgeOpts(ax, ay, bx, by, hb, soft) {
 
 // A* over waypoints, state = (node, entryDir); cost = length + bendCost*bends + group penalty.
 // Returns the chain [{node, corner}] start->goal (corner = the L-bend used to reach that node).
-function astar(WP, edgesOf, start, goal, ownGroups) {
+function astar(WP, edgesOf, start, goal, ownGroups, softCost) {
     const sid = (n, d) => n * 5 + (d == null ? 4 : DC[d]);
     const h = (i) => Math.abs(WP[i][0] - WP[goal][0]) + Math.abs(WP[i][1] - WP[goal][1]);
     const dist = new Map(), prev = new Map();
@@ -88,7 +93,7 @@ function astar(WP, edgesOf, start, goal, ownGroups) {
         for (const e of edgesOf(n)) {
             let bends = (e.d1 !== e.d2 ? 1 : 0);
             if (d != null && e.d1 !== d) bends += 1;
-            let pen = 0; if (e.gset && e.gset.size) for (const gi of e.gset) if (!ownGroups.has(gi)) pen += C.groupCross;
+            let pen = 0; if (e.gset && e.gset.size) for (const gi of e.gset) if (!ownGroups.has(gi)) pen += softCost[gi];
             const ng = g + e.len + C.bendCost * bends + pen, ns = sid(e.to, e.d2);
             if (ng < (dist.get(ns) ?? 1e18)) { dist.set(ns, ng); prev.set(ns, { id: cur, corner: e.corner }); push(ng + h(e.to), ng, e.to, e.d2); }
         }
@@ -118,17 +123,46 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     const prevSides = opts.prevSides || null;
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const rects = nodes.map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h, id: n.id }));
-    // flat obstacle bounds, built once — fed to every segHitsHard in the O(N^3) build (see edgeOpts)
-    const RN = rects.length, rx0 = new Float64Array(RN), ry0 = new Float64Array(RN), rx1 = new Float64Array(RN), ry1 = new Float64Array(RN);
-    for (let i = 0; i < RN; i++) { const r = rects[i]; rx0[i] = r.x; ry0[i] = r.y; rx1[i] = r.x + r.w; ry1[i] = r.y + r.h; }
-    const HB = { n: RN, x0: rx0, y0: ry0, x1: rx1, y1: ry1 };
     const m = C.clearance, PADG = 18;
-    const soft = [], groupOfNode = new Map();
+    // soft[] holds avoid-with-penalty rects: one per group box, plus (when C.headBand>0) one per
+    // group TITLE band — the top strip of its box — so wires stray off the heading. A group's OWN
+    // lines are exempt from the BOX (own-group set below) but NOT from the heading: every line,
+    // internal or foreign, pays groupCross to cross any title band, so headings stay clear.
+    const soft = [], softCost = [], groupOfNode = new Map();   // softCost[i] = penalty to cross soft[i]
+    const headRects = [];   // TEMP: title bands fed into HB below as HARD obstacles for observation
     for (const grp of (groups || [])) {
-        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, any = false;
-        for (const id of grp.members) { const nd = byId.get(id); if (!nd) continue; any = true; x0 = Math.min(x0, nd.x); y0 = Math.min(y0, nd.y); x1 = Math.max(x1, nd.x + nd.w); y1 = Math.max(y1, nd.y + nd.h); groupOfNode.set(id, soft.length); }
-        if (any) soft.push({ x0: x0 - PADG, y0: y0 - PADG, x1: x1 + PADG, y1: y1 + PADG });
+        // Geometry: prefer the caller's REAL rendered box + title-band height (grp.box/grp.bandH);
+        // the title banner occupies the top `bandH` of that box. Fall back to member bounds ± PADG
+        // (standalone/test callers without box info) — there the band height is the C.headBand guess.
+        let bx0, by0, bx1, by1, band;
+        if (grp.box) {
+            bx0 = grp.box.x; by0 = grp.box.y; bx1 = grp.box.x + grp.box.w; by1 = grp.box.y + grp.box.h;
+            band = grp.bandH || 0;
+        } else {
+            let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, any = false;
+            for (const id of grp.members) { const nd = byId.get(id); if (!nd) continue; any = true; x0 = Math.min(x0, nd.x); y0 = Math.min(y0, nd.y); x1 = Math.max(x1, nd.x + nd.w); y1 = Math.max(y1, nd.y + nd.h); }
+            if (!any) continue;
+            bx0 = x0 - PADG; by0 = y0 - PADG; bx1 = x1 + PADG; by1 = y1 + PADG; band = C.headBand;
+        }
+        const gi = soft.length;
+        for (const id of grp.members) if (byId.has(id)) groupOfNode.set(id, gi);
+        soft.push({ x0: bx0, y0: by0, x1: bx1, y1: by1 }); softCost.push(C.groupCross);
+        if (C.headBand > 0 && band > 0) {
+            const hr = { x0: bx0, y0: by0, x1: bx1, y1: by0 + band };
+            soft.push(hr); softCost.push(C.headCross); headRects.push(hr);
+        }
     }
+    // extra title bands the caller computed itself (subgroup TOP bands, super-group BOTTOM label
+    // bands — each has its own position the box+bandH shorthand can't express). Same treatment as a
+    // group heading: a hard obstacle (via headRects→HB) AND a high-cost soft rect with waypoints.
+    for (const tb of (opts.titleBands || [])) { soft.push(tb); softCost.push(C.headCross); headRects.push(tb); }
+    // flat obstacle bounds = node rects + (TEMP) title bands, hard-blocked by every segHitsHard
+    // in the O(N^3) build (see edgeOpts). Built AFTER the group loop so heading rects can join.
+    const RN = rects.length + headRects.length;
+    const rx0 = new Float64Array(RN), ry0 = new Float64Array(RN), rx1 = new Float64Array(RN), ry1 = new Float64Array(RN);
+    for (let i = 0; i < rects.length; i++) { const r = rects[i]; rx0[i] = r.x; ry0[i] = r.y; rx1[i] = r.x + r.w; ry1[i] = r.y + r.h; }
+    for (let k = 0; k < headRects.length; k++) { const r = headRects[k], i = rects.length + k; rx0[i] = r.x0; ry0[i] = r.y0; rx1[i] = r.x1; ry1[i] = r.y1; }
+    const HB = { n: RN, x0: rx0, y0: ry0, x1: rx1, y1: ry1 };
 
     // stage 1: base waypoints = inflated node corners + group box corners; 1-bend adjacency
     const WP = [];
@@ -180,7 +214,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
         for (const g of FACES) for (const e of peB[g]) add(e.to, { to: dstIdx[g], d1: rev(e.d2), d2: rev(e.d1), corner: e.corner, len: e.len, gset: e.gset });
         for (const f of FACES) { const sp = ppA[f], od = outDir(f); for (const g of FACES) { const dp = ppB[g], id = inDirOf(g); for (const e of edgeOpts(sp[0], sp[1], dp[0], dp[1], HB, soft)) if (e.d1 === od && e.d2 === id) add(srcIdx[f], { to: dstIdx[g], d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset }); } }
         const edgesOf = (i) => (i < baseN ? (overlay.has(i) ? baseAdj[i].concat(overlay.get(i)) : baseAdj[i]) : (overlay.get(i) || []));
-        const chain = astar(WP, edgesOf, S0, D0, own);
+        const chain = astar(WP, edgesOf, S0, D0, own, softCost);
         if (chain && chain.length >= 3) {
             const faceOf = (node, map) => FACES.find((f) => map[f] === node);
             ln.srcSide = faceOf(chain[1].node, srcIdx) || "R";

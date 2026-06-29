@@ -60,7 +60,7 @@ import {
 import { openContextMenu } from "../ctxmenu.js";
 import {
     vtables, vtableFor, refreshDataNode, refreshDatasetNode, expandSubsetRow,
-    batchesState, batEls, loadBatchesNode, refreshAllBatchesNodes,
+    batchesState, batEls, loadBatchesNode,
 } from "./panels/datanodes.js";
 import {
     pc, pcState, buildPrecap,
@@ -1209,8 +1209,35 @@ async function _refreshSubsetNode(id, pre) {
     }
 }
 
+// ---- coalesced live refresh (storm control) -------------------------------
+// Each open dataset/subset node refetching itself on every live change is N concurrent slow
+// /dataset + /subset requests — a "storm" on a rename or a sweep, since singleFlight keys are
+// per-node and so DON'T coalesce across nodes. Instead COLLECT the changed ids, debounce briefly,
+// and pull them all in ONE POST /flow/details — the same batched, memo-shared endpoint the boot
+// prefetch uses (a dataset feeding many views opens/parses once, not once per consumer). The
+// per-node refresh still runs, but fed a prefetched `pre` so it does no network of its own; a
+// dataset/subset missing from the batch (or a failed batch) falls back to its own fetch.
+const _refDs = new Set(), _refSub = new Set();
+let _refTimer = null;
+function queueNodeRefresh({ datasets = [], subsets = [] } = {}) {
+    for (const d of datasets) if (d) _refDs.add(d);
+    for (const s of subsets) if (s) _refSub.add(s);
+    if (_refTimer === null) _refTimer = setTimeout(flushNodeRefresh, 120);   // coalesce a burst into one batch
+}
+async function flushNodeRefresh() {
+    _refTimer = null;
+    const dss = [..._refDs].filter((d) => nodeEls.has(`vt:ds:${d}`) || nodeEls.has(`ds:${d}`));
+    const subs = [..._refSub].filter((s) => nodeEls.has(`vt:sub:${s}`) || nodeEls.has(`sub:${s}`));
+    _refDs.clear(); _refSub.clear();
+    if (!dss.length && !subs.length) return;
+    let details = null;
+    try { details = await api.flowDetails(model.profile.name, dss, subs); } catch { /* batch failed -> per-node fetch */ }
+    for (const d of dss) { const pre = details?.datasets?.[d] || null; refreshDataNode(d, pre); loadBatchesNode(d, pre); }
+    for (const s of subs) refreshSubsetNode(s, details?.subsets?.[s] || null);
+}
+
 function refreshAllSubsetNodes() {
-    for (const s of model.profile.subsets || []) if (nodeEls.has(`sub:${s.id}`)) refreshSubsetNode(s.id);
+    queueNodeRefresh({ subsets: (model.profile.subsets || []).map((s) => s.id) });
 }
 
 // Refresh every subset that READS from `ds` (directly or through an upstream subset). Batch edits
@@ -1232,7 +1259,14 @@ function wireSubset(div, s) {
         renameNode(e.target, oldId,
             () => model.renameSubset(oldId, e.target.value),
             () => movePos(`sub:${oldId}`, `sub:${s.id}`),
-            () => { render(); autosave(null); });
+            async () => {
+                render(); autosave(null);
+                // render()'s queued fetch for vt:sub:<newId> races the DEBOUNCED autosave: the backend
+                // still serves the old (or no) def -> 404 "no data yet" and the grid never refills.
+                // Flush the renamed def, then refetch this subset's records under the new id.
+                await persist.flush();
+                refreshSubsetNode(s.id);
+            });
     });
     div.querySelector(".sub-addf")?.addEventListener("click", () => { model.addFilter(s.id); restructure(); });
     div.querySelector(".sub-addd")?.addEventListener("click", () => { model.addDerived(s.id); restructure(); });
@@ -1414,6 +1448,7 @@ function wireSource(div, n) {
     $(".src-path")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "path", e.target.value); autosave(null); schedulePreview(); });
     $(".src-throttle")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "throttle_s", e.target.value); autosave(null); });
     $(".src-tail")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "tail", e.target.checked); autosave(null); schedulePreview(); });
+    $(".src-linepos")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "line_position", e.target.checked); autosave(null); });
 
     // line filters (match clauses)
     $(".src-addm")?.addEventListener("click", () => { model.addSourceMatch(s.id); rebuildNode(n.id); autosave(null); });
@@ -1440,19 +1475,19 @@ function wireSource(div, n) {
     $(".src-find")?.addEventListener("click", () => openFindModal($, s, schedulePreview));
     // read the file now (writes to the dataset). The button doubles as cancel: while a read is in
     // flight it carries `.reading` (CSS appends a spinner) and a second click aborts the request.
-    let readCtl = null;
+    // The read runs in the BACKGROUND server-side (a big log can take many seconds) — the request
+    // returns at once and the rows stream into the dataset live via the change bus, so there's
+    // nothing to spin on or cancel here. Just kick it and report that it started.
     $(".src-read")?.addEventListener("click", async (e) => {
         const btn = e.currentTarget;
-        if (readCtl) { readCtl.abort(); return; }   // second click = cancel
-        readCtl = new AbortController();
-        btn.classList.add("reading"); prog.textContent = "reading…";
+        btn.disabled = true;
         try {
-            const r = await api.sources.read(model.profile.name, s.id, readCtl.signal);
-            prog.textContent = `read ${r.rows} row(s) → ${r.dataset || "(no dataset)"}`; refreshLive();
+            const r = await api.sources.read(model.profile.name, s.id);
+            prog.textContent = r.busy ? "already reading…" : `reading ${s.dataset || "(no dataset)"} — rows fill in live`;
         } catch (err) {
-            prog.textContent = err.name === "AbortError" ? "cancelled" : String(err.message || err);
+            prog.textContent = String(err.message || err);
         } finally {
-            btn.classList.remove("reading"); readCtl = null;
+            btn.disabled = false;
         }
     });
     $(".src-prevbtn")?.addEventListener("click", runPreview);
@@ -2023,6 +2058,7 @@ function syncMultiSelect() {
         del.hidden = !ids.some((id) => REMOVABLE.has(nodeTypeOf(id)));
         if (del.dataset.armed === "1") { del.dataset.armed = "0"; const dl = del.querySelector(".sel-lbl"); if (dl) dl.textContent = del.dataset.label || dl.textContent; }
     }
+    drawEdges();   // selection changed -> repaint so selected nodes' lines pick up the `sel` colour
 }
 
 // Predict the group action's label/title so the toolbar button shows group vs ungroup up
@@ -2175,6 +2211,12 @@ function wireNode(div, n) {
                 render(); return;
             }
             await refreshLive();   // re-reads the dataset list (now under the new name) and re-renders
+            // refreshLive's gates MISS this rename: the dataset SET is unchanged (renamed in place) so it
+            // takes the no-render branch, and newId has no prior last_ts so its per-ds refetch is skipped.
+            // render()'s queued fetch ran BEFORE the server moved the data (empty). Re-pull the renamed
+            // node's records/batches + its subset consumers — COALESCED, so this and the server-rename
+            // change echo collapse into one batched /flow/details instead of a storm of per-node fetches.
+            queueNodeRefresh({ datasets: [newId], subsets: (model.profile.subsets || []).map((s) => s.id) });
         });
         div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(null); });
         div.querySelector(".dskey")?.addEventListener("change", async (e) => {
@@ -2201,8 +2243,17 @@ function wireNode(div, n) {
                 return;
             }
             clearBtn.dataset.armed = "0"; clearBtn.textContent = "clear data";
-            try { await withBusy([n.id], () => api.clearDataset(model.profile.name, n.ref)); refreshLive(); refreshDataNode(n.ref); refreshAllBatchesNodes(); refreshAllSubsetNodes(); setStatus(`cleared ${n.ref}`); }
-            catch (e) { setStatus(String(e.message || e)); }
+            // Clearing ONE dataset only changes THAT dataset (+ its subset consumers). Refresh just
+            // those, coalesced through one batched /details — NOT refreshAll* across every node (the
+            // GET storm). The clear's own change-push dedups into the same batch. scheduleRefreshLive
+            // (debounced) updates the count badge once.
+            try {
+                await withBusy([n.id], () => api.clearDataset(model.profile.name, n.ref));
+                const subs = (model.profile.subsets || []).filter((s) => model.subsetReaches(s.id, n.ref)).map((s) => s.id);
+                queueNodeRefresh({ datasets: [n.ref], subsets: subs });
+                scheduleRefreshLive();
+                setStatus(`cleared ${n.ref}`);
+            } catch (e) { setStatus(String(e.message || e)); }
         });
     } else if (n.type === "vttable") {
         // the records grid satellite: fill it once built. Subset variant carries the view host;
@@ -2703,7 +2754,12 @@ async function loadGame(name) {
     // from `_bootDetails` instead of firing its own fetch (and a dataset feeding many views is
     // fetched once, not once per consumer). Best-effort: on failure nodes fall back to per-node fetch.
     try {
-        _bootDetails = await api.flowDetails(name, model.datasets(), (model.profile.subsets || []).map((s) => s.id));
+        // Bound the boot prefetch: a huge/slow dataset must not hold the whole boot. If it doesn't
+        // land fast, give up the batch and let each node lazy-fetch its own data after render.
+        const ac = new AbortController();
+        const to = setTimeout(() => ac.abort(), 6000);
+        try { _bootDetails = await api.flowDetails(name, model.datasets(), (model.profile.subsets || []).map((s) => s.id), ac.signal); }
+        finally { clearTimeout(to); }
     } catch { _bootDetails = null; }
     render();
     await prettyOverrides.initOverrides(name);   // layer this game's transient pretty overrides onto the model
@@ -3281,9 +3337,12 @@ async function initKillGpu() {
     dsevents.subscribe((dataset) => {
         scheduleRefreshLive();
         if (!dataset) return;
-        if (nodeEls.has(`ds:${dataset}`)) refreshDatasetNode(dataset);   // singleFlight -> latest wins, never dropped
-        for (const s of model.profile.subsets || [])
-            if (nodeEls.has(`sub:${s.id}`) && model.subsetReaches(s.id, dataset)) refreshSubsetNode(s.id);
+        // Coalesce this dataset + every subset reading it into the batched refresh, so a sweep that
+        // touches many datasets (or a rename's change echo) collapses to ONE /flow/details instead
+        // of a fetch per node. queueNodeRefresh de-dups against the rename's explicit enqueue too.
+        const subs = (model.profile.subsets || [])
+            .filter((s) => model.subsetReaches(s.id, dataset)).map((s) => s.id);
+        queueNodeRefresh({ datasets: [dataset], subsets: subs });
     });
     // Safety net only: catch any event missed across a stream reconnect. Slow on purpose — the
     // push bus is the mechanism, not this. Skipped while offline (conn.js gates the overlay).
@@ -3409,6 +3468,16 @@ function haltStartup(msg) {
 // the GPU/game and is the thing you'd otherwise have to hunt down in Task Manager.
 async function killStrayOcrThenBoot() {
     setLogOpen(true);   // show the log history during boot so initial-load progress is visible
+    // During boot, mirror EVERY api request into the log bar so the initial-load sequence (and any
+    // stuck/slow endpoint) is visible live. Cleared once booted so steady state isn't noisy.
+    api.onApiRequest((ev) => {
+        if (booted) return;
+        if (ev.phase === "start") log(`→ ${ev.method} ${ev.path}`);
+        else log(`${ev.ok ? "✓" : "✗"} ${ev.method} ${ev.path} · ${ev.ms}ms${ev.ok ? "" : " " + (ev.reason || "failed")}`, ev.ok ? undefined : "err");
+    });
+    // a tripped circuit breaker (an endpoint that kept timing out) surfaces here so the user learns
+    // why a panel went quiet — it auto-recovers when the endpoint responds again.
+    if (!window._apiGuardWired) { window._apiGuardWired = true; window.addEventListener("api-guard", (e) => { setStatus(String(e.detail)); log(String(e.detail), "err"); }); }
     try {
         log("stopping stray OCR…");
         const r = await api.precapture.killAll();
@@ -3444,6 +3513,7 @@ async function killStrayOcrThenBoot() {
         log(String(e.message || e), "err");   // boot hiccup: show the page anyway
     }
     booted = true;
+    api.onApiRequest(null);   // stop mirroring requests into the log bar (boot done)
     veil.drop();
     setLogOpen(false);   // boot done -> collapse the log back to its one-line bar
 }

@@ -233,7 +233,8 @@ export class GraphModel {
     edges() {
         const es = [];
         for (const w of this.profile.windows) {
-            es.push({ from: "game", to: `win:${w.id}`, kind: "own" });
+            // game→window line hidden by request — uncomment to restore the owns edge.
+            // es.push({ from: "game", to: `win:${w.id}`, kind: "own" });
             if (this.satelliteOn(`prev:${w.id}`)) es.push({ from: `win:${w.id}`, to: `prev:${w.id}`, kind: "img" });
             for (const r of w.regions || []) {
                 es.push({ from: `win:${w.id}`, to: `reg:${w.id}:${r.id}`, kind: "field" });
@@ -449,11 +450,12 @@ export class GraphModel {
             else if (f.method === "path") f.method = "after";
         }
     }
-    // simple scalar props: path | filename | watch | throttle_s | tail
+    // simple scalar props: path | filename | watch | throttle_s | tail | line_position
     setSourceProp(id, key, val) {
         const s = this.fileSource(id); if (!s) return;
         if (key === "throttle_s") { const v = parseFloat(val); if (v >= 0) s.throttle_s = v; }
         else if (key === "tail") s.tail = !!val;
+        else if (key === "line_position") s.line_position = !!val;
         else if (key === "watch") s.watch = val === "on_change" ? "on_change" : "manual";
         else if (key === "path" || key === "filename") s[key] = val || "";
     }

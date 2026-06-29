@@ -7,7 +7,7 @@
 // startWire from main.js (live bindings, runtime-safe circular import).
 import * as groups from "./groups.js";
 import { routeGraph, polylinePath } from "./route.js";
-import { $, setStatus, model, nodeEls, pos, nw, nh } from "./state.js";
+import { $, setStatus, model, nodeEls, pos, nw, nh, selected } from "./state.js";
 import { selectedNodeId, wire, startWire, CAN_DISABLE } from "./main.js";
 
 // Port exit directions (L/R/T/B) -> unit vector, used to stub a line out of a port the
@@ -94,8 +94,11 @@ const nodeRect = (id) => { const p = pos.get(id); return p && { x: p.x, y: p.y, 
 // EVERY connection in the view is the same thing: a line between two NODES — always to
 // the node rect, never to a box on the image. They all flow through buildLinks →
 // routing → drawn on a persistent per-link <path>. No bespoke per-kind drawing.
+// a line is highlighted when EITHER end is selected — the single focus node OR any node in the
+// multi-select set (marquee / shift-click), so selecting many nodes colours their lines too.
 function selClsFor(aId, bId) {
-    return selectedNodeId && (aId === selectedNodeId || bId === selectedNodeId) ? " sel" : "";
+    const hit = (id) => id === selectedNodeId || selected.has(id);
+    return (hit(aId) || hit(bId)) ? " sel" : "";
 }
 
 // Build the descriptor for every line. `aId`/`bId` name each rect's owner (used to
@@ -519,7 +522,10 @@ function runRouting() {
         // last-frame faces in as hysteresis so a tiny move can't flip a route's whole shape.
         const nodes = [];
         for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) nodes.push({ id: n.id, x: r.x, y: r.y, w: r.w, h: r.h }); }
-        const grps = groups.allGroups().map((g) => ({ members: [...g.members] }));
+        // pass the REAL rendered box + title-band height (groupBox uses PAD=40 + titleH, NOT the
+        // router's member-bounds guess) so the heading soft/hard rect lands exactly on the banner.
+        const boxOf = new Map(groups.groupBoxes().map((b) => [b.id, b]));
+        const grps = groups.allGroups().map((g) => { const b = boxOf.get(g.id); return { members: [...g.members], box: b ? b.box : null, bandH: b ? b.bandH : 0 }; });
         const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, pinSrc: l.port ? (l.portKind === "watch" ? "L" : "R") : null,
             // watch ends in a diamond sunk slightly into the watched node; trigger ends in a hollow ring
             // pulled back by its radius (3px) so the ring centres ON the fired node's edge.
@@ -530,8 +536,13 @@ function runRouting() {
         for (const n of nodes) if (PORT_OUT_SRC.some((p) => n.id.startsWith(p)) || n.id.startsWith("trigger:")) outPorts.set(n.id, "R");
         const prevSides = new Map();
         for (const [k, c] of routeCache) if (c.d1) prevSides.set(k, { d1: c.d1, d2: c.d2 });
+        // subgroup + super-group TITLE bands as extra avoid rects: subgroup band sits at the TOP of
+        // its box (height bandH), super-group label band at the BOTTOM (SUPER_LABEL_BAND tall).
+        const titleBands = [];
+        for (const b of groups.subGroupBoxes()) if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.w, y1: b.box.y + b.bandH });
+        for (const b of groups.superGroupBoxes()) if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
         const _t0 = performance.now();
-        const res = routeGraph(nodes, grps, edges, { prevSides, outPorts, config: { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell } });
+        const res = routeGraph(nodes, grps, edges, { prevSides, outPorts, titleBands, config: { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell } });
         recordRouteMs(performance.now() - _t0);   // feeds the adaptive drag frame-skip
         const fresh = new Map();
         for (const l of links) { const r = res.get(l.key); if (r && r.pts && r.pts.length >= 2) fresh.set(l.key, r); }

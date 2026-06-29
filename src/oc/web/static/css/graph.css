@@ -218,10 +218,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     background: var(--accent); top: 50%; transform: translateY(-50%); cursor: crosshair; z-index: 2;
 }
 .gnode .port.out { right: -4px; background: var(--data); }   /* match the data-line orange */
-.gnode .port.out.sel { background: var(--accent); }   /* edge selected (either end) -> accent */
+.gnode .port.out.sel { background: var(--sel); }   /* edge selected (either end) -> white */
 .gnode .port.in { left: -4px; background: var(--line); }
 .gnode .port.pwatch { left: -4px; right: auto; background: var(--watch-line); }   /* trigger watch out-port (left face) */
-.gnode .port.pwatch.sel { background: var(--accent); }
+.gnode .port.pwatch.sel { background: var(--sel); }
 /* an idle out-port (drag handle with no line) only appears while its node is hovered, so resting
    nodes aren't dotted with empty ports; it's still grabbable once shown. */
 .gnode .port.port-idle { opacity: 0; pointer-events: none; transition: opacity .1s; }
@@ -272,7 +272,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .stealthcap-head { fill: context-stroke; }
 .circlebar-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; }
 .gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; marker-start: none; marker-end: none; }   /* live drag line: no caps */
-.gedge.sel { stroke: var(--accent) !important; stroke-width: 2.2; opacity: 1 !important; }
+.gedge.sel { stroke: var(--sel) !important; stroke-width: 2.2; opacity: 1 !important; }
 /* a line touching a disabled node is greyed (it carries no live data) */
 .gedge.dis-edge { filter: grayscale(1); opacity: 0.4; }
 
@@ -423,8 +423,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .key-sec { margin: 6px 0; }
 .prev-count { padding: 4px 8px; font-size: var(--fs-sm); }
 
-.gnode.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); z-index: 20; }
-.gnode.multisel { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
+.gnode.selected { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel); z-index: 20; }
+.gnode.multisel { border-color: var(--sel); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sel) 60%, transparent); }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
 .seltoolbar { position: fixed; left: 50%; top: 69px; transform: translateX(-50%);
@@ -552,14 +552,24 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gp-scheme-border { border-width: 2.5px; }
 
 /* ---- file-source node: rule builder + live preview ---- */
-.gnode.filesource .lab-grid > .src-matches,
-.gnode.filesource .lab-grid > .src-fields { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
-.src-m, .src-f { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
-.src-m input[type="text"], .src-m input:not([type]), .src-f input:not([type="number"]):not([type="checkbox"]) { flex: 1 1 70px; min-width: 60px; }
-.src-f input[type="number"] { width: 56px; }
-.src-f .src-fid { flex: 0 0 84px; }
-.src-f .src-ftype { flex: 0 0 auto; width: auto; }
-.src-arrow { opacity: 0.6; padding: 0 2px; }
+.gnode.filesource .lab-grid > .src-matches { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
+.src-m { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
+.src-m input[type="text"], .src-m input:not([type]) { flex: 1 1 70px; min-width: 60px; }
+/* ONE grid for all field rows: id | method | inputA | inputB | type | remove. Each row is
+   display:contents so its cells join this grid directly and line up across rows. */
+.gnode.filesource .lab-grid > .src-fields {
+    grid-column: 1 / -1; display: grid;
+    grid-template-columns: 84px auto minmax(56px, 1fr) minmax(56px, 1fr) auto auto;
+    gap: 4px 6px; align-items: center;
+}
+.src-f { display: contents; }
+.src-f .fset2 { min-width: 0; width: 100%; }            /* fill the grid cell, never overflow it */
+.src-f .src-ftype { width: auto; justify-self: start; }
+.src-f .src-fpath { grid-column: 2 / 5; }               /* document path spans method + both input cols */
+.src-f .src-rmf { justify-self: end; }
+.src-fields > .src-addf { grid-column: 1 / -1; justify-self: start; }
+/* read/preview progress sits BELOW the foot buttons (mirrors the producer node's enr-prog) */
+.src-prog { margin-top: 6px; font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .src-cs { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; opacity: 0.8; }
 .src-chk { display: inline-flex; align-items: center; }
 .src-addm, .src-addf { align-self: flex-start; }
