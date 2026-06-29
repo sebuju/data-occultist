@@ -68,6 +68,7 @@ pages:
       y: px
     matchW: hd_main
     styleProfiles: []
+    configProfiles: []
   - id: pn_sess
     x: 0
     y: 4
@@ -100,6 +101,7 @@ pages:
       y: px
     matchW: game_name
     styleProfiles: []
+    configProfiles: []
   - id: pn_live
     x: 0
     y: 4
@@ -126,6 +128,7 @@ pages:
       y: px
     matchW: hd_l
     styleProfiles: []
+    configProfiles: []
   - id: pn_tasks
     x: 0
     y: 4
@@ -153,6 +156,7 @@ pages:
     matchW: pn_live
     matchH: pn_live
     styleProfiles: []
+    configProfiles: []
   - id: hd_r
     x: 0
     y: 64
@@ -176,6 +180,7 @@ pages:
       x: px
     matchW: hd_l
     styleProfiles: []
+    configProfiles: []
   - id: hd_l
     x: 0
     y: 65
@@ -201,6 +206,7 @@ pages:
     matchWPct: 48
     matchW: game_name
     styleProfiles: []
+    configProfiles: []
   - id: hd_main
     x: 0
     y: 30
@@ -229,6 +235,7 @@ pages:
       target: bl
     matchW: game_name
     styleProfiles: []
+    configProfiles: []
   - id: game_name
     x: 50
     y: 100
@@ -258,6 +265,7 @@ pages:
       target: tl
     onAllPages: true
     styleProfiles: []
+    configProfiles: []
   - id: hd_prec
     x: 0
     y: 30
@@ -284,6 +292,7 @@ pages:
       corner: tl
       target: bl
     styleProfiles: []
+    configProfiles: []
   - id: btn_page_prime
     x: 10
     y: 0
@@ -331,6 +340,7 @@ pages:
         alignH: center
         bg: '#5aa9e6'
         color: '#000000'
+    configProfiles: []
   - id: btn_page_live
     x: 10
     y: 0
@@ -380,6 +390,21 @@ pages:
         bg: '#5aa9e6'
         opacity: 1
         color: '#000000'
+    configProfiles: []
+  - id: w8
+    x: 295
+    y: 1049
+    w: 240
+    h: 44
+    z: 20
+    style: {}
+    conditions:
+      rules: []
+    type: label
+    config:
+      text: '{{dataset:master.name[0:5]}}'
+    styleProfiles: []
+    configProfiles: []
 - id: page1
   title: Prime Parts
   style: {}
@@ -424,6 +449,7 @@ pages:
         fill: true
         bg: '#5aa9e6'
         color: '#000000'
+    configProfiles: []
   - id: w2
     x: 0
     y: 4
@@ -479,6 +505,7 @@ pages:
       target: bl
     matchW: game_name
     styleProfiles: []
+    configProfiles: []
   - id: w3
     x: 0
     y: 65
@@ -496,6 +523,7 @@ pages:
       corner: tl
       target: bl
     styleProfiles: []
+    configProfiles: []
 - id: page2
   title: Live
   style: {}
@@ -517,6 +545,7 @@ pages:
       corner: tl
       target: bl
     styleProfiles: []
+    configProfiles: []
   - id: w4
     x: 0
     y: 4
@@ -531,21 +560,27 @@ pages:
       padding: 0
       opacity: 1
     conditions:
-      rules: []
+      rules:
+      - effect: enable
+        source: activity:live
+        op: '!='
+        value: '1'
       visible_when: ''
-      enabled_when: ''
+      enabled_when: '{{activity:live}} != 1'
     type: table
     config:
       columns:
-      - key: slug
-        enabled: false
       - key: _seq
+        enabled: false
+      - key: updated
+        enabled: false
+      - key: key
+        enabled: false
+      - key: price
         enabled: false
       - key: live_sellers
         enabled: false
       - key: live_median
-        enabled: false
-      - key: price_min
         enabled: false
       - key: live_ask
         enabled: false
@@ -553,19 +588,8 @@ pages:
         enabled: false
       - key: price_median
         enabled: false
-      - key: key
+      - key: slug
         enabled: false
-      - key: updated
-        enabled: false
-      - key: name
-        enabled: true
-      - key: price
-        enabled: true
-        width: 25
-      pageSize: 4
-      sortDesc: true
-      sortField: price
-      paging: false
     binding:
       src: subset
       id: relic_rewards_price_from_stored
@@ -579,6 +603,7 @@ pages:
       y: px
     matchW: game_name
     styleProfiles: []
+    configProfiles: []
   - id: w5
     x: 0
     y: 235
@@ -596,6 +621,7 @@ pages:
       corner: tl
       target: bl
     styleProfiles: []
+    configProfiles: []
   - id: w6
     x: 0
     y: 4
@@ -657,20 +683,28 @@ pages:
       y: px
     matchW: game_name
     styleProfiles: []
+    configProfiles: []
   - id: w7
     x: 0
     y: 9
-    w: 80
+    w: 120
     h: 28
     z: 19
     style:
       alignH: center
       alignV: middle
       fill: true
-      bg: '#570f0f'
+      bg: var(--danger)
+      radius: 4
+      color: '#000000'
     conditions:
       rules:
       - effect: style
+        source: activity:live
+        op: ==
+        value: '1'
+        state: sp1
+      - effect: config
         source: activity:live
         op: ==
         value: '1'
@@ -683,7 +717,7 @@ pages:
       target: ''
       value: ''
       page: ''
-      label: Toggle
+      label: 'live: disabled'
     styleProfiles:
     - id: sp1
       name: live_on
@@ -691,8 +725,20 @@ pages:
         alignH: center
         alignV: middle
         fill: true
-        bg: '#146312'
+        bg: var(--ok)
+        border_w: 0
+        radius: 4
+        color: '#000000'
     anchor:
       to: game_name
       corner: tr
       target: br
+    configProfiles:
+    - id: sp1
+      name: live_on
+      config:
+        action: live_toggle
+        target: ''
+        value: ''
+        page: ''
+        label: 'live: enabled'

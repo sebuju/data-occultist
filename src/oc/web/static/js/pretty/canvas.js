@@ -12,6 +12,7 @@
 
 import { makeDraggable, addResizeGrips, GRID, snap } from "../graph/dragresize.js";
 import { applyStyle, mergeStyle, profileStyle } from "./style.js";
+import { profileConfig } from "./profiles.js";
 import { widgetDef } from "./widgets/index.js";
 import { evaluate, tokensIn, truthy, compileTerm } from "./expr.js";
 import { resolveToken, subKeyForToken } from "./binding.js";
@@ -113,6 +114,42 @@ export function renderPage(surface, page, ctx) {
     }) : null;
     ro && ro.observe(surface);
 
+    // The widget object a widget INSTANCE sees: the real widget with its `config` swapped for the
+    // ACTIVE config profile's object (condition-driven, or the inspector's live preview). The default
+    // profile IS w.config, so no copy is made then; an extra profile gives a shallow clone whose
+    // `config` is the profile object (a live ref — widget writes like table column resize land in it).
+    function effWidget(widget) {
+        const cfg = profileConfig(widget, activeConfigId(widget));
+        return cfg === widget.config ? widget : { ...widget, config: cfg };
+    }
+    // (Re)build a widget's content instance from its active config into rec.host. Destroying the old
+    // instance first is the caller's job (build starts fresh; reconfig tears down). Records which config
+    // profile produced it so maybeReconfig knows when a rebuild is needed.
+    function makeInstance(rec) {
+        const { def, host, widget } = rec;
+        host.textContent = "";
+        let inst = { update() {}, destroy() {} };
+        if (def) { try { inst = def.create(host, effWidget(widget), ctx) || inst; } catch (e) { host.textContent = String(e.message || e); } }
+        // Stable marker on the content host: every widget's create() REPLACES the host class with its
+        // own (pw-label / pw-button-host / …), so re-add a class the canvas owns. Edit-mode gating
+        // (clicks select/drag the frame until selected, then the content turns interactive) keys off
+        // this — see .pw-host rules in pretty.css.
+        host.classList.add("pw-host");
+        rec.inst = inst;
+        // a widget may paint its Style onto a different element than the frame (e.g. the button's inner
+        // <button>, which has its own chrome) — applyWidgetStyle targets it.
+        rec.styleTarget = inst.styleTarget || rec.frame;
+        rec.configId = activeConfigId(widget);
+    }
+    // Rebuild a widget's instance iff its active config profile changed (a condition flipped, or the
+    // inspector previews a different config tab). Structure-affecting, so the instance is recreated —
+    // unlike style, which only re-applies CSS.
+    function maybeReconfig(rec) {
+        if (activeConfigId(rec.widget) === rec.configId) return;
+        try { rec.inst.destroy && rec.inst.destroy(); } catch { /* */ }
+        makeInstance(rec);
+    }
+
     function build(widget) {
         const def = widgetDef(widget.type);
         const frame = el("div", `pw pw-t-${widget.type}`);   // type class carries per-type defaults; inline style overrides
@@ -124,23 +161,15 @@ export function renderPage(surface, page, ctx) {
         frame.appendChild(host);
         surface.appendChild(frame);
 
-        let inst = { update() {}, destroy() {} };
-        if (def) { try { inst = def.create(host, widget, ctx) || inst; } catch (e) { host.textContent = String(e.message || e); } }
-        // Stable marker on the content host: every widget's create() REPLACES the host class with its
-        // own (pw-label / pw-button-host / …), so re-add a class the canvas owns. Edit-mode gating
-        // (clicks select/drag the frame until selected, then the content turns interactive) keys off
-        // this — see .pw-host rules in pretty.css.
-        host.classList.add("pw-host");
-
-        // reactive conditions (show/enable AND the style-profile pick both re-run on a source change)
-        const condSub = keySubscription(ctx, () => { applyConditions(rec); applyWidgetStyle(rec); });
-        // a widget may paint its Style onto a different element than the frame (e.g. the button's inner
-        // <button>, which has its own chrome) — applyWidgetStyle targets it.
-        const rec = { widget, frame, host, inst, def, condSub, styleTarget: inst.styleTarget || frame };
+        // reactive: show/enable conditions, the style-profile pick, AND the config-profile pick all
+        // re-run on a source change (config swap may rebuild the instance — maybeReconfig).
+        const condSub = keySubscription(ctx, () => { maybeReconfig(rec); applyConditions(rec); applyWidgetStyle(rec); });
+        const rec = { widget, frame, host, inst: { update() {}, destroy() {} }, def, condSub, styleTarget: frame, configId: "default" };
         // Register BEFORE wiring/applying: resolvedCond (and match-rule target lookups) read `recs`,
         // so the rec must be in it first — otherwise the initial applyConditions resolves against a
         // missing rec, defaults to visible:true, and the condition silently never applies on build.
         recs.set(widget.id, rec);
+        makeInstance(rec);       // content instance from the active config profile
         wireConditions(rec);
         applyConditions(rec);
         applyWidgetStyle(rec);   // active profile (condition-driven) over the base style applied at build
@@ -591,9 +620,9 @@ export function renderPage(surface, page, ctx) {
         for (const r of (c.rules || [])) {
             if (r.effect === "match" && r.source && r.source !== id && recs.has(r.source) && !seen.has(r.source))
                 condTokens(r.source, new Set(seen).add(id), out);
-            // style-profile rules aren't compiled into visible/enable expressions — track their tokens
-            // here so the active profile re-evaluates the instant the source flips.
-            if (r.effect === "style") for (const inner of tokensIn(compileTerm(r))) out.add(inner);
+            // style/config-profile rules aren't compiled into visible/enable expressions — track their
+            // tokens here so the active profile re-evaluates the instant the source flips.
+            if (r.effect === "style" || r.effect === "config") for (const inner of tokensIn(compileTerm(r))) out.add(inner);
         }
         return out;
     }
@@ -620,6 +649,22 @@ export function renderPage(surface, page, ctx) {
         const pv = ctx.stylePreview && ctx.stylePreview();
         if (ctx.mode === "edit" && pv && pv.id === w.id) return pv.profileId || "default";
         return condProfileId(w);
+    }
+    // The config profile a widget's CONDITIONS activate right now (first "config" rule whose test is
+    // true), ignoring any inspector preview — mirrors condProfileId for style.
+    function condConfigId(w) {
+        const resolve = (inner) => resolveToken(ctx, inner);
+        for (const r of (w.conditions?.rules || [])) {
+            if (r.effect !== "config" || !r.state) continue;
+            const expr = compileTerm(r);
+            if (expr && truthy(evaluate(expr, resolve, false))) return r.state;
+        }
+        return "default";
+    }
+    function activeConfigId(w) {
+        const pv = ctx.configPreview && ctx.configPreview();
+        if (ctx.mode === "edit" && pv && pv.id === w.id) return pv.profileId || "default";
+        return condConfigId(w);
     }
     // Apply the active profile's style (theme defaults under it) to a widget's style target (the frame,
     // or a widget-chosen element like the button's inner <button>).
@@ -734,6 +779,16 @@ export function renderPage(surface, page, ctx) {
         // placement) — after a style edit / profile switch / inspector-preview change, no rebuild.
         restyle(id) { const rec = recs.get(id); if (!rec) return; applyWidgetStyle(rec); try { rec.inst.update && rec.inst.update(); } catch { /* guard */ } },
         restyleAll() { for (const rec of recs.values()) applyWidgetStyle(rec); },
+        // Rebuild one widget's content instance for its active config profile (after a config edit /
+        // config-profile switch / inspector config preview), no full canvas rebuild. Re-applies style +
+        // conditions + re-places (a config change can resize content).
+        reconfig(id) {
+            const rec = recs.get(id); if (!rec) return;
+            try { rec.inst.destroy && rec.inst.destroy(); } catch { /* */ }
+            makeInstance(rec);
+            applyWidgetStyle(rec); applyConditions(rec); placeAll(); drawAnchorCue();
+        },
+        condConfig: (id) => { const rec = recs.get(id); return rec ? condConfigId(rec.widget) : "default"; },   // condition-active config profile id (no preview)
         select(sel) {
             const ids = sel instanceof Set ? sel : sel ? new Set([sel]) : new Set();
             for (const rec of recs.values()) rec.frame.classList.toggle("pw-sel", ids.has(rec.widget.id));
@@ -747,7 +802,7 @@ export function renderPage(surface, page, ctx) {
         // Re-wire + re-evaluate every widget's conditions in place after the rules were edited — so a
         // condition change applies WITHOUT a full rebuild (which would tear down embedded panels and
         // stop the live collector). Re-wiring all is cheap and keeps match dependencies consistent.
-        recondition() { for (const rec of recs.values()) { wireConditions(rec); applyConditions(rec); applyWidgetStyle(rec); } },
+        recondition() { for (const rec of recs.values()) { maybeReconfig(rec); wireConditions(rec); applyConditions(rec); applyWidgetStyle(rec); } },
         reanchor,
         showAnchorCue,
         // px nudge (WASD) -> back into each field's unit

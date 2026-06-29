@@ -1,10 +1,11 @@
 // Inspector (edit mode): edit the selected widget — its binding, type-specific config,
-// show/enable conditions, and style (via the ONE style editor). Edits commit on change, then
-// re-render the page and the inspector so dependent choices (e.g. a binding's columns) refresh.
+// show/enable conditions, and style. Both config and style are PROFILE groups (a default plus any
+// number of named profiles, shown as tabs; a condition can activate one at runtime). Edits commit
+// on change, then re-render the page and the inspector so dependent choices refresh.
 
 import { createFloatWin } from "../../graph/floatwin.js";
 import { styleEditor } from "../style_editor.js";
-import { widgetProfiles } from "../style.js";
+import { widgetProfiles, widgetConfigProfiles } from "../profiles.js";
 import { nodeInputs, inputMeta } from "../constraints.js";
 import { sourceTokenList, resolveToken, subKeyForToken } from "../binding.js";
 import { compileTerm, evaluate, truthy } from "../expr.js";
@@ -19,44 +20,66 @@ export const inspectorState = { visible: false, x: null, y: null, w: 320, h: nul
 export function buildInspector(ctx) {
     const win = createFloatWin({ id: "pretty-inspector", title: "inspector", state: inspectorState, bothAxes: true, autoFit: false });
     let current = null;
-    let condSubs = [];   // live current-value read-outs in the conditions editor; torn down each render
-    let editProfileId = "default";   // which style profile the editor is showing (tab selection)
+    let condSubs = [];   // live current-value read-outs / profile markers; torn down each render
+    let editProfileId = "default";   // which STYLE profile the editor is showing (tab selection)
+    let editConfigId = "default";    // which CONFIG profile the editor is showing (tab selection)
+    const collapsed = {};   // section key -> collapsed? — persists across inspector re-renders (buildInspector runs once)
 
-    function show(widget) { current = widget; editProfileId = "default"; win.setVisible(true); render(); }   // visible BEFORE render so height measures right
+    function show(widget) { current = widget; editProfileId = "default"; editConfigId = "default"; win.setVisible(true); render(); }   // visible BEFORE render so height measures right
     function clear() { current = null; render(); }
 
-    // Live style-profile preview: while the inspector holds focus, the canvas shows the profile whose
-    // tab is selected (so you edit-and-see); when focus leaves the panel it reverts to the condition-
-    // driven profile. focusin/out bubble, so one pair of listeners on the panel root covers every input.
-    win.el.addEventListener("focusin", () => { if (current) ctx.previewStyleProfile(current.id, editProfileId); });
-    win.el.addEventListener("focusout", (e) => { if (!win.el.contains(e.relatedTarget)) ctx.previewStyleProfile(null); });
+    // Live profile preview: while the inspector holds focus, the canvas shows the style + config
+    // profiles whose tabs are selected (so you edit-and-see); when focus leaves the panel it reverts
+    // to the condition-driven profiles. focusin/out bubble, so one pair of listeners covers every input.
+    win.el.addEventListener("focusin", () => { if (current) { ctx.previewStyleProfile(current.id, editProfileId); ctx.previewConfigProfile(current.id, editConfigId); } });
+    win.el.addEventListener("focusout", (e) => { if (!win.el.contains(e.relatedTarget)) { ctx.previewStyleProfile(null); ctx.previewConfigProfile(null); } });
 
     // ---- small control builders --------------------------------------------------------
     const save = () => { ctx.pretty.save(); ctx.refresh(); render(); };
     function row(label, control) { const r = el("div", "pw-insp-row"); r.appendChild(el("span", "pw-insp-lab", label)); r.appendChild(control); return r; }
-    // A section header with an optional icon-only reset button justified to the right of the row.
+    // An icon-only reset button (the circular-arrow glyph), justified right in a section header.
+    function resetBtn(label, onReset) {
+        const b = el("button", "pw-insp-h-reset"); b.title = `reset ${label}`;
+        b.appendChild(svg("svg", { viewBox: "0 0 16 16", width: "12", height: "12", "aria-hidden": "true" },
+            svg("path", {
+                d: "M13 8a5 5 0 1 1-1.6-3.7M13 2.2V5h-2.8",
+                fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round",
+            })));
+        b.addEventListener("click", (e) => { e.stopPropagation(); onReset(); });
+        return b;
+    }
+    // A plain (non-collapsing) sub-header with an optional reset — used INSIDE a section for sub-parts
+    // (columns / series / fields).
     function hdr(label, onReset) {
         const h = el("div", "pw-insp-h");
         h.appendChild(el("span", "pw-insp-h-lab", label));
-        if (onReset) {
-            const b = el("button", "pw-insp-h-reset"); b.title = `reset ${label}`;
-            b.appendChild(svg("svg", { viewBox: "0 0 16 16", width: "12", height: "12", "aria-hidden": "true" },
-                svg("path", {
-                    d: "M13 8a5 5 0 1 1-1.6-3.7M13 2.2V5h-2.8",
-                    fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round",
-                })));
-            b.addEventListener("click", (e) => { e.stopPropagation(); onReset(); });
-            h.appendChild(b);
-        }
+        if (onReset) h.appendChild(resetBtn(label, onReset));
         return h;
     }
+    // A top-level COLLAPSIBLE section: a header (caret + label + optional reset) over a body. The
+    // collapse state is keyed by `key` and remembered across inspector re-renders; clicking the header
+    // toggles it. Returns {grp, body} — callers append their controls into `body`.
+    function section(key, label, onReset) {
+        const grp = el("div", "pw-insp-grp");
+        const h = el("div", "pw-insp-h pw-insp-h-click");
+        const car = el("span", "pw-insp-caret");
+        h.append(car, el("span", "pw-insp-h-lab", label));
+        if (onReset) h.appendChild(resetBtn(label, onReset));
+        const body = el("div", "pw-insp-sec-body");
+        const apply = () => { const c = !!collapsed[key]; grp.classList.toggle("pw-collapsed", c); body.hidden = c; car.textContent = c ? "▸" : "▾"; };
+        h.addEventListener("click", () => { collapsed[key] = !collapsed[key]; apply(); });
+        apply();
+        grp.append(h, body);
+        return { grp, body };
+    }
 
-    // Editable position + size at the top of the inspector, each with a unit (px/%/vw/vh/dvw/dvh).
-    // Values live-update while the widget is dragged/resized (syncGeom) and apply on enter/blur.
+    // Editable position + size, each with a unit (px/%/vw/vh/dvw/dvh). Values live-update while the
+    // widget is dragged/resized (syncGeom) and apply on enter/blur. Returns the bare grid (no header) —
+    // it's nested into the merged "layout" section alongside the anchor controls.
     const GEOM_FIELDS = ["x", "y", "w", "h"];
     let geomRefs = null;
-    function geomEditor(w) {
-        const g = el("div", "pw-insp-grp pw-geom");
+    function geomGrid(w) {
+        const g = el("div", "pw-geom");
         const gm = ctx.geomOf(w.id) || { x: w.x ?? 0, y: w.y ?? 0, w: w.w ?? 200, h: w.h ?? 80, units: {} };
         geomRefs = {};
         for (const k of GEOM_FIELDS) {
@@ -126,34 +149,46 @@ export function buildInspector(ctx) {
     const subOptions = () => (ctx.model.profile.subsets || []).map((s) => ({ value: s.id, label: s.id }));
 
     // Changing the bound source invalidates any column/series config keyed by the OLD source's
-    // column names — clear it so stale entries don't render as fake columns.
-    function resetBindingConfig(w) {
-        if (w.type === "table") { w.config.columns = []; w.config.sortField = ""; }
-        if (w.type === "chart") { w.config.x = ""; w.config.y = []; w.config.colorBy = {}; }
-    }
-    function bindingEditor(w) {
-        const wrap = el("div", "pw-insp-grp");
-        wrap.appendChild(hdr("data", () => { w.binding = { src: "dataset", id: "" }; resetBindingConfig(w); save(); }));
-        w.binding = w.binding || { src: "dataset", id: "" };
-        wrap.appendChild(row("source", sel(w.binding.src, [{ value: "dataset", label: "dataset" }, { value: "subset", label: "subset" }], (v) => { w.binding.src = v; w.binding.id = ""; resetBindingConfig(w); save(); })));
-        const opts = w.binding.src === "subset" ? subOptions() : dsOptions();
-        wrap.appendChild(row("id", sel(w.binding.id, [{ value: "", label: "—" }, ...opts], (v) => { w.binding.id = v; resetBindingConfig(w); save(); })));
-        return wrap;
+    // column names — clear it (across EVERY config profile, not just the active one, since the binding
+    // is shared) so stale entries don't render as fake columns.
+    function resetBindingConfigAll(w) {
+        const clear = (cfg) => {
+            if (w.type === "table") { cfg.columns = []; cfg.sortField = ""; }
+            if (w.type === "chart") { cfg.x = ""; cfg.y = []; cfg.colorBy = {}; }
+        };
+        clear(w.config = w.config || {});
+        for (const p of (w.configProfiles || [])) clear(p.config = p.config || {});
     }
 
-    function configEditor(w) {
-        const g = el("div", "pw-insp-grp");
-        g.appendChild(hdr("config", () => { w.config = {}; save(); }));
-        const c = w.config = w.config || {};
+    // The type-specific config fields for ONE config object (the active profile's config), appended
+    // into `host`. `save` persists + rebuilds (caller decides whether that's a full refresh or a
+    // light reconfig). The widget `w` supplies non-config context (binding, path, type).
+    function buildConfigFields(host, w, c, save) {
+        const g = host;
+        // data binding lives at the TOP of config for data widgets (the old separate "data" section is
+        // merged in here). The binding is widget-level (shared across config profiles), but changing it
+        // resets the column/series config of every profile.
+        if (["table", "chart"].includes(w.type)) {
+            w.binding = w.binding || { src: "dataset", id: "" };
+            g.appendChild(row("source", sel(w.binding.src, [{ value: "dataset", label: "dataset" }, { value: "subset", label: "subset" }], (v) => { w.binding.src = v; w.binding.id = ""; resetBindingConfigAll(w); save(); })));
+            const opts = w.binding.src === "subset" ? subOptions() : dsOptions();
+            g.appendChild(row("id", sel(w.binding.id, [{ value: "", label: "—" }, ...opts], (v) => { w.binding.id = v; resetBindingConfigAll(w); save(); })));
+        }
         if (w.type === "label") g.appendChild(row("text", txt(c.text, (v) => { c.text = v; save(); }, true)));
         if (w.type === "container") g.appendChild(row("title", txt(c.title, (v) => { c.title = v; save(); })));
         if (w.type === "panel") g.appendChild(row("panel", sel(c.panel || "live", PANEL_OPTIONS, (v) => { c.panel = v; save(); })));
         if (w.type === "table") {
             const avail = colsFor(w.binding);
-            g.appendChild(row("page size", numEl(c.pageSize ?? 50, (v) => { c.pageSize = v || 50; save(); })));
-            g.appendChild(row("paging", chk(c.paging, (v) => { c.paging = v; save(); })));
-            g.appendChild(row("sort by", sel(c.sortField || "", [{ value: "", label: "—" }, ...avail.map((k) => ({ value: k, label: humanize(k) }))], (v) => { c.sortField = v; save(); })));
-            g.appendChild(row("direction", sel(c.sortDesc ? "desc" : "asc", ["asc", "desc"], (v) => { c.sortDesc = v === "desc"; save(); })));
+            // page size + paging share a row; sort by (grows) + direction (fits its content) share a row.
+            const pr = el("div", "pw-insp-row");
+            pr.append(el("span", "pw-insp-lab", "page size"), numEl(c.pageSize ?? 50, (v) => { c.pageSize = v || 50; save(); }),
+                el("span", "pw-pair-lab", "paging"), chk(c.paging, (v) => { c.paging = v; save(); }));
+            g.appendChild(pr);
+            const sr = el("div", "pw-insp-row");
+            const dir = sel(c.sortDesc ? "desc" : "asc", ["asc", "desc"], (v) => { c.sortDesc = v === "desc"; save(); }); dir.classList.add("pw-fit");
+            sr.append(el("span", "pw-insp-lab", "sort by"),
+                sel(c.sortField || "", [{ value: "", label: "—" }, ...avail.map((k) => ({ value: k, label: humanize(k) }))], (v) => { c.sortField = v; save(); }), dir);
+            g.appendChild(sr);
             g.appendChild(hdr("columns", () => { c.columns = []; save(); }));
             if (!avail.length) g.appendChild(el("div", "pw-insp-hint", "bind data to list columns"));
             c.columns = Array.isArray(c.columns) ? c.columns : [];
@@ -244,7 +279,6 @@ export function buildInspector(ctx) {
             g.appendChild(row("label", txt(c.label, (v) => { c.label = v; save(); })));
             // NB: button placement (align h/v, fill) is a STYLE concern — see styleExtras() in the style group.
         }
-        return g;
     }
 
     // Widget-type-specific STYLE controls appended into the style group, stored in w.style (not config)
@@ -264,9 +298,8 @@ export function buildInspector(ctx) {
     // per-page checklist. The SAME object renders on each, so edits propagate. Un-checking a page (or
     // deleting the widget while viewing a shared page) just detaches it there; its home copy survives.
     function pagesEditor(w) {
-        const g = el("div", "pw-insp-grp");
         const commit = () => { ctx.refresh(); render(); };   // reflect on canvas (if current page is a target) + refresh toggles
-        g.appendChild(hdr("pages", () => { ctx.pretty.setShareAll(w.id, false); commit(); }));   // reset -> home only
+        const { grp, body } = section("pages", "pages", () => { ctx.pretty.setShareAll(w.id, false); commit(); });   // reset -> home only
         const homeId = ctx.pretty.homePageId(w.id);
         const all = !!w.onAllPages;
         // rehome: move which page OWNS this element. Picking another page moves it there (and may drop
@@ -274,17 +307,17 @@ export function buildInspector(ctx) {
         const others = ctx.pretty.pages().filter((p) => p.id !== homeId);
         if (others.length) {
             const homeTitle = (ctx.pretty.page(homeId) || {}).title || homeId;
-            g.appendChild(row("home page", sel(homeId, [{ value: homeId, label: `${homeTitle} (home)` }, ...others.map((p) => ({ value: p.id, label: p.title }))], (v) => { if (v !== homeId) ctx.rehomeWidget(w.id, v); })));
+            body.appendChild(row("home page", sel(homeId, [{ value: homeId, label: `${homeTitle} (home)` }, ...others.map((p) => ({ value: p.id, label: p.title }))], (v) => { if (v !== homeId) ctx.rehomeWidget(w.id, v); })));
         }
-        g.appendChild(row("all pages", chk(all, (v) => { ctx.pretty.setShareAll(w.id, v); commit(); })));
+        body.appendChild(row("all pages", chk(all, (v) => { ctx.pretty.setShareAll(w.id, v); commit(); })));
         for (const p of ctx.pretty.pages()) {
-            if (p.id === homeId) { g.appendChild(row(p.title, el("span", "pw-insp-hint", "home"))); continue; }
+            if (p.id === homeId) { body.appendChild(row(p.title, el("span", "pw-insp-hint", "home"))); continue; }
             const on = all || (Array.isArray(w.pages) && w.pages.includes(p.id));
             const c = chk(on, (v) => { ctx.pretty.setShare(w.id, p.id, v); commit(); });
             if (all) c.disabled = true;   // "all pages" already covers every page
-            g.appendChild(row(p.title, c));
+            body.appendChild(row(p.title, c));
         }
-        return g;
+        return grp;
     }
 
     // ---- anchor (layout): where the widget is pinned -------------------------------------
@@ -310,9 +343,8 @@ export function buildInspector(ctx) {
         return g;
     }
     const widgetName = (x) => { const c = x.config || {}; const lab = c.title || c.text || c.label || (x.binding && x.binding.id) || x.type; return `${lab} · ${x.id}`; };
-    function anchorEditor(w) {
-        const g = el("div", "pw-insp-grp");
-        g.appendChild(hdr("anchor", () => { ctx.setAnchor(w.id, { to: "", corner: "tl", target: "tl" }); render(); }));
+    // Anchor controls appended into `g` (the merged "layout" section's body), below the geometry grid.
+    function appendAnchorRows(w, g) {
         const a = w.anchor || { to: "", corner: "tl" };
         const others = ctx.currentWidgets().filter((x) => x.id !== w.id);
         const toOpts = [{ value: "", label: "canvas" }, ...others.map((x) => ({ value: x.id, label: widgetName(x) }))];
@@ -326,8 +358,14 @@ export function buildInspector(ctx) {
             lab.append(el("span", `pw-anchor-mark ${mark}`), document.createTextNode(text));
             const r = el("div", "pw-insp-row"); r.append(lab, control); return r;
         };
-        g.appendChild(markedRow("this", "this", cornerGrid(a.corner || "tl", (v) => set({ corner: v }))));
-        g.appendChild(markedRow("target", "target", cornerGrid(a.target || a.corner || "tl", (v) => set({ target: v }))));
+        // this/target are sub-options OF the anchor target — only meaningful when one is chosen, and
+        // indented under the "anchor to" select to read as nested.
+        if (a.to) {
+            const sub = el("div", "pw-anchor-sub");
+            sub.appendChild(markedRow("this", "this", cornerGrid(a.corner || "tl", (v) => set({ corner: v }))));
+            sub.appendChild(markedRow("target", "target", cornerGrid(a.target || a.corner || "tl", (v) => set({ target: v }))));
+            g.appendChild(sub);
+        }
         // match this widget's width / height to another widget's resolved size ("—" = own size).
         const matchOpts = [{ value: "", label: "—" }, ...others.map((x) => ({ value: x.id, label: widgetName(x) }))];
         const setMatch = (key, v) => { ctx.setMatch(w.id, key, v); render(); };   // re-render so the size field's disabled state follows
@@ -344,34 +382,45 @@ export function buildInspector(ctx) {
         };
         g.appendChild(matchRow("match w", "matchW", "matchWPct"));
         g.appendChild(matchRow("match h", "matchH", "matchHPct"));
-        return g;
+    }
+    // Merged LAYOUT section: position/size grid + the anchor controls, under one collapsible header.
+    function layoutEditor(w) {
+        const { grp, body } = section("layout", "layout", () => { ctx.setAnchor(w.id, { to: "", corner: "tl", target: "tl" }); render(); });
+        body.appendChild(geomGrid(w));
+        appendAnchorRows(w, body);
+        return grp;
     }
 
     const OPS = ["==", "!=", ">", "<", ">=", "<=", "nonempty", "empty"];
     // One merged effect select. The rule keeps its {effect, state} shape (canvas + compileConditions
-    // read it); the select flattens "match" and "style" cases into one list. "match X" -> effect:"match",
-    // state:X (a resolved-state key the canvas mirrors); "style:<id>" -> effect:"style", state:<profile id>
-    // (the profile the canvas activates while the rule is true). The per-widget style options are built
-    // in conditionsEditor (they depend on the widget's profiles); the base options are constant.
+    // read it); the select flattens "match", "style" and "config" cases into one list. "match X" ->
+    // effect:"match", state:X (a resolved-state key the canvas mirrors); "style:<id>" -> effect:"style",
+    // state:<profile id>; "config:<id>" -> effect:"config", state:<config profile id> (the profile the
+    // canvas activates while the rule is true). The per-widget style/config options are built in
+    // conditionsEditor (they depend on the widget's profiles); the base options are constant.
     const BASE_EFFECT_OPTS = [
         { value: "show", label: "show" }, { value: "enable", label: "enable" },
         { value: "match show", label: "match show" }, { value: "match enabled", label: "match enabled" }, { value: "match both", label: "match both" },
     ];
-    const effectValue = (r) => (r.effect === "match" ? `match ${r.state || "both"}` : r.effect === "style" ? `style:${r.state || ""}` : (r.effect || "show"));
+    const effectValue = (r) => (r.effect === "match" ? `match ${r.state || "both"}`
+        : r.effect === "style" ? `style:${r.state || ""}`
+            : r.effect === "config" ? `config:${r.state || ""}`
+                : (r.effect || "show"));
     const setEffect = (r, v) => {
         if (v.startsWith("match ")) { r.effect = "match"; r.state = v.slice(6); }
         else if (v.startsWith("style:")) { r.effect = "style"; r.state = v.slice(6); }
+        else if (v.startsWith("config:")) { r.effect = "config"; r.state = v.slice(7); }
         else { r.effect = v; }
     };
     // Compile the structured rule list -> the visible_when / enabled_when expr strings the canvas
-    // evaluates. Rules of the same effect are AND-ed. "match" and "style" rules are NOT compiled to
-    // expressions — match mirrors another element's RESOLVED state, style picks a profile; both are
-    // applied live in canvas (resolvedCond / activeProfileId). compileTerm (expr.js) is the shared
-    // rule->expression builder the canvas reuses, so a rule's truth is derived in exactly one place.
+    // evaluates. Rules of the same effect are AND-ed. "match", "style" and "config" rules are NOT
+    // compiled to expressions — match mirrors another element's RESOLVED state, style/config pick a
+    // profile; all are applied live in canvas. compileTerm (expr.js) is the shared rule->expression
+    // builder the canvas reuses, so a rule's truth is derived in exactly one place.
     function compileConditions(w) {
         const show = [], en = [];
         for (const r of (w.conditions.rules || [])) {
-            if (r.effect === "match" || r.effect === "style") continue;   // applied live in canvas, not an expression
+            if (r.effect === "match" || r.effect === "style" || r.effect === "config") continue;   // applied live in canvas, not an expression
             const t = compileTerm(r); if (t) (r.effect === "enable" ? en : show).push(t);
         }
         w.conditions.visible_when = show.join(" && ");
@@ -397,14 +446,17 @@ export function buildInspector(ctx) {
     }
 
     function conditionsEditor(w) {
-        const g = el("div", "pw-insp-grp");
-        g.appendChild(hdr("conditions", () => { w.conditions = { rules: [], visible_when: "", enabled_when: "" }; save(); }));
         w.conditions = w.conditions || {}; w.conditions.rules = w.conditions.rules || [];
+        const { grp, body } = section("conditions", `conditions (${w.conditions.rules.length})`, () => { w.conditions = { rules: [], visible_when: "", enabled_when: "" }; save(); });
+        const g = body;
         const srcOpts = [{ value: "", label: "—" }, ...sourceTokenList(ctx.model, ctx.currentWidgets())];
         const elemOpts = [{ value: "", label: "—" }, ...ctx.currentWidgets().filter((x) => x.id !== w.id).map((x) => ({ value: x.id, label: widgetName(x) }))];
-        // effect options = the base set + one "style · <name>" per extra profile this widget defines,
-        // so a condition can switch the element to that profile while true.
-        const effectOpts = [...BASE_EFFECT_OPTS, ...widgetProfiles(w).filter((p) => p.id !== "default").map((p) => ({ value: `style:${p.id}`, label: `style · ${p.name}` }))];
+        // effect options = the base set + one "style · <name>" per extra style profile + one
+        // "config · <name>" per extra config profile this widget defines, so a condition can switch the
+        // element to that profile while true.
+        const effectOpts = [...BASE_EFFECT_OPTS,
+            ...widgetProfiles(w).filter((p) => p.id !== "default").map((p) => ({ value: `style:${p.id}`, label: `style · ${p.name}` })),
+            ...widgetConfigProfiles(w).filter((p) => p.id !== "default").map((p) => ({ value: `config:${p.id}`, label: `config · ${p.name}` }))];
         // Re-apply conditions in place (re-wire subscriptions + re-evaluate), NOT a full canvas
         // rebuild: ctx.refresh() destroys + recreates every widget, which tears down any EMBEDDED
         // panel (e.g. the live panel) -> unembed -> onHide -> stops the live collector. Conditions
@@ -433,8 +485,8 @@ export function buildInspector(ctx) {
         }
 
         // A live ✓/✗ at the head of each rule row showing whether the condition is TRUE right now —
-        // for show/enable/style rules from the rule's own term, for match rules from the mirrored
-        // element's resolved state. Re-paints on the source's heartbeat (no inspector re-render).
+        // for show/enable/style/config rules from the rule's own term, for match rules from the
+        // mirrored element's resolved state. Re-paints on the source's heartbeat (no inspector re-render).
         function truthBadge(rule) {
             const b = el("span", "pw-cond-truth");
             const paint = () => {
@@ -484,62 +536,56 @@ export function buildInspector(ctx) {
         });
         const add = el("button", "pw-insp-add", "+ condition"); add.addEventListener("click", () => { w.conditions.rules.push({ effect: "show", source: "", op: "nonempty", value: "" }); recompile(); });
         g.appendChild(add);
-        return g;
+        return grp;
     }
 
-    // ---- style group (profiles as tabs + the ONE style editor for the active profile) -----------
-    // A widget has a default profile (w.style) plus any number of extra named profiles. The tabs pick
-    // which one the editor edits; a condition rule (effect "style") activates a profile at runtime.
-    // Clicking a tab previews that profile on the canvas while the inspector is focused.
-    const newProfileId = (w) => { const taken = new Set(["default", ...(w.styleProfiles || []).map((p) => p.id)]); let n = 1, id = `sp${n}`; while (taken.has(id)) id = `sp${++n}`; return id; };
-    function styleGroup(w) {
-        const g = el("div", "pw-insp-grp");
-        if (!widgetProfiles(w).some((p) => p.id === editProfileId)) editProfileId = "default";   // selection survives widget switches
+    // ---- profile group (profiles-as-tabs + the editor for the active profile) -------------------
+    // The SHARED tabbed-profile UI used by BOTH style and config (rule 7). A widget has a default
+    // profile plus any number of extra named profiles; the tabs pick which one the editor edits; a
+    // condition rule activates a profile at runtime. Clicking a tab previews that profile on the canvas
+    // while the inspector is focused. `d` (a descriptor) supplies the kind-specific bits:
+    //   key/label, valKey ("style"/"config"), listKey, effect, addName,
+    //   profilesOf / getEditId / setEditId / preview / condActive / live / buildBody
+    function profileGroup(w, d) {
+        let resetActive = () => {};
+        const { grp, body } = section(d.key, d.label, () => resetActive());
+        if (!d.profilesOf(w).some((p) => p.id === d.getEditId())) d.setEditId("default");   // selection survives widget switches
 
-        const hdrHost = el("div"); g.appendChild(hdrHost);
-        const tabs = el("div", "pw-style-tabs"); g.appendChild(tabs);
-        const ctlHost = el("div"); g.appendChild(ctlHost);   // rename/delete for the active extra profile
-        const seHost = el("div"); g.appendChild(seHost);
-        styleExtras(w, g);   // widget-type-specific style controls (e.g. button placement) — on the base style
+        const tabs = el("div", "pw-style-tabs"); body.appendChild(tabs);
+        const ctlHost = el("div"); body.appendChild(ctlHost);   // rename/delete for the active extra profile
+        const seHost = el("div"); body.appendChild(seHost);     // the active profile's editor
 
         // live marker: ring the tab of the profile the CONDITIONS currently activate (distinct from
-        // .on, which is the profile being EDITED). Repaints on the style rules' source heartbeats.
-        let styleSubs = []; condSubs.push(() => { styleSubs.forEach((u) => u()); styleSubs = []; });
+        // .on, the profile being EDITED). Repaints on the active-effect rules' source heartbeats.
+        let subs = []; condSubs.push(() => { subs.forEach((u) => u()); subs = []; });
         const tabBtns = new Map();
-        const markActive = () => { const act = ctx.condProfile(w.id); tabBtns.forEach((b, id) => b.classList.toggle("pw-style-active", id === act && act !== "default")); };
+        const markActive = () => { const act = d.condActive(w.id); tabBtns.forEach((b, id) => b.classList.toggle("pw-style-active", id === act && act !== "default")); };
 
         // (Re)build the dynamic parts for the active profile WITHOUT a full inspector render — so
         // clicking a tab keeps focus inside the panel (which is what holds the live canvas preview).
         const build = () => {
-            const profiles = widgetProfiles(w);
-            const active = profiles.find((p) => p.id === editProfileId) || profiles[0];
-
-            // header reset acts ONLY on the active profile (default -> w.style {}, extra -> its style {})
-            hdrHost.textContent = "";
-            hdrHost.appendChild(hdr("style", () => {
-                if (active.id === "default") w.style = {}; else { const p = (w.styleProfiles || []).find((x) => x.id === active.id); if (p) p.style = {}; }
-                ctx.pretty.save(); ctx.restyle(w.id); build();
-            }));
+            const profiles = d.profilesOf(w);
+            const active = profiles.find((p) => p.id === d.getEditId()) || profiles[0];
 
             // tab strip: one tab per profile + a "+" that adds a profile copied from the active one
-            tabs.textContent = "";
-            tabBtns.clear();
+            tabs.textContent = ""; tabBtns.clear();
             for (const p of profiles) {
                 const t = el("button", "pw-style-tab", p.name);
-                t.classList.toggle("on", p.id === editProfileId);
-                t.title = p.id === "default" ? "default profile" : "style profile";
-                t.addEventListener("click", () => { editProfileId = p.id; ctx.previewStyleProfile(w.id, p.id); build(); });
+                t.classList.toggle("on", p.id === d.getEditId());
+                t.title = p.id === "default" ? "default profile" : `${d.label} profile`;
+                t.addEventListener("click", () => { d.setEditId(p.id); d.preview(w.id, p.id); build(); });
                 tabBtns.set(p.id, t);
                 tabs.appendChild(t);
             }
             const addT = el("button", "pw-style-tab pw-style-addtab", "+"); addT.title = "new profile (copies the active one)";
             addT.addEventListener("click", () => {
-                const id = newProfileId(w);
-                w.styleProfiles = w.styleProfiles || [];
-                w.styleProfiles.push({ id, name: `Style ${w.styleProfiles.length + 1}`, style: JSON.parse(JSON.stringify(active.style || {})) });
-                editProfileId = id;
+                const list = (w[d.listKey] = w[d.listKey] || []);
+                const taken = new Set(["default", ...list.map((p) => p.id)]);
+                let n = 1, id = `sp${n}`; while (taken.has(id)) id = `sp${++n}`;
+                list.push({ id, name: `${d.addName} ${list.length + 1}`, [d.valKey]: JSON.parse(JSON.stringify(active[d.valKey] || {})) });
+                d.setEditId(id);
                 // full render so the conditions editor's effect options pick up the new profile
-                ctx.pretty.save(); ctx.previewStyleProfile(w.id, id); render();
+                ctx.pretty.save(); d.preview(w.id, id); render();
             });
             tabs.appendChild(addT);
 
@@ -548,36 +594,69 @@ export function buildInspector(ctx) {
             if (active.id !== "default") {
                 const ctl = el("div", "pw-style-pctl");
                 const nameIn = el("input", "pw-style-pname"); nameIn.type = "text"; nameIn.value = active.name; nameIn.spellcheck = false; nameIn.title = "profile name";
-                const commitName = () => { const p = (w.styleProfiles || []).find((x) => x.id === active.id); if (p && nameIn.value.trim() && p.name !== nameIn.value.trim()) { p.name = nameIn.value.trim(); ctx.pretty.save(); render(); } };   // render: the "style · <name>" condition option relabels
+                const commitName = () => { const p = (w[d.listKey] || []).find((x) => x.id === active.id); if (p && nameIn.value.trim() && p.name !== nameIn.value.trim()) { p.name = nameIn.value.trim(); ctx.pretty.save(); render(); } };   // render: the "· <name>" condition option relabels
                 nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameIn.blur(); } else if (e.key === "Escape") { e.preventDefault(); nameIn.value = active.name; nameIn.blur(); } });
                 nameIn.addEventListener("blur", commitName);
                 const del = el("button", "pw-insp-del", "×"); del.title = "delete this profile (click again to confirm)";
                 del.addEventListener("click", () => {
                     if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "✓"; setTimeout(() => { del.dataset.armed = "0"; del.textContent = "×"; }, 2000); return; }
-                    w.styleProfiles = (w.styleProfiles || []).filter((x) => x.id !== active.id);
+                    w[d.listKey] = (w[d.listKey] || []).filter((x) => x.id !== active.id);
                     // drop any condition rule that activated this now-gone profile
-                    if (w.conditions && Array.isArray(w.conditions.rules)) w.conditions.rules = w.conditions.rules.filter((r) => !(r.effect === "style" && r.state === active.id));
-                    editProfileId = "default"; compileConditions(w);
-                    ctx.pretty.save(); ctx.previewStyleProfile(w.id, "default"); ctx.recondition(); render();   // full render: the conditions editor's effect options changed
+                    if (w.conditions && Array.isArray(w.conditions.rules)) w.conditions.rules = w.conditions.rules.filter((r) => !(r.effect === d.effect && r.state === active.id));
+                    d.setEditId("default"); compileConditions(w);
+                    ctx.pretty.save(); d.preview(w.id, "default"); ctx.recondition(); render();   // full render: the conditions editor's effect options changed
                 });
                 ctl.append(nameIn, del);
                 ctlHost.appendChild(ctl);
             }
 
-            // the ONE style editor, bound to the active profile's style object (mutated in place)
-            styleEditor(seHost, active.style, () => { ctx.pretty.save(); ctx.restyle(w.id); }, { effective: ctx.effectiveStyle(w.id) });
+            // the editor for the active profile, bound to its value object (mutated in place)
+            seHost.textContent = "";
+            d.buildBody(seHost, active, w, build);
 
-            // (re)wire the live condition-active marker: subscribe to every style rule's source so the
-            // ring moves to whichever profile the conditions activate, without an inspector re-render.
-            styleSubs.forEach((u) => u()); styleSubs = [];
+            // (re)wire the live condition-active marker: subscribe to every active-effect rule's source
+            // so the ring moves to whichever profile the conditions activate, without an inspector render.
+            subs.forEach((u) => u()); subs = [];
             const keys = new Set();
-            for (const r of (w.conditions?.rules || [])) if (r.effect === "style") { const k = subKeyForToken(r.source); if (k) keys.add(k); }
-            for (const k of keys) styleSubs.push(ctx.data.subscribe(k, markActive));
+            for (const r of (w.conditions?.rules || [])) if (r.effect === d.effect) { const k = subKeyForToken(r.source); if (k) keys.add(k); }
+            for (const k of keys) subs.push(ctx.data.subscribe(k, markActive));
             markActive();
         };
+        // header reset acts ONLY on the active profile (default -> base {}, extra -> its value {})
+        resetActive = () => {
+            const active = d.profilesOf(w).find((p) => p.id === d.getEditId()) || d.profilesOf(w)[0];
+            if (active.id === "default") w[d.valKey] = {}; else { const p = (w[d.listKey] || []).find((x) => x.id === active.id); if (p) p[d.valKey] = {}; }
+            ctx.pretty.save(); d.live(w.id); build();
+        };
         build();
-        return g;
+        return grp;
     }
+
+    // The two profile-group descriptors. STYLE applies live via restyle (CSS only); CONFIG rebuilds the
+    // widget instance via reconfig (config drives structure).
+    const STYLE_DESC = {
+        key: "style", label: "style", valKey: "style", listKey: "styleProfiles", effect: "style", addName: "Style",
+        profilesOf: widgetProfiles,
+        getEditId: () => editProfileId, setEditId: (v) => { editProfileId = v; },
+        preview: (id, pid) => ctx.previewStyleProfile(id, pid),
+        condActive: (id) => ctx.condProfile(id),
+        live: (id) => ctx.restyle(id),
+        buildBody: (host, active, w) => {
+            styleEditor(host, active.style, () => { ctx.pretty.save(); ctx.restyle(w.id); }, { effective: ctx.effectiveStyle(w.id) });
+            styleExtras(w, host);   // widget-type-specific style controls (e.g. button placement)
+        },
+    };
+    const CONFIG_DESC = {
+        key: "config", label: "config", valKey: "config", listKey: "configProfiles", effect: "config", addName: "Config",
+        profilesOf: widgetConfigProfiles,
+        getEditId: () => editConfigId, setEditId: (v) => { editConfigId = v; },
+        preview: (id, pid) => ctx.previewConfigProfile(id, pid),
+        condActive: (id) => ctx.condConfig(id),
+        live: (id) => ctx.reconfig(id),
+        buildBody: (host, active, w, build) => {
+            buildConfigFields(host, w, active.config, () => { ctx.pretty.save(); ctx.reconfig(w.id); build(); });
+        },
+    };
 
     function render() {
         const body = win.body;
@@ -615,14 +694,11 @@ export function buildInspector(ctx) {
         head.appendChild(del);
         body.appendChild(head);
 
-        body.appendChild(geomEditor(w));
-        if (["table", "chart"].includes(w.type)) body.appendChild(bindingEditor(w));
-        body.appendChild(configEditor(w));
+        body.appendChild(layoutEditor(w));   // merged position/size + anchor
         if (ctx.pretty.pages().length > 1) body.appendChild(pagesEditor(w));   // sharing only matters with >1 page
-        body.appendChild(anchorEditor(w));
         body.appendChild(conditionsEditor(w));
-
-        body.appendChild(styleGroup(w));   // profiles-as-tabs + the ONE style editor for the active profile
+        body.appendChild(profileGroup(w, CONFIG_DESC));   // config profiles (below conditions)
+        body.appendChild(profileGroup(w, STYLE_DESC));    // style profiles
         // height is content-driven via CSS (.fw-body flex-basis:auto) — no JS measurement.
     }
 

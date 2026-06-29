@@ -135,6 +135,12 @@ export class PrettyModel {
         from.widgets = from.widgets.filter((x) => x.id !== wid);
         if (Array.isArray(w.pages)) w.pages = w.pages.filter((id) => id !== toPageId);
         to.widgets.push(w);
+        // Drop layout links that reference widgets NOT present on the new home page — an anchor target
+        // or width/height match that doesn't render there would resolve to nothing, so reset it.
+        const present = new Set(this.widgetsForPage(toPageId).map((x) => x.id));
+        if (w.anchor && w.anchor.to && !present.has(w.anchor.to)) w.anchor = { to: "", corner: "tl", target: "tl" };
+        if (w.matchW && !present.has(w.matchW)) delete w.matchW;
+        if (w.matchH && !present.has(w.matchH)) delete w.matchH;
         this.save();
         return true;
     }
@@ -232,11 +238,16 @@ function normalize(doc) {
             w.conditions = w.conditions || {};
             w.conditions.rules = Array.isArray(w.conditions.rules) ? w.conditions.rules : [];
             w.config = w.config || {};
-            // table columns: coerce any legacy string entries to {key, enabled}
-            if (Array.isArray(w.config.columns)) {
-                w.config.columns = w.config.columns.map((c) => (typeof c === "string" ? { key: c, enabled: true } : c));
-            }
-            if (w.type === "chart") w.config.colorBy = w.config.colorBy || {};
+            // extra named config profiles (the default profile is w.config itself). Each {id, name, config}.
+            w.configProfiles = Array.isArray(w.configProfiles) ? w.configProfiles.filter((cp) => cp && cp.id) : [];
+            w.configProfiles.forEach((cp) => { cp.name = cp.name || cp.id; cp.config = cp.config || {}; });
+            // normalise the base config + every config profile the same way (legacy column coercion, chart colorBy)
+            const fixCfg = (c) => {
+                if (Array.isArray(c.columns)) c.columns = c.columns.map((x) => (typeof x === "string" ? { key: x, enabled: true } : x));
+                if (w.type === "chart") c.colorBy = c.colorBy || {};
+            };
+            fixCfg(w.config);
+            w.configProfiles.forEach((cp) => fixCfg(cp.config));
         });
     });
     return d;

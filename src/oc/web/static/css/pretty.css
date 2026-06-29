@@ -285,9 +285,6 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 
 /* right-click add-widget menu uses the shared .ctxmenu / .ctx-item (overlays.css, js/ctxmenu.js) */
 
-/* sources token showing its live value on hover */
-.pw-src-tok.pw-src-val { background: #2a3550; color: #cfe3ff; }
-
 /* studio panels are content-height (autoFit:false); the viewport height cap that keeps a tall one
    on-screen now lives on the shared `.floatwin` rule (floatwin.css) so EVERY panel reserves the same
    --fw-top/--fw-bot margins — nothing pretty-specific here anymore. */
@@ -311,15 +308,32 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-insp-id:focus { border-color: #4ea1ff; outline: none; background: #0d1016; }
 .pw-insp-id.bad { border-color: #f7768e; }
 .pw-insp-remove, .pw-insp-clone { font-size: 11px; }
-.pw-insp-grp { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+.pw-insp-grp { padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.07); }
+.pw-insp-grp:last-child { border-bottom: 0; }   /* last section needs no divider under it */
+/* grp is edge-to-edge (its border spans the full width); the inner header + body carry the inset */
+.pw-insp-h, .pw-insp-sec-body { padding-left: 6px; padding-right: 6px; }
 .pw-insp-h { display: flex; align-items: center; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55; margin-bottom: 4px; }
 .pw-insp-h-lab { flex: 1 1 auto; }
 .pw-insp-h-reset { flex: 0 0 auto; background: none; border: 0; color: inherit; opacity: 0.6; cursor: pointer; padding: 0 2px; line-height: 0; min-height: 0; }
 .pw-insp-h-reset:hover { opacity: 1; color: #4ea1ff; }
+/* collapsible section header: caret + clickable header; body hides when collapsed */
+.pw-insp-h-click { cursor: pointer; user-select: none; }
+.pw-insp-h-click:hover { opacity: 0.8; }
+.pw-insp-caret { flex: 0 0 auto; width: 11px; font-size: 9px; opacity: 0.6; text-align: center; }
+.pw-insp-sec-body[hidden] { display: none; }
+/* collapsed: the header is the whole section, so it carries no gap under it */
+.pw-collapsed .pw-insp-h-click { margin-bottom: 0; }
+/* anchor sub-options (this / target points) nest under the "anchor to" select — indented to its
+   left edge (label column 84px + 6px gap) so they read as belonging to the anchor target. */
+.pw-anchor-sub { margin-left: 90px; }
+/* a label sharing a row with a prior control (page size + paging) — natural width, centred */
+.pw-pair-lab { flex: 0 0 auto; font-size: 12px; opacity: 0.8; display: flex; align-items: center; padding-left: 2px; }
+/* a select that should size to its content (e.g. sort direction), not flex-grow */
+.pw-insp-row select.pw-fit { flex: 0 0 fit-content; }
 /* editable position + size grid (each: value input + unit select). The global
    `input,select { width:100% }` would make the unit select demand the whole cell and never
    shrink (it's flex:0 0) — so override its width to auto and let the value input flex-grow. */
-.pw-geom { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 6px; }
+.pw-geom { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 6px; margin-bottom: 6px; }
 .pw-geom-cell { display: flex; align-items: center; gap: 3px; min-width: 0; }
 .pw-geom-lab { flex: 0 0 auto; width: 1.2ch; text-transform: uppercase; font-size: 11px; opacity: 0.6; }
 .pw-geom-val { flex: 1 1 0; min-width: 0; width: auto; padding-left: 5px; padding-right: 2px; }
@@ -329,11 +343,13 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-insp-row { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 4px; min-height: 26px; }
 .pw-insp-lab { flex: 0 0 84px; font-size: 12px; opacity: 0.8; min-height: 26px; display: flex; align-items: center; }
 /* match row: source select flex-grows, percent stays a narrow fixed field. */
+.pw-match-row { align-items: center; }   /* select + pct + "%" are all single-line — centre them */
 .pw-match-pct { flex: 0 0 64px !important; }
 .pw-match-pct-unit { flex: 0 0 auto; font-size: 12px; opacity: 0.6; }
 .pw-insp-row input, .pw-insp-row select, .pw-insp-row textarea { flex: 1; min-width: 0; }
 .pw-insp-row textarea { min-height: 40px; resize: vertical; }
 .pw-insp-hint { font-size: 11px; opacity: 0.5; margin-top: 2px; }
+.pw-insp-row > .pw-insp-hint { align-self: center; margin-top: 0; }   /* hint as a row's value (e.g. "home") centres against the label */
 .pw-insp-frow { display: flex; gap: 4px; margin-bottom: 3px; align-items: center; }
 .pw-insp-frow input[type="text"] { flex: 1 1 90px; min-width: 64px; }
 .pw-insp-frow select { flex: 0 1 auto; min-width: 0; }
@@ -356,7 +372,10 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-insp-frow :is(input, select, button),
 .pw-se-row :is(input, select, button) { min-height: 26px; box-sizing: border-box; }
 /* checkboxes don't stretch and aren't tall */
-.pw-insp-row input[type="checkbox"], .pw-insp-frow input[type="checkbox"], .pw-se-row input[type="checkbox"] { flex: 0 0 auto; width: auto; min-height: 0; }
+/* checkboxes don't stretch, aren't tall, and centre vertically against the row's taller label
+   (the row is align-items:flex-start so multi-line textareas top-align — a bare checkbox would
+   otherwise stick to the top). */
+.pw-insp-row input[type="checkbox"], .pw-insp-frow input[type="checkbox"], .pw-se-row input[type="checkbox"] { flex: 0 0 auto; width: auto; min-height: 0; align-self: center; }
 .pw-insp-row input[type="color"], .pw-se-row input[type="color"], .pw-se-cmini { height: 26px; }
 .pw-insp-empty, .pw-src-empty { padding: 12px; opacity: 0.5; font-size: 12px; }
 
@@ -365,15 +384,24 @@ body.pretty-mode .topbar-pretty-tools { display: flex; }
 .pw-src-search { flex: 1; min-width: 0; }
 .pw-src-valonly { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; white-space: nowrap; opacity: 0.85; }
 .pw-src-valonly input { min-height: 0; }
-.pw-src-sec { margin-bottom: 8px; }
-.pw-src-h { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55; margin: 4px 0; }
-.pw-src-row { display: flex; align-items: center; gap: 4px; margin-bottom: 2px; }
+/* collapsible sections: reuse the shared .panel-fs disclosure, just tighten the padding */
+.pw-src-fs { margin-bottom: 4px; }
+.pw-src-fs > summary { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.7; padding: 3px 2px; }
+.pw-src-fs > .fs-body { padding: 4px 2px; }
+/* node-input sub-group header (grouped by node id) */
+.pw-src-grp { font-size: 10px; opacity: 0.55; margin: 6px 0 2px; word-break: break-all; }
+.pw-src-grp:first-child { margin-top: 0; }
+/* whole row is the click target (copies the token); highlights on hover, flashes green on copy */
+.pw-src-row { display: flex; align-items: center; gap: 4px; margin-bottom: 2px; padding: 1px 3px; border-radius: 3px; cursor: pointer; }
+.pw-src-row:hover { background: rgba(255,255,255,0.07); }
+.pw-src-row.pw-src-copied { background: #2a4a36; }
 .pw-src-child .pw-src-tok { margin-left: 14px; }   /* fields/columns sit a tad deeper than their dataset/view */
 .pw-src-meta { font-size: 10px; opacity: 0.5; flex: 0 0 auto; }
 .pw-src-tok { font-size: 11px; background: rgba(255,255,255,0.06); padding: 5px 4px; border-radius: 3px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* copy + use buttons: equal width, identical height (both .pw-src-btn) */
-.pw-src-btn { font-size: 10px; padding: 2px 0; flex: 0 0 auto; width: 44px; text-align: center; box-sizing: border-box; }
-.pw-src-use { background: #38507a; }
+/* inline resolved value (shown without hovering once a section is open) */
+.pw-src-v { font-size: 10px; opacity: 0.8; color: #cfe3ff; flex: 0 1 auto; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+/* slicing help note under the datasets / subsets bodies */
+.pw-src-help { font-size: 10px; opacity: 0.45; line-height: 1.4; margin: 4px 2px 2px; }
 
 /* ---- style editor (inspector + theme) ---- */
 #pretty-theme .fw-body { padding: 8px; }   /* theme panel hosts the style editor directly */

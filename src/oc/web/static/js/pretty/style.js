@@ -37,26 +37,9 @@ export function mergeStyle(theme, style) {
 }
 
 // ---- style profiles ------------------------------------------------------------------------
-// A widget carries ONE base style (`w.style`, the "Default" profile) plus any number of extra
-// named profiles (`w.styleProfiles = [{id, name, style}]`). Each profile is a FULL, independent
-// style object (a new one is created by copying the active one). Which profile renders is chosen
-// at draw time: a condition rule with effect "style" activates its profile while true; otherwise
-// the default. The editor shows the profiles as tabs and edits one at a time.
-
-// Ordered profiles of a widget: the default first (id "default", backed by w.style), then extras.
-// Each entry's `style` is a live reference into the widget, so the editor mutates it in place.
-export function widgetProfiles(w) {
-    const base = { id: "default", name: "Default", style: (w.style = w.style || {}) };
-    const extra = (w.styleProfiles || []).map((p) => ({ id: p.id, name: p.name || p.id, style: (p.style = p.style || {}) }));
-    return [base, ...extra];
-}
-
-// The style object of one profile by id ("default" / missing -> the base w.style).
-export function profileStyle(w, id) {
-    if (!id || id === "default") return w.style || {};
-    const p = (w.styleProfiles || []).find((x) => x.id === id);
-    return p ? (p.style || {}) : (w.style || {});
-}
+// Style profiles live in the SHARED profile primitive (profiles.js), which also backs config
+// profiles. Re-exported here so existing style.js importers keep working unchanged (rule 7).
+export { widgetProfiles, profileStyle } from "./profiles.js";
 
 // Apply a (theme-merged) style object to a DOM element as inline CSS. Keys left unset clear
 // to "" so re-applying after an edit removes a property rather than leaving a stale value.
