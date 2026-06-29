@@ -13,6 +13,7 @@ from ...collect.live import LiveSession
 from ...profile import list_profiles
 from ...runtime import load_live_profile
 from ..deps import get_engine, get_settings
+from .ocr import read_mode
 
 router = APIRouter(prefix="/api/live", tags=["live"])
 
@@ -54,6 +55,9 @@ def _refresh_profile(game: str, s: LiveSession) -> None:
 def start(game: str, interval: float | None = None):
     s = _session(game, create=True)
     _refresh_profile(game, s)   # pick up profile edits made since the last run
+    # auto-mode runs the live loop on GPU (then frees it on stop); cpu/gpu leave the device
+    # as-is (gpu is already pinned, cpu stays CPU) — same policy as the precapture batch.
+    s.batch_device = "gpu" if read_mode() == "auto" else None
     s.start(interval=interval)
     _fire_on_capture(game)
     return s.status()

@@ -18,6 +18,7 @@ import threading
 import time
 
 from ..engine import Engine
+from ..ocr.device_switch import enter_device, exit_device
 from ..profile.models import GameProfile
 from .collector import Collector, TickStatus
 
@@ -41,6 +42,10 @@ class LiveSession:
         self._scroll_meta: dict | None = None             # latest mirror calibration snapshot
         self._t0 = 0.0
         self._error: str | None = None
+        # "auto" device policy: set to "gpu" by the web layer to run the live loop on GPU
+        # (every frame OCRs many regions -> GPU throughput wins), then restore the baseline
+        # device on stop (which frees the GPU). None = use whatever device the engine is on.
+        self.batch_device: str | None = None
 
     # ---- profile -----------------------------------------------------------
 
@@ -96,6 +101,7 @@ class LiveSession:
     # ---- worker ------------------------------------------------------------
 
     def _loop(self) -> None:
+        restore = enter_device(self._engine, self.batch_device)
         try:
             collector = Collector(self._engine, self._profile)
             collector.on_frame = self._save_frame   # persist a frame only when a record was written
@@ -104,6 +110,8 @@ class LiveSession:
         except Exception as exc:  # pragma: no cover - defensive
             with self._lock:
                 self._error = str(exc)
+        finally:
+            exit_device(self._engine, restore)
 
     def _save_frame(self, frame) -> None:
         """Save one frame into the game's live/ image bucket — the same bucket the read-only
