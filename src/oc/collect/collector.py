@@ -17,6 +17,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from statistics import median
 
+import cv2
+import numpy as np
+
 from ..engine import Engine
 from ..learn.confusions import ConfusionMap
 from ..learn.dictionary import build_dictionaries
@@ -39,6 +42,20 @@ from .stability import Confirmer
 # Minimum scrollbar-detection confidence before a frame's slice counts for mirror removal —
 # a faint/ambiguous thumb yields no slice, so a misread can never drive a false removal.
 _SCROLL_CONF_FLOOR = 0.35
+
+# Classify-cache tolerance (the detector regions). A bare hash of the regions has ZERO
+# tolerance, so a single changed pixel — capture noise, or the animated diorama behind the
+# UI — busts the cache and re-runs the (OCR-heavy) classify pass EVERY tick. Compare the
+# downsampled regions with a noise floor instead, exactly like the settle gate: only a change
+# bigger than transient flicker counts as "the window might have changed, re-classify". A real
+# window switch redraws the title text -> well over this -> re-classifies correctly.
+_DETECT_TOL = settle.THUMB_TOL          # per-sample brightness delta that counts as changed
+_DETECT_MIN_CELLS = 8                    # fewer changed samples than this -> treat as unchanged
+_DETECT_CELL = 16                        # each region downsampled to CELL x CELL (fixed -> shape-stable)
+# A real window switch redraws the title and stays changed for many frames; a transient (a
+# particle burst / glow pulse behind the UI) spikes for one or two. Require this many CONSECUTIVE
+# changed frames before paying the OCR-heavy re-classify, so flicker can't bust the cache.
+_DETECT_RECLASSIFY_AFTER = 2
 
 
 def _detect_search_fracs(profile: GameProfile) -> list:
@@ -131,7 +148,10 @@ class Collector:
         # the classify pass (which runs an OCR read per text detector across every
         # window). Single slot: ticks see one screen at a time.
         self._detect_fracs = _detect_search_fracs(profile)
-        self._classify_cache: tuple[int | None, tuple[str, str | None] | None] = (None, None)
+        # (detector-region feature vector, last classification). Compared with a tolerance in
+        # _classify (not a bare hash), so noise/sub-threshold animation doesn't bust the cache.
+        self._classify_cache: tuple[object, tuple[str, str | None] | None] = (None, None)
+        self._detect_miss_streak = 0   # consecutive over-floor frames (debounces re-classify)
         # Last grab's settle thumbnail. A frame is OCR'd only once it matches its
         # predecessor within the noise floor (screen has stopped moving) — a mid-scroll
         # grab is blurred and reads as garbage. Single slot: ticks see one screen at a time.
@@ -187,31 +207,57 @@ class Collector:
         floor = self._tuning.min_confidence
         return [r for r in records if r.confidence >= floor]
 
-    def _detect_signature(self, frame) -> int | None:
-        """Cheap downsampled hash of the detector search regions. Identical regions ->
-        identical classification, so the classify pass can be skipped."""
+    def _detect_features(self, frame):
+        """Coarse grayscale samples of every detector search region, concatenated — the input
+        to the classify-cache's tolerant compare (NOT a hash; see ``_classify``). The boxes are
+        fixed, so the vector has the same length every frame and lines up sample-for-sample."""
         img = frame.image
         if img is None or img.size == 0 or not self._detect_fracs:
             return None
         cw, ch = frame.client.w, frame.client.h
-        h = 0
+        parts = []
         for fb in self._detect_fracs:
             pb = fb.to_pixels(cw, ch)
             crop = img[pb.y : pb.y + pb.h, pb.x : pb.x + pb.w]
             if crop.size:
-                sy = max(1, crop.shape[0] // 16)
-                sx = max(1, crop.shape[1] // 16)
-                h ^= hash(crop[::sy, ::sx].tobytes())
-        return h
+                # Stride-subsample the (wide, 4K) region FIRST so the area-resize doesn't read
+                # every pixel — same trick as settle.thumb; a coarse change signature needs no
+                # full res. Then resize to a FIXED size: a strided shape alone would flip on a
+                # 1px window-geometry jitter (forced cache miss); the fixed resize stays
+                # comparable sample-for-sample and barely moves the content.
+                hh, ww = crop.shape[:2]
+                step = max(1, min(hh, ww) // (_DETECT_CELL * 4))
+                g = crop[::step, ::step]
+                g = g.max(axis=2) if g.ndim == 3 else np.ascontiguousarray(g)
+                parts.append(cv2.resize(g, (_DETECT_CELL, _DETECT_CELL),
+                                        interpolation=cv2.INTER_AREA).reshape(-1))
+        if not parts:
+            return None
+        return np.concatenate(parts).astype(np.int16)   # int16: abs-diff without uint8 wrap
 
     def _classify(self, frame):
-        """Classify, reusing the last result while the detector regions are unchanged."""
-        sig = self._detect_signature(frame)
-        csig, cres = self._classify_cache
-        if sig is not None and sig == csig:
-            return cres
+        """Classify, reusing the last result while the detector regions are unchanged WITHIN a
+        noise floor. A bare hash re-ran every tick (one changed pixel = miss); a tolerant compare
+        holds through capture noise and sub-threshold UI animation, so a steady screen pays the
+        OCR-heavy classify pass once, not every tick. The stored features are refreshed on a hit
+        so slow animation (a rotating background) is tracked, never accumulating into a false miss."""
+        feat = self._detect_features(frame)
+        prev, cres = self._classify_cache
+        if feat is not None and prev is not None and feat.shape == prev.shape:
+            changed = int((np.abs(feat - prev) > _DETECT_TOL).sum())
+            if changed < _DETECT_MIN_CELLS:
+                self._detect_miss_streak = 0
+                self._classify_cache = (feat, cres)   # under floor: same window, track drift
+                return cres
+            # Over the floor — but a transient (flicker/particles) spikes for a frame or two while
+            # a real switch stays changed. Debounce: hold the prior classification until the change
+            # PERSISTS, and DON'T advance the anchor to the burst frame (so flicker can't ratchet it).
+            self._detect_miss_streak += 1
+            if self._detect_miss_streak < _DETECT_RECLASSIFY_AFTER:
+                return cres
+        self._detect_miss_streak = 0
         match = self._engine.classifier.classify(frame, self._profile)
-        self._classify_cache = (sig, match)
+        self._classify_cache = (feat, match)
         return match
 
     def _thumb_pos(self, frame, window: WindowDef) -> float | None:
