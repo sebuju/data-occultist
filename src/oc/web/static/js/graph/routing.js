@@ -112,6 +112,28 @@ const PORT_OUT_SRC = ["win:", "producer:", "ds:", "sub:", "src:"];
 const fromPortOut = (aId, kind) =>
     (kind === "data" && PORT_OUT_SRC.some((p) => aId.startsWith(p))) ||
     ((kind === "trigger" || kind === "watch") && aId.startsWith("trigger:"));
+
+// Out-ports all share ONE face for a uniform look, but WHICH face is negotiated every route:
+// whichever side most data lines want (target right of source -> R, else L) wins, then EVERY data
+// out-port uses it. Triggers are exempt (their fires-port stays R so it never collides with the
+// watch-port pinned L on the same node). `outSide` holds the current winner.
+let outSide = "R";
+function negotiateOutSide(links) {
+    let r = 0, l = 0;
+    for (const ln of links) {
+        if (!ln.port || ln.portKind === "watch") continue;
+        if (!PORT_OUT_SRC.some((p) => ln.aId.startsWith(p))) continue;   // data sources vote; triggers don't
+        const sc = ln.ra.x + ln.ra.w / 2, tc = ln.rb.x + ln.rb.w / 2;
+        if (tc >= sc) r++; else l++;
+    }
+    return l > r ? "L" : "R";   // tie -> R (the historical default)
+}
+// The face a port line leaves: watch always L; a data source uses the negotiated side; a trigger's
+// fires-port stays R (paired opposite its L watch-port).
+function sideForPort(l) {
+    if (l.portKind === "watch") return "L";
+    return PORT_OUT_SRC.some((p) => l.aId.startsWith(p)) ? outSide : "R";
+}
 function buildLinks() {
     const links = [];
     const add = (key, aId, bId, top, kind, ra, rb) => {
@@ -140,6 +162,7 @@ const MIN_PORT_GAP = 11;   // hard floor between adjacent fanned port dots (dot 
 // both node ids belong to the same (non-null) group
 function sameGroup(aId, bId) { const g = groups.groupOf(aId); return !!g && g === groups.groupOf(bId); }
 function computePorts(links) {
+    outSide = negotiateOutSide(links);   // pick the shared out-port face before pinning any line
     for (const l of links) {
         // geometric facing — the pre-route default for a brand-new line; the router picks the real
         // faces (and the routed result's ports override these in drawEdges/runRouting).
@@ -149,7 +172,7 @@ function computePorts(links) {
         // router will pick (route.js pinSrc) so the elbow doesn't flip. `watch` leaves the LEFT
         // `.port.pwatch`; every other port line leaves the RIGHT `.port.out`.
         if (l.port) {
-            if (l.portKind === "watch") { l.d1 = "L"; l.p1 = [l.ra.x, l.ra.y + l.ra.h / 2]; }
+            if (sideForPort(l) === "L") { l.d1 = "L"; l.p1 = [l.ra.x, l.ra.y + l.ra.h / 2]; }
             else { l.d1 = "R"; l.p1 = [l.ra.x + l.ra.w, l.ra.y + l.ra.h / 2]; }
         }
         l.align = false;
@@ -236,6 +259,7 @@ function styleDot(dot, pt, rect, cls) {
     dot.style.top = `${pt[1] - rect.y - 1}px`;
     dot.style.right = "auto";
     dot.style.transform = "translate(-50%, -50%)";
+    dot._idleStyle = null;   // active now -> force a rewrite back to its idle home when it next goes idle
     const sel = cls.includes(" sel");
     dot.classList.toggle("sel", sel);   // edge selected (either end) -> accent (CSS clears inline bg)
     dot.style.background = sel ? ""
@@ -260,12 +284,13 @@ function ensurePortDots(node, count, base, extrasSel, extraCls, spec) {
 
 // One source-dot family (the `.port.out` fires/data handle, or the `.port.pwatch` watch handle):
 // fan a dot per line onto its start; when idle, drop clones and park the handle at its CSS home.
-function placeSrcDots(node, lines, baseSel, extrasSel, extraCls, spec) {
+function placeSrcDots(node, lines, baseSel, extrasSel, extraCls, spec, idleStyle = "") {
     const base = node.querySelector(baseSel);
     if (!base) return;
     if (!lines || !lines.length) {   // idle handle: no line uses it — show only on node hover (.port-idle)
         node.querySelectorAll(extrasSel).forEach((d) => d.remove());
-        if (base.style.left || base.style.top) { base.style.cssText = ""; base.classList.remove("sel"); }
+        // park at its idle home — CSS default ("") or the negotiated left face — only when it changed
+        if (base._idleStyle !== idleStyle) { base.style.cssText = idleStyle; base.classList.remove("sel"); base._idleStyle = idleStyle; }
         base.classList.add("port-idle");
         return;
     }
@@ -283,8 +308,11 @@ function placePortDots(links) {
         if (!l.port) continue;
         push(l.portKind === "watch" ? srcWatch : srcOut, l.aId, l);   // leaving end -> source family
     }
+    // a data source's idle out-dot sits on the negotiated face (left only when `outSide` flipped);
+    // triggers keep the CSS default (right fires-port, left watch-port).
     for (const [id, node] of nodeEls) {
-        placeSrcDots(node, srcOut.get(id), ".port.out:not(.port-extra)", ".port.out.port-extra", "port-extra", node._outSpec);
+        const outIdle = (outSide === "L" && PORT_OUT_SRC.some((p) => id.startsWith(p))) ? "left:-4px;right:auto" : "";
+        placeSrcDots(node, srcOut.get(id), ".port.out:not(.port-extra)", ".port.out.port-extra", "port-extra", node._outSpec, outIdle);
         placeSrcDots(node, srcWatch.get(id), ".port.pwatch:not(.pw-extra)", ".port.pwatch.pw-extra", "pw-extra", node._watchSpec);
     }
 }
@@ -526,21 +554,30 @@ function runRouting() {
         // router's member-bounds guess) so the heading soft/hard rect lands exactly on the banner.
         const boxOf = new Map(groups.groupBoxes().map((b) => [b.id, b]));
         const grps = groups.allGroups().map((g) => { const b = boxOf.get(g.id); return { members: [...g.members], box: b ? b.box : null, bandH: b ? b.bandH : 0 }; });
-        const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, pinSrc: l.port ? (l.portKind === "watch" ? "L" : "R") : null,
+        const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, pinSrc: l.port ? sideForPort(l) : null,
             // watch ends in a diamond sunk slightly into the watched node; trigger ends in a hollow ring
             // pulled back by its radius (3px) so the ring centres ON the fired node's edge.
             insetEnd: l.portKind === "watch" ? 3 : (/\btrigger\b/.test(l.cls) ? 3 : 0) }));
-        // every node that renders an out-port parks it on its RIGHT face; the router keeps arriving
-        // lines off that dot when it's idle (`reserveMid`). Trigger fires-port lives on the right too.
+        // every data source parks its out-port on the negotiated shared face (`outSide`); the router
+        // keeps arriving lines off that dot when it's idle (`reserveMid`). Trigger fires-port is fixed R.
         const outPorts = new Map();
-        for (const n of nodes) if (PORT_OUT_SRC.some((p) => n.id.startsWith(p)) || n.id.startsWith("trigger:")) outPorts.set(n.id, "R");
+        for (const n of nodes) {
+            if (PORT_OUT_SRC.some((p) => n.id.startsWith(p))) outPorts.set(n.id, outSide);   // negotiated shared face
+            else if (n.id.startsWith("trigger:")) outPorts.set(n.id, "R");                    // fires-port fixed (watch owns L)
+        }
         const prevSides = new Map();
         for (const [k, c] of routeCache) if (c.d1) prevSides.set(k, { d1: c.d1, d2: c.d2 });
         // subgroup + super-group TITLE bands as extra avoid rects: subgroup band sits at the TOP of
         // its box (height bandH), super-group label band at the BOTTOM (SUPER_LABEL_BAND tall).
         const titleBands = [];
         for (const b of groups.subGroupBoxes()) if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.w, y1: b.box.y + b.bandH });
-        for (const b of groups.superGroupBoxes()) if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
+        // super-group: avoid only the watermark TEXT, not the whole bottom band — most of the band
+        // is empty canvas the lines should be free to cross.
+        for (const b of groups.superGroupBoxes()) {
+            const r = b.labelRect;
+            if (r) titleBands.push({ x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h });
+            else if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
+        }
         const _t0 = performance.now();
         const res = routeGraph(nodes, grps, edges, { prevSides, outPorts, titleBands, config: { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell } });
         recordRouteMs(performance.now() - _t0);   // feeds the adaptive drag frame-skip

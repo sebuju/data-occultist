@@ -626,10 +626,19 @@ function superMemberNodeIds(sg) {
     for (const gid of sg.groups) { const g = byId(gid); if (g) ids.push(...g.members); }
     return ids;
 }
-// world boxes for external renderers (node map, canvas dblclick hit-test)
+// world boxes for external renderers (node map, canvas dblclick hit-test). `labelRect` is the
+// rendered watermark label's world box (text only, not the full bottom band) so lines route
+// around just the visible text — null until the label el has measured.
 export function superGroupBoxes() {
-    return superGroups.map((sg) => ({ id: sg.id, title: sg.title, outline: { ...sg.outline }, bg: sg.bg, bandH: SUPER_LABEL_BAND, box: superBox(sg) }))
-        .filter((x) => x.box);
+    const layer = ctx.superWorld && ctx.superWorld();
+    return superGroups.map((sg) => {
+        const box = superBox(sg);
+        if (!box) return null;
+        let labelRect = null;
+        const lab = layer && layer.querySelector(`.sgroup[data-sgid="${sg.id}"] .sgroup-label`);
+        if (lab && lab.offsetWidth) labelRect = { x: box.x + lab.offsetLeft, y: box.y + lab.offsetTop, w: lab.offsetWidth, h: lab.offsetHeight };
+        return { id: sg.id, title: sg.title, outline: { ...sg.outline }, bg: sg.bg, bandH: SUPER_LABEL_BAND, box, labelRect };
+    }).filter(Boolean);
 }
 
 // ---- rendering ------------------------------------------------------------
