@@ -63,7 +63,23 @@ class DetectClassifier(WindowClassifier):
                 return state.id
         return None
 
+    @staticmethod
+    def _text_detect_boxes(profile: GameProfile, frame: Frame):
+        """Every enabled TEXT window-detector's search box (pixels) — what classify recognises
+        for every window. State detectors are left out (read only for the window that wins)."""
+        boxes = []
+        for w in profile.windows:
+            for d in w.detect:
+                if d.enabled and d.text and not d.template:
+                    boxes.append(d.search.to_fraction().to_pixels(frame.client.w, frame.client.h))
+        return boxes
+
     def classify(self, frame: Frame, profile: GameProfile) -> tuple[str, str | None] | None:
+        # On GPU, recognise every window's title box in ONE batched pass up front (prewarm
+        # no-ops on CPU / stub matcher / no frame) — turns N tiny launch-bound reads into one.
+        prewarm = getattr(self._matcher, "prewarm", None)
+        if frame is not None and prewarm is not None:
+            prewarm(frame, self._text_detect_boxes(profile, frame))
         candidates = [w for w in profile.windows if self._window_matches(w, frame)]
         if not candidates:
             return None

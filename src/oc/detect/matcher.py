@@ -158,6 +158,35 @@ class DetectMatcher:
         self._memo: dict[tuple[int, int, int, int], tuple[str, float]] = {}
         self._memo_frame: Frame | None = None
 
+    def prewarm(self, frame: Frame, boxes) -> None:
+        """Fill the per-frame OCR memo for many landmark boxes in ONE batched recognition
+        pass (``read_lines``), instead of a ``read_line`` per box as ``classify`` walks the
+        windows' (differently-boxed) titles.
+
+        GPU ONLY: on GPU each tiny sequential read pays a fixed launch/sync cost, so batching
+        N reads into one launch is a large win. On CPU it LOSES — it defeats the per-detector
+        short-circuit and RapidOCR pads every crop to the batch's max width (the title crops are
+        wide at 4K), so the eager batch did MORE work than the sequential rec-only reads (measured
+        ~80ms -> ~170ms). So it no-ops unless the engine is actively on GPU."""
+        if not getattr(self._ocr, "gpu_active", False):
+            return
+        if frame is not self._memo_frame:
+            self._memo = {}
+            self._memo_frame = frame
+        keys, crops = [], []
+        for box in boxes:
+            key = (box.x, box.y, box.w, box.h)
+            if key in self._memo:
+                continue
+            crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
+            self._memo[key] = ("", 0.0)   # reserve (dedups within this batch; filled below)
+            if crop.size:
+                keys.append(key)
+                crops.append(crop)
+        if crops:
+            for key, res in zip(keys, self._ocr.read_lines(crops)):
+                self._memo[key] = res
+
     def _read_text_box(self, frame: Frame, box) -> tuple[str, float]:
         """Recognition-only read of one landmark box, memoised per frame. ``read_line``
         skips text DETECTION (the dominant OCR cost) — a detect box bounds one label, so
