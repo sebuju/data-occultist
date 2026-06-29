@@ -25,6 +25,7 @@ import json
 import os
 import re
 import stat
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -182,6 +183,7 @@ def write_dictionary(profiles_dir: Path | str, source: str, terms: list[str]) ->
     if path.exists() and path.read_text(encoding="utf-8") == text:
         return
     _atomic_write_text(path, text)
+    clear_profile_cache()   # terms are resolved INTO profiles -> the YAML-mtime cache can't see this
 
 
 def list_dictionaries(profiles_dir: Path | str) -> list[dict]:
@@ -211,14 +213,46 @@ def _resolve_dictionaries(profiles_dir: Path | str, profile: GameProfile) -> Non
         # else: keep inline terms (migration completes on next save)
 
 
+# Parse cache: profiles are loaded fresh on MANY requests (clear, item read, price, …), each a
+# disk read + YAML parse + model validation. Cache the parsed profile keyed by the file's
+# (mtime_ns, size) — a cache hit happens ONLY when the file is byte-for-byte the same, so ANY
+# write (our atomic os.replace, or an external edit) changes the signature and busts it on the
+# very next load. No time-based staleness window. A cached profile is stored PRISTINE and every
+# caller gets a deep copy, because consumers (apply_overrides, merge_profiles) mutate in place.
+_profile_cache: dict[str, tuple[tuple[int, int], GameProfile]] = {}
+_profile_cache_lock = threading.Lock()
+
+
+def clear_profile_cache() -> None:
+    """Drop the whole parse cache. Called when something changes a profile's INPUTS without
+    touching its own YAML mtime — e.g. a dictionary file is rewritten (its terms are resolved
+    INTO the profile), which the YAML signature alone can't see."""
+    with _profile_cache_lock:
+        _profile_cache.clear()
+
+
 def load_profile(profiles_dir: Path | str, name: str) -> GameProfile:
     path = profile_path(profiles_dir, name)
+    key = str(path)
+    try:
+        st = path.stat()
+        sig: tuple[int, int] | None = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        sig = None
+    if sig is not None:
+        with _profile_cache_lock:
+            hit = _profile_cache.get(key)
+        if hit is not None and hit[0] == sig:
+            return hit[1].model_copy(deep=True)   # pristine cached -> own copy (callers mutate)
     raw = yaml.safe_load(_read_text_retry(path))
     if isinstance(raw, dict):
         raw = _migrate_detect_thresholds(_migrate_keys(raw))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
-    return profile
+    if sig is not None:
+        with _profile_cache_lock:
+            _profile_cache[key] = (sig, profile)
+    return profile.model_copy(deep=True)
 
 
 def _profile_yaml(profile: GameProfile) -> str:
