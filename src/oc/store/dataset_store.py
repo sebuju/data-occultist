@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -216,11 +217,23 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    # busy_timeout FIRST so later statements WAIT on a lock instead of failing instantly. Then set
+    # WAL + schema, retrying the whole setup on a transient "database is locked": switching journal
+    # mode / first-time WAL file creation needs a brief exclusive lock that busy_timeout doesn't
+    # cover, so a connection opened WHILE another writes (a background source read, a sweep) can
+    # otherwise die on contention. A few short backoffs ride it out.
     conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.executescript(_SCHEMA)
-    return conn
+    for delay in (0.05, 0.1, 0.2, 0.4, 0.0):   # last attempt re-raises
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.executescript(_SCHEMA)
+            return conn
+        except sqlite3.OperationalError as e:
+            if not delay or "locked" not in str(e).lower():
+                raise
+            time.sleep(delay)
+    return conn   # unreachable (loop returns or raises)
 
 
 def _db_path(data_dir: Path | str, game: str) -> Path:
@@ -564,16 +577,17 @@ class DatasetStore:
 
     # ---- mutation ----------------------------------------------------------
 
-    def record_seen(self, values: dict) -> ChangeEvent | None:
-        """Register a confirmed record. A NEW key starts an observation list; an existing
-        key APPENDS a fresh observation when the merged record differs from its latest
-        (so the key accumulates a history). Returns the event, or ``None`` when the read is
-        identical to the current latest (nothing to track)."""
+    def _plan_observation(self, values: dict):
+        """Decide what observation ``values`` produces against the CURRENT ledger state, doing
+        the dedup/merge/changed reads but WITHOUT writing. Returns
+        ``(op, event_key, stored_values, changed, per_event_key, announce_values)`` or ``None``
+        when the read is identical to the latest (nothing to track). The single source of the
+        "what does this record do" decision, shared by :meth:`record_seen` (one txn each) and
+        :meth:`record_many` (one txn for the whole batch) so the two can never drift."""
         if self._no_dedup:
             # 1->many OFF: every read is its own record (keyed per event), never merged.
-            ev = self._commit_observation(ChangeOp.add, "", dict(values), per_event_key=True)
-            self._announce([dict(values)])
-            return ev
+            v = dict(values)
+            return (ChangeOp.add, "", v, None, True, v)
         key = self._key.build(values)
         if key is None:
             return None
@@ -586,9 +600,8 @@ class DatasetStore:
             "SELECT values_json FROM events WHERE dataset=? AND key=? AND reverted=0 AND op!='remove' "
             "ORDER BY id DESC LIMIT 1", (self._dataset, key)).fetchone()
         if obs is None:
-            ev = self._commit_observation(ChangeOp.add, key, dict(values))
-            self._announce([dict(values)])
-            return ev
+            v = dict(values)
+            return (ChangeOp.add, key, v, None, False, v)
         latest = json.loads(obs["values_json"])
         merged = {**latest, **values}
         changed = {f: [latest.get(f), merged.get(f)] for f in merged if latest.get(f) != merged.get(f)}
@@ -596,12 +609,72 @@ class DatasetStore:
         if not changed and not was_absent:
             return None                            # identical to latest → nothing to add
         op = ChangeOp.add if was_absent else ChangeOp.update
+        return (op, key, dict(merged), changed, False, dict(merged))
+
+    def record_seen(self, values: dict) -> ChangeEvent | None:
+        """Register a confirmed record. A NEW key starts an observation list; an existing
+        key APPENDS a fresh observation when the merged record differs from its latest
+        (so the key accumulates a history). Returns the event, or ``None`` when the read is
+        identical to the current latest (nothing to track)."""
+        plan = self._plan_observation(values)
+        if plan is None:
+            return None
+        op, event_key, vals, changed, per_event, announce = plan
         # Fold this observation in atomically — the per-record write stays O(1) and, because the
         # rev bump + cur_rev stamp commit together, a concurrent read never catches a rev>cur_rev
         # gap and triggers a full O(events) rebuild.
-        ev = self._commit_observation(op, key, dict(merged), changed)
-        self._announce([dict(merged)])
+        ev = self._commit_observation(op, event_key, vals, changed, per_event_key=per_event)
+        self._announce([announce])
         return ev
+
+    def record_many(self, rows: list[dict]) -> list[ChangeEvent | None]:
+        """Bulk-register confirmed records in ONE transaction with ONE change-bus announce.
+
+        A file source can match tens of thousands of lines; routing each through
+        :meth:`record_seen` means a separate fsync COMMIT **and** a separate change-bus publish
+        per row. That publish flood is the real killer: each one schedules a callback onto the
+        web app's single asyncio loop (the SSE push), so 80k rows starve the loop and every HTTP
+        endpoint stops responding — exactly the "no response after reading the log" wedge. This
+        folds the whole read into one atomic batch: the SAME per-row dedup/merge decision (via
+        :meth:`_plan_observation`, so behaviour can't drift from ``record_seen``), one COMMIT, and
+        one announce carrying every changed row. Within the single open transaction each insert is
+        visible to the next row's plan, so keys that repeat across the batch dedup correctly.
+
+        Returns a list aligned 1:1 with ``rows`` (``None`` for a row that changed nothing), so a
+        caller can map each input to its event (e.g. line-number positions)."""
+        rows = list(rows)
+        if not rows:
+            return []
+        self._ensure_current()   # current must be valid going in (cheap when already current)
+        c = self._conn
+        start_id = self._next_id
+        out: list[ChangeEvent | None] = []
+        announced: list[dict] = []
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            for values in rows:
+                plan = self._plan_observation(values)
+                if plan is None:
+                    out.append(None)
+                    continue
+                op, event_key, vals, changed, per_event, announce = plan
+                ev = self._insert_core(op, event_key, vals, changed)
+                # advance the in-memory cursor NOW (inside the txn) so the next insert gets a
+                # fresh id — _insert_core reads self._next_id but only the post-COMMIT path
+                # normally advances it.
+                self._next_id = ev.id + 1
+                self._current_upsert(f"#{ev.id}" if per_event else event_key, ev, vals)
+                out.append(ev)
+                announced.append(announce)
+            self._stamp_current()
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            self._next_id = start_id   # txn rolled back -> restore the cursor
+            raise
+        if announced:
+            self._announce(announced)
+        return out
 
     def present_keys(self) -> set[str]:
         """The keys currently present (``present=1``) — what a live mirror reconciles against."""

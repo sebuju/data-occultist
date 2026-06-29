@@ -47,14 +47,17 @@ def read_source(game: str, source, data_dir, *, profile=None, reader=None) -> in
     key = KeyMap(source.key.spec()) if getattr(source, "key", None) is not None else None
     store = store_for(data_dir, game, source.dataset, profile=profile, key=key)
     store.begin_batch()
-    positions: dict[str, tuple[float, float]] = {}
-    for lineno, rec in indexed:
-        ev = store.record_seen(rec)
+    # ONE bulk write (single txn + single change-bus announce) — a per-row record_seen would fire
+    # one fsync commit AND one SSE publish per matched line, starving the web app's event loop on a
+    # big log (tens of thousands of lines). record_many returns events aligned 1:1 with the input.
+    events = store.record_many([rec for _, rec in indexed])
+    if line_position:
         # set_positions wants {key: (xpos, vpos)} — single column (xpos 0) at row = line number.
-        if line_position and ev is not None and ev.key:
-            positions[ev.key] = (0.0, float(lineno))
-    if positions:
-        store.set_positions(positions)
+        positions = {ev.key: (0.0, float(lineno))
+                     for (lineno, _), ev in zip(indexed, events)
+                     if ev is not None and ev.key}
+        if positions:
+            store.set_positions(positions)
     return len(indexed)
 
 
