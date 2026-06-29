@@ -32,7 +32,16 @@ def thumb(image: np.ndarray, crop_px: int = 0) -> np.ndarray | None:
         return None
     if crop_px and image.shape[0] > crop_px:
         image = image[: image.shape[0] - crop_px]
-    gray = image.max(axis=2) if image.ndim == 3 else image
+    # A 48x48 perceptual diff doesn't need every one of a 4K frame's ~25M pixels, and the
+    # channel-max + area-resize over the full frame dominate a whole collection tick (~120ms
+    # at 4K). Stride-subsample to a coarse intermediate FIRST (short side ~4*THUMB), then do
+    # the max + resize on that tiny array — ~50x fewer elements touched. The channel-max is
+    # kept (not a single channel) so the signature's magnitude — and thus THUMB_TOL/MIN_CELLS
+    # — is unchanged; only the sampling grid differs, which a coarse diff is robust to.
+    h, w = image.shape[:2]
+    step = max(1, min(h, w) // (THUMB * 4))
+    small = image[::step, ::step]
+    gray = small.max(axis=2) if small.ndim == 3 else np.ascontiguousarray(small)
     return cv2.resize(gray, (THUMB, THUMB), interpolation=cv2.INTER_AREA)
 
 
