@@ -23,9 +23,12 @@ from ..eventlog import publish as _logev
 from ..store import DatasetStore, KeySpec, PriceStore, store_for
 from .wm_client import NET_ERRORS, fetch_items, fetch_orders, fetch_statistics, slugify
 
-# Persist progress every this many fetched items so a long sweep survives a crash
-# and the web page can read partial results mid-sweep.
-_SAVE_EVERY = 25
+# Persist progress at most this often (seconds) during a sweep so a long run survives a crash
+# and the web page can read partial results mid-sweep. TIME-based, not per-N-items: each save
+# re-serializes the WHOLE (shared, often multi-MB) price store and holds the GIL for the encode,
+# so a per-item cadence stalls the server's event loop on a big store. The in-sweep saves also
+# skip the summary-index rebuild (a full movers() scan) — it's rebuilt once on the final save.
+_SAVE_INTERVAL = 15.0
 
 # How many worker threads fetch concurrently. The serial loop wasted the whole network
 # round-trip per item; with a shared rate limiter the pool keeps several requests in flight
@@ -108,6 +111,7 @@ class PriceCollector:
         total = len(items)
         fetched = failed = done = 0
         t0 = time.monotonic()
+        last_save = t0
         store_lock = threading.Lock()
         limiter = _RateLimiter(self._throttle)
         stop = threading.Event()
@@ -157,9 +161,11 @@ class PriceCollector:
                         failed += 1
                     if on_item is not None:
                         on_item(done, total, slug, name, ok)
-                    if fetched and fetched % _SAVE_EVERY == 0:
+                    now = time.monotonic()
+                    if fetched and now - last_save >= _SAVE_INTERVAL:
+                        last_save = now
                         with store_lock:
-                            self._store.save()
+                            self._store.save(write_index=False)   # cheap mid-sweep checkpoint
                             if dataset_store is not None:
                                 dataset_store.save()
                     if should_stop is not None and should_stop():

@@ -107,7 +107,12 @@ class PriceStore:
             self._slugs = doc.get("slugs", {}) or {}
             self._misses = doc.get("misses", {}) or {}
 
-    def save(self) -> None:
+    def save(self, *, write_index: bool = True) -> None:
+        """Persist the store. ``write_index=False`` skips the summary sidecar rebuild
+        (:meth:`_write_index` runs :meth:`movers`, an O(all slugs x candles) scan) — used by the
+        in-sweep periodic saves, which fire repeatedly; the sidecar is rebuilt once on the final
+        save. Both the JSON encode here and that scan hold the GIL, so doing them on every
+        progress save stalls the server's event loop."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         doc = {"_meta": {"version": 1, "updated": _utcnow_iso()},
                "slugs": self._slugs, "misses": self._misses}
@@ -126,7 +131,8 @@ class PriceStore:
                     tmp.unlink(missing_ok=True)
                     raise
                 time.sleep(0.05)
-        self._write_index()
+        if write_index:
+            self._write_index()
 
     def _write_index(self) -> None:
         """Write the small summary sidecar (slug count + top movers). Best-effort — a
