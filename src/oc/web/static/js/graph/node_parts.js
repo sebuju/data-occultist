@@ -540,6 +540,15 @@ export function nodeParts(n) {
                 body: h("div", { class: "nodehost scrollhost sub-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
             };
         }
+        if (r.kind === "source") {
+            // a file source's parse preview (what the current rules would produce, without writing)
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} preview`),
+                body: frag(
+                    h("div", { class: "src-prev-info muted" }),
+                    h("div", { class: "nodehost scrollhost src-host" }, h("p", { class: "muted", style: "padding:8px" }, "edit the source or hit preview to parse"))),
+            };
+        }
         return {
             title: h("span", { class: "gi-id" }, `${r.ds} data`),
             head: slideToggle({ on: vtShowRemoved.get(r.ds) || false, cls: "vt-showrm", label: "removed", hidden: true, title: "show removed (no-longer-present) rows in the table + counts" }),
@@ -555,7 +564,7 @@ export function nodeParts(n) {
     }
     if (n.type === "subset") return subsetParts(n.ref);
     if (n.type === "producer") return producerParts(n.ref, model.producerSourceColumns(n.ref), model.producerJoinable(n.ref));
-    if (n.type === "filesource") return sourceParts(n.ref);
+    if (n.type === "filesource") return { ...sourceParts(n.ref), head: satToggleBtn(`vt:src:${n.ref.id}`, "vttable") };
     if (n.type === "trigger") return triggerParts(n.ref, model);
     if (n.type === "dictionary") {
         // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The

@@ -14,7 +14,7 @@ import threading
 from fastapi import APIRouter, Body, HTTPException
 
 from ...profile import list_profiles, load_profile
-from ...profile.models import FileSourceDef
+from ...profile.models import FileSourceDef, SourceField
 from ...registry import build_parser, parser_names
 from ...source.locate import expand, find_candidates, resolve_path
 from ...source.reader import default_reader
@@ -88,33 +88,48 @@ def peek(game: str, body: dict = Body(...)):
             "truncated": size > len(chunk), "line_ending": _line_ending(path)}
 
 
+def _source_of(body: dict) -> FileSourceDef:
+    """Validate a FileSourceDef-shaped body (the in-progress node config), or 422."""
+    try:
+        return FileSourceDef.model_validate(body)
+    except Exception as exc:   # noqa: BLE001 - surface a 422-ish reason to the editor
+        raise HTTPException(status_code=422, detail=f"bad source config: {exc}") from exc
+
+
+def _parser_of(source: FileSourceDef):
+    """Build the source's registered parser, or 400 on an unknown format."""
+    parser = build_parser(source.format) if source.format in parser_names() else None
+    if parser is None:
+        raise HTTPException(status_code=400, detail=f"unknown format {source.format!r}")
+    return parser
+
+
+def _source_text(source: FileSourceDef, body: dict):
+    """Resolve the source's text for preview/resolve: a pasted ``sample`` wins; else read the
+    located file whole. Returns ``(text, path, line_ending)`` with ``path=None`` and empty text
+    when no file resolves (and no sample was given)."""
+    sample = body.get("sample")
+    if sample:
+        return str(sample), None, ""
+    path = resolve_path(source)
+    if not path:
+        return "", None, ""
+    return default_reader().read(path, tail=False), path, _line_ending(path)
+
+
 @router.post("/{game}/preview")
 def preview(game: str, body: dict = Body(...)):
     """Parse the in-progress source config WITHOUT writing. ``body`` is a FileSourceDef shape;
     an optional ``sample`` string parses pasted text instead of reading the file. Returns the
     rows the rules produce, the detected line ending, and matched/total line counts."""
     _profile_or_404(game)
-    try:
-        source = FileSourceDef.model_validate(body)
-    except Exception as exc:   # noqa: BLE001 - surface a 422-ish reason to the editor
-        raise HTTPException(status_code=422, detail=f"bad source config: {exc}") from exc
+    source = _source_of(body)
+    parser = _parser_of(source)
 
-    parser = build_parser(source.format) if source.format in parser_names() else None
-    if parser is None:
-        raise HTTPException(status_code=400, detail=f"unknown format {source.format!r}")
-
-    sample = body.get("sample")
-    line_ending = ""
-    path = None
-    if sample:
-        text = str(sample)
-    else:
-        path = resolve_path(source)
-        if not path:
-            return {"rows": [], "matched": 0, "total": 0, "line_ending": "",
-                    "path": None, "note": "file not found"}
-        text = default_reader().read(path, tail=False)
-        line_ending = _line_ending(path)
+    text, path, line_ending = _source_text(source, body)
+    if path is None and not text:
+        return {"rows": [], "matched": 0, "total": 0, "line_ending": "",
+                "path": None, "note": "file not found"}
 
     total = 0
     if getattr(parser, "stream", False):
@@ -127,6 +142,41 @@ def preview(game: str, body: dict = Body(...)):
     rows = parser.parse(text, source.match, source.fields)
     return {"rows": rows[:_PREVIEW_ROWS], "matched": len(rows), "total": total,
             "line_ending": line_ending, "path": path}
+
+
+@router.post("/{game}/resolve")
+def resolve(game: str, body: dict = Body(...)):
+    """Inspect the file's own data and PROPOSE extraction columns (the node's "auto-resolve").
+    The parser walks its format's structure (json/yaml/ini/xml leaves, or a log line's whitespace
+    columns) and returns full :class:`SourceField` dicts — defaults filled, ids deduped — that the
+    UI drops straight onto the node. The user then renames/refines; nothing is written or guessed
+    into the dataset here."""
+    _profile_or_404(game)
+    source = _source_of(body)
+    parser = _parser_of(source)
+
+    text, path, _ = _source_text(source, body)
+    if path is None and not text:
+        return {"fields": [], "note": "file not found"}
+    if getattr(parser, "stream", False):           # only sniff the tail of a huge log
+        lines = text.splitlines()
+        if len(lines) > _PREVIEW_LINES:
+            text = "\n".join(lines[-_PREVIEW_LINES:])
+
+    fields: list[dict] = []
+    seen: set[str] = set()
+    for d in parser.suggest(text, source.match) or []:
+        fid = (str(d.get("id") or "").strip()) or "field"
+        base, n = fid, 1
+        while fid in seen:
+            n += 1
+            fid = f"{base}_{n}"
+        seen.add(fid)
+        try:
+            fields.append(SourceField(**{**d, "id": fid}).model_dump())
+        except Exception:   # noqa: BLE001 - a malformed suggestion is skipped, never fatal
+            continue
+    return {"fields": fields}
 
 
 # sources currently reading — so a second 'read now' (or a watcher tick) can't double-process the

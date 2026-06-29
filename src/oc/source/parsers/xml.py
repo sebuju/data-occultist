@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 
 from ...interfaces import SourceParser
 from ...registry import register_parser
-from ..extract import doc_record
+from ..extract import doc_record, path_fields
 
 
 def _xml_get(root, path: str):
@@ -40,3 +40,29 @@ class XmlParser(SourceParser):
         except ET.ParseError:
             return []
         return doc_record(lambda f: _xml_get(root, f.path), fields)
+
+    def suggest(self, text: str, match) -> list[dict]:
+        try:
+            root = ET.fromstring(text or "")
+        except ET.ParseError:
+            return []
+        pairs: list[tuple[str, object]] = []
+        seen: set[str] = set()
+
+        def walk(node, path: str) -> None:
+            if len(pairs) >= 60:
+                return
+            for name, val in node.attrib.items():
+                p = f"{path}/@{name}"
+                if p not in seen:
+                    seen.add(p)
+                    pairs.append((p, val))
+            kids = list(node)
+            if not kids and (node.text or "").strip() and path not in seen:
+                seen.add(path)
+                pairs.append((path, (node.text or "").strip()))
+            for k in kids:
+                walk(k, f"{path}/{k.tag}")
+
+        walk(root, root.tag)
+        return path_fields(pairs, sep="/")

@@ -514,6 +514,10 @@ export const sources = {
     preview: (game, body, signal) => tfetch(`/api/sources/${_pg(game)}/preview`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
     }, 15_000).then((r) => ok(r, "source preview").then((x) => x.json())),
+    // propose extraction fields by inspecting the file's data (the node's "auto-resolve")
+    resolve: (game, body, signal) => tfetch(`/api/sources/${_pg(game)}/resolve`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
+    }, 15_000).then((r) => ok(r, "resolve fields").then((x) => x.json())),
     find: (game, body, signal) => tfetch(`/api/sources/${_pg(game)}/find`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}), signal,
     }, 30_000).then((r) => ok(r, "find source").then((x) => x.json())),

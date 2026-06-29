@@ -10,7 +10,17 @@ import configparser
 
 from ...interfaces import SourceParser
 from ...registry import register_parser
-from ..extract import doc_record
+from ..extract import doc_record, path_fields
+
+
+def _parse_ini(text: str):
+    cp = configparser.ConfigParser(strict=False, interpolation=None)
+    cp.optionxform = str   # preserve key case (default lowercases)
+    try:
+        cp.read_string(text or "")
+    except configparser.Error:
+        return None
+    return cp
 
 
 @register_parser("ini")
@@ -18,11 +28,8 @@ class IniParser(SourceParser):
     stream = False
 
     def parse(self, text: str, match, fields) -> list[dict]:
-        cp = configparser.ConfigParser(strict=False, interpolation=None)
-        cp.optionxform = str   # preserve key case (default lowercases)
-        try:
-            cp.read_string(text or "")
-        except configparser.Error:
+        cp = _parse_ini(text)
+        if cp is None:
             return []
 
         def get(field):
@@ -35,3 +42,12 @@ class IniParser(SourceParser):
                 return None
 
         return doc_record(get, fields)
+
+    def suggest(self, text: str, match) -> list[dict]:
+        cp = _parse_ini(text)
+        if cp is None:
+            return []
+        # one path-field per Section.Key (the form parse() reads back); value drives text/number
+        pairs = [(f"{section}.{key}", val) for section in cp.sections()
+                 for key, val in cp.items(section)]
+        return path_fields(pairs)

@@ -212,6 +212,14 @@ class SourceParser(ABC):
         file-source feeds line numbers as the dataset position."""
         return list(enumerate(self.parse(text, match, fields), start=1))
 
+    def suggest(self, text: str, match) -> list[dict]:
+        """Propose extraction columns by inspecting the file's own data — the UI's "auto-resolve"
+        offers them as a starting point the user then refines. Each entry is a partial
+        :class:`oc.profile.models.SourceField` kwargs dict (``{"id", "method", ...}``); the caller
+        wraps it into a full field (filling defaults + deduping ids). The base default proposes
+        nothing — a parser that can read structure out of its format overrides this."""
+        return []
+
 
 class WindowClassifier(ABC):
     """Decide which profile-defined window (and state) a frame shows.

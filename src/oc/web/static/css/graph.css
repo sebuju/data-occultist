@@ -568,8 +568,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .src-f .src-fpath { grid-column: 2 / 5; }               /* document path spans method + both input cols */
 .src-f .src-rmf { justify-self: end; }
 .src-fields > .src-addf { grid-column: 1 / -1; justify-self: start; }
-/* read/preview progress sits BELOW the foot buttons (mirrors the producer node's enr-prog) */
-.src-prog { margin-top: 6px; font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .src-cs { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; opacity: 0.8; }
 .src-chk { display: inline-flex; align-items: center; }
 .src-addm, .src-addf { align-self: flex-start; }
@@ -593,8 +591,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .find-vpath { flex: 1; font-size: 11px; word-break: break-all; color: var(--muted); }
 .find-use { white-space: nowrap; background: var(--accent); color: var(--bg); border: none; border-radius: 5px; padding: 3px 10px; cursor: pointer; }
 .find-pre { flex: 1; margin: 0; overflow: auto; padding: 8px; font-size: 11px; white-space: pre; }
-.src-prev-info { margin-top: 6px; font-size: 11px; }
-.src-preview { max-height: 200px; overflow: auto; margin-top: 2px; }
+/* parse-preview now lives in the source's data-table satellite (vt:src:<id>): count line + table */
+.src-prev-info { margin: 6px 8px 2px; font-size: 11px; }
 .src-ptab { border-collapse: collapse; font-size: 11px; width: 100%; }
 .src-ptab th, .src-ptab td { border: 1px solid var(--border); padding: 1px 5px; text-align: left;
     max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

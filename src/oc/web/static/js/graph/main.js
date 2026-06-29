@@ -1410,28 +1410,13 @@ function wireTrigger(div, n) {
 function wireSource(div, n) {
     const s = n.ref;
     const $ = (sel) => div.querySelector(sel);
-    const prog = $(".src-prog");
 
-    // Live preview: parse the CURRENT rules without writing. Edit-driven and debounced — NEVER a
-    // poll/timer (so it can't violate the steady-state-zero-DOM rule); the only redraws are user edits.
-    let pvTimer = null, pvCtl = null;
-    const schedulePreview = () => { clearTimeout(pvTimer); pvTimer = setTimeout(runPreview, 300); };
-    async function runPreview() {
-        if (!document.contains(div) || !model.profile.name) return;
-        pvCtl?.abort(); pvCtl = new AbortController();
-        const info = $(".src-prev-info"), host = $(".src-preview");
-        try {
-            const r = await api.sources.preview(model.profile.name, s, pvCtl.signal);
-            renderPreview(host, r.rows || []);
-            const le = r.line_ending ? ` · ${r.line_ending}` : "";
-            info.textContent = (r.path === null && !(r.rows || []).length)
-                ? (r.note || "file not found") : `${r.matched} row(s) · ${r.total} line(s)${le}`;
-        } catch (e) {
-            if (e.name === "AbortError") return;
-            info.textContent = String(e.message || e);
-        }
-    }
-    queueMicrotask(runPreview);   // initial preview on mount
+    // The parse preview now lives in the source's opt-in data-table satellite (vt:src:<id>), not the
+    // node body — edits refresh it through refreshSourcePreview (a no-op when the satellite is hidden,
+    // so a closed table costs nothing). Edit-driven + debounced — NEVER a poll/timer (steady-state-
+    // zero-DOM rule); the only redraws are user edits. The satellite's own build kicks the first read.
+    let pvTimer = null;
+    const schedulePreview = () => { clearTimeout(pvTimer); pvTimer = setTimeout(() => refreshSourcePreview(s.id), 300); };
 
     $(".srcrename")?.addEventListener("change", (e) => {
         const oldId = s.id;
@@ -1473,24 +1458,72 @@ function wireSource(div, n) {
     // auto-find the file across generic OS locations — opens a modal that runs the search,
     // lists hits, previews a clicked file's contents, and pins the chosen one as the path.
     $(".src-find")?.addEventListener("click", () => openFindModal($, s, schedulePreview));
-    // read the file now (writes to the dataset). The button doubles as cancel: while a read is in
-    // flight it carries `.reading` (CSS appends a spinner) and a second click aborts the request.
-    // The read runs in the BACKGROUND server-side (a big log can take many seconds) — the request
-    // returns at once and the rows stream into the dataset live via the change bus, so there's
-    // nothing to spin on or cancel here. Just kick it and report that it started.
+    // read the file now (writes to the dataset). The read runs in the BACKGROUND server-side (a big
+    // log can take many seconds) — the request returns at once and the rows stream into the dataset
+    // live via the change bus, so there's nothing to spin on or cancel here. Progress goes to the
+    // log bar (the node carries no progress strip anymore), so it reads alongside every other event.
     $(".src-read")?.addEventListener("click", async (e) => {
         const btn = e.currentTarget;
         btn.disabled = true;
         try {
             const r = await api.sources.read(model.profile.name, s.id);
-            prog.textContent = r.busy ? "already reading…" : `reading ${s.dataset || "(no dataset)"} — rows fill in live`;
+            log(r.busy ? `${s.id}: already reading…`
+                : `${s.id}: reading → ${s.dataset || "(no dataset)"}, rows fill in live`, r.busy ? "warn" : "run");
         } catch (err) {
-            prog.textContent = String(err.message || err);
+            log(`${s.id}: ${err.message || err}`, "err");
         } finally {
             btn.disabled = false;
         }
     });
-    $(".src-prevbtn")?.addEventListener("click", runPreview);
+    // "preview" reveals the data-table satellite (and refreshes it if it's already shown)
+    $(".src-prevbtn")?.addEventListener("click", () => { showSatellite(`vt:src:${s.id}`); refreshSourcePreview(s.id); });
+    // "auto-resolve" inspects the file's data and proposes extraction columns the user then refines
+    $(".src-resolve")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        const done = timed(`${s.id}: auto-resolve`);
+        try {
+            const r = await api.sources.resolve(model.profile.name, s);
+            const fields = r.fields || [];
+            const added = model.mergeSourceFields(s.id, fields);   // append-only: never drops existing fields
+            if (!added) { done(`(${fields.length ? "nothing new" : (r.note || "no columns found")})`, "warn"); return; }
+            rebuildNode(n.id); autosave(null);
+            done(`(+${added} field${added === 1 ? "" : "s"})`, "ok");
+            showSatellite(`vt:src:${s.id}`); refreshSourcePreview(s.id);
+        } catch (err) {
+            done(String(err.message || err), "err");
+        } finally {
+            btn.disabled = false;
+        }
+    });
+}
+
+// Refresh a file source's parse-preview satellite (vt:src:<id>): re-run the live preview and render
+// its rows + count line into the satellite. A no-op when the satellite is hidden (no node to fill).
+// singleFlight per source so a burst of edits coalesces and the LATEST request wins (never dropped).
+function refreshSourcePreview(id) { singleFlight(`srcpv:${id}`, () => _refreshSourcePreview(id)); }
+async function _refreshSourcePreview(id) {
+    const vtId = `vt:src:${id}`;
+    const node = nodeEls.get(vtId);
+    if (!node || !model.profile.name) return;   // satellite not shown -> nothing to render
+    const host = node.querySelector(".src-host");
+    const info = node.querySelector(".src-prev-info");
+    const s = model.fileSource(id);
+    if (!s || !host) return;
+    setNodeBusy(vtId, true);
+    try {
+        const r = await api.sources.preview(model.profile.name, s);
+        renderPreview(host, r.rows || []);
+        if (!(r.rows || []).length) host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, r.note || "no rows"));
+        const le = r.line_ending ? ` · ${r.line_ending}` : "";
+        if (info) info.textContent = (r.path === null && !(r.rows || []).length)
+            ? (r.note || "file not found") : `${r.matched} row(s) · ${r.total} line(s)${le}`;
+    } catch (e) {
+        if (info) info.textContent = String(e.message || e);
+        host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, String(e.message || e)));
+    } finally {
+        setNodeBusy(vtId, false);
+    }
 }
 
 // Auto-find picker (modal): runs the search, lists hits on the left, previews a clicked file's
@@ -2260,7 +2293,9 @@ function wireNode(div, n) {
         // dataset variant carries the data + batches hosts AND the data|batches selector (the tabs
         // live ABOVE the table here, not on the dataset node).
         const r = n.ref;
-        if (r.kind === "subset") {
+        if (r.kind === "source") {
+            queueMicrotask(() => refreshSourcePreview(r.id));   // parse the source's current rules into the table
+        } else if (r.kind === "subset") {
             const pre = _bootDetails?.subsets?.[r.id] || null;
             queueMicrotask(() => refreshSubsetNode(r.id, pre));
         } else {

@@ -105,12 +105,10 @@ export function sourceParts(s) {
             h("select", { class: "src-watch" }, watchOpts),
             throttle, tail, linePos, matchBlock, fields),
         h("div", { class: "src-found muted" }),
-        h("div", { class: "src-prev-info muted" }),
-        h("div", { class: "src-preview" }),
         h("div", { class: "gn-foot" },
             h("button", { class: "src-read", title: "read the file now and write rows to the dataset (runs in the background; rows fill in live)" }, "read now"),
-            h("button", { class: "src-prevbtn", title: "preview what the current rules produce (without writing)" }, "preview")),
-        h("div", { class: "src-prog muted" }));   // progress sits BELOW the buttons (matches the producer node)
+            h("button", { class: "src-prevbtn", title: "show the data-table satellite — preview what the current rules produce (without writing)" }, "preview"),
+            h("button", { class: "src-resolve", title: "inspect the file and propose extraction columns from its data" }, "auto-resolve")));
 
     return {
         title: h("input", { class: "gi gi-id srcrename", value: s.id, title: "rename source" }),

@@ -1666,8 +1666,8 @@ layout:
     src:source:
       x: 500.0
       y: -1120.0
-      w: 640.0
-      h: 840.0
+      w: 700.0
+      h: 780.0
       collapsed: false
     vt:sub:relic_rewards_price_from_stored:
       x: 2280.0
@@ -2347,13 +2347,14 @@ layout:
   satellites:
   - prev:relic_select
   - vt:sub:relic_rewards_price_from_stored
+  - vt:sub:live_prices_joined
   - vt:sub:statistic_prices_joined
   - vt:sub:relics_with_content_view
   - prev:relic_refinement
   - vt:sub:contents_with_price
   - vt:ds:relics_offered
-  - vt:sub:live_prices_joined
   - vt:ds:ee_log
+  - vt:ds:ee_log_
   sub_groups:
   - id: subgroup_5
     parent: group_22

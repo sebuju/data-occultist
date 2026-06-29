@@ -171,3 +171,45 @@ def doc_record(get, fields) -> list[dict]:
             continue
         rec[f.id] = finalize(v, f)
     return [rec] if rec else []
+
+
+# ---- field auto-resolve (suggest columns from the data) --------------------
+
+def _id_from_path(path: str, sep: str) -> str:
+    """A friendly column id from a path's LAST segment (``a.b.count`` -> ``count``)."""
+    seg = (path or "").rstrip(sep).rsplit(sep, 1)[-1].lstrip("@")
+    return seg or "value"
+
+
+def leaf_paths(data, *, limit: int = 60) -> list[tuple[str, object]]:
+    """Enumerate scalar leaves of nested dict/list data as ``(dotted_path, value)``, depth-first.
+    A numeric segment is a list index (``items.0.name``) — the same path form :func:`dig` reads."""
+    out: list[tuple[str, object]] = []
+
+    def walk(node, prefix: str) -> None:
+        if len(out) >= limit:
+            return
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, f"{prefix}.{k}" if prefix else str(k))
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                walk(v, f"{prefix}.{i}" if prefix else str(i))
+        elif node is not None and node != "":
+            out.append((prefix, node))
+
+    walk(data, "")
+    return out[:limit]
+
+
+def path_fields(pairs, *, sep: str = ".") -> list[dict]:
+    """Turn ``(path, value)`` pairs (from :func:`leaf_paths` or a parser's own walk) into partial
+    ``path``-method SourceField kwargs, typing a numeric value as ``number``."""
+    out: list[dict] = []
+    for path, value in pairs:
+        if not path:
+            continue
+        is_num = isinstance(value, (int, float)) and not isinstance(value, bool)
+        out.append({"id": _id_from_path(path, sep), "method": "path", "path": path,
+                    "type": "number" if is_num else "text"})
+    return out

@@ -183,7 +183,8 @@ export class GraphModel {
     // A satellite is a companion node bonded to a parent by a dotted "img" edge — it follows the
     // parent in/out of groups and is never grouped alone (like the window's preview). Two kinds:
     //   • preview  — id `prev:<winId>`        parent `win:<winId>`     (window's live-read node)
-    //   • vt-table — id `vt:ds:<ds>`/`vt:sub:<id>`  parent `ds:<ds>`/`sub:<id>`  (a node's records grid)
+    //   • vt-table — id `vt:ds:<ds>`/`vt:sub:<id>`/`vt:src:<id>`  parent `ds:<ds>`/`sub:<id>`/`src:<id>`
+    //                (a dataset/subset's records grid, or a file source's parse preview)
     // Visibility is opt-in (the user toggles each on) and rides the layout sidecar, never the yaml.
     satelliteOn(id) { return this.shownSatellites.has(id); }
     toggleSatellite(id) { const on = !this.shownSatellites.has(id); if (on) this.shownSatellites.add(id); else this.shownSatellites.delete(id); return on; }
@@ -224,7 +225,10 @@ export class GraphModel {
             if (this.satelliteOn(`vt:sub:${s.id}`)) ns.push({ id: `vt:sub:${s.id}`, type: "vttable", ref: { kind: "subset", id: s.id } });
         }
         for (const pn of this.profile.producers || []) ns.push({ id: `producer:${pn.id}`, type: "producer", ref: pn });
-        for (const s of this.profile.file_sources || []) ns.push({ id: `src:${s.id}`, type: "filesource", ref: s });
+        for (const s of this.profile.file_sources || []) {
+            ns.push({ id: `src:${s.id}`, type: "filesource", ref: s });
+            if (this.satelliteOn(`vt:src:${s.id}`)) ns.push({ id: `vt:src:${s.id}`, type: "vttable", ref: { kind: "source", id: s.id } });
+        }
         for (const t of this.profile.triggers || []) ns.push({ id: `trigger:${t.id}`, type: "trigger", ref: t });
         for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
         return ns;
@@ -289,6 +293,7 @@ export class GraphModel {
         // vt-table satellites: a dotted "img" edge from the dataset/subset to its records grid (opt-in)
         for (const ds of this.datasets()) if (this.satelliteOn(`vt:ds:${ds}`)) es.push({ from: `ds:${ds}`, to: `vt:ds:${ds}`, kind: "img" });
         for (const s of this.profile.subsets || []) if (this.satelliteOn(`vt:sub:${s.id}`)) es.push({ from: `sub:${s.id}`, to: `vt:sub:${s.id}`, kind: "img" });
+        for (const s of this.profile.file_sources || []) if (this.satelliteOn(`vt:src:${s.id}`)) es.push({ from: `src:${s.id}`, to: `vt:src:${s.id}`, kind: "img" });
         return es;
     }
 
@@ -478,6 +483,30 @@ export class GraphModel {
             delim: " ", index: 0, path: "", type: "text", strip: true });
     }
     removeSourceField(id, i) { const s = this.fileSource(id); if (s && s.fields) s.fields.splice(i, 1); }
+    // Merge auto-resolved fields into a source, NEVER removing existing ones. Skip a suggestion whose
+    // extraction already exists (same path, or same column delim+index) so re-running doesn't pile up
+    // dupes; append the rest, suffixing any id that collides with an existing field. Returns the count
+    // actually added.
+    mergeSourceFields(id, fields) {
+        const s = this.fileSource(id);
+        if (!s || !Array.isArray(fields)) return 0;
+        s.fields = s.fields || [];
+        const sig = (f) => f.method === "path" ? `path:${f.path || ""}`
+            : f.method === "column" ? `col:${f.delim ?? " "}:${f.index ?? 0}`
+                : `${f.method}:${f.anchor || ""}:${f.end || ""}:${f.stop || ""}`;
+        const haveSig = new Set(s.fields.map(sig));
+        const haveId = new Set(s.fields.map((f) => f.id));
+        let added = 0;
+        for (const f of fields) {
+            if (haveSig.has(sig(f))) continue;   // same column already extracted -> skip
+            let fid = f.id || "field"; const base = fid; let n = 1;
+            while (haveId.has(fid)) fid = `${base}_${++n}`;
+            haveId.add(fid); haveSig.add(sig(f));
+            s.fields.push({ ...f, id: fid });
+            added++;
+        }
+        return added;
+    }
     setSourceFieldProp(id, i, key, val) {
         const s = this.fileSource(id); const f = s && s.fields && s.fields[i]; if (!f) return;
         if (key === "index") { const v = parseInt(val, 10); f.index = Number.isNaN(v) ? 0 : v; }

@@ -65,7 +65,7 @@ export function forgetNodeState(id) {
     const tables = model.profile.layout?.tables;
     if (tables) { delete tables[id]; if (p[0] === "ds") delete tables[`bat:${p[1]}`]; }
     // a node's satellite (preview / vt-table) dies with it — forget its visibility + slot too
-    const sat = (p[0] === "ds" || p[0] === "sub") ? `vt:${id}` : p[0] === "win" ? `prev:${p[1]}` : null;
+    const sat = (p[0] === "ds" || p[0] === "sub" || p[0] === "src") ? `vt:${id}` : p[0] === "win" ? `prev:${p[1]}` : null;
     if (sat) { model.shownSatellites.delete(sat); pos.delete(sat); nodeSizes.delete(sat); collapsed.delete(sat); }
     groups.forgetNodes(new Set(sat ? [id, sat] : [id]));
 }

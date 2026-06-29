@@ -7,7 +7,7 @@ import yaml
 
 from ...interfaces import SourceParser
 from ...registry import register_parser
-from ..extract import dig, doc_record
+from ..extract import dig, doc_record, leaf_paths, path_fields
 
 
 @register_parser("yaml")
@@ -20,3 +20,10 @@ class YamlParser(SourceParser):
         except yaml.YAMLError:
             return []
         return doc_record(lambda f: dig(data, f.path), fields)
+
+    def suggest(self, text: str, match) -> list[dict]:
+        try:
+            data = yaml.safe_load(text or "")
+        except yaml.YAMLError:
+            return []
+        return path_fields(leaf_paths(data))
