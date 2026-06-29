@@ -20,8 +20,9 @@ const C = {
     clearance: 22,   // routing margin around each node => gutter width for waypoints
     bendCost: 70,    // penalty per 90-degree bend (vs 1 unit of length)
     groupCross: 240, // soft penalty per group box a segment passes through (not its own)
-    headCross: 9000, // soft penalty per group TITLE band crossed — far heavier than groupCross so
-                                      // wires detour around headings unless there's truly no alternative
+    headCross: 1e6,  // soft penalty per group TITLE band crossed — so heavy that ANY detour, however
+                                      // long, beats crossing; a band is crossed only when a node is truly
+                                      // boxed in (no path exists) and nothing else can route it
     headBand: 46,    // height (px) of a group's FULL colored title banner (CSS .ggroup-title:
                                       // padding 9*2 + ~24 line for --fs-xl 20px), added as its own soft rect so
                                       // wires bias off the whole banner — not just the text (0 disables)
@@ -127,9 +128,16 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     // soft[] holds avoid-with-penalty rects: one per group box, plus (when C.headBand>0) one per
     // group TITLE band — the top strip of its box — so wires stray off the heading. A group's OWN
     // lines are exempt from the BOX (own-group set below) but NOT from the heading: every line,
-    // internal or foreign, pays groupCross to cross any title band, so headings stay clear.
+    // internal or foreign, pays headCross to cross any title band, so headings stay clear.
+    //
+    // Bands are HIGH-COST SOFT, never HARD. A member node sits BELOW its group's full-width band, so
+    // hard-blocking the band would leave that node no escape: the router finds no path and drops to a
+    // straight degenerate fallback (see stage 2) that ignores every obstacle and slices clean through
+    // the banner. Heavy-soft instead makes the router detour around the heading whenever a path exists
+    // and cross it (cleanly routed, not a degenerate cut) only when a node is genuinely boxed in.
     const soft = [], softCost = [], groupOfNode = new Map();   // softCost[i] = penalty to cross soft[i]
-    const headRects = [];   // TEMP: title bands fed into HB below as HARD obstacles for observation
+    const bands = [];   // title-band rects {x,y,w,h} — passed to nudge as alley walls so the lane shift
+                        // can't push a wire (that A* routed AROUND a heading) back ACROSS it
     for (const grp of (groups || [])) {
         // Geometry: prefer the caller's REAL rendered box + title-band height (grp.box/grp.bandH);
         // the title banner occupies the top `bandH` of that box. Fall back to member bounds ± PADG
@@ -147,21 +155,17 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
         const gi = soft.length;
         for (const id of grp.members) if (byId.has(id)) groupOfNode.set(id, gi);
         soft.push({ x0: bx0, y0: by0, x1: bx1, y1: by1 }); softCost.push(C.groupCross);
-        if (C.headBand > 0 && band > 0) {
-            const hr = { x0: bx0, y0: by0, x1: bx1, y1: by0 + band };
-            soft.push(hr); softCost.push(C.headCross); headRects.push(hr);
-        }
+        if (C.headBand > 0 && band > 0) { soft.push({ x0: bx0, y0: by0, x1: bx1, y1: by0 + band }); softCost.push(C.headCross); bands.push({ x: bx0, y: by0, w: bx1 - bx0, h: band }); }
     }
     // extra title bands the caller computed itself (subgroup TOP bands, super-group BOTTOM label
-    // bands — each has its own position the box+bandH shorthand can't express). Same treatment as a
-    // group heading: a hard obstacle (via headRects→HB) AND a high-cost soft rect with waypoints.
-    for (const tb of (opts.titleBands || [])) { soft.push(tb); softCost.push(C.headCross); headRects.push(tb); }
-    // flat obstacle bounds = node rects + (TEMP) title bands, hard-blocked by every segHitsHard
-    // in the O(N^3) build (see edgeOpts). Built AFTER the group loop so heading rects can join.
-    const RN = rects.length + headRects.length;
+    // band — each has its own position the box+bandH shorthand can't express). Same heavy-soft
+    // treatment as a group heading (waypoints at the band corners let wires hug around it).
+    for (const tb of (opts.titleBands || [])) { soft.push(tb); softCost.push(C.headCross); bands.push({ x: tb.x0, y: tb.y0, w: tb.x1 - tb.x0, h: tb.y1 - tb.y0 }); }
+    // flat HARD obstacle bounds = node rects ONLY — title bands are soft (handled above), never hard,
+    // so no member node is ever boxed in by its own heading. Hard-blocked by every segHitsHard.
+    const RN = rects.length;
     const rx0 = new Float64Array(RN), ry0 = new Float64Array(RN), rx1 = new Float64Array(RN), ry1 = new Float64Array(RN);
     for (let i = 0; i < rects.length; i++) { const r = rects[i]; rx0[i] = r.x; ry0[i] = r.y; rx1[i] = r.x + r.w; ry1[i] = r.y + r.h; }
-    for (let k = 0; k < headRects.length; k++) { const r = headRects[k], i = rects.length + k; rx0[i] = r.x0; ry0[i] = r.y0; rx1[i] = r.x1; ry1[i] = r.y1; }
     const HB = { n: RN, x0: rx0, y0: ry0, x1: rx1, y1: ry1 };
 
     // stage 1: base waypoints = inflated node corners + group box corners; 1-bend adjacency
@@ -194,7 +198,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
 
     // stage 2: route each line; A* chooses the faces (super-source/sink over all 4)
     const lines = [];
-    for (const e of edges) { if (byId.has(e.from) && byId.has(e.to)) lines.push({ from: e.from, to: e.to, key: e.key, pinSrc: e.pinSrc || null, insetEnd: e.insetEnd || 0 }); }
+    for (const e of edges) { if (byId.has(e.from) && byId.has(e.to)) lines.push({ from: e.from, to: e.to, key: e.key, pinSrc: e.pinSrc || null, insetEnd: e.insetEnd || 0, tether: !!e.tether }); }
     for (const ln of lines) {
         const A = byId.get(ln.from), B = byId.get(ln.to), base0 = WP.length;
         const ppA = portPos.get(ln.from), ppB = portPos.get(ln.to), peA = portEdges.get(ln.from), peB = portEdges.get(ln.to);
@@ -234,7 +238,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     }
 
     // stage 3: nudging — split shared corridors into nested lanes, centred in their alley
-    nudge(lines, byId, rects, opts.outPorts || new Map());
+    nudge(lines, byId, rects, opts.outPorts || new Map(), bands);
 
     const out = new Map();
     for (const ln of lines) out.set(ln.key, { pts: ln.pts, p1: ln.pts[0].slice(), d1: ln.srcSide, p2: ln.pts[ln.pts.length - 1].slice(), d2: ln.dstSide });
@@ -246,7 +250,14 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
 // so a vertex = base + its V-offset + its H-offset and orthogonality is preserved). Port stubs are
 // segments too => connectors leaving one face fan out along it. Each lane band is shifted to stay
 // within the free alley bounded by neighbouring nodes, so no lane spills across a node edge.
-function nudge(lines, byId, rects, outPorts) {
+const MARG = 1;   // px of clearance baked onto every nudge alley wall (node + band) so lanes never sit flush
+const CORNER_CLEAR = 15;   // px a band/node eviction pushes a vertex PAST the edge: > the corner radius (14)
+                           // so the rounded bend at the evicted vertex can never arc back across the edge
+function nudge(lines, byId, rects, outPorts, bands) {
+    // alley walls = node rects PLUS title bands: a lane shift must not push a wire across a heading
+    // it was routed around. A band straddling the segment's coord gives no bound (already inside it,
+    // which A* avoids); a band to one side clamps that side, keeping the lane out of the band.
+    const walls = bands && bands.length ? rects.concat(bands) : rects;
     for (const ln of lines) { ln._V = ln.pts.map((p) => p.slice()); ln._dx = new Array(ln._V.length).fill(0); ln._dy = new Array(ln._V.length).fill(0); }
     const segs = [];
     for (const ln of lines) { const V = ln._V; for (let i = 0; i + 1 < V.length; i++) { const a = V[i], b = V[i + 1];
@@ -266,10 +277,17 @@ function nudge(lines, byId, rects, outPorts) {
         const minOff = (0 - (T - 1) / 2) * g, maxOff = ((T - 1) - (T - 1) / 2) * g;
         let lo = Infinity, hi = -Infinity; for (const s of arr) { lo = Math.min(lo, s.lo); hi = Math.max(hi, s.hi); }
         let lb = -Infinity, rb = Infinity;
-        for (const nd of rects) {
+        for (const nd of walls) {
             const ov = axis === "V" ? (nd.y < hi && nd.y + nd.h > lo) : (nd.x < hi && nd.x + nd.w > lo); if (!ov) continue;
-            const near0 = axis === "V" ? nd.x : nd.y, near1 = axis === "V" ? nd.x + nd.w : nd.y + nd.h;
-            if (near1 <= coord + 0.5) lb = Math.max(lb, near1); if (near0 >= coord - 0.5) rb = Math.min(rb, near0);
+            // +MARG inflates every wall by 1px so a lane keeps a hair of clearance and never sits flush.
+            const near0 = (axis === "V" ? nd.x : nd.y) - MARG, near1 = (axis === "V" ? nd.x + nd.w : nd.y + nd.h) + MARG;
+            if (near1 <= coord + 0.5) lb = Math.max(lb, near1);            // wall entirely on the low side
+            else if (near0 >= coord - 0.5) rb = Math.min(rb, near0);       // wall entirely on the high side
+            // STRADDLE: the wall spans this lane's coord, i.e. the segment is INSIDE it (a node it's
+            // cutting through, or a band it's crossing). A side bound alone can't evict it, so push the
+            // whole bundle out to the NEARER edge of the wall.
+            else if (coord - near0 <= near1 - coord) rb = Math.min(rb, near0);
+            else lb = Math.max(lb, near1);
         }
         const clear = 5, aLo = lb + clear, aHi = rb - clear, minC = coord + minOff, maxC = coord + maxOff;
         let shift = 0;
@@ -295,6 +313,44 @@ function nudge(lines, byId, rects, outPorts) {
         if (i >= 1 && v) p[i] = [p[i][0] - v[0] * ln.insetEnd, p[i][1] - v[1] * ln.insetEnd];
     }
     for (const ln of lines) ln.pts = simplify(ln._pts);
+    // FINAL backstop: the lane shift can slide a segment 1-5px into a wall edge (its center-when-narrow
+    // fallback overrides the alley clamp). A* never crosses, so any overlap here is nudge's doing —
+    // push each offending INTERIOR segment back out to the wall's nearest edge (+MARG). Endpoints
+    // (port stubs, i=0 / last) are left alone so a wire never detaches from its node face.
+    if (walls.length) for (const ln of lines) evictSegments(ln.pts, walls, ln.tether);
+}
+// Push interior axis-segments of `pts` out of any wall they sit inside, to the wall's nearer edge.
+// Moving a segment's constant-axis coord shifts its two corner vertices only (neighbouring segments
+// lengthen/shorten, staying orthogonal); the lane separation set by nudge is preserved.
+function evictSegments(pts, walls, isTether) {
+    for (let i = 0; i + 1 < pts.length; i++) {   // EVERY segment, incl. the port stubs — a tiny shift just
+        const a = pts[i], b = pts[i + 1];        // slides the port along its own face, it stays attached
+        const isEnd = i === 0 || i + 1 === pts.length - 1;   // a port-stub: clamp its move so it can't run off-face
+        if (isTether && isEnd) continue;   // a tether is centred on its face (fanFaceEnds) — don't let an evict re-corner its endpoints
+        const vert = Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) > 0.5;
+        const horiz = Math.abs(a[1] - b[1]) < 0.5 && Math.abs(a[0] - b[0]) > 0.5;
+        if (!vert && !horiz) continue;
+        const lo = vert ? Math.min(a[1], b[1]) : Math.min(a[0], b[0]);
+        const hi = vert ? Math.max(a[1], b[1]) : Math.max(a[0], b[0]);
+        const coord = vert ? a[0] : a[1];
+        for (const r of walls) {
+            const e0 = vert ? r.x : r.y, e1 = vert ? (r.x + r.w) : (r.y + r.h);
+            const o0 = vert ? r.y : r.x, o1 = vert ? (r.y + r.h) : (r.x + r.w);
+            if (hi <= o0 + 0.5 || lo >= o1 - 0.5) continue;          // segment span misses the wall
+            if (coord <= e0 + 0.5 || coord >= e1 - 0.5) continue;    // segment already outside the wall
+            // Push to the edge on the side the line's NEIGHBOURS sit — NOT the nearer edge. A line
+            // arching over a node has both ends below the band; shoving its top run to the nearer
+            // (top) edge would leave the two legs spanning the band. Following the neighbours sinks
+            // the run to the bottom edge so the whole detour stays on one side, legs clear.
+            const side = (j) => { if (j < 0 || j >= pts.length) return 0; const c = vert ? pts[j][0] : pts[j][1]; return c >= e1 ? 1 : (c <= e0 ? -1 : 0); };
+            const lean = side(i - 1) + side(i + 2);
+            // CORNER_CLEAR past the edge (> corner radius) so the rounded bend can't arc back over it.
+            const toHigh = lean !== 0 ? lean > 0 : (coord - e0) > (e1 - coord);
+            const target = toHigh ? e1 + CORNER_CLEAR : e0 - CORNER_CLEAR;
+            if (isEnd && Math.abs(target - coord) > 14) continue;    // big move on a port stub would pull the dot off its face — leave it
+            if (vert) { a[0] = target; b[0] = target; } else { a[1] = target; b[1] = target; }
+        }
+    }
 }
 // Lay out the endpoints of EVERY line along the face each touches: the source end where it LEAVES a
 // node and the destination end where it ARRIVES. Per face, endpoints are ordered by where their far end
@@ -332,9 +388,10 @@ function fanFaceEnds(lines, byId, outPorts) {
             const e = arr[0], p = e.ln._pts; if (!p || p.length < 2) continue;
             const last = e.end === "dst", i = last ? p.length - 1 : 0;
             const cur = horiz ? p[i][1] : p[i][0];
-            let c = e.ln.pinSrc ? mid : cur;
+            // a satellite tether attaches at the face CENTRE (both ends) — never let A* leave it at a corner
+            let c = (e.ln.pinSrc || e.ln.tether) ? mid : cur;
             if (reserveMid && Math.abs(c - mid) < PORT_MIN) c = mid + PORT_MIN;
-            if (e.ln.pinSrc || Math.abs(c - cur) > 0.5) setEnd(p, side, clamp(c), last);
+            if (e.ln.pinSrc || e.ln.tether || Math.abs(c - cur) > 0.5) setEnd(p, side, clamp(c), last);
             continue;
         }
         const pref = Math.min(span - PORT_MARGIN, (n - 1) * C.laneGap);

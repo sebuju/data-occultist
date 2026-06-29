@@ -107,6 +107,10 @@ function selClsFor(aId, bId) {
 // one — window, producer, dataset, view (subset), file source — anchors its data line at the port
 // dot and gets the animated flow. (Keep this prefix set in sync with `outPortSpec`.)
 const PORT_OUT_SRC = ["win:", "producer:", "ds:", "sub:", "src:"];
+// parent->child structural tethers (a node bonded to its companion/children): preview/vttable (img),
+// region+field boxes (field), item crops (item), tell boxes (tell). They attach at face CENTRES, not
+// corners; their middle segments are still evicted off bands/nodes, only the centred endpoints are spared.
+const TETHER_KINDS = ["img", "field", "item", "tell"];
 // a data edge leaves its source's out-port; a trigger's control edges (fires + watch) leave the
 // trigger's out-ports too — `fires` from the RIGHT `.port.out`, `watch` from the LEFT `.port.pwatch`.
 const fromPortOut = (aId, kind) =>
@@ -554,7 +558,7 @@ function runRouting() {
         // router's member-bounds guess) so the heading soft/hard rect lands exactly on the banner.
         const boxOf = new Map(groups.groupBoxes().map((b) => [b.id, b]));
         const grps = groups.allGroups().map((g) => { const b = boxOf.get(g.id); return { members: [...g.members], box: b ? b.box : null, bandH: b ? b.bandH : 0 }; });
-        const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, pinSrc: l.port ? sideForPort(l) : null,
+        const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, pinSrc: l.port ? sideForPort(l) : null, tether: TETHER_KINDS.some((k) => l.cls.split(" ").includes(k)),
             // watch ends in a diamond sunk slightly into the watched node; trigger ends in a hollow ring
             // pulled back by its radius (3px) so the ring centres ON the fired node's edge.
             insetEnd: l.portKind === "watch" ? 3 : (/\btrigger\b/.test(l.cls) ? 3 : 0) }));

@@ -1424,55 +1424,55 @@ dictionaries:
 layout:
   nodes:
     game:
-      x: -1220.0
+      x: -1320.0
       y: -1100.0
       w: 340.0
       h: 140.0
       collapsed: false
     dict:wiki:
-      x: -1220.0
+      x: -1320.0
       y: -940.0
       w: 300.0
       h: 360.0
       collapsed: false
     ds:master:
-      x: -820.0
-      y: -940.0
+      x: -920.0
+      y: -920.0
       w: 360.0
       h: 200.0
       collapsed: false
     producer:price:
-      x: -420.0
+      x: -380.0
       y: 560.0
       w: 380.0
       h: 220.0
       collapsed: false
     ds:prices_live:
-      x: -420.0
+      x: -380.0
       y: 1140.0
       w: 360.0
       h: 200.0
       collapsed: false
     ds:prices_statistics:
-      x: -420.0
+      x: -380.0
       y: 380.0
       w: 380.0
       h: 160.0
       collapsed: false
     sub:live_prices_joined:
-      x: 0.0
+      x: 40.0
       y: 1140.0
       w: 360.0
       h: 1240.0
       collapsed: false
     sub:statistic_prices_joined:
-      x: 20.0
+      x: 60.0
       y: 380.0
       w: 360.0
       h: 580.0
       collapsed: false
     producer:wf_market_live:
-      x: -420.0
+      x: -380.0
       y: 1480.0
       w: 360.0
       h: 260.0
@@ -1490,8 +1490,8 @@ layout:
       h: 200.0
       collapsed: false
     ds:mods:
-      x: -400.0
-      y: -940.0
+      x: -420.0
+      y: -920.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -1598,7 +1598,7 @@ layout:
       h: 180.0
       collapsed: false
     trigger:owned_refresh:
-      x: -420.0
+      x: -380.0
       y: 1760.0
       w: 360.0
       h: 300.0
@@ -1664,8 +1664,8 @@ layout:
       h: 320.0
       collapsed: false
     src:source:
-      x: 500.0
-      y: -1120.0
+      x: 480.0
+      y: -1100.0
       w: 700.0
       h: 780.0
       collapsed: false
@@ -1676,26 +1676,26 @@ layout:
       h: 220.0
       collapsed: false
     vt:sub:live_prices_joined:
-      x: 380.0
+      x: 420.0
       y: 1140.0
       w: 1020.0
       h: 1240.0
       collapsed: false
     vt:sub:statistic_prices_joined:
-      x: 420.0
+      x: 460.0
       y: 380.0
       w: 500.0
       h: 580.0
       collapsed: false
     producer:producer:
-      x: 20.0
-      y: -1120.0
+      x: 0.0
+      y: -1100.0
       w: 360.0
       h: 160.0
       collapsed: false
     ds:relic_contents:
-      x: 20.0
-      y: -940.0
+      x: 0.0
+      y: -920.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -1791,7 +1791,7 @@ layout:
       collapsed: false
     prev:relic_refinement:
       x: 280.0
-      y: 4080.0
+      y: 4100.0
       w: 520.0
       h: 480.0
       collapsed: false
@@ -1856,20 +1856,20 @@ layout:
       h: 560.0
       collapsed: false
     sub:master_prime_parts:
-      x: -1680.0
-      y: -1120.0
+      x: -1740.0
+      y: -1100.0
       w: 360.0
       h: 1180.0
       collapsed: false
     ds:ee_log:
-      x: 1240.0
-      y: -1120.0
+      x: 1220.0
+      y: -1100.0
       w: 360.0
       h: 200.0
       collapsed: false
     vt:ds:ee_log:
-      x: 1620.0
-      y: -1120.0
+      x: 1600.0
+      y: -1100.0
       w: 640.0
       h: 460.0
       collapsed: false
