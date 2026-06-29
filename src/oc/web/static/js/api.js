@@ -7,32 +7,105 @@ import * as conn from "./conn.js";
 // fast; OCR endpoints get longer since they queue behind the one GPU lock.
 const LIGHT_MS = 30_000;
 const OCR_MS = 60_000;
-function tfetch(url, opts = {}, ms = LIGHT_MS) {
+
+// ---- flood / stuck guards (every request rides these, so NO endpoint can be hammered or wedge
+// the UI). Two centralized guards:
+//   1. GET coalescing — concurrent identical in-flight GETs (no caller signal) share ONE request,
+//      so a refresh storm or a render loop collapses to a single fetch instead of N. Each caller
+//      gets its own response CLONE (the cached one stays unread, so every clone is readable).
+//   2. Per-endpoint circuit breaker — after a few timeouts/conn-failures on a path, fail fast for a
+//      cooldown instead of piling more doomed requests on a wedged endpoint. Informs once (so the
+//      user knows why a panel went quiet) and auto-recovers: the first call after the cooldown is a
+//      live trial; success clears the breaker. ----------------------------------------------------
+const _inflightGet = new Map();        // url -> Promise<Response> for an in-flight idempotent GET
+const _breaker = new Map();            // path -> { fails, openUntil }
+const BREAKER_FAILS = 3;               // consecutive timeouts/conn-fails on a path before it trips
+const BREAKER_COOLDOWN_MS = 10_000;    // fail-fast window before a trial request is allowed through
+
+function _guardNotice(msg) {
+    console.warn("[api guard]", msg);
+    // decoupled from the UI layer: whoever cares (main.js) listens and surfaces it (setStatus/log).
+    try { window.dispatchEvent(new CustomEvent("api-guard", { detail: msg })); } catch { /* no window */ }
+}
+
+// Optional per-request observer (main.js wires this during boot to mirror every request into the
+// log bar). Called at request `start` and again on settle with `{ms, ok, status, reason}`. Kept a
+// plain sink (not always-on events) so steady state pays nothing when no one is listening.
+let _onRequest = null;
+export function onApiRequest(fn) { _onRequest = fn || null; }
+function _emitReq(ev) { if (_onRequest) { try { _onRequest(ev); } catch { /* observer must never break a request */ } } }
+function _breakerOpen(path) { const b = _breaker.get(path); return !!b && b.openUntil > performance.now(); }
+function _breakerOk(path) { if (_breaker.has(path)) _breaker.delete(path); }
+function _breakerFail(path) {
+    const b = _breaker.get(path) || { fails: 0, openUntil: 0 };
+    b.fails += 1;
+    if (b.fails >= BREAKER_FAILS) {
+        b.openUntil = performance.now() + BREAKER_COOLDOWN_MS;
+        b.fails = 0;
+        _guardNotice(`${path} keeps timing out — pausing calls to it for ${BREAKER_COOLDOWN_MS / 1000}s`);
+    }
+    _breaker.set(path, b);
+}
+
+// THE guard, applied to one fetch. Installed on `window.fetch` below so EVERY request to our API
+// rides it — raw `fetch("/api/...")` callers (refreshLive, the dataset/subset node fetches, stats,
+// …) get coalescing + breaker + deadline + logging WITHOUT having to remember to call a wrapper.
+// Non-API URLs (static assets) pass straight through. `init.__timeoutMs` overrides the deadline.
+function _guardedFetch(native, input, init = {}) {
+    const url = typeof input === "string" ? input : (input && input.url) || "";
+    if (!url.includes("/api/")) return native(input, init);   // only guard our backend API
+    const path = url.split("?")[0];
+    const method = (init.method || (typeof input !== "string" && input.method) || "GET").toUpperCase();
+    // breaker tripped: fail fast (recoverable — the next call after the cooldown probes live).
+    if (_breakerOpen(path)) {
+        return Promise.reject(new Error(`${path}: paused after repeated timeouts (retrying shortly)`));
+    }
+    // coalesce side-effect-free GETs with no caller abort signal — concurrent identical fetches
+    // (a render loop, a refresh storm, build + batches hitting the same dataset url) collapse to
+    // ONE request; each caller gets its own response clone (the cached one stays unread).
+    const coalesce = method === "GET" && !init.signal;
+    if (coalesce) {
+        const hit = _inflightGet.get(url);
+        if (hit) return hit.then((r) => r.clone());
+    }
+    const ms = init.__timeoutMs || LIGHT_MS;
+    const t0 = performance.now();
+    _emitReq({ phase: "start", method, path });
     const deadline = AbortSignal.timeout(ms);
-    const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
-    return fetch(url, { ...opts, signal }).then((r) => {
+    const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
+    const p = native(input, { ...init, signal }).then((r) => {
         conn.reportReachable();   // got a response (even an error status) -> backend is up
+        _breakerOk(path);
+        _emitReq({ phase: "done", method, path, ms: Math.round(performance.now() - t0), ok: true, status: r.status });
         return r;
     }).catch((e) => {
-        // A caller-driven abort (panel closed, navigation) is not a connectivity signal.
-        const userAborted = opts.signal && opts.signal.aborted;
-        const path = url.split("?")[0];
+        const userAborted = init.signal && init.signal.aborted;   // panel closed / navigation, not connectivity
+        _emitReq({ phase: "done", method, path, ms: Math.round(performance.now() - t0), ok: false, reason: e.name === "TimeoutError" ? "timeout" : (e.message || e.name) });
         if (e.name === "TimeoutError") {
-            // No response arrived in time. We CANNOT tell why (slow server, dropped
-            // connection, a request blocked client-side) — so don't invent a cause; state
-            // only the fact. The health probe sorts reachable-vs-not on its own.
             const reason = `${path}: no response within ${ms / 1000}s`;
-            if (!userAborted) conn.reportUnreachable(reason);
+            if (!userAborted) { conn.reportUnreachable(reason); _breakerFail(path); }
             throw new Error(reason);
         }
-        // fetch() usually rejects with TypeError for a dropped/refused connection, but the
-        // SAME error also covers a blocked or malformed request and missing browser APIs.
-        // We can't be sure it's connectivity, so flag it (the probe clears it within
-        // seconds if the server is actually up) and surface the REAL error untouched
-        // rather than asserting "backend down".
-        if (!userAborted && e.name === "TypeError") conn.reportUnreachable(`${path}: ${e.message}`);
+        if (!userAborted && e.name === "TypeError") { conn.reportUnreachable(`${path}: ${e.message}`); _breakerFail(path); }
         throw e;
-    });
+    }).finally(() => { if (coalesce) _inflightGet.delete(url); });
+    if (coalesce) { _inflightGet.set(url, p); return p.then((r) => r.clone()); }   // keep the cached one unread
+    return p;
+}
+
+// Install once: from here, NOTHING can fetch our API without the guard — calling fetch() directly
+// is fine, it's still wrapped. (EventSource/SSE is a separate API and unaffected.)
+if (typeof window !== "undefined" && window.fetch && !window.fetch.__apiGuarded) {
+    const native = window.fetch.bind(window);
+    const wrapped = (input, init) => _guardedFetch(native, input, init);
+    wrapped.__apiGuarded = true;
+    window.fetch = wrapped;
+}
+
+// A fetch with our timeout policy, for the typed api.* helpers. Coalescing/breaker/logging now live
+// in the window.fetch guard, so this just carries the per-call deadline (OCR gets a longer one).
+function tfetch(url, opts = {}, ms = LIGHT_MS) {
+    return fetch(url, { ...opts, __timeoutMs: ms });
 }
 
 // Global OCR gate. The server serializes ALL OCR on one process-wide lock (see
@@ -481,11 +554,12 @@ export async function getSubset(game, subset) {
 // One round-trip for many nodes' data: every listed dataset's detail + subset's view, computed
 // server-side sharing one store per dataset (so a dataset feeding several views parses once).
 // Returns { datasets: {id: detail}, subsets: {id: view} }. Used by the boot prefetch.
-export async function flowDetails(game, datasets, subsets) {
+export async function flowDetails(game, datasets, subsets, signal) {
     const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/details`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ datasets: datasets || [], subsets: subsets || [] }),
+        signal,
     });
     if (!r.ok) throw new Error(`details: ${r.status} ${await r.text()}`);
     return r.json();
