@@ -524,6 +524,9 @@ export function createFloatWin({
         save();
     }
     el.querySelector(".fw-collapse").addEventListener("click", toggleCollapsed);
+    // double-clicking the title bar folds/unfolds too (same as the collapse button). Bound to the
+    // title text so a double-click on a header control/button isn't hijacked.
+    el.querySelector(".fw-title").addEventListener("dblclick", toggleCollapsed);
 
     // `reset` (topbar open): start from a fresh default box (authored preset width, auto-fit
     // height, expanded, not user-sized) rather than whatever size it carried when last hidden.
