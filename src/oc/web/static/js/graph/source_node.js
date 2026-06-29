@@ -27,32 +27,34 @@ function matchRow(m, i) {
         h("button", { class: "src-rmm danger", dataset: { i }, title: "remove" }, TRASH()));
 }
 
-// the method-specific inputs for one extraction field (varies by method)
+// The two method-specific input cells for one extraction field. ALWAYS exactly two cells (empty
+// placeholders for `whole`) so every row contributes the same column count to the shared grid and
+// the inputs line up across rows. The `between` arrow is dropped — the start/end placeholders read
+// clearly and a stray glyph would break a grid column.
 function methodInputs(f, i) {
     const inp = (k, ph) => h("input", { class: "fset2", dataset: { i, k }, value: f[k] ?? "", placeholder: ph });
     if (f.method === "after") return [inp("anchor", "after this text"), inp("stop", "stop at (optional)")];
-    if (f.method === "between") return [inp("anchor", "start"), h("span", { class: "src-arrow" }, "→"), inp("end", "end")];
+    if (f.method === "between") return [inp("anchor", "start"), inp("end", "end")];
     if (f.method === "column") return [inp("delim", "delimiter (blank = whitespace)"),
-        h("input", { class: "fset2", dataset: { i, k: "index" }, type: "number", step: "1", value: Number(f.index) || 0, title: "token index (negative = from end)" })];
-    if (f.method === "path") return inp("path", "a.b.c  /  Section.Key  /  root/child");
-    return null;   // whole: no extra inputs
+        h("input", { class: "fset2 src-fnum", dataset: { i, k: "index" }, type: "number", step: "1", value: Number(f.index) || 0, title: "token index (negative = from end)" })];
+    return [h("span", { class: "src-fcell" }), h("span", { class: "src-fcell" })];   // whole: keep the 2 slots empty
 }
 
-// one extraction-field row: id + method (line formats) + method inputs + type + remove
+// one extraction-field row: id + method + two method-input cells + type + remove. The row is
+// `display:contents` (see CSS) so these become cells of the ONE `.src-fields` grid; every row emits
+// the SAME cells so columns align. Document formats have no method: the path input spans the
+// method+input columns instead (class `src-fpath`).
 function fieldRow(f, i, stream) {
-    // line formats pick a method (after/between/column/whole); document formats are always path.
-    const methodSel = stream
-        ? h("select", { class: "fset2", dataset: { i, k: "method" } },
-            METHODS.map(([v, l]) => h("option", { value: v, selected: v === f.method }, l)))
-        : null;
-    const inputs = stream ? methodInputs(f, i)
-        : h("input", { class: "fset2", dataset: { i, k: "path" }, value: f.path ?? "", placeholder: "a.b.c  /  Section.Key  /  root/child" });
+    const idCell = h("input", { class: "fset2 src-fid", dataset: { i, k: "id" }, value: f.id || "", placeholder: "column", title: "output column id" });
     const types = ["text", "number"].map((t) => h("option", { selected: t === f.type }, t));
-    return h("div", { class: "src-f", dataset: { i } },
-        h("input", { class: "fset2 src-fid", dataset: { i, k: "id" }, value: f.id || "", placeholder: "column", title: "output column id" }),
-        methodSel, inputs,
-        h("select", { class: "fset2 src-ftype", dataset: { i, k: "type" }, title: "value type" }, types),
-        h("button", { class: "src-rmf danger", dataset: { i }, title: "remove" }, TRASH()));
+    const typeCell = h("select", { class: "fset2 src-ftype", dataset: { i, k: "type" }, title: "value type" }, types);
+    const rm = h("button", { class: "src-rmf danger", dataset: { i }, title: "remove" }, TRASH());
+    const mid = stream
+        ? frag(h("select", { class: "fset2 src-fmethod", dataset: { i, k: "method" } },
+            METHODS.map(([v, l]) => h("option", { value: v, selected: v === f.method }, l))),
+        ...methodInputs(f, i))
+        : h("input", { class: "fset2 src-fpath", dataset: { i, k: "path" }, value: f.path ?? "", placeholder: "a.b.c  /  Section.Key  /  root/child" });
+    return h("div", { class: "src-f", dataset: { i } }, idCell, mid, typeCell, rm);
 }
 
 export function sourceParts(s) {
@@ -71,6 +73,10 @@ export function sourceParts(s) {
     const tail = stream
         ? frag(labCell("tail", "read only newly appended lines (off = re-read the whole file each time)"),
             h("label", { class: "src-chk" }, h("input", { type: "checkbox", class: "src-tail", checked: s.tail !== false })))
+        : null;
+    const linePos = stream
+        ? frag(labCell("line position", "feed each row's source line number as its dataset position (rows order by file position) — stays tailing; the absolute line is tracked"),
+            h("label", { class: "src-chk" }, h("input", { type: "checkbox", class: "src-linepos", checked: !!s.line_position })))
         : null;
 
     const matchBlock = stream
@@ -97,14 +103,14 @@ export function sourceParts(s) {
                 h("button", { class: "src-find", title: "search common game/config locations for the filename" }, "⌕ auto-find")),
             labCell("read", "when to read: a manual button, or whenever the file changes"),
             h("select", { class: "src-watch" }, watchOpts),
-            throttle, tail, matchBlock, fields),
+            throttle, tail, linePos, matchBlock, fields),
         h("div", { class: "src-found muted" }),
         h("div", { class: "src-prev-info muted" }),
         h("div", { class: "src-preview" }),
         h("div", { class: "gn-foot" },
-            h("button", { class: "src-read", title: "read the file now and write rows to the dataset (click again to cancel)" }, "read now"),
-            h("button", { class: "src-prevbtn", title: "preview what the current rules produce (without writing)" }, "preview"),
-            h("span", { class: "src-prog muted" })));
+            h("button", { class: "src-read", title: "read the file now and write rows to the dataset (runs in the background; rows fill in live)" }, "read now"),
+            h("button", { class: "src-prevbtn", title: "preview what the current rules produce (without writing)" }, "preview")),
+        h("div", { class: "src-prog muted" }));   // progress sits BELOW the buttons (matches the producer node)
 
     return {
         title: h("input", { class: "gi gi-id srcrename", value: s.id, title: "rename source" }),

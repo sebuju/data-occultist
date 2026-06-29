@@ -9,6 +9,8 @@ dir holding one throwaway profile.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 pytest.importorskip("httpx")   # TestClient needs httpx; skip cleanly where dev extras aren't installed
@@ -160,10 +162,17 @@ def test_read_writes_rows_to_dataset(env):
     r = client.post(f"/api/sources/{GAME}/src1/read")
     assert r.status_code == 200
     body = r.json()
-    assert body["dataset"] == "loot" and body["rows"] == 2
+    # the read runs on a daemon thread now (so a big log can't time out the request)
+    assert body["dataset"] == "loot" and body["started"] is True
 
-    store = store_for(data_dir, GAME, "loot", key=KeyMap(KeySpec(("name",))))
-    assert {rec.get("name") for rec in store.records()} == {"Forma", "Kuva"}
+    # wait for the background read's rows to land (fresh store each poll so it can't read a stale cache)
+    names: set = set()
+    for _ in range(100):
+        names = {rec.get("name") for rec in store_for(data_dir, GAME, "loot", key=KeyMap(KeySpec(("name",)))).records()}
+        if names == {"Forma", "Kuva"}:
+            break
+        time.sleep(0.02)
+    assert names == {"Forma", "Kuva"}
 
 
 def test_read_unknown_source_404(env):

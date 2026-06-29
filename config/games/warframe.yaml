@@ -945,7 +945,7 @@ datasets:
   dedup: true
   batch_mode: detection
   sync_mode: mirror
-- id: dataset_2
+- id: ee_log
   aggregate: latest
   key_field: ''
   dedup: true
@@ -1340,10 +1340,11 @@ file_sources:
   path: '%LocalAppData%\Warframe\EE.log'
   filename: ''
   roots: []
-  dataset: dataset_2
+  dataset: ee_log
   watch: manual
   throttle_s: 1.0
   tail: false
+  line_position: false
   match:
   - op: contains
     text: '[Info]'
@@ -1423,19 +1424,19 @@ dictionaries:
 layout:
   nodes:
     game:
-      x: -880.0
-      y: -720.0
+      x: -1220.0
+      y: -1100.0
       w: 340.0
       h: 140.0
       collapsed: false
     dict:wiki:
-      x: -1240.0
+      x: -1220.0
       y: -940.0
       w: 300.0
       h: 360.0
       collapsed: false
     ds:master:
-      x: -880.0
+      x: -820.0
       y: -940.0
       w: 360.0
       h: 200.0
@@ -1489,10 +1490,10 @@ layout:
       h: 200.0
       collapsed: false
     ds:mods:
-      x: 20.0
+      x: -400.0
       y: -940.0
       w: 360.0
-      h: 160.0
+      h: 200.0
       collapsed: false
     win:mod_window:
       x: -1460.0
@@ -1644,12 +1645,6 @@ layout:
       w: 220.0
       h: 480.0
       collapsed: false
-    vt:ds:master:
-      x: -440.0
-      y: -940.0
-      w: 420.0
-      h: 360.0
-      collapsed: false
     item:relic_select:guard:
       x: 20.0
       y: 6440.0
@@ -1669,22 +1664,10 @@ layout:
       h: 320.0
       collapsed: false
     src:source:
-      x: 520.0
-      y: -940.0
-      w: 700.0
-      h: 780.0
-      collapsed: false
-    ds:dataset_2:
-      x: 1260.0
-      y: -940.0
-      w: 360.0
-      h: 160.0
-      collapsed: false
-    vt:ds:dataset_2:
-      x: 1640.0
-      y: -940.0
+      x: 500.0
+      y: -1120.0
       w: 640.0
-      h: 460.0
+      h: 840.0
       collapsed: false
     vt:sub:relic_rewards_price_from_stored:
       x: 2280.0
@@ -1706,31 +1689,31 @@ layout:
       collapsed: false
     producer:producer:
       x: 20.0
-      y: -400.0
-      w: 300.0
-      h: 180.0
+      y: -1120.0
+      w: 360.0
+      h: 160.0
       collapsed: false
     ds:relic_contents:
       x: 20.0
-      y: -200.0
-      w: 300.0
+      y: -940.0
+      w: 360.0
       h: 200.0
       collapsed: false
     sub:relics_with_content:
-      x: 1840.0
-      y: 5460.0
+      x: 1440.0
+      y: 5500.0
       w: 380.0
       h: 1120.0
       collapsed: false
     sub:relics_with_content_view:
-      x: 2260.0
-      y: 5460.0
+      x: 1860.0
+      y: 5500.0
       w: 380.0
       h: 1120.0
       collapsed: false
     vt:sub:relics_with_content_view:
-      x: 2680.0
-      y: 5460.0
+      x: 2280.0
+      y: 5500.0
       w: 860.0
       h: 1120.0
       collapsed: false
@@ -1836,27 +1819,21 @@ layout:
       w: 360.0
       h: 200.0
       collapsed: false
-    vt:ds:relics_refinement:
-      x: 1260.0
-      y: 3140.0
-      w: 420.0
-      h: 1120.0
-      collapsed: false
     sub:relics_refinement_with_contents:
-      x: 1720.0
-      y: 3140.0
+      x: 1260.0
+      y: 3160.0
       w: 360.0
       h: 1120.0
       collapsed: false
     sub:contents_with_price:
-      x: 2120.0
-      y: 3140.0
+      x: 1660.0
+      y: 3160.0
       w: 360.0
       h: 1120.0
       collapsed: false
     vt:sub:contents_with_price:
-      x: 2520.0
-      y: 3140.0
+      x: 2060.0
+      y: 3160.0
       w: 800.0
       h: 1120.0
       collapsed: false
@@ -1869,14 +1846,8 @@ layout:
     ds:relics_select:
       x: 1440.0
       y: 5260.0
-      w: 360.0
+      w: 380.0
       h: 200.0
-      collapsed: false
-    vt:ds:relics_select:
-      x: 1440.0
-      y: 5480.0
-      w: 360.0
-      h: 1100.0
       collapsed: false
     vt:ds:relics_offered:
       x: 1140.0
@@ -1889,6 +1860,18 @@ layout:
       y: -1120.0
       w: 360.0
       h: 1180.0
+      collapsed: false
+    ds:ee_log:
+      x: 1240.0
+      y: -1120.0
+      w: 360.0
+      h: 200.0
+      collapsed: false
+    vt:ds:ee_log:
+      x: 1620.0
+      y: -1120.0
+      w: 640.0
+      h: 460.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -2107,7 +2090,6 @@ layout:
     - ds:mods
     - game
     - ds:master
-    - vt:ds:master
     - dict:wiki
     - sub:master_prime_parts
     - ds:relic_contents
@@ -2263,7 +2245,6 @@ layout:
     - vt:sub:relics_with_content_view
     - vt:ds:relics
     - vt:ds:dataset
-    - vt:ds:relics_select
     outline:
       color: '#5ae6c2'
       style: none
@@ -2276,9 +2257,10 @@ layout:
   - id: group_24
     title: 'file: ee.log'
     members:
-    - ds:dataset_2
+    - ds:ee_log
     - vt:ds:dataset_2
     - src:source
+    - vt:ds:ee_log
     outline:
       color: '#e0556b'
       style: none
@@ -2303,7 +2285,6 @@ layout:
     - ds:relics_refinement
     - sub:relics_refinement_with_contents
     - sub:contents_with_price
-    - vt:ds:relics_refinement
     - vt:sub:relics_refinement_view_view
     - vt:sub:contents_with_price
     - det:relic_refinement:detect_1
@@ -2364,18 +2345,15 @@ layout:
     bg: '#1b1d23'
     titleColor: ''
   satellites:
-  - vt:ds:master
   - prev:relic_select
-  - vt:ds:dataset_2
   - vt:sub:relic_rewards_price_from_stored
-  - vt:sub:live_prices_joined
   - vt:sub:statistic_prices_joined
   - vt:sub:relics_with_content_view
   - prev:relic_refinement
-  - vt:ds:relics_refinement
   - vt:sub:contents_with_price
-  - vt:ds:relics_select
   - vt:ds:relics_offered
+  - vt:sub:live_prices_joined
+  - vt:ds:ee_log
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -2475,7 +2453,6 @@ layout:
     - ds:relics_refinement
     - sub:relics_refinement_with_contents
     - sub:contents_with_price
-    - vt:ds:relics_refinement
     - vt:sub:relics_refinement_view_view
     - vt:sub:contents_with_price
     outline:
@@ -2540,7 +2517,6 @@ layout:
     - sub:relics_with_content_view
     - vt:sub:relics_with_content_view
     - ds:relics_select
-    - vt:ds:relics_select
     outline:
       color: '#3a4154'
       style: solid
@@ -2632,6 +2608,34 @@ layout:
     - det:equipment_window:detect_h
     - det:equipment_window:detect_1
     - sb:equipment_window:scrollbar
+    outline:
+      color: '#3a4154'
+      style: solid
+      width: 1
+    bg: '#191c23'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+  - id: subgroup_22
+    parent: group_9
+    title: ''
+    members:
+    - ds:relic_contents
+    - producer:producer
+    outline:
+      color: '#3a4154'
+      style: solid
+      width: 1
+    bg: '#191c23'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+  - id: subgroup_23
+    parent: group_9
+    title: ''
+    members:
+    - game
+    - dict:wiki
     outline:
       color: '#3a4154'
       style: solid

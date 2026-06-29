@@ -205,6 +205,13 @@ class SourceParser(ABC):
     def parse(self, text: str, match, fields) -> list[dict]:
         """Parse ``text`` into a list of ``{field_id: value}`` records using the rules."""
 
+    def parse_indexed(self, text: str, match, fields) -> list[tuple[int, dict]]:
+        """Like :meth:`parse` but pairs each record with a 1-based POSITION. The base default
+        is emit order (1, 2, 3 …); a line-oriented parser overrides it to report the record's
+        true SOURCE LINE number (so unmatched lines still advance the count). Used when a
+        file-source feeds line numbers as the dataset position."""
+        return list(enumerate(self.parse(text, match, fields), start=1))
+
 
 class WindowClassifier(ABC):
     """Decide which profile-defined window (and state) a frame shows.

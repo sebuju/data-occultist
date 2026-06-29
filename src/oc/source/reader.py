@@ -19,6 +19,7 @@ class SourceReader:
         self._lock = threading.RLock()
         self._cache: dict[str, tuple[int, int, str]] = {}   # abspath -> (mtime_ns, size, text)
         self._consumed: dict[tuple[str, str], int] = {}     # (abspath, key) -> chars already read
+        self._lines: dict[tuple[str, str], int] = {}        # (abspath, key) -> COMPLETE lines already read
         self.reads = 0   # disk-read counter — tests assert coalescing
 
     def stat(self, path) -> tuple[int, int] | None:
@@ -60,6 +61,33 @@ class SourceReader:
                 seen = 0
             self._consumed[ck] = len(text)
             return text[seen:]
+
+    def read_lined(self, path, *, tail: bool = False, key: str = "") -> tuple[str, int]:
+        """Like :meth:`read` but also returns the 1-based ABSOLUTE line number of the chunk's
+        first line — so a tailing reader can number rows by their true file position without
+        re-reading the whole file each time. When tailing, only COMPLETE lines are consumed (a
+        partial trailing line waits for its newline on a later read), which keeps the line cursor
+        aligned with the byte cursor. A rotated/shrunk file restarts at line 1."""
+        with self._lock:
+            ap = os.path.abspath(str(path))
+            text = self._load(ap)
+            if text is None:
+                return "", 1
+            ck = (ap, key or "")
+            if not tail:
+                return text, 1
+            seen = self._consumed.get(ck, 0)
+            base = self._lines.get(ck, 0)
+            if seen > len(text):   # rotated/truncated -> start over
+                seen, base = 0, 0
+            chunk = text[seen:]
+            cut = chunk.rfind("\n")
+            if cut == -1:          # no complete line appended yet -> consume nothing
+                return "", base + 1
+            chunk = chunk[: cut + 1]
+            self._consumed[ck] = seen + len(chunk)
+            self._lines[ck] = base + chunk.count("\n")
+            return chunk, base + 1
 
 
 _READER: SourceReader | None = None

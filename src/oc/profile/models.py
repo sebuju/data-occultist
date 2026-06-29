@@ -817,6 +817,10 @@ class FileSourceDef(BaseModel):
     watch: str = "manual"           # manual | on_change (live file-watch)
     throttle_s: float = 1.0         # on_change: trailing quiet window before a read fires
     tail: bool = True               # log_lines: read only appended bytes since the last read
+    # log_lines: feed each row's source line number as its dataset POSITION (so rows order by file
+    # position). Stays tailing — the reader tracks the absolute line cursor, so numbers are true
+    # file positions without re-reading the whole file.
+    line_position: bool = False
     match: list[SourceMatch] = Field(default_factory=list)   # log_lines: which lines to keep
     fields: list[SourceField] = Field(default_factory=list)  # how each output column is extracted
     # How output rows are keyed/deduped in the dataset. None -> the dataset's own key (or ``name``).

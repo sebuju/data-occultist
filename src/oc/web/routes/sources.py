@@ -9,6 +9,7 @@ node's config is a normal profile save (it persists in the YAML like any other n
 from __future__ import annotations
 
 import os
+import threading
 
 from fastapi import APIRouter, Body, HTTPException
 
@@ -128,12 +129,38 @@ def preview(game: str, body: dict = Body(...)):
             "line_ending": line_ending, "path": path}
 
 
+# sources currently reading — so a second 'read now' (or a watcher tick) can't double-process the
+# same file while a long read is in flight.
+_reading: set[tuple[str, str]] = set()
+_reading_lock = threading.Lock()
+
+
 @router.post("/{game}/{source_id}/read")
 def read_now(game: str, source_id: str):
-    """Read ``source_id`` now and write its rows to the dataset (the manual 'read' button)."""
+    """Kick a read of ``source_id`` and return immediately. A big log (especially with
+    ``line_position``, which also writes a position per row) can take many seconds — far longer
+    than an HTTP request should block — so the read runs on a daemon thread and its rows stream
+    into the dataset via the change bus (the node refreshes live). Returns ``started`` (or
+    ``busy`` if a read of this source is already running)."""
     profile = _profile_or_404(game)
     source = profile.file_source(source_id)
     if source is None:
         raise HTTPException(status_code=404, detail=f"No source {source_id!r}")
-    rows = read_source(game, source, get_settings().data_dir, profile=profile)
-    return {"source": source_id, "dataset": source.dataset, "rows": rows}
+    data_dir = get_settings().data_dir
+    key = (game, source_id)
+    with _reading_lock:
+        if key in _reading:
+            return {"source": source_id, "dataset": source.dataset, "started": False, "busy": True}
+        _reading.add(key)
+
+    def _run() -> None:
+        try:
+            read_source(game, source, data_dir, profile=profile)
+        except Exception:   # noqa: BLE001 - a read failure must not wedge the in-flight guard
+            pass
+        finally:
+            with _reading_lock:
+                _reading.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"source": source_id, "dataset": source.dataset, "started": True}

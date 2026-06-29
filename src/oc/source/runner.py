@@ -30,17 +30,32 @@ def read_source(game: str, source, data_dir, *, profile=None, reader=None) -> in
     parser = build_parser(source.format)
     # tail only for streaming (log) parsers; documents always re-read whole.
     tail = bool(getattr(source, "tail", True)) and getattr(parser, "stream", False)
-    text = reader.read(path, tail=tail, key=source.id)
-    records = parser.parse(text, source.match, source.fields)
-    if not records:
+    # Feed line numbers as position? Only meaningful for a line parser. Use the line-aware read so
+    # it STAYS tailing (no whole-file re-read+rewrite per call — that timed out on big logs) yet
+    # numbers each row by its ABSOLUTE file line.
+    line_position = bool(getattr(source, "line_position", False)) and getattr(parser, "stream", False)
+    if line_position:
+        text, start_line = reader.read_lined(path, tail=tail, key=source.id)
+        indexed = [(start_line - 1 + i, rec)
+                   for i, rec in parser.parse_indexed(text, source.match, source.fields)]
+    else:
+        text = reader.read(path, tail=tail, key=source.id)
+        indexed = parser.parse_indexed(text, source.match, source.fields)
+    if not indexed:
         return 0
     # A source can pin its own key; else the dataset/profile default decides.
     key = KeyMap(source.key.spec()) if getattr(source, "key", None) is not None else None
     store = store_for(data_dir, game, source.dataset, profile=profile, key=key)
     store.begin_batch()
-    for rec in records:
-        store.record_seen(rec)
-    return len(records)
+    positions: dict[str, tuple[float, float]] = {}
+    for lineno, rec in indexed:
+        ev = store.record_seen(rec)
+        # set_positions wants {key: (xpos, vpos)} — single column (xpos 0) at row = line number.
+        if line_position and ev is not None and ev.key:
+            positions[ev.key] = (0.0, float(lineno))
+    if positions:
+        store.set_positions(positions)
+    return len(indexed)
 
 
 class SourceRunner:
