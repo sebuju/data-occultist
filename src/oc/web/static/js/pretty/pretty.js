@@ -28,6 +28,7 @@ let surface = null, toolsEl = null, panels = null, tools = null, canvasCtrl = nu
 let game = null, mode = "edit", pageId = null, selectedId = null, mounted = false;
 let cueScope = "selected";   // edit-mode cue layer default: "selected" only (hover-preview when none selected); "all" shows every widget
 let stylePreview = null;   // edit-mode style-profile preview: {id, profileId} while the inspector is focused, else null
+let configPreview = null;  // edit-mode config-profile preview: {id, profileId} while the inspector is focused, else null
 const selection = new Set();   // every selected widget id; selectedId is the primary (inspector) one
 
 const ctx = {
@@ -53,6 +54,17 @@ const ctx = {
         if (canvasCtrl) { if (id) canvasCtrl.restyle(id); if (prev && prev !== id) canvasCtrl.restyle(prev); }
     },
     effectiveStyle: (id) => { const f = surface && surface.querySelector(`.pw[data-id="${id}"]`); return f ? computedToStyle(getComputedStyle(f)) : {}; },
+    // Config-profile preview, mirroring stylePreview: while the inspector is focused the canvas builds
+    // the widget from the config tab being edited; on blur it reverts to the condition-driven config.
+    // A config swap rebuilds the widget instance (structure), so this routes through canvas.reconfig.
+    configPreview: () => configPreview,
+    previewConfigProfile: (id, profileId) => {
+        const prev = configPreview && configPreview.id;
+        configPreview = id ? { id, profileId: profileId || "default" } : null;
+        if (canvasCtrl) { if (id) canvasCtrl.reconfig(id); if (prev && prev !== id) canvasCtrl.reconfig(prev); }
+    },
+    condConfig: (id) => (canvasCtrl ? canvasCtrl.condConfig(id) : "default"),
+    reconfig: (id) => { if (canvasCtrl) canvasCtrl.reconfig(id); },
     selectWidget: (id, additive) => selectWidget(id, additive),
     setAnchor: (id, anchor) => { if (canvasCtrl) canvasCtrl.reanchor(id, anchor); },
     geomOf: (id) => (canvasCtrl ? canvasCtrl.geom(id) : null),
@@ -76,8 +88,6 @@ const ctx = {
     renamePage: (id, title) => { const ok = pretty.renamePage(id, title); if (ok && tools) tools.refresh(); return ok; },
     reorderPages: (ids) => { pretty.reorderPages(ids); if (tools) tools.refresh(); },
     setMode: (m) => setMode(m),
-    bindDataToSelected: (src, id) => bindData(src, id),
-    bindPathToSelected: (path) => bindPath(path),
 };
 
 export function isMounted() { return mounted; }
@@ -344,15 +354,3 @@ function setMode(m) {
     if (tools) tools.refresh();
 }
 
-function bindData(src, id) {
-    const w = ctx.selectedWidget();
-    if (!w || !["table", "chart"].includes(w.type)) return;
-    w.binding = { ...(w.binding || {}), src, id };
-    pretty.save(); renderCurrent(); panels.inspector.refresh();
-}
-function bindPath(path) {
-    const w = ctx.selectedWidget();
-    if (!w || w.type !== "control") return;
-    w.path = path;
-    pretty.save(); renderCurrent(); panels.inspector.refresh();
-}

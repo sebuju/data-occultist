@@ -142,9 +142,7 @@ legend { color: var(--muted); padding: 0 6px; }
 
 /* collapsible panels (details/summary) */
 .panel-fs {
-    border: 1px solid var(--line);
     border-radius: 6px;
-    background: var(--panel);
 }
 .panel-fs > summary {
     cursor: pointer;
@@ -157,7 +155,6 @@ legend { color: var(--muted); padding: 0 6px; }
 .panel-fs > summary::-webkit-details-marker { display: none; }
 .panel-fs > summary::before { content: "▸ "; color: var(--muted); }
 .panel-fs[open] > summary::before { content: "▾ "; }
-.panel-fs[open] > summary { border-bottom: 1px solid var(--line); }
 .fs-body { padding: 10px; }
 
 .games {

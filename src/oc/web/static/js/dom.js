@@ -81,16 +81,19 @@ export function svg(tag, props, ...children) {
 // A collapsible panel: <details><summary>{legend}</summary><div class="fs-body">{body}</div></details>.
 // `legend` and `body` are nodes (or strings); `key` (required when legend isn't a plain
 // string) keys the persisted open/closed state.
-export function fieldset(legend, body, key) {
+// `opts.open` overrides the persisted state (caller owns the open flag — e.g. the sources panel,
+// which defaults its sections closed); `opts.onToggle(isOpen)` fires after a user toggle (e.g. to
+// fetch values lazily on uncollapse).
+export function fieldset(legend, body, key, opts = {}) {
     key = key || (typeof legend === "string" ? legend.trim() : "");
     const d = document.createElement("details");
     d.className = "panel-fs";
-    d.open = !collapsed.has(key);
+    d.open = opts.open !== undefined ? opts.open : !collapsed.has(key);
     const summary = h("summary", legend);
     d.append(summary, h("div", { class: "fs-body" }, body));
     summary.addEventListener("click", () => {
         // d.open reflects the *previous* state during the click; flip it.
-        setTimeout(() => collapse(key, !d.open), 0);
+        setTimeout(() => { collapse(key, !d.open); opts.onToggle && opts.onToggle(d.open); }, 0);
     });
     return d;
 }
@@ -120,3 +123,4 @@ export const CAMERA = _ic("M20 5h-3.2l-1.4-1.8c-.2-.2-.5-.2-.8-.2H9.4c-.3 0-.6 0
 export const WARN = _ic("M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z");
 export const PAUSE = _ic("M6 5h4v14H6zM14 5h4v14h-4z");
 export const STAR = _ic("M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z");
+export const COPY = _ic("M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z");

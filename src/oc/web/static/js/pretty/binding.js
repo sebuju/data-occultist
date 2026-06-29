@@ -36,11 +36,15 @@ export function sourceTokenList(model, widgets = []) {
     return out;
 }
 
+// Strip a trailing python-style `[...]` row slice off a token segment (so the subscribe key /
+// id is the bare collection, not "id[0:5]").
+const stripSlice = (s) => String(s).replace(/\[[^\]]*\]\s*$/, "").trim();
+
 // The subscribe key a token/binding depends on (what the data layer notifies on).
 export function subKeyForToken(inner) {
     const src = String(inner || "").split("|")[0].trim();
-    if (src.startsWith("dataset:")) return `dataset:${src.slice(8).split(".")[0].trim()}`;
-    if (src.startsWith("subset:")) return `subset:${src.slice(7).split(".")[0].trim()}`;
+    if (src.startsWith("dataset:")) return `dataset:${stripSlice(src.slice(8).split(".")[0])}`;
+    if (src.startsWith("subset:")) return `subset:${stripSlice(src.slice(7).split(".")[0])}`;
     if (src.startsWith("node:")) return `node:${src.slice(5).trim()}`;
     if (src.startsWith("widget:")) return `widget:${src.slice(7).trim()}`;
     if (src === "page") return "page";
@@ -52,6 +56,41 @@ export function subKeyForToken(inner) {
 export function dataKeyForBinding(b) {
     if (!b || !b.id) return null;
     return b.src === "subset" ? `subset:${b.id}` : `dataset:${b.id}`;
+}
+
+// Pull a trailing python-style `[...]` slice off a dataset/subset body. Returns the remaining
+// body (id[.field]) and the parsed slice (null when absent / empty).
+function splitSlice(body) {
+    const m = /^(.*)\[([^\]]*)\]\s*$/.exec(String(body));
+    if (!m) return { rest: body, slice: null };
+    return { rest: m[1], slice: parseSlice(m[2]) };
+}
+// Parse a slice spec: "n" -> single index; "a:b" / "a:b:c" -> range (any part may be blank).
+function parseSlice(spec) {
+    spec = String(spec).trim();
+    if (spec === "") return null;
+    const toInt = (s) => { s = String(s).trim(); if (s === "") return null; const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; };
+    if (!spec.includes(":")) { const i = toInt(spec); return i == null ? null : { index: i }; }
+    const p = spec.split(":");
+    return { start: toInt(p[0]), stop: toInt(p[1]), step: p.length > 2 ? toInt(p[2]) : null };
+}
+// Apply a parsed slice to `rows` with python semantics (negative indices, step, blanks).
+function applySlice(rows, sl) {
+    if (!sl) return rows;
+    const n = rows.length;
+    if (sl.index != null) { const i = sl.index < 0 ? n + sl.index : sl.index; return (i >= 0 && i < n) ? [rows[i]] : []; }
+    let step = sl.step == null ? 1 : sl.step; if (step === 0) step = 1;
+    const out = [];
+    if (step > 0) {
+        const lo = sl.start == null ? 0 : (sl.start < 0 ? Math.max(n + sl.start, 0) : Math.min(sl.start, n));
+        const hi = sl.stop == null ? n : (sl.stop < 0 ? Math.max(n + sl.stop, 0) : Math.min(sl.stop, n));
+        for (let i = lo; i < hi; i += step) out.push(rows[i]);
+    } else {
+        const lo = sl.start == null ? n - 1 : (sl.start < 0 ? n + sl.start : Math.min(sl.start, n - 1));
+        const hi = sl.stop == null ? -1 : (sl.stop < 0 ? n + sl.stop : sl.stop);
+        for (let i = lo; i > hi; i += step) out.push(rows[i]);
+    }
+    return out;
 }
 
 function aggregate(rows, field, agg) {
@@ -68,11 +107,24 @@ function aggregate(rows, field, agg) {
     }
 }
 
+// Join a slice of rows into a delimited string: `field` picks the column (else each row's first
+// visible field), empties dropped, joined by `delim` (default ", ").
+function joinRows(rows, field, delim) {
+    const valOf = (r) => {
+        if (field) return r[field];
+        const k = Object.keys(r).find((x) => !x.startsWith("_"));   // first visible column
+        return k ? r[k] : "";
+    };
+    return rows.map(valOf).filter((v) => v !== undefined && v !== null && v !== "").join(delim);
+}
+
 // Resolve one {{token}} inner string to a scalar (for dynamic text / conditions).
 export function resolveToken(ctx, inner) {
     const parts = String(inner || "").split("|");
     const src = parts[0].trim();
-    const agg = (parts[1] || "").trim() || "latest";
+    // everything after the first "|" is the aggregate (delimiters may contain "|", so re-join)
+    const aggRaw = parts.slice(1).join("|").trim();
+    const agg = aggRaw || "latest";
     if (src.startsWith("node:")) return pathGet(ctx.model.profile, src.slice(5).trim());
     if (src.startsWith("widget:")) return ctx.data.read(`widget:${src.slice(7).trim()}`);
     if (src === "page") return ctx.data.read("page") || "";   // the page id currently shown/edited
@@ -101,9 +153,15 @@ export function resolveToken(ctx, inner) {
     }
     if (src.startsWith("dataset:") || src.startsWith("subset:")) {
         const isSub = src.startsWith("subset:");
-        const body = src.slice(isSub ? 7 : 8);
-        const [id, field] = body.split(".");
-        const rows = ctx.data.read(`${isSub ? "subset" : "dataset"}:${id.trim()}`) || [];
+        const { rest, slice } = splitSlice(src.slice(isSub ? 7 : 8));
+        const [id, field] = rest.split(".");
+        let rows = ctx.data.read(`${isSub ? "subset" : "dataset"}:${id.trim()}`) || [];
+        if (slice) rows = applySlice(rows, slice);      // pythonesque row slice, e.g. dataset:id[0:5]
+        if (agg === "join" || agg.startsWith("join:")) {   // join sliced rows into a delimited string
+            const c = agg.indexOf(":");
+            const delim = c >= 0 ? agg.slice(c + 1).replace(/^["']|["']$/g, "") : ", ";
+            return joinRows(rows, field && field.trim(), delim);
+        }
         if (!field) return rows.length;                 // bare collection -> row count
         return aggregate(rows, field.trim(), agg);
     }
