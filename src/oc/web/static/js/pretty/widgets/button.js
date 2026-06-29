@@ -3,36 +3,49 @@
 // normal styled element; its action runs on click.
 
 import * as api from "../../api.js";
+import * as hub from "../../hub.js";
 import { el } from "./util.js";
 
-const ACTIONS = ["fire_trigger", "run_sweep", "set_value", "switch_page"];
+const ACTIONS = ["fire_trigger", "run_sweep", "set_value", "switch_page", "live_on", "live_off", "live_toggle"];
 export { ACTIONS };
 
 export default {
     type: "button",
     title: "Button",
     icon: "⏺",
-    defaults: () => ({ config: { action: "fire_trigger", target: "", value: "", page: "", label: "Run" }, style: { alignH: "left", alignV: "middle", fill: false }, w: 140, h: 44 }),
+    defaults: () => ({ config: { action: "fire_trigger", target: "", value: "", page: "", label: "Run" }, style: { alignH: "center", alignV: "middle", fill: true }, w: 80, h: 28 }),
     create(host, widget, ctx) {
         host.className = "pw-button-host";
         const c = widget.config || {};
         const btn = el("button", "pw-button", c.label || "Run");
-        const msg = el("span", "pw-button-msg");
         applyPlacement(host, btn, widget.style || {});
+        // no in-button status text — the action just runs (errors surface in the console/log, not on the button)
         btn.addEventListener("click", async () => {
-            btn.disabled = true; msg.textContent = "";
+            btn.disabled = true;
             try {
-                if (c.action === "fire_trigger") { await api.triggers.fire(ctx.game, c.target); msg.textContent = "fired"; }
-                else if (c.action === "run_sweep") { await api.prices.refresh(ctx.game, c.target); msg.textContent = "sweeping"; }
-                else if (c.action === "set_value") { await ctx.overrides.setOverride(c.target, c.value); msg.textContent = "set"; }
+                if (c.action === "fire_trigger") { await api.triggers.fire(ctx.game, c.target); }
+                else if (c.action === "run_sweep") { await api.prices.refresh(ctx.game, c.target); }
+                else if (c.action === "set_value") { await ctx.overrides.setOverride(c.target, c.value); }
                 else if (c.action === "switch_page") { ctx.switchPage(c.page); }
-            } catch (e) { msg.textContent = String(e.message || e); }
-            finally { btn.disabled = false; setTimeout(() => { msg.textContent = ""; }, 2000); }
+                // live actions kick the heartbeat so every activity-bound part of the UI (indicators,
+                // the live panel, activity:* conditions) reflects the new state at once, not next cadence.
+                else if (c.action === "live_on") { await api.live.start(ctx.game); hub.kick(); }
+                else if (c.action === "live_off") { await api.live.stop(ctx.game); hub.kick(); }
+                else if (c.action === "live_toggle") {
+                    // toggle off the live heartbeat the activity source reports, else start it
+                    const on = !!(ctx.data.read("activity") || {}).live;
+                    if (on) await api.live.stop(ctx.game); else await api.live.start(ctx.game);
+                    hub.kick();
+                }
+            } catch { /* action error — left silent per design (no in-button message) */ }
+            finally { btn.disabled = false; }
         });
-        host.append(btn, msg);
+        host.append(btn);
         // re-apply placement on update so STYLE edits (alignH/alignV/fill) take effect live via restyle,
         // without a full canvas rebuild (label changes still need a rebuild — they live in config).
-        return { update() { applyPlacement(host, btn, widget.style || {}); }, destroy() {} };
+        // styleTarget: the canvas paints the widget's Style onto the INNER button (it has its own chrome
+        // that would otherwise hide the frame's), so bg/border/radius/colour/font all reach the button.
+        return { update() { applyPlacement(host, btn, widget.style || {}); }, destroy() {}, styleTarget: btn };
     },
 };
 
