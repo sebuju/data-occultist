@@ -121,6 +121,15 @@ export function read(key) {
     return _cache.get(key);
 }
 
+// The controller publishes the current page id here on every page switch / render, so conditions
+// and dynamic text bound to the `page` source re-evaluate when the user navigates. Not polled —
+// it's pushed, cached under "page", and notified only on a real change.
+export function setPage(id) {
+    if (_cache.get("page") === id) return;
+    _cache.set("page", id);
+    notify("page");
+}
+
 // A widget publishes its live value into the scope (control value, form field, selected row).
 export function publish(widgetId, value) {
     const key = `widget:${widgetId}`;

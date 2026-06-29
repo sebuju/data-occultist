@@ -9,6 +9,7 @@
 //   status[:<ds>.<f>]        live flow status (dataset present/total/last_op, or counts)
 //   activity[:<what>]        live worker heartbeat (running / live / precapture / sweeps / triggers)
 //   widget:<id>              another pretty element's published value (the reactive scope)
+//   page                     the id of the page currently shown/edited (changes on page switch)
 //
 // A token may end with `| <agg>` (count|sum|mean|min|max|latest|first) to collapse rows.
 
@@ -24,6 +25,7 @@ export function sourceTokenList(model, widgets = []) {
     for (const s of model.profile.subsets || []) { add(`subset:${s.id}`, `rows · ${s.id}`); for (const c of model.subsetColumns(s.id)) add(`subset:${s.id}.${c}`, `${s.id} · ${c}`); }
     for (const i of nodeInputs(model)) add(`node:${i.path}`, `node · ${i.nodeLabel} · ${i.label}`);
     for (const w of widgets) add(`widget:${w.id}`, `widget · ${w.id} (${w.type})`);
+    add("page", "current page");
     add("status:datasets", "status · datasets");
     // live worker heartbeat (what the tasks/live/precapture panels reflect) — see resolveToken
     add("activity:running", "activity · any running");
@@ -41,6 +43,7 @@ export function subKeyForToken(inner) {
     if (src.startsWith("subset:")) return `subset:${src.slice(7).split(".")[0].trim()}`;
     if (src.startsWith("node:")) return `node:${src.slice(5).trim()}`;
     if (src.startsWith("widget:")) return `widget:${src.slice(7).trim()}`;
+    if (src === "page") return "page";
     if (src.startsWith("status")) return "status";
     if (src.startsWith("activity")) return "activity";
     return null;
@@ -72,6 +75,7 @@ export function resolveToken(ctx, inner) {
     const agg = (parts[1] || "").trim() || "latest";
     if (src.startsWith("node:")) return pathGet(ctx.model.profile, src.slice(5).trim());
     if (src.startsWith("widget:")) return ctx.data.read(`widget:${src.slice(7).trim()}`);
+    if (src === "page") return ctx.data.read("page") || "";   // the page id currently shown/edited
     if (src.startsWith("status")) {
         const st = ctx.data.read("status") || {};
         const rest = src.includes(":") ? src.slice(src.indexOf(":") + 1).trim() : "";
