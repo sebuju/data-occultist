@@ -46,6 +46,7 @@ let liveSave = true;
 let liveInterval = 0.2;
 let liveColStatus = null;   // latest server collector status (from the heartbeat) while collecting
 let liveColUnsub = null;    // hub subscription active while the server collector runs
+let liveSawServer = false;  // we've observed the server collector actually running this run (gates the external-stop reflect, so an optimistic pre-start beat can't kill a just-started toggle)
 let liveImg = { count: 0, bytes: 0 };   // saved live-image stat (live tuning saves one frame/round)
 
 // ---- live floating panel --------------------------------------------------
@@ -64,6 +65,14 @@ function buildLiveWindow() {
     });
     winAdapter = { host: liveWin.body, fit: () => liveWin.fitHeight(), nav: (id) => panZoomTo(id) };
     mountLive(winAdapter);
+    // Standing heartbeat watch (built once): ADOPT a server collector started elsewhere (a pretty
+    // live button, another client) so the toggle + worker reflect it, and reflect an EXTERNAL stop.
+    // Distinct from liveColUnsub (which mirrors status only while WE run) — this watches the on/off edge.
+    hub.subscribe((s) => {
+        const running = !!(s && s.live);
+        if (running && !liveOn) adoptServerCollect(s);
+        else if (!running && liveOn && liveSave && liveSawServer) reflectExternalStop();
+    });
 }
 
 // Build the content root once, wire its handlers, then (re-)parent it into `adapter.host`.
@@ -267,6 +276,7 @@ function subscribeCollector() {
     liveColUnsub = hub.subscribe((s) => {
         if (!liveOn || !liveSave) return;
         liveColStatus = s.live || null;
+        if (liveColStatus) liveSawServer = true;   // confirmed running -> external-stop reflect may now fire
         liveRecog.clear(); liveDetCount.clear();
         for (const r of (liveColStatus?.recognized || [])) {   // cumulative tally → per-window count
             if (!r.miss && r.key.includes("/")) {
@@ -286,6 +296,7 @@ function startServerCollect() {
     const game = model.profile.name;
     if (!game) return;
     liveColStatus = null;
+    liveSawServer = false;   // not yet observed running -> don't let the pre-start beat reflect a stop
     // Optimistic beat for instant "starting" feedback, then an AUTHORITATIVE beat once the server
     // has actually started: the immediate kick races the worker and usually reads live=false, which
     // would schedule the hub at IDLE cadence (~3s) — so activity:live-gated elements lagged badly.
@@ -306,7 +317,7 @@ async function syncLiveFromServer() {
     let st;
     try { st = await api.live.status(game); } catch { return; }
     if (!st?.running || liveOn) return;   // re-check liveOn: the await may have raced a user toggle
-    liveOn = true; liveSave = true;
+    liveOn = true; liveSave = true; liveSawServer = true;
     liveColStatus = st;
     if (Number.isFinite(st.interval) && st.interval > 0) {   // restore the frame-limiter input
         liveInterval = st.interval;
@@ -319,6 +330,40 @@ async function syncLiveFromServer() {
     hub.kick();
     renderLiveWindow();   // reflect the adopted toggle
 }
+// Adopt a server collector observed running on the heartbeat (started by another client / a pretty
+// live button) — flip the toggle + register the worker WITHOUT restarting it. Like syncLiveFromServer
+// but driven off a live snapshot, not a fresh status fetch.
+function adoptServerCollect(s) {
+    if (liveOn) return;
+    const lv = s && s.live;
+    liveOn = true; liveSave = true; liveSawServer = true;
+    liveColStatus = lv || null;
+    if (lv && Number.isFinite(lv.interval) && lv.interval > 0) {   // restore the frame-limiter input
+        liveInterval = lv.interval;
+        const intIn = liveRoot?.querySelector(".live-int-in");
+        if (intIn) intIn.value = String(Math.round(lv.interval * 1000));
+    }
+    registerWorker("live", "live collection", () => setLiveMode(false));
+    showLiveStats(true);
+    subscribeCollector();
+    log("live collection adopted", "run");
+    renderLiveWindow();
+}
+
+// Reflect an EXTERNAL stop (the server collector we were tracking is no longer running) — drop the
+// toggle + worker locally without issuing another stop (the server is already stopped).
+function reflectExternalStop() {
+    liveOn = false; liveSawServer = false;
+    if (timer) { clearTimeout(timer); timer = null; }
+    liveRecog.clear(); liveDetCount.clear();
+    if (liveColUnsub) { liveColUnsub(); liveColUnsub = null; }
+    liveColStatus = null;
+    unregisterWorker("live");
+    showLiveStats(false);
+    log("live mode stopped (external)");
+    renderLiveWindow();
+}
+
 // Throttled saved-image stat refresh — the heartbeat fires often, but stat() globs the live/
 // dir, so re-fetch at most every ~5s. Without this the armed (server-collector) path never
 // refreshes liveImg and the panel reads "no live images saved" while frames pile up on disk.
@@ -338,6 +383,7 @@ function stopServerCollect() {
     // re-arm (e.g. an interval change) can't race the teardown and leave collection stopped.
     const done = game ? api.live.stop(game).catch((e) => log(`live stop failed: ${e.message || e}`) || null) : Promise.resolve();
     liveColStatus = null;
+    liveSawServer = false;   // teardown -> the watcher must re-observe before reflecting another stop
     refreshLiveImgStat(true);   // final count after the run stops
     hub.kick();                       // optimistic beat
     done.then(() => hub.kick());      // authoritative beat once the worker is joined and live reads false
