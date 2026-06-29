@@ -226,6 +226,9 @@ function normalize(doc) {
         p.widgets = Array.isArray(p.widgets) ? p.widgets : [];
         p.widgets.forEach((w) => {
             w.style = w.style || {};
+            // extra named style profiles (the default profile is w.style itself). Each {id, name, style}.
+            w.styleProfiles = Array.isArray(w.styleProfiles) ? w.styleProfiles.filter((sp) => sp && sp.id) : [];
+            w.styleProfiles.forEach((sp) => { sp.name = sp.name || sp.id; sp.style = sp.style || {}; });
             w.conditions = w.conditions || {};
             w.conditions.rules = Array.isArray(w.conditions.rules) ? w.conditions.rules : [];
             w.config = w.config || {};

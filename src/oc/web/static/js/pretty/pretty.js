@@ -27,6 +27,7 @@ const pretty = new PrettyModel();
 let surface = null, toolsEl = null, panels = null, tools = null, canvasCtrl = null;
 let game = null, mode = "edit", pageId = null, selectedId = null, mounted = false;
 let cueScope = "selected";   // edit-mode cue layer default: "selected" only (hover-preview when none selected); "all" shows every widget
+let stylePreview = null;   // edit-mode style-profile preview: {id, profileId} while the inspector is focused, else null
 const selection = new Set();   // every selected widget id; selectedId is the primary (inspector) one
 
 const ctx = {
@@ -42,11 +43,21 @@ const ctx = {
     requestSave: () => pretty.save(),
     refresh: () => renderCurrent(),
     restyle: (id) => restyleWidget(id),
+    // The canvas reads this to decide which style profile to draw in edit mode: while the inspector
+    // is focused it previews the selected profile tab; on blur the preview clears and the canvas
+    // falls back to the condition-driven profile.
+    stylePreview: () => stylePreview,
+    previewStyleProfile: (id, profileId) => {
+        const prev = stylePreview && stylePreview.id;
+        stylePreview = id ? { id, profileId: profileId || "default" } : null;
+        if (canvasCtrl) { if (id) canvasCtrl.restyle(id); if (prev && prev !== id) canvasCtrl.restyle(prev); }
+    },
     effectiveStyle: (id) => { const f = surface && surface.querySelector(`.pw[data-id="${id}"]`); return f ? computedToStyle(getComputedStyle(f)) : {}; },
     selectWidget: (id, additive) => selectWidget(id, additive),
     setAnchor: (id, anchor) => { if (canvasCtrl) canvasCtrl.reanchor(id, anchor); },
     geomOf: (id) => (canvasCtrl ? canvasCtrl.geom(id) : null),
     condState: (id) => (canvasCtrl ? canvasCtrl.condState(id) : null),
+    condProfile: (id) => (canvasCtrl ? canvasCtrl.condProfile(id) : "default"),
     recondition: () => { if (canvasCtrl) canvasCtrl.recondition(); },
     applyGeom: (id, patch) => { if (canvasCtrl) canvasCtrl.setGeom(id, patch); pretty.save(); },
     setUnit: (id, k, unit) => { if (canvasCtrl) canvasCtrl.setUnit(id, k, unit); pretty.save(); },
@@ -165,17 +176,19 @@ function renderCurrent() {
     surface.classList.toggle("view", mode === "view");
     const page = pretty.page(pageId) || pretty.pages()[0];
     pageId = page ? page.id : null;
+    data.setPage(pageId);   // publish the current page so `page`-bound conditions/text react to nav
     canvasCtrl = page ? renderPage(surface, page, ctx) : null;
     if (canvasCtrl && selection.size) { canvasCtrl.select(selection); canvasCtrl.showAnchorCue(selectedId); }
     if (panels && panels.elements) panels.elements.refresh();   // list follows add/remove/rename/page
 }
 
 function restyleWidget(id) {
+    // The canvas owns active-profile resolution (condition-driven, or the inspector's live preview),
+    // so route restyle through it. Fall back to the base style only if the canvas isn't built yet.
+    if (canvasCtrl) { canvasCtrl.restyle(id); return; }
     const w = pretty.widget(pageId, id);
     const frame = surface.querySelector(`.pw[data-id="${id}"]`);
     if (w && frame) applyStyle(frame, mergeStyle(pretty.theme(), w.style));
-    // let the widget re-apply any style it reads itself (e.g. button align/fill placement on its host).
-    if (canvasCtrl) canvasCtrl.updateOne(id);
 }
 
 // Select a widget. `additive` (shift-click / shift-marquee) toggles it in/out of the current

@@ -117,6 +117,19 @@ export function evaluate(expr, resolve, dflt = true) {
     }
 }
 
+// Compile ONE structured condition rule {source, op, value} to an expression string — the same
+// shape compileConditions builds and the canvas evaluates. Returns "" when the rule has no source.
+// Shared so the inspector (visible/enable compile), the live truth read-out, and the canvas's
+// style-profile activation all derive a rule's truthiness from ONE place (rule 7).
+export function compileTerm(r) {
+    if (!r || !r.source) return "";
+    if (r.op === "nonempty") return `{{${r.source}}} != ''`;
+    if (r.op === "empty") return `{{${r.source}}} == ''`;
+    const v = r.value ?? "";
+    const val = (v !== "" && !isNaN(Number(v))) ? v : `'${String(v).replace(/'/g, "")}'`;
+    return `{{${r.source}}} ${r.op} ${val}`;
+}
+
 // The inner strings of every {{token}} in a piece of text/expression (for dependency tracking).
 export function tokensIn(text) {
     const out = [];

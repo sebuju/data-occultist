@@ -67,6 +67,7 @@ pages:
       w: px
       y: px
     matchW: hd_main
+    styleProfiles: []
   - id: pn_sess
     x: 0
     y: 4
@@ -98,6 +99,7 @@ pages:
       w: dvw
       y: px
     matchW: game_name
+    styleProfiles: []
   - id: pn_live
     x: 0
     y: 4
@@ -123,6 +125,7 @@ pages:
       h: px
       y: px
     matchW: hd_l
+    styleProfiles: []
   - id: pn_tasks
     x: 0
     y: 4
@@ -149,6 +152,7 @@ pages:
       y: px
     matchW: pn_live
     matchH: pn_live
+    styleProfiles: []
   - id: hd_r
     x: 0
     y: 64
@@ -171,6 +175,7 @@ pages:
       y: px
       x: px
     matchW: hd_l
+    styleProfiles: []
   - id: hd_l
     x: 0
     y: 65
@@ -195,6 +200,7 @@ pages:
       target: bl
     matchWPct: 48
     matchW: game_name
+    styleProfiles: []
   - id: hd_main
     x: 0
     y: 30
@@ -222,6 +228,7 @@ pages:
       corner: tl
       target: bl
     matchW: game_name
+    styleProfiles: []
   - id: game_name
     x: 50
     y: 100
@@ -250,6 +257,7 @@ pages:
       corner: tc
       target: tl
     onAllPages: true
+    styleProfiles: []
   - id: hd_prec
     x: 0
     y: 30
@@ -275,6 +283,7 @@ pages:
       to: pn_live
       corner: tl
       target: bl
+    styleProfiles: []
   - id: btn_page_prime
     x: 10
     y: 0
@@ -286,12 +295,14 @@ pages:
       padding: 0
       fill: true
       alignH: center
+      bg: '#2c313c'
     conditions:
       rules:
-      - effect: show
-        source: ''
-        op: nonempty
-        value: ''
+      - effect: style
+        source: page
+        op: ==
+        value: page1
+        state: sp1
       visible_when: ''
       enabled_when: ''
     type: button
@@ -310,6 +321,16 @@ pages:
     onAllPages: true
     matchW: btn_page_main
     matchH: btn_page_main
+    styleProfiles:
+    - id: sp1
+      name: active
+      style:
+        align: left
+        padding: 0
+        fill: true
+        alignH: center
+        bg: '#5aa9e6'
+        color: '#000000'
   - id: btn_page_live
     x: 10
     y: 0
@@ -321,12 +342,15 @@ pages:
       padding: 0
       fill: true
       alignH: center
+      bg: '#2c313c'
+      opacity: 1
     conditions:
       rules:
-      - effect: show
-        source: ''
-        op: nonempty
-        value: ''
+      - effect: style
+        source: page
+        op: ==
+        value: page2
+        state: sp1
       visible_when: ''
       enabled_when: ''
     type: button
@@ -345,6 +369,17 @@ pages:
     onAllPages: true
     matchW: btn_page_main
     matchH: btn_page_main
+    styleProfiles:
+    - id: sp1
+      name: active
+      style:
+        align: left
+        padding: 0
+        fill: true
+        alignH: center
+        bg: '#5aa9e6'
+        opacity: 1
+        color: '#000000'
 - id: page1
   title: Prime Parts
   style: {}
@@ -357,8 +392,16 @@ pages:
     z: 11
     style:
       fill: true
+      bg: '#2c313c'
     conditions:
-      rules: []
+      rules:
+      - effect: style
+        source: page
+        op: ==
+        value: main
+        state: sp1
+      visible_when: ''
+      enabled_when: ''
     type: button
     config:
       action: switch_page
@@ -374,6 +417,13 @@ pages:
       corner: tl
       target: bl
     onAllPages: true
+    styleProfiles:
+    - id: sp1
+      name: active
+      style:
+        fill: true
+        bg: '#5aa9e6'
+        color: '#000000'
   - id: w2
     x: 0
     y: 4
@@ -428,6 +478,7 @@ pages:
       corner: tl
       target: bl
     matchW: game_name
+    styleProfiles: []
   - id: w3
     x: 0
     y: 65
@@ -444,6 +495,7 @@ pages:
       to: game_name
       corner: tl
       target: bl
+    styleProfiles: []
 - id: page2
   title: Live
   style: {}
@@ -464,6 +516,7 @@ pages:
       to: game_name
       corner: tl
       target: bl
+    styleProfiles: []
   - id: w4
     x: 0
     y: 4
@@ -525,6 +578,7 @@ pages:
       w: px
       y: px
     matchW: game_name
+    styleProfiles: []
   - id: w5
     x: 0
     y: 235
@@ -541,6 +595,7 @@ pages:
       to: game_name
       corner: tl
       target: bl
+    styleProfiles: []
   - id: w6
     x: 0
     y: 4
@@ -601,3 +656,43 @@ pages:
       w: px
       y: px
     matchW: game_name
+    styleProfiles: []
+  - id: w7
+    x: 0
+    y: 9
+    w: 80
+    h: 28
+    z: 19
+    style:
+      alignH: center
+      alignV: middle
+      fill: true
+      bg: '#570f0f'
+    conditions:
+      rules:
+      - effect: style
+        source: activity:live
+        op: ==
+        value: '1'
+        state: sp1
+      visible_when: ''
+      enabled_when: ''
+    type: button
+    config:
+      action: live_toggle
+      target: ''
+      value: ''
+      page: ''
+      label: Toggle
+    styleProfiles:
+    - id: sp1
+      name: live_on
+      style:
+        alignH: center
+        alignV: middle
+        fill: true
+        bg: '#146312'
+    anchor:
+      to: game_name
+      corner: tr
+      target: br

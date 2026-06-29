@@ -11,12 +11,11 @@
 // build, on every drag/resize/nudge, and when the surface resizes, so dependents stay glued.
 
 import { makeDraggable, addResizeGrips, GRID, snap } from "../graph/dragresize.js";
-import { applyStyle, mergeStyle } from "./style.js";
+import { applyStyle, mergeStyle, profileStyle } from "./style.js";
 import { widgetDef } from "./widgets/index.js";
-import { evaluate, tokensIn, truthy } from "./expr.js";
+import { evaluate, tokensIn, truthy, compileTerm } from "./expr.js";
 import { resolveToken, subKeyForToken } from "./binding.js";
 import { keySubscription, el } from "./widgets/util.js";
-import { svg } from "../dom.js";
 
 // nine anchor points: vertical t/m/b × horizontal l/c/r → fraction of the target box.
 const FX = { l: 0, c: 0.5, r: 1 };
@@ -121,7 +120,6 @@ export function renderPage(surface, page, ctx) {
         frame.style.width = `${widget.w || 200}px`;
         frame.style.height = `${widget.h || 80}px`;
         frame.style.zIndex = String(widget.z || 1);
-        applyStyle(frame, mergeStyle(ctx.pretty.theme(), widget.style));
         const host = el("div", "pw-content");
         frame.appendChild(host);
         surface.appendChild(frame);
@@ -134,15 +132,18 @@ export function renderPage(surface, page, ctx) {
         // this — see .pw-host rules in pretty.css.
         host.classList.add("pw-host");
 
-        // reactive conditions
-        const condSub = keySubscription(ctx, () => applyConditions(rec));
-        const rec = { widget, frame, host, inst, def, condSub };
+        // reactive conditions (show/enable AND the style-profile pick both re-run on a source change)
+        const condSub = keySubscription(ctx, () => { applyConditions(rec); applyWidgetStyle(rec); });
+        // a widget may paint its Style onto a different element than the frame (e.g. the button's inner
+        // <button>, which has its own chrome) — applyWidgetStyle targets it.
+        const rec = { widget, frame, host, inst, def, condSub, styleTarget: inst.styleTarget || frame };
         // Register BEFORE wiring/applying: resolvedCond (and match-rule target lookups) read `recs`,
         // so the rec must be in it first — otherwise the initial applyConditions resolves against a
         // missing rec, defaults to visible:true, and the condition silently never applies on build.
         recs.set(widget.id, rec);
         wireConditions(rec);
         applyConditions(rec);
+        applyWidgetStyle(rec);   // active profile (condition-driven) over the base style applied at build
 
         if (ctx.mode === "edit") wireEdit(rec);
         else { frame.classList.remove("pw-edit"); }
@@ -590,6 +591,9 @@ export function renderPage(surface, page, ctx) {
         for (const r of (c.rules || [])) {
             if (r.effect === "match" && r.source && r.source !== id && recs.has(r.source) && !seen.has(r.source))
                 condTokens(r.source, new Set(seen).add(id), out);
+            // style-profile rules aren't compiled into visible/enable expressions — track their tokens
+            // here so the active profile re-evaluates the instant the source flips.
+            if (r.effect === "style") for (const inner of tokensIn(compileTerm(r))) out.add(inner);
         }
         return out;
     }
@@ -597,6 +601,32 @@ export function renderPage(surface, page, ctx) {
         const inners = [...condTokens(rec.widget.id, new Set(), new Set())];
         rec.condSub.sync(inners.map(subKeyForToken).filter(Boolean));
     }
+    // Which style profile is in force for a widget RIGHT NOW. In edit mode the inspector can pin a
+    // profile for live preview (clicking a profile tab while the inspector is focused) — that wins so
+    // you see the profile you're editing. Otherwise the first condition rule with effect "style" whose
+    // test is true picks the profile; with none true, the default profile.
+    // The profile a widget's CONDITIONS activate right now (first "style" rule whose test is true),
+    // ignoring any inspector preview — what the element really shows when not being previewed.
+    function condProfileId(w) {
+        const resolve = (inner) => resolveToken(ctx, inner);
+        for (const r of (w.conditions?.rules || [])) {
+            if (r.effect !== "style" || !r.state) continue;
+            const expr = compileTerm(r);
+            if (expr && truthy(evaluate(expr, resolve, false))) return r.state;
+        }
+        return "default";
+    }
+    function activeProfileId(w) {
+        const pv = ctx.stylePreview && ctx.stylePreview();
+        if (ctx.mode === "edit" && pv && pv.id === w.id) return pv.profileId || "default";
+        return condProfileId(w);
+    }
+    // Apply the active profile's style (theme defaults under it) to a widget's style target (the frame,
+    // or a widget-chosen element like the button's inner <button>).
+    function applyWidgetStyle(rec) {
+        applyStyle(rec.styleTarget || rec.frame, mergeStyle(ctx.pretty.theme(), profileStyle(rec.widget, activeProfileId(rec.widget))));
+    }
+
     function applyConditions(rec) {
         const { visible, enabled } = resolvedCond(rec.widget.id, new Set());
         // in edit mode never hide (so you can still select/move a conditionally-hidden widget) —
@@ -637,21 +667,7 @@ export function renderPage(surface, page, ctx) {
             if (ev.shiftKey) ctx.selectWidget(widget.id, true);
             else if (!ctx.selectionIds().has(widget.id)) ctx.selectWidget(widget.id);
         });
-        // hover trashcan -> delete with standard armed two-click confirm (rule 2)
-        const del = el("button", "pw-del");
-        del.title = "delete widget (click again to confirm)";
-        del.appendChild(svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
-            svg("path", {
-                d: "M3 4.5h10M6.4 4V2.8a.8.8 0 0 1 .8-.8h1.6a.8.8 0 0 1 .8.8V4M4.8 4.5l.5 8a1 1 0 0 0 1 .95h3.4a1 1 0 0 0 1-.95l.5-8",
-                fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round", "stroke-linejoin": "round",
-            })));
-        del.addEventListener("mousedown", (ev) => { ev.stopPropagation(); ev.preventDefault(); });   // don't start a drag/select
-        del.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.classList.add("armed"); setTimeout(() => { del.dataset.armed = "0"; del.classList.remove("armed"); }, 2500); return; }
-            ctx.removeWidget(widget.id);
-        });
-        frame.appendChild(del);
+        // (deletion is via the inspector / elements panel — no per-widget hover trashcan)
         // Drag moves the whole selection in tandem when this widget is part of a multi-selection,
         // else just this one. The delta is snapped (not each absolute position) so the group keeps
         // its relative grid, and clamped so no member crosses the canvas edge.
@@ -714,6 +730,10 @@ export function renderPage(surface, page, ctx) {
         // re-run one widget's content update (e.g. after a style edit a widget applies itself, like the
         // button's alignH/alignV/fill placement) without rebuilding the whole canvas.
         updateOne(id) { const rec = recs.get(id); if (rec) try { rec.inst.update && rec.inst.update(); } catch { /* guard */ } },
+        // Re-apply one widget's active-profile style + let it re-read its own style (e.g. button
+        // placement) — after a style edit / profile switch / inspector-preview change, no rebuild.
+        restyle(id) { const rec = recs.get(id); if (!rec) return; applyWidgetStyle(rec); try { rec.inst.update && rec.inst.update(); } catch { /* guard */ } },
+        restyleAll() { for (const rec of recs.values()) applyWidgetStyle(rec); },
         select(sel) {
             const ids = sel instanceof Set ? sel : sel ? new Set([sel]) : new Set();
             for (const rec of recs.values()) rec.frame.classList.toggle("pw-sel", ids.has(rec.widget.id));
@@ -723,10 +743,11 @@ export function renderPage(surface, page, ctx) {
         placeAll,
         boxes: () => resolveBoxes(),   // resolved {left,top,w,h} per id — used for marquee hit-testing
         condState: (id) => resolvedCond(id, new Set()),   // resolved {visible,enabled} — for the inspector's match read-out
+        condProfile: (id) => { const rec = recs.get(id); return rec ? condProfileId(rec.widget) : "default"; },   // condition-active style profile id (no preview)
         // Re-wire + re-evaluate every widget's conditions in place after the rules were edited — so a
         // condition change applies WITHOUT a full rebuild (which would tear down embedded panels and
         // stop the live collector). Re-wiring all is cheap and keeps match dependencies consistent.
-        recondition() { for (const rec of recs.values()) { wireConditions(rec); applyConditions(rec); } },
+        recondition() { for (const rec of recs.values()) { wireConditions(rec); applyConditions(rec); applyWidgetStyle(rec); } },
         reanchor,
         showAnchorCue,
         // px nudge (WASD) -> back into each field's unit
