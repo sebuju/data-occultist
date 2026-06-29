@@ -41,18 +41,22 @@ should move.
 > Every other logic stage is sub-millisecond. This is the per-tick floor before capture
 > or OCR; fixing it (candidate **0**) is worth more than everything else combined.
 
-### 0. `settle.thumb` is the per-tick floor — ~127 ms/4K frame  *(st)*  **[do first]**
-`image.max(axis=2)` reduces all ~25M uint8 elements of a 4K BGR frame, then `cv2.resize`
-(INTER_AREA) shrinks the full-res frame to 48². Both run on every grab. Options, cheapest
-first (verify the staleness diff still gates correctly — it only feeds the diff, never OCR):
-- **Subsample before reducing:** take a strided view (e.g. `image[::8, ::8]`) *first*, then
-  gray + resize the tiny result. Cuts the elements touched ~64x.
-- **One channel, not channel-max:** `image[:, :, 1]` (or `cv2.cvtColor(..., BGR2GRAY)`,
-  SIMD) instead of `.max(axis=2)`.
-- **INTER_NEAREST/INTER_LINEAR** for the thumbnail (a perceptual 48² diff doesn't need
-  area averaging).
-Target: drop `st` from ~127 ms to low single-digit ms — i.e. raise the tick ceiling from
-~8/s to capture/OCR-bound. Re-measure with `bench_live.py` (the `settle.thumb (4K)` row).
+### 0. `settle.thumb` is the per-tick floor — ~118 ms/4K frame  *(st)*  **[DONE]**
+`image.max(axis=2)` reduced all ~25M uint8 elements of a 4K BGR frame, then `cv2.resize`
+(INTER_AREA) shrank the full-res frame to 48² — both on every grab.
+**Fix applied** (`settle.py`): stride-subsample to a coarse intermediate (short side ~4·THUMB)
+**first**, then run `.max(axis=2)` + INTER_AREA on that tiny array (~50x fewer elements). Kept
+the channel-max (not a single channel) so the signature magnitude — and thus `THUMB_TOL`/
+`MIN_CELLS` — is unchanged; only the sampling grid differs, which a coarse 48² diff is robust to.
+Guarded by new `tests/test_settle.py` (identical→settled, big change→motion, cursor twitch→settled).
+
+| measure | before | after | speedup |
+|---|---|---|---|
+| `settle.thumb (4K)` | 118.0 ms | **1.14 ms** | ~104x |
+| `TICK end-to-end (real)` | 117.86 ms | **2.72 ms** | ~43x |
+
+The pure-logic per-tick floor is now ~2.7 ms; live ticks are capture/OCR-bound as intended.
+See `baseline.md` (before) vs `after.md` (after).
 
 ### A. Cache the authored grid + targets per window  *(sg, oc, tk)*
 `expand_cells(window)` and `_targets_from_cells(...)` rebuild every tick, and **2-3x
@@ -88,6 +92,26 @@ that is ~2400 center tests + many small sorts per read. Pre-bucket lines into ce
 `json.dumps(values, sort_keys=True, default=str)` for every kept record every tick is
 heavy next to the rest of `observe`. A `tuple(sorted(values.items()))` repr (or a hash)
 is far cheaper and equally stable as a change key.
+
+### G2. Batch the classifier's per-window title reads  *(cl)*  **[REVERTED — regressed]**
+Tried: gather every text-detector box and recognise them in ONE `read_lines` batch before the
+window walk. Measured WORSE live (~80 ms → 120-224 ms) and reverted. Two reasons it backfired:
+(1) it defeated `combine_passes`' short-circuit — windows that fail a cheap/template detector
+first never read their text box, but eager batching read them all; (2) RapidOCR's batched
+`text_rec` pads every crop to the batch's max width, and the title crops are WIDE at 4K, so the
+padded batch did more work than the sequential rec-only `read_line` calls. Lesson: don't batch
+when the sequential path short-circuits AND the crops have very different widths.
+
+Real levers for `cl` instead (highest first):
+- **Classify cache must hold.** `_classify` skips the whole pass when `_detect_signature`
+  (downsampled hash of the detector regions) is unchanged. If `cl` is ~80 ms EVERY settled tick,
+  some detector search box overlaps animating pixels (cursor, blink, tooltip) → cache never holds
+  → re-OCR every tick. Fixing that drops `cl` to ~0 on steady screens — far bigger than any read
+  speedup. Diagnose: log signature hits/misses, or shrink/move the offending detector box.
+- **Template, not text, for the title landmark.** `cv2.matchTemplate` is far cheaper than an OCR
+  recognition pass; a title bar is a fixed glyph image. Authoring the window detector as a
+  template tell instead of text removes the read entirely (profile change, not code).
+- **Run OCR on GPU / cap CPU threads** (see the CPU note below) — moves the cost off the CPU.
 
 ### G. Classifier double-scores detectors  *(cl)*
 `classify` runs `_window_matches` (→ `matcher.score`) for **all** windows, then

@@ -78,16 +78,15 @@ def bench(name: str, fn, reps: int, warm: int = 50) -> dict:
 # --------------------------------------------------------------------------- fixtures
 
 class StubOcr(OcrEngine):
-    """Returns a fixed set of lines (no real inference); covers every read API."""
+    """Returns a fixed set of lines (no real inference). ``read_line``/``read_lines`` inherit
+    the base (loop -> read_image -> join), so a single-line stub reads back its one line —
+    which is what the classifier's prewarm batch needs."""
 
     def __init__(self, lines):
         self._lines = lines
 
     def read_image(self, image):
         return list(self._lines)
-
-    def read_lines(self, images):
-        return [("12", 0.9) for _ in images]
 
 
 _NAMES = [
