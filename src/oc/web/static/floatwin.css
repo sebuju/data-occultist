@@ -175,8 +175,13 @@
    stripe down the left edge keeps the otherwise-bland list scannable; it brightens when open. */
 /* type-bucket heading (ticks/ocr/replays/…); cards group under it, sorted by avg within. */
 .st-group { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.06em; color: var(--muted); padding: 6px 2px 1px; }
+    letter-spacing: 0.06em; color: var(--muted); padding: 6px 2px 1px;
+    display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.st-group:hover { color: var(--text); }
 .st-group:first-child { padding-top: 1px; }
+.st-group::before { content: "\25be"; font-size: 0.9em; transition: transform .12s; }
+.st-group.collapsed::before { transform: rotate(-90deg); }
+.st-group-n { color: var(--warn); font-weight: 700; letter-spacing: 0; }
 .st-card { background: var(--bg); border: 1px solid var(--line);
     border-radius: 6px; overflow: hidden; }
 /* slow replays/recomputes flagged by avg: amber over 1s, red over 10s (left stripe + tint). */
@@ -188,9 +193,10 @@
 .st-head:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .st-card.open .st-head { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .st-title { font-weight: 600; font-size: var(--fs-sm);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.st-name { color: var(--text); }
+    display: flex; align-items: baseline; gap: 4px; white-space: nowrap; overflow: hidden; }
+.st-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
 .st-runs { color: var(--accent); font-weight: 700; }   /* run count, dot-delimited in the title */
+.st-title .st-m-since { margin-left: auto; padding-left: 8px; }   /* since: hard right of the title */
 .st-meta { display: flex; flex-wrap: wrap; gap: 3px 10px;
     font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--text); }
 .st-m { display: inline-flex; align-items: baseline; gap: 4px; }
@@ -202,6 +208,12 @@
 .st-m-min b  { color: var(--ok); }
 .st-m-max b  { color: var(--warn); }
 .st-m-since b { color: var(--muted); font-weight: 500; }
+/* per-window Σ footer: total last/avg across the window's op cards */
+.st-foot { display: flex; align-items: baseline; gap: 8px; padding: 4px 9px 6px;
+    margin-top: -2px; border-top: 1px dashed var(--line); }
+.st-foot[hidden] { display: none; }
+.st-foot-lbl { color: var(--muted); font-weight: 700; font-size: var(--fs-sm); }
+.st-foot .st-m b { font-weight: 700; }
 .st-detail { border-top: 1px solid var(--line); padding: 6px; }
 .st-detail-bar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
 .st-detail-bar[hidden] { display: none; }
