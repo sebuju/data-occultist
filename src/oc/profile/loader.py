@@ -80,6 +80,23 @@ def _atomic_write_text(path: Path, text: str) -> None:
                 pass
 
 
+def _read_text_retry(path: Path) -> str:
+    """Read a text file, retrying on a transient Windows ``PermissionError`` (WinError 5). A
+    save's ``os.replace`` momentarily makes the target inaccessible, so a read that races a
+    concurrent save (the profile is loaded fresh on many requests) can hit a sharing violation —
+    the twin of the write-side retry above. Mirrors the same short backoff; the last attempt
+    re-raises so a genuinely unreadable file still surfaces."""
+    delays = (0.05, 0.1, 0.2, 0.4, 0.0)   # ~0.75s total; last attempt re-raises
+    for delay in delays:
+        try:
+            return path.read_text(encoding="utf-8")
+        except PermissionError:
+            if not delay:
+                raise
+            time.sleep(delay)
+    raise AssertionError("unreachable")   # the loop either returns or re-raises
+
+
 def _migrate_keys(raw: dict) -> dict:
     """Older profiles keyed records on the dataset (``key_field`` + normalisation
     flags) or the scroll grid (``dedup_field``). Keys now live on the window/item
@@ -196,7 +213,7 @@ def _resolve_dictionaries(profiles_dir: Path | str, profile: GameProfile) -> Non
 
 def load_profile(profiles_dir: Path | str, name: str) -> GameProfile:
     path = profile_path(profiles_dir, name)
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw = yaml.safe_load(_read_text_retry(path))
     if isinstance(raw, dict):
         raw = _migrate_detect_thresholds(_migrate_keys(raw))
     profile = GameProfile.model_validate(raw)

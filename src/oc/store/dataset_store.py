@@ -56,7 +56,10 @@ CREATE TABLE IF NOT EXISTS datasets (
   dataset  TEXT PRIMARY KEY,
   key_meta TEXT,
   next_id  INTEGER NOT NULL DEFAULT 1,
-  batch    INTEGER NOT NULL DEFAULT 0
+  batch    INTEGER NOT NULL DEFAULT 0,
+  rev      INTEGER NOT NULL DEFAULT 0,   -- bumps on every mutation
+  cur_rev  INTEGER NOT NULL DEFAULT -1,  -- the rev the `current` materialisation was built at
+  cur_agg  TEXT                          -- the aggregate policy `current` was built under
 );
 CREATE TABLE IF NOT EXISTS events (
   dataset      TEXT NOT NULL,
@@ -72,6 +75,10 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS ix_events_ds_key   ON events(dataset, key);
 CREATE INDEX IF NOT EXISTS ix_events_ds_batch ON events(dataset, batch);
+-- Covering partial index for the `current` boundary rebuild (_compute_boundary): the
+-- per-key COUNT / MIN(id) / MAX(id) over live rows scan this index-only instead of the
+-- whole dataset partition (reverted/removed rows are excluded from the index entirely).
+CREATE INDEX IF NOT EXISTS ix_events_live ON events(dataset, key, id) WHERE reverted=0 AND op!='remove';
 CREATE TABLE IF NOT EXISTS current (
   dataset    TEXT NOT NULL,
   key        TEXT NOT NULL,
@@ -93,15 +100,6 @@ CREATE TABLE IF NOT EXISTS positions (
 );
 """
 
-# datasets columns added after the base schema (so an already-created DB gains them too):
-# rev bumps on every mutation; cur_rev stamps the rev the `current` materialisation was built
-# at, so a steady-state read is a plain SELECT and only a write triggers a rebuild.
-_DATASET_COLS = ("rev INTEGER NOT NULL DEFAULT 0", "cur_rev INTEGER NOT NULL DEFAULT -1",
-                 "cur_agg TEXT")
-# positions columns added after the base schema (so an already-created DB gains them too):
-# xpos is the slot's column (0..1 of data_area width) — persisted alongside the row index so
-# a carried-over key's full slot is known across runs (else mirror removal can't judge it).
-_POSITION_COLS = ("xpos REAL",)
 
 
 def _num(v):
@@ -222,12 +220,6 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(_SCHEMA)
-    for table, cols in (("datasets", _DATASET_COLS), ("positions", _POSITION_COLS)):
-        for col in cols:
-            try:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
-            except sqlite3.OperationalError:
-                pass   # column already exists
     return conn
 
 
@@ -477,27 +469,63 @@ class DatasetStore:
             "INSERT OR IGNORE INTO datasets(dataset,key_meta,next_id,batch) VALUES(?,?,?,?)",
             (self._dataset, self._key_meta_json(), self._next_id, self._batch))
 
-    def _insert(self, op: ChangeOp, key: str, values: dict, changed: dict | None = None) -> ChangeEvent:
+    def _insert_core(self, op: ChangeOp, key: str, values: dict, changed: dict | None = None) -> ChangeEvent:
+        """The event INSERT + ``rev`` bump WITHOUT its own transaction — the caller MUST already
+        hold an open ``BEGIN IMMEDIATE``. This lets :meth:`_commit_observation` fold the insert,
+        the ``current`` maintenance, and the ``cur_rev`` stamp into ONE commit so a concurrent
+        reader never observes ``rev > cur_rev`` (which would force a full O(events) rebuild).
+        Does NOT advance ``self._next_id`` — the caller does that only after a successful COMMIT
+        (so a rollback can't desync the in-memory cursor)."""
         ts = self._clock()
+        c = self._conn
+        self._ensure_dataset_row()
+        eid = self._next_id
+        c.execute(
+            "INSERT INTO events(dataset,id,batch,ts,op,key,values_json,changed_json,reverted) "
+            "VALUES(?,?,?,?,?,?,?,?,0)",
+            (self._dataset, eid, self._batch, ts, op.value, key,
+             json.dumps(values, default=str),
+             json.dumps(changed) if changed else None))
+        c.execute("UPDATE datasets SET next_id=?, batch=?, rev=rev+1 WHERE dataset=?",
+                  (eid + 1, self._batch, self._dataset))
+        return ChangeEvent(ts, op, key, values, changed or {}, id=eid, batch=self._batch)
+
+    def _insert(self, op: ChangeOp, key: str, values: dict, changed: dict | None = None) -> ChangeEvent:
         c = self._conn
         c.execute("BEGIN IMMEDIATE")
         try:
-            self._ensure_dataset_row()
-            eid = self._next_id
-            c.execute(
-                "INSERT INTO events(dataset,id,batch,ts,op,key,values_json,changed_json,reverted) "
-                "VALUES(?,?,?,?,?,?,?,?,0)",
-                (self._dataset, eid, self._batch, ts, op.value, key,
-                 json.dumps(values, default=str),
-                 json.dumps(changed) if changed else None))
-            c.execute("UPDATE datasets SET next_id=?, batch=?, rev=rev+1 WHERE dataset=?",
-                      (eid + 1, self._batch, self._dataset))
+            ev = self._insert_core(op, key, values, changed)
             c.execute("COMMIT")
         except Exception:
             c.execute("ROLLBACK")
             raise
-        self._next_id = eid + 1
-        return ChangeEvent(ts, op, key, values, changed or {}, id=eid, batch=self._batch)
+        self._next_id = ev.id + 1
+        return ev
+
+    def _commit_observation(self, op: ChangeOp, event_key: str, values: dict,
+                            changed: dict | None = None, *, per_event_key: bool = False) -> ChangeEvent:
+        """Insert one confirmed observation, fold it into the ``current`` materialisation, and
+        re-stamp ``cur_rev`` — all in ONE atomic transaction. Because the ``rev`` bump and the
+        ``cur_rev`` stamp commit together, a reader on another connection never catches the
+        old 3-transaction gap where ``rev > cur_rev`` triggered a full, multi-hundred-ms rebuild
+        of the whole dataset mid-write. ``current`` must be valid going in, so we refresh it
+        first (cheap when already current; one rebuild at a sweep's first write).
+
+        ``per_event_key`` (the ``no_dedup`` path) keys ``current`` by the event id (``#<id>``,
+        known only after the insert) while the stored event key stays ``event_key``."""
+        self._ensure_current()
+        c = self._conn
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            ev = self._insert_core(op, event_key, values, changed)
+            self._current_upsert(f"#{ev.id}" if per_event_key else event_key, ev, values)
+            self._stamp_current()   # cur_rev = rev (the rev this insert just advanced to)
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+        self._next_id = ev.id + 1
+        return ev
 
     def begin_batch(self) -> int:
         """Start a new batch; subsequent ``record_seen``/``reconcile`` events belong to it.
@@ -543,10 +571,7 @@ class DatasetStore:
         identical to the current latest (nothing to track)."""
         if self._no_dedup:
             # 1->many OFF: every read is its own record (keyed per event), never merged.
-            self._ensure_current()
-            ev = self._insert(ChangeOp.add, "", dict(values))
-            self._current_upsert(f"#{ev.id}", ev, dict(values))
-            self._stamp_current()
+            ev = self._commit_observation(ChangeOp.add, "", dict(values), per_event_key=True)
             self._announce([dict(values)])
             return ev
         key = self._key.build(values)
@@ -561,10 +586,7 @@ class DatasetStore:
             "SELECT values_json FROM events WHERE dataset=? AND key=? AND reverted=0 AND op!='remove' "
             "ORDER BY id DESC LIMIT 1", (self._dataset, key)).fetchone()
         if obs is None:
-            self._ensure_current()
-            ev = self._insert(ChangeOp.add, key, dict(values))
-            self._current_upsert(key, ev, dict(values))
-            self._stamp_current()
+            ev = self._commit_observation(ChangeOp.add, key, dict(values))
             self._announce([dict(values)])
             return ev
         latest = json.loads(obs["values_json"])
@@ -574,13 +596,10 @@ class DatasetStore:
         if not changed and not was_absent:
             return None                            # identical to latest → nothing to add
         op = ChangeOp.add if was_absent else ChangeOp.update
-        # Keep `current` valid before the write (cheap when already so; one rebuild at a sweep's
-        # first write), then fold this observation in — so the per-record write stays O(1) and a
-        # concurrent read never triggers a full O(events) rebuild.
-        self._ensure_current()
-        ev = self._insert(op, key, dict(merged), changed)
-        self._current_upsert(key, ev, dict(merged))
-        self._stamp_current()
+        # Fold this observation in atomically — the per-record write stays O(1) and, because the
+        # rev bump + cur_rev stamp commit together, a concurrent read never catches a rev>cur_rev
+        # gap and triggers a full O(events) rebuild.
+        ev = self._commit_observation(op, key, dict(merged), changed)
         self._announce([dict(merged)])
         return ev
 
@@ -956,13 +975,19 @@ class DatasetStore:
         return [{"ts": r["ts"], **json.loads(r["values_json"])} for r in rows]
 
     def summary(self) -> dict:
-        """Cheap dashboard digest: counts + a column preview + the last change."""
-        rows = self._current_records()
-        present = sum(1 for r in rows if r.get("present", True))
-        total = len(rows)
+        """Cheap dashboard digest: counts + a column preview + the last change. Reads the counts
+        straight off `current` with COUNT/SUM and samples just 20 rows for column names — it does
+        NOT materialise + json.loads every record (the old `_current_records()` path, O(keys)),
+        so the flow-list endpoint that summarises every dataset stays cheap as key counts grow."""
+        self._ensure_current()   # make `current` valid; the counts/sample below trust it
+        c = self._conn
+        total, present = c.execute(
+            "SELECT COUNT(*), COALESCE(SUM(present), 0) FROM current WHERE dataset=?",
+            (self._dataset,)).fetchone()
         cols: list[str] = []
-        for r in rows[:20]:
-            for k in r:
+        for (vj,) in c.execute("SELECT values_json FROM current WHERE dataset=? LIMIT 20",
+                               (self._dataset,)):
+            for k in json.loads(vj):   # raw record values — no plumbing keys to filter
                 if k not in _PLUMBING and k not in cols:
                     cols.append(k)
         last = self.last_change

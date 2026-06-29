@@ -101,7 +101,9 @@ def clear_dataset(game: str, dataset: str):
     """Empty the records by reverting every batch — the batch ledger is kept (each
     batch restorable)."""
     from ...store.db_backup import snapshot_db
-    snapshot_db(get_settings().data_dir, game, reason=f"pre-clear:{dataset}")
+    # Capture the pre-clear state synchronously (consistent copy) but compress it off-thread, so a
+    # clear of one small dataset isn't blocked seconds on gzipping the whole multi-hundred-MB store.
+    snapshot_db(get_settings().data_dir, game, reason=f"pre-clear:{dataset}", background=True)
     store = _store(game, dataset)
     store.clear_data()
     return _detail(store, dataset)

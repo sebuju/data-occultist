@@ -100,11 +100,17 @@ def _prune(d: Path, now: datetime) -> None:
             sc.unlink(missing_ok=True)
 
 
-def snapshot_db(data_dir: Path | str, game: str, reason: str = "manual") -> Path | None:
+def snapshot_db(data_dir: Path | str, game: str, reason: str = "manual",
+                *, background: bool = False) -> Path | None:
     """Snapshot the game's live store to a fresh gzipped ``<stamp>.gz`` (+ a ``<stamp>.json``
     meta sidecar), then thin per the GFS policy. Returns the snapshot path, or ``None`` when
     no store exists yet. ``reason`` tags WHY it was taken (``manual`` / ``auto`` /
-    ``pre-drop`` / ``pre-clear:<dataset>`` ...) so backups are self-identifying in the list."""
+    ``pre-drop`` / ``pre-clear:<dataset>`` ...) so backups are self-identifying in the list.
+
+    The CONSISTENT copy (the part that must capture state-as-of-now, e.g. before a destructive
+    clear) is always taken synchronously. ``background=True`` then defers only the slow
+    gzip+meta+prune to a daemon thread, so a caller that just needs the pre-state captured (a
+    pre-clear/pre-delete guard) returns in ~the copy time instead of waiting on compression."""
     db = _db_path(data_dir, game)
     if not db.exists():
         return None
@@ -112,8 +118,8 @@ def snapshot_db(data_dir: Path | str, game: str, reason: str = "manual") -> Path
     d.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc)
     _, path = backup.new_stamp_path(d, _EXT, now)
-    raw = path.with_name(f"{path.name}.{os.getpid()}.raw")   # uncompressed sqlite copy
-    gz = path.with_name(f"{path.name}.{os.getpid()}.tmp")    # gzip target, atomically replaced in
+    tag = f"{os.getpid()}.{threading.get_ident()}"   # unique per concurrent snapshot
+    raw = path.with_name(f"{path.name}.{tag}.raw")   # uncompressed sqlite copy
     meta = {"stamp": path.stem, "reason": reason, "created": now.isoformat(),
             "datasets": 0, "events": 0, "last_seen": None}
     src = sqlite3.connect(str(db))
@@ -126,18 +132,28 @@ def snapshot_db(data_dir: Path | str, game: str, reason: str = "manual") -> Path
             dst.close()
     finally:
         src.close()
-    try:
-        with open(raw, "rb") as fi, gzip.open(gz, "wb", compresslevel=_GZIP_LEVEL) as fo:
-            shutil.copyfileobj(fi, fo)
-    finally:
-        raw.unlink(missing_ok=True)
-    os.replace(gz, path)           # snapshot only appears once fully written
-    meta["size"] = path.stat().st_size   # compressed size (what the dir actually costs)
-    _meta_path(path).write_text(json.dumps(meta), encoding="utf-8")
-    _prune(d, now)
-    eventlog.publish(
-        f"db backup · {reason} · {meta['datasets']} ds / {meta['events']} events "
-        f"· {_human(meta['size'])}", level="ok", game=game)
+
+    # `raw` now holds the consistent pre-call image; compressing + finalising it is pure I/O
+    # with no further read of the live DB, so it can run off the request thread.
+    def _finalize() -> None:
+        gz = path.with_name(f"{path.name}.{tag}.tmp")   # gzip target, atomically replaced in
+        try:
+            with open(raw, "rb") as fi, gzip.open(gz, "wb", compresslevel=_GZIP_LEVEL) as fo:
+                shutil.copyfileobj(fi, fo)
+        finally:
+            raw.unlink(missing_ok=True)
+        os.replace(gz, path)           # snapshot only appears once fully written
+        meta["size"] = path.stat().st_size   # compressed size (what the dir actually costs)
+        _meta_path(path).write_text(json.dumps(meta), encoding="utf-8")
+        _prune(d, now)
+        eventlog.publish(
+            f"db backup · {reason} · {meta['datasets']} ds / {meta['events']} events "
+            f"· {_human(meta['size'])}", level="ok", game=game)
+
+    if background:
+        threading.Thread(target=_finalize, daemon=True).start()
+    else:
+        _finalize()
     return path
 
 
