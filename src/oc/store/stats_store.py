@@ -40,6 +40,10 @@ from pathlib import Path
 
 STATS_CSV_VERSION = 1
 MAX_SAMPLES = 500          # rows kept per node after compaction (also the chart history depth)
+# The rollup's avg/min/max are computed over the most-recent WINDOW_N samples, NOT all-time —
+# so a card reflects recent behaviour and matches the panel's default chart window. Mirrors
+# STAT_LAST_N in web/static/js/graph/panels/stats.js; keep the two in sync.
+WINDOW_N = 20
 _COMPACT_AT = 2 * MAX_SAMPLES
 _FLUSH_EVERY_S = 10.0      # wall-clock between throttled flushes
 _FLUSH_ROWS = 64           # ...or flush sooner once this many rows are buffered for a game
@@ -93,14 +97,20 @@ class _Agg:
         self.samples.append((ts, ms, n))
 
     def as_row(self, node: str, op: str) -> dict:
-        avg = self.sum_ms / self.count if self.count else 0.0
+        # avg/min/max are windowed to the most-recent WINDOW_N samples (the same set the
+        # panel's default chart plots) so the card tracks recent perf rather than a lifetime
+        # average diluted by every run ever. ``count`` stays the lifetime total.
+        win = list(self.samples)[-WINDOW_N:]
+        ms = [s[1] for s in win]
+        w_avg = sum(ms) / len(ms) if ms else 0.0
         return {
             "node": node, "op": op, "label": OPS.get(op, op),
             "count": self.count,
+            "window": len(ms),
             "last_ms": round(self.last_ms, 2),
-            "avg_ms": round(avg, 2),
-            "min_ms": round(self.min_ms, 2) if self.count else 0.0,
-            "max_ms": round(self.max_ms, 2),
+            "avg_ms": round(w_avg, 2),
+            "min_ms": round(min(ms), 2) if ms else 0.0,
+            "max_ms": round(max(ms), 2) if ms else 0.0,
             "last_ts": int(self.last_ts),
         }
 

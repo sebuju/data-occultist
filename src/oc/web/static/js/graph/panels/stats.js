@@ -341,9 +341,12 @@ function updateRow(r, d) {
     setText(r.runs, `${d.count} runs`);
     const u = durUnit(DUR_METRICS.map(([key]) => d[key]));
     setText(r.cells.last_ms, `${u.fmt(d.last_ms)}${u.unit}`);
-    // avg chip folds in the min-max range: "[avg]ms ([min]ms - [max]ms)"
+    // avg chip folds in the min-max range: "[avg]ms ([min]ms - [max]ms)". avg/min/max are over
+    // the most-recent `window` runs (matches the chart's default), so flag that in the tooltip.
     setText(r.cells.avg_ms,
         `${u.fmt(d.avg_ms)}${u.unit} (${u.fmt(d.min_ms)}${u.unit} - ${u.fmt(d.max_ms)}${u.unit})`);
+    const avgTip = d.window ? `avg / min - max over the last ${d.window} runs` : "";
+    if (r.cells.avg_ms.title !== avgTip) r.cells.avg_ms.title = avgTip;
     // since label ticks optimistically (1s) via the shared ago ticker, not just on the poll
     if (d.last_ts) liveAgo(r.cells.since, d.last_ts * 1000);   // unix s -> ms for Date()
     else { stopAgo(r.cells.since); setText(r.cells.since, "—"); }
