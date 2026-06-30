@@ -368,6 +368,14 @@ class ItemDef(BaseModel):
     # the default (``name``). Per-template because templates sharing a window can
     # need different identities (an arcane keys on name+level, a plain item on name).
     key: KeyDef | None = None
+    # Occlusion guard: the fraction of the located CELL that must lie inside the data area on
+    # each axis for the record to be SENT FORWARD (stored). Scrolling clips the top/bottom row
+    # (and edge columns), so part of a cell falls outside the data area and reads unreliably —
+    # a cell covered LESS than this on either axis is dismissed, never stored. It gates only the
+    # forwarded output, NEVER grid location (so a partly-off row still anchors its neighbours).
+    # 1.0 = require the whole cell inside; 0 = never dismiss on that axis.
+    min_cover_x: float = 0.75
+    min_cover_y: float = 0.75
 
 
 class DetectCombine(str, Enum):

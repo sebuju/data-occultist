@@ -22,6 +22,8 @@ from .fields import coerce_rule, out_of_range
 from .grid import Cell, cells_for_rows, expand_cells
 from .items import (
     ItemCell,
+    cell_cover,
+    cell_occluded,
     grid_drift,
     locate_item_cells,
     resolve_overlaps,
@@ -415,8 +417,11 @@ class RegionReader:
         # (on its tells alone) so it can SUPPRESS a higher-or-equal cell that would otherwise
         # misread the placeholder. It is dropped from the stored output below — it exists to
         # win the tile, not to be saved.
+        # a cell the scroll has occluded past its item's min coverage is dismissed before storage
+        da = window.data_area.to_fraction()
         valid = [ci for ci, c in enumerate(cr)
                  if not c.failed
+                 and not cell_occluded(ics[ci], da)
                  and (not records[ci].is_empty() or (not ics[ci].item.fields and ics[ci].item.tells))
                  and valid_cell(frame, window, records[ci].values, ics[ci], self._templates, fields,
                                 c.confs, self._read_tell_boxes(frame, window, ics[ci]))]
@@ -477,6 +482,7 @@ class RegionReader:
         # UI shows exactly why each cell is kept or dropped. Same gates and confidences as
         # ``read`` (both ride ``_read_cells``), so the preview is what collection would store.
         if ics is not None:
+            da = window.data_area.to_fraction()
             valid = []
             for ci, cell in enumerate(out):
                 cell["item"] = ics[ci].item.id
@@ -488,18 +494,32 @@ class RegionReader:
                                   self._read_tell_boxes(frame, window, ics[ci]))
                 cell["tells"] = rep
                 cell["tells_pass"] = all(r["pass"] for r in rep)
+                # scroll-occlusion: how much of the cell sits inside the data area, and whether
+                # that's below the item's required coverage (same gate as collection). Reported
+                # so the canvas can mark a dismissed-by-occlusion cell distinctly.
+                fx, fy = cell_cover(ics[ci], da)
+                occ = cell_occluded(ics[ci], da)
+                cell["cover"] = {"x": round(fx, 3), "y": round(fy, 3)}
+                cell["occluded"] = occ
+                if occ:
+                    ax, got, need = (("vert", fy, ics[ci].item.min_cover_y) if fy < ics[ci].item.min_cover_y
+                                     else ("horiz", fx, ics[ci].item.min_cover_x))
+                    cell["occ"] = f"{ax} {round(got * 100)}%"   # terse canvas label
+                    cell["reason"] = f"occluded ({ax}): {round(got * 100)}% inside, need {round(need * 100)}%"
                 # an out-of-range field drops the cell too (same as collection) — record it
                 # as the reject reason; it does not count as a tell failure
                 oor_fids = [fid for fid, f in cell["fields"].items() if f.get("out_of_range")]
-                if oor_fids:
+                if oor_fids and not occ:
                     cell["reason"] = "out of range: " + ", ".join(oor_fids)
-                if cell["tells_pass"] and not oor_fids:
+                if cell["tells_pass"] and not oor_fids and not occ:
                     valid.append(ci)
             kept = set(resolve_overlaps(ics, valid))
             for ci, cell in enumerate(out):
                 cell["valid"] = ci in kept
                 if ci in valid and ci not in kept:
                     cell["reason"] = "overlap: lost to higher-priority template"
+                elif cell.get("occluded"):
+                    pass   # keep the occlusion reason set above (it's the dismissal cause)
                 elif not cell["tells_pass"]:
                     failed = [r["id"] for r in cell["tells"] if not r["pass"]]
                     cell["reason"] = "tell failed: " + ", ".join(failed)

@@ -933,10 +933,17 @@ export class GraphModel {
         while (w.items.some((it) => it.id === id)) id = "item_" + _fieldSeq++;
         const cell = box || cutout_box;
         w.items.push({ id, cutout: cutout || null, cutout_box: cutout_box || null,
-            box: { x: cell.x, y: cell.y, w: cell.w, h: cell.h }, align: "center", priority: 0, fields: [], tells: [] });
+            box: { x: cell.x, y: cell.y, w: cell.w, h: cell.h }, align: "center", priority: 0,
+            min_cover_x: 0.75, min_cover_y: 0.75, fields: [], tells: [] });
         return id;
     }
     setItemPriority(winId, id, priority) { const it = this.item(winId, id); if (it) it.priority = priority | 0; }
+    // Min coverage on one axis ("x"/"y"): the fraction of the cell that must sit inside the data
+    // area for the record to be stored — clamped 0..1. A row scrolled off past this is dismissed.
+    setItemCover(winId, id, axis, frac) {
+        const it = this.item(winId, id);
+        if (it) it["min_cover_" + axis] = Math.max(0, Math.min(1, +frac || 0));
+    }
     // Move an item up/down the displayed order (dir -1/+1, where the list shows HIGHEST
     // priority first) and renumber every item's priority to match its new rank. Renumbering
     // keeps the list dense and contiguous so the window node's order list stays a faithful

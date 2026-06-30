@@ -555,6 +555,17 @@ function wireItemControls(div, n) {
         setItemCellKeepingChildren(winId, itemId, { ...it.box, w: base.box.w, h: base.box.h });
         itemChanged(winId, itemId); syncCellSize(winId, itemId);   // copy P0 w/h, reflect in inputs
     });
+    // min-coverage (occlusion guard) — stored as a 0..1 fraction, edited as a %. Re-read so the
+    // canvas immediately reflects which cells the new threshold dismisses.
+    div.querySelectorAll(".ccover").forEach((inp) => inp.addEventListener("change", (e) => {
+        const it = model.item(winId, itemId);
+        if (!it) return;
+        const axis = e.target.dataset.k;
+        const pct = Math.max(0, Math.min(100, Math.round(+e.target.value || 0)));
+        e.target.value = pct;                       // reflect the clamp
+        model.setItemCover(winId, itemId, axis, pct / 100);
+        itemChanged(winId, itemId);
+    }));
     div.querySelector(".gi-id").addEventListener("change", (e) => {
         renameNode(e.target, itemId,
             () => model.renameItem(winId, itemId, e.target.value.trim()),

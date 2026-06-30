@@ -218,7 +218,21 @@ export function cellSizeControls(it) {
         h("label", { class: "flab", title: "cell width as a window fraction — the static grid's column pitch" },
             "width ", h("input", { type: "number", class: "csize", dataset: { k: "w" }, step: "0.001", min: "0.001", value: v(b.w) })),
         h("label", { class: "flab", title: "cell height as a window fraction — the static grid's row pitch" },
-            "height ", h("input", { type: "number", class: "csize", dataset: { k: "h" }, step: "0.001", min: "0.001", value: v(b.h) })));
+            "height ", h("input", { type: "number", class: "csize", dataset: { k: "h" }, step: "0.001", min: "0.001", value: v(b.h) })),
+        coverControls(it));
+}
+
+// Occlusion guard (per item): how much of the cell must sit INSIDE the data area, per axis, for
+// the record to be stored. A row the scroll clips below this is dismissed (and marked on the
+// canvas) — guards against reading a half-visible top/bottom row. Shown as a percent (stored
+// 0..1). Does NOT affect grid location, only the forwarded/stored data.
+export function coverControls(it) {
+    const pct = (n, d) => Math.round((n ?? d) * 100);
+    return frag(
+        h("label", { class: "flab", title: "minimum % of the cell that must be inside the data area HORIZONTALLY to store the row — an edge column clipped past this is dismissed" },
+            "cover x % ", h("input", { type: "number", class: "ccover", dataset: { k: "x" }, step: "5", min: "0", max: "100", value: pct(it.min_cover_x, 0.75) })),
+        h("label", { class: "flab", title: "minimum % of the cell that must be inside the data area VERTICALLY to store the row — a top/bottom row the scroll occludes past this is dismissed" },
+            "cover y % ", h("input", { type: "number", class: "ccover", dataset: { k: "y" }, step: "5", min: "0", max: "100", value: pct(it.min_cover_y, 0.75) })));
 }
 
 // One field's fallback-rule rows (FieldRule list). `cls` is the change-class the node

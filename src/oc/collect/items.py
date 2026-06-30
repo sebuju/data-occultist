@@ -156,6 +156,26 @@ def _cell_in_bounds(item: ItemDef, cell_x: float, cell_y: float, da, iw: float |
     return True
 
 
+def cell_cover(ic: ItemCell, da) -> tuple[float, float]:
+    """Fraction of the located cell's width and height that lies inside the data area: 1.0 =
+    fully inside that axis, 0.5 = half the cell scrolled off that edge. The intersection of the
+    cell rect ``[ox,oy,iw,ih]`` with the data area, normalised per axis by the cell size."""
+    if ic.iw <= 0 or ic.ih <= 0:
+        return 0.0, 0.0
+    ix = max(0.0, min(ic.ox + ic.iw, da.x + da.w) - max(ic.ox, da.x))
+    iy = max(0.0, min(ic.oy + ic.ih, da.y + da.h) - max(ic.oy, da.y))
+    return ix / ic.iw, iy / ic.ih
+
+
+def cell_occluded(ic: ItemCell, da) -> bool:
+    """True when scrolling has clipped the cell below its item's required coverage on EITHER
+    axis (``min_cover_x`` / ``min_cover_y``) — the row is too occluded to read reliably, so it
+    is dismissed from the forwarded output. Drives both the storage gate (drop it) and the
+    preview's dismissal marker on the window canvas. Never affects grid location."""
+    fx, fy = cell_cover(ic, da)
+    return fx < ic.item.min_cover_x or fy < ic.item.min_cover_y
+
+
 def static_grid_origins(o0: float, step: float, lo: float, hi: float) -> list[float]:
     """Tile origins ``o0 + k*step`` (k any sign) whose tile ``[o, o+step]`` fits in ``[lo, hi]``.
     The static grid anchors at the DATA-AREA corner (``o0 = lo``) and tiles by the cell size

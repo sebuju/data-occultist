@@ -9,7 +9,7 @@ import { persist } from "./persist.js";
 import * as groups from "./groups.js";
 import {
     setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases,
-    gridPreviews, gridReads, gridCellBoxes, gridGuards, gridDetections, itemReads, clearGrid, view, boot,
+    gridPreviews, gridReads, gridCellBoxes, gridGuards, gridOccluded, gridDetections, itemReads, clearGrid, view, boot,
 } from "./state.js";
 import { drawEdges } from "./routing.js";
 import { renderLiveWindow, liveDetCount, liveRecog } from "./panels/livewin.js";
@@ -980,6 +980,7 @@ function refreshImageBoxes(winId) {
     // the live-detected grid (where items were actually located this capture)
     entry.overlay.setCellBoxes(gridCellBoxes.get(winId) || []);   // detected cell tiling (solid)
     entry.overlay.setGuardCells(gridGuards.get(winId) || []);     // fieldless guard items (distinct colour)
+    entry.overlay.setOccludedCells(gridOccluded.get(winId) || []); // scroll-occluded, dismissed cells
     entry.overlay.setGridPreview(gridPreviews.get(winId) || staticFieldPreview(winId) || []);
     entry.overlay.setPreview(gridReads.get(winId) || []);   // value + confidence per cell
     entry.overlay.setDetections(gridDetections.get(winId) || []);   // raw OCR lines (opt-in layer)
@@ -1159,10 +1160,14 @@ function setGridFromPreview(winId, res) {
     const cells = kept.map((c) => c.box).filter(Boolean);
     // guard cells with their win/lose verdict so the overlay can colour them
     const guardCells = guards.map((c) => ({ ...c.box, valid: c.valid }));
+    // cells DISMISSED because the scroll occluded them past the item's min coverage — drawn
+    // distinctly on the canvas with the reason, so it's clear WHY the row wasn't stored
+    const occluded = res.cells.filter((c) => c.occluded && c.box).map((c) => ({ ...c.box, occ: c.occ }));
     if (boxes.length) gridPreviews.set(winId, boxes); else gridPreviews.delete(winId);
     if (reads.length) gridReads.set(winId, reads); else gridReads.delete(winId);
     if (cells.length) gridCellBoxes.set(winId, cells); else gridCellBoxes.delete(winId);
     if (guardCells.length) gridGuards.set(winId, guardCells); else gridGuards.delete(winId);
+    if (occluded.length) gridOccluded.set(winId, occluded); else gridOccluded.delete(winId);
     const dets = res.detections || [];   // raw OCR lines (the opt-in "raw OCR" layer)
     if (dets.length) gridDetections.set(winId, dets); else gridDetections.delete(winId);
     refreshImageBoxes(winId);

@@ -54,6 +54,7 @@ export class Overlay {
         this.gridCells = [];        // faint preview rectangles (fractions)
         this.cellBoxes = [];        // detected CELL outlines (the tiled item cells), drawn solid
         this.guardCells = [];       // located GUARD cells (fieldless detector items) — drawn in a distinct colour
+        this.occludedCells = [];    // cells DISMISSED for scroll-occlusion (below the item's min coverage) — drawn red + reason
         this.gridGuides = null;     // search structure: column dividers + locator scan strips
         this.previewItems = [];     // extracted per-cell values: {x,y,w,h,text,confidence}
         this.detections = [];       // raw OCR lines: {box:{x,y,w,h}, text, confidence}
@@ -75,6 +76,7 @@ export class Overlay {
     setGridPreview(cells) { this.gridCells = cells || []; this.render(); }
     setCellBoxes(cells) { this.cellBoxes = cells || []; this.render(); }
     setGuardCells(cells) { this.guardCells = cells || []; this.render(); }
+    setOccludedCells(cells) { this.occludedCells = cells || []; this.render(); }
     setGridGuides(g) { this.gridGuides = g || null; this.render(); }
     setPreview(items) { this.previewItems = items || []; this.render(); }
     setDetections(items) { this.detections = items || []; this.render(); }
@@ -341,6 +343,24 @@ export class Overlay {
             ctx.setLineDash([]);
         }
 
+        // Occlusion-dismissed cells: a row the scroll clipped below the item's min coverage, so
+        // it was NOT stored. Red dashed box + a light wash + the reason centred, so it's obvious
+        // which rows the occlusion guard threw out and why.
+        if (this.vis.cells && this.occludedCells.length) {
+            ctx.lineWidth = 2.5 * u;
+            ctx.setLineDash([6 * u, 4 * u]);
+            for (const c of this.occludedCells) {
+                ctx.strokeStyle = "rgba(230,104,90,0.95)";
+                ctx.fillStyle = "rgba(230,104,90,0.14)";
+                ctx.fillRect(c.x * W, c.y * H, c.w * W, c.h * H);
+                ctx.strokeRect(c.x * W, c.y * H, c.w * W, c.h * H);
+            }
+            ctx.setLineDash([]);
+            if (this.vis.reads) for (const c of this.occludedCells) {
+                if (c.occ) this._centerLabel(`occluded: ${c.occ}`, (c.x + c.w / 2) * W, (c.y + c.h / 2) * H, labelFs, "#e6685a");
+            }
+        }
+
         // Grid preview: where each field will be read across the tiled grid.
         if (this.vis.grid && this.gridCells.length) {
             ctx.strokeStyle = "rgba(90,169,230,0.9)";
@@ -492,7 +512,7 @@ export class Overlay {
 
     // Centred variant of _label: solid black plate, white text, anchored on (cx, cy) —
     // used for cell-level read-outs (the item's name on its tile).
-    _centerLabel(text, cx, cy, fs) {
+    _centerLabel(text, cx, cy, fs, color = "#fff") {
         const ctx = this.ctx;
         const pad = fs * 0.28;
         ctx.font = `${fs}px system-ui`;
@@ -502,7 +522,7 @@ export class Overlay {
         cy = Math.max(h / 2, Math.min(cy, this.canvas.height - h / 2));   // keep the plate on-canvas vertically
         ctx.fillStyle = "rgba(0,0,0,0.9)";
         ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
-        ctx.fillStyle = "#fff";
+        ctx.fillStyle = color;
         ctx.textAlign = "center";
         ctx.textBaseline = "alphabetic";
         // optically centre the actual glyph box (baseline maths, not the em box, which
