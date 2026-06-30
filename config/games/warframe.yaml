@@ -143,6 +143,8 @@ windows:
       - name
       sep: '|'
       case_sensitive: false
+    min_cover_x: 0.75
+    min_cover_y: 0.75
   - id: arcane
     enabled: true
     box:
@@ -165,6 +167,8 @@ windows:
       - arcane_level
       sep: '|'
       case_sensitive: false
+    min_cover_x: 0.75
+    min_cover_y: 0.75
   static_grid: false
   scroll:
     enabled: true
@@ -359,6 +363,8 @@ windows:
       - mod_name
       sep: '|'
       case_sensitive: true
+    min_cover_x: 0.75
+    min_cover_y: 0.75
   - id: drop_item
     enabled: true
     box:
@@ -375,6 +381,8 @@ windows:
     align: center
     align_x: left
     priority: 0
+    min_cover_x: 0.75
+    min_cover_y: 0.75
   static_grid: true
   scroll:
     enabled: true
@@ -526,6 +534,8 @@ windows:
       - name
       sep: '|'
       case_sensitive: false
+    min_cover_x: 0.75
+    min_cover_y: 0.75
   static_grid: false
   preprocess:
     mode: none
@@ -625,6 +635,8 @@ windows:
       - name
       sep: '|'
       case_sensitive: false
+    min_cover_x: 0.75
+    min_cover_y: 0.75
   - id: guard
     enabled: true
     box:
@@ -641,6 +653,8 @@ windows:
     align: center
     align_x: left
     priority: 1
+    min_cover_x: 0.75
+    min_cover_y: 0.75
   static_grid: false
   scroll:
     enabled: true
@@ -786,6 +800,8 @@ windows:
     align: center
     align_x: left
     priority: 0
+    min_cover_x: 0.75
+    min_cover_y: 0.75
   - id: not_owned
     enabled: true
     box:
@@ -802,6 +818,8 @@ windows:
     align: center
     align_x: left
     priority: 1
+    min_cover_x: 0.75
+    min_cover_y: 0.75
   static_grid: false
   scroll:
     enabled: true
@@ -1478,14 +1496,14 @@ layout:
       h: 260.0
       collapsed: false
     sub:relic_rewards_limit:
-      x: 1480.0
-      y: 7860.0
+      x: 1540.0
+      y: 7980.0
       w: 360.0
       h: 360.0
       collapsed: false
     ds:relics_offered:
-      x: 1140.0
-      y: 7640.0
+      x: 1200.0
+      y: 7760.0
       w: 300.0
       h: 200.0
       collapsed: false
@@ -1496,16 +1514,16 @@ layout:
       h: 200.0
       collapsed: false
     win:mod_window:
-      x: -1460.0
-      y: 3040.0
+      x: -1480.0
+      y: 3100.0
       w: 520.0
       h: 1100.0
       collapsed: false
     item:mod_window:mod:
-      x: -3060.0
-      y: 3040.0
+      x: -3080.0
+      y: 3100.0
       w: 380.0
-      h: 998.0
+      h: 1072.0
       collapsed: false
     win:equipment_window:
       x: -1680.0
@@ -1521,15 +1539,15 @@ layout:
       collapsed: false
     item:equipment_window:arcane:
       x: -3080.0
-      y: 1560.0
+      y: 1620.0
       w: 380.0
-      h: 1235.0
+      h: 1309.0
       collapsed: false
     item:equipment_window:normal:
       x: -3080.0
       y: 380.0
       w: 380.0
-      h: 1110.0
+      h: 1184.0
       collapsed: false
     det:equipment_window:detect_1:
       x: -1960.0
@@ -1538,10 +1556,10 @@ layout:
       h: 380.0
       collapsed: false
     item:mod_window:drop_item:
-      x: -3060.0
-      y: 4060.0
+      x: -3080.0
+      y: 4220.0
       w: 380.0
-      h: 896.0
+      h: 970.0
       collapsed: false
     fld:equipment_window:normal:name:
       x: -2300.0
@@ -1557,43 +1575,43 @@ layout:
       collapsed: false
     fld:equipment_window:arcane:name:
       x: -2040.0
-      y: 1560.0
+      y: 1620.0
       w: 220.0
       h: 620.0
       collapsed: false
     fld:equipment_window:arcane:arcane_level:
       x: -2660.0
-      y: 1560.0
+      y: 1620.0
       w: 220.0
       h: 480.0
       collapsed: false
     fld:equipment_window:arcane:count:
       x: -2400.0
-      y: 1560.0
+      y: 1620.0
       w: 320.0
       h: 540.0
       collapsed: false
     fld:mod_window:mod:mod_name:
-      x: -2300.0
-      y: 3040.0
+      x: -2320.0
+      y: 3100.0
       w: 220.0
       h: 700.0
       collapsed: false
     fld:mod_window:mod:mod_drain:
-      x: -2060.0
-      y: 3040.0
+      x: -2080.0
+      y: 3100.0
       w: 220.0
       h: 480.0
       collapsed: false
     fld:mod_window:mod:mod_count:
-      x: -2640.0
-      y: 3040.0
+      x: -2660.0
+      y: 3100.0
       w: 320.0
       h: 600.0
       collapsed: false
     tell:mod_window:drop_item:tell_3:
-      x: -2660.0
-      y: 4060.0
+      x: -2680.0
+      y: 4220.0
       w: 220.0
       h: 180.0
       collapsed: false
@@ -1604,62 +1622,62 @@ layout:
       h: 300.0
       collapsed: false
     sub:relic_rewards_price_from_stored:
-      x: 1880.0
-      y: 7860.0
+      x: 1940.0
+      y: 7980.0
       w: 360.0
       h: 1140.0
       collapsed: false
     trigger:trigger:
-      x: 1480.0
-      y: 8240.0
+      x: 1540.0
+      y: 8360.0
       w: 360.0
       h: 320.0
       collapsed: false
     win:relic_select:
       x: 480.0
-      y: 5260.0
+      y: 5240.0
       w: 520.0
       h: 1063.0
       collapsed: false
     sb:relic_select:scrollbar:
       x: 1040.0
-      y: 5640.0
+      y: 5620.0
       w: 220.0
       h: 260.0
       collapsed: false
     item:relic_select:relic_item:
       x: 20.0
-      y: 5260.0
+      y: 5240.0
       w: 380.0
-      h: 1127.0
+      h: 1201.0
       collapsed: false
     fld:relic_select:relic_item:name:
       x: -220.0
-      y: 5260.0
+      y: 5240.0
       w: 220.0
       h: 700.0
       collapsed: false
     fld:relic_select:relic_item:count:
       x: -460.0
-      y: 5260.0
+      y: 5240.0
       w: 220.0
       h: 480.0
       collapsed: false
     item:relic_select:guard:
       x: 20.0
-      y: 6440.0
+      y: 6500.0
       w: 380.0
-      h: 1025.0
+      h: 1099.0
       collapsed: false
     tell:relic_select:guard:tell_no_relic:
       x: -220.0
-      y: 6440.0
+      y: 6500.0
       w: 220.0
       h: 500.0
       collapsed: false
     prev:relic_select:
       x: 480.0
-      y: 6360.0
+      y: 6340.0
       w: 520.0
       h: 320.0
       collapsed: false
@@ -1670,8 +1688,8 @@ layout:
       h: 780.0
       collapsed: false
     vt:sub:relic_rewards_price_from_stored:
-      x: 2280.0
-      y: 7860.0
+      x: 2340.0
+      y: 7980.0
       w: 580.0
       h: 220.0
       collapsed: false
@@ -1700,86 +1718,86 @@ layout:
       h: 200.0
       collapsed: false
     sub:relics_with_content:
-      x: 1440.0
-      y: 5500.0
+      x: 1460.0
+      y: 5480.0
       w: 380.0
       h: 1120.0
       collapsed: false
     sub:relics_with_content_view:
-      x: 1860.0
-      y: 5500.0
+      x: 1880.0
+      y: 5480.0
       w: 380.0
       h: 1120.0
       collapsed: false
     vt:sub:relics_with_content_view:
-      x: 2280.0
-      y: 5500.0
+      x: 2300.0
+      y: 5480.0
       w: 860.0
       h: 1120.0
       collapsed: false
     win:relic_refinement:
-      x: 300.0
-      y: 2920.0
+      x: 240.0
+      y: 2780.0
       w: 520.0
       h: 1097.0
       collapsed: false
     sb:relic_refinement:scrollbar:
-      x: 860.0
-      y: 3660.0
+      x: 800.0
+      y: 3520.0
       w: 300.0
       h: 900.0
       collapsed: false
     item:relic_refinement:relic_item:
       x: -200.0
-      y: 2920.0
+      y: 2780.0
       w: 380.0
-      h: 1052.0
+      h: 1126.0
       collapsed: false
     fld:relic_refinement:relic_item:name:
-      x: -440.0
-      y: 2920.0
+      x: -460.0
+      y: 2780.0
       w: 220.0
       h: 740.0
       collapsed: false
     win:relic_rewards:
-      x: 220.0
-      y: 7640.0
+      x: 240.0
+      y: 7760.0
       w: 520.0
       h: 1033.0
       collapsed: false
     item:relic_rewards:item_1:
       x: -220.0
-      y: 7640.0
+      y: 7760.0
       w: 380.0
-      h: 1032.0
+      h: 1106.0
       collapsed: false
     fld:relic_rewards:item_1:name:
       x: -460.0
-      y: 7640.0
+      y: 7760.0
       w: 220.0
       h: 700.0
       collapsed: false
     det:relic_rewards:detect_h:
-      x: 780.0
-      y: 7640.0
+      x: 800.0
+      y: 7760.0
       w: 260.0
       h: 380.0
       collapsed: false
     det:relic_select:detect_h:
       x: 1040.0
-      y: 5260.0
+      y: 5240.0
       w: 300.0
       h: 360.0
       collapsed: false
     det:relic_refinement:detect_h:
-      x: 860.0
-      y: 2920.0
+      x: 800.0
+      y: 2780.0
       w: 300.0
       h: 340.0
       collapsed: false
     det:mod_window:detect_h:
-      x: -1740.0
-      y: 3040.0
+      x: -1760.0
+      y: 3100.0
       w: 260.0
       h: 380.0
       collapsed: false
@@ -1790,68 +1808,68 @@ layout:
       h: 400.0
       collapsed: false
     prev:relic_refinement:
-      x: 300.0
-      y: 4100.0
+      x: 240.0
+      y: 3960.0
       w: 520.0
       h: 480.0
       collapsed: false
     item:relic_refinement:not_owned:
       x: -200.0
-      y: 4040.0
+      y: 3960.0
       w: 380.0
-      h: 1041.0
+      h: 1115.0
       collapsed: false
     tell:relic_refinement:not_owned:tell_3:
-      x: -440.0
-      y: 4400.0
+      x: -460.0
+      y: 4320.0
       w: 220.0
       h: 320.0
       collapsed: false
     tell:relic_refinement:not_owned:tell_4:
-      x: -440.0
-      y: 4040.0
+      x: -460.0
+      y: 3960.0
       w: 220.0
       h: 340.0
       collapsed: false
     ds:relics_refinement:
-      x: 1280.0
-      y: 2920.0
+      x: 1260.0
+      y: 2780.0
       w: 360.0
       h: 200.0
       collapsed: false
     sub:relics_refinement_with_contents:
-      x: 1700.0
-      y: 3160.0
+      x: 1680.0
+      y: 3020.0
       w: 360.0
       h: 1120.0
       collapsed: false
     sub:contents_with_price:
-      x: 2100.0
-      y: 3160.0
+      x: 2080.0
+      y: 3020.0
       w: 360.0
       h: 1120.0
       collapsed: false
     vt:sub:contents_with_price:
-      x: 2500.0
-      y: 3160.0
+      x: 2480.0
+      y: 3020.0
       w: 800.0
       h: 1120.0
       collapsed: false
     det:relic_refinement:detect_1:
-      x: 860.0
-      y: 3300.0
+      x: 800.0
+      y: 3160.0
       w: 300.0
       h: 340.0
       collapsed: false
     ds:relics_select:
-      x: 1440.0
-      y: 5260.0
+      x: 1460.0
+      y: 5240.0
       w: 380.0
       h: 200.0
       collapsed: false
     vt:ds:relics_offered:
-      x: 1140.0
-      y: 7860.0
+      x: 1200.0
+      y: 7980.0
       w: 300.0
       h: 560.0
       collapsed: false
@@ -1874,8 +1892,8 @@ layout:
       h: 460.0
       collapsed: false
     vt:ds:relics_refinement:
-      x: 1320.0
-      y: 4340.0
+      x: 1300.0
+      y: 4200.0
       w: 620.0
       h: 660.0
       collapsed: false
