@@ -1953,6 +1953,7 @@ function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
             // first redraw greys this node's out-edges; onResize only fires after a full grid step, so
             // a resize smaller than one step otherwise never greyed them at all (rule 7: same as drag).
             setDraggingNodes(true, [id]); requestEdges();
+            div.classList.add("snapping");   // glide each 20px grid step (same class as a move drag — rule 7)
         },
         // While ACTIVELY dragging (_ptrDown), keep the soft grid mins cleared so a prior grow's
         // min-width/height can't block a shrink. NOT on a programmatic resize (e.g. the size change
@@ -1968,6 +1969,7 @@ function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
                 nodeSizes.set(id, { w, h, softW, softH });   // record min-vs-hard so restore can't drift
             }
             div.classList.add("has-size"); setDraggingNodes(false); flushEdges(); groups.renderGroups(); persist.layout();
+            div.classList.remove("snapping");   // back to instant for programmatic sizes (restore/collapse/refit)
         },
         // reset dot: drop the user's size, then snap the node's NATURAL size UP to the grid using
         // soft mins set DIRECTLY (not via applyGridSize). snapUp always rounds UP, so min-width/height
@@ -3374,6 +3376,18 @@ $("graph").addEventListener("pointerdown", cancelPan, true);
 $("graph").addEventListener("wheel", cancelPan, { capture: true, passive: true });
 window.addEventListener("keydown", cancelPan, true);
 
+// Briefly arm the grid-glide transition for a DISCRETE (keyboard) step. A grip drag holds
+// `.snapping` across the whole drag (down..up); a WASD step has no down/up, so add the class and
+// drop it once the ~90ms ease has run — re-pressing restarts the timer so a burst keeps gliding.
+// Same class + transition as the drag path (rule 7). Timeout slightly > the transition duration.
+const _snapTimers = new WeakMap();
+function glideStep(el) {
+    if (!el) return;
+    el.classList.add("snapping");
+    clearTimeout(_snapTimers.get(el));
+    _snapTimers.set(el, setTimeout(() => el.classList.remove("snapping"), 140));
+}
+
 // WASD moves the selected rectangle; Shift+WASD resizes it (A/D width, W/S height).
 // Ignored while typing in a field.
 const NUDGE = { w: [0, -1], a: [-1, 0], s: [0, 1], d: [1, 0] };
@@ -3408,6 +3422,7 @@ document.addEventListener("keydown", (ev) => {
                 // collapsed nodes are header-only; widthOnly nodes (item/window) follow their
                 // cutout aspect, so neither takes a height step (widthOnly still resizes width).
                 if (el && !collapsed.has(selectedNodeId)) {
+                    glideStep(el);   // arm the ease BEFORE the size write so the step transitions (rule 7)
                     const widthOnly = WIDTH_ONLY_NODES.has(nodeTypeOf(selectedNodeId));
                     if (widthOnly) {
                         // item/window wrap a fixed-aspect canvas -> HARD width only, height aspect-driven
@@ -3430,7 +3445,7 @@ document.addEventListener("keydown", (ev) => {
             } else {
                 const p = pos.get(selectedNodeId);
                 p.x = snap(p.x + dir[0] * GRID); p.y = snap(p.y + dir[1] * GRID);
-                positionNode(selectedNodeId); drawEdges(); groups.renderGroups(); persist.layout();
+                glideStep(el); positionNode(selectedNodeId); drawEdges(); groups.renderGroups(); persist.layout();
             }
             ev.preventDefault();
         }

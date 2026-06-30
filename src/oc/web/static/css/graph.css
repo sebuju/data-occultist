@@ -22,10 +22,16 @@
 /* flow-blob layer: dots animating along edges on live activity (graph/flow.js). Above
    everything inside the world, never takes pointer events; rides the #gworld transform. */
 #gflow { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 6; overflow: visible; }
-/* while a node is dragged it snaps to the 20px grid in discrete steps; ease left/top so it glides
-   to each grid cell instead of teleporting (felt like the drag was running badly). Class is only on
-   the node during the drag, so non-drag repositions (layout/route) still apply instantly. */
-.gnode.snapping { transition: left 90ms cubic-bezier(.22,.61,.36,1), top 90ms cubic-bezier(.22,.61,.36,1); }
+/* while a node is dragged OR resized it snaps to the 20px grid in discrete steps; ease the stepped
+   properties so it glides to each grid cell instead of teleporting (felt like the interaction was
+   running badly / stuttering). MOVE changes only left/top; RESIZE changes width/height (plus the soft
+   min-width/height the settle sets, and left/top for the bottom-left grip) — listing all here lets the
+   ONE class cover both (rule 7). Class is only on the node during the interaction, so non-interactive
+   repositions/sizes (layout/route/restore/collapse) still apply instantly. */
+.gnode.snapping { transition:
+    left 90ms cubic-bezier(.22,.61,.36,1), top 90ms cubic-bezier(.22,.61,.36,1),
+    width 90ms cubic-bezier(.22,.61,.36,1), height 90ms cubic-bezier(.22,.61,.36,1),
+    min-width 90ms cubic-bezier(.22,.61,.36,1), min-height 90ms cubic-bezier(.22,.61,.36,1); }
 .gnode.collapsed .gn-body { display: none !important; }   /* beats the host-node `> .gn-body { display:flex }` */
 /* collapse works the SAME for every node: header only. !important overrides the inline
    width/height a resizable host node carries, and resizing is off while collapsed. */
