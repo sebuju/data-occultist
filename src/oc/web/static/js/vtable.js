@@ -444,6 +444,8 @@ export class VTable {
             this._render();
         }
     }
+    // Public: fold any open inline-detail row (e.g. when the node loses focus). No-op if none open.
+    collapse() { if (this.expandedRow) { this._collapse(); this._render(); } }
     _measureExpand() { this.expandH = this.expandEl ? this.expandEl.offsetHeight : 0; }
     _collapse() {
         if (this.expandEl) this.expandEl.remove();

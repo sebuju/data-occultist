@@ -43,6 +43,15 @@ function vtableFor(key, host) {
 
 const VT_META = ["present", "first_seen", "last_seen", "key", "_count"];   // not shown as columns
 
+// Fold any open inline-detail row in VTables hosted by a node OTHER than `keepId`. Called when
+// focus moves so an expanded row doesn't linger on a node you've unfocused.
+function collapseVtablesExcept(keepId = null) {
+    for (const [nid, el] of nodeEls) {
+        if (nid === keepId) continue;
+        for (const vt of vtables.values()) if (vt.expandedRow && el.contains(vt.host)) vt.collapse();
+    }
+}
+
 // A `<p class="muted">` message node (error / empty / loading). `pad` adds the 8px inset some
 // hosts want. The ONE muted-message factory so these never drift.
 const mutedP = (msg, pad = false) => h("p", { class: "muted", style: pad ? "padding:8px" : null }, msg);
@@ -392,7 +401,7 @@ async function _refreshDatasetNode(ds) {
 }
 
 export {
-    dataHost, vtables, vtableFor, VT_META, setTabCount, refreshDataNode, refreshDatasetNode,
+    dataHost, vtables, vtableFor, collapseVtablesExcept, VT_META, setTabCount, refreshDataNode, refreshDatasetNode,
     refreshAllDataNodes, expandObservations, srcBlock, expandSubsetRow, showRecordMany,
     batchesState, batEls, batState, loadBatchesNode, refreshAllBatchesNodes,
     renderBatchesList, selectBatch, renderBatchDetail, fmtVals,
