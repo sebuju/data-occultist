@@ -5,6 +5,7 @@ from __future__ import annotations
 import glob
 import os
 import threading
+import time
 
 import cv2
 import numpy as np
@@ -21,6 +22,20 @@ _GPU_MEM_LIMIT = 6 * 1024 ** 3   # hard cap on the CUDA arena (bytes) — bounds
 # (2 GB was too tight: 4K frames OOM'd -> 500s. 6 GB still caps the kNextPowerOfTwo
 #  growth well under an 8 GB card while leaving headroom for a single det+rec pass.)
 _BUILD_LOCK = threading.Lock()
+
+
+def _to_float(v, default: float = 0.0) -> float:
+    try:
+        return max(0.0, float(v))
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_int(v, default: int = 0) -> int:
+    try:
+        return max(0, int(v))
+    except (TypeError, ValueError):
+        return default
 # _INFER_LOCK (imported above) is the per-call safety net around inference. The real
 # serialization is job-level via ocr_job() (serialize.py); this shared re-entrant lock
 # just guarantees even a stray un-wrapped call can't run concurrently with anything else.
@@ -182,6 +197,13 @@ class RapidOcrEngine(OcrEngine):
         # CLI use opts in via settings.ocr.options.use_gpu. GPU for small interactive reads
         # rarely pays (CUDA init + per-call overhead) — auto-mode reserves it for batches.
         self._gpu = bool(options.pop("use_gpu", False))
+        # GPU pacing knobs (popped so they never reach RapidOCR). A single OCR read is one
+        # big CUDA burst that stalls a game's frame present for its whole duration; splitting
+        # the recognition into chunks with a sleep between submissions lets the game present
+        # frames in the gaps. yield_ms = sleep between GPU submissions (0 = off, one burst).
+        # rec_chunk = crops per text_rec submission before yielding (0 = single batch).
+        self._yield_ms = _to_float(options.pop("yield_ms", 0.0))
+        self._rec_chunk = _to_int(options.pop("rec_chunk", 0))
         self._options = options
         self._engine = None
         self._scale = 1   # integer downscale factor for big frames (1 = off; 2 -> quarter area)
@@ -208,6 +230,16 @@ class RapidOcrEngine(OcrEngine):
         if n != self._scale:
             self._scale = n
             self._engine = None   # det limits are constructor config -> rebuild lazily
+
+    @property
+    def yield_ms(self) -> float:
+        return self._yield_ms
+
+    def set_yield_ms(self, ms) -> None:
+        """GPU pacing: milliseconds slept between consecutive GPU submissions in a read, so a
+        game can present a frame in the gap instead of waiting out one long burst. 0 = off (one
+        continuous burst). Takes effect immediately — no model rebuild (it only gates a sleep)."""
+        self._yield_ms = _to_float(ms, self._yield_ms)
 
     @property
     def device(self) -> str:
@@ -293,6 +325,30 @@ class RapidOcrEngine(OcrEngine):
             return "", 0.0
         return " ".join(t for t in texts).strip(), sum(scores) / len(scores)
 
+    def _text_rec(self, engine, crops: list[np.ndarray]) -> list:
+        """Batched recognition over ``crops``, optionally paced. When GPU pacing is on
+        (``yield_ms`` > 0 and ``rec_chunk`` > 0) and there's more than one chunk, run
+        ``text_rec`` on slices of ``rec_chunk`` crops and ``time.sleep(yield_ms)`` between
+        slices — splitting one long CUDA burst into shorter ones so a game can present a
+        frame in each gap. Results are concatenated in input order. Off => one batched call
+        (current behavior). Returns the raw rec_res list."""
+        if not crops:
+            return []
+        chunk = self._rec_chunk
+        if chunk <= 0 or self._yield_ms <= 0 or len(crops) <= chunk:
+            with _INFER_LOCK:
+                rec_res, _elapse = engine.text_rec(crops)
+            return rec_res or []
+        gap = self._yield_ms / 1000.0
+        out: list = []
+        for i in range(0, len(crops), chunk):
+            with _INFER_LOCK:
+                rec_res, _elapse = engine.text_rec(crops[i : i + chunk])
+            out.extend(rec_res or [])
+            if i + chunk < len(crops):
+                time.sleep(gap)   # no kernels enqueued during the gap -> game's present can slip in
+        return out
+
     def read_lines(self, images: list[np.ndarray]) -> list[tuple[str, float]]:
         """Recognise many single-line crops in ONE batched pass: RapidOCR's recogniser
         groups them by aspect ratio and runs a few GPU batches instead of a call per
@@ -306,8 +362,7 @@ class RapidOcrEngine(OcrEngine):
         if not crops:
             return out
         engine = self._ensure_engine()
-        with _INFER_LOCK:
-            rec_res, _elapse = engine.text_rec(crops)   # batched recognition, input order
+        rec_res = self._text_rec(engine, crops)   # batched recognition (paced), input order
         for j, res in enumerate(rec_res or []):
             if j < len(keep) and isinstance(res, (list, tuple)) and len(res) >= 2:
                 out[keep[j]] = (str(res[0]), float(res[1]))
@@ -339,13 +394,15 @@ class RapidOcrEngine(OcrEngine):
         small = cv2.resize(image, (w // f, h // f), interpolation=cv2.INTER_AREA)
         with _INFER_LOCK:
             dt_boxes, _elapse = engine.text_det(small)
-            if dt_boxes is None or len(dt_boxes) == 0:
-                return []
-            # det boxes back to full-frame coords, clipped against rounding overshoot
-            boxes = [np.clip(b * f, (0, 0), (w - 1, h - 1)).astype(np.float32)
-                     for b in engine.sorted_boxes(dt_boxes)]
-            crops = engine.get_crop_img_list(image, boxes)
-            rec_res, _elapse = engine.text_rec(crops)
+        if dt_boxes is None or len(dt_boxes) == 0:
+            return []
+        # det boxes back to full-frame coords, clipped against rounding overshoot (CPU work)
+        boxes = [np.clip(b * f, (0, 0), (w - 1, h - 1)).astype(np.float32)
+                 for b in engine.sorted_boxes(dt_boxes)]
+        crops = engine.get_crop_img_list(image, boxes)
+        if self._yield_ms > 0:
+            time.sleep(self._yield_ms / 1000.0)   # gap between the detect burst and the rec burst
+        rec_res = self._text_rec(engine, crops)   # paced recognition
         floor = float(getattr(engine, "text_score", 0.5))
         lines: list[OcrLine] = []
         for pts, res in zip(boxes, rec_res or []):

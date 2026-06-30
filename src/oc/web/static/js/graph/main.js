@@ -3120,13 +3120,7 @@ $("settingsBtn")?.addEventListener("click", () => {
                 h("select", { id: "ocrDevice" },
                     h("option", { value: "auto" }, "Auto (CPU; GPU for precapture)"),
                     h("option", { value: "cpu" }, "CPU"),
-                    h("option", { value: "gpu" }, "GPU"))),
-            h("label", { class: "set-row", title: "downscale big frames before OCR — faster + far less GPU memory" },
-                h("span", "downscale"),
-                h("select", { id: "ocrScale" },
-                    h("option", { value: "1" }, "1× full"),
-                    h("option", { value: "2" }, "½ (¼ pixels)"),
-                    h("option", { value: "4" }, "¼ (1/16 pixels)")))),
+                    h("option", { value: "gpu" }, "GPU")))),
         h("section", { class: "set-sec set-backups" }, h("h4", "backups"), h("div")));
 
     const name = model.profile.name;
@@ -3430,16 +3424,28 @@ async function wireOcrControls(root) {
             try { const r = await api.ocr.setDevice(sel.value); if (r.mode) sel.value = r.mode; syncKillGpu(r); done(); }
             catch (e) { done(String(e.message || e), "err"); }
         });
-        const scaleSel = root.querySelector("#ocrScale");
-        if (scaleSel) {
-            scaleSel.value = String(st.scale || 1);
-            scaleSel.addEventListener("change", async () => {
-                const done = timed(`OCR downscale → ${scaleSel.value}×`);
-                try { const r = await api.ocr.setScale(scaleSel.value); scaleSel.value = String(r.scale || 1); done(); }
-                catch (e) { done(String(e.message || e), "err"); }
-            });
-        }
     } catch { /* ignore */ }
+}
+
+// Wire one OCR pacing control (a <select> or number <input>) to its api setter, echoing the
+// server's canonical value back into the element. The det-downscale + GPU-yield controls live
+// only in the LIVE panel (livewin.js); these helpers are exported there so its two controls
+// share one wiring path (rule 7). Caller seeds the element's value first; this only attaches
+// the change handler.
+function wireOcrScale(el) {
+    el.addEventListener("change", async () => {
+        const done = timed(`OCR downscale → ${el.value}×`);
+        try { const r = await api.ocr.setScale(el.value); el.value = String(r.scale || 1); done(); }
+        catch (e) { done(String(e.message || e), "err"); }
+    });
+}
+function wireOcrYield(el) {
+    el.addEventListener("change", async () => {
+        const ms = Math.max(0, parseFloat(el.value) || 0);
+        const done = timed(`OCR GPU yield → ${ms}ms`);
+        try { const r = await api.ocr.setYield(ms); el.value = String(r.yield_ms ?? 0); done(); }
+        catch (e) { done(String(e.message || e), "err"); }
+    });
 }
 
 // ---- boot veil: full-page spinner until the initial load has settled ----------
@@ -3564,7 +3570,7 @@ killStrayOcrThenBoot();
 // ---- exports consumed by panel modules (imported back from "./main.js") ----
 export {
     focusNode, autosave, placeNewNode, render,
-    refreshLive, subsetParts,
+    refreshLive, subsetParts, wireOcrScale, wireOcrYield,
     refreshAllSubsetNodes, refreshDatasetConsumers,
     rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,
     overlaySelected, selectWindowBox, persistBox, syncCellSize, itemChanged,

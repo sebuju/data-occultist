@@ -335,6 +335,7 @@ export const ocr = {
     getDevice: () => tfetch("/api/ocr/device").then((r) => r.json()),
     setDevice: (device) => tfetch(`/api/ocr/device?device=${encodeURIComponent(device)}`, { method: "POST" }).then((r) => r.json()),
     setScale: (n) => tfetch(`/api/ocr/scale?scale=${encodeURIComponent(n)}`, { method: "POST" }).then((r) => r.json()),
+    setYield: (ms) => tfetch(`/api/ocr/yield?ms=${encodeURIComponent(ms)}`, { method: "POST" }).then((r) => r.json()),
     releaseGpu: () => tfetch("/api/ocr/release", { method: "POST" }).then((r) => r.json()),
 };
 

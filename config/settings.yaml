@@ -8,7 +8,16 @@ capture: wgc          # oc.capture.*    -> grabs pixels. wgc = DWM-composited (n
                       #   fresh render each grab. mss = screen-region (window must be on top).
 window: win32       # oc.window.*       -> locates the game window (Windows)
 process: psutil     # oc.process.*      -> finds the running game
-ocr: rapidocr       # oc.ocr.*          -> reads text from regions
+ocr:                # oc.ocr.*          -> reads text from regions
+  name: rapidocr
+  options:
+    # GPU pacing: one OCR read is a single big CUDA burst that stalls a game's frame
+    # present for its whole duration. rec_chunk splits the recognition into this many
+    # crops per GPU submission and yield_ms sleeps between submissions, so the game can
+    # present a frame in each gap (smoother pacing, slightly slower reads). yield_ms 0 =
+    # off (one burst). Live-tunable in the web UI's OCR settings (downscale + yield).
+    rec_chunk: 8
+    yield_ms: 3
 classifier: detect  # oc.detect.*       -> decides window + state
 corrector: rapidfuzz  # oc.learn.*      -> fuzzy-corrects uncertain OCR
 

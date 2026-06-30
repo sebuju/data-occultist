@@ -9,7 +9,7 @@ import { $, setStatus, model } from "../state.js";
 import { registerWorker, unregisterWorker } from "../workers.js";
 import { pc, precapOpen, precapBusy, fmtBytes } from "./precap.js";
 import { prevHost, refreshDetect, refreshPreview } from "../imaging.js";
-import { refreshLive } from "../main.js";
+import { refreshLive, wireOcrScale, wireOcrYield } from "../main.js";
 import { panZoomTo } from "../camera.js";
 import { h, svg } from "../../dom.js";
 
@@ -44,6 +44,7 @@ let liveSave = true;
 // that keeps CPU/GPU sane. Changeable while live is on — the server collector is restarted in place
 // so the new limit takes effect immediately.
 let liveInterval = 0.2;
+let liveOcr = null;         // latest OCR device/pacing snapshot (heartbeat s.ocr) for the stats readout
 let liveColStatus = null;   // latest server collector status (from the heartbeat) while collecting
 let liveColUnsub = null;    // hub subscription active while the server collector runs
 let liveSawServer = false;  // we've observed the server collector actually running this run (gates the external-stop reflect, so an optimistic pre-start beat can't kill a just-started toggle)
@@ -69,9 +70,11 @@ function buildLiveWindow() {
     // live button, another client) so the toggle + worker reflect it, and reflect an EXTERNAL stop.
     // Distinct from liveColUnsub (which mirrors status only while WE run) — this watches the on/off edge.
     hub.subscribe((s) => {
+        if (s && s.ocr) liveOcr = s.ocr;   // keep the pacing readout (det scale + GPU yield) current
         const running = !!(s && s.live);
         if (running && !liveOn) adoptServerCollect(s);
         else if (!running && liveOn && liveSave && liveSawServer) reflectExternalStop();
+        if (active) renderLiveWindow();    // reflect the pacing readout (reconciles in place, rule 1)
     });
 }
 
@@ -91,17 +94,37 @@ function mountLive(adapter) {
                 h("label", { class: "live-toggle" },
                     h("button", { class: "act-enable live-switch", role: "switch", "aria-checked": "false", title: "enable / disable live mode" },
                         switchSvg()),
-                    h("span", { class: "live-switch-lbl" }, "live mode")),
-                h("span", { class: "live-stats muted" })),
+                    h("span", { class: "live-switch-lbl" }, "live mode"))),
             h("div", { class: "live-row" },
                 h("label", { class: "live-toggle" },
                     h("button", { class: "act-enable live-save", role: "switch", "aria-checked": "true", title: "save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)" },
                         switchSvg()),
                     h("span", { class: "live-save-lbl" }, "save to datasets"))),
-            h("div", { class: "live-row live-int-row" },
+            h("div", { class: "live-row" },
                 h("span", { class: "live-int-lbl", title: "frame limiter — minimum milliseconds between collector reads. 0 (or blank) = as fast as possible (more CPU/GPU). Applies live while collecting." }, "limit (ms)"),
                 h("input", { class: "live-int-in", type: "number", min: "0", step: "10", value: "200", placeholder: "0", title: "minimum milliseconds between reads; 0 = as fast as possible" })),
+            h("div", { class: "live-row live-gpu-row" },
+                h("span", { class: "live-int-lbl", title: "detection downscale — the DETECTION pass is the biggest single GPU burst per read; ½ = a quarter of the detect pixels = a much shorter stall (the main anti-hitch lever). Applies live." }, "downscale"),
+                h("select", { class: "live-det-in", title: "detection downscale — the main knob that shrinks OCR's GPU burst" },
+                    h("option", { value: "1" }, "1× full"),
+                    h("option", { value: "2" }, "½ (¼ px)"),
+                    h("option", { value: "4" }, "¼ (1/16 px)"))),
+            h("div", { class: "live-row live-gpu-row" },
+                h("span", { class: "live-int-lbl", title: "GPU yield — milliseconds slept between OCR GPU submissions; a secondary fine-tune on top of downscale. 0 = off. Applies live." }, "gpu yield"),
+                h("input", { class: "live-yield-in", type: "number", min: "0", step: "1", placeholder: "0", title: "GPU yield (ms) between OCR submissions — secondary fine-tune" })),
             h("div", { class: "live-wins" }),
+            // Live stats sit BELOW the window list as fixed rows with "–" placeholders, so the
+            // panel height is identical whether live mode is on or off (no jump on enable).
+            h("div", { class: "live-statbox" },
+                h("div", { class: "live-row" },
+                    h("span", { class: "live-int-lbl", title: "records added/updated this run" }, "saved"),
+                    h("span", { class: "live-statval live-stat-saved muted" }, "–")),
+                h("div", { class: "live-row" },
+                    h("span", { class: "live-int-lbl", title: "collector rate (armed) or client image rate (tuning)" }, "rate"),
+                    h("span", { class: "live-statval live-stat-rate muted" }, "–")),
+                h("div", { class: "live-row" },
+                    h("span", { class: "live-int-lbl", title: "visible row-index span (mirror datasets only)" }, "rows"),
+                    h("span", { class: "live-statval live-stat-rows muted" }, "–"))),
             h("div", { class: "live-row live-imgs" },
                 h("span", { class: "live-imgstat muted" }, " "),
                 h("button", { class: "live-clear", dataset: { armed: "0" }, title: "delete every saved live image" }, "clear")));
@@ -135,6 +158,13 @@ function mountLive(adapter) {
             if (liveOn && liveSave) { await stopServerCollect(); startServerCollect(); }
         };
         intIn.addEventListener("change", commitInterval);
+        // GPU pacing controls — same wiring helpers the settings modal uses (rule 7). They hit
+        // the shared engine via /api/ocr, so a change applies live to the running collector;
+        // values are seeded + kept in sync from the heartbeat in renderLiveWindow.
+        const detIn = liveRoot.querySelector(".live-det-in");
+        if (detIn) wireOcrScale(detIn);
+        const yIn = liveRoot.querySelector(".live-yield-in");
+        if (yIn) wireOcrYield(yIn);
     }
     if (liveRoot.parentElement !== adapter.host) adapter.host.appendChild(liveRoot);
 }
@@ -161,21 +191,38 @@ function renderLiveWindow() {
     };
     syncSwitch(liveRoot.querySelector(".live-switch"), liveOn);
     syncSwitch(liveRoot.querySelector(".live-save"), liveSave);
-    const st = liveRoot.querySelector(".live-stats");
-    // collecting (armed): show what the server collector saved; tuning (disarmed): client fps.
-    // blank when off (the switch already conveys that). No processing/idle flip — it toggled
-    // every round (OCR vs the 200ms gap) and just flickered.
+    // Stats render as fixed rows below the window list; "–" placeholder when off so height holds.
+    // collecting (armed): show what the server collector saved; tuning (disarmed): client img rate.
     const collecting = liveOn && liveSave;
     // mirror datasets report the current visible row-index span [vlo,vhi] + calibration -> show live
     const sc = collecting ? liveColStatus?.scroll : null;
     const scm = collecting ? liveColStatus?.scroll_meta : null;
-    const scTxt = sc
-        ? ` · rows ${Math.round(sc[0])}–${Math.round(sc[1])}${scm && scm.total ? ` / ${Math.round(scm.total)}` : ""}`
-        : "";
-    const stTxt = !liveOn ? ""
-        : collecting ? `${liveColStatus?.written ?? 0} saved · ${(liveColStatus?.fps ?? 0).toFixed(1)}/s${scTxt}`
-        : `${liveFps.toFixed(1)} img/s`;
-    if (st && st.textContent !== stTxt) st.textContent = stTxt;
+    const setStat = (cls, txt) => {
+        const el = liveRoot.querySelector(cls);
+        if (el && el.textContent !== txt) el.textContent = txt;
+    };
+    setStat(".live-stat-saved", collecting ? String(liveColStatus?.written ?? 0) : "–");
+    setStat(".live-stat-rate",
+        collecting ? `${(liveColStatus?.fps ?? 0).toFixed(1)}/s`
+        : liveOn ? `${liveFps.toFixed(1)} img/s` : "–");
+    setStat(".live-stat-rows", sc
+        ? `${Math.round(sc[0])}–${Math.round(sc[1])}${scm && scm.total ? ` / ${Math.round(scm.total)}` : ""}`
+        : "–");
+    // Reflect the live OCR pacing knobs (det downscale + GPU yield) from the heartbeat into
+    // their controls — seeds them on first beat and mirrors a change made in the settings
+    // modal. Never stomp a control the user is actively editing (reconciles in place, rule 1).
+    if (liveOcr) {
+        const detIn = liveRoot.querySelector(".live-det-in");
+        if (detIn && detIn !== document.activeElement) {
+            const v = String(liveOcr.scale || 1);
+            if (detIn.value !== v) detIn.value = v;
+        }
+        const yIn = liveRoot.querySelector(".live-yield-in");
+        if (yIn && yIn !== document.activeElement) {
+            const v = String(liveOcr.yield_ms ?? 0);
+            if (yIn.value !== v) yIn.value = v;
+        }
+    }
     // saved-live-image stat (touch DOM only on change)
     const ist = liveRoot.querySelector(".live-imgstat");
     const itxt = liveImg.count ? `${liveImg.count} imgs · ${fmtBytes(liveImg.bytes)}` : "";

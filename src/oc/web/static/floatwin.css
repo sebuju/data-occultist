@@ -270,15 +270,19 @@
 
 /* ---- live panel ------------------------------------------------------------ */
 .live-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.live-row.live-int-row { margin-bottom: 12px; }
 .live-row > label { margin: 0; color: var(--text); font-weight: 600; }
 .live-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; flex: none; }
+.live-wins { margin-top: 12px; }       /* gap between the GPU controls and the window list */
+.live-statbox { margin-top: 12px; }    /* stats sit below the window list as fixed reserved rows */
 /* a stat sits at the right of its row, truncating with an ellipsis rather than wrapping */
-.live-stats, .live-imgstat { flex: 1; min-width: 0; text-align: right; white-space: nowrap;
+.live-statval, .live-imgstat { flex: 1; min-width: 0; text-align: right; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
 /* frame-limiter row: label holds its width (never wraps), the input takes the rest */
-.live-int-lbl { flex: none; white-space: nowrap; color: var(--text); font-weight: 600; }
+/* shared fixed label width so the limit / downscale / gpu-yield controls all line up */
+.live-int-lbl { flex: none; min-width: 72px; white-space: nowrap; color: var(--text); font-weight: 600; }
 .live-int-in { flex: 1; min-width: 0; }
+/* GPU-easing rows: one knob per row, the control fills the rest beside its aligned label */
+.live-det-in, .live-yield-in { flex: 1; min-width: 0; }
 .live-imgs { margin: 6px 0 0; }   /* the saved-images stat row, below the window list */
 .live-clear { flex: none; font-size: var(--fs-xs); padding: 1px 8px; border: 0;
     background: var(--danger); color: var(--on-danger); }

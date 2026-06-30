@@ -1,4 +1,5 @@
-"""Switch the OCR engine between CPU and GPU at runtime, persisted across restarts."""
+"""Switch the OCR engine between CPU and GPU at runtime, plus the GPU pacing knobs
+(downscale + per-burst yield), all persisted across restarts."""
 
 from __future__ import annotations
 
@@ -12,8 +13,32 @@ from ..deps import get_engine, get_settings
 router = APIRouter(prefix="/api/ocr", tags=["ocr"])
 
 
-def _device_file() -> Path:
-    return Path(get_settings().data_dir) / ".ocr_device"
+# Each runtime OCR knob is one scalar persisted to data/.ocr_<name>: a parse() that turns the
+# stored text into a validated value (raising ValueError to fall back) and a default (a value
+# or a zero-arg callable, e.g. to read a settings default). Three knobs ride this one helper
+# instead of three hand-rolled file pairs (CLAUDE.md rule 7).
+def _persisted(name: str, parse, default):
+    def _path() -> Path:
+        return Path(get_settings().data_dir) / f".ocr_{name}"
+
+    def _default():
+        return default() if callable(default) else default
+
+    def read():
+        try:
+            return parse(_path().read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return _default()
+
+    def write(value) -> None:
+        try:
+            p = _path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(str(value), encoding="utf-8")
+        except OSError:
+            pass
+
+    return read, write
 
 
 # The OCR device MODE: "cpu" / "gpu" / "auto". "auto" runs OCR on CPU for the snappy
@@ -24,45 +49,37 @@ _MODES = ("cpu", "gpu", "auto")
 DEFAULT_MODE = "auto"
 
 
-def read_mode() -> str:
-    """The persisted device MODE, defaulting to ``auto``. Tolerates the legacy file that
-    stored a bare ``cpu``/``gpu``."""
+def _parse_mode(v: str) -> str:
+    if v in _MODES:
+        return v
+    raise ValueError(v)   # legacy/garbage -> default
+
+
+def _yield_default() -> float:
+    """Settings-file default for the per-burst yield, so an unset dotfile falls back to the
+    value shipped in config/settings.yaml (ocr.options.yield_ms) rather than a bare 0."""
     try:
-        v = _device_file().read_text(encoding="utf-8").strip()
-        return v if v in _MODES else DEFAULT_MODE
-    except OSError:
-        return DEFAULT_MODE
+        return float(get_settings().ocr.options.get("yield_ms", 0.0) or 0.0)
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
 
 
-def _write_mode(mode: str) -> None:
-    try:
-        p = _device_file()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(mode, encoding="utf-8")
-    except OSError:
-        pass
-
-
-def _scale_file() -> Path:
-    return Path(get_settings().data_dir) / ".ocr_scale"
-
-
-def _read_scale() -> int:
-    try:
-        return max(1, int(_scale_file().read_text(encoding="utf-8").strip()))
-    except (OSError, ValueError):
-        return 1
+read_mode, _write_mode = _persisted("device", _parse_mode, DEFAULT_MODE)
+_read_scale, _write_scale = _persisted("scale", lambda v: max(1, int(v)), 1)
+_read_yield, _write_yield = _persisted("yield", lambda v: max(0.0, float(v)), _yield_default)
 
 
 def apply_persisted() -> None:
-    """Apply the persisted device MODE AND downscale factor to the engine — called at
-    startup so the selection survives reloads and restarts. ``auto``/``cpu`` baseline the
-    engine on CPU (auto bursts to GPU per precapture batch); ``gpu`` pins it to GPU."""
+    """Apply the persisted device MODE, downscale factor, AND per-burst yield to the engine —
+    called at startup so the selections survive reloads and restarts. ``auto``/``cpu`` baseline
+    the engine on CPU (auto bursts to GPU per precapture batch); ``gpu`` pins it to GPU."""
     ocr = get_engine().ocr
     if hasattr(ocr, "set_device"):
         ocr.set_device(read_mode() == "gpu")
     if hasattr(ocr, "set_scale"):
         ocr.set_scale(_read_scale())
+    if hasattr(ocr, "set_yield_ms"):
+        ocr.set_yield_ms(_read_yield())
 
 
 def _state() -> dict:
@@ -70,7 +87,8 @@ def _state() -> dict:
     return {"device": getattr(ocr, "device", "cpu"), "mode": read_mode(),
             "gpu_available": cuda_available(),
             "gpu_active": bool(getattr(ocr, "gpu_active", False)),
-            "scale": getattr(ocr, "scale", 1)}
+            "scale": getattr(ocr, "scale", 1),
+            "yield_ms": getattr(ocr, "yield_ms", 0.0)}
 
 
 def ocr_state() -> dict:
@@ -110,10 +128,17 @@ def set_scale(scale: int):
     ocr = get_engine().ocr
     if hasattr(ocr, "set_scale"):
         ocr.set_scale(scale)
-    try:
-        p = _scale_file()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(str(getattr(ocr, "scale", 1)), encoding="utf-8")
-    except OSError:
-        pass
+    _write_scale(getattr(ocr, "scale", 1))
+    return _state()
+
+
+@router.post("/yield")
+def set_yield(ms: float):
+    """Set the per-burst GPU yield (ms slept between OCR submissions). Higher = the read is
+    split into more, shorter GPU bursts with gaps a game can present in -> smoother frame
+    pacing, slightly slower reads. 0 = off (one continuous burst)."""
+    ocr = get_engine().ocr
+    if hasattr(ocr, "set_yield_ms"):
+        ocr.set_yield_ms(ms)
+    _write_yield(getattr(ocr, "yield_ms", 0.0))
     return _state()
