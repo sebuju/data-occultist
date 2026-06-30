@@ -25,13 +25,19 @@ const SAT_EYE = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "1
     svg("path", { fill: "currentColor", d: "M8 3.5C4.5 3.5 1.7 5.7.5 8c1.2 2.3 4 4.5 7.5 4.5S14.3 10.3 15.5 8C14.3 5.7 11.5 3.5 8 3.5zm0 7.5a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm0-1.6a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8z" }));
 const SAT_GRID = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
     svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.3", d: "M2.5 2.5h11v11h-11zM2.5 6.5h11M2.5 10h11M6.5 2.5v11" }));
+// dismissed-rows grid: a table glyph struck through (these are the rows a required field rejected)
+const SAT_DISMISS = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
+    svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.3", d: "M2.5 2.5h11v11h-11zM2.5 6.5h11M6.5 2.5v11" }),
+    svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.4", d: "M3 13L13 3" }));
+const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table" };
+const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS };
 export function satToggleBtn(satId, kind) {
     const on = model.satelliteOn(satId);
-    const title = `${on ? "hide" : "show"} ${kind === "preview" ? "preview" : "data table"}`;
+    const title = `${on ? "hide" : "show"} ${_SAT_LABEL[kind] || "data table"}`;
     return h("button", {
         class: `gn-sat-tog gn-cog${on ? " on" : ""}`, dataset: { sat: satId },
         title, "aria-label": title, "aria-pressed": on,
-    }, kind === "preview" ? SAT_EYE() : SAT_GRID());
+    }, (_SAT_ICON[kind] || SAT_GRID)());
 }
 
 // SVG track+thumb shared by every header slide toggle (enable switch, vt-table "show removed").
@@ -554,13 +560,18 @@ export function nodeParts(n) {
                 body: h("div", { class: "nodehost scrollhost sub-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
             };
         }
-        if (r.kind === "source") {
-            // a file source's parse preview (what the current rules would produce, without writing)
+        if (r.kind === "source" || r.kind === "sourcedismissed") {
+            // a file source's parse preview. Two variants share this body (same hosts, one refresh
+            // fills both): `source` = rows the rules PRODUCE; `sourcedismissed` = rows a required
+            // field REJECTED (shown so you can see why a line was dropped — never written).
+            const dism = r.kind === "sourcedismissed";
             return {
-                title: h("span", { class: "gi-id" }, `${r.id} preview`),
+                title: h("span", { class: "gi-id" }, `${r.id} ${dism ? "dismissed" : "preview"}`),
                 body: frag(
                     h("div", { class: "src-prev-info muted" }),
-                    h("div", { class: "nodehost scrollhost src-host" }, h("p", { class: "muted", style: "padding:8px" }, "edit the source or hit preview to parse"))),
+                    h("div", { class: "nodehost scrollhost src-host" },
+                        h("p", { class: "muted", style: "padding:8px" },
+                            dism ? "rows dropped by a required field show here" : "edit the source or hit preview to parse"))),
             };
         }
         return {
@@ -578,7 +589,9 @@ export function nodeParts(n) {
     }
     if (n.type === "subset") return subsetParts(n.ref);
     if (n.type === "producer") return producerParts(n.ref, model.producerSourceColumns(n.ref), model.producerJoinable(n.ref));
-    if (n.type === "filesource") return { ...sourceParts(n.ref), head: satToggleBtn(`vt:src:${n.ref.id}`, "vttable") };
+    if (n.type === "filesource") return { ...sourceParts(n.ref),
+        head: frag(satToggleBtn(`vt:src:${n.ref.id}`, "vttable"),
+            satToggleBtn(`vtd:src:${n.ref.id}`, "dismissed")) };
     if (n.type === "trigger") return triggerParts(n.ref, model);
     if (n.type === "dictionary") {
         // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The

@@ -14,6 +14,7 @@ import os
 from ..registry import build_parser
 from ..store import store_for
 from ..store.keys import KeyMap
+from .extract import DISMISSED
 from .locate import resolve_path
 from .reader import default_reader
 
@@ -28,19 +29,22 @@ def read_source(game: str, source, data_dir, *, profile=None, reader=None) -> in
         return 0
     reader = reader or default_reader()
     parser = build_parser(source.format)
-    # tail only for streaming (log) parsers; documents always re-read whole.
-    tail = bool(getattr(source, "tail", True)) and getattr(parser, "stream", False)
-    # Feed line numbers as position? Only meaningful for a line parser. Use the line-aware read so
-    # it STAYS tailing (no whole-file re-read+rewrite per call — that timed out on big logs) yet
-    # numbers each row by its ABSOLUTE file line.
+    # tail = read only the last N lines (streaming/log parsers only; documents always read whole).
+    last_lines = (int(getattr(source, "tail_lines", 0) or 0)
+                  if bool(getattr(source, "tail", True)) and getattr(parser, "stream", False) else 0)
+    # Feed line numbers as position? Only meaningful for a line parser. The line-aware read reports
+    # the absolute line where the tail window starts, so each row keeps its TRUE file line number.
     line_position = bool(getattr(source, "line_position", False)) and getattr(parser, "stream", False)
     if line_position:
-        text, start_line = reader.read_lined(path, tail=tail, key=source.id)
+        text, start_line = reader.read_lined(path, last_lines=last_lines, key=source.id)
         indexed = [(start_line - 1 + i, rec)
                    for i, rec in parser.parse_indexed(text, source.match, source.fields)]
     else:
-        text = reader.read(path, tail=tail, key=source.id)
+        text = reader.read(path, last_lines=last_lines, key=source.id)
         indexed = parser.parse_indexed(text, source.match, source.fields)
+    # drop rows a REQUIRED field dismissed — they never reach the dataset (the dismissed-rows
+    # preview shows them instead). Kept rows carry no marker, so record_many gets clean dicts.
+    indexed = [(ln, rec) for ln, rec in indexed if not rec.get(DISMISSED)]
     if not indexed:
         return 0
     # A source can pin its own key; else the dataset/profile default decides.

@@ -13,6 +13,14 @@ from __future__ import annotations
 import re
 
 _NUM = re.compile(r"-?\d+(?:\.\d+)?")
+# A REQUIRED number must be a CLEAN number — sign, digits, optional single decimal point — and
+# nothing else (so "12kg" or "1.2.3" fail). Distinct from _NUM, which sniffs the first token out
+# of arbitrary text for the lenient (optional-field) cast.
+_STRICT_NUM = re.compile(r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$")
+
+# Transient marker stamped on a record whose REQUIRED field(s) failed validation: the row is
+# "dismissed" — surfaced in the dismissed-rows preview but NEVER written. Stripped before any write.
+DISMISSED = "__dismissed__"
 
 
 # ---- line filtering --------------------------------------------------------
@@ -63,15 +71,48 @@ def finalize(value, field):
     return cast(value, getattr(field, "type", "text"))
 
 
+def cell(value, field):
+    """Validate + cast one extracted value for the RECORD builders. Returns ``(out, ok)``:
+
+    * ``out`` — the value to store under the field's id (``None`` -> omit it from the record);
+    * ``ok``  — ``False`` ONLY when a REQUIRED field is invalid, which dismisses the whole row.
+
+    Required rules: a ``number`` must be a clean number (sign + digits + optional decimal, nothing
+    else); ``text`` must be non-empty (a number counts as text). A non-required field never drops a
+    row — an empty/invalid value is just omitted, and an optional number keeps the lenient sniff."""
+    if value is None:
+        return None, not _required(field)
+    raw = value.strip() if isinstance(value, str) and getattr(field, "strip", True) else value
+    if isinstance(raw, str) and raw == "":
+        return None, not _required(field)
+    ftype = getattr(field, "type", "text")
+    if ftype == "number":
+        if isinstance(raw, bool):
+            return (None, False) if _required(field) else (None, True)
+        if isinstance(raw, (int, float)):
+            return raw, True
+        if _STRICT_NUM.match(str(raw).strip()):
+            s = str(raw).strip()
+            return (float(s) if "." in s else int(s)), True
+        if _required(field):
+            return None, False                  # has non-numeric content -> dismiss the row
+        return cast(raw, "number"), True         # optional: keep the lenient first-token sniff
+    return cast(raw, "text"), True               # text: non-empty already ensured; numbers are fine
+
+
+def _required(field) -> bool:
+    return bool(getattr(field, "required", True))
+
+
 # ---- per-line field methods (log_lines) ------------------------------------
 
-def extract_line_field(line: str, field):
-    """Pull one field's value out of a single log line via its declarative ``method``.
-    Returns ``None`` when the anchor/column isn't present (so the row simply lacks that
-    column — a missing KEY part then drops the row downstream, never a guess)."""
+def _extract_raw(line: str, field):
+    """Pull one field's RAW substring out of a single log line via its declarative ``method``
+    (no strip/cast yet — :func:`cell` does that so a REQUIRED field can validate the raw text).
+    Returns ``None`` when the anchor/column isn't present."""
     method = getattr(field, "method", "after")
     if method == "whole":
-        return finalize(line, field)
+        return line
 
     if method == "after":
         anchor = field.anchor or ""
@@ -86,7 +127,7 @@ def extract_line_field(line: str, field):
             j = rest.find(field.stop)
             if j >= 0:
                 rest = rest[:j]
-        return finalize(rest, field)
+        return rest
 
     if method == "between":
         anchor = field.anchor or ""
@@ -102,28 +143,44 @@ def extract_line_field(line: str, field):
             if j < 0:
                 return None
             rest = rest[:j]
-        return finalize(rest, field)
+        return rest
 
     if method == "column":
         delim = field.delim or " "
         parts = line.split() if delim == " " else line.split(delim)
         try:
-            return finalize(parts[field.index], field)
+            return parts[field.index]
         except IndexError:
             return None
 
     return None
 
 
-def line_record(line: str, fields) -> dict:
-    """Build one record dict from a line: every field that extracts a non-empty value.
-    A field that misses (None / "") is omitted, not nulled."""
+def extract_line_field(line: str, field):
+    """Pull + strip + cast one field's value from a log line (the public, single-value form).
+    ``None`` when the anchor/column isn't present. Validation/dismissal is the record builder's
+    job (:func:`line_record`); this keeps the simple cast contract callers/tests rely on."""
+    raw = _extract_raw(line, field)
+    return None if raw is None else finalize(raw, field)
+
+
+def line_record(line: str, fields):
+    """Build one record from a line. Returns the record dict, or ``None`` when the line yields
+    nothing AND nothing was required. A REQUIRED field that's missing/invalid stamps the record
+    with :data:`DISMISSED` (still returned, carrying whatever DID extract, so the dismissed-rows
+    preview can show it) — the runner drops dismissed rows before writing."""
     rec: dict = {}
+    dismissed = False
     for f in fields or []:
-        v = extract_line_field(line, f)
-        if v is not None and v != "":
-            rec[f.id] = v
-    return rec
+        out, ok = cell(_extract_raw(line, f), f)
+        if not ok:
+            dismissed = True
+        if out is not None and out != "":
+            rec[f.id] = out
+    if dismissed:
+        rec[DISMISSED] = True
+        return rec
+    return rec or None
 
 
 # ---- document path lookup (json / yaml; ini & xml have their own) ----------
@@ -161,15 +218,22 @@ def dig(data, path: str):
 
 def doc_record(get, fields) -> list[dict]:
     """Build the single-row result for a document parser: ``get(field)`` per ``path`` field,
-    cast, dropped if None. Returns ``[record]`` or ``[]`` when nothing resolved."""
+    validated + cast by :func:`cell`. A REQUIRED field that's missing/invalid stamps the row with
+    :data:`DISMISSED` (kept for the dismissed preview; the runner drops it). Returns ``[record]``
+    or ``[]`` when nothing resolved and nothing was required."""
     rec: dict = {}
+    dismissed = False
     for f in fields or []:
         if getattr(f, "method", "") != "path" or not getattr(f, "path", ""):
             continue
-        v = get(f)
-        if v is None:
-            continue
-        rec[f.id] = finalize(v, f)
+        out, ok = cell(get(f), f)
+        if not ok:
+            dismissed = True
+        if out is not None and out != "":
+            rec[f.id] = out
+    if dismissed:
+        rec[DISMISSED] = True
+        return [rec]
     return [rec] if rec else []
 
 

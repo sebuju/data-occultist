@@ -16,6 +16,7 @@ from fastapi import APIRouter, Body, HTTPException
 from ...profile import list_profiles, load_profile
 from ...profile.models import FileSourceDef, SourceField
 from ...registry import build_parser, parser_names
+from ...source.extract import DISMISSED
 from ...source.locate import expand, find_candidates, resolve_path
 from ...source.reader import default_reader
 from ...source.runner import read_source
@@ -120,27 +121,36 @@ def _source_text(source: FileSourceDef, body: dict):
 @router.post("/{game}/preview")
 def preview(game: str, body: dict = Body(...)):
     """Parse the in-progress source config WITHOUT writing. ``body`` is a FileSourceDef shape;
-    an optional ``sample`` string parses pasted text instead of reading the file. Returns the
-    rows the rules produce, the detected line ending, and matched/total line counts."""
+    an optional ``sample`` string parses pasted text instead of reading the file. Returns the rows
+    the rules produce (``rows``), the rows a REQUIRED field DISMISSED (``dismissed`` — shown in the
+    second preview, never written), the detected line ending, and matched/total line counts."""
     _profile_or_404(game)
     source = _source_of(body)
     parser = _parser_of(source)
 
     text, path, line_ending = _source_text(source, body)
     if path is None and not text:
-        return {"rows": [], "matched": 0, "total": 0, "line_ending": "",
-                "path": None, "note": "file not found"}
+        return {"rows": [], "dismissed": [], "matched": 0, "dismissed_count": 0, "total": 0,
+                "line_ending": "", "path": None, "note": "file not found"}
 
     total = 0
     if getattr(parser, "stream", False):
         lines = text.splitlines()
         total = len([ln for ln in lines if ln.strip()])
-        if len(lines) > _PREVIEW_LINES:        # only parse the tail of a huge log
-            text = "\n".join(lines[-_PREVIEW_LINES:])
+        # mirror the read: with tail on, only the last tail_lines lines; always cap to _PREVIEW_LINES.
+        cap = _PREVIEW_LINES
+        if source.tail and source.tail_lines and source.tail_lines > 0:
+            cap = min(_PREVIEW_LINES, source.tail_lines)
+        if len(lines) > cap:
+            text = "\n".join(lines[-cap:])
     else:
         total = 1
-    rows = parser.parse(text, source.match, source.fields)
-    return {"rows": rows[:_PREVIEW_ROWS], "matched": len(rows), "total": total,
+    produced = parser.parse(text, source.match, source.fields)
+    kept = [r for r in produced if not r.get(DISMISSED)]
+    dismissed = [{k: v for k, v in r.items() if k != DISMISSED}
+                 for r in produced if r.get(DISMISSED)]
+    return {"rows": kept[:_PREVIEW_ROWS], "dismissed": dismissed[:_PREVIEW_ROWS],
+            "matched": len(kept), "dismissed_count": len(dismissed), "total": total,
             "line_ending": line_ending, "path": path}
 
 

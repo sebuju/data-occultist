@@ -14,6 +14,16 @@ import threading
 from pathlib import Path
 
 
+def _tail_lines(text: str, n: int) -> tuple[str, int]:
+    """The last ``n`` lines of ``text`` plus the 1-based absolute line number where that window
+    starts. Keeps line endings so downstream line counts are unchanged."""
+    lines = text.splitlines(keepends=True)
+    if n >= len(lines):
+        return text, 1
+    window = lines[-n:]
+    return "".join(window), len(lines) - len(window) + 1
+
+
 class SourceReader:
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -44,15 +54,18 @@ class SourceReader:
         self._cache[abspath] = (sig[0], sig[1], text)
         return text
 
-    def read(self, path, *, tail: bool = False, key: str = "") -> str:
-        """Return the file's text. With ``tail`` return only the text appended since this
-        ``key`` last read it (a rotated/shrunk file restarts from the top). One disk read per
-        ``(path, mtime, size)`` no matter how many callers ask."""
+    def read(self, path, *, tail: bool = False, key: str = "", last_lines: int = 0) -> str:
+        """Return the file's text. ``last_lines > 0`` returns only the LAST ``last_lines`` lines
+        (read X rows from the end). ``tail`` (legacy) returns only the text appended since this
+        ``key`` last read it. One disk read per ``(path, mtime, size)`` no matter how many callers
+        ask."""
         with self._lock:
             ap = os.path.abspath(str(path))
             text = self._load(ap)
             if text is None:
                 return ""
+            if last_lines and last_lines > 0:
+                return _tail_lines(text, last_lines)[0]
             if not tail:
                 return text
             ck = (ap, key or "")
@@ -62,17 +75,18 @@ class SourceReader:
             self._consumed[ck] = len(text)
             return text[seen:]
 
-    def read_lined(self, path, *, tail: bool = False, key: str = "") -> tuple[str, int]:
-        """Like :meth:`read` but also returns the 1-based ABSOLUTE line number of the chunk's
-        first line — so a tailing reader can number rows by their true file position without
-        re-reading the whole file each time. When tailing, only COMPLETE lines are consumed (a
-        partial trailing line waits for its newline on a later read), which keeps the line cursor
-        aligned with the byte cursor. A rotated/shrunk file restarts at line 1."""
+    def read_lined(self, path, *, tail: bool = False, key: str = "", last_lines: int = 0) -> tuple[str, int]:
+        """Like :meth:`read` but also returns the 1-based ABSOLUTE line number of the chunk's first
+        line — so rows are numbered by their TRUE file position. ``last_lines > 0`` returns the last
+        ``last_lines`` lines and the absolute line number where that window starts. ``tail`` (legacy)
+        returns only complete newly-appended lines. A rotated/shrunk file restarts at line 1."""
         with self._lock:
             ap = os.path.abspath(str(path))
             text = self._load(ap)
             if text is None:
                 return "", 1
+            if last_lines and last_lines > 0:
+                return _tail_lines(text, last_lines)
             ck = (ap, key or "")
             if not tail:
                 return text, 1

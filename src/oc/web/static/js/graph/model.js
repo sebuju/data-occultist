@@ -192,6 +192,7 @@ export class GraphModel {
     satelliteIds() { return [...this.shownSatellites]; }
     // Parent node id a satellite is bonded to (so groups keep them together).
     satelliteParent(id) {
+        if (id.startsWith("vtd:")) return id.slice(4);   // dismissed-rows preview (file source)
         if (id.startsWith("vt:")) return id.slice(3);
         if (id.startsWith("prev:")) return `win:${id.slice(5)}`;
         return null;
@@ -228,6 +229,7 @@ export class GraphModel {
         for (const s of this.profile.file_sources || []) {
             ns.push({ id: `src:${s.id}`, type: "filesource", ref: s });
             if (this.satelliteOn(`vt:src:${s.id}`)) ns.push({ id: `vt:src:${s.id}`, type: "vttable", ref: { kind: "source", id: s.id } });
+            if (this.satelliteOn(`vtd:src:${s.id}`)) ns.push({ id: `vtd:src:${s.id}`, type: "vttable", ref: { kind: "sourcedismissed", id: s.id } });
         }
         for (const t of this.profile.triggers || []) ns.push({ id: `trigger:${t.id}`, type: "trigger", ref: t });
         for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
@@ -294,6 +296,7 @@ export class GraphModel {
         for (const ds of this.datasets()) if (this.satelliteOn(`vt:ds:${ds}`)) es.push({ from: `ds:${ds}`, to: `vt:ds:${ds}`, kind: "img" });
         for (const s of this.profile.subsets || []) if (this.satelliteOn(`vt:sub:${s.id}`)) es.push({ from: `sub:${s.id}`, to: `vt:sub:${s.id}`, kind: "img" });
         for (const s of this.profile.file_sources || []) if (this.satelliteOn(`vt:src:${s.id}`)) es.push({ from: `src:${s.id}`, to: `vt:src:${s.id}`, kind: "img" });
+        for (const s of this.profile.file_sources || []) if (this.satelliteOn(`vtd:src:${s.id}`)) es.push({ from: `src:${s.id}`, to: `vtd:src:${s.id}`, kind: "img" });
         return es;
     }
 
@@ -432,7 +435,7 @@ export class GraphModel {
         while (this.fileSource(id)) id = `source_${++n}`;
         if (dataset) this.ensureDatasetDef(dataset);
         this.profile.file_sources.push({ id, format: "log_lines", path: "", filename: "", roots: [],
-            dataset, watch: "manual", throttle_s: 1, tail: true, match: [], fields: [], enabled: true });
+            dataset, watch: "manual", throttle_s: 1, tail: true, tail_lines: 200, match: [], fields: [], enabled: true });
         return id;
     }
     removeFileSource(id) { this.profile.file_sources = (this.profile.file_sources || []).filter((s) => s.id !== id); this._dropTarget(id); }
@@ -480,7 +483,7 @@ export class GraphModel {
         // log formats default to an after-anchor pull; document formats to a path lookup
         const isDoc = s.format !== "log_lines";
         s.fields.push({ id: fid, method: isDoc ? "path" : "after", anchor: "", end: "", stop: "",
-            delim: " ", index: 0, path: "", type: "text", strip: true });
+            delim: " ", index: 0, path: "", type: "text", strip: true, required: true });
     }
     removeSourceField(id, i) { const s = this.fileSource(id); if (s && s.fields) s.fields.splice(i, 1); }
     // Merge auto-resolved fields into a source, NEVER removing existing ones. Skip a suggestion whose
@@ -510,7 +513,7 @@ export class GraphModel {
     setSourceFieldProp(id, i, key, val) {
         const s = this.fileSource(id); const f = s && s.fields && s.fields[i]; if (!f) return;
         if (key === "index") { const v = parseInt(val, 10); f.index = Number.isNaN(v) ? 0 : v; }
-        else if (key === "strip") f.strip = !!val;
+        else if (key === "strip" || key === "required") f[key] = !!val;
         else f[key] = val ?? "";
     }
 

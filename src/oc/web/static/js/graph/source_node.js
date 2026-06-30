@@ -4,6 +4,7 @@
 // target it. Rendering only — every input is wired in main.js (wireSource). A live preview of
 // what the current rules produce is fetched there too.
 import { h, frag, TRASH, labCell } from "../dom.js";
+import { slideToggle } from "./node_parts.js";   // shared gn-slide switch (rule 7: one toggle primitive)
 
 // formats mirror the registered parsers (oc.source.parsers / registry._PARSER). `log_lines` is the
 // only line-streaming one; the rest are whole-document (path lookups).
@@ -31,12 +32,22 @@ function matchRow(m, i) {
 // placeholders for `whole`) so every row contributes the same column count to the shared grid and
 // the inputs line up across rows. The `between` arrow is dropped — the start/end placeholders read
 // clearly and a stray glyph would break a grid column.
+// a value made only of whitespace renders as an empty-looking box — flag it so a literal-space
+// delimiter is distinguishable from "blank = whitespace" (the default).
+const isWhitespace = (s) => typeof s === "string" && s.length > 0 && s.trim() === "";
+
 function methodInputs(f, i) {
     const inp = (k, ph) => h("input", { class: "fset2", dataset: { i, k }, value: f[k] ?? "", placeholder: ph });
     if (f.method === "after") return [inp("anchor", "after this text"), inp("stop", "stop at (optional)")];
     if (f.method === "between") return [inp("anchor", "start"), inp("end", "end")];
-    if (f.method === "column") return [inp("delim", "delimiter (blank = whitespace)"),
-        h("input", { class: "fset2 src-fnum", dataset: { i, k: "index" }, type: "number", step: "1", value: Number(f.index) || 0, title: "token index (negative = from end)" })];
+    if (f.method === "column") {
+        // delimiter wrapped with a ␣ flag shown when the value is whitespace-only (so a typed space
+        // doesn't look like an empty field). wireSource toggles `.has-ws` live as the user types.
+        const delim = h("input", { class: "fset2 src-delim", dataset: { i, k: "delim" }, value: f.delim ?? "", placeholder: "blank = whitespace" });
+        const wrap = h("span", { class: `src-delim-wrap${isWhitespace(f.delim) ? " has-ws" : ""}` },
+            delim, h("span", { class: "src-ws-flag", title: "value is whitespace" }, "␣"));
+        return [wrap, h("input", { class: "fset2 src-fnum", dataset: { i, k: "index" }, type: "number", step: "1", value: Number(f.index) || 0, title: "token index (negative = from end)" })];
+    }
     return [h("span", { class: "src-fcell" }), h("span", { class: "src-fcell" })];   // whole: keep the 2 slots empty
 }
 
@@ -48,13 +59,25 @@ function fieldRow(f, i, stream) {
     const idCell = h("input", { class: "fset2 src-fid", dataset: { i, k: "id" }, value: f.id || "", placeholder: "column", title: "output column id" });
     const types = ["text", "number"].map((t) => h("option", { selected: t === f.type }, t));
     const typeCell = h("select", { class: "fset2 src-ftype", dataset: { i, k: "type" }, title: "value type" }, types);
+    // required toggle (default on): when on, this field MUST yield a valid value or the whole row is
+    // dropped (and shown in the dismissed-rows preview). No label — the shared gn-slide switch.
+    const req = slideToggle({ on: f.required !== false, cls: "src-req",
+        title: "required — drop the row if this field has no valid value (number: a clean number; text: non-empty)" });
+    req.dataset.i = i;   // which field this toggle drives (wireSource reads it)
     const rm = h("button", { class: "src-rmf danger", dataset: { i }, title: "remove" }, TRASH());
-    const mid = stream
-        ? frag(h("select", { class: "fset2 src-fmethod", dataset: { i, k: "method" } },
-            METHODS.map(([v, l]) => h("option", { value: v, selected: v === f.method }, l))),
-        ...methodInputs(f, i))
-        : h("input", { class: "fset2 src-fpath", dataset: { i, k: "path" }, value: f.path ?? "", placeholder: "a.b.c  /  Section.Key  /  root/child" });
-    return h("div", { class: "src-f", dataset: { i } }, idCell, mid, typeCell, rm);
+    // line 1 (`.src-frow`, nowrap) always holds id + method + type + required + remove together; the
+    // method inputs sit on their own full-width line below (`.src-finputs`) so they stay roomy.
+    // document rows have no method: id + type + required + remove on line 1, path full-width below.
+    if (stream) {
+        const methodSel = h("select", { class: "fset2 src-fmethod", dataset: { i, k: "method" } },
+            METHODS.map(([v, l]) => h("option", { value: v, selected: v === f.method }, l)));
+        const inputs = h("div", { class: "src-finputs" }, ...methodInputs(f, i));
+        return h("div", { class: "src-f", dataset: { i } },
+            h("div", { class: "src-frow" }, idCell, methodSel, typeCell, req, rm), inputs);
+    }
+    const path = h("input", { class: "fset2 src-fpath", dataset: { i, k: "path" }, value: f.path ?? "", placeholder: "a.b.c  /  Section.Key  /  root/child" });
+    return h("div", { class: "src-f", dataset: { i } },
+        h("div", { class: "src-frow" }, idCell, typeCell, req, rm), path);
 }
 
 export function sourceParts(s) {
@@ -70,13 +93,17 @@ export function sourceParts(s) {
             h("span", { class: "src-secs" },
                 h("input", { class: "src-throttle", type: "number", min: "0", step: "0.5", value: s.throttle_s ?? 1 }), " s"))
         : null;
+    const tailOn = s.tail !== false;
     const tail = stream
-        ? frag(labCell("tail", "read only newly appended lines (off = re-read the whole file each time)"),
-            h("label", { class: "src-chk" }, h("input", { type: "checkbox", class: "src-tail", checked: s.tail !== false })))
+        ? frag(labCell("tail", "read only the last N lines from the end of the file (off = read the whole file each time)"),
+            h("div", { class: "src-tailrow" },
+                slideToggle({ on: tailOn, cls: "src-tail", title: "read only the last N lines from the end of the file" }),
+                tailOn ? h("input", { type: "number", min: "1", step: "1", class: "src-taillines",
+                    value: s.tail_lines ?? 200, title: "how many lines from the end of the file to read" }) : null))
         : null;
     const linePos = stream
         ? frag(labCell("line position", "feed each row's source line number as its dataset position (rows order by file position) — stays tailing; the absolute line is tracked"),
-            h("label", { class: "src-chk" }, h("input", { type: "checkbox", class: "src-linepos", checked: !!s.line_position })))
+            slideToggle({ on: !!s.line_position, cls: "src-linepos", title: "feed each row's source line number as its dataset position" }))
         : null;
 
     const matchBlock = stream
@@ -89,7 +116,9 @@ export function sourceParts(s) {
         labCell("fields", `columns pulled from each ${stream ? "matched line" : "file"}`, true),
         h("div", { class: "src-fields" },
             (s.fields || []).map((f, i) => fieldRow(f, i, stream)),
-            h("button", { class: "src-addf" }, "+ field")));
+            h("div", { class: "src-faddrow" },
+                h("button", { class: "src-addf" }, "+ field"),
+                h("button", { class: "src-resolve", title: "inspect the file and propose extraction columns from its data" }, "auto-resolve"))));
 
     const body = frag(
         h("div", { class: "lab-grid" },
@@ -106,9 +135,7 @@ export function sourceParts(s) {
             throttle, tail, linePos, matchBlock, fields),
         h("div", { class: "src-found muted" }),
         h("div", { class: "gn-foot" },
-            h("button", { class: "src-read", title: "read the file now and write rows to the dataset (runs in the background; rows fill in live)" }, "read now"),
-            h("button", { class: "src-prevbtn", title: "show the data-table satellite — preview what the current rules produce (without writing)" }, "preview"),
-            h("button", { class: "src-resolve", title: "inspect the file and propose extraction columns from its data" }, "auto-resolve")));
+            h("button", { class: "src-read", title: "read the file now and write rows to the dataset (runs in the background; rows fill in live)" }, "read now")));
 
     return {
         title: h("input", { class: "gi gi-id srcrename", value: s.id, title: "rename source" }),

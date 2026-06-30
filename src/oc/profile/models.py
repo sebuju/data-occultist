@@ -801,6 +801,9 @@ class SourceField(BaseModel):
     path: str = ""                  # path: dotted/slashed lookup for document formats
     type: str = "text"              # text | number  (number casts the extracted value)
     strip: bool = True              # trim surrounding whitespace from the extracted value
+    required: bool = True           # the field MUST yield a valid value, else the whole row is
+                                    # dropped (number: a clean number, decimals ok, nothing else;
+                                    # text: non-empty — numbers count as text). Off = optional.
 
 
 class FileSourceDef(BaseModel):
@@ -824,10 +827,11 @@ class FileSourceDef(BaseModel):
     dataset: str = ""               # output dataset the parsed rows are written to
     watch: str = "manual"           # manual | on_change (live file-watch)
     throttle_s: float = 1.0         # on_change: trailing quiet window before a read fires
-    tail: bool = True               # log_lines: read only appended bytes since the last read
+    tail: bool = True               # log_lines: read only the last ``tail_lines`` lines (off = whole file)
+    tail_lines: int = 200           # log_lines + tail: how many lines from the END of the file to read
     # log_lines: feed each row's source line number as its dataset POSITION (so rows order by file
-    # position). Stays tailing — the reader tracks the absolute line cursor, so numbers are true
-    # file positions without re-reading the whole file.
+    # position). With tail on, the absolute line number of each kept line is still its TRUE file
+    # position (the reader reports where the tail window starts), not a 1-based offset into the tail.
     line_position: bool = False
     match: list[SourceMatch] = Field(default_factory=list)   # log_lines: which lines to keep
     fields: list[SourceField] = Field(default_factory=list)  # how each output column is extracted
