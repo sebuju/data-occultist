@@ -1,16 +1,11 @@
 {
-  "name": "data-occultist-web",
-  "version": "0.0.0",
+  "name": "data-occultist-e2e",
   "private": true,
-  "description": "Dev-only tooling for the web UI front-end (lint). The app ships no build step.",
-  "type": "module",
+  "description": "Browser e2e tests for the node-graph web UI (playwright).",
   "scripts": {
-    "lint": "eslint \"src/oc/web/static/js/**/*.js\"",
-    "lint:fix": "eslint --fix \"src/oc/web/static/js/**/*.js\""
+    "test:e2e": "node tests/e2e/route-no-through-nodes.mjs"
   },
   "devDependencies": {
-    "@eslint/js": "^9.13.0",
-    "eslint": "^9.13.0",
-    "globals": "^15.11.0"
+    "playwright": "^1.61.1"
   }
 }

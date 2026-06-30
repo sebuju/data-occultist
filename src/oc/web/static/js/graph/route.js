@@ -106,6 +106,21 @@ function astar(WP, edgesOf, start, goal, ownGroups, softCost) {
     return chain;
 }
 
+// A 2-point line whose ends don't share an axis renders as a DIAGONAL — but every edge is an
+// orthogonal 90° route, so a diagonal stands out (the dotted tethers were the usual offenders: they
+// centre BOTH ends on their face, and setEnd can't keep a 2-point line orthogonal). Replace it with
+// an L (perpendicular faces) or Z (parallel faces) elbow derived from the src/dst face dirs, so it
+// bends and arcs like the rest. Already-straight lines pass through untouched.
+function orthoElbow(a, b, d1, d2) {
+    if (Math.abs(a[0] - b[0]) < 0.5 || Math.abs(a[1] - b[1]) < 0.5) return [a, b];
+    const vert = (d) => d === "T" || d === "B";
+    if (vert(d1) === vert(d2)) {   // parallel faces -> Z bending on the shared (perpendicular) axis
+        if (vert(d1)) { const my = (a[1] + b[1]) / 2; return [a, [a[0], my], [b[0], my], b]; }
+        const mx = (a[0] + b[0]) / 2; return [a, [mx, a[1]], [mx, b[1]], b];
+    }
+    return vert(d1) ? [a, [a[0], b[1]], b] : [a, [b[0], a[1]], b];   // perpendicular -> single corner
+}
+
 function simplify(pts) {
     const dd = [];
     for (const p of pts) { const l = dd[dd.length - 1]; if (l && Math.abs(l[0] - p[0]) < 0.5 && Math.abs(l[1] - p[1]) < 0.5) continue; dd.push(p); }
@@ -198,7 +213,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
 
     // stage 2: route each line; A* chooses the faces (super-source/sink over all 4)
     const lines = [];
-    for (const e of edges) { if (byId.has(e.from) && byId.has(e.to)) lines.push({ from: e.from, to: e.to, key: e.key, pinSrc: e.pinSrc || null, insetEnd: e.insetEnd || 0, tether: !!e.tether }); }
+    for (const e of edges) { if (byId.has(e.from) && byId.has(e.to)) lines.push({ from: e.from, to: e.to, key: e.key, pinSrc: e.pinSrc || null, insetEnd: e.insetEnd || 0, tether: !!e.tether, port: !!e.port }); }
     for (const ln of lines) {
         const A = byId.get(ln.from), B = byId.get(ln.to), base0 = WP.length;
         const ppA = portPos.get(ln.from), ppB = portPos.get(ln.to), peA = portEdges.get(ln.from), peB = portEdges.get(ln.to);
@@ -267,7 +282,25 @@ function nudge(lines, byId, rects, outPorts, bands) {
     const buckets = new Map();
     for (const s of segs) { const k = s.axis + ":" + Math.round(s.coord); if (!buckets.has(k)) buckets.set(k, []); buckets.get(k).push(s); }
     const through = (s) => { const c0 = center(byId.get(s.ln.from)), c1 = center(byId.get(s.ln.to)); return s.axis === "V" ? (c0[0] + c1[0]) / 2 : (c0[1] + c1[1]) / 2; };
-    for (const arr of buckets.values()) {
+    // A coord-bucket can hold segments at the SAME axis-coord that live in vertically (or
+    // horizontally) disjoint parts of the graph — different corridors that merely line up. Bundling
+    // them as one lane group is wrong: their combined span reaches walls all over the canvas, which
+    // yields a nonsensical (even inverted) alley and a wild lane shift that flings a segment across a
+    // node it never touched. So first split each bucket into CLUSTERS of span-overlapping segments
+    // (a real shared corridor) and lay each cluster out independently.
+    const clustersOf = (arr) => {
+        const byLo = arr.slice().sort((a, b) => a.lo - b.lo);
+        const out = []; let cur = null, curHi = -Infinity;
+        for (const s of byLo) {
+            if (cur && s.lo > curHi + C.laneGap) { out.push(cur); cur = null; curHi = -Infinity; }   // gap > a lane → new corridor
+            (cur || (cur = [])).push(s); curHi = Math.max(curHi, s.hi);
+        }
+        if (cur) out.push(cur);
+        return out;
+    };
+    for (const bucket of buckets.values()) {
+      if (bucket.length < 2) continue;
+      for (const arr of clustersOf(bucket)) {
         if (arr.length < 2) continue;
         arr.sort((a, b) => through(a) - through(b) || a.lo - b.lo);
         const trackEnd = [];
@@ -291,12 +324,18 @@ function nudge(lines, byId, rects, outPorts, bands) {
         }
         const clear = 5, aLo = lb + clear, aHi = rb - clear, minC = coord + minOff, maxC = coord + maxOff;
         let shift = 0;
-        if (maxC > aHi) shift = aHi - maxC;
-        if (minC + shift < aLo) { const room = aHi - aLo, need = maxC - minC; shift = need <= room ? aLo - minC : (aLo + aHi) / 2 - (minC + maxC) / 2; }
+        // Only clamp into the alley when it has real room. If walls leave aHi <= aLo (no alley — e.g.
+        // a wall straddles both sides) the clamp math goes haywire and would fling the bundle far off,
+        // ACROSS unrelated nodes. There, keep A*'s coord (shift 0) — A* already routed it obstacle-free.
+        if (aHi > aLo) {
+            if (maxC > aHi) shift = aHi - maxC;
+            if (minC + shift < aLo) { const room = aHi - aLo, need = maxC - minC; shift = need <= room ? aLo - minC : (aLo + aHi) / 2 - (minC + maxC) / 2; }
+        }
         for (const s of arr) {
             const off = (s.tr - (T - 1) / 2) * g + shift;
             if (axis === "V") { s.ln._dx[s.i0] += off; s.ln._dx[s.i1] += off; } else { s.ln._dy[s.i0] += off; s.ln._dy[s.i1] += off; }
         }
+      }
     }
     for (const ln of lines) {
         const pts = ln._V.map((p, i) => [p[0] + ln._dx[i], p[1] + ln._dy[i]]);
@@ -312,7 +351,11 @@ function nudge(lines, byId, rects, outPorts, bands) {
         const p = ln._pts, i = p.length - 1, v = faceOut[ln.dstSide];
         if (i >= 1 && v) p[i] = [p[i][0] - v[0] * ln.insetEnd, p[i][1] - v[1] * ln.insetEnd];
     }
-    for (const ln of lines) ln.pts = simplify(ln._pts);
+    for (const ln of lines) {
+        let pts = simplify(ln._pts);
+        if (pts.length === 2) pts = orthoElbow(pts[0], pts[1], ln.srcSide, ln.dstSide);   // never a diagonal
+        ln.pts = pts;
+    }
     // FINAL backstop: the lane shift can slide a segment 1-5px into a wall edge (its center-when-narrow
     // fallback overrides the alley clamp). A* never crosses, so any overlap here is nudge's doing —
     // push each offending INTERIOR segment back out to the wall's nearest edge (+MARG). Endpoints
@@ -381,7 +424,7 @@ function fanFaceEnds(lines, byId, outPorts) {
         const clamp = (c) => Math.max(lo + 4, Math.min(lo + span - 4, c));
         // a node with an idle out-port on THIS face parks a (non-endpoint) dot at the centre — keep lines
         // off it. A real PORT line leaving the face owns the dot (its own start); a structural src does not.
-        const reserveMid = outPorts.get(nodeId) === side && !arr.some((e) => e.end === "src" && e.ln.pinSrc);
+        const reserveMid = outPorts.get(nodeId) === side && !arr.some((e) => e.end === "src" && (e.ln.pinSrc || e.ln.port));
         if (n < 2) {
             // lone endpoint: port ends keep the canonical centred position; structural ends keep their
             // ROUTED coord (never force-centred). Either way, an end under an idle out-port dot is nudged clear.
@@ -389,9 +432,9 @@ function fanFaceEnds(lines, byId, outPorts) {
             const last = e.end === "dst", i = last ? p.length - 1 : 0;
             const cur = horiz ? p[i][1] : p[i][0];
             // a satellite tether attaches at the face CENTRE (both ends) — never let A* leave it at a corner
-            let c = (e.ln.pinSrc || e.ln.tether) ? mid : cur;
+            let c = (e.ln.pinSrc || e.ln.port || e.ln.tether) ? mid : cur;
             if (reserveMid && Math.abs(c - mid) < PORT_MIN) c = mid + PORT_MIN;
-            if (e.ln.pinSrc || e.ln.tether || Math.abs(c - cur) > 0.5) setEnd(p, side, clamp(c), last);
+            if (e.ln.pinSrc || e.ln.port || e.ln.tether || Math.abs(c - cur) > 0.5) setEnd(p, side, clamp(c), last);
             continue;
         }
         const pref = Math.min(span - PORT_MARGIN, (n - 1) * C.laneGap);

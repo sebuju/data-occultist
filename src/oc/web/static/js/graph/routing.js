@@ -482,6 +482,10 @@ const ROUTE = {
 if (typeof window !== "undefined") {
     window.__route = ROUTE;
     window.__reroute = () => { routeCache = new Map(); routeHash = ""; drawEdges(); };   // force a full recompute
+    // read-only e2e introspection (playwright): the routed geometry keyed by `${from} ${to}`, plus
+    // every node's world rect — lets a test assert no edge passes through a non-endpoint node.
+    window.__routes = () => { const o = {}; for (const [k, c] of routeCache) o[k] = { pts: c.pts, d1: c.d1, d2: c.d2 }; return o; };
+    window.__nodeRects = () => { const o = {}; for (const id of nodeEls.keys()) { const r = nodeRect(id); if (r) o[id] = r; } return o; };
 }
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -534,7 +538,12 @@ function runRouting() {
         // router's member-bounds guess) so the heading soft/hard rect lands exactly on the banner.
         const boxOf = new Map(groups.groupBoxes().map((b) => [b.id, b]));
         const grps = groups.allGroups().map((g) => { const b = boxOf.get(g.id); return { members: [...g.members], box: b ? b.box : null, bandH: b ? b.bandH : 0 }; });
-        const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, pinSrc: l.port ? sideForPort(l) : null, tether: TETHER_KINDS.some((k) => l.cls.split(" ").includes(k)),
+        // a DATA out-line leaves no pinned face: A* picks whichever of the 4 faces routes cleanest
+        // (the port dot follows the chosen face). Watch/trigger control lines KEEP their semantic pin
+        // (watch=L, fires=R) so they never collide on the same node. `port` still flags every port line
+        // so the router fans + centres its endpoint on whatever face it lands on.
+        const dataOut = (l) => l.portKind === "out" && PORT_OUT_SRC.some((p) => l.aId.startsWith(p));
+        const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, port: l.port, pinSrc: (l.port && !dataOut(l)) ? sideForPort(l) : null, tether: TETHER_KINDS.some((k) => l.cls.split(" ").includes(k)),
             // watch ends in a diamond sunk slightly into the watched node; trigger ends in a hollow ring
             // pulled back by its radius (3px) so the ring centres ON the fired node's edge. The data-flow
             // arrow needs NO inset: its marker is centred (refX=5) so it already straddles the edge, and
