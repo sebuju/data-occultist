@@ -60,6 +60,7 @@ import {
 import { openContextMenu } from "../ctxmenu.js";
 import {
     vtables, vtableFor, refreshDataNode, refreshDatasetNode, expandSubsetRow,
+    collapseVtablesExcept,
     batchesState, batEls, loadBatchesNode,
 } from "./panels/datanodes.js";
 import {
@@ -1879,13 +1880,29 @@ function targetIdOf(el, target) {
 // be squeezed, so set a hard width/height and the flex body SCROLLS (never clips). Clears any prior
 // inline size first so the natural box (CSS min-width respected) is what's measured. After it runs,
 // offsetWidth/Height land on the grid, so snapResize's live-snap sees no gap and doesn't fight it.
+// Soft-grow / hard-shrink for ONE axis. Caller must have already cleared THIS axis's inline
+// size + min so `el.offset*` reads the natural box. GROW (target ≥ natural) -> soft min (content
+// fills the extra room); SHRINK -> hard size (body scrolls). Returns true=soft, false=hard.
+// The single primitive both the drag-settle (applyGridSize) and keyboard nudge build on (rule 7).
+function sizeAxisToGrid(el, axis, target) {
+    const nat = axis === "w" ? el.offsetWidth : el.offsetHeight;   // natural (this axis already cleared)
+    if (target >= nat) { el.style[axis === "w" ? "minWidth" : "minHeight"] = `${target}px`; return true; }
+    el.style[axis === "w" ? "width" : "height"] = `${target}px`; return false;
+}
 function applyGridSize(el, w, h) {
     clearGridSize(el);
-    const cw = el.offsetWidth, ch = el.offsetHeight;   // natural box
     let softW = true, softH = true;
-    if (w) { if (w >= cw) el.style.minWidth = `${w}px`; else { el.style.width = `${w}px`; softW = false; } }
-    if (h) { if (h >= ch) el.style.minHeight = `${h}px`; else { el.style.height = `${h}px`; softH = false; } }
+    if (w) softW = sizeAxisToGrid(el, "w", w);
+    if (h) softH = sizeAxisToGrid(el, "h", h);
     return { softW, softH };   // which dims grew (soft min) vs shrank (hard) — recorded for restore
+}
+// One-axis keyboard nudge: clear THIS axis (so the natural box is re-measured) WITHOUT touching
+// the other axis, then re-apply through the same soft/hard rule. A naive style.width set silently
+// no-ops when a prior grow left a min-width ≥ the target — clearing it first is the whole fix.
+function nudgeAxisToGrid(el, axis, target) {
+    if (axis === "w") { el.style.width = ""; el.style.minWidth = ""; }
+    else { el.style.height = ""; el.style.minHeight = ""; }
+    return sizeAxisToGrid(el, axis, target);
 }
 // Re-apply a size decision recorded by applyGridSize/onReset WITHOUT re-measuring the natural box.
 // Restore must be deterministic: re-measuring (as applyGridSize does) can drift a hair (scrollbar /
@@ -2110,6 +2127,7 @@ function openMissingItemCanvases() {
 // picked batch) for every node that isn't `keepId` — so a node's inner selection
 // doesn't linger after focus moves off it.
 function clearNodeSelections(keepId = null) {
+    collapseVtablesExcept(keepId);   // fold any open vt-table row on a node losing focus
     for (const [nid, el] of nodeEls) {
         if (nid === keepId) continue;
         el.querySelectorAll(".il-sel").forEach((r) => r.classList.remove("il-sel"));
@@ -2240,6 +2258,14 @@ function wireNode(div, n) {
     // (selects, chips, tables) never drags the node. The header + outer padding stay grab zones.
     div.addEventListener("mousedown", (ev) => {
         if (ev.button !== 0) return;   // only left-drag moves; right-drag pans the canvas
+        // ctrl/cmd-click ANYWHERE on the node (header, frame, OR body content) toggles it in/out
+        // of the multi-selection and NEVER drags — handled first so body fields don't swallow it.
+        if (ev.ctrlKey || ev.metaKey) {
+            ev.preventDefault();
+            if (selected.has(n.id)) selected.delete(n.id); else selected.add(n.id);
+            syncMultiSelect();
+            return;
+        }
         // the collapse caret and the title input double as drag HANDLES: a real drag moves
         // the node, a plain click still toggles / edits (threshold-gated below).
         const handle = ev.target.closest(".collapse, input.gi-id");
@@ -2249,13 +2275,6 @@ function wireNode(div, n) {
         const onContent = !handle && ev.target.closest(".gn-body,input,select,button,a,.canvas-wrap,[contenteditable],.scrollhost");
         if (onContent) {
             if (!selected.has(n.id)) { clearMultiSelect(); focusNode(n.id); }   // select, never drag
-            return;
-        }
-        // ctrl/cmd-click on the header/frame toggles this node in/out of the multi-selection
-        if (ev.ctrlKey || ev.metaKey) {
-            ev.preventDefault();
-            if (selected.has(n.id)) selected.delete(n.id); else selected.add(n.id);
-            syncMultiSelect();
             return;
         }
         const r = div.getBoundingClientRect();   // skip the CSS resize-handle corner (resizable nodes)
@@ -3271,6 +3290,10 @@ $("graph").addEventListener("dblclick", (ev) => {
 // Rubber-band selection: drag a rectangle on empty canvas to select every node it
 // touches. Highlights live; commits on release. A press with no drag clears selection.
 function startMarquee(ev) {
+    // ctrl/cmd-marquee is ADDITIVE: it toggles every caught node against the EXISTING selection
+    // (nodes already selected get removed, fresh ones added) instead of replacing it.
+    const additive = ev.ctrlKey || ev.metaKey;
+    const base = new Set(selectionIds());
     const box = $("graph").getBoundingClientRect();
     const el = $("marquee");
     const s = { x: ev.clientX, y: ev.clientY };
@@ -3291,18 +3314,23 @@ function startMarquee(ev) {
     const onMove = (e) => {
         _mx = e.clientX; _my = e.clientY;
         if (!moved && Math.hypot(_mx - s.x, _my - s.y) < 4) return;
-        if (!moved) { moved = true; el.hidden = false; deselectAll(); }
+        // additive keeps the prior selection on-screen; plain replace clears it on first drag
+        if (!moved) { moved = true; el.hidden = false; if (!additive) deselectAll(); }
         const left = Math.min(s.x, _mx) - box.left, top = Math.min(s.y, _my) - box.top;
         el.style.left = `${left}px`; el.style.top = `${top}px`;
         el.style.width = `${Math.abs(_mx - s.x)}px`; el.style.height = `${Math.abs(_my - s.y)}px`;
         const hit = new Set(caught());
-        for (const [id, nel] of nodeEls) nel.classList.toggle("multisel", hit.has(id));
+        // additive: a node is lit when membership in base XOR the marquee differs (toggle)
+        for (const [id, nel] of nodeEls)
+            nel.classList.toggle("multisel", additive ? (base.has(id) !== hit.has(id)) : hit.has(id));
     };
     const onUp = () => {
         document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
         el.hidden = true;
-        if (moved) setMultiSelect(caught());
-        else deselectAll();
+        if (moved) {
+            const hit = new Set(caught());
+            setMultiSelect(additive ? [...nodeEls.keys()].filter((id) => base.has(id) !== hit.has(id)) : [...hit]);
+        } else if (!additive) deselectAll();   // ctrl-click on empty canvas keeps the selection
     };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
@@ -3377,21 +3405,32 @@ document.addEventListener("keydown", (ev) => {
         if (selectedNodeId && pos.has(selectedNodeId)) {
             const el = nodeEls.get(selectedNodeId);
             if (ev.shiftKey) {
-                // collapsed nodes are header-only and item nodes follow their cutout aspect,
-                // so neither takes a height step (item still resizes width).
+                // collapsed nodes are header-only; widthOnly nodes (item/window) follow their
+                // cutout aspect, so neither takes a height step (widthOnly still resizes width).
                 if (el && !collapsed.has(selectedNodeId)) {
-                    const type = nodeTypeOf(selectedNodeId);
-                    const cur = nodeSizes.get(selectedNodeId) || { w: el.offsetWidth, h: el.offsetHeight };
-                    if (dir[0]) el.style.width = `${Math.max(GRID, snap(cur.w + dir[0] * GRID))}px`;
-                    if (dir[1] && type !== "item") el.style.height = `${Math.max(GRID, snap(cur.h + dir[1] * GRID))}px`;
-                    nodeSizes.set(selectedNodeId, { w: el.offsetWidth, h: el.offsetHeight });
+                    const widthOnly = WIDTH_ONLY_NODES.has(nodeTypeOf(selectedNodeId));
+                    if (widthOnly) {
+                        // item/window wrap a fixed-aspect canvas -> HARD width only, height aspect-driven
+                        // (mirrors drag onSettle + restore). No height step.
+                        if (dir[0]) { el.style.minWidth = ""; el.style.width = `${Math.max(GRID, snap(el.offsetWidth + dir[0] * GRID))}px`; }
+                        nodeSizes.set(selectedNodeId, { w: el.offsetWidth, h: el.offsetHeight, softW: false, softH: false });
+                    } else {
+                        // step from the CURRENT rendered box (what the user sees) and re-apply through the
+                        // SAME soft-grow/hard-shrink primitive the drag uses — a raw style.width set is
+                        // blocked by a prior grow's min-width and silently no-ops (the "doesn't resize" bug).
+                        const s = nodeSizes.get(selectedNodeId) || {};
+                        let softW = s.softW, softH = s.softH;
+                        if (dir[0]) softW = nudgeAxisToGrid(el, "w", Math.max(GRID, snap(el.offsetWidth + dir[0] * GRID)));
+                        if (dir[1]) softH = nudgeAxisToGrid(el, "h", Math.max(GRID, snap(el.offsetHeight + dir[1] * GRID)));
+                        nodeSizes.set(selectedNodeId, { w: el.offsetWidth, h: el.offsetHeight, softW, softH });
+                    }
                     el.classList.add("has-size");
                     drawEdges(); groups.renderGroups(); persist.layout();
                 }
             } else {
                 const p = pos.get(selectedNodeId);
                 p.x = snap(p.x + dir[0] * GRID); p.y = snap(p.y + dir[1] * GRID);
-                positionNode(selectedNodeId); drawEdges(); persist.layout();
+                positionNode(selectedNodeId); drawEdges(); groups.renderGroups(); persist.layout();
             }
             ev.preventDefault();
         }

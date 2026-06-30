@@ -954,6 +954,7 @@ function buildSuperEl(sg) {
     cog.addEventListener("mousedown", (ev) => {
         if (ev.button !== 0) return;
         ev.stopPropagation();
+        if (ev.ctrlKey || ev.metaKey) return;   // ctrl is for selection, never drags
         const stop = beginDrag(ev, { threshold: DRAG_THRESH, onStart: () => { stop(); startSuperDrag(sg.id, ev); } });
     });
     cog.addEventListener("click", (ev) => { ev.stopPropagation(); toggleSuperPopover(sg.id, ev); });
@@ -963,6 +964,7 @@ function buildSuperEl(sg) {
 function onSuperPress(sid, ev) {
     if (ev.button !== 0) return;
     ev.stopPropagation();
+    if (ev.ctrlKey || ev.metaKey) return;   // ctrl is for selection, never drags
     const stop = beginDrag(ev, { threshold: DRAG_THRESH, onStart: () => { stop(); startSuperDrag(sid, ev); } });
 }
 // dragging a super group moves every node in every member group as one
@@ -1228,6 +1230,7 @@ function buildSubTitleEl(sg) {
 function onSubPress(sid, ev) {
     if (ev.button !== 0) return;
     ev.stopPropagation();
+    if (ev.ctrlKey || ev.metaKey) return;   // ctrl is for selection, never drags
     const sg = subById(sid);
     if (!sg) return;
     const stop = beginDrag(ev, { threshold: DRAG_THRESH, onStart: () => { stop(); ctx.moveMembers(sg.members, ev); } });
