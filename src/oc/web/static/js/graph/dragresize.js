@@ -47,7 +47,7 @@ export function hideSizeHud() { if (_sizeHud) _sizeHud.style.display = "none"; }
 // edges — its anchored top + fixed corner stay put, so only the moving edge/bottom is limited,
 // leaving `margin` px clear. Graph nodes leave it off (they live in zoomed/panned canvas space,
 // not viewport space, so a viewport clamp would be meaningless there).
-export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onSettle = null, snapEdge = null, onReset = null, screenClamp = false, margin = 0, bottomMargin = null } = {}) {
+export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onResizeStart = null, onSettle = null, snapEdge = null, onReset = null, screenClamp = false, margin = 0, bottomMargin = null } = {}) {
     if (el.querySelector(":scope > .rz-grip")) return;   // once only
     const q = (v) => (snapGrid ? snapUp(v) : v);   // grid-step nodes (round up); panels resize smoothly
     for (const side of ["left", "right"]) {
@@ -58,6 +58,10 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
         g.addEventListener("mousedown", (ev) => {
             if (ev.button !== 0) return;   // left button only — right/middle never starts a resize
             ev.preventDefault(); ev.stopPropagation();
+            // Let the caller FREEZE the node's current size to a stable hard box BEFORE we measure
+            // startW/startH — otherwise a soft min-width/height (which onResize clears mid-drag)
+            // collapses the node to content on the first move, jumping it and desyncing the cursor.
+            onResizeStart && onResizeStart();
             const allowH = typeof both === "function" ? both() : both;   // may depend on live state
             const z = zoom() || 1, sx = ev.clientX, sy = ev.clientY;
             const startW = el.offsetWidth, startH = el.offsetHeight, startL = left ? left() : 0;

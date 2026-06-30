@@ -22,6 +22,10 @@
 /* flow-blob layer: dots animating along edges on live activity (graph/flow.js). Above
    everything inside the world, never takes pointer events; rides the #gworld transform. */
 #gflow { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 6; overflow: visible; }
+/* while a node is dragged it snaps to the 20px grid in discrete steps; ease left/top so it glides
+   to each grid cell instead of teleporting (felt like the drag was running badly). Class is only on
+   the node during the drag, so non-drag repositions (layout/route) still apply instantly. */
+.gnode.snapping { transition: left 90ms cubic-bezier(.22,.61,.36,1), top 90ms cubic-bezier(.22,.61,.36,1); }
 .gnode.collapsed .gn-body { display: none !important; }   /* beats the host-node `> .gn-body { display:flex }` */
 /* collapse works the SAME for every node: header only. !important overrides the inline
    width/height a resizable host node carries, and resizing is off while collapsed. */
@@ -81,6 +85,11 @@
 /* a field node with fallback rules needs room for the rule row (when + then + value + trash
    on one line); this is its natural width, so a size reset lands here instead of crushing them */
 .gnode.has-rules { width: 320px; }
+/* the file-source node carries a 5-cell field grid. Its input tracks shrink and the select tracks
+   keep a readable floor (below), so a size reset / drag never clips a field or overflows the node.
+   width = the resting size where the two method-input fields are comfortably usable; min-width =
+   the grid's min-content floor, so resize can't crush past where the row still fits. */
+.gnode.filesource { width: 300px; min-width: 260px; }
 .gnode, .gnode * { box-sizing: border-box; }
 .gnode input, .gnode select { user-select: text; max-width: 100%; }
 /* the node-wide cursor:grab (set on .gnode above) gives way to these — form fields,
@@ -110,6 +119,8 @@
     color: var(--ntint); background: var(--node-head); padding-left: 8px;
     pointer-events: none; opacity: 1; transition: opacity .12s ease; z-index: 0; }
 .gn-h .gn-enable { position: relative; z-index: 1; }
+/* vttable header has no flex:1 title to push the type tag over, so pin it to the right edge */
+.gnode.vttable .gn-h .gn-type { margin-left: auto; }
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap; }
 .gnode input.gi { width: 100%; }
 .gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; border: unset; background: transparent; margin-left: -35px; padding-left: 35px;
@@ -245,9 +256,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gedge.tell { stroke: var(--ok); }   /* item -> its tell nodes (pass/fail checks) */
 .gedge.attach { stroke: var(--accent); }
 .gedge.img { stroke: var(--muted); stroke-dasharray: 2 4; }
-/* trigger -> the price node it fires: cyan, solid, ending in a » go/activate chevron (not the flow
-   arrow). marker-end overrides .gedge.flow's #flowarrow (same specificity, declared later wins). */
-.gedge.trigger { stroke: var(--trigger-line); marker-end: url(#ringcap); }
+/* trigger -> the price node it fires: cyan, solid, ending in a filled hexagon (not the flow arrow).
+   marker-end overrides .gedge.flow's #flowarrow (same specificity, declared later wins). */
+.gedge.trigger { stroke: var(--trigger-line); marker-end: url(#hexcap); }
+.hexcap-head { fill: context-stroke; }   /* fires line: filled hexagon, takes the line's colour (cyan, or accent when selected) */
 .triggergo-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }   /* » = go/activate, takes the line's colour */
 .triggerbar-head { stroke: context-stroke; stroke-width: 2; }   /* reusable bar end-cap (takes the line's colour); not on the trigger line now */
 /* watched dataset/view -> on_change trigger: own teal, fine dotted, ending in a diamond —
@@ -273,8 +285,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .circlebar-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; }
 .gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; marker-start: none; marker-end: none; }   /* live drag line: no caps */
 .gedge.sel { stroke: var(--sel) !important; stroke-width: 2.2; opacity: 1 !important; }
-/* a line touching a disabled node is greyed (it carries no live data) */
-.gedge.dis-edge { filter: grayscale(1); opacity: 0.4; }
+/* a line touching a disabled node is greyed (it carries no live data); a stale-edge is a line whose
+   node has been dragged off its routed endpoint — greyed + faded the same way until it re-routes */
+.gedge.dis-edge, .gedge.stale-edge { filter: grayscale(1); }
+.gedge.dis-edge { opacity: 0.4; }
+.gedge.stale-edge { opacity: 0.3 !important; transition: opacity 80ms linear; }   /* beat .sel's opacity:1 */
 
 /* window node: fixed default width, resized by WIDTH (its grips) like the item node —
    the embedded image canvas fills the node and its height follows the image aspect.
@@ -283,6 +298,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* node overflow stays visible so the right-edge out-port isn't clipped (like price/dataset/
    subset below); the BODY clips instead, keeping the canvas + controls inside the card. */
 .gnode.window > .gn-body { overflow: hidden; }
+/* freely-resizable nodes (everything but the fixed-aspect window/item canvases): the card is a
+   flex column so the body fills it and SCROLLS when the card is sized smaller than its content —
+   content never clips or overflows. At natural size the body is content-height, so there's nothing
+   to scroll (a reset, which drops to natural size, is therefore never scrollable). */
+.gnode:not(.window):not(.item):not(.collapsed) { display: flex; flex-direction: column; }
+.gnode:not(.window):not(.item):not(.collapsed) > .gn-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* busy state: just a centred spinner — no dimming scrim over the node (reads fire on every
    edit now, so a full-node dim would flash constantly). The header (z2, set above) stays above it. */
 .gn-spin { position: absolute; inset: 0; z-index: 1; pointer-events: none; border-radius: 8px;
@@ -482,9 +503,22 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 8px var(--shadow); white-space: nowrap; }
 
 /* group options popover (screen-fixed, like the topbar dropdowns) */
-.ggroup-pop { position: fixed; z-index: 200; min-width: 220px; display: flex; flex-direction: column; gap: 6px;
+.ggroup-pop { position: fixed; z-index: 200; min-width: 220px; max-width: 400px; display: flex; flex-direction: column; gap: 0px;
     padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
     box-shadow: 0 8px 24px #00000066; }
+/* the popover lives on <body>, NOT inside .gnode, so it misses the global border-box rule — without
+   this the fixed-width number/colour inputs add padding+border on top of their width (widths drift) */
+.ggroup-pop input, .ggroup-pop select, .ggroup-pop button { box-sizing: border-box; }
+/* outline width + offset: small fixed number inputs leading the outline row (before style + colour) */
+/* pin width via flex-basis (NOT just `width`): the base `input{width:100%}` in controls.css loads
+   after this, and on a flex item a 100% width can still stretch it — a fixed grow:0 shrink:0 basis can't */
+.gp-owidth, .gp-ooffset { flex: 0 0 40px; width: 40px; max-width: 40px; min-width: 0; padding: 2px 3px; }
+/* inline "bg:" / "text:" mini-labels before the title colour pickers */
+.gp-mini { flex: 0 0 auto; font-size: var(--fs-xs); color: var(--muted); }
+/* box-shadow row: x, y, blur, spread number inputs + a colour, packed tight on one line */
+.gp-shadow { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.gp-shadow input[type="number"] { flex: 1 1 0; min-width: 0; width: 100%; padding-left: 4px; padding-right: 2px; }
+.gp-shadow input[type="color"] { flex: 0 0 auto; }
 .ggroup-pop .flab { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
 /* fixed-width leader so every row's control starts at the same x (labels + inputs line up) */
 .ggroup-pop .gp-lab { flex: 0 0 auto; width: 72px; }
@@ -493,11 +527,49 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .ggroup-pop input[type="color"] { flex: 0 0 auto; width: 28px; height: 22px; padding: 0; border: 1px solid var(--line); background: none; }
 .ggroup-pop .gp-btns { display: flex; gap: 6px; margin-top: 4px; }
 .ggroup-pop .gp-btns button { flex: 1; min-width: 0; }
-/* premade scheme swatches */
+/* premade scheme swatches: each is a chip ringed in the scheme outline, split into an upper "title"
+   half (titleBg + "Aa" in titleColor) and a lower "fill" half (bg) — previews every colour it sets */
 .gp-schemes { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
-.gp-scheme { width: 22px; height: 22px; padding: 0; border-radius: 5px; border: 1.5px solid var(--line);
-    cursor: pointer; flex: 0 0 auto; }
+/* align-items:stretch + gap:0 OVERRIDE the base `button` rule (controls.css: align-items:center,
+   gap:5px) — without them the two halves shrink to content width and the empty bg half vanishes. */
+.gp-scheme { position: relative; width: 30px; height: 26px; padding: 0; border-radius: 4px; border: 2px solid var(--line);
+    cursor: pointer; flex: 0 0 auto; overflow: hidden; display: flex; flex-direction: column;
+    align-items: stretch; gap: 0; background: var(--bg); }
 .gp-scheme:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
+/* the scheme the group is linked to: a small dot pinned top-right inside the swatch (built-in AND
+   user-added schemes show it the same way) */
+.gp-scheme.sel::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
+    border-radius: 50%; background: var(--sel); box-shadow: 0 0 0 1.5px var(--panel); pointer-events: none; }
+/* a user-added scheme: hovering the SELECTED swatch swaps that dot for a trashcan that removes it */
+.gp-sw-rm { position: absolute; top: 0; right: 0; width: 15px; height: 15px; display: none;
+    align-items: center; justify-content: center; color: #e0503f; background: var(--panel);
+    border-bottom-left-radius: 4px; cursor: pointer; z-index: 2; }
+.gp-scheme.sel:hover .gp-sw-rm { display: flex; }
+.gp-sw-rm:hover { color: #ff6b5a; }
+.gp-sw-rm .ic-trash { width: 11px; height: 11px; display: block; }
+.gp-sw-top { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 9px; line-height: 1; font-weight: 600; }
+.gp-sw-bot { flex: 1; }
+/* "+" save-current-as-scheme + "copy" arm: both are grid swatches with a single centred glyph (no
+   two-half split). line-height:1 + flex centring keeps the glyph optically centred in the chip. */
+/* grid place-items centres the glyph in BOTH axes regardless of the column-flex `.gp-scheme` sets;
+   line-height:0 strips the font's leading so the mark sits dead-centre, not biased by ascent/descent */
+.gp-scheme-add, .gp-scheme-copy { display: grid; place-items: center; place-content: center; color: var(--muted); }
+.gp-scheme-add { border-style: dashed; }
+.gp-ic { width: 13px; height: 13px; display: block; }   /* the +/copy svg, dead-centred by the grid */
+.gp-scheme-add:disabled { opacity: 0.4; cursor: default; }
+.gp-scheme-add:disabled:hover { outline: none; }
+.gp-scheme-copy.armed { outline: 2px solid var(--accent); outline-offset: 1px; color: var(--accent); }
+/* scheme label aligns to the FIRST row of swatches (they wrap) */
+.gp-scheme-row { align-items: flex-start; }
+.gp-lab-top { padding-top: 4px; }
+/* section subheading inside the popover (LAYOUT / STYLE) */
+.gp-sub { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    margin-top: 8px; padding-bottom: 2px; border-bottom: 1px solid var(--line); font-weight: 700; }
+.gp-sub:first-child { margin-top: 0; }
+/* container size row: [w][auto][h][auto] — number inputs share the row, "auto" buttons clear an axis */
+.gp-size { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.gp-size input[type="number"] { flex: 1; min-width: 0; width: 100%; }
+.gp-size .gp-auto { flex: 0 0 auto; padding: 2px 7px; font-size: var(--fs-sm); cursor: pointer; }
 
 /* ---- super-group layer (a group OF groups; sits behind the group layer) ---- */
 #sgroups { position: absolute; top: 0; left: 0; z-index: 0; }
@@ -548,31 +620,48 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* the gear svg sits inline by default -> baseline descender gap nudges it up inside the button;
    block-display + middle align kills that so the button box alone places it (lines up with title). */
 .subgroup-cog svg { display: block; vertical-align: middle; }
-/* subgroup scheme swatch: a dark chip ringed in the scheme colour (border, not fill) */
-.gp-scheme-border { border-width: 2.5px; }
 
 /* ---- file-source node: rule builder + live preview ---- */
 .gnode.filesource .lab-grid > .src-matches { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
-.src-m { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
-.src-m input[type="text"], .src-m input:not([type]) { flex: 1 1 70px; min-width: 60px; }
-/* ONE grid for all field rows: id | method | inputA | inputB | type | remove. Each row is
-   display:contents so its cells join this grid directly and line up across rows. */
-.gnode.filesource .lab-grid > .src-fields {
-    grid-column: 1 / -1; display: grid;
-    grid-template-columns: 84px auto minmax(56px, 1fr) minmax(56px, 1fr) auto auto;
-    gap: 4px 6px; align-items: center;
-}
-.src-f { display: contents; }
-.src-f .fset2 { min-width: 0; width: 100%; }            /* fill the grid cell, never overflow it */
-.src-f .src-ftype { width: auto; justify-self: start; }
-.src-f .src-fpath { grid-column: 2 / 5; }               /* document path spans method + both input cols */
-.src-f .src-rmf { justify-self: end; }
-.src-fields > .src-addf { grid-column: 1 / -1; justify-self: start; }
+.src-m { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; min-width: 0; }
+/* the op select sizes to its own short label ("contains" / "starts with"…). Without an explicit
+   width it inherits the global `select { width: 100% }` (controls.css) as its flex-basis and eats
+   the whole row, crushing the text input — so pin it to content width and let the input take the rest. */
+.src-m > select { flex: 0 0 auto; width: auto; min-width: 0; }
+.src-m input[type="text"], .src-m input:not([type]) { flex: 1 1 40px; min-width: 0; }
+/* Each field row stacks two lines: `.src-frow` (id + method + type + remove, nowrap so they always
+   share one row) and the method inputs below (`.src-finputs`, half-width each). Splitting the inputs
+   onto their own line is what stopped the crush/clip — line 1 fits at any node width. */
+.gnode.filesource .lab-grid > .src-fields { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.src-f { display: flex; flex-direction: column; gap: 6px; }
+.src-frow { display: flex; align-items: center; gap: 6px; }    /* nowrap: id + method + type + remove on ONE row */
+.src-frow .src-fid { flex: 1 1 auto; min-width: 0; }           /* id takes the slack, shrinks (never clips a select) */
+.src-frow .src-fmethod, .src-frow .src-ftype { flex: 0 0 auto; width: auto; min-width: 0; }  /* size to content, not 100% */
+/* required gn-slide switch: fixed size, never stretched by the nowrap row */
+.src-frow .src-req { flex: 0 0 auto; }
+.src-finputs { display: flex; gap: 6px; }                      /* own line: the two method inputs share it, half each */
+.src-finputs > .fset2, .src-finputs > .src-fcell, .src-finputs > .src-delim-wrap { flex: 1 1 0; min-width: 0; }
+.src-f .src-fpath { width: 100%; min-width: 0; }               /* document path: full-width own line */
+/* delimiter input + its whitespace flag: the ␣ shows only when the value is whitespace-only, so a
+   typed space is distinguishable from an empty (= split-on-whitespace) field. */
+.src-delim-wrap { position: relative; display: flex; min-width: 0; }
+.src-delim-wrap .src-delim { flex: 1 1 0; min-width: 0; }
+.src-ws-flag { display: none; position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    pointer-events: none; opacity: 0.55; font-size: var(--fs-sm); }
+.src-delim-wrap.has-ws .src-ws-flag { display: block; }
+/* remove buttons: padded hit target. match-row button is set off with a left margin; the field-row
+   button sits in a gap'd flex row, so it needs none. */
+.src-rmm, .src-rmf { flex: 0 0 auto; padding: 7px; }
+.src-rmm { margin-left: 4px; }
+/* the +field / auto-resolve buttons share one row at the foot of the fields list */
+.src-faddrow { display: flex; align-items: center; gap: 6px; }
+/* tail toggle + its "last N lines" count input share one cell; the number sizes to a few digits */
+.src-tailrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.src-tailrow .src-taillines { flex: 0 1 70px; min-width: 0; }
 .src-cs { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; opacity: 0.8; }
-.src-chk { display: inline-flex; align-items: center; }
 .src-addm, .src-addf { align-self: flex-start; }
 .src-pathrow { display: flex; align-items: center; gap: 6px; }
-.src-pathrow .src-path { flex: 1 1 auto; min-width: 40px; }
+.src-pathrow .src-path { flex: 1 1 auto; min-width: 0; }
 .src-pathrow .src-find { flex: 0 0 auto; white-space: nowrap; }
 .src-found { word-break: break-all; margin-top: 6px; }
 

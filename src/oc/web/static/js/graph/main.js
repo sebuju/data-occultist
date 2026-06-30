@@ -204,6 +204,7 @@ function collectLayout() {
     L.groups = groups.collect();
     L.super_groups = groups.collectSuper();   // groups-of-groups travel with the profile too
     L.sub_groups = groups.collectSub();        // groups-within-a-group travel with the profile too
+    L.schemes = groups.collectSchemes();       // user-added colour schemes travel with the profile too
     // floating panels are NOT persisted (session-only) — drop any stale saved state so it's
     // cleaned from the profile on the next write.
     delete L.float_windows;
@@ -220,6 +221,7 @@ function hydrateLayout() {
     }
     pendingOpenImages = [...(L.open_images || [])];
     model.setSatellites(L.satellites);     // restore which preview / vt-table followers are shown
+    groups.hydrateSchemes(L.schemes);      // user-added colour schemes (before any popover opens)
     groups.hydrate(L.groups);
     groups.hydrateSuper(L.super_groups);   // after groups (super groups reference group ids)
     groups.hydrateSub(L.sub_groups);       // after groups (sub groups reference a parent group + its nodes)
@@ -266,7 +268,7 @@ initPersist({
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", dict: "dictionary" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", dict: "dictionary" };
 function nodeTypeOf(id) { return id === "game" ? "game" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
     world: () => $("ggroups"),
@@ -282,7 +284,7 @@ groups.initGroups({
     afterChange: () => { syncMultiSelect(); },
     // double-click a group → frame its bounding box (reuses groupBoxes() geometry)
     zoomToGroup: (gid) => { const gb = groups.groupBoxes().find((b) => b.id === gid); if (gb) panZoomToRect(gb.box); },
-    // drag the group's resize grip → scale its members, gaps intact
+    // drag the group's resize grip → resize the group's container box (sets explicit w/h)
     startGroupResize: (gid, ev) => startGroupResize(gid, ev),
 });
 
@@ -384,81 +386,28 @@ function inheritGroupFrom(newId, srcId) {
 
 // pan/zoom camera (panTo/panZoomTo/applyView/resizeCanvas/onWheel/…) lives in camera.js
 
-// ---- group resize: scale members, keep their gaps intact -------------------
-function memberBBox(snap) {
-    let x = Infinity, y = Infinity, r = -Infinity, b = -Infinity;
-    for (const n of snap) { x = Math.min(x, n.x); y = Math.min(y, n.y); r = Math.max(r, n.x + n.w); b = Math.max(b, n.y + n.h); }
-    return { x, y, w: r - x, h: b - y };
-}
-// Group resize: each member's SIZE grows by s; every node then shifts so the empty GAP between
-// nodes stays constant (a growing node must push its neighbours, not eat the gap). Members are
-// assigned a column index (by x) and a row index (by y). A node is then pushed RIGHT by the
-// width-growth of every node LEFT of it IN ITS ROW, and DOWN by the height-growth of every node
-// ABOVE it IN ITS COLUMN — so each specific gap moves by exactly its neighbour's growth and holds
-// at any drag scale, even when node sizes differ (a per-band MAX would over-shift the smaller
-// ones). The leftmost column / topmost row is the anchor (shift 0).
-// SIZES are GRID-stepped and read back via offsetWidth/Height so each node's own CSS constraints
-// (min/max-width, item width-only + cutout aspect) apply; the post-clamp growth (dw/dh) drives
-// the shift, so gaps hold even when a node hits a limit.
-//
-// Cluster member START coords on one axis into ordered bands (columns for x, rows for y) and
-// return each node's band index. Positions are GRID-snapped, so anything within GRID/2 shares a band.
-function bandIndex(snap, startOf) {
-    const sorted = [...snap].sort((a, b) => startOf(a) - startOf(b));
-    const idx = new Map();          // id -> band index
-    let band = -1, edge = -Infinity;
-    for (const n of sorted) {
-        if (startOf(n) > edge + GRID / 2) band++;   // a coord past half-a-grid from the last starts a new band
-        edge = startOf(n);
-        idx.set(n.id, band);
-    }
-    return idx;
-}
-const G = snapUp;   // group-scale sizes round UP too, so a scaled node never clips its content
-function applyGroupScale(snap, s) {
-    const grow = new Map();   // id -> { dw, dh } actual growth after CSS clamping (0 if it can't resize)
-    for (const n of snap) {
-        const el = nodeEls.get(n.id), type = nodeTypeOf(n.id);
-        const free = !collapsed.has(n.id) && type !== "item";   // every node resizes width AND height…
-        const widthOnly = !collapsed.has(n.id) && type === "item";       // …except item: width only, height follows its aspect
-        if (!el || (!free && !widthOnly)) { grow.set(n.id, { dw: 0, dh: 0 }); continue; }
-        el.style.width = `${Math.max(GRID, G(n.w * s))}px`;              // CSS min/max-width clamps this
-        if (free) el.style.height = `${Math.max(GRID, G(n.h * s))}px`;
-        const aw = el.offsetWidth, ah = el.offsetHeight;                 // size AFTER the node's own constraints
-        if (free) nodeSizes.set(n.id, { w: aw, h: ah });
-        grow.set(n.id, { dw: aw - n.w, dh: ah - n.h });
-    }
-    const colOf = bandIndex(snap, (n) => n.x);   // column index per node (vertical stacks share one)
-    const rowOf = bandIndex(snap, (n) => n.y);   // row index per node (horizontal runs share one)
-    for (const n of snap) {
-        let shiftX = 0, shiftY = 0;
-        for (const o of snap) {
-            if (o === n) continue;
-            if (rowOf.get(o.id) === rowOf.get(n.id) && colOf.get(o.id) < colOf.get(n.id)) shiftX += grow.get(o.id).dw;   // left, same row
-            if (colOf.get(o.id) === colOf.get(n.id) && rowOf.get(o.id) < rowOf.get(n.id)) shiftY += grow.get(o.id).dh;   // above, same column
-        }
-        pos.set(n.id, { x: Math.round(n.x + shiftX), y: Math.round(n.y + shiftY) });
-        positionNode(n.id);
-    }
-}
-
+// ---- group resize: resize the group's CONTAINER box (sets explicit w/h) -----
+// Dragging the bottom-right grip resizes the group box itself, NOT its members: it writes an
+// explicit g.w / g.h (grid-stepped) that groupBox() honours instead of auto-hugging the members.
+// The box's top-left stays pinned to the members, so the grip grows the box down + right from
+// there. Both axes can later be cleared back to "auto" independently from the settings panel.
+const GROUP_MIN = GRID * 4;   // floor so a group box can't collapse to nothing while dragging
 function startGroupResize(gid, ev) {
     ev.preventDefault(); ev.stopPropagation();
     const g = groups.allGroups().find((x) => x.id === gid);
     if (!g) return;
-    const snap = g.members.filter((id) => pos.get(id) && nodeEls.get(id))
-        .map((id) => { const p = pos.get(id), el = nodeEls.get(id); return { id, x: p.x, y: p.y, w: el.offsetWidth, h: el.offsetHeight }; });
-    if (!snap.length) return;
-    const mb = memberBBox(snap), z = view.zoom, start = { x: ev.clientX, y: ev.clientY };
-    const oldD = Math.hypot(mb.w, mb.h) || 1;
+    const gb = groups.groupBoxes().find((b) => b.id === gid);
+    if (!gb) return;
+    const w0 = gb.box.w, h0 = gb.box.h, z = view.zoom, start = { x: ev.clientX, y: ev.clientY };
     cancelPan();
-    let lastS = 1;
+    let lw = w0, lh = h0;
     const onMove = (e) => {
         const dx = (e.clientX - start.x) / z, dy = (e.clientY - start.y) / z;   // drag the bottom-right outward
-        lastS = Math.max(0.25, Math.hypot(mb.w + dx, mb.h + dy) / oldD);
-        applyGroupScale(snap, lastS);   // grid-stepped each tick
-        drawEdges(); groups.renderGroups(); renderNodeViews();
-        showSizeHud(mb.w * lastS, mb.h * lastS, e.clientX, e.clientY);
+        lw = Math.max(GROUP_MIN, snap(w0 + dx));
+        lh = Math.max(GROUP_MIN, snap(h0 + dy));
+        g.w = lw; g.h = lh;
+        groups.renderGroups();
+        showSizeHud(lw, lh, e.clientX, e.clientY);
     };
     const onUp = () => {
         document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
@@ -1443,27 +1392,53 @@ function wireSource(div, n) {
     $(".src-filename")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "filename", e.target.value); autosave(null); schedulePreview(); });
     $(".src-path")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "path", e.target.value); autosave(null); schedulePreview(); });
     $(".src-throttle")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "throttle_s", e.target.value); autosave(null); });
-    $(".src-tail")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "tail", e.target.checked); autosave(null); schedulePreview(); });
-    $(".src-linepos")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "line_position", e.target.checked); autosave(null); });
+    // gn-slide switches report state via aria-checked (role=switch), not a checkbox `.checked` —
+    // flip it on click, toggle the .on class, return the new value.
+    const flipSlide = (e) => {
+        e.stopPropagation();
+        const tog = e.currentTarget, on = tog.getAttribute("aria-checked") !== "true";
+        tog.setAttribute("aria-checked", on); tog.classList.toggle("on", on);
+        return on;
+    };
+    // tail on/off rebuilds the node so the "tail lines" count input shows/hides with it
+    $(".src-tail")?.addEventListener("click", (e) => { model.setSourceProp(s.id, "tail", flipSlide(e)); rebuildNode(n.id); autosave(null); schedulePreview(); });
+    $(".src-taillines")?.addEventListener("change", (e) => {
+        const v = parseInt(e.target.value, 10);
+        model.setSourceProp(s.id, "tail_lines", Number.isNaN(v) || v < 1 ? 1 : v);
+        autosave(null); schedulePreview();
+    });
+    $(".src-linepos")?.addEventListener("click", (e) => { model.setSourceProp(s.id, "line_position", flipSlide(e)); autosave(null); });
 
-    // line filters (match clauses)
-    $(".src-addm")?.addEventListener("click", () => { model.addSourceMatch(s.id); rebuildNode(n.id); autosave(null); });
-    div.querySelectorAll(".src-rmm").forEach((b) => b.addEventListener("click", () => { model.removeSourceMatch(s.id, +b.dataset.i); rebuildNode(n.id); autosave(null); }));
+    // line filters (match clauses). add/remove change the parse output, so they refresh the preview
+    // too — not just the inline edits below (the bug was removals leaving the preview stale).
+    $(".src-addm")?.addEventListener("click", () => { model.addSourceMatch(s.id); rebuildNode(n.id); autosave(null); schedulePreview(); });
+    div.querySelectorAll(".src-rmm").forEach((b) => b.addEventListener("click", () => { model.removeSourceMatch(s.id, +b.dataset.i); rebuildNode(n.id); autosave(null); schedulePreview(); }));
     div.querySelectorAll(".mset").forEach((inp) => inp.addEventListener("change", (e) => {
         model.setSourceMatch(s.id, +e.target.dataset.i, e.target.dataset.k,
             e.target.type === "checkbox" ? e.target.checked : e.target.value);
         autosave(null); schedulePreview();
     }));
 
-    // extraction fields
-    $(".src-addf")?.addEventListener("click", () => { model.addSourceField(s.id); rebuildNode(n.id); autosave(null); });
-    div.querySelectorAll(".src-rmf").forEach((b) => b.addEventListener("click", () => { model.removeSourceField(s.id, +b.dataset.i); rebuildNode(n.id); autosave(null); }));
+    // extraction fields. add/remove change which columns the parse emits -> refresh the preview too.
+    $(".src-addf")?.addEventListener("click", () => { model.addSourceField(s.id); rebuildNode(n.id); autosave(null); schedulePreview(); });
+    div.querySelectorAll(".src-rmf").forEach((b) => b.addEventListener("click", () => { model.removeSourceField(s.id, +b.dataset.i); rebuildNode(n.id); autosave(null); schedulePreview(); }));
     div.querySelectorAll(".fset2").forEach((inp) => inp.addEventListener("change", (e) => {
         const k = e.target.dataset.k;
         model.setSourceFieldProp(s.id, +e.target.dataset.i, k,
             e.target.type === "checkbox" ? e.target.checked : e.target.value);
-        if (k === "method") { rebuildNode(n.id); autosave(null); }   // method swaps its own inputs
+        if (k === "method") { rebuildNode(n.id); autosave(null); schedulePreview(); }   // method swaps its own inputs + changes the parse
         else { autosave(null); schedulePreview(); }
+    }));
+    // show the ␣ flag live while a delimiter holds a whitespace-only value (else it looks empty)
+    div.querySelectorAll(".src-delim").forEach((inp) => inp.addEventListener("input", (e) => {
+        const ws = e.target.value.length > 0 && e.target.value.trim() === "";
+        e.target.closest(".src-delim-wrap")?.classList.toggle("has-ws", ws);
+    }));
+    // per-field "required" gn-slide — flips whether an invalid value dismisses the row; re-preview
+    div.querySelectorAll(".src-req").forEach((tog) => tog.addEventListener("click", (e) => {
+        const on = flipSlide(e);
+        model.setSourceFieldProp(s.id, +e.currentTarget.dataset.i, "required", on);
+        autosave(null); schedulePreview();
     }));
 
     // auto-find the file across generic OS locations — opens a modal that runs the search,
@@ -1486,8 +1461,6 @@ function wireSource(div, n) {
             btn.disabled = false;
         }
     });
-    // "preview" reveals the data-table satellite (and refreshes it if it's already shown)
-    $(".src-prevbtn")?.addEventListener("click", () => { showSatellite(`vt:src:${s.id}`); refreshSourcePreview(s.id); });
     // "auto-resolve" inspects the file's data and proposes extraction columns the user then refines
     $(".src-resolve")?.addEventListener("click", async (e) => {
         const btn = e.currentTarget;
@@ -1513,27 +1486,46 @@ function wireSource(div, n) {
 // its rows + count line into the satellite. A no-op when the satellite is hidden (no node to fill).
 // singleFlight per source so a burst of edits coalesces and the LATEST request wins (never dropped).
 function refreshSourcePreview(id) { singleFlight(`srcpv:${id}`, () => _refreshSourcePreview(id)); }
+// ONE preview fetch feeds BOTH satellites: vt:src (kept rows) and vtd:src (rows a required field
+// dismissed). Either may be hidden — we just skip the missing host. No-op when neither is shown.
 async function _refreshSourcePreview(id) {
-    const vtId = `vt:src:${id}`;
-    const node = nodeEls.get(vtId);
-    if (!node || !model.profile.name) return;   // satellite not shown -> nothing to render
-    const host = node.querySelector(".src-host");
-    const info = node.querySelector(".src-prev-info");
+    const kept = nodeEls.get(`vt:src:${id}`);
+    const dism = nodeEls.get(`vtd:src:${id}`);
+    if ((!kept && !dism) || !model.profile.name) return;
     const s = model.fileSource(id);
-    if (!s || !host) return;
-    setNodeBusy(vtId, true);
+    if (!s) return;
+    // render one satellite's host from a row list + a meta line
+    const fill = (node, vtId, rows, meta, empty) => {
+        if (!node) return;
+        const host = node.querySelector(".src-host"), info = node.querySelector(".src-prev-info");
+        if (!host) return;
+        if (rows.length) renderPreview(host, rows);
+        else host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, empty));
+        if (info) info.textContent = meta;
+    };
+    if (kept) setNodeBusy(`vt:src:${id}`, true);
+    if (dism) setNodeBusy(`vtd:src:${id}`, true);
     try {
         const r = await api.sources.preview(model.profile.name, s);
-        renderPreview(host, r.rows || []);
-        if (!(r.rows || []).length) host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, r.note || "no rows"));
+        const rows = r.rows || [], dropped = r.dismissed || [];
         const le = r.line_ending ? ` · ${r.line_ending}` : "";
-        if (info) info.textContent = (r.path === null && !(r.rows || []).length)
-            ? (r.note || "file not found") : `${r.matched} row(s) · ${r.total} line(s)${le}`;
+        const noFile = r.path === null && !rows.length && !dropped.length;
+        fill(kept, `vt:src:${id}`, rows,
+            noFile ? (r.note || "file not found") : `${r.matched} row(s) · ${r.total} line(s)${le}`,
+            r.note || "no rows");
+        fill(dism, `vtd:src:${id}`, dropped,
+            noFile ? (r.note || "file not found") : `${r.dismissed_count ?? dropped.length} dismissed · ${r.total} line(s)${le}`,
+            "no dismissed rows — every matched line passed its required fields");
     } catch (e) {
-        if (info) info.textContent = String(e.message || e);
-        host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, String(e.message || e)));
+        const msg = String(e.message || e);
+        for (const node of [kept, dism]) if (node) {
+            const host = node.querySelector(".src-host"), info = node.querySelector(".src-prev-info");
+            if (info) info.textContent = msg;
+            host?.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, msg));
+        }
     } finally {
-        setNodeBusy(vtId, false);
+        if (kept) setNodeBusy(`vt:src:${id}`, false);
+        if (dism) setNodeBusy(`vtd:src:${id}`, false);
     }
 }
 
@@ -1732,13 +1724,15 @@ function fillNode(div, n, wire = true) {
     // satellite show/hide (preview on a window; vt-table on a dataset/subset) — one handler for
     // every node that carries the head button. Toggling rebuilds the graph so the follower node +
     // its dotted edge appear/disappear; a freshly shown one is parked just right of its parent.
-    div.querySelector(".gn-sat-tog")?.addEventListener("click", (e) => {
+    // a node may carry MORE than one satellite toggle (a file source has preview + dismissed) —
+    // wire every one, not just the first.
+    div.querySelectorAll(".gn-sat-tog").forEach((tog) => tog.addEventListener("click", (e) => {
         e.stopPropagation();
         const btn = e.currentTarget;
         const on = model.toggleSatellite(btn.dataset.sat);
         paintSatToggle(btn, on);   // render() keeps existing node DOM, so flip the button by hand
         applySatellite(btn.dataset.sat, on);
-    });
+    }));
     if (busy.get(n.id)) div.classList.add("busy");   // preserve spinner across rebuilds
     if (!wire) return;   // measurement probe: skip side-effecting wiring (openImage, out-port drag)
     wireNode(div, n);
@@ -1855,7 +1849,8 @@ function applySatellite(satId, on) {
 export function showSatellite(satId) {
     if (model.satelliteOn(satId)) return;
     model.toggleSatellite(satId);
-    const btn = nodeEls.get(model.satelliteParent(satId))?.querySelector(".gn-sat-tog");
+    // pick THIS satellite's toggle by id — a node can carry several (file source: preview + dismissed)
+    const btn = nodeEls.get(model.satelliteParent(satId))?.querySelector(`.gn-sat-tog[data-sat="${satId}"]`);
     if (btn) paintSatToggle(btn, true);
     applySatellite(satId, true);
 }
@@ -1877,6 +1872,44 @@ function targetIdOf(el, target) {
 // `widthOnly`: item + window nodes wrap a FIXED-ASPECT canvas (cutout / captured image), so
 // they resize by WIDTH only — height follows the image aspect. Same primitive, one flag; never
 // a separate resize path (their size persists through nodeSizes like every other node).
+// Size a freely-resizable node to a grid target (w×h) WITHOUT a hard width/height where it can be
+// avoided. GROW (target ≥ natural box): a soft `min-width`/`min-height` opens the box out to the
+// grid line — the content keeps its natural size and the flex body fills the extra room (breathing
+// space), so nothing is locked to a stamped pixel box. SHRINK (target < natural): the content can't
+// be squeezed, so set a hard width/height and the flex body SCROLLS (never clips). Clears any prior
+// inline size first so the natural box (CSS min-width respected) is what's measured. After it runs,
+// offsetWidth/Height land on the grid, so snapResize's live-snap sees no gap and doesn't fight it.
+function applyGridSize(el, w, h) {
+    clearGridSize(el);
+    const cw = el.offsetWidth, ch = el.offsetHeight;   // natural box
+    let softW = true, softH = true;
+    if (w) { if (w >= cw) el.style.minWidth = `${w}px`; else { el.style.width = `${w}px`; softW = false; } }
+    if (h) { if (h >= ch) el.style.minHeight = `${h}px`; else { el.style.height = `${h}px`; softH = false; } }
+    return { softW, softH };   // which dims grew (soft min) vs shrank (hard) — recorded for restore
+}
+// Re-apply a size decision recorded by applyGridSize/onReset WITHOUT re-measuring the natural box.
+// Restore must be deterministic: re-measuring (as applyGridSize does) can drift a hair (scrollbar /
+// font reflow) and flip a soft-grow dim into the hard-shrink branch — which is exactly what left a
+// reset source node hard-sized + scrollable after a later full render() / page reload. `soft*` !==
+// false means a min (grow, content always fits); false means a hard size (shrink, body scrolls).
+function applySavedSize(el, s) {
+    clearGridSize(el);
+    if (s.w) { if (s.softW !== false) el.style.minWidth = `${s.w}px`; else el.style.width = `${s.w}px`; }
+    if (s.h) { if (s.softH !== false) el.style.minHeight = `${s.h}px`; else el.style.height = `${s.h}px`; }
+}
+// drop all inline grid sizing (back to the natural box: CSS width + content height)
+function clearGridSize(el) { el.style.width = ""; el.style.height = ""; el.style.minWidth = ""; el.style.minHeight = ""; }
+// The box size that fits the node's content with NO scroll in EITHER axis. offsetWidth/Height alone
+// isn't enough: the body clips wide content into a HORIZONTAL scroll (the node's CSS width is fixed,
+// so content wider than it overflows rather than widening the box). Add back whatever the body can't
+// currently show, so a reset can size the node to actually contain its content.
+function naturalBox(el) {
+    const body = el.querySelector(".gn-body");
+    const hOver = body ? Math.max(0, body.scrollWidth - body.clientWidth) : 0;
+    const vOver = body ? Math.max(0, body.scrollHeight - body.clientHeight) : 0;
+    return { w: el.offsetWidth + hOver, h: el.offsetHeight + vOver };
+}
+
 function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
     return {
         both: !widthOnly,
@@ -1884,19 +1917,59 @@ function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
         // left-edge accessor: the node's world x lives in `pos` (canvas-zoomed) — lets the
         // shared bottom-left grip resize this node leftward with its right edge anchored
         left: (v) => { const p = pos.get(id); if (v === undefined) return p ? p.x : 0; if (p) { p.x = v; positionNode(id); } },
-        onResize: () => { drawEdges(); groups.renderGroups(); },
-        onSettle: () => { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight }); div.classList.add("has-size"); drawEdges(); groups.renderGroups(); persist.layout(); },
-        // reset dot: drop the user's size back to the node's natural CSS size, then snap that UP
-        // to the grid. Snapping DOWN would shrink the node below its natural size and clip content,
-        // so always round up — the reset size is the smallest grid-aligned box that still fits.
-        // (widthOnly nodes never stamp height — it follows the aspect.)
-        onReset: () => {
-            div.style.width = ""; if (!widthOnly) div.style.height = "";   // measure the natural CSS size
-            const w = snapUp(div.offsetWidth);
+        // A resize moves a node's geometry exactly like a drag does, so it MUST get the SAME line
+        // treatment — freeze the routed paths (greying any whose endpoint floats off the resized
+        // edge) and re-route ONCE on settle — not a live A* reroute every frame (the forked path
+        // that made resize wiggle differently from a drag). Freeze only on a real user drag
+        // (_ptrDown); a programmatic resize (reset/refit, no pointer) just repaints + reroutes.
+        // resize START: freeze the CURRENT rendered size (which may be held by a soft min) into a
+        // hard px box, THEN drop the mins. Capturing the size before clearing the mins is the whole
+        // point — clear-then-measure would already have collapsed the node to content. This makes the
+        // drag start exactly where the node sits, so it no longer jumps + desyncs from the cursor.
+        onResizeStart: () => {
+            const w = div.offsetWidth, h = div.offsetHeight;
+            div.style.minWidth = ""; div.style.minHeight = "";
             div.style.width = `${w}px`;
-            const h = widthOnly ? div.offsetHeight : snapUp(div.offsetHeight);
             if (!widthOnly) div.style.height = `${h}px`;
-            nodeSizes.set(id, { w, h });
+            // freeze line routing for THIS node up front — exactly like a node drag does at its start
+            // (moveNodes -> setDraggingNodes). Doing it here, not lazily in onResize, means the very
+            // first redraw greys this node's out-edges; onResize only fires after a full grid step, so
+            // a resize smaller than one step otherwise never greyed them at all (rule 7: same as drag).
+            setDraggingNodes(true, [id]); requestEdges();
+        },
+        // While ACTIVELY dragging (_ptrDown), keep the soft grid mins cleared so a prior grow's
+        // min-width/height can't block a shrink. NOT on a programmatic resize (e.g. the size change
+        // onSettle's applyGridSize causes) — that would wipe the min it just set and undo the grow.
+        onResize: () => { if (_ptrDown) { div.style.minWidth = ""; div.style.minHeight = ""; setDraggingNodes(true, [id]); } requestEdges(); groups.renderGroups(); },
+        // settle: convert the dragged box into a grid-snapped PADDING size (no hard width/height).
+        // widthOnly nodes (item/window) wrap a fixed-aspect canvas — they keep the inline width.
+        onSettle: () => {
+            if (widthOnly) { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight, softW: false, softH: false }); }
+            else {
+                const w = snapUp(div.offsetWidth), h = snapUp(div.offsetHeight);
+                const { softW, softH } = applyGridSize(div, w, h);
+                nodeSizes.set(id, { w, h, softW, softH });   // record min-vs-hard so restore can't drift
+            }
+            div.classList.add("has-size"); setDraggingNodes(false); flushEdges(); groups.renderGroups(); persist.layout();
+        },
+        // reset dot: drop the user's size, then snap the node's NATURAL size UP to the grid using
+        // soft mins set DIRECTLY (not via applyGridSize). snapUp always rounds UP, so min-width/height
+        // are always ≥ the natural box — the box only grows to the grid line, so content ALWAYS fits
+        // (never scrollable) and there's never a hard width/height. Setting the min straight from this
+        // one measurement avoids applyGridSize re-measuring the natural box — a second measurement can
+        // drift (scrollbar/reflow) and wrongly pick the hard-shrink branch, which is what left a reset
+        // source node hard-sized and scrollable. Pre-snapping here also stops a later event (e.g.
+        // unfocusing an input) from grid-snapping + jumping the node.
+        onReset: () => {
+            clearGridSize(div);
+            const nb = naturalBox(div);   // size to CONTENT (incl. horizontal overflow), not the clipped box
+            const w = snapUp(nb.w), h = snapUp(nb.h);
+            div.style.minWidth = `${w}px`;
+            if (widthOnly) div.style.width = `${w}px`; else div.style.minHeight = `${h}px`;
+            // both dims are soft mins (grow to grid) -> restore re-applies them as mins, never hard,
+            // so a later full render()/reload can't drift this into a scrollable hard size.
+            nodeSizes.set(id, { w, h, softW: true, softH: !widthOnly });
+            div.classList.add("has-size");
             drawEdges(); groups.renderGroups(); persist.layout();
         },
     };
@@ -1909,9 +1982,15 @@ function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
 // aspect-driven, so it's never stamped inline.
 function makeNodeResizable(div, id, { widthOnly = false } = {}) {
     const s = nodeSizes.get(id);
-    // a collapsed node is header-only (CSS) — never stamp its saved w/h inline, or the hard
-    // inline size beats the collapsed CSS and the node renders full-height while "collapsed".
-    if (s && !collapsed.has(id)) { if (s.w) div.style.width = `${s.w}px`; if (!widthOnly && s.h) div.style.height = `${s.h}px`; }
+    // a collapsed node is header-only (CSS) — never stamp its saved w/h, or it beats the collapsed
+    // CSS and renders full-height while "collapsed". widthOnly nodes (item/window) keep a hard inline
+    // width (their height is aspect-driven); every other node restores its saved size via the RECORDED
+    // soft/hard decision (applySavedSize), NOT by re-measuring — re-measuring can drift a soft-grow
+    // dim into a hard-shrink one, which scrolled a reset node after a render/reload (the repeat bug).
+    if (s && !collapsed.has(id)) {
+        if (widthOnly) { if (s.w) div.style.width = `${s.w}px`; }
+        else applySavedSize(div, s);
+    }
     snapResize(div, nodeResizeOpts(div, id, { widthOnly }));
 }
 
@@ -2304,8 +2383,8 @@ function wireNode(div, n) {
         // dataset variant carries the data + batches hosts AND the data|batches selector (the tabs
         // live ABOVE the table here, not on the dataset node).
         const r = n.ref;
-        if (r.kind === "source") {
-            queueMicrotask(() => refreshSourcePreview(r.id));   // parse the source's current rules into the table
+        if (r.kind === "source" || r.kind === "sourcedismissed") {
+            queueMicrotask(() => refreshSourcePreview(r.id));   // parse the source's rules into BOTH satellites
         } else if (r.kind === "subset") {
             const pre = _bootDetails?.subsets?.[r.id] || null;
             queueMicrotask(() => refreshSubsetNode(r.id, pre));
@@ -2595,7 +2674,11 @@ function moveNodes(id, extra, ev) {
     const rect = $("graph").getBoundingClientRect();
     const toWorld = (e) => ({ x: (e.clientX - rect.left - view.panX) / view.zoom, y: (e.clientY - rect.top - view.panY) / view.zoom });
     const g0 = toWorld(ev);
-    setDraggingNodes(true);   // route synchronously each frame so lines track the node smoothly
+    // the moved nodes ease left/top to each 20px grid cell instead of teleporting (.snapping CSS)
+    const moved = [id, ...starts.map((g) => g.gid)];
+    setDraggingNodes(true, moved);   // freeze line routing during the drag (invalidating lines a
+                                     // dragged node touches or crosses); re-route once on settle
+    for (const mid of moved) nodeEls.get(mid)?.classList.add("snapping");
     // shared drag loop (dragresize.js) — onMove does the world-space + grid-snap work
     beginDrag(ev, {
         onMove: (e) => {
@@ -2609,6 +2692,7 @@ function moveNodes(id, extra, ev) {
             groups.renderGroups();   // group boxes hug their members live
         },
         onSettle: () => {
+            for (const mid of moved) nodeEls.get(mid)?.classList.remove("snapping");
             setDraggingNodes(false);
             flushEdges();   // paint the final positions now, dropping any pending coalesced frame
             groups.absorb([id, ...extra.filter((x) => x !== id)]);   // dropped inside a group box -> join it

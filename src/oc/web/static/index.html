@@ -113,7 +113,11 @@
                 <div id="subgroups"></div>
                 <svg id="gedges">
                     <defs>
-                        <marker id="flowarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+                        <!-- data-flow arrow. Centred on the endpoint (refX=5) like squarecap/hexcap so it
+                 straddles the node edge (half in / half out, matching the out-port dots) WITHOUT the
+                 line needing to be inset into the node. Box 8 with a full-viewBox glyph -> ~8px drawn,
+                 matching the 8px out-port dots. -->
+                        <marker id="flowarrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
                             <path d="M0,0 L10,5 L0,10 z" class="flowarrow-head" />
                         </marker>
                         <!-- trigger control line end: a double chevron (») reading "go / activate / fire" — set
@@ -154,6 +158,12 @@
                  so the ring centre (cx=5) must land 3px back toward the edge: refX = cx + insetEnd = 8. -->
                         <marker id="ringcap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
                             <circle cx="5" cy="5" r="3" class="ringcap-head" />
+                        </marker>
+                        <!-- filled hexagon centred ON the node's edge (half in / half out), like ringcap: route.js
+                 pulls the arriving end 3px INTO the node, so the centre (5,5) lands on the edge with
+                 refX = 5 + insetEnd = 8. Used by the trigger "fires" line. -->
+                        <marker id="hexcap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+                            <path d="M9,5 L7,8.46 L3,8.46 L1,5 L3,1.54 L7,1.54 z" class="hexcap-head" />
                         </marker>
                         <!-- single chevron › -->
                         <marker id="chevroncap" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto">

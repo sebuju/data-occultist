@@ -1,10 +1,11 @@
 // Edge routing + drawing: builds the unified link list, picks ports/sides, fans shared
 // endpoints, runs the cached A* orthogonal router (route.js), and paints one persistent
-// <path> per link (with live morphing under a drag). Split out of main.js.
+// <path> per link (each changed line MORPHS into its new routed shape). Split out of main.js.
 //
-// Owns the routing-freeze flag (OCR pauses re-routing) and the drag-sync flag; main.js
-// flips the drag flag via setDraggingNodes(). Reads selectedNodeId/wire and calls
-// startWire from main.js (live bindings, runtime-safe circular import).
+// Owns the routing-freeze flag (OCR pauses re-routing) and the drag flag; main.js flips the
+// drag flag via setDraggingNodes() — while it's set, lines are frozen (stale ones greyed) and
+// re-route once on settle. Reads selectedNodeId/wire and calls startWire from main.js (live
+// bindings, runtime-safe circular import).
 import * as groups from "./groups.js";
 import { routeGraph, polylinePath } from "./route.js";
 import { $, setStatus, model, nodeEls, pos, nw, nh, selected } from "./state.js";
@@ -28,33 +29,6 @@ function dirElbowPts(x1, y1, d1, x2, y2, d2) {
     return [[x1, y1], s1, corner, s2, [x2, y2]];
 }
 
-// Orthogonal stub from a port `p` exiting along direction `d` to a FREE interior point `q`
-// (no target direction). Like dirElbowPts but only one end is a real port — used to bridge a
-// moved node's new port back onto an existing routed polyline. Ends exactly ON `q`.
-function orthoConnect(p, d, q, k = 16) {
-    const a = _DIROFF[d] || [0, 0];
-    const s = [p[0] + a[0] * k, p[1] + a[1] * k];   // stub out of the port along its facing dir
-    const corner = a[0] !== 0 ? [q[0], s[1]] : [s[0], q[1]];   // one right angle to reach q
-    return [p, s, corner, q];
-}
-
-// Lazy reglue: keep the cached routed polyline `pts` (the OLD line) and only re-attach the end(s)
-// whose node moved this frame. The far (stationary) end and the whole routed body stay put; the
-// moved end rubber-bands to its new port via a cheap orthogonal stub. The proper A* route returns
-// on the next routed frame. `head`/`tail` say which end drifted (both for a multi-node drag).
-function lazyReglue(pts, l, head, tail) {
-    if (!pts || pts.length < 2) return null;   // nothing to preserve -> caller falls back to the elbow
-    let out = pts.slice();
-    if (head) {   // splice the leading stub: [newPort ..stub.. ] + body from pts[1] onward
-        out = [...orthoConnect(l.p1, l.d1, out[1]).slice(0, -1), ...out.slice(1)];
-    }
-    if (tail) {   // splice the trailing stub: body up to pts[n-2] (kept anchor) + reversed [ ..stub.. newPort]
-        const n = out.length;
-        if (n >= 2) out = [...out.slice(0, n - 1), ...orthoConnect(l.p2, l.d2, out[n - 2]).reverse().slice(1)];
-    }
-    return out;
-}
-
 // Resample a polyline to n+1 points spread evenly by arc length — so two shapes with
 // different vertex counts can be lerped point-for-point during a morph.
 function resamplePoly(pts, n) {
@@ -71,6 +45,9 @@ function resamplePoly(pts, n) {
     }
     return out;
 }
+// Straight polyline through the (already dense) morph points. We do NOT round these per-vertex: the
+// lerped intermediate shape bends BETWEEN the resampled points, so polylinePath rounding each one
+// piles curve on curve and the line visibly wobbles. The crisp arcs return on the final routed frame.
 const straightD = (pts) => "M " + pts.map((p) => `${Math.round(p[0] * 10) / 10} ${Math.round(p[1] * 10) / 10}`).join(" L ");
 
 // Closest-facing sides of two rects (shortest centre axis): the port point and
@@ -346,13 +323,6 @@ function setBezier(el, l) {   // name kept (one caller); draws an ORTHOGONAL elb
     el._routed = false;
     el.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
 }
-function setLazy(el, pts) {   // paint a ready polyline (the lazy reglue body) as a non-routed path
-    cancelMorph(el);
-    el._geo = pts;
-    el._routed = false;
-    el.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
-}
-
 const MORPH_MS = 150, MORPH_N = 32;
 function startMorph(el, toPts) {
     const from = resamplePoly(el._geo && el._geo.length ? el._geo : toPts, MORPH_N);
@@ -381,10 +351,40 @@ let drawSig = "";   // link signature for THIS draw (compared against the route 
 // is recomputed and painted in the same frame the node moves — the line stays glued to the
 // node (smooth) instead of trailing it by a frame. Per-frame routing cost is accepted.
 let draggingNodes = false;
+let draggedIds = null;   // Set of node ids under the cursor THIS drag (multi-node drags move many)
 // Is a point still sitting on (or within a few px of) a node rect? A routed endpoint sits ON its
 // node's edge; once that node is dragged away, the cached endpoint floats off it -> not onRect.
 const onRect = (p, r, mar = 3) =>
     !!p && !!r && p[0] >= r.x - mar && p[0] <= r.x + r.w + mar && p[1] >= r.y - mar && p[1] <= r.y + r.h + mar;
+// Orientation sign of (a,b,c); used by the segment-segment cross test.
+const _ccw = (a, b, c) => (c[1] - a[1]) * (b[0] - a[0]) - (b[1] - a[1]) * (c[0] - a[0]);
+// Do segments p1p2 and p3p4 cross? (standard straddle test, endpoints-touch counts as crossing)
+function segSeg(p1, p2, p3, p4) {
+    const d1 = _ccw(p3, p4, p1), d2 = _ccw(p3, p4, p2), d3 = _ccw(p1, p2, p3), d4 = _ccw(p1, p2, p4);
+    return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+}
+// Does segment a→b touch axis-aligned rect r? (either end inside, or it cuts any rect edge.)
+function segHitsRect(a, b, r) {
+    const x2 = r.x + r.w, y2 = r.y + r.h;
+    if (Math.max(a[0], b[0]) < r.x || Math.min(a[0], b[0]) > x2 ||
+        Math.max(a[1], b[1]) < r.y || Math.min(a[1], b[1]) > y2) return false;   // bbox reject
+    const inside = (p) => p[0] >= r.x && p[0] <= x2 && p[1] >= r.y && p[1] <= y2;
+    if (inside(a) || inside(b)) return true;
+    const tl = [r.x, r.y], tr = [x2, r.y], br = [x2, y2], bl = [r.x, y2];
+    return segSeg(a, b, tl, tr) || segSeg(a, b, tr, br) || segSeg(a, b, br, bl) || segSeg(a, b, bl, tl);
+}
+// A frozen routed line is invalid this drag frame if a DRAGGED node (other than its own endpoints)
+// has slid on top of it — any segment of its polyline now cuts through that node's rect.
+function lineCrossesDragged(pts, aId, bId) {
+    if (!draggedIds || pts.length < 2) return false;
+    for (const did of draggedIds) {
+        if (did === aId || did === bId) continue;   // its own endpoint nodes legitimately touch it
+        const r = nodeRect(did);
+        if (!r) continue;
+        for (let i = 0; i < pts.length - 1; i++) if (segHitsRect(pts[i], pts[i + 1], r)) return true;
+    }
+    return false;
+}
 function drawEdges() {
     const svg = $("gedges"), top = $("gedges-top");
     const links = buildLinks();
@@ -394,22 +394,22 @@ function drawEdges() {
     for (const l of links) {
         const c = routeCache.get(l.key);
         if (!c || !c.p1) continue;
-        const curP1 = l.p1, curD1 = l.d1, curP2 = l.p2, curD2 = l.d2;   // node-glued facing ports (pre-adopt)
         l.p1 = c.p1; l.d1 = c.d1; l.p2 = c.p2; l.d2 = c.d2;
-        // On a SKIPPED drag frame the cached route is stale: an endpoint whose node has moved no longer
-        // touches it. Re-glue just that end to the node's current port (keep the other end's routed port)
-        // so the line — and its end/start cap — follows the node. Then keep the OLD routed body and only
-        // rubber-band the moved end onto it (`_lazyPts`), so the line lazy-follows the node instead of
-        // collapsing to a crude elbow each skipped frame; the proper A* path returns on the next route
-        // pass. (skip=0 => no skipped frames => never trips. A multi-node drag can move BOTH ends.)
-        if (draggingNodes && c.pts && c.pts.length >= 2) {
-            const head = !onRect(c.pts[0], l.ra), tail = !onRect(c.pts[c.pts.length - 1], l.rb);
-            if (head) { l.p1 = curP1; l.d1 = curD1; }
-            if (tail) { l.p2 = curP2; l.d2 = curD2; }
-            if (head || tail) l._lazyPts = lazyReglue(c.pts, l, head, tail);
-        }
+        // While dragging we do NOT re-route — the live A* reglue looked janky. The cached routed path
+        // stays frozen as the node moves; mark it stale (paint greys + fades it) when it can no longer
+        // be trusted, on any of three counts. A clean route morphs back in once, on drag settle.
+        //   (a) either ENDPOINT node is being dragged (its line must re-route to follow it),
+        //   (b) an endpoint floated off its node rect (covers a dragged endpoint that already left),
+        //   (c) a dragged node has slid ON TOP of this otherwise-stationary line (crosses its rect).
+        if (draggingNodes && c.pts && c.pts.length >= 2)
+            l._stale = (!!draggedIds && (draggedIds.has(l.aId) || draggedIds.has(l.bId)))
+                || !onRect(c.pts[0], l.ra) || !onRect(c.pts[c.pts.length - 1], l.rb)
+                || lineCrossesDragged(c.pts, l.aId, l.bId);
     }
-    placePortDots(links);   // move each out-port dot onto where its line actually starts (regated end too)
+    // Don't re-fan the port dots mid-drag: each dot is a child of its node and rides it as the node
+    // moves, so re-placing them every frame only makes them twitch (and lead the CSS-eased node).
+    // They settle onto the fresh route when the drag ends and routing runs again.
+    if (!draggingNodes) placePortDots(links);   // move each out-port dot onto where its line starts
     const used = new Set();
     // node ids that are turned off — any line touching one is greyed (carries no live data)
     const disSet = new Set();
@@ -417,11 +417,11 @@ function drawEdges() {
     for (const l of links) {
         used.add(l.key);
         const el = edgeEl(l.key, (l.top || l.over) ? top : svg);
-        el.setAttribute("class", l.cls + (disSet.has(l.aId) || disSet.has(l.bId) ? " dis-edge" : ""));
+        el.setAttribute("class", l.cls
+            + (disSet.has(l.aId) || disSet.has(l.bId) ? " dis-edge" : "")
+            + (l._stale ? " stale-edge" : ""));   // dragged off its node -> grey + fade until it re-routes
         const c = routeCache.get(l.key);
-        if (l._lazyPts) {                                       // stale routed end this frame: lazy-follow the moved node, keep the old body
-            setLazy(el, l._lazyPts);
-        } else if (c && c.pts.length >= 2) {                    // have a routed path for this line
+        if (c && c.pts.length >= 2) {                           // have a routed path for this line
             if (tweenRoutes && geoChanged(el, c.pts)) startMorph(el, c.pts);
             else if (!el._raf && geoChanged(el, c.pts)) setRouted(el, c.pts);   // only redraw if it changed; leave morphs alone
         } else if (!el.getAttribute("d")) {
@@ -453,13 +453,10 @@ function requestEdges() {
     if (_edgeRaf) return;   // a redraw is already queued; it'll read the newest positions when it runs
     _edgeRaf = requestAnimationFrame(() => {
         _edgeRaf = 0;
-        // While dragging, route IN this frame (runRouting computes the route then paints) so the line
-        // is current the same frame the node moves — BUT only on frames the perf budget allows: route
-        // on frame 0 then every (skip+1)th frame, painting the node movement on the skipped ones. On a
-        // cheap graph skip is 0 (routes every frame, as before); on a heavy one it backs off.
-        if (draggingNodes) {
-            if (_dragFrame++ % (dragFrameSkip() + 1) === 0) runRouting(); else drawEdges();
-        } else drawEdges();
+        // While dragging we never re-route (the live A* reglue was janky): just repaint the lines at
+        // the node's new position, keeping each cached routed shape frozen (stale ones greyed). The
+        // single clean re-route — morphed in — happens once on settle (flushEdges -> scheduleRouting).
+        drawEdges();
     });
 }
 function flushEdges() {   // force the final frame now (drop on settle) — cancels any pending rAF
@@ -468,11 +465,10 @@ function flushEdges() {   // force the final frame now (drop on settle) — canc
 }
 
 // ---- live line routing -----------------------------------------------------
-// Pathfinding runs every animation frame, as fast as the browser will paint:
-// drawEdges() paints direct beziers instantly for any line whose route is stale and
-// requests a recompute; the A* then fires on the next rAF and repaints with neat
-// routed paths — so lines re-route LIVE under a drag, not only on settle. Routing is
-// incremental + cached (only links whose deps changed re-run) and gated by a layout
+// Pathfinding runs on its own rAF whenever the layout signature changes: drawEdges() requests a
+// recompute, the A* fires on the next frame, then each changed line MORPHS into its new routed
+// shape (interpolated, not snapped). Routing does NOT run mid-drag — the lines stay frozen at their
+// last route (stale ones greyed) and re-route once on settle. It is cached + gated by a layout
 // signature, so a frame where nothing moved is a no-op and the loop idles.
 const ROUTE = {
     enabled: true,
@@ -480,8 +476,6 @@ const ROUTE = {
     cell: 10,           // grid resolution (world px) — fine enough to squeeze a line between two others
     clearWanted: 5,     // cells of breathing room a line prefers around nodes
     radius: 14,         // corner rounding for "curve"
-    budgetMs: 32,       // target cost of one route pass during a drag; at/under this, route EVERY frame
-                        // (skip nothing). Over it, frames are skipped so a heavy graph still drags smooth
 };
 // internal handles: tweak ROUTE in the console, __reroute() to force a recompute
 // (e.g. after flipping __route.corners to "square").
@@ -494,24 +488,6 @@ const SVGNS = "http://www.w3.org/2000/svg";
 let routeCache = new Map();     // link key -> { pts:[[x,y]…], sig } (sig = its own deps)
 let routeHash = "";             // global layout signature of the last pass (cheap change gate)
 let routeRaf = null;            // pending requestAnimationFrame handle (one in flight at a time)
-
-// Adaptive drag cadence: routing cost scales ~O(N^3), so on a big graph one pass blows the frame
-// budget. Instead of routing every drag frame, measure the last few passes and skip frames in
-// proportion to how far over ROUTE.budgetMs the average sits — the node keeps dragging, lines just
-// re-route every Kth frame (and snap clean on settle). Samples persist across drags so the very
-// first frame of the next drag is already informed.
-const ROUTE_SAMPLES = 5;        // perf window: last N route-pass durations
-const MAX_SKIP = 8;             // hard cap on frames skipped between routed frames
-let _routeMs = [];              // ring of recent routeGraph() durations (ms)
-let _dragFrame = 0;             // frames since the current drag began (drives the skip counter)
-function recordRouteMs(ms) { _routeMs.push(ms); if (_routeMs.length > ROUTE_SAMPLES) _routeMs.shift(); }
-function dragFrameSkip() {
-    if (!_routeMs.length) return 0;
-    let s = 0; for (const v of _routeMs) s += v;
-    const avg = s / _routeMs.length;
-    if (avg <= ROUTE.budgetMs) return 0;   // fits the frame budget -> route every frame, skip nothing
-    return Math.min(MAX_SKIP, Math.ceil(avg / ROUTE.budgetMs) - 1);
-}
 
 // Everything physical is an obstacle: nodes AND panels. Lines weave around all of
 // them, not just the two rects they connect.
@@ -535,8 +511,8 @@ function linksSig(links) {
 
 function scheduleRouting() {
     if (!ROUTE.enabled) return;
-    if (draggingNodes) return;           // drag drives its own (frame-skipped) routing via requestEdges;
-                                         // don't let a skipped frame's drawEdges queue a reroute behind it
+    if (draggingNodes) return;           // no re-routing mid-drag — lines stay frozen (stale ones greyed);
+                                         // the single clean route runs on settle
     if (routingFrozen) return;           // OCR in progress -> don't re-route (lines would wiggle)
     if (drawSig === routeHash) return;   // routes already current (drawSig set in drawEdges)
     if (routeRaf) return;                // one recompute already queued for the next frame
@@ -560,7 +536,9 @@ function runRouting() {
         const grps = groups.allGroups().map((g) => { const b = boxOf.get(g.id); return { members: [...g.members], box: b ? b.box : null, bandH: b ? b.bandH : 0 }; });
         const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, pinSrc: l.port ? sideForPort(l) : null, tether: TETHER_KINDS.some((k) => l.cls.split(" ").includes(k)),
             // watch ends in a diamond sunk slightly into the watched node; trigger ends in a hollow ring
-            // pulled back by its radius (3px) so the ring centres ON the fired node's edge.
+            // pulled back by its radius (3px) so the ring centres ON the fired node's edge. The data-flow
+            // arrow needs NO inset: its marker is centred (refX=5) so it already straddles the edge, and
+            // insetting would only push the line stub visibly inside the card (flow lines draw on top).
             insetEnd: l.portKind === "watch" ? 3 : (/\btrigger\b/.test(l.cls) ? 3 : 0) }));
         // every data source parks its out-port on the negotiated shared face (`outSide`); the router
         // keeps arriving lines off that dot when it's idle (`reserveMid`). Trigger fires-port is fixed R.
@@ -582,9 +560,7 @@ function runRouting() {
             if (r) titleBands.push({ x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h });
             else if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
         }
-        const _t0 = performance.now();
         const res = routeGraph(nodes, grps, edges, { prevSides, outPorts, titleBands, config: { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell } });
-        recordRouteMs(performance.now() - _t0);   // feeds the adaptive drag frame-skip
         const fresh = new Map();
         for (const l of links) { const r = res.get(l.key); if (r && r.pts && r.pts.length >= 2) fresh.set(l.key, r); }
         routeCache = fresh;                 // also drops keys for links that vanished
@@ -593,6 +569,8 @@ function runRouting() {
         setStatus(`route failed: ${err.message}`);   // surface instead of silently using elbows
         return;
     }
+    tweenRoutes = true;   // a fresh route landed -> the next drawEdges animates each changed line into its
+                          // new shape (interpolated morph) instead of snapping — feels far less janky
     drawEdges();
 }
 
@@ -609,9 +587,10 @@ function freezeRouting() {
     _routeFreezeTimer = setTimeout(() => { routingFrozen = false; drawEdges(); }, 300);
 }
 
-// main.js owns the drag interaction; it flips this flag so drawEdges routes synchronously
-// per frame while a node is dragged (line stays glued to the node).
-export function setDraggingNodes(v) { draggingNodes = v; if (v) _dragFrame = 0; }
+// main.js owns the drag interaction; it flips this flag so drawEdges keeps the cached routed lines
+// frozen (greying any whose node has moved off them) instead of re-routing every frame; the clean
+// route is computed once on settle.
+export function setDraggingNodes(v, ids = null) { draggingNodes = v; draggedIds = v ? new Set(ids || []) : null; }
 
 // World-space routed polyline for the edge between two node ids (the same key buildLinks uses,
 // `${from} ${to}`), or null if that edge isn't drawn/routed yet. The ONE accessor for an edge's
