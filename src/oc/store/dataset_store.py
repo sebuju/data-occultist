@@ -724,14 +724,17 @@ class DatasetStore:
             "SELECT key, pos, xpos FROM positions WHERE dataset=?", (self._dataset,)).fetchall()}
 
     def set_positions(self, mapping: dict[str, tuple[float, float]]) -> None:
-        """Upsert learned grid slots ``{key: (xpos, vpos)}``. Pure metadata: no event, no
-        ``rev`` bump — it must not trigger a ``current`` rebuild or a change-bus fire (it
-        isn't a record change)."""
+        """Upsert learned grid slots ``{key: (xpos, vpos)}``. Pure metadata: no ``rev`` bump and
+        no ``current`` rebuild — it isn't a record change. It DOES fire a UI-only change-bus
+        notification (empty records, like ``set_reverted``), so the records grid's ``_pos`` column
+        refreshes live; without it, a position learned with no accompanying record change left the
+        grid showing stale/partial ``_pos`` until the table was reopened."""
         if not mapping:
             return
         self._conn.executemany(
             "INSERT OR REPLACE INTO positions(dataset, key, pos, xpos) VALUES(?,?,?,?)",
             [(self._dataset, k, float(v), float(x)) for k, (x, v) in mapping.items()])
+        self._announce([])   # UI-only: refresh the live grid's _pos; no pricing (empty), no rebuild
 
     # ---- ledger / revert ---------------------------------------------------
 
