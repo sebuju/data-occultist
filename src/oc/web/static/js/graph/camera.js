@@ -76,13 +76,16 @@ export function usableViewport() {
 // Smoothly pan AND zoom to centre a WORLD rect {x,y,w,h}. fit=true picks a comfortable zoom
 // to frame it, else keeps the current zoom. The shared core of panZoomTo (node) and the
 // group double-click jump.
+// Returns true if the camera actually moved (a target far enough from the current view to
+// animate); false when the rect is already framed, so callers can fall back to another action.
 export function panZoomToRect(box, { fit = true } = {}) {
-    if (!box || !box.w || !box.h) return;
+    if (!box || !box.w || !box.h) return false;
     const u = usableViewport();   // centre in the area clear of floating panels
     const tz = fit ? fitZoom(box.w, box.h, { width: u.w, height: u.h }) : view.zoom;
     const tx = (u.left + u.w / 2) - (box.x + box.w / 2) * tz;
     const ty = (u.top + u.h / 2) - (box.y + box.h / 2) * tz;
     const sx = view.panX, sy = view.panY, sz = view.zoom, t0 = performance.now(), dur = 380;
+    if (Math.abs(tx - sx) < 0.5 && Math.abs(ty - sy) < 0.5 && Math.abs(tz - sz) < 1e-3) return false;  // already framed
     cancelPan();
     const step = (now) => {
         let t = (now - t0) / dur; if (t > 1) t = 1;
@@ -93,18 +96,19 @@ export function panZoomToRect(box, { fit = true } = {}) {
         if (!panAnim) persist.local();
     };
     panAnim = requestAnimationFrame(step);
+    return true;
 }
 
-// Smoothly pan AND zoom to centre a node (the node-map jump).
+// Smoothly pan AND zoom to centre a node (the node-map jump). Returns whether the camera moved.
 export function panZoomTo(id, opts = {}) {
     const el = nodeEls.get(id), p = pos.get(id);
-    if (!el || !p) return;
-    panZoomToRect({ x: p.x, y: p.y, w: el.offsetWidth || 220, h: el.offsetHeight || 80 }, opts);
+    if (!el || !p) return false;
+    return panZoomToRect({ x: p.x, y: p.y, w: el.offsetWidth || 220, h: el.offsetHeight || 80 }, opts);
 }
 
 // Double-click a node: fit it tight to the viewport and centre it (smooth, shared with the
-// node-map jump so both frame a node the same way).
-export function zoomToNode(id) { panZoomTo(id, { fit: true }); }
+// node-map jump so both frame a node the same way). Returns whether the camera moved.
+export function zoomToNode(id) { return panZoomTo(id, { fit: true }); }
 
 export function viewportCenterWorld() {
     const u = usableViewport();

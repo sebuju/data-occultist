@@ -2414,6 +2414,14 @@ function wireNode(div, n) {
 
     // double-click anywhere non-interactive on the node: fit + centre it
     div.addEventListener("dblclick", (ev) => {
+        // fast double-click on the id input pans/zooms to the node instead of editing it;
+        // only when the camera is ALREADY framing the node (nothing to pan) does it fall
+        // through to native focus → rename.
+        const idInput = ev.target.closest("input.gi-id");
+        if (idInput) {
+            if (zoomToNode(n.id)) { ev.preventDefault(); idInput.blur(); disarmGiId(); }
+            return;
+        }
         if (ev.target.closest("input,select,button,textarea,a,.port,.collapse")) return;
         ev.preventDefault();
         zoomToNode(n.id);
@@ -3405,7 +3413,7 @@ $("graph").addEventListener("dblclick", (ev) => {
     const wy = (ev.clientY - box.top - view.panY) / view.zoom;
     const inside = (b) => wx >= b.x && wx <= b.x + b.w && wy >= b.y && wy <= b.y + b.h;
     let hit = null;
-    for (const gb of [...(groups.superGroupBoxes?.() || []), ...groups.groupBoxes()])
+    for (const gb of [...(groups.superGroupBoxes?.() || []), ...groups.groupBoxes(), ...(groups.subGroupBoxes?.() || [])])
         if (inside(gb.box) && (!hit || gb.box.w * gb.box.h < hit.box.w * hit.box.h)) hit = gb;
     if (hit) panZoomToRect(hit.box);
 });
