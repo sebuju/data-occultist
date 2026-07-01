@@ -2,6 +2,24 @@ name: warframe
 process_names:
 - Warframe.x64.exe
 window_title_hint: Warframe
+detect:
+- id: detect_1
+  enabled: true
+  search:
+    x: 0.967537611145707
+    y: 0.10164558137528797
+    w: 0.004
+    h: 0.008494271091003433
+  color: '#e0ebde'
+  tolerance: 32
+  width: 0.0
+  threshold: 0.5
+  match: partial
+  case_sensitive: false
+  min_chars: 0
+  strip: none
+  negate: true
+detect_mode: any
 fields:
 - id: name
   type: text
@@ -98,6 +116,8 @@ windows:
       w: 0.33869291031996673
       h: 0.04192976141839593
     text: inventory
+    tolerance: 32
+    width: 0.0
     threshold: 0.8
     match: partial
     case_sensitive: false
@@ -112,6 +132,8 @@ windows:
       w: 0.04834284612974901
       h: 0.03582122837035165
     text: search
+    tolerance: 32
+    width: 0.0
     threshold: 0.5
     match: partial
     case_sensitive: false
@@ -332,6 +354,8 @@ windows:
       w: 0.4092943360310977
       h: 0.05324730585577367
     text: mods
+    tolerance: 32
+    width: 0.0
     threshold: 0.8
     match: partial
     case_sensitive: false
@@ -503,6 +527,8 @@ windows:
       w: 0.28744675084295424
       h: 0.05150294295161798
     text: rewards
+    tolerance: 32
+    width: 0.0
     threshold: 0.8
     match: partial
     case_sensitive: false
@@ -604,6 +630,8 @@ windows:
       w: 0.357732018626002
       h: 0.050204210400661656
     text: selectrelic
+    tolerance: 32
+    width: 0.0
     threshold: 0.8
     match: partial
     case_sensitive: false
@@ -760,6 +788,8 @@ windows:
       w: 0.4861086446058485
       h: 0.05482975273337321
     text: refinement
+    tolerance: 32
+    width: 0.0
     threshold: 0.8
     match: partial
     case_sensitive: false
@@ -774,6 +804,8 @@ windows:
       w: 0.06395299857186793
       h: 0.029519311240093937
     text: search
+    tolerance: 32
+    width: 0.0
     threshold: 0.8
     match: partial
     case_sensitive: false
@@ -1113,7 +1145,7 @@ subsets:
       collapse_ws: true
       strip_words: []
     aggregate: latest
-    required: true
+    required: false
   filters: []
   derived:
   - name: price
@@ -1444,56 +1476,56 @@ dictionaries:
 layout:
   nodes:
     game:
-      x: -1740.0
-      y: -1380.0
-      w: 340.0
-      h: 140.0
+      x: -1720.0
+      y: -1600.0
+      w: 580.0
+      h: 683.0
       collapsed: false
     dict:wiki:
-      x: -1740.0
-      y: -1220.0
-      w: 340.0
+      x: -1120.0
+      y: -1600.0
+      w: 300.0
       h: 360.0
       collapsed: false
     ds:master:
       x: -1320.0
-      y: -220.0
+      y: -420.0
       w: 360.0
       h: 200.0
       collapsed: false
     producer:price:
-      x: 1740.0
-      y: -1120.0
+      x: 1900.0
+      y: -1340.0
       w: 380.0
       h: 220.0
       collapsed: false
     ds:prices_live:
-      x: -660.0
-      y: -1380.0
+      x: -500.0
+      y: -1600.0
       w: 360.0
       h: 200.0
       collapsed: false
     ds:prices_statistics:
-      x: 1740.0
-      y: -1380.0
+      x: 1900.0
+      y: -1600.0
       w: 380.0
       h: 200.0
       collapsed: false
     sub:live_prices_joined:
-      x: -220.0
-      y: -1380.0
+      x: -60.0
+      y: -1600.0
       w: 360.0
       h: 1280.0
       collapsed: false
     sub:statistic_prices_joined:
-      x: 2160.0
-      y: -1380.0
+      x: 2320.0
+      y: -1600.0
       w: 360.0
       h: 1280.0
       collapsed: false
     producer:wf_market_live:
-      x: -660.0
-      y: -1140.0
+      x: -500.0
+      y: -1360.0
       w: 360.0
       h: 280.0
       collapsed: false
@@ -1510,8 +1542,8 @@ layout:
       h: 200.0
       collapsed: false
     ds:mods:
-      x: -1320.0
-      y: -700.0
+      x: -1700.0
+      y: -420.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -1618,8 +1650,8 @@ layout:
       h: 180.0
       collapsed: false
     trigger:owned_refresh:
-      x: -660.0
-      y: -800.0
+      x: -500.0
+      y: -1020.0
       w: 360.0
       h: 300.0
       collapsed: false
@@ -1643,7 +1675,7 @@ layout:
       collapsed: false
     sb:relic_select:scrollbar:
       x: 840.0
-      y: 3480.0
+      y: 3520.0
       w: 220.0
       h: 260.0
       collapsed: false
@@ -1684,9 +1716,9 @@ layout:
       h: 320.0
       collapsed: false
     src:source:
-      x: -3080.0
-      y: -1140.0
-      w: 340.0
+      x: -3060.0
+      y: -1360.0
+      w: 360.0
       h: 780.0
       collapsed: false
     vt:sub:relic_rewards_price_from_stored:
@@ -1696,26 +1728,26 @@ layout:
       h: 360.0
       collapsed: false
     vt:sub:live_prices_joined:
-      x: 180.0
-      y: -1380.0
+      x: 340.0
+      y: -1600.0
       w: 1020.0
       h: 1280.0
       collapsed: false
     vt:sub:statistic_prices_joined:
-      x: 2580.0
-      y: -1380.0
+      x: 2740.0
+      y: -1600.0
       w: 1620.0
       h: 1280.0
       collapsed: false
     producer:producer:
-      x: -1320.0
-      y: -1380.0
+      x: -1700.0
+      y: -660.0
       w: 360.0
-      h: 160.0
+      h: 200.0
       collapsed: false
     ds:relic_contents:
       x: -1320.0
-      y: -460.0
+      y: -660.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -1789,13 +1821,13 @@ layout:
       x: 840.0
       y: 3100.0
       w: 300.0
-      h: 360.0
+      h: 400.0
       collapsed: false
     det:relic_refinement:detect_h:
       x: 600.0
       y: 380.0
       w: 300.0
-      h: 340.0
+      h: 380.0
       collapsed: false
     det:mod_window:detect_h:
       x: -1760.0
@@ -1861,7 +1893,7 @@ layout:
       x: 600.0
       y: 760.0
       w: 300.0
-      h: 340.0
+      h: 380.0
       collapsed: false
     ds:relics_select:
       x: 1260.0
@@ -1876,20 +1908,20 @@ layout:
       h: 720.0
       collapsed: false
     sub:master_prime_parts:
-      x: 1240.0
-      y: -1380.0
+      x: 1400.0
+      y: -1600.0
       w: 360.0
       h: 1280.0
       collapsed: false
     ds:ee_log:
-      x: -3080.0
-      y: -1380.0
+      x: -3060.0
+      y: -1600.0
       w: 360.0
       h: 200.0
       collapsed: false
     vt:ds:ee_log:
-      x: -2680.0
-      y: -1380.0
+      x: -2660.0
+      y: -1600.0
       w: 820.0
       h: 460.0
       collapsed: false
@@ -1906,16 +1938,22 @@ layout:
       h: 1120.0
       collapsed: false
     vt:src:source:
-      x: -2680.0
-      y: -900.0
+      x: -2660.0
+      y: -1120.0
       w: 820.0
       h: 500.0
       collapsed: false
     vtd:src:source:
-      x: -2680.0
-      y: -380.0
+      x: -2660.0
+      y: -600.0
       w: 820.0
-      h: 360.0
+      h: 380.0
+      collapsed: false
+    det:game:detect_1:
+      x: -1120.0
+      y: -1220.0
+      w: 300.0
+      h: 300.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -2142,6 +2180,7 @@ layout:
       - message
       - _pos
   open_images:
+  - game
   - equipment_window
   - mod_window
   - relic_rewards
@@ -2157,6 +2196,7 @@ layout:
     - dict:wiki
     - ds:relic_contents
     - producer:producer
+    - det:game:detect_1
     outline:
       color: '#5aa9e6'
       style: none
@@ -2747,7 +2787,7 @@ layout:
     members:
     - game
     - dict:wiki
-    - producer:producer
+    - det:game:detect_1
     outline:
       color: '#3a4154'
       style: solid
@@ -2764,6 +2804,7 @@ layout:
     - ds:master
     - ds:mods
     - ds:relic_contents
+    - producer:producer
     outline:
       color: '#3a4154'
       style: solid
