@@ -22,6 +22,9 @@ import { el } from "./widgets/util.js";
 import { openContextMenu } from "../ctxmenu.js";
 import * as papi from "./api.js";
 import { model } from "../graph/state.js";
+import { createHistory } from "../history_core.js";
+import { diffLabel } from "../history_label.js";
+import { createHistoryPanel } from "../history_panel.js";
 
 const pretty = new PrettyModel();
 let surface = null, toolsEl = null, panels = null, tools = null, canvasCtrl = null;
@@ -30,6 +33,27 @@ let cueScope = "selected";   // edit-mode cue layer default: "selected" only (ho
 let stylePreview = null;   // edit-mode style-profile preview: {id, profileId} while the inspector is focused, else null
 let configPreview = null;  // edit-mode config-profile preview: {id, profileId} while the inspector is focused, else null
 const selection = new Set();   // every selected widget id; selectedId is the primary (inspector) one
+
+// Pretty's OWN undo/redo history (independent of the node graph's). The whole doc is the snapshot
+// unit; PrettyModel.save() (the single edit funnel) pushes each edit via the hook wired in
+// mountPretty. Excludes everything transient (selection / current page / mode / panel geometry)
+// because none of that lives in the doc.
+const history = createHistory({
+    snapshot: () => pretty.serialize(),
+    restore: restorePretty,
+    label: diffLabel,
+});
+
+// read-only e2e introspection (playwright), same convention as the node view's window.__nodeHistory.
+// `edit` uses the REAL funnel — pretty.addPage() calls save(), which pushes history via the hook.
+if (typeof window !== "undefined") {
+    window.__prettyHistory = {
+        state: () => ({ index: history.index(), len: history.entries().length, labels: history.entries().map((e) => e.label) }),
+        pages: () => pretty.pages().map((p) => p.id),
+        edit: (title) => { const id = pretty.addPage(title || "e2e"); renderCurrent(); if (tools) tools.refresh(); return id; },
+        undo: () => history.undo(), redo: () => history.redo(), jump: (i) => history.jumpTo(i),
+    };
+}
 
 const ctx = {
     get mode() { return mode; },
@@ -104,7 +128,9 @@ export async function mountPretty(container, toolsHost, g) {
             theme: buildTheme(ctx),
             pages: buildPages(ctx),
             elements: buildElements(ctx),
+            history: buildHistoryPanel(),
         };
+        pretty.setHistoryHook(() => history.push());   // every edit (via save()) records here
         tools = buildPrettyTools(toolsEl, ctx, panels);
         // Click anywhere that is NOT a widget, a floating panel, or the edit-tools deselects.
         document.addEventListener("mousedown", (ev) => {
@@ -122,6 +148,17 @@ export async function mountPretty(container, toolsHost, g) {
             ev.preventDefault();
             const step = ev.shiftKey ? 1 : GRID;
             nudge(m[0] * step, m[1] * step);
+        });
+        // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) drive Pretty's OWN history (the node view's document
+        // keybind is gated off while pretty-mode is up, so the two never collide). Works in edit
+        // and view mode; ignored while typing in a field.
+        document.addEventListener("keydown", (ev) => {
+            if (!mounted || !document.body.classList.contains("pretty-mode")) return;
+            if (ev.target && ev.target.closest && ev.target.closest("input, select, textarea, [contenteditable=true]")) return;
+            if (!(ev.ctrlKey || ev.metaKey)) return;
+            const k = ev.key.toLowerCase();
+            if (k === "z" && !ev.shiftKey) { ev.preventDefault(); history.undo(); }
+            else if (k === "y" || (k === "z" && ev.shiftKey)) { ev.preventDefault(); history.redo(); }
         });
         // Drag a rectangle on empty canvas -> rubber-band multi-select (shift adds to the current
         // selection). A click that doesn't move clears the selection.
@@ -151,6 +188,7 @@ export async function setPrettyGame(g) {
     pageId = pretty.firstPageId();
     renderCurrent();
     tools.refresh();
+    history.reset();   // fresh undo/redo baseline for this game's pretty doc (after the doc settles)
 }
 
 // Toggle data polling + panel visibility when entering/leaving pretty view. The studio
@@ -177,6 +215,33 @@ export function deactivatePretty() {
     _hiddenPretty = [];
     if (panels) for (const [name, p] of Object.entries(panels)) if (p.win.state.visible) { _hiddenPretty.push(name); p.win.setVisible(false); }
     if (tools) tools.refresh();
+}
+
+// Load a history snapshot back into the doc, then rebuild — non-destructive travel. Transient
+// pointers (current page / selection / inspector) may reference ids the snapshot no longer has, so
+// clamp them to what exists before re-rendering, then persist the restored doc.
+function restorePretty(snap) {
+    pretty.replaceDoc(snap);
+    if (!pretty.page(pageId)) pageId = pretty.firstPageId();
+    for (const id of [...selection]) if (!pretty.widget(pageId, id)) selection.delete(id);
+    if (selectedId && !pretty.widget(pageId, selectedId)) selectedId = [...selection].pop() || null;
+    renderCurrent();
+    if (panels) {
+        const w = selectedId ? pretty.widget(pageId, selectedId) : null;
+        if (w) panels.inspector.show(w); else panels.inspector.clear();
+        if (panels.pages) panels.pages.refresh();
+    }
+    if (tools) tools.refresh();
+    pretty.save();   // persist the restored doc (its history push is a no-op while restoring)
+}
+
+// Pretty's edit-history panel — the shared builder, given pretty's independent `history` instance.
+// Session-only geometry like the other studio panels (no onPersist). Shaped like the other panels
+// ({win, refresh}) so the activate/deactivate/mode loops that walk panels[*].win keep working.
+function buildHistoryPanel() {
+    const state = { visible: false, x: null, y: null, w: 300, h: null, collapsed: false };
+    const win = createHistoryPanel({ hist: history, id: "pretty-history", title: "edit history", state });
+    return { win, refresh: () => {} };
 }
 
 function renderCurrent() {

@@ -17,7 +17,7 @@ export function buildPrettyTools(host, ctx, panels) {
     const spacer = el("span", "spacer");
     const editTools = el("div", "pw-edittools");
     const toggles = [
-        ["pages", panels.pages], ["elements", panels.elements], ["inspector", panels.inspector], ["sources", panels.sources], ["theme", panels.theme],
+        ["pages", panels.pages], ["elements", panels.elements], ["inspector", panels.inspector], ["sources", panels.sources], ["theme", panels.theme], ["history", panels.history],
     ];
     const toggleBtns = new Map();
     for (const [label, panel] of toggles) {

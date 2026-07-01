@@ -7,7 +7,7 @@ import * as papi from "./api.js";
 const DEBOUNCE = 400;
 
 export class PrettyModel {
-    constructor() { this.game = null; this.doc = blankDoc(); this._t = null; }
+    constructor() { this.game = null; this.doc = blankDoc(); this._t = null; this._histHook = null; }
 
     load(game, doc) {
         this.game = game;
@@ -15,8 +15,16 @@ export class PrettyModel {
         return this.doc;
     }
 
+    // ---- history (undo/redo) ----------------------------------------------------------
+    // save() is the single funnel every edit converges on, so it's where the history snapshot is
+    // taken. The controller injects the hook (pretty.js) to avoid a module cycle.
+    setHistoryHook(fn) { this._histHook = fn; }
+    serialize() { return JSON.stringify(this.doc); }          // the whole doc IS the snapshot
+    replaceDoc(doc) { this.doc = normalize(JSON.parse(doc)); } // load a snapshot back (no save)
+
     // ---- persistence (debounced) ------------------------------------------------------
     save() {
+        if (this._histHook) this._histHook();   // record this edit (no-op while a restore is in flight)
         clearTimeout(this._t);
         this._t = setTimeout(() => this.flush(), DEBOUNCE);
     }
