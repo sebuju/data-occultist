@@ -857,7 +857,7 @@ windows:
     enabled: true
     scrollbar:
       x: 0.596809419224071
-      y: 0.18574686749862768
+      y: 0.18852464527640542
       w: 0.004
       h: 0.7202815859034493
     scrollbar_orientation: vertical
@@ -1733,7 +1733,7 @@ layout:
       collapsed: false
     sb:relic_refinement:scrollbar:
       x: 600.0
-      y: 1120.0
+      y: 1160.0
       collapsed: false
     item:relic_refinement:relic_item:
       x: -400.0
