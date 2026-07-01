@@ -221,6 +221,42 @@
 .st-toggle.on { background: var(--accent); color: var(--on-accent, var(--bg)); }
 .st-chart { width: 100%; height: 150px; }
 
+/* ---- edit-history panel ---------------------------------------------------- */
+#history, #pretty-history { width: 300px; height: 300px; }
+/* header cluster: current index counter + undo/redo arrows */
+.hist-nav-wrap { display: flex; align-items: center; gap: 4px; }
+.hist-count { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; margin-right: 2px; }
+.fw-head .hist-nav { width: 22px; height: 22px; font-size: var(--fs-xs); }
+.fw-head .hist-nav:disabled { opacity: 0.4; cursor: default; background: var(--line); color: var(--text); }
+.hist-list { display: flex; flex-direction: column; gap: 2px; min-height: 100%; }
+.hist-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+/* one edit per row: label (left, truncates) + relative time (right). Click to travel there. */
+.hist-row {
+    display: flex; align-items: baseline; gap: 8px; padding: 4px 8px; border-radius: 4px;
+    cursor: pointer; color: var(--text); border-left: 2px solid transparent;
+}
+.hist-row:hover { background: var(--line); }
+/* Ellipsis on the LEFT so the meaningful TAIL of the path stays visible ("…sets 'gear_prices'").
+   direction:rtl moves the clip/ellipsis to the start; the inner text keeps its natural LTR order. */
+.hist-lbl {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: var(--fs-sm); direction: rtl; text-align: left;
+}
+.hist-time { flex: none; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+/* colour each entry's label by the KIND of change (the labeller tags it) */
+.hist-row[data-kind="add"]    .hist-lbl { color: var(--ok); }
+.hist-row[data-kind="remove"] .hist-lbl { color: var(--danger); }
+.hist-row[data-kind="set"]    .hist-lbl { color: var(--accent); }
+.hist-row[data-kind="clear"]  .hist-lbl { color: var(--warn); }
+.hist-row[data-kind="change"] .hist-lbl { color: var(--text); }
+.hist-row[data-kind="base"]   .hist-lbl { color: var(--muted); }
+/* the point we're parked on: accent stripe + tint (bold, but keep the kind colour) */
+.hist-row.hist-cur { background: var(--accent-bg); border-left-color: var(--accent); }
+.hist-row.hist-cur .hist-lbl { font-weight: 600; }
+/* entries AHEAD of the current point (redoable future) read dimmed */
+.hist-row.hist-future { opacity: 0.45; }
+.hist-row.hist-future .hist-lbl { font-style: italic; }
+
 /* ---- database structure panel ---------------------------------------------- */
 .db-panel { display: flex; flex-direction: column; gap: 8px; min-height: 100%; }
 .db-head { display: flex; align-items: center; gap: 8px; }

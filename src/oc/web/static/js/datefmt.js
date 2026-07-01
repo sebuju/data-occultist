@@ -32,3 +32,17 @@ export function since(iso) {
     const w = dy / 7; if (w < 5) return `${Math.floor(w)}w ago`;
     return fmtDateTime(iso);
 }
+
+// Compact relative age: no "ago", single-letter units (12s, 5m, 3h, 2d, 1w). Falls back to the
+// absolute dd/mm/yy HH:MM once older than a few weeks. For dense lists (e.g. the history panel).
+export function sinceShort(iso) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const s = Math.max(0, (Date.now() - d.getTime()) / 1000);
+    if (s < 60) return `${Math.floor(s)}s`;
+    const m = s / 60; if (m < 60) return `${Math.floor(m)}m`;
+    const h = m / 60; if (h < 24) return `${Math.floor(h)}h`;
+    const dy = h / 24; if (dy < 7) return `${Math.floor(dy)}d`;
+    const w = dy / 7; if (w < 5) return `${Math.floor(w)}w`;
+    return fmtDateTime(iso);
+}
