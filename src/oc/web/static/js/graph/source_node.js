@@ -65,19 +65,19 @@ function fieldRow(f, i, stream) {
         title: "required — drop the row if this field has no valid value (number: a clean number; text: non-empty)" });
     req.dataset.i = i;   // which field this toggle drives (wireSource reads it)
     const rm = h("button", { class: "src-rmf danger", dataset: { i }, title: "remove" }, TRASH());
-    // line 1 (`.src-frow`, nowrap) always holds id + method + type + required + remove together; the
+    // line 1 (`.src-frow`, nowrap) always holds required + id + method + type + remove together; the
     // method inputs sit on their own full-width line below (`.src-finputs`) so they stay roomy.
-    // document rows have no method: id + type + required + remove on line 1, path full-width below.
+    // document rows have no method: required + id + type + remove on line 1, path full-width below.
     if (stream) {
         const methodSel = h("select", { class: "fset2 src-fmethod", dataset: { i, k: "method" } },
             METHODS.map(([v, l]) => h("option", { value: v, selected: v === f.method }, l)));
         const inputs = h("div", { class: "src-finputs" }, ...methodInputs(f, i));
         return h("div", { class: "src-f", dataset: { i } },
-            h("div", { class: "src-frow" }, idCell, methodSel, typeCell, req, rm), inputs);
+            h("div", { class: "src-frow" }, req, idCell, methodSel, typeCell, rm), inputs);
     }
     const path = h("input", { class: "fset2 src-fpath", dataset: { i, k: "path" }, value: f.path ?? "", placeholder: "a.b.c  /  Section.Key  /  root/child" });
     return h("div", { class: "src-f", dataset: { i } },
-        h("div", { class: "src-frow" }, idCell, typeCell, req, rm), path);
+        h("div", { class: "src-frow" }, req, idCell, typeCell, rm), path);
 }
 
 export function sourceParts(s) {

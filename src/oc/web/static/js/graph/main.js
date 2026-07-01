@@ -210,7 +210,7 @@ function collectLayout() {
         if (!nodeEls.has(id)) continue;   // orphan coord (deleted/renamed node) — don't re-persist it
         const n = { x: p.x, y: p.y };
         const sz = nodeSizes.get(id);
-        if (sz) { n.w = sz.w; n.h = sz.h; }
+        if (sz) { n.w = sz.w; n.h = sz.h; if (sz.custW !== undefined) n.custW = sz.custW; if (sz.custH !== undefined) n.custH = sz.custH; }
         if (collapsed.has(id)) n.collapsed = true;
         nodes[id] = n;
     }
@@ -233,7 +233,7 @@ function hydrateLayout() {
         if (Number.isFinite(n.x) && Number.isFinite(n.y)) pos.set(id, { x: n.x, y: n.y });
         // >0, not just finite: a legacy 0,0 (from the old zero-box settle bug) means "no saved
         // size" — storing it would block the real size from ever applying (0 is falsy downstream).
-        if (n.w > 0 && n.h > 0) nodeSizes.set(id, { w: n.w, h: n.h });
+        if (n.w > 0 && n.h > 0) nodeSizes.set(id, { w: n.w, h: n.h, custW: n.custW, custH: n.custH });
         if (n.collapsed) collapsed.add(id);
     }
     pendingOpenImages = [...(L.open_images || [])];
@@ -1363,7 +1363,8 @@ function wireTrigger(div, n) {
         model.setTriggerKind(t.id, e.target.value); rebuildNode(n.id); render(); autosave(null);
     });
     div.querySelector(".tg-interval")?.addEventListener("change", (e) => { model.setTriggerInterval(t.id, e.target.value); autosave(null); });
-    div.querySelector(".tg-sound")?.addEventListener("change", (e) => { model.setTriggerSound(t.id, e.target.value); autosave(null); });
+    // rebuild the node: picking/clearing a sound shows/hides the preview button + volume row
+    div.querySelector(".tg-sound")?.addEventListener("change", (e) => { model.setTriggerSound(t.id, e.target.value); rebuildNode(t.id); autosave(null); });
     // volume slider: `input` (not change) so the % label tracks the live drag; autosave coalesces the writes
     div.querySelector(".tg-volume")?.addEventListener("input", (e) => {
         model.setTriggerVolume(t.id, e.target.value);
@@ -1382,7 +1383,7 @@ function wireTrigger(div, n) {
     div.querySelector(".tg-fire")?.addEventListener("click", async () => {
         const prog = div.querySelector(".tg-prog");
         prog.textContent = "firing…";
-        try { const r = await api.triggers.fire(model.profile.name, t.id); prog.textContent = `fired ${(r.started || []).length} sweep(s)`; refreshLive(); }
+        try { const r = await api.triggers.fire(model.profile.name, t.id); const n = (r.started || []).length, sk = (r.skipped || []).length; prog.textContent = n ? `fired ${n} sweep(s)` : sk ? `already sweeping (${sk} skipped)` : "no targets to fire"; refreshLive(); }
         catch (err) { prog.textContent = String(err.message || err); }
     });
 }
@@ -1616,16 +1617,22 @@ function openFindModal($, s, schedulePreview) {
 
 // small read-only preview table (capped) of the rows the current rules produce. Edit-driven
 // (never a steady-state tick), so a full rebuild here is fine.
+const SRC_LINE_COL = "__line__";   // preview-only column carrying the raw source line (see sources route)
 function renderPreview(host, rows) {
     if (!host) return;
     if (!rows.length) { host.replaceChildren(); return; }
     const cols = [];
     for (const r of rows) for (const k of Object.keys(r)) if (!cols.includes(k)) cols.push(k);
+    // show the raw source line FIRST (traces a row back to its file line), with a friendly header
+    // and a muted monospace look — it's context, not an extracted field.
+    const li = cols.indexOf(SRC_LINE_COL);
+    if (li >= 0) { cols.splice(li, 1); cols.unshift(SRC_LINE_COL); }
+    const isLine = (c) => c === SRC_LINE_COL;
     const cap = 50;
     host.replaceChildren(h("table", { class: "src-ptab" },
-        h("thead", h("tr", cols.map((c) => h("th", c)))),
+        h("thead", h("tr", cols.map((c) => h("th", { class: isLine(c) ? "src-pline" : "" }, isLine(c) ? "line" : c)))),
         h("tbody", rows.slice(0, cap).map((r) =>
-            h("tr", cols.map((c) => h("td", r[c] == null ? "" : String(r[c]))))))));
+            h("tr", cols.map((c) => h("td", { class: isLine(c) ? "src-pline" : "" }, r[c] == null ? "" : String(r[c]))))))));
 }
 
 export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource"]);
@@ -1910,18 +1917,25 @@ function targetIdOf(el, target) {
 // Soft-grow / hard-shrink for ONE axis. Caller must have already cleared THIS axis's inline
 // size + min so `el.offset*` reads the natural box. GROW (target ≥ natural) -> soft min (content
 // fills the extra room); SHRINK -> hard size (body scrolls). Returns true=soft, false=hard.
-// The single primitive both the drag-settle (applyGridSize) and keyboard nudge build on (rule 7).
+// The single primitive both the drag-settle (settleAxis) and keyboard nudge build on (rule 7).
 function sizeAxisToGrid(el, axis, target) {
     const nat = axis === "w" ? el.offsetWidth : el.offsetHeight;   // natural (this axis already cleared)
     if (target >= nat) { el.style[axis === "w" ? "minWidth" : "minHeight"] = `${target}px`; return true; }
     el.style[axis === "w" ? "width" : "height"] = `${target}px`; return false;
 }
-function applyGridSize(el, w, h) {
-    clearGridSize(el);
-    let softW = true, softH = true;
-    if (w) softW = sizeAxisToGrid(el, "w", w);
-    if (h) softH = sizeAxisToGrid(el, "h", h);
-    return { softW, softH };   // which dims grew (soft min) vs shrank (hard) — recorded for restore
+// Settle ONE axis on grip release: clear the axis to expose its natural (grid-fit) size, then only
+// STAMP a size when the target DIFFERS from it, reusing sizeAxisToGrid for the grow(min)/shrink(hard)
+// decision. Landing exactly on natural leaves the axis UNSTAMPED: nothing to record, no reset dot, so
+// a drag back to the fit size is as if the axis was never sized. Returns { size, soft, cust }.
+function settleAxis(el, axis, target) {
+    el.style[axis === "w" ? "width" : "height"] = ""; el.style[axis === "w" ? "minWidth" : "minHeight"] = "";
+    const nat = snapUp(axis === "w" ? el.offsetWidth : el.offsetHeight);   // grid-fit size at content
+    if (target === nat) return { size: nat, soft: true, cust: false };     // exactly natural -> leave cleared
+    return { size: target, soft: sizeAxisToGrid(el, axis, target), cust: true };
+}
+// Settle both axes (targets captured BEFORE any clear — clearing width reflows height).
+function settleGridSize(el, wTarget, hTarget) {
+    return { w: settleAxis(el, "w", wTarget), h: settleAxis(el, "h", hTarget) };
 }
 // One-axis keyboard nudge: clear THIS axis (so the natural box is re-measured) WITHOUT touching
 // the other axis, then re-apply through the same soft/hard rule. A naive style.width set silently
@@ -1931,15 +1945,18 @@ function nudgeAxisToGrid(el, axis, target) {
     else { el.style.height = ""; el.style.minHeight = ""; }
     return sizeAxisToGrid(el, axis, target);
 }
-// Re-apply a size decision recorded by applyGridSize/onReset WITHOUT re-measuring the natural box.
-// Restore must be deterministic: re-measuring (as applyGridSize does) can drift a hair (scrollbar /
+// Re-apply a size decision recorded by settleAxis/resetNodeAxis WITHOUT re-measuring the natural box.
+// Restore must be deterministic: re-measuring (as the settle path does) can drift a hair (scrollbar /
 // font reflow) and flip a soft-grow dim into the hard-shrink branch — which is exactly what left a
 // reset source node hard-sized + scrollable after a later full render() / page reload. `soft*` !==
 // false means a min (grow, content always fits); false means a hard size (shrink, body scrolls).
 function applySavedSize(el, s) {
     clearGridSize(el);
-    if (s.w) { if (s.softW !== false) el.style.minWidth = `${s.w}px`; else el.style.width = `${s.w}px`; }
-    if (s.h) { if (s.softH !== false) el.style.minHeight = `${s.h}px`; else el.style.height = `${s.h}px`; }
+    // only re-stamp an axis the user actually customized — a natural axis (custW/H === false) stays
+    // unstamped so it flows to content, matching what onSettle stored. Legacy entries lack the flags
+    // (undefined) -> stamp, preserving old behaviour.
+    if (s.w && s.custW !== false) { if (s.softW !== false) el.style.minWidth = `${s.w}px`; else el.style.width = `${s.w}px`; }
+    if (s.h && s.custH !== false) { if (s.softH !== false) el.style.minHeight = `${s.h}px`; else el.style.height = `${s.h}px`; }
 }
 // drop all inline grid sizing (back to the natural box: CSS width + content height)
 function clearGridSize(el) { el.style.width = ""; el.style.height = ""; el.style.minWidth = ""; el.style.minHeight = ""; }
@@ -1986,40 +2003,77 @@ function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
         },
         // While ACTIVELY dragging (_ptrDown), keep the soft grid mins cleared so a prior grow's
         // min-width/height can't block a shrink. NOT on a programmatic resize (e.g. the size change
-        // onSettle's applyGridSize causes) — that would wipe the min it just set and undo the grow.
+        // onSettle's re-stamp causes) — that would wipe the min it just set and undo the grow.
         onResize: () => { if (_ptrDown) { div.style.minWidth = ""; div.style.minHeight = ""; setDraggingNodes(true, [id]); } requestEdges(); groups.renderGroups(); },
-        // settle: convert the dragged box into a grid-snapped PADDING size (no hard width/height).
-        // widthOnly nodes (item/window) wrap a fixed-aspect canvas — they keep the inline width.
+        // Settle to the grid, but only KEEP a size on an axis that ends up different from its natural
+        // (grid-fit) box — an axis dragged back to natural is left unstamped and un-customized, so it
+        // shows no reset dot; a node natural on BOTH axes drops its entry entirely (as if never sized).
+        // widthOnly nodes (item/window) wrap a fixed-aspect canvas — width only, height aspect-driven.
+        // (No `moved` param: this runs idempotently, incl. snapResize's second no-arg call on release.)
         onSettle: () => {
-            if (widthOnly) { nodeSizes.set(id, { w: div.offsetWidth, h: div.offsetHeight, softW: false, softH: false }); }
-            else {
-                const w = snapUp(div.offsetWidth), h = snapUp(div.offsetHeight);
-                const { softW, softH } = applyGridSize(div, w, h);
-                nodeSizes.set(id, { w, h, softW, softH });   // record min-vs-hard so restore can't drift
+            if (widthOnly) {
+                const wTarget = div.offsetWidth;
+                div.style.width = ""; div.style.minWidth = "";
+                const natW = div.offsetWidth;
+                if (Math.abs(wTarget - natW) < 1) nodeSizes.delete(id);   // back at natural -> unstamped
+                else { div.style.width = `${wTarget}px`; nodeSizes.set(id, { w: wTarget, h: div.offsetHeight, softW: false, softH: false, custW: true, custH: false }); }
+            } else {
+                const { w, h } = settleGridSize(div, snapUp(div.offsetWidth), snapUp(div.offsetHeight));
+                if (w.cust || h.cust) nodeSizes.set(id, { w: w.size, h: h.size, softW: w.soft, softH: h.soft, custW: w.cust, custH: h.cust });
+                else nodeSizes.delete(id);   // natural on both axes -> as if never sized
             }
-            div.classList.add("has-size"); setDraggingNodes(false); flushEdges(); groups.renderGroups(); persist.layout();
+            markNodeSized(div, id); setDraggingNodes(false); flushEdges(); groups.renderGroups(); persist.layout();
         },
-        // reset dot: drop the user's size, then snap the node's NATURAL size UP to the grid using
-        // soft mins set DIRECTLY (not via applyGridSize). snapUp always rounds UP, so min-width/height
-        // are always ≥ the natural box — the box only grows to the grid line, so content ALWAYS fits
-        // (never scrollable) and there's never a hard width/height. Setting the min straight from this
-        // one measurement avoids applyGridSize re-measuring the natural box — a second measurement can
-        // drift (scrollbar/reflow) and wrongly pick the hard-shrink branch, which is what left a reset
-        // source node hard-sized and scrollable. Pre-snapping here also stops a later event (e.g.
-        // unfocusing an input) from grid-snapping + jumping the node.
-        onReset: () => {
-            clearGridSize(div);
-            const nb = naturalBox(div);   // size to CONTENT (incl. horizontal overflow), not the clipped box
-            const w = snapUp(nb.w), h = snapUp(nb.h);
-            div.style.minWidth = `${w}px`;
-            if (widthOnly) div.style.width = `${w}px`; else div.style.minHeight = `${h}px`;
-            // both dims are soft mins (grow to grid) -> restore re-applies them as mins, never hard,
-            // so a later full render()/reload can't drift this into a scrollable hard size.
-            nodeSizes.set(id, { w, h, softW: true, softH: !widthOnly });
-            div.classList.add("has-size");
-            drawEdges(); groups.renderGroups(); persist.layout();
-        },
+        // reset dots (one per axis): drop the user's size on THAT axis, then snap the node's NATURAL
+        // size UP to the grid using a soft min set DIRECTLY (not via the settle path). snapUp always
+        // rounds UP, so the min is always ≥ the natural box — the box only grows to the grid line, so
+        // content ALWAYS fits (never scrollable) and there's never a hard width/height. Setting the min
+        // straight from this one measurement avoids re-measuring the natural box — a second
+        // measurement can drift (scrollbar/reflow) and wrongly pick the hard-shrink branch, which is what
+        // left a reset source node hard-sized and scrollable. Pre-snapping here also stops a later event
+        // (e.g. unfocusing an input) from grid-snapping + jumping the node. Each callback touches only its
+        // own axis, keeping the other's user size; Shift-click (handled in addResizeGrips) fires both.
+        onResetW: () => resetNodeAxis(div, id, "w", widthOnly),
+        // widthOnly nodes (item/window) have an aspect-driven height that's never stamped inline —
+        // there's nothing to reset, so they get no height dot.
+        onResetH: widthOnly ? null : () => resetNodeAxis(div, id, "h", false),
     };
+}
+
+// Reset ONE axis of a node back to its content-fitting, grid-snapped soft min (see onResetW/onResetH).
+// Clears only that axis's inline sizing so the other axis keeps the user's size, then merges the new
+// dim into the recorded nodeSizes so a later render()/reload restores it deterministically.
+function resetNodeAxis(div, id, axis, widthOnly) {
+    if (axis === "w") { div.style.width = ""; div.style.minWidth = ""; }
+    else { div.style.height = ""; div.style.minHeight = ""; }
+    const nb = naturalBox(div);   // size to CONTENT (incl. overflow), not the clipped box
+    const s = nodeSizes.get(id) || {};
+    if (axis === "w") {
+        const w = snapUp(nb.w);
+        div.style.minWidth = `${w}px`;
+        if (widthOnly) div.style.width = `${w}px`;   // item/window keep a hard inline width
+        s.w = w; s.softW = true; s.custW = false;   // back at natural -> nothing left to reset (hide the dot)
+    } else {
+        const h = snapUp(nb.h);
+        div.style.minHeight = `${h}px`;
+        s.h = h; s.softH = true; s.custH = false;   // soft min (grow to grid) -> restore re-applies as min, never hard
+    }
+    nodeSizes.set(id, s);
+    markNodeSized(div, id);
+    drawEdges(); groups.renderGroups(); persist.layout();
+}
+
+// Reveal each axis's reset control only when that axis carries a user-set size a reset would undo,
+// driven by the nodeSizes entry's custW/custH (set true by a grip/keyboard resize of that axis,
+// cleared by resetNodeAxis). Legacy/loaded entries may lack the flags (undefined) -> treated as set
+// so nothing regresses until the user next touches the node. Also owns the whole-node has-size gate,
+// so every has-size toggle site funnels through this one helper (rule 7).
+function markNodeSized(el, id) {
+    const s = nodeSizes.get(id);
+    const sized = !!s && !collapsed.has(id);
+    el.classList.toggle("has-size", sized);
+    el.classList.toggle("rz-has-w", sized && s.custW !== false);
+    el.classList.toggle("rz-has-h", sized && s.custH !== false);
 }
 
 // Make a node user-resizable: restore its saved size, then attach the grips (NODE itself, its
@@ -2035,7 +2089,7 @@ function makeNodeResizable(div, id, { widthOnly = false } = {}) {
     // soft/hard decision (applySavedSize), NOT by re-measuring — re-measuring can drift a soft-grow
     // dim into a hard-shrink one, which scrolled a reset node after a render/reload (the repeat bug).
     if (s && !collapsed.has(id)) {
-        if (widthOnly) { if (s.w) div.style.width = `${s.w}px`; }
+        if (widthOnly) { if (s.w && s.custW !== false) div.style.width = `${s.w}px`; }
         else applySavedSize(div, s);
     }
     snapResize(div, nodeResizeOpts(div, id, { widthOnly }));
@@ -2079,10 +2133,11 @@ function rebuildNode(id) {
     }
     fillNode(el, n);
     // fillNode rewrote the node's DOM, wiping the resize grips — re-add them. The ResizeObserver +
-    // mouseup listeners from the initial snapResize stay bound to `el` (reused across rebuild);
-    // only the grip DOM needs restoring, with grid snap (matching snapResize's `{...opts,snap:true}`).
+    // mouseup listeners from the initial snapResize stay bound to `el` (reused across rebuild) and its
+    // `finish` still owns settling; only the grip DOM needs restoring, with grid snap and NO grip-side
+    // onSettle (matching snapResize — avoids the double settle).
     // (window + item already returned above; every remaining node type is freely resizable.)
-    addResizeGrips(el, { ...nodeResizeOpts(el, n.id), snap: true });
+    addResizeGrips(el, { ...nodeResizeOpts(el, n.id), snap: true, onSettle: null });
     fitNodeHeight(el, n.id);   // a revealed input (e.g. learn -> fuzzy) may overflow the pinned height — grow to fit
 }
 
@@ -2098,7 +2153,7 @@ function fitNodeHeight(el, id) {
     if (over <= 1) return;
     const h = el.offsetHeight + over;
     el.style.height = `${h}px`;
-    nodeSizes.set(id, { w: el.offsetWidth, h });
+    nodeSizes.set(id, { ...nodeSizes.get(id), w: el.offsetWidth, h });   // keep softW/H + custW/H
     drawEdges(); groups.renderGroups(); persist.layout();
 }
 
@@ -2114,7 +2169,7 @@ function toggleCollapse(id) {
             const s = nodeSizes.get(id);            // (survives reload; el._size would not)
             if (s) { if (s.w) el.style.width = `${s.w}px`; if (s.h) el.style.height = `${s.h}px`; }
         }
-        el.classList.toggle("has-size", nodeSizes.has(id) && !willCollapse);   // reset dot hidden while collapsed
+        markNodeSized(el, id);   // reset dots hidden while collapsed; per-axis when expanded
     }
     drawEdges();   // node size changed -> reroute its lines
     groups.renderGroups();
@@ -2165,7 +2220,10 @@ function clearNodeSelections(keepId = null) {
         el.querySelectorAll(".il-sel").forEach((r) => r.classList.remove("il-sel"));
     }
     for (const ds of batchesState.keys()) {
-        if (`ds:${ds}` === keepId) continue;
+        // the batches ledger lives in the vt-table satellite (`vt:ds:${ds}`), not the dataset
+        // node — keep its selection when EITHER is focused, else focusing the satellite wipes
+        // its own picked batch (breaks click-to-deselect; strands the detail on "loading…").
+        if (`ds:${ds}` === keepId || `vt:ds:${ds}` === keepId) continue;
         const st = batchesState.get(ds);
         if (st.sel == null) continue;
         st.sel = null;
@@ -2201,62 +2259,91 @@ function setMultiSelect(ids) {
     syncMultiSelect();
 }
 function clearMultiSelect() { if (selected.size) { selected.clear(); syncMultiSelect(); } }
+// ---- selection toolbar: ONE shared predictor for all three grouping tiers (rule 7) -----------
+// Every tier button (group / subgroup / super) derives its label, icon and tooltip from tierState()
+// — a PURE function of the member SET, so the button never changes meaning with selection ORDER
+// (item 7), and each tier's ungroup carries a distinct label + icon (items 2, 3).
+const _selSvg = (...kids) => svg("svg", { viewBox: "0 0 16 16", width: 14, height: 14, "aria-hidden": "true",
+    fill: "none", stroke: "currentColor", "stroke-width": "1.4", "stroke-linecap": "round", "stroke-linejoin": "round" }, ...kids);
+const _selRect = (x, y, w, hh) => svg("rect", { x, y, width: w, height: hh, rx: "2" });
+// base glyph per tier: group = one box, sub = box with a nested box, super = two offset boxes
+const SEL_ICON = {
+    group: () => _selSvg(_selRect(2.5, 2.5, 11, 11)),
+    sub: () => _selSvg(_selRect(2.5, 2.5, 11, 11), _selRect(6.5, 6.5, 6.5, 6.5)),
+    super: () => _selSvg(_selRect(2, 4.5, 9, 9), _selRect(5, 2, 9, 9)),
+};
+// ungroup adds a slash across the tier glyph — a distinct icon per tier for every ungroup (item 3)
+function selIcon(kind, verb) {
+    const g = SEL_ICON[kind]();
+    if (verb === "ungroup") g.append(svg("line", { x1: "2.5", y1: "13.5", x2: "13.5", y2: "2.5" }));
+    return g;
+}
+const SEL_LABELS = {
+    group: { make: "group", add: "add", ungroup: "ungroup" },
+    sub: { make: "subgroup", add: "add", ungroup: "un-sub" },
+    super: { make: "super-group", add: "add", ungroup: "un-super" },
+};
+const SEL_TITLES = {
+    group: { make: "group the selection", add: "add the loose nodes to the group", ungroup: "ungroup the selection" },
+    sub: { make: "sub-group the selection within its group", add: "add the loose nodes to the subgroup", ungroup: "dissolve / leave this subgroup" },
+    super: { make: "super-group the selected groups", add: "add the loose groups to the super group", ungroup: "dissolve / leave the super group" },
+};
+// Predict a tier action from its member ids + the "which record holds this id" lookup. Pure in the
+// SET of ids (order-independent, item 7): 1 shared holder & none loose -> ungroup; 1 shared holder
+// & some loose -> add; otherwise -> make a new record. Returns null when nothing is selected.
+function tierState(ids, holderOf, kind) {
+    if (!ids.length) return null;
+    const holders = new Set(ids.map(holderOf).filter(Boolean));
+    const loose = ids.some((id) => !holderOf(id));
+    const verb = (holders.size === 1 && !loose) ? "ungroup" : (holders.size === 1 && loose) ? "add" : "make";
+    return { verb, kind, label: SEL_LABELS[kind][verb], title: SEL_TITLES[kind][verb] };
+}
+// A subgroup is only offerable when the WHOLE selection sits inside ONE group (scoped to a single
+// parent group). Then it follows the same predictor.
+function subOfferable(ids) {
+    if (!ids.length) return false;
+    const gset = new Set(ids.map((id) => groups.groupOf(id)).filter(Boolean));
+    if (gset.size !== 1) return false;
+    const parent = [...gset][0];
+    return ids.every((id) => parent.members.includes(id));
+}
+function subState(ids) { return subOfferable(ids) ? tierState(ids, groups.subgroupOf, "sub") : null; }
+// Paint a tier button from a state (or hide it). Icon, label + tooltip all come from the state.
+function applyTierBtn(btn, state) {
+    if (!btn) return;
+    btn.hidden = !state;
+    if (!state) return;
+    const ic = btn.querySelector(".sel-ic"); if (ic) ic.replaceChildren(selIcon(state.kind, state.verb));
+    const lbl = btn.querySelector(".sel-lbl"); if (lbl) lbl.textContent = state.label;
+    btn.title = state.title;
+}
 function syncMultiSelect() {
     for (const [id, el] of nodeEls) el.classList.toggle("multisel", selected.has(id));
-    const bar = $("seltoolbar"), cnt = $("selCount"), gbtn = $("selGroupBtn");
-    const ng = groups.selectedGroupIds().length;   // ctrl-selected GROUPS (for super-grouping)
-    const ids = selectionIds();                    // selected nodes (single focus OR multi-select set)
+    const bar = $("seltoolbar"), cnt = $("selCount");
+    const gids = groups.selectedGroupIds();   // ctrl-selected GROUPS (super-grouping channel)
+    const ng = gids.length;
+    const ids = selectionIds();               // selected nodes (single focus OR multi-select set)
     const nsel = ids.length;
+    const groupMode = ng >= 1;                 // ctrl-selected groups -> super ops (node buttons hide)
+    const wasHidden = bar ? bar.hidden : true;
     if (bar) bar.hidden = !(nsel >= 1 || ng >= 1);
-    if (cnt) cnt.textContent = ng >= 1 ? `${ng} group${ng === 1 ? "" : "s"} selected` : `${nsel} selected`;
-    // the button label mirrors what `g` would actually DO to this selection (group vs ungroup)
-    const gstate = groupBtnState();
-    if (gbtn) { const gl = gbtn.querySelector(".sel-lbl"); if (gl) gl.textContent = gstate.label; else gbtn.textContent = gstate.label; gbtn.title = gstate.title; }
-    // subgroup shows only when the whole selection sits inside ONE group (a subgroup is scoped to a
-    // single parent group); its label mirrors what the action would do (subgroup vs ungroup).
-    const sgb = $("selSubgroupBtn");
-    if (sgb) {
-        const ss = subgroupBtnState(ids);
-        sgb.hidden = !ss;
-        if (ss) { const sl = sgb.querySelector(".sel-lbl"); if (sl) sl.textContent = ss.label; sgb.title = ss.title; }
-    }
-    // detach shows only when something in the selection is grouped AND the group button isn't
-    // already offering "ungroup" — when it is (whole selection == one full group), detach would do
-    // the exact same detachNodes(ids), so two buttons would mean one action. detach's reason to
-    // exist is the mixed selection (some loose / many groups), where the group button flips to
-    // "group"/"add" instead; there it's the only way to pull the grouped ones OUT.
+    // replay the slide-in only on the hidden->shown edge (never on a steady-state selection tick)
+    if (bar && wasHidden && !bar.hidden) { bar.classList.remove("slidein"); void bar.offsetWidth; bar.classList.add("slidein"); }
+    if (cnt) cnt.textContent = groupMode ? `${ng} group${ng === 1 ? "" : "s"} selected` : `${nsel} selected`;
+    // SUPER lives on its own button + channel; GROUP/SUB/detach/delete act on the node selection.
+    applyTierBtn($("selSuperBtn"), groupMode ? tierState(gids, groups.superGroupOf, "super") : null);
+    const gs = groupMode ? null : tierState(ids, groups.groupOf, "group");
+    applyTierBtn($("selGroupBtn"), gs);
+    applyTierBtn($("selSubgroupBtn"), groupMode ? null : subState(ids));
+    // detach shows only for a MIXED node selection (some grouped) where the group button offers
+    // group/add rather than ungroup — else the two buttons would do the same detach.
     const det = $("selDetachBtn"), del = $("selDeleteBtn");
-    if (det) det.hidden = gstate.label === "ungroup" || !ids.some((id) => groups.groupOf(id));
+    if (det) det.hidden = groupMode || !gs || gs.verb === "ungroup" || !ids.some((id) => groups.groupOf(id));
     if (del) {
-        del.hidden = !ids.some((id) => REMOVABLE.has(nodeTypeOf(id)));
+        del.hidden = groupMode || !ids.some((id) => REMOVABLE.has(nodeTypeOf(id)));
         if (del.dataset.armed === "1") { del.dataset.armed = "0"; const dl = del.querySelector(".sel-lbl"); if (dl) dl.textContent = del.dataset.label || dl.textContent; }
     }
     drawEdges();   // selection changed -> repaint so selected nodes' lines pick up the `sel` colour
-}
-
-// Predict the group action's label/title so the toolbar button shows group vs ungroup up
-// front — mirrors the branches in superGroupShortcut()/groupShortcut() exactly.
-function groupBtnState() {
-    const gids = groups.selectedGroupIds();
-    if (gids.length) {   // ctrl-selected GROUPS -> super-group ops
-        let ungroup;
-        if (gids.length === 1) ungroup = !!groups.superGroupOf(gids[0]);   // lone group in a super -> detach
-        else {
-            const sset = new Set(gids.map((id) => groups.superGroupOf(id)).filter(Boolean));
-            const loose = gids.some((id) => !groups.superGroupOf(id));
-            ungroup = sset.size === 1 && !loose;   // all in ONE super, none loose -> dissolve
-        }
-        return ungroup
-            ? { label: "ungroup", title: "dissolve the super group (hotkey: g)" }
-            : { label: "super-group", title: "super-group the selected groups (hotkey: g)" };
-    }
-    const ids = selectionIds();
-    const gset = new Set(ids.map((id) => groups.groupOf(id)).filter(Boolean));   // distinct groups in selection
-    const ungrouped = ids.some((id) => !groups.groupOf(id));
-    const ungroup = ids.length >= 1 && gset.size === 1 && !ungrouped;   // share ONE group, none loose -> ungroup/detach
-    return ungroup
-        ? { label: "ungroup", title: "ungroup the selection (hotkey: g)" }
-        : { label: "group", title: "group the selection (hotkey: g)" };
 }
 
 
@@ -2674,9 +2761,14 @@ function snapResize(el, opts = {}) {
     new ResizeObserver(() => {
         if (el.classList && el.classList.contains("collapsed")) return;   // ignore the collapsed size
         dirty = true;
-        if (_ptrDown) { _resizing = true; liveSnap(); }   // user drag → live grid-snap + cheap lines
-        // one redraw per frame, not per resize event — kills the per-pixel edge-redraw lag
-        if (!_resizeRaf) _resizeRaf = requestAnimationFrame(() => { _resizeRaf = null; onResize && onResize(); });
+        // Both the grid-snap write AND the redraw run in ONE deferred frame — NEVER mutate el's size
+        // synchronously inside the observer callback (that re-enters the observer in the same delivery
+        // -> "ResizeObserver loop completed with undelivered notifications"). Coalesced per frame.
+        if (!_resizeRaf) _resizeRaf = requestAnimationFrame(() => {
+            _resizeRaf = null;
+            if (_ptrDown) { _resizing = true; liveSnap(); }   // user drag → live grid-snap + cheap lines
+            onResize && onResize();
+        });
     }).observe(el);
     const finish = () => {
         if (!dirty) return;
@@ -2694,7 +2786,10 @@ function snapResize(el, opts = {}) {
     };
     el.addEventListener("mouseup", finish);     // release on the element's resize handle
     window.addEventListener("mouseup", finish);  // …or release after the cursor left it
-    addResizeGrips(el, { ...opts, snap: true }); // custom grips on BOTH bottom corners, grid-stepped
+    // `finish` is the SOLE settler for nodes (fires only when a resize actually happened, `dirty`);
+    // null the grip's own onSettle so a release doesn't settle TWICE (double the clear/re-stamp churn
+    // -> spurious ResizeObserver-loop notifications) and a no-move grip click settles nothing.
+    addResizeGrips(el, { ...opts, snap: true, onSettle: null }); // custom grips on BOTH bottom corners, grid-stepped
 }
 
 // Every node reachable by following edges OUT of `id` (its downstream subtree).
@@ -2784,7 +2879,7 @@ function dragFromHandle(id, ev, div, handle) {
         },
     });
 }
-function positionNode(id) { const el = nodeEls.get(id); const p = pos.get(id); if (el && p) { el.style.left = `${p.x}px`; el.style.top = `${p.y}px`; el.classList.toggle("has-size", nodeSizes.has(id) && !collapsed.has(id)); } }
+function positionNode(id) { const el = nodeEls.get(id); const p = pos.get(id); if (el && p) { el.style.left = `${p.x}px`; el.style.top = `${p.y}px`; markNodeSized(el, id); } }
 
 // Drag a wire out of a node's `.port.out`. Drop on a dataset node to wire to it, or on
 // empty canvas to mint a fresh dataset there and wire to that. ``srcId`` is the source
@@ -3134,6 +3229,7 @@ setScrubHook(prettyOverrides.scrubForSave);
 
 $("selGroupBtn").addEventListener("click", () => groupShortcut());
 $("selSubgroupBtn")?.addEventListener("click", () => subgroupShortcut());
+$("selSuperBtn")?.addEventListener("click", () => superGroupShortcut());
 
 // Detach every selected node that's in a group. Mirrors the per-node unlock icon that
 // used to live on each node — now one toolbar action over the whole selection.
@@ -3165,8 +3261,7 @@ function selectionIds() {
     return [];
 }
 
-// Group/ungroup the selection. SHARED by the toolbar button and the `g` hotkey so both
-// behave identically:
+// Group/ungroup the selection. Backs the toolbar group button:
 //   • 1 node, grouped            -> detach it
 //   • 2+, all share ONE group, some ungrouped -> add the ungrouped ones to that group
 //   • 2+, all share ONE group, none ungrouped -> ungroup everything
@@ -3193,27 +3288,10 @@ function superGroupShortcut() {
         else { groups.detachGroups(gids); setStatus("super group dissolved"); }
     } else {
         const sg = groups.createSuperGroup(gids);
-        if (sg) setStatus(`super-grouped ${sg.groups.length} groups`);
+        if (sg) setStatus(`super-grouped ${sg.members.length} groups`);
     }
     groups.clearGroupSelection();
     return true;
-}
-
-// Predict the subgroup action's label, and gate the toolbar button: a subgroup is only offered
-// when the WHOLE selection sits inside ONE group (it's scoped to a single parent group). Returns
-// null when not offerable. Mirrors the group ruleset (subgroup vs add vs ungroup).
-function subgroupBtnState(ids) {
-    if (!ids.length) return null;
-    const gset = new Set(ids.map((id) => groups.groupOf(id)).filter(Boolean));
-    if (gset.size !== 1) return null;                       // not all in exactly one group
-    const parent = [...gset][0];
-    if (!ids.every((id) => parent.members.includes(id))) return null;
-    const subs = new Set(ids.map((id) => groups.subgroupOf(id)).filter(Boolean));
-    const loose = ids.filter((id) => !groups.subgroupOf(id));
-    if (subs.size === 1 && !loose.length) return { label: "ungroup", title: "dissolve this subgroup" };
-    if (subs.size === 1 && loose.length) return { label: "subgroup", title: "add the loose nodes to the subgroup" };
-    if (ids.length === 1 && subs.size === 1) return { label: "ungroup", title: "remove from subgroup" };
-    return { label: "subgroup", title: "sub-group the selection within its group" };
 }
 
 // Sub-group the selection inside its (single) parent group, with the SAME ruleset groups use:
@@ -3223,7 +3301,7 @@ function subgroupBtnState(ids) {
 //   • otherwise                       -> form a new subgroup
 function subgroupShortcut() {
     const ids = selectionIds();
-    if (!subgroupBtnState(ids)) { setStatus("subgroup: select nodes that share one group"); return; }
+    if (!subOfferable(ids)) { setStatus("subgroup: select nodes that share one group"); return; }
     const subs = new Set(ids.map((id) => groups.subgroupOf(id)).filter(Boolean));
     const loose = ids.filter((id) => !groups.subgroupOf(id));
     if (subs.size === 1) {
@@ -3424,6 +3502,7 @@ window.addEventListener("keydown", cancelPan, true);
 // drop it once the ~90ms ease has run — re-pressing restarts the timer so a burst keeps gliding.
 // Same class + transition as the drag path (rule 7). Timeout slightly > the transition duration.
 const _snapTimers = new WeakMap();
+let _resizeSettle = 0;   // coalesces the post-resize reroute until the box's glide has settled
 function glideStep(el) {
     if (!el) return;
     el.classList.add("snapping");
@@ -3442,15 +3521,27 @@ document.addEventListener("keydown", (ev) => {
         if (k === "z" && !ev.shiftKey) { ev.preventDefault(); undo(); return; }
         if (k === "y" || (k === "z" && ev.shiftKey)) { ev.preventDefault(); redo(); return; }
     }
-    // g: group / ungroup the selection (same logic as the toolbar button)
-    if (ev.key.toLowerCase() === "g" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
-        groupShortcut(); ev.preventDefault(); return;
-    }
+    // (no group hotkey: the group/subgroup/super actions live only on the toolbar buttons — the
+    // single-key semantics couldn't be pinned down across the three tiers.)
     // Delete: delete the selection (same path as the toolbar button; undo restores).
     // No arm needed — Ctrl+Z brings it back, and a key takes intent the way a stray click doesn't.
     if (ev.key === "Delete" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
         if (!selectionIds().length) return;
         deleteSelection(); ev.preventDefault(); return;
+    }
+    // Shift+R: reset any manual resize on every selected node (same as pressing its reset dots —
+    // snaps each axis back to its natural content box). Only touches nodes that carry a saved size.
+    if (ev.shiftKey && ev.key.toLowerCase() === "r" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        if (overlays.get(activeOverlayKey)) return;   // a live box overlay owns the keys
+        const selIds = selectionIds().filter((id) => nodeSizes.has(id) && !collapsed.has(id) && nodeEls.has(id));
+        for (const id of selIds) {
+            const div = nodeEls.get(id);
+            const widthOnly = WIDTH_ONLY_NODES.has(nodeTypeOf(id));
+            resetNodeAxis(div, id, "w", widthOnly);
+            if (!widthOnly) resetNodeAxis(div, id, "h", false);
+        }
+        if (selIds.length) ev.preventDefault();
+        return;
     }
     const dir = NUDGE[ev.key.toLowerCase()];
     if (!dir) return;
@@ -3459,38 +3550,67 @@ document.addEventListener("keydown", (ev) => {
     // handle drives, so it persists + redraws edges identically.
     const rec = overlays.get(activeOverlayKey);
     if (!rec) {
-        if (selectedNodeId && pos.has(selectedNodeId)) {
-            const el = nodeEls.get(selectedNodeId);
-            if (ev.shiftKey) {
-                // collapsed nodes are header-only; widthOnly nodes (item/window) follow their
-                // cutout aspect, so neither takes a height step (widthOnly still resizes width).
-                if (el && !collapsed.has(selectedNodeId)) {
-                    glideStep(el);   // arm the ease BEFORE the size write so the step transitions (rule 7)
-                    const widthOnly = WIDTH_ONLY_NODES.has(nodeTypeOf(selectedNodeId));
-                    if (widthOnly) {
-                        // item/window wrap a fixed-aspect canvas -> HARD width only, height aspect-driven
-                        // (mirrors drag onSettle + restore). No height step.
-                        if (dir[0]) { el.style.minWidth = ""; el.style.width = `${Math.max(GRID, snap(el.offsetWidth + dir[0] * GRID))}px`; }
-                        nodeSizes.set(selectedNodeId, { w: el.offsetWidth, h: el.offsetHeight, softW: false, softH: false });
-                    } else {
-                        // step from the CURRENT rendered box (what the user sees) and re-apply through the
-                        // SAME soft-grow/hard-shrink primitive the drag uses — a raw style.width set is
-                        // blocked by a prior grow's min-width and silently no-ops (the "doesn't resize" bug).
-                        const s = nodeSizes.get(selectedNodeId) || {};
-                        let softW = s.softW, softH = s.softH;
-                        if (dir[0]) softW = nudgeAxisToGrid(el, "w", Math.max(GRID, snap(el.offsetWidth + dir[0] * GRID)));
-                        if (dir[1]) softH = nudgeAxisToGrid(el, "h", Math.max(GRID, snap(el.offsetHeight + dir[1] * GRID)));
-                        nodeSizes.set(selectedNodeId, { w: el.offsetWidth, h: el.offsetHeight, softW, softH });
-                    }
-                    el.classList.add("has-size");
-                    drawEdges(); groups.renderGroups(); persist.layout();
+        if (ev.shiftKey) {
+            // Shift+WASD RESIZES every selected node one grid step (A/D width, W/S height) — same
+            // grip the drag handle drives, so each persists + redraws edges identically. Collapsed
+            // nodes (header-only) are skipped; widthOnly nodes (item/window) take width only.
+            const stepResize = (id) => {
+                const el = nodeEls.get(id);
+                if (!el || collapsed.has(id)) return false;
+                glideStep(el);   // arm the ease BEFORE the size write so the step transitions (rule 7)
+                const prev = nodeSizes.get(id) || {};
+                if (WIDTH_ONLY_NODES.has(nodeTypeOf(id))) {
+                    // item/window wrap a fixed-aspect canvas -> HARD width only, height aspect-driven.
+                    if (dir[0]) { el.style.minWidth = ""; el.style.width = `${Math.max(GRID, snap(el.offsetWidth + dir[0] * GRID))}px`; }
+                    nodeSizes.set(id, { w: el.offsetWidth, h: el.offsetHeight, softW: false, softH: false, custW: !!dir[0] || !!prev.custW, custH: false });
+                } else {
+                    // re-apply through the SAME soft-grow/hard-shrink primitive the drag uses — a raw
+                    // style.width set is blocked by a prior grow's min-width and silently no-ops.
+                    let softW = prev.softW, softH = prev.softH;
+                    if (dir[0]) softW = nudgeAxisToGrid(el, "w", Math.max(GRID, snap(el.offsetWidth + dir[0] * GRID)));
+                    if (dir[1]) softH = nudgeAxisToGrid(el, "h", Math.max(GRID, snap(el.offsetHeight + dir[1] * GRID)));
+                    // only the nudged axis becomes customized (reveals its reset per-axis)
+                    nodeSizes.set(id, { w: el.offsetWidth, h: el.offsetHeight, softW, softH, custW: !!dir[0] || !!prev.custW, custH: !!dir[1] || !!prev.custH });
                 }
-            } else {
-                const p = pos.get(selectedNodeId);
-                p.x = snap(p.x + dir[0] * GRID); p.y = snap(p.y + dir[1] * GRID);
-                glideStep(el); positionNode(selectedNodeId); drawEdges(); groups.renderGroups(); persist.layout();
+                markNodeSized(el, id);
+                return true;
+            };
+            const selIds = selectionIds().filter((id) => pos.has(id));
+            if (selIds.length) {
+                let any = false;
+                for (const id of selIds) if (stepResize(id)) any = true;
+                if (any) {
+                    // the box glides to its new size (.snapping, ~140ms). Repaint the lines live
+                    // against the growing border but FREEZE routing, then run the pathfinder once the
+                    // box has settled — so routes are computed on the final size, not a mid-glide box.
+                    setDraggingNodes(true, selIds);
+                    requestEdges();
+                    groups.renderGroups();
+                    clearTimeout(_resizeSettle);
+                    _resizeSettle = setTimeout(() => {
+                        setDraggingNodes(false);
+                        flushEdges();
+                        groups.renderGroups();
+                        persist.layout();
+                    }, 160);
+                }
+                ev.preventDefault();
             }
-            ev.preventDefault();
+        } else {
+            // WASD MOVES the whole selection one grid step (every selected node, not just the focus),
+            // mirroring how a multi-select drag moves the set. selectionIds() = the multi-select set
+            // if any, else the single focused node.
+            const selIds = selectionIds().filter((id) => pos.has(id));
+            if (selIds.length) {
+                for (const id of selIds) {
+                    const p = pos.get(id);
+                    p.x = snap(p.x + dir[0] * GRID); p.y = snap(p.y + dir[1] * GRID);
+                    const el = nodeEls.get(id); if (el) glideStep(el);
+                    positionNode(id);
+                }
+                drawEdges(); groups.renderGroups(); persist.layout();
+                ev.preventDefault();
+            }
         }
         return;
     }

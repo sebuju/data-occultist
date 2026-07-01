@@ -446,24 +446,38 @@ export function createFloatWin({
         snapEdge: (axis, v) => snapEdgeVal(id, axis, v),   // align resize edges to other panels
         // height ownership flips ONLY when the height axis actually moved — a width-only resize must
         // leave a content-driven panel (autoFit:false, e.g. inspector) height-auto, not pin state.h.
-        // state.sized (any axis) gates the reset dot so a width-only resize still gets it.
+        // Each axis's flag is set only when THAT axis moved, so its reset control reveals per-axis
+        // (state.sized = width sized, state.userSized = height sized).
         onSettle: ({ w = false, h = false } = {}) => {
             if (h) state.userSized = true;   // manual height -> stop auto-fitting
-            if (w || h) state.sized = true;
+            if (w) state.sized = true;       // width sized (reveals only the width reset)
             markSized(); stashSize(); save();
         },
-        // reset dot: drop the user's WIDTH back to the panel's preset (CSS default); height re-fits
-        onReset: () => {
-            state.userSized = false; state.sized = false;
-            state.w = RESET_W; state.h = null;   // width -> uniform preset (300); height -> auto-fit
-            el.style.width = ""; el.style.height = "";
-            applySize(); markSized();
-            onResize && onResize(); fitHeight();
+        // reset dots (per axis; Shift-click either fires both). Width dot -> uniform preset (300);
+        // height dot -> auto-fit. Each clears only its own axis so the other keeps the user's size.
+        onResetW: () => {
+            state.sized = false;
+            state.w = RESET_W; el.style.width = "";
+            applySize(); markSized(); onResize && onResize();
             save();
         },
+        // height is manually resizable only when bothAxes — otherwise it's always auto-fit and there's
+        // nothing to reset, so no height dot on a width-only panel.
+        onResetH: (typeof bothAxes === "function" ? bothAxes() : bothAxes) ? () => {
+            state.userSized = false;
+            state.h = null; el.style.height = "";   // back to auto-fit
+            applySize(); markSized(); onResize && onResize(); fitHeight();
+            save();
+        } : null,
     });
-    // reset dot is shown only once the panel carries a user-set size (CSS gates on .fw-sized)
-    function markSized() { el.classList.toggle("fw-sized", !!(state.userSized || state.sized)); }
+    // reset dot is shown only once the panel carries a user-set size (CSS gates on .fw-sized), and
+    // each axis's dot only when THAT axis is sized (.rz-has-w = width, .rz-has-h = height) — so a
+    // width-only resize never shows a height reset that would do nothing.
+    function markSized() {
+        el.classList.toggle("fw-sized", !!(state.userSized || state.sized));
+        el.classList.toggle("rz-has-w", !!state.sized);
+        el.classList.toggle("rz-has-h", !!state.userSized);
+    }
     markSized();
 
     // CSS-resize / programmatic size changes: re-fit + persist (debounced). onResize/fitHeight

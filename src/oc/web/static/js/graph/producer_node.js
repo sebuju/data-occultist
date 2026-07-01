@@ -6,6 +6,7 @@
 import * as api from "../api.js";
 import { isOnline } from "../conn.js";
 import { h, frag, TRASH, labCell } from "../dom.js";
+import * as hub from "../hub.js";
 import { log } from "../log.js";
 
 // Backends the type picker offers (mirrors registry._PRODUCER). warframe_market is the market
@@ -35,10 +36,11 @@ export function producerParts(pn, cols = [], free = []) {
         const body = frag(
             h("div", { class: "enr-sum muted" }, "↻ refresh to fetch this data"),
             h("div", { class: "lab-grid" },
-                labCell("backend", "which producer backend fetches this dataset"), typeSel(pn)),
+                labCell("backend", "which producer backend fetches this dataset"), typeSel(pn),
+                labCell("status", "live refresh progress ('idle' when not running)"),
+                h("div", { class: "enr-prog livestats" })),
             h("div", { class: "gn-foot" },
-                h("button", { class: "enr-refresh" }, "↻ refresh")),   // doubles as cancel while running
-            h("div", { class: "enr-prog livestats" }));   // progress sits BELOW the button
+                h("button", { class: "enr-refresh" }, "↻ refresh")));   // doubles as cancel while running
         return { title, body, ports: port };
     }
 
@@ -70,10 +72,11 @@ export function producerParts(pn, cols = [], free = []) {
             labCell("backend", "which producer backend fetches this dataset"), typeSel(pn),
             labCell("source", "what each sweep stores: full daily history or a live now-snapshot"),
             h("select", { class: "enr-mode" }, opt("statistics", "statistics (history)"), opt("orders", "live orders (now)")),
-            srcs, keyFld),
+            srcs, keyFld,
+            labCell("status", "live sweep progress ('idle' when not running)"),
+            h("div", { class: "enr-prog livestats" })),
         h("div", { class: "gn-foot" },
-            h("button", { class: "enr-refresh" }, "↻ sweep prices")),   // doubles as cancel while running
-        h("div", { class: "enr-prog livestats" }));   // progress sits BELOW the button
+            h("button", { class: "enr-refresh" }, "↻ sweep prices")));   // doubles as cancel while running
     return { title, body, ports: port };
 }
 
@@ -127,7 +130,7 @@ export function wireProducerNode(div, game, dataset, mode = "statistics",
         } else if (st.finished) {
             prog.textContent = `done: ${st.fetched}/${st.total} (${st.failed} failed) in ${elapsed(st.started, st.finished)}`;
         } else {
-            prog.textContent = "";
+            prog.textContent = "idle";
         }
     }
 
@@ -154,6 +157,20 @@ export function wireProducerNode(div, game, dataset, mode = "statistics",
         btn.classList.add("reading"); btn.textContent = "cancel";   // instant feedback before the poll confirms
         try { await api.prices.refresh(game, dataset, mode, type); poll(); onChange?.(); }
         catch (e) { btn.classList.remove("reading"); btn.textContent = startLabel; $(".enr-prog").textContent = String(e.message || e); }
+    });
+
+    // Catch a sweep started by ANOTHER actor (a trigger's "fire now", the collector loop, another
+    // tab): the self-poll only runs once THIS node kicks it, so an idle node would never notice an
+    // externally-started sweep and its status would stay "idle". Ride the shared heartbeat — when a
+    // sweep for our dataset appears and we're not already polling, reflectStatus kicks the poll loop,
+    // which then owns progress + the finished/idle transition. (subscribe() replays the last snapshot
+    // immediately, so a sweep already running at mount is picked up too.)
+    let unsub;
+    unsub = hub.subscribe((snap) => {
+        if (!document.contains(div)) { unsub?.(); return; }   // node gone -> stop listening
+        if (div._enrPoll) return;                              // already tracking a sweep
+        const sw = (snap.sweeps || []).find((s) => s.dataset === dataset);
+        if (sw && sw.running) reflectStatus(sw);               // kicks poll()
     });
 
     queueMicrotask(loadSummary);

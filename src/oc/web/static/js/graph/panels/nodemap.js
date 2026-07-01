@@ -377,7 +377,7 @@ function nmRenderList(body) {
         for (const r of orderWalk(sub)) rows.push({ kind: "node", ...r, depth: r.depth + depth + 1 });
     };
     for (const sg of groups.allSuperGroups()) {
-        const memberGroups = sg.groups.map((id) => groups.allGroups().find((g) => g.id === id)).filter(Boolean);
+        const memberGroups = sg.members.map((id) => groups.allGroups().find((g) => g.id === id)).filter(Boolean);
         if (!memberGroups.length) continue;
         rows.push({ kind: "super", sgid: sg.id, label: sg.title || sg.id, color: sg.outline?.color, depth: 0 });
         for (const g of memberGroups) emitGroup(g, 1);

@@ -267,7 +267,7 @@ function updateTriggerNodes(data) {
         if (!span) continue;
         const running = (t.targets || []).some((x) => x.running);
         if (!running && t.last_fired) {
-            liveAgo(span, t.last_fired, (s) => `last fired ${s}`);   // ticks every 1s, panel open or not
+            liveAgo(span, t.last_fired, (s) => s);   // ticks every 1s, panel open or not (label cell already says "last fired")
         } else {
             stopAgo(span);
             const txt = running ? "firing now…" : "never fired";

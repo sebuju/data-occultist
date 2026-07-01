@@ -86,6 +86,12 @@
     border-radius: 8px; padding: 6px 8px; font-size: var(--fs-base);
     cursor: grab;                 /* whole card drags; the exceptions below override */
     user-select: none;            /* don't select text while dragging */
+    /* each node is its OWN stacking context (z-index on a positioned box makes one). Without this,
+       inner z-indexed bits (header z:2, ports z:2, spinner) escape into the #gnodes layer and paint
+       OVER a node that sits in front of this one in DOM order — a back node visibly bleeds through
+       the front one. With a base z here, all of a node's children are confined to the node's plane,
+       so a node in front (higher z / later DOM) fully covers one behind it. .selected bumps to 20. */
+    z-index: 10;
 }
 .gnode.game { width: 340px; }
 /* a field node with fallback rules needs room for the rule row (when + then + value + trash
@@ -181,6 +187,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    the thumb travels the full track end to end. The label takes only its own width. */
 .tg-secs input[type="range"] { flex: 1; width: auto; min-width: 0; margin: 0; }
 .tg-volnum { flex: 0 0 auto; min-width: 2.4em; text-align: right; }
+/* value cells with no full-height control (bare status spans, the range-only volume cell) would
+   otherwise size to their text line and sit SHORTER than the select/input rows. Pin them to the
+   same box as a control row (1lh text + 12px padding + 2px border) so every grid row is one height. */
+.lab-grid > .tg-secs { min-height: calc(1lh + 14px); }
+.lab-grid > .tg-prog, .lab-grid > .tg-last, .lab-grid > .enr-prog { min-height: calc(1lh + 14px); display: inline-flex; align-items: center; }
 /* checkboxes are slide-toggles now (base.css). Keep them at the start of their grid cell
    and never let a flex row stretch them — their size is fixed by the toggle. */
 /* inside a node the toggle adopts the form-input palette so it doesn't pop next to the text
@@ -460,10 +471,16 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gnode.multisel { border-color: var(--sel); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sel) 60%, transparent); }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
-.seltoolbar { position: fixed; left: 50%; top: 69px; transform: translateX(-50%);
+.seltoolbar { position: fixed; left: 50%; top: 53px; transform: translateX(-50%);
     z-index: 200; display: flex; align-items: center; gap: 10px; padding: 6px 10px;
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-    box-shadow: 0 6px 20px var(--shadow); }
+    /* stronger shadow + a faint inset ring so the pill pops off the canvas */
+    box-shadow: 0 10px 30px #000000aa, 0 2px 6px #00000066, inset 0 0 0 1px #ffffff12; }
+/* slide-in: replayed by syncMultiSelect on the hidden->shown edge only (class toggled there) */
+.seltoolbar.slidein { animation: selSlideIn .18s cubic-bezier(.2, .7, .3, 1); }
+@keyframes selSlideIn { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+/* lock the remove button's label width so arming (remove -> confirm) doesn't resize it (item 4) */
+#selDeleteBtn .sel-lbl { display: inline-block; min-width: 7ch; text-align: center; }
 .seltoolbar .sel-count { color: var(--muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 .seltoolbar button { display: inline-flex; align-items: center; gap: 5px; }
 .seltoolbar .sel-ic { display: inline-flex; align-items: center; }
@@ -536,7 +553,14 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .ggroup-pop .gp-lab { flex: 0 0 auto; width: 72px; }
 .ggroup-pop input[type="text"], .ggroup-pop .gp-title, .ggroup-pop select { flex: 1; min-width: 0; }
 .ggroup-pop input[type="range"] { flex: 1; min-width: 0; }
-.ggroup-pop input[type="color"] { flex: 0 0 auto; width: 28px; height: 22px; padding: 0; border: 1px solid var(--line); background: none; }
+.ggroup-pop input[type="color"] { flex: 0 0 auto; width: 28px; height: 22px; padding: 0; border: none; background: none; }
+/* small "×" after a colour picker: clears that field to "" (CSS default / no colour) */
+/* match the colour picker's height exactly: stretch to the row (the picker is the tallest control),
+   so the × never sits short of the swatch regardless of the picker's rendered height */
+.ggroup-pop .gp-clear { flex: 0 0 auto; width: 18px; align-self: stretch; height: auto; min-height: 0; min-width: 0; padding: 0; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-md);
+    color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+.ggroup-pop .gp-clear:hover { color: var(--danger); border-color: var(--danger); }
 .ggroup-pop .gp-btns { display: flex; gap: 6px; margin-top: 4px; }
 .ggroup-pop .gp-btns button { flex: 1; min-width: 0; }
 /* premade scheme swatches: each is a chip ringed in the scheme outline, split into an upper "title"
@@ -552,6 +576,18 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    user-added schemes show it the same way) */
 .gp-scheme.sel::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
     border-radius: 50%; background: var(--sel); box-shadow: 0 0 0 1.5px var(--panel); pointer-events: none; }
+/* user-made schemes (id `s_…`; built-ins use their name) carry a small top-left corner triangle so
+   they read apart from the built-in swatches at a glance */
+button.gp-scheme[data-sid^="s_"]::before {
+    position: absolute;
+    content: " ";
+    left: 0px;
+    top: 0px;
+    width: 6px;
+    height: 6px;
+    background: #ffffff;
+    clip-path: polygon(0 0, 0% 100%, 100% 0);
+}
 /* a user-added scheme: hovering the SELECTED swatch swaps that dot for a trashcan that removes it */
 .gp-sw-rm { position: absolute; top: 0; right: 0; width: 15px; height: 15px; display: none;
     align-items: center; justify-content: center; color: #e0503f; background: var(--panel);
@@ -698,4 +734,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .src-ptab th, .src-ptab td { border: 1px solid var(--border); padding: 1px 5px; text-align: left;
     max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .src-ptab th { background: var(--node-head); position: sticky; top: 0; }
+/* raw source-line column: context, not an extracted field — muted + monospace, a touch roomier */
+.src-ptab .src-pline { color: var(--muted); font-family: var(--mono, monospace); max-width: 360px; }
 

@@ -294,6 +294,10 @@ function renderBatchesList(ds, batches) {
     if (list._empty) { list.replaceChildren(); list._empty = false; }   // clear the placeholder once
     const want = new Set(batches.map((b) => b.batch));
     for (const [k, r] of rows) if (!want.has(k)) { r.li.remove(); rows.delete(k); }
+    // drop any stray placeholder (the node_parts "loading…" template li, or a prior "no
+    // batches yet") — it's not a tracked batrow, so the reconcile loop never removes it and
+    // rows insertBefore it, leaving it stranded. Steady state finds none -> zero mutations.
+    for (const c of [...list.children]) if (!c.classList.contains("batrow")) c.remove();
     let i = 0;
     for (const b of batches) {
         let r = rows.get(b.batch);

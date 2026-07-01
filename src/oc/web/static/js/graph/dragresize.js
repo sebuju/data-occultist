@@ -41,14 +41,18 @@ export function hideSizeHud() { if (_sizeHud) _sizeHud.style.display = "none"; }
 // graph nodes, style.left for floating panels).
 // `snapEdge(axis, value)` (optional) snaps a moving edge to nearby alignment lines — floating
 // panels pass it so resize lines up with other panels; graph nodes leave it null.
-// `onReset` (optional) adds a small dot centred between the two grips that restores the
-// element's default size on click — revealed, like the grips, only while hovering the element.
+// `onResetW` / `onResetH` (optional) each add small hover-revealed reset dots clustered beside the
+// bottom-corner grip(s): a WIDTH dot beside the grip resets width, a HEIGHT dot on top of it resets
+// height. The pair is mirrored to the LEFT corner too wherever a left grip exists. Shift-clicking
+// ANY dot resets BOTH axes (calls both callbacks). A dot is only added when its callback is given,
+// so a width-only element gets just the width dots.
 // `screenClamp` (panels only) caps the new size so the element never grows past the viewport
 // edges — its anchored top + fixed corner stay put, so only the moving edge/bottom is limited,
 // leaving `margin` px clear. Graph nodes leave it off (they live in zoomed/panned canvas space,
 // not viewport space, so a viewport clamp would be meaningless there).
-export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onResizeStart = null, onSettle = null, snapEdge = null, onReset = null, screenClamp = false, margin = 0, bottomMargin = null } = {}) {
+export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onResizeStart = null, onSettle = null, snapEdge = null, onResetW = null, onResetH = null, screenClamp = false, margin = 0, bottomMargin = null } = {}) {
     if (el.querySelector(":scope > .rz-grip")) return;   // once only
+    el.classList.add("rz-host");   // marks the near-hover cluster parent (CSS :has reveals grips/dots)
     const q = (v) => (snapGrid ? snapUp(v) : v);   // grid-step nodes (round up); panels resize smoothly
     for (const side of ["left", "right"]) {
         if (side === "left" && !left) continue;            // left grip needs a left-edge accessor
@@ -108,13 +112,25 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
             document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
         });
     }
-    // reset-size dot, centred between the grips (hover-revealed via CSS like the grips)
-    if (onReset) {
+    // reset-size dots (hover-revealed via CSS like the grips), clustered beside each bottom-corner
+    // grip: a WIDTH dot beside the grip + a HEIGHT dot on top of it. Mirrored to the LEFT corner too
+    // (only where a left grip exists — i.e. `left` was given). A plain click resets that dot's own
+    // axis; Shift+click resets BOTH axes (fires whichever callbacks exist).
+    const mkReset = (axis, corner, resetOwn) => {
         const r = document.createElement("div");
-        r.className = "rz-reset"; r.title = "reset size";
+        r.className = `rz-reset rz-reset-${axis} rz-reset-${corner}`;
+        r.title = `reset ${axis === "w" ? "width" : "height"} (shift: both)`;
         el.appendChild(r);
         r.addEventListener("mousedown", (ev) => { ev.preventDefault(); ev.stopPropagation(); });   // don't start a drag/resize
-        r.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); onReset(); });
+        r.addEventListener("click", (ev) => {
+            ev.preventDefault(); ev.stopPropagation();
+            if (ev.shiftKey) { onResetW && onResetW(); onResetH && onResetH(); }   // both axes
+            else resetOwn();
+        });
+    };
+    for (const corner of (left ? ["r", "l"] : ["r"])) {   // left cluster only when a left grip exists
+        if (onResetW) mkReset("w", corner, onResetW);
+        if (onResetH) mkReset("h", corner, onResetH);
     }
 }
 

@@ -67,15 +67,17 @@ export function triggerParts(t, model) {
         const cur = t.sound || "";
         const sopt = (s) => h("option", { selected: s === cur }, s);
         const vol = t.volume == null ? 1 : t.volume;
+        // preview button + volume row only make sense once a sound is picked — hide them at "none"
+        // (the select's change handler rebuilds the node, so picking a sound re-shows them).
         sound = frag(
             labCell("sound", "optional sound played (in the browser) when it fires"),
             h("span", { class: "tg-secs" },
                 h("select", { class: "tg-sound" },
                     h("option", { value: "", selected: !cur }, "none"),
                     model.sounds.map(sopt)),
-                h("button", { class: "tg-sound-preview", title: "play this sound" }, "▶")),
-            labCell("volume", "playback volume for the sound"),
-            h("span", { class: "tg-secs" },
+                cur && h("button", { class: "tg-sound-preview", title: "play this sound" }, "▶")),
+            cur && labCell("volume", "playback volume for the sound"),
+            cur && h("span", { class: "tg-secs" },
                 h("input", { class: "tg-volume", type: "range", min: "0", max: "1", step: "0.05", value: vol }),
                 h("span", { class: "tg-volnum muted" }, `${Math.round(vol * 100)}%`)));
     }
@@ -84,9 +86,10 @@ export function triggerParts(t, model) {
         title: h("input", { class: "gi gi-id tgrename", value: t.id, title: "rename trigger" }),
         body: frag(
             h("div", { class: "lab-grid" },
+                targets,
                 labCell("kind", "how the trigger decides to fire"),
                 h("select", { class: "tg-kind" }, KINDS.map(kopt)),
-                interval, watch, targets, sound,
+                interval, watch, sound,
                 labCell("progress", "what the current/last sweep is doing"),
                 h("span", { class: "tg-prog muted" }, "idle"),
                 labCell("last fired", "last time this trigger fired"),

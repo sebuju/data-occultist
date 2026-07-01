@@ -19,6 +19,7 @@ function remapNodeState(mapId) {
     // A satellite id embeds its parent's id (`prev:<win>` / `vt:<parentNodeId>`); a parent rename
     // only maps the bare parent id, so widen mapId to also carry the parent's satellites along.
     const mapSat = (id) => {
+        if (id.startsWith("vtd:")) { const np = mapId(id.slice(4)); return np ? `vtd:${np}` : null; }
         if (id.startsWith("vt:")) { const np = mapId(id.slice(3)); return np ? `vt:${np}` : null; }
         if (id.startsWith("prev:")) { const np = mapId(`win:${id.slice(5)}`); return np && np.startsWith("win:") ? `prev:${np.slice(4)}` : null; }
         return null;
@@ -64,10 +65,13 @@ export function forgetNodeState(id) {
     if (p[0] === "win") winPage.delete(p[1]);
     const tables = model.profile.layout?.tables;
     if (tables) { delete tables[id]; if (p[0] === "ds") delete tables[`bat:${p[1]}`]; }
-    // a node's satellite (preview / vt-table) dies with it — forget its visibility + slot too
-    const sat = (p[0] === "ds" || p[0] === "sub" || p[0] === "src") ? `vt:${id}` : p[0] === "win" ? `prev:${p[1]}` : null;
-    if (sat) { model.shownSatellites.delete(sat); pos.delete(sat); nodeSizes.delete(sat); collapsed.delete(sat); }
-    groups.forgetNodes(new Set(sat ? [id, sat] : [id]));
+    // a node's satellite(s) die with it — forget visibility + slot too. A file source carries TWO
+    // (vt: kept rows + vtd: dismissed rows); dataset/subset one; a window its preview.
+    const sats = (p[0] === "ds" || p[0] === "sub") ? [`vt:${id}`]
+        : p[0] === "src" ? [`vt:${id}`, `vtd:${id}`]
+        : p[0] === "win" ? [`prev:${p[1]}`] : [];
+    for (const sat of sats) { model.shownSatellites.delete(sat); pos.delete(sat); nodeSizes.delete(sat); collapsed.delete(sat); }
+    groups.forgetNodes(new Set([id, ...sats]));
 }
 
 // THE rename flow for node-id renames. Guard via the model rename (restore the field + bail on a
