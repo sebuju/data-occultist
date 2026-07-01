@@ -17,6 +17,17 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
     title = incoming.window_title_hint or existing.window_title_hint
     process_names = incoming.process_names or existing.process_names
 
+    # Game-level worthiness gate: like datasets/dictionaries it's game-scoped, so a
+    # single-window teach save carries none — upsert by id and preserve existing, never
+    # wipe the gate on an unrelated window save. (The graph editor saves the whole
+    # profile with merge=false, so deletions there still propagate.)
+    detect = {d.id: d for d in existing.detect}
+    for d in incoming.detect:
+        detect[d.id] = d
+    # gate combine-mode: a single-window teach save doesn't carry the game gate, so keep
+    # existing unless the incoming edit actually brought gate detectors (the game-node save).
+    detect_mode = incoming.detect_mode if incoming.detect else existing.detect_mode
+
     fields = {f.id: f for f in existing.fields}
     for f in incoming.fields:
         fields[f.id] = f  # incoming overrides same-id
@@ -55,6 +66,8 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
         name=name,
         process_names=process_names,
         window_title_hint=title,
+        detect=list(detect.values()),
+        detect_mode=detect_mode,
         fields=list(fields.values()),
         windows=list(windows.values()),
         datasets=list(datasets.values()),

@@ -52,6 +52,9 @@ _FLUSH_ROWS = 64           # ...or flush sooner once this many rows are buffered
 # display. A code not in here is rejected on write (so it can't smuggle a delimiter in).
 OPS = {
     "tk": "tick",        # win: — one whole collection pass
+    "ga": "pre-OCR gate", # game — cheap worthiness check (no OCR); runs every tick
+    "go": "gate->ocr",   # game — gate opened => the OCR-heavy path ran (gate-triggered OCR)
+    "gn": "gate, no window", # game — gate opened but classify found no window (wasted OCR)
     "oc": "ocr",         # win: — OCR inference only (the dominant cost)
     "cp": "capture",     # win: — window grab (capture backend)
     "st": "settle",      # win: — settle thumbnail + staleness diff

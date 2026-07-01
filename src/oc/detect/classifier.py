@@ -30,9 +30,10 @@ class DetectClassifier(WindowClassifier):
 
     @staticmethod
     def _cheap_first(detectors):
-        """Template detectors (a few ms of matchTemplate) before text detectors (a full
-        OCR pass), so a failing cheap detector short-circuits ``all()`` before any OCR."""
-        return sorted((d for d in detectors if d.enabled), key=lambda d: 0 if d.template else 1)
+        """Cheap detectors (template / colour — a few ms, no OCR) before text detectors
+        (a full OCR pass), so a failing cheap detector short-circuits ``all()`` before any
+        OCR. ``DetectDef.is_cheap`` is the single source of "needs no OCR"."""
+        return sorted((d for d in detectors if d.enabled), key=lambda d: 0 if d.is_cheap else 1)
 
     def _window_matches(self, window: WindowDef, frame: Frame) -> bool:
         active = self._cheap_first(window.detect)
@@ -70,9 +71,23 @@ class DetectClassifier(WindowClassifier):
         boxes = []
         for w in profile.windows:
             for d in w.detect:
-                if d.enabled and d.text and not d.template:
+                # text-kind = needs OCR = not a cheap (template/colour) detector. Includes an
+                # empty-text "any text present" detector.
+                if d.enabled and not d.is_cheap:
                     boxes.append(d.search.to_fraction().to_pixels(frame.client.w, frame.client.h))
         return boxes
+
+    def gate_active(self, frame: Frame, profile: GameProfile) -> bool:
+        """Live-mode worthiness gate. Evaluate the profile's game-level ``detect`` list
+        using ONLY cheap (no-OCR) detectors and return True if ANY passes (OR), honouring
+        each detector's ``negate`` polarity. No ``prewarm``, no text reads — a few ms of
+        matchTemplate / colour-mask. An empty (or all-non-cheap) gate means "no gate" ->
+        always active, so the collector behaves exactly as before."""
+        cheap = [d for d in profile.detect if d.enabled and d.is_cheap]
+        if not cheap:
+            return True
+        passes = (detector_passes(self._matcher.matches(d, frame), d.negate) for d in cheap)
+        return combine_passes(passes, profile.detect_mode)
 
     def classify(self, frame: Frame, profile: GameProfile) -> tuple[str, str | None] | None:
         # On GPU, recognise every window's title box in ONE batched pass up front (prewarm

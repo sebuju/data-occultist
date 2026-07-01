@@ -136,6 +136,7 @@ def _migrate_detect_thresholds(raw: dict) -> dict:
         for d in dets or []:
             if isinstance(d, dict) and d.get("threshold") is None:
                 d["threshold"] = DEFAULT_DETECT_THRESHOLD
+    _fix(raw.get("detect"))   # game-level worthiness gate
     for w in raw.get("windows") or []:
         if not isinstance(w, dict):
             continue

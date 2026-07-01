@@ -25,8 +25,12 @@ tuning:
   accept_confidence: 0.88   # >= this: trust + learn the term
   min_confidence: 0.50      # worst-field floor; below -> drop record
   confirm_frames: 2         # stable frames required before saving (anti-popup)
-  collect_interval: 1.0     # seconds between collection ticks (the throttle); lower
-                            #   for faster-changing views, 0 = tick as fast as possible
+  collect_interval: 1.0     # OCR throttle: OCR-heavy path runs at most once per this many
+                            #   seconds; lower for faster-changing views, 0 = no throttle
+  gate_interval: 0.25       # fast poll of the cheap worthiness gate (no OCR); idle ticks
+                            #   stay cheap while an OCR-worthy phase is caught promptly
+  live_gate: true           # honour the game-level detect gate (skip OCR while no worthy
+                            #   phase is up); no-op when a profile declares no gate
   require_foreground: false  # true only if using screen-region capture
 
 profiles_dir: config/games

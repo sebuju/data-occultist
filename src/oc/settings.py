@@ -28,16 +28,24 @@ class Tuning:
     ``confirm_frames`` — how many consecutive stable observations a record needs
     before it is written; defeats transient floating windows / popups.
 
-    ``collect_interval`` — seconds the collection loop sleeps between ticks (the
-    throttle). 1.0 suits static catalogue screens; lower it to read faster-changing
-    views. Callers that don't pass an explicit interval fall back to this. 0 = no
-    sleep (tick as fast as the pipeline allows).
+    ``collect_interval`` — the OCR throttle: the OCR-heavy path runs at most once per
+    this many seconds. 1.0 suits static catalogue screens; lower it to read
+    faster-changing views. Callers that don't pass an explicit interval fall back to
+    this. 0 = no throttle (OCR every gate poll the pipeline allows).
+
+    ``gate_interval`` — the fast poll rate: how often the loop checks the cheap
+    worthiness gate (no OCR). Much smaller than ``collect_interval`` so an OCR-worthy
+    phase is caught promptly while idle ticks stay cheap. ``live_gate`` master-switches
+    the gate off (collector classifies every settled frame, the historical behaviour);
+    it's a no-op anyway when a profile declares no game-level ``detect`` gate.
     """
 
     accept_confidence: float = 0.88
     min_confidence: float = 0.50
     confirm_frames: int = 2
     collect_interval: float = 1.0
+    gate_interval: float = 0.25
+    live_gate: bool = True
     # Only collect while the game window is focused. False suits window-targeted
     # capture (printwindow), which reads the window even when backgrounded.
     require_foreground: bool = False
@@ -89,6 +97,8 @@ class Settings:
                 min_confidence=t.get("min_confidence", s.tuning.min_confidence),
                 confirm_frames=t.get("confirm_frames", s.tuning.confirm_frames),
                 collect_interval=t.get("collect_interval", s.tuning.collect_interval),
+                gate_interval=t.get("gate_interval", s.tuning.gate_interval),
+                live_gate=t.get("live_gate", s.tuning.live_gate),
                 require_foreground=t.get("require_foreground", s.tuning.require_foreground),
                 detect_removals=t.get("detect_removals", s.tuning.detect_removals),
             )

@@ -78,6 +78,8 @@ class TickStatus(str, Enum):
     no_window = "no_window"
     not_foreground = "not_foreground"
     moving = "moving"                      # screen still animating/scrolling — wait for it to settle
+    idle = "idle"                          # worthiness gate inactive — no OCR-worthy phase on screen
+    throttled = "throttled"                # in a phase, but between OCR slots (two-rate) — skip OCR, hold
     unrecognised = "unrecognised"          # no profile window matched
     state_invalid = "state_invalid"        # window matched but state not save-worthy
     saved = "saved"                        # frame processed (new may be 0)
@@ -282,7 +284,7 @@ class Collector:
 
     # ---- pipeline ----------------------------------------------------------
 
-    def tick(self) -> TickResult:
+    def tick(self, ocr_due: bool = True) -> TickResult:
         from ..store import stats_store
         t0 = time.perf_counter()
         self._tick_no += 1   # counts EVERY tick, so the gap since a dataset was last fed is a subtraction
@@ -312,10 +314,34 @@ class Collector:
             if prev is not None and not settle.is_settled(th, prev):
                 return TickResult(TickStatus.moving)
         t_settle = (time.perf_counter() - _ts) * 1000.0
+
+        # Worthiness gate (pre-OCR): a few-ms cheap check (no OCR) for whether an
+        # OCR-worthy phase is on screen. While it's inactive — or while it's active but
+        # the OCR throttle hasn't elapsed (``ocr_due``) — skip classify/OCR entirely and
+        # report idle, so a continuously-running live session costs almost nothing between
+        # the brief moments worth reading. No game-level gate detectors => always active.
+        if self._tuning.live_gate:
+            _tgate = time.perf_counter()
+            active = eng.classifier.gate_active(frame, self._profile)
+            # benchmark the cheap pre-OCR check on EVERY tick (idle ones too — that's the
+            # common case the gate exists to make cheap), not only when it passes.
+            stats_store.record_timing(self._profile.name, "game", "ga",
+                                      (time.perf_counter() - _tgate) * 1000.0)
+            if not active:
+                return TickResult(TickStatus.idle)   # gate closed: no OCR-worthy phase
+        # Two-rate throttle: between OCR slots, hold without classifying/OCR-ing. Distinct from
+        # idle — we ARE in a phase (the gate is open / absent), just not re-reading this tick, so
+        # the live view keeps showing the current window instead of flickering to "idle".
+        if not ocr_due:
+            return TickResult(TickStatus.throttled)
+
         _tc = time.perf_counter()
         match = self._classify(frame)
         t_classify = (time.perf_counter() - _tc) * 1000.0
         if match is None:
+            # gate opened (we're past the worthiness check) yet no window classified — wasted
+            # OCR. Attributed to the game node (the gate's owner) so the rate is visible.
+            stats_store.record_timing(self._profile.name, "game", "gn", t_classify)
             return TickResult(TickStatus.unrecognised)
 
         window_id, state_id = match
@@ -346,8 +372,11 @@ class Collector:
             # cache-hit frame does no OCR, so recording it would understate the real cost).
             _oc = time.perf_counter()
             records = self._reader.read(frame, window, fields)
-            stats_store.record_timing(self._profile.name, f"win:{window_id}", "oc",
-                                      (time.perf_counter() - _oc) * 1000.0, n=len(records))
+            oc_ms = (time.perf_counter() - _oc) * 1000.0
+            stats_store.record_timing(self._profile.name, f"win:{window_id}", "oc", oc_ms, n=len(records))
+            # the gate let this OCR through — mirror its cost onto the game node (the gate owner)
+            # so "gate->ocr" shows how often / how long the worthiness gate triggered OCR.
+            stats_store.record_timing(self._profile.name, "game", "go", oc_ms, n=len(records))
             if sig is not None:
                 self._frame_cache[window_id] = (sig, records)
 
@@ -502,11 +531,20 @@ class Collector:
         from .triggers import TriggerRunner
         return TriggerRunner(self._profile, self._engine.settings.data_dir)
 
+    # Pre-classify early returns: the tick never reached the OCR-heavy path, so they
+    # don't "spend" an OCR slot (the throttle clock isn't reset on them).
+    _HEAVY_SKIPPED = {TickStatus.idle, TickStatus.throttled, TickStatus.moving,
+                      TickStatus.no_window, TickStatus.not_foreground}
+
     def run(self, interval: float | None = None, on_tick=None, should_stop=None) -> None:
         """Loop ticks until interrupted. ``on_tick(TickResult)`` is called each pass.
 
-        ``interval`` — seconds slept between ticks (the throttle). ``None`` falls back to
-        ``tuning.collect_interval`` so the loop rate is a setting, not a hard-coded 1.0.
+        Two-rate: the loop polls the cheap worthiness gate every ``tuning.gate_interval``
+        (fast, no OCR), but the OCR-heavy path runs at most once per ``interval`` — the
+        slow OCR throttle. ``interval`` defaults to ``tuning.collect_interval``. A frame
+        that the gate rejects (or that is throttled between OCR slots) returns ``idle``
+        cheaply; the OCR clock only advances when a frame actually passes the gate, so an
+        OCR-worthy screen is read promptly the moment it appears.
 
         ``should_stop`` — optional predicate checked before every tick AND in place of the
         plain ``sleep``, so a worker thread can end the loop promptly (the CLI relies on
@@ -517,10 +555,16 @@ class Collector:
         when due. Sweeps run in their own background threads, so capture never blocks."""
         if interval is None:
             interval = self._tuning.collect_interval
+        gate_interval = self._tuning.gate_interval
         triggers = self._build_triggers()
+        last_ocr = float("-inf")   # perf_counter of the last OCR-heavy tick (monotonic)
         try:
             while not (should_stop and should_stop()):
-                result = self.tick()
+                now = time.perf_counter()
+                ocr_due = (now - last_ocr) >= interval
+                result = self.tick(ocr_due=ocr_due)
+                if ocr_due and result.status not in self._HEAVY_SKIPPED:
+                    last_ocr = now   # this frame passed the gate and ran the heavy path
                 if on_tick:
                     on_tick(result)
                 # on_change now fires via the dataset change bus (oc.store.changes) — any write,
@@ -528,14 +572,16 @@ class Collector:
                 # The collector only needs to drive the periodic (interval) triggers here.
                 if triggers is not None:
                     triggers.tick()
-                # interruptible wait: poll should_stop so cancel doesn't wait out the interval
+                # Sleep the FAST gate poll, not the OCR interval — so the gate is checked
+                # often and an OCR-worthy phase is caught within ~gate_interval of opening.
+                wait = gate_interval if gate_interval > 0 else interval
                 if should_stop is not None:
                     slept = 0.0
-                    while slept < interval and not should_stop():
-                        time.sleep(min(0.1, interval - slept))
+                    while slept < wait and not should_stop():
+                        time.sleep(min(0.1, wait - slept))
                         slept += 0.1
                 else:
-                    time.sleep(interval)
+                    time.sleep(wait)
         except KeyboardInterrupt:
             pass
         finally:

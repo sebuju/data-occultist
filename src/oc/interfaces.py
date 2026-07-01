@@ -230,3 +230,11 @@ class WindowClassifier(ABC):
 
     @abstractmethod
     def classify(self, frame: Frame, profile) -> tuple[str, str | None] | None: ...
+
+    def gate_active(self, frame: Frame, profile) -> bool:
+        """Cheap pre-OCR verdict: is an OCR-worthy phase plausibly on screen? Evaluated
+        from the profile's game-level worthiness detectors using NO OCR, so a live loop
+        can poll it often and skip the heavy classify/OCR while nothing worth reading is
+        up. Default: always active (no gate) — a classifier without a cheap gate behaves
+        exactly as before."""
+        return True

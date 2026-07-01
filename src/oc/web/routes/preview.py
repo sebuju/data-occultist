@@ -85,13 +85,15 @@ def _frame_for(engine, profile, game, capture):
 @router.post("/detect")
 def detect(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None),
            prefer_cache: bool = Query(False)):
-    """Evaluate each window detector + state against the image: matched + what it read."""
-    if not profile.windows:
-        return {"detect": {}, "states": {}}
-    window = profile.windows[0]
+    """Evaluate each window detector + state against the image: matched + what it read.
+    Also evaluates the game-level worthiness ``gate`` (cheap, no-OCR detectors)."""
+    window = profile.windows[0] if profile.windows else None
+    if window is None and not profile.detect:
+        return {"detect": {}, "states": {}, "gate": {}}
     # Cache on the stashed image + the detectors that act on it (no fields/lexicon — detect
     # is template/text matching only). A box/detector edit changes the dump → fresh read.
-    cfg = {"window": window.model_dump(mode="json")}
+    cfg = {"window": window.model_dump(mode="json") if window else None,
+           "gate": [d.model_dump(mode="json") for d in profile.detect]}
     cache, key, hit = _ocr_cache_for(game, capture, cfg, prefer_cache)
     if hit is not None:
         return {**hit, "cached": True}
@@ -101,13 +103,17 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
 
     # one job: run the whole detect pass without interleaving with another OCR job
     with ocr_job(engine.ocr) as job:
-        detect = {d.id: matcher.evaluate(d, frame) for d in window.detect}
+        # Game-level worthiness gate — OR over ENABLED detectors, each per its polarity.
+        gate = {d.id: matcher.evaluate(d, frame) for d in profile.detect}
+        gate_enabled = [gate[d.id]["passes"] for d in profile.detect if d.enabled]
+        gate_active = combine_passes(gate_enabled, profile.detect_mode) if gate_enabled else False
+        detect = {d.id: matcher.evaluate(d, frame) for d in window.detect} if window else {}
         # overall window verdict — mirrors the classifier (only ENABLED detectors count,
         # each per its polarity, combined by detect_mode), so the UI shows pass/fail.
-        enabled = [detect[d.id]["passes"] for d in window.detect if d.enabled]
+        enabled = [detect[d.id]["passes"] for d in (window.detect if window else []) if d.enabled]
         window_pass = combine_passes(enabled, window.detect_mode) if enabled else False
         states = {}
-        for s in window.states:
+        for s in (window.states if window else []):
             evs = [matcher.evaluate(d, frame) for d in s.detect]
             states[s.id] = {
                 "matched": bool(evs) and all(e["passes"] for e in evs),
@@ -115,7 +121,7 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
             }
 
     scrollbar = None
-    sc = window.scroll
+    sc = window.scroll if window else None
     if sc and sc.scrollbar:
         from ...collect.scrollbar import scroll_detail
         box = sc.scrollbar.to_fraction().to_pixels(frame.client.w, frame.client.h)
@@ -130,7 +136,8 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
             }
 
     result = {"detect": detect, "states": states, "scrollbar": scrollbar,
-              "window": {"pass": window_pass, "mode": window.detect_mode},
+              "gate": gate, "gate_active": gate_active,
+              "window": {"pass": window_pass, "mode": window.detect_mode if window else "all"},
               "device": getattr(engine.ocr, "device", "cpu"), "ms": round(job.ms)}
     if cache is not None:
         cache.put(key, result)

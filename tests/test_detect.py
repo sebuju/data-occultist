@@ -33,9 +33,18 @@ def test_tiny_substring_matches_partial_only_min_chars_floors():
     assert text_match_score("inventory", "in", min_chars=4) == 0.0
 
 
-def test_empty_is_zero():
+def test_empty_read_is_zero():
     assert text_match_score("x", "") == 0.0
-    assert text_match_score("", "y") == 0.0
+
+
+def test_empty_target_matches_any_text():
+    # empty detector text = "any text present": any non-empty read scores 1.0...
+    assert text_match_score("", "y") == 1.0
+    assert text_match_score("", "anything here") == 1.0
+    # ...but an empty read still fails, and min_chars still gates
+    assert text_match_score("", "") == 0.0
+    assert text_match_score("", "ab", min_chars=4) == 0.0
+    assert text_match_score("", "abcd", min_chars=4) == 1.0
 
 
 def test_partial_waves_through_near_substring():

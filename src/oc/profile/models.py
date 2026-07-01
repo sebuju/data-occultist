@@ -396,6 +396,10 @@ class DetectDef(BaseModel):
     ``template`` is a PNG path (relative to the profile dir) matched within
     ``search`` via template matching. Alternatively ``text`` is OCR'd inside
     ``search`` and compared against ``text`` per the ``match`` knobs below.
+    ``color`` is the cheapest kind — the fraction of pixels in ``search`` near a
+    taught hex colour (``width>0`` restricts it to the box perimeter, for a frame/
+    outline). ``template`` and ``color`` are *cheap* (no OCR), so they can gate the
+    OCR-heavy ``text`` pass — see :meth:`is_cheap` and the live-mode worthiness gate.
     """
 
     id: str
@@ -403,6 +407,12 @@ class DetectDef(BaseModel):
     search: Box
     template: str | None = None
     text: str | None = None
+    # Cheap colour-presence kind (reuses the item-Tell colour primitives). ``color`` is
+    # a hex string; ``tolerance`` the BGR distance that counts as "near"; ``width`` the
+    # perimeter band as a fraction of the box's shorter side (0 = whole-fill colour).
+    color: str | None = None
+    tolerance: int = 32
+    width: float = 0.0
     # 0..1 score required to match. REQUIRED — no baked-in default; the UI seeds new
     # nodes from DEFAULT_DETECT_THRESHOLD and the loader backfills older profiles
     # (_migrate_detect_thresholds), so the magic number lives in exactly one place.
@@ -415,6 +425,14 @@ class DetectDef(BaseModel):
     # present (score >= threshold). True -> a NEGATIVE detector: passes when the landmark
     # is ABSENT, so the window fails if this landmark IS found (e.g. "not the shop tab").
     negate: bool = False
+
+    @property
+    def is_cheap(self) -> bool:
+        """A detector that needs no OCR — a template or colour probe (a few ms). The
+        classifier runs these first (so a failing cheap detector short-circuits the OCR
+        text pass) and the live-mode gate uses ONLY these to decide whether OCR is worth
+        running this frame. A detector with ``text`` set is never cheap."""
+        return bool(self.template or self.color) and not self.text
 
 
 class StateKind(str, Enum):
@@ -971,6 +989,15 @@ class GameProfile(BaseModel):
     # Process executable names to match (case-insensitive), e.g. "Warframe.x64.exe".
     process_names: list[str] = Field(default_factory=list)
     window_title_hint: str | None = None
+    # Live-mode worthiness gate: cheap (no-OCR) detectors that say "an OCR-worthy phase
+    # is on screen". OR-combined — the gate is active if ANY passes. While none pass the
+    # collector stays idle (no classify, no OCR), so a continuously-running live session
+    # costs almost nothing between the brief moments worth reading. Empty = no gate (the
+    # collector classifies every settled frame, the historical behaviour).
+    detect: list[DetectDef] = Field(default_factory=list)
+    # How the gate detectors combine: ``any`` (OR — any anchor arms OCR, the default) or
+    # ``all`` (AND — every anchor must be present). Mirrors ``WindowDef.detect_mode``.
+    detect_mode: DetectCombine = DetectCombine.any
     fields: list[FieldDef] = Field(default_factory=list)
     windows: list[WindowDef] = Field(default_factory=list)
     datasets: list[DatasetDef] = Field(default_factory=list)

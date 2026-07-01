@@ -78,10 +78,12 @@ def text_match_score(
     """
     nw = _norm(want, strip, case_sensitive)
     ng = _norm(got, strip, case_sensitive)
-    if not nw or not ng:
+    if not ng:
         return 0.0
     if len(ng) < min_chars:
         return 0.0
+    if not nw:
+        return 1.0   # empty target = "any text present" — matches any read meeting min_chars
     from rapidfuzz import fuzz
     if mode == "exact":
         return 1.0 if nw == ng else 0.0
@@ -217,16 +219,25 @@ class DetectMatcher:
         )
         return read, score
 
+    def _crop(self, det: DetectDef, frame: Frame):
+        box = det.search.to_fraction().to_pixels(frame.client.w, frame.client.h)
+        return frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
+
     def score(self, det: DetectDef, frame: Frame) -> float:
         """Return a 0..1 confidence that this detector is present."""
         if det.template:
-            box = det.search.to_fraction().to_pixels(frame.client.w, frame.client.h)
             tmpl = load_template(self._dir / det.template)
-            crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
-            return best_match(crop, tmpl)
-        if det.text:
-            return self._text_score(det, frame)[1]
-        return 0.0
+            return best_match(self._crop(det, frame), tmpl)
+        if det.color:
+            # Cheap colour-presence kind — reuse the SAME primitives item Tells score on
+            # (no OCR). ``width>0`` scores only the box perimeter (a frame/outline).
+            from ..collect.tells import border_score, color_score
+            crop = self._crop(det, frame)
+            return (border_score(crop, det.color, det.tolerance, det.width)
+                    if det.width else color_score(crop, det.color, det.tolerance))
+        # otherwise a text detector — read the box. Empty ``text`` means "any text present"
+        # (``text_match_score`` returns 1.0 for any read meeting ``min_chars``).
+        return self._text_score(det, frame)[1]
 
     def matches(self, det: DetectDef, frame: Frame) -> bool:
         return self.score(det, frame) >= det.threshold
@@ -236,14 +247,15 @@ class DetectMatcher:
         runtime path (``score``/``_text_score``), so what the UI shows is what classify()
         does. (The old preview used ``read_region`` — full detection — and silently
         disagreed with the recognition-only runtime read.)"""
-        if det.template:
+        if det.template or det.color:
             s = self.score(det, frame)
             matched = s >= det.threshold
+            label = "(template)" if det.template else "(color)"
             return {"matched": matched, "passes": detector_passes(matched, det.negate),
-                    "negate": det.negate, "read": "(template)",
+                    "negate": det.negate, "read": label,
                     "score": round(s, 2), "threshold": det.threshold}
         read, s = self._text_score(det, frame)
-        matched = bool(det.text) and s >= det.threshold
+        matched = s >= det.threshold   # empty text ("any") scores 1.0 on any read meeting min_chars
         out = {"matched": matched, "passes": detector_passes(matched, det.negate),
                "negate": det.negate, "read": read,
                "score": round(s, 2), "threshold": det.threshold}

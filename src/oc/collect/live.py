@@ -38,6 +38,8 @@ class LiveSession:
         self._written = 0                  # records added/updated this run
         self._frames = 0                   # ticks processed
         self._cur: tuple[str | None, str | None] = (None, None)
+        self._phase = False                # worthiness gate: was the latest tick OCR-worthy?
+        self._last_status = "no_window"    # raw TickStatus of the latest tick (why we're not reading)
         self._scroll: tuple[float, float] | None = None   # latest mirror visible row-index span
         self._scroll_meta: dict | None = None             # latest mirror calibration snapshot
         self._t0 = 0.0
@@ -75,6 +77,8 @@ class LiveSession:
             self._written = 0
             self._frames = 0
             self._cur = (None, None)
+            self._phase = False
+            self._last_status = "no_window"
             self._scroll = None
             self._scroll_meta = None
             self._error = None
@@ -133,14 +137,23 @@ class LiveSession:
         with self._lock:
             self._frames += 1
             self._written += result.new
+            self._last_status = result.status.value   # why we are / aren't reading right now
+            # phase = we're in an OCR-worthy screen. A `saved` tick read it; a `throttled` tick
+            # is the SAME screen between two-rate OCR slots (not re-read) — both count as "in a
+            # phase", so the live view stays steady instead of flickering to idle every slot.
             if result.status is TickStatus.saved:
+                self._phase = True
                 self._cur = (result.window_id, result.state_id)
                 self._scroll = result.scroll   # None unless a mirror dataset read its scrollbar
                 self._scroll_meta = result.scroll_meta
                 key = f"{result.window_id}/{result.state_id}"
+            elif result.status is TickStatus.throttled:
+                self._phase = True             # still in the phase; KEEP _cur (don't reset)
+                key = "throttled"
             else:
+                self._phase = False
                 self._cur = (None, None)
-                key = result.status.value   # no_window / not_foreground / unrecognised / state_invalid
+                key = result.status.value   # idle / no_window / not_foreground / unrecognised / state_invalid
             self._recog[key] = self._recog.get(key, 0) + 1
 
     # ---- status ------------------------------------------------------------
@@ -157,9 +170,12 @@ class LiveSession:
                 "fps": round(self._frames / elapsed, 1) if running else 0.0,
                 "window": self._cur[0],
                 "state": self._cur[1],
+                "phase": self._phase and running,   # worthiness gate: currently reading an OCR-worthy screen
+                "gated": bool(self._profile.detect),  # whether a gate is configured at all
+                "phase_status": self._last_status,  # raw TickStatus — distinguishes gate-closed from no-window
                 "scroll": list(self._scroll) if self._scroll else None,   # [vlo,vhi] row-index span, or null
                 "scroll_meta": self._scroll_meta,   # {total,viewport,gain,confident,pinned} or null
-                "recognized": [{"key": k, "count": n, "miss": k in ("", "unrecognised", "no_window")}
+                "recognized": [{"key": k, "count": n, "miss": k in ("", "idle", "unrecognised", "no_window")}
                                for k, n in sorted(self._recog.items(), key=lambda kv: kv[1], reverse=True)],
                 "error": self._error,
             }
