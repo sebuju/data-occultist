@@ -16,7 +16,7 @@ import { GRID, snap, snapUp, showSizeHud, hideSizeHud, addResizeGrips, beginDrag
 import { floatWins } from "./floatwin.js";
 import { playSound } from "./sound.js";
 import { setTableStore } from "./table.js";
-import { setVTableStore } from "../vtable.js";
+import { setVTableStore, reapplyPersistedVTables, vtableById, liveVTables } from "../vtable.js";
 import { initPersist, persist, setScrubHook } from "./persist.js";
 import * as prettyOverrides from "../pretty/overrides.js";
 import { buildBackups } from "./backups.js";
@@ -66,7 +66,8 @@ import {
 import {
     pc, pcState, buildPrecap,
 } from "./panels/precap.js";
-import { pushHistory, resetHistory, undo, redo } from "./history.js";
+import { pushHistory, resetHistory, undo, redo, hist } from "./history.js";
+import { createHistoryPanel } from "../history_panel.js";
 import { workers, unregisterWorker } from "./workers.js";
 import {
     closeImage, openImage, openGameImage, armColorPick, refreshDetect, nodeIdOf,
@@ -226,7 +227,11 @@ function collectLayout() {
     // cleaned from the profile on the next write.
     delete L.float_windows;
 }
-function hydrateLayout() {
+// Node-spatial layout ONLY (positions/sizes/collapse, groups, satellites, open-image LIST).
+// SHARED by the initial load and by an undo/redo restore (CLAUDE.md rule 7) — everything here is
+// in-history state the user asked to keep. Deliberately does NOT reset the floating panels (that's
+// session-only, load path only): an undo must never yank the history panel itself shut.
+function hydrateNodeLayout() {
     pos.clear(); nodeSizes.clear(); collapsed.clear();
     const L = model.profile.layout || {};
     for (const [id, n] of Object.entries(L.nodes || {})) {
@@ -242,9 +247,23 @@ function hydrateLayout() {
     groups.hydrate(L.groups);
     groups.hydrateSuper(L.super_groups);   // after groups (super groups reference group ids)
     groups.hydrateSub(L.sub_groups);       // after groups (sub groups reference a parent group + its nodes)
+}
+function hydrateLayout() {
+    hydrateNodeLayout();
     // floating panels are session-only: never restored from the profile -> always start at their
-    // defaults (all hidden). hydrate(undefined) resets each to its _default state.
+    // defaults (all hidden). hydrate(undefined) resets each to its _default state. LOAD path only.
     for (const [, w] of floatWins()) w.hydrate(undefined);
+}
+
+// Open/close window image canvases to match `pendingOpenImages` (set by hydrateNodeLayout from the
+// restored layout). Used by an undo/redo restore so "which window images are open" travels with
+// history. Must run AFTER render() so openImage can resolve each window node's live host.
+async function reconcileOpenImages() {
+    const want = new Set(pendingOpenImages);
+    pendingOpenImages = [];
+    for (const winId of [...openImages]) if (!want.has(winId)) closeImage(winId);   // close the ones no longer wanted
+    await Promise.all([...want].map((winId) =>
+        (!openImages.has(winId) && model.window(winId) ? openImage(winId) : null)));
 }
 
 // Per-device viewport (canvas zoom/pan) ↔ the gitignored sidecar. Floating panels are not
@@ -276,6 +295,9 @@ initPersist({
     model,
     collectLayout,
     collectLocal,
+    // a pure layout move (drag/resize/collapse/group/open-image/satellite/table width) is an
+    // undoable edit now, so the layout funnel records history too (config edits push via autosave).
+    recordHistory: () => pushHistory(),
     onContentSaved: (err) => {
         if (err) { setStatus(err); return; }
         setStatus("saved ✓");
@@ -3133,6 +3155,42 @@ buildDBStruct();
 $("dbstructBtn")?.classList.toggle("active", dbState.visible);
 $("dbstructBtn")?.addEventListener("click", () => dbWin.setVisible(!dbState.visible, true));
 
+// edit-history panel: the node graph's own history (independent of Pretty's). Reads the graph
+// `hist` instance; clicking a row travels there. Session-only geometry like the other panels.
+const histState = { visible: false, x: null, y: null, w: 300, h: null, collapsed: false };
+const histWin = createHistoryPanel({
+    hist, id: "history", title: "edit history", state: histState,
+    onPersist: () => persist.layout(),
+    onShow: () => $("historyBtn")?.classList.toggle("active", true),
+    onHide: () => $("historyBtn")?.classList.toggle("active", false),
+});
+$("historyBtn")?.classList.toggle("active", histState.visible);
+$("historyBtn")?.addEventListener("click", () => histWin.setVisible(!histState.visible, true));
+
+// read-only e2e introspection (playwright), same convention as window.__routes (routing.js).
+// `edit` drives the REAL funnel (model mutate + render + autosave -> pushHistory) so the test
+// exercises the production path, not the history engine in isolation.
+if (typeof window !== "undefined") {
+    window.__nodeHistory = {
+        state: () => ({ index: hist.index(), len: hist.entries().length, labels: hist.entries().map((e) => e.label) }),
+        booting: () => boot.phase,
+        datasets: () => model.datasets(),
+        edit: (name) => { const id = model.addDataset(name || "e2e_ds"); render(); autosave(null); return id; },
+        // layout edit through the REAL funnel (pos update + persist.layout -> recordHistory)
+        nodePos: (id) => { const p = pos.get(id); return p ? { x: p.x, y: p.y } : null; },
+        moveNode: (id, x, y) => { pos.set(id, { x, y }); render(); persist.layout(); },
+        // vttable column width through the real funnel: write the store, apply live, persist -> record.
+        firstTable: () => { const v = liveVTables()[0]; return v && v.columns[0] ? { id: v.id, col: v.columns[0], width: v.widths[v.columns[0]] ?? null } : null; },
+        tableWidth: (id, col) => { const v = vtableById(id); return v ? (v.widths[col] ?? null) : null; },
+        setTableWidth: (id, col, px) => {
+            const L = (model.profile.layout = model.profile.layout || {});
+            const t = (L.tables = L.tables || {}); const st = (t[id] = t[id] || {}); (st.widths = st.widths || {})[col] = px;
+            reapplyPersistedVTables(); persist.layout();
+        },
+        undo: () => undo(), redo: () => redo(), jump: (i) => hist.jumpTo(i),
+    };
+}
+
 buildToolbox();
 $("createBtn")?.classList.toggle("active", tbState.visible);
 $("createBtn")?.addEventListener("click", () => tb.setVisible(!tbState.visible, true));
@@ -3150,7 +3208,7 @@ $("precapBtn").addEventListener("click", () => {
 // of toggling it. Capture phase so it can pre-empt the normal toggle handler above. If the
 // panel is already open we reset in place and suppress the toggle (which would hide it); if
 // it's closed/not-built we let the toggle open it, then reset on the next tick.
-const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", nodemapBtn: "nodemap", nodelistBtn: "nodelist", activityBtn: "activity", testingBtn: "testing", statsBtn: "stats", dbstructBtn: "dbstruct" };
+const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", nodemapBtn: "nodemap", nodelistBtn: "nodelist", activityBtn: "activity", testingBtn: "testing", statsBtn: "stats", dbstructBtn: "dbstruct", historyBtn: "history" };
 for (const [btnId, panelId] of Object.entries(_PANEL_TOGGLES)) {
     $(btnId)?.addEventListener("click", (ev) => {
         if (!ev.shiftKey) return;
@@ -3168,7 +3226,7 @@ let _hiddenNodePanels = [];
 
 // Node-view floating panels belong to the node view: hide them while in pretty, restore the
 // ones that were open on return (open state remembered, never reset).
-const _NODE_PANELS = ["nodemap", "nodelist", "activity", "testing", "stats", "dbstruct", "toolbox", "live", "precap"];
+const _NODE_PANELS = ["nodemap", "nodelist", "activity", "testing", "stats", "dbstruct", "history", "toolbox", "live", "precap"];
 function setNodePanelsHidden(hidden) {
     if (hidden) {
         _hiddenNodePanels = [];
@@ -3523,6 +3581,7 @@ function glideStep(el) {
 const NUDGE = { w: [0, -1], a: [-1, 0], s: [0, 1], d: [1, 0] };
 const MINB = 0.004;
 document.addEventListener("keydown", (ev) => {
+    if (prettyActive) return;   // pretty view owns the keyboard (incl. its OWN undo/redo) while up
     if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
     if (ev.ctrlKey || ev.metaKey) {
         const k = ev.key.toLowerCase();
@@ -3768,6 +3827,25 @@ function wireOcrYield(el) {
     });
 }
 
+// ---- debug launch: ?debug=1 skips the slow/heavy boot ceremony ----------------
+// A dev/inspect launch that comes up instantly by defaulting every slow-or-noisy boot
+// step OFF. Each piece is individually toggleable so you can turn just one back on:
+//   /?debug=1                every slow step off (fastest: bare shell, no OCR touched)
+//   /?debug=1&load=1         load the game but skip the kill/settle waits + veil/log
+//   /?debug=1&settle=1       load AND wait for boot OCR to drain (but no kill/veil/log)
+//   /?kill=1&veil=1&...      force any single step back on regardless of debug
+// Booleans read "0"/"false" as off, anything else (incl. bare "?veil") as on.
+const _dq = new URLSearchParams(location.search);
+const _flag = (k, dflt) => { const v = _dq.get(k); return v === null ? dflt : (v !== "0" && v !== "false"); };
+const dbg = { on: _flag("debug", false) };
+// when debug is on each slow step defaults OFF; `load` stays on (an empty shell is rarely useful).
+dbg.kill    = _flag("kill",    !dbg.on);   // kill+await any stray OCR worker from a prior session
+dbg.settle  = _flag("settle",  !dbg.on);   // block the veil until the boot OCR round drains (bootSettle)
+dbg.veil    = _flag("veil",    !dbg.on);   // full-page boot spinner
+dbg.bootlog = _flag("bootlog", !dbg.on);   // expand the log bar + mirror every request during boot
+dbg.load    = _flag("load",    true);      // load the selected game at all (off ⇒ empty graph, instant)
+if (dbg.on) log(`debug launch: kill=${dbg.kill} settle=${dbg.settle} veil=${dbg.veil} bootlog=${dbg.bootlog} load=${dbg.load}`);
+
 // ---- boot veil: full-page spinner until the initial load has settled ----------
 const veil = {
     drop() {
@@ -3828,10 +3906,11 @@ function haltStartup(msg) {
 // die. Do NOT load the graph until it's confirmed gone — a stray worker keeps hammering
 // the GPU/game and is the thing you'd otherwise have to hunt down in Task Manager.
 async function killStrayOcrThenBoot() {
-    setLogOpen(true);   // show the log history during boot so initial-load progress is visible
+    if (!dbg.veil) veil.drop();   // debug launch: no full-page spinner
+    if (dbg.bootlog) setLogOpen(true);   // show the log history during boot so initial-load progress is visible
     // During boot, mirror EVERY api request into the log bar so the initial-load sequence (and any
     // stuck/slow endpoint) is visible live. Cleared once booted so steady state isn't noisy.
-    api.onApiRequest((ev) => {
+    if (dbg.bootlog) api.onApiRequest((ev) => {
         if (booted) return;
         if (ev.phase === "start") log(`→ ${ev.method} ${ev.path}`);
         else log(`${ev.ok ? "✓" : "✗"} ${ev.method} ${ev.path} · ${ev.ms}ms${ev.ok ? "" : " " + (ev.reason || "failed")}`, ev.ok ? undefined : "err");
@@ -3839,7 +3918,7 @@ async function killStrayOcrThenBoot() {
     // a tripped circuit breaker (an endpoint that kept timing out) surfaces here so the user learns
     // why a panel went quiet — it auto-recovers when the endpoint responds again.
     if (!window._apiGuardWired) { window._apiGuardWired = true; window.addEventListener("api-guard", (e) => { setStatus(String(e.detail)); log(String(e.detail), "err"); }); }
-    try {
+    if (dbg.kill) try {
         log("stopping stray OCR…");
         const r = await api.precapture.killAll();
         if (r.alive && r.alive.length) {
@@ -3859,7 +3938,7 @@ async function killStrayOcrThenBoot() {
         log("loading profile…");
         await refreshGames();
         model.sounds = await api.sounds.list().catch(() => []);   // trigger-sound picker options (global, once)
-        if ($("gameSelect").value) await loadGame($("gameSelect").value);
+        if (dbg.load && $("gameSelect").value) await loadGame($("gameSelect").value);
         // ?view=pretty (the desktop window passes it) boots into the pretty dashboard;
         // a plain browser has no param and stays on the node view.
         if (new URLSearchParams(location.search).get("view") === "pretty") setPrettyView(true);
@@ -3867,7 +3946,7 @@ async function killStrayOcrThenBoot() {
         hub.init(() => model.profile.name);   // single backend heartbeat for every panel
         hub.start();
         log("first read…");
-        await bootSettle();
+        if (dbg.settle) await bootSettle();
         boot.phase = false;   // boot OCR drained -> later reads/edits re-OCR fresh (cache write-through)
     } catch (e) {
         if (!conn.isOnline()) { veil.drop(); return; }   // dropped mid-boot -> offline overlay handles it
@@ -3890,6 +3969,7 @@ killStrayOcrThenBoot();
 // ---- exports consumed by panel modules (imported back from "./main.js") ----
 export {
     focusNode, autosave, placeNewNode, render,
+    collectLayout, hydrateNodeLayout, reconcileOpenImages,   // used by history.js restore
     refreshLive, subsetParts, wireOcrScale, wireOcrYield,
     refreshAllSubsetNodes, refreshDatasetConsumers,
     rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,
