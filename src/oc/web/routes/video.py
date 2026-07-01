@@ -9,6 +9,7 @@ whole detect + OCR chain can be tested with no game running. See
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 
@@ -30,10 +31,17 @@ def _videos_dir() -> Path:
 async def upload(file: UploadFile):
     name = Path(file.filename or "video").name
     dest = _videos_dir() / name
-    with dest.open("wb") as out:
-        shutil.copyfileobj(file.file, out)
-    try:
+    src = file.file
+
+    def _save_and_load():
+        # Both the disk copy and the cv2 VideoCapture open are blocking; a large upload
+        # would freeze the event loop for its whole duration if run inline.
+        with dest.open("wb") as out:
+            shutil.copyfileobj(src, out)
         return get_video_source().load(dest, name)
+
+    try:
+        return await asyncio.to_thread(_save_and_load)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

@@ -8,6 +8,7 @@ snapshot, not tracked data, so it lives nowhere near ``captures/`` or ``data/``.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime
 from pathlib import Path
@@ -31,7 +32,11 @@ async def stash_screenshot(game: str, request: Request, view: str = Query("canva
         raise HTTPException(status_code=400, detail="empty screenshot body")
     stamp = datetime.now().strftime("%d-%m-%y-%H%M")
     name = f"{_SAFE.sub('_', game)}-{_SAFE.sub('_', view)}-{stamp}.png"
-    _TRASH.mkdir(parents=True, exist_ok=True)
     path = _TRASH / name
-    path.write_bytes(data)
+
+    def _write():
+        _TRASH.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    await asyncio.to_thread(_write)   # a multi-MB PNG write shouldn't block the event loop
     return {"path": str(path), "name": name}

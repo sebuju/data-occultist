@@ -87,7 +87,9 @@ async def events(game: str, request: Request, after: int = 0):
             last = None
             while True:
                 try:
-                    snap = build_activity(game, get_settings())
+                    # build_activity reads disk (sweep sidecars, session status, schedules); at
+                    # 0.8–2.5s cadence that's steady on-loop I/O, so run it OFF the event loop.
+                    snap = await asyncio.to_thread(build_activity, game, get_settings())
                 except Exception:   # a transient build error must not kill the stream
                     await asyncio.sleep(_ACT_IDLE_S)
                     continue
