@@ -220,8 +220,10 @@ async def lifespan(_app: FastAPI):
     except Exception:  # noqa: BLE001 - best-effort
         pass
     try:
-        from ..enrich.price_runner import cancel_all_sweeps
-        cancel_all_sweeps()
+        # Ask every child sweep to stop (cancel flag), let it flush partial data, then hard-stop
+        # + reap any survivor — so no orphaned sweep process outlives the server.
+        from ..enrich.price_runner import shutdown_sweeps
+        shutdown_sweeps()
     except Exception:  # noqa: BLE001 - best-effort
         pass
     try:

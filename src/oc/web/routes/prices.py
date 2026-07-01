@@ -13,10 +13,9 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
-from ...enrich.price_runner import cancel_sweep, start_sweep, sweep_status
+from ...enrich.price_runner import cancel_sweep, producer_for, start_sweep, sweep_status
 from ...profile import list_profiles
 from ...runtime import load_live_profile
-from ...profile.models import ProducerDef
 from ...store import PriceStore
 from ..deps import get_settings
 
@@ -46,17 +45,6 @@ def _profile(game: str):
     return None
 
 
-def _producer_for(profile, dataset: str, *, type: str, mode: str, throttle: float) -> ProducerDef:
-    """The configured producer feeding ``dataset`` (its ``type``/``sources`` decide what it
-    fetches), or an ephemeral node when none is taught — preserving the original behaviour
-    for a dataset with no producer."""
-    if profile is not None:
-        for pn in profile.producers:
-            if pn.dataset == dataset:
-                return pn
-    return ProducerDef(id=dataset, dataset=dataset, type=type, mode=mode, throttle=throttle)
-
-
 # ---- background sweep (orchestrated in enrich.price_runner) -----------------
 
 @router.post("/{game}/refresh")
@@ -69,7 +57,7 @@ def refresh(game: str, dataset: str = "prices", type: str = "warframe_market",
     running is a no-op; if a DIFFERENT node in the same game (or process) is sweeping, returns
     ``blocked`` instead of starting (one sweep/game)."""
     profile = _profile(game)
-    pn = _producer_for(profile, dataset, type=type, mode=mode, throttle=throttle)
+    pn = producer_for(profile, dataset, type=type, mode=mode, throttle=throttle)
     state = start_sweep(get_settings().data_dir, game, pn, profile=profile,
                         timeout=timeout, limit=limit, workers=workers)
     return state.public()

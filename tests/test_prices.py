@@ -428,3 +428,18 @@ def test_clear_stale_locks_removes_orphaned_sweep_locks(tmp_path):
     # idempotent + safe on a clean tree
     assert clear_stale_locks(tmp_path) == []
     assert clear_stale_locks(tmp_path / "missing") == []
+
+
+def test_clear_stale_locks_removes_orphaned_cancel_flags(tmp_path):
+    # A cancel flag stranded by a killed sweep would insta-cancel the NEXT sweep; startup must
+    # clear it alongside the lock. (Cancel files don't count toward the returned "cleared" list.)
+    from oc.enrich.price_runner import _cancel_path, clear_stale_locks
+
+    for game in ("warframe", "other"):
+        p = _cancel_path(tmp_path, game)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("0")
+
+    clear_stale_locks(tmp_path)
+    assert not _cancel_path(tmp_path, "warframe").exists()
+    assert not _cancel_path(tmp_path, "other").exists()

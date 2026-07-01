@@ -13,6 +13,7 @@ from . import price as price_cmd
 from . import prices as prices_cmd
 from . import profiles as profiles_cmd
 from . import serve as serve_cmd
+from . import sweep_job as sweep_job_cmd
 from . import view as view_cmd
 
 
@@ -28,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     prices_cmd.register(sub)
     profiles_cmd.register(sub)
     serve_cmd.register(sub)
+    sweep_job_cmd.register(sub)
     view_cmd.register(sub)
     app_cmd.register(sub)
     return parser
