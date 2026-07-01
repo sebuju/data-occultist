@@ -25,10 +25,11 @@ router = APIRouter(prefix="/api/activity", tags=["activity"])
 _BUSY = {"recording", "processing", "paused"}
 
 
-@router.get("/{game}")
-def activity(game: str) -> dict:
-    """Live jobs for ``game``: running sweeps, the precapture worker (when busy), and the
-    enabled triggers with their next-fire countdown."""
+def build_activity(game: str, settings) -> dict:
+    """The activity snapshot for ``game``: running sweeps, the precapture worker (when busy),
+    the live collector (when running), enabled triggers with next-fire countdown, sources, and
+    OCR device state. Shared by the ``GET /api/activity`` poll (``hub.kick`` / reload adoption)
+    and the pushed ``activity`` SSE channel (:mod:`oc.web.routes.events`)."""
     precap = None
     s = _sessions.get(game)
     if s is not None:
@@ -41,8 +42,14 @@ def activity(game: str) -> dict:
         lst = ls.status()
         if lst.get("running"):
             live = lst
-    settings = get_settings()
     return {"sweeps": active_sweeps(game, settings.data_dir), "blocked": recent_blocked(game),
             "precapture": precap, "live": live,
             "triggers": trigger_schedule(game, settings),
             "sources": source_status(game, settings), "ocr": ocr_state()}
+
+
+@router.get("/{game}")
+def activity(game: str) -> dict:
+    """Live jobs for ``game``: running sweeps, the precapture worker (when busy), and the
+    enabled triggers with their next-fire countdown."""
+    return build_activity(game, get_settings())

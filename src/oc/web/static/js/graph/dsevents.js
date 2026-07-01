@@ -17,13 +17,17 @@
 // gap. Subscribers must tolerate the brief reconnect window (each pairs this push with a slow
 // fallback poll).
 
+import * as conn from "../conn.js";
+
 let game = null;
 let stream = null;
 let lastSeq = 0;            // last activity-log seq seen, so a reconnect's ?after= resumes the log
 let retry = null;
+let downTimer = null;       // grace before declaring offline on a sustained stream failure
 const subs = new Set();
 const flowSubs = new Set();
 const logSubs = new Set();
+const activitySubs = new Set();
 
 // Subscribe to every dataset change. `fn(dataset, n)` — the dataset id and the coalesced row
 // count for this event. Returns an unsubscribe.
@@ -46,6 +50,14 @@ export function subscribeLog(fn) {
     return () => logSubs.delete(fn);
 }
 
+// Subscribe to the pushed ACTIVITY snapshot (worker/device/trigger status), multiplexed on this
+// SAME stream — the push replacement for hub.js's old /api/activity poll, so it isn't timer-
+// throttled when the tab is backgrounded. `fn(snap)` gets the full activity dict. Returns unsub.
+export function subscribeActivity(fn) {
+    activitySubs.add(fn);
+    return () => activitySubs.delete(fn);
+}
+
 // Point the bus at a game (opening or repointing the stream). Idempotent: a no-op when the
 // stream is already open for the same game.
 export function setGame(g) {
@@ -66,6 +78,8 @@ function open() {
         stream.addEventListener("dataset", onMessage);
         stream.addEventListener("flow", onFlow);   // flow hops ride the SAME socket (one connection)
         stream.addEventListener("log", onLog);     // activity-log lines too — one socket for the page
+        stream.addEventListener("activity", onActivity);   // worker/device status — one socket too
+        stream.addEventListener("open", markOk);   // stream up -> we can reach the backend
         // A clean server-side window close (or transient drop) surfaces as `error`. Recreate the
         // source OURSELVES (not native auto-reconnect) so the URL picks up the fresh ?after=lastSeq
         // cursor — otherwise the log backfill refetches from the stale original and dupes.
@@ -74,13 +88,24 @@ function open() {
     } catch { /* EventSource unavailable -> subscribers fall back to their own poll */ }
 }
 
+// The stream is the always-on liveness signal (it inherited that from the old hub poll). Any
+// successful open/message proves the backend is reachable and cancels a pending offline verdict.
+function markOk() {
+    clearTimeout(downTimer); downTimer = null;
+    conn.reportReachable();
+}
+
 function onError() {
     if (stream) { try { stream.close(); } catch { /* */ } stream = null; }
+    // A clean 600s window close reconnects at once, so only a SUSTAINED failure means the server is
+    // gone — arm a grace timer and declare offline only if no successful open lands first (no flap).
+    if (!downTimer) downTimer = setTimeout(() => { downTimer = null; conn.reportUnreachable("event stream lost"); }, 5000);
     clearTimeout(retry); retry = setTimeout(open, 1500);
 }
 
 function close() {
     clearTimeout(retry); retry = null;
+    clearTimeout(downTimer); downTimer = null;
     if (stream) { try { stream.close(); } catch { /* */ } stream = null; }
 }
 
@@ -103,4 +128,11 @@ function onLog(e) {
     if (ev.seq && ev.seq <= lastSeq) return;   // dedup across reconnects / backfill overlap
     if (ev.seq) lastSeq = ev.seq;
     for (const fn of logSubs) { try { fn(ev); } catch { /* one bad subscriber must not stall the rest */ } }
+}
+
+function onActivity(e) {
+    markOk();   // a snapshot lands every ~2.5s even when idle -> keeps the reachable signal fresh
+    let snap;
+    try { snap = JSON.parse(e.data); } catch { return; }
+    for (const fn of activitySubs) { try { fn(snap); } catch { /* one bad subscriber must not stall the rest */ } }
 }
