@@ -261,25 +261,3 @@ def test_fresh_reader_sees_all_committed_writes(tmp_path):
     s.record_seen({"name": "b"})
     s.record_seen({"name": "c"})
     assert DatasetStore(tmp_path, "game", "mods").present_count == 3
-
-
-def test_lazy_import_from_jsonl(tmp_path):
-    # A legacy JSONL ledger is imported into the DB on first open and renamed *.bak.
-    import json as _json
-    g = tmp_path / "game"
-    g.mkdir(parents=True)
-    evs = [
-        {"id": 1, "batch": 1, "ts": "t1", "op": "add", "key": "serration",
-         "values": {"name": "Serration", "rank": 5}},
-        {"id": 2, "batch": 1, "ts": "t2", "op": "update", "key": "serration",
-         "values": {"name": "Serration", "rank": 6}, "changed": {"rank": [5, 6]}},
-    ]
-    (g / "mods.history.jsonl").write_text(
-        "\n".join(_json.dumps(e) for e in evs) + "\n", encoding="utf-8")
-    s = DatasetStore(tmp_path, "game", "mods")
-    assert s.present_count == 1
-    assert s.records()[0]["rank"] == 6 and s.records()[0]["_count"] == 2
-    assert not (g / "mods.history.jsonl").exists()
-    assert (g / "mods.history.jsonl.bak").exists()
-    # next id continues past the imported max
-    assert s.record_seen({"name": "Vitality"}).id == 3

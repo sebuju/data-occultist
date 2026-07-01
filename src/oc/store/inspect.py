@@ -28,9 +28,7 @@ def _reader(data_dir: Path | str, game: str, dataset: str,
 
 
 def list_datasets(data_dir: Path | str, game: str) -> list[str]:
-    """Datasets known on disk: registered in the per-game DB, plus any not-yet-imported
-    legacy ``<dataset>.history.jsonl`` ledger (opening it imports it). Both so a dataset
-    stays visible across the SQLite migration."""
+    """Datasets known on disk: those registered in the per-game SQLite DB."""
     names: set[str] = set()
     db = _db_path(data_dir, game)
     if db.exists():
@@ -41,9 +39,6 @@ def list_datasets(data_dir: Path | str, game: str) -> list[str]:
             pass
         finally:
             conn.close()
-    d = _game_dir(data_dir, game)
-    if d.exists():
-        names |= {p.name[: -len(".history.jsonl")] for p in d.glob("*.history.jsonl")}
     return sorted(names)
 
 

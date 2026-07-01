@@ -20,8 +20,7 @@ missing is unkeyable and dropped, never guessed.
 How rows are keyed (which fields, joined how) is taught on the window/item that reads them;
 the resolved key spec is passed in here. The old JSONL ledger + JSON snapshot/summary caches
 are gone — SQLite gives ACID + WAL concurrency, so a reader can never see a stale snapshot
-that lags the ledger (the bug class the previous design fought). A legacy
-``<dataset>.history.jsonl`` is imported into the DB on first open and renamed ``*.bak``.
+that lags the ledger (the bug class the previous design fought).
 """
 
 from __future__ import annotations
@@ -284,14 +283,6 @@ def delete_dataset(data_dir: Path | str, game: str, dataset: str) -> bool:
             conn.execute("ROLLBACK")
             raise
         removed = bool(n1 or n2)
-    # sweep any stray legacy files too (a pre-migration ledger / its .bak)
-    base = Path(data_dir) / game
-    for suf in (".history.jsonl", ".reverted.json", ".state.json", ".summary.json",
-                ".history.jsonl.bak", ".reverted.json.bak", ".state.json.bak"):
-        p = base / f"{dataset}{suf}"
-        if p.exists():
-            p.unlink()
-            removed = True
     return removed
 
 
@@ -368,17 +359,14 @@ class DatasetStore:
         self._clock = clock
         self._no_dedup = getattr(key, "dedup", True) is False
         self._base = base
-        self._jsonl_path = base / f"{dataset}.history.jsonl"
-        self._reverted_path = base / f"{dataset}.reverted.json"
         self._conn = _connect(_db_path(data_dir, game))
         self._next_id = 1
         self._batch = 0
         self._load()
 
-    # ---- load / migrate ----------------------------------------------------
+    # ---- load ---------------------------------------------------------------
 
     def _load(self) -> None:
-        self._maybe_import_jsonl()
         row = self._conn.execute(
             "SELECT next_id, batch, key_meta FROM datasets WHERE dataset=?",
             (self._dataset,)).fetchone()
@@ -418,62 +406,6 @@ class DatasetStore:
         except Exception:
             self._conn.execute("ROLLBACK")
             raise
-
-    def _maybe_import_jsonl(self) -> None:
-        """Import a legacy ``<dataset>.history.jsonl`` ledger into the DB once, then rename
-        the old triplet to ``*.bak`` (kept for rollback). Skipped when the dataset already
-        has rows or no legacy ledger exists."""
-        if not self._jsonl_path.exists():
-            return
-        if self._conn.execute("SELECT 1 FROM events WHERE dataset=? LIMIT 1",
-                              (self._dataset,)).fetchone():
-            return
-        try:
-            lines = [ln for ln in self._jsonl_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-        except OSError:
-            return
-        reverted: set[int] = set()
-        if self._reverted_path.exists():
-            try:
-                reverted = set(json.loads(self._reverted_path.read_text(encoding="utf-8")))
-            except (ValueError, OSError):
-                reverted = set()
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            if self._conn.execute("SELECT 1 FROM events WHERE dataset=? LIMIT 1",
-                                  (self._dataset,)).fetchone():
-                self._conn.execute("ROLLBACK")
-                return
-            max_id = 0
-            max_batch = 0
-            for ln in lines:
-                d = json.loads(ln)
-                ev = ChangeEvent.from_dict(d)
-                k = "" if self._no_dedup else self._key.build(ev.values)
-                self._conn.execute(
-                    "INSERT INTO events(dataset,id,batch,ts,op,key,values_json,changed_json,reverted) "
-                    "VALUES(?,?,?,?,?,?,?,?,?)",
-                    (self._dataset, ev.id, ev.batch, ev.ts, ev.op.value, k,
-                     json.dumps(ev.values, default=str),
-                     json.dumps(ev.changed) if ev.changed else None,
-                     1 if ev.id in reverted else 0))
-                max_id = max(max_id, ev.id)
-                max_batch = max(max_batch, ev.batch)
-            self._conn.execute(
-                "INSERT OR REPLACE INTO datasets(dataset,key_meta,next_id,batch) VALUES(?,?,?,?)",
-                (self._dataset, self._key_meta_json(), max_id + 1, max_batch))
-            self._conn.execute("COMMIT")
-        except Exception:
-            self._conn.execute("ROLLBACK")
-            raise
-        for p in (self._jsonl_path, self._reverted_path,
-                  self._base / f"{self._dataset}.state.json",
-                  self._base / f"{self._dataset}.summary.json"):
-            if p.exists():
-                try:
-                    p.rename(p.with_suffix(p.suffix + ".bak"))
-                except OSError:
-                    pass
 
     # ---- write helpers -----------------------------------------------------
 
