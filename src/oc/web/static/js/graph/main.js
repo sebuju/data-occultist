@@ -4,7 +4,7 @@
 import * as api from "../api.js";
 import * as conn from "../conn.js";
 import * as hub from "../hub.js";
-import { h, frag, svg, TRASH, labCell } from "../dom.js";
+import { h, frag, svg, TRASH, labCell, observeResize } from "../dom.js";
 import { nodeIcon, iconFor } from "./node_icons.js";
 import { openModal } from "../modal.js";
 import { since } from "../datefmt.js";
@@ -446,11 +446,12 @@ function startGroupResize(gid, ev) {
         lh = Math.max(GROUP_MIN, snap(h0 + dy));
         g.w = lw; g.h = lh;
         groups.renderGroups();
+        requestEdges();   // box changed -> gates + the group's hard obstacle moved: re-path (coalesced 1/frame)
         showSizeHud(lw, lh, e.clientX, e.clientY);
     };
     const onUp = () => {
         document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
-        hideSizeHud(); persist.layout(); pushHistory();
+        hideSizeHud(); flushEdges(); persist.layout(); pushHistory();   // final clean re-path on settle
     };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
@@ -2003,8 +2004,9 @@ function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
         // A resize moves a node's geometry exactly like a drag does, so it MUST get the SAME line
         // treatment — freeze the routed paths (greying any whose endpoint floats off the resized
         // edge) and re-route ONCE on settle — not a live A* reroute every frame (the forked path
-        // that made resize wiggle differently from a drag). Freeze only on a real user drag
-        // (_ptrDown); a programmatic resize (reset/refit, no pointer) just repaints + reroutes.
+        // that made resize wiggle differently from a drag). These callbacks fire ONLY from the grip
+        // loop (a real user drag); a programmatic resize (reset/refit) never enters this path, and the
+        // node-level ResizeObserver (snapResize) only repaints edges — it never freezes or snaps.
         // resize START: freeze the CURRENT rendered size (which may be held by a soft min) into a
         // hard px box, THEN drop the mins. Capturing the size before clearing the mins is the whole
         // point — clear-then-measure would already have collapsed the node to content. This makes the
@@ -2016,25 +2018,24 @@ function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
             if (!widthOnly) div.style.height = `${h}px`;
             // freeze line routing for THIS node up front — exactly like a node drag does at its start
             // (moveNodes -> setDraggingNodes). Doing it here, not lazily in onResize, means the very
-            // first redraw greys this node's out-edges; onResize only fires after a full grid step, so
-            // a resize smaller than one step otherwise never greyed them at all (rule 7: same as drag).
+            // first redraw greys this node's out-edges before the pointer has moved (rule 7: same as drag).
             setDraggingNodes(true, [id]); requestEdges();
-            // NO .snapping here: easing width/height while the pointer drags the grip makes the
-            // dragged edge lag the cursor (felt like the resize "resisted"). Grip steps are already
-            // grid-snapped (crisp 20px), so they don't need a glide. WASD/move keep their glide.
+            // The live drag is SMOOTH (no grid step, no glide) — easing width/height while the pointer
+            // drags the grip makes the dragged edge lag the cursor (felt like the resize "resisted").
+            // Grid snap happens exactly once, on release (onSettle). WASD/move keep their glide.
         },
-        // While ACTIVELY dragging (_ptrDown), keep the soft grid mins cleared so a prior grow's
-        // min-width/height can't block a shrink. NOT on a programmatic resize (e.g. the size change
-        // onSettle's re-stamp causes) — that would wipe the min it just set and undo the grow.
-        onResize: () => { if (_ptrDown) { div.style.minWidth = ""; div.style.minHeight = ""; setDraggingNodes(true, [id]); } requestEdges(); groups.renderGroups(); },
+        // Fires only from the grip loop (a live user drag). Keep the soft grid mins cleared so a
+        // prior grow's min-width/height can't block a shrink, and freeze routing like a node drag.
+        onResize: () => { div.style.minWidth = ""; div.style.minHeight = ""; setDraggingNodes(true, [id]); requestEdges(); groups.renderGroups(); },
         // Settle to the grid, but only KEEP a size on an axis that ends up different from its natural
         // (grid-fit) box — an axis dragged back to natural is left unstamped and un-customized, so it
         // shows no reset dot; a node natural on BOTH axes drops its entry entirely (as if never sized).
         // widthOnly nodes (item/window) wrap a fixed-aspect canvas — width only, height aspect-driven.
-        // (No `moved` param: this runs idempotently, incl. snapResize's second no-arg call on release.)
+        // The grip loop fires this ONCE on release (passing {w,h} moved flags we don't need — it
+        // settles both axes idempotently regardless).
         onSettle: () => {
             if (widthOnly) {
-                const wTarget = div.offsetWidth;
+                const wTarget = snapUp(div.offsetWidth);   // quantize to the grid once, on release
                 div.style.width = ""; div.style.minWidth = "";
                 const natW = div.offsetWidth;
                 if (Math.abs(wTarget - natW) < 1) nodeSizes.delete(id);   // back at natural -> unstamped
@@ -2780,63 +2781,16 @@ function focusNode(id) {
 // GRID, snap, addResizeGrips, beginDrag and makeDraggable are imported from dragresize.js
 // — the same primitives the floating panels use.
 
-// Node-resize coalescing state (used by snapResize's ResizeObserver). A ResizeObserver
-// tick is only a real user resize when the pointer is down — track that globally.
-let _resizing = false;       // a node is being resized — draw cheap straight lines, no A*/bezier
-let _resizeRaf = null;       // coalesces resize-driven redraws to one per frame
-let _ptrDown = false;        // is a mouse button held?
-if (typeof window !== "undefined") {
-    window.addEventListener("mousedown", () => { _ptrDown = true; }, true);
-    window.addEventListener("mouseup", () => { _ptrDown = false; }, true);
-}
-
-// Snap a resizable element to the grid — but only when the drag is RELEASED, not while
-// resizing (snapping mid-drag fights the smooth native resize). The observer just flags
-// that a resize happened and runs ``onResize`` live (e.g. redraw edges); the snap fires
-// on mouseup. Idempotent, so it never loops.
+// Make a node resizable. The grip loop (dragresize.js) is the SOLE resize authority: it resizes
+// SMOOTHLY during the drag and quantizes to the grid exactly ONCE, on release, via `opts.onSettle`
+// — which also fires when the cursor is released off the grip (its mouseup is document-level). The
+// ResizeObserver here does NOT snap or settle; its only job is to keep edges glued to the node when
+// its box changes for reasons OTHER than a grip drag (image load, content reflow, an input losing
+// focus). Snapping from an observer was the old jump-on-unfocus bug — a ResizeObserver can't tell a
+// user grip-drag from an incidental reflow, so it must never write size or settle.
 function snapResize(el, opts = {}) {
-    const { both = false, onResize = null, onSettle = null } = opts;
-    if (typeof ResizeObserver === "undefined") return;
-    let dirty = false;
-    // Step the size to the grid LIVE so the node never shows smooth in-between sizes.
-    // Guarded (only writes when it actually changes) so it doesn't loop the observer.
-    const liveSnap = () => {
-        const w = snapUp(el.offsetWidth);
-        if (Math.abs(w - el.offsetWidth) >= 1) el.style.width = `${w}px`;
-        if (both) { const h = snapUp(el.offsetHeight); if (Math.abs(h - el.offsetHeight) >= 1) el.style.height = `${h}px`; }
-    };
-    new ResizeObserver(() => {
-        if (el.classList && el.classList.contains("collapsed")) return;   // ignore the collapsed size
-        dirty = true;
-        // Both the grid-snap write AND the redraw run in ONE deferred frame — NEVER mutate el's size
-        // synchronously inside the observer callback (that re-enters the observer in the same delivery
-        // -> "ResizeObserver loop completed with undelivered notifications"). Coalesced per frame.
-        if (!_resizeRaf) _resizeRaf = requestAnimationFrame(() => {
-            _resizeRaf = null;
-            if (_ptrDown) { _resizing = true; liveSnap(); }   // user drag → live grid-snap + cheap lines
-            onResize && onResize();
-        });
-    }).observe(el);
-    const finish = () => {
-        if (!dirty) return;
-        // The window-mouseup listener outlives the node: loadGame wipes #gnodes (detaching every
-        // element) but these closures stay bound to `window`, and a hidden graph (pretty view) keeps
-        // them attached at zero size. A detached/hidden node reports offsetWidth/Height 0 — persisting
-        // that would store {w:0,h:0}, which hydrate keeps (0 is finite) but makeNodeResizable can't
-        // re-apply (0 is falsy), so every node loads at default size. Never settle a zero-box node.
-        if (!el.isConnected) { window.removeEventListener("mouseup", finish); return; }   // torn-down node: drop the leaked listener
-        if (!el.offsetWidth || !el.offsetHeight) { dirty = false; return; }                // hidden (e.g. pretty view): don't settle a zero box
-        dirty = false; _resizing = false;
-        if (_resizeRaf) { cancelAnimationFrame(_resizeRaf); _resizeRaf = null; }
-        liveSnap();
-        onSettle && onSettle();    // persists size + a final routed (non-straight) redraw
-    };
-    el.addEventListener("mouseup", finish);     // release on the element's resize handle
-    window.addEventListener("mouseup", finish);  // …or release after the cursor left it
-    // `finish` is the SOLE settler for nodes (fires only when a resize actually happened, `dirty`);
-    // null the grip's own onSettle so a release doesn't settle TWICE (double the clear/re-stamp churn
-    // -> spurious ResizeObserver-loop notifications) and a no-move grip click settles nothing.
-    addResizeGrips(el, { ...opts, snap: true, onSettle: null }); // custom grips on BOTH bottom corners, grid-stepped
+    observeResize(el, () => requestEdges(), { gate: true });   // reflow -> edges follow; never snaps
+    addResizeGrips(el, opts);   // custom grips on BOTH bottom corners; they own snap-on-release
 }
 
 // Every node reachable by following edges OUT of `id` (its downstream subtree).

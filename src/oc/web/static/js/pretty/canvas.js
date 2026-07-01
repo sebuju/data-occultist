@@ -17,6 +17,7 @@ import { widgetDef } from "./widgets/index.js";
 import { evaluate, tokensIn, truthy, compileTerm } from "./expr.js";
 import { resolveToken, subKeyForToken } from "./binding.js";
 import { keySubscription, el } from "./widgets/util.js";
+import { observeResize } from "../dom.js";
 
 // nine anchor points: vertical t/m/b × horizontal l/c/r → fraction of the target box.
 const FX = { l: 0, c: 0.5, r: 1 };
@@ -94,25 +95,13 @@ export function renderPage(surface, page, ctx) {
 
     // anchored-to-canvas widgets (e.g. pinned to the right/bottom edge) re-place when the
     // surface changes size; cheap, and it keeps edge-pinned widgets where they belong. placeAll
-    // resizes widgets, which can resize the surface again — running it synchronously inside the
-    // observer trips "ResizeObserver loop completed with undelivered notifications", so defer to the
-    // next frame (coalescing bursts) to break the feedback loop.
-    let roFrame = 0, _roW = -1, _roH = -1;
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
-        if (roFrame) return;
-        roFrame = requestAnimationFrame(() => {
-            roFrame = 0;
-            // Only react to a REAL surface-size change. .pw-surface is min-height/width:100% of #pretty,
-            // so a scrollbar toggling #pretty's client size resizes the surface and re-fires this RO —
-            // redrawing the cue, which can re-toggle the scrollbar (a flashing, CPU-pinning loop). Bail
-            // when the size is unchanged so the loop can't sustain itself.
-            const w = Math.round(surface.offsetWidth), h = Math.round(surface.offsetHeight);
-            if (w === _roW && h === _roH) return;
-            _roW = w; _roH = h;
-            placeAll(); drawAnchorCue();
-        });
-    }) : null;
-    ro && ro.observe(surface);
+    // resizes widgets, which can resize the surface again — running synchronously would trip
+    // "ResizeObserver loop completed with undelivered notifications". observeResize defers+coalesces
+    // per frame; { gate:true } bails when the size is unchanged. That gate matters here: .pw-surface
+    // is min-height/width:100% of #pretty, so a scrollbar toggling #pretty's client size resizes the
+    // surface and would re-fire — redrawing the cue, which can re-toggle the scrollbar (a flashing,
+    // CPU-pinning loop). No size delta -> no cb, so the loop can't sustain itself.
+    const roDispose = observeResize(surface, () => { placeAll(); drawAnchorCue(); }, { gate: true });
 
     // The widget object a widget INSTANCE sees: the real widget with its `config` swapped for the
     // ACTIVE config profile's object (condition-driven, or the inspector's live preview). The default
@@ -871,7 +860,7 @@ export function renderPage(surface, page, ctx) {
             return { x: w.x ?? 0, y: w.y ?? 0, w: w.w ?? 200, h: w.h ?? 80,
                 units: { x: unitOf(w, "x"), y: unitOf(w, "y"), w: unitOf(w, "w"), h: unitOf(w, "h") } };
         },
-        destroy() { ro && ro.disconnect(); if (roFrame) cancelAnimationFrame(roFrame); for (const rec of recs.values()) { try { rec.inst.destroy && rec.inst.destroy(); } catch { /* */ } rec.condSub.destroy(); } recs.clear(); },
+        destroy() { roDispose(); for (const rec of recs.values()) { try { rec.inst.destroy && rec.inst.destroy(); } catch { /* */ } rec.condSub.destroy(); } recs.clear(); },
     };
 }
 

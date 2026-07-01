@@ -6,6 +6,8 @@
 // changes the CSS display width. Mouse mapping uses getBoundingClientRect, so
 // drawing stays pixel-accurate at any zoom.
 
+import { observeResize } from "./dom.js";
+
 const ROLE_COLOR = {
     region: "#5aa9e6",
     field: "#5aa9e6",
@@ -69,12 +71,16 @@ export class Overlay {
         this.autoFit = true;        // keep fit-to-width until the user manually zooms
         this.worldZoom = 1;         // outer graph zoom, so UI sizes stay constant on screen
         this._bind();
-        // Re-fit when the canvas area resizes (e.g. opened in a modal/iframe whose
-        // width arrives after the image loaded). Avoids the image rendering as a sliver.
-        if (typeof ResizeObserver !== "undefined" && canvas.parentElement) {
-            new ResizeObserver(() => { if (this.img && this.autoFit) this.fit(); }).observe(canvas.parentElement);
-        }
+        // Re-fit when the canvas area resizes (e.g. opened in a modal/iframe whose width arrives
+        // after the image loaded). Avoids the image rendering as a sliver. { gate:true } keeps
+        // fit()'s width:100% write (a no-op size-wise) from re-triggering. A NEW Overlay is built on
+        // every image open, so this MUST be disposed on close (see destroy()) or it leaks unbounded.
+        this._roDispose = observeResize(canvas.parentElement, () => { if (this.img && this.autoFit) this.fit(); }, { gate: true });
     }
+
+    // Tear down the resize observer. Called by closeImage/closeItemImage before dropping the
+    // Overlay instance — an Overlay is created per open, so a leaked observer would accumulate.
+    destroy() { this._roDispose && this._roDispose(); this._roDispose = null; }
 
     setWorldZoom(z) { this.worldZoom = z || 1; this.render(); }
     setGridPreview(cells) { this.gridCells = cells || []; this.render(); }

@@ -5,7 +5,7 @@
 // the bookkeeping that lets layout persistence collect/hydrate panels generically.
 
 import { makeDraggable, addResizeGrips } from "./dragresize.js";
-import { h } from "../dom.js";
+import { h, observeResize } from "../dom.js";
 
 // Registry of live panels by id. Panels are SESSION-ONLY (not persisted): hydrateLayout resets
 // them all to their hidden defaults on load; nothing writes their state back to the profile.
@@ -89,7 +89,7 @@ function _scheduleReflow() {
     const watch = (sel, watchClass) => {
         const el = document.querySelector(sel);
         if (!el) return;
-        if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => _scheduleReflow()).observe(el);
+        observeResize(el, () => _scheduleReflow());
         if (watchClass && typeof MutationObserver !== "undefined")
             new MutationObserver(() => _scheduleReflow()).observe(el, { attributes: true, attributeFilter: ["class"] });
     };
@@ -481,25 +481,21 @@ export function createFloatWin({
     markSized();
 
     // CSS-resize / programmatic size changes: re-fit + persist (debounced). onResize/fitHeight
-    // mutate el's own size, so running them synchronously in the observer trips "ResizeObserver
-    // loop completed with undelivered notifications". Defer to the next frame (coalescing bursts)
-    // to break the feedback loop — same pattern as vtable.js / pretty/canvas.js.
-    let rt = null, _obsW = el.offsetWidth, roRaf = 0;
-    new ResizeObserver(() => {
-        if (roRaf) return;
-        roRaf = requestAnimationFrame(() => {
-            roRaf = 0;
-            if (el.hidden || state.collapsed || !el.offsetWidth) return;
-            const widthChanged = Math.abs(el.offsetWidth - _obsW) > 0.5;
-            _obsW = el.offsetWidth;
-            stashSize();
-            reflowDock(id, null, prevL, prevR);   // height/width changed -> slide docked panels (using my pre-resize edges)
-            prevL = el.offsetLeft; prevR = prevL + el.offsetWidth;
-            onResize && onResize();
-            if (widthChanged) fitHeight();   // a width change rewraps the content -> re-fit the height to it
-            clearTimeout(rt); rt = setTimeout(save, 300);
-        });
-    }).observe(el);
+    // mutate el's own size — observeResize defers+coalesces per frame and { gate:true } skips ticks
+    // with no real size delta, so fitHeight's own height write can't sustain a feedback loop
+    // ("ResizeObserver loop completed with undelivered notifications").
+    let rt = null, _obsW = el.offsetWidth;
+    observeResize(el, () => {
+        if (el.hidden || state.collapsed || !el.offsetWidth) return;
+        const widthChanged = Math.abs(el.offsetWidth - _obsW) > 0.5;
+        _obsW = el.offsetWidth;
+        stashSize();
+        reflowDock(id, null, prevL, prevR);   // height/width changed -> slide docked panels (using my pre-resize edges)
+        prevL = el.offsetLeft; prevR = prevL + el.offsetWidth;
+        onResize && onResize();
+        if (widthChanged) fitHeight();   // a width change rewraps the content -> re-fit the height to it
+        clearTimeout(rt); rt = setTimeout(save, 300);
+    }, { gate: true });
 
     // collapse/expand: shrink to just the header buttons (visibility is the topbar button's
     // job; this is a shade roll-up in BOTH axes). Collapsed state persists with the panel.

@@ -100,6 +100,7 @@ async function stepWinPage(winId, d) {
 
 function closeImage(winId) {
     const e = imageCanvases.get(winId);
+    if (e && e.overlay) e.overlay.destroy();   // dispose the overlay's ResizeObserver (created per open)
     if (e && e.host) e.host.replaceChildren();
     imageCanvases.delete(winId);
     unregisterOverlay(nodeIdOf(winId));
@@ -190,7 +191,6 @@ async function openImage(winId, nodeEl = null) {
     host.querySelectorAll(".imgpg").forEach((b) => b.addEventListener("click", () => stepWinPage(winId, +b.dataset.d)));
     host.querySelectorAll(".imglayer").forEach((c) => c.addEventListener("change", (e) =>
         overlay.setVisible({ [e.target.dataset.k]: e.target.checked })));   // toggle a draw layer on the canvas
-    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
     await loadImage(winId, false);   // its onload now refreshes detect once the pixels are in
     drawEdges();
 }
@@ -274,7 +274,6 @@ export async function openGameImage(nodeEl = null) {
     host.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal("game"));
     host.querySelector(".imgcap").addEventListener("click", () => loadImage("game", true));
     host.querySelectorAll(".imgpg").forEach((b) => b.addEventListener("click", () => stepWinPage("game", +b.dataset.d)));
-    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
     await loadImage("game", false);
     drawEdges();
 }
@@ -302,6 +301,7 @@ async function createItemFromGeom(winId, geom) {
 function closeItemImage(winId, itemId) {
     const key = `${winId}:${itemId}`;
     const e = itemCanvases.get(key);
+    if (e && e.overlay) e.overlay.destroy();   // dispose the overlay's ResizeObserver (created per open)
     if (e && e.host) e.host.replaceChildren();
     itemCanvases.delete(key);
     itemReads.delete(key);
@@ -415,7 +415,6 @@ function openItemImage(winId, itemId) {
     registerOverlay(`item:${winId}:${itemId}`, { overlay, kind: "item", winId, itemId,
         persist: persistItem, refresh: () => { refreshItemBoxes(winId, itemId); refreshImageBoxes(winId); } });
     overlay.setWorldZoom(view.zoom);
-    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
 
     const img = new Image();
     img.onload = () => {

@@ -4,6 +4,7 @@
 import { resolveRows, dataKeyForBinding } from "../binding.js";
 import { drawChart } from "../chart_draw.js";
 import { keySubscription } from "./util.js";
+import { observeResize } from "../../dom.js";
 
 export default {
     type: "chart",
@@ -22,9 +23,8 @@ export default {
         }
         sub.sync([dataKeyForBinding(widget.binding)]);
         // size changes (resize in edit mode) need a redraw too — observe the host box
-        const ro = new ResizeObserver(() => render());
-        ro.observe(host);
+        const roDispose = observeResize(host, () => render(), { gate: true });
         render();
-        return { update: render, destroy() { ro.disconnect(); sub.destroy(); } };
+        return { update: render, destroy() { roDispose(); sub.destroy(); } };
     },
 };

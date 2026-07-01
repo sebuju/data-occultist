@@ -100,6 +100,40 @@ export function fieldset(legend, body, key, opts = {}) {
 
 export function mount(container, el) { container.replaceChildren(el); }
 
+// The ONE ResizeObserver idiom (CLAUDE.md rule 7). Every site that wants to react to an
+// element's box change goes through this instead of hand-rolling `new ResizeObserver` +
+// its own rAF coalescing + size-diff gate + teardown (which drifted per-site: some sync,
+// some leaked, some snapped on incidental reflow).
+//   observeResize(target, cb, opts) -> dispose()
+//     coalesce (default true): fold a burst of ticks into ONE cb per animation frame.
+//     gate     (default false): skip the cb when the ROUNDED content-box w/h is unchanged
+//       from the last delivery. This is what kills self-write feedback loops (a cb that
+//       resizes its own target) and the "ResizeObserver loop completed with undelivered
+//       notifications" warning — without every caller re-implementing _roW/_roH bookkeeping.
+//   cb receives { width, height, target } (rounded content dims from the latest entry).
+//   Returns a dispose() that disconnect()s AND cancels any pending frame.
+// No-op (dispose is a no-op) where ResizeObserver is unavailable, so callers drop the
+// `typeof ResizeObserver !== "undefined"` guard they all used to carry.
+export function observeResize(target, cb, { coalesce = true, gate = false } = {}) {
+    if (typeof ResizeObserver === "undefined" || !target) return () => {};
+    let raf = 0, lastW = -1, lastH = -1;
+    const deliver = (w, h) => {
+        if (gate && w === lastW && h === lastH) return;   // no real size delta -> no cb (loop guard)
+        lastW = w; lastH = h;
+        cb({ width: w, height: h, target });
+    };
+    const ro = new ResizeObserver((entries) => {
+        const e = entries[entries.length - 1];               // latest box only; older ticks are stale
+        const r = e.contentRect;
+        const w = Math.round(r.width), h = Math.round(r.height);
+        if (!coalesce) { deliver(w, h); return; }
+        if (raf) return;                                      // a frame is already queued
+        raf = requestAnimationFrame(() => { raf = 0; deliver(w, h); });
+    });
+    ro.observe(target);
+    return () => { ro.disconnect(); if (raf) cancelAnimationFrame(raf); raf = 0; };
+}
+
 // The ONE delete/remove glyph, as a node factory (a DOM node can live in only one place,
 // so each call returns a FRESH svg). Every "remove this row / chip / source / session"
 // button drops `TRASH()` in instead of an ad-hoc x so they never drift apart again.

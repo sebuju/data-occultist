@@ -17,7 +17,7 @@
 //   vt.setData(columns /* string[] */, rows /* object[] */, { rowClass(row){…} });
 
 import { colResizeDrag } from "./graph/dragresize.js";
-import { h } from "./dom.js";
+import { h, observeResize } from "./dom.js";
 
 const ROW_H = 22;        // fixed row height (px) — virtualization needs a known height
 const BUFFER = 6;        // extra rows rendered above/below the viewport
@@ -184,16 +184,12 @@ export class VTable {
         this.scroll.addEventListener("scroll", () => { this._syncHead(); this._schedule(); });
         // _applyHeight -> _render mutates layout (spacer/rows sizing); running it synchronously
         // inside the observer trips "ResizeObserver loop completed with undelivered notifications"
-        // (worst when the host is too small to fit a row). Defer to the next frame, coalescing
-        // bursts, to break the feedback loop — same pattern as pretty/canvas.js.
-        this._ro = new ResizeObserver(() => {
-            if (this._roRaf) return;
-            this._roRaf = requestAnimationFrame(() => { this._roRaf = null; this._applyHeight(); });
-        });
-        this._ro.observe(this.scroll);
+        // (worst when the host is too small to fit a row). observeResize defers+coalesces to the
+        // next frame and gates on a real size change, breaking the feedback loop.
+        this._roDispose = observeResize(this.scroll, () => this._applyHeight(), { gate: true });
     }
 
-    destroy() { this._ro.disconnect(); if (this._raf) cancelAnimationFrame(this._raf); if (this._roRaf) cancelAnimationFrame(this._roRaf); this.el.remove(); }
+    destroy() { this._roDispose(); if (this._raf) cancelAnimationFrame(this._raf); this.el.remove(); }
 
     // ---- data ----
     setData(columns, rows, opts = {}) {
