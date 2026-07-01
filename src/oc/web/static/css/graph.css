@@ -115,7 +115,7 @@
     border-bottom: 1px solid var(--muted);  }
 .gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 8px;
     flex: 0 0 auto;   /* in flex-column host nodes, the header must NOT shrink when content overflows */
-    margin: -7px -8px 6px; padding: 5px 8px; overflow: hidden; position: relative; z-index: 2;
+    margin: -6px -8px 6px; padding: 5px 8px; overflow: hidden; position: relative; z-index: 2;
     background: var(--node-head); border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
 /* collapsed: header IS the whole node. Keep the same top/side margins + border-bottom WIDTH
    as expanded (so toggling never changes its height), but pull the bottom margin to -7 too
@@ -467,7 +467,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .key-sec { margin: 6px 0; }
 .prev-count { padding: 4px 8px; font-size: var(--fs-sm); }
 
-.gnode.selected { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel); z-index: 20; }
+.gnode.selected { border-color: var(--sel); box-shadow: 0 0 0 0px var(--sel); z-index: 20; }
 .gnode.multisel { border-color: var(--sel); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sel) 60%, transparent); }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
