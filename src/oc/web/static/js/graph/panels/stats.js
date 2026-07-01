@@ -27,8 +27,9 @@ const DUR_METRICS = [["last_ms", "last"], ["avg_ms", "avg"], ["min_ms", "min"], 
 // op-code -> display order of its type bucket + heading label. Cards group under these; the
 // order here is the order the buckets render in. Mirrors stats_store.OPS.
 const OP_GROUPS = [
-    ["tk", "ticks"], ["oc", "ocr"], ["cp", "capture"], ["st", "settle"], ["cl", "classify"],
-    ["sg", "signature"], ["cf", "confirm"], ["cm", "commit"],
+    ["tk", "ticks"], ["ga", "pre-OCR gate"], ["go", "gate→ocr"], ["gn", "gate, no window"],
+    ["oc", "ocr"], ["cp", "capture"], ["st", "settle"],
+    ["cl", "classify"], ["sg", "signature"], ["cf", "confirm"], ["cm", "commit"],
     ["rp", "replays"], ["rc", "recomputes"], ["sw", "sweeps"], ["fr", "frames"],
 ];
 const GROUP_RANK = new Map(OP_GROUPS.map(([op], i) => [op, i]));
@@ -42,11 +43,20 @@ const groupLabel = (op) => GROUP_LABEL.get(op) || op;
 // inside a window heading; their group rank is the tick bucket's, so windows sort as one block.
 const PIPE_OPS = new Set(["tk", "oc", "cp", "st", "cl", "sg", "cf", "cm"]);
 const PIPE_RANK = new Map([...PIPE_OPS].map((op, i) => [op, i]));
-const groupKey = (d) => (PIPE_OPS.has(d.op) ? `win|${d.node}` : `op|${d.op}`);
-const groupLabelOf = (d) => (PIPE_OPS.has(d.op) ? shortName(d.node) : groupLabel(d.op));
-// group display order: pipeline windows sort by name within the tick-bucket slot; op-buckets
-// sort by their OP_GROUPS rank. (Pipeline ops all share groupRank("tk")=0 so windows lead.)
-const groupOrd = (d) => (PIPE_OPS.has(d.op) ? [0, shortName(d.node)] : [groupRank(d.op), ""]);
+// The worthiness-gate ops all carry node="game" — collect them under ONE heading (the "game" node,
+// like a pipeline window) instead of a separate bucket per op. GATE_RANK orders the cards inside it.
+const GATE_OPS = new Set(["ga", "go", "gn"]);
+const GATE_RANK = new Map([...GATE_OPS].map((op, i) => [op, i]));
+const GATE_GROUP_RANK = groupRank("ga");   // the gate bucket sits in ga's slot (right after ticks)
+const groupKey = (d) => (PIPE_OPS.has(d.op) ? `win|${d.node}`
+    : GATE_OPS.has(d.op) ? `gate|${d.node}` : `op|${d.op}`);
+const groupLabelOf = (d) => (PIPE_OPS.has(d.op) ? shortName(d.node)
+    : GATE_OPS.has(d.op) ? shortName(d.node) : groupLabel(d.op));   // node name ("game") — like a pipeline window
+// group display order: pipeline windows sort by name within the tick-bucket slot; the gate bucket
+// holds ga's slot; op-buckets sort by their OP_GROUPS rank. (Pipeline ops all share
+// groupRank("tk")=0 so windows lead.) Gate ops return a CONSTANT ord so all three stay contiguous.
+const groupOrd = (d) => (PIPE_OPS.has(d.op) ? [0, shortName(d.node)]
+    : GATE_OPS.has(d.op) ? [GATE_GROUP_RANK, ""] : [groupRank(d.op), ""]);
 const cmpGroup = (a, b) => {
     const [ra, sa] = groupOrd(a), [rb, sb] = groupOrd(b);
     return (ra - rb) || (sa < sb ? -1 : sa > sb ? 1 : 0);
@@ -147,7 +157,8 @@ function renderStats(nodes) {
     const frozen = (r) => (rank.has(`${r.node}|${r.op}`) ? rank.get(`${r.node}|${r.op}`) : Infinity);
     // within a pipeline window the op order is fixed (PIPE_RANK); op-buckets order their nodes by
     // the frozen avg rank.
-    const withinRank = (r) => (PIPE_OPS.has(r.op) ? (PIPE_RANK.get(r.op) ?? 99) : frozen(r));
+    const withinRank = (r) => (PIPE_OPS.has(r.op) ? (PIPE_RANK.get(r.op) ?? 99)
+        : GATE_OPS.has(r.op) ? (GATE_RANK.get(r.op) ?? 99) : frozen(r));
     rows.sort((a, b) =>
         cmpGroup(a, b) || (withinRank(a) - withinRank(b)) || ((b.avg_ms || 0) - (a.avg_ms || 0)));
     const want = new Set(rows.map((r) => `${r.node}|${r.op}`));

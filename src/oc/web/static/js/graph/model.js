@@ -205,6 +205,10 @@ export class GraphModel {
 
     nodes() {
         const ns = [{ id: "game", type: "game", ref: this.profile }];
+        // game-level worthiness-gate detectors — child detect nodes of the game node.
+        // win:{id:"game"} so the shared detect node body/wiring (rule 7) routes to the gate.
+        for (const d of this.profile.detect || [])
+            ns.push({ id: `det:game:${d.id}`, type: "detect", ref: d, win: { id: "game", isGame: true } });
         for (const w of this.profile.windows) {
             ns.push({ id: `win:${w.id}`, type: "window", ref: w });
             if (this.satelliteOn(`prev:${w.id}`)) ns.push({ id: `prev:${w.id}`, type: "preview", ref: w });
@@ -238,6 +242,7 @@ export class GraphModel {
 
     edges() {
         const es = [];
+        for (const d of this.profile.detect || []) es.push({ from: "game", to: `det:game:${d.id}`, kind: "detect" });
         for (const w of this.profile.windows) {
             // game→window line hidden by request — uncomment to restore the owns edge.
             // es.push({ from: "game", to: `win:${w.id}`, kind: "own" });
@@ -818,31 +823,40 @@ export class GraphModel {
     }
     regions(winId) { const w = this.window(winId); return (w && w.regions) || []; }
 
-    // ---- detect (window-detect landmarks) -----------------------------------
+    // ---- detect (window-detect landmarks AND the game-level worthiness gate) ---
+    // Detectors live on a window OR on the game (the live-mode gate). The owner id "game"
+    // routes to profile.detect; any other id is a window. ONE set of methods serves both
+    // (rule 7) — the image/box machinery just passes the owner through as `winId`.
+
+    _detectHost(ownerId) { return ownerId === "game" ? this.profile : this.window(ownerId); }
 
     addDetect(winId, box) {
-        const w = this.window(winId);
-        if (!w) return null;
-        w.detect = w.detect || [];
+        const host = this._detectHost(winId);
+        if (!host) return null;
+        host.detect = host.detect || [];
         let id = "detect_" + _fieldSeq++;
-        while (w.detect.some((d) => d.id === id)) id = "detect_" + _fieldSeq++;
-        w.detect.push({ id, search: { x: box.x, y: box.y, w: box.w, h: box.h }, text: "", threshold: DEFAULT_DETECT_THRESHOLD });
+        while (host.detect.some((d) => d.id === id)) id = "detect_" + _fieldSeq++;
+        // game gate detectors default to the cheap COLOUR kind (no OCR); window detectors
+        // stay text by default. A colour detector seeds an empty colour (sample it on the image).
+        const base = { id, search: { x: box.x, y: box.y, w: box.w, h: box.h }, threshold: DEFAULT_DETECT_THRESHOLD };
+        host.detect.push(winId === "game" ? { ...base, color: "", tolerance: 32 } : { ...base, text: "" });
         return id;
     }
-    detect(winId, id) { const w = this.window(winId); return w && (w.detect || []).find((d) => d.id === id); }
+    detect(winId, id) { const h = this._detectHost(winId); return h && (h.detect || []).find((d) => d.id === id); }
     setDetectBox(winId, id, box) { const d = this.detect(winId, id); if (d) d.search = { x: box.x, y: box.y, w: box.w, h: box.h }; }
-    removeDetect(winId, id) { const w = this.window(winId); if (w) w.detect = (w.detect || []).filter((d) => d.id !== id); }
+    removeDetect(winId, id) { const h = this._detectHost(winId); if (h) h.detect = (h.detect || []).filter((d) => d.id !== id); }
     renameDetect(winId, id, newId) {
-        const w = this.window(winId);
+        const host = this._detectHost(winId);
         const d = this.detect(winId, id);
-        if (!w || !d || !newId || (w.detect || []).some((x) => x.id === newId)) return false;
+        if (!host || !d || !newId || (host.detect || []).some((x) => x.id === newId)) return false;
         d.id = newId;
         return true;
     }
-    detects(winId) { const w = this.window(winId); return (w && w.detect) || []; }
-    // how a window's detectors combine: "all" (AND, default) or "any" (OR)
-    detectMode(winId) { const w = this.window(winId); return (w && w.detect_mode) || "all"; }
-    setDetectMode(winId, mode) { const w = this.window(winId); if (w) w.detect_mode = mode === "any" ? "any" : "all"; }
+    detects(winId) { const h = this._detectHost(winId); return (h && h.detect) || []; }
+    // how an owner's detectors combine: "all" (AND, default) or "any" (OR). Owner "game" =
+    // the worthiness gate (profile.detect_mode); any other id = a window.
+    detectMode(winId) { const h = this._detectHost(winId); return (h && h.detect_mode) || "all"; }
+    setDetectMode(winId, mode) { const h = this._detectHost(winId); if (h) h.detect_mode = mode === "any" ? "any" : "all"; }
     // per-detector polarity: negate=true requires the landmark ABSENT (window fails if found)
     setDetectNegate(winId, id, neg) { const d = this.detect(winId, id); if (d) d.negate = !!neg; }
 

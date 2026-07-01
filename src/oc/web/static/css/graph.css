@@ -204,6 +204,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .detect-status .ds-txt { white-space: normal; word-break: break-all; font-family: var(--mono, monospace); }
 /* matched characters in the after-text — the chars that carried a successful detect */
 .detect-status .ds-hit { background: var(--accent); color: var(--on-accent, #06121f); border-radius: 2px; }
+/* detect node colour kind: a swatch + an eyedropper button beside the hex input */
+.aset-swatch { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--border, #444); border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+.aset-pick { margin-left: 4px; padding: 0 4px; cursor: pointer; }
+/* game node worthiness gate: the live ●/◯ badge + detector count */
+.game-gate { margin-top: 4px; font-size: var(--fs-sm); display: flex; align-items: center; gap: 2px; }
+.game-gate .gate-badge { font-weight: 600; }
 /* scrollbar node: calibration as a small labelled stack (one metric per row) */
 .sb-calib { margin-top: 6px; font-size: var(--fs-sm); }
 .sb-calib .sbc-row { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); }
@@ -300,10 +306,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* window node: fixed default width, resized by WIDTH (its grips) like the item node —
    the embedded image canvas fills the node and its height follows the image aspect.
    overflow:hidden keeps the canvas + controls clipped to the card; spinner in header. */
-.gnode.window { width: 520px; min-width: 240px; max-width: 76vw; }
+.gnode.window, .gnode.game { width: 520px; min-width: 240px; max-width: 76vw; }
 /* node overflow stays visible so the right-edge out-port isn't clipped (like price/dataset/
    subset below); the BODY clips instead, keeping the canvas + controls inside the card. */
-.gnode.window > .gn-body { overflow: hidden; }
+.gnode.window > .gn-body, .gnode.game > .gn-body { overflow: hidden; }
 /* freely-resizable nodes (everything but the fixed-aspect window/item canvases): the card is a
    flex column so the body fills it and SCROLLS when the card is sized smaller than its content —
    content never clips or overflows. At natural size the body is content-height, so there's nothing
@@ -413,7 +419,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .key-prev { margin-top: 4px; font-size: var(--fs-sm); word-break: break-all; }
 /* window node: item templates listed in priority order (top = priority 0). Reorder with the
    ▲/▼ buttons to set priority; the number itself is never shown. */
-.win-controls .wi-h { margin-top: 14px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 1px solid var(--muted); }
+.win-controls .wi-h, .game-controls .wi-h { margin-top: 14px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 1px solid var(--muted); }
 .wi-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
 .wi-row .wi-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .wi-row .wi-name:hover { text-decoration: underline; color: var(--text); }

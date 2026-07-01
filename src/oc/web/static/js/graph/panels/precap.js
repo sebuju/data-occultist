@@ -118,9 +118,9 @@ function buildPrecap() {
         else if (a === "newsess") { precapView = "new"; precapPage = "detail"; if (precapLast) _pcDraw(precapLast); }
         // recordStart creates+persists a new session server-side, so leave the "new" pane at
         // once and show it as the active loaded session (its row appears via loadSessions)
-        else if (a === "record") { const ap = !!pcNode.querySelector(".pc-autoproc")?.checked; precapView = "loaded"; _pcRun(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, ap, pcSig); _pcLoadSessions(); return st; }); }
+        else if (a === "record") { setLiveMode(false); const ap = !!pcNode.querySelector(".pc-autoproc")?.checked; precapView = "loaded"; _pcRun(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, ap, pcSig); _pcLoadSessions(); return st; }); }
         else if (a === "recstop") _pcRun(() => api.precapture.recordStop(game, pcSig));
-        else if (a === "process") _pcRun(() => api.precapture.processStart(game, pcSig));
+        else if (a === "process") { setLiveMode(false); _pcRun(() => api.precapture.processStart(game, pcSig)); }
         else if (a === "pause") _pcRun(() => api.precapture.pause(game, true, pcSig));
         else if (a === "resume") _pcRun(() => api.precapture.pause(game, false, pcSig));
         else if (a === "cancel") _pcRun(() => api.precapture.cancel(game, pcSig));
@@ -176,7 +176,10 @@ function mountPrecap(adapter) {
 async function showPrecap() {
     const game = model.profile.name;
     if (!game) { setStatus("load a game first"); A?.close?.(); return; }
-    setLiveMode(false);                         // mutually exclusive with live
+    // NB: merely OPENING the panel must NOT stop live — an idle precap panel doesn't compete for
+    // OCR, and this hook also fires on a pure visibility restore (mode switch, pretty embed), where
+    // stopping live would be a surprise. The mutual exclusion is enforced where precapture actually
+    // RUNS (record/process below) instead.
     precapOpen = true;
     precapStopping = false; precapView = null; precapPage = null;
     // reopening starts from the latest few sessions again — don't rebuild whatever big window

@@ -169,10 +169,14 @@ const optSel = (val, opts, cls, props = {}) =>
 // (reconciled in place, never rebuilt per tick) and hold blank until the first detect pass
 // returns. `.wd-collide` is the cross-window verdict (does this window WIN classify, or does a
 // sibling also match / steal the tie-break) — sourced from the whole-profile collision check.
-export function windowDetects(w) {
+// Reused by BOTH the window node (its detectors) and the game node (worthiness-gate
+// detectors) — same markup/behaviour, only labels differ (rule 7). `opts`: heading,
+// matchLabel, defaultMode, collide (cross-window row — windows only). The owner object just
+// needs `.detect` + `.detect_mode`.
+export function windowDetects(w, opts = {}) {
     const dets = w.detect || [];
     if (!dets.length) return null;
-    const mode = w.detect_mode || "all";
+    const mode = w.detect_mode || opts.defaultMode || "all";
     const modeSel = optSel(mode, [["all", "all"], ["any", "any"]], "wd-mode",
         { title: "all = every detector must pass (AND); any = at least one passes (OR)" });
     // Three columns: col1 = detector name, col2 = its live status, col3 = the polarity select
@@ -187,15 +191,16 @@ export function windowDetects(w) {
                 { dataset: { id: d.id }, title: "require this landmark PRESENT (positive), or ABSENT (negative — the window fails if it IS found)", disabled: off }));
     });
     return frag(
-        h("div", { class: "muted il-h wi-h", title: "how this window's detectors decide a match" }, "detects"),
-        h("label", { class: "wd-mode-line muted" }, "window matches if ", modeSel),
+        h("div", { class: "muted il-h wi-h", title: "how these detectors decide a match" }, opts.heading || "detects"),
+        h("label", { class: "wd-mode-line muted" }, (opts.matchLabel || "window matches if") + " ", modeSel),
         h("div", { class: "wd-row wd-head muted" },
             h("span", { class: "wd-name" }, "detector"),
             h("span", { class: "wd-status" }, "pass"),
             h("span", { class: "wd-req-h" }, "require")),
         rows,
-        h("div", { class: "wd-verdict muted", title: "whether the current capture would be recognised as this window with the settings above" }),
-        h("div", { class: "wd-collide", title: "cross-window: detection picks ONE winner across all windows — does this window actually win, or does a sibling also match / steal it" }));
+        h("div", { class: "wd-verdict muted", title: opts.verdictTitle || "whether the current capture would be recognised as this window with the settings above" }),
+        opts.collide === false ? null
+            : h("div", { class: "wd-collide", title: "cross-window: detection picks ONE winner across all windows — does this window actually win, or does a sibling also match / steal it" }));
 }
 
 // Item templates listed in PRIORITY order, HIGHEST first — the top row wins when cells
@@ -465,6 +470,26 @@ export function keyPrevNode(winId, itemId) {
         h("span", { class: "muted" }, "(record dropped)"));
 }
 
+// Which kind a detector is, derived from which fields are set (the model has no explicit
+// kind field — template/text are inferred, colour adds the colour fields). Single source so
+// the node body, wiring, and live verdict all agree.
+export function detectKind(a) {
+    if (a.template) return "template";
+    if (a.color != null && a.text == null) return a.width ? "border" : "color";
+    return "text";
+}
+
+// The game node's gate controls (the reused detectors section). In its own builder so
+// rebuildNode can refresh JUST this on a detector toggle/add/remove, leaving the image canvas
+// intact — mirrors windowControls for the window node (rule 7). The live verdict lives on the
+// section's .wd-verdict; the per-phase live status is shown in the live panel.
+export function gameControls(g) {
+    return windowDetects(g, { ownerId: "game", heading: "detects", matchLabel: "OCR-worthy if",
+        defaultMode: "any", collide: false,
+        verdictTitle: "whether the current capture counts as an OCR-worthy phase" })
+        || h("p", { class: "muted", style: "margin:4px 0" }, "draw a detect box below to gate live OCR");
+}
+
 export function nodeParts(n) {
     if (n.type === "game") {
         const g = n.ref;
@@ -474,7 +499,12 @@ export function nodeParts(n) {
                 h("label", { class: "flab" }, "process ",
                     h("input", { class: "gi", dataset: { k: "proc" }, value: (g.process_names || []).join(", "), placeholder: "Warframe.x64.exe" })),
                 h("label", { class: "flab" }, "title hint ",
-                    h("input", { class: "gi", dataset: { k: "title" }, value: g.window_title_hint || "", placeholder: "Warframe" }))),
+                    h("input", { class: "gi", dataset: { k: "title" }, value: g.window_title_hint || "", placeholder: "Warframe" })),
+                // gate badge + detector section, in their OWN wrapper so a rebuild (toggle/add/
+                // remove a gate detector) refreshes JUST this — the image canvas below is preserved
+                // (rebuildNode only re-renders `.game-controls`, like `.win-controls` on a window).
+                h("div", { class: "game-controls" }, gameControls(g)),
+                h("div", { class: "win-img" })),
         };
     }
     if (n.type === "window") {
@@ -497,28 +527,52 @@ export function nodeParts(n) {
     }
     if (n.type === "detect") {
         const a = n.ref;
+        const kind = detectKind(a);
+        const isGate = n.win?.id === "game";
+        // text-kind controls (text/mode/min-chars/strip/case) — only OCR detectors use them
+        const textBody = frag(
+            h("label", { class: "flab" }, "text ",
+                h("input", { class: "aset", dataset: { k: "text" }, value: a.text || "", placeholder: "EQUIPMENT" })),
+            h("label", { class: "flab", title: "how text is compared: partial=substring (loose); full=whole-string; exact=equal; prefix=starts-with" },
+                "mode ", h("select", { class: "aset", dataset: { k: "match" } },
+                    h("option", { value: "partial", selected: (a.match ?? "partial") === "partial" }, "partial"),
+                    h("option", { value: "full", selected: a.match === "full" }, "full"),
+                    h("option", { value: "exact", selected: a.match === "exact" }, "exact"),
+                    h("option", { value: "prefix", selected: a.match === "prefix" }, "prefix"))),
+            h("label", { class: "flab", title: "hard floor: reads shorter than this never match (kills tiny-blob false hits)" },
+                "min chars ", h("input", { type: "number", class: "aset", dataset: { k: "minchars" }, step: "1", min: "0", value: a.min_chars ?? 0 })),
+            h("label", { class: "flab", title: "what to ignore before comparing (default: none — keep everything)" },
+                "strip ", h("select", { class: "aset", dataset: { k: "strip" } },
+                    h("option", { value: "none", selected: (a.strip ?? "none") === "none" }, "none"),
+                    h("option", { value: "alnum", selected: a.strip === "alnum" }, "alnum"),
+                    h("option", { value: "spaces", selected: a.strip === "spaces" }, "spaces"))),
+            h("label", { class: "flab" }, "case sensitive ",
+                h("input", { type: "checkbox", class: "aset", dataset: { k: "case" }, checked: !!a.case_sensitive, title: "off = fold case before comparing" })));
+        // colour/border-kind controls — cheap, no OCR. A colour swatch + hex + eyedropper.
+        const colorBody = frag(
+            h("label", { class: "flab", title: "fraction of pixels near this colour (border = only on the box perimeter)" },
+                "colour ",
+                h("span", { class: "aset-swatch", style: `background:${a.color || "transparent"}` }),
+                h("input", { class: "aset", dataset: { k: "color" }, value: a.color || "", placeholder: "#rrggbb", size: "8" }),
+                h("button", { class: "aset-pick", title: "sample a colour from the image" }, "⊙")),
+            h("label", { class: "flab", title: "how close a pixel's colour must be (BGR distance) to count" },
+                "tolerance ", h("input", { type: "number", class: "aset", dataset: { k: "tol" }, step: "1", min: "0", value: a.tolerance ?? 32 })),
+            kind === "border" && h("label", { class: "flab", title: "perimeter band thickness as a fraction of the box's shorter side" },
+                "border width ", h("input", { type: "number", class: "aset", dataset: { k: "width" }, step: "0.01", min: "0", max: "0.5", value: a.width ?? 0.1 })));
         return {
-            title: h("input", { class: "gi gi-id", dataset: { k: "detid" }, value: a.id, title: "detector: all must match to capture" }),
+            title: h("input", { class: "gi gi-id", dataset: { k: "detid" }, value: a.id,
+                title: isGate ? "worthiness-gate detector: any match => OCR-worthy phase" : "detector: all must match to capture" }),
             body: frag(
-                h("label", { class: "flab" }, "text ",
-                    h("input", { class: "aset", dataset: { k: "text" }, value: a.text || "", placeholder: "EQUIPMENT" })),
-                h("label", { class: "flab", title: "how text is compared: partial=substring (loose); full=whole-string; exact=equal; prefix=starts-with" },
-                    "mode ", h("select", { class: "aset", dataset: { k: "match" } },
-                        h("option", { value: "partial", selected: (a.match ?? "partial") === "partial" }, "partial"),
-                        h("option", { value: "full", selected: a.match === "full" }, "full"),
-                        h("option", { value: "exact", selected: a.match === "exact" }, "exact"),
-                        h("option", { value: "prefix", selected: a.match === "prefix" }, "prefix"))),
+                h("label", { class: "flab", title: "text = OCR a label (costs OCR); colour/border = cheap pixel check (no OCR — use these for the live-mode gate)" },
+                    "kind ", h("select", { class: "aset", dataset: { k: "kind" } },
+                        h("option", { value: "text", selected: kind === "text" }, "text"),
+                        h("option", { value: "color", selected: kind === "color" }, "colour"),
+                        h("option", { value: "border", selected: kind === "border" }, "border"),
+                        ...(kind === "template" ? [h("option", { value: "template", selected: true }, "template")] : []))),
+                kind === "text" ? textBody : kind === "template"
+                    ? h("div", { class: "muted" }, "template image (set on the box)") : colorBody,
                 h("label", { class: "flab" }, "threshold ",
                     h("input", { type: "number", class: "aset", dataset: { k: "thr" }, step: "0.05", min: "0", max: "1", value: a.threshold ?? 0.8 })),
-                h("label", { class: "flab", title: "hard floor: reads shorter than this never match (kills tiny-blob false hits)" },
-                    "min chars ", h("input", { type: "number", class: "aset", dataset: { k: "minchars" }, step: "1", min: "0", value: a.min_chars ?? 0 })),
-                h("label", { class: "flab", title: "what to ignore before comparing (default: none — keep everything)" },
-                    "strip ", h("select", { class: "aset", dataset: { k: "strip" } },
-                        h("option", { value: "none", selected: (a.strip ?? "none") === "none" }, "none"),
-                        h("option", { value: "alnum", selected: a.strip === "alnum" }, "alnum"),
-                        h("option", { value: "spaces", selected: a.strip === "spaces" }, "spaces"))),
-                h("label", { class: "flab" }, "case sensitive ",
-                    h("input", { type: "checkbox", class: "aset", dataset: { k: "case" }, checked: !!a.case_sensitive, title: "off = fold case before comparing" })),
                 h("div", { class: "detect-status muted" },
                     h("div", { class: "ds-verdict" }, "◯ —"),
                     h("div", { class: "ds-line ds-before", hidden: true }),

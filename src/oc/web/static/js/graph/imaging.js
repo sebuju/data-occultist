@@ -42,6 +42,11 @@ const ITEM_KINDS = [
     ["diamonds", "diamonds", "◆", "Draw a 'diamonds' tell — the cell counts only if a rank-diamond strip (◇/◆) is present (e.g. a rank-pip row)."],
 ];
 
+// Graph node id for an image owner: a window is `win:<id>`, the game gate is the bare
+// `game` node. The image/box/detect machinery is shared between them (rule 7), so every
+// `win:${winId}` node-id lookup goes through this so "game" resolves to the game node.
+export function nodeIdOf(winId) { return winId === "game" ? "game" : `win:${winId}`; }
+
 // A window's bound image pages + which one the canvas currently shows.
 function winPageOf(winId) { return winPage.get(winId) || 0; }
 function capListOf(winId) { return api.bindingList(model.profile.name, winId); }
@@ -55,7 +60,7 @@ async function curCapOf(winId) {
 
 // Show how many images the window holds on the selector button + refresh the page nav.
 async function updateImageLabel(winId, btn) {
-    btn = btn || nodeEls.get(`win:${winId}`)?.querySelector(".imgbtn");
+    btn = btn || nodeEls.get(nodeIdOf(winId))?.querySelector(".imgbtn");
     try {
         const list = await capListOf(winId);
         const lbl = btn && btn.querySelector(".imgbtn-lbl");
@@ -68,7 +73,7 @@ async function updateImageLabel(winId, btn) {
 // Page buttons + "p/N" indicator for the bound pages. A single (or no) image hides the
 // nav; the page index is clamped into range here so a removed page can't strand it.
 function updatePageNav(winId, list) {
-    const pages = nodeEls.get(`win:${winId}`)?.querySelector(".img-pages");
+    const pages = nodeEls.get(nodeIdOf(winId))?.querySelector(".img-pages");
     if (!pages) return;
     const n = list.length;
     if (winPageOf(winId) >= n) winPage.set(winId, 0);
@@ -97,7 +102,7 @@ function closeImage(winId) {
     const e = imageCanvases.get(winId);
     if (e && e.host) e.host.replaceChildren();
     imageCanvases.delete(winId);
-    unregisterOverlay(`win:${winId}`);
+    unregisterOverlay(nodeIdOf(winId));
     openImages.delete(winId);
     drawEdges();
     persist.layout();
@@ -187,6 +192,90 @@ async function openImage(winId, nodeEl = null) {
         overlay.setVisible({ [e.target.dataset.k]: e.target.checked })));   // toggle a draw layer on the canvas
     if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
     await loadImage(winId, false);   // its onload now refreshes detect once the pixels are in
+    drawEdges();
+}
+
+// ---- game-node worthiness gate image (detect-only sibling of openImage) -----
+// The game node binds its own capture (a frame of the whole game window) and draws ONLY
+// gate detectors on it. Reuses the SAME Overlay primitive + loadImage + model.detects/
+// addDetect("game") as windows (rule 7); it just omits the grid/item/scrollbar tools and
+// the preview pipeline a window has. The detect tool + colour eyedropper are wired here.
+let _pickTarget = null;   // {winId, detId} armed by a detect node's eyedropper button
+
+export function armColorPick(winId, detId) {
+    _pickTarget = { winId, detId };
+    const ov = imageCanvases.get(winId)?.overlay;
+    if (ov) { ov.setPick(true); setStatus("click the image to sample a colour"); }
+    else setStatus("open the image first");
+}
+
+function applyPickedColor(winId, hex) {
+    const t = _pickTarget; _pickTarget = null;
+    if (!t || t.winId !== winId) return;
+    const d = model.detect(winId, t.detId);
+    if (!d) return;
+    d.color = hex;
+    rebuildNode(`det:${winId}:${t.detId}`);   // refresh swatch + hex input
+    refreshImageBoxes(winId); autosave(null); refreshDetect(winId);
+}
+
+export async function openGameImage(nodeEl = null) {
+    const winId = "game";
+    const node = nodeEl || nodeEls.get("game");
+    const host = node && node.querySelector(".win-img");
+    if (!host) return;
+    const prev = imageCanvases.get(winId);
+    if (prev && prev.host === host) return;
+    if (prev) { unregisterOverlay("game"); imageCanvases.delete(winId); openImages.delete(winId); }
+    host.replaceChildren(
+        h("div", { class: "imgtools" },
+            h("span", { class: "tools" },
+                h("button", { class: "tool", dataset: { kind: "detect" }, title: "draw a gate detector" }, "◎ detect"))),
+        h("div", { class: "canvas-wrap" }, h("canvas")),
+        h("div", { class: "img-foot" },
+            h("span", { class: "img-pages", hidden: true },
+                h("button", { class: "imgpg", dataset: { d: "-1" }, title: "previous image" }, "‹"),
+                h("span", { class: "img-pageind" }),
+                h("button", { class: "imgpg", dataset: { d: "1" }, title: "next image" }, "›")),
+            h("button", { class: "imgbtn", title: "choose which stashed images the gate is taught on" },
+                CAMERA(), h("span", { class: "imgbtn-lbl" }, "images")),
+            h("button", { class: "imgcap", title: "capture the live game window into the current page" }, "recapture")));
+    const canvas = host.querySelector("canvas");
+    const kindOf = () => host.querySelector(".tool.active")?.dataset.kind || null;   // no tool => no draw
+    const overlay = new Overlay(canvas, {
+        onCreate: async (geom) => {
+            if (kindOf() !== "detect") return;   // drawing is a no-op until the detect tool is picked
+            const id = model.addDetect("game", geom);
+            const newNode = `det:game:${id}`;
+            await placeNewNode(newNode, "detect", "game");
+            render(); refreshImageBoxes("game"); autosave(null);
+            inheritGroupFrom(newNode, "game");   // box drawn on a grouped/subgrouped game node → join it
+            rebuildNode("game"); drawEdges(); refreshDetect("game");
+        },
+        onChange: (box) => {
+            if (box.role === "detect") model.setDetectBox("game", box.id, box);
+            refreshImageBoxes("game"); drawEdges(); autosave(null);
+            refreshDetect("game");   // a moved/resized box reads different pixels -> re-evaluate
+        },
+        onSelect: (id) => overlaySelected("game", id),
+        onPick: (hex) => applyPickedColor("game", hex),
+        canCreate: () => kindOf() === "detect",   // no draw without the detect tool (no crosshair, no box)
+    });
+    imageCanvases.set(winId, { host, canvas, overlay });
+    registerOverlay("game", { overlay, kind: "game", winId,
+        persist: (b) => model.setDetectBox("game", b.id, b), refresh: () => refreshImageBoxes("game") });
+    overlay.setWorldZoom(view.zoom);
+    openImages.add(winId);
+    persist.layout();
+    host.querySelectorAll(".tool").forEach((btn) => btn.addEventListener("click", () => {
+        host.querySelectorAll(".tool").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+    }));
+    host.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal("game"));
+    host.querySelector(".imgcap").addEventListener("click", () => loadImage("game", true));
+    host.querySelectorAll(".imgpg").forEach((b) => b.addEventListener("click", () => stepWinPage("game", +b.dataset.d)));
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => drawEdges()).observe(canvas.parentElement);
+    await loadImage("game", false);
     drawEdges();
 }
 
@@ -677,8 +766,9 @@ const detectAgain = new Map();
 async function refreshDetect(winId, live = false) {
     if (detectBusy.has(winId)) { detectAgain.set(winId, live); return; }
     detectBusy.add(winId);
+    const isGame = winId === "game";
     // spinner on every node whose value this detect refreshes
-    const ids = [`win:${winId}`, ...model.detects(winId).map((a) => `det:${winId}:${a.id}`)];
+    const ids = [nodeIdOf(winId), ...model.detects(winId).map((a) => `det:${winId}:${a.id}`)];
     if (model.scrollbar(winId)) ids.push(`sb:${winId}:scrollbar`);
     const done = timed(`detect ${winId}`);
     try {
@@ -687,15 +777,19 @@ async function refreshDetect(winId, live = false) {
                 const cap = live ? null : await curCapOf(winId);   // the page on screen (live grabs fresh)
                 const res = await api.detect(previewProfileFor(winId), model.profile.name, cap, boot.phase && !live);
                 const dstatus = {};   // mirror onto the window canvas: colour/tint each detect box by its verdict
-                for (const [aid, info] of Object.entries(res.detect || {})) { setDetectStatus(`det:${winId}:${aid}`, info); dstatus[aid] = info; }
+                // game gate verdicts live under res.gate (keyed like the window's res.detect)
+                const detMap = isGame ? (res.gate || {}) : (res.detect || {});
+                for (const [aid, info] of Object.entries(detMap)) { setDetectStatus(`det:${winId}:${aid}`, info); dstatus[aid] = info; }
+                if (isGame) setGameGateBadge(res.gate_active);
                 for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);
-                setWindowDetectStatus(winId, res);   // window node's detects section: per-row + overall verdict
+                setWindowDetectStatus(winId, res);   // detects section: per-row + overall verdict (window or gate)
                 const dent = imageCanvases.get(winId);
                 if (dent) dent.overlay.setDetectStatus(dstatus);
                 if (live) {   // is this window currently recognised on screen? (drives the live panel dot)
                     const svals = Object.values(res.states || {});
-                    // mode/negate-aware window verdict comes from the server; states (when present) still win
-                    const recognized = svals.length ? svals.some((s) => s.matched) : (res.window?.pass ?? false);
+                    // game: the worthiness gate's OR verdict; window: mode/negate-aware verdict (states win)
+                    const recognized = isGame ? !!res.gate_active
+                        : svals.length ? svals.some((s) => s.matched) : (res.window?.pass ?? false);
                     liveRecog.set(winId, recognized);
                     if (recognized) liveDetCount.set(winId, (liveDetCount.get(winId) || 0) + 1);
                     renderLiveWindow();
@@ -740,6 +834,20 @@ function setWindowDrift(winId, drift) {
     span.textContent = `x ${pct(drift.x.mean)}/${pct(drift.x.max)} · y ${pct(drift.y.mean)}/${pct(drift.y.max)} · ${drift.n} cells`;
     const worst = Math.max(drift.x.max, drift.y.max);
     span.className = "wd-drift " + (worst < 0.05 ? "conf-ok" : worst < 0.15 ? "conf-warn" : "conf-bad");
+}
+
+// The game node's worthiness badge: ● collecting (an OCR-worthy phase is up) vs ◯ waiting.
+// Reconciled in place (text/class only) — no rebuild. `active` null => unknown (pre-read).
+// nGate counts only ENABLED gate detectors (a disabled one isn't part of the gate).
+export function setGameGateBadge(active) {
+    const el = nodeEls.get("game");
+    const badge = el && el.querySelector(".gate-badge");
+    if (!badge) return;
+    const nGate = (model.profile.detect || []).filter((d) => d.enabled !== false).length;
+    if (!nGate) { badge.textContent = "no gate — always reads"; badge.className = "gate-badge muted"; return; }
+    if (active == null) { badge.textContent = "◯ waiting for phase"; badge.className = "gate-badge muted"; return; }
+    badge.textContent = active ? "● collecting" : "◯ waiting for phase";
+    badge.className = "gate-badge " + (active ? "conf-ok" : "conf-warn");
 }
 
 function setDetectStatus(nodeId, info) {
@@ -790,9 +898,10 @@ function setDetectStatus(nodeId, info) {
 // Each `.wd-status` is coloured by PASS (negate-aware), with the raw landmark match in its title;
 // `.wd-verdict` shows whether the whole window would match under its combine mode.
 function setWindowDetectStatus(winId, res) {
-    const el = nodeEls.get(`win:${winId}`);
+    const el = nodeEls.get(nodeIdOf(winId));
     if (!el) return;
-    const det = res.detect || {};
+    const isGame = winId === "game";
+    const det = (isGame ? res.gate : res.detect) || {};
     // skip the header row's "pass" label (no data-id) — only the per-detector status spans
     for (const span of el.querySelectorAll(".wd-row:not(.wd-head) .wd-status")) {
         if (span.closest(".wd-row").classList.contains("wd-disabled")) continue;   // keep "disabled"
@@ -805,14 +914,20 @@ function setWindowDetectStatus(winId, res) {
     }
     const verdict = el.querySelector(".wd-verdict");
     if (verdict) {
-        const w = res.window;
-        if (!w) { verdict.textContent = ""; verdict.className = "wd-verdict muted"; }
-        else {
-            verdict.textContent = w.pass ? "✓ would match this window" : "✗ would not match";
-            verdict.className = "wd-verdict " + (w.pass ? "conf-ok" : "conf-bad");
+        if (isGame) {   // gate verdict: OCR-worthy phase up (green ✓) vs idle (amber ◯ — not an error)
+            const a = res.gate_active;
+            verdict.textContent = a ? "✓ OCR-worthy phase" : "◯ idle — no OCR";
+            verdict.className = "wd-verdict " + (a ? "conf-ok" : "conf-warn");
+        } else {
+            const w = res.window;
+            if (!w) { verdict.textContent = ""; verdict.className = "wd-verdict muted"; }
+            else {
+                verdict.textContent = w.pass ? "✓ would match this window" : "✗ would not match";
+                verdict.className = "wd-verdict " + (w.pass ? "conf-ok" : "conf-bad");
+            }
         }
     }
-    setWindowCollideStatus(winId);   // cross-window outcome (cached; cheap, sig-guarded)
+    if (!isGame) setWindowCollideStatus(winId);   // cross-window outcome (windows only)
 }
 
 // Detection is a cross-window contest: classify() runs EVERY window's detectors against
@@ -915,7 +1030,7 @@ async function loadImage(winId, recapture) {
     const game = model.profile.name;
     let url = null;
     const done = timed(`${recapture ? "recapture" : "load image"} ${winId}`);
-    setNodeBusy(`win:${winId}`, true);   // capturing/fetching the image
+    setNodeBusy(nodeIdOf(winId), true);   // capturing/fetching the image
     try {
         if (recapture) {
             // grab the live window and store it as the CURRENT page (append when there are none)
@@ -929,10 +1044,10 @@ async function loadImage(winId, recapture) {
             const cap = await curCapOf(winId);   // the bound capture for the page on screen
             if (cap) url = api.captureUrl(game, cap);
         }
-    } catch (e) { done(String(e.message || e), "err"); setStatus(String(e.message || e)); setNodeBusy(`win:${winId}`, false); return; }
+    } catch (e) { done(String(e.message || e), "err"); setStatus(String(e.message || e)); setNodeBusy(nodeIdOf(winId), false); return; }
     if (!url) {   // this page has no bound image — show a blank canvas (no live grab) + the empty nav
         done();
-        setNodeBusy(`win:${winId}`, false);
+        setNodeBusy(nodeIdOf(winId), false);
         entry.overlay.setImage(null);
         refreshImageBoxes(winId);
         updateImageLabel(winId);
@@ -942,7 +1057,7 @@ async function loadImage(winId, recapture) {
     const img = new Image();
     img.onload = () => {
         done();
-        setNodeBusy(`win:${winId}`, false);
+        setNodeBusy(nodeIdOf(winId), false);
         // keep the canvas area at the image aspect ratio so resizing always fits
         entry.canvas.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
         entry.overlay.setImage(img);
@@ -950,12 +1065,15 @@ async function loadImage(winId, recapture) {
         drawEdges();
         updateImageLabel(winId);     // button shows the (possibly new) filename
         // the image changed (recapture / picked a capture / first open) → READ it: full preview
-        // when the node exists, else just the grid overlay. No first-manual-read gate.
-        if (prevHost(winId)) refreshPreview(winId, false);
-        else refreshGridPreview(winId);
+        // when the node exists, else just the grid overlay. The game gate has no grid/preview —
+        // only its cheap detectors need re-evaluating.
+        if (winId !== "game") {
+            if (prevHost(winId)) refreshPreview(winId, false);
+            else refreshGridPreview(winId);
+        }
         refreshDetect(winId);   // re-evaluate detectors against the new image
     };
-    img.onerror = () => setNodeBusy(`win:${winId}`, false);
+    img.onerror = () => setNodeBusy(nodeIdOf(winId), false);
     img.src = url;
 }
 

@@ -41,7 +41,7 @@ import {
     applyView, resizeCanvas, onWheel, startPan, consumePanSuppress,
 } from "./camera.js";
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
-import { nodeParts, windowControls, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved } from "./node_parts.js";
+import { nodeParts, windowControls, gameControls, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved } from "./node_parts.js";
 import * as dsevents from "./dsevents.js";
 import { singleFlight } from "../singleflight.js";
 import {
@@ -69,7 +69,7 @@ import {
 import { pushHistory, resetHistory, undo, redo } from "./history.js";
 import { workers, unregisterWorker } from "./workers.js";
 import {
-    closeImage, openImage,
+    closeImage, openImage, openGameImage, armColorPick, refreshDetect, nodeIdOf,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
     scheduleItemRead, itemReadout,
     previewBusy, previewAgain,
@@ -88,7 +88,7 @@ const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, producer: 7
 // with visibility-toggleable inputs, so a frozen height would clip or leave dead space.
 // Only the fixed-aspect canvas nodes are width-only (height follows their image aspect).
 // Every other node — incl. the config nodes (dataset/subset/producer) — is freely resizable.
-const WIDTH_ONLY_NODES = new Set(["item", "window"]);
+const WIDTH_ONLY_NODES = new Set(["item", "window", "game"]);
 const FLOW_FALLBACK_MS = 15000;   // safety-net /api/flow poll; the dataset-change bus is the real mechanism
 // One-shot boot prefetch: every dataset detail + subset view fetched in a SINGLE /details request
 // before the nodes are built, so each node renders from this map instead of firing its own fetch
@@ -116,7 +116,12 @@ function overlaySelected(key, id) {
     activeOverlayKey = id ? key : (activeOverlayKey === key ? null : activeOverlayKey);
     for (const [k, rec] of overlays) if (k !== key) rec.overlay.setActive(null);
     const rec = overlays.get(key);
-    if (rec && rec.kind === "window" && id) selectRegionNode(rec.winId, id);   // highlight its node
+    // A box-backed NODE click (selectWindowBox) routes here with the window/game key even when that
+    // window's image canvas is CLOSED (no overlay rec). Still highlight the box's node, or the
+    // just-focused detect/region/scrollbar node would deselect itself on the trailing click.
+    const winKey = key === "game" || key.startsWith("win:");
+    if (id && (rec ? (rec.kind === "window" || rec.kind === "game") : winKey))
+        selectRegionNode(rec ? rec.winId : (key === "game" ? "game" : key.slice(4)), id);   // highlight its node
     else { selectedNodeId = null; for (const [, el] of nodeEls) el.classList.remove("selected"); drawEdges(); }
 }
 
@@ -125,7 +130,18 @@ function overlaySelected(key, id) {
 function selectWindowBox(winId, boxId) {
     const e = imageCanvases.get(winId);
     if (e) e.overlay.setActive(boxId);
-    overlaySelected(`win:${winId}`, boxId);
+    overlaySelected(nodeIdOf(winId), boxId);
+}
+
+// Switch a detector between kinds by toggling the discriminating fields (the model infers
+// kind from which are set — see detectKind in node_parts). text=OCR; color/border=cheap.
+function setDetectKind(a, kind) {
+    if (kind === "text") { a.text = a.text ?? ""; delete a.color; delete a.width; }
+    else {                                  // color or border (both cheap, no OCR)
+        delete a.text;
+        a.color = a.color ?? ""; a.tolerance = a.tolerance ?? 32;
+        if (kind === "border") a.width = a.width || 0.1; else delete a.width;
+    }
 }
 let pendingOpenImages = [];
 
@@ -853,17 +869,22 @@ function wireWindowControls(div, n) {
     div.querySelectorAll(".wi-row .wi-name").forEach((el) => el.addEventListener("click", (e) => {
         panZoomTo(`item:${n.ref.id}:${el.closest(".wi-row").dataset.id}`);
     }));
-    // detects section: combine mode + per-detector polarity. Both change the live verdict, so
-    // autosave(winId) re-runs detect for ONLY this window (refreshes .wd-status/.wd-verdict).
+    wireDetectsSection(div, n.ref.id);   // combine mode + per-detector polarity + name jumps
+}
+
+// The detectors section (mode select + polarity selects + name jumps). Shared by the window
+// node and the game node (rule 7); ownerId "game" routes to the gate. A change re-runs detect
+// for that owner so .wd-status/.wd-verdict refresh.
+function wireDetectsSection(div, ownerId) {
+    const saveDet = () => { if (ownerId === "game") { autosave(null); refreshDetect("game"); } else autosave(ownerId); };
     div.querySelector(".wd-mode")?.addEventListener("change", (e) => {
-        model.setDetectMode(n.ref.id, e.target.value); autosave(n.ref.id);
+        model.setDetectMode(ownerId, e.target.value); saveDet();
     });
     div.querySelectorAll(".wd-neg").forEach((sel) => sel.addEventListener("change", (e) => {
-        model.setDetectNegate(n.ref.id, e.target.dataset.id, e.target.value === "absent"); autosave(n.ref.id);
+        model.setDetectNegate(ownerId, e.target.dataset.id, e.target.value === "absent"); saveDet();
     }));
-    // click a detect name -> jump to its detect node (where its text/threshold live)
     div.querySelectorAll(".wd-row .wd-name").forEach((el) => el.addEventListener("click", () => {
-        panZoomTo(`det:${n.ref.id}:${el.closest(".wd-row").dataset.id}`);
+        panZoomTo(`det:${ownerId}:${el.closest(".wd-row").dataset.id}`);
     }));
 }
 
@@ -1623,7 +1644,7 @@ function removeNode(n) {
         window:     { kill: () => { closeImage(n.ref.id); model.removeWindow(n.ref.id); }, after: () => autosave(null) },
         item:       { kill: () => { closeItemImage(win, n.ref.id); model.removeItem(win, n.ref.id); clearGrid(win); }, after: () => { refreshImageBoxes(win); autosave(win); } },
         region:     { kill: () => model.removeRegion(win, n.ref.id), after: () => { autosave(win); refreshImageBoxes(win); } },
-        detect:     { kill: () => model.removeDetect(win, n.ref.id), after: () => { rebuildNode(`win:${win}`); autosave(win); refreshImageBoxes(win); } },
+        detect:     { kill: () => model.removeDetect(win, n.ref.id), after: () => { rebuildNode(nodeIdOf(win)); if (win === "game") refreshDetect("game"); else autosave(win); refreshImageBoxes(win); } },
         scrollbar:  { kill: () => model.removeScrollbar(win), after: () => { autosave(win); refreshImageBoxes(win); } },
         itemfield:  { kill: () => model.removeItemField(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
         itemtell:   { kill: () => model.removeItemTell(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
@@ -1720,6 +1741,12 @@ function fillNode(div, n, wire = true) {
         div.classList.toggle("node-disabled", !on);
         const winId = n.type === "window" ? n.ref.id : n.win?.id;
         if (winId) { clearGrid(winId); refreshImageBoxes(winId); }
+        // a toggled detector changes the owner's detects section (its row greys / un-greys, and
+        // the game gate's enabled count) — rebuild that section + re-run detect for the verdict.
+        if (n.type === "detect" && winId) {
+            rebuildNode(nodeIdOf(winId));
+            if (winId === "game") refreshDetect("game");
+        }
         autosave(winId);   // window id (or undefined for data-plane) -> scoped; re-fires only on enable
     });
     // satellite show/hide (preview on a window; vt-table on a dataset/subset) — one handler for
@@ -1953,7 +1980,9 @@ function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
             // first redraw greys this node's out-edges; onResize only fires after a full grid step, so
             // a resize smaller than one step otherwise never greyed them at all (rule 7: same as drag).
             setDraggingNodes(true, [id]); requestEdges();
-            div.classList.add("snapping");   // glide each 20px grid step (same class as a move drag — rule 7)
+            // NO .snapping here: easing width/height while the pointer drags the grip makes the
+            // dragged edge lag the cursor (felt like the resize "resisted"). Grip steps are already
+            // grid-snapped (crisp 20px), so they don't need a glide. WASD/move keep their glide.
         },
         // While ACTIVELY dragging (_ptrDown), keep the soft grid mins cleared so a prior grow's
         // min-width/height can't block a shrink. NOT on a programmatic resize (e.g. the size change
@@ -1969,7 +1998,6 @@ function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
                 nodeSizes.set(id, { w, h, softW, softH });   // record min-vs-hard so restore can't drift
             }
             div.classList.add("has-size"); setDraggingNodes(false); flushEdges(); groups.renderGroups(); persist.layout();
-            div.classList.remove("snapping");   // back to instant for programmatic sizes (restore/collapse/refit)
         },
         // reset dot: drop the user's size, then snap the node's NATURAL size UP to the grid using
         // soft mins set DIRECTLY (not via applyGridSize). snapUp always rounds UP, so min-width/height
@@ -2034,6 +2062,8 @@ function buildNode(n, wire = true) {
 const _LIVE_SECTIONS = {
     window: { sel: ".win-controls", build: (n) => windowControls(n.ref), wire: wireWindowControls },
     item:   { sel: ".item-lists", build: (n) => itemLists(n.ref, n.win), wire: wireItemControls },
+    // game gate controls rebuild without disturbing the image canvas (like window controls)
+    game:   { sel: ".game-controls", build: (n) => gameControls(n.ref), wire: (el) => wireDetectsSection(el, "game") },
 };
 
 // Rebuild ONE node's DOM in place (used when its own layout changes, e.g. type).
@@ -2310,6 +2340,8 @@ function wireNode(div, n) {
             else if (k === "title") model.profile.window_title_hint = v.trim() || null;
             autosave(null);   // process/title/name affect window LOCATION, not stashed-image OCR
         }));
+        wireDetectsSection(div, "game");   // gate combine-mode + per-detector polarity (shared with windows)
+        openGameImage(div);   // mount the worthiness-gate image surface (built before nodeEls has the node)
         // node creation moved to the floating "create" toolbox (see buildToolbox)
     } else if (n.type === "dictionary") {
         // the title doubles as both name and id (renamed in place)
@@ -2475,20 +2507,31 @@ function wireNode(div, n) {
             commit: () => autosave(n.win?.id),
         });
     } else if (n.type === "detect") {
+        const owner = n.win.id;                         // window id, or "game" for the gate
+        const isGate = owner === "game";
+        const ownerNode = nodeIdOf(owner);
+        // persist a detector edit: window detectors re-OCR their window; gate detectors just
+        // save + re-run the cheap gate (autosave(null) doesn't re-read a window).
+        const saveDet = () => { if (isGate) { autosave(null); refreshDetect("game"); } else autosave(owner); };
         div.addEventListener("click", (ev) => {
             if (ev.target.closest("input,select,button")) return;
-            selectWindowBox(n.win.id, n.ref.id);
+            selectWindowBox(owner, n.ref.id);
         });
         div.querySelector(".gi-id").addEventListener("change", (e) => {
             const oldId = n.ref.id;
             renameNode(e.target, oldId,
-                () => model.renameDetect(n.win.id, oldId, e.target.value.trim()),
-                () => movePos(`det:${n.win.id}:${oldId}`, `det:${n.win.id}:${n.ref.id}`),
-                () => { render(); rebuildNode(`win:${n.win.id}`); autosave(n.win.id); refreshImageBoxes(n.win.id); });
+                () => model.renameDetect(owner, oldId, e.target.value.trim()),
+                () => movePos(`det:${owner}:${oldId}`, `det:${owner}:${n.ref.id}`),
+                () => { render(); rebuildNode(ownerNode); saveDet(); refreshImageBoxes(owner); });
         });
+        div.querySelector(".aset-pick")?.addEventListener("click", () => armColorPick(owner, n.ref.id));
         div.querySelectorAll(".aset").forEach((inp) => inp.addEventListener("change", (e) => {
             const k = e.target.dataset.k;
+            if (k === "kind") { setDetectKind(n.ref, e.target.value); rebuildNode(n.id); refreshImageBoxes(owner); saveDet(); return; }
             if (k === "text") n.ref.text = e.target.value;
+            else if (k === "color") { n.ref.color = e.target.value.trim(); rebuildNode(n.id); }
+            else if (k === "tol") n.ref.tolerance = Math.max(0, Math.trunc(+e.target.value) || 0);
+            else if (k === "width") n.ref.width = Math.max(0, +e.target.value || 0);
             else if (k === "thr") n.ref.threshold = +e.target.value;
             else if (k === "match") n.ref.match = e.target.value;
             else if (k === "minchars") n.ref.min_chars = Math.max(0, Math.trunc(+e.target.value) || 0);
@@ -2496,7 +2539,7 @@ function wireNode(div, n) {
             else if (k === "case") n.ref.case_sensitive = e.target.checked;
             // mode change shows/hides "read ⊆ text" (ignored by full/exact) -> rebuild the body
             if (k === "match") rebuildNode(n.id);
-            autosave(n.win.id);   // a detector knob re-runs detect for ONLY this window
+            saveDet();   // a detector knob re-runs detect for ONLY this owner
         }));
     } else if (n.type === "scrollbar") {
         div.addEventListener("click", (ev) => {

@@ -8,10 +8,11 @@ import { persist } from "../persist.js";
 import { $, setStatus, model } from "../state.js";
 import { registerWorker, unregisterWorker } from "../workers.js";
 import { pc, precapOpen, precapBusy, fmtBytes } from "./precap.js";
-import { prevHost, refreshDetect, refreshPreview } from "../imaging.js";
+import { prevHost, refreshDetect, refreshPreview, setGameGateBadge } from "../imaging.js";
 import { refreshLive, wireOcrScale, wireOcrYield } from "../main.js";
 import { panZoomTo } from "../camera.js";
 import { h, svg } from "../../dom.js";
+import { bgSetTimeout, bgClearTimeout } from "../../bgtimer.js";
 
 let timer = null;
 // live floating panel state — declared BEFORE buildLiveWindow() runs at module-eval
@@ -117,6 +118,9 @@ function mountLive(adapter) {
             // panel height is identical whether live mode is on or off (no jump on enable).
             h("div", { class: "live-statbox" },
                 h("div", { class: "live-row" },
+                    h("span", { class: "live-int-lbl", title: "the OCR-worthy phase being read right now (window/state), or idle when the worthiness gate is closed" }, "phase"),
+                    h("span", { class: "live-statval live-stat-phase muted" }, "–")),
+                h("div", { class: "live-row" },
                     h("span", { class: "live-int-lbl", title: "records added/updated this run" }, "saved"),
                     h("span", { class: "live-statval live-stat-saved muted" }, "–")),
                 h("div", { class: "live-row" },
@@ -201,6 +205,19 @@ function renderLiveWindow() {
         const el = liveRoot.querySelector(cls);
         if (el && el.textContent !== txt) el.textContent = txt;
     };
+    // current phase: the window/state being read now, else the REASON we aren't reading — taken
+    // from the raw tick status (gate-closed is only ONE of them; no-window is different).
+    const win = collecting ? liveColStatus?.window : null;
+    const reasonText = { idle: "idle (gate closed)", unrecognised: "no window recognised",
+        no_window: "game not found", not_foreground: "window not focused",
+        state_invalid: "wrong state", moving: "screen moving" };
+    setStat(".live-stat-phase", !collecting ? "–"
+        : win ? (liveColStatus.state ? `${win} / ${liveColStatus.state}` : win)
+        : (reasonText[liveColStatus?.phase_status] || "idle"));
+    const phaseEl = liveRoot.querySelector(".live-stat-phase");
+    // same scheme as the gate verdict: reading a phase = green, idle = amber, off = muted
+    const phaseCls = "live-statval live-stat-phase " + (win ? "conf-ok" : collecting ? "conf-warn" : "muted");
+    if (phaseEl && phaseEl.className !== phaseCls) phaseEl.className = phaseCls;
     setStat(".live-stat-saved", collecting ? String(liveColStatus?.written ?? 0) : "–");
     setStat(".live-stat-rate",
         collecting ? `${(liveColStatus?.fps ?? 0).toFixed(1)}/s`
@@ -311,7 +328,10 @@ async function liveTick() {
         if (anyDet) api.liveCaptures.grab(game).then((s) => { liveImg = s; }).catch((e) => log(`live grab failed: ${e.message || e}`, "err"));
         renderLiveStats();   // recompute fps + refresh the panel after the round
     }
-    if (liveOn && !liveSave) timer = setTimeout(liveTick, 200);   // next round only AFTER this one drained
+    // Schedule via the worker-backed timer so the tuning loop keeps ticking when the tab is
+    // backgrounded (a plain setTimeout would clamp to ~1/min while hidden — exactly when you tune
+    // against the foregrounded game). The round body still runs on the main thread (fetch + canvas).
+    if (liveOn && !liveSave) timer = bgSetTimeout(liveTick, 200);   // next round only AFTER this one drained
 }
 
 // Server-side collector (the real pipeline): started when live + save are both on. The
@@ -334,6 +354,8 @@ function subscribeCollector() {
         // dot reflects what's detected RIGHT NOW (the current tick's window), NOT the cumulative
         // tally — else a window detected once stays green for the whole run after it left screen.
         if (liveColStatus?.window) liveRecog.set(liveColStatus.window, true);
+        // game node worthiness badge: live phase from the server collector (● collecting / ◯ waiting)
+        setGameGateBadge(liveColStatus?.gated ? !!liveColStatus.phase : null);
         refreshLiveImgStat();   // server collector saves frames to disk — keep the saved-image stat fresh
         renderLiveWindow();
     });
@@ -401,7 +423,7 @@ function adoptServerCollect(s) {
 // toggle + worker locally without issuing another stop (the server is already stopped).
 function reflectExternalStop() {
     liveOn = false; liveSawServer = false;
-    if (timer) { clearTimeout(timer); timer = null; }
+    if (timer) { bgClearTimeout(timer); timer = null; }
     liveRecog.clear(); liveDetCount.clear();
     if (liveColUnsub) { liveColUnsub(); liveColUnsub = null; }
     liveColStatus = null;
@@ -445,7 +467,8 @@ function setLiveMode(on) {
     if (on && precapOpen) pc.setVisible(false);   // idle precap panel open → close it (one OCR consumer at a time)
     if (on === liveOn) { renderLiveWindow(); return; }   // no change → don't double-start; keep the switch in sync
     liveOn = on;
-    if (timer) { clearTimeout(timer); timer = null; }
+    hub.setLiveActive(on);   // keep the heartbeat FAST while live runs, even with the tab unfocused
+    if (timer) { bgClearTimeout(timer); timer = null; }
     if (!on) { liveRecog.clear(); liveDetCount.clear(); }   // drop stale dots + counts
     showLiveStats(on);
     if (on) {
@@ -466,7 +489,7 @@ function setLiveSave(on) {
     if (on === liveSave) return;
     liveSave = on;
     if (liveOn) {
-        if (timer) { clearTimeout(timer); timer = null; }   // stop the client loop either way
+        if (timer) { bgClearTimeout(timer); timer = null; }   // stop the client loop either way
         if (on) { stopServerCollect().then(startServerCollect); }   // await teardown, then (re)start
         else { stopServerCollect(); liveTick(); }                  // back to read-only tuning
         registerWorker("live", on ? "live collection" : "live view", () => setLiveMode(false));

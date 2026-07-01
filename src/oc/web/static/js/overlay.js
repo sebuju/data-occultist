@@ -37,7 +37,7 @@ const HANDLES = [
 ];
 
 export class Overlay {
-    constructor(canvas, { onCreate, onSelect, onChange, onZoom, onPick } = {}) {
+    constructor(canvas, { onCreate, onSelect, onChange, onZoom, onPick, canCreate } = {}) {
         this.canvas = canvas;
         this.ctx = canvas.getContext("2d");
         this.img = null;
@@ -48,6 +48,10 @@ export class Overlay {
         this.onChange = onChange;   // a box was moved/resized
         this.onZoom = onZoom;
         this.onPick = onPick;       // eyedropper: sampled "#rrggbb"
+        // Optional gate: when it returns false, drag-to-draw is disabled (no new box, no
+        // crosshair) — e.g. the game gate canvas with no draw tool picked. Default: always on,
+        // so existing callers (window/item canvases) keep drawing as before.
+        this.canCreate = canCreate;
         this.picking = false;
         this.op = null;             // active interaction
         this.scale = 1;
@@ -218,8 +222,9 @@ export class Overlay {
             this.render();
             return;
         }
-        // 4) empty space: deselect, then start a new box
+        // 4) empty space: deselect, then start a new box — unless creation is gated off
         if (this.activeId !== null) { this.activeId = null; this.onSelect?.(null); this.render(); }
+        if (this.canCreate && this.canCreate() === false) return;   // no draw tool -> no new box
         this.op = { type: "create", x0: p.x, y0: p.y, x1: p.x, y1: p.y };
     }
 
@@ -284,7 +289,9 @@ export class Overlay {
         const h = this._hitHandle(p, active);
         if (h) { this.canvas.style.cursor = h.cur; return; }
         if (active && this._hitCenter(p, active)) { this.canvas.style.cursor = "move"; return; }
-        this.canvas.style.cursor = this._hitBox(p) ? "pointer" : "crosshair";
+        if (this._hitBox(p)) { this.canvas.style.cursor = "pointer"; return; }
+        // empty space: crosshair only when drawing is allowed, else the normal cursor
+        this.canvas.style.cursor = (this.canCreate && this.canCreate() === false) ? "default" : "crosshair";
     }
 
     // ---- render -------------------------------------------------------------

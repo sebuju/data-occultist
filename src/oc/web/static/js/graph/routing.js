@@ -422,7 +422,7 @@ function drawEdges() {
             + (l._stale ? " stale-edge" : ""));   // dragged off its node -> grey + fade until it re-routes
         const c = routeCache.get(l.key);
         if (c && c.pts.length >= 2) {                           // have a routed path for this line
-            if (tweenRoutes && geoChanged(el, c.pts)) startMorph(el, c.pts);
+            if (tweenRoutes && el._routed && geoChanged(el, c.pts)) startMorph(el, c.pts);
             else if (!el._raf && geoChanged(el, c.pts)) setRouted(el, c.pts);   // only redraw if it changed; leave morphs alone
         } else if (!el.getAttribute("d")) {
             // BRAND-NEW line only (no path yet): give it an initial orthogonal elbow so it isn't
