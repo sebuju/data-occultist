@@ -2117,6 +2117,23 @@ function makeNodeResizable(div, id, { widthOnly = false } = {}) {
     snapResize(div, nodeResizeOpts(div, id, { widthOnly }));
 }
 
+// Re-apply saved node SIZES to already-rendered nodes — render() re-applies position every pass
+// but size is stamped only at buildNode, so an undo/redo (which rewrites `nodeSizes` via
+// hydrateNodeLayout) wouldn't otherwise resize a REUSED node. Clears the inline size first so a
+// node that's now natural (no saved size in the restored snapshot) resets to content size. Mirrors
+// makeNodeResizable's restore branch exactly (widthOnly nodes stamp width only).
+function reapplyNodeSizes() {
+    for (const [id, el] of nodeEls) {
+        el.style.width = ""; el.style.height = ""; el.style.minWidth = ""; el.style.minHeight = "";
+        const s = nodeSizes.get(id);
+        if (s && !collapsed.has(id)) {
+            if (WIDTH_ONLY_NODES.has(nodeTypeOf(id))) { if (s.w && s.custW !== false) el.style.width = `${s.w}px`; }
+            else applySavedSize(el, s);
+        }
+        markNodeSized(el, id);
+    }
+}
+
 function buildNode(n, wire = true) {
     const div = document.createElement("div");
     div.id = `node-${n.id}`;
@@ -3179,9 +3196,26 @@ if (typeof window !== "undefined") {
         // layout edit through the REAL funnel (pos update + persist.layout -> recordHistory)
         nodePos: (id) => { const p = pos.get(id); return p ? { x: p.x, y: p.y } : null; },
         moveNode: (id, x, y) => { pos.set(id, { x, y }); render(); persist.layout(); },
+        // node SIZE through the real funnel (nodeSizes + persist.layout -> record). offsetWidth/Height
+        // are unscaled local layout px.
+        nodeSize: (id) => { const el = nodeEls.get(id); return el ? { w: el.offsetWidth, h: el.offsetHeight } : null; },
+        resizeNode: (id, w, h) => {
+            nodeSizes.set(id, { w, h, custW: true, custH: true, softW: false, softH: false });
+            const el = nodeEls.get(id); if (el) { applySavedSize(el, nodeSizes.get(id)); markNodeSized(el, id); }
+            persist.layout();
+        },
         // vttable column width through the real funnel: write the store, apply live, persist -> record.
         firstTable: () => { const v = liveVTables()[0]; return v && v.columns[0] ? { id: v.id, col: v.columns[0], width: v.widths[v.columns[0]] ?? null } : null; },
         tableWidth: (id, col) => { const v = vtableById(id); return v ? (v.widths[col] ?? null) : null; },
+        tableDomWidth: (id, colName) => { const v = vtableById(id); if (!v) return null; const i = v.columns.indexOf(colName); const c = i >= 0 && v.head && v.head.children[i]; return c ? c.offsetWidth : null; },
+        tableCols: (id) => { const v = vtableById(id); return v ? v.columns.slice() : null; },
+        tableSort: (id) => { const v = vtableById(id); if (!v) return null; return { col: v.sortCol != null ? v.columns[v.sortCol] : null, dir: v.sortDir }; },
+        // first VISIBLE row's value for a column — proves the ROWS actually reordered, not just the arrow
+        tableFirstRow: (id, colName) => { const v = vtableById(id); if (!v || !v.filtered.length) return null; return v.filtered[0].values[colName] ?? null; },
+        setTableSort: (id, colName, dir) => {
+            const v = vtableById(id); if (!v) return; const i = v.columns.indexOf(colName); if (i < 0) return;
+            v.sortCol = i; v.sortDir = dir; v._sortView(); v._renderHead(); v._render(); v._saveSort();   // real sort-commit path (persists -> records)
+        },
         setTableWidth: (id, col, px) => {
             const L = (model.profile.layout = model.profile.layout || {});
             const t = (L.tables = L.tables || {}); const st = (t[id] = t[id] || {}); (st.widths = st.widths || {})[col] = px;
@@ -3969,7 +4003,7 @@ killStrayOcrThenBoot();
 // ---- exports consumed by panel modules (imported back from "./main.js") ----
 export {
     focusNode, autosave, placeNewNode, render,
-    collectLayout, hydrateNodeLayout, reconcileOpenImages,   // used by history.js restore
+    collectLayout, hydrateNodeLayout, reconcileOpenImages, reapplyNodeSizes,   // used by history.js restore
     refreshLive, subsetParts, wireOcrScale, wireOcrYield,
     refreshAllSubsetNodes, refreshDatasetConsumers,
     rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,

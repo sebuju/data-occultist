@@ -50,6 +50,22 @@ let _store = (() => {
 })();
 export function setVTableStore(store) { _store = store; }
 
+// Live-instance registry so an undo/redo restore can re-apply persisted column state (widths /
+// order / sort) to tables ALREADY on screen — the ctor reads the store only once, so a restore
+// that changes layout.tables[id] wouldn't otherwise show until the node rebuilt. Self-cleaning:
+// instances whose root has been detached (node rebuilt) are pruned on the next sweep, so no
+// teardown hook is needed.
+const _live = new Set();
+// first live (attached) table with the given store id — used by e2e to assert width restore.
+export function vtableById(id) { for (const v of _live) if (v.id === id && v.el && v.el.isConnected) return v; return null; }
+export function liveVTables() { return [..._live].filter((v) => v.el && v.el.isConnected && v.id); }
+export function reapplyPersistedVTables() {
+    for (const vt of [..._live]) {
+        if (!vt.el || !vt.el.isConnected) { _live.delete(vt); continue; }
+        try { vt.reloadPersisted(); } catch { /* detached mid-rebuild — ignore */ }
+    }
+}
+
 export class VTable {
     constructor(host, id = null) {
         this.host = host;
@@ -72,6 +88,19 @@ export class VTable {
         this._batchCount = null;  // optional batch tally shown in the bar meta (null = not applicable)
         this._raf = null;
         this._build();
+        _live.add(this);   // register for restore-time re-apply (pruned by isConnected later)
+    }
+
+    // Re-read this table's persisted column state (widths / order / sort) from the store and
+    // re-apply it live — used by an undo/redo restore so the change snaps back without a full node
+    // rebuild (the ctor reads the store only once). No-op without an id. Mirrors the setColumns path.
+    reloadPersisted() {
+        if (!this.id) return;
+        this.widths = _store.load(this.id).widths || {};
+        this.columns = this._applyOrder(this.columns);   // restored column order
+        this._applySort();                                // restored sort col/dir (from the store)
+        this._renderHead();                               // header cells + arrow + widths
+        this._filter();                                   // REBUILD + re-SORT the rows (not just _render — matches setData)
     }
 
     // ---- DOM scaffold (built once) ----

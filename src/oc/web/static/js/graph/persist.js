@@ -10,8 +10,9 @@
 // callbacks (collect/apply for each side) so this module never reaches into them.
 //
 // Saves are debounced. content() vs layout() both PUT the whole profile (which now
-// carries `layout`); they differ only in whether the content-side callback fires —
-// so a node drag never enters undo/redo or triggers a preview re-read.
+// carries `layout`); they differ only in whether the content-side callback fires (a
+// preview/detect re-read). BOTH record an undo/redo snapshot — a node drag is undoable
+// too — but only content() runs the preview re-read.
 
 import * as api from "../api.js";
 import { log } from "../log.js";
@@ -20,6 +21,7 @@ let M = null;                 // the GraphModel
 let collectLayout = null;     // () => write live node state into model.profile.layout
 let collectLocal = null;      // () => ({ view, minimap }) for the sidecar
 let onContentSaved = null;    // () => UI refresh after a real content save
+let recordHistory = null;     // () => push an undo/redo snapshot (layout edits are undoable too)
 
 let tProfile = null, tLocal = null;
 let pendingContent = false;
@@ -36,6 +38,7 @@ export function initPersist(opts) {
     collectLayout = opts.collectLayout;
     collectLocal = opts.collectLocal;
     onContentSaved = opts.onContentSaved;
+    recordHistory = opts.recordHistory;
 }
 
 async function flushProfile() {
@@ -71,7 +74,9 @@ export const persist = {
     // A configuration edit: debounced profile save; fires onContentSaved on success.
     content() { scheduleProfile(true); },
     // A pure layout move (drag/resize/collapse/open-image): saved, but no UI side effects.
-    layout() { scheduleProfile(false); },
+    // Records an undo snapshot (guarded internally: a no-op during an in-flight restore, and
+    // identical snapshots dedup, so a boot-time re-save never spawns a phantom entry).
+    layout() { recordHistory && recordHistory(); scheduleProfile(false); },
     // Viewport/minimap change: debounced sidecar save.
     local() { clearTimeout(tLocal); tLocal = setTimeout(flushLocal, DEBOUNCE); },
 

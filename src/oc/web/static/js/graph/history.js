@@ -1,39 +1,48 @@
-// Undo / redo of the profile (full config history, layout excluded).
-// Extracted from main.js verbatim.
-import { model, setStatus, imageCanvases } from "./state.js";
+// Undo / redo of the profile — the node graph's history. Built on the shared createHistory engine
+// (../history_core.js); this file supplies the node-view specifics: how to snapshot the WHOLE
+// profile (config + layout), how to restore it (reload + re-hydrate node layout + re-render +
+// reconcile open images + redraw boxes + persist), and the diff labeller for the panel.
+//
+// What IS in history: all config, plus node positions/sizes/collapse, groups, satellites, open
+// image panels, table widths (everything in `profile.layout`). What is NOT: the per-device viewport
+// (pan/zoom lives in a separate sidecar, never in the profile), dataset row data + captures (both
+// server-side). So undo restores where every node sat, but never shuffles your pan/zoom.
+
+import { model, setStatus, imageCanvases, itemCanvases, boot } from "./state.js";
 import { persist } from "./persist.js";
-import { render } from "./main.js";
-import { refreshImageBoxes, refreshDetect } from "./imaging.js";
+import { render, collectLayout, hydrateNodeLayout, reconcileOpenImages, reapplyNodeSizes } from "./main.js";
+import { refreshImageBoxes, refreshDetect, refreshItemBoxes } from "./imaging.js";
+import { reapplyPersistedVTables } from "../vtable.js";
+import { createHistory } from "../history_core.js";
+import { diffLabel } from "../history_label.js";
 
-// ---- undo / redo (full history of the profile) -----------------------------
-// Layout is EXCLUDED from history (snapState strips it) so undo/redo is config-only —
-// moving a node never becomes an undo step, and undo never shuffles the canvas.
+// fold live node layout into the profile first, so the snapshot captures the CURRENT positions
+// (collectLayout runs at PUT time otherwise — too late for a synchronous snapshot).
+const snapshot = () => { collectLayout(); return JSON.stringify(model.profile); };
 
-let history = [];
-let hIndex = -1;
-let restoring = false;
-function snapState() { const { layout, ...rest } = model.profile; return JSON.stringify(rest); }
-function pushHistory() {
-    if (restoring) return;
-    const s = snapState();
-    if (hIndex >= 0 && history[hIndex] === s) return;   // no change
-    history = history.slice(0, hIndex + 1);
-    history.push(s);
-    if (history.length > 200) history.shift();
-    hIndex = history.length - 1;
-}
-function resetHistory() { history = [snapState()]; hIndex = 0; }
-function applyHistory() {
-    restoring = true;
-    const layout = model.profile.layout;     // carry layout across the reload (it's not in history)
-    model.load(JSON.parse(history[hIndex]));
-    model.profile.layout = layout;
-    render();
+async function restore(snap) {
+    model.load(JSON.parse(snap));          // profile incl. its layout
+    hydrateNodeLayout();                   // push restored positions/sizes/collapse/groups/satellites live
+    render();                              // place nodes at the restored spots (nodes now in the DOM)
+    reapplyNodeSizes();                    // re-stamp restored node w/h (render only re-applies position)
+    reapplyPersistedVTables();             // snap open tables' column widths/order/sort to the restored state
+    await reconcileOpenImages();           // open/close window image canvases to match the snapshot
+    // redraw every OPEN canvas from the restored model: window canvases (regions/detectors/data-area/
+    // scrollbar + grid) and item-cutout canvases (per-item field/tell boxes, a separate map).
     for (const winId of imageCanvases.keys()) { refreshImageBoxes(winId); refreshDetect(winId); }
-    persist.content();
-    restoring = false;
+    for (const key of itemCanvases.keys()) { const i = key.indexOf(":"); refreshItemBoxes(key.slice(0, i), key.slice(i + 1)); }
+    persist.content(); persist.layout();   // persist the restored profile (guarded: no re-record mid-restore)
 }
-function undo() { if (hIndex > 0) { hIndex--; applyHistory(); setStatus("undo"); } }
-function redo() { if (hIndex < history.length - 1) { hIndex++; applyHistory(); setStatus("redo"); } }
 
-export { history, hIndex, restoring, snapState, pushHistory, resetHistory, applyHistory, undo, redo };
+export const hist = createHistory({ snapshot, restore, label: diffLabel });
+
+// thin wrappers keep the existing call sites (main.js) unchanged + add the status line
+// Skip while booting: reopening images, re-OCR, group-rehydration and size re-stamps all fire
+// layout/content saves during load — none are user edits. resetHistory() seeds the baseline once
+// the graph is built; boot.phase only clears after bootSettle, so nothing boot-side records.
+const pushHistory = () => { if (!boot.phase) hist.push(); };
+const resetHistory = () => hist.reset("loaded");
+function undo() { if (hist.canUndo()) { const p = hist.undo(); setStatus("undo"); return p; } }
+function redo() { if (hist.canRedo()) { const p = hist.redo(); setStatus("redo"); return p; } }
+
+export { pushHistory, resetHistory, undo, redo };
