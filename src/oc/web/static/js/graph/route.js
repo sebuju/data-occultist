@@ -121,7 +121,7 @@ function orthoElbow(a, b, d1, d2) {
     return vert(d1) ? [a, [a[0], b[1]], b] : [a, [b[0], a[1]], b];   // perpendicular -> single corner
 }
 
-function simplify(pts) {
+export function simplify(pts) {
     const dd = [];
     for (const p of pts) { const l = dd[dd.length - 1]; if (l && Math.abs(l[0] - p[0]) < 0.5 && Math.abs(l[1] - p[1]) < 0.5) continue; dd.push(p); }
     if (dd.length < 3) return dd;
@@ -211,43 +211,64 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
         portPos.set(n.id, pp); portEdges.set(n.id, pe);
     }
 
-    // stage 2: route each line; A* chooses the faces (super-source/sink over all 4)
+    // stage 2: route each line. Each endpoint is a TERMINAL: either a real NODE (a super-source over
+    // its 4 face ports, A* picks the face) or a fixed GATE ({pt,dir,face}) — a single forced-direction
+    // port on a group-box surface. Gates are how hierarchical routing (hierRoute.js) funnels a group's
+    // boundary-crossing lines through ONE fanned crossing point per face: the outer pass and the inner
+    // pass each terminate their half of the line at the SAME gate pt, so the stitched line is seamless.
     const lines = [];
-    for (const e of edges) { if (byId.has(e.from) && byId.has(e.to)) lines.push({ from: e.from, to: e.to, key: e.key, pinSrc: e.pinSrc || null, insetEnd: e.insetEnd || 0, tether: !!e.tether, port: !!e.port }); }
+    for (const e of edges) {
+        const okFrom = e.fromGate || byId.has(e.from), okTo = e.toGate || byId.has(e.to);
+        if (okFrom && okTo) lines.push({ from: e.from, to: e.to, key: e.key, pinSrc: e.pinSrc || null, insetEnd: e.insetEnd || 0, tether: !!e.tether, port: !!e.port, fromGate: e.fromGate || null, toGate: e.toGate || null });
+    }
+    // super-source/sink anchor position for an endpoint (a node centre, or the gate point itself)
+    const anchor = (id, gate) => (gate ? gate.pt : center(byId.get(id)));
     for (const ln of lines) {
-        const A = byId.get(ln.from), B = byId.get(ln.to), base0 = WP.length;
-        const ppA = portPos.get(ln.from), ppB = portPos.get(ln.to), peA = portEdges.get(ln.from), peB = portEdges.get(ln.to);
+        const base0 = WP.length;
         const prev = prevSides && prevSides.get(ln.key);
-        const S0 = WP.length; WP.push(center(A));
-        const srcIdx = {}; for (const f of FACES) { srcIdx[f] = WP.length; WP.push(ppA[f].slice()); }
-        const dstIdx = {}; for (const f of FACES) { dstIdx[f] = WP.length; WP.push(ppB[f].slice()); }
-        const D0 = WP.length; WP.push(center(B));
-        const own = new Set(); const sg = groupOfNode.get(ln.from), dg = groupOfNode.get(ln.to); if (sg != null) own.add(sg); if (dg != null) own.add(dg);
+        // Build the ENTRY waypoints for each end: [{idx, pt, dir, face, pe?}]. A node contributes its 4
+        // face ports (pe = precomputed face->base edges); a gate contributes one point, exit/entry forced
+        // to gate.dir. `dir` is the perpendicular direction of the stub touching that entry (out for the
+        // source end, in for the dest end); for a gate hierRoute already baked the correct sense into dir.
+        const S0 = WP.length; WP.push(anchor(ln.from, ln.fromGate).slice());
+        const srcEntries = [];
+        if (ln.fromGate) { const idx = WP.length; WP.push(ln.fromGate.pt.slice()); srcEntries.push({ idx, pt: ln.fromGate.pt, dir: ln.fromGate.dir, face: ln.fromGate.face }); }
+        else { const pp = portPos.get(ln.from), pe = portEdges.get(ln.from); for (const f of (ln.pinSrc ? [ln.pinSrc] : FACES)) { const idx = WP.length; WP.push(pp[f].slice()); srcEntries.push({ idx, pt: pp[f], dir: outDir(f), face: f, pe: pe[f] }); } }
+        const dstEntries = [];
+        if (ln.toGate) { const idx = WP.length; WP.push(ln.toGate.pt.slice()); dstEntries.push({ idx, pt: ln.toGate.pt, dir: ln.toGate.dir, face: ln.toGate.face }); }
+        else { const pp = portPos.get(ln.to), pe = portEdges.get(ln.to); for (const f of FACES) { const idx = WP.length; WP.push(pp[f].slice()); dstEntries.push({ idx, pt: pp[f], dir: inDirOf(f), face: f, pe: pe[f] }); } }
+        const D0 = WP.length; WP.push(anchor(ln.to, ln.toGate).slice());
+        const own = new Set(); const sg = ln.fromGate ? null : groupOfNode.get(ln.from), dg = ln.toGate ? null : groupOfNode.get(ln.to); if (sg != null) own.add(sg); if (dg != null) own.add(dg);
         const overlay = new Map(); const add = (from, e) => { if (!overlay.has(from)) overlay.set(from, []); overlay.get(from).push(e); };
         // hysteresis: non-previous faces cost a small stickiness bias, so the route keeps its face.
-        // pinSrc (port lines) clamps the source to a single face — the line leaves the out-port dot.
-        const srcFaces = ln.pinSrc ? [ln.pinSrc] : FACES;
-        for (const f of srcFaces) { const od = outDir(f); add(S0, { to: srcIdx[f], d1: od, d2: od, corner: null, len: prev && prev.d1 !== f ? C.faceStick : 0, gset: EMPTY }); }
-        for (const f of FACES) { const id = inDirOf(f); add(dstIdx[f], { to: D0, d1: id, d2: id, corner: null, len: prev && prev.d2 !== f ? C.faceStick : 0, gset: EMPTY }); }
-        for (const f of FACES) for (const e of peA[f]) add(srcIdx[f], e);
-        for (const g of FACES) for (const e of peB[g]) add(e.to, { to: dstIdx[g], d1: rev(e.d2), d2: rev(e.d1), corner: e.corner, len: e.len, gset: e.gset });
-        for (const f of FACES) { const sp = ppA[f], od = outDir(f); for (const g of FACES) { const dp = ppB[g], id = inDirOf(g); for (const e of edgeOpts(sp[0], sp[1], dp[0], dp[1], HB, soft)) if (e.d1 === od && e.d2 === id) add(srcIdx[f], { to: dstIdx[g], d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset }); } }
+        for (const se of srcEntries) add(S0, { to: se.idx, d1: se.dir, d2: se.dir, corner: null, len: prev && prev.d1 !== se.face ? C.faceStick : 0, gset: EMPTY });
+        for (const de of dstEntries) add(de.idx, { to: D0, d1: de.dir, d2: de.dir, corner: null, len: prev && prev.d2 !== de.face ? C.faceStick : 0, gset: EMPTY });
+        // entries -> base visibility graph (node faces reuse the precompute; a gate scans the base once)
+        for (const se of srcEntries) {
+            if (se.pe) { for (const e of se.pe) add(se.idx, e); }
+            else for (let i = 0; i < baseN; i++) { const W = WP[i]; for (const e of edgeOpts(se.pt[0], se.pt[1], W[0], W[1], HB, soft)) if (e.d1 === se.dir) add(se.idx, { to: i, d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset }); }
+        }
+        for (const de of dstEntries) {
+            if (de.pe) { for (const e of de.pe) add(e.to, { to: de.idx, d1: rev(e.d2), d2: rev(e.d1), corner: e.corner, len: e.len, gset: e.gset }); }
+            else for (let i = 0; i < baseN; i++) { const W = WP[i]; for (const e of edgeOpts(W[0], W[1], de.pt[0], de.pt[1], HB, soft)) if (e.d2 === de.dir) add(i, { to: de.idx, d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset }); }
+        }
+        // direct entry -> entry (short lines that never touch the base graph)
+        for (const se of srcEntries) for (const de of dstEntries) for (const e of edgeOpts(se.pt[0], se.pt[1], de.pt[0], de.pt[1], HB, soft)) if (e.d1 === se.dir && e.d2 === de.dir) add(se.idx, { to: de.idx, d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset });
         const edgesOf = (i) => (i < baseN ? (overlay.has(i) ? baseAdj[i].concat(overlay.get(i)) : baseAdj[i]) : (overlay.get(i) || []));
         const chain = astar(WP, edgesOf, S0, D0, own, softCost);
         if (chain && chain.length >= 3) {
-            const faceOf = (node, map) => FACES.find((f) => map[f] === node);
-            ln.srcSide = faceOf(chain[1].node, srcIdx) || "R";
-            ln.dstSide = faceOf(chain[chain.length - 2].node, dstIdx) || "L";
+            ln.srcSide = (srcEntries.find((se) => se.idx === chain[1].node) || srcEntries[0]).face;
+            ln.dstSide = (dstEntries.find((de) => de.idx === chain[chain.length - 2].node) || dstEntries[0]).face;
             const pts = [];
             for (let c = 1; c < chain.length - 1; c++) { if (chain[c].corner) pts.push(chain[c].corner.slice()); pts.push(WP[chain[c].node].slice()); }
             ln.pts = simplify(pts);
         } else {
             // degenerate (an endpoint trapped inside an overlapping node): orthogonal Z, never a diagonal
-            const sc = center(A), dc = center(B), horiz = Math.abs(dc[0] - sc[0]) >= Math.abs(dc[1] - sc[1]);
+            const sc = anchor(ln.from, ln.fromGate), dc = anchor(ln.to, ln.toGate), horiz = Math.abs(dc[0] - sc[0]) >= Math.abs(dc[1] - sc[1]);
             const mx = (sc[0] + dc[0]) / 2, my = (sc[1] + dc[1]) / 2;
-            ln.pts = simplify(horiz ? [sc, [mx, sc[1]], [mx, dc[1]], dc] : [sc, [sc[0], my], [dc[0], my], dc]);
-            ln.srcSide = ln.pinSrc || (horiz ? (dc[0] >= sc[0] ? "R" : "L") : (dc[1] >= sc[1] ? "B" : "T"));
-            ln.dstSide = horiz ? (dc[0] >= sc[0] ? "L" : "R") : (dc[1] >= sc[1] ? "T" : "B");
+            ln.pts = simplify(horiz ? [sc.slice(), [mx, sc[1]], [mx, dc[1]], dc.slice()] : [sc.slice(), [sc[0], my], [dc[0], my], dc.slice()]);
+            ln.srcSide = ln.fromGate ? ln.fromGate.face : (ln.pinSrc || (horiz ? (dc[0] >= sc[0] ? "R" : "L") : (dc[1] >= sc[1] ? "B" : "T")));
+            ln.dstSide = ln.toGate ? ln.toGate.face : (horiz ? (dc[0] >= sc[0] ? "L" : "R") : (dc[1] >= sc[1] ? "T" : "B"));
         }
         WP.length = base0;
     }
@@ -265,6 +286,17 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
 // so a vertex = base + its V-offset + its H-offset and orthogonality is preserved). Port stubs are
 // segments too => connectors leaving one face fan out along it. Each lane band is shifted to stay
 // within the free alley bounded by neighbouring nodes, so no lane spills across a node edge.
+// endpoint reference centre for a line end: a node centre, or a gate's fixed point (gate ends have no
+// backing node, so byId.get() would be undefined). Used by nudge/fan wherever they'd read a node centre.
+const endCenter = (ln, which, byId) => { const g = which === "from" ? ln.fromGate : ln.toGate; return g ? g.pt : center(byId.get(which === "from" ? ln.from : ln.to)); };
+// force a gate endpoint back onto its exact gate point after nudging, carrying the collinear stub
+// vertex so the stub stays orthogonal — keeps the two halves' seam exactly coincident for stitching.
+function pinGate(pts, pt, last) {
+    if (!pts || pts.length < 2) return;
+    const i = last ? pts.length - 1 : 0, j = last ? pts.length - 2 : 1;
+    if (pts.length > 2) { if (Math.abs(pts[j][0] - pts[i][0]) < 0.5) pts[j][0] = pt[0]; if (Math.abs(pts[j][1] - pts[i][1]) < 0.5) pts[j][1] = pt[1]; }
+    pts[i][0] = pt[0]; pts[i][1] = pt[1];
+}
 const MARG = 1;   // px of clearance baked onto every nudge alley wall (node + band) so lanes never sit flush
 const CORNER_CLEAR = 15;   // px a band/node eviction pushes a vertex PAST the edge: > the corner radius (14)
                            // so the rounded bend at the evicted vertex can never arc back across the edge
@@ -281,7 +313,7 @@ function nudge(lines, byId, rects, outPorts, bands) {
     } }
     const buckets = new Map();
     for (const s of segs) { const k = s.axis + ":" + Math.round(s.coord); if (!buckets.has(k)) buckets.set(k, []); buckets.get(k).push(s); }
-    const through = (s) => { const c0 = center(byId.get(s.ln.from)), c1 = center(byId.get(s.ln.to)); return s.axis === "V" ? (c0[0] + c1[0]) / 2 : (c0[1] + c1[1]) / 2; };
+    const through = (s) => { const c0 = endCenter(s.ln, "from", byId), c1 = endCenter(s.ln, "to", byId); return s.axis === "V" ? (c0[0] + c1[0]) / 2 : (c0[1] + c1[1]) / 2; };
     // A coord-bucket can hold segments at the SAME axis-coord that live in vertically (or
     // horizontally) disjoint parts of the graph — different corridors that merely line up. Bundling
     // them as one lane group is wrong: their combined span reaches walls all over the canvas, which
@@ -345,6 +377,10 @@ function nudge(lines, byId, rects, outPorts, bands) {
     // every PORT-line endpoint (data/control lines on a port dot) is laid out on the face it touches —
     // BOTH the leaving end and the arriving end — fanned along that face so no two dots overlap.
     fanFaceEnds(lines, byId, outPorts);
+    // GATE ends: nudging shifts every stub's coord by its lane offset, which would slide a gate endpoint
+    // off its exact gate point and open a gap at the stitch seam. Re-pin them (fanFaceEnds already left
+    // them alone) so both halves of a crossing line still meet at the identical point.
+    for (const ln of lines) { if (ln.fromGate) pinGate(ln._pts, ln.fromGate.pt, false); if (ln.toGate) pinGate(ln._pts, ln.toGate.pt, true); }
     // pull a line's arriving end a few px INTO the node (along the face normal, so the last segment
     // just shortens and stays orthogonal) — lets an end marker rest halfway inside the edge.
     for (const ln of lines) if (ln.insetEnd) {
@@ -360,16 +396,19 @@ function nudge(lines, byId, rects, outPorts, bands) {
     // fallback overrides the alley clamp). A* never crosses, so any overlap here is nudge's doing —
     // push each offending INTERIOR segment back out to the wall's nearest edge (+MARG). Endpoints
     // (port stubs, i=0 / last) are left alone so a wire never detaches from its node face.
-    if (walls.length) for (const ln of lines) evictSegments(ln.pts, walls, ln.tether);
+    if (walls.length) for (const ln of lines) evictSegments(ln.pts, walls, ln.tether, ln);
 }
 // Push interior axis-segments of `pts` out of any wall they sit inside, to the wall's nearer edge.
 // Moving a segment's constant-axis coord shifts its two corner vertices only (neighbouring segments
 // lengthen/shorten, staying orthogonal); the lane separation set by nudge is preserved.
-function evictSegments(pts, walls, isTether) {
+function evictSegments(pts, walls, isTether, ln) {
     for (let i = 0; i + 1 < pts.length; i++) {   // EVERY segment, incl. the port stubs — a tiny shift just
         const a = pts[i], b = pts[i + 1];        // slides the port along its own face, it stays attached
-        const isEnd = i === 0 || i + 1 === pts.length - 1;   // a port-stub: clamp its move so it can't run off-face
+        const firstSeg = i === 0, lastSeg = i + 1 === pts.length - 1;
+        const isEnd = firstSeg || lastSeg;   // a port-stub: clamp its move so it can't run off-face
         if (isTether && isEnd) continue;   // a tether is centred on its face (fanFaceEnds) — don't let an evict re-corner its endpoints
+        // a GATE stub must not move: its endpoint is pinned to the exact seam point shared with the other half.
+        if (ln && ((firstSeg && ln.fromGate) || (lastSeg && ln.toGate))) continue;
         const vert = Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) > 0.5;
         const horiz = Math.abs(a[1] - b[1]) < 0.5 && Math.abs(a[0] - b[0]) > 0.5;
         if (!vert && !horiz) continue;
@@ -411,8 +450,10 @@ function fanFaceEnds(lines, byId, outPorts) {
     for (const ln of lines) {
         // every line (port AND structural) registers both ends, so endpoints sharing a face
         // co-distribute and never collapse onto one point. A lone endpoint keeps its routed coord below.
-        push(ln.from, ln.srcSide, ln, "src", center(byId.get(ln.to)));
-        push(ln.to, ln.dstSide, ln, "dst", center(byId.get(ln.from)));
+        // GATE ends are skipped: they're pre-fanned by gates.js at a fixed point on a group-box face and
+        // must not be redistributed onto a node face (they have no backing node here anyway).
+        if (!ln.fromGate) push(ln.from, ln.srcSide, ln, "src", endCenter(ln, "to", byId));
+        if (!ln.toGate) push(ln.to, ln.dstSide, ln, "dst", endCenter(ln, "from", byId));
     }
     for (const [k, arr] of groups) {
         const sep = k.indexOf("\x00"), nodeId = k.slice(0, sep), side = k.slice(sep + 1);

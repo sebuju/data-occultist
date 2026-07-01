@@ -8,6 +8,7 @@
 // bindings, runtime-safe circular import).
 import * as groups from "./groups.js";
 import { routeGraph, polylinePath } from "./route.js";
+import { hierRoute } from "./hierRoute.js";
 import { $, setStatus, model, nodeEls, pos, nw, nh, selected } from "./state.js";
 import { selectedNodeId, wire, startWire, CAN_DISABLE } from "./main.js";
 
@@ -472,6 +473,9 @@ function flushEdges() {   // force the final frame now (drop on settle) — canc
 // signature, so a frame where nothing moved is a no-op and the loop idles.
 const ROUTE = {
     enabled: true,
+    hier: true,         // hierarchical routing: each group routed as its own sub-problem, its boundary
+                        // lines funnelled through fanned per-face GATES (hierRoute.js). Toggle off in the
+                        // console (window.__route.hier=false; __reroute()) to fall back to one global pass.
     corners: "curve",   // "curve" | "square" — internal toggle (window.__route.corners)
     cell: 10,           // grid resolution (world px) — fine enough to squeeze a line between two others
     clearWanted: 5,     // cells of breathing room a line prefers around nodes
@@ -481,7 +485,7 @@ const ROUTE = {
 // (e.g. after flipping __route.corners to "square").
 if (typeof window !== "undefined") {
     window.__route = ROUTE;
-    window.__reroute = () => { routeCache = new Map(); routeHash = ""; drawEdges(); };   // force a full recompute
+    window.__reroute = () => { routeCache = new Map(); routeHash = ""; hierPassCache = new Map(); drawEdges(); };   // force a full recompute
     // read-only e2e introspection (playwright): the routed geometry keyed by `${from} ${to}`, plus
     // every node's world rect — lets a test assert no edge passes through a non-endpoint node.
     window.__routes = () => { const o = {}; for (const [k, c] of routeCache) o[k] = { pts: c.pts, d1: c.d1, d2: c.d2 }; return o; };
@@ -491,6 +495,8 @@ if (typeof window !== "undefined") {
 const SVGNS = "http://www.w3.org/2000/svg";
 let routeCache = new Map();     // link key -> { pts:[[x,y]…], sig } (sig = its own deps)
 let routeHash = "";             // global layout signature of the last pass (cheap change gate)
+let gateFaces = new Map();      // "key|gid" -> gate face last frame (hierRoute hysteresis, anti-flicker)
+let hierPassCache = new Map();  // "outer"/"inner:<gid>" -> {sig,res}: memoised sub-pass routes (per-pass cache)
 let routeRaf = null;            // pending requestAnimationFrame handle (one in flight at a time)
 
 // Everything physical is an obstacle: nodes AND panels. Lines weave around all of
@@ -499,6 +505,9 @@ function obstacleRects() {
     const out = [];
     for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) out.push(r); }
     for (const t of groups.titleRects()) out.push(t);   // lines prefer not to cross a group title
+    // group boxes: in hier mode a box IS a hard obstacle + drives every gate, so a box move/resize
+    // (even without a routed node's own rect changing) must invalidate the route cache.
+    for (const b of groups.groupBoxes()) if (b.box) out.push(b.box);
     return out;
 }
 
@@ -569,7 +578,19 @@ function runRouting() {
             if (r) titleBands.push({ x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h });
             else if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
         }
-        const res = routeGraph(nodes, grps, edges, { prevSides, outPorts, titleBands, config: { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell } });
+        const config = { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell };
+        let res;
+        if (ROUTE.hier) {
+            // hierarchical: collapse each group to a hard box and funnel its crossing lines through gates.
+            // groupOf() returns the group RECORD; hierRoute/gates key off the group id.
+            const groupBox = new Map();
+            for (const b of groups.groupBoxes()) if (b.box) groupBox.set(b.id, { x: b.box.x, y: b.box.y, w: b.box.w, h: b.box.h, bandH: b.bandH || 0 });
+            const gof = (id) => { const r = groups.groupOf(id); return r ? r.id : null; };
+            const out = hierRoute(nodes, groupBox, gof, edges, { prevSides, outPorts, titleBands, config, laneGap: ROUTE.cell, prevFace: gateFaces, passCache: hierPassCache });
+            res = out.routes; gateFaces = out.faces; hierPassCache = out.passCache;
+        } else {
+            res = routeGraph(nodes, grps, edges, { prevSides, outPorts, titleBands, config });
+        }
         const fresh = new Map();
         for (const l of links) { const r = res.get(l.key); if (r && r.pts && r.pts.length >= 2) fresh.set(l.key, r); }
         routeCache = fresh;                 // also drops keys for links that vanished

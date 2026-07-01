@@ -1,0 +1,129 @@
+// gates.js — hierarchical routing helper (pure, no DOM/state deps). Classifies every edge by the group
+// membership of its two endpoints and assigns each boundary-CROSSING edge a GATE: one fanned crossing
+// point per group-box face. A group becomes an opaque box to the outside; every line that crosses its
+// boundary funnels through the gate on the face nearest its outside end, fanned so multiple crossings
+// never stack on one point. hierRoute.js then routes the inside half (member -> gate) and the outside
+// half (gate -> free node / other group's gate) as separate A* sub-problems and stitches them at the
+// shared gate point (route.js gate terminals keep both halves meeting there exactly).
+//
+// Edge classes:
+//   outer     — both ends free (no group)                -> routed whole in the outer pass
+//   inner(G)  — both ends in the same group G            -> routed whole in G's pass
+//   crossing  — ends in different groups, or one free    -> split at a gate on each grouped end
+
+const PORT_MIN = 12;      // hard floor between adjacent fanned gates on one face (no overlap)
+const FACE_MARGIN = 12;   // keep the fan this far inside the face corners
+
+const rectCenter = (r) => [r.x + r.w / 2, r.y + r.h / 2];
+
+// which face of `box` points toward `pt` — the face whose outward normal best aligns with the direction
+// to `pt`. The TOP face is FORBIDDEN when the box has a title band (band > 0): a gate there would sit on
+// the colored ggroup-title, and its stub would cross the heading (never allowed — cf. route.js headCross).
+// Such crossings are steered to L/R/B instead (the line wraps around to a side).
+function faceToward(box, pt, band) {
+    const c = rectCenter(box), dx = pt[0] - c[0], dy = pt[1] - c[1];
+    const score = { L: -dx, R: dx, T: band > 0 ? -Infinity : -dy, B: dy };
+    let best = "R", bv = -Infinity;
+    for (const f of ["L", "R", "T", "B"]) if (score[f] > bv) { bv = score[f]; best = f; }
+    return best;
+}
+// Move every single-exit face's end onto the busiest OTHER occupied face (never onto the title-band top
+// face when band > 0). Counts are recomputed live, so two lone singles collapse onto one side rather than
+// swapping. A single that has no company anywhere (all other faces empty) stays put — one line, one gate.
+function mergeLonelyFaces(ends, band) {
+    const FACES = ["L", "R", "T", "B"];
+    const tally = () => { const m = { L: 0, R: 0, T: 0, B: 0 }; for (const e of ends) m[e.face]++; return m; };
+    for (const lf of FACES) {
+        const m = tally();
+        if (m[lf] !== 1) continue;                       // only a face with exactly one exit is merged
+        let target = null, best = 0;
+        for (const f of FACES) { if (f === lf || (band > 0 && f === "T")) continue; if (m[f] > best) { best = m[f]; target = f; } }
+        if (!target) continue;                           // nothing to merge onto — leave the lone exit
+        for (const e of ends) if (e.face === lf) e.face = target;
+    }
+}
+// is a remembered face still geometrically reasonable (outside pt still on that side of the box centre)?
+function faceStillOk(box, pt, f) {
+    const c = rectCenter(box);
+    if (f === "L") return pt[0] <= c[0];
+    if (f === "R") return pt[0] >= c[0];
+    if (f === "T") return pt[1] <= c[1];
+    return pt[1] >= c[1];
+}
+// point on `box` face `f` at perpendicular coord `c`
+function facePoint(box, f, c) {
+    if (f === "L") return [box.x, c];
+    if (f === "R") return [box.x + box.w, c];
+    if (f === "T") return [c, box.y];
+    return [c, box.y + box.h];
+}
+// outward (leaving the box) / inward (entering) stub direction per face — route.js gate `dir`
+const OUT_DIR = { L: "W", R: "E", T: "N", B: "S" };
+const IN_DIR = { L: "E", R: "W", T: "S", B: "N" };
+
+// classifyAndGate({ nodeRects, groupBox, groupOf, edges, laneGap, prevFace })
+//   nodeRects : Map(id -> {x,y,w,h})            live world rect of every routable node
+//   groupBox  : Map(gid -> {x,y,w,h,bandH})     live box of every group that has one
+//   groupOf   : (id) -> gid | null              a node's group (null = free)
+//   edges     : [{from,to,key}]                 the edges to route
+//   laneGap   : preferred spacing between fanned gates
+//   prevFace  : Map("key|gid" -> face) | null   last frame's gate faces, for hysteresis
+// returns { outer:[edge], inner:Map(gid->[edge]), crossings:[cr], faces:Map("key|gid"->face) }
+// where a crossing `cr` = { key, from, to, fromGid, toGid, fromGate, toGate } and a gate =
+//   { pt:[x,y], face, gid, out, in }  (out/in are the outward/inward stub dirs; hierRoute picks per half)
+export function classifyAndGate({ nodeRects, groupBox, groupOf, edges, laneGap = 12, prevFace = null }) {
+    const outer = [], inner = new Map(), crossings = [], faces = new Map();
+    for (const e of edges) {
+        const ga = groupOf(e.from), gb = groupOf(e.to);
+        const va = ga && groupBox.has(ga), vb = gb && groupBox.has(gb);   // grouped AND that group has a live box
+        if (!va && !vb) { outer.push(e); continue; }
+        if (va && vb && ga === gb) { (inner.get(ga) || inner.set(ga, []).get(ga)).push(e); continue; }
+        crossings.push({ key: e.key, from: e.from, to: e.to, fromGid: va ? ga : null, toGid: vb ? gb : null, fromGate: null, toGate: null });
+    }
+    // reference point of a crossing's OTHER end: a free node's centre, or the other group's box centre
+    const outsidePtOf = (cr, which) => {
+        const otherId = which === "from" ? cr.to : cr.from;
+        const otherGid = which === "from" ? cr.toGid : cr.fromGid;
+        if (otherGid && groupBox.has(otherGid)) return rectCenter(groupBox.get(otherGid));
+        const r = nodeRects.get(otherId); return r ? rectCenter(r) : [0, 0];
+    };
+    // gather every gated END per group
+    const byGroup = new Map();   // gid -> [{cr, which, outside:[x,y]}]
+    const addEnd = (gid, cr, which) => (byGroup.get(gid) || byGroup.set(gid, []).get(gid)).push({ cr, which, outside: outsidePtOf(cr, which) });
+    for (const cr of crossings) { if (cr.fromGid) addEnd(cr.fromGid, cr, "from"); if (cr.toGid) addEnd(cr.toGid, cr, "to"); }
+
+    for (const [gid, ends] of byGroup) {
+        const box = groupBox.get(gid), band = box.bandH || 0;
+        // face per end, with hysteresis: keep last frame's face unless it's no longer on the right side
+        for (const en of ends) {
+            let f = faceToward(box, en.outside, band);
+            if (prevFace) { const pf = prevFace.get(en.cr.key + "|" + gid); if (pf && !(band > 0 && pf === "T") && pf !== f && faceStillOk(box, en.outside, pf)) f = pf; }
+            en.face = f;
+        }
+        // consolidate: a face carrying only ONE exit is merged onto the busiest OTHER occupied face, so a
+        // group doesn't sprout lonely single-line gates on several sides — its crossings gather on as few
+        // sides as possible. A truly solitary crossing (nothing on any other face) is left where it is.
+        mergeLonelyFaces(ends, band);
+        for (const en of ends) faces.set(en.cr.key + "|" + gid, en.face);
+        // fan each face's ends along the face span (ordered by the outside end so stubs don't cross)
+        const buckets = new Map();
+        for (const en of ends) (buckets.get(en.face) || buckets.set(en.face, []).get(en.face)).push(en);
+        for (const [f, arr] of buckets) {
+            const horiz = f === "L" || f === "R";   // vertical face edge => fan along Y; top/bottom => along X
+            let lo = horiz ? box.y + band : box.x;   // L/R skip the title band at the top of the box
+            let hi = horiz ? box.y + box.h : box.x + box.w;
+            lo += FACE_MARGIN; hi -= FACE_MARGIN;
+            if (hi < lo) { const m = (lo + hi) / 2; lo = hi = m; }
+            const mid = (lo + hi) / 2, n = arr.length;
+            arr.sort((u, v) => (horiz ? u.outside[1] - v.outside[1] : u.outside[0] - v.outside[0]));
+            const spread = Math.min(hi - lo, Math.max((n - 1) * laneGap, (n - 1) * PORT_MIN));
+            for (let i = 0; i < n; i++) {
+                const c = n < 2 ? mid : mid - spread / 2 + (i * spread) / (n - 1);
+                const pt = facePoint(box, f, Math.max(lo, Math.min(hi, c)));
+                const gate = { pt, face: f, gid, out: OUT_DIR[f], in: IN_DIR[f] };
+                if (arr[i].which === "from") arr[i].cr.fromGate = gate; else arr[i].cr.toGate = gate;
+            }
+        }
+    }
+    return { outer, inner, crossings, faces };
+}
