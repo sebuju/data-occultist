@@ -16,7 +16,7 @@ from fastapi import APIRouter, Body, HTTPException
 from ...profile import list_profiles, load_profile
 from ...profile.models import FileSourceDef, SourceField
 from ...registry import build_parser, parser_names
-from ...source.extract import DISMISSED
+from ...source.extract import DISMISSED, SOURCE_LINE
 from ...source.locate import expand, find_candidates, resolve_path
 from ...source.reader import default_reader
 from ...source.runner import read_source
@@ -142,10 +142,15 @@ def preview(game: str, body: dict = Body(...)):
         if source.tail and source.tail_lines and source.tail_lines > 0:
             cap = min(_PREVIEW_LINES, source.tail_lines)
         if len(lines) > cap:
-            text = "\n".join(lines[-cap:])
+            lines = lines[-cap:]
+            text = "\n".join(lines)
+        # A stream parser knows each row's source line number, so attach the raw line it matched
+        # (SOURCE_LINE) — a preview-only column the vttables show so a row traces back to its line.
+        produced = [{**rec, SOURCE_LINE: (lines[ln - 1] if 1 <= ln <= len(lines) else "")}
+                    for ln, rec in parser.parse_indexed(text, source.match, source.fields)]
     else:
         total = 1
-    produced = parser.parse(text, source.match, source.fields)
+        produced = parser.parse(text, source.match, source.fields)
     kept = [r for r in produced if not r.get(DISMISSED)]
     dismissed = [{k: v for k, v in r.items() if k != DISMISSED}
                  for r in produced if r.get(DISMISSED)]

@@ -22,6 +22,11 @@ _STRICT_NUM = re.compile(r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$")
 # "dismissed" — surfaced in the dismissed-rows preview but NEVER written. Stripped before any write.
 DISMISSED = "__dismissed__"
 
+# Reserved preview-only column carrying the row's ORIGINAL source line (the raw text a stream
+# parser matched). The preview/dismissed vttables show it so a row can be traced back to its line;
+# it is NEVER produced by the record builders and never written (only the preview route attaches it).
+SOURCE_LINE = "__line__"
+
 
 # ---- line filtering --------------------------------------------------------
 

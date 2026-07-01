@@ -13,6 +13,7 @@ import os
 
 from ..registry import build_parser
 from ..store import store_for
+from ..store.flow_events import publish_flow
 from ..store.keys import KeyMap
 from .extract import DISMISSED
 from .locate import resolve_path
@@ -47,8 +48,14 @@ def read_source(game: str, source, data_dir, *, profile=None, reader=None) -> in
     indexed = [(ln, rec) for ln, rec in indexed if not rec.get(DISMISSED)]
     if not indexed:
         return 0
-    # A source can pin its own key; else the dataset/profile default decides.
-    key = KeyMap(source.key.spec()) if getattr(source, "key", None) is not None else None
+    # A source can pin its own key; else the dataset/profile default decides. BUT a dataset the
+    # user set to no-dedup (accumulate every read) must win over a source's own key — else pinning
+    # a key silently re-enables dedup and identical re-reads stop flowing. So consult the dataset
+    # key map first and honour its no-dedup; only fall back to the source key when it still dedups.
+    key = None
+    if getattr(source, "key", None) is not None:
+        ds_key = profile.key_map_for(source.dataset) if profile is not None else None
+        key = ds_key if (ds_key is not None and ds_key.dedup is False) else KeyMap(source.key.spec())
     store = store_for(data_dir, game, source.dataset, profile=profile, key=key)
     store.begin_batch()
     # ONE bulk write (single txn + single change-bus announce) — a per-row record_seen would fire
@@ -62,6 +69,11 @@ def read_source(game: str, source, data_dir, *, profile=None, reader=None) -> in
                      if ev is not None and ev.key}
         if positions:
             store.set_positions(positions)
+    # Source-aware data hop for the graph blob animation: THIS source fed the dataset, so only
+    # its edge lights up. Count rows that actually landed (add/update events), same as the other
+    # write sites (collector/preview) — an unchanged re-read moves nothing, so it animates nothing.
+    moved = sum(1 for ev in events if ev is not None)
+    publish_flow(game, "data", f"src:{source.id}", f"ds:{source.dataset}", moved)
     return len(indexed)
 
 

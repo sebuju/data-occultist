@@ -273,15 +273,9 @@ class TriggerRunner:
                 self._read_source(by_source[tid], trigger.id)
 
     def _read_source(self, source, trigger_id: str) -> None:
-        """Fire a file-source target: read it and emit the trigger->source control pulse. A
-        misbehaving read must never crash the loop / a request."""
-        from ..source.runner import read_source
-        try:
-            read_source(self._profile.name, source, self._data_dir, profile=self._profile)
-            publish_flow(self._profile.name, "trigger", f"trigger:{trigger_id}",
-                         f"src:{source.id}", 1)
-        except Exception:   # noqa: BLE001
-            pass
+        """Fire a file-source target via the shared funnel (see :func:`read_source_target`)."""
+        read_source_target(self._profile.name, source, self._data_dir,
+                           profile=self._profile, trigger_id=trigger_id)
 
     def _default_fire(self, price_node, items) -> None:
         start_sweep(self._data_dir, self._profile.name, price_node,
@@ -311,4 +305,18 @@ def fire_target(game: str, price_node, items, *, trigger_id: str,
         publish_flow(game, "trigger", f"trigger:{trigger_id}", f"producer:{price_node.id}", 1)
         return True
     except Exception:   # a misbehaving fire must never crash the collector loop / a request
+        return False
+
+
+def read_source_target(game: str, source, data_dir, *, profile, trigger_id: str) -> bool:
+    """Fire ONE file-source target of a trigger — the single funnel every fire path uses
+    (collector interval/on_change AND the web "fire now" route), the file-source analogue of
+    :func:`fire_target`. Reads the source then emits the trigger->source control pulse. A
+    misbehaving read must never crash the loop / a request. Returns True if the read ran."""
+    from ..source.runner import read_source
+    try:
+        read_source(game, source, data_dir, profile=profile)
+        publish_flow(game, "trigger", f"trigger:{trigger_id}", f"src:{source.id}", 1)
+        return True
+    except Exception:   # noqa: BLE001
         return False

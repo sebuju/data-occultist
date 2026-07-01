@@ -89,7 +89,10 @@ def test_preview_log_sample(env):
     })
     assert r.status_code == 200
     body = r.json()
-    assert body["rows"] == [{"name": "Forma", "qty": 3}, {"name": "Kuva", "qty": 1}]
+    # stream rows carry the raw source line (__line__) so the preview/dismissed vttables can show it
+    assert body["rows"] == [
+        {"name": "Forma", "qty": 3, "__line__": "LOOT item=Forma qty=3"},
+        {"name": "Kuva", "qty": 1, "__line__": "LOOT item=Kuva qty=1"}]
     assert body["matched"] == 2 and body["total"] == 3
 
 
@@ -102,7 +105,9 @@ def test_preview_reads_the_real_file_when_no_sample(env):
     })
     assert r.status_code == 200
     body = r.json()
-    assert body["rows"] == [{"name": "Forma"}, {"name": "Kuva"}]
+    assert body["rows"] == [
+        {"name": "Forma", "__line__": "12:00 LOOT item=Forma"},
+        {"name": "Kuva", "__line__": "12:01 LOOT item=Kuva"}]
     assert body["line_ending"] in {"LF", "CRLF", "CR"}   # detected from the real file's bytes
 
 

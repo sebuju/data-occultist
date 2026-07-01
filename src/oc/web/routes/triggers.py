@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from ...collect.triggers import fire_target, record_fire
+from ...collect.triggers import fire_target, read_source_target, record_fire
 from ...enrich.price_runner import start_sweep, sweep_status
 from ...profile import list_profiles, load_profile
 from ..deps import get_settings
@@ -48,18 +48,31 @@ def fire_trigger(game: str, trigger_id: str):
     trig = next((t for t in profile.triggers if t.id == trigger_id), None)
     if trig is None:
         raise HTTPException(status_code=404, detail=f"No trigger {trigger_id!r}")
-    by_id = {p.id: p for p in profile.producers}
+    by_producer = {p.id: p for p in profile.producers}
+    by_source = {s.id: s for s in profile.file_sources}
     data_dir = get_settings().data_dir
-    # SAME funnel the collector uses (fire_target): skip-if-sweeping + the trigger->price control
-    # pulse, so a manual fire behaves identically to an automatic one — no path drifts.
-    started = []
+    # SAME funnels the collector uses (fire_target for producers, read_source_target for file
+    # sources) so a manual fire behaves identically to an automatic one — no path drifts. A
+    # producer already sweeping is reported in ``skipped`` (not an error) so the UI can say
+    # "already sweeping" instead of a bare "0 sweeps" that reads as a broken button.
+    started, skipped = [], []
     fired = False
     for pid in trig.targets:
-        pn = by_id.get(pid)
-        if fire_target(game, pn, None, trigger_id=trigger_id,
-                       fire=lambda p, items: start_sweep(data_dir, game, p, profile=profile, items=items)):
-            started.append(sweep_status(game, pn.dataset))
+        pn = by_producer.get(pid)
+        if pn is not None:
+            if sweep_status(game, pn.dataset).get("running"):
+                skipped.append(pid)
+                continue
+            if fire_target(game, pn, None, trigger_id=trigger_id,
+                           fire=lambda p, items: start_sweep(data_dir, game, p, profile=profile, items=items)):
+                started.append(sweep_status(game, pn.dataset))
+                fired = True
+            continue
+        src = by_source.get(pid)
+        if src is not None and read_source_target(game, src, data_dir, profile=profile,
+                                                  trigger_id=trigger_id):
+            started.append({"source": pid})
             fired = True
     if fired:
         record_fire(data_dir, game, trigger_id)   # stamp the sidecar so the fire countdown is right
-    return {"trigger": trigger_id, "started": started}
+    return {"trigger": trigger_id, "started": started, "skipped": skipped}
