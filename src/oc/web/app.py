@@ -35,7 +35,6 @@ from .routes import (
     sounds,
     sources,
     stats,
-    suggest,
     triggers,
     video,
 )
@@ -283,7 +282,6 @@ def create_app() -> FastAPI:
     app.include_router(profiles.router)
     app.include_router(flow.router)
     app.include_router(preview.router)
-    app.include_router(suggest.router)
     app.include_router(lexicon.router)
     app.include_router(precapture.router)
     app.include_router(live.router)

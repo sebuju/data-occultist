@@ -19,7 +19,7 @@ _ASSET = re.compile(r"\.(?:js|mjs|css|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf|
 
 def _is_static(path: str) -> bool:
     path = path.split("?", 1)[0]          # ignore a cache-busting query string
-    if path in ("/", "/index.html", "/teach.html"):
+    if path in ("/", "/index.html"):
         return True
     return path.endswith(".html") or bool(_ASSET.search(path))
 
