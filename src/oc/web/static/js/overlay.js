@@ -21,6 +21,16 @@ const ROLE_COLOR = {
     data_area: "#e89a4c",
 };
 
+// How a read was validated against authored knowledge -> a coloured pill on the cell, so the
+// author sees a value is TRUSTED (confirmed by the dictionary / a snap / glyph pixels), not just
+// its OCR confidence %. Keyed by FieldResolver.verified (+ the reader's "glyph" upgrade).
+const VERIFY = {
+    dict:  { label: "dict",  color: "#7ddc7d" },   // green  — exact vocabulary hit
+    split: { label: "split", color: "#e6c25a" },   // amber  — fused words unmerged
+    fuzzy: { label: "fuzzy", color: "#5aa9e6" },    // blue   — similarity snap (weakest)
+    glyph: { label: "glyph", color: "#c98ae6" },    // purple — pixel glyph_check refined
+};
+
 const HANDLE_PX = 5;     // half-size of a resize handle, screen pixels
 const MIN_FRAC = 0.004;  // minimum box size in fractions
 const LABEL_BASE_PX = 12; // label size on screen at zoom z=1 (scales ∝ z, so it shrinks when zoomed out)
@@ -39,12 +49,15 @@ const HANDLES = [
 ];
 
 export class Overlay {
-    constructor(canvas, { onCreate, onSelect, onChange, onZoom, onPick, canCreate } = {}) {
+    constructor(canvas, { onCreate, onSelect, onChange, onZoom, onPick, canCreate, minFrac } = {}) {
         this.canvas = canvas;
         this.ctx = canvas.getContext("2d");
         this.img = null;
         this.boxes = [];
         this.activeId = null;
+        // smallest box this overlay allows (fractions). Default suits window/detect boxes; the glyph
+        // surface passes a much smaller floor so a single tiny glyph can be boxed tightly.
+        this.minFrac = minFrac ?? MIN_FRAC;
         this.onCreate = onCreate;
         this.onSelect = onSelect;
         this.onChange = onChange;   // a box was moved/resized
@@ -168,8 +181,8 @@ export class Overlay {
     }
 
     _clampBox(b) {
-        b.w = Math.max(MIN_FRAC, b.w);
-        b.h = Math.max(MIN_FRAC, b.h);
+        b.w = Math.max(this.minFrac, b.w);
+        b.h = Math.max(this.minFrac, b.h);
         b.x = Math.min(Math.max(0, b.x), 1 - b.w);
         b.y = Math.min(Math.max(0, b.y), 1 - b.h);
     }
@@ -207,37 +220,27 @@ export class Overlay {
         // 1) resize the selected box from an edge/corner handle
         const handle = this._hitHandle(p, active);
         if (handle) {
-            this.op = { type: "resize", box: active, handle, orig: { ...active } };
+            this.op = { type: "resize", box: active, handle, orig: { ...active }, moved: false };
             return;
         }
-        // 2) move ONLY from the centre indicator of the selected box
-        if (active && this._hitCenter(p, active)) {
-            this.op = { type: "move", box: active, start: p, orig: { ...active } };
-            return;
-        }
-        // 3) clicking a box selects it. EXCEPT the data_area backdrop: you draw items
-        //    inside it, so a drag there creates a new box (a plain click still selects).
+        // 2) clicking a box selects it AND immediately begins a move — drag from anywhere inside,
+        //    no prior select needed (a press without a drag just selects; see _onUp's `moved`).
+        //    EXCEPT the data_area/bbox backdrop: you draw items inside it, so a drag there creates
+        //    a new box (a plain click still selects it).
         const hit = this._hitBox(p);
         if (hit && (hit.role === "data_area" || hit.role === "bbox")) {
             this.op = { type: "create", x0: p.x, y0: p.y, x1: p.x, y1: p.y, selHit: hit.id };
             return;
         }
         if (hit) {
-            this.activeId = hit.id;
-            this.onSelect?.(hit.id);
-            this.render();
+            if (this.activeId !== hit.id) { this.activeId = hit.id; this.onSelect?.(hit.id); this.render(); }
+            this.op = { type: "move", box: hit, start: p, orig: { ...hit }, moved: false };
             return;
         }
         // 4) empty space: deselect, then start a new box — unless creation is gated off
         if (this.activeId !== null) { this.activeId = null; this.onSelect?.(null); this.render(); }
         if (this.canCreate && this.canCreate() === false) return;   // no draw tool -> no new box
         this.op = { type: "create", x0: p.x, y0: p.y, x1: p.x, y1: p.y };
-    }
-
-    _hitCenter(p, b) {
-        if (!b) return false;
-        const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-        return Math.abs(p.x - cx) <= p.tol.x * 1.8 && Math.abs(p.y - cy) <= p.tol.y * 1.8;
     }
 
     _onMove(ev) {
@@ -254,9 +257,11 @@ export class Overlay {
             box.x = orig.x + (p.x - start.x);
             box.y = orig.y + (p.y - start.y);
             this._clampBox(box);
+            this.op.moved = true;
             this.render();
         } else if (this.op.type === "resize") {
             this._resize(p);
+            this.op.moved = true;
             this.render();
         }
     }
@@ -268,8 +273,8 @@ export class Overlay {
         if (handle.dy === 1) box.h = p.y - orig.y;
         if (handle.dy === -1) { box.y = p.y; box.h = orig.y + orig.h - p.y; }
         // Guard against inverted drags past the opposite edge.
-        if (box.w < MIN_FRAC) { box.w = MIN_FRAC; if (handle.dx === -1) box.x = orig.x + orig.w - MIN_FRAC; }
-        if (box.h < MIN_FRAC) { box.h = MIN_FRAC; if (handle.dy === -1) box.y = orig.y + orig.h - MIN_FRAC; }
+        if (box.w < this.minFrac) { box.w = this.minFrac; if (handle.dx === -1) box.x = orig.x + orig.w - this.minFrac; }
+        if (box.h < this.minFrac) { box.h = this.minFrac; if (handle.dy === -1) box.y = orig.y + orig.h - this.minFrac; }
         this._clampBox(box);
     }
 
@@ -283,10 +288,10 @@ export class Overlay {
                 w: Math.abs(op.x1 - op.x0), h: Math.abs(op.y1 - op.y0),
             };
             this.render();
-            if (b.w > MIN_FRAC && b.h > MIN_FRAC) this.onCreate?.(b);
+            if (b.w > this.minFrac && b.h > this.minFrac) this.onCreate?.(b);
             else if (op.selHit != null) { this.activeId = op.selHit; this.onSelect?.(op.selHit); this.render(); }  // click = select the backdrop
-        } else {
-            this.onChange?.(op.box);
+        } else if (op.moved) {
+            this.onChange?.(op.box);   // a real move/resize; a click-without-drag only selected
         }
     }
 
@@ -294,9 +299,10 @@ export class Overlay {
         const active = this.boxes.find((b) => b.id === this.activeId);
         const h = this._hitHandle(p, active);
         if (h) { this.canvas.style.cursor = h.cur; return; }
-        if (active && this._hitCenter(p, active)) { this.canvas.style.cursor = "move"; return; }
-        if (this._hitBox(p)) { this.canvas.style.cursor = "pointer"; return; }
-        // empty space: crosshair only when drawing is allowed, else the normal cursor
+        // over a draggable box -> move; the data_area/bbox backdrop is a draw surface, not draggable
+        const hit = this._hitBox(p);
+        if (hit && hit.role !== "data_area" && hit.role !== "bbox") { this.canvas.style.cursor = "move"; return; }
+        // backdrop / empty space: crosshair only when drawing is allowed, else the normal cursor
         this.canvas.style.cursor = (this.canCreate && this.canCreate() === false) ? "default" : "crosshair";
     }
 
@@ -403,7 +409,15 @@ export class Overlay {
             const tag = p.substituted
                 ? `if ${String(p.substituted).replace(/^if_/, "").replace(/_/g, " ")}`
                 : `${Math.round(conf * 100)}%`;
-            this._label(`${txt}  ${tag}`, x, y + h, `rgb(${tint})`, labelFs);
+            // when the final value differs from the genuine OCR read (dict/fuzzy/glyph correction
+            // or a fallback), show the ORIGINAL too so the author sees what was changed
+            const raw = p.raw == null ? "" : String(p.raw);
+            const shown = raw && raw !== txt && txt !== "∅" ? `${raw} → ${txt}` : txt;
+            this._label(`${shown}  ${tag}`, x, y + h, `rgb(${tint})`, labelFs);
+            // validated read -> a coloured pill at the cell's top-left naming the mechanism that
+            // confirmed it (dictionary / unmerge / fuzzy / glyph), independent of the conf tint
+            const v = p.verified && VERIFY[p.verified];
+            if (v) this._pill(v.label, x, y, v.color, labelFs);
         }
 
         // Raw OCR detections: exactly what OCR found and where (independent of boxes).
@@ -523,6 +537,25 @@ export class Overlay {
         ctx.fillText(text, x + pad, y - pad);
     }
 
+    // A validation badge: a small SOLID-coloured pill with dark text, anchored TOP-left of a
+    // read cell (opposite corner to the bottom conf label, so the two never collide). The fill
+    // colour IS the signal (green/amber/blue/purple by mechanism); the label just names it.
+    _pill(text, x, y, bg, fs) {
+        const ctx = this.ctx;
+        const s = fs * 0.82;                 // slightly smaller than the conf label
+        const pad = s * 0.3;
+        ctx.font = `${s}px system-ui`;
+        const hh = s + pad * 2;
+        const w = ctx.measureText(text).width + pad * 2;
+        y = Math.max(0, Math.min(y, this.canvas.height - hh));   // keep the plate on-canvas
+        ctx.fillStyle = bg;
+        ctx.fillRect(x, y, w, hh);
+        ctx.fillStyle = "rgba(0,0,0,0.85)";
+        ctx.textBaseline = "top";
+        ctx.fillText(text, x + pad, y + pad);
+        ctx.textBaseline = "bottom";         // restore default for the other label paths
+    }
+
     // Centred variant of _label: solid black plate, white text, anchored on (cx, cy) —
     // used for cell-level read-outs (the item's name on its tile).
     _centerLabel(text, cx, cy, fs, color = "#fff") {
@@ -602,7 +635,7 @@ export class Overlay {
             ctx.fillRect(hx - s, hy - s, s * 2, s * 2);
             ctx.strokeRect(hx - s, hy - s, s * 2, s * 2);
         }
-        // centre move indicator (drag from here)
+        // centre move indicator (the box drags from anywhere inside; this just marks it movable)
         const cx = (b.x + b.w / 2) * W, cy = (b.y + b.h / 2) * H;
         const r = Math.max(3 * u, Math.min(HANDLE_PX * 1.5 * u, bw * 0.32, bh * 0.32));
         ctx.beginPath();

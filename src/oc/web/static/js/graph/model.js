@@ -59,9 +59,10 @@ export class GraphModel {
     glyphs() { return this.profile.glyphs || (this.profile.glyphs = []); }
     // alphabetical by char (case-insensitive, then case, then image) so the atlas list is ordered
     sortGlyphs() { this.glyphs().sort((a, b) => (a.char || "").localeCompare(b.char || "", undefined, { sensitivity: "base" }) || (a.char || "").localeCompare(b.char || "") || (a.image || "").localeCompare(b.image || "")); }
-    addGlyph({ char = "", image }) { this.glyphs().push({ char, image }); this.sortGlyphs(); return this.glyphs().findIndex((g) => g.image === image); }
-    addGlyphs(list) { for (const g of list) this.glyphs().push({ char: g.char || "", image: g.image }); this.sortGlyphs(); }
+    addGlyph({ char = "", image, enabled = true }) { this.glyphs().push({ char, image, enabled }); this.sortGlyphs(); return this.glyphs().findIndex((g) => g.image === image); }
+    addGlyphs(list) { for (const g of list) this.glyphs().push({ char: g.char || "", image: g.image, enabled: g.enabled !== false }); this.sortGlyphs(); }
     setGlyphChar(i, char) { const g = this.glyphs()[i]; if (g) { g.char = char; this.sortGlyphs(); } }
+    setGlyphEnabled(i, on) { const g = this.glyphs()[i]; if (g) g.enabled = !!on; }
     removeGlyph(i) { this.glyphs().splice(i, 1); }
 
     // effective dataset id for a window (defaults to its own id)
@@ -86,10 +87,50 @@ export class GraphModel {
     setDatasetAggregate(id, agg) { this.ensureDatasetDef(id).aggregate = agg || "latest"; }
     // The field the dataset's 1->many collapse keys on: "" = inherit the window/item keys.
     datasetKeyField(id) { const d = this.datasetDef(id); return (d && d.key_field) || ""; }
-    setDatasetKeyField(id, f) { const d = this.ensureDatasetDef(id); d.key_field = f || ""; d.dedup = true; }
+    setDatasetKeyField(id, f) { const d = this.ensureDatasetDef(id); d.key_field = f || ""; d.key_fields = []; d.dedup = true; }
     // Whether the dataset does the 1->many collapse at all (false = keep every read as its own row).
     datasetDedup(id) { const d = this.datasetDef(id); return !d || d.dedup !== false; }
     setDatasetDedup(id, on) { this.ensureDatasetDef(id).dedup = !!on; }
+    // ---- concat key: several fields combined into one identity, each part canonicalised ----
+    // The fields the concat key combines (single-field / auto modes leave this empty).
+    datasetKeyFields(id) { const d = this.datasetDef(id); return (d && d.key_fields) || []; }
+    // The concat key's canonicalisation knobs (mirrors a subset join's JoinNorm; defaults match).
+    datasetKeyNorm(id) {
+        const d = this.datasetDef(id);
+        const n = (d && d.key_norm) || {};
+        return { case_insensitive: n.case_insensitive !== false, strip_punct: !!n.strip_punct,
+            collapse_ws: n.collapse_ws !== false, strip_words: n.strip_words || [] };
+    }
+    // Which key mode the dataset is in — drives the "1 -> many" dropdown selection.
+    datasetKeyMode(id) {
+        const d = this.datasetDef(id);
+        if (!d || d.dedup === false) return d && d.dedup === false ? "nodedup" : "auto";
+        if ((d.key_fields || []).length) return "concat";
+        if (d.key_field) return "single";
+        return "auto";
+    }
+    // Switch the dataset's key mode. "single" is set by picking a field (setDatasetKeyField); this
+    // handles the modeless options. Concat seeds an empty field list + default norm to fill in.
+    setDatasetKeyMode(id, mode) {
+        const d = this.ensureDatasetDef(id);
+        if (mode === "nodedup") { d.dedup = false; return; }
+        d.dedup = true; d.key_field = "";
+        if (mode === "concat") {
+            d.key_fields = d.key_fields || [];
+            d.key_norm = d.key_norm || { case_insensitive: true, strip_punct: false, collapse_ws: true, strip_words: [] };
+        } else { d.key_fields = []; }   // "auto"
+    }
+    // Add/remove one field from the concat key (order = insertion order = key part order).
+    toggleDatasetKeyField(id, field) {
+        const d = this.ensureDatasetDef(id); d.key_fields = d.key_fields || [];
+        const i = d.key_fields.indexOf(field);
+        if (i >= 0) d.key_fields.splice(i, 1); else d.key_fields.push(field);
+    }
+    // Patch one concat-key norm knob (case_insensitive / strip_punct / collapse_ws / strip_words).
+    setDatasetKeyNorm(id, patch) {
+        const d = this.ensureDatasetDef(id);
+        d.key_norm = { ...this.datasetKeyNorm(id), ...patch };
+    }
     // How a live run splits into batches: "run" (one per run) or "detection" (a new batch each
     // time the feeding window is freshly detected — transient per-event screens like relic offerings).
     datasetBatchMode(id) { const d = this.datasetDef(id); return (d && d.batch_mode) || "run"; }
@@ -128,6 +169,9 @@ export class GraphModel {
                 sites.push({ decl: false, get: () => t.dataset_targets[i], set: (v) => { t.dataset_targets[i] = v; } }));
             sites.push({ decl: false, get: () => t.dataset_dest || "", set: (v) => { t.dataset_dest = v; } });   // clone/move dest
         }
+        for (const d of this.profile.dictionaries || [])                  // a dictionary feed is a dataset REF
+            (d.feeds || []).forEach((_, i) =>
+                sites.push({ decl: false, get: () => d.feeds[i].dataset, set: (v) => { d.feeds[i].dataset = v; } }));
         return sites;
     }
 
@@ -189,13 +233,14 @@ export class GraphModel {
     }
     // The output columns a producer writes — ONE source of truth for the key picker and the
     // subset column list (a producer dataset isn't fed by windows, so its columns can't be read
-    // off a schema). relic writes fixed reward rows; an http node writes `name` + each mapped
-    // out_field (so editing the mapping immediately surfaces/removes downstream columns).
+    // off a schema). An http node writes each mapped out_field; per-item mode also injects `name`
+    // (the source item), so prepend it unless the mapping already declares a `name` column (list
+    // mode names it itself). Editing the mapping immediately surfaces/removes downstream columns.
     producerColumns(pn) {
         if (!pn) return [];
-        if (pn.type === "relic") return ["name", "item", "rarity", "chance", "ducats", "state"];
         const fields = (pn.http && pn.http.fields) || [];
-        return ["name", ...fields.map((f) => f.out_field).filter(Boolean)];
+        const cols = fields.map((f) => f.out_field).filter(Boolean);
+        return cols.includes("name") ? cols : ["name", ...cols];
     }
 
     // ---- satellites (opt-in follower nodes) ---------------------------------
@@ -326,7 +371,11 @@ export class GraphModel {
             for (const ds of t.dataset_targets || [])
                 es.push({ from: `trigger:${t.id}`, to: `ds:${ds}`, kind: "trigger" });
         }
-        for (const d of this.profile.dictionaries || []) es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
+        for (const d of this.profile.dictionaries || []) {
+            es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
+            for (const fd of d.feeds || [])   // a dataset PUSHES its column values in as terms
+                if (fd.dataset) es.push({ from: `ds:${fd.dataset}`, to: `dict:${d.id}`, kind: "data" });
+        }
         // vt-table satellites: a dotted "img" edge from the dataset/subset to its records grid (opt-in)
         for (const ds of this.datasets()) if (this.satelliteOn(`vt:ds:${ds}`)) es.push({ from: `ds:${ds}`, to: `vt:ds:${ds}`, kind: "img" });
         for (const s of this.profile.subsets || []) if (this.satelliteOn(`vt:sub:${s.id}`)) es.push({ from: `sub:${s.id}`, to: `vt:sub:${s.id}`, kind: "img" });
@@ -381,14 +430,14 @@ export class GraphModel {
         if (dataset) this.ensureDatasetDef(dataset);
         const pn = { id, type, mode: "", dataset, throttle: 0.4, enabled: true, sources: [] };
         if (type === "http") pn.http = this._blankHttp();
-        this._applyProducerDefaultKey(pn);   // relic needs its (name,item,state) key from birth
         this.profile.producers.push(pn);
         return id;
     }
-    // A fresh http spec: no request, slugify keys, no mapping — the user teaches it all in the UI.
+    // A fresh http spec: no request, slugify keys, no mapping, per-item mode (empty explode) —
+    // the user teaches it all in the UI.
     _blankHttp() {
         return { request: { method: "GET", url: "", headers: {}, query: {}, timeout: 30 },
-                 key_transform: "slugify", key_encode: true, catalogue: null, root: "", fields: [] };
+                 key_transform: "slugify", key_encode: true, catalogue: null, root: "", explode: [], fields: [] };
     }
     _blankCatalogue() {
         return { url: "", items_path: "data", name_path: "", key_path: "", fuzzy: 0.9, ttl_days: 7, suffix_hints: [] };
@@ -401,20 +450,12 @@ export class GraphModel {
         this._repointTargets(oldId, newId);   // a trigger may target this producer — carry its wire
         return true;
     }
-    // the producer backend (registry._PRODUCER): http | relic. Switching it rebuilds the node.
+    // the producer backend (registry._PRODUCER): currently just http. Switching it rebuilds the node.
     setProducerType(id, type) {
         const pn = this.producerNode(id);
         if (!pn || !type) return;
         pn.type = type;
         if (type === "http" && !pn.http) pn.http = this._blankHttp();
-        this._applyProducerDefaultKey(pn);
-    }
-    // a backend may need a specific output key. relic writes one row per (relic, reward, state),
-    // so it MUST key on all three or every reward/state of a relic collapses into one row; an http
-    // node keys by name (the default), so carries no explicit key.
-    _applyProducerDefaultKey(pn) {
-        if (pn.type === "relic") pn.key = { fields: ["name", "item", "state"], sep: "|", case_sensitive: false };
-        else delete pn.key;
     }
     setProducerDataset(id, ds) {
         const pn = this.producerNode(id);
@@ -439,12 +480,16 @@ export class GraphModel {
     }
     setHttpKeyEncode(id, on) { const s = this._http(id); if (s) s.key_encode = !!on; }
     setHttpRoot(id, r) { const s = this._http(id); if (s) s.root = r || ""; }
+    // list-mode explode paths (nested arrays expanded into one row each). Non-empty -> list mode.
+    addHttpExplode(id) { const s = this._http(id); if (s) (s.explode = s.explode || []).push(""); }
+    removeHttpExplode(id, i) { const s = this._http(id); if (s && s.explode) s.explode.splice(i, 1); }
+    setHttpExplode(id, i, v) { const s = this._http(id); if (s && s.explode && i < s.explode.length) s.explode[i] = v || ""; }
     setHttpCatalogue(id, patch) {
         const s = this._http(id); if (!s) return;
         s.catalogue = Object.assign(s.catalogue || this._blankCatalogue(), patch);
     }
     // response field mapping (each row = one output column)
-    addHttpField(id) { const s = this._http(id); if (s) s.fields.push({ out_field: "", path: "", type: "text", required: false }); }
+    addHttpField(id) { const s = this._http(id); if (s) s.fields.push({ out_field: "", path: "", template: "", type: "text", required: false }); }
     removeHttpField(id, i) { const s = this._http(id); if (s) s.fields.splice(i, 1); }
     setHttpField(id, i, patch) { const s = this._http(id); if (s && s.fields[i]) Object.assign(s.fields[i], patch); }
     toggleHttpFieldArray(id, i, on) {
@@ -675,6 +720,34 @@ export class GraphModel {
         return true;
     }
     setDictionaryTerms(id, terms) { const d = this.dictionary(id); if (d) d.terms = terms; }
+
+    // ---- dictionary feeds: a dataset pushes its column values in as terms ----
+    // Non-empty feeds => the term list is DERIVED (pulled from the datasets, deduped on save),
+    // not hand-typed. The pull runs server-side (oc.learn.dict_feed) on save / on data change.
+    dictFeeds(id) { const d = this.dictionary(id); return (d && d.feeds) || []; }
+    dictFeed(id, ds) { return this.dictFeeds(id).find((f) => f.dataset === ds) || null; }
+    // whether this dictionary pulls its terms from any dataset (drives the read-only textarea hint)
+    dictIsFed(id) { return this.dictFeeds(id).some((f) => f.dataset); }
+    // Wire a dataset -> dictionary: add a feed (no columns picked yet -> pulls nothing until chosen).
+    addDictFeed(id, ds) {
+        const d = this.dictionary(id); if (!d || !ds) return false;
+        d.feeds = d.feeds || [];
+        if (d.feeds.some((f) => f.dataset === ds)) return false;   // already fed by it
+        d.feeds.push({ dataset: ds, columns: [] });
+        return true;
+    }
+    removeDictFeed(id, ds) {
+        const d = this.dictionary(id); if (!d) return;
+        d.feeds = (d.feeds || []).filter((f) => f.dataset !== ds);
+    }
+    // columns of one feed pulled into the dictionary (each selected column's values become terms)
+    dictFeedColumns(id, ds) { const f = this.dictFeed(id, ds); return (f && f.columns) || []; }
+    toggleDictFeedColumn(id, ds, col) {
+        const f = this.dictFeed(id, ds); if (!f) return;
+        f.columns = f.columns || [];
+        const i = f.columns.indexOf(col);
+        if (i >= 0) f.columns.splice(i, 1); else f.columns.push(col);
+    }
 
     // duplicate a dataset's definition under a fresh id; a window can then be wired to it
     cloneDataset(id) {
@@ -922,7 +995,7 @@ export class GraphModel {
         w.fields = w.fields || [];
         const fid = id || `field_${_fieldSeq++}`;
         if (!w.fields.some((f) => f.id === fid))
-            w.fields.push({ id: fid, type: "text", extract: "whole", separator: "/", learn: false, fuzzy: 0.82 });
+            w.fields.push({ id: fid, type: "text", extract: "whole", separator: "/", fuzzy: 0.82 });
     }
     removeField(winId, fid) {
         const w = this.window(winId);

@@ -1,18 +1,18 @@
 // Producer node: a standalone source fired on a schedule/trigger that fetches external data
 // and pushes current records into its output dataset (wired producer -> dataset). The backend
-// is chosen by `type` (registry._PRODUCER): `http` fetches a taught URL per source item and maps
-// JSON paths -> columns (warframe.market pricing is just an http node); `relic` fetches the WFCD
-// relic table and writes one row per (relic, reward). The node shows the config + controls;
-// joining/deriving is a view's job.
+// is chosen by `type` (registry._PRODUCER): `http` fetches a taught URL and maps JSON paths ->
+// columns — per source item (warframe.market pricing), or, with `explode` set, one fetch expanded
+// into many rows (the WFCD relic table -> one row per (relic, reward)). The node shows the config
+// + controls; joining/deriving is a view's job.
 import * as api from "../api.js";
 import { isOnline } from "../conn.js";
 import { h, frag, TRASH, labCell } from "../dom.js";
 import * as hub from "../hub.js";
 import { log } from "../log.js";
 
-// Backends the type picker offers (mirrors registry._PRODUCER). http is the generic fetch+map
-// backend (URL / headers / mapping); relic is a self-contained table refresh (no request config).
-const PRODUCER_TYPES = ["http", "relic"];
+// Backends the type picker offers (mirrors registry._PRODUCER). http is the one generic fetch+map
+// backend (URL / headers / mapping, per-item or list mode).
+const PRODUCER_TYPES = ["http"];
 
 const AGG_OPS = ["min", "max", "sum", "count", "median", "median_low", "first"];
 const FILTER_OPS = ["eq", "ne", "in", "nin", "gt", "ge", "lt", "le", "contains"];
@@ -29,7 +29,7 @@ const elapsed = (start, end) => {
 const typeSel = (pn) => h("select", { class: "prtype" },
     ...PRODUCER_TYPES.map((t) => h("option", { value: t, selected: t === (pn.type || "http") }, t)));
 
-const sel = (cls, opts, cur) => h("select", { class: cls },
+const sel = (cls, opts, cur, title = "") => h("select", { class: cls, title: title || null },
     ...opts.map((o) => h("option", { value: o, selected: o === cur }, o)));
 
 // checkbox WITH an inline text label (for list rows that have no labCell of their own)
@@ -69,27 +69,40 @@ const catalogueRows = (c) => [
     h("input", { class: "pr-cat-ttl", type: "number", value: c.ttl_days ?? 7 }),
 ];
 
-// The response->columns mapping: one row per output column, each optionally reducing an array
-// (filter -> pluck -> aggregate). Indices (data-i field, data-fi filter) drive the wiring.
+// A {k:v}-style list of single text values (ordered) with delete + trailing add-row. Used for the
+// `explode` array-path list (list mode). `kind` hooks the wiring; the whole list rebuilds per edit.
+const listBlock = (cls, items, placeholder, addLabel, itemTitle) => {
+    const row = (v, i) => h("div", { class: `pr-row ${cls}-row`, dataset: { i } },
+        h("input", { class: `${cls}-v`, value: v, placeholder, title: itemTitle }),
+        h("button", { class: `sv-rmin danger ${cls}-del`, dataset: { i }, title: "remove" }, TRASH()));
+    return h("div", { class: "pr-rows" }, ...(items || []).map(row), h("button", { class: `${cls}-add` }, addLabel));
+};
+
+// The response->columns mapping: one row per output column. A column's value is a `path` (optionally
+// reducing an array: filter -> pluck -> aggregate) OR a `{path}` template composed from several
+// fields. Indices (data-i field, data-fi filter) drive the wiring.
 const fieldsBlock = (fields) => {
     const fieldRow = (f, i) => {
         const arr = f.array;
         return h("div", { class: "pr-field", dataset: { i } },
             h("div", { class: "pr-row" },
-                h("input", { class: "pr-f-out", value: f.out_field || "", placeholder: "column" }),
-                h("input", { class: "pr-f-path", value: f.path || "", placeholder: "json path" }),
-                sel("pr-f-type", ["text", "number"], f.type || "text"),
+                h("input", { class: "pr-f-out", value: f.out_field || "", placeholder: "column", title: "output dataset column name" }),
+                h("input", { class: "pr-f-path", value: f.path || "", placeholder: "json path", title: "dotted/[i] path to the value ('' = response root)" }),
+                sel("pr-f-type", ["text", "number"], f.type || "text", "text keeps the raw value; number coerces (drops non-numeric)"),
                 chk("pr-f-req", f.required, "required"),
                 chk("pr-f-arr", !!arr, "array"),
                 h("button", { class: "sv-rmin danger pr-f-del", dataset: { i }, title: "remove column" }, TRASH())),
+            h("div", { class: "pr-row" },
+                h("input", { class: "pr-f-tmpl", value: f.template || "", placeholder: "template (optional): {path} {path}",
+                    title: "compose the column from several fields, e.g. '{tier} {relicName}' -> 'Axi A1'. Overrides path/array." })),
             arr ? h("div", { class: "pr-arr" },
-                h("input", { class: "pr-fa-pluck", value: arr.pluck || "", placeholder: "pluck path" }),
-                sel("pr-fa-agg", AGG_OPS, arr.agg || "min"),
-                h("input", { class: "pr-fa-depth", type: "number", value: arr.depth ?? 5, title: "depth (median_low)" }),
+                h("input", { class: "pr-fa-pluck", value: arr.pluck || "", placeholder: "pluck path", title: "dotted path within each kept element to the value" }),
+                sel("pr-fa-agg", AGG_OPS, arr.agg || "min", "how the plucked values fold to one"),
+                h("input", { class: "pr-fa-depth", type: "number", value: arr.depth ?? 5, title: "depth (median_low): median of the lowest N" }),
                 ...(arr.filter || []).map((flt, fi) => h("div", { class: "pr-row pr-ffilt", dataset: { i, fi } },
-                    h("input", { class: "pr-ff-path", value: flt.path || "", placeholder: "field" }),
-                    sel("pr-ff-op", FILTER_OPS, flt.op || "eq"),
-                    h("input", { class: "pr-ff-val", value: Array.isArray(flt.value) ? flt.value.join(", ") : (flt.value ?? ""), placeholder: "value" }),
+                    h("input", { class: "pr-ff-path", value: flt.path || "", placeholder: "field", title: "path within each element to test" }),
+                    sel("pr-ff-op", FILTER_OPS, flt.op || "eq", "comparison (in/nin take a comma list)"),
+                    h("input", { class: "pr-ff-val", value: Array.isArray(flt.value) ? flt.value.join(", ") : (flt.value ?? ""), placeholder: "value", title: "value to compare against" }),
                     h("button", { class: "sv-rmin danger pr-ff-del", dataset: { i, fi }, title: "remove filter" }, TRASH()))),
                 h("button", { class: "pr-ff-add", dataset: { i } }, "+ filter"),
             ) : null);
@@ -97,27 +110,16 @@ const fieldsBlock = (fields) => {
     return h("div", { class: "pr-fields" }, ...fields.map(fieldRow), h("button", { class: "pr-f-add" }, "+ column"));
 };
 
-// Node title + body for a producer. http: the full fetch+map editor. relic (and any non-http
-// type): just a type picker + the refresh controls.
+// Node title + body for a producer: the full http fetch+map editor. Two shapes share it —
+// per-item (sources + key transform) and list mode (`explode` set: one fetch, many rows). The
+// per-item-only rows (key transform, sources, name-by) hide in list mode where they don't apply.
 export function producerParts(pn, cols = [], free = []) {
-    const isHttp = (pn.type || "http") === "http";
     const title = h("input", { class: "gi gi-id prrename", value: pn.id, title: "rename producer node" });
     const port = h("span", { class: "port out", title: "drag to a dataset to write its rows there" });
 
-    if (!isHttp) {
-        const body = frag(
-            h("div", { class: "enr-sum muted" }, "↻ refresh to fetch this data"),
-            h("div", { class: "lab-grid" },
-                labCell("backend", "which producer backend fetches this dataset"), typeSel(pn),
-                labCell("status", "live refresh progress ('idle' when not running)"),
-                h("div", { class: "enr-prog livestats" })),
-            h("div", { class: "gn-foot" },
-                h("button", { class: "enr-refresh" }, "↻ refresh")));   // doubles as cancel while running
-        return { title, body, ports: port };
-    }
-
     const spec = pn.http || {};
     const req = spec.request || {};
+    const isList = (spec.explode || []).length > 0;     // list mode: one fetch expanded into rows
     const hasSrc = (pn.sources || []).length;
     // item sources use the SAME chip + add-select input the subset's sources use.
     const chips = (pn.sources || []).map((s) =>
@@ -135,37 +137,44 @@ export function producerParts(pn, cols = [], free = []) {
         ? frag(labCell("name by", "which source column names the item (fed to the URL / catalogue)"),
             h("select", { class: "enr-keyfld-sel" }, nfOpts))
         : null;
+    // per-item-only knobs (how {key} is built, which sources feed it) — irrelevant in list mode.
+    const perItem = isList ? [] : [
+        labCell("key", "how {key} is built from the item name"),
+        sel("pr-keytransform", ["none", "lowercase", "slugify", "catalogue"], spec.key_transform || "slugify",
+            "transform each source name into the {key} the URL substitutes"),
+        labCell("encode", "percent-encode the substituted {key}"),
+        chkBare("pr-keyencode", spec.key_encode !== false, "percent-encode the substituted {key}"),
+        ...(spec.key_transform === "catalogue" ? catalogueRows(spec.catalogue || {}) : []),
+        srcs, keyFld,
+    ];
 
     const body = frag(
         h("div", { class: "enr-sum muted" }, "↻ refresh to fetch this data"),
         h("div", { class: "lab-grid" },
             labCell("backend", "which producer backend fetches this dataset"), typeSel(pn),
-            labCell("throttle", "seconds between requests during a sweep"),
-            h("input", { class: "pr-throttle", type: "number", step: "0.1", value: pn.throttle ?? 0.4 }),
+            labCell("throttle", "seconds between requests during a sweep (per-item mode only)"),
+            h("input", { class: "pr-throttle", type: "number", step: "0.1", value: pn.throttle ?? 0.4, title: "seconds between requests during a sweep" }),
             labCell("label", "status label only (no behaviour) — shown in progress copy"),
-            h("input", { class: "pr-mode", value: pn.mode || "", placeholder: "e.g. orders" }),
+            h("input", { class: "pr-mode", value: pn.mode || "", placeholder: "e.g. orders", title: "status label only (no behaviour)" }),
             labCell("enabled", "include in scheduled / triggered runs"),
             chkBare("pr-enabled", pn.enabled !== false, "include in scheduled / triggered runs"),
-            labCell("method", "HTTP method"), sel("pr-method", ["GET", "POST"], req.method || "GET"),
-            labCell("url", "{name} = raw item name, {key} = transformed key"),
-            h("input", { class: "pr-url", value: req.url || "", placeholder: "https://…/{key}" }),
+            labCell("method", "HTTP method"), sel("pr-method", ["GET", "POST"], req.method || "GET", "HTTP method"),
+            labCell("url", isList ? "the URL fetched once (no {name}/{key} in list mode)" : "{name} = raw item name, {key} = transformed key"),
+            h("input", { class: "pr-url", value: req.url || "", placeholder: "https://…/{key}", title: "request URL; templates {name}/{key} in per-item mode" }),
             labCell("headers", "request headers", true), mapBlock("headers", req.headers),
             labCell("query", "query params appended to the URL", true), mapBlock("query", req.query),
             labCell("timeout", "per-request timeout (seconds)"),
-            h("input", { class: "pr-timeout", type: "number", value: req.timeout ?? 30 }),
-            labCell("key", "how {key} is built from the item name"),
-            sel("pr-keytransform", ["none", "lowercase", "slugify", "catalogue"], spec.key_transform || "slugify"),
-            labCell("encode", "percent-encode the substituted {key}"),
-            chkBare("pr-keyencode", spec.key_encode !== false, "percent-encode the substituted {key}"),
-            ...(spec.key_transform === "catalogue" ? catalogueRows(spec.catalogue || {}) : []),
-            srcs, keyFld,
-            labCell("root", "path applied to the response before every column path"),
-            h("input", { class: "pr-root", value: spec.root || "", placeholder: "e.g. data" }),
+            h("input", { class: "pr-timeout", type: "number", value: req.timeout ?? 30, title: "per-request timeout (seconds)" }),
+            ...perItem,
+            labCell("root", "path applied to the response before every column path (and before explode)"),
+            h("input", { class: "pr-root", value: spec.root || "", placeholder: "e.g. data", title: "dotted path into the response applied before mapping" }),
+            labCell("explode", "LIST MODE: nested array paths to expand into one row each (blank = fetch per source item)", true),
+            listBlock("pr-exp", spec.explode || [], "array path (e.g. relics)", "+ level", "a nested array path, relative to the prior level"),
             labCell("fields", "response → dataset columns", true), fieldsBlock(spec.fields || []),
             labCell("status", "live sweep progress ('idle' when not running)"),
             h("div", { class: "enr-prog livestats" })),
         h("div", { class: "gn-foot" },
-            h("button", { class: "enr-refresh" }, "↻ refresh")));   // doubles as cancel while running
+            h("button", { class: "enr-refresh" }, "↻ fetch")));   // doubles as cancel while running
     return { title, body, ports: port };
 }
 
@@ -190,7 +199,7 @@ export function wireProducerNode(div, game, dataset, mode = "", type = "http",
     }
 
     const btn = $(".enr-refresh");
-    const startLabel = "↻ refresh";
+    const startLabel = "↻ fetch";
 
     // ONE button, like every other node: idle = start; while running it carries `.reading`
     // (CSS appends the spinner) and a second click cancels. No separate cancel button.

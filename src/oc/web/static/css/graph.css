@@ -106,7 +106,7 @@
 .gnode input, .gnode select { user-select: text; max-width: 100%; }
 /* the node-wide cursor:grab (set on .gnode above) gives way to these — form fields,
    buttons, scroll/resize areas — so the cursor always tells the truth */
-.gnode input:not([type="checkbox"]), .gnode textarea, .gnode [contenteditable="true"] { cursor: text; }
+.gnode input:not([type="checkbox"], [type="color"]), .gnode textarea, .gnode [contenteditable="true"] { cursor: text; }
 .gnode button, .gnode select, .gnode a, .gnode .collapse, .gnode .port, .gnode .gn-enable, input[type="checkbox"] { cursor: pointer; }
 .gnode .scrollhost, .gnode .nodehost, .gnode .canvas-wrap, .gnode table { cursor: auto; }
 .glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; overflow: hidden; }
@@ -131,8 +131,8 @@
     color: var(--ntint); background: var(--node-head); padding-left: 8px;
     pointer-events: none; opacity: 1; transition: opacity .12s ease; z-index: 0; }
 .gn-h .gn-enable { position: relative; z-index: 1; }
-/* vttable header has no flex:1 title to push the type tag over, so pin it to the right edge */
-.gnode.vttable .gn-h .gn-type { margin-left: auto; }
+/* vttable/glyphs headers have no flex:1 title to push the type tag over, so pin it to the right edge */
+.gnode.vttable .gn-h .gn-type, .gnode.glyphs .gn-h .gn-type { margin-left: auto; }
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap; }
 .gnode input.gi { width: 100%; }
 .gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; border: unset; background: transparent; margin-left: -35px; padding-left: 35px;
@@ -172,7 +172,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* full-width controls EXCEPT checkboxes — a checkbox keeps its base 28px toggle-switch size
    (base.css) and sits at the start of the control column instead of stretching. */
 .lab-grid > select, .lab-grid > input:not([type="checkbox"]), .lab-grid > .tg-secs { width: 100%; min-width: 0; }
-.lab-grid > input[type="checkbox"] { justify-self: start; }
+.lab-grid > input[type="checkbox"], .lab-grid > .gn-slide { justify-self: start; }
 .lab-grid > .tg-secs input { width: 100%; }
 .lab-grid > .sv-inputs { margin: 0; min-width: 0; }
 /* full-width cells inside the grid (e.g. the price node's source-pill list) span both columns */
@@ -218,9 +218,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .detect-status .ds-txt { white-space: normal; word-break: break-all; font-family: var(--mono, monospace); }
 /* matched characters in the after-text — the chars that carried a successful detect */
 .detect-status .ds-hit { background: var(--accent); color: var(--on-accent, #06121f); border-radius: 2px; }
-/* detect node colour kind: a swatch + an eyedropper button beside the hex input */
-.aset-swatch { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--border, #444); border-radius: 2px; vertical-align: middle; margin-right: 4px; }
-.aset-pick { margin-left: 4px; padding: 0 4px; cursor: pointer; }
+/* detect node color kind: hex input beside a native color swatch/picker */
+.aset-color { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.aset-color input[type="text"], .aset-color .aset:not(.aset-swatch) { flex: 1; min-width: 0; }
+.aset-swatch { flex: 0 0 auto; width: 22px; height: 18px; padding: 0; border: 1px solid var(--border, #444); border-radius: 2px; cursor: pointer; background: none; }
+.aset-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+.aset-swatch::-webkit-color-swatch { border: none; border-radius: 1px; }
 /* game node worthiness gate: the live ●/◯ badge + detector count */
 .game-gate { margin-top: 4px; font-size: var(--fs-sm); display: flex; align-items: center; gap: 2px; }
 .game-gate .gate-badge { font-weight: 600; }
@@ -246,6 +249,20 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gn-foot button { flex: 1 1 0; min-width: 0; }
 .gn-foot button.danger { flex: 0 0 auto; margin-left: auto; }  /* remove always sits at the right */
 .gn-foot .imgbtn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* concat-key editor (dataset) + dictionary feed pickers — compact checkbox groups */
+.mini { font-size: 11px; }
+.dsconcat, .dict-feeds { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.dsk-fields, .dsk-norm, .df-cols { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.dsk-norm { border-top: 1px solid var(--muted); padding-top: 6px; }
+.chk { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.chk input[type="checkbox"] { margin: 0; }
+.chk-words { flex: 1 1 100%; }
+.chk-words input { flex: 1 1 auto; min-width: 0; }
+.dsk-words { width: 100%; }
+.dict-feed { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; border-top: 1px solid var(--muted); }
+.df-head { display: flex; align-items: center; gap: 6px; }
+.df-head code { flex: 1 1 auto; }
+.df-rm { flex: 0 0 auto; }
 /* per-window "live" checkbox in the window footer — doesn't stretch like the buttons */
 .win-live { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; cursor: pointer; }
 .win-live input { margin: 0; }
@@ -275,6 +292,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gedge.flow { stroke-width: 1.8; opacity: 1; marker-end: url(#flowarrow); }
 .flowarrow-head { fill: context-stroke; }   /* arrow takes the line's colour (orange, or accent when selected) */
 .gedge.ownwin { stroke: var(--accent); }   /* game→window: match the window icon tint */
+.gedge.owndict { stroke: var(--purple); }  /* game→dictionary: match the dict icon tint */
 .gedge.field { stroke: var(--accent); }
 .gedge.detect, .gedge.scrollbar { stroke: var(--ok); }
 .gedge.state { stroke: var(--warn); }
@@ -310,7 +328,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .stealthcap-head { fill: context-stroke; }
 .circlebar-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; }
 .gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; marker-start: none; marker-end: none; }   /* live drag line: no caps */
-.gedge.sel { stroke: var(--sel) !important; stroke-width: 2.2; opacity: 1 !important; }
+/* selected edge keeps its OWN colour; highlight is a whitish outline (halo) around the stroke,
+   not a recolour. Two tight drop-shadows in --sel build an even outline on both sides of the line. */
+.gedge.sel { stroke-width: 2.2; opacity: 1 !important; filter: drop-shadow(0 0 1.5px var(--sel)) drop-shadow(0 0 1.5px var(--sel)); }
 /* a line touching a disabled node is greyed (it carries no live data); a stale-edge is a line whose
    node has been dragged off its routed endpoint — greyed + faded the same way until it re-routes */
 .gedge.dis-edge, .gedge.stale-edge { filter: grayscale(1); }
@@ -352,24 +372,53 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 
 /* taught glyph atlas node: a wrapping grid of thumbnail + editable char + delete */
 .glyph-atlas:empty { display: none; }
-.glyph-atlas .glyph-head { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 4px; }
+/* the atlas is the LAST section of the node body (below the image/preview/pending), so its
+   heading needs the same top-border divider other mid-body sub-headings get — but it's the
+   first child of the .glyph-atlas wrapper, so .fgrp:first-child would strip it. Restore it. */
+.glyph-atlas > .fgrp { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--line); }
 .glyph-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.glyph-cell { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--line);
+/* the taught atlas lays out as a neat, uniform grid: auto-fill columns, each cell a row of the
+   cutout + its char input (like the auto strip). (The pending strip keeps the inline flex-wrap.) */
+.glyph-atlas .glyph-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 6px; align-items: start; }
+.glyph-atlas .glyph-cell { justify-self: start; }
+.glyph-cell { position: relative; display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--line);
     border-radius: 4px; padding: 2px 3px; background: var(--panel, transparent); }
-.glyph-thumb { height: 22px; width: auto; max-width: 48px; image-rendering: pixelated;
-    background: #000; border-radius: 2px; }
+.glyph-thumb { height: 44px; width: 44px; object-fit: contain; image-rendering: pixelated;
+    background: #000; border-radius: 2px; border: 2px solid var(--accent); }
 .glyph-char { width: 2.2em; text-align: center; padding: 1px 2px; }
 .glyph-rm { padding: 1px 4px; }
-/* glyph compose bar (arm rect / type char / save; auto-glypher word + button) */
+/* remove button: icon-only red trash, floats in the cell's top-right corner, revealed only on
+   hover (visibility, not display, so the grid never reflows) */
+.glyph-cell .glyph-rm, .glyph-cell .gp-rm { position: absolute; top: 1px; right: 1px; z-index: 2;
+    padding: 1px; margin: 0; background: none; border: 0; line-height: 0; cursor: pointer; min-height: unset;
+    color: var(--danger); visibility: hidden; }
+.glyph-cell .glyph-rm svg, .glyph-cell .gp-rm svg { width: 12px; height: 12px; display: block; fill: currentColor; }
+.glyph-cell:hover .glyph-rm, .glyph-cell:hover .gp-rm { visibility: visible; }
+/* per-glyph enable toggle: top-left corner, hover-revealed; a disabled glyph is greyed and
+   ignored by refinement (glyph_atlas skips it) */
+.glyph-cell .glyph-en { position: absolute; top: 1px; left: 1px; z-index: 2; margin: 0; cursor: pointer; visibility: hidden; }
+.glyph-cell:hover .glyph-en { visibility: visible; }
+.glyph-cell.disabled .glyph-thumb { opacity: 0.3; filter: grayscale(1); }
+.glyph-cell.disabled .glyph-char { opacity: 0.5; }
+/* glyph compose bar (arm rect / type char / save; auto-glypher button) */
 .glyph-compose { display: flex; align-items: center; gap: 4px; padding: 4px 0; flex-wrap: wrap; }
 .glyph-compose .gc-char { width: 2.4em; text-align: center; }
-.glyph-compose .gc-word { min-width: 0; flex: 0 1 8em; }
 .glyph-compose .gc-div { flex: 0 0 6px; }
+.glyph-compose .gc-autotoggle { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+/* live cutout preview of the drawn box (manual flow) */
+.glyph-preview:empty { display: none; }
+.glyph-preview { margin: 4px 0; }
 /* auto-glypher proposals awaiting correct + save-all */
 .glyph-pending:empty { display: none; }
 .glyph-pending { margin: 4px 0; padding: 4px 6px; border: 1px dashed var(--accent); border-radius: 4px; }
 .glyph-pending .glyph-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .glyph-pending .gp-char { width: 2.4em; text-align: center; padding: 1px 2px; }
+/* auto proposals are the read-and-correct step -> blow the cutouts up so the glyph is clear */
+.glyph-pending .gp-thumb { height: 88px; max-width: 200px; }
+.glyph-pending .gp-cell { cursor: pointer; }   /* click anywhere in the cell selects its box */
+.glyph-pending .gp-cell .gp-char { cursor: text; }
+.glyph-cell.gp-cell.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .imgtools { display: flex; align-items: center; gap: 6px; padding: 4px 0; flex-wrap: wrap; }
 .imgtools .tools { display: inline-flex; gap: 2px; flex-wrap: wrap; }
 .imgtools .spacer { flex: 1; }
@@ -491,7 +540,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .key-sec { margin: 6px 0; }
 .prev-count { padding: 4px 8px; font-size: var(--fs-sm); }
 
-.gnode.selected { border-color: var(--sel); box-shadow: 0 0 0 0px var(--sel); z-index: 20; }
+.gnode.selected { border-color: var(--sel-node); box-shadow: 0 0 0 0px var(--sel-node); z-index: 20; }
 .gnode.multisel { border-color: var(--sel); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sel) 60%, transparent); }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */

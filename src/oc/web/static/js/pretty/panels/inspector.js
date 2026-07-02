@@ -593,7 +593,7 @@ export function buildInspector(ctx) {
             ctlHost.textContent = "";
             if (active.id !== "default") {
                 const ctl = el("div", "pw-style-pctl");
-                const nameIn = el("input", "pw-style-pname"); nameIn.type = "text"; nameIn.value = active.name; nameIn.spellcheck = false; nameIn.title = "profile name";
+                const nameIn = el("input", "pw-style-pname"); nameIn.type = "text"; nameIn.value = active.name; nameIn.title = "profile name";
                 const commitName = () => { const p = (w[d.listKey] || []).find((x) => x.id === active.id); if (p && nameIn.value.trim() && p.name !== nameIn.value.trim()) { p.name = nameIn.value.trim(); ctx.pretty.save(); render(); } };   // render: the "· <name>" condition option relabels
                 nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameIn.blur(); } else if (e.key === "Escape") { e.preventDefault(); nameIn.value = active.name; nameIn.blur(); } });
                 nameIn.addEventListener("blur", commitName);
@@ -669,7 +669,7 @@ export function buildInspector(ctx) {
         head.appendChild(el("span", "pw-insp-type", `${w.type} ·`));
         // editable id: rename commits on Enter/blur; the model repoints every reference. A rejected
         // id (empty / duplicate / token-unsafe) snaps back and flashes.
-        const idIn = el("input", "pw-insp-id"); idIn.value = w.id; idIn.spellcheck = false;
+        const idIn = el("input", "pw-insp-id"); idIn.value = w.id;
         idIn.title = "rename this element (updates all references to it)";
         const commitId = () => {
             const v = idIn.value.trim();

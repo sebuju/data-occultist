@@ -8,9 +8,8 @@ engine at all.
 
 Persisted to ``data/<game>/ocr_cache.json`` as ``{key_hash: payload}``. The key
 hashes the IMMUTABLE image id (a timestamped capture / cutout filename) together
-with a canonical dump of the OCR-affecting inputs (the window def + fields, plus
-the lexicon mtime for reads whose substitutions depend on it). Any box / region /
-detector / dictionary change moves the hash → cache miss → fresh read. Live grabs
+with a canonical dump of the OCR-affecting inputs (the window def + fields). Any
+box / region / detector change moves the hash → cache miss → fresh read. Live grabs
 (no stashed image) are never cached — their pixels vary frame to frame.
 """
 
@@ -24,9 +23,13 @@ from pathlib import Path
 from typing import Any
 
 
-def cache_key(image_id: str, config: Any) -> str:
-    """Stable hash of an immutable image id + the inputs that change OCR output."""
-    blob = image_id + "\x00" + json.dumps(config, sort_keys=True, default=str, ensure_ascii=False)
+def cache_key(image_id: str, config: Any, engine_sig: str = "") -> str:
+    """Stable hash of an immutable image id + the inputs that change OCR output.
+    ``engine_sig`` is the OCR backend's own fingerprint (``ocr_sig``: backend name,
+    inference engine, model options) — swapping the engine moves every key, so stale
+    results from another engine are never served as fresh reads."""
+    blob = image_id + "\x00" + json.dumps(config, sort_keys=True, default=str, ensure_ascii=False) \
+        + "\x00" + engine_sig
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()
 
 

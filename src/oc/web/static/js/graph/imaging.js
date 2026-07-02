@@ -36,8 +36,8 @@ const ITEM_KINDS = [
     ["field", "field", "▦", "Draw a field box — text to OCR and store as a column of the record."],
     ["filled", "filled", "▩", "Draw a 'filled' tell — the cell counts as an item only if this box has visual content (edges/variance above the floor)."],
     ["text", "text", "T", "Draw a 'text' tell — the cell counts only if OCR reads here: bind a field (or leave blank for any column), and optionally require the read to match a literal."],
-    ["color", "color", "◐", "Draw a 'colour' tell — the cell counts only if a taught colour is present in this box."],
-    ["border", "border", "▭", "Draw a 'border' tell — like colour, but the taught colour must ride the box's PERIMETER band (a rarity frame / selection outline), not its fill."],
+    ["color", "color", "◐", "Draw a 'color' tell — the cell counts only if a taught color is present in this box."],
+    ["border", "border", "▭", "Draw a 'border' tell — like color, but the taught color must ride the box's PERIMETER band (a rarity frame / selection outline), not its fill."],
     ["template", "template", "⧉", "Draw a 'template' tell — the cell counts only if a saved sub-image matches in this box."],
     ["diamonds", "diamonds", "◆", "Draw a 'diamonds' tell — the cell counts only if a rank-diamond strip (◇/◆) is present (e.g. a rank-pip row)."],
 ];
@@ -209,7 +209,7 @@ let _pickTarget = null;   // {winId, detId} armed by a detect node's eyedropper 
 export function armColorPick(winId, detId) {
     _pickTarget = { winId, detId };
     const ov = imageCanvases.get(winId)?.overlay;
-    if (ov) { ov.setPick(true); setStatus("click the image to sample a colour"); }
+    if (ov) { ov.setPick(true); setStatus("click the image to sample a color"); }
     else setStatus("open the image first");
 }
 
@@ -218,7 +218,7 @@ export function armColorPick(winId, detId) {
 export function armPreprocessPick(winId) {
     _pickTarget = { winId, pp: true };
     const ov = imageCanvases.get(winId)?.overlay;
-    if (ov) { ov.setPick(true); setStatus("click the image to sample the text colour"); }
+    if (ov) { ov.setPick(true); setStatus("click the image to sample the text color"); }
     else setStatus("open the image first");
 }
 
@@ -300,45 +300,92 @@ export async function openGameImage(nodeEl = null) {
 // ---- glyph-atlas node -----------------------------------------------------
 // Standalone node (its OWN image surface, keyed winId "glyphs"; the image/box stack is shared
 // via nodeIdOf, rule 7). Separate from the game node because that canvas already hosts gate
-// detectors. Teaching model: arm ONE positioning rectangle, nudge it with WASD (shift+WASD to
-// resize) over a character, type the character, confirm -> the crop is frozen into the atlas
-// and the rect is cleared. The auto-glypher segments a labelled word into per-character
-// proposals the user corrects + confirms.
+// detectors. Teaching model: pick the "glyph" draw tool, drag a box round ONE character, type
+// the character, confirm -> the crop is frozen into the atlas and the box is cleared. Boxes are
+// dragged/resized with the mouse (the app-wide dragresize, precise), same as every other overlay
+// box. The auto-glypher segments a labelled word into per-character proposals the user edits +
+// confirms (its boxes are editable the same way).
 
 const GLYPH_RECT_ID = "__glyphrect";
-let glyphRect = null;        // pending positioning rect on the glyph surface (fractions); null = hidden
-let glyphPending = [];       // auto-glypher proposals awaiting correct+confirm: [{char, image}]
-let _glyphKeyBound = false;
+const GLYPH_PROP_PREFIX = "__glyphprop:";   // per-proposal editable box id -> `${prefix}${index}`
+let glyphRect = null;        // pending glyph box on the glyph surface (fractions); null = hidden
+let glyphPending = [];       // auto-glypher proposals awaiting edit+confirm: [{char, box:{x,y,w,h}}]
 
-function defaultGlyphRect(wide = false) { return { x: 0.44, y: 0.45, w: wide ? 0.16 : 0.05, h: 0.06 }; }
+// Redraw the glyph box (refreshImageBoxes folds glyphRect in for the "glyphs" surface). Auto only
+// makes sense on an existing box, so its button is shown only while a glyph rect is armed.
+function drawGlyphRect() {
+    refreshImageBoxes("glyphs");
+    const auto = nodeEls.get("glyphs")?.querySelector(".gc-auto");
+    if (auto) auto.hidden = !glyphRect;
+    refreshGlyphPreview();
+}
 
-// Redraw the positioning rect (refreshImageBoxes folds glyphRect in for the "glyphs" surface).
-function drawGlyphRect() { refreshImageBoxes("glyphs"); }
+// Live cutout of the currently-drawn glyph box, shown below the canvas so the user can see exactly
+// what will be saved (the manual flow: before auto is clicked, or when auto found nothing). Hidden
+// while auto proposals are on screen (those carry their own thumbnails).
+function refreshGlyphPreview() {
+    const host = nodeEls.get("glyphs")?.querySelector(".glyph-preview");
+    if (!host) return;
+    if (!glyphRect || glyphPending.length) { host.replaceChildren(); return; }
+    host.replaceChildren(
+        h("img", { class: "glyph-thumb", src: glyphThumbSrc(glyphRect), alt: "cutout", title: "the box's cutout — this is what gets saved" }));
+}
 
-// WASD nudges / shift+WASD resizes the armed rect. Ignored while a text input is focused (so
-// typing the character isn't hijacked) and when no rect is armed.
-function glyphKeydown(ev) {
-    if (!glyphRect) return;
-    const ae = document.activeElement;
-    if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
-    const k = ev.key.toLowerCase();
-    if (k === "escape") { cancelGlyphCompose(); ev.preventDefault(); return; }
-    if (!"wasd".includes(k)) return;
-    ev.preventDefault();
-    const step = ev.shiftKey ? 0.004 : 0.005, r = glyphRect;
-    if (ev.shiftKey) {   // resize (a/d width, w/s height)
-        if (k === "d") r.w = Math.min(1 - r.x, r.w + step);
-        if (k === "a") r.w = Math.max(0.008, r.w - step);
-        if (k === "s") r.h = Math.min(1 - r.y, r.h + step);
-        if (k === "w") r.h = Math.max(0.008, r.h - step);
-    } else {             // move
-        if (k === "d") r.x = Math.min(1 - r.w, r.x + step);
-        if (k === "a") r.x = Math.max(0, r.x - step);
-        if (k === "s") r.y = Math.min(1 - r.h, r.y + step);
-        if (k === "w") r.y = Math.max(0, r.y - step);
+// Write a moved/resized/nudged glyph box back to its source (the armed rect or a proposal). The
+// overlay's onChange (mouse) and the shared WASD nudge (registry persist) both route here — one
+// writer, so a 1-pixel WASD step and a drag land in the same place (rule 7).
+function persistGlyphBox(b) {
+    if (b.id === GLYPH_RECT_ID) { glyphRect = { x: b.x, y: b.y, w: b.w, h: b.h }; refreshGlyphPreview(); return; }
+    if (b.id.startsWith(GLYPH_PROP_PREFIX)) {
+        const i = +b.id.slice(GLYPH_PROP_PREFIX.length);
+        if (glyphPending[i]) { glyphPending[i].box = { x: b.x, y: b.y, w: b.w, h: b.h }; refreshGlyphThumb(i); }
     }
+}
+
+// Crop a box (window fractions) out of the glyph surface's LOADED image into a small data URL —
+// the preview thumbnail beside a proposal's char input, so the user can see which glyph to label.
+// Client-side (no server round-trip / no saved PNG); the real crop is frozen on save.
+function glyphThumbSrc(box) {
+    const img = imageCanvases.get("glyphs")?.overlay?.img;
+    if (!img || !img.naturalWidth) return "";
+    const sx = box.x * img.naturalWidth, sy = box.y * img.naturalHeight;
+    const sw = Math.max(1, box.w * img.naturalWidth), sh = Math.max(1, box.h * img.naturalHeight);
+    const dh = 96, dw = Math.max(1, Math.round(sw * dh / sh));   // render tall enough to stay sharp when blown up
+    const c = document.createElement("canvas");
+    c.width = dw; c.height = dh;
+    c.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
+    return c.toDataURL();
+}
+
+// Repoint one proposal's thumbnail after its box moved/resized (no DOM rebuild -> no focus loss).
+function refreshGlyphThumb(i) {
+    const img = nodeEls.get("glyphs")?.querySelector(`.gp-thumb[data-i="${i}"]`);
+    if (img && glyphPending[i]) img.src = glyphThumbSrc(glyphPending[i].box);
+}
+
+// proposal box id <-> list index, and the two-way selection mirror between canvas box and row.
+function propIndexFromId(id) {
+    return (id && id.startsWith(GLYPH_PROP_PREFIX)) ? +id.slice(GLYPH_PROP_PREFIX.length) : null;
+}
+function markGlyphPropSelected(i) {
+    nodeEls.get("glyphs")?.querySelectorAll(".gp-cell")
+        .forEach((c) => c.classList.toggle("selected", +c.dataset.i === i));
+}
+function selectGlyphProp(i) {   // clicking a suggestion image selects its box on the canvas
+    const id = `${GLYPH_PROP_PREFIX}${i}`;
+    imageCanvases.get("glyphs")?.overlay.setActive(id);
+    overlaySelected("glyphs", id);
+    markGlyphPropSelected(i);
+}
+function discardGlyphProp(node, i) {   // drop ONE suggestion (+ its box); ids reindex on rebuild
+    glyphPending.splice(i, 1);
+    imageCanvases.get("glyphs")?.overlay.setActive(null);   // stale selection after reindex
+    refreshGlyphPending(node);
     drawGlyphRect();
 }
+
+// "auto after draw" toggle state (glyph node checkbox): drawing a box runs auto immediately.
+function glyphAutoOn() { return !!nodeEls.get("glyphs")?.querySelector(".gc-autochk")?.checked; }
 
 function glyphComposeEls() {
     const node = nodeEls.get("glyphs");
@@ -379,25 +426,24 @@ async function saveGlyph() {
 }
 
 async function runAutoGlypher() {
-    const node = nodeEls.get("glyphs");
-    const word = node?.querySelector(".gc-word")?.value.trim();
-    if (!word) { setStatus("type the text the box covers, then Auto"); return; }
-    if (!glyphRect) {   // first Auto arms a wide rect to position over the whole word
-        glyphRect = defaultGlyphRect(true);
-        drawGlyphRect();
-        setStatus("position the box over the whole word (WASD / shift+WASD), then press Auto again");
-        return;
-    }
+    if (!glyphRect) return;   // button is only shown while a rect is armed; guard anyway
     const game = model.profile.name;
     const cap = await curCapOf("glyphs");
     if (!cap) { setStatus("pick an image (or recapture) first"); return; }
     let props;
-    try { props = await api.glyphAuto(game, cap, glyphRect, word); }
+    try { props = await api.glyphAuto(game, cap, glyphRect); }
     catch (e) { setStatus(String(e.message || e)); return; }
     glyphPending = props || [];
-    glyphRect = null; showGlyphCompose(false); drawGlyphRect();   // hand off to the review strip
-    refreshGlyphPending();
-    if (!glyphPending.length) setStatus("auto-glypher found nothing — adjust the box");
+    if (glyphPending.length) {
+        glyphRect = null; showGlyphCompose(false); drawGlyphRect();   // hand off to the editable boxes
+        refreshGlyphPending();
+        setStatus(`auto: ${glyphPending.length} glyphs — drag/resize the boxes, fix labels, then save all`);
+    } else {
+        // nothing recognised: keep the box and fall back to manual — its cutout preview stays up
+        showGlyphCompose(true); drawGlyphRect();
+        refreshGlyphPending();
+        setStatus("auto found no text — label the box by hand, or adjust it and try auto again");
+    }
 }
 
 export async function openGlyphImage(nodeEl = null) {
@@ -410,13 +456,15 @@ export async function openGlyphImage(nodeEl = null) {
     if (prev) { unregisterOverlay("glyphs"); imageCanvases.delete(winId); openImages.delete(winId); }
     host.replaceChildren(
         h("div", { class: "glyph-compose" },
-            h("button", { class: "gc-add", title: "add one glyph: show the box, position it with WASD (shift+WASD to resize) over a character, type the character, then Save" }, "＋ glyph"),
-            h("input", { class: "gc-char", maxlength: "2", placeholder: "char", hidden: true, title: "the character under the box (Enter to save, Esc to cancel)" }),
+            h("span", { class: "tools" },
+                h("button", { class: "tool gc-add", dataset: { kind: "glyph" }, title: "draw tool: activate, then drag a box round ONE character on the image (drag/resize to fine-tune), type the character, then Save" }, "◻ glyph")),
+            h("input", { class: "gc-char", maxlength: "1", placeholder: "char", hidden: true, title: "the single character inside the box (Enter to save, Esc to cancel)" }),
             h("button", { class: "gc-confirm", hidden: true, title: "save this glyph permanently" }, "save"),
             h("button", { class: "gc-cancel", hidden: true, title: "cancel" }, "✕"),
             h("span", { class: "gc-div" }),
-            h("input", { class: "gc-word", size: "10", placeholder: "known text", title: "auto-glypher: position the box over a whole word, type what it reads, then Auto" }),
-            h("button", { class: "gc-auto", title: "segment the box into one glyph per character for you to correct + confirm" }, "auto")),
+            h("button", { class: "gc-auto", hidden: true, title: "auto: OCR the drawn box and split it into one glyph per character (labels prefilled) for you to correct + confirm" }, "auto"),
+            h("label", { class: "gc-autotoggle", title: "auto after draw: drawing a box immediately runs OCR instead of asking for a single char" },
+                h("input", { type: "checkbox", class: "gc-autochk" }), "auto after draw")),
         h("div", { class: "canvas-wrap" }, h("canvas")),
         h("div", { class: "img-foot" },
             h("span", { class: "img-pages", hidden: true },
@@ -427,22 +475,36 @@ export async function openGlyphImage(nodeEl = null) {
                 CAMERA(), h("span", { class: "imgbtn-lbl" }, "images")),
             h("button", { class: "imgcap", title: "capture the live game window into the current page" }, "recapture")));
     const canvas = host.querySelector("canvas");
+    const kindOf = () => host.querySelector(".tool.active")?.dataset.kind || null;   // no tool => no draw
     const overlay = new Overlay(canvas, {
-        // dragging/resizing the rect with the mouse updates the pending rect too (WASD is the
-        // keyboard equivalent). No draw-to-create — the ONE rect is the capture mechanism.
-        onChange: (box) => { if (box.id === GLYPH_RECT_ID) glyphRect = { x: box.x, y: box.y, w: box.w, h: box.h }; },
-        onSelect: () => {},
-        canCreate: () => false,
+        // The "glyph" draw tool creates the box for one manual glyph; the auto-glypher's arm rect
+        // and each proposal box are created programmatically. All boxes are then drag/resizable
+        // with the mouse (the app-wide dragresize), same as every other overlay box.
+        onCreate: (geom) => {
+            if (kindOf() !== "glyph") return;   // drawing is a no-op until the glyph tool is picked
+            glyphRect = { x: geom.x, y: geom.y, w: geom.w, h: geom.h };
+            if (glyphAutoOn()) { drawGlyphRect(); runAutoGlypher(); }   // "auto after draw": OCR the box immediately
+            else { showGlyphCompose(true); drawGlyphRect(); }           // else the manual single-char flow
+        },
+        onChange: (box) => persistGlyphBox(box),
+        // make glyphs the active box overlay (WASD targets its box) AND mirror the selection into
+        // the proposal list, so selecting a box on the canvas highlights its suggestion row
+        onSelect: (id) => { overlaySelected("glyphs", id); markGlyphPropSelected(propIndexFromId(id)); },
+        canCreate: () => kindOf() === "glyph",   // no crosshair/draw without the glyph tool
+        minFrac: 0.0005,   // a single glyph is tiny vs the whole window — allow a much smaller box
     });
     imageCanvases.set(winId, { host, canvas, overlay });
-    registerOverlay("glyphs", { overlay, kind: "glyphs", winId, refresh: () => refreshImageBoxes("glyphs") });
+    registerOverlay("glyphs", { overlay, kind: "glyphs", winId,
+        persist: (b) => persistGlyphBox(b), refresh: () => refreshImageBoxes("glyphs") });
     overlay.setWorldZoom(view.zoom);
     openImages.add(winId);
     persist.layout();
-    host.querySelector(".gc-add").addEventListener("click", () => {
-        glyphRect = glyphRect || defaultGlyphRect();
-        showGlyphCompose(true);
-        drawGlyphRect();
+    host.querySelector(".gc-add").addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        const on = !btn.classList.contains("active");
+        host.querySelectorAll(".tool").forEach((b) => b.classList.remove("active"));
+        if (on) { btn.classList.add("active"); setStatus("draw a box round one character, then label it"); }
+        else cancelGlyphCompose();   // turning the tool off clears any half-drawn box + compose row
     });
     host.querySelector(".gc-confirm").addEventListener("click", saveGlyph);
     host.querySelector(".gc-cancel").addEventListener("click", cancelGlyphCompose);
@@ -454,38 +516,67 @@ export async function openGlyphImage(nodeEl = null) {
     host.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal("glyphs"));
     host.querySelector(".imgcap").addEventListener("click", () => loadImage("glyphs", true));
     host.querySelectorAll(".imgpg").forEach((b) => b.addEventListener("click", () => stepWinPage("glyphs", +b.dataset.d)));
-    if (!_glyphKeyBound) { document.addEventListener("keydown", glyphKeydown); _glyphKeyBound = true; }
     refreshGlyphAtlas(false, node);
     refreshGlyphPending(node);
     await loadImage("glyphs", false);
     drawEdges();
 }
 
-// Auto-glypher proposals: thumbnail + editable char each, plus confirm-all / discard. Nothing
-// is saved until "confirm all" — the user corrects mis-read characters first.
+// Auto-glypher proposals: one editable char per proposal box (the boxes themselves live on the
+// canvas — drag/resize to adjust), plus save-all / discard. Nothing is cropped or saved until
+// "save all": each box is frozen into a glyph THEN, so box edits are honoured. A blanked char is
+// skipped. Editing a char here relabels its box live (refreshImageBoxes).
+export async function commitGlyphProposals(node) {
+    const game = model.profile.name;
+    const cap = await curCapOf("glyphs");
+    if (!cap) { setStatus("pick an image (or recapture) to teach glyphs from first"); return; }
+    const wanted = glyphPending.filter((p) => p.char);   // skip any the user blanked out
+    const added = [];
+    for (const p of wanted) {
+        try { const cut = await api.glyphCutout(game, cap, p.box); added.push({ char: p.char, image: cut.name }); }
+        catch (e) { setStatus(String(e.message || e)); return; }   // stop on first failure, keep the rest editable
+    }
+    if (added.length) model.addGlyphs(added);
+    glyphPending = [];
+    refreshGlyphPending(node); refreshGlyphAtlas(); drawGlyphRect(); autosave(null);
+    setStatus(`saved ${added.length} glyph${added.length === 1 ? "" : "s"}`);
+}
+
 export function refreshGlyphPending(nodeEl = null) {
     const node = nodeEl || nodeEls.get("glyphs");
     const host = node && node.querySelector(".glyph-pending");
     if (!host) return;
     if (!glyphPending.length) { host.replaceChildren(); return; }
-    const game = model.profile.name;
-    const rows = glyphPending.map((p, i) => h("div", { class: "glyph-cell" },
-        h("img", { class: "glyph-thumb", src: api.glyphUrl(game, p.image), alt: p.char || "?", title: "proposed glyph" }),
-        h("input", { class: "gp-char", maxlength: "2", value: p.char || "", placeholder: "?", dataset: { i } })));
+    const rows = glyphPending.map((p, i) => h("div", { class: "glyph-cell gp-cell", dataset: { i } },
+        h("img", { class: "glyph-thumb gp-thumb", src: glyphThumbSrc(p.box), alt: p.char || "?",
+            title: "the glyph this box covers — click to select its box, then drag/resize or WASD-nudge it", dataset: { i } }),
+        h("input", { class: "gp-char", maxlength: "1", value: p.char || "", placeholder: "?",
+            title: "which character this box is; the box is on the image — click the image to select it", dataset: { i } }),
+        h("button", { class: "gp-rm danger", dataset: { i }, title: "discard this suggestion" }, TRASH())));
     host.replaceChildren(
         h("div", { class: "glyph-head" },
-            h("span", { class: "flab" }, `auto — fix chars, then save all [${glyphPending.length}]`),
+            h("span", { class: "flab" }, `auto — adjust boxes + labels, then save all [${glyphPending.length}]`),
             h("button", { class: "gp-confirm" }, "save all"),
             h("button", { class: "gp-discard danger" }, "discard")),
         h("div", { class: "glyph-grid" }, ...rows));
     host.querySelectorAll(".gp-char").forEach((inp) =>
-        inp.addEventListener("input", (e) => { glyphPending[+e.target.dataset.i].char = e.target.value.trim(); }));
-    host.querySelector(".gp-confirm").addEventListener("click", () => {
-        model.addGlyphs(glyphPending.filter((p) => p.char));   // skip any the user blanked out
-        glyphPending = [];
-        refreshGlyphPending(node); refreshGlyphAtlas(); autosave(null);
-    });
-    host.querySelector(".gp-discard").addEventListener("click", () => { glyphPending = []; refreshGlyphPending(node); });
+        inp.addEventListener("input", (e) => {
+            glyphPending[+e.target.dataset.i].char = e.target.value.trim();
+            drawGlyphRect();   // relabel the box on the canvas live
+        }));
+    // clicking anywhere in a cell selects its box (so it drags/WASD-nudges); the trash button keeps
+    // its own action. WASD never moves the box while the char input is focused — the global key
+    // handler bails on a focused INPUT (main.js), so typing a label stays safe.
+    host.querySelectorAll(".gp-cell").forEach((cell) =>
+        cell.addEventListener("click", (e) => {
+            if (e.target.closest(".gp-rm")) return;   // trash handles its own click
+            selectGlyphProp(+cell.dataset.i);
+        }));
+    host.querySelectorAll(".gp-rm").forEach((btn) =>
+        btn.addEventListener("click", (e) => discardGlyphProp(node, +e.currentTarget.dataset.i)));
+    host.querySelector(".gp-confirm").addEventListener("click", () => commitGlyphProposals(node));
+    host.querySelector(".gp-discard").addEventListener("click", () => { glyphPending = []; refreshGlyphPending(node); drawGlyphRect(); });
+    markGlyphPropSelected(propIndexFromId(imageCanvases.get("glyphs")?.overlay.activeId));   // keep highlight across rebuilds
 }
 
 // The taught glyph atlas list: a thumbnail + editable character + delete per glyph, kept
@@ -497,21 +588,27 @@ export function refreshGlyphAtlas(focusLast = false, nodeEl = null) {
     if (!host) return;
     const game = model.profile.name;
     const glyphs = model.glyphs();
-    const rows = glyphs.map((g, i) => h("div", { class: "glyph-cell" },
-        h("img", { class: "glyph-thumb", src: api.glyphUrl(game, g.image), alt: g.char || "?", title: "taught glyph (cutout is frozen)" }),
-        h("input", { class: "glyph-char", maxlength: "2", value: g.char || "", placeholder: "?",
-            title: "which character this glyph is", dataset: { i } }),
-        h("button", { class: "glyph-rm danger", dataset: { i }, title: "remove glyph" }, TRASH())));
+    const rows = glyphs.map((g, i) => {
+        const on = g.enabled !== false;
+        return h("div", { class: on ? "glyph-cell" : "glyph-cell disabled", dataset: { i } },
+            h("input", { type: "checkbox", class: "glyph-en", checked: on, dataset: { i },
+                title: on ? "glyph enabled — click to mute it (kept, but ignored by refinement)" : "glyph muted — click to enable" }),
+            h("img", { class: "glyph-thumb", src: api.glyphUrl(game, g.image), alt: g.char || "?", title: "taught glyph (cutout is frozen)" }),
+            h("input", { class: "glyph-char", maxlength: "1", value: g.char || "", placeholder: "?",
+                title: "which character this glyph is", dataset: { i } }),
+            h("button", { class: "glyph-rm danger", dataset: { i }, title: "remove glyph" }, TRASH()));
+    });
     host.replaceChildren(...[
-        h("div", { class: "glyph-head" },
-            h("span", { class: "flab" }, "glyph atlas"),
-            h("span", { class: "muted" }, glyphs.length ? `${glyphs.length} taught` : "＋ glyph or Auto to teach")),
+        glyphs.length ? h("div", { class: "fgrp" }, "glyph atlas") : null,   // subheading only when non-empty
         glyphs.length ? h("div", { class: "glyph-grid" }, ...rows) : null,
     ].filter(Boolean));   // never pass null to replaceChildren -> it stringifies to a "null" text node
     host.querySelectorAll(".glyph-char").forEach((inp) => {
         inp.addEventListener("change", (e) => { model.setGlyphChar(+e.target.dataset.i, e.target.value.trim()); refreshGlyphAtlas(); autosave(null); });
         inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } });
     });
+    host.querySelectorAll(".glyph-en").forEach((chk) => chk.addEventListener("change", (e) => {
+        model.setGlyphEnabled(+e.target.dataset.i, e.target.checked); refreshGlyphAtlas(); autosave(null);
+    }));
     host.querySelectorAll(".glyph-rm").forEach((btn) => btn.addEventListener("click", () => {
         model.removeGlyph(+btn.dataset.i); refreshGlyphAtlas(); autosave(null);
     }));
@@ -717,7 +814,7 @@ function refreshItemBoxes(winId, itemId) {
     // the extracted field values, drawn over their boxes tinted by confidence (same as the
     // window preview). The read returns boxes already in cutout fractions.
     const reads = rd ? Object.values(rd.fields).filter((f) => f.box)
-        .map((f) => ({ ...f.box, text: f.value, confidence: f.confidence, substituted: f.substituted })) : [];
+        .map((f) => ({ ...f.box, text: f.value, raw: f.raw, confidence: f.confidence, substituted: f.substituted, verified: f.verified || null })) : [];
     ent.overlay.setPreview(reads);
 }
 
@@ -1332,8 +1429,13 @@ function refreshImageBoxes(winId) {
     // isn't where detection actually reads; the live grid (below) shows the real cells
     const sb = model.scrollbar(winId);
     if (sb) boxes.push({ id: "scrollbar", role: "scrollbar", ...sb });
-    // the glyph surface has no model boxes — its only box is the armed positioning rect
-    if (winId === "glyphs" && glyphRect) boxes.push({ id: GLYPH_RECT_ID, role: "glyphrect", label: "glyph", ...glyphRect });
+    // the glyph surface has no model boxes — its boxes are the armed positioning rect and the
+    // auto-glypher's per-character proposals (editable until confirmed), each labelled by its char
+    if (winId === "glyphs") {
+        if (glyphRect) boxes.push({ id: GLYPH_RECT_ID, role: "glyphrect", label: "glyph", ...glyphRect });
+        glyphPending.forEach((p, i) =>
+            boxes.push({ id: `${GLYPH_PROP_PREFIX}${i}`, role: "glyphprop", label: p.char || "?", ...p.box }));
+    }
     entry.overlay.setBoxes(boxes);
     entry.overlay.setGridGuides(buildGridGuides(winId));   // columns + locator scan strips
     // prefer the live-detected grid (rows found in the actual capture); fall back to
@@ -1479,8 +1581,10 @@ function setGridFromPreview(winId, res) {
         .map((f) => ({
             ...f.box,
             text: f.value,
+            raw: f.raw,                     // genuine OCR read; shown as "orig -> value" when corrected
             confidence: f.confidence,
             substituted: f.substituted || null,
+            verified: f.verified || null,   // dict/split/fuzzy/glyph — drawn as a validation pill
         })));
     // which item template matched: its id centred on each cell, white on black
     reads.push(...kept.filter((c) => c.box && c.item).map((c) => ({ ...c.box, cell: c.box, text: c.item })));

@@ -298,10 +298,11 @@ export async function glyphCutout(game, capture, box) {
 export function glyphUrl(game, name) {
     return `/api/glyph/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
-// Auto-glypher: segment a labelled word region into one saved glyph per character. Returns
-// [{char, image, url}] for the user to correct + confirm (nothing is saved to the profile yet).
-export async function glyphAuto(game, capture, box, text) {
-    const q = `game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}&text=${encodeURIComponent(text)}&x=${box.x}&y=${box.y}&w=${box.w}&h=${box.h}`;
+// Auto-glypher: OCR a region box, split each recognised word into one crop per character with
+// the label prefilled from OCR. Returns [{char, image, url}] for the user to correct + confirm
+// (nothing is saved to the profile yet).
+export async function glyphAuto(game, capture, box) {
+    const q = `game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}&x=${box.x}&y=${box.y}&w=${box.w}&h=${box.h}`;
     const r = await tfetch(`/api/glyph/auto?${q}`, { method: "POST" });
     if (!r.ok) throw new Error(`auto-glyph: ${r.status} ${await r.text()}`);
     return r.json();
@@ -346,6 +347,8 @@ export const ocr = {
     setDevice: (device) => tfetch(`/api/ocr/device?device=${encodeURIComponent(device)}`, { method: "POST" }).then((r) => r.json()),
     setScale: (n) => tfetch(`/api/ocr/scale?scale=${encodeURIComponent(n)}`, { method: "POST" }).then((r) => r.json()),
     setYield: (ms) => tfetch(`/api/ocr/yield?ms=${encodeURIComponent(ms)}`, { method: "POST" }).then((r) => r.json()),
+    setThreads: (n) => tfetch(`/api/ocr/threads?n=${encodeURIComponent(n)}`, { method: "POST" }).then((r) => r.json()),
+    setEngineType: (name) => tfetch(`/api/ocr/engine?name=${encodeURIComponent(name)}`, { method: "POST" }).then((r) => r.json()),
     releaseGpu: () => tfetch("/api/ocr/release", { method: "POST" }).then((r) => r.json()),
 };
 
@@ -420,6 +423,11 @@ export const live = {
     },
     stop: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/stop`, { method: "POST", signal }).then((r) => ok(r, "live stop")).then((r) => r.json()),
     status: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
+    // Debug log: incremental poll (entries newer than `after`). { running, seq, entries:[...] }.
+    debug: (game, after = 0, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/debug?after=${encodeURIComponent(after)}`, { signal }).then((r) => r.json()),
+    // Persisted frame limiter (seconds; 0 = fastest). getInterval → { interval }; setInterval persists.
+    getInterval: (signal) => tfetch("/api/live/interval", { signal }).then((r) => r.json()),
+    setInterval: (seconds) => tfetch(`/api/live/interval?seconds=${encodeURIComponent(seconds)}`, { method: "POST" }).then((r) => r.json()),
 };
 
 // Wipe a dataset's stored records + ledger.

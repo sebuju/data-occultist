@@ -9,10 +9,11 @@ import { $, setStatus, model } from "../state.js";
 import { registerWorker, unregisterWorker } from "../workers.js";
 import { pc, precapOpen, precapBusy, fmtBytes } from "./precap.js";
 import { prevHost, refreshDetect, refreshPreview, setGameGateBadge } from "../imaging.js";
-import { refreshLive, wireOcrScale, wireOcrYield } from "../main.js";
+import { refreshLive } from "../main.js";
 import { panZoomTo } from "../camera.js";
 import { h, svg } from "../../dom.js";
 import { bgSetTimeout, bgClearTimeout } from "../../bgtimer.js";
+import { fmtTimeSec } from "../../datefmt.js";
 
 let timer = null;
 // live floating panel state — declared BEFORE buildLiveWindow() runs at module-eval
@@ -40,16 +41,21 @@ let liveFrames = 0, liveT0 = 0, liveFps = 0;
 // real pipeline (confirm_frames -> dedup -> store -> triggers). When live + disarmed, only
 // the read-only client detect/preview loop runs (tuning, no writes).
 let liveSave = true;
-// Frame limiter: minimum SECONDS between collector reads (the panel input is in ms and
-// converts). 0 = as fast as possible (no throttle). Default 0.2s (200ms) — a sane frame limiter
-// that keeps CPU/GPU sane. Changeable while live is on — the server collector is restarted in place
-// so the new limit takes effect immediately.
-let liveInterval = 0.2;
-let liveOcr = null;         // latest OCR device/pacing snapshot (heartbeat s.ocr) for the stats readout
+// Frame limiter (min SECONDS between collector reads) now lives in the SETTINGS modal and is
+// persisted server-side; the collector reads it on start. applyLiveInterval() (exported) restarts
+// a running collector when the modal changes it, so the new limit takes effect immediately.
 let liveColStatus = null;   // latest server collector status (from the heartbeat) while collecting
 let liveColUnsub = null;    // hub subscription active while the server collector runs
 let liveSawServer = false;  // we've observed the server collector actually running this run (gates the external-stop reflect, so an optimistic pre-start beat can't kill a just-started toggle)
 let liveImg = { count: 0, bytes: 0 };   // saved live-image stat (live tuning saves one frame/round)
+// Debug log (expandable, below the stats): shows what OCR read, how it was corrected, and what
+// was pushed to which dataset. Polled from /api/live/{game}/debug ONLY while expanded (gated poll,
+// like precap), reconciled in place (keyed by seq, rule 1), and capped (rule 4).
+let dbgOpen = false;        // section expanded?
+let dbgTimer = null;        // poll timer while open (null = not polling)
+let dbgSeq = 0;             // highest debug seq already rendered (incremental poll cursor)
+const dbgRows = new Map();  // seq -> row element, reused across polls
+const DBG_CAP = 200;        // max rendered debug rows — a log preview, not a data grid
 
 // ---- live floating panel --------------------------------------------------
 // Styled like the tasks panel: a master live toggle, live stats, and a list of every
@@ -71,7 +77,6 @@ function buildLiveWindow() {
     // live button, another client) so the toggle + worker reflect it, and reflect an EXTERNAL stop.
     // Distinct from liveColUnsub (which mirrors status only while WE run) — this watches the on/off edge.
     hub.subscribe((s) => {
-        if (s && s.ocr) liveOcr = s.ocr;   // keep the pacing readout (det scale + GPU yield) current
         const running = !!(s && s.live);
         if (running && !liveOn) adoptServerCollect(s);
         else if (!running && liveOn && liveSave && liveSawServer) reflectExternalStop();
@@ -101,18 +106,6 @@ function mountLive(adapter) {
                     h("button", { class: "act-enable live-save", role: "switch", "aria-checked": "true", title: "save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)" },
                         switchSvg()),
                     h("span", { class: "live-save-lbl" }, "save to datasets"))),
-            h("div", { class: "live-row" },
-                h("span", { class: "live-int-lbl", title: "frame limiter — minimum milliseconds between collector reads. 0 (or blank) = as fast as possible (more CPU/GPU). Applies live while collecting." }, "limit (ms)"),
-                h("input", { class: "live-int-in", type: "number", min: "0", step: "10", value: "200", placeholder: "0", title: "minimum milliseconds between reads; 0 = as fast as possible" })),
-            h("div", { class: "live-row live-gpu-row" },
-                h("span", { class: "live-int-lbl", title: "detection downscale — the DETECTION pass is the biggest single GPU burst per read; ½ = a quarter of the detect pixels = a much shorter stall (the main anti-hitch lever). Applies live." }, "downscale"),
-                h("select", { class: "live-det-in", title: "detection downscale — the main knob that shrinks OCR's GPU burst" },
-                    h("option", { value: "1" }, "1× full"),
-                    h("option", { value: "2" }, "½ (¼ px)"),
-                    h("option", { value: "4" }, "¼ (1/16 px)"))),
-            h("div", { class: "live-row live-gpu-row" },
-                h("span", { class: "live-int-lbl", title: "GPU yield — milliseconds slept between OCR GPU submissions; a secondary fine-tune on top of downscale. 0 = off. Applies live." }, "gpu yield"),
-                h("input", { class: "live-yield-in", type: "number", min: "0", step: "1", placeholder: "0", title: "GPU yield (ms) between OCR submissions — secondary fine-tune" })),
             h("div", { class: "live-wins" }),
             // Live stats sit BELOW the window list as fixed rows with "–" placeholders, so the
             // panel height is identical whether live mode is on or off (no jump on enable).
@@ -131,7 +124,18 @@ function mountLive(adapter) {
                     h("span", { class: "live-statval live-stat-rows muted" }, "–"))),
             h("div", { class: "live-row live-imgs" },
                 h("span", { class: "live-imgstat muted" }, " "),
-                h("button", { class: "live-clear", dataset: { armed: "0" }, title: "delete every saved live image" }, "clear")));
+                h("button", { class: "live-clear", dataset: { armed: "0" }, title: "delete every saved live image" }, "clear")),
+            // Expandable debug log — collapsed by default; when open it polls the server's debug
+            // ring and shows, per OCR-heavy tick, every field's raw text -> resolved value (marking
+            // corrections) plus what was written to which dataset.
+            h("div", { class: "live-debug" },
+                h("button", { class: "live-dbg-head", title: "per-tick OCR reads, corrections, and dataset writes (polls only while open)" },
+                    h("span", { class: "live-dbg-chev" }, "▸"),
+                    h("span", { class: "live-dbg-title" }, "debug log"),
+                    h("span", { class: "live-dbg-clear", role: "button", title: "clear the debug view" }, "clear")),
+                h("div", { class: "live-dbg-body", hidden: true },
+                    h("div", { class: "live-dbg-empty muted" }, "waiting for reads…"),
+                    h("div", { class: "live-dbg-list" }))));
         liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
         // click a window row -> navigate to its window node on the graph (no-op in pretty)
         liveRoot.querySelector(".live-wins").addEventListener("click", (ev) => {
@@ -149,26 +153,12 @@ function mountLive(adapter) {
             if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch((e) => log(`clear live images failed: ${e.message || e}`, "err"));
         });
         if (model.profile.name) api.liveCaptures.stats(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
-        // frame-limiter input (milliseconds): commit on change/blur. Blank/0 -> 0s -> as fast
-        // as possible. While collecting, restart the server collector so the new limit applies now.
-        const intIn = liveRoot.querySelector(".live-int-in");
-        const commitInterval = async () => {
-            const ms = parseFloat(intIn.value);
-            const next = Number.isFinite(ms) && ms > 0 ? ms / 1000 : 0;   // ms -> seconds; blank/0/neg = fastest
-            if (next === 0) intIn.value = "";
-            if (next === liveInterval) return;
-            liveInterval = next;
-            // re-arm with the new limit: await teardown FIRST so start can't race the stop
-            if (liveOn && liveSave) { await stopServerCollect(); startServerCollect(); }
-        };
-        intIn.addEventListener("change", commitInterval);
-        // GPU pacing controls — same wiring helpers the settings modal uses (rule 7). They hit
-        // the shared engine via /api/ocr, so a change applies live to the running collector;
-        // values are seeded + kept in sync from the heartbeat in renderLiveWindow.
-        const detIn = liveRoot.querySelector(".live-det-in");
-        if (detIn) wireOcrScale(detIn);
-        const yIn = liveRoot.querySelector(".live-yield-in");
-        if (yIn) wireOcrYield(yIn);
+        // debug log: header toggles the section (and starts/stops its gated poll); clear wipes
+        // the rendered view without touching the server ring (a fresh poll re-fills from `after`).
+        liveRoot.querySelector(".live-dbg-head").addEventListener("click", (ev) => {
+            if (ev.target.closest(".live-dbg-clear")) { clearDebugView(); return; }
+            setDebugOpen(!dbgOpen);
+        });
     }
     if (liveRoot.parentElement !== adapter.host) adapter.host.appendChild(liveRoot);
 }
@@ -178,10 +168,116 @@ function activateLive() {
     active = true;
     refreshLiveImgStat(true);   // re-pull the saved-image count: it may be stale (fetched before a profile loaded, or frames saved while hidden)
     renderLiveWindow();
+    if (dbgOpen) startDebugPoll();   // resume the debug poll if the section was left open
     requestAnimationFrame(() => fitLivePanelHeight());
     document.fonts?.ready?.then(() => { if (active) fitLivePanelHeight(); });
 }
-function deactivateLive() { active = false; }
+function deactivateLive() { active = false; stopDebugPoll(); }   // hidden panel polls nothing
+
+// ---- debug log -------------------------------------------------------------
+// Expandable section below the stats. Polls the server debug ring ONLY while open (gated, like
+// precap), reconciles rows in place (keyed by seq, rule 1), and caps the rendered rows (rule 4).
+
+function setDebugOpen(on) {
+    dbgOpen = on;
+    const body = liveRoot?.querySelector(".live-dbg-body");
+    const chev = liveRoot?.querySelector(".live-dbg-chev");
+    if (body) body.hidden = !on;
+    if (chev && chev.textContent !== (on ? "▾" : "▸")) chev.textContent = on ? "▾" : "▸";
+    if (on) startDebugPoll(); else stopDebugPoll();
+    fitLivePanelHeight();
+}
+
+function startDebugPoll() {
+    if (dbgTimer || !active) return;
+    pollDebug();   // immediate first pull, then a gated cadence
+}
+function stopDebugPoll() {
+    if (dbgTimer) { bgClearTimeout(dbgTimer); dbgTimer = null; }
+}
+
+function pollDebug() {
+    dbgTimer = null;
+    const game = model.profile.name;
+    if (!dbgOpen || !active || !game) return;
+    api.live.debug(game, dbgSeq).then((r) => {
+        if (r && r.entries && r.entries.length) renderDebugEntries(r.entries);
+    }).catch(() => {}).finally(() => {
+        // keep polling while open — on bgtimer so a backgrounded tab still ticks (like liveTick)
+        if (dbgOpen && active) dbgTimer = bgSetTimeout(pollDebug, 700);
+    });
+}
+
+// Clear the rendered view only (server ring untouched). Next poll re-fills from the current seq.
+function clearDebugView() {
+    dbgRows.clear();
+    const list = liveRoot?.querySelector(".live-dbg-list");
+    if (list) list.replaceChildren();
+    const empty = liveRoot?.querySelector(".live-dbg-empty");
+    if (empty) empty.hidden = false;
+    fitLivePanelHeight();
+}
+
+// Reconcile new debug entries into the list. Newest at TOP (prepend). Keyed by seq so a re-poll
+// never duplicates a row; capped at DBG_CAP (oldest rows dropped) so the DOM stays a preview.
+function renderDebugEntries(entries) {
+    const list = liveRoot?.querySelector(".live-dbg-list");
+    if (!list) return;
+    const empty = liveRoot?.querySelector(".live-dbg-empty");
+    if (empty && !empty.hidden) empty.hidden = true;
+    // entries arrive oldest-first; prepend each so the newest ends up on top.
+    for (const e of entries) {
+        if (e.seq > dbgSeq) dbgSeq = e.seq;
+        if (dbgRows.has(e.seq)) continue;
+        const row = buildDebugRow(e);
+        dbgRows.set(e.seq, row);
+        list.insertBefore(row, list.firstChild || null);
+    }
+    // cap: drop the oldest (lowest seq) rows beyond DBG_CAP
+    if (dbgRows.size > DBG_CAP) {
+        const seqs = [...dbgRows.keys()].sort((a, b) => a - b);
+        for (const s of seqs.slice(0, dbgRows.size - DBG_CAP)) {
+            dbgRows.get(s)?.remove();
+            dbgRows.delete(s);
+        }
+    }
+    fitLivePanelHeight();
+}
+
+// One debug entry: a header (time · window/state · write summary) and a per-read list showing
+// each field's raw OCR text -> resolved value, flagging corrected fields.
+function buildDebugRow(e) {
+    const phase = e.state ? `${e.window}/${e.state}` : (e.window || "?");
+    const wrote = e.new ? `+${e.new}${e.dataset ? " → " + e.dataset : ""}` : "";
+    const head = h("div", { class: "live-dbg-row-head" },
+        h("span", { class: "live-dbg-time" }, fmtTimeSec(e.t * 1000)),
+        h("span", { class: "live-dbg-phase" }, phase),
+        h("span", { class: "live-dbg-wrote" + (e.new ? " wrote" : "") }, wrote || `${e.kept ?? 0}/${e.read ?? 0} read`));
+    const reads = (e.reads || []).map((rd) => {
+        const cor = new Set(rd.corrected || []);
+        const parts = Object.entries(rd.values).map(([fid, val]) => {
+            const raw = rd.raw?.[fid];
+            const shownVal = val === null || val === undefined ? "∅" : String(val);
+            const corrected = cor.has(fid);
+            // raw -> value only when they differ (or the field was corrected); else just the value
+            const changed = corrected || (raw != null && String(raw) !== shownVal);
+            return h("span", { class: "live-dbg-fld" + (corrected ? " cor" : "") },
+                h("span", { class: "live-dbg-fid" }, fid + ":"),
+                changed && raw != null ? h("span", { class: "live-dbg-raw" }, String(raw)) : null,
+                changed && raw != null ? h("span", { class: "live-dbg-arrow" }, "→") : null,
+                h("span", { class: "live-dbg-val" }, shownVal));
+        });
+        return h("div", { class: "live-dbg-read" }, ...parts);
+    });
+    return h("div", { class: "live-dbg-row" }, head, ...reads);
+}
+
+// Apply a frame-limiter change made in the settings modal: restart a running server collector so
+// the new (already-persisted) limit takes effect immediately. No-op when not collecting.
+async function applyLiveInterval(seconds) {
+    if (liveOn && liveSave) { await stopServerCollect(); startServerCollect(); }
+    log(`live frame limit set (${seconds ? Math.round(seconds * 1000) + "ms" : "fastest"})`);
+}
 
 function renderLiveWindow() {
     if (!liveRoot || !active) return;
@@ -225,21 +321,6 @@ function renderLiveWindow() {
     setStat(".live-stat-rows", sc
         ? `${Math.round(sc[0])}–${Math.round(sc[1])}${scm && scm.total ? ` / ${Math.round(scm.total)}` : ""}`
         : "–");
-    // Reflect the live OCR pacing knobs (det downscale + GPU yield) from the heartbeat into
-    // their controls — seeds them on first beat and mirrors a change made in the settings
-    // modal. Never stomp a control the user is actively editing (reconciles in place, rule 1).
-    if (liveOcr) {
-        const detIn = liveRoot.querySelector(".live-det-in");
-        if (detIn && detIn !== document.activeElement) {
-            const v = String(liveOcr.scale || 1);
-            if (detIn.value !== v) detIn.value = v;
-        }
-        const yIn = liveRoot.querySelector(".live-yield-in");
-        if (yIn && yIn !== document.activeElement) {
-            const v = String(liveOcr.yield_ms ?? 0);
-            if (yIn.value !== v) yIn.value = v;
-        }
-    }
     // saved-live-image stat (touch DOM only on change)
     const ist = liveRoot.querySelector(".live-imgstat");
     const itxt = liveImg.count ? `${liveImg.count} imgs · ${fmtBytes(liveImg.bytes)}` : "";
@@ -370,7 +451,7 @@ function startServerCollect() {
     // has actually started: the immediate kick races the worker and usually reads live=false, which
     // would schedule the hub at IDLE cadence (~3s) — so activity:live-gated elements lagged badly.
     // Requesting a beat on resolution flips them as soon as the worker is up.
-    api.live.start(game, liveInterval).then(() => hub.kick()).catch((e) => setStatus(String(e.message || e)));
+    api.live.start(game, null).then(() => hub.kick()).catch((e) => setStatus(String(e.message || e)));   // null => server uses the persisted frame limiter
     subscribeCollector();
     hub.kick();   // beat now so collection status shows immediately
 }
@@ -388,11 +469,6 @@ async function syncLiveFromServer() {
     if (!st?.running || liveOn) return;   // re-check liveOn: the await may have raced a user toggle
     liveOn = true; liveSave = true; liveSawServer = true;
     liveColStatus = st;
-    if (Number.isFinite(st.interval) && st.interval > 0) {   // restore the frame-limiter input
-        liveInterval = st.interval;
-        const intIn = liveRoot?.querySelector(".live-int-in");
-        if (intIn) intIn.value = String(Math.round(st.interval * 1000));
-    }
     registerWorker("live", "live collection", () => setLiveMode(false));
     showLiveStats(true);
     subscribeCollector();
@@ -407,11 +483,6 @@ function adoptServerCollect(s) {
     const lv = s && s.live;
     liveOn = true; liveSave = true; liveSawServer = true;
     liveColStatus = lv || null;
-    if (lv && Number.isFinite(lv.interval) && lv.interval > 0) {   // restore the frame-limiter input
-        liveInterval = lv.interval;
-        const intIn = liveRoot?.querySelector(".live-int-in");
-        if (intIn) intIn.value = String(Math.round(lv.interval * 1000));
-    }
     registerWorker("live", "live collection", () => setLiveMode(false));
     showLiveStats(true);
     subscribeCollector();
@@ -503,5 +574,5 @@ export {
     buildLiveWindow, mountLive, activateLive, deactivateLive,
     renderLiveWindow, renderLiveWinList, fitLivePanelHeight,
     showLiveStats, renderLiveStats, liveTick, startServerCollect, stopServerCollect,
-    setLiveMode, setLiveSave, syncLiveFromServer,
+    setLiveMode, setLiveSave, syncLiveFromServer, applyLiveInterval,
 };

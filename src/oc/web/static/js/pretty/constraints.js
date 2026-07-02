@@ -42,7 +42,6 @@ export function nodeInputs(model) {
             const lab = `${wid} ▸ ${f.id}`;
             add(`win:${wid}`, lab, `${base}.min_confidence`, "min confidence", N(0, 1, 0.05));
             add(`win:${wid}`, lab, `${base}.fuzzy`, "fuzzy", N(0, 1, 0.05));
-            add(`win:${wid}`, lab, `${base}.learn`, "learn", BOOL);
             add(`win:${wid}`, lab, `${base}.type`, "type", ENUM("text", "number", "pips", "diamonds"));
             add(`win:${wid}`, lab, `${base}.min`, "min", N(null, null, 1));
             add(`win:${wid}`, lab, `${base}.max`, "max", N(null, null, 1));

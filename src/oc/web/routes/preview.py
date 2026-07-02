@@ -8,8 +8,6 @@ exactly what each box gets out of the image before saving.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import cv2
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -20,7 +18,6 @@ from ...collect.items import item_templates
 from ...collect.reader import RegionReader
 from ...detect.matcher import DetectMatcher, combine_passes
 from ...learn.dictionary import build_dictionaries
-from ...learn.lexicon import Lexicon
 from ...learn.resolver import FieldResolver
 from ...ocr.serialize import ocr_job
 from ...profile import GameProfile, KeyDef, list_profiles
@@ -37,13 +34,6 @@ from ..video_source import get_video_source
 router = APIRouter(prefix="/api", tags=["preview"])
 
 
-def _lex_mtime(game: str) -> float:
-    """Mtime of the game's lexicon — folded into read caches so a learned/edited
-    dictionary (which changes a read's substitutions) invalidates stale entries."""
-    p = Path(get_settings().data_dir) / game / "lexicon.json"
-    return p.stat().st_mtime if p.exists() else 0.0
-
-
 def _ocr_cache_for(game, image_id, config, prefer_cache):
     """Resolve the per-game OCR cache and this read's key. Returns ``(cache, key,
     hit)`` where ``hit`` is a cached payload when ``prefer_cache`` and present, else
@@ -51,7 +41,10 @@ def _ocr_cache_for(game, image_id, config, prefer_cache):
     if not (game and image_id):
         return None, None, None   # live grab -> pixels vary, never cache
     cache = get_ocr_cache(game)
-    key = cache_key(image_id, config)
+    # The engine's own fingerprint joins the key: swapping OCR backend / inference
+    # engine busts the cache instead of serving reads made by the previous one.
+    ocr = get_engine().ocr
+    key = cache_key(image_id, config, getattr(ocr, "ocr_sig", type(ocr).__name__))
     hit = cache.get(key) if prefer_cache else None
     return cache, key, hit
 
@@ -267,12 +260,11 @@ def _window_reader(engine, profile, game, capture):
     frame = _frame_for(engine, profile, game, capture)
     window = profile.windows[0]
     fields = {f.id: f for f in profile.fields_for(window)}
-    # read-only resolver: applies the game's dictionaries (exact then fuzzy) so the
-    # preview shows the SAME snapped values the collector would, but never learns/mutates.
-    lex = Lexicon.for_game(get_settings().data_dir, profile.name)
+    # resolver applies the game's dictionaries (exact then fuzzy) so the preview shows
+    # the SAME snapped values the collector would.
     pooled, dict_map = build_dictionaries(profile, engine.corrector)
-    resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
-                             dictionary=pooled, dictionaries=dict_map, learn_enabled=False)
+    resolver = FieldResolver(engine.corrector, engine.settings.tuning.accept_confidence,
+                             dictionary=pooled, dictionaries=dict_map)
     templates = item_templates([window], captures_store.cutout_loader(
         get_settings().captures_dir, game or profile.name))
     glyphs = glyph_atlas(profile.glyphs,
@@ -308,11 +300,10 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
         raise HTTPException(status_code=400, detail="profile has no window")
     window = profile.windows[0]
     # Cache on the stashed image + everything that shapes the read: the window boxes/grid,
-    # the fields, the resolver's accept floor, and the lexicon mtime (substitutions depend on it).
+    # the fields, and the resolver's accept floor.
     cfg = {"window": window.model_dump(mode="json"),
            "fields": [f.model_dump(mode="json") for f in profile.fields],
-           "accept": get_settings().tuning.accept_confidence,
-           "lex": _lex_mtime(game) if game else 0.0}
+           "accept": get_settings().tuning.accept_confidence}
     cache, key, hit = _ocr_cache_for(game, capture, cfg, prefer_cache)
     if hit is not None:
         return {**hit, "cached": True}
@@ -405,7 +396,7 @@ def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...
     # Cache on the immutable cutout image + the window/fields/dictionary that drive the read.
     cfg = {"window": window.model_dump(mode="json"),
            "fields": [f.model_dump(mode="json") for f in profile.fields],
-           "accept": get_settings().tuning.accept_confidence, "lex": _lex_mtime(game)}
+           "accept": get_settings().tuning.accept_confidence}
     cache, key, hit = _ocr_cache_for(game, f"{it.cutout}\x00{item}", cfg, prefer_cache)
     if hit is not None:
         return {**hit, "cached": True}
@@ -416,10 +407,9 @@ def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...
 
     engine = get_engine()
     fields = {f.id: f for f in profile.fields_for(window)}
-    lex = Lexicon.for_game(get_settings().data_dir, profile.name)
     pooled, dict_map = build_dictionaries(profile, engine.corrector)
-    resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
-                             dictionary=pooled, dictionaries=dict_map, learn_enabled=False)
+    resolver = FieldResolver(engine.corrector, engine.settings.tuning.accept_confidence,
+                             dictionary=pooled, dictionaries=dict_map)
     templates = item_templates([window], lambda _name: cut)   # the cutout IS this item's reference
     glyphs = glyph_atlas(profile.glyphs,
                          captures_store.glyph_loader(get_settings().captures_dir, profile.name))

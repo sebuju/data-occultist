@@ -70,7 +70,7 @@ import { pushHistory, resetHistory, undo, redo, hist } from "./history.js";
 import { createHistoryPanel } from "../history_panel.js";
 import { workers, unregisterWorker } from "./workers.js";
 import {
-    closeImage, openImage, openGameImage, openGlyphImage, armColorPick, armPreprocessPick, refreshDetect, nodeIdOf,
+    closeImage, openImage, openGameImage, openGlyphImage, armPreprocessPick, refreshDetect, nodeIdOf,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
     scheduleItemRead, itemReadout,
     previewBusy, previewAgain,
@@ -80,7 +80,7 @@ import {
     refreshImageBoxes, refreshGridPreview, selectRegionNode,
 } from "./imaging.js";
 import {
-    liveWin, liveWinState, buildLiveWindow, renderLiveWindow, syncLiveFromServer,
+    liveWin, liveWinState, buildLiveWindow, renderLiveWindow, syncLiveFromServer, applyLiveInterval,
 } from "./panels/livewin.js";
 
 const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, producer: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, vttable: 2300, prod: 1080, dictionary: 20 };
@@ -322,7 +322,7 @@ groups.initGroups({
     persist: () => persist.layout(),
     afterChange: () => { syncMultiSelect(); },
     // double-click a group → frame its bounding box (reuses groupBoxes() geometry)
-    zoomToGroup: (gid) => { const gb = groups.groupBoxes().find((b) => b.id === gid); if (gb) panZoomToRect(gb.box); },
+    zoomToGroup: (gid) => { const gb = groups.groupBoxes().find((b) => b.id === gid); if (gb) panZoomToRect(gb.box, { onlyIn: true }); },
     // drag the group's resize grip → resize the group's container box (sets explicit w/h)
     startGroupResize: (gid, ev) => startGroupResize(gid, ev),
 });
@@ -683,7 +683,6 @@ function wireItemField(div, n) {
         if (k === "type") { fd.type = e.target.value; rebuild = true; }       // toggles extract/sep/dict/min-max
         else if (k === "extract") { fd.extract = e.target.value; rebuild = true; }  // toggles separator
         else if (k === "sep") fd.separator = e.target.value || "/";
-        else if (k === "learn") { fd.learn = e.target.checked; rebuild = true; }    // toggles fuzzy
         else if (k === "fuzzy") fd.fuzzy = +e.target.value;
         else if (k === "minconf") fd.min_confidence = +e.target.value || 0;
         else if (k === "isolate") fd.isolate = e.target.checked;
@@ -1367,7 +1366,7 @@ function wireProducer(div, n) {
     const id = n.ref.id;
     const save = () => autosave(null);                       // value-only edit
     const rebuild = () => { rebuildNode(n.id); drawEdges(); autosave(null); };   // body/edges change
-    const structural = () => { render(); autosave(null); };  // output columns change -> refresh downstream
+    const structural = () => { rebuildNode(n.id); render(); autosave(null); };  // output columns change -> rebuild THIS body (removed row) + refresh downstream
     const fieldI = (el) => +el.closest(".pr-field").dataset.i;
     const collectMap = (kind) => {
         const obj = {};
@@ -1385,7 +1384,7 @@ function wireProducer(div, n) {
             refreshLive(); refreshDataNode(n.ref.dataset); loadBatchesNode(n.ref.dataset);
         }, hub.kick);   // refresh start/cancel -> beat the hub so the tasks panel refreshes now
 
-    // backend picker (http | relic). Switching swaps the body AND the output columns.
+    // backend picker (http). Switching swaps the body AND the output columns.
     div.querySelector(".prtype")?.addEventListener("change", (e) => { model.setProducerType(id, e.target.value); structural(); });
     // rename the producer node (its id) — carry its saved layout slot to the new id, then re-render
     div.querySelector(".prrename")?.addEventListener("change", (e) => {
@@ -1431,10 +1430,15 @@ function wireProducer(div, n) {
 
     // response mapping
     div.querySelector(".pr-root")?.addEventListener("change", (e) => { model.setHttpRoot(id, e.target.value); save(); });
+    // list-mode explode paths — adding/removing the first level flips list mode, so rebuild the body
+    div.querySelector(".pr-exp-add")?.addEventListener("click", () => { model.addHttpExplode(id); rebuild(); });
+    div.querySelectorAll(".pr-exp-del").forEach((b) => b.addEventListener("click", () => { model.removeHttpExplode(id, +b.closest(".pr-exp-row").dataset.i); rebuild(); }));
+    div.querySelectorAll(".pr-exp-v").forEach((el) => el.addEventListener("change", () => { model.setHttpExplode(id, +el.closest(".pr-exp-row").dataset.i, el.value.trim()); save(); }));
     div.querySelector(".pr-f-add")?.addEventListener("click", () => { model.addHttpField(id); rebuild(); });
     div.querySelectorAll(".pr-f-del").forEach((b) => b.addEventListener("click", () => { model.removeHttpField(id, +b.dataset.i); structural(); }));
     div.querySelectorAll(".pr-f-out").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { out_field: el.value.trim() }); structural(); }));
     div.querySelectorAll(".pr-f-path").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { path: el.value }); save(); }));
+    div.querySelectorAll(".pr-f-tmpl").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { template: el.value }); save(); }));
     div.querySelectorAll(".pr-f-type").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { type: el.value }); save(); }));
     div.querySelectorAll(".pr-f-req").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { required: el.checked }); save(); }));
     div.querySelectorAll(".pr-f-arr").forEach((el) => el.addEventListener("change", () => { model.toggleHttpFieldArray(id, fieldI(el), el.checked); rebuild(); }));
@@ -1963,10 +1967,12 @@ function outPortSpec(n) {
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setProducerDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
         };
         case "dataset": return {
-            // a dataset feeds a SUBSET (join) or a PRODUCER node (price only these items)
-            target: ["subset", "producer"],
+            // a dataset feeds a SUBSET (join), a PRODUCER node (price only these items), or a
+            // DICTIONARY (push its column values in as terms)
+            target: ["subset", "producer", "dictionary"],
             onDrop: (id, ttype) => {
                 if (ttype === "producer") { if (model.addProducerSource(id, n.ref)) rebuildNode(`producer:${id}`); }
+                else if (ttype === "dictionary") { if (model.addDictFeed(id, n.ref)) rebuildNode(`dict:${id}`); }
                 // rebuild the subset node (its sources chips + join-on list), not just refresh the
                 // vtable — same as the in-panel add (.sv-addin); rebuild re-queues the refresh.
                 else if (model.addSubsetInput(id, n.ref)) rebuildNode(`sub:${id}`);
@@ -2064,7 +2070,7 @@ export function showSatellite(satId) {
 // the source id a drop target commits to: a dataset node's name, or a node's bare id
 // (subset/price/trigger carry a prefixed node id in data-id).
 function targetIdOf(el, target) {
-    return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|producer|trigger|src):/, "");
+    return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|producer|trigger|src|dict):/, "");
 }
 
 // Host node types that resize at the NODE level (their body fills them) — one consistent
@@ -2326,7 +2332,7 @@ function rebuildNode(id) {
     // onSettle (matching snapResize — avoids the double settle).
     // (window + item already returned above; every remaining node type is freely resizable.)
     addResizeGrips(el, { ...nodeResizeOpts(el, n.id), snap: true, onSettle: null });
-    fitNodeHeight(el, n.id);   // a revealed input (e.g. learn -> fuzzy) may overflow the pinned height — grow to fit
+    fitNodeHeight(el, n.id);   // a revealed input (e.g. dict -> fuzzy) may overflow the pinned height — grow to fit
 }
 
 // A node with a manually-pinned height keeps that height across a rebuild, so revealing
@@ -2640,9 +2646,28 @@ function wireNode(div, n) {
             render(); autosave(null);
         });
         div.querySelector(".dictterms")?.addEventListener("change", (e) => {
+            if (e.target.readOnly) return;   // fed dictionaries derive their terms; ignore edits
             n.ref.terms = e.target.value.split("\n").map((s) => s.trim()).filter(Boolean);
             rebuildNode(n.id); autosave(null);   // refresh the word count
         });
+        // Dictionary feeds: pick which of a wired dataset's columns become terms. The pull runs
+        // server-side on save (oc.learn.dict_feed), so after saving we re-fetch the derived list.
+        const refetchFedTerms = async () => {
+            if (!n.ref.source) return;
+            await persist.flush();   // let the save's re-pull land first
+            try {
+                const { terms } = await api.dictionaries.get(n.ref.source);
+                model.setDictionaryTerms(n.ref.id, terms || []); rebuildNode(n.id);
+            } catch { /* keep the current list on error */ }
+        };
+        div.querySelectorAll(".dfcol").forEach((el) => el.addEventListener("change", () => {
+            model.toggleDictFeedColumn(n.ref.id, el.dataset.ds, el.dataset.col);
+            autosave(null); refetchFedTerms();
+        }));
+        div.querySelectorAll(".df-rm").forEach((el) => el.addEventListener("click", () => {
+            model.removeDictFeed(n.ref.id, el.dataset.ds);
+            rebuildNode(n.id); autosave(null); refetchFedTerms();
+        }));
     } else if (n.type === "window") {
         wireWindowControls(div, n);   // out-port wiring is handled generically in wireOutPort
         openImage(n.ref.id, div);     // pass div: this runs during buildNode, before nodeEls has the node
@@ -2681,13 +2706,28 @@ function wireNode(div, n) {
             queueNodeRefresh({ datasets: [newId], subsets: (model.profile.subsets || []).map((s) => s.id) });
         });
         div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(null); });
+        // Any key change re-keys the ledger on disk, so flush BEFORE re-reading this node + its views.
+        const rekeyDataset = async () => { autosave(null); await persist.flush(); refreshDataNode(n.ref); refreshAllSubsetNodes(); };
         div.querySelector(".dskey")?.addEventListener("change", async (e) => {
             const v = e.target.value;
             if (v === "__nodedup__") model.setDatasetDedup(n.ref, false);
+            else if (v === "__concat__") model.setDatasetKeyMode(n.ref, "concat");
+            else if (v === "") model.setDatasetKeyMode(n.ref, "auto");
             else model.setDatasetKeyField(n.ref, v);
-            autosave(null);
-            await persist.flush();   // re-key on disk before re-reading
-            refreshDataNode(n.ref); refreshAllSubsetNodes();
+            rebuildNode(n.id);   // show/hide the concat editor for the new mode
+            await rekeyDataset();
+        });
+        // Concat-key editor: field checkboxes + the four canonicalisation knobs (present only in concat mode).
+        div.querySelectorAll(".dskf").forEach((el) => el.addEventListener("change", () => {
+            model.toggleDatasetKeyField(n.ref, el.dataset.field); rekeyDataset();
+        }));
+        for (const [cls, key] of [[".dsk-ci", "case_insensitive"], [".dsk-punct", "strip_punct"], [".dsk-ws", "collapse_ws"]])
+            div.querySelector(cls)?.addEventListener("change", (e) => {
+                model.setDatasetKeyNorm(n.ref, { [key]: e.target.checked }); rekeyDataset();
+            });
+        div.querySelector(".dsk-words")?.addEventListener("change", (e) => {
+            model.setDatasetKeyNorm(n.ref, { strip_words: e.target.value.split(/\s+/).map((s) => s.trim()).filter(Boolean) });
+            rekeyDataset();
         });
         div.querySelector(".dsbatch")?.addEventListener("change", (e) => {
             model.setDatasetBatchMode(n.ref, e.target.value);
@@ -2780,7 +2820,6 @@ function wireNode(div, n) {
             if (k === "type") { fld.type = e.target.value; rebuildNode(n.id); }  // toggles extract/sep/dict/min-max
             else if (k === "extract") { fld.extract = e.target.value; rebuildNode(n.id); }  // toggles sep
             else if (k === "sep") fld.separator = e.target.value || "/";
-            else if (k === "learn") { fld.learn = e.target.checked; rebuildNode(n.id); }  // toggles fuzzy
             else if (k === "fuzzy") fld.fuzzy = +e.target.value;
             else if (k === "isolate") fld.isolate = e.target.checked;
             else if (k === "glyph_check") fld.glyph_check = e.target.checked;
@@ -2813,12 +2852,12 @@ function wireNode(div, n) {
                 () => movePos(`det:${owner}:${oldId}`, `det:${owner}:${n.ref.id}`),
                 () => { render(); rebuildNode(ownerNode); saveDet(); refreshImageBoxes(owner); });
         });
-        div.querySelector(".aset-pick")?.addEventListener("click", () => armColorPick(owner, n.ref.id));
         div.querySelectorAll(".aset").forEach((inp) => inp.addEventListener("change", (e) => {
             const k = e.target.dataset.k;
             if (k === "kind") { setDetectKind(n.ref, e.target.value); rebuildNode(n.id); refreshImageBoxes(owner); saveDet(); return; }
             if (k === "text") n.ref.text = e.target.value;
             else if (k === "color") { n.ref.color = e.target.value.trim(); rebuildNode(n.id); }
+            else if (k === "colorpick") { n.ref.color = e.target.value; rebuildNode(n.id); }
             else if (k === "tol") n.ref.tolerance = Math.max(0, Math.trunc(+e.target.value) || 0);
             else if (k === "width") n.ref.width = Math.max(0, +e.target.value || 0);
             else if (k === "thr") n.ref.threshold = +e.target.value;
@@ -3593,7 +3632,27 @@ $("settingsBtn")?.addEventListener("click", () => {
                 h("select", { id: "ocrDevice" },
                     h("option", { value: "auto" }, "Auto (CPU; GPU for precapture)"),
                     h("option", { value: "cpu" }, "CPU"),
-                    h("option", { value: "gpu" }, "GPU")))),
+                    h("option", { value: "gpu" }, "GPU"))),
+            // Backend-specific knobs: hidden until the server reports the engine has them
+            // (ppocr5 exposes both; the old rapidocr backend only the thread cap).
+            h("label", { class: "set-row", id: "ocrEngineRow", hidden: true, title: "Inference engine for the ppocr5 OCR backend. OpenVINO is often the faster CPU path on Intel; only installed runtimes are listed. Takes effect on the next read (model rebuilds lazily)." },
+                h("span", "engine"),
+                h("select", { id: "ocrEngine" })),
+            h("label", { class: "set-row", id: "ocrThreadsRow", hidden: true, title: "CPU threads each OCR inference may use. 0 = one per core (fastest reads, starves a running game); low values keep reads polite at some latency cost. Takes effect on the next read." },
+                h("span", "cpu threads"),
+                h("input", { id: "ocrThreads", type: "number", min: "0", max: "64", step: "1" })),
+            // Detection downscale — only shown when the live engine has the knob (ppocr5 lacks it).
+            h("label", { class: "set-row", id: "ocrScaleRow", hidden: true, title: "Detection downscale — the DETECTION pass is the biggest single GPU burst per read; ½ = a quarter of the detect pixels = a much shorter stall. Applies live to a running collector." },
+                h("span", "downscale"),
+                h("select", { id: "ocrScale" },
+                    h("option", { value: "1" }, "1× full"),
+                    h("option", { value: "2" }, "½ (¼ px)"),
+                    h("option", { value: "4" }, "¼ (1/16 px)")))),
+        h("section", { class: "set-sec" },
+            h("h4", "live collection"),
+            h("label", { class: "set-row", title: "Frame limiter — minimum milliseconds between collector reads. 0 (or blank) = as fast as possible (more CPU/GPU). Persists across restarts; a running collector restarts in place so it applies immediately." },
+                h("span", "frame limit (ms)"),
+                h("input", { id: "liveLimit", type: "number", min: "0", step: "10", placeholder: "0" }))),
         h("section", { class: "set-sec set-backups" }, h("h4", "backups"), h("div")));
 
     const name = model.profile.name;
@@ -3610,6 +3669,24 @@ $("settingsBtn")?.addEventListener("click", () => {
 
     // OCR device + downscale
     wireOcrControls(wrap);
+
+    // live frame limiter — persisted server-side; a running collector restarts in place so it
+    // applies immediately (applyLiveInterval, exported by livewin, owns that restart).
+    const limIn = wrap.querySelector("#liveLimit");
+    if (limIn) {
+        api.live.getInterval(handle.signal).then((r) => {
+            const ms = Math.round((r.interval || 0) * 1000);
+            limIn.value = ms > 0 ? String(ms) : "";
+        }).catch(() => {});
+        limIn.addEventListener("change", async () => {
+            const ms = parseFloat(limIn.value);
+            const secs = Number.isFinite(ms) && ms > 0 ? ms / 1000 : 0;
+            if (secs === 0) limIn.value = "";
+            const done = timed(`live frame limit → ${secs ? Math.round(secs * 1000) + "ms" : "off"}`);
+            try { const r = await api.live.setInterval(secs); await applyLiveInterval(r.interval); done(); }
+            catch (e) { done(String(e.message || e), "err"); }
+        });
+    }
 
     // backups (restoring re-saves the backup live -> reload it fresh)
     const bkHost = wrap.querySelector(".set-backups > div");
@@ -3643,7 +3720,7 @@ $("graph").addEventListener("dblclick", (ev) => {
     let hit = null;
     for (const gb of [...(groups.superGroupBoxes?.() || []), ...groups.groupBoxes(), ...(groups.subGroupBoxes?.() || [])])
         if (inside(gb.box) && (!hit || gb.box.w * gb.box.h < hit.box.w * hit.box.h)) hit = gb;
-    if (hit) panZoomToRect(hit.box);
+    if (hit) panZoomToRect(hit.box, { onlyIn: true });
 });
 
 // Rubber-band selection: drag a rectangle on empty canvas to select every node it
@@ -3973,26 +4050,46 @@ async function wireOcrControls(root) {
             try { const r = await api.ocr.setDevice(sel.value); if (r.mode) sel.value = r.mode; syncKillGpu(r); done(); }
             catch (e) { done(String(e.message || e), "err"); }
         });
+
+        // Backend-specific knobs: the state reports null for anything the live engine
+        // lacks, so a control only appears when it would actually do something.
+        const engRow = root.querySelector("#ocrEngineRow"), engSel = root.querySelector("#ocrEngine");
+        if (engRow && st.engine_type && (st.engine_types || []).length) {
+            engRow.hidden = false;
+            engSel.replaceChildren(...st.engine_types.map((n) => h("option", { value: n }, n)));
+            engSel.value = st.engine_type;
+            engSel.addEventListener("change", async () => {
+                const done = timed(`OCR engine → ${engSel.value}`);
+                try { const r = await api.ocr.setEngineType(engSel.value); if (r.engine_type) engSel.value = r.engine_type; done(); }
+                catch (e) { done(String(e.message || e), "err"); }
+            });
+        }
+        const thRow = root.querySelector("#ocrThreadsRow"), thIn = root.querySelector("#ocrThreads");
+        if (thRow && st.threads != null) {
+            thRow.hidden = false;
+            thIn.value = String(st.threads);
+            thIn.addEventListener("change", async () => {
+                const done = timed(`OCR cpu threads → ${thIn.value || 0}`);
+                try { const r = await api.ocr.setThreads(Math.max(0, parseInt(thIn.value, 10) || 0)); thIn.value = String(r.threads ?? 0); done(); }
+                catch (e) { done(String(e.message || e), "err"); }
+            });
+        }
+        const scRow = root.querySelector("#ocrScaleRow"), scSel = root.querySelector("#ocrScale");
+        if (scRow && st.scale != null) {   // null => engine has no downscale knob -> stay hidden
+            scRow.hidden = false;
+            scSel.value = String(st.scale || 1);
+            wireOcrScale(scSel);   // shared wiring helper (rule 7)
+        }
     } catch { /* ignore */ }
 }
 
-// Wire one OCR pacing control (a <select> or number <input>) to its api setter, echoing the
-// server's canonical value back into the element. The det-downscale + GPU-yield controls live
-// only in the LIVE panel (livewin.js); these helpers are exported there so its two controls
-// share one wiring path (rule 7). Caller seeds the element's value first; this only attaches
-// the change handler.
+// Wire the OCR detection-downscale <select> to its api setter, echoing the server's canonical
+// value back into the element. Lives in the settings modal (was the live panel). Caller seeds
+// the element's value first; this only attaches the change handler.
 function wireOcrScale(el) {
     el.addEventListener("change", async () => {
         const done = timed(`OCR downscale → ${el.value}×`);
         try { const r = await api.ocr.setScale(el.value); el.value = String(r.scale || 1); done(); }
-        catch (e) { done(String(e.message || e), "err"); }
-    });
-}
-function wireOcrYield(el) {
-    el.addEventListener("change", async () => {
-        const ms = Math.max(0, parseFloat(el.value) || 0);
-        const done = timed(`OCR GPU yield → ${ms}ms`);
-        try { const r = await api.ocr.setYield(ms); el.value = String(r.yield_ms ?? 0); done(); }
         catch (e) { done(String(e.message || e), "err"); }
     });
 }
@@ -4140,7 +4237,7 @@ killStrayOcrThenBoot();
 export {
     focusNode, autosave, placeNewNode, render,
     collectLayout, hydrateNodeLayout, reconcileOpenImages, reapplyNodeSizes,   // used by history.js restore
-    refreshLive, subsetParts, wireOcrScale, wireOcrYield,
+    refreshLive, subsetParts, wireOcrScale,
     refreshAllSubsetNodes, refreshDatasetConsumers,
     rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,
     overlaySelected, selectWindowBox, persistBox, syncCellSize, itemChanged,

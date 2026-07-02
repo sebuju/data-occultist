@@ -24,6 +24,17 @@ def test_key_moves_when_image_or_config_changes():
     assert cache_key("cap.jpg", {"window": {"regions": [2]}}) != base   # edited boxes
 
 
+def test_key_moves_with_engine_sig():
+    """Swapping the OCR backend / inference engine must bust the cache — same image +
+    config under a different engine fingerprint is a different key (else the swap
+    silently serves the previous engine's reads and looks like a no-op)."""
+    cfg = {"window": {"regions": [1]}}
+    base = cache_key("cap.jpg", cfg, "ppocr5|{\"engine_type\": \"onnxruntime\"}")
+    assert cache_key("cap.jpg", cfg, "ppocr5|{\"engine_type\": \"openvino\"}") != base
+    assert cache_key("cap.jpg", cfg, "rapidocr|scale=1|{}") != base
+    assert cache_key("cap.jpg", cfg, "ppocr5|{\"engine_type\": \"onnxruntime\"}") == base
+
+
 def test_put_get_roundtrip_and_persist(tmp_path):
     p = tmp_path / "ocr_cache.json"
     c = OcrCache(p)

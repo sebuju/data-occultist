@@ -308,17 +308,13 @@
 .live-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .live-row > label { margin: 0; color: var(--text); font-weight: 600; }
 .live-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; flex: none; }
-.live-wins { margin-top: 12px; }       /* gap between the GPU controls and the window list */
+.live-wins { margin-top: 12px; }       /* gap between the toggles and the window list */
 .live-statbox { margin-top: 12px; }    /* stats sit below the window list as fixed reserved rows */
 /* a stat sits at the right of its row, truncating with an ellipsis rather than wrapping */
 .live-statval, .live-imgstat { flex: 1; min-width: 0; text-align: right; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
-/* frame-limiter row: label holds its width (never wraps), the input takes the rest */
-/* shared fixed label width so the limit / downscale / gpu-yield controls all line up */
+/* fixed stat-label width so every "phase / saved / rate / rows" label lines up */
 .live-int-lbl { flex: none; min-width: 72px; white-space: nowrap; color: var(--text); font-weight: 600; }
-.live-int-in { flex: 1; min-width: 0; }
-/* GPU-easing rows: one knob per row, the control fills the rest beside its aligned label */
-.live-det-in, .live-yield-in { flex: 1; min-width: 0; }
 .live-imgs { margin: 6px 0 0; }   /* the saved-images stat row, below the window list */
 .live-clear { flex: none; font-size: var(--fs-xs); padding: 1px 8px; border: 0;
     background: var(--danger); color: var(--on-danger); }
@@ -332,6 +328,39 @@
 /* detection dot: grey = not detected, green (glow) = currently on screen */
 .live-wdot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--line); transition: background .15s; }
 .live-wdot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+
+/* ---- live debug log -------------------------------------------------------- */
+.live-debug { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+/* header row: chevron + title, with a right-aligned "clear" affordance */
+.live-dbg-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none;
+    border: 0; padding: 2px 0; color: var(--text); font-weight: 600; cursor: pointer; text-align: left; }
+.live-dbg-chev { flex: none; width: 12px; color: var(--muted); }
+.live-dbg-title { flex: 1; min-width: 0; }
+.live-dbg-clear { flex: none; color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
+.live-dbg-clear:hover { color: var(--text); }
+/* scrollable log body; a data preview, not a grid — capped rows keep the DOM small (rule 4) */
+.live-dbg-body { margin-top: 6px; max-height: 260px; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
+.live-dbg-empty { font-size: var(--fs-xs); padding: 4px 2px; }
+.live-dbg-list { display: flex; flex-direction: column; gap: 4px; }
+/* one tick: header line + its per-read lines, hairline-separated */
+.live-dbg-row { border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.live-dbg-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.live-dbg-row-head { display: flex; align-items: baseline; gap: 6px; font-size: var(--fs-xs); }
+.live-dbg-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.live-dbg-phase { flex: 1; min-width: 0; color: var(--text); font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-dbg-wrote { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.live-dbg-wrote.wrote { color: var(--ok); font-weight: 600; }
+/* a read: field chips wrap; each shows fid + optional raw->value */
+.live-dbg-read { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 0 12px; font-size: var(--fs-xs); }
+.live-dbg-fld { display: inline-flex; align-items: baseline; gap: 3px; white-space: nowrap; }
+.live-dbg-fld.cor { color: var(--warn); }        /* a corrected field stands out */
+.live-dbg-fid { color: var(--muted); }
+.live-dbg-raw { color: var(--muted); text-decoration: line-through; opacity: 0.8; }
+.live-dbg-arrow { color: var(--muted); }
+.live-dbg-val { color: var(--text); font-weight: 500; }
+.live-dbg-fld.cor .live-dbg-val { color: var(--warn); }
 
 /* ---- testing harness (video -> live OCR) ----------------------------------- */
 .test-panel { display: flex; flex-direction: column; gap: 8px; }

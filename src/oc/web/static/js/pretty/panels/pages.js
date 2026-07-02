@@ -66,7 +66,7 @@ export function buildPages(ctx) {
     // inline rename: swap the name button for an input. Enter commits; a rejected name (empty or a
     // COLLISION with another page) flashes and stays open to fix. Escape / blur-while-invalid cancels.
     function beginRename(r, p, name) {
-        const inp = el("input", "pw-pages-rename"); inp.value = p.title; inp.spellcheck = false;
+        const inp = el("input", "pw-pages-rename"); inp.value = p.title;
         let done = false;
         const close = () => { if (done) return; done = true; refresh(); };
         // try to apply the typed name; true = handled (committed or unchanged), false = rejected.

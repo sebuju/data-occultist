@@ -23,7 +23,6 @@ from .routes import (
     dictionaries,
     events,
     flow,
-    lexicon,
     live,
     ocr,
     precapture,
@@ -208,6 +207,14 @@ async def lifespan(_app: FastAPI):
         _sub_changes(AutoBackup(get_settings().data_dir))
     except Exception:  # noqa: BLE001 - best-effort
         pass
+    # Dictionary feeds: when a dataset that feeds a dictionary changes, re-pull that
+    # dictionary's columns and rewrite its term file (deduped) — the word list tracks the data.
+    try:
+        from ..learn.dict_feed import DictFeeder
+        from ..store.changes import subscribe as _sub_feed
+        _sub_feed(DictFeeder(get_settings().profiles_dir, get_settings().data_dir))
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
     yield
     # --- shutdown -------------------------------------------------------------------------
     # Backstop for any stop that ISN'T a signal (e.g. desktop's server.should_exit): flip the
@@ -282,7 +289,6 @@ def create_app() -> FastAPI:
     app.include_router(profiles.router)
     app.include_router(flow.router)
     app.include_router(preview.router)
-    app.include_router(lexicon.router)
     app.include_router(precapture.router)
     app.include_router(live.router)
     app.include_router(ocr.router)

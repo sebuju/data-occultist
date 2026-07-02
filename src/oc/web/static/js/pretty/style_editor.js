@@ -47,7 +47,7 @@ export function styleEditor(host, style, onChange, opts = {}) {
         };
         const wn = el("input", "pw-se-num"); wn.type = "number"; wn.min = 0; wn.max = 40; wn.title = "width";
         wn.addEventListener("change", () => setv(bk("w"), wn.value === "" ? "" : Number(wn.value)));
-        const cm = el("input", "pw-se-cmini"); cm.type = "color"; cm.title = "border colour";
+        const cm = el("input", "pw-se-cmini"); cm.type = "color"; cm.title = "border color";
         cm.addEventListener("input", () => setv(bk("color"), cm.value));
         const stOpts = (STYLE_FIELDS.find((x) => x.key === "border_style") || {}).options || [];
         const ss = el("select"); ss.title = "border style";

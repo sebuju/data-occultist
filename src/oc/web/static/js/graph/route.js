@@ -396,22 +396,28 @@ function nudge(lines, byId, rects, outPorts, bands) {
     // fallback overrides the alley clamp). A* never crosses, so any overlap here is nudge's doing —
     // push each offending INTERIOR segment back out to the wall's nearest edge (+MARG). Endpoints
     // (port stubs, i=0 / last) are left alone so a wire never detaches from its node face.
-    if (walls.length) for (const ln of lines) evictSegments(ln.pts, walls, ln.tether, ln);
+    if (walls.length) for (const ln of lines) evictSegments(ln.pts, walls, ln.tether, ln, byId);
 }
 // Push interior axis-segments of `pts` out of any wall they sit inside, to the wall's nearer edge.
 // Moving a segment's constant-axis coord shifts its two corner vertices only (neighbouring segments
 // lengthen/shorten, staying orthogonal); the lane separation set by nudge is preserved.
-function evictSegments(pts, walls, isTether, ln) {
+function evictSegments(pts, walls, isTether, ln, byId) {
     for (let i = 0; i + 1 < pts.length; i++) {   // EVERY segment, incl. the port stubs — a tiny shift just
         const a = pts[i], b = pts[i + 1];        // slides the port along its own face, it stays attached
         const firstSeg = i === 0, lastSeg = i + 1 === pts.length - 1;
         const isEnd = firstSeg || lastSeg;   // a port-stub: clamp its move so it can't run off-face
-        if (isTether && isEnd) continue;   // a tether is centred on its face (fanFaceEnds) — don't let an evict re-corner its endpoints
         // a GATE stub must not move: its endpoint is pinned to the exact seam point shared with the other half.
         if (ln && ((firstSeg && ln.fromGate) || (lastSeg && ln.toGate))) continue;
         const vert = Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) > 0.5;
         const horiz = Math.abs(a[1] - b[1]) < 0.5 && Math.abs(a[0] - b[0]) > 0.5;
         if (!vert && !horiz) continue;
+        // A tether attaches at its face CENTRE, but fanFaceEnds can fan that endpoint to a coord whose
+        // stub runs straight ACROSS a sibling node (grazing it) — and A* never sanctioned it. We can't
+        // slide the stub freely (its dot must stay on the endpoint node's own face), so push it just off
+        // the crossed node to that node's NEARER edge, then clamp back inside the endpoint node's face
+        // span so the dot stays attached. If the clamp lands back inside the crossed node (face too
+        // small to clear it) we leave the stub — detaching the wire is worse than the graze.
+        const endNode = (isTether && isEnd && byId) ? byId.get(firstSeg ? ln.from : ln.to) : null;
         const lo = vert ? Math.min(a[1], b[1]) : Math.min(a[0], b[0]);
         const hi = vert ? Math.max(a[1], b[1]) : Math.max(a[0], b[0]);
         const coord = vert ? a[0] : a[1];
@@ -420,6 +426,17 @@ function evictSegments(pts, walls, isTether, ln) {
             const o0 = vert ? r.y : r.x, o1 = vert ? (r.y + r.h) : (r.x + r.w);
             if (hi <= o0 + 0.5 || lo >= o1 - 0.5) continue;          // segment span misses the wall
             if (coord <= e0 + 0.5 || coord >= e1 - 0.5) continue;    // segment already outside the wall
+            if (isTether && isEnd) {
+                if (!endNode) continue;   // no backing node face to clamp against (gate/free end) — leave it
+                // nearer edge of the crossed node (minimal move off a graze), CORNER_CLEAR past it
+                const t = (coord - e0) <= (e1 - coord) ? e0 - CORNER_CLEAR : e1 + CORNER_CLEAR;
+                // clamp inside the endpoint node's face span (perp to the face = this segment's const axis)
+                const fLo = vert ? endNode.x : endNode.y, fHi = vert ? (endNode.x + endNode.w) : (endNode.y + endNode.h);
+                const ct = Math.max(fLo, Math.min(fHi, t));
+                if (ct > e0 + 0.5 && ct < e1 - 0.5) continue;   // clamped back INSIDE the crossed node — can't clear without detaching
+                if (vert) { a[0] = ct; b[0] = ct; } else { a[1] = ct; b[1] = ct; }
+                continue;
+            }
             // Push to the edge on the side the line's NEIGHBOURS sit — NOT the nearer edge. A line
             // arching over a node has both ends below the band; shoving its top run to the nearer
             // (top) edge would leave the two legs spanning the band. Following the neighbours sinks

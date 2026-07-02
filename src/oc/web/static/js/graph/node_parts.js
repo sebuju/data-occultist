@@ -122,29 +122,29 @@ export function windowControls(w) {
 }
 
 // Window-level OCR preprocess ("Text appearance"): clean the crop before reading so stylised
-// game text is legible. `color` masks the taught text colour(s) (eyedropper or hex) to clean
+// game text is legible. `color` masks the taught text color(s) (eyedropper or hex) to clean
 // black-on-white; `threshold` is global Otsu; `invert` flips light-on-dark; `scale` upsamples
 // small fonts. Ported from the old teach page. Handlers live in main.js wireWindowControls.
-const PP_MODES = [["none", "none"], ["color", "keep text colour(s)"],
+const PP_MODES = [["none", "none"], ["color", "keep text color(s)"],
     ["threshold", "auto threshold"], ["invert", "invert"]];
 
 export function preprocessControls(w) {
     const pp = w.preprocess || { mode: "none", colors: [], tolerance: 60, scale: 1.0 };
     const chips = (pp.colors || []).map((c, i) => h("span", { class: "pp-chip", style: `border-color:${c}` },
         h("span", { class: "pp-sw", style: `background:${c}` }),
-        h("button", { class: "pp-cx danger", dataset: { i }, title: "remove colour" }, TRASH())));
+        h("button", { class: "pp-cx danger", dataset: { i }, title: "remove color" }, TRASH())));
     return frag(
         h("div", { class: "muted il-h wi-h", title: "clean the OCR crop before reading — helps stylised / low-contrast text" }, "text appearance"),
-        h("label", { class: "flab", title: "preprocess the crop before OCR: threshold = auto black/white (good default), color = keep only the taught text colour(s), invert = flip light-on-dark" },
+        h("label", { class: "flab", title: "preprocess the crop before OCR: threshold = auto black/white (good default), color = keep only the taught text color(s), invert = flip light-on-dark" },
             "preprocess ", h("select", { class: "ppmode" },
                 PP_MODES.map(([v, t]) => h("option", { value: v, selected: pp.mode === v }, t)))),
         pp.mode === "color" && h("div", { class: "pp-color" },
-            h("div", { class: "pp-chips" }, chips.length ? chips : h("span", { class: "muted" }, "no colours yet")),
+            h("div", { class: "pp-chips" }, chips.length ? chips : h("span", { class: "muted" }, "no colors yet")),
             h("div", { class: "pp-row" },
-                h("button", { class: "pp-pick", title: "sample the text colour from the open image" }, "⊙ pick"),
+                h("button", { class: "pp-pick", title: "sample the text color from the open image" }, "⊙ pick"),
                 h("input", { class: "pp-hex", placeholder: "#ffffff", style: "width:9ch" }),
                 h("button", { class: "pp-add" }, "add")),
-            h("label", { class: "flab", title: "how close a pixel must be to a taught colour to be kept" },
+            h("label", { class: "flab", title: "how close a pixel must be to a taught color to be kept" },
                 "tolerance ", h("input", { type: "range", class: "pptol", min: "10", max: "200", value: pp.tolerance ?? 60 }))),
         h("label", { class: "flab", title: "upscale the crop before OCR — helps small fonts" },
             "upscale ", h("input", { type: "number", class: "ppscale", step: "0.5", min: "1", max: "4", value: pp.scale ?? 1 })));
@@ -332,9 +332,7 @@ export function fieldConfigBody(fd, cls, fid) {
                     DICT_MODES.map(([v, t]) => h("option", { value: v, selected: (fd.dict_mode || "correct") === v }, t)))),
             (hasDicts && dictOn) && h("label", { class: "flab", title: "which authored dictionary this field snaps to (all = every enabled one pooled)" },
                 "use dict ", h("select", { class: cls, dataset: { k: "usedict", ...da } }, dictOptions(fd.dictionary))),
-            h("label", { class: "flab", title: "learn the dictionary from confident reads, fuzzy-correct uncertain ones" },
-                "learn ", h("input", { type: "checkbox", class: cls, dataset: { k: "learn", ...da }, checked: !!fd.learn })),
-            (fd.learn || dictOn) && h("label", { class: "flab", title: "similarity (0-1) an uncertain read must reach to snap to a known word; higher = stricter" },
+            dictOn && h("label", { class: "flab", title: "similarity (0-1) an uncertain read must reach to snap to a known word; higher = stricter" },
                 "fuzzy ", h("input", { type: "number", class: cls, dataset: { k: "fuzzy", ...da }, step: "0.05", min: "0", max: "1", value: fd.fuzzy ?? 0.82 }))),
         h("div", { class: "fgrp" }, "rules ",
             h("button", { class: "ruleadd", dataset: { ...da }, title: "add a fallback rule" }, "+ rule")),
@@ -345,7 +343,7 @@ export function fieldConfigBody(fd, cls, fid) {
 // per-field config (against the window's FieldDef) plus the row-role controls (tell /
 // locate / align) that only make sense for a field inside an item template.
 export function itemFieldParts(n) {
-    const f = n.ref, fd = n.field || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
+    const f = n.ref, fd = n.field || { type: "text", extract: "whole", fuzzy: 0.82 };
     const alignSel = (cls, vals, cur) => h("select", { class: cls, dataset: { fid: f.id } },
         vals.map((v) => h("option", { selected: cur === v }, v)));
     const body = frag(
@@ -392,9 +390,9 @@ export function itemTellParts(n) {
                     "strip ", tset("strip", ["alnum", "spaces", "none"], t.strip, "alnum")),
                 h("label", { class: "flab", title: "off = fold case before comparing" },
                     "case sensitive ", h("input", { type: "checkbox", class: "tset", dataset: { k: "case" }, checked: !!t.case_sensitive })))),
-        (t.kind === "color" || t.kind === "border") && h("label", { class: "flab", title: t.kind === "border" ? "the colour that must ride the box's perimeter band" : "the colour that must be present in the tell box" },
-            "colour ", h("input", { type: "color", class: "tset", dataset: { k: "color" }, value: t.color || "#ffcc00" })),
-        t.kind === "border" && h("label", { class: "flab", title: "thickness of the sampled perimeter band, as a fraction (0..1) of the box's shorter side. Only this ring is checked for the colour; the fill is ignored." },
+        (t.kind === "color" || t.kind === "border") && h("label", { class: "flab", title: t.kind === "border" ? "the color that must ride the box's perimeter band" : "the color that must be present in the tell box" },
+            "color ", h("input", { type: "color", class: "tset", dataset: { k: "color" }, value: t.color || "#ffcc00" })),
+        t.kind === "border" && h("label", { class: "flab", title: "thickness of the sampled perimeter band, as a fraction (0..1) of the box's shorter side. Only this ring is checked for the color; the fill is ignored." },
             "width ", h("input", { type: "number", class: "tset", dataset: { k: "width" }, step: "0.02", min: "0", max: "0.5", value: t.width ?? 0.2 })),
         t.kind === "template" && h("div", { class: "tt-ref", title: "the saved sub-image this tell matches — the tell box cropped from the item's frozen cutout" },
             it.cutout ? h("canvas", { class: "tt-ref-canvas" }) : h("div", { class: "muted" }, "no cutout yet")),
@@ -550,6 +548,7 @@ export function nodeParts(n) {
             title: h("span", { class: "gi-id", title: "taught glyph atlas — fixes confident single-glyph misreads (e.g. Q↔G) on glyph-check fields" }, "glyphs"),
             body: frag(
                 h("div", { class: "glyph-img" }),        // image surface + positioning rect + compose bar
+                h("div", { class: "glyph-preview" }),    // live cutout of the drawn box (manual flow)
                 h("div", { class: "glyph-pending" }),    // auto-glypher proposals awaiting correct+confirm
                 h("div", { class: "glyph-atlas" })),     // the taught atlas (alphabetical)
         };
@@ -566,7 +565,7 @@ export function nodeParts(n) {
         };
     }
     if (n.type === "region") {
-        const f = n.field || { type: "text", extract: "whole", learn: false, fuzzy: 0.82 };
+        const f = n.field || { type: "text", extract: "whole", fuzzy: 0.82 };
         return {
             title: h("input", { class: "gi gi-id", dataset: { k: "regid" }, value: n.ref.id, title: "region / field id" }),
             body: frag(fieldConfigBody(f, "fset"), h("div", { class: "gn-foot" })),
@@ -595,14 +594,15 @@ export function nodeParts(n) {
                     h("option", { value: "spaces", selected: a.strip === "spaces" }, "spaces"))),
             h("label", { class: "flab" }, "case sensitive ",
                 h("input", { type: "checkbox", class: "aset", dataset: { k: "case" }, checked: !!a.case_sensitive, title: "off = fold case before comparing" })));
-        // colour/border-kind controls — cheap, no OCR. A colour swatch + hex + eyedropper.
+        // color/border-kind controls — cheap, no OCR. A color swatch + hex + eyedropper.
         const colorBody = frag(
-            h("label", { class: "flab", title: "fraction of pixels near this colour (border = only on the box perimeter)" },
-                "colour ",
-                h("span", { class: "aset-swatch", style: `background:${a.color || "transparent"}` }),
-                h("input", { class: "aset", dataset: { k: "color" }, value: a.color || "", placeholder: "#rrggbb", size: "8" }),
-                h("button", { class: "aset-pick", title: "sample a colour from the image" }, "⊙")),
-            h("label", { class: "flab", title: "how close a pixel's colour must be (BGR distance) to count" },
+            h("label", { class: "flab", title: "fraction of pixels near this color (border = only on the box perimeter)" },
+                "color ",
+                h("span", { class: "aset-color" },
+                    h("input", { class: "aset", dataset: { k: "color" }, value: a.color || "", placeholder: "#rrggbb", size: "8" }),
+                    h("input", { type: "color", class: "aset aset-swatch", dataset: { k: "colorpick" }, title: "pick a color",
+                        value: /^#[0-9a-fA-F]{6}$/.test(a.color || "") ? a.color : "#000000" }))),
+            h("label", { class: "flab", title: "how close a pixel's color must be (BGR distance) to count" },
                 "tolerance ", h("input", { type: "number", class: "aset", dataset: { k: "tol" }, step: "1", min: "0", value: a.tolerance ?? 32 })),
             kind === "border" && h("label", { class: "flab", title: "perimeter band thickness as a fraction of the box's shorter side" },
                 "border width ", h("input", { type: "number", class: "aset", dataset: { k: "width" }, step: "0.01", min: "0", max: "0.5", value: a.width ?? 0.1 })));
@@ -610,10 +610,10 @@ export function nodeParts(n) {
             title: h("input", { class: "gi gi-id", dataset: { k: "detid" }, value: a.id,
                 title: isGate ? "worthiness-gate detector: any match => OCR-worthy phase" : "detector: all must match to capture" }),
             body: frag(
-                h("label", { class: "flab", title: "text = OCR a label (costs OCR); colour/border = cheap pixel check (no OCR — use these for the live-mode gate)" },
+                h("label", { class: "flab", title: "text = OCR a label (costs OCR); color/border = cheap pixel check (no OCR — use these for the live-mode gate)" },
                     "kind ", h("select", { class: "aset", dataset: { k: "kind" } },
                         h("option", { value: "text", selected: kind === "text" }, "text"),
-                        h("option", { value: "color", selected: kind === "color" }, "colour"),
+                        h("option", { value: "color", selected: kind === "color" }, "color"),
                         h("option", { value: "border", selected: kind === "border" }, "border"),
                         ...(kind === "template" ? [h("option", { value: "template", selected: true }, "template")] : []))),
                 kind === "text" ? textBody : kind === "template"
@@ -718,15 +718,21 @@ export function nodeParts(n) {
         const count = (dict.terms || []).length;
         const src = dict.source || "—";
         const missing = !count && dict.source;   // a referenced file that resolved to nothing
+        const fed = model.dictIsFed(dict.id);     // terms are pulled from datasets, not hand-typed
         return {
             title: h("input", { class: "gi gi-id dictname", value: dict.name || dict.id, title: "dictionary name" }),
+            // wire a dataset's out-port here to feed its column values in as terms
+            ports: h("span", { class: "port in", title: "drag a dataset here to feed it terms" }),
             body: frag(
                 h("div", { class: "muted" },
                     `${count} word${count === 1 ? "" : "s"} · file `,
                     h("code", src),
                     missing && h("span", { class: "warn" }, " · file missing")),
+                dictFeedsEditor(dict),
                 h("div", { class: "nodehost scrollhost dict-host" },
-                    h("textarea", { class: "dictterms", spellcheck: "false", autocomplete: "off", placeholder: "one word per line\nNeo V11\nSoma Prime\n…" },
+                    h("textarea", { class: "dictterms", autocomplete: "off",
+                        readOnly: fed, title: fed ? "terms are pulled from the wired dataset(s) — edit the source data, not this list" : "",
+                        placeholder: "one word per line\nNeo V11\nSoma Prime\n…" },
                         (dict.terms || []).join("\n"))),
                 h("div", { class: "gn-foot" })),
         };
@@ -735,19 +741,21 @@ export function nodeParts(n) {
     // The key itself is no concern of the dataset: it's taught on the item templates
     // (or windows) that read the records.
     const ds = n.ref;
-    const noDedup = !model.datasetDedup(ds);
+    const mode = model.datasetKeyMode(ds);
     const kf = model.datasetKeyField(ds);
     // pin the configured key field even if the feeder schema doesn't (yet) list it, so a key on a
     // field the feeders don't currently declare stays selected rather than snapping to the auto default.
     const kfields = model.datasetFields(ds);
-    const keyFields = !noDedup && kf && !kfields.includes(kf) ? [...kfields, kf] : kfields;
+    const keyFields = mode === "single" && kf && !kfields.includes(kf) ? [...kfields, kf] : kfields;
     const keyOpts = [
         // empty = no dataset-level override; key comes from whatever feeds it (a window's/item's
-        // key, a file source's, or a producer's — e.g. the relic producer's name|item|state).
-        h("option", { value: "" }, "key: auto"),
-        keyFields.map((f) => h("option", { value: f, selected: !noDedup && kf === f }, `key: ${f}`)),
-        h("option", { value: "__nodedup__", selected: noDedup }, "no dedup (keep every read)"),
+        // key, a file source's, or a producer's — e.g. the relic table producer's name|item).
+        h("option", { value: "", selected: mode === "auto" }, "key: auto"),
+        keyFields.map((f) => h("option", { value: f, selected: mode === "single" && kf === f }, `key: ${f}`)),
+        h("option", { value: "__concat__", selected: mode === "concat" }, "concat (combine fields)"),
+        h("option", { value: "__nodedup__", selected: mode === "nodedup" }, "no dedup (keep every read)"),
     ];
+    const concatEditor = mode === "concat" ? datasetConcatEditor(ds) : null;
     const bm = model.datasetBatchMode(ds);
     const batchOpts = [["run", "per run"], ["detection", "per detection"]]
         .map(([v, l]) => h("option", { value: v, selected: bm === v }, l));
@@ -765,11 +773,58 @@ export function nodeParts(n) {
                 h("select", { class: "dsbatch", title: "how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like a timed offer / pop-up)" }, batchOpts),
                 "sync",
                 h("select", { class: "dssync", title: "accumulate: only add/update. mirror: keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)." }, syncOpts)),
+            concatEditor,
             h("div", { class: "gn-foot" },
                 h("button", { class: "dsclone" }, "clone"),
                 h("button", { class: "dsclear danger" }, "clear data"))),
         ports: h("span", { class: "port out", title: "drag to a subset to feed it this dataset" }),
     };
+}
+
+// Per-feed column pickers for a dictionary fed by dataset(s): each wired dataset lists its
+// columns as checkboxes — every ticked column's values become terms (pulled + deduped on save).
+function dictFeedsEditor(dict) {
+    const feeds = model.dictFeeds(dict.id);
+    if (!feeds.length) return null;
+    return h("div", { class: "dict-feeds" },
+        h("div", { class: "mini muted" }, "pull terms from"),
+        feeds.map((fd) => {
+            const cols = model.datasetFields(fd.dataset);
+            const picked = fd.columns || [];
+            const shown = [...new Set([...cols, ...picked])];
+            return h("div", { class: "dict-feed", dataset: { ds: fd.dataset } },
+                h("div", { class: "df-head" },
+                    h("code", fd.dataset),
+                    h("button", { class: "df-rm danger", dataset: { ds: fd.dataset }, title: "stop feeding from this dataset" }, TRASH())),
+                shown.length
+                    ? h("div", { class: "df-cols" }, shown.map((c) => h("label", { class: "chk" },
+                        h("input", { type: "checkbox", class: "dfcol", dataset: { ds: fd.dataset, col: c }, checked: picked.includes(c) }), c)))
+                    : h("div", { class: "mini muted" }, "no columns — dataset has no data yet"));
+        }));
+}
+
+// The concat-key editor: which fields combine into the identity, plus the same canonicalisation
+// knobs a subset join has (case / punctuation / spacing / dropped words). Only shown in concat mode.
+function datasetConcatEditor(ds) {
+    const picked = model.datasetKeyFields(ds);
+    const norm = model.datasetKeyNorm(ds);
+    // offer every field the feeders declare, plus any already-picked field the schema doesn't list
+    const fields = [...new Set([...model.datasetFields(ds), ...picked])];
+    const chk = (cls, label, on) => h("label", { class: "chk" },
+        h("input", { type: "checkbox", class: cls, checked: !!on }), label);
+    return h("div", { class: "dsconcat" },
+        h("div", { class: "mini muted" }, "combine fields — a row dedups only when ALL agree (e.g. name + item)"),
+        fields.length
+            ? h("div", { class: "dsk-fields" }, fields.map((f) => h("label", { class: "chk" },
+                h("input", { type: "checkbox", class: "dskf", dataset: { field: f }, checked: picked.includes(f) }), f)))
+            : h("div", { class: "mini muted" }, "no fields yet — wire a feeder first"),
+        h("div", { class: "dsk-norm" },
+            chk("dsk-ci", "ignore case", norm.case_insensitive),
+            chk("dsk-punct", "strip punctuation", norm.strip_punct),
+            chk("dsk-ws", "collapse spaces", norm.collapse_ws),
+            h("label", { class: "chk chk-words" }, "drop words ",
+                h("input", { class: "dsk-words", autocomplete: "off",
+                    value: (norm.strip_words || []).join(" "), placeholder: "relic blueprint" }))));
 }
 
 // Friendly timestamp for a dataset's last change: clock time if today, else date.

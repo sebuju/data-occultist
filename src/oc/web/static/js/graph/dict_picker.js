@@ -14,7 +14,7 @@ import { h } from "../dom.js";
 export function openDictionaryPicker({ used = new Set(), onPick, onCreate } = {}) {
     const node = document.createElement("div");
     node.className = "dpk";
-    const nameEl = h("input", { class: "dpk-name", placeholder: "new dictionary name", autocomplete: "off", spellcheck: false });
+    const nameEl = h("input", { class: "dpk-name", placeholder: "new dictionary name", autocomplete: "off" });
     const createEl = h("button", { class: "dpk-create" }, "create blank");
     const listEl = h("div", { class: "dpk-list" }, h("div", { class: "muted dpk-pad" }, "loading…"));
     node.replaceChildren(

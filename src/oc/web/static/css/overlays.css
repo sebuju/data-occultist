@@ -28,7 +28,7 @@
 }
 .modal.large { width: 95vw; height: 92vh; }
 .modal.data { width: 760px; max-width: 92vw; max-height: 82vh; }
-.modal.medium { width: 520px; max-width: 92vw; max-height: 82vh; }
+.modal.medium { width: 600px; max-width: 92vw; max-height: 84vh; }
 .modal-h {
     display: flex; align-items: center; justify-content: space-between;
     padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line);

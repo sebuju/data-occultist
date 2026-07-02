@@ -76,12 +76,15 @@ export function usableViewport() {
 // Smoothly pan AND zoom to centre a WORLD rect {x,y,w,h}. fit=true picks a comfortable zoom
 // to frame it, else keeps the current zoom. The shared core of panZoomTo (node) and the
 // group double-click jump.
+// onlyIn=true makes the move ZOOM-IN-ONLY: if the camera is already closer than the fit zoom,
+// framing would zoom OUT (jarring on a double-click) — skip the whole move instead.
 // Returns true if the camera actually moved (a target far enough from the current view to
 // animate); false when the rect is already framed, so callers can fall back to another action.
-export function panZoomToRect(box, { fit = true } = {}) {
+export function panZoomToRect(box, { fit = true, onlyIn = false } = {}) {
     if (!box || !box.w || !box.h) return false;
     const u = usableViewport();   // centre in the area clear of floating panels
     const tz = fit ? fitZoom(box.w, box.h, { width: u.w, height: u.h }) : view.zoom;
+    if (onlyIn && tz < view.zoom - 1e-3) return false;   // already closer than fit → don't zoom out
     const tx = (u.left + u.w / 2) - (box.x + box.w / 2) * tz;
     const ty = (u.top + u.h / 2) - (box.y + box.h / 2) * tz;
     const sx = view.panX, sy = view.panY, sz = view.zoom, t0 = performance.now(), dur = 380;
@@ -108,7 +111,7 @@ export function panZoomTo(id, opts = {}) {
 
 // Double-click a node: fit it tight to the viewport and centre it (smooth, shared with the
 // node-map jump so both frame a node the same way). Returns whether the camera moved.
-export function zoomToNode(id) { return panZoomTo(id, { fit: true }); }
+export function zoomToNode(id) { return panZoomTo(id, { fit: true, onlyIn: true }); }
 
 export function viewportCenterWorld() {
     const u = usableViewport();

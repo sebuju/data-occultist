@@ -115,7 +115,6 @@ export class VTable {
         this.search.className = "vt-search";
         this.search.type = "text";
         this.search.placeholder = "search…  (AND OR NOT, *, ?)";
-        this.search.spellcheck = false;
         this.clearBtn = document.createElement("button");
         this.clearBtn.className = "vt-clear";
         this.clearBtn.textContent = "✕";

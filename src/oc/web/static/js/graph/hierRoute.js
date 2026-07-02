@@ -62,6 +62,12 @@ export function hierRoute(nodes, groupBox, groupOf, edges, opts = {}) {
     const innerNodes = new Map();          // gid -> [member node]
     for (const [gid] of groupBox) innerNodes.set(gid, []);
     for (const n of nodes) { const g = groupOf(n.id); if (g && groupBox.has(g)) innerNodes.get(g).push(n); else outerNodes.push(n); }
+    // Overlapping group boxes: a group's inner pass only knows its OWN members, so an inner edge is
+    // blind to a FOREIGN node (another group's member, or a free node) that happens to sit inside this
+    // group's box — and routes straight through it. Add every foreign node whose rect intersects the
+    // box as an obstacle-only node in this pass (no inner edge terminates on it, so it just blocks).
+    const rectHit = (n, b) => n.x < b.x + b.w && n.x + n.w > b.x && n.y < b.y + b.h && n.y + n.h > b.y;
+    for (const [gid, b] of groupBox) { const arr = innerNodes.get(gid); for (const n of nodes) { if (groupOf(n.id) === gid) continue; if (rectHit(n, b)) arr.push(n); } }
     for (const [gid, b] of groupBox) outerNodes.push({ id: boxNodeId(gid), x: b.x, y: b.y, w: b.w, h: b.h });
 
     // ---- per-pass edge lists ----

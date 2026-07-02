@@ -12,6 +12,13 @@ export function fmtDateTime(iso) {
         + `${p2(d.getHours())}:${p2(d.getMinutes())}`;
 }
 
+// "HH:MM:SS" (24-hour, time only) — for dense log rows that need per-second resolution.
+export function fmtTimeSec(iso) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso ?? "");
+    return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+}
+
 // "dd/mm/yy" (no time).
 export function fmtDate(iso) {
     const d = new Date(iso);
