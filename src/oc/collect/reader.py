@@ -97,12 +97,15 @@ def _center_in(line: OcrLine, box: PixelBox) -> bool:
 
 
 class RegionReader:
-    def __init__(self, ocr: OcrEngine, resolver=None, templates=None) -> None:
+    def __init__(self, ocr: OcrEngine, resolver=None, templates=None, glyphs=None) -> None:
         self._ocr = ocr
         self._resolver = resolver
         # {tell_id: image} for ``template`` tells; loaded by the caller (knows the
         # profile dir). None/absent -> template tells score 0.
         self._templates = templates or {}
+        # Optional GlyphMatcher (taught glyph atlas) for post-OCR glyph refinement on
+        # ``glyph_check`` fields. None -> refinement skipped.
+        self._glyphs = glyphs
 
     # ---- batched OCR -------------------------------------------------------
 
@@ -360,6 +363,12 @@ class RegionReader:
                                                 pip_unit=unit)
                 continue
             text, conf = focus.get((ci, field_id)) or base[(ci, field_id)]
+            # Post-OCR glyph refinement (runs BEFORE resolve, so the dictionary then sees the
+            # corrected glyphs). Matches this box's pixels against the taught atlas — fixes a
+            # Q<->G-class confusion the dictionary can't, since both readings are valid terms.
+            if text and self._glyphs is not None and fdef and getattr(fdef, "glyph_check", False):
+                gcrop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
+                text = self._glyphs.refine(text, gcrop)
             substituted = None
             if self._resolver and fdef:
                 resolved = self._resolver.resolve(fdef, text, conf)
@@ -391,7 +400,8 @@ class RegionReader:
             c.confidence = worst[ci] if c.saw else 0.0
         return cells, lines, ics, cr
 
-    def read(self, frame: Frame, window: WindowDef, fields: dict[str, FieldDef]) -> list[Record]:
+    def read(self, frame: Frame, window: WindowDef,
+             fields: dict[str, FieldDef]) -> tuple[list[Record], float | None]:
         cells, lines, ics, cr = self._read_cells(frame, window, fields)
         records: list[Record] = []
         for ci, c in enumerate(cr):
@@ -409,7 +419,7 @@ class RegionReader:
                     rec.xpos = self._data_xfrac(window, sum(b.x + b.w / 2 for b in bs) / len(bs))
             records.append(rec)
         if ics is None:
-            return [r for ci, r in enumerate(records) if not r.is_empty() and not cr[ci].failed]
+            return ([r for ci, r in enumerate(records) if not r.is_empty() and not cr[ci].failed], None)
         # Item templates: keep a cell only if all its tells pass (drops popups/empties);
         # resolve template overlaps; and (when >1 template) tag which one matched.
         # A GUARD item (no fields, but has tells — e.g. a "no relic selected" placeholder)
@@ -428,13 +438,20 @@ class RegionReader:
         kept = resolve_overlaps(ics, valid)
         tag = len(window.items) > 1
         out = []
+        # A terminator template marks the end of the real list: report the top-most kept
+        # terminator's viewport position so the collector can cut everything below it. A
+        # terminator is usually a fieldless guard (stores nothing) but need not be.
+        sentinel_ypos: float | None = None
         for ci in kept:
-            if not ics[ci].item.fields:   # guard item -> suppressed the tile, stores nothing
+            it = ics[ci].item
+            if it.terminator and records[ci].ypos is not None:
+                sentinel_ypos = records[ci].ypos if sentinel_ypos is None else min(sentinel_ypos, records[ci].ypos)
+            if not it.fields:   # guard item -> suppressed the tile, stores nothing
                 continue
             if tag:
-                records[ci].values["_item"] = ics[ci].item.id
+                records[ci].values["_item"] = it.id
             out.append(records[ci])
-        return out
+        return out, sentinel_ypos
 
     def region_signature(self, frame: Frame, window: WindowDef) -> int | None:
         """Cheap hash of the grid region's pixels, to detect an unchanged view.

@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from ...collect.commit import commit_records
+from ...collect.glyph_match import glyph_atlas
 from ...collect.items import item_templates
 from ...collect.reader import RegionReader
 from ...detect.matcher import DetectMatcher, combine_passes
@@ -274,7 +275,9 @@ def _window_reader(engine, profile, game, capture):
                              dictionary=pooled, dictionaries=dict_map, learn_enabled=False)
     templates = item_templates([window], captures_store.cutout_loader(
         get_settings().captures_dir, game or profile.name))
-    reader = RegionReader(engine.ocr, resolver, templates)
+    glyphs = glyph_atlas(profile.glyphs,
+                         captures_store.glyph_loader(get_settings().captures_dir, game or profile.name))
+    reader = RegionReader(engine.ocr, resolver, templates, glyphs)
     return frame, window, fields, reader
 
 
@@ -361,7 +364,7 @@ def preview_commit(profile: GameProfile, game: str | None = Query(None), capture
     engine = get_engine()
     frame, window, fields, reader = _window_reader(engine, profile, game, capture)
     with ocr_job(engine.ocr) as job:
-        records = reader.read(frame, window, fields)
+        records, _sentinel = reader.read(frame, window, fields)
     floor = engine.settings.tuning.min_confidence
     gated = [r for r in records if r.confidence >= floor]   # worst-field floor, as in collection
     low_conf = len(records) - len(gated)
@@ -418,7 +421,9 @@ def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...
     resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
                              dictionary=pooled, dictionaries=dict_map, learn_enabled=False)
     templates = item_templates([window], lambda _name: cut)   # the cutout IS this item's reference
-    reader = RegionReader(engine.ocr, resolver, templates)
+    glyphs = glyph_atlas(profile.glyphs,
+                         captures_store.glyph_loader(get_settings().captures_dir, profile.name))
+    reader = RegionReader(engine.ocr, resolver, templates, glyphs)
     with ocr_job(engine.ocr) as job:
         result = reader.read_cutout(cut, window, it, fields)
     h, w = cut.shape[:2]

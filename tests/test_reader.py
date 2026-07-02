@@ -46,7 +46,7 @@ def test_substituted_read_does_not_sink_confidence():
     ])
     window = _window()
     fields = {f.id: f for f in window.fields}
-    records = RegionReader(ocr).read(_frame(), window, fields)
+    records, _sentinel = RegionReader(ocr).read(_frame(), window, fields)
     assert len(records) == 1
     rec = records[0]
     assert rec.values == {"name": "Soma Prime", "count": 1}
@@ -61,7 +61,7 @@ def test_real_low_confidence_read_still_sinks_record():
     ])
     window = _window()
     fields = {f.id: f for f in window.fields}
-    records = RegionReader(ocr).read(_frame(), window, fields)
+    records, _sentinel = RegionReader(ocr).read(_frame(), window, fields)
     assert len(records) == 1
     assert records[0].values["count"] == 3
     assert records[0].confidence == 0.30

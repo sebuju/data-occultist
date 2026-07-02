@@ -131,6 +131,19 @@ def test_remove_keys_drops_position(tmp_path):
     assert s.positions() == {}                    # a gone key's position is meaningless
 
 
+def test_remove_after_cuts_stale_far_rows(tmp_path):
+    s = _store(tmp_path)
+    for nm in ["Lith A1", "Lith B2", "Lith C3", "Stale X9"]:
+        s.record_seen({"name": nm})
+    # three real relics at row indices 0..2; a stale misread parked far down at row 57
+    s.set_positions({"lith_a1": (0.1, 0.0), "lith_b2": (0.1, 1.0),
+                     "lith_c3": (0.1, 2.0), "stale_x9": (0.1, 57.0)})
+    s.remove_after(8)                          # terminator sits at row ~8 -> drop everything past it
+    assert s.present_keys() == {"lith_a1", "lith_b2", "lith_c3"}
+    assert "stale_x9" not in s.positions()     # remove_keys drops its position too
+    assert s.remove_after(100) == []           # nothing past the cutoff -> no-op
+
+
 def test_positions_follow_rename_and_delete(tmp_path):
     s = _store(tmp_path)
     s.record_seen({"name": "Lith G1"})

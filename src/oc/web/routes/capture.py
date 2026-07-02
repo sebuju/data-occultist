@@ -166,3 +166,78 @@ def get_cutout(game: str, name: str):
     if path is None:
         raise HTTPException(status_code=404, detail="cutout not found")
     return FileResponse(str(path), media_type="image/png")
+
+
+@router.post("/glyph/cutout")
+def glyph_cutout(
+    game: str = Query(...), capture: str = Query(...),
+    x: float = Query(...), y: float = Query(...), w: float = Query(...), h: float = Query(...),
+):
+    """Freeze a taught glyph: crop the bound capture to the fraction box, save a PNG under
+    ``captures/<game>/glyphs/``. The crop is the reference image for one character in the
+    game's glyph atlas (see GameProfile.glyphs)."""
+    settings = get_settings()
+    path = captures_store.path_for(settings.captures_dir, game, capture)
+    if path is None:
+        raise HTTPException(status_code=404, detail="capture not found")
+    img = cv2.imread(str(path))
+    if img is None:
+        raise HTTPException(status_code=500, detail="failed to read capture")
+    H, W = img.shape[:2]
+    px, py = max(0, int(x * W)), max(0, int(y * H))
+    pw, ph = max(1, int(w * W)), max(1, int(h * H))
+    crop = img[py : py + ph, px : px + pw]
+    ok, buf = cv2.imencode(".png", crop)
+    if not ok:
+        raise HTTPException(status_code=500, detail="failed to encode glyph")
+    name = captures_store.save_glyph(settings.captures_dir, game, buf.tobytes())
+    return {"name": name, "url": f"/api/glyph/cutout/{game}/{name}"}
+
+
+@router.get("/glyph/cutout/{game}/{name}")
+def get_glyph(game: str, name: str):
+    """Serve a taught glyph PNG."""
+    path = captures_store.glyph_path(get_settings().captures_dir, game, name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="glyph not found")
+    return FileResponse(str(path), media_type="image/png")
+
+
+@router.post("/glyph/auto")
+def glyph_auto(
+    game: str = Query(...), capture: str = Query(...), text: str = Query(...),
+    x: float = Query(...), y: float = Query(...), w: float = Query(...), h: float = Query(...),
+):
+    """Auto-glypher: crop the region box, segment it into one glyph per non-space character of
+    ``text``, save each as a glyph PNG, and return ``[{char, image, url}]`` in reading order.
+
+    This does NOT add anything to the profile — the UI presents the proposals for the user to
+    correct + confirm. A region that can't be split into the character count returns 422."""
+    from ...collect.glyph_match import segment_word
+
+    settings = get_settings()
+    path = captures_store.path_for(settings.captures_dir, game, capture)
+    if path is None:
+        raise HTTPException(status_code=404, detail="capture not found")
+    img = cv2.imread(str(path))
+    if img is None:
+        raise HTTPException(status_code=500, detail="failed to read capture")
+    chars = [c for c in text if not c.isspace()]
+    if not chars:
+        raise HTTPException(status_code=422, detail="no characters in text")
+    H, W = img.shape[:2]
+    px, py = max(0, int(x * W)), max(0, int(y * H))
+    pw, ph = max(1, int(w * W)), max(1, int(h * H))
+    crop = img[py : py + ph, px : px + pw]
+    glyphs = segment_word(crop, len(chars))
+    if glyphs is None:
+        raise HTTPException(status_code=422,
+                            detail=f"could not split the region into {len(chars)} glyphs — adjust the box")
+    out = []
+    for ch, g in zip(chars, glyphs):
+        ok, buf = cv2.imencode(".png", g)
+        if not ok:
+            continue
+        name = captures_store.save_glyph(settings.captures_dir, game, buf.tobytes())
+        out.append({"char": ch, "image": name, "url": f"/api/glyph/cutout/{game}/{name}"})
+    return out

@@ -637,6 +637,19 @@ class DatasetStore:
             self._announce([])
         return events
 
+    def remove_after(self, pos_cutoff: float) -> list[ChangeEvent]:
+        """Soft-remove every present key whose learned scroll row index is past ``pos_cutoff``.
+
+        A terminator/sentinel item marks the end of the real list — nothing valid can sit after
+        it — so a record still parked at a later row index is stale (an old misread that scrolled
+        out of view and was never replaced). Keys with no learned position are left untouched.
+        Reuses :meth:`remove_keys` (which also drops the removed keys' ``positions`` rows)."""
+        rows = self._conn.execute(
+            "SELECT key FROM positions WHERE dataset=? AND pos > ?",
+            (self._dataset, float(pos_cutoff))).fetchall()
+        keys = {r["key"] for r in rows} & self.present_keys()
+        return self.remove_keys(keys)
+
     def reconcile(self, present_keys: set[str]) -> list[ChangeEvent]:
         """Mark stored keys absent from a *complete* pass as removed.
 

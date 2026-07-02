@@ -111,6 +111,37 @@ def cutout_loader(captures_dir: Path | str, game: str):
     return load
 
 
+# ---- taught glyph atlas (reference character crops) -----------------------
+
+def save_glyph(captures_dir: Path | str, game: str, data: bytes, clock=None) -> str:
+    """Save a taught glyph PNG under ``captures/<game>/glyphs/`` and return its name."""
+    stamp = (clock or (lambda: datetime.now(timezone.utc)))().strftime("%Y%m%d-%H%M%S-%f")
+    name = f"glyph-{stamp}.png"
+    path = Path(captures_dir) / _safe(game) / "glyphs" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return name
+
+
+def glyph_path(captures_dir: Path | str, game: str, name: str) -> Path | None:
+    if "/" in name or "\\" in name or ".." in name:
+        return None
+    p = Path(captures_dir) / _safe(game) / "glyphs" / name
+    return p if p.exists() else None
+
+
+def glyph_loader(captures_dir: Path | str, game: str):
+    """Return ``name -> BGR ndarray | None`` for a game's taught glyph crops — feeds the
+    GlyphMatcher its reference character images (see ``collect.glyph_match.glyph_atlas``)."""
+    import cv2
+
+    def load(name: str):
+        p = glyph_path(captures_dir, game, name)
+        return cv2.imread(str(p)) if p else None
+
+    return load
+
+
 # ---- per-window stash bindings (which stash a window opens with) ----------
 
 def _bindings_path(captures_dir: Path | str, game: str) -> Path:

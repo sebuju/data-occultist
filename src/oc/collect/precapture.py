@@ -48,6 +48,7 @@ from ..ocr.device_switch import enter_device, exit_device
 from ..ocr.serialize import ocr_job
 from ..window.input import scroll_window
 from . import settle
+from .glyph_match import glyph_atlas
 from .items import item_templates
 from .reader import RegionReader
 
@@ -257,7 +258,9 @@ class PrecaptureSession:
         from ..web import captures_store
         templates = item_templates(profile.windows,
                                    captures_store.cutout_loader(eng.settings.captures_dir, profile.name))
-        self._reader = RegionReader(eng.ocr, resolver, templates)
+        glyphs = glyph_atlas(profile.glyphs,
+                             captures_store.glyph_loader(eng.settings.captures_dir, profile.name))
+        self._reader = RegionReader(eng.ocr, resolver, templates, glyphs)
         self._detect_fracs = _detect_boxes(profile)
         self._key_maps = {}
 
@@ -843,7 +846,7 @@ class PrecaptureSession:
         if sig is not None and last_sig.get(window.id) == sig:
             return last_recs.get(window.id, [])
         fields = {f.id: f for f in self._profile.fields_for(window)}
-        records = self._reader.read(frame, window, fields)
+        records, _sentinel = self._reader.read(frame, window, fields)
         if sig is not None:
             last_sig[window.id] = sig
             last_recs[window.id] = records

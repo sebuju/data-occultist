@@ -31,6 +31,7 @@ from ..store import DatasetStore, KeyMap, store_for
 from ..store.flow_events import publish_flow
 from . import settle
 from .items import item_templates
+from .glyph_match import glyph_atlas
 from .commit import commit_records
 from .reader import Record, RegionReader
 from .scrollbar import scroll_detail
@@ -120,7 +121,9 @@ class Collector:
         from ..web import captures_store
         templates = item_templates(profile.windows,
                                    captures_store.cutout_loader(engine.settings.captures_dir, profile.name))
-        self._reader = RegionReader(engine.ocr, resolver, templates)
+        glyphs = glyph_atlas(profile.glyphs,
+                             captures_store.glyph_loader(engine.settings.captures_dir, profile.name))
+        self._reader = RegionReader(engine.ocr, resolver, templates, glyphs)
 
         # Confirmers, stores, and observed-key sets are keyed by DATASET, not
         # window, so windows that share a dataset dedup against each other and
@@ -365,20 +368,20 @@ class Collector:
         cached = self._frame_cache.get(window_id)
         cache_hit = sig is not None and cached is not None and cached[0] == sig
         if cache_hit:
-            records = cached[1]
+            records, sentinel_ypos = cached[1], cached[2]
         else:
             fields = {f.id: f for f in self._profile.fields_for(window)}
             # Time OCR read specifically (only the frames where it actually ran — a
             # cache-hit frame does no OCR, so recording it would understate the real cost).
             _oc = time.perf_counter()
-            records = self._reader.read(frame, window, fields)
+            records, sentinel_ypos = self._reader.read(frame, window, fields)
             oc_ms = (time.perf_counter() - _oc) * 1000.0
             stats_store.record_timing(self._profile.name, f"win:{window_id}", "oc", oc_ms, n=len(records))
             # the gate let this OCR through — mirror its cost onto the game node (the gate owner)
             # so "gate->ocr" shows how often / how long the worthiness gate triggered OCR.
             stats_store.record_timing(self._profile.name, "game", "go", oc_ms, n=len(records))
             if sig is not None:
-                self._frame_cache[window_id] = (sig, records)
+                self._frame_cache[window_id] = (sig, records, sentinel_ypos)
 
         kept = self._above_floor(records)               # occlusion / garbage gate
 
@@ -498,6 +501,13 @@ class Collector:
                         # _pos column + next run: the same (column, row-index) slots slice_sync
                         # just used — column persisted so a gone relic stays a removal candidate.
                         store.set_positions(read_cells)
+                    # Terminator cut: a sentinel template (e.g. an unowned-relic placeholder) marks
+                    # the end of the real list. On a clean frame it's visible, drop every stored key
+                    # parked past its row index — stale misreads that scrolled out of view and were
+                    # never replaced (which slice_sync alone can't reach). Runs AFTER set_positions
+                    # so a fresh far misread this frame has a position to be cut by.
+                    if fresh and sentinel_ypos is not None:
+                        store.remove_after(int(offset + sentinel_ypos * visible))
 
         stats_store.record_timing(self._profile.name, f"win:{window_id}", "cm",
                                   (time.perf_counter() - _tcm) * 1000.0, n=new)
