@@ -250,7 +250,9 @@ class DetectMatcher:
         if det.template or det.color:
             s = self.score(det, frame)
             matched = s >= det.threshold
-            label = "(template)" if det.template else "(color)"
+            # colour/border: the "read" concept doesn't apply — the verdict row already
+            # carries the pixel-match %/threshold. Only template gets an echo label.
+            label = "(template)" if det.template else ""
             return {"matched": matched, "passes": detector_passes(matched, det.negate),
                     "negate": det.negate, "read": label,
                     "score": round(s, 2), "threshold": det.threshold}

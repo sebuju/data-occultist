@@ -21,9 +21,7 @@ import cv2
 import numpy as np
 
 from ..engine import Engine
-from ..learn.confusions import ConfusionMap
 from ..learn.dictionary import build_dictionaries
-from ..learn.lexicon import Lexicon
 from ..learn.resolver import FieldResolver
 from ..locate import WindowLocator
 from ..profile.models import GameProfile, WindowDef
@@ -57,6 +55,21 @@ _DETECT_CELL = 16                        # each region downsampled to CELL x CEL
 # particle burst / glow pulse behind the UI) spikes for one or two. Require this many CONSECUTIVE
 # changed frames before paying the OCR-heavy re-classify, so flicker can't bust the cache.
 _DETECT_RECLASSIFY_AFTER = 2
+
+
+def _debug_reads(records) -> list[dict]:
+    """Compact per-record OCR detail for the live debug log: raw text, resolved value, and
+    which fields were corrected. Internal ``_``-prefixed fields (e.g. ``_item``) are hidden.
+    Pure presentation — never consumed by the pipeline."""
+    out = []
+    for r in records:
+        out.append({
+            "values": {k: v for k, v in r.values.items() if not str(k).startswith("_")},
+            "raw": dict(r.raw),
+            "corrected": list(r.corrected),
+            "conf": round(r.confidence, 3),
+        })
+    return out
 
 
 def _detect_search_fracs(profile: GameProfile) -> list:
@@ -97,6 +110,7 @@ class TickResult:
     total: int = 0      # distinct records confirmed so far
     dataset: str | None = None              # the dataset records were written to
     changed: list[dict] = field(default_factory=list)  # values added/updated this tick (for triggers)
+    reads: list[dict] = field(default_factory=list)     # per-kept-record OCR detail (live debug log only)
     scroll: tuple[float, float] | None = None  # mirror datasets: visible row-index span (vlo,vhi)
     scroll_meta: dict | None = None            # mirror: {total, viewport, gain, confident, pinned}
 
@@ -113,11 +127,9 @@ class Collector:
         self._tuning = engine.settings.tuning
         self._locator = WindowLocator(engine)
 
-        self._lexicon = Lexicon.for_game(engine.settings.data_dir, profile.name)
-        self._confusions = ConfusionMap.for_game(engine.settings.data_dir, profile.name)
         pooled, dict_map = build_dictionaries(profile, engine.corrector)
-        resolver = FieldResolver(self._lexicon, engine.corrector, self._tuning.accept_confidence,
-                                 confusions=self._confusions, dictionary=pooled, dictionaries=dict_map)
+        resolver = FieldResolver(engine.corrector, self._tuning.accept_confidence,
+                                 dictionary=pooled, dictionaries=dict_map)
         from ..web import captures_store
         templates = item_templates(profile.windows,
                                    captures_store.cutout_loader(engine.settings.captures_dir, profile.name))
@@ -384,6 +396,9 @@ class Collector:
                 self._frame_cache[window_id] = (sig, records, sentinel_ypos)
 
         kept = self._above_floor(records)               # occlusion / garbage gate
+        # Per-read debug detail for the live log — only on a REAL OCR frame (a cache hit
+        # re-feeds the same reads, so surfacing them would spam the log with duplicates).
+        reads = [] if cache_hit else _debug_reads(kept)
 
         dataset = window.dataset_id
         # A window with no dataset produces nothing storable — discard its reads
@@ -401,6 +416,7 @@ class Collector:
                 total=0,
                 dataset=None,
                 changed=[],
+                reads=reads,
             )
 
         # Per-detection batching: when this dataset hasn't been fed within the grace window
@@ -529,6 +545,7 @@ class Collector:
             total=confirmer.count,
             dataset=dataset,
             changed=changed,
+            reads=reads,
             scroll=tick_scroll,
             scroll_meta=tick_scroll_meta,
         )
@@ -598,8 +615,6 @@ class Collector:
             self.close()
 
     def close(self) -> None:
-        self._lexicon.save()
-        self._confusions.save()
         # Stop any backend that owns a live thread (e.g. WGC runs a free-threaded native
         # capture thread). Left running, it touches Python during interpreter finalization
         # -> "Fatal Python error: ... import state already initialized" on exit. Best-effort.

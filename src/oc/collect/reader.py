@@ -42,6 +42,9 @@ class Record:
     values: dict[str, object] = dc_field(default_factory=dict)
     confidence: float = 1.0
     corrected: list[str] = dc_field(default_factory=list)
+    # {field_id: raw OCR text} for genuine text reads — carried purely for the live debug
+    # log (what OCR saw before resolve). Empty for pip fields / fallback-fired fields.
+    raw: dict[str, str] = dc_field(default_factory=dict)
     # Position of this record's cell as fractions (0..1) of the window's data_area: ``ypos``
     # vertical (0 = top of the visible list, 1 = bottom), ``xpos`` horizontal (0 = left col,
     # 1 = right col). Lets a scrolling consumer place a row in the grid — ypos + the scrollbar
@@ -63,6 +66,7 @@ class _FieldRead:
     out_of_range: bool
     box: PixelBox                # where the field was read (image pixels)
     pip_unit: str | None = None  # "pips"/"filled" for visual-count fields, else None
+    verified: str | None = None  # how the value was confirmed: dict/split/fuzzy/glyph, else None
 
 
 @dataclass
@@ -363,28 +367,38 @@ class RegionReader:
                                                 pip_unit=unit)
                 continue
             text, conf = focus.get((ci, field_id)) or base[(ci, field_id)]
+            raw_ocr = text   # the genuine OCR read, kept so the UI can show the ORIGINAL vs value
             # Post-OCR glyph refinement (runs BEFORE resolve, so the dictionary then sees the
             # corrected glyphs). Matches this box's pixels against the taught atlas — fixes a
             # Q<->G-class confusion the dictionary can't, since both readings are valid terms.
+            refined = False
             if text and self._glyphs is not None and fdef and getattr(fdef, "glyph_check", False):
                 gcrop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
-                text = self._glyphs.refine(text, gcrop)
-            substituted = None
+                new = self._glyphs.refine(text, gcrop)
+                refined = new != text
+                text = new
+            substituted = verified = None
             if self._resolver and fdef:
                 resolved = self._resolver.resolve(fdef, text, conf)
                 value = resolved.value
                 substituted = resolved.substituted
+                verified = resolved.verified
                 if resolved.corrected:
                     c.corrected.append(field_id)
             elif fdef:
                 value, substituted = coerce_rule(fdef, text)
             else:
                 value = text or None
+            # a pixel-level glyph_check that actually changed the read is the salient tell for
+            # these fields — surface "glyph" over the dictionary's own verdict
+            if refined and substituted is None:
+                verified = "glyph"
             c.values[field_id] = value
             # out-of-range only counts for a GENUINE read (a fired fallback's value is authored)
             oor = substituted is None and bool(fdef) and out_of_range(fdef, value)
-            c.fields[field_id] = _FieldRead(raw=text, conf=conf, value=value,
-                                            substituted=substituted, out_of_range=oor, box=box)
+            c.fields[field_id] = _FieldRead(raw=raw_ocr, conf=conf, value=value,
+                                            substituted=substituted, out_of_range=oor, box=box,
+                                            verified=verified)
             if text:
                 c.saw = True
                 c.confs[field_id] = conf   # so a field-tell's tell_conf can gate
@@ -405,7 +419,8 @@ class RegionReader:
         cells, lines, ics, cr = self._read_cells(frame, window, fields)
         records: list[Record] = []
         for ci, c in enumerate(cr):
-            rec = Record(values=dict(c.values), confidence=c.confidence, corrected=list(c.corrected))
+            rec = Record(values=dict(c.values), confidence=c.confidence, corrected=list(c.corrected),
+                         raw={fid: fr.raw for fid, fr in c.fields.items() if fr.raw})
             # Position of the cell within the data_area, so a scrolling consumer can place this
             # row in the grid. Item cells carry their origin/size; a static grid cell takes the
             # mean centre of its field boxes.
@@ -491,6 +506,7 @@ class RegionReader:
                     # "81" misread) but flagged — the cell is dropped below, mirroring collection
                     d["substituted"] = fr.substituted
                     d["out_of_range"] = fr.out_of_range
+                    d["verified"] = fr.verified   # dict/split/fuzzy/glyph, else None
                 flds[fid] = d
             out.append({"row": cells[ci].row, "col": cells[ci].col, "fields": flds})
 
@@ -603,16 +619,19 @@ class RegionReader:
                 vals[fid], confs[fid] = cnt, 0.99
                 continue
             text, conf = focus.get(fid) or base[fid]
+            verified = None
             if self._resolver and fdef:
                 resolved = self._resolver.resolve(fdef, text, conf)
                 value, rule = resolved.value, resolved.substituted
+                verified = resolved.verified
             elif fdef:
                 value, rule = coerce_rule(fdef, text)
             else:
                 value, rule = text or None, None
             oor = rule is None and bool(fdef) and out_of_range(fdef, value)
             out_fields[fid] = {"raw": text, "value": value, "confidence": round(conf, 3),
-                               "substituted": rule, "out_of_range": oor, "box": bf}
+                               "substituted": rule, "out_of_range": oor, "box": bf,
+                               "verified": verified}
             vals[fid], confs[fid] = value, conf
 
         tells = tell_report(frame, vals, ic, self._templates, confs, fields,

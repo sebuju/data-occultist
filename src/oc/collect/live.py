@@ -14,6 +14,7 @@ polled through the activity heartbeat. The worker runs even when the game is bac
 
 from __future__ import annotations
 
+import collections
 import threading
 import time
 
@@ -21,6 +22,10 @@ from ..engine import Engine
 from ..ocr.device_switch import enter_device, exit_device
 from ..profile.models import GameProfile
 from .collector import Collector, TickStatus
+
+# How many recent debug entries the live session keeps for the panel's debug log. Bounded so a
+# long-running collector can't grow memory without limit; the UI polls incrementally by seq.
+_DEBUG_CAP = 300
 
 
 class LiveSession:
@@ -44,6 +49,11 @@ class LiveSession:
         self._scroll_meta: dict | None = None             # latest mirror calibration snapshot
         self._t0 = 0.0
         self._error: str | None = None
+        # Debug log ring: recent OCR-heavy ticks (raw reads, corrections, what was written to
+        # which dataset). Bounded; the panel polls incrementally by monotonic seq. Only ticks
+        # that actually read or wrote are recorded, so an idle/gate-closed run stays quiet.
+        self._debug: collections.deque = collections.deque(maxlen=_DEBUG_CAP)
+        self._debug_seq = 0
         # "auto" device policy: set to "gpu" by the web layer to run the live loop on GPU
         # (every frame OCRs many regions -> GPU throughput wins), then restore the baseline
         # device on stop (which frees the GPU). None = use whatever device the engine is on.
@@ -82,6 +92,8 @@ class LiveSession:
             self._scroll = None
             self._scroll_meta = None
             self._error = None
+            self._debug.clear()
+            self._debug_seq = 0
             self._t0 = time.monotonic()
             self._stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -155,8 +167,37 @@ class LiveSession:
                 self._cur = (None, None)
                 key = result.status.value   # idle / no_window / not_foreground / unrecognised / state_invalid
             self._recog[key] = self._recog.get(key, 0) + 1
+            # Debug log: record a tick that actually READ something new or WROTE a record. A
+            # cache-hit / throttled / idle tick carries no reads, so it never spams the log.
+            reads = getattr(result, "reads", None) or []
+            if reads or result.new:
+                self._debug_seq += 1
+                self._debug.append({
+                    "seq": self._debug_seq,
+                    "t": time.time(),
+                    "window": result.window_id,
+                    "state": result.state_id,
+                    "dataset": result.dataset,
+                    "new": result.new,
+                    "read": result.read,
+                    "kept": result.kept,
+                    "reads": reads,
+                    # written keys/values this tick (added or updated) — the "pushed to dataset" side
+                    "changed": [{k: v for k, v in c.items() if not str(k).startswith("_")}
+                                for c in (result.changed or [])],
+                })
 
     # ---- status ------------------------------------------------------------
+
+    def debug(self, after: int = 0) -> dict:
+        """Debug-log entries with seq > ``after`` (incremental poll). ``seq`` is the newest
+        entry number so a caller knows the high-water mark even when nothing is newer."""
+        with self._lock:
+            return {
+                "running": self.is_running(),
+                "seq": self._debug_seq,
+                "entries": [e for e in self._debug if e["seq"] > after],
+            }
 
     def status(self) -> dict:
         with self._lock:

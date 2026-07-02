@@ -34,9 +34,7 @@ import cv2
 import numpy as np
 
 from ..engine import Engine
-from ..learn.confusions import ConfusionMap
 from ..learn.dictionary import build_dictionaries
-from ..learn.lexicon import Lexicon
 from ..learn.resolver import FieldResolver
 from ..locate import WindowLocator
 from ..profile.models import GameProfile, WindowDef
@@ -191,8 +189,6 @@ class PrecaptureSession:
         self._engine = engine
         self._tuning = engine.settings.tuning
         self._locator = WindowLocator(engine)
-        self._lexicon = Lexicon.for_game(engine.settings.data_dir, profile.name)
-        self._confusions = ConfusionMap.for_game(engine.settings.data_dir, profile.name)
         self._key_maps: dict[str, KeyMap] = {}
         # profile-derived state (reader, detect boxes, key cache) — rebuilt by _apply_profile
         # so a UI edit between recording and processing actually reaches classify/read.
@@ -253,8 +249,8 @@ class PrecaptureSession:
         eng = self._engine
         self._profile = profile
         pooled, dict_map = build_dictionaries(profile, eng.corrector)
-        resolver = FieldResolver(self._lexicon, eng.corrector, self._tuning.accept_confidence,
-                                 confusions=self._confusions, dictionary=pooled, dictionaries=dict_map)
+        resolver = FieldResolver(eng.corrector, self._tuning.accept_confidence,
+                                 dictionary=pooled, dictionaries=dict_map)
         from ..web import captures_store
         templates = item_templates(profile.windows,
                                    captures_store.cutout_loader(eng.settings.captures_dir, profile.name))
@@ -1000,8 +996,6 @@ class PrecaptureSession:
                     if w.dataset_id == dataset:
                         publish_flow(self._profile.name, "data", f"win:{w.id}",
                                      f"ds:{dataset}", n)
-        self._lexicon.save()
-        self._confusions.save()
         # keep the checkpoint: the session retains its processed records so it can be
         # re-saved later. Just stamp the session as saved (and remember what it wrote).
         self._save_ocr_state()

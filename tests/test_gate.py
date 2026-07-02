@@ -4,6 +4,7 @@ two-rate run loop polls the gate fast while throttling the OCR-heavy path."""
 
 import numpy as np
 
+import collections
 import threading
 
 from oc.collect.collector import Collector, TickResult, TickStatus
@@ -198,6 +199,8 @@ def _live_session():
     s._scroll = None
     s._scroll_meta = None
     s._recog = {}
+    s._debug = collections.deque(maxlen=8)
+    s._debug_seq = 0
     return s
 
 

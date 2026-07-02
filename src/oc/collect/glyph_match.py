@@ -15,8 +15,8 @@ Matching is done by SLIDING each taught template (scaled to the read's text-band
 across the band and taking the peak normalised cross-correlation, NOT by cropping fixed
 glyph cells. This font's intra- and inter-glyph column gaps overlap, so fixed segmentation
 mis-merges strokes into blobs; a sliding match is immune to that — it finds a glyph wherever
-it sits. Rough positions (from the widest column gaps) only anchor WHICH read character a
-detection belongs to; the sliding tolerates their imprecision.
+it sits. Rough positions (equal-spaced then snapped to ink valleys, :func:`_positions`) only
+anchor WHICH read character a detection belongs to; the sliding tolerates their imprecision.
 
 There is ZERO game knowledge here — which glyphs exist and what they look like is data.
 """
@@ -35,8 +35,10 @@ _MIN_SCORE = 0.55
 # A row counts as "ink" when its foreground pixel count exceeds this fraction of the band's
 # peak — separates the (dim, gradient) glow band above relic text from the text row itself.
 _ROW_INK = 0.18
-# A column is a "gap" (glyph boundary candidate) when its ink is at/below this fraction of peak.
-_GAP_INK = 0.04
+# Each character boundary is seeded at equal spacing (this font is near-monospace) then snapped
+# to the lowest-ink column within +/- this fraction of the per-char step — nudging the cut off a
+# glyph's centre and into the valley between glyphs, without ever failing to make n pieces.
+_SNAP_FRAC = 0.35
 # When sliding a template around a character's rough position, search this much either side of
 # its span (as a fraction of band height) — enough slack to absorb segmentation error.
 _SLIDE_SLACK = 0.6
@@ -88,10 +90,11 @@ def _text_band(bin_: np.ndarray) -> np.ndarray:
     return bin_[lo:hi, :]
 
 
-def segment_word(bgr: np.ndarray, n: int) -> list[np.ndarray] | None:
-    """Split a BGR word crop into ``n`` single-glyph BGR crops, left-to-right (the auto-glypher:
-    one labelled word -> a crop per character). Uses the same text-band isolation + count-driven
-    positioning as :meth:`GlyphMatcher.refine`. Returns None when it can't make ``n`` pieces."""
+def segment_boxes(bgr: np.ndarray, n: int) -> list[tuple[int, int, int, int]] | None:
+    """Split a BGR word crop into ``n`` single-glyph pixel boxes ``(x, y, w, h)`` in the crop's
+    own coordinates, left-to-right (the auto-glypher: one word -> a box per character). Uses the
+    same text-band isolation + count-driven positioning as :meth:`GlyphMatcher.refine`, so the
+    boxes hug the text row. Returns None when it can't make ``n`` pieces."""
     bin_ = _binary(bgr)
     if bin_ is None or n <= 0:
         return None
@@ -100,7 +103,16 @@ def segment_word(bgr: np.ndarray, n: int) -> list[np.ndarray] | None:
     spans = _positions(band, n)
     if spans is None:
         return None
-    return [bgr[lo:hi, x0:x1] for x0, x1 in spans]
+    return [(x0, lo, x1 - x0, hi - lo) for x0, x1 in spans]
+
+
+def segment_word(bgr: np.ndarray, n: int) -> list[np.ndarray] | None:
+    """Split a BGR word crop into ``n`` single-glyph BGR crops, left-to-right. Thin wrapper over
+    :func:`segment_boxes` that materialises each box into a crop. Returns None on failure."""
+    boxes = segment_boxes(bgr, n)
+    if boxes is None:
+        return None
+    return [bgr[y : y + h, x : x + w] for x, y, w, h in boxes]
 
 
 def _content_x(band: np.ndarray) -> tuple[int, int]:
@@ -111,37 +123,35 @@ def _content_x(band: np.ndarray) -> tuple[int, int]:
 
 
 def _positions(band: np.ndarray, n: int) -> list[tuple[int, int]] | None:
-    """Rough x-span per character by cutting the band at its ``n-1`` WIDEST interior column
-    gaps (the most-separating valleys are true character boundaries; thin intra-glyph dips
-    are ignored). Only anchors which read character a sliding detection belongs to — exact
-    edges don't matter. Returns None when there aren't enough gaps to make ``n`` pieces."""
+    """Rough x-span per character. Seed the ``n-1`` boundaries at EQUAL spacing across the
+    inked content (this font is near-monospace, so equal cuts land close) then snap each to
+    the lowest-ink column within a local window — sliding the boundary off a glyph body into
+    the valley beside it. Unlike pure gap-detection this always makes ``n`` pieces (relic
+    intra-/inter-glyph gaps overlap, so gap-detection either finds too few or cuts mid-glyph).
+
+    For :meth:`GlyphMatcher.refine` these only anchor which read character a sliding detection
+    belongs to (edges are forgiven by the slide); for the auto-glypher they are the per-char
+    crops themselves. Returns None only when the content is too narrow for ``n`` pieces."""
     if n <= 0:
         return None
     x0, x1 = _content_x(band)
+    width = x1 - x0
+    if width < n:                                # can't carve n non-empty columns
+        return None
     if n == 1:
         return [(x0, x1)]
-    cols = (band[:, x0:x1] > 0).sum(axis=0).astype(np.float64)
-    peak = cols.max()
-    if peak <= 0:
-        return None
-    gap = cols <= peak * _GAP_INK
-    # interior gap runs -> (centre, width)
-    runs: list[tuple[int, int]] = []
-    i, m = 0, len(gap)
-    while i < m:
-        if not gap[i]:
-            i += 1
-            continue
-        j = i
-        while j < m and gap[j]:
-            j += 1
-        if i > 0 and j < m:                      # interior only (skip leading/trailing margin)
-            runs.append((i, j))
-        i = j
-    if len(runs) < n - 1:
-        return None
-    widest = sorted(runs, key=lambda r: r[1] - r[0], reverse=True)[: n - 1]
-    cuts = sorted((r[0] + r[1]) // 2 for r in widest)
+    ink = (band[:, x0:x1] > 0).sum(axis=0).astype(np.float64)   # per-column ink, content-relative
+    step = width / n
+    snap = max(1, round(step * _SNAP_FRAC))
+    cuts, prev = [], 0
+    for i in range(1, n):
+        seed = round(i * step)
+        a = max(prev + 1, seed - snap)
+        b = min(width - 1, seed + snap + 1)
+        c = seed if a >= b else a + int(np.argmin(ink[a:b]))
+        c = min(max(c, prev + 1), width - (n - i))   # strictly increasing, leaving room for the rest
+        cuts.append(c)
+        prev = c
     spans, prev = [], 0
     for c in cuts:
         spans.append((x0 + prev, x0 + c))
@@ -252,6 +262,8 @@ def glyph_atlas(glyphs, load_glyph) -> GlyphMatcher | None:
     None when nothing is taught, so the reader skips refinement entirely."""
     samples: dict[str, list[np.ndarray]] = {}
     for g in (glyphs or []):
+        if not getattr(g, "enabled", True):
+            continue   # muted sample: kept in the profile/UI but excluded from the matcher
         img = load_glyph(g.image)
         if img is not None:
             samples.setdefault(g.char, []).append(img)
