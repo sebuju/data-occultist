@@ -1,41 +1,21 @@
-"""Price endpoints: a background warframe.market *producer* sweep + history reads.
+"""Price/producer endpoints: a background producer sweep + its status.
 
-The price node is a producer: ``refresh`` sweeps the whole market catalogue in a daemon
-thread (throttled, cancellable) and pushes one current snapshot record per item into its
-output dataset, while daily candles accumulate in the :class:`PriceStore`. ``status``
-polls progress; ``item``/``movers``/``summary`` read the store for the node's chart and
-mover list. Joining prices to inventory is a *view*'s job now, not an endpoint here.
+The price node is a producer: ``refresh`` runs its sweep in a subprocess (throttled,
+cancellable) and pushes one current record per source item into its output dataset.
+``status`` polls progress; ``summary`` reports just the sweep status. Joining producer
+output to inventory is a *view*'s job now, not an endpoint here.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from fastapi import APIRouter
 
 from ...enrich.price_runner import cancel_sweep, producer_for, start_sweep, sweep_status
 from ...profile import list_profiles
 from ...runtime import load_live_profile
-from ...store import PriceStore
 from ..deps import get_settings
 
 router = APIRouter(prefix="/api/prices", tags=["prices"])
-
-
-# Read-side cache: parsing the (large) price store on every chart click / movers poll is
-# wasteful when nothing changed. Reuse a parsed instance until the file's mtime moves.
-_store_cache: dict[str, tuple[float, PriceStore]] = {}
-
-
-def _price_store(game: str) -> PriceStore:
-    path = Path(get_settings().data_dir) / game / "price_store.json"
-    mtime = path.stat().st_mtime if path.exists() else 0.0
-    cached = _store_cache.get(game)
-    if cached and cached[0] == mtime:
-        return cached[1]
-    store = PriceStore(get_settings().data_dir, game)
-    _store_cache[game] = (mtime, store)
-    return store
 
 
 def _profile(game: str):
@@ -48,13 +28,12 @@ def _profile(game: str):
 # ---- background sweep (orchestrated in enrich.price_runner) -----------------
 
 @router.post("/{game}/refresh")
-def refresh(game: str, dataset: str = "prices", type: str = "warframe_market",
-            mode: str = "statistics", throttle: float = 0.4,
+def refresh(game: str, dataset: str = "prices", type: str = "http",
+            mode: str = "", throttle: float = 0.4,
             timeout: float = 30.0, limit: int = 0, workers: int = 6):
-    """Start a background producer sweep of ``dataset``. For ``warframe_market`` the node's
-    ``sources`` decide what's priced (``mode`` = statistics | orders), whole catalogue if none;
-    other ``type``s (e.g. ``relic``) refresh their own data. A second call while this node is
-    running is a no-op; if a DIFFERENT node in the same game (or process) is sweeping, returns
+    """Start a background producer sweep of ``dataset``. The producer node's ``sources`` decide
+    what's fetched; its ``type`` (``http`` / ``relic``) decides how. A second call while this
+    node is running is a no-op; if a DIFFERENT node in the same game is sweeping, returns
     ``blocked`` instead of starting (one sweep/game)."""
     profile = _profile(game)
     pn = producer_for(profile, dataset, type=type, mode=mode, throttle=throttle)
@@ -74,36 +53,31 @@ def status(game: str, dataset: str = "prices"):
     return sweep_status(game, dataset)
 
 
-# ---- reads ------------------------------------------------------------------
-
-@router.get("/{game}/movers")
-def movers(game: str, days: int = 7, threshold: float = 0.15, limit: int = 50):
-    """Items whose median moved >= ``threshold`` over ``days``, biggest swing first."""
-    return {"game": game, "days": days, "threshold": threshold,
-            "movers": _price_store(game).movers(days=days, threshold=threshold, limit=limit)}
-
-
-@router.get("/{game}/item/{slug}")
-def item(game: str, slug: str):
-    """One item's daily candle history + summary, for the detail chart."""
-    store = _price_store(game)
-    info = store.info(slug)
-    if info is None:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail=f"no price data for {slug!r}")
-    return {**info, "history": store.history(slug)}
-
-
 @router.get("/{game}/summary")
 def summary(game: str, dataset: str = "prices"):
-    """A producer's OWN status (not its output dataset's contents — that's the dataset node's
-    job). For ``warframe_market`` it also reports the stored-slug count + top movers it has
-    accumulated, from the tiny index sidecar (never parses the full candle store, so it stays
-    fast mid-sweep). Other producers report just the sweep status."""
-    idx = PriceStore.read_index(get_settings().data_dir, game)
-    return {
-        "game": game, "dataset": dataset,
-        "slugs": idx.get("slugs", 0),
-        "movers": idx.get("movers", []),
-        "status": sweep_status(game, dataset),
-    }
+    """A producer's OWN sweep status (not its output dataset's contents — that's the dataset
+    node's job)."""
+    return {"game": game, "dataset": dataset, "status": sweep_status(game, dataset)}
+
+
+# ---- preview / probe (the producer's satellite) -----------------------------
+
+@router.get("/{game}/preview")
+def preview(game: str, dataset: str = "prices", limit: int = 50):
+    """What an http producer WILL fetch + output, without running a sweep: the resolved item
+    names -> keys from its sources, plus the columns it emits. Powers the producer satellite."""
+    from ...enrich.http_producer import resolved_inputs
+    profile = _profile(game)
+    node = producer_for(profile, dataset)
+    return resolved_inputs(get_settings().data_dir, game, profile, node, limit=limit)
+
+
+@router.post("/{game}/probe")
+def probe(game: str, dataset: str = "prices", item: str = ""):
+    """Live test-fetch ONE item through the taught URL + mapping and return the (trimmed) raw
+    response next to the mapped row — so the user can debug paths/filters against the real API.
+    ``item`` defaults to the first resolved source item."""
+    from ...enrich.http_producer import probe_item
+    profile = _profile(game)
+    node = producer_for(profile, dataset)
+    return probe_item(get_settings().data_dir, game, profile, node, item=item or None)

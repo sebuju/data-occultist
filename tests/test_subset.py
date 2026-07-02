@@ -2,7 +2,7 @@
 
 from oc.profile.loader import load_profile, save_profile
 from oc.profile.models import (
-    DerivedColumn, EnrichRule, FilterRule, GameProfile, JoinNorm, JoinSource, SubsetDef,
+    DerivedColumn, FilterRule, GameProfile, JoinNorm, JoinSource, SubsetDef,
 )
 from oc.enrich.subset import compute_subset, compute_view
 from oc.store.textnorm import norm_text
@@ -228,11 +228,9 @@ def test_subset_round_trips_through_profile(tmp_path):
         id="arc", sources=[_src("equip")],
         filters=[FilterRule(field="rank", op="gte", value="1")],
         derived=[DerivedColumn(name="display", template="{name} [{rank}]")],
-        enrich=[EnrichRule(type="warframe_market", source_field="name")],
     )])
     save_profile(tmp_path, p)
     back = load_profile(tmp_path, "g")
     assert len(back.subsets) == 1
     s = back.subset_def("arc")
     assert s.sources[0].dataset == "equip" and s.derived[0].template == "{name} [{rank}]"
-    assert s.enrich[0].type == "warframe_market"

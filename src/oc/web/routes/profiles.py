@@ -36,6 +36,21 @@ def get_profile(name: str):
     return load_profile(settings.profiles_dir, name).model_dump(mode="json", exclude_none=True)
 
 
+def _preserve_producer_http(existing, incoming) -> None:
+    """Anti-data-loss: a save must never silently drop a producer's authored ``http`` spec
+    (URL + headers + mapping). If an ``http``-type producer arrives with no ``http`` — a
+    stale/partial client that lost the block — keep the on-disk spec instead of nuking it.
+    (Deliberately clearing it means switching the node's ``type``, not blanking ``http``.)"""
+    if existing is None:
+        return
+    prev = {p.id: p for p in existing.producers}
+    for p in incoming.producers:
+        if getattr(p, "type", "") == "http" and p.http is None:
+            old = prev.get(p.id)
+            if old is not None and old.http is not None:
+                p.http = old.http
+
+
 @router.put("/{name}")
 def put_profile(name: str, profile: GameProfile, merge: bool = True):
     """Save a profile. With ``merge`` (default), upsert the incoming window(s) and
@@ -44,8 +59,10 @@ def put_profile(name: str, profile: GameProfile, merge: bool = True):
     if profile.name != name:
         raise HTTPException(status_code=400, detail="Body name must match URL name")
     settings = get_settings()
-    if merge and name in list_profiles(settings.profiles_dir):
-        profile = merge_profiles(load_profile(settings.profiles_dir, name), profile)
+    existing = load_profile(settings.profiles_dir, name) if name in list_profiles(settings.profiles_dir) else None
+    if merge and existing is not None:
+        profile = merge_profiles(existing, profile)
+    _preserve_producer_http(existing, profile)   # never let a stale save strip an http node's spec
     path = save_profile(settings.profiles_dir, profile)
     return {"saved": str(path), "windows": [w.id for w in profile.windows]}
 

@@ -1,9 +1,7 @@
-"""Post-capture enrichment: augment saved records from external sources.
+"""Post-capture enrichment: producers that fetch external data into datasets.
 
 Kept strictly out of the capture loop so external latency/outages never affect
-collection robustness. First enricher: warframe.market price lookup.
+collection robustness. The generic ``http`` producer (:mod:`oc.enrich.http_producer`)
+fetches a taught URL per source item and maps the JSON response to columns; ``relic``
+is a second, self-contained producer backend.
 """
-
-from .runner import enrich_file
-
-__all__ = ["enrich_file"]

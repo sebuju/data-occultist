@@ -1,4 +1,4 @@
-"""Live warframe.market checks — the real network path end to end.
+"""Live warframe.market checks — the real network path end to end, via the generic http node.
 
 These hit the public API, so they're gated to never FAIL on an outage:
 * a session-scoped probe skips the whole module (with a message) when the API is unreachable;
@@ -12,10 +12,11 @@ import time
 
 import pytest
 
-from oc.enrich import wm_client
+from oc.enrich.http_get import NET_ERRORS, http_get_json
 from oc.enrich.price_runner import start_sweep
-from oc.enrich.wm_client import NET_ERRORS, fetch_orders
-from oc.profile.models import GameProfile, ProducerDef
+from oc.profile.models import (
+    HttpArraySpec, HttpField, HttpFilter, HttpRequest, HttpSpec, GameProfile, ProducerDef,
+)
 from oc.store import DatasetStore, KeySpec
 
 pytestmark = pytest.mark.network
@@ -23,6 +24,8 @@ pytestmark = pytest.mark.network
 # Mods are always tradeable and their market slug is just the lowercased name, so we can
 # resolve without fetching the (large) catalogue. They reliably have online sellers.
 _KNOWN = ["Serration", "Vitality"]
+_ORDERS_URL = "https://api.warframe.market/v2/orders/item/{key}"
+_HEADERS = {"platform": "pc", "User-Agent": "oc/0.1", "Accept": "application/json"}
 
 _down = False   # circuit breaker: set once the API proves unreachable this run
 
@@ -38,11 +41,21 @@ def _guard():
         pytest.skip("warframe.market unreachable earlier this run")
 
 
+def _spec():
+    flt = [HttpFilter(path="type", op="eq", value="sell"),
+           HttpFilter(path="user.status", op="in", value=["online", "ingame"])]
+    return HttpSpec(
+        request=HttpRequest(url=_ORDERS_URL, headers=_HEADERS, timeout=20),
+        key_transform="lowercase", root="data",
+        fields=[HttpField(out_field="price_min", type="number",
+                          array=HttpArraySpec(filter=flt, pluck="platinum", agg="min"))])
+
+
 @pytest.fixture(scope="session")
 def market():
     """Probe the API once; skip the whole module (never fail) if it's down."""
     try:
-        fetch_orders("serration", timeout=15.0)
+        http_get_json(_ORDERS_URL.format(key="serration"), headers=_HEADERS, timeout=15.0)
     except Exception as e:                       # noqa: BLE001 - any probe failure -> skip, not fail
         pytest.skip(f"warframe.market unreachable: {e!r}")
     return True
@@ -51,13 +64,13 @@ def market():
 def test_orders_fetch_returns_live_prices(market):
     _guard()
     try:
-        orders = fetch_orders("serration", timeout=20.0)
+        payload = http_get_json(_ORDERS_URL.format(key="serration"), headers=_HEADERS, timeout=20.0)
     except NET_ERRORS as e:
         _trip(e)
+    orders = payload.get("data") or []
     assert isinstance(orders, list) and orders
-    prices = wm_client.online_sell_prices(orders)
-    # a popular mod essentially always has online sellers; prices are positive ints
-    assert all(isinstance(p, int) and p > 0 for p in prices)
+    plats = [o["platinum"] for o in orders if o.get("type") == "sell"]
+    assert all(isinstance(p, int) and p > 0 for p in plats)
 
 
 def _wait(state, timeout=90.0):
@@ -76,10 +89,10 @@ def test_start_sweep_prices_only_its_sources(market, tmp_path):
         ds.record_seen({"name": nm})
     ds.save()
 
-    pn = ProducerDef(id="live", dataset="prices_live", mode="orders", sources=["master"])
+    pn = ProducerDef(id="live", dataset="prices_live", type="http", mode="orders",
+                     sources=["master"], http=_spec())
     profile = GameProfile(name="g", datasets=[{"id": "master"}, {"id": "prices_live"}], producers=[pn])
-    # lowercased name resolves straight to the mod's slug — no catalogue fetch needed
-    state = start_sweep(tmp_path, "g", pn, profile=profile, resolve=lambda n: n.lower(), workers=2)
+    state = start_sweep(tmp_path, "g", pn, profile=profile, workers=2)
     _wait(state)
 
     assert not state.running

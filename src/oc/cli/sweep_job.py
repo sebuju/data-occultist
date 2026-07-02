@@ -95,7 +95,7 @@ def run(args) -> int:
             data_dir=data_dir, game=game, node=node, dataset=dataset, key=key,
             profile=profile, items=items, timeout=args.timeout, limit=args.limit,
             workers=args.workers, on_item=on_item, should_stop=should_stop)
-        build_producer(getattr(node, "type", "warframe_market")).run(ctx)
+        build_producer(getattr(node, "type", "http")).run(ctx)
     finally:
         state.running = False
         state.finished = _utcnow_iso()

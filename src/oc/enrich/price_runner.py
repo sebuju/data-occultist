@@ -39,10 +39,6 @@ from pathlib import Path
 from ..eventlog import publish as logev
 from ..jobs import SubprocessJob
 from ..profile.models import ProducerDef
-from ..store import store_for
-from .price_collector import inventory_slugs
-from .slug_resolver import get_resolver
-from .wm_client import slugify
 
 
 def _utcnow_iso() -> str:
@@ -55,7 +51,7 @@ def _utcnow_iso() -> str:
 class SweepState:
     game: str
     dataset: str
-    mode: str = "statistics"
+    mode: str = ""
     total: int = 0
     done: int = 0
     fetched: int = 0
@@ -118,8 +114,8 @@ def _gate(game: str) -> threading.Lock:
 
 # ---- producer-node resolution -----------------------------------------------
 
-def producer_for(profile, dataset: str, *, type: str = "warframe_market",
-                 mode: str = "statistics", throttle: float = 0.4) -> ProducerDef:
+def producer_for(profile, dataset: str, *, type: str = "http",
+                 mode: str = "", throttle: float = 0.4) -> ProducerDef:
     """The configured producer feeding ``dataset`` (its ``type``/``sources`` decide what it
     fetches), or an ephemeral node when none is taught — preserving the original behaviour for
     a dataset with no producer. The ONE place a (game, dataset) maps to its :class:`ProducerDef`
@@ -318,38 +314,8 @@ def _foreign_sweep(data_dir, game: str) -> dict | None:
 
 
 # ---- item-source resolution -------------------------------------------------
-
-def _present_fetch(data_dir, game: str, profile):
-    """A ``fetch_dataset(dataset_id, aggregate)`` for :func:`compute_view_rows` — a plain
-    dataset's PRESENT records only (a sold/removed item must not be re-priced). Ignores the
-    aggregate (a price node reads the dataset's default), preserving prior behaviour."""
-    return lambda ds, _agg: [r for r in store_for(data_dir, game, ds, profile=profile).records()
-                             if r.get("present", True)]
-
-
-def _resolver(data_dir, game: str, resolve):
-    """A name->slug callable: the caller's, else the catalogue-backed resolver, else naive."""
-    if resolve is not None:
-        return resolve
-    r = get_resolver(data_dir, game)
-    return r.resolve if r is not None else slugify
-
-
-def gather_source_items(data_dir, game: str, profile, sources: list[str],
-                        resolve=None, name_field: str = "name") -> list[tuple[str, str]]:
-    """``(slug, name)`` pairs for every item across a node's ``sources`` (datasets/views),
-    de-duped by slug. ``name_field`` is the column holding the item name (selectable per
-    price node). Names that don't resolve to a market slug are dropped."""
-    from .subset import compute_view_rows
-    resolve = _resolver(data_dir, game, resolve)
-    fetch = _present_fetch(data_dir, game, profile)
-    rows: list[dict] = []
-    for s in sources:
-        # A bare dataset source -> its present rows directly; a VIEW source -> computed (so its
-        # filters/derived columns apply, e.g. count>0), recursing through the shared primitive.
-        sub = profile.subset_def(s) if profile else None
-        rows.extend(compute_view_rows(profile, s, fetch)["rows"] if sub else fetch(s, None))
-    return inventory_slugs(rows, name_field or "name", resolve)
+# Item names are gathered by :func:`oc.enrich.http_producer.gather_source_names` (re-exported
+# for callers of this module); the producer applies its own key transform per its HttpSpec.
 
 
 # ---- supervising the child sweep --------------------------------------------
@@ -445,7 +411,7 @@ def _sync(runner: _Runner) -> None:
         job.join(timeout=2.0)
 
 
-def start_sweep(data_dir, game: str, price_node, *, profile=None, key=None, resolve=None,
+def start_sweep(data_dir, game: str, price_node, *, profile=None, key=None,
                 items=None, timeout: float = 30.0, limit: int = 0, workers: int = 6) -> SweepState:
     """Start a background producer sweep (in a child process) for ``price_node`` and return its
     live state.
@@ -453,9 +419,8 @@ def start_sweep(data_dir, game: str, price_node, *, profile=None, key=None, reso
     A second call while this node is running is a no-op (returns the running state); if a
     DIFFERENT node in the same game (or another process) is sweeping, returns a ``blocked``
     state without starting. ``items`` forces the exact list to price (on_change path); otherwise
-    the node's ``sources`` decide, falling back to the whole catalogue. ``key`` is recomputed by
-    the child from ``profile``; ``resolve`` (a callable) can't cross a process, so the child
-    rebuilds the catalogue-backed resolver itself."""
+    the node's ``sources`` decide. ``key`` is recomputed by the child from ``profile``; the child
+    also builds any catalogue resolver itself (a callable can't cross a process)."""
     dataset = price_node.dataset
     runner = _runner(game, dataset)
     _sync(runner)   # reap a just-finished prior child so a stale running flag doesn't block us

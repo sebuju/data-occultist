@@ -12,7 +12,6 @@ from .change import ChangeEvent, ChangeOp
 from .dataset_store import DatasetStore, rows_at
 from .factory import store_for
 from .keys import KeyMap, KeySpec
-from .price_store import PriceStore
 
 __all__ = ["ChangeEvent", "ChangeOp", "DatasetStore", "KeyMap", "KeySpec",
-           "PriceStore", "inspect", "rows_at", "store_for"]
+           "inspect", "rows_at", "store_for"]

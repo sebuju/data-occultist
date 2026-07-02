@@ -156,6 +156,12 @@ class FieldDef(BaseModel):
     # tight box can't split it. Isolate crops just the box (upscaled) so it sees only those
     # pixels — the fix for a number fused with a neighbouring symbol.
     isolate: bool = False
+    # Post-OCR GLYPH refinement: after this field is read, match each cleanly-separated
+    # glyph against the game's taught glyph atlas (GameProfile.glyphs) and substitute a
+    # character only when a *different* taught glyph out-scores the OCR's own by a margin.
+    # Fixes systematic single-glyph confusions the dictionary cannot (e.g. "Q3" vs "G3"
+    # where both are valid names). No atlas / no clean segmentation -> the read is untouched.
+    glyph_check: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -376,6 +382,11 @@ class ItemDef(BaseModel):
     # 1.0 = require the whole cell inside; 0 = never dismiss on that axis.
     min_cover_x: float = 0.75
     min_cover_y: float = 0.75
+    # Terminator/sentinel: when this template is detected, it marks the END of the real list —
+    # every record positioned AFTER it is discarded (an unowned-relic placeholder, a "no more
+    # results" row). Ordered scroll/mirror datasets only; the collector cuts the store to the
+    # sentinel's row on each clean frame it's visible. Game-agnostic (any list with an end marker).
+    terminator: bool = False
 
 
 class DetectCombine(str, Enum):
@@ -718,73 +729,142 @@ class SortRule(BaseModel):
     desc: bool = False
 
 
-class EnrichRule(BaseModel):
-    """Attach external data to each row via a registered :class:`Enricher` (e.g.
-    warframe.market prices, relic contents). The enricher reads ``source_field`` (a base
-    OR derived column) as its lookup key. Network enrichers run only on an explicit
-    enrich pass, never in the live filter/derive refresh."""
+class HttpFilter(BaseModel):
+    """One predicate on an array element, ANDed with the others. ``path`` is a dotted
+    lookup within the element (e.g. ``"type"`` or ``"user.status"``)."""
 
-    id: str = ""                    # stable id so the teach UI can node-ify each rule
-    type: str                       # registered enricher name (registry._ENRICHER)
-    source_field: str = "name"      # which column feeds the enricher's lookup
-    enabled: bool = True
+    path: str
+    op: str = "eq"                  # eq | ne | in | nin | gt | ge | lt | le | contains
+    value: object = None            # scalar, or a list for in/nin
+
+
+class HttpArraySpec(BaseModel):
+    """Reduce a JSON array to one value: select -> filter -> pluck -> aggregate. The
+    field's ``path`` must resolve to a list; each element is kept when every
+    :class:`HttpFilter` passes, ``pluck`` reads a value out of it, and ``agg`` folds
+    the plucked values to a single number."""
+
+    filter: list[HttpFilter] = Field(default_factory=list)
+    pluck: str = ""                 # dotted path within each kept element to the value
+    agg: str = "min"               # min|max|sum|count|median|median_low|first
+    depth: int = 5                 # median_low: median of the lowest ``depth`` values
+
+
+class HttpField(BaseModel):
+    """One output dataset column pulled from the fetched JSON response."""
+
+    out_field: str                  # dataset column name (e.g. "price_min")
+    path: str = ""                 # dotted/[i] path to the value ("" = response root)
+    array: HttpArraySpec | None = None   # when set, ``path`` must resolve to a list
+    type: str = "text"            # text | number  (number coerces / drops non-numeric)
+    required: bool = False         # drop the whole row if this yields nothing
+
+
+class HttpRequest(BaseModel):
+    """The HTTP call made per source item. ``url`` templates ``{name}`` (raw source
+    value) and ``{key}`` (``key_transform`` applied, percent-encoded when ``key_encode``).
+    Header + query values may template the same placeholders."""
+
+    method: str = "GET"
+    url: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+    query: dict[str, str] = Field(default_factory=dict)
+    timeout: float = 30.0
+
+
+class CatalogueSpec(BaseModel):
+    """Teachable name -> key resolver (a generic re-expression of a slug catalogue).
+    The producer fetches ``url`` once per sweep, reads the array at ``items_path``,
+    builds ``{name_path -> key_path}``, and resolves each source name through it (exact
+    -> slugify -> fuzzy at ``fuzzy``). Cached on disk for ``ttl_days``."""
+
+    url: str                        # list endpoint returning all items
+    items_path: str = "data"       # path to the array of catalogue entries
+    name_path: str = ""            # path within an entry to its display name
+    key_path: str = ""             # path within an entry to its key
+    fuzzy: float = 0.9             # corrector cutoff for a fuzzy name match
+    ttl_days: float = 7            # disk-cache freshness
+    # Extra key framings to try after a direct slugify miss (before fuzzy): each hint is
+    # appended to slugify(name), e.g. ``_set`` resolves "Soma Prime" -> ``soma_prime_set``.
+    suffix_hints: list[str] = Field(default_factory=list)
+
+
+class HttpSpec(BaseModel):
+    """Everything the generic ``http`` producer needs to fetch + map one item -> one row.
+    All of it is authored in the teach UI — zero API knowledge lives in Python."""
+
+    request: HttpRequest = Field(default_factory=HttpRequest)
+    key_transform: str = "slugify"  # none | lowercase | slugify | catalogue
+    key_encode: bool = True         # percent-encode the substituted {key}
+    catalogue: CatalogueSpec | None = None   # required when key_transform == "catalogue"
+    root: str = ""                 # path applied to the response before every field path
+    fields: list[HttpField] = Field(default_factory=list)
 
 
 class ProducerDef(BaseModel):
     """A standalone *producer*: fired on a schedule/trigger, it fetches external data and
     pushes current records into its output ``dataset`` (so the data lives in a dataset like
     any other, joinable by a view). The pluggable kind is chosen by ``type`` (registry
-    ._PRODUCER): ``warframe_market`` sweeps the market and writes one price snapshot per item
-    (daily candles also accumulate in the price store); ``relic`` writes one row per
-    (relic, reward, state). The only game-specific, pluggable producers — Warframe's
-    allowed exception."""
+    ._PRODUCER): ``http`` fetches a taught URL per source item and maps JSON paths ->
+    columns (warframe.market pricing is just an ``http`` node in the profile); ``relic``
+    writes one row per (relic, reward). Nothing here is game-specific — the URL, headers,
+    and response mapping are all taught."""
 
     id: str
-    type: str = "warframe_market"   # registered producer backend (registry._PRODUCER)
-    # warframe_market only — what it fetches per item: ``statistics`` (daily candles ->
-    # history, movers, 48h live median) or ``orders`` (live lowest online SELL right now, no
-    # history). Pick per node; run two nodes (two datasets) for both, joined in a view.
-    mode: str = "statistics"        # "statistics" | "orders"
+    type: str = "http"              # registered producer backend (registry._PRODUCER)
+    mode: str = ""                  # free-text status label only (shown in the node UI)
     dataset: str = "prices"         # output dataset the records are written to
     throttle: float = 0.4           # seconds between requests during a sweep
     enabled: bool = True
-    # warframe_market only — which items to price. EMPTY = the whole market catalogue (the
-    # original behaviour). When set, the node prices only the names found in these source
-    # datasets/views (e.g. wire an inventory dataset in to price just owned gear, or a
-    # relic-reward dataset to price just this run's rewards). Wired in the graph UI as
-    # input edges; resolved to slugs via the catalogue resolver before a sweep.
+    # Which items to fetch: the names found in these source datasets/views (e.g. wire an
+    # inventory dataset in to price just owned gear). Wired in the graph UI as input edges.
     sources: list[str] = Field(default_factory=list)
-    # warframe_market only — which source column names the item to price (resolved to a
-    # market slug). Default ``name``; selectable in the UI when a source's item names live
-    # under a different column.
+    # Which source column names the item (fed to the URL template / catalogue resolver).
     source_field: str = "name"
+    # The generic HTTP fetch+map spec (for ``type: http``). Authored in the UI.
+    http: HttpSpec | None = None
     # How this producer's output rows are keyed/deduped in the dataset — its own
-    # :class:`KeyDef` (e.g. relic rewards key on ``relic|item|state``). None -> ``name``
-    # (the market-snapshot default). The producer MUST feed :meth:`GameProfile.key_map_for`
-    # so the write key matches the read key, else the ledger re-keys to NULL on open.
+    # :class:`KeyDef` (e.g. relic rewards key on ``relic|item``). None -> ``name``. The
+    # producer MUST feed :meth:`GameProfile.key_map_for` so the write key matches the read
+    # key, else the ledger re-keys to NULL on open.
     key: KeyDef | None = None
 
 
 class TriggerDef(BaseModel):
-    """A generic *trigger*: it fires one or more price nodes' sweeps on a condition,
-    so pricing can run automatically instead of only on a manual button. Pure config —
-    the runner that evaluates triggers lives in the collector / web app, never in the
-    capture loop. Three kinds:
+    """A generic *trigger*: it fires one or more targets on a condition, so work can run
+    automatically instead of only on a manual button. Pure config — the runner that evaluates
+    triggers lives in the collector / web app, never in the capture loop. Kinds:
 
-    * ``interval``   — fire every ``interval_s`` seconds (periodic refresh).
-    * ``on_change``  — fire when a dataset in ``watch`` gains new/changed records, pricing
-      only those changed keys (real-time, e.g. relic-reward items the moment they're read).
-    * ``manual``     — never auto-fires; just declares the wiring (the sweep button drives it).
+    * ``interval``       — fire every ``interval_s`` seconds (periodic refresh).
+    * ``on_change``      — fire when a dataset/subset in ``watch`` gains new/changed records,
+      pricing only those changed keys (real-time, e.g. relic-reward items the moment they're read).
+    * ``on_app_start``   — fire once when the web app boots.
+    * ``on_capture``     — fire when a capture session starts (live OR precapture).
+    * ``on_live_start``  — fire when the server live-collection session starts (armed collection).
+    * ``on_live_stop``   — fire when the server live-collection session stops.
+    * ``manual``         — never auto-fires; just declares the wiring (the sweep button drives it).
+
+    A trigger's ``targets`` are producer ids (sweep/refresh) or file-source ids (read). It can
+    ALSO act on datasets: ``dataset_targets`` names datasets and ``dataset_action`` says what to
+    do to them when it fires (clear, or clone/move their data into ``dataset_dest``).
     """
 
     id: str
-    kind: str = "interval"                  # interval | on_change | manual
+    # interval | on_change | on_app_start | on_capture | on_live_start | on_live_stop | manual
+    kind: str = "interval"
     interval_s: float = 300.0               # for kind="interval": seconds between fires
     watch: list[str] = Field(default_factory=list)    # for kind="on_change": datasets to watch
-    targets: list[str] = Field(default_factory=list)  # price-node ids this trigger fires
+    targets: list[str] = Field(default_factory=list)  # producer / file-source ids this trigger fires
     enabled: bool = True
     sound: str = ""                         # optional sound file (in the web sounds folder) the UI plays on fire
     volume: float = 1.0                     # playback volume for ``sound`` (0..1)
+    # datasets this trigger acts on, and what it does to them. dataset_action is one of
+    # "" (none) | clear | clone_batches | clone_resolved | move_batches | move_resolved.
+    # clone/move copy each dataset_target's data into dataset_dest (batches = preserve batch
+    # grouping; resolved = collapse current records into one new batch). move also clears source.
+    dataset_targets: list[str] = Field(default_factory=list)
+    dataset_action: str = ""
+    dataset_dest: str = ""                  # destination dataset for clone/move actions
 
 
 class SourceMatch(BaseModel):
@@ -908,7 +988,6 @@ class SubsetDef(BaseModel):
     filters: list[FilterRule] = Field(default_factory=list)
     derived: list[DerivedColumn] = Field(default_factory=list)
     hidden_columns: list[str] = Field(default_factory=list)  # result columns to omit from the view
-    enrich: list[EnrichRule] = Field(default_factory=list)   # legacy; price is a producer now
     sort: list[SortRule] = Field(default_factory=list)   # multi-column sort (primary first)
     sort_by: str = ""               # legacy single-column sort (folded into ``sort``)
     sort_desc: bool = False
@@ -982,6 +1061,18 @@ class GraphLayout(BaseModel):
     float_windows: dict[str, dict] = Field(default_factory=dict)
 
 
+class GlyphDef(BaseModel):
+    """One taught reference glyph: a single character plus the saved crop of how that
+    character looks in this game's font. Several samples of the same character are several
+    ``GlyphDef`` entries (same ``char``, different ``image``) — more samples make the match
+    sturdier. ``image`` is a bare filename under ``captures/<game>/glyphs/`` (mirrors item
+    cutouts). Post-OCR glyph refinement (``FieldDef.glyph_check``) matches ambiguous glyphs
+    against this atlas. This is game DATA authored in the UI — no glyph knowledge in Python."""
+
+    char: str
+    image: str
+
+
 class GameProfile(BaseModel):
     """Everything needed to detect a game and read its windows."""
 
@@ -1006,6 +1097,8 @@ class GameProfile(BaseModel):
     file_sources: list[FileSourceDef] = Field(default_factory=list)
     triggers: list[TriggerDef] = Field(default_factory=list)
     dictionaries: list[DictionaryDef] = Field(default_factory=list)
+    # Taught glyph atlas for post-OCR glyph refinement (see GlyphDef / FieldDef.glyph_check).
+    glyphs: list[GlyphDef] = Field(default_factory=list)
     # Teach-UI node layout (positions/sizes/collapse/tables/open-images). Pure UI
     # data; the collector ignores it. Lives here so layout travels with the profile.
     layout: GraphLayout = Field(default_factory=GraphLayout)

@@ -1,4 +1,4 @@
-from oc.enrich.warframe_market import slugify
+from oc.enrich.http_get import slugify
 
 
 def test_slugify_basic():

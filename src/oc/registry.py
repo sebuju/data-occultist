@@ -24,7 +24,6 @@ from typing import TypeVar
 from .interfaces import (
     CaptureBackend,
     Corrector,
-    Enricher,
     OcrEngine,
     ProcessDetector,
     ProducerSource,
@@ -41,7 +40,6 @@ _PROCESS: dict[str, type[ProcessDetector]] = {}
 _OCR: dict[str, type[OcrEngine]] = {}
 _CLASSIFIER: dict[str, type[WindowClassifier]] = {}
 _CORRECTOR: dict[str, type[Corrector]] = {}
-_ENRICHER: dict[str, type[Enricher]] = {}
 _PRODUCER: dict[str, type[ProducerSource]] = {}
 _PARSER: dict[str, type[SourceParser]] = {}
 
@@ -57,8 +55,7 @@ _IMPL_MODULES = (
     "oc.detect.classifier",
     "oc.learn.rapidfuzz_corrector",
     "oc.learn.difflib_corrector",
-    "oc.enrich.warframe_market",
-    "oc.enrich.wm_producer",
+    "oc.enrich.http_producer",
     "oc.enrich.relic",
     "oc.source.parsers.log_lines",
     "oc.source.parsers.ini",
@@ -98,10 +95,6 @@ def register_classifier(name: str):
 
 def register_corrector(name: str):
     return _register(_CORRECTOR, name)
-
-
-def register_enricher(name: str):
-    return _register(_ENRICHER, name)
 
 
 def register_producer(name: str):
@@ -168,10 +161,6 @@ def build_classifier(name: str, **opts) -> WindowClassifier:
 
 def build_corrector(name: str, **opts) -> Corrector:
     return _build(_CORRECTOR, "corrector", name, **opts)
-
-
-def build_enricher(name: str, **opts) -> Enricher:
-    return _build(_ENRICHER, "enricher", name, **opts)
 
 
 def build_producer(name: str, **opts) -> ProducerSource:
