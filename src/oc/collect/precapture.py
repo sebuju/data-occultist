@@ -82,6 +82,8 @@ def _sig(image: np.ndarray) -> int:
 # flag — recording continues, and the user can re-enable it if it stopped too early.
 _AUTOSCROLL_CLICKS = 1       # wheel notches per nudge (small step keeps cross-scroll overlap)
 _AUTOSCROLL_GIVE_UP = 3      # barren nudges in a row -> pause recording (list end reached)
+_SCROLL_LAND_S = 0.35        # grace for a posted nudge to RENDER before it counts as barren
+                             # (WM_MOUSEWHEEL is async; the pre-scroll frame reads settled+stale)
 
 def _detect_boxes(profile: GameProfile) -> list[FractionBox]:
     """Every region used for window/state detection — detectors on windows and states."""
@@ -588,6 +590,8 @@ class PrecaptureSession:
         idle = max(interval, 0.5)
         barren = 0                            # consecutive auto-scrolls that surfaced nothing new
         pending_scroll = False                # a scroll was sent, awaiting its result
+        scroll_from: np.ndarray | None = None # thumb of the frame the pending nudge scrolled AWAY from
+        scroll_at = 0.0                       # monotonic time the pending nudge was posted
         scroll_sig: int | None = None         # detect-region sig the auto-scroll cfg was read at
         natural_end = False                   # loop ended on its own (max_frames / list-end), not a user stop
         try:
@@ -661,27 +665,45 @@ class PrecaptureSession:
                         if kept:                       # good frame saved -> advance
                             barren = 0
                             scrolled = scroll_window(win, self._scroll_clicks)
-                            pending_scroll = scrolled
-                        elif pending_scroll:           # nudged, but nothing new settled yet
-                            barren += 1
-                            if barren >= _AUTOSCROLL_GIVE_UP:
-                                barren = 0
-                                pending_scroll = False
-                                if self._auto_process:     # list end -> end recording, then process
-                                    natural_end = True
-                                    break
-                                self.pause(True)       # list end reached -> pause, don't uncheck
+                            if scrolled:
+                                pending_scroll = True
+                                scroll_from = saved_thumb    # frame we scrolled away from
+                                scroll_at = time.monotonic()
+                        elif pending_scroll:
+                            # Has the nudge actually LANDED? WM_MOUSEWHEEL is an async POST, so
+                            # the next fast grab often still shows the exact pre-scroll frame —
+                            # which reads settled+stale. Counting THAT barren fires a second
+                            # scroll before the first animates (double-scroll, skipped row, no
+                            # capture between). Only count it once the view has moved off
+                            # scroll_from, or a short land-timeout lapses (true list end never
+                            # moves, so the timeout is what ends it).
+                            landed = scroll_from is None or \
+                                settle.changed_cells(thumb, scroll_from) >= settle.MIN_CELLS
+                            if not landed and (time.monotonic() - scroll_at) < _SCROLL_LAND_S:
+                                pass                   # nudge not rendered yet -> keep waiting
                             else:
-                                scrolled = scroll_window(win, self._scroll_clicks)   # retry
+                                barren += 1
+                                if barren >= _AUTOSCROLL_GIVE_UP:
+                                    barren = 0
+                                    pending_scroll = False
+                                    if self._auto_process:   # list end -> end recording, then process
+                                        natural_end = True
+                                        break
+                                    self.pause(True)   # list end reached -> pause, don't uncheck
+                                else:
+                                    scrolled = scroll_window(win, self._scroll_clicks)   # retry
+                                    if scrolled:
+                                        scroll_from = thumb
+                                        scroll_at = time.monotonic()
                 else:
                     barren = 0
                     pending_scroll = False
 
                 moving = not settled           # screen changing (transition) -> grab fast to catch the settle
                 prev_thumb = thumb
-                # wait ON the stop event so cancel is instant even mid idle-poll. A just-sent
-                # scroll is about to animate the view, so poll fast to catch its settle too.
-                self._stop.wait(fast if (moving or scrolled) else idle)
+                # wait ON the stop event so cancel is instant even mid idle-poll. A pending nudge
+                # is about to animate the view, so poll fast to catch its settle too.
+                self._stop.wait(fast if (moving or scrolled or pending_scroll) else idle)
         except Exception as exc:  # pragma: no cover - defensive
             with self._lock:
                 self._error = str(exc)
