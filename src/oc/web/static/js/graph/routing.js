@@ -265,20 +265,19 @@ function computePorts(links) {
 // lines shows N dots, one per line, never all stacked on one point. Each dot FOLLOWS its line: the
 // router (fanFaceEnds) picks the coord, the dot moves onto that node-relative point.
 
-// Position + colour one dot at a world point, relative to its node's rect. (-1: the dot lives in the
+// Position one dot at a world point, relative to its node's rect. (-1: the dot lives in the
 // node's PADDING box inside its 1px border, but the point/rect are border-box world coords.)
+// An ACTIVE dot (line attached) is INVISIBLE — the line paints its own start dot (#portcap
+// marker-start, #portcap-sel when selected), which by construction sits exactly on the line and
+// over it. This element is only the grab target riding the line's start; idle handles (no line)
+// go back to visible via the idle cssText reset in placeSrcDots.
 function styleDot(dot, pt, rect, cls) {
     dot.style.left = `${pt[0] - rect.x - 1}px`;
     dot.style.top = `${pt[1] - rect.y - 1}px`;
     dot.style.right = "auto";
     dot.style.transform = "translate(-50%, -50%)";
+    dot.style.opacity = "0";
     dot._idleStyle = null;   // active now -> force a rewrite back to its idle home when it next goes idle
-    const sel = cls.includes(" sel");
-    dot.classList.toggle("sel", sel);   // edge selected (either end) -> accent (CSS clears inline bg)
-    dot.style.background = sel ? ""
-        : cls.includes("trigger") ? "var(--trigger-line)"
-        : cls.includes("watch") ? "var(--watch-line)"
-        : "#ff8c2b";   // data orange
 }
 
 // Grow/shrink a pool of source-dot clones off `base` (the drag handle = dot #0); clones get
@@ -303,7 +302,7 @@ function placeSrcDots(node, lines, baseSel, extrasSel, extraCls, spec, idleStyle
     if (!lines || !lines.length) {   // idle handle: no line uses it — show only on node hover (.port-idle)
         node.querySelectorAll(extrasSel).forEach((d) => d.remove());
         // park at its idle home — CSS default ("") or the negotiated left face — only when it changed
-        if (base._idleStyle !== idleStyle) { base.style.cssText = idleStyle; base.classList.remove("sel"); base._idleStyle = idleStyle; }
+        if (base._idleStyle !== idleStyle) { base.style.cssText = idleStyle; base._idleStyle = idleStyle; }
         base.classList.add("port-idle");
         return;
     }
@@ -438,10 +437,6 @@ function drawEdges() {
                 || !onRect(c.pts[0], l.ra) || !onRect(c.pts[c.pts.length - 1], l.rb)
                 || lineCrossesDragged(c.pts, l.aId, l.bId);
     }
-    // Don't re-fan the port dots mid-drag: each dot is a child of its node and rides it as the node
-    // moves, so re-placing them every frame only makes them twitch (and lead the CSS-eased node).
-    // They settle onto the fresh route when the drag ends and routing runs again.
-    if (!draggingNodes) placePortDots(links);   // move each out-port dot onto where its line starts
     const used = new Set();
     // node ids that are turned off — any line touching one is greyed (carries no live data)
     const disSet = new Set();
@@ -449,6 +444,7 @@ function drawEdges() {
     for (const l of links) {
         used.add(l.key);
         const el = edgeEl(l.key, (l.top || l.over) ? top : svg);
+        l._el = el;
         el.setAttribute("class", l.cls
             + (disSet.has(l.aId) || disSet.has(l.bId) ? " dis-edge" : "")
             + (l._stale ? " stale-edge" : ""));   // dragged off its node -> grey + fade until it re-routes
@@ -463,6 +459,22 @@ function drawEdges() {
             // updates it straight to the next FINISHED route.
             setBezier(el, l);
         }
+    }
+    // Place the port dots AFTER painting, and pin each dot to the PAINTED path's start, not the
+    // freshly recomputed fan point: a path that kept an older shape (routing frozen during OCR, no
+    // routed result yet) is never repainted above, so a dot placed at the new fan coord would sit a
+    // few px off its own line whenever the node's size settled after the line was first drawn.
+    // (A routed line already has l.p1 = its route's pts[0], adopted from routeCache above — also the
+    // morph target, so a morphing line's dot goes straight to where the line is about to land.)
+    // Don't re-fan the port dots mid-drag: each dot is a child of its node and rides it as the node
+    // moves, so re-placing them every frame only makes them twitch (and lead the CSS-eased node).
+    // They settle onto the fresh route when the drag ends and routing runs again.
+    if (!draggingNodes) {
+        for (const l of links) {
+            const c = routeCache.get(l.key);
+            if (!(c && c.pts && c.pts.length >= 2) && l._el._geo && l._el._geo.length) l.p1 = l._el._geo[0];
+        }
+        placePortDots(links);   // move each out-port grab handle onto where its line starts
     }
     for (const [k, el] of edgeEls) if (!used.has(k)) { cancelMorph(el); el.remove(); edgeEls.delete(k); }
     if (wire) {

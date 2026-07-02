@@ -69,6 +69,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
             kill gpu
         </button>
+        <span id="gpuMemLbl" class="gpumem" title="dedicated VRAM held by the OCR process right now" hidden></span>
         <!-- pretty-dirty controls: shown in node view only when transient overrides exist -->
         <div class="pw-dirtybar" id="prettyDirtyBar" hidden>
             <span class="pw-dirty-count" id="prettyDirtyCount"></span>
@@ -143,6 +144,18 @@
                  diamond still reads as terminated. Centred on the endpoint; takes the line's colour. -->
                         <marker id="squarecap" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto">
                             <path d="M2,2 L8,2 L8,8 L2,8 z" class="squarecap-head" />
+                        </marker>
+                        <!-- out-port dot: the START cap of every line that leaves an out-port (.gedge.flow /
+                 .gedge.watch). The dot IS part of the line (marker-start), so it sits exactly on the
+                 line's start and paints over it by construction — no separate DOM dot to align (the
+                 .port element remains only as the invisible grab handle). 8px, line's colour. -->
+                        <marker id="portcap" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse">
+                            <circle cx="5" cy="5" r="5" class="portcap-head" />
+                        </marker>
+                        <!-- selected variant (.gedge.sel): grown a touch + a crisp --sel ring, matching the
+                 line's own selection treatment (thicker, never recoloured). -->
+                        <marker id="portcap-sel" viewBox="0 0 12 12" refX="6" refY="6" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse">
+                            <circle cx="6" cy="6" r="5" class="portcap-head portcap-ring" />
                         </marker>
 
                         <!-- ============================================================

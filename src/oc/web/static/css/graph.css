@@ -272,19 +272,24 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     background: var(--accent); top: 50%; transform: translateY(-50%); cursor: crosshair; z-index: 2;
 }
 .gnode .port.out { right: -4px; background: var(--data); }   /* match the data-line orange */
-.gnode .port.out.sel { background: var(--sel); }   /* edge selected (either end) -> white */
 .gnode .port.in { left: -4px; background: var(--line); }
 .gnode .port.pwatch { left: -4px; right: auto; background: var(--watch-line); }   /* trigger watch out-port (left face) */
-.gnode .port.pwatch.sel { background: var(--sel); }
 /* an idle out-port (drag handle with no line) only appears while its node is hovered, so resting
    nodes aren't dotted with empty ports; it's still grabbable once shown. */
 .gnode .port.port-idle { opacity: 0; pointer-events: none; transition: opacity .1s; }
 .gnode:hover .port.port-idle { opacity: 1; pointer-events: auto; }
 /* every line caps BOTH ends with the small square by default; the more-specific edge rules
    below (.gedge.flow/.toview/.trigger/.watch) override only marker-end with their own glyph,
-   so a line keeps the square wherever it has no arrow/chevron/diamond (incl. the port start). */
+   so a line keeps the square wherever it has no arrow/chevron/diamond. Lines that LEAVE an
+   out-port (.flow/.watch) start with the PORT DOT itself (#portcap): the dot is the line's own
+   marker-start, so it sits exactly on the start and paints over it — nothing shows beneath it.
+   (The DOM .port element is only the invisible grab handle riding the same point.) */
 .gedge { fill: none; stroke: var(--line); stroke-width: 1.8; marker-start: url(#squarecap); marker-end: url(#squarecap); }
+.gedge.flow, .gedge.watch { marker-start: url(#portcap); }
+.gedge.flow.sel, .gedge.watch.sel { marker-start: url(#portcap-sel); }   /* selected -> grown dot + --sel ring */
 .squarecap-head { fill: context-stroke; }   /* square takes the line's colour (or accent when selected) */
+.portcap-head { fill: context-stroke; }     /* port dot takes the line's colour (data orange / trigger / watch) */
+.portcap-ring { stroke: var(--sel); stroke-width: 0.75; }
 .gedge.data { stroke: var(--data); opacity: 1; }   /* data flow: solid bright orange */
 .gedge.toview { marker-end: url(#flowarrow); }                     /* dataset -> view: solid + arrow */
 /* producer → dataset (a node pushing data OUT): emphasised + an arrowhead so the flow
@@ -329,8 +334,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .circlebar-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; }
 .gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; marker-start: none; marker-end: none; }   /* live drag line: no caps */
 /* selected edge keeps its OWN colour; highlight is a whitish outline (halo) around the stroke,
-   not a recolour. Two tight drop-shadows in --sel build an even outline on both sides of the line. */
-.gedge.sel { stroke-width: 2.2; opacity: 1 !important; filter: drop-shadow(0 0 1.5px var(--sel)) drop-shadow(0 0 1.5px var(--sel)); }
+   not a recolour. One soft, wider drop-shadow in --sel — a gentle glow, not a crisp sparkle. */
+.gedge.sel { stroke-width: 2.2; opacity: 1 !important; filter: drop-shadow(0 0 0.1px var(--sel)); }
 /* a line touching a disabled node is greyed (it carries no live data); a stale-edge is a line whose
    node has been dragged off its routed endpoint — greyed + faded the same way until it re-routes */
 .gedge.dis-edge, .gedge.stale-edge { filter: grayscale(1); }
