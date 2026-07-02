@@ -203,7 +203,7 @@ def _flow_fetch(game: str):
 
     ``agg == "all"`` is the no-collapse opt-out: open at ``latest`` (so the materialisation
     doesn't churn) and return every observation via :func:`rows_at`."""
-    return lambda ds, agg: rows_at(_store(game, ds, "latest" if agg == "all" else agg), agg)
+    return lambda ds, agg: rows_at(_store(game, ds, "latest" if agg == "all" else agg), agg, present_only=True)
 
 
 @router.get("/{game}/subset/{subset}")
@@ -257,7 +257,7 @@ def flow_details(game: str, req: _DetailsReq):
 
     # subset rows aggregate by the CONSUMING view's policy (mirrors _flow_fetch) — share the memo
     def fetch(d, agg):
-        return rows_at(store(d, "latest" if agg == "all" else agg), agg)
+        return rows_at(store(d, "latest" if agg == "all" else agg), agg, present_only=True)
     subsets: dict[str, dict] = {}
     for sid in dict.fromkeys(req.subsets):
         sub = profile.subset_def(sid)

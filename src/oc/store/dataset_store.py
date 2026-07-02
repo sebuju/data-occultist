@@ -151,12 +151,18 @@ def aggregate_records(records: list[dict], policy: str = "latest") -> dict:
     return out
 
 
-def rows_at(store, aggregate: str, *, present_only: bool = False) -> list[dict]:
+def rows_at(store, aggregate: str, *, present_only: bool = True) -> list[dict]:
     """Rows a VIEW sees from one dataset store under its chosen aggregate. ``"all"`` returns
     every observation (no collapse — :meth:`DatasetStore.all_records`); any other policy returns
-    the keyed/collapsed :meth:`DatasetStore.records`. ``present_only`` drops removed rows (a
-    pricing source must not re-price a sold item). The ONE place the "all" opt-out is honoured,
-    so the web view, trigger change-gate, and any future reader stay in lockstep."""
+    the keyed/collapsed :meth:`DatasetStore.records`. The ONE place the "all" opt-out is honoured,
+    so the web view, trigger change-gate, and any future reader stay in lockstep.
+
+    ``present_only`` (DEFAULT, and the only safe value for a view/producer) drops
+    reconciled-removed rows — a ``present=0`` row is a sold/deleted item still on the ledger,
+    NOT live data, so it must never surface in a subset join or re-price. This defaults ON so
+    that FORGETTING it is safe: a caller that genuinely wants removed rows (e.g. a history/audit
+    view) must opt out with ``present_only=False`` on purpose. Do not reintroduce a default-off
+    footgun — a removed relic leaking into a join is exactly the bug this guards."""
     rows = store.all_records() if aggregate == "all" else store.records()
     return [r for r in rows if r.get("present", True)] if present_only else rows
 

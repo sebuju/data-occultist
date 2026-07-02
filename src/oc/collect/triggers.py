@@ -241,7 +241,7 @@ class TriggerRunner:
         try:
             fetch = lambda ds, agg: rows_at(store_for(  # noqa: E731
                 self._data_dir, self._profile.name, ds, profile=self._profile,
-                aggregate="latest" if agg == "all" else agg), agg)
+                aggregate="latest" if agg == "all" else agg), agg, present_only=True)
             view = compute_view_rows(self._profile, sid, fetch)
             cols = view["columns"]
             visible = [{c: r.get(c) for c in cols} for r in view["rows"]]
