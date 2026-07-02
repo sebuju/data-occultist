@@ -175,11 +175,11 @@ def test_fields_for_dedupes_stale_duplicate_ids():
     from oc.profile.models import GameProfile, WindowDef
 
     win = WindowDef(id="w", fields=[
-        FieldDef(id="name", fuzzy=0.65, learn=True),
+        FieldDef(id="name", fuzzy=0.65),
         FieldDef(id="count"),
         FieldDef(id="name", fuzzy=0.82),          # stale shadow
     ])
     prof = GameProfile(name="g", windows=[win])
     out = prof.fields_for(win)
     assert [f.id for f in out] == ["name", "count"]
-    assert out[0].learn is True and out[0].fuzzy == 0.65
+    assert out[0].fuzzy == 0.65

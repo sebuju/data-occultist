@@ -1,12 +1,10 @@
-"""Self-learning OCR repair: a per-game dictionary plus fuzzy correction.
+"""OCR read repair: an authored per-game dictionary plus fuzzy correction.
 
-High-confidence reads teach the :class:`Lexicon` (a game-specific dictionary of
-known terms per field). Low-confidence reads are snapped to the closest known
-term via a :class:`~oc.interfaces.Corrector`. Over time the dictionary grows and
-corrections get better.
+Reads are snapped to the closest known term via a :class:`~oc.interfaces.Corrector`,
+using only the vocabulary the profile's dictionaries declare — there is no
+self-learning, so every correction traces back to a term someone taught.
 """
 
-from .lexicon import Lexicon
 from .resolver import FieldResolver, ResolvedField
 
-__all__ = ["Lexicon", "FieldResolver", "ResolvedField"]
+__all__ = ["FieldResolver", "ResolvedField"]

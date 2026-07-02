@@ -63,6 +63,13 @@ def put_profile(name: str, profile: GameProfile, merge: bool = True):
     if merge and existing is not None:
         profile = merge_profiles(existing, profile)
     _preserve_producer_http(existing, profile)   # never let a stale save strip an http node's spec
+    # Re-pull fed dictionaries so a feed-config change (columns/wiring) refreshes terms now —
+    # save_profile then externalises the derived (deduped) list to each dictionary's term file.
+    try:
+        from ...learn.dict_feed import apply_feeds
+        apply_feeds(settings.data_dir, name, profile)
+    except Exception:  # noqa: BLE001 - best-effort; never block a save
+        pass
     path = save_profile(settings.profiles_dir, profile)
     return {"saved": str(path), "windows": [w.id for w in profile.windows]}
 
