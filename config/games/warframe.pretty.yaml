@@ -590,6 +590,8 @@ pages:
         enabled: false
       - key: slug
         enabled: false
+      sortField: price_min
+      sortDesc: true
     binding:
       src: subset
       id: relic_rewards_price_from_stored

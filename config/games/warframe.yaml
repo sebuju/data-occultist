@@ -32,6 +32,7 @@ fields:
   min_confidence: 0.0
   isolate: false
   glyph_check: false
+  fold_accents: false
 - id: count
   type: number
   extract: whole
@@ -43,6 +44,7 @@ fields:
   min_confidence: 0.0
   isolate: false
   glyph_check: false
+  fold_accents: false
 - id: rank
   type: number
   extract: whole
@@ -54,6 +56,7 @@ fields:
   min_confidence: 0.0
   isolate: false
   glyph_check: false
+  fold_accents: false
 windows:
 - id: equipment_window
   dataset: master
@@ -74,6 +77,7 @@ windows:
     min_confidence: 0.05
     isolate: false
     glyph_check: false
+    fold_accents: false
   - id: count
     type: number
     extract: whole
@@ -91,6 +95,7 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    fold_accents: false
   - id: arcane_level
     type: diamonds
     extract: whole
@@ -102,6 +107,7 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    fold_accents: false
   data_area:
     x: 0.031884303692792056
     y: 0.17565452653306793
@@ -311,6 +317,7 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    fold_accents: false
   - id: mod_drain
     type: number
     extract: number
@@ -322,6 +329,7 @@ windows:
     min_confidence: 0.5
     isolate: true
     glyph_check: false
+    fold_accents: false
   - id: mod_count
     type: number
     extract: number
@@ -342,6 +350,7 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    fold_accents: false
   data_area:
     x: 0.04033210220688822
     y: 0.4859775443166545
@@ -517,6 +526,7 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    fold_accents: false
   data_area:
     x: 0.2472434730244972
     y: 0.19635388680544943
@@ -610,6 +620,7 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    fold_accents: false
   - id: count
     type: number
     extract: number
@@ -621,6 +632,7 @@ windows:
     min_confidence: 0.4
     isolate: false
     glyph_check: false
+    fold_accents: false
   data_area:
     x: 0.04068236562341155
     y: 0.1729023165854181
@@ -781,6 +793,7 @@ windows:
     min_confidence: 0.75
     isolate: false
     glyph_check: false
+    fold_accents: true
   data_area:
     x: 0.0449550474139316
     y: 0.17880592428756362
@@ -866,7 +879,7 @@ windows:
     enabled: true
     scrollbar:
       x: 0.596809419224071
-      y: 0.18852464527640542
+      y: 0.18574686749862768
       w: 0.004
       h: 0.7202815859034493
     scrollbar_orientation: vertical
@@ -1698,7 +1711,7 @@ layout:
       x: 760.0
       y: -2140.0
       w: 520.0
-      h: 1668.0
+      h: 1837.0
       collapsed: false
       custW: true
       custH: false
@@ -1800,7 +1813,7 @@ layout:
       collapsed: false
     trigger:owned_refresh:
       x: 340.0
-      y: -1240.0
+      y: -1300.0
       w: 360.0
       h: 363.0
       collapsed: false
@@ -2007,7 +2020,7 @@ layout:
       custW: false
       custH: true
     sub:master_prime_parts:
-      x: 3140.0
+      x: 2560.0
       y: -2360.0
       w: 360.0
       h: 1220.0
@@ -2075,7 +2088,7 @@ layout:
       custW: true
       custH: false
     producer:wf_market_relic:
-      x: 2560.0
+      x: 3060.0
       y: -2140.0
       w: 537.0
       h: 1704.0
@@ -2083,11 +2096,11 @@ layout:
       custW: true
       custH: false
     ds:relic_prices:
-      x: 2560.0
+      x: 3060.0
       y: -2360.0
       collapsed: false
     vt:ds:relic_prices:
-      x: 3560.0
+      x: 4060.0
       y: -2360.0
       w: 760.0
       h: 340.0
@@ -2103,7 +2116,7 @@ layout:
       custW: true
       custH: false
     trigger:trigger_on_new_relic:
-      x: 3140.0
+      x: 3640.0
       y: -1120.0
       w: 420.0
       h: 360.0
@@ -2609,9 +2622,9 @@ layout:
     - sub:relics_refinement_with_contents
     - sub:contents_with_price
     - vt:sub:relics_refinement_view_view
-    - vt:sub:contents_with_price
     - det:relic_refinement:detect_1
     - vt:ds:relics_refinement
+    - vt:sub:contents_with_price
     outline:
       color: '#5ae6c2'
       style: none
@@ -2729,7 +2742,6 @@ layout:
   - vt:sub:statistic_prices_joined
   - vt:sub:relics_with_content_view
   - prev:relic_refinement
-  - vt:sub:contents_with_price
   - vt:ds:relics_offered
   - vt:ds:ee_log_
   - vt:ds:relics_refinement
@@ -2742,6 +2754,7 @@ layout:
   - vt:ds:relic_contents
   - vt:ds:mods
   - vt:ds:master
+  - vt:sub:contents_with_price
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -2854,8 +2867,8 @@ layout:
     - sub:relics_refinement_with_contents
     - sub:contents_with_price
     - vt:sub:relics_refinement_view_view
-    - vt:sub:contents_with_price
     - vt:ds:relics_refinement
+    - vt:sub:contents_with_price
     outline:
       color: '#2c313c'
       style: none
