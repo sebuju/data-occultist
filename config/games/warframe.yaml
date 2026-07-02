@@ -32,6 +32,7 @@ fields:
   fuzzy: 0.82
   min_confidence: 0.0
   isolate: false
+  glyph_check: false
 - id: count
   type: number
   extract: whole
@@ -43,6 +44,7 @@ fields:
   fuzzy: 0.82
   min_confidence: 0.0
   isolate: false
+  glyph_check: false
 - id: rank
   type: number
   extract: whole
@@ -54,6 +56,7 @@ fields:
   fuzzy: 0.82
   min_confidence: 0.0
   isolate: false
+  glyph_check: false
 windows:
 - id: equipment_window
   dataset: master
@@ -74,6 +77,7 @@ windows:
     fuzzy: 0.82
     min_confidence: 0.05
     isolate: false
+    glyph_check: false
   - id: count
     type: number
     extract: whole
@@ -91,6 +95,7 @@ windows:
     fuzzy: 0.82
     min_confidence: 0.0
     isolate: false
+    glyph_check: false
   - id: arcane_level
     type: diamonds
     extract: whole
@@ -102,6 +107,7 @@ windows:
     fuzzy: 0.75
     min_confidence: 0.0
     isolate: false
+    glyph_check: false
   data_area:
     x: 0.031884303692792056
     y: 0.17565452653306793
@@ -167,6 +173,7 @@ windows:
       case_sensitive: false
     min_cover_x: 0.75
     min_cover_y: 0.75
+    terminator: false
   - id: arcane
     enabled: true
     box:
@@ -191,6 +198,7 @@ windows:
       case_sensitive: false
     min_cover_x: 0.75
     min_cover_y: 0.75
+    terminator: false
   static_grid: false
   scroll:
     enabled: true
@@ -309,6 +317,7 @@ windows:
     fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
+    glyph_check: false
   - id: mod_drain
     type: number
     extract: number
@@ -320,6 +329,7 @@ windows:
     fuzzy: 0.8
     min_confidence: 0.5
     isolate: true
+    glyph_check: false
   - id: mod_count
     type: number
     extract: number
@@ -340,6 +350,7 @@ windows:
     fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
+    glyph_check: false
   data_area:
     x: 0.04033210220688822
     y: 0.4859775443166545
@@ -389,6 +400,7 @@ windows:
       case_sensitive: true
     min_cover_x: 0.75
     min_cover_y: 0.75
+    terminator: false
   - id: drop_item
     enabled: true
     box:
@@ -407,6 +419,7 @@ windows:
     priority: 0
     min_cover_x: 0.75
     min_cover_y: 0.75
+    terminator: false
   static_grid: true
   scroll:
     enabled: true
@@ -513,6 +526,7 @@ windows:
     fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
+    glyph_check: false
   data_area:
     x: 0.2472434730244972
     y: 0.19635388680544943
@@ -562,9 +576,10 @@ windows:
       case_sensitive: false
     min_cover_x: 0.75
     min_cover_y: 0.75
+    terminator: false
   static_grid: false
   preprocess:
-    mode: none
+    mode: threshold
     colors: []
     tolerance: 60
     scale: 1.0
@@ -605,6 +620,7 @@ windows:
     fuzzy: 0.82
     min_confidence: 0.0
     isolate: false
+    glyph_check: false
   - id: count
     type: number
     extract: number
@@ -616,6 +632,7 @@ windows:
     fuzzy: 0.82
     min_confidence: 0.4
     isolate: false
+    glyph_check: false
   data_area:
     x: 0.04068236562341155
     y: 0.1729023165854181
@@ -665,6 +682,7 @@ windows:
       case_sensitive: false
     min_cover_x: 0.75
     min_cover_y: 0.75
+    terminator: false
   - id: guard
     enabled: true
     box:
@@ -683,6 +701,7 @@ windows:
     priority: 1
     min_cover_x: 0.75
     min_cover_y: 0.75
+    terminator: false
   static_grid: false
   scroll:
     enabled: true
@@ -700,7 +719,7 @@ windows:
     autoscroll: false
     scroll_clicks: 1
   preprocess:
-    mode: none
+    mode: threshold
     colors: []
     tolerance: 60
     scale: 1.0
@@ -774,6 +793,7 @@ windows:
     fuzzy: 0.82
     min_confidence: 0.75
     isolate: false
+    glyph_check: false
   data_area:
     x: 0.0449550474139316
     y: 0.17880592428756362
@@ -834,6 +854,7 @@ windows:
     priority: 0
     min_cover_x: 0.75
     min_cover_y: 0.75
+    terminator: false
   - id: not_owned
     enabled: true
     box:
@@ -852,6 +873,7 @@ windows:
     priority: 1
     min_cover_x: 0.75
     min_cover_y: 0.75
+    terminator: true
   static_grid: false
   scroll:
     enabled: true
@@ -890,7 +912,7 @@ windows:
     autoscroll: false
     scroll_clicks: 1
   preprocess:
-    mode: none
+    mode: threshold
     colors: []
     tolerance: 60
     scale: 1.0
@@ -965,12 +987,6 @@ datasets:
   dedup: true
   batch_mode: run
   sync_mode: accumulate
-- id: prices_statistics
-  aggregate: latest
-  key_field: ''
-  dedup: true
-  batch_mode: run
-  sync_mode: accumulate
 - id: prices_live
   aggregate: latest
   key_field: ''
@@ -1013,47 +1029,13 @@ datasets:
   dedup: true
   batch_mode: detection
   sync_mode: mirror
+- id: relic_prices
+  aggregate: latest
+  key_field: ''
+  dedup: true
+  batch_mode: run
+  sync_mode: accumulate
 subsets:
-- id: statistic_prices_joined
-  sources:
-  - dataset: master
-    join_field: name
-    join_norm:
-      case_insensitive: true
-      strip_punct: false
-      collapse_ws: true
-      strip_words: []
-    aggregate: latest
-    required: false
-  - dataset: prices_statistics
-    join_field: name
-    join_norm:
-      case_insensitive: true
-      strip_punct: false
-      collapse_ws: true
-      strip_words: []
-    aggregate: latest
-    required: false
-  filters:
-  - field: slug
-    op: nonempty
-    value: ''
-  - field: count
-    op: gt
-    value: '0'
-  derived: []
-  hidden_columns: []
-  enrich:
-  - id: enr_1
-    type: warframe_market
-    source_field: name
-    enabled: true
-  sort: []
-  sort_by: ''
-  sort_desc: false
-  latest_batch: false
-  limit: 0
-  config_collapsed: true
 - id: live_prices_joined
   sources:
   - dataset: master
@@ -1075,7 +1057,7 @@ subsets:
     aggregate: latest
     required: false
   filters:
-  - field: slug
+  - field: price_median
     op: nonempty
     value: ''
   - field: count
@@ -1085,15 +1067,12 @@ subsets:
   - name: total
     template: '{=count*price_median} platinum'
   hidden_columns:
-  - slug
   - arcane_level
   - key
   - _item
   - updated
-  - live_ask
   - _pos
   - _seq
-  enrich: []
   sort: []
   sort_by: ''
   sort_desc: false
@@ -1119,7 +1098,6 @@ subsets:
   hidden_columns:
   - _seq
   - key
-  enrich: []
   sort: []
   sort_by: ''
   sort_desc: false
@@ -1137,7 +1115,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-  - dataset: prices_live
+  - dataset: relic_prices
     join_field: name
     join_norm:
       case_insensitive: true
@@ -1165,7 +1143,6 @@ subsets:
   - key
   - price_min
   - _pos
-  enrich: []
   sort: []
   sort_by: ''
   sort_desc: false
@@ -1201,7 +1178,6 @@ subsets:
   - _item
   - _seq
   - key
-  enrich: []
   sort: []
   sort_by: ''
   sort_desc: false
@@ -1240,7 +1216,6 @@ subsets:
   - updated
   - ducats
   - live_median
-  enrich: []
   sort: []
   sort_by: ''
   sort_desc: false
@@ -1274,7 +1249,6 @@ subsets:
   - _seq
   - _pos
   - _item
-  enrich: []
   sort: []
   sort_by: ''
   sort_desc: false
@@ -1315,7 +1289,6 @@ subsets:
   - live_ask
   - updated
   - volume
-  enrich: []
   sort: []
   sort_by: ''
   sort_desc: false
@@ -1351,7 +1324,6 @@ subsets:
     value: Blueprint
   derived: []
   hidden_columns: []
-  enrich: []
   sort: []
   sort_by: ''
   sort_desc: false
@@ -1359,16 +1331,8 @@ subsets:
   limit: 0
   config_collapsed: false
 producers:
-- id: price
-  type: warframe_market
-  mode: statistics
-  dataset: prices_statistics
-  throttle: 0.4
-  enabled: true
-  sources: []
-  source_field: name
 - id: wf_market_live
-  type: warframe_market
+  type: http
   mode: orders
   dataset: prices_live
   throttle: 0.4
@@ -1376,14 +1340,171 @@ producers:
   sources:
   - master
   source_field: name
+  http:
+    request:
+      method: GET
+      url: https://api.warframe.market/v2/orders/item/{key}
+      headers:
+        platform: pc
+        User-Agent: oc/0.1
+        Accept: application/json
+      query: {}
+      timeout: 30.0
+    key_transform: catalogue
+    key_encode: true
+    catalogue:
+      url: https://api.warframe.market/v2/items
+      items_path: data
+      name_path: i18n.en.name
+      key_path: slug
+      fuzzy: 0.9
+      ttl_days: 7.0
+      suffix_hints:
+      - _set
+    root: data
+    fields:
+    - out_field: price_min
+      path: ''
+      array:
+        filter:
+        - path: type
+          op: eq
+          value: sell
+        - path: user.status
+          op: in
+          value:
+          - online
+          - ingame
+        pluck: platinum
+        agg: min
+        depth: 5
+      type: number
+      required: false
+    - out_field: price_median
+      path: ''
+      array:
+        filter:
+        - path: type
+          op: eq
+          value: sell
+        - path: user.status
+          op: in
+          value:
+          - online
+          - ingame
+        pluck: platinum
+        agg: median_low
+        depth: 5
+      type: number
+      required: false
+    - out_field: volume
+      path: ''
+      array:
+        filter:
+        - path: type
+          op: eq
+          value: sell
+        - path: user.status
+          op: in
+          value:
+          - online
+          - ingame
+        pluck: platinum
+        agg: count
+        depth: 5
+      type: number
+      required: false
 - id: producer
   type: relic
-  mode: statistics
+  mode: ''
   dataset: relic_contents
   throttle: 0.4
   enabled: true
   sources: []
   source_field: name
+- id: wf_market_relic
+  type: http
+  mode: orders
+  dataset: relic_prices
+  throttle: 0.4
+  enabled: true
+  sources:
+  - relic_rewards_limit
+  source_field: name
+  http:
+    request:
+      method: GET
+      url: https://api.warframe.market/v2/orders/item/{key}
+      headers:
+        platform: pc
+        User-Agent: oc/0.1
+        Accept: application/json
+      query: {}
+      timeout: 30.0
+    key_transform: catalogue
+    key_encode: true
+    catalogue:
+      url: https://api.warframe.market/v2/items
+      items_path: data
+      name_path: i18n.en.name
+      key_path: slug
+      fuzzy: 0.9
+      ttl_days: 7.0
+      suffix_hints:
+      - _set
+    root: data
+    fields:
+    - out_field: price_min
+      path: ''
+      array:
+        filter:
+        - path: type
+          op: eq
+          value: sell
+        - path: user.status
+          op: in
+          value:
+          - online
+          - ingame
+        pluck: platinum
+        agg: min
+        depth: 5
+      type: number
+      required: false
+    - out_field: price_median
+      path: ''
+      array:
+        filter:
+        - path: type
+          op: eq
+          value: sell
+        - path: user.status
+          op: in
+          value:
+          - online
+          - ingame
+        pluck: platinum
+        agg: median_low
+        depth: 5
+      type: number
+      required: false
+    - out_field: volume
+      path: ''
+      array:
+        filter:
+        - path: type
+          op: eq
+          value: sell
+        - path: user.status
+          op: in
+          value:
+          - online
+          - ingame
+        pluck: platinum
+        agg: count
+        depth: 5
+      type: number
+      required: false
 file_sources:
 - id: log_ee
   format: log_lines
@@ -1459,77 +1580,75 @@ triggers:
   enabled: true
   sound: ''
   volume: 1.0
-- id: trigger
+  dataset_targets: []
+  dataset_action: ''
+  dataset_dest: ''
+- id: trigger_on_new_relic
   kind: on_change
   interval_s: 300.0
   watch:
-  - relic_rewards_price_from_stored
-  targets: []
+  - relic_rewards_limit
+  targets:
+  - wf_market_relic
   enabled: true
   sound: blip.wav
-  volume: 0.25
+  volume: 1.0
+  dataset_targets: []
+  dataset_action: ''
+  dataset_dest: ''
 dictionaries:
 - id: wiki
   name: wiki
   enabled: true
   source: wiki.txt
+glyphs:
+- char: L
+  image: glyph-20260702-004516-690204.png
 layout:
   nodes:
     game:
-      x: -1380.0
-      y: -1600.0
+      x: -1340.0
+      y: -2360.0
       w: 580.0
       h: 684.0
       collapsed: false
       custW: true
       custH: false
     dict:wiki:
-      x: -780.0
-      y: -1600.0
+      x: -740.0
+      y: -2360.0
       collapsed: false
     ds:master:
-      x: -900.0
-      y: -540.0
-      collapsed: false
-    producer:price:
-      x: -40.0
-      y: -1120.0
+      x: -880.0
+      y: -380.0
       collapsed: false
     ds:prices_live:
-      x: -40.0
-      y: -2920.0
+      x: 240.0
+      y: -2360.0
+      w: 440.0
+      h: 193.0
       collapsed: false
-    ds:prices_statistics:
-      x: -40.0
-      y: -1340.0
-      w: 360.0
-      h: 200.0
-      collapsed: false
-      custW: false
+      custW: true
       custH: false
     sub:live_prices_joined:
-      x: 400.0
-      y: -2920.0
+      x: 860.0
+      y: -2360.0
       w: 380.0
       h: 1260.0
       collapsed: false
       custW: true
       custH: false
-    sub:statistic_prices_joined:
-      x: 360.0
-      y: -1340.0
-      w: 360.0
-      h: 1200.0
+    producer:wf_market_live:
+      x: 240.0
+      y: -2140.0
+      w: 520.0
+      h: 1668.0
       collapsed: false
       custW: true
-      custH: true
-    producer:wf_market_live:
-      x: -40.0
-      y: -2700.0
-      collapsed: false
+      custH: false
     sub:relic_rewards_limit:
       x: 3220.0
-      y: 1760.0
+      y: 1800.0
       w: 420.0
       h: 320.0
       collapsed: false
@@ -1537,11 +1656,11 @@ layout:
       custH: false
     ds:relics_offered:
       x: 2760.0
-      y: 1520.0
+      y: 1560.0
       collapsed: false
     ds:mods:
-      x: -1380.0
-      y: -540.0
+      x: -1360.0
+      y: -380.0
       collapsed: false
     win:mod_window:
       x: -1660.0
@@ -1565,7 +1684,7 @@ layout:
       collapsed: false
     item:equipment_window:arcane:
       x: -3240.0
-      y: 1600.0
+      y: 1620.0
       collapsed: false
     item:equipment_window:normal:
       x: -3240.0
@@ -1577,7 +1696,7 @@ layout:
       collapsed: false
     item:mod_window:drop_item:
       x: -3260.0
-      y: 4220.0
+      y: 4260.0
       collapsed: false
     fld:equipment_window:normal:name:
       x: -2460.0
@@ -1589,15 +1708,15 @@ layout:
       collapsed: false
     fld:equipment_window:arcane:name:
       x: -2200.0
-      y: 1600.0
+      y: 1620.0
       collapsed: false
     fld:equipment_window:arcane:arcane_level:
       x: -2820.0
-      y: 1600.0
+      y: 1620.0
       collapsed: false
     fld:equipment_window:arcane:count:
       x: -2560.0
-      y: 1600.0
+      y: 1620.0
       collapsed: false
     fld:mod_window:mod:mod_name:
       x: -2500.0
@@ -1613,11 +1732,11 @@ layout:
       collapsed: false
     tell:mod_window:drop_item:tell_3:
       x: -2860.0
-      y: 4220.0
+      y: 4260.0
       collapsed: false
     trigger:owned_refresh:
-      x: -40.0
-      y: -2380.0
+      x: -140.0
+      y: -1260.0
       w: 360.0
       h: 300.0
       collapsed: false
@@ -1625,16 +1744,8 @@ layout:
       custH: false
     sub:relic_rewards_price_from_stored:
       x: 3680.0
-      y: 1760.0
+      y: 1800.0
       collapsed: false
-    trigger:trigger:
-      x: 3220.0
-      y: 2120.0
-      w: 420.0
-      h: 360.0
-      collapsed: false
-      custW: true
-      custH: false
     win:relic_select:
       x: 280.0
       y: 3100.0
@@ -1646,7 +1757,11 @@ layout:
     item:relic_select:relic_item:
       x: -180.0
       y: 3100.0
+      w: 380.0
+      h: 1239.0
       collapsed: false
+      custW: true
+      custH: false
     fld:relic_select:relic_item:name:
       x: -420.0
       y: 3100.0
@@ -1657,11 +1772,15 @@ layout:
       collapsed: false
     item:relic_select:guard:
       x: -180.0
-      y: 4360.0
+      y: 4420.0
+      w: 400.0
+      h: 1156.0
       collapsed: false
+      custW: true
+      custH: false
     tell:relic_select:guard:tell_no_relic:
       x: -420.0
-      y: 4360.0
+      y: 4420.0
       collapsed: false
     prev:relic_select:
       x: 280.0
@@ -1673,35 +1792,27 @@ layout:
       custH: false
     vt:sub:relic_rewards_price_from_stored:
       x: 3220.0
-      y: 2520.0
+      y: 2620.0
       collapsed: false
     vt:sub:live_prices_joined:
-      x: 800.0
-      y: -2920.0
+      x: 1280.0
+      y: -2360.0
       w: 1020.0
-      h: 1260.0
-      collapsed: false
-      custW: true
-      custH: true
-    vt:sub:statistic_prices_joined:
-      x: 760.0
-      y: -1340.0
-      w: 860.0
-      h: 1200.0
+      h: 1220.0
       collapsed: false
       custW: true
       custH: true
     producer:producer:
-      x: -1380.0
-      y: -800.0
+      x: -1360.0
+      y: -640.0
       w: 360.0
       h: 200.0
       collapsed: false
       custW: false
       custH: true
     ds:relic_contents:
-      x: -900.0
-      y: -800.0
+      x: -880.0
+      y: -640.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -1781,15 +1892,15 @@ layout:
       collapsed: false
     item:relic_refinement:not_owned:
       x: -400.0
-      y: 1560.0
+      y: 1580.0
       collapsed: false
     tell:relic_refinement:not_owned:tell_3:
       x: -660.0
-      y: 1920.0
+      y: 1940.0
       collapsed: false
     tell:relic_refinement:not_owned:tell_4:
       x: -660.0
-      y: 1560.0
+      y: 1580.0
       collapsed: false
     ds:relics_refinement:
       x: 1020.0
@@ -1825,27 +1936,27 @@ layout:
       collapsed: false
     vt:ds:relics_offered:
       x: 2760.0
-      y: 1760.0
+      y: 1800.0
       w: 420.0
       h: 1140.0
       collapsed: false
       custW: false
       custH: true
     sub:master_prime_parts:
-      x: 1860.0
-      y: -2920.0
+      x: 2340.0
+      y: -2360.0
       w: 360.0
-      h: 1260.0
+      h: 1220.0
       collapsed: false
       custW: false
       custH: true
     ds:ee_log:
-      x: -2760.0
-      y: -1600.0
+      x: -2720.0
+      y: -2360.0
       collapsed: false
     vt:ds:ee_log:
-      x: -2360.0
-      y: -1600.0
+      x: -2320.0
+      y: -2360.0
       w: 840.0
       h: 460.0
       collapsed: false
@@ -1868,25 +1979,65 @@ layout:
       custW: false
       custH: true
     det:game:detect_1:
-      x: -780.0
-      y: -1220.0
+      x: -740.0
+      y: -1980.0
       collapsed: false
     src:log_ee:
-      x: -2760.0
-      y: -1360.0
+      x: -2720.0
+      y: -2120.0
       w: 360.0
       h: 740.0
       collapsed: false
       custW: true
       custH: false
     vt:src:log_ee:
-      x: -2360.0
-      y: -1120.0
+      x: -2320.0
+      y: -1880.0
       w: 840.0
       h: 480.0
       collapsed: false
       custW: true
       custH: true
+    glyphs:
+      x: -1340.0
+      y: -1620.0
+      w: 880.0
+      h: 686.0
+      collapsed: false
+      custW: true
+      custH: false
+    producer:wf_market_relic:
+      x: 4120.0
+      y: 2120.0
+      w: 537.0
+      h: 1704.0
+      collapsed: false
+      custW: true
+      custH: false
+    ds:relic_prices:
+      x: 4120.0
+      y: 1560.0
+      collapsed: false
+    vt:ds:relic_prices:
+      x: 4700.0
+      y: 1560.0
+      collapsed: false
+    prev:relic_rewards:
+      x: 4040.0
+      y: 900.0
+      w: 500.0
+      h: 320.0
+      collapsed: false
+      custW: true
+      custH: false
+    trigger:trigger_on_new_relic:
+      x: 4120.0
+      y: 1780.0
+      w: 420.0
+      h: 320.0
+      collapsed: false
+      custW: true
+      custH: false
   tables:
     warframe:ds:master:
       sorts:
@@ -1984,10 +2135,6 @@ layout:
         _seq: 57
         _batch: 70
         name: 239
-    ds:prices_statistics:
-      sorts:
-      - col: _seq
-        dir: -1
     view:relic_rewards_stored:
       sorts:
       - col: price
@@ -1998,8 +2145,13 @@ layout:
         dir: -1
     ds:prices_live:
       sorts:
-      - col: _batch
-        dir: -1
+      - col: _seq
+        dir: 1
+      widths:
+        _seq: 36
+        _batch: 36
+        price_min: 70
+        price_median: 90
     view:statistic_prices_joined:
       widths:
         _seq: 36
@@ -2036,7 +2188,7 @@ layout:
     view:relics_with_content_view:
       widths:
         name: 212
-        count: 36
+        count: 78
         item: 239
         live_sellers: 89
         price_min: 71
@@ -2113,6 +2265,7 @@ layout:
       - _pos
   open_images:
   - game
+  - glyphs
   - equipment_window
   - mod_window
   - relic_rewards
@@ -2129,6 +2282,7 @@ layout:
     - det:game:detect_1
     - ds:relic_contents
     - producer:producer
+    - glyphs
     outline:
       color: '#8fe65a'
       style: none
@@ -2155,8 +2309,12 @@ layout:
     - sub:relic_rewards_limit
     - sub:relic_rewards_price_from_stored
     - vt:sub:relic_rewards_price_from_stored
-    - trigger:trigger
     - vt:ds:relics_offered
+    - producer:wf_market_relic
+    - ds:relic_prices
+    - vt:ds:relic_prices
+    - prev:relic_rewards
+    - trigger:trigger_on_new_relic
     outline:
       color: '#5ae6c2'
       style: none
@@ -2215,7 +2373,6 @@ layout:
   - id: group_17
     title: 'price: stash'
     members:
-    - ds:prices_statistics
     - sub:statistic_prices_joined
     - producer:price
     - vt:sub:statistic_prices_joined
@@ -2250,8 +2407,6 @@ layout:
     titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    w: 2340
-    h: 1500
     schemeId: orange
   - id: group_19
     title: 'window: equipment'
@@ -2279,7 +2434,7 @@ layout:
     titleAlign: left
     titlePos: tl
     w: 2200
-    h: 2680
+    h: 2720
     schemeId: lime
   - id: group_22
     title: 'window: relic select'
@@ -2300,7 +2455,6 @@ layout:
     - sub:relics_with_content_view
     - vt:sub:relics_with_content_view
     - vt:ds:relics
-    - vt:ds:dataset
     - vt:ds:relics_select
     outline:
       color: '#5ae6c2'
@@ -2434,6 +2588,8 @@ layout:
   - vtd:src:source
   - vt:ds:ee_log
   - vt:src:log_ee
+  - vt:ds:relic_prices
+  - prev:relic_rewards
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -2442,14 +2598,15 @@ layout:
     - item:relic_select:guard
     - tell:relic_select:guard:tell_no_relic
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_6
     parent: group_22
     title: ''
@@ -2458,14 +2615,15 @@ layout:
     - fld:relic_select:relic_item:name
     - fld:relic_select:relic_item:count
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_7
     parent: group_22
     title: ''
@@ -2475,14 +2633,15 @@ layout:
     - det:relic_select:detect_h
     - sb:relic_select:scrollbar
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_8
     parent: group_25
     title: ''
@@ -2491,14 +2650,15 @@ layout:
     - tell:relic_refinement:not_owned:tell_3
     - tell:relic_refinement:not_owned:tell_4
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_9
     parent: group_25
     title: ''
@@ -2506,14 +2666,15 @@ layout:
     - item:relic_refinement:relic_item
     - fld:relic_refinement:relic_item:name
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_10
     parent: group_25
     title: ''
@@ -2524,14 +2685,15 @@ layout:
     - sb:relic_refinement:scrollbar
     - det:relic_refinement:detect_1
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_11
     parent: group_25
     title: ''
@@ -2543,14 +2705,15 @@ layout:
     - vt:sub:contents_with_price
     - vt:ds:relics_refinement
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_12
     parent: group_11
     title: ''
@@ -2558,18 +2721,18 @@ layout:
     - sub:relic_rewards_limit
     - sub:relic_rewards_price_from_stored
     - vt:sub:relic_rewards_price_from_stored
-    - trigger:trigger
     - ds:relics_offered
     - vt:ds:relics_offered
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_13
     parent: group_11
     title: ''
@@ -2577,29 +2740,32 @@ layout:
     - item:relic_rewards:item_1
     - fld:relic_rewards:item_1:name
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_14
     parent: group_11
     title: ''
     members:
     - win:relic_rewards
     - det:relic_rewards:detect_h
+    - prev:relic_rewards
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_15
     parent: group_22
     title: ''
@@ -2610,14 +2776,15 @@ layout:
     - ds:relics_select
     - vt:ds:relics_select
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_16
     parent: group_16
     title: ''
@@ -2625,14 +2792,15 @@ layout:
     - item:mod_window:drop_item
     - tell:mod_window:drop_item:tell_3
     outline:
-      color: '#3a4154'
-      style: solid
-      width: 1
+      color: '#2c313c'
+      style: none
+      width: 2
       offset: 0
-    bg: '#191c23'
+    bg: '#181a20'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#2c313c'
     titleAlign: left
+    schemeId: slate
   - id: subgroup_17
     parent: group_16
     title: ''
@@ -2727,6 +2895,7 @@ layout:
     - game
     - dict:wiki
     - det:game:detect_1
+    - glyphs
     outline:
       color: '#8fe65a'
       style: none
@@ -2755,6 +2924,23 @@ layout:
     titleColor: '#8fe65a'
     titleAlign: left
     schemeId: chartreuse
+  - id: subgroup_25
+    parent: group_11
+    title: ''
+    members:
+    - ds:relic_prices
+    - vt:ds:relic_prices
+    - producer:wf_market_relic
+    - trigger:trigger_on_new_relic
+    outline:
+      color: '#3a4154'
+      style: none
+      width: 1
+      offset: 0
+    bg: '#191c23'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
   schemes:
   - id: s_f7c53c61-d630-4b1b-9fc4-17c3356055d9
     name: custom 1
