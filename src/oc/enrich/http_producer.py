@@ -1,20 +1,26 @@
-"""Generic HTTP producer — fetch JSON from a taught URL per source item, map JSON
-paths to dataset columns, write one row per item.
+"""Generic HTTP producer — fetch JSON from a taught URL and map JSON paths to dataset
+columns. Two shapes, chosen by the spec:
 
-This is the one network-pricing backend: warframe.market is just an ``http`` node in
-a profile (its URL, headers, and response mapping are authored in the teach UI), not
-a Python class. The producer knows nothing about any specific API — it reads the
-:class:`~oc.profile.models.HttpSpec` off the node and drives the shared
-:func:`oc.enrich.sweep_engine.run_sweep`.
+* **per item** (default) — fetch the URL once per source item (``{name}``/``{key}``
+  substituted) and map the response to ONE row (warframe.market pricing works this way).
+* **list / explode** (``HttpSpec.explode`` set) — fetch the URL ONCE (no sources) and
+  expand nested arrays into MANY rows, one per leaf (the WFCD relic table works this
+  way: ``explode: [relics, rewards]`` -> one row per (relic, reward)).
 
-The *mapping engine* (:func:`map_response`) is a pure function — select an array,
-filter it, pluck a field, aggregate — kept separate so it's unit-testable with no
-network.
+This is the one network backend: warframe.market pricing AND the relic reward table are
+just ``http`` nodes in a profile (URL, headers, and response mapping authored in the
+teach UI), not Python classes. The producer knows nothing about any specific API — it
+reads the :class:`~oc.profile.models.HttpSpec` off the node.
+
+The *mapping engine* (:func:`map_response` / :func:`map_rows`) is pure — select an array,
+filter it, pluck a field, aggregate, or fill a ``{path}`` template — kept separate so
+it's unit-testable with no network.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import statistics
 import time
 import urllib.parse
@@ -97,12 +103,29 @@ def _eval_array(arr: list, spec) -> object:
     return _agg(values, kept, spec)
 
 
+_TMPL_RE = re.compile(r"\{([^{}]+)\}")
+
+
+def _fill_template(obj: object, tmpl: str) -> str:
+    """Substitute ``{path}`` placeholders in ``tmpl`` with values pulled from ``obj`` by
+    :func:`json_path` (a missing path -> ""), e.g. ``"{tier} {relicName}"`` -> ``"Axi A1"``.
+    Lets one output column be composed from several JSON fields (the generic equivalent of a
+    view's derived column, but at fetch time)."""
+    def one(m: "re.Match") -> str:
+        v = json_path(obj, m.group(1).strip())
+        return "" if v is None else str(v)
+    return _TMPL_RE.sub(one, tmpl)
+
+
 def _eval_field(obj: object, field) -> object:
-    base = json_path(obj, field.path)
-    if field.array is not None:
-        val = _eval_array(base, field.array) if isinstance(base, list) else None
+    if getattr(field, "template", ""):
+        val: object = _fill_template(obj, field.template)
     else:
-        val = base
+        base = json_path(obj, field.path)
+        if field.array is not None:
+            val = _eval_array(base, field.array) if isinstance(base, list) else None
+        else:
+            val = base
     if field.type == "number":
         val = _num(val)
     return val
@@ -121,6 +144,38 @@ def map_response(obj: object, fields: list) -> dict | None:
         if val is not None:
             row[f.out_field] = val
     return row
+
+
+def _explode(rooted: object, paths: list[str]):
+    """Walk nested arrays and yield one merged dict per leaf. ``paths`` are dotted array
+    paths, each relative to the previous level's element; every ancestor object's fields are
+    merged in so a leaf's :func:`map_response` can reference any level (e.g. a relic's ``tier``
+    alongside a reward's ``itemName``). ``[""]`` means the rooted value is itself the list."""
+    def walk(obj: object, ps: list[str], acc: dict):
+        if not ps:
+            merged = dict(acc)
+            if isinstance(obj, dict):
+                merged.update(obj)
+            yield merged
+            return
+        nacc = dict(acc)
+        if isinstance(obj, dict):
+            nacc.update(obj)
+        arr = json_path(obj, ps[0])
+        if isinstance(arr, list):
+            for e in arr:
+                yield from walk(e, ps[1:], nacc)
+    yield from walk(rooted, list(paths), {})
+
+
+def map_rows(rooted: object, spec) -> list[dict]:
+    """Map a rooted response to the producer's output rows. With ``spec.explode`` set, one row
+    per leaf of the nested-array walk (list mode); otherwise the single per-item row (or none)."""
+    if spec.explode:
+        return [r for r in (map_response(m, spec.fields) for m in _explode(rooted, spec.explode))
+                if r is not None]
+    row = map_response(rooted, spec.fields)
+    return [row] if row is not None else []
 
 
 # ---------------------------------------------------------------------------
@@ -282,8 +337,11 @@ def resolved_inputs(data_dir, game: str, profile, node, limit: int = 50) -> dict
     (so the user sees what it will request before running). Capped at ``limit``; ``total`` is
     the true count. ``columns`` is the schema this node emits (``name`` + each ``out_field``)."""
     spec = getattr(node, "http", None)
-    cols = ["name", *[f.out_field for f in (spec.fields if spec else []) if f.out_field]]
+    outs = [f.out_field for f in (spec.fields if spec else []) if f.out_field]
+    cols = outs if "name" in outs else ["name", *outs]   # list mode maps its own ``name`` column
     if spec is None:
+        return {"inputs": [], "total": 0, "columns": cols}
+    if spec.explode:            # list mode: no per-item sources — the one fetch yields every row
         return {"inputs": [], "total": 0, "columns": cols}
     names = gather_source_names(data_dir, game, profile, list(getattr(node, "sources", []) or []),
                                 name_field=getattr(node, "source_field", "name"))
@@ -302,6 +360,17 @@ def probe_item(data_dir, game: str, profile, node, item: str | None = None,
     spec = getattr(node, "http", None)
     if spec is None or not getattr(spec, "request", None) or not spec.request.url:
         return {"error": "this node has no http request configured yet"}
+    if spec.explode:            # list mode: fetch the one URL, show the sample + expanded rows
+        url, headers, query = request_parts(spec, "", "")
+        try:
+            raw = http_get_json(url, headers=headers, timeout=spec.request.timeout,
+                                method=spec.request.method or "GET", query=query)
+        except Exception as e:  # noqa: BLE001 - report any fetch/parse failure to the user
+            return {"name": "(list)", "key": None, "url": url, "error": str(e)}
+        rooted = json_path(raw, spec.root)
+        sample = rooted[:sample_cap] if isinstance(rooted, list) else rooted
+        return {"name": "(list)", "key": None, "url": url, "sample": sample,
+                "mapped": map_rows(rooted, spec)[:sample_cap]}
     if not item:
         names = gather_source_names(data_dir, game, profile, list(getattr(node, "sources", []) or []),
                                     name_field=getattr(node, "source_field", "name"))
@@ -339,6 +408,8 @@ class HttpProducer(ProducerSource):
         spec = getattr(node, "http", None)
         if spec is None or not getattr(spec, "request", None) or not spec.request.url:
             return {"total": 0, "fetched": 0, "failed": 0}
+        if spec.explode:                                   # list mode: one fetch, many rows
+            return self._run_list(ctx, spec)
 
         # Item names: explicit ctx.items (e.g. on_change changed keys) > the node's sources.
         names = [str(n) for n in ctx.items] if ctx.items else gather_source_names(
@@ -376,3 +447,26 @@ class HttpProducer(ProducerSource):
                          throttle=float(getattr(node, "throttle", 0.4) or 0.0),
                          workers=ctx.workers, on_item=ctx.on_item,
                          should_stop=ctx.should_stop, game=ctx.game, log_dataset=ctx.dataset)
+
+    def _run_list(self, ctx: ProducerCtx, spec) -> dict:
+        """List mode: fetch the taught URL ONCE and expand nested arrays into rows (no sources).
+        A single call, so there is nothing to sweep/throttle — write the whole batch in one txn."""
+        stop = ctx.should_stop or (lambda: False)
+        url, headers, query = request_parts(spec, "", "")
+        try:
+            data = http_get_json(url, headers=headers, timeout=spec.request.timeout,
+                                 method=spec.request.method or "GET", query=query)
+        except Exception as e:  # noqa: BLE001 - a fetch/parse failure leaves the prior rows intact
+            return {"total": 0, "fetched": 0, "failed": 1, "error": str(e)}
+        if stop():                                         # cancelled before we wrote anything
+            return {"total": 0, "fetched": 0, "failed": 0}
+        rows = map_rows(json_path(data, spec.root), spec)
+        store = store_for(ctx.data_dir, ctx.game, ctx.dataset, profile=ctx.profile,
+                          key=ctx.key or KeySpec(fields=("name",)))
+        store.begin_batch()
+        store.record_many(rows)                            # one txn, one announce (not per row)
+        store.save()
+        n = len(rows)
+        if ctx.on_item:
+            ctx.on_item(n, n, "", ctx.dataset, True)       # register final progress on the sweep
+        return {"total": n, "fetched": n, "failed": 0, "done": n}

@@ -5,8 +5,8 @@ logic, so it gets the most coverage. No network — everything here is a pure fu
 """
 
 from oc.enrich.http_get import json_path, key_transform
-from oc.enrich.http_producer import _agg, map_response
-from oc.profile.models import HttpArraySpec, HttpField, HttpFilter
+from oc.enrich.http_producer import _agg, _explode, _fill_template, map_response, map_rows
+from oc.profile.models import HttpArraySpec, HttpField, HttpFilter, HttpSpec
 
 
 # ---- json_path --------------------------------------------------------------
@@ -122,3 +122,57 @@ def test_map_response_omits_none_but_keeps_row():
     fields = [HttpField(out_field="present", path="a"),
               HttpField(out_field="absent", path="nope")]
     assert map_response({"a": 1}, fields) == {"present": 1}
+
+
+# ---- template columns -------------------------------------------------------
+
+def test_fill_template_composes_and_drops_missing():
+    obj = {"tier": "Axi", "relicName": "A1"}
+    assert _fill_template(obj, "{tier} {relicName}") == "Axi A1"
+    assert _fill_template(obj, "{tier} {gone}") == "Axi "        # missing path -> ""
+
+
+def test_map_response_template_field_wins_over_path():
+    fields = [HttpField(out_field="name", path="ignored", template="{tier} {relicName}")]
+    assert map_response({"tier": "Axi", "relicName": "A1"}, fields) == {"name": "Axi A1"}
+
+
+# ---- explode / list mode ----------------------------------------------------
+
+_RELICS = {"relics": [
+    {"tier": "Axi", "relicName": "A1", "rewards": [
+        {"itemName": "Braton Prime", "rarity": "Common"},
+        {"itemName": "Nikana Prime", "rarity": "Rare"}]},
+    {"tier": "Lith", "relicName": "G3", "rewards": [
+        {"itemName": "Nikana Prime", "rarity": "Rare"}]},
+    {"tier": "Requiem", "relicName": "I", "rewards": []},   # no rewards -> contributes no rows
+]}
+
+
+def _relic_spec():
+    return HttpSpec(root="", explode=["relics", "rewards"], fields=[
+        HttpField(out_field="name", template="{tier} {relicName}", required=True),
+        HttpField(out_field="item", path="itemName", required=True),
+        HttpField(out_field="rarity", path="rarity")])
+
+
+def test_explode_merges_ancestor_fields_at_each_leaf():
+    merged = list(_explode(_RELICS, ["relics", "rewards"]))
+    assert len(merged) == 3                                  # empty-rewards relic yields nothing
+    assert merged[0]["tier"] == "Axi" and merged[0]["itemName"] == "Braton Prime"
+
+
+def test_map_rows_list_mode_one_row_per_leaf():
+    rows = map_rows(_RELICS, _relic_spec())
+    assert rows == [
+        {"name": "Axi A1", "item": "Braton Prime", "rarity": "Common"},
+        {"name": "Axi A1", "item": "Nikana Prime", "rarity": "Rare"},
+        {"name": "Lith G3", "item": "Nikana Prime", "rarity": "Rare"}]
+
+
+def test_map_rows_per_item_mode_single_row():
+    # no explode -> the classic one-row map (or none)
+    spec = HttpSpec(fields=[HttpField(out_field="v", path="a", type="number")])
+    assert map_rows({"a": 5}, spec) == [{"v": 5}]
+    assert map_rows({"a": None}, HttpSpec(fields=[
+        HttpField(out_field="v", path="a", required=True)])) == []

@@ -3,8 +3,8 @@
 One place that turns "run this producer now" into a throttled, cancellable background sweep —
 driven by BOTH the web app (the manual button) and the collector (triggers), so they can't
 double-run. Type-agnostic: it owns the gate / lock / status / cancel and dispatches the actual
-fetch+write to the backend named by ``type`` (registry._PRODUCER) — ``warframe_market`` prices
-items, ``relic`` writes relic rewards. Responsibilities:
+fetch+write to the backend named by ``type`` (registry._PRODUCER) — the ``http`` producer
+prices items (per-item) or writes an expanded table (list mode). Responsibilities:
 
 * track per-(game, dataset) :class:`SweepState` so each price node reports its own progress;
 * serialise fetching PER GAME — two concurrent sweeps would blow past warframe.market's

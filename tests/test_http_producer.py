@@ -126,6 +126,50 @@ def test_resolved_inputs_previews_names_keys_columns(tmp_path):
     assert out["columns"] == ["name", "price_min", "volume"]
 
 
+def _relic_raw():
+    return {"relics": [
+        {"tier": "Axi", "relicName": "A1", "state": "Intact", "rewards": [
+            {"itemName": "Braton Prime", "rarity": "Common"},
+            {"itemName": "Nikana Prime", "rarity": "Rare"}]},
+        {"tier": "Axi", "relicName": "A1", "state": "Radiant", "rewards": [
+            {"itemName": "Nikana Prime", "rarity": "Rare"}]},   # dup (name,item) across states
+        {"tier": "Requiem", "relicName": "I", "state": "Intact", "rewards": []}]}
+
+
+def _relic_spec():
+    return HttpSpec(
+        request=HttpRequest(url="https://x/relics.json", timeout=60),
+        key_transform="none", key_encode=False, root="", explode=["relics", "rewards"],
+        fields=[HttpField(out_field="name", template="{tier} {relicName}", required=True),
+                HttpField(out_field="item", path="itemName", required=True),
+                HttpField(out_field="rarity", path="rarity")])
+
+
+def test_http_producer_list_mode_writes_expanded_rows(tmp_path, monkeypatch):
+    monkeypatch.setattr(http_producer, "http_get_json", lambda url, **kw: _relic_raw())
+    node = ProducerDef(id="relics", dataset="relic_contents", type="http", http=_relic_spec())
+    # list mode needs no sources; the one fetch yields every row
+    key = KeySpec(fields=("name", "item"))
+    ctx = ProducerCtx(data_dir=str(tmp_path), game="g", node=node, dataset="relic_contents",
+                      key=key, profile=None)
+    res = HttpProducer().run(ctx)
+    assert res["fetched"] == 3                              # 3 mapped rows (empty relic dropped)
+
+    out = DatasetStore(tmp_path, "g", "relic_contents", key=key)
+    rows = {(r["name"], r["item"]): r for r in out.records()}
+    assert len(rows) == 2                                   # the two Nikana states dedup on name|item
+    assert rows[("Axi A1", "Braton Prime")]["rarity"] == "Common"
+    assert ("Axi A1", "Nikana Prime") in rows
+
+
+def test_probe_item_list_mode_shows_rows(tmp_path, monkeypatch):
+    monkeypatch.setattr(http_producer, "http_get_json", lambda url, **kw: _relic_raw())
+    node = ProducerDef(id="relics", dataset="relic_contents", type="http", http=_relic_spec())
+    out = probe_item(str(tmp_path), "g", None, node)
+    assert out["name"] == "(list)"
+    assert {"name": "Axi A1", "item": "Braton Prime", "rarity": "Common"} in out["mapped"]
+
+
 def test_http_producer_cancel_flushes_partial(tmp_path, monkeypatch):
     monkeypatch.setattr(http_producer, "http_get_json", lambda url, **kw: _orders(10))
 

@@ -31,9 +31,9 @@ def _profile(game: str):
 def refresh(game: str, dataset: str = "prices", type: str = "http",
             mode: str = "", throttle: float = 0.4,
             timeout: float = 30.0, limit: int = 0, workers: int = 6):
-    """Start a background producer sweep of ``dataset``. The producer node's ``sources`` decide
-    what's fetched; its ``type`` (``http`` / ``relic``) decides how. A second call while this
-    node is running is a no-op; if a DIFFERENT node in the same game is sweeping, returns
+    """Start a background producer sweep of ``dataset``. The producer node's ``sources`` (or, in
+    list mode, its one fetch) decide what's fetched; its ``type`` (``http``) the backend. A second
+    call while this node is running is a no-op; if a DIFFERENT node in the same game is sweeping, returns
     ``blocked`` instead of starting (one sweep/game)."""
     profile = _profile(game)
     pn = producer_for(profile, dataset, type=type, mode=mode, throttle=throttle)

@@ -27,8 +27,8 @@ def test_incoming_http_is_respected():
     assert incoming.producers[0].http.request.url == "https://new/{key}"   # not overwritten
 
 
-def test_relic_node_untouched():
+def test_non_http_node_untouched():
     existing = GameProfile(name="g", producers=[_http_node()])
-    incoming = GameProfile(name="g", producers=[ProducerDef(id="px", type="relic", dataset="d")])
+    incoming = GameProfile(name="g", producers=[ProducerDef(id="px", type="other", dataset="d")])
     _preserve_producer_http(existing, incoming)
     assert incoming.producers[0].http is None   # switching type away from http is honoured

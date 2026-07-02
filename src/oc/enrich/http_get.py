@@ -1,8 +1,8 @@
 """Generic JSON-over-HTTP transport, shared by every network producer.
 
-One place that speaks HTTP to any host so the generic ``http`` producer (and the
-relic producer's ducat lookup) share connection pooling, key transforms, and JSON
-navigation. Stdlib ``urllib`` only — no extra dependency. Every call is best-effort:
+One place that speaks HTTP to any host so the generic ``http`` producer shares
+connection pooling, key transforms, and JSON navigation across every fetch. Stdlib
+``urllib`` only — no extra dependency. Every call is best-effort:
 network or parse failures raise the small set of errors in :data:`NET_ERRORS` for
 callers to swallow, so external outages never compromise capture.
 
