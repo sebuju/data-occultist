@@ -217,8 +217,8 @@ export class Overlay {
         }
         const active = this.boxes.find((b) => b.id === this.activeId);
 
-        // 1) resize the selected box from an edge/corner handle
-        const handle = this._hitHandle(p, active);
+        // 1) resize the selected box from an edge/corner handle (a locked box has no handles)
+        const handle = active && !active.locked ? this._hitHandle(p, active) : null;
         if (handle) {
             this.op = { type: "resize", box: active, handle, orig: { ...active }, moved: false };
             return;
@@ -234,7 +234,8 @@ export class Overlay {
         }
         if (hit) {
             if (this.activeId !== hit.id) { this.activeId = hit.id; this.onSelect?.(hit.id); this.render(); }
-            this.op = { type: "move", box: hit, start: p, orig: { ...hit }, moved: false };
+            // a locked box (e.g. a calibrated scrollbar) selects but never moves
+            if (!hit.locked) this.op = { type: "move", box: hit, start: p, orig: { ...hit }, moved: false };
             return;
         }
         // 4) empty space: deselect, then start a new box — unless creation is gated off
@@ -297,10 +298,11 @@ export class Overlay {
 
     _updateCursor(p) {
         const active = this.boxes.find((b) => b.id === this.activeId);
-        const h = this._hitHandle(p, active);
+        const h = active && !active.locked ? this._hitHandle(p, active) : null;
         if (h) { this.canvas.style.cursor = h.cur; return; }
         // over a draggable box -> move; the data_area/bbox backdrop is a draw surface, not draggable
         const hit = this._hitBox(p);
+        if (hit && hit.locked) { this.canvas.style.cursor = "not-allowed"; return; }
         if (hit && hit.role !== "data_area" && hit.role !== "bbox") { this.canvas.style.cursor = "move"; return; }
         // backdrop / empty space: crosshair only when drawing is allowed, else the normal cursor
         this.canvas.style.cursor = (this.canCreate && this.canCreate() === false) ? "default" : "crosshair";
@@ -451,10 +453,11 @@ export class Overlay {
             if (b.border) this._borderBand(b, W, H);   // a 'border' tell: tint the sampled perimeter band
             if (b.searchMargin) this._searchRegion(b, W, H, u, color);   // a 'template' tell: dashed slide region
             let label = b.label || b.id || b.role;
+            if (b.locked) label += " 🔒";   // position pinned (e.g. scrollbar with calibration cutouts)
             if (st) label += `  ${st.matched ? "✓" : "✗"}${st.score != null ? ` ${Math.round(st.score * 100)}%` : ""}`;
             this._label(label, b.x * W, b.y * H, color, labelFs);
             this._alignArrow(b, W, H, u, color);   // anchor snap point (align x/y) drawn, not written
-            if (isActive && !this.op) this._drawHandles(b, W, H, u);   // hide handles while dragging
+            if (isActive && !this.op && !b.locked) this._drawHandles(b, W, H, u);   // hide handles while dragging; a locked box has none
         }
 
         // Search structure (drawn LAST, on top of everything): the columns the reader tiles the

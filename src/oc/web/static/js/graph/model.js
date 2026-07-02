@@ -1085,9 +1085,17 @@ export class GraphModel {
         const w = this.window(winId);
         if (!w) return;
         w.scroll = w.scroll || { rows: 1, cols: 1 };
+        // Locked once calibration cutouts exist: each cutout embeds a crop taken at the box's
+        // origin, so moving the box silently invalidates every sample (thumb px shifts by the
+        // move → row offsets misread by a constant). Remove the cutouts to move the box.
+        if (this.scrollbarLocked(winId)) return;
         w.scroll.scrollbar = { x: box.x, y: box.y, w: box.w, h: box.h };
     }
     scrollbar(winId) { const w = this.window(winId); return w && w.scroll && w.scroll.scrollbar; }
+    scrollbarLocked(winId) {
+        const w = this.window(winId);
+        return !!(w && w.scroll && w.scroll.scrollbar && (w.scroll.calib_samples || []).length);
+    }
     setScrollbarOrientation(winId, o) { const w = this.window(winId); if (w && w.scroll) w.scroll.scrollbar_orientation = o; }
     setScrollAutoscroll(winId, on) { const w = this.window(winId); if (!w) return; w.scroll = w.scroll || { rows: 1, cols: 1 }; w.scroll.autoscroll = !!on; }
     setScrollClicks(winId, n) { const w = this.window(winId); if (!w) return; w.scroll = w.scroll || { rows: 1, cols: 1 }; w.scroll.scroll_clicks = n; }
@@ -1127,7 +1135,15 @@ export class GraphModel {
         sc.calib_gain = Math.round(slope * 10) / 10;
         return sc.calib_gain;
     }
-    removeScrollbar(winId) { const w = this.window(winId); if (w && w.scroll) delete w.scroll.scrollbar; }
+    // Killing the scrollbar node removes the whole calibration with it — the cutouts and gain
+    // are crops of THIS box, meaningless without it (and they'd lock a future redraw out).
+    removeScrollbar(winId) {
+        const w = this.window(winId);
+        if (!w || !w.scroll) return;
+        delete w.scroll.scrollbar;
+        delete w.scroll.calib_samples;
+        delete w.scroll.calib_gain;
+    }
 
     // ---- data area (bounds OCR) ---------------------------------------------
 

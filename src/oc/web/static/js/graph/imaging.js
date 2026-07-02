@@ -1428,7 +1428,8 @@ function refreshImageBoxes(winId) {
     // item template box is NOT drawn here — it's the authored cell at one spot, which
     // isn't where detection actually reads; the live grid (below) shows the real cells
     const sb = model.scrollbar(winId);
-    if (sb) boxes.push({ id: "scrollbar", role: "scrollbar", ...sb });
+    // locked once calibration cutouts exist — their crops are tied to this exact origin
+    if (sb) boxes.push({ id: "scrollbar", role: "scrollbar", locked: model.scrollbarLocked(winId), ...sb });
     // the glyph surface has no model boxes — its boxes are the armed positioning rect and the
     // auto-glypher's per-character proposals (editable until confirmed), each labelled by its char
     if (winId === "glyphs") {
