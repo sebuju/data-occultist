@@ -22,15 +22,26 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from .textnorm import norm_text
 
-def _norm_part(value, case_sensitive: bool) -> str | None:
+
+def _norm_part(value, case_sensitive: bool, *, strip_punct: bool = False,
+               collapse_ws: bool = True, strip_words: tuple[str, ...] = ()) -> str | None:
     if value in (None, ""):
         return None
-    # whitespace runs become single underscores so keys are stable across OCR
-    # spacing noise and read as one token ("Arcane Aegis" -> "arcane_aegis")
-    s = re.sub(r"\s+", "_", str(value).strip())
-    if not case_sensitive:
-        s = s.lower()
+    s = str(value)
+    # A "concat" key (punct/word stripping requested) bridges near-match values the SAME way a
+    # subset join does — reuse the one canonicaliser rather than hand-roll a second regex chain.
+    if strip_punct or strip_words:
+        s = norm_text(s, lower=not case_sensitive, strip_punct=strip_punct,
+                      collapse_ws=True, strip_words=list(strip_words))
+    else:
+        s = s.strip()
+        if not case_sensitive:
+            s = s.lower()
+    # whitespace becomes underscores so keys are stable across OCR spacing noise and read as one
+    # token ("Arcane Aegis" -> "arcane_aegis"); collapse_ws off keeps each space its own underscore.
+    s = re.sub(r"\s+", "_", s.strip()) if collapse_ws else s.strip().replace(" ", "_")
     return s or None
 
 
@@ -38,11 +49,19 @@ def _norm_part(value, case_sensitive: bool) -> str | None:
 class KeySpec:
     """One key recipe: ordered field ids, joined by ``sep``. Parts are trimmed,
     whitespace becomes underscores, and (by default) they're lowercased — OCR
-    case/spacing is noisy."""
+    case/spacing is noisy.
+
+    The ``strip_punct``/``collapse_ws``/``strip_words`` knobs power a dataset-level "concat"
+    key: several fields combined into one identity, each part canonicalised through the same
+    near-match normaliser a subset join uses, so e.g. ``relic_contents`` dedups on name+item
+    with punctuation/spacing folded away."""
 
     fields: tuple[str, ...] = ("name",)
     sep: str = "|"
     case_sensitive: bool = False
+    strip_punct: bool = False
+    collapse_ws: bool = True
+    strip_words: tuple[str, ...] = ()
 
     def parts(self, values: dict) -> list[str] | None:
         """The normalised key parts, or ``None`` when any part is missing/empty.
@@ -52,7 +71,8 @@ class KeySpec:
             return None
         out = []
         for f in self.fields:
-            p = _norm_part(values.get(f), self.case_sensitive)
+            p = _norm_part(values.get(f), self.case_sensitive, strip_punct=self.strip_punct,
+                           collapse_ws=self.collapse_ws, strip_words=self.strip_words)
             if p is None:
                 return None
             out.append(p)
@@ -67,7 +87,8 @@ class KeySpec:
         ``norm`` versions the part normalisation itself, so snapshots cached under
         older key rules (e.g. spaces kept) replay once and re-key."""
         return {"fields": list(self.fields), "sep": self.sep, "case": self.case_sensitive,
-                "norm": 2}
+                "punct": self.strip_punct, "ws": self.collapse_ws,
+                "words": list(self.strip_words), "norm": 3}
 
 
 @dataclass(frozen=True)

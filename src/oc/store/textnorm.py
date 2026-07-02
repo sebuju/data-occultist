@@ -9,9 +9,7 @@ This is deliberately data-driven (every knob is an argument, nothing game-specif
 baked in) so the SAME function backs any near-match join — the word list (e.g.
 ``relic``) lives in the profile YAML, never here. It is the shared primitive new
 join/normalise needs should be built on rather than hand-rolling a fresh regex chain
-next to :func:`oc.store.keys._norm_part` or :func:`oc.enrich.relic._norm` (the latter
-is a candidate to later delegate here; its hard-coded ``RELIC`` stays producer-internal
-for now).
+next to :func:`oc.store.keys._norm_part`.
 """
 
 from __future__ import annotations

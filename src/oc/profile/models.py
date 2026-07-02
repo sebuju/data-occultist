@@ -71,7 +71,7 @@ class Extract(str, Enum):
 class DictMode(str, Enum):
     """How a text field uses the game dictionary.
 
-    * ``off`` — the dictionary is not consulted (the self-learning lexicon still is).
+    * ``off`` — the dictionary is not consulted; the read passes through verbatim.
     * ``correct`` — word-per-word correction; an unmatched word passes through.
     * ``drop`` — validation only: every word must already be a dictionary word or
       the read resolves to None. Nothing is rewritten.
@@ -135,10 +135,8 @@ class FieldDef(BaseModel):
     # the pooled vocabulary (every enabled dictionary). Lets one field key off relic
     # names while another keys off arcane names, instead of one shared word soup.
     dictionary: str = ""
-    # If true, high-confidence reads teach the game dictionary and low-confidence
-    # reads are fuzzy-corrected against it. Suits identity text (item names).
-    learn: bool = False
-    # Similarity (0..1) an uncertain read must reach to be snapped to a known term.
+    # Similarity (0..1) an uncertain read must reach to be snapped to a known
+    # dictionary term (word-per-word fuzzy correction under the correcting dict modes).
     fuzzy: float = 0.82
     # Per-field minimum OCR confidence (0..1). A non-empty read below this drops the whole
     # record for that cell — a per-area floor on top of the global ``tuning.min_confidence``.
@@ -646,6 +644,19 @@ class WindowDef(BaseModel):
         return self.dataset or None
 
 
+class JoinNorm(BaseModel):
+    """Teachable canonicalisation applied to a value BEFORE it is matched, so near-match keys
+    (``"Axi A1 Relic"`` vs ``"AXI A1"``) collapse to one. Generic — any near-match join OR a
+    dataset ``concat`` key configures it; game-specific words (e.g. ``relic``) live here in
+    YAML, never in Python. The default (case-insensitive + collapse whitespace) equals the old
+    ``.strip().lower()`` join, so existing exact joins are unaffected."""
+
+    case_insensitive: bool = True   # fold case before matching
+    strip_punct: bool = False       # drop punctuation (collapse to spaces)
+    collapse_ws: bool = True        # runs of whitespace -> one space, trimmed
+    strip_words: list[str] = Field(default_factory=list)   # whole words to remove (e.g. "relic")
+
+
 class DatasetDef(BaseModel):
     """A logical collection of records. Datasets just receive, store, and serve
     rows — HOW a row is keyed/deduped is defined where the rows are read: the
@@ -661,8 +672,14 @@ class DatasetDef(BaseModel):
     # Dataset-level key override for the 1->many collapse. "" = inherit the key taught on the
     # windows/items feeding it (the default). A field name = key on that single field instead.
     key_field: str = ""
+    # "Concat" key override: several fields combined into ONE identity, so rows dedup only when
+    # ALL of these agree (e.g. ``relic_contents`` keyed on name+item — the same item inside two
+    # relics stays two records). Non-empty WINS over ``key_field``. ``key_norm`` canonicalises
+    # each part (case/punct/spacing/word folding) exactly like a subset join.
+    key_fields: list[str] = Field(default_factory=list)
+    key_norm: JoinNorm | None = None
     # False turns the 1->many collapse OFF entirely: every read is kept as its own record
-    # (no dedup/merge). ``key_field`` is ignored when ``dedup`` is False.
+    # (no dedup/merge). ``key_field``/``key_fields`` are ignored when ``dedup`` is False.
     dedup: bool = True
     # How a live collection run splits into revertable batches:
     #   "run"       — one batch for the whole run (default; persistent inventory).
@@ -679,18 +696,32 @@ class DatasetDef(BaseModel):
     sync_mode: str = "accumulate"
 
 
+class DictFeed(BaseModel):
+    """One dataset pushing its column values INTO a dictionary. The chosen ``columns``'
+    values (across every stored row) become dictionary terms — so a collected dataset can
+    author the vocabulary its own field reads snap to. Multiple columns pool together (e.g.
+    pull both relic names and item names from ``relic_contents``). Always deduped on pull."""
+
+    dataset: str = ""
+    columns: list[str] = Field(default_factory=list)
+
+
 class DictionaryDef(BaseModel):
     """A named, game-level word list. OCR reads of text fields snap to the closest
-    entry — exact match first, then fuzzy — an authored alternative to the (flaky)
-    self-learning lexicon for games with a known vocabulary: item/weapon/relic/arcane
-    names, factions, etc. A game can have several; they're pooled.
+    entry — exact match first, then fuzzy — the authored vocabulary for games with a
+    known term set: item/weapon/relic/arcane names, factions, etc. A game can have
+    several; they're pooled.
 
     The term list lives in its own file under ``config/dictionaries/`` (named by
     ``source``) so the profile YAML stays small — a 7000-word dictionary doesn't
     belong inline. ``terms`` is RUNTIME-ONLY: the loader fills it from the ``source``
     file on load and writes it back on save, but it is never serialised into the
     profile YAML. A missing ``source`` file resolves to zero terms and the node
-    survives (it is just a reference)."""
+    survives (it is just a reference).
+
+    ``feeds`` make the list DERIVED: when any dataset feed is wired, ``terms`` are pulled
+    from those datasets' columns (deduped) and REPLACE the hand-typed list — refreshed
+    whenever the fed data changes or the feed config is saved (see ``oc.learn.dict_feed``)."""
 
     id: str
     name: str = ""
@@ -700,6 +731,8 @@ class DictionaryDef(BaseModel):
     # Resolved at load time from ``source`` and returned to the teach UI; the loader
     # strips it from the on-disk profile YAML (it persists to the ``source`` file).
     terms: list[str] = Field(default_factory=list)
+    # Datasets feeding terms in. Non-empty => ``terms`` is derived (pulled + deduped), not hand-typed.
+    feeds: list[DictFeed] = Field(default_factory=list)
 
 
 class FilterRule(BaseModel):
@@ -755,6 +788,10 @@ class HttpField(BaseModel):
 
     out_field: str                  # dataset column name (e.g. "price_min")
     path: str = ""                 # dotted/[i] path to the value ("" = response root)
+    # When set, the value is this text with ``{path}`` placeholders filled from the object
+    # (e.g. ``"{tier} {relicName}"`` -> ``"Axi A1"``) instead of a single ``path`` — one
+    # column composed from several JSON fields. Takes precedence over ``path``/``array``.
+    template: str = ""
     array: HttpArraySpec | None = None   # when set, ``path`` must resolve to a list
     type: str = "text"            # text | number  (number coerces / drops non-numeric)
     required: bool = False         # drop the whole row if this yields nothing
@@ -798,6 +835,11 @@ class HttpSpec(BaseModel):
     key_encode: bool = True         # percent-encode the substituted {key}
     catalogue: CatalogueSpec | None = None   # required when key_transform == "catalogue"
     root: str = ""                 # path applied to the response before every field path
+    # When non-empty, LIST mode: fetch the URL once (no sources) and expand these nested array
+    # paths — each relative to the prior level's element — into one row per leaf (ancestor
+    # fields merge in, so a leaf can reference any level). e.g. ``[relics, rewards]`` on the
+    # WFCD relic table -> one row per (relic, reward). Empty -> per-item mode (fetch per source).
+    explode: list[str] = Field(default_factory=list)
     fields: list[HttpField] = Field(default_factory=list)
 
 
@@ -805,10 +847,10 @@ class ProducerDef(BaseModel):
     """A standalone *producer*: fired on a schedule/trigger, it fetches external data and
     pushes current records into its output ``dataset`` (so the data lives in a dataset like
     any other, joinable by a view). The pluggable kind is chosen by ``type`` (registry
-    ._PRODUCER): ``http`` fetches a taught URL per source item and maps JSON paths ->
-    columns (warframe.market pricing is just an ``http`` node in the profile); ``relic``
-    writes one row per (relic, reward). Nothing here is game-specific — the URL, headers,
-    and response mapping are all taught."""
+    ._PRODUCER): ``http`` fetches a taught URL and maps JSON paths -> columns — per source
+    item (warframe.market pricing), or, with ``HttpSpec.explode`` set, one fetch expanded into
+    many rows (the WFCD relic table -> one row per (relic, reward)). Nothing here is
+    game-specific — the URL, headers, and response mapping are all taught."""
 
     id: str
     type: str = "http"              # registered producer backend (registry._PRODUCER)
@@ -938,19 +980,6 @@ class FileSourceDef(BaseModel):
     enabled: bool = True
 
 
-class JoinNorm(BaseModel):
-    """Teachable canonicalisation applied to each source's ``join_field`` value BEFORE the
-    join matches, so near-match keys (``"Axi A1 Relic"`` vs ``"AXI A1"``) collapse to one.
-    Generic — any near-match join configures it; game-specific words (e.g. ``relic``) live
-    here in YAML, never in Python. The default (case-insensitive + collapse whitespace)
-    equals the old ``.strip().lower()`` join, so existing exact joins are unaffected."""
-
-    case_insensitive: bool = True   # fold case before matching
-    strip_punct: bool = False       # drop punctuation (collapse to spaces)
-    collapse_ws: bool = True        # runs of whitespace -> one space, trimmed
-    strip_words: list[str] = Field(default_factory=list)   # whole words to remove (e.g. "relic")
-
-
 class JoinSource(BaseModel):
     """One input to a subset view: a source dataset (or upstream subset) PLUS how that source
     joins. Per-source so heterogeneous sources combine cleanly — each names its OWN join
@@ -1071,6 +1100,9 @@ class GlyphDef(BaseModel):
 
     char: str
     image: str
+    # Disabled glyphs stay in the atlas (and the UI) but are skipped when building the matcher, so
+    # a bad sample can be muted without deleting it. Default on (older profiles have no flag).
+    enabled: bool = True
 
 
 class GameProfile(BaseModel):
@@ -1245,6 +1277,12 @@ class GameProfile(BaseModel):
         d = self.dataset_def(dataset_id)
         if d is not None and d.dedup is False:
             return KeyMap(KeySpec(), {}, dedup=False)
+        if d is not None and d.key_fields:
+            # Concat key: combine several fields, each canonicalised like a subset join.
+            n = d.key_norm or JoinNorm()
+            return KeyMap(KeySpec(fields=tuple(d.key_fields), case_sensitive=not n.case_insensitive,
+                                  strip_punct=n.strip_punct, collapse_ws=n.collapse_ws,
+                                  strip_words=tuple(n.strip_words)), {})
         if d is not None and d.key_field:
             return KeyMap(KeySpec(fields=(d.key_field,)), {})
         by_item: dict[str, KeySpec] = {}

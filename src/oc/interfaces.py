@@ -160,8 +160,8 @@ class ProducerSource(ABC):
     current records into an output dataset — the producer pattern parallel to OCR capture and
     file sources. Heavy + cancellable, so it runs only on an explicit refresh (the manual button
     or a trigger), never in the capture loop. Selected by name (``ProducerDef.type`` ->
-    ``registry._PRODUCER``): e.g. ``http`` (fetch a taught URL per item, map JSON -> columns)
-    or ``relic`` (relic -> reward rows)."""
+    ``registry._PRODUCER``): ``http`` (fetch a taught URL, map JSON -> columns — per item, or
+    one fetch expanded into many rows in list mode)."""
 
     @abstractmethod
     def run(self, ctx: ProducerCtx) -> dict:
