@@ -27,9 +27,20 @@ const BUFFER = 6;        // extra rows rendered above/below the viewport
 // ranks "0.05" below "0.006" (it reads the fractional "05" vs "006" as 5 vs 6). Otherwise
 // fall back to natural string collation (numeric:true gives "item2" < "item10").
 const _numRe = /^[+-]?(\d+\.?\d*|\.\d+)$/;
+// Numeric tuple cells like `_pos`'s "(12, 0.05)" / "(12,)" — compared component-wise as
+// floats, since the collation fallback mangles the fractional part (see above).
+const _tupRe = /^\(\s*([+-]?(?:\d+\.?\d*|\.\d+))\s*(?:,\s*([+-]?(?:\d+\.?\d*|\.\d+))\s*)?,?\s*\)$/;
 function cmpCell(a, b) {
     const ta = a.trim(), tb = b.trim();
     if (_numRe.test(ta) && _numRe.test(tb)) return parseFloat(ta) - parseFloat(tb);
+    const ma = _tupRe.exec(ta), mb = _tupRe.exec(tb);
+    if (ma && mb) {
+        const d = parseFloat(ma[1]) - parseFloat(mb[1]);
+        if (d) return d;
+        // missing second component (legacy "(12,)") sorts before any present one
+        if (ma[2] == null || mb[2] == null) return (ma[2] != null) - (mb[2] != null);
+        return parseFloat(ma[2]) - parseFloat(mb[2]);
+    }
     return ta.localeCompare(tb, undefined, { numeric: true, sensitivity: "base" });
 }
 

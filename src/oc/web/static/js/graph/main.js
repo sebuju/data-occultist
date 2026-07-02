@@ -64,7 +64,7 @@ import {
     batchesState, batEls, loadBatchesNode,
 } from "./panels/datanodes.js";
 import {
-    pc, pcState, buildPrecap,
+    pc, pcState, buildPrecap, fmtBytes,
 } from "./panels/precap.js";
 import { pushHistory, resetHistory, undo, redo, hist } from "./history.js";
 import { createHistoryPanel } from "../history_panel.js";
@@ -687,6 +687,7 @@ function wireItemField(div, n) {
         else if (k === "minconf") fd.min_confidence = +e.target.value || 0;
         else if (k === "isolate") fd.isolate = e.target.checked;
         else if (k === "glyph_check") fd.glyph_check = e.target.checked;
+        else if (k === "fold_accents") fd.fold_accents = e.target.checked;
         else if (k === "min") fd.min = e.target.value === "" ? null : +e.target.value;
         else if (k === "max") fd.max = e.target.value === "" ? null : +e.target.value;
         else if (k === "dictmode") { fd.dict_mode = e.target.value; rebuild = true; }  // toggles use-dict/fuzzy
@@ -2823,6 +2824,7 @@ function wireNode(div, n) {
             else if (k === "fuzzy") fld.fuzzy = +e.target.value;
             else if (k === "isolate") fld.isolate = e.target.checked;
             else if (k === "glyph_check") fld.glyph_check = e.target.checked;
+            else if (k === "fold_accents") fld.fold_accents = e.target.checked;
             else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
             else if (k === "min") fld.min = e.target.value === "" ? null : +e.target.value;
             else if (k === "max") fld.max = e.target.value === "" ? null : +e.target.value;
@@ -2891,7 +2893,8 @@ function wireScrollbar(div, n) {
     const winId = n.win.id;
     // re-fit the gain from the cutouts after any change, refresh the node, save, and re-read the
     // window image so its row-index labels update (works even with the preview node closed).
-    const relearn = () => { model.learnScrollGain(winId); rebuildNode(n.id); autosave(null); refreshGridPreview(winId); };
+    // refreshImageBoxes: the cutout count decides the box's locked flag on the window canvas.
+    const relearn = () => { model.learnScrollGain(winId); rebuildNode(n.id); autosave(null); refreshGridPreview(winId); refreshImageBoxes(winId); };
     div.querySelectorAll(".sbset").forEach((inp) => inp.addEventListener("change", (e) => {
         if (e.target.dataset.k === "orient") { model.setScrollbarOrientation(winId, e.target.value); autosave(winId); }
     }));
@@ -2930,6 +2933,7 @@ async function captureScrollCutout(n) {
     rebuildNode(`sb:${winId}:scrollbar`);
     autosave(null);
     refreshGridPreview(winId);                // re-read the window image -> row-index labels update
+    refreshImageBoxes(winId);                 // first cutout locks the box on the window canvas
 }
 
 // HTML5 drag-reorder of the cutout rows (drop onto another row moves before it).
@@ -3641,13 +3645,16 @@ $("settingsBtn")?.addEventListener("click", () => {
             h("label", { class: "set-row", id: "ocrThreadsRow", hidden: true, title: "CPU threads each OCR inference may use. 0 = one per core (fastest reads, starves a running game); low values keep reads polite at some latency cost. Takes effect on the next read." },
                 h("span", "cpu threads"),
                 h("input", { id: "ocrThreads", type: "number", min: "0", max: "64", step: "1" })),
-            // Detection downscale — only shown when the live engine has the knob (ppocr5 lacks it).
-            h("label", { class: "set-row", id: "ocrScaleRow", hidden: true, title: "Detection downscale — the DETECTION pass is the biggest single GPU burst per read; ½ = a quarter of the detect pixels = a much shorter stall. Applies live to a running collector." },
+            // Detection downscale — only shown when the live engine has the knob.
+            h("label", { class: "set-row", id: "ocrScaleRow", hidden: true, title: "Detection downscale — the DETECTION pass is the biggest single GPU burst per read; ½ = a quarter of the detect pixels = a much shorter stall. Recognition still crops from the full-detail frame, so text quality holds. Applies live to a running collector." },
                 h("span", "downscale"),
                 h("select", { id: "ocrScale" },
                     h("option", { value: "1" }, "1× full"),
-                    h("option", { value: "2" }, "½ (¼ px)"),
-                    h("option", { value: "4" }, "¼ (1/16 px)")))),
+                    h("option", { value: "2" }, "1/2 (1/4 px)"),
+                    h("option", { value: "4" }, "1/4 (1/16 px)"))),
+            h("label", { class: "set-row", id: "ocrGpuMemRow", hidden: true, title: "Hard VRAM ceiling (GB) for the GPU OCR session — it can never hold more than this. Too low and a big detect fails to allocate; 3 clears real 4K workloads. Applies on the next GPU session build." },
+                h("span", "gpu mem cap (GB)"),
+                h("input", { id: "ocrGpuMem", type: "number", min: "0.5", max: "64", step: "0.5" }))),
         h("section", { class: "set-sec" },
             h("h4", "live collection"),
             h("label", { class: "set-row", title: "Frame limiter — minimum milliseconds between collector reads. 0 (or blank) = as fast as possible (more CPU/GPU). Persists across restarts; a running collector restarts in place so it applies immediately." },
@@ -3815,7 +3822,6 @@ window.addEventListener("keydown", cancelPan, true);
 // drop it once the ~90ms ease has run — re-pressing restarts the timer so a burst keeps gliding.
 // Same class + transition as the drag path (rule 7). Timeout slightly > the transition duration.
 const _snapTimers = new WeakMap();
-let _resizeSettle = 0;   // coalesces the post-resize reroute until the box's glide has settled
 function glideStep(el) {
     if (!el) return;
     el.classList.add("snapping");
@@ -3871,7 +3877,6 @@ document.addEventListener("keydown", (ev) => {
             const stepResize = (id) => {
                 const el = nodeEls.get(id);
                 if (!el || collapsed.has(id)) return false;
-                glideStep(el);   // arm the ease BEFORE the size write so the step transitions (rule 7)
                 const prev = nodeSizes.get(id) || {};
                 if (WIDTH_ONLY_NODES.has(nodeTypeOf(id))) {
                     // item/window wrap a fixed-aspect canvas -> HARD width only, height aspect-driven.
@@ -3894,19 +3899,11 @@ document.addEventListener("keydown", (ev) => {
                 let any = false;
                 for (const id of selIds) if (stepResize(id)) any = true;
                 if (any) {
-                    // the box glides to its new size (.snapping, ~140ms). Repaint the lines live
-                    // against the growing border but FREEZE routing, then run the pathfinder once the
-                    // box has settled — so routes are computed on the final size, not a mid-glide box.
-                    setDraggingNodes(true, selIds);
-                    requestEdges();
+                    // resize is instant (no glide) → the box is already at its final size, so route +
+                    // persist right away; no freeze/settle wait needed.
+                    flushEdges();
                     groups.renderGroups();
-                    clearTimeout(_resizeSettle);
-                    _resizeSettle = setTimeout(() => {
-                        setDraggingNodes(false);
-                        flushEdges();
-                        groups.renderGroups();
-                        persist.layout();
-                    }, 160);
+                    persist.layout();
                 }
                 ev.preventDefault();
             }
@@ -3931,7 +3928,7 @@ document.addEventListener("keydown", (ev) => {
     // Otherwise operate on whichever overlay holds the live box selection (window OR item).
     const ov = rec.overlay;
     const b = ov.boxes.find((x) => x.id === ov.activeId);
-    if (!b) return;
+    if (!b || b.locked) return;   // a locked box (calibrated scrollbar) never nudges
     // step exactly ONE image pixel, so it's the same feel on any canvas size
     const sx = 1 / (ov.canvas.width || 1000), sy = 1 / (ov.canvas.height || 1000);
     if (ev.shiftKey) {
@@ -3967,6 +3964,14 @@ function syncKillGpu(ocr) {
     const k = $("killGpuBtn"); if (!k) return;
     const hidden = !(ocr && ocr.gpu_active);
     if (k.hidden !== hidden) k.hidden = hidden;
+    // VRAM readout beside the button: the server process's dedicated GPU memory
+    // (gpu_mem, bytes; null when unreadable). Same visibility as the button, and
+    // textContent-only updates so steady-state beats mutate nothing.
+    const lbl = $("gpuMemLbl"); if (!lbl) return;
+    const memHidden = hidden || typeof ocr.gpu_mem !== "number";
+    if (lbl.hidden !== memHidden) lbl.hidden = memHidden;
+    const txt = memHidden ? "" : fmtBytes(ocr.gpu_mem);
+    if (lbl.textContent !== txt) lbl.textContent = txt;
 }
 
 // Wire the persistent topbar kill-GPU button once at startup. Visibility is driven by the
@@ -4079,6 +4084,16 @@ async function wireOcrControls(root) {
             scRow.hidden = false;
             scSel.value = String(st.scale || 1);
             wireOcrScale(scSel);   // shared wiring helper (rule 7)
+        }
+        const gmRow = root.querySelector("#ocrGpuMemRow"), gmIn = root.querySelector("#ocrGpuMem");
+        if (gmRow && st.gpu_mem_gb != null) {
+            gmRow.hidden = false;
+            gmIn.value = String(st.gpu_mem_gb);
+            gmIn.addEventListener("change", async () => {
+                const done = timed(`OCR gpu mem cap → ${gmIn.value} GB`);
+                try { const r = await api.ocr.setGpuMemGb(parseFloat(gmIn.value) || 3); gmIn.value = String(r.gpu_mem_gb ?? 3); done(); }
+                catch (e) { done(String(e.message || e), "err"); }
+            });
         }
     } catch { /* ignore */ }
 }
