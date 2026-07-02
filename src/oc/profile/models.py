@@ -160,6 +160,11 @@ class FieldDef(BaseModel):
     # Fixes systematic single-glyph confusions the dictionary cannot (e.g. "Q3" vs "G3"
     # where both are valid names). No atlas / no clean segmentation -> the read is untouched.
     glyph_check: bool = False
+    # Fold accented characters to their plain ASCII base BEFORE anything else runs on the
+    # read (rules, extraction, dictionary): "ö" -> "o", "ä" -> "a", "é" -> "e". For games
+    # whose text is plain ASCII but OCR occasionally hallucinates diacritics, or whose
+    # dictionary is authored unaccented.
+    fold_accents: bool = True
 
     @model_validator(mode="before")
     @classmethod

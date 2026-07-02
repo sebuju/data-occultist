@@ -7,10 +7,19 @@ Extraction is driven by a declarative :class:`~oc.profile.models.Extract` strate
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from ..profile.models import Extract, FieldDef, FieldType, RuleThen, RuleWhen
 
 _NUMBER_RE = re.compile(r"-?\d[\d,]*\.?\d*")
+
+
+def fold_accents(text: str) -> str:
+    """Strip diacritics, mapping accented characters to their plain ASCII base
+    ("ö" -> "o", "ä" -> "a", "é" -> "e"). Decomposes via NFKD and drops the combining
+    marks; characters with no decomposition (é already covered) pass through unchanged."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text)
+                   if not unicodedata.combining(c))
 
 
 def _first_number(text: str) -> str | None:
@@ -88,6 +97,8 @@ def coerce_rule(field: FieldDef, raw: str) -> tuple[str | float | int | None, st
     Rules run before extraction, in order; the first whose condition matches the raw
     read's shape wins. ``drop`` resolves to None (the cell, and so the record, is
     dropped). With no matching rule the read is extracted/typed normally."""
+    if field.fold_accents:      # runs before anything else — rules/extraction/dict see plain ASCII
+        raw = fold_accents(raw)
     raw = raw.strip()
     has_digit = any(c.isdigit() for c in raw)
     has_alpha = any(c.isalpha() for c in raw)
