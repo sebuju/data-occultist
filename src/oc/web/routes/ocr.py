@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
-from ...ocr.rapidocr_engine import cuda_available
+from ...ocr.cuda import cuda_available
 from ..deps import get_engine, get_settings
 
 router = APIRouter(prefix="/api/ocr", tags=["ocr"])
@@ -64,9 +64,25 @@ def _yield_default() -> float:
         return 0.0
 
 
+def _option_default(key: str, cast, fallback):
+    """Settings-file default for an OCR engine option (same intent as _yield_default,
+    generalized: the dotfile overrides config/settings.yaml which overrides a constant)."""
+    def default():
+        try:
+            v = get_settings().ocr.options.get(key)
+            return cast(v) if v is not None else fallback
+        except (AttributeError, TypeError, ValueError):
+            return fallback
+    return default
+
+
 read_mode, _write_mode = _persisted("device", _parse_mode, DEFAULT_MODE)
 _read_scale, _write_scale = _persisted("scale", lambda v: max(1, int(v)), 1)
 _read_yield, _write_yield = _persisted("yield", lambda v: max(0.0, float(v)), _yield_default)
+_read_threads, _write_threads = _persisted(
+    "threads", lambda v: max(0, int(v)), _option_default("intra_op_num_threads", int, 0))
+_read_engine, _write_engine = _persisted(
+    "engine", lambda v: v.strip().lower(), _option_default("engine_type", str, "onnxruntime"))
 
 
 def apply_persisted() -> None:
@@ -80,15 +96,29 @@ def apply_persisted() -> None:
         ocr.set_scale(_read_scale())
     if hasattr(ocr, "set_yield_ms"):
         ocr.set_yield_ms(_read_yield())
+    if hasattr(ocr, "set_intra_threads"):
+        ocr.set_intra_threads(_read_threads())
+    if hasattr(ocr, "set_engine_type"):
+        try:
+            ocr.set_engine_type(_read_engine())
+        except ValueError:
+            pass   # persisted engine no longer installed -> keep the settings default
 
 
 def _state() -> dict:
+    # Knobs a backend doesn't have report None so the UI hides their controls
+    # (e.g. ppocr5 has engine_type but no scale/yield; the old backend the reverse).
     ocr = get_engine().ocr
     return {"device": getattr(ocr, "device", "cpu"), "mode": read_mode(),
             "gpu_available": cuda_available(),
             "gpu_active": bool(getattr(ocr, "gpu_active", False)),
-            "scale": getattr(ocr, "scale", 1),
-            "yield_ms": getattr(ocr, "yield_ms", 0.0)}
+            # None when the live engine lacks the knob, so the UI hides its control (ppocr5 has
+            # neither downscale nor yield; the old rapidocr backend has both).
+            "scale": getattr(ocr, "scale", None) if hasattr(ocr, "set_scale") else None,
+            "yield_ms": getattr(ocr, "yield_ms", None) if hasattr(ocr, "set_yield_ms") else None,
+            "threads": getattr(ocr, "intra_threads", None),
+            "engine_type": getattr(ocr, "engine_type", None),
+            "engine_types": getattr(ocr, "engine_types", None)}
 
 
 def ocr_state() -> dict:
@@ -129,6 +159,32 @@ def set_scale(scale: int):
     if hasattr(ocr, "set_scale"):
         ocr.set_scale(scale)
     _write_scale(getattr(ocr, "scale", 1))
+    return _state()
+
+
+@router.post("/threads")
+def set_threads(n: int):
+    """Cap the CPU threads each inference may use (0 = runtime default: one per core).
+    Fewer threads = slower reads but less CPU stolen from a game on the same machine."""
+    ocr = get_engine().ocr
+    if hasattr(ocr, "set_intra_threads"):
+        ocr.set_intra_threads(n)
+    _write_threads(getattr(ocr, "intra_threads", 0))
+    return _state()
+
+
+@router.post("/engine")
+def set_engine_type(name: str):
+    """Pick the inference engine for the ppocr5 backend (onnxruntime / openvino). Only
+    engines whose runtime is installed are accepted; a bad name keeps the current one."""
+    ocr = get_engine().ocr
+    if hasattr(ocr, "set_engine_type"):
+        try:
+            ocr.set_engine_type(name)
+        except ValueError:
+            pass
+    if getattr(ocr, "engine_type", None):
+        _write_engine(ocr.engine_type)
     return _state()
 
 

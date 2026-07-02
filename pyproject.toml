@@ -43,6 +43,12 @@ gpu = [
     "nvidia-cudnn-cu12", "nvidia-cublas-cu12", "nvidia-cuda-runtime-cu12",
     "nvidia-cufft-cu12", "nvidia-curand-cu12", "nvidia-cusparse-cu12", "nvidia-cuda-nvrtc-cu12",
 ]
+# New-gen RapidOCR backend (ocr: ppocr5 in settings.yaml): PP-OCRv5/v6 models with a
+# selectable inference engine. Coexists with rapidocr-onnxruntime (different dist).
+# Models auto-download on first use. The -openvino variant adds the OpenVINO runtime,
+# usually the fastest CPU path on Intel (settings option: engine_type: openvino).
+ppocr5 = ["rapidocr>=3.4,<4"]
+ppocr5-openvino = ["rapidocr>=3.4,<4", "openvino>=2024.0"]
 
 [build-system]
 requires = ["setuptools>=68"]

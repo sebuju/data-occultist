@@ -22,7 +22,7 @@ def enter_device(engine: Any, want: str | None) -> str | None:
     if getattr(ocr, "device", None) == want:
         return None
     if want == "gpu":
-        from .rapidocr_engine import cuda_available
+        from .cuda import cuda_available
         if not cuda_available():
             return None
     prev = ocr.device

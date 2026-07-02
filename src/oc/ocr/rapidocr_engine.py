@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import glob
-import os
+import json
 import threading
 import time
 
@@ -13,9 +12,9 @@ import numpy as np
 from ..interfaces import OcrEngine
 from ..registry import register_ocr
 from ..types import OcrLine, PixelBox
+from .cuda import register_cuda_dlls as _register_cuda_dlls
 from .serialize import OCR_LOCK as _INFER_LOCK
 
-_CUDA_DLLS_REGISTERED = False
 _CUDA_SEARCH_PATCHED = False
 _CLS_DROPPED = False
 _GPU_MEM_LIMIT = 6 * 1024 ** 3   # hard cap on the CUDA arena (bytes) — bounds runaway growth
@@ -150,38 +149,34 @@ def _drop_cls() -> None:
         pass
 
 
-def _register_cuda_dlls() -> None:
-    """Add the pip-installed NVIDIA CUDA/cuDNN DLL folders to the search path so the
-    CUDA execution provider can load (the nvidia-*-cu12 wheels drop DLLs under
-    site-packages/nvidia/<lib>/bin on Windows). No-op off Windows / if absent."""
-    global _CUDA_DLLS_REGISTERED
-    if _CUDA_DLLS_REGISTERED:
+_SESS_OPTS_PATCHED = False
+
+
+def _patch_sess_opts() -> None:
+    """ORT's intra-op thread pool SPIN-WAITS between inferences by default — worker
+    threads burn whole cores busy-polling for the next task, which on a shared machine
+    is CPU stolen from the game for nothing (OCR runs ~once a second; the pool spins
+    the rest of the time). Disable spinning on every session RapidOCR builds; threads
+    then sleep between calls at the cost of a microseconds-slower wake-up. Applied to
+    CPU and CUDA sessions alike (a CUDA session still owns a CPU-side pool).
+    Best-effort; no-op if the internals move."""
+    global _SESS_OPTS_PATCHED
+    if _SESS_OPTS_PATCHED:
         return
-    _CUDA_DLLS_REGISTERED = True
-    if os.name != "nt":
-        return
+    _SESS_OPTS_PATCHED = True
     try:
-        import nvidia
-        base = os.path.dirname(nvidia.__file__)
-        dirs = glob.glob(os.path.join(base, "*", "bin")) + glob.glob(os.path.join(base, "*", "lib"))
-        for d in dirs:
-            try:
-                os.add_dll_directory(d)
-            except OSError:
-                pass
-        if dirs:   # also on PATH — onnxruntime's CUDA provider resolves its deps that way
-            os.environ["PATH"] = os.pathsep.join(dirs) + os.pathsep + os.environ.get("PATH", "")
+        from rapidocr_onnxruntime.utils import infer_engine as ie
+
+        orig = ie.OrtInferSession._init_sess_opts
+
+        def _init_sess_opts(config):
+            sess_opt = orig(config)
+            sess_opt.add_session_config_entry("session.intra_op.allow_spinning", "0")
+            return sess_opt
+
+        ie.OrtInferSession._init_sess_opts = staticmethod(_init_sess_opts)
     except Exception:
         pass
-
-
-def cuda_available() -> bool:
-    """True when onnxruntime exposes the CUDA provider (the GPU package is installed)."""
-    try:
-        import onnxruntime as ort
-        return "CUDAExecutionProvider" in ort.get_available_providers()
-    except Exception:
-        return False
 
 
 @register_ocr("rapidocr")
@@ -242,6 +237,38 @@ class RapidOcrEngine(OcrEngine):
         self._yield_ms = _to_float(ms, self._yield_ms)
 
     @property
+    def intra_threads(self) -> int:
+        """CPU threads per inference (0 = ORT default: one per core). Mirrors the
+        ppocr5 backend's knob so the settings modal drives either backend."""
+        try:
+            return max(0, int(self._options.get("intra_op_num_threads", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def set_intra_threads(self, n) -> None:
+        try:
+            n = max(0, int(n))
+        except (TypeError, ValueError):
+            return
+        if n == self.intra_threads and self._engine is not None:
+            return
+        if n:
+            self._options["intra_op_num_threads"] = n
+        else:
+            self._options.pop("intra_op_num_threads", None)   # 0 = ORT default
+        self._engine = None   # thread caps are session config -> rebuild lazily
+
+    @property
+    def ocr_sig(self) -> str:
+        """Fingerprint of everything that can change what this backend READS (see the
+        ppocr5 twin) — backend name, detection scale, model options. Perf-only knobs
+        (thread caps; yield_ms/rec_chunk are pacing and already live outside
+        ``_options``) and the cpu/gpu device are excluded."""
+        opts = {k: v for k, v in self._options.items()
+                if k not in ("intra_op_num_threads", "inter_op_num_threads")}
+        return f"rapidocr|scale={self._scale}|" + json.dumps(opts, sort_keys=True, default=str)
+
+    @property
     def device(self) -> str:
         return "gpu" if self._gpu else "cpu"
 
@@ -281,6 +308,7 @@ class RapidOcrEngine(OcrEngine):
                     from rapidocr_onnxruntime import RapidOCR
 
                     _drop_cls()   # before construction: no angle-classification session gets built
+                    _patch_sess_opts()   # threads sleep between calls instead of spinning
                     opts = dict(self._options)
                     # A grid read recognises dozens of crops; the default batch of 6
                     # means ~8 sequential model calls. Bigger batches = fewer launches

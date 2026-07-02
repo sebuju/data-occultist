@@ -9,15 +9,20 @@ capture: wgc          # oc.capture.*    -> grabs pixels. wgc = DWM-composited (n
 window: win32       # oc.window.*       -> locates the game window (Windows)
 process: psutil     # oc.process.*      -> finds the running game
 ocr:                # oc.ocr.*          -> reads text from regions
-  name: rapidocr
+  # ppocr5 = new-gen rapidocr package (PP-OCRv5/v6 models; needs the [ppocr5] extra).
+  # Rollback = the old tuned backend:
+  #   name: rapidocr
+  #   options: {rec_chunk: 8, yield_ms: 3,   # GPU pacing knobs (ppocr5 has none)
+  #             intra_op_num_threads: 2, inter_op_num_threads: 1}   # same CPU-cap intent
+  name: ppocr5
   options:
-    # GPU pacing: one OCR read is a single big CUDA burst that stalls a game's frame
-    # present for its whole duration. rec_chunk splits the recognition into this many
-    # crops per GPU submission and yield_ms sleeps between submissions, so the game can
-    # present a frame in each gap (smoother pacing, slightly slower reads). yield_ms 0 =
-    # off (one burst). Live-tunable in the web UI's OCR settings (downscale + yield).
-    rec_chunk: 8
-    yield_ms: 3
+    engine_type: onnxruntime   # or openvino ([ppocr5-openvino] extra) — often faster on CPU
+    rec_batch_num: 16          # grid reads recognise dozens of crops; fewer, bigger launches
+    # Cap ORT's CPU pool: the default is one worker per core, spin-waiting between
+    # inferences — CPU stolen from the game. 2 threads keeps reads quick while staying
+    # polite; the same option caps openvino's pool when that engine is selected.
+    intra_op_num_threads: 2
+    inter_op_num_threads: 1
 classifier: detect  # oc.detect.*       -> decides window + state
 corrector: rapidfuzz  # oc.learn.*      -> fuzzy-corrects uncertain OCR
 
