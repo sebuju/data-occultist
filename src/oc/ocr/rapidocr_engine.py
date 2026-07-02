@@ -12,6 +12,7 @@ import numpy as np
 from ..interfaces import OcrEngine
 from ..registry import register_ocr
 from ..types import OcrLine, PixelBox
+from .cuda import patch_arena_shrinkage
 from .cuda import register_cuda_dlls as _register_cuda_dlls
 from .serialize import OCR_LOCK as _INFER_LOCK
 
@@ -88,38 +89,15 @@ def _patch_cuda_conv_search() -> None:
         pass
 
 
-_SHRINK_PATCHED = False
-
-
 def _patch_arena_shrinkage() -> None:
-    """The CUDA BFC arena NEVER returns memory on its own: after one OCR burst the
-    process squats on the whole peak working set forever, and repeated bursts (every
-    page reload runs a detect pass) fragment it upward until the gpu_mem_limit cap —
-    it looks exactly like a leak. ORT can free unused arena chunks at the END of a
-    run when the run carries ``memory.enable_memory_arena_shrinkage``; RapidOCR never
-    passes RunOptions, so patch its session ``__call__`` to add them on CUDA sessions.
-    Costs a few cudaFrees per run — noise next to the inference itself — and idle GPU
-    use falls back to the loaded models instead of gigabytes of dead arena."""
-    global _SHRINK_PATCHED
-    if _SHRINK_PATCHED:
-        return
-    _SHRINK_PATCHED = True
+    """Free unused CUDA arena at each run's end so idle VRAM falls back to the loaded
+    models instead of the ratcheted peak (see :func:`oc.ocr.cuda.patch_arena_shrinkage`).
+    This backend's session class lives in ``rapidocr_onnxruntime``; the shared patcher
+    does the work so both backends share one implementation."""
     try:
-        import onnxruntime as ort
         from rapidocr_onnxruntime.utils import infer_engine as ie
 
-        ro = ort.RunOptions()
-        ro.add_run_config_entry("memory.enable_memory_arena_shrinkage", "gpu:0")
-        orig = ie.OrtInferSession.__call__
-
-        def call(self, input_content):
-            sess = getattr(self, "session", None)
-            if sess is None or "CUDAExecutionProvider" not in sess.get_providers():
-                return orig(self, input_content)   # CPU session: leave untouched
-            input_dict = dict(zip(self.get_input_names(), [input_content]))
-            return sess.run(self.get_output_names(), input_dict, ro)
-
-        ie.OrtInferSession.__call__ = call
+        patch_arena_shrinkage(ie.OrtInferSession)
     except Exception:
         pass
 

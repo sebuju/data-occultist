@@ -47,6 +47,17 @@ def test_to_params_gpu_enables_cuda_with_heuristic_conv_search():
     assert "EngineConfig.onnxruntime.use_cuda" not in to_params({})
 
 
+def test_to_params_gpu_tames_the_cuda_arena():
+    # v3's default (kNextPowerOfTwo, no limit) doubles the arena per extension and
+    # never returns VRAM — observed filling the whole card. Both overrides must ride
+    # every GPU build.
+    p = to_params({}, gpu=True)
+    cfg = "EngineConfig.onnxruntime.cuda_ep_cfg."
+    assert p[cfg + "arena_extend_strategy"] == "kSameAsRequested"
+    assert p[cfg + "gpu_mem_limit"] == 3 * 1024**3
+    assert cfg + "gpu_mem_limit" not in to_params({})
+
+
 def test_to_lines_reduces_quads_to_axis_aligned_boxes():
     boxes = [[(10, 20), (110, 22), (108, 50), (12, 48)]]
     lines = to_lines(boxes, ("Lith G3 Relic",), (0.97,))

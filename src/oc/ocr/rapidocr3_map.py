@@ -36,9 +36,17 @@ _FLAT = {
 # algorithm on the first inference and on every new input shape, a minute-plus stall
 # repeated as OCR feeds many image sizes (same lesson as the old backend's
 # _patch_cuda_conv_search, but v3 exposes the knob so no monkeypatch is needed).
+#
+# v3 also leaves ORT's CUDA memory arena at kNextPowerOfTwo with NO gpu_mem_limit:
+# the arena DOUBLES on every extension and never returns VRAM to the OS, and OCR's
+# varied input shapes keep forcing extensions — observed ratcheting to the full 8GB
+# card. kSameAsRequested grows only by what an allocation actually needs, and the
+# hard limit caps the arena outright (well above det's real peak at max_side 2000).
 _CUDA_PARAMS = {
     "EngineConfig.onnxruntime.use_cuda": True,
     "EngineConfig.onnxruntime.cuda_ep_cfg.cudnn_conv_algo_search": "HEURISTIC",
+    "EngineConfig.onnxruntime.cuda_ep_cfg.arena_extend_strategy": "kSameAsRequested",
+    "EngineConfig.onnxruntime.cuda_ep_cfg.gpu_mem_limit": 3 * 1024**3,
 }
 
 

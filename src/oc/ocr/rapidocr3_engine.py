@@ -8,11 +8,15 @@ name-flip away. Install the extra first: ``pip install -e ".[ppocr5]"`` (or
 silently skips it, so ``ppocr5`` simply doesn't resolve.
 
 Differences from the old backend, on purpose:
-- No ``rec_chunk``/``yield_ms`` GPU pacing and no ``set_scale`` detection budget —
-  the v3 public API doesn't expose the det/rec split those ride on. This backend's
-  pitch is the faster CPU path; GPU batch work can stay on ``rapidocr``.
-- No monkeypatches: cls-off, thread caps and the CUDA conv-search fix are real
-  config in v3 (translated in :mod:`oc.ocr.rapidocr3_map`).
+- No ``rec_chunk``/``yield_ms`` GPU pacing — the v3 public API doesn't expose the
+  per-burst hooks those ride on. ``set_scale`` (the detection budget) IS ported:
+  v3 exposes det-only/rec-only calls plus its crop helper, which is exactly the
+  split the downscaled read needs (see :meth:`Rapid3OcrEngine.read_image`).
+- Almost no monkeypatches: cls-off, thread caps and the CUDA conv-search fix are
+  real config in v3 (translated in :mod:`oc.ocr.rapidocr3_map`). The ONE unavoidable
+  patch is CUDA arena shrinkage (:func:`oc.ocr.cuda.patch_arena_shrinkage`) — v3
+  exposes no per-run RunOptions hook, so the arena would otherwise ratchet VRAM
+  upward on every read (varied crop widths mint new shapes it never reclaims).
 
 Models auto-download on first construction (one network hit, cached under the
 package's models dir) — ``prepare()``/the startup warmup absorbs it.
@@ -24,12 +28,13 @@ import json
 import threading
 from importlib.util import find_spec
 
+import cv2
 import numpy as np
 
 from ..interfaces import OcrEngine
 from ..registry import register_ocr
 from ..types import OcrLine
-from .cuda import register_cuda_dlls
+from .cuda import patch_arena_shrinkage, register_cuda_dlls
 from .rapidocr3_map import join_rec, to_lines, to_params
 from .serialize import OCR_LOCK as _INFER_LOCK
 
@@ -74,8 +79,46 @@ class Rapid3OcrEngine(OcrEngine):
         self._gpu = bool(options.pop("use_gpu", False))
         self._options = options
         self._engine = None
+        self._scale = 1   # integer downscale factor for big frames (1 = off; 2 -> quarter area)
+        self._gpu_mem_gb = 3.0   # CUDA arena ceiling; see _CUDA_PARAMS in the map module
         if self._gpu:
             register_cuda_dlls()
+
+    @property
+    def gpu_mem_gb(self) -> float:
+        return self._gpu_mem_gb
+
+    def set_gpu_mem_gb(self, gb) -> None:
+        """Hard ceiling (GB) for the CUDA memory arena — OCR can never hold more VRAM
+        than this. Too low and a big detect batch fails to allocate; the 3GB default
+        clears real 4K workloads with room to spare. Rebuilds the GPU session on next
+        read when changed (a CPU session doesn't carry the arena, so no rebuild)."""
+        try:
+            gb = min(64.0, max(0.5, float(gb)))
+        except (TypeError, ValueError):
+            return
+        if gb != self._gpu_mem_gb:
+            self._gpu_mem_gb = gb
+            if self._gpu:
+                self._engine = None
+
+    @property
+    def scale(self) -> int:
+        return self._scale
+
+    def set_scale(self, n) -> None:
+        """Detection budget, same contract as the old backend: 2 -> the detector sees
+        half the side length (a quarter of the pixels). Detection is the pass whose
+        cost (time AND VRAM) scales with resolution; recognition still crops from the
+        full-detail frame, so text quality holds. Changing the value rebuilds the
+        model on next use (the det resize limits are construction config)."""
+        try:
+            n = max(1, int(n))
+        except (TypeError, ValueError):
+            n = 1
+        if n != self._scale:
+            self._scale = n
+            self._engine = None
 
     @property
     def device(self) -> str:
@@ -131,13 +174,15 @@ class Rapid3OcrEngine(OcrEngine):
     @property
     def ocr_sig(self) -> str:
         """Fingerprint of everything that can change what this backend READS — the
-        backend itself, the inference engine, model/version options. The web OCR
+        backend itself, the inference engine, model/version options, and the
+        detection scale (a downscaled detect can find different boxes). The web OCR
         cache mixes this into its keys so results cached under one engine are never
         served after a swap. Perf-only knobs (thread caps, batch size) and the
         cpu/gpu device are excluded: they alter speed, not output, and auto device
-        mode flips per batch."""
+        mode flips per batch. scale=1 adds nothing so existing cache keys survive."""
         opts = {k: v for k, v in self._options.items() if k not in _PERF_ONLY}
-        return "ppocr5|" + json.dumps(opts, sort_keys=True, default=str)
+        scale = f"scale={self._scale}|" if self._scale > 1 else ""
+        return f"ppocr5|{scale}" + json.dumps(opts, sort_keys=True, default=str)
 
     @property
     def gpu_active(self) -> bool:
@@ -169,19 +214,80 @@ class Rapid3OcrEngine(OcrEngine):
                 if self._engine is None:
                     from rapidocr import RapidOCR
 
-                    params = _to_enums(to_params(self._options, gpu=self._gpu))
-                    self._engine = RapidOCR(params=params)
+                    params = to_params(self._options, gpu=self._gpu)
+                    if self._gpu:
+                        # v3 exposes no RunOptions hook, so the CUDA arena would ratchet
+                        # VRAM upward every read (varied crop widths = new shapes, never
+                        # reclaimed). Patch its session class to shrink the arena per run —
+                        # the ONE monkeypatch v3 can't avoid (shared with the old backend).
+                        try:
+                            from rapidocr.inference_engine.onnxruntime.main import (
+                                OrtInferSession,
+                            )
+
+                            patch_arena_shrinkage(OrtInferSession)
+                        except Exception:  # noqa: BLE001 - best-effort, never block a build
+                            pass
+                        # runtime-tunable arena ceiling (settings modal) over the map
+                        # module's 3GB default
+                        params["EngineConfig.onnxruntime.cuda_ep_cfg.gpu_mem_limit"] = \
+                            int(self._gpu_mem_gb * 1024**3)
+                    if self._scale > 1:
+                        # read_image hands the detector an ALREADY-SHRUNK frame and it
+                        # must stay shrunk: the default det preprocess ('min'/736)
+                        # re-inflates anything whose short side is under 736, and
+                        # 'max' looks like the right knob but v3 ignores the
+                        # configured limit for anything except 'min'
+                        # (TextDetector.get_preprocess hardcodes 960/1500/2000 tiers).
+                        # Same lesson, same fix as the old backend. Overrides any
+                        # det_limit_* from settings.yaml while a scale is active.
+                        params["Det.limit_type"] = "min"
+                        params["Det.limit_side_len"] = 320
+                    self._engine = RapidOCR(params=_to_enums(params))
         return self._engine
 
     def read_image(self, image: np.ndarray) -> list[OcrLine]:
         engine = self._ensure_engine()
+        f = self._scale
+        h, w = image.shape[:2]
         # v3's per-call flags are STATEFUL: update_params skips None, so a flag set by
         # any earlier call sticks on the shared engine. One read_line (use_det=False)
         # would otherwise flip every later read_image to rec-only — which also changes
         # the return TYPE to a boxless TextRecOutput. Always pass all three.
+        if f <= 1 or max(h, w) <= 600:   # no downscale / small crop: the normal pipeline
+            with _INFER_LOCK:
+                out = engine(image, use_det=True, use_cls=False, use_rec=True)
+            return to_lines(out.boxes, out.txts, out.scores)
+
+        # Downscaled read (same split as the old backend): DETECT on a reduced frame —
+        # detection is the pass whose time/VRAM scale with resolution — then RECOGNISE
+        # crops cut from the ORIGINAL frame so text quality is untouched. v3 exposes
+        # the pieces the old backend had to reach into v1 for: a det-only call (boxes
+        # come back in the small frame's coords), its quad-crop helper, and a direct
+        # rec entry point that never touches the stateful per-call flags.
+        small = cv2.resize(image, (w // f, h // f), interpolation=cv2.INTER_AREA)
         with _INFER_LOCK:
-            out = engine(image, use_det=True, use_cls=False, use_rec=True)
-        return to_lines(out.boxes, out.txts, out.scores)
+            det = engine(small, use_det=True, use_cls=False, use_rec=False)
+            if det.boxes is None or len(det.boxes) == 0:
+                return []
+            # det boxes back to full-frame coords, clipped against rounding overshoot
+            boxes = [np.clip(np.asarray(b) * f, (0, 0), (w - 1, h - 1)).astype(np.float32)
+                     for b in det.boxes]
+            crops = engine.crop_text_regions(image, np.asarray(boxes))
+            from rapidocr.ch_ppocr_rec import TextRecInput
+
+            rec = engine.text_rec(TextRecInput(img=crops))
+        # same floor the stock pipeline applies before returning a line
+        try:
+            floor = float(engine.cfg.Global.text_score)
+        except (AttributeError, TypeError, ValueError):
+            floor = 0.5
+        keep = [(b, str(t), float(s))
+                for b, t, s in zip(boxes, rec.txts or (), rec.scores or ())
+                if str(t).strip() and float(s) >= floor]
+        if not keep:
+            return []
+        return to_lines(*zip(*keep))
 
     def read_line(self, image: np.ndarray) -> tuple[str, float]:
         """Recognition-only (detection skipped) for a crop known to be one line."""
