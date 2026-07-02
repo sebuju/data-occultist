@@ -349,6 +349,7 @@ export const ocr = {
     setYield: (ms) => tfetch(`/api/ocr/yield?ms=${encodeURIComponent(ms)}`, { method: "POST" }).then((r) => r.json()),
     setThreads: (n) => tfetch(`/api/ocr/threads?n=${encodeURIComponent(n)}`, { method: "POST" }).then((r) => r.json()),
     setEngineType: (name) => tfetch(`/api/ocr/engine?name=${encodeURIComponent(name)}`, { method: "POST" }).then((r) => r.json()),
+    setGpuMemGb: (gb) => tfetch(`/api/ocr/gpumem?gb=${encodeURIComponent(gb)}`, { method: "POST" }).then((r) => r.json()),
     releaseGpu: () => tfetch("/api/ocr/release", { method: "POST" }).then((r) => r.json()),
 };
 

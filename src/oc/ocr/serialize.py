@@ -18,7 +18,51 @@ import threading
 import time
 from contextlib import contextmanager
 
-OCR_LOCK = threading.RLock()
+class _UsageLock:
+    """The global OCR RLock, plus a last-used stamp maintained on every acquire/release.
+
+    The stamp is what lets the GPU watchdog (:mod:`oc.web.gpu_watch`) answer "has OCR
+    run recently?" without instrumenting every engine call site — engines already take
+    this lock around each inference, so lock traffic IS usage."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._last = 0.0   # monotonic of last acquire/release; 0 = never used
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        got = self._lock.acquire(blocking, timeout)
+        if got:
+            self._last = time.monotonic()
+        return got
+
+    def release(self) -> None:
+        self._last = time.monotonic()
+        self._lock.release()
+
+    def __enter__(self):
+        return self.acquire()
+
+    def __exit__(self, *exc) -> None:
+        self.release()
+
+    def idle_for(self) -> float:
+        """Seconds since OCR work last started or finished — ``0.0`` while a job holds
+        the lock, ``inf`` if OCR never ran. Probes the raw inner lock so the check
+        itself never disturbs the stamp."""
+        if not self._lock.acquire(blocking=False):
+            return 0.0
+        try:
+            return (time.monotonic() - self._last) if self._last else float("inf")
+        finally:
+            self._lock.release()
+
+
+OCR_LOCK = _UsageLock()
+
+
+def ocr_idle_for() -> float:
+    """Module-level convenience for :meth:`_UsageLock.idle_for` on the global lock."""
+    return OCR_LOCK.idle_for()
 
 
 class _JobTimer:

@@ -62,8 +62,8 @@ class _RevalidateStatic(StaticFiles):
 def _warm() -> None:
     """Pay the one-time slow costs in the background at startup so the user's first
     Capture/Preview is instant: the process scan AND the OCR model load. The model stays
-    resident for the life of the process — with the lean CUDA arena options it only costs
-    a few hundred MB of GPU, so there's no reason to keep loading/unloading it."""
+    resident while a front end is listening; once the UI disconnects and OCR goes idle,
+    :mod:`oc.web.gpu_watch` releases a GPU session to give the VRAM back."""
     try:
         settings = get_settings()
         locator = get_locator()
@@ -179,6 +179,12 @@ async def lifespan(_app: FastAPI):
     try:
         from .source_sched import start as _start_sources
         _start_sources(get_settings())
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
+    # Auto-release the GPU OCR session when no front end is connected and OCR is idle.
+    try:
+        from .gpu_watch import start as _start_gpu_watch
+        _start_gpu_watch()
     except Exception:  # noqa: BLE001 - best-effort
         pass
     # Fire on_change triggers for ANY dataset write in this process (form, sweep, preview,

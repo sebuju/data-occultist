@@ -9,6 +9,8 @@ capture: wgc          # oc.capture.*    -> grabs pixels. wgc = DWM-composited (n
 window: win32       # oc.window.*       -> locates the game window (Windows)
 process: psutil     # oc.process.*      -> finds the running game
 ocr:                # oc.ocr.*          -> reads text from regions
+  # Device (cpu/gpu/auto) is picked in the web UI and persisted to data/.ocr_device;
+  # it defaults to GPU whenever CUDA is present (CPU is the no-CUDA fallback).
   # ppocr5 = new-gen rapidocr package (PP-OCRv5/v6 models; needs the [ppocr5] extra).
   # Rollback = the old tuned backend:
   #   name: rapidocr

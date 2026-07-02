@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from ...ocr.cuda import cuda_available
+from ...ocr.gpu_mem import process_gpu_mem
 from ..deps import get_engine, get_settings
 
 router = APIRouter(prefix="/api/ocr", tags=["ocr"])
@@ -41,12 +42,15 @@ def _persisted(name: str, parse, default):
     return read, write
 
 
-# The OCR device MODE: "cpu" / "gpu" / "auto". "auto" runs OCR on CPU for the snappy
-# interactive work (authoring nodes, preview, detect — sparse small reads where CUDA
-# init + per-call overhead lose) and flips to GPU only for the precapture BATCH (many
-# frames at once, where GPU batching wins), then frees the GPU again. Default = "auto".
+# The OCR device MODE: "cpu" / "gpu" / "auto". GPU is the primary device — CPU is the
+# emergency fallback for machines without CUDA. "auto" baselines on CPU for sparse
+# interactive reads and bursts to GPU for batch work (precapture/live), for users who
+# want the GPU freed between batches. Default = "gpu" whenever CUDA is present.
 _MODES = ("cpu", "gpu", "auto")
-DEFAULT_MODE = "auto"
+
+
+def default_mode() -> str:
+    return "gpu" if cuda_available() else "cpu"
 
 
 def _parse_mode(v: str) -> str:
@@ -76,13 +80,14 @@ def _option_default(key: str, cast, fallback):
     return default
 
 
-read_mode, _write_mode = _persisted("device", _parse_mode, DEFAULT_MODE)
+read_mode, _write_mode = _persisted("device", _parse_mode, default_mode)
 _read_scale, _write_scale = _persisted("scale", lambda v: max(1, int(v)), 1)
 _read_yield, _write_yield = _persisted("yield", lambda v: max(0.0, float(v)), _yield_default)
 _read_threads, _write_threads = _persisted(
     "threads", lambda v: max(0, int(v)), _option_default("intra_op_num_threads", int, 0))
 _read_engine, _write_engine = _persisted(
     "engine", lambda v: v.strip().lower(), _option_default("engine_type", str, "onnxruntime"))
+_read_gpumem, _write_gpumem = _persisted("gpumem", lambda v: float(v), 3.0)
 
 
 def apply_persisted() -> None:
@@ -98,6 +103,8 @@ def apply_persisted() -> None:
         ocr.set_yield_ms(_read_yield())
     if hasattr(ocr, "set_intra_threads"):
         ocr.set_intra_threads(_read_threads())
+    if hasattr(ocr, "set_gpu_mem_gb"):
+        ocr.set_gpu_mem_gb(_read_gpumem())
     if hasattr(ocr, "set_engine_type"):
         try:
             ocr.set_engine_type(_read_engine())
@@ -112,11 +119,15 @@ def _state() -> dict:
     return {"device": getattr(ocr, "device", "cpu"), "mode": read_mode(),
             "gpu_available": cuda_available(),
             "gpu_active": bool(getattr(ocr, "gpu_active", False)),
+            # This process's dedicated VRAM (bytes; None = unreadable). With a GPU
+            # session loaded that is effectively the OCR's footprint.
+            "gpu_mem": process_gpu_mem(),
             # None when the live engine lacks the knob, so the UI hides its control (ppocr5 has
             # neither downscale nor yield; the old rapidocr backend has both).
             "scale": getattr(ocr, "scale", None) if hasattr(ocr, "set_scale") else None,
             "yield_ms": getattr(ocr, "yield_ms", None) if hasattr(ocr, "set_yield_ms") else None,
             "threads": getattr(ocr, "intra_threads", None),
+            "gpu_mem_gb": getattr(ocr, "gpu_mem_gb", None) if hasattr(ocr, "set_gpu_mem_gb") else None,
             "engine_type": getattr(ocr, "engine_type", None),
             "engine_types": getattr(ocr, "engine_types", None)}
 
@@ -135,7 +146,7 @@ def get_device():
 def set_device(device: str):
     """Set the device MODE (``cpu`` / ``gpu`` / ``auto``). ``gpu`` pins the engine to GPU;
     ``cpu`` and ``auto`` baseline it on CPU (auto bursts to GPU per precapture batch)."""
-    mode = device if device in _MODES else DEFAULT_MODE
+    mode = device if device in _MODES else default_mode()
     ocr = get_engine().ocr
     if hasattr(ocr, "set_device"):
         ocr.set_device(mode == "gpu")
@@ -170,6 +181,17 @@ def set_threads(n: int):
     if hasattr(ocr, "set_intra_threads"):
         ocr.set_intra_threads(n)
     _write_threads(getattr(ocr, "intra_threads", 0))
+    return _state()
+
+
+@router.post("/gpumem")
+def set_gpu_mem(gb: float):
+    """Cap the CUDA memory arena (GB) — the most VRAM the GPU OCR session may hold.
+    Applies on the next GPU session build (a loaded session rebuilds lazily)."""
+    ocr = get_engine().ocr
+    if hasattr(ocr, "set_gpu_mem_gb"):
+        ocr.set_gpu_mem_gb(gb)
+    _write_gpumem(getattr(ocr, "gpu_mem_gb", 3.0))
     return _state()
 
 

@@ -41,6 +41,11 @@ def kill_all_sessions(timeout: float = 5.0) -> dict:
     return {"killed": killed, "alive": alive}
 
 
+def any_running() -> bool:
+    """True while any precapture worker runs — the GPU watchdog must not release then."""
+    return any(s.is_running() for s in _sessions.values())
+
+
 def _session(game: str, create: bool = False) -> PrecaptureSession:
     s = _sessions.get(game)
     if s is None:

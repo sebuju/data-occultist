@@ -17,6 +17,7 @@ from fastapi import APIRouter, Request
 from ...eventlog import recent as log_recent, subscribe as subscribe_log
 from ...store.changes import subscribe
 from ...store.flow_events import subscribe as subscribe_flow
+from .. import gpu_watch
 from ..deps import get_settings
 from ..sse import sse_response
 from .activity import build_activity
@@ -69,6 +70,10 @@ async def events(game: str, request: Request, after: int = 0):
       live, so reconnects don't drop or duplicate lines."""
 
     def subscribe_fn(push):
+        # this ONE socket is the page's liveness signal: while any is open a front end
+        # is listening, and the GPU watchdog leaves the OCR session alone
+        gpu_watch.client_connected()
+
         def on_change(g: str, dataset: str, records: list) -> None:
             if g == game:
                 # carry the row count so the client can animate "n items flowed into this dataset"
@@ -104,7 +109,7 @@ async def events(game: str, request: Request, after: int = 0):
 
         task = asyncio.ensure_future(pump_activity())
         offs = [subscribe(on_change), subscribe_flow(on_flow), subscribe_log(on_log)]
-        return lambda: (task.cancel(), [off() for off in offs])
+        return lambda: (gpu_watch.client_disconnected(), task.cancel(), [off() for off in offs])
 
     async def fmt(first, queue: asyncio.Queue) -> str:
         tag, payload = first
