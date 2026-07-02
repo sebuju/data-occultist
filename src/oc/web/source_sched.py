@@ -93,11 +93,27 @@ def _fire_kind_all(settings, fire) -> None:
 
 def fire_capture(game: str, settings) -> None:
     """Fire ``on_capture`` triggers for ``game`` — called when a live/precapture session starts."""
+    _fire_lifecycle(game, settings, "on_capture", lambda r: r.fire_capture())
+
+
+def fire_live_start(game: str, settings) -> None:
+    """Fire ``on_live_start`` triggers for ``game`` — called when the server live session starts."""
+    _fire_lifecycle(game, settings, "on_live_start", lambda r: r.fire_live_start())
+
+
+def fire_live_stop(game: str, settings) -> None:
+    """Fire ``on_live_stop`` triggers for ``game`` — called when the server live session stops."""
+    _fire_lifecycle(game, settings, "on_live_stop", lambda r: r.fire_live_stop())
+
+
+def _fire_lifecycle(game: str, settings, kind: str, fire) -> None:
+    """Build a runner and ``fire`` it for ``game`` iff it has an enabled trigger of ``kind``.
+    A lifecycle fire must never break the capture/live start/stop that triggered it."""
     try:
         profile = load_live_profile(settings.profiles_dir, game)
-        if any(t.enabled and t.kind == "on_capture" for t in profile.triggers):
-            TriggerRunner(profile, settings.data_dir).fire_capture()
-    except Exception:   # noqa: BLE001 - a lifecycle fire must never break the capture start
+        if any(t.enabled and t.kind == kind for t in profile.triggers):
+            fire(TriggerRunner(profile, settings.data_dir))
+    except Exception:   # noqa: BLE001
         pass
 
 

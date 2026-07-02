@@ -60,15 +60,22 @@ def start(game: str, interval: float | None = None):
     s.batch_device = "gpu" if read_mode() == "auto" else None
     s.start(interval=interval)
     _fire_on_capture(game)
+    _fire_lifecycle(game, "fire_live_start")   # a live start is also its own distinct event
     return s.status()
 
 
 def _fire_on_capture(game: str) -> None:
     """Fire any on_capture triggers — a live session counts as a capture start."""
+    _fire_lifecycle(game, "fire_capture")
+
+
+def _fire_lifecycle(game: str, fn_name: str) -> None:
+    """Call ``source_sched.<fn_name>(game, settings)`` — a lifecycle fire must never break the
+    live start/stop that triggered it."""
     try:
-        from ..source_sched import fire_capture
-        fire_capture(game, get_settings())
-    except Exception:   # noqa: BLE001 - a lifecycle fire must never break capture start
+        from .. import source_sched
+        getattr(source_sched, fn_name)(game, get_settings())
+    except Exception:   # noqa: BLE001
         pass
 
 
@@ -78,6 +85,7 @@ def stop(game: str):
     if s is None:
         return {"running": False, "frames": 0, "written": 0, "fps": 0.0, "recognized": []}
     s.stop()
+    _fire_lifecycle(game, "fire_live_stop")
     return s.status()
 
 

@@ -36,7 +36,9 @@ def list_triggers(game: str):
                     "status": sweep_status(game, by_id[pid].dataset)}
                    for pid in t.targets if pid in by_id]
         out.append({"id": t.id, "kind": t.kind, "interval_s": t.interval_s,
-                    "watch": t.watch, "enabled": t.enabled, "targets": targets})
+                    "watch": t.watch, "enabled": t.enabled, "targets": targets,
+                    "dataset_targets": t.dataset_targets, "dataset_action": t.dataset_action,
+                    "dataset_dest": t.dataset_dest})
     return {"game": game, "triggers": out}
 
 
@@ -73,6 +75,14 @@ def fire_trigger(game: str, trigger_id: str):
                                                   trigger_id=trigger_id):
             started.append({"source": pid})
             fired = True
+    # dataset actions (clear / clone / move) — same funnel the collector dispatch uses, so a
+    # manual test fire behaves identically to an automatic one.
+    if trig.dataset_action:
+        from ...store.dataset_ops import fire_dataset_target
+        for ds in trig.dataset_targets:
+            if fire_dataset_target(game, data_dir, profile, trig, ds):
+                started.append({"dataset": ds, "action": trig.dataset_action})
+                fired = True
     if fired:
         record_fire(data_dir, game, trigger_id)   # stamp the sidecar so the fire countdown is right
     return {"trigger": trigger_id, "started": started, "skipped": skipped}

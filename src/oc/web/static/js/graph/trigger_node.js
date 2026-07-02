@@ -6,7 +6,14 @@
 import { h, frag, TRASH, labCell } from "../dom.js";
 
 const KINDS = [["interval", "interval (periodic)"], ["on_change", "on change (live)"],
-    ["on_app_start", "on app start"], ["on_capture", "on capture start"], ["manual", "manual only"]];
+    ["on_app_start", "on app start"], ["on_capture", "on capture start"],
+    ["on_live_start", "on live start"], ["on_live_stop", "on live stop"], ["manual", "manual only"]];
+
+// dataset actions a trigger can perform on its dataset targets when it fires. "" = do nothing.
+// clone/move copy into `dataset_dest` (batches = keep batch grouping; resolved = collapse to one).
+const DS_ACTIONS = [["", "no action"], ["clear", "clear dataset"],
+    ["clone_batches", "clone data (batches)"], ["clone_resolved", "clone data (resolved)"],
+    ["move_batches", "move data (batches)"], ["move_resolved", "move data (resolved)"]];
 
 // removable source pill — same look as a subset's join-source pills (.sv-input). `rmCls`
 // is the wiring hook (tg-rmwatch / tg-rmtarget); `attrKey`/`attrVal` carry the id back to
@@ -60,6 +67,30 @@ export function triggerParts(t, model) {
             [h("option", { value: "" }, "+ fire target"), popts],
         ));
 
+    // dataset action: attach the trigger to one or more datasets and pick what it does to them
+    // when it fires (clear, or clone/move their data into a destination dataset). Independent of
+    // the fire targets above and of `kind`, so any trigger can carry a dataset action.
+    const dsHave = new Set(t.dataset_targets || []);
+    const dsFree = model.datasets().filter((d) => !dsHave.has(d));
+    const dsAction = t.dataset_action || "";
+    const needsDest = dsAction.startsWith("clone_") || dsAction.startsWith("move_");
+    const dsAction_ = frag(
+        labCell("datasets", "datasets this trigger acts on when it fires", true),
+        srcInputs(
+            (t.dataset_targets || []).map((d) => srcChip(d, "ds", "tg-rmds")),
+            "tg-addds",
+            [h("option", { value: "" }, "+ dataset"), dsFree.map((d) => h("option", d))],
+        ),
+        (t.dataset_targets || []).length ? labCell("action", "what to do to the target dataset(s)") : null,
+        (t.dataset_targets || []).length
+            ? h("select", { class: "tg-dsaction" },
+                DS_ACTIONS.map(([v, l]) => h("option", { value: v, selected: v === dsAction }, l)))
+            : null,
+        needsDest && labCell("into", "destination dataset for clone/move"),
+        needsDest && h("select", { class: "tg-dsdest" },
+            h("option", { value: "" }, "- dataset -"),
+            dsFree.map((d) => h("option", { selected: d === t.dataset_dest }, d))));
+
     // optional sound: the UI plays it (in the browser) when the trigger fires. Only shown when
     // the sounds/ folder has files; the chosen name is just persisted on the trigger. ▶ auditions.
     let sound = null;
@@ -89,7 +120,7 @@ export function triggerParts(t, model) {
                 targets,
                 labCell("kind", "how the trigger decides to fire"),
                 h("select", { class: "tg-kind" }, KINDS.map(kopt)),
-                interval, watch, sound,
+                interval, watch, dsAction_, sound,
                 labCell("progress", "what the current/last sweep is doing"),
                 h("span", { class: "tg-prog muted" }, "idle"),
                 labCell("last fired", "last time this trigger fired"),

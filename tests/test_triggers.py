@@ -1,13 +1,13 @@
 """Trigger runner + price-node item sourcing — pure logic, no network.
 
 ``TriggerRunner`` scheduling (interval due / on_change for changed keys only) is tested with
-an injected clock and a captured ``fire``. ``gather_source_items`` is tested against a real
-DatasetStore with a stubbed name->slug resolver.
+an injected clock and a captured ``fire``. ``gather_source_names`` is tested against a real
+DatasetStore (the producer applies its own key transform, so this yields raw item names).
 """
 
 from oc import eventlog
 from oc.collect.triggers import TriggerRunner, read_subset_sigs
-from oc.enrich.price_runner import gather_source_items
+from oc.enrich.http_producer import gather_source_names
 from oc.profile.models import GameProfile, JoinSource, ProducerDef, SubsetDef, TriggerDef
 from oc.store import DatasetStore, KeySpec
 
@@ -48,12 +48,12 @@ def test_interval_fires_only_when_due():
 def test_on_change_fires_targets_for_changed_keys_only():
     clock = [0.0]
     tr, calls = _runner(_profile(), clock)
-    tr._resolve = lambda n: n.lower().replace(" ", "_")     # stub slug resolver (no network)
 
     assert tr.on_change("master", [{"name": "x"}]) == []    # no on_change trigger watches master
     changed = [{"name": "Soma Prime"}, {"name": "Volt Prime"}]
     assert tr.on_change("relic_rewards", changed) == ["relicwatch"]
-    assert calls == [("relic", [("soma_prime", "Soma Prime"), ("volt_prime", "Volt Prime")])]
+    # items are raw changed names — the producer applies its own key transform
+    assert calls == [("relic", ["Soma Prime", "Volt Prime"])]
 
 
 def test_on_change_ignores_empty_and_disabled():
@@ -61,7 +61,6 @@ def test_on_change_ignores_empty_and_disabled():
     profile.triggers[1].enabled = False
     clock = [0.0]
     tr, calls = _runner(profile, clock)
-    tr._resolve = lambda n: n
     assert tr.on_change("relic_rewards", [{"name": "x"}]) == []   # disabled
     assert tr.on_change("relic_rewards", []) == []               # nothing changed
     assert calls == []
@@ -74,7 +73,6 @@ def test_triggers_publish_activity_log_lines():
     try:
         clock = [1000.0]
         tr, _ = _runner(_profile(), clock)
-        tr._resolve = lambda n: n.lower().replace(" ", "_")
         tr.on_change("relic_rewards", [{"name": "Soma Prime"}])
         clock[0] = 1100.0
         tr.tick()
@@ -124,7 +122,6 @@ def test_on_change_subset_fires_only_when_joined_output_changes(tmp_path):
     calls = []
     tr = TriggerRunner(_join_profile(), tmp_path,
                        fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
-    tr._resolve = lambda n: n
 
     # first change -> no baseline sig yet -> fires once and records the baseline
     assert tr.on_change("prices", [{"name": "Soma Prime", "price": 10}]) == ["watch"]
@@ -146,13 +143,12 @@ def test_on_change_subset_fires_only_when_joined_output_changes(tmp_path):
     assert calls == ["px", "px"]   # fired twice total (baseline + real change), not on the no-ops
 
 
-def test_gather_source_items_from_dataset(tmp_path):
+def test_gather_source_names_from_dataset(tmp_path):
     ds = DatasetStore(tmp_path, "g", "master", key=KeySpec(fields=("name",)))
     ds.begin_batch()
-    for name in ("Soma Prime", "Soma Prime", "Volt Prime"):   # dup name -> one slug
+    for name in ("Soma Prime", "Soma Prime", "Volt Prime"):   # dup name -> one entry
         ds.record_seen({"name": name})
     ds.save()
 
-    items = gather_source_items(tmp_path, "g", _profile(), ["master"],
-                                resolve=lambda n: n.lower().replace(" ", "_"))
-    assert items == [("soma_prime", "Soma Prime"), ("volt_prime", "Volt Prime")]
+    names = gather_source_names(tmp_path, "g", _profile(), ["master"])
+    assert names == ["Soma Prime", "Volt Prime"]

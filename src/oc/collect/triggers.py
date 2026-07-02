@@ -12,10 +12,14 @@ Kinds:
   those changed keys (resolved to slugs) so a relic-reward read prices ~4 items, not the world.
 * ``on_app_start`` — fire once when the teach/web app boots (:meth:`fire_app_start`).
 * ``on_capture``   — fire when a capture session starts, live OR precapture (:meth:`fire_capture`).
+* ``on_live_start``— fire when the server live-collection session starts (:meth:`fire_live_start`).
+* ``on_live_stop`` — fire when the server live-collection session stops (:meth:`fire_live_stop`).
 * ``manual``       — never auto-fires (the sweep button drives it); declared only for wiring.
 
 A trigger ``target`` is a price-node id OR a file-source id: pricing nodes sweep the market,
-file sources read a log/config file. The runner dispatches by which kind owns the id.
+file sources read a log/config file. The runner dispatches by which kind owns the id. A trigger
+can ALSO act on datasets — see ``dataset_targets``/``dataset_action`` and
+:func:`oc.store.dataset_ops.fire_dataset_target`.
 
 ``fire`` and ``clock`` are injectable so the scheduling logic is unit-testable without sleeping
 or hitting the network.
@@ -30,10 +34,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..enrich.price_collector import inventory_slugs
 from ..enrich.price_runner import start_sweep, sweep_status
-from ..enrich.slug_resolver import get_resolver
-from ..enrich.wm_client import slugify
 from ..eventlog import publish as logev
 from ..eventlog import slog
 from ..store.flow_events import publish_flow
@@ -112,7 +113,6 @@ class TriggerRunner:
         now = clock()
         self._last: dict[str, float] = {
             t.id: now for t in profile.triggers if t.kind == "interval"}
-        self._resolve = None   # built lazily on first on_change (needs the catalogue)
 
     # ---- interval ----------------------------------------------------------
 
@@ -143,6 +143,14 @@ class TriggerRunner:
     def fire_capture(self) -> list[str]:
         """Fire every enabled ``on_capture`` trigger (called when a live/precapture session starts)."""
         return self._fire_kind("on_capture", "capture start")
+
+    def fire_live_start(self) -> list[str]:
+        """Fire every enabled ``on_live_start`` trigger (called when the server live session starts)."""
+        return self._fire_kind("on_live_start", "live start")
+
+    def fire_live_stop(self) -> list[str]:
+        """Fire every enabled ``on_live_stop`` trigger (called when the server live session stops)."""
+        return self._fire_kind("on_live_stop", "live stop")
 
     def _fire_kind(self, kind: str, why: str) -> list[str]:
         fired: list[str] = []
@@ -255,14 +263,19 @@ class TriggerRunner:
                 return True
         return False
 
-    def _items_for(self, records: list[dict]) -> list[tuple[str, str]]:
-        if self._resolve is None:
-            r = get_resolver(self._data_dir, self._profile.name)
-            self._resolve = r.resolve if r is not None else slugify
-        return inventory_slugs(records, "name", self._resolve)
+    def _items_for(self, records: list[dict]) -> list[str]:
+        """Unique item names among the changed records — the producer applies its own key
+        transform (a generic ``http`` node has no notion of a slug here)."""
+        seen: dict[str, None] = {}
+        for r in records:
+            n = r.get("name")
+            if n and str(n) not in seen:
+                seen[str(n)] = None
+        return list(seen.keys())
 
     def _fire_targets(self, trigger, items) -> None:
-        """Dispatch each target id by what owns it: a producer sweeps/refreshes, a file source reads."""
+        """Dispatch each target id by what owns it: a producer sweeps/refreshes, a file source
+        reads, and each ``dataset_targets`` entry runs the trigger's dataset action."""
         by_producer = {p.id: p for p in self._profile.producers}
         by_source = {s.id: s for s in self._profile.file_sources}
         for tid in trigger.targets:
@@ -271,6 +284,10 @@ class TriggerRunner:
                             trigger_id=trigger.id, fire=self._fire)
             elif tid in by_source:
                 self._read_source(by_source[tid], trigger.id)
+        if getattr(trigger, "dataset_action", ""):
+            from ..store.dataset_ops import fire_dataset_target
+            for ds in getattr(trigger, "dataset_targets", []):
+                fire_dataset_target(self._profile.name, self._data_dir, self._profile, trigger, ds)
 
     def _read_source(self, source, trigger_id: str) -> None:
         """Fire a file-source target via the shared funnel (see :func:`read_source_target`)."""
