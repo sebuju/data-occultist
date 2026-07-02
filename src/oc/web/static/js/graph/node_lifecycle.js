@@ -22,6 +22,7 @@ function remapNodeState(mapId) {
         if (id.startsWith("vtd:")) { const np = mapId(id.slice(4)); return np ? `vtd:${np}` : null; }
         if (id.startsWith("vt:")) { const np = mapId(id.slice(3)); return np ? `vt:${np}` : null; }
         if (id.startsWith("prev:")) { const np = mapId(`win:${id.slice(5)}`); return np && np.startsWith("win:") ? `prev:${np.slice(4)}` : null; }
+        if (id.startsWith("prod:")) { const np = mapId(`producer:${id.slice(5)}`); return np && np.startsWith("producer:") ? `prod:${np.slice(9)}` : null; }
         return null;
     };
     const mapAny = (id) => mapId(id) || mapSat(id);
@@ -69,7 +70,8 @@ export function forgetNodeState(id) {
     // (vt: kept rows + vtd: dismissed rows); dataset/subset one; a window its preview.
     const sats = (p[0] === "ds" || p[0] === "sub") ? [`vt:${id}`]
         : p[0] === "src" ? [`vt:${id}`, `vtd:${id}`]
-        : p[0] === "win" ? [`prev:${p[1]}`] : [];
+        : p[0] === "win" ? [`prev:${p[1]}`]
+        : p[0] === "producer" ? [`prod:${p[1]}`] : [];
     for (const sat of sats) { model.shownSatellites.delete(sat); pos.delete(sat); nodeSizes.delete(sat); collapsed.delete(sat); }
     groups.forgetNodes(new Set([id, ...sats]));
 }
@@ -109,8 +111,10 @@ export function movePos(oldId, newId) {
 // Renaming a window changes the id embedded in ALL its child nodes, so carry every node
 // whose window segment matches — one rename, the whole subtree stays put. Limited to the
 // window-owned node types so it can't grab a same-named dataset node (those carry
-// separately in the handler, since their stored data moves too).
-const WINDOW_NODE_TYPES = new Set(["win", "prev", "reg", "det", "item", "sb"]);
+// separately in the handler, since their stored data moves too). Item fields/tells
+// (`fld:<win>:<item>:*` / `tell:<win>:<item>:*`) are window-owned too — omit them and a
+// window rename orphans every item-field/tell node's layout+group state (it jumps/resets).
+const WINDOW_NODE_TYPES = new Set(["win", "prev", "reg", "det", "item", "sb", "fld", "tell"]);
 export function moveWindowPos(oldWin, newWin) {
     if (oldWin === newWin) return;
     statsRenameNode(`win:${oldWin}`, `win:${newWin}`);   // carry the window node's timing history

@@ -21,6 +21,12 @@ const INNER = {
         C("15.5", "11.5", "1", fill), C("18", "13.5", "1", fill),
     ],
     window: () => [P("M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3")],
+    // glyphs: a character "A" in a card — the taught glyph atlas (font reference for OCR)
+    glyphs: () => [
+        svg("rect", { x: "4", y: "4", width: "16", height: "16", rx: "2.5" }),
+        P("M8.5 16.5 12 7.5 15.5 16.5"),
+        svg("line", { x1: "9.6", y1: "13.4", x2: "14.4", y2: "13.4" }),
+    ],
     preview: () => [P("M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"), C("12", "12", "2.6")],
     region: () => [
         svg("rect", { x: "5", y: "6", width: "14", height: "12", rx: "1", "stroke-dasharray": "2 2" }),

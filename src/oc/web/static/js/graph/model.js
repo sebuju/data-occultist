@@ -20,6 +20,7 @@ export class GraphModel {
         this.profile.file_sources = this.profile.file_sources || [];
         this.profile.triggers = this.profile.triggers || [];
         this.profile.dictionaries = this.profile.dictionaries || [];
+        this.profile.glyphs = this.profile.glyphs || [];   // taught glyph atlas (post-OCR refinement)
         // a subset joins many sources, each carrying its own join config (JoinSource)
         for (const s of this.profile.subsets) {
             s.sources = s.sources || [];
@@ -29,7 +30,10 @@ export class GraphModel {
         }
         for (const pn of this.profile.producers) pn.sources = pn.sources || [];   // items the node prices (empty = catalogue)
         for (const s of this.profile.file_sources) { s.match = s.match || []; s.fields = s.fields || []; s.roots = s.roots || []; }
-        for (const t of this.profile.triggers) { t.watch = t.watch || []; t.targets = t.targets || []; if (t.volume == null) t.volume = 1; }
+        for (const t of this.profile.triggers) {
+            t.watch = t.watch || []; t.targets = t.targets || []; if (t.volume == null) t.volume = 1;
+            t.dataset_targets = t.dataset_targets || []; t.dataset_action = t.dataset_action || ""; t.dataset_dest = t.dataset_dest || "";
+        }
         // Item children arrive HOISTED to the window (flat ``item_fields``/``item_tells``, each
         // with an ``item`` backref) so each is its own node. Fan them back onto each item's
         // ``fields``/``tells`` for the per-item editing logic, and drop the flat key so saving
@@ -50,6 +54,15 @@ export class GraphModel {
             fanIn(w, "item_tells", "tells");
         }
     }
+
+    // ---- taught glyph atlas (reference characters for post-OCR glyph refinement) ----
+    glyphs() { return this.profile.glyphs || (this.profile.glyphs = []); }
+    // alphabetical by char (case-insensitive, then case, then image) so the atlas list is ordered
+    sortGlyphs() { this.glyphs().sort((a, b) => (a.char || "").localeCompare(b.char || "", undefined, { sensitivity: "base" }) || (a.char || "").localeCompare(b.char || "") || (a.image || "").localeCompare(b.image || "")); }
+    addGlyph({ char = "", image }) { this.glyphs().push({ char, image }); this.sortGlyphs(); return this.glyphs().findIndex((g) => g.image === image); }
+    addGlyphs(list) { for (const g of list) this.glyphs().push({ char: g.char || "", image: g.image }); this.sortGlyphs(); }
+    setGlyphChar(i, char) { const g = this.glyphs()[i]; if (g) { g.char = char; this.sortGlyphs(); } }
+    removeGlyph(i) { this.glyphs().splice(i, 1); }
 
     // effective dataset id for a window (defaults to its own id)
     datasetOf(win) { return win.dataset || null; }
@@ -108,9 +121,13 @@ export class GraphModel {
         for (const s of this.profile.subsets || [])                       // each subset source is a REF
             (s.sources || []).forEach((_, i) =>
                 sites.push({ decl: false, get: () => s.sources[i].dataset, set: (v) => { s.sources[i].dataset = v; } }));
-        for (const t of this.profile.triggers || [])                      // on_change watch are REFs
-            (t.watch || []).forEach((_, i) =>
+        for (const t of this.profile.triggers || []) {                    // trigger dataset REFs
+            (t.watch || []).forEach((_, i) =>                             // on_change watch
                 sites.push({ decl: false, get: () => t.watch[i], set: (v) => { t.watch[i] = v; } }));
+            (t.dataset_targets || []).forEach((_, i) =>                   // datasets it acts on
+                sites.push({ decl: false, get: () => t.dataset_targets[i], set: (v) => { t.dataset_targets[i] = v; } }));
+            sites.push({ decl: false, get: () => t.dataset_dest || "", set: (v) => { t.dataset_dest = v; } });   // clone/move dest
+        }
         return sites;
     }
 
@@ -170,13 +187,15 @@ export class GraphModel {
         }
         return [...out];
     }
-    // The output columns a producer writes, by backend type — ONE source of truth for the key
-    // picker and the subset column list (a producer dataset isn't fed by windows, so its columns
-    // can't be read off a schema). relic writes reward rows; warframe_market writes price snapshots.
+    // The output columns a producer writes — ONE source of truth for the key picker and the
+    // subset column list (a producer dataset isn't fed by windows, so its columns can't be read
+    // off a schema). relic writes fixed reward rows; an http node writes `name` + each mapped
+    // out_field (so editing the mapping immediately surfaces/removes downstream columns).
     producerColumns(pn) {
         if (!pn) return [];
         if (pn.type === "relic") return ["name", "item", "rarity", "chance", "ducats", "state"];
-        return ["name", "slug", "price_min", "price_median", "volume", "live_ask", "live_median", "live_sellers"];
+        const fields = (pn.http && pn.http.fields) || [];
+        return ["name", ...fields.map((f) => f.out_field).filter(Boolean)];
     }
 
     // ---- satellites (opt-in follower nodes) ---------------------------------
@@ -195,6 +214,7 @@ export class GraphModel {
         if (id.startsWith("vtd:")) return id.slice(4);   // dismissed-rows preview (file source)
         if (id.startsWith("vt:")) return id.slice(3);
         if (id.startsWith("prev:")) return `win:${id.slice(5)}`;
+        if (id.startsWith("prod:")) return `producer:${id.slice(5)}`;   // producer preview (inputs/schema/test)
         return null;
     }
     satelliteBonds() {
@@ -209,6 +229,8 @@ export class GraphModel {
         // win:{id:"game"} so the shared detect node body/wiring (rule 7) routes to the gate.
         for (const d of this.profile.detect || [])
             ns.push({ id: `det:game:${d.id}`, type: "detect", ref: d, win: { id: "game", isGame: true } });
+        // standalone glyph-atlas node (its own image surface; teaches post-OCR glyph refinement)
+        ns.push({ id: "glyphs", type: "glyphs", ref: this.profile });
         for (const w of this.profile.windows) {
             ns.push({ id: `win:${w.id}`, type: "window", ref: w });
             if (this.satelliteOn(`prev:${w.id}`)) ns.push({ id: `prev:${w.id}`, type: "preview", ref: w });
@@ -229,7 +251,10 @@ export class GraphModel {
             ns.push({ id: `sub:${s.id}`, type: "subset", ref: s });
             if (this.satelliteOn(`vt:sub:${s.id}`)) ns.push({ id: `vt:sub:${s.id}`, type: "vttable", ref: { kind: "subset", id: s.id } });
         }
-        for (const pn of this.profile.producers || []) ns.push({ id: `producer:${pn.id}`, type: "producer", ref: pn });
+        for (const pn of this.profile.producers || []) {
+            ns.push({ id: `producer:${pn.id}`, type: "producer", ref: pn });
+            if (this.satelliteOn(`prod:${pn.id}`)) ns.push({ id: `prod:${pn.id}`, type: "vttable", ref: { kind: "producer", id: pn.id, dataset: pn.dataset } });
+        }
         for (const s of this.profile.file_sources || []) {
             ns.push({ id: `src:${s.id}`, type: "filesource", ref: s });
             if (this.satelliteOn(`vt:src:${s.id}`)) ns.push({ id: `vt:src:${s.id}`, type: "vttable", ref: { kind: "source", id: s.id } });
@@ -243,6 +268,7 @@ export class GraphModel {
     edges() {
         const es = [];
         for (const d of this.profile.detect || []) es.push({ from: "game", to: `det:game:${d.id}`, kind: "detect" });
+        es.push({ from: "game", to: "glyphs", kind: "own" });   // glyph-atlas node hangs off the game node
         for (const w of this.profile.windows) {
             // game→window line hidden by request — uncomment to restore the owns edge.
             // es.push({ from: "game", to: `win:${w.id}`, kind: "own" });
@@ -277,6 +303,7 @@ export class GraphModel {
                 const from = this.subsetDef(src) ? `sub:${src}` : `ds:${src}`;
                 es.push({ from, to: `producer:${pn.id}`, kind: "data" });
             }
+            if (this.satelliteOn(`prod:${pn.id}`)) es.push({ from: `producer:${pn.id}`, to: `prod:${pn.id}`, kind: "img" });
         }
         // a trigger FIRES its target price nodes (trigger -> price); an on_change trigger also
         // WATCHES datasets — the dashed line leaves the trigger's watch port and reaches OUT to the
@@ -295,6 +322,9 @@ export class GraphModel {
                     const to = this.subsetDef(w) ? `sub:${w}` : `ds:${w}`;
                     es.push({ from: `trigger:${t.id}`, to, kind: "watch" });
                 }
+            // a dataset-action trigger ACTS ON its dataset targets (trigger -> dataset)
+            for (const ds of t.dataset_targets || [])
+                es.push({ from: `trigger:${t.id}`, to: `ds:${ds}`, kind: "trigger" });
         }
         for (const d of this.profile.dictionaries || []) es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
         // vt-table satellites: a dotted "img" edge from the dataset/subset to its records grid (opt-in)
@@ -310,6 +340,29 @@ export class GraphModel {
         return win.fields.find((f) => f.id === region.field) || null;
     }
 
+    // SINGLE SOURCE OF TRUTH for every place a FIELD id is referenced within a window (rule 7).
+    // A field id names a schema column, so it is pointed at by the region/item-field that reads
+    // it, the tells that validate on it, AND — critically — every RECORD KEY that includes it
+    // (window default key, each item's own key, and the dataset's key_field override). A rename
+    // that misses any of these leaves a key part pointing at a dead id, and CLAUDE.md's rule holds:
+    // a record with any key part unread is dropped → every record silently vanishes / the ledger
+    // re-keys to NULL. Both field-rename paths (region node + item-field node) route through here
+    // so they can never diverge again. Caller renames the FieldDef itself + the node-id twin.
+    _repointField(win, oldFid, newFid) {
+        if (!win || !oldFid || oldFid === newFid) return;
+        const swap = (arr) => (arr || []).map((x) => (x === oldFid ? newFid : x));
+        for (const r of win.regions || []) if (r.field === oldFid) r.field = newFid;   // grid region → field link
+        for (const it of win.items || []) {
+            for (const f of it.fields || []) if (f.field === oldFid) f.field = newFid;  // item field → field link
+            for (const t of it.tells || []) if (t.field === oldFid) t.field = newFid;   // text tell validates on it
+            if (it.key) it.key.fields = swap(it.key.fields);                            // per-item record key
+        }
+        if (win.key) win.key.fields = swap(win.key.fields);                             // window default key (items inherit)
+        // dataset key_field override — for every dataset this window feeds (several windows can share one)
+        const d = this.datasetDef(this.datasetOf(win));
+        if (d && d.key_field === oldFid) d.key_field = newFid;
+    }
+
     datasets() {
         const set = new Set();
         for (const st of this._datasetSites()) if (st.decl) { const v = st.get(); if (v) set.add(v); }   // declaration sites only
@@ -321,15 +374,24 @@ export class GraphModel {
     producerNode(id) { return (this.profile.producers || []).find((p) => p.id === id) || null; }
     // a fresh producer is born UNWIRED — no output dataset (the user drags its out-port to one,
     // or onto empty canvas to mint one). Never auto-create/attach a dataset here.
-    addProducer(dataset = "", type = "warframe_market") {
+    addProducer(dataset = "", type = "http") {
         this.profile.producers = this.profile.producers || [];
         let n = 1, id = "producer";
         while (this.producerNode(id)) id = `producer_${++n}`;
         if (dataset) this.ensureDatasetDef(dataset);
-        const pn = { id, type, mode: "statistics", dataset, throttle: 0.4, enabled: true, sources: [] };
+        const pn = { id, type, mode: "", dataset, throttle: 0.4, enabled: true, sources: [] };
+        if (type === "http") pn.http = this._blankHttp();
         this._applyProducerDefaultKey(pn);   // relic needs its (name,item,state) key from birth
         this.profile.producers.push(pn);
         return id;
+    }
+    // A fresh http spec: no request, slugify keys, no mapping — the user teaches it all in the UI.
+    _blankHttp() {
+        return { request: { method: "GET", url: "", headers: {}, query: {}, timeout: 30 },
+                 key_transform: "slugify", key_encode: true, catalogue: null, root: "", fields: [] };
+    }
+    _blankCatalogue() {
+        return { url: "", items_path: "data", name_path: "", key_path: "", fuzzy: 0.9, ttl_days: 7, suffix_hints: [] };
     }
     removeProducer(id) { this.profile.producers = (this.profile.producers || []).filter((p) => p.id !== id); this._dropTarget(id); }
     renameProducer(oldId, newId) {
@@ -339,14 +401,17 @@ export class GraphModel {
         this._repointTargets(oldId, newId);   // a trigger may target this producer — carry its wire
         return true;
     }
-    // the producer backend (registry._PRODUCER): warframe_market | relic. Switching it rebuilds the node.
+    // the producer backend (registry._PRODUCER): http | relic. Switching it rebuilds the node.
     setProducerType(id, type) {
         const pn = this.producerNode(id);
-        if (pn && type) { pn.type = type; this._applyProducerDefaultKey(pn); }
+        if (!pn || !type) return;
+        pn.type = type;
+        if (type === "http" && !pn.http) pn.http = this._blankHttp();
+        this._applyProducerDefaultKey(pn);
     }
     // a backend may need a specific output key. relic writes one row per (relic, reward, state),
-    // so it MUST key on all three or every reward/state of a relic collapses into one row; market
-    // snapshots key by name (the default), so carry no explicit key.
+    // so it MUST key on all three or every reward/state of a relic collapses into one row; an http
+    // node keys by name (the default), so carries no explicit key.
     _applyProducerDefaultKey(pn) {
         if (pn.type === "relic") pn.key = { fields: ["name", "item", "state"], sep: "|", case_sensitive: false };
         else delete pn.key;
@@ -355,12 +420,53 @@ export class GraphModel {
         const pn = this.producerNode(id);
         if (pn && ds) { pn.dataset = ds; this.ensureDatasetDef(ds); }
     }
-    setProducerMode(id, mode) {
-        const pn = this.producerNode(id);
-        if (pn && (mode === "statistics" || mode === "orders")) pn.mode = mode;
+    // status-label only (no behaviour) — shown in the node so a sweep's progress copy reads sensibly.
+    setProducerMode(id, mode) { const pn = this.producerNode(id); if (pn) pn.mode = mode || ""; }
+    setProducerThrottle(id, v) { const pn = this.producerNode(id); if (pn) pn.throttle = Math.max(0, parseFloat(v) || 0); }
+    setProducerEnabled(id, on) { const pn = this.producerNode(id); if (pn) pn.enabled = !!on; }
+
+    // ---- http spec mutators (one per teachable knob; no knob without a setter) ----
+    _http(id) { const pn = this.producerNode(id); return pn && pn.http ? pn.http : null; }
+    setHttpMethod(id, m) { const s = this._http(id); if (s) s.request.method = m || "GET"; }
+    setHttpUrl(id, u) { const s = this._http(id); if (s) s.request.url = u || ""; }
+    setHttpTimeout(id, t) { const s = this._http(id); if (s) s.request.timeout = Math.max(0, parseFloat(t) || 0); }
+    // headers/query are maps; the panel rebuilds the whole {k:v} from its rows on each edit.
+    setProducerMap(id, kind, obj) { const s = this._http(id); if (s && (kind === "headers" || kind === "query")) s.request[kind] = obj || {}; }
+    setHttpKeyTransform(id, m) {
+        const s = this._http(id); if (!s) return;
+        s.key_transform = m;
+        if (m === "catalogue" && !s.catalogue) s.catalogue = this._blankCatalogue();
     }
-    // a warframe_market node's priced-item sources (datasets/subsets). Empty = the whole catalogue.
-    // A node may not source its own output dataset (a self-loop). Returns true when the wire was added.
+    setHttpKeyEncode(id, on) { const s = this._http(id); if (s) s.key_encode = !!on; }
+    setHttpRoot(id, r) { const s = this._http(id); if (s) s.root = r || ""; }
+    setHttpCatalogue(id, patch) {
+        const s = this._http(id); if (!s) return;
+        s.catalogue = Object.assign(s.catalogue || this._blankCatalogue(), patch);
+    }
+    // response field mapping (each row = one output column)
+    addHttpField(id) { const s = this._http(id); if (s) s.fields.push({ out_field: "", path: "", type: "text", required: false }); }
+    removeHttpField(id, i) { const s = this._http(id); if (s) s.fields.splice(i, 1); }
+    setHttpField(id, i, patch) { const s = this._http(id); if (s && s.fields[i]) Object.assign(s.fields[i], patch); }
+    toggleHttpFieldArray(id, i, on) {
+        const s = this._http(id); if (!s || !s.fields[i]) return;
+        s.fields[i].array = on ? { filter: [], pluck: "", agg: "min", depth: 5 } : null;
+    }
+    setHttpFieldArray(id, i, patch) { const s = this._http(id); if (s && s.fields[i] && s.fields[i].array) Object.assign(s.fields[i].array, patch); }
+    addHttpFilter(id, i) { const s = this._http(id); if (s && s.fields[i] && s.fields[i].array) s.fields[i].array.filter.push({ path: "", op: "eq", value: "" }); }
+    removeHttpFilter(id, i, fi) { const s = this._http(id); if (s && s.fields[i] && s.fields[i].array) s.fields[i].array.filter.splice(fi, 1); }
+    setHttpFilter(id, i, fi, patch) {
+        const s = this._http(id); if (!s || !s.fields[i] || !s.fields[i].array) return;
+        const flt = s.fields[i].array.filter[fi]; if (!flt) return;
+        Object.assign(flt, patch);
+        // in/nin take a list; split a comma string so the spec matches how the server evaluates it.
+        if ((flt.op === "in" || flt.op === "nin") && typeof flt.value === "string") {
+            flt.value = flt.value.split(",").map((x) => x.trim()).filter(Boolean);
+        } else if (flt.op !== "in" && flt.op !== "nin" && Array.isArray(flt.value)) {
+            flt.value = flt.value.join(", ");
+        }
+    }
+    // an http node's item sources (datasets/subsets) — the names it fetches. A node may not
+    // source its own output dataset (a self-loop). Returns true when the wire was added.
     addProducerSource(id, ds) {
         const pn = this.producerNode(id);
         if (!pn || !ds || ds === pn.dataset) return false;
@@ -379,7 +485,7 @@ export class GraphModel {
         for (const s of this.profile.subsets || []) if (!cur.has(s.id)) out.push(s.id);
         return out;
     }
-    // which source column names the item to price (resolved to a market slug). Default "name".
+    // which source column names the item (fed to the URL template / catalogue resolver). Default "name".
     setProducerSourceField(id, f) { const pn = this.producerNode(id); if (pn) pn.source_field = f || "name"; }
     // columns available across a producer's source datasets/subsets (for the name-field picker)
     producerSourceColumns(pn) {
@@ -398,7 +504,7 @@ export class GraphModel {
         this.profile.triggers = this.profile.triggers || [];
         let n = 1, id = "trigger";
         while (this.trigger(id)) id = `trigger_${++n}`;
-        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, sound: "", volume: 1 });
+        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, sound: "", volume: 1, dataset_targets: [], dataset_action: "", dataset_dest: "" });
         return id;
     }
     removeTrigger(id) { this.profile.triggers = (this.profile.triggers || []).filter((t) => t.id !== id); }
@@ -408,7 +514,7 @@ export class GraphModel {
         this.trigger(oldId).id = newId;
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "on_change", "on_app_start", "on_capture", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "on_change", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
     setTriggerSound(id, v) { const t = this.trigger(id); if (t) t.sound = v || ""; }
     setTriggerVolume(id, v) { const t = this.trigger(id); const n = parseFloat(v); if (t && !Number.isNaN(n)) t.volume = Math.max(0, Math.min(1, n)); }
@@ -431,6 +537,20 @@ export class GraphModel {
         return true;
     }
     removeTriggerWatch(id, ds) { const t = this.trigger(id); if (t) t.watch = (t.watch || []).filter((d) => d !== ds); }
+
+    // ---- dataset actions: a trigger can clear / clone / move a dataset's data ----
+    static TRIGGER_DS_ACTIONS = ["", "clear", "clone_batches", "clone_resolved", "move_batches", "move_resolved"];
+    addTriggerDataset(id, ds) {
+        const t = this.trigger(id);
+        if (!t || !ds || !this.datasets().includes(ds)) return false;
+        t.dataset_targets = t.dataset_targets || [];
+        if (t.dataset_targets.includes(ds)) return false;
+        t.dataset_targets.push(ds);
+        return true;
+    }
+    removeTriggerDataset(id, ds) { const t = this.trigger(id); if (t) t.dataset_targets = (t.dataset_targets || []).filter((d) => d !== ds); }
+    setTriggerDatasetAction(id, v) { const t = this.trigger(id); if (t && GraphModel.TRIGGER_DS_ACTIONS.includes(v)) t.dataset_action = v; }
+    setTriggerDatasetDest(id, v) { const t = this.trigger(id); if (t) t.dataset_dest = v || ""; }
 
     // ---- file sources: parse a game log/config file into a dataset -----------
     fileSource(id) { return (this.profile.file_sources || []).find((s) => s.id === id) || null; }
@@ -563,6 +683,26 @@ export class GraphModel {
         (this.profile.datasets = this.profile.datasets || []).push({ id: newId });
         return newId;
     }
+
+    // Deep-copy an entry in `list` under a fresh non-colliding id (`<id>-copy`, `-copy2`, …).
+    // ONE cloner for every id-keyed node kind (rule 7): the clone is a full independent copy of
+    // the model object, so editing it never touches the original. Returns the new id (or null).
+    _cloneById(list, id, has) {
+        const src = (list || []).find((x) => x.id === id);
+        if (!src) return null;
+        const copy = structuredClone(src);
+        let n = 2, nid = `${id}-copy`;
+        while (has(nid)) nid = `${id}-copy${n++}`;
+        copy.id = nid;
+        list.push(copy);
+        return nid;
+    }
+    cloneWindow(id) { return this._cloneById(this.profile.windows, id, (x) => !!this.window(x)); }
+    cloneSubset(id) { this.profile.subsets = this.profile.subsets || []; return this._cloneById(this.profile.subsets, id, (x) => !!this.subsetDef(x)); }
+    cloneProducer(id) { this.profile.producers = this.profile.producers || []; return this._cloneById(this.profile.producers, id, (x) => !!this.producerNode(x)); }
+    cloneTrigger(id) { this.profile.triggers = this.profile.triggers || []; return this._cloneById(this.profile.triggers, id, (x) => (this.profile.triggers || []).some((t) => t.id === x)); }
+    cloneFileSource(id) { this.profile.file_sources = this.profile.file_sources || []; return this._cloneById(this.profile.file_sources, id, (x) => !!this.fileSource(x)); }
+    cloneDictionary(id) { this.profile.dictionaries = this.profile.dictionaries || []; return this._cloneById(this.profile.dictionaries, id, (x) => !!this.dictionary(x)); }
     removeDatasetDef(id) { this.profile.datasets = (this.profile.datasets || []).filter((d) => d.id !== id); }
 
     // Unwire every site holding a removed dataset/subset id (declarations AND references) and
@@ -573,7 +713,10 @@ export class GraphModel {
         for (const st of this._datasetSites()) if (st.get() === id) st.set("");   // decl: unwire feeder; ref: emptied
         for (const pn of this.profile.producers || []) pn.sources = (pn.sources || []).filter(Boolean);
         for (const s of this.profile.subsets || []) s.sources = (s.sources || []).filter((src) => src.dataset);
-        for (const t of this.profile.triggers || []) t.watch = (t.watch || []).filter(Boolean);
+        for (const t of this.profile.triggers || []) {
+            t.watch = (t.watch || []).filter(Boolean);
+            t.dataset_targets = (t.dataset_targets || []).filter(Boolean);   // _datasetSites() blanked the deleted id
+        }
         if (this._extraDatasets) this._extraDatasets = this._extraDatasets.filter((x) => x !== id);
     }
 
@@ -816,8 +959,11 @@ export class GraphModel {
         const w = this.window(winId);
         const r = this.region(winId, regId);
         if (!w || !r || !newId || w.regions.some((x) => x.id === newId)) return false;
+        const oldField = r.field;
         const fld = this.fieldOf(w, r);
-        if (fld && fld.id === r.field) { fld.id = newId; r.field = newId; }
+        // rename the FieldDef + repoint EVERY reference to it (region link, tells, keys, dataset
+        // key_field) through the shared helper — not just this region's own link.
+        if (fld && fld.id === oldField) { fld.id = newId; this._repointField(w, oldField, newId); }
         r.id = newId;
         return true;
     }
@@ -955,6 +1101,9 @@ export class GraphModel {
         return id;
     }
     setItemPriority(winId, id, priority) { const it = this.item(winId, id); if (it) it.priority = priority | 0; }
+    // Terminator flag: when this template is detected it marks the END of the list — every record
+    // positioned after it is discarded (an unowned/"no more results" placeholder). Scroll datasets only.
+    setItemTerminator(winId, id, on) { const it = this.item(winId, id); if (it) it.terminator = !!on; }
     // Min coverage on one axis ("x"/"y"): the fraction of the cell that must sit inside the data
     // area for the record to be stored — clamped 0..1. A row scrolled off past this is dismissed.
     setItemCover(winId, id, axis, frac) {
@@ -976,6 +1125,20 @@ export class GraphModel {
         order.forEach((it, k) => { it.priority = n - 1 - k; });   // top -> highest priority, bottom -> 0 (base)
     }
     setWindowStaticGrid(winId, on) { const w = this.window(winId); if (w) w.static_grid = !!on; }
+    // Window-level OCR preprocess (Text appearance): mode none/color/threshold/invert,
+    // taught colours + tolerance for `color`, upscale for small text. Lazily defaulted so
+    // an old profile without the block gets one on first edit.
+    preprocess(winId) {
+        const w = this.window(winId);
+        if (!w) return null;
+        w.preprocess = w.preprocess || { mode: "none", colors: [], tolerance: 60, scale: 1.0 };
+        return w.preprocess;
+    }
+    setPreprocessMode(winId, mode) { const pp = this.preprocess(winId); if (pp) pp.mode = mode; }
+    setPreprocessTolerance(winId, t) { const pp = this.preprocess(winId); if (pp) pp.tolerance = t; }
+    setPreprocessScale(winId, s) { const pp = this.preprocess(winId); if (pp) pp.scale = s; }
+    addPreprocessColor(winId, hex) { const pp = this.preprocess(winId); if (pp && !pp.colors.includes(hex)) pp.colors.push(hex); }
+    removePreprocessColor(winId, i) { const pp = this.preprocess(winId); if (pp) pp.colors.splice(i, 1); }
     removeItem(winId, id) {
         const w = this.window(winId);
         if (!w) return;
@@ -1037,12 +1200,11 @@ export class GraphModel {
         const old = f.field;
         const fld = (w.fields || []).find((x) => x.id === old);
         if (fld && fld.id === old) fld.id = newId;
-        // repoint tells that validate/locate on this field, else they reference a dead id
-        // and silently reject every cell (the item stops detecting entirely)
-        for (const t of it.tells || []) if (t.field === old) t.field = newId;
-        // same for the record key — a stale part would silently drop every record
-        if (it.key) it.key.fields = (it.key.fields || []).map((x) => (x === old ? newId : x));
-        f.field = newId; f.id = newId;
+        // repoint EVERY reference to this field (this item's tells + key, the WINDOW default key
+        // items inherit, the dataset key_field, sibling regions/item-fields) through the shared
+        // helper — a missed key part silently drops every record (see _repointField).
+        this._repointField(w, old, newId);
+        f.id = newId;   // the item-field NODE id tracks its field (f.field moved via _repointField)
         return true;
     }
 

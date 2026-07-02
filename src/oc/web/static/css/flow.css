@@ -305,6 +305,26 @@ label.inline input:not([type="checkbox"]) { width: auto; }
     min-width: 0; }   /* a labelled 'status' row in the lab-grid, ABOVE the button */
 .enr-of { margin-bottom: 6px; }
 
+/* generic http producer editor: plain stacked rows (NOT the accent `.sv-input` chip pill).
+   `.pr-row` is one horizontal line of controls; `.pr-rows`/`.pr-fields` stack them vertically. */
+.pr-rows, .pr-fields { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pr-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.pr-row > input, .pr-row > select { min-width: 0; }
+.pr-field { display: flex; flex-direction: column; gap: 3px; }
+.pr-arr { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 2px 6px; padding-left: 8px;
+    border-left: 2px solid var(--line); }   /* the array reduce (pluck/agg/filters) nests under its column */
+.pr-chk { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; flex: 0 0 auto; }
+.pr-f-add, .pr-ff-add { align-self: start; }
+
+/* producer preview satellite (resolved inputs + output schema + live test-fetch) */
+.pp-cols { font-size: var(--fs-sm); white-space: normal; }
+.pp-table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); }
+.pp-table th { text-align: left; color: var(--muted); font-weight: 600; }
+.pp-table th, .pp-table td { padding: 1px 6px 1px 0; }
+.pp-raw { white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto;
+    font-size: var(--fs-xs); background: var(--bg); border-radius: 4px; padding: 4px 6px; }
+.pp-map code, .pp-kv code { word-break: break-all; }
+
 /* flow blobs: small dots traveling node->node along graph edges on live activity. Colour by
    edge kind (matches the edge stroke vars in base.css): data orange, trigger cyan, watch teal.
    The layer (#gflow) lives in graph.css; here is just the dot look. JS drives cx/cy + r. */

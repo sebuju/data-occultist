@@ -1,17 +1,21 @@
 // Producer node: a standalone source fired on a schedule/trigger that fetches external data
 // and pushes current records into its output dataset (wired producer -> dataset). The backend
-// is chosen by `type` (registry._PRODUCER): `warframe_market` sweeps the market catalogue and
-// prices items; `relic` fetches the WFCD relic table and writes one row per (relic, reward,
-// state). The node shows the refresh config + controls; joining/charting is a view's job.
+// is chosen by `type` (registry._PRODUCER): `http` fetches a taught URL per source item and maps
+// JSON paths -> columns (warframe.market pricing is just an http node); `relic` fetches the WFCD
+// relic table and writes one row per (relic, reward). The node shows the config + controls;
+// joining/deriving is a view's job.
 import * as api from "../api.js";
 import { isOnline } from "../conn.js";
 import { h, frag, TRASH, labCell } from "../dom.js";
 import * as hub from "../hub.js";
 import { log } from "../log.js";
 
-// Backends the type picker offers (mirrors registry._PRODUCER). warframe_market is the market
-// pricer (mode/sources/key field); relic is a self-contained table refresh (no sources).
-const PRODUCER_TYPES = ["warframe_market", "relic"];
+// Backends the type picker offers (mirrors registry._PRODUCER). http is the generic fetch+map
+// backend (URL / headers / mapping); relic is a self-contained table refresh (no request config).
+const PRODUCER_TYPES = ["http", "relic"];
+
+const AGG_OPS = ["min", "max", "sum", "count", "median", "median_low", "first"];
+const FILTER_OPS = ["eq", "ne", "in", "nin", "gt", "ge", "lt", "le", "contains"];
 
 // Elapsed between two ISO instants (end defaults to now) as "m:ss" / "h:mm:ss".
 const elapsed = (start, end) => {
@@ -23,16 +27,84 @@ const elapsed = (start, end) => {
 };
 
 const typeSel = (pn) => h("select", { class: "prtype" },
-    ...PRODUCER_TYPES.map((t) => h("option", { value: t, selected: t === (pn.type || "warframe_market") }, t)));
+    ...PRODUCER_TYPES.map((t) => h("option", { value: t, selected: t === (pn.type || "http") }, t)));
 
-// Node title + body for a producer. warframe_market: sweep config (mode, sources, key field) +
-// controls. relic (and any non-market type): just a type picker + the refresh controls.
+const sel = (cls, opts, cur) => h("select", { class: cls },
+    ...opts.map((o) => h("option", { value: o, selected: o === cur }, o)));
+
+// checkbox WITH an inline text label (for list rows that have no labCell of their own)
+const chk = (cls, on, label) =>
+    h("label", { class: "pr-chk", title: label }, h("input", { type: "checkbox", class: cls, checked: !!on }), label);
+// bare checkbox (for lab-grid rows whose labCell already names it — avoids a doubled label)
+const chkBare = (cls, on, title) => h("input", { type: "checkbox", class: cls, checked: !!on, title });
+
+// A {k: v} map editor: committed rows (with delete) + one trailing empty add-row. `kind` is
+// "headers" | "query" (a data hook read back by the wiring). The whole map is rebuilt from the
+// rows on each edit, so a filled add-row simply commits and a fresh blank one reappears.
+const mapBlock = (kind, obj) => {
+    const row = (k, v, committed) => h("div", { class: "pr-row pr-map-row", dataset: { kind } },
+        h("input", { class: "pr-map-k", value: k, placeholder: "name" }),
+        h("input", { class: "pr-map-v", value: v, placeholder: "value" }),
+        committed ? h("button", { class: "sv-rmin danger pr-map-del", dataset: { kind }, title: "remove" }, TRASH()) : null);
+    return h("div", { class: "pr-rows" },
+        ...Object.entries(obj || {}).map(([k, v]) => row(k, v, true)), row("", "", false));
+};
+
+// The catalogue sub-panel (only when key_transform == "catalogue"): teaches the name->key
+// resolver. Returned as flat [label, control, ...] pairs to spread into the lab-grid.
+const catalogueRows = (c) => [
+    labCell("cat url", "catalogue list endpoint (fetched once per sweep)"),
+    h("input", { class: "pr-cat-url", value: c.url || "", placeholder: "https://…/items" }),
+    labCell("cat items", "path to the items array in the response"),
+    h("input", { class: "pr-cat-items", value: c.items_path || "data" }),
+    labCell("cat name", "path within an item to its display name"),
+    h("input", { class: "pr-cat-name", value: c.name_path || "" }),
+    labCell("cat key", "path within an item to its key"),
+    h("input", { class: "pr-cat-key", value: c.key_path || "" }),
+    labCell("cat fuzzy", "fuzzy match cutoff (0..1)"),
+    h("input", { class: "pr-cat-fuzzy", type: "number", step: "0.05", value: c.fuzzy ?? 0.9 }),
+    labCell("cat hints", "extra key framings tried after a slugify miss (comma list), e.g. _set"),
+    h("input", { class: "pr-cat-hints", value: (c.suffix_hints || []).join(", "), placeholder: "_set" }),
+    labCell("cat ttl", "cache freshness (days)"),
+    h("input", { class: "pr-cat-ttl", type: "number", value: c.ttl_days ?? 7 }),
+];
+
+// The response->columns mapping: one row per output column, each optionally reducing an array
+// (filter -> pluck -> aggregate). Indices (data-i field, data-fi filter) drive the wiring.
+const fieldsBlock = (fields) => {
+    const fieldRow = (f, i) => {
+        const arr = f.array;
+        return h("div", { class: "pr-field", dataset: { i } },
+            h("div", { class: "pr-row" },
+                h("input", { class: "pr-f-out", value: f.out_field || "", placeholder: "column" }),
+                h("input", { class: "pr-f-path", value: f.path || "", placeholder: "json path" }),
+                sel("pr-f-type", ["text", "number"], f.type || "text"),
+                chk("pr-f-req", f.required, "required"),
+                chk("pr-f-arr", !!arr, "array"),
+                h("button", { class: "sv-rmin danger pr-f-del", dataset: { i }, title: "remove column" }, TRASH())),
+            arr ? h("div", { class: "pr-arr" },
+                h("input", { class: "pr-fa-pluck", value: arr.pluck || "", placeholder: "pluck path" }),
+                sel("pr-fa-agg", AGG_OPS, arr.agg || "min"),
+                h("input", { class: "pr-fa-depth", type: "number", value: arr.depth ?? 5, title: "depth (median_low)" }),
+                ...(arr.filter || []).map((flt, fi) => h("div", { class: "pr-row pr-ffilt", dataset: { i, fi } },
+                    h("input", { class: "pr-ff-path", value: flt.path || "", placeholder: "field" }),
+                    sel("pr-ff-op", FILTER_OPS, flt.op || "eq"),
+                    h("input", { class: "pr-ff-val", value: Array.isArray(flt.value) ? flt.value.join(", ") : (flt.value ?? ""), placeholder: "value" }),
+                    h("button", { class: "sv-rmin danger pr-ff-del", dataset: { i, fi }, title: "remove filter" }, TRASH()))),
+                h("button", { class: "pr-ff-add", dataset: { i } }, "+ filter"),
+            ) : null);
+    };
+    return h("div", { class: "pr-fields" }, ...fields.map(fieldRow), h("button", { class: "pr-f-add" }, "+ column"));
+};
+
+// Node title + body for a producer. http: the full fetch+map editor. relic (and any non-http
+// type): just a type picker + the refresh controls.
 export function producerParts(pn, cols = [], free = []) {
-    const isMarket = (pn.type || "warframe_market") === "warframe_market";
+    const isHttp = (pn.type || "http") === "http";
     const title = h("input", { class: "gi gi-id prrename", value: pn.id, title: "rename producer node" });
     const port = h("span", { class: "port out", title: "drag to a dataset to write its rows there" });
 
-    if (!isMarket) {
+    if (!isHttp) {
         const body = frag(
             h("div", { class: "enr-sum muted" }, "↻ refresh to fetch this data"),
             h("div", { class: "lab-grid" },
@@ -44,50 +116,65 @@ export function producerParts(pn, cols = [], free = []) {
         return { title, body, ports: port };
     }
 
-    const mode = pn.mode === "orders" ? "orders" : "statistics";
-    const opt = (v, label) => h("option", { value: v, selected: v === mode }, label);
+    const spec = pn.http || {};
+    const req = spec.request || {};
     const hasSrc = (pn.sources || []).length;
-    // priced-item sources use the SAME chip + add-select input the subset's sources use.
-    // same chip + add-select look as subset/trigger sources: shared .sv-* classes for style,
-    // pr-* classes are the wiring hooks.
+    // item sources use the SAME chip + add-select input the subset's sources use.
     const chips = (pn.sources || []).map((s) =>
         h("span", { class: "sv-input" }, s,
-            h("button", { class: "sv-rmin danger pr-rmsrc", dataset: { ds: s }, title: "stop pricing this source" }, TRASH())));
+            h("button", { class: "sv-rmin danger pr-rmsrc", dataset: { ds: s }, title: "stop fetching this source" }, TRASH())));
     const addOpts = [h("option", { value: "" }, "+ source"), free.map((d) => h("option", { value: d }, d))];
     const srcs = frag(
-        labCell("prices", "datasets/subsets whose items to price (empty = whole market catalogue)", true),
+        labCell("sources", "datasets/subsets whose item names to fetch", true),
         h("div", { class: "sv-inputs" }, chips,
             h("span", { class: "sv-input sv-add" }, h("select", { class: "sv-addin pr-addsrc" }, addOpts))));
-    // which source column names the item to price (resolved to a market slug). Only relevant
-    // when sourcing from datasets/subsets (the whole-catalogue sweep needs no key).
+    // which source column names the item (only meaningful when sourcing from datasets/subsets).
     const nf = pn.source_field || "name";
     const nfOpts = [...new Set([nf, ...cols])].map((c) => h("option", { selected: c === nf }, c));
     const keyFld = hasSrc
-        ? frag(labCell("price by", "which source column names the item to price (it's resolved to a market slug)"),
+        ? frag(labCell("name by", "which source column names the item (fed to the URL / catalogue)"),
             h("select", { class: "enr-keyfld-sel" }, nfOpts))
         : null;
+
     const body = frag(
-        h("div", { class: "enr-sum muted" }, "↻ sweep to price the market"),
+        h("div", { class: "enr-sum muted" }, "↻ refresh to fetch this data"),
         h("div", { class: "lab-grid" },
             labCell("backend", "which producer backend fetches this dataset"), typeSel(pn),
-            labCell("source", "what each sweep stores: full daily history or a live now-snapshot"),
-            h("select", { class: "enr-mode" }, opt("statistics", "statistics (history)"), opt("orders", "live orders (now)")),
+            labCell("throttle", "seconds between requests during a sweep"),
+            h("input", { class: "pr-throttle", type: "number", step: "0.1", value: pn.throttle ?? 0.4 }),
+            labCell("label", "status label only (no behaviour) — shown in progress copy"),
+            h("input", { class: "pr-mode", value: pn.mode || "", placeholder: "e.g. orders" }),
+            labCell("enabled", "include in scheduled / triggered runs"),
+            chkBare("pr-enabled", pn.enabled !== false, "include in scheduled / triggered runs"),
+            labCell("method", "HTTP method"), sel("pr-method", ["GET", "POST"], req.method || "GET"),
+            labCell("url", "{name} = raw item name, {key} = transformed key"),
+            h("input", { class: "pr-url", value: req.url || "", placeholder: "https://…/{key}" }),
+            labCell("headers", "request headers", true), mapBlock("headers", req.headers),
+            labCell("query", "query params appended to the URL", true), mapBlock("query", req.query),
+            labCell("timeout", "per-request timeout (seconds)"),
+            h("input", { class: "pr-timeout", type: "number", value: req.timeout ?? 30 }),
+            labCell("key", "how {key} is built from the item name"),
+            sel("pr-keytransform", ["none", "lowercase", "slugify", "catalogue"], spec.key_transform || "slugify"),
+            labCell("encode", "percent-encode the substituted {key}"),
+            chkBare("pr-keyencode", spec.key_encode !== false, "percent-encode the substituted {key}"),
+            ...(spec.key_transform === "catalogue" ? catalogueRows(spec.catalogue || {}) : []),
             srcs, keyFld,
+            labCell("root", "path applied to the response before every column path"),
+            h("input", { class: "pr-root", value: spec.root || "", placeholder: "e.g. data" }),
+            labCell("fields", "response → dataset columns", true), fieldsBlock(spec.fields || []),
             labCell("status", "live sweep progress ('idle' when not running)"),
             h("div", { class: "enr-prog livestats" })),
         h("div", { class: "gn-foot" },
-            h("button", { class: "enr-refresh" }, "↻ sweep prices")));   // doubles as cancel while running
+            h("button", { class: "enr-refresh" }, "↻ refresh")));   // doubles as cancel while running
     return { title, body, ports: port };
 }
 
-// Wire the producer panel: load summary, drive the refresh/sweep.
+// Wire the producer panel: load status, drive the refresh/sweep.
 // Self-cleaning — polling stops once the node leaves the DOM. ``onDone`` fires when a
 // refresh finishes (or is cancelled) so the wired-up output dataset can refresh.
-export function wireProducerNode(div, game, dataset, mode = "statistics",
-                                 type = "warframe_market", onDone = null, onChange = null) {
+export function wireProducerNode(div, game, dataset, mode = "", type = "http",
+                                 onDone = null, onChange = null) {
     const $ = (sel) => div.querySelector(sel);
-    const isMarket = type === "warframe_market";
-    const noun = isMarket ? "items priced" : "rows";
 
     // unwired producer: no output dataset yet -> nothing to refresh. Prompt the user to wire it.
     if (!dataset) {
@@ -98,16 +185,12 @@ export function wireProducerNode(div, game, dataset, mode = "statistics",
 
     async function loadSummary() {
         try {
-            const s = await api.prices.summary(game, dataset);
-            // warframe_market reports its OWN accumulated count ("N items priced"); other
-            // producers show no count here (the row total belongs to the dataset node, not us).
-            if (isMarket) $(".enr-sum").replaceChildren(h("strong", String(s.slugs)), ` ${noun}`);
-            reflectStatus(s.status || { running: false });
+            reflectStatus((await api.prices.summary(game, dataset)).status || { running: false });
         } catch (e) { $(".enr-sum").textContent = String(e.message || e); }
     }
 
     const btn = $(".enr-refresh");
-    const startLabel = isMarket ? "↻ sweep prices" : "↻ refresh";
+    const startLabel = "↻ refresh";
 
     // ONE button, like every other node: idle = start; while running it carries `.reading`
     // (CSS appends the spinner) and a second click cancels. No separate cancel button.
@@ -160,11 +243,8 @@ export function wireProducerNode(div, game, dataset, mode = "statistics",
     });
 
     // Catch a sweep started by ANOTHER actor (a trigger's "fire now", the collector loop, another
-    // tab): the self-poll only runs once THIS node kicks it, so an idle node would never notice an
-    // externally-started sweep and its status would stay "idle". Ride the shared heartbeat — when a
-    // sweep for our dataset appears and we're not already polling, reflectStatus kicks the poll loop,
-    // which then owns progress + the finished/idle transition. (subscribe() replays the last snapshot
-    // immediately, so a sweep already running at mount is picked up too.)
+    // tab): the self-poll only runs once THIS node kicks it, so ride the shared heartbeat — when a
+    // sweep for our dataset appears and we're not already polling, reflectStatus kicks the poll loop.
     let unsub;
     unsub = hub.subscribe((snap) => {
         if (!document.contains(div)) { unsub?.(); return; }   // node gone -> stop listening

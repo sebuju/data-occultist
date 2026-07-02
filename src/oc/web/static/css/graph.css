@@ -44,7 +44,7 @@
 /* collapse + type icon share ONE fixed slot: the type icon shows at rest, the collapse
    button replaces it while the slot is hovered. Both are absolute inside the 22px box, so the
    hidden one takes no space and swapping never shifts the header. */
-.gn-disc { position: relative; width: 22px; height: 22px; flex: 0 0 auto; }
+.gn-disc { position: relative; z-index: 1; width: 22px; height: 22px; flex: 0 0 auto; }   /* keep the type icon above the id input's focus background while editing the id */
 .gn-disc .nicon, .gn-disc .collapse { position: absolute; inset: 0; margin: auto; }
 .gn-disc .collapse { display: none; }
 .gn-disc:hover .collapse { display: flex; }
@@ -169,7 +169,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
 .lab-grid > .lab { white-space: nowrap; }
 .lab-grid > .lab-top { align-self: start; padding-top: 4px; }
-.lab-grid > select, .lab-grid > input, .lab-grid > .tg-secs { width: 100%; min-width: 0; }
+/* full-width controls EXCEPT checkboxes — a checkbox keeps its base 28px toggle-switch size
+   (base.css) and sits at the start of the control column instead of stretching. */
+.lab-grid > select, .lab-grid > input:not([type="checkbox"]), .lab-grid > .tg-secs { width: 100%; min-width: 0; }
+.lab-grid > input[type="checkbox"] { justify-self: start; }
 .lab-grid > .tg-secs input { width: 100%; }
 .lab-grid > .sv-inputs { margin: 0; min-width: 0; }
 /* full-width cells inside the grid (e.g. the price node's source-pill list) span both columns */
@@ -344,18 +347,39 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* the image drawing surface lives INSIDE the window node (one DOM element) */
-.win-img { width: auto; margin-top: 8px; }
-.win-img:empty { display: none; }
+.win-img, .glyph-img { width: auto; margin-top: 8px; }
+.win-img:empty, .glyph-img:empty { display: none; }
+
+/* taught glyph atlas node: a wrapping grid of thumbnail + editable char + delete */
+.glyph-atlas:empty { display: none; }
+.glyph-atlas .glyph-head { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 4px; }
+.glyph-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.glyph-cell { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--line);
+    border-radius: 4px; padding: 2px 3px; background: var(--panel, transparent); }
+.glyph-thumb { height: 22px; width: auto; max-width: 48px; image-rendering: pixelated;
+    background: #000; border-radius: 2px; }
+.glyph-char { width: 2.2em; text-align: center; padding: 1px 2px; }
+.glyph-rm { padding: 1px 4px; }
+/* glyph compose bar (arm rect / type char / save; auto-glypher word + button) */
+.glyph-compose { display: flex; align-items: center; gap: 4px; padding: 4px 0; flex-wrap: wrap; }
+.glyph-compose .gc-char { width: 2.4em; text-align: center; }
+.glyph-compose .gc-word { min-width: 0; flex: 0 1 8em; }
+.glyph-compose .gc-div { flex: 0 0 6px; }
+/* auto-glypher proposals awaiting correct + save-all */
+.glyph-pending:empty { display: none; }
+.glyph-pending { margin: 4px 0; padding: 4px 6px; border: 1px dashed var(--accent); border-radius: 4px; }
+.glyph-pending .glyph-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.glyph-pending .gp-char { width: 2.4em; text-align: center; padding: 1px 2px; }
 .imgtools { display: flex; align-items: center; gap: 6px; padding: 4px 0; flex-wrap: wrap; }
 .imgtools .tools { display: inline-flex; gap: 2px; flex-wrap: wrap; }
 .imgtools .spacer { flex: 1; }
 .imgtools .tool-div { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
-.win-img .canvas-wrap, .item-img .canvas-wrap { width: 100%; overflow: hidden;
+.win-img .canvas-wrap, .glyph-img .canvas-wrap, .item-img .canvas-wrap { width: 100%; overflow: hidden;
     border-radius: 4px; margin-top: 4px; }  /* fills the node; node grips resize it. aspect-ratio set per image in JS */
 /* canvas fills the wrap EXACTLY (height:100%, not buffer-intrinsic) so the wrap's
    aspect-ratio box never leaves a dark gap around the image; the buffer ratio already
    matches the wrap ratio, so this stretches nothing. No border — the image is the edge. */
-.win-img canvas { display: block; width: 100%; height: 100%; }
+.win-img canvas, .glyph-img canvas { display: block; width: 100%; height: 100%; }
 /* below-canvas bar: page nav + image selector + recapture + preview-all */
 .img-foot { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
 .img-foot button { flex: 0 0 auto; min-width: 0; }

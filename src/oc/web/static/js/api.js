@@ -237,16 +237,6 @@ export async function capture(game, stash = true) {
     return { url: URL.createObjectURL(blob), width, height, name };
 }
 
-// Analyse the live window and suggest a reading layout. Pass a search box
-// (fractions) to focus on the item area; omit to scan the whole window.
-export async function suggest(game, search) {
-    let url = `/api/suggest?game=${encodeURIComponent(game)}`;
-    if (search) url += `&sx=${search.x}&sy=${search.y}&sw=${search.w}&sh=${search.h}`;
-    const r = await tfetchOcr(url, {}, OCR_MS);
-    if (!r.ok) throw new Error(`suggest: ${r.status} ${await r.text()}`);
-    return r.json();
-}
-
 // Evaluate detectors/states against the image: { detect:{id:{matched,read}}, states:{...} }.
 export async function detect(profile, game, capture, preferCache = false) {
     let url = "/api/detect";
@@ -295,6 +285,26 @@ export async function itemCutout(game, capture, box) {
 }
 export function cutoutUrl(game, name) {
     return `/api/item/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
+}
+
+// Freeze a taught glyph from a stashed capture -> { name, url }. box is fractions. The crop
+// is one reference character for the game's glyph atlas (post-OCR glyph refinement).
+export async function glyphCutout(game, capture, box) {
+    const q = `game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}&x=${box.x}&y=${box.y}&w=${box.w}&h=${box.h}`;
+    const r = await tfetch(`/api/glyph/cutout?${q}`, { method: "POST" });
+    if (!r.ok) throw new Error(`glyph: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+export function glyphUrl(game, name) {
+    return `/api/glyph/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
+}
+// Auto-glypher: segment a labelled word region into one saved glyph per character. Returns
+// [{char, image, url}] for the user to correct + confirm (nothing is saved to the profile yet).
+export async function glyphAuto(game, capture, box, text) {
+    const q = `game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}&text=${encodeURIComponent(text)}&x=${box.x}&y=${box.y}&w=${box.w}&h=${box.h}`;
+    const r = await tfetch(`/api/glyph/auto?${q}`, { method: "POST" });
+    if (!r.ok) throw new Error(`auto-glyph: ${r.status} ${await r.text()}`);
+    return r.json();
 }
 // Read the scrollbar thumb position (0..1) from a cutout PNG data URL — one scroll-calibration
 // sample. Returns { pos, conf, thumb_px, thumb_len } (pos null if no thumb found).
@@ -493,12 +503,12 @@ export const removeDatasetEvent = (game, dataset, batch, eventId) =>
 const _pg = (game) => encodeURIComponent(game);
 export const prices = {
     summary: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/summary?dataset=${encodeURIComponent(dataset)}`).then((r) => ok(r, "price summary").then((x) => x.json())),
-    portfolio: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/portfolio?dataset=${encodeURIComponent(dataset)}`).then((r) => ok(r, "portfolio").then((x) => x.json())),
-    item: (game, slug) => tfetch(`/api/prices/${_pg(game)}/item/${encodeURIComponent(slug)}`).then((r) => ok(r, "price item").then((x) => x.json())),
-    movers: (game, days = 7, threshold = 0.15) => tfetch(`/api/prices/${_pg(game)}/movers?days=${days}&threshold=${threshold}`).then((r) => ok(r, "movers").then((x) => x.json())),
-    refresh: (game, dataset, mode = "statistics", type = "warframe_market") => tfetch(`/api/prices/${_pg(game)}/refresh?dataset=${encodeURIComponent(dataset)}&mode=${encodeURIComponent(mode)}&type=${encodeURIComponent(type)}`, { method: "POST" }, 30_000).then((r) => ok(r, "producer refresh").then((x) => x.json())),
+    refresh: (game, dataset, mode = "", type = "http") => tfetch(`/api/prices/${_pg(game)}/refresh?dataset=${encodeURIComponent(dataset)}&mode=${encodeURIComponent(mode)}&type=${encodeURIComponent(type)}`, { method: "POST" }, 30_000).then((r) => ok(r, "producer refresh").then((x) => x.json())),
     cancel: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/cancel?dataset=${encodeURIComponent(dataset)}`, { method: "POST" }).then((r) => ok(r, "cancel sweep")).then((r) => r.json()),
     status: (game, dataset) => tfetch(`/api/prices/${_pg(game)}/status?dataset=${encodeURIComponent(dataset)}`).then((r) => r.json()),
+    // producer satellite: what it WILL fetch/output (no sweep), and a live one-item test-fetch
+    preview: (game, dataset, limit = 50) => tfetch(`/api/prices/${_pg(game)}/preview?dataset=${encodeURIComponent(dataset)}&limit=${limit}`).then((r) => ok(r, "producer preview").then((x) => x.json())),
+    probe: (game, dataset, item = "") => tfetch(`/api/prices/${_pg(game)}/probe?dataset=${encodeURIComponent(dataset)}&item=${encodeURIComponent(item)}`, { method: "POST" }, 30_000).then((r) => ok(r, "producer probe").then((x) => x.json())),
 };
 
 // Triggers: fire a price-node sweep on a condition. `list` shows wiring + per-target status;

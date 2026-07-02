@@ -1,7 +1,7 @@
 // Window image / region drawing, item cutouts, OCR read pipeline (preview + detect + grid).
 // Extracted from main.js verbatim.
 import * as api from "../api.js";
-import { h, frag, CAMERA } from "../dom.js";
+import { h, frag, CAMERA, TRASH } from "../dom.js";
 import { openCaptureModal } from "./panels/precap.js";
 import { timed } from "../log.js";
 import { Overlay } from "../overlay.js";
@@ -45,7 +45,11 @@ const ITEM_KINDS = [
 // Graph node id for an image owner: a window is `win:<id>`, the game gate is the bare
 // `game` node. The image/box/detect machinery is shared between them (rule 7), so every
 // `win:${winId}` node-id lookup goes through this so "game" resolves to the game node.
-export function nodeIdOf(winId) { return winId === "game" ? "game" : `win:${winId}`; }
+export function nodeIdOf(winId) {
+    if (winId === "game") return "game";
+    if (winId === "glyphs") return "glyphs";   // the glyph-atlas node reuses the image stack
+    return `win:${winId}`;
+}
 
 // A window's bound image pages + which one the canvas currently shows.
 function winPageOf(winId) { return winPage.get(winId) || 0; }
@@ -209,9 +213,24 @@ export function armColorPick(winId, detId) {
     else setStatus("open the image first");
 }
 
+// Arm the eyedropper to feed the window's preprocess (Text appearance) colour list
+// instead of a detector's colour. Same sample flow, different sink (see applyPickedColor).
+export function armPreprocessPick(winId) {
+    _pickTarget = { winId, pp: true };
+    const ov = imageCanvases.get(winId)?.overlay;
+    if (ov) { ov.setPick(true); setStatus("click the image to sample the text colour"); }
+    else setStatus("open the image first");
+}
+
 function applyPickedColor(winId, hex) {
     const t = _pickTarget; _pickTarget = null;
     if (!t || t.winId !== winId) return;
+    if (t.pp) {                                   // eyedropper armed for window preprocess
+        model.addPreprocessColor(winId, hex);
+        rebuildNode(`win:${winId}`);              // refresh the colour chips
+        autosave(winId);                          // preprocess changes OCR input -> re-read this window
+        return;
+    }
     const d = model.detect(winId, t.detId);
     if (!d) return;
     d.color = hex;
@@ -276,6 +295,227 @@ export async function openGameImage(nodeEl = null) {
     host.querySelectorAll(".imgpg").forEach((b) => b.addEventListener("click", () => stepWinPage("game", +b.dataset.d)));
     await loadImage("game", false);
     drawEdges();
+}
+
+// ---- glyph-atlas node -----------------------------------------------------
+// Standalone node (its OWN image surface, keyed winId "glyphs"; the image/box stack is shared
+// via nodeIdOf, rule 7). Separate from the game node because that canvas already hosts gate
+// detectors. Teaching model: arm ONE positioning rectangle, nudge it with WASD (shift+WASD to
+// resize) over a character, type the character, confirm -> the crop is frozen into the atlas
+// and the rect is cleared. The auto-glypher segments a labelled word into per-character
+// proposals the user corrects + confirms.
+
+const GLYPH_RECT_ID = "__glyphrect";
+let glyphRect = null;        // pending positioning rect on the glyph surface (fractions); null = hidden
+let glyphPending = [];       // auto-glypher proposals awaiting correct+confirm: [{char, image}]
+let _glyphKeyBound = false;
+
+function defaultGlyphRect(wide = false) { return { x: 0.44, y: 0.45, w: wide ? 0.16 : 0.05, h: 0.06 }; }
+
+// Redraw the positioning rect (refreshImageBoxes folds glyphRect in for the "glyphs" surface).
+function drawGlyphRect() { refreshImageBoxes("glyphs"); }
+
+// WASD nudges / shift+WASD resizes the armed rect. Ignored while a text input is focused (so
+// typing the character isn't hijacked) and when no rect is armed.
+function glyphKeydown(ev) {
+    if (!glyphRect) return;
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+    const k = ev.key.toLowerCase();
+    if (k === "escape") { cancelGlyphCompose(); ev.preventDefault(); return; }
+    if (!"wasd".includes(k)) return;
+    ev.preventDefault();
+    const step = ev.shiftKey ? 0.004 : 0.005, r = glyphRect;
+    if (ev.shiftKey) {   // resize (a/d width, w/s height)
+        if (k === "d") r.w = Math.min(1 - r.x, r.w + step);
+        if (k === "a") r.w = Math.max(0.008, r.w - step);
+        if (k === "s") r.h = Math.min(1 - r.y, r.h + step);
+        if (k === "w") r.h = Math.max(0.008, r.h - step);
+    } else {             // move
+        if (k === "d") r.x = Math.min(1 - r.w, r.x + step);
+        if (k === "a") r.x = Math.max(0, r.x - step);
+        if (k === "s") r.y = Math.min(1 - r.h, r.y + step);
+        if (k === "w") r.y = Math.max(0, r.y - step);
+    }
+    drawGlyphRect();
+}
+
+function glyphComposeEls() {
+    const node = nodeEls.get("glyphs");
+    const host = node && node.querySelector(".glyph-img");
+    return host ? {
+        char: host.querySelector(".gc-char"), confirm: host.querySelector(".gc-confirm"),
+        cancel: host.querySelector(".gc-cancel"), add: host.querySelector(".gc-add"),
+    } : {};
+}
+
+function showGlyphCompose(on) {
+    const { char, confirm, cancel } = glyphComposeEls();
+    for (const el of [char, confirm, cancel]) if (el) el.hidden = !on;
+    if (on && char) { char.value = ""; setTimeout(() => char.focus(), 0); }
+}
+
+function cancelGlyphCompose() {
+    glyphRect = null;
+    showGlyphCompose(false);
+    drawGlyphRect();
+}
+
+async function saveGlyph() {
+    const { char } = glyphComposeEls();
+    const ch = (char?.value || "").trim();
+    if (!glyphRect) return;
+    if (!ch) { setStatus("type the character under the box first"); char?.focus(); return; }
+    const game = model.profile.name;
+    const cap = await curCapOf("glyphs");
+    if (!cap) { setStatus("pick an image (or recapture) to teach glyphs from first"); return; }
+    let cut;
+    try { cut = await api.glyphCutout(game, cap, glyphRect); }   // freeze the crop NOW (independent of the canvas image after)
+    catch (e) { setStatus(String(e.message || e)); return; }
+    model.addGlyph({ char: ch, image: cut.name });
+    cancelGlyphCompose();          // permanent now: clear the rect + compose row
+    refreshGlyphAtlas();
+    autosave(null);
+}
+
+async function runAutoGlypher() {
+    const node = nodeEls.get("glyphs");
+    const word = node?.querySelector(".gc-word")?.value.trim();
+    if (!word) { setStatus("type the text the box covers, then Auto"); return; }
+    if (!glyphRect) {   // first Auto arms a wide rect to position over the whole word
+        glyphRect = defaultGlyphRect(true);
+        drawGlyphRect();
+        setStatus("position the box over the whole word (WASD / shift+WASD), then press Auto again");
+        return;
+    }
+    const game = model.profile.name;
+    const cap = await curCapOf("glyphs");
+    if (!cap) { setStatus("pick an image (or recapture) first"); return; }
+    let props;
+    try { props = await api.glyphAuto(game, cap, glyphRect, word); }
+    catch (e) { setStatus(String(e.message || e)); return; }
+    glyphPending = props || [];
+    glyphRect = null; showGlyphCompose(false); drawGlyphRect();   // hand off to the review strip
+    refreshGlyphPending();
+    if (!glyphPending.length) setStatus("auto-glypher found nothing — adjust the box");
+}
+
+export async function openGlyphImage(nodeEl = null) {
+    const winId = "glyphs";
+    const node = nodeEl || nodeEls.get("glyphs");
+    const host = node && node.querySelector(".glyph-img");
+    if (!host) return;
+    const prev = imageCanvases.get(winId);
+    if (prev && prev.host === host) { refreshGlyphAtlas(false, node); return; }
+    if (prev) { unregisterOverlay("glyphs"); imageCanvases.delete(winId); openImages.delete(winId); }
+    host.replaceChildren(
+        h("div", { class: "glyph-compose" },
+            h("button", { class: "gc-add", title: "add one glyph: show the box, position it with WASD (shift+WASD to resize) over a character, type the character, then Save" }, "＋ glyph"),
+            h("input", { class: "gc-char", maxlength: "2", placeholder: "char", hidden: true, title: "the character under the box (Enter to save, Esc to cancel)" }),
+            h("button", { class: "gc-confirm", hidden: true, title: "save this glyph permanently" }, "save"),
+            h("button", { class: "gc-cancel", hidden: true, title: "cancel" }, "✕"),
+            h("span", { class: "gc-div" }),
+            h("input", { class: "gc-word", size: "10", placeholder: "known text", title: "auto-glypher: position the box over a whole word, type what it reads, then Auto" }),
+            h("button", { class: "gc-auto", title: "segment the box into one glyph per character for you to correct + confirm" }, "auto")),
+        h("div", { class: "canvas-wrap" }, h("canvas")),
+        h("div", { class: "img-foot" },
+            h("span", { class: "img-pages", hidden: true },
+                h("button", { class: "imgpg", dataset: { d: "-1" }, title: "previous image" }, "‹"),
+                h("span", { class: "img-pageind" }),
+                h("button", { class: "imgpg", dataset: { d: "1" }, title: "next image" }, "›")),
+            h("button", { class: "imgbtn", title: "choose which stashed images to teach glyphs from" },
+                CAMERA(), h("span", { class: "imgbtn-lbl" }, "images")),
+            h("button", { class: "imgcap", title: "capture the live game window into the current page" }, "recapture")));
+    const canvas = host.querySelector("canvas");
+    const overlay = new Overlay(canvas, {
+        // dragging/resizing the rect with the mouse updates the pending rect too (WASD is the
+        // keyboard equivalent). No draw-to-create — the ONE rect is the capture mechanism.
+        onChange: (box) => { if (box.id === GLYPH_RECT_ID) glyphRect = { x: box.x, y: box.y, w: box.w, h: box.h }; },
+        onSelect: () => {},
+        canCreate: () => false,
+    });
+    imageCanvases.set(winId, { host, canvas, overlay });
+    registerOverlay("glyphs", { overlay, kind: "glyphs", winId, refresh: () => refreshImageBoxes("glyphs") });
+    overlay.setWorldZoom(view.zoom);
+    openImages.add(winId);
+    persist.layout();
+    host.querySelector(".gc-add").addEventListener("click", () => {
+        glyphRect = glyphRect || defaultGlyphRect();
+        showGlyphCompose(true);
+        drawGlyphRect();
+    });
+    host.querySelector(".gc-confirm").addEventListener("click", saveGlyph);
+    host.querySelector(".gc-cancel").addEventListener("click", cancelGlyphCompose);
+    host.querySelector(".gc-char").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); saveGlyph(); }
+        else if (e.key === "Escape") { e.preventDefault(); cancelGlyphCompose(); }
+    });
+    host.querySelector(".gc-auto").addEventListener("click", runAutoGlypher);
+    host.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal("glyphs"));
+    host.querySelector(".imgcap").addEventListener("click", () => loadImage("glyphs", true));
+    host.querySelectorAll(".imgpg").forEach((b) => b.addEventListener("click", () => stepWinPage("glyphs", +b.dataset.d)));
+    if (!_glyphKeyBound) { document.addEventListener("keydown", glyphKeydown); _glyphKeyBound = true; }
+    refreshGlyphAtlas(false, node);
+    refreshGlyphPending(node);
+    await loadImage("glyphs", false);
+    drawEdges();
+}
+
+// Auto-glypher proposals: thumbnail + editable char each, plus confirm-all / discard. Nothing
+// is saved until "confirm all" — the user corrects mis-read characters first.
+export function refreshGlyphPending(nodeEl = null) {
+    const node = nodeEl || nodeEls.get("glyphs");
+    const host = node && node.querySelector(".glyph-pending");
+    if (!host) return;
+    if (!glyphPending.length) { host.replaceChildren(); return; }
+    const game = model.profile.name;
+    const rows = glyphPending.map((p, i) => h("div", { class: "glyph-cell" },
+        h("img", { class: "glyph-thumb", src: api.glyphUrl(game, p.image), alt: p.char || "?", title: "proposed glyph" }),
+        h("input", { class: "gp-char", maxlength: "2", value: p.char || "", placeholder: "?", dataset: { i } })));
+    host.replaceChildren(
+        h("div", { class: "glyph-head" },
+            h("span", { class: "flab" }, `auto — fix chars, then save all [${glyphPending.length}]`),
+            h("button", { class: "gp-confirm" }, "save all"),
+            h("button", { class: "gp-discard danger" }, "discard")),
+        h("div", { class: "glyph-grid" }, ...rows));
+    host.querySelectorAll(".gp-char").forEach((inp) =>
+        inp.addEventListener("input", (e) => { glyphPending[+e.target.dataset.i].char = e.target.value.trim(); }));
+    host.querySelector(".gp-confirm").addEventListener("click", () => {
+        model.addGlyphs(glyphPending.filter((p) => p.char));   // skip any the user blanked out
+        glyphPending = [];
+        refreshGlyphPending(node); refreshGlyphAtlas(); autosave(null);
+    });
+    host.querySelector(".gp-discard").addEventListener("click", () => { glyphPending = []; refreshGlyphPending(node); });
+}
+
+// The taught glyph atlas list: a thumbnail + editable character + delete per glyph, kept
+// alphabetical (model.sortGlyphs). Event-driven (rebuilt on add/edit/delete, not a poll), so a
+// full rebuild of this small list is fine (rule 1 is about steady-state poll redraws).
+export function refreshGlyphAtlas(focusLast = false, nodeEl = null) {
+    const node = nodeEl || nodeEls.get("glyphs");
+    const host = node && node.querySelector(".glyph-atlas");
+    if (!host) return;
+    const game = model.profile.name;
+    const glyphs = model.glyphs();
+    const rows = glyphs.map((g, i) => h("div", { class: "glyph-cell" },
+        h("img", { class: "glyph-thumb", src: api.glyphUrl(game, g.image), alt: g.char || "?", title: "taught glyph (cutout is frozen)" }),
+        h("input", { class: "glyph-char", maxlength: "2", value: g.char || "", placeholder: "?",
+            title: "which character this glyph is", dataset: { i } }),
+        h("button", { class: "glyph-rm danger", dataset: { i }, title: "remove glyph" }, TRASH())));
+    host.replaceChildren(...[
+        h("div", { class: "glyph-head" },
+            h("span", { class: "flab" }, "glyph atlas"),
+            h("span", { class: "muted" }, glyphs.length ? `${glyphs.length} taught` : "＋ glyph or Auto to teach")),
+        glyphs.length ? h("div", { class: "glyph-grid" }, ...rows) : null,
+    ].filter(Boolean));   // never pass null to replaceChildren -> it stringifies to a "null" text node
+    host.querySelectorAll(".glyph-char").forEach((inp) => {
+        inp.addEventListener("change", (e) => { model.setGlyphChar(+e.target.dataset.i, e.target.value.trim()); refreshGlyphAtlas(); autosave(null); });
+        inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } });
+    });
+    host.querySelectorAll(".glyph-rm").forEach((btn) => btn.addEventListener("click", () => {
+        model.removeGlyph(+btn.dataset.i); refreshGlyphAtlas(); autosave(null);
+    }));
+    if (focusLast && glyphs.length) host.querySelector(`.glyph-char[data-i="${glyphs.length - 1}"]`)?.focus();
 }
 
 // ---- item template nodes (frozen cutout + cell-relative fields/tells) ------
@@ -1066,11 +1306,12 @@ async function loadImage(winId, recapture) {
         // the image changed (recapture / picked a capture / first open) → READ it: full preview
         // when the node exists, else just the grid overlay. The game gate has no grid/preview —
         // only its cheap detectors need re-evaluating.
-        if (winId !== "game") {
+        // gate-like image-only nodes (game worthiness gate, glyph atlas) have no grid/preview
+        if (winId !== "game" && winId !== "glyphs") {
             if (prevHost(winId)) refreshPreview(winId, false);
             else refreshGridPreview(winId);
         }
-        refreshDetect(winId);   // re-evaluate detectors against the new image
+        if (winId !== "glyphs") refreshDetect(winId);   // glyph node has no detectors to evaluate
     };
     img.onerror = () => setNodeBusy(nodeIdOf(winId), false);
     img.src = url;
@@ -1091,6 +1332,8 @@ function refreshImageBoxes(winId) {
     // isn't where detection actually reads; the live grid (below) shows the real cells
     const sb = model.scrollbar(winId);
     if (sb) boxes.push({ id: "scrollbar", role: "scrollbar", ...sb });
+    // the glyph surface has no model boxes — its only box is the armed positioning rect
+    if (winId === "glyphs" && glyphRect) boxes.push({ id: GLYPH_RECT_ID, role: "glyphrect", label: "glyph", ...glyphRect });
     entry.overlay.setBoxes(boxes);
     entry.overlay.setGridGuides(buildGridGuides(winId));   // columns + locator scan strips
     // prefer the live-detected grid (rows found in the actual capture); fall back to

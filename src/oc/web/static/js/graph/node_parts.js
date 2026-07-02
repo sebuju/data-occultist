@@ -29,7 +29,7 @@ const SAT_GRID = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "
 const SAT_DISMISS = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
     svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.3", d: "M2.5 2.5h11v11h-11zM2.5 6.5h11M6.5 2.5v11" }),
     svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.4", d: "M3 13L13 3" }));
-const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table" };
+const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table", producer: "preview (inputs + test fetch)" };
 const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS };
 export function satToggleBtn(satId, kind) {
     const on = model.satelliteOn(satId);
@@ -117,7 +117,37 @@ export function windowControls(w) {
         windowItemOrder(w),
         (w.items || []).length && h("div", { class: "wi-drift muted", title: "how far located cells sit from the content they should bracket, split by axis — x and y as avg/max % of a CELL (25% = a quarter-cell off). 0 = dead-on; high = cells drift off their columns (x) or rows (y). Filled by the read." },
             "grid drift: ", h("span", { class: "wd-drift" }, "—")),
+        preprocessControls(w),
         windowDetects(w));
+}
+
+// Window-level OCR preprocess ("Text appearance"): clean the crop before reading so stylised
+// game text is legible. `color` masks the taught text colour(s) (eyedropper or hex) to clean
+// black-on-white; `threshold` is global Otsu; `invert` flips light-on-dark; `scale` upsamples
+// small fonts. Ported from the old teach page. Handlers live in main.js wireWindowControls.
+const PP_MODES = [["none", "none"], ["color", "keep text colour(s)"],
+    ["threshold", "auto threshold"], ["invert", "invert"]];
+
+export function preprocessControls(w) {
+    const pp = w.preprocess || { mode: "none", colors: [], tolerance: 60, scale: 1.0 };
+    const chips = (pp.colors || []).map((c, i) => h("span", { class: "pp-chip", style: `border-color:${c}` },
+        h("span", { class: "pp-sw", style: `background:${c}` }),
+        h("button", { class: "pp-cx danger", dataset: { i }, title: "remove colour" }, TRASH())));
+    return frag(
+        h("div", { class: "muted il-h wi-h", title: "clean the OCR crop before reading — helps stylised / low-contrast text" }, "text appearance"),
+        h("label", { class: "flab", title: "preprocess the crop before OCR: threshold = auto black/white (good default), color = keep only the taught text colour(s), invert = flip light-on-dark" },
+            "preprocess ", h("select", { class: "ppmode" },
+                PP_MODES.map(([v, t]) => h("option", { value: v, selected: pp.mode === v }, t)))),
+        pp.mode === "color" && h("div", { class: "pp-color" },
+            h("div", { class: "pp-chips" }, chips.length ? chips : h("span", { class: "muted" }, "no colours yet")),
+            h("div", { class: "pp-row" },
+                h("button", { class: "pp-pick", title: "sample the text colour from the open image" }, "⊙ pick"),
+                h("input", { class: "pp-hex", placeholder: "#ffffff", style: "width:9ch" }),
+                h("button", { class: "pp-add" }, "add")),
+            h("label", { class: "flab", title: "how close a pixel must be to a taught colour to be kept" },
+                "tolerance ", h("input", { type: "range", class: "pptol", min: "10", max: "200", value: pp.tolerance ?? 60 }))),
+        h("label", { class: "flab", title: "upscale the crop before OCR — helps small fonts" },
+            "upscale ", h("input", { type: "number", class: "ppscale", step: "0.5", min: "1", max: "4", value: pp.scale ?? 1 })));
 }
 
 // Scrollbar node: orientation + the cutout-based scroll-calibration tool. Each cutout is a
@@ -280,6 +310,8 @@ export function fieldConfigBody(fd, cls, fid) {
         h("div", { class: "fgrp" }, "read"),
         h("label", { class: "flab", title: "read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. an '8' read as '81')" },
             "isolate ", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate })),
+        isText && h("label", { class: "flab", title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the game node." },
+            "glyph-check ", h("input", { type: "checkbox", class: cls, dataset: { k: "glyph_check", ...da }, checked: !!fd.glyph_check })),
         h("label", { class: "flab" }, "type ",
             h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, t)))),
         !pips && h("label", { class: "flab" }, "extract ",
@@ -413,6 +445,8 @@ export function itemLists(it, w) {
         h("div", { class: "muted il-h" }, "cell"),
         h("div", { class: "il-tools" }, cellBtns),
         cellSizeControls(it),
+        h("label", { class: "flab", title: "terminator: when this template is detected it marks the END of the list — every record positioned after it is discarded (an unowned/'no more results' placeholder). Ordered scroll/mirror datasets only." },
+            "terminator (ends the list) ", h("input", { type: "checkbox", class: "iterm", checked: !!it.terminator })),
         h("div", { class: "muted il-h" }, "tells"),
         h("div", { class: "il-tools" }, tellBtns),
         (tellsSummary.length || fieldTells.length) ? [tellsSummary, fieldTells] : h("div", { class: "muted" }, "draw a tell on the cutout"),
@@ -505,6 +539,19 @@ export function nodeParts(n) {
                 // (rebuildNode only re-renders `.game-controls`, like `.win-controls` on a window).
                 h("div", { class: "game-controls" }, gameControls(g)),
                 h("div", { class: "win-img" })),
+        };
+    }
+    if (n.type === "glyphs") {
+        // Standalone glyph-atlas node (attached to the game node). Its OWN image surface
+        // (.glyph-img, wired by imaging.js openGlyphImage) — kept separate from the game
+        // node whose canvas already hosts gate detectors — plus the taught-glyph list
+        // (.glyph-atlas, populated by refreshGlyphAtlas).
+        return {
+            title: h("span", { class: "gi-id", title: "taught glyph atlas — fixes confident single-glyph misreads (e.g. Q↔G) on glyph-check fields" }, "glyphs"),
+            body: frag(
+                h("div", { class: "glyph-img" }),        // image surface + positioning rect + compose bar
+                h("div", { class: "glyph-pending" }),    // auto-glypher proposals awaiting correct+confirm
+                h("div", { class: "glyph-atlas" })),     // the taught atlas (alphabetical)
         };
     }
     if (n.type === "window") {
@@ -614,6 +661,22 @@ export function nodeParts(n) {
                 body: h("div", { class: "nodehost scrollhost sub-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
             };
         }
+        if (r.kind === "producer") {
+            // an http producer's preview: what it WILL fetch (resolved names -> keys), the columns
+            // it emits, and a live one-item test-fetch (raw response vs mapped row). Filled by
+            // refreshProducerPreview; the button drives the probe.
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} preview`),
+                body: frag(
+                    h("div", { class: "pp-cols muted", style: "padding:4px 8px" }, "loading…"),
+                    h("div", { class: "gn-foot", style: "gap:6px" },
+                        h("input", { class: "pp-item", placeholder: "item to test (blank = first source)", style: "flex:1;min-width:0" }),
+                        h("button", { class: "pp-probe" }, "test fetch")),
+                    h("div", { class: "pp-result" }),
+                    h("div", { class: "nodehost scrollhost pp-inputs" },
+                        h("p", { class: "muted", style: "padding:8px" }, "resolved item list appears here"))),
+            };
+        }
         if (r.kind === "source" || r.kind === "sourcedismissed") {
             // a file source's parse preview. Two variants share this body (same hosts, one refresh
             // fills both): `source` = rows the rules PRODUCE; `sourcedismissed` = rows a required
@@ -642,7 +705,8 @@ export function nodeParts(n) {
         };
     }
     if (n.type === "subset") return subsetParts(n.ref);
-    if (n.type === "producer") return producerParts(n.ref, model.producerSourceColumns(n.ref), model.producerJoinable(n.ref));
+    if (n.type === "producer") return { ...producerParts(n.ref, model.producerSourceColumns(n.ref), model.producerJoinable(n.ref)),
+        head: n.ref.type === "http" ? satToggleBtn(`prod:${n.ref.id}`, "producer") : null };
     if (n.type === "filesource") return { ...sourceParts(n.ref),
         head: frag(satToggleBtn(`vt:src:${n.ref.id}`, "vttable"),
             satToggleBtn(`vtd:src:${n.ref.id}`, "dismissed")) };
