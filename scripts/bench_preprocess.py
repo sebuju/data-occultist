@@ -30,7 +30,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from oc.collect.reader import RegionReader          # noqa: E402
 from oc.engine import Engine                         # noqa: E402
 from oc.learn.dictionary import build_dictionaries, _norm  # noqa: E402
-from oc.learn.lexicon import Lexicon                 # noqa: E402
 from oc.learn.resolver import FieldResolver          # noqa: E402
 from oc.ocr.serialize import ocr_job                 # noqa: E402
 from oc.runtime import load_live_profile             # noqa: E402
@@ -64,10 +63,9 @@ def _frame_for(engine, game, cap):
 def _reader(engine, profile, game, window):
     from oc.collect.items import item_templates
 
-    lex = Lexicon.for_game(engine.settings.data_dir, profile.name)
     pooled, dmap = build_dictionaries(profile, engine.corrector)
-    resolver = FieldResolver(lex, engine.corrector, engine.settings.tuning.accept_confidence,
-                             dictionary=pooled, dictionaries=dmap, learn_enabled=False)
+    resolver = FieldResolver(engine.corrector, engine.settings.tuning.accept_confidence,
+                             dictionary=pooled, dictionaries=dmap)
     templates = item_templates([window], captures_store.cutout_loader(
         engine.settings.captures_dir, game))
     return RegionReader(engine.ocr, resolver, templates)

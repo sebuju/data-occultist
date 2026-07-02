@@ -28,7 +28,6 @@ fields:
   rules: []
   dict_mode: correct
   dictionary: ''
-  learn: true
   fuzzy: 0.82
   min_confidence: 0.0
   isolate: false
@@ -40,7 +39,6 @@ fields:
   rules: []
   dict_mode: correct
   dictionary: ''
-  learn: false
   fuzzy: 0.82
   min_confidence: 0.0
   isolate: false
@@ -52,7 +50,6 @@ fields:
   rules: []
   dict_mode: correct
   dictionary: ''
-  learn: false
   fuzzy: 0.82
   min_confidence: 0.0
   isolate: false
@@ -73,7 +70,6 @@ windows:
     rules: []
     dict_mode: correct
     dictionary: wiki
-    learn: false
     fuzzy: 0.82
     min_confidence: 0.05
     isolate: false
@@ -91,7 +87,6 @@ windows:
       value: '1'
     dict_mode: correct
     dictionary: ''
-    learn: false
     fuzzy: 0.82
     min_confidence: 0.0
     isolate: false
@@ -103,7 +98,6 @@ windows:
     rules: []
     dict_mode: correct
     dictionary: ''
-    learn: false
     fuzzy: 0.75
     min_confidence: 0.0
     isolate: false
@@ -313,7 +307,6 @@ windows:
     rules: []
     dict_mode: correct
     dictionary: ''
-    learn: false
     fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
@@ -325,7 +318,6 @@ windows:
     rules: []
     dict_mode: correct
     dictionary: ''
-    learn: false
     fuzzy: 0.8
     min_confidence: 0.5
     isolate: true
@@ -346,7 +338,6 @@ windows:
       value: '1'
     dict_mode: correct
     dictionary: ''
-    learn: false
     fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
@@ -522,7 +513,6 @@ windows:
     rules: []
     dict_mode: correct
     dictionary: ''
-    learn: false
     fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
@@ -616,7 +606,6 @@ windows:
     rules: []
     dict_mode: correct
     dictionary: ''
-    learn: false
     fuzzy: 0.82
     min_confidence: 0.0
     isolate: false
@@ -628,7 +617,6 @@ windows:
     rules: []
     dict_mode: correct
     dictionary: ''
-    learn: false
     fuzzy: 0.82
     min_confidence: 0.4
     isolate: false
@@ -789,7 +777,6 @@ windows:
     rules: []
     dict_mode: correct
     dictionary: ''
-    learn: true
     fuzzy: 0.82
     min_confidence: 0.75
     isolate: false
@@ -984,54 +971,63 @@ datasets:
 - id: master
   aggregate: latest
   key_field: ''
+  key_fields: []
   dedup: true
   batch_mode: run
   sync_mode: accumulate
 - id: prices_live
   aggregate: latest
   key_field: ''
+  key_fields: []
   dedup: true
   batch_mode: run
   sync_mode: accumulate
 - id: relics_offered
   aggregate: latest
   key_field: ''
+  key_fields: []
   dedup: false
   batch_mode: detection
   sync_mode: accumulate
 - id: mods
   aggregate: latest
   key_field: ''
+  key_fields: []
   dedup: true
   batch_mode: run
   sync_mode: accumulate
 - id: relics_select
   aggregate: latest
   key_field: ''
+  key_fields: []
   dedup: true
   batch_mode: detection
   sync_mode: mirror
 - id: ee_log
   aggregate: latest
   key_field: ''
+  key_fields: []
   dedup: true
   batch_mode: run
   sync_mode: mirror
 - id: relic_contents
   aggregate: latest
   key_field: ''
-  dedup: false
+  key_fields: []
+  dedup: true
   batch_mode: run
   sync_mode: accumulate
 - id: relics_refinement
   aggregate: latest
   key_field: ''
+  key_fields: []
   dedup: true
   batch_mode: detection
   sync_mode: mirror
 - id: relic_prices
   aggregate: latest
   key_field: ''
+  key_fields: []
   dedup: true
   batch_mode: run
   sync_mode: accumulate
@@ -1362,9 +1358,11 @@ producers:
       suffix_hints:
       - _set
     root: data
+    explode: []
     fields:
     - out_field: price_min
       path: ''
+      template: ''
       array:
         filter:
         - path: type
@@ -1382,6 +1380,7 @@ producers:
       required: false
     - out_field: price_median
       path: ''
+      template: ''
       array:
         filter:
         - path: type
@@ -1399,6 +1398,7 @@ producers:
       required: false
     - out_field: volume
       path: ''
+      template: ''
       array:
         filter:
         - path: type
@@ -1415,13 +1415,50 @@ producers:
       type: number
       required: false
 - id: producer
-  type: relic
+  type: http
   mode: ''
   dataset: relic_contents
   throttle: 0.4
   enabled: true
   sources: []
   source_field: name
+  http:
+    request:
+      method: GET
+      url: https://raw.githubusercontent.com/WFCD/warframe-drop-data/main/data/relics.json
+      headers:
+        User-Agent: oc/0.1
+        Accept: application/json
+      query: {}
+      timeout: 60.0
+    key_transform: none
+    key_encode: false
+    root: ''
+    explode:
+    - relics
+    - rewards
+    fields:
+    - out_field: name
+      path: ''
+      template: '{tier} {relicName}'
+      type: text
+      required: true
+    - out_field: item
+      path: itemName
+      template: ''
+      type: text
+      required: true
+    - out_field: rarity
+      path: rarity
+      template: ''
+      type: text
+      required: false
+  key:
+    fields:
+    - name
+    - item
+    sep: '|'
+    case_sensitive: false
 - id: wf_market_relic
   type: http
   mode: orders
@@ -1453,9 +1490,11 @@ producers:
       suffix_hints:
       - _set
     root: data
+    explode: []
     fields:
     - out_field: price_min
       path: ''
+      template: ''
       array:
         filter:
         - path: type
@@ -1473,6 +1512,7 @@ producers:
       required: false
     - out_field: price_median
       path: ''
+      template: ''
       array:
         filter:
         - path: type
@@ -1490,6 +1530,7 @@ producers:
       required: false
     - out_field: volume
       path: ''
+      template: ''
       array:
         filter:
         - path: type
@@ -1578,7 +1619,7 @@ triggers:
   targets:
   - wf_market_live
   enabled: true
-  sound: ''
+  sound: ding.wav
   volume: 1.0
   dataset_targets: []
   dataset_action: ''
@@ -1591,8 +1632,8 @@ triggers:
   targets:
   - wf_market_relic
   enabled: true
-  sound: blip.wav
-  volume: 1.0
+  sound: two-tone.wav
+  volume: 0.45
   dataset_targets: []
   dataset_action: ''
   dataset_dest: ''
@@ -1601,37 +1642,52 @@ dictionaries:
   name: wiki
   enabled: true
   source: wiki.txt
+  feeds: []
+- id: dict_1
+  name: relics
+  enabled: true
+  source: dict_1.txt
+  feeds:
+  - dataset: relic_contents
+    columns:
+    - name
+    - item
+    - rarity
 glyphs:
-- char: L
-  image: glyph-20260702-004516-690204.png
+- char: G
+  image: glyph-20260702-101221-085106.png
+  enabled: true
+- char: Q
+  image: glyph-20260702-101328-422407.png
+  enabled: true
 layout:
   nodes:
     game:
-      x: -1340.0
+      x: -3000.0
       y: -2360.0
-      w: 580.0
-      h: 684.0
+      w: 720.0
+      h: 763.0
       collapsed: false
       custW: true
       custH: false
     dict:wiki:
-      x: -740.0
-      y: -2360.0
+      x: -2240.0
+      y: -2080.0
       collapsed: false
     ds:master:
-      x: -880.0
-      y: -380.0
+      x: -1020.0
+      y: -1400.0
       collapsed: false
     ds:prices_live:
-      x: 240.0
+      x: 760.0
       y: -2360.0
-      w: 440.0
+      w: 500.0
       h: 193.0
       collapsed: false
       custW: true
       custH: false
     sub:live_prices_joined:
-      x: 860.0
+      x: 1360.0
       y: -2360.0
       w: 380.0
       h: 1260.0
@@ -1639,7 +1695,7 @@ layout:
       custW: true
       custH: false
     producer:wf_market_live:
-      x: 240.0
+      x: 760.0
       y: -2140.0
       w: 520.0
       h: 1668.0
@@ -1647,7 +1703,7 @@ layout:
       custW: true
       custH: false
     sub:relic_rewards_limit:
-      x: 3220.0
+      x: 3160.0
       y: 1800.0
       w: 420.0
       h: 320.0
@@ -1655,13 +1711,17 @@ layout:
       custW: true
       custH: false
     ds:relics_offered:
-      x: 2760.0
+      x: 2700.0
       y: 1560.0
       collapsed: false
     ds:mods:
-      x: -1360.0
-      y: -380.0
+      x: -1040.0
+      y: -940.0
+      w: 360.0
+      h: 200.0
       collapsed: false
+      custW: false
+      custH: true
     win:mod_window:
       x: -1660.0
       y: 3100.0
@@ -1709,7 +1769,11 @@ layout:
     fld:equipment_window:arcane:name:
       x: -2200.0
       y: 1620.0
+      w: 220.0
+      h: 660.0
       collapsed: false
+      custW: false
+      custH: true
     fld:equipment_window:arcane:arcane_level:
       x: -2820.0
       y: 1620.0
@@ -1735,15 +1799,15 @@ layout:
       y: 4260.0
       collapsed: false
     trigger:owned_refresh:
-      x: -140.0
-      y: -1260.0
+      x: 340.0
+      y: -1240.0
       w: 360.0
-      h: 300.0
+      h: 363.0
       collapsed: false
       custW: true
       custH: false
     sub:relic_rewards_price_from_stored:
-      x: 3680.0
+      x: 3620.0
       y: 1800.0
       collapsed: false
     win:relic_select:
@@ -1784,40 +1848,40 @@ layout:
       collapsed: false
     prev:relic_select:
       x: 280.0
-      y: 4200.0
+      y: 4300.0
       w: 520.0
       h: 320.0
       collapsed: false
       custW: true
       custH: false
     vt:sub:relic_rewards_price_from_stored:
-      x: 3220.0
+      x: 3160.0
       y: 2620.0
       collapsed: false
     vt:sub:live_prices_joined:
-      x: 1280.0
+      x: 1780.0
       y: -2360.0
-      w: 1020.0
+      w: 731.0
       h: 1220.0
       collapsed: false
       custW: true
       custH: true
     producer:producer:
-      x: -1360.0
-      y: -640.0
+      x: -620.0
+      y: -2360.0
+      w: 540.0
+      h: 897.0
+      collapsed: false
+      custW: true
+      custH: true
+    ds:relic_contents:
+      x: -1040.0
+      y: -2360.0
       w: 360.0
       h: 200.0
       collapsed: false
       custW: false
       custH: true
-    ds:relic_contents:
-      x: -880.0
-      y: -640.0
-      w: 360.0
-      h: 200.0
-      collapsed: false
-      custW: false
-      custH: false
     sub:relics_with_content:
       x: 1720.0
       y: 3340.0
@@ -1855,19 +1919,19 @@ layout:
       y: 380.0
       collapsed: false
     win:relic_rewards:
-      x: 3460.0
+      x: 3400.0
       y: 380.0
       collapsed: false
     item:relic_rewards:item_1:
-      x: 3000.0
+      x: 2940.0
       y: 380.0
       collapsed: false
     fld:relic_rewards:item_1:name:
-      x: 2760.0
+      x: 2700.0
       y: 380.0
       collapsed: false
     det:relic_rewards:detect_h:
-      x: 4020.0
+      x: 3960.0
       y: 380.0
       collapsed: false
     det:relic_select:detect_h:
@@ -1888,7 +1952,7 @@ layout:
       collapsed: false
     prev:relic_refinement:
       x: 40.0
-      y: 1560.0
+      y: 1620.0
       collapsed: false
     item:relic_refinement:not_owned:
       x: -400.0
@@ -1935,7 +1999,7 @@ layout:
       y: 3100.0
       collapsed: false
     vt:ds:relics_offered:
-      x: 2760.0
+      x: 2700.0
       y: 1800.0
       w: 420.0
       h: 1140.0
@@ -1943,7 +2007,7 @@ layout:
       custW: false
       custH: true
     sub:master_prime_parts:
-      x: 2340.0
+      x: 3140.0
       y: -2360.0
       w: 360.0
       h: 1220.0
@@ -1951,11 +2015,11 @@ layout:
       custW: false
       custH: true
     ds:ee_log:
-      x: -2720.0
+      x: -4380.0
       y: -2360.0
       collapsed: false
     vt:ds:ee_log:
-      x: -2320.0
+      x: -3980.0
       y: -2360.0
       w: 840.0
       h: 460.0
@@ -1979,11 +2043,15 @@ layout:
       custW: false
       custH: true
     det:game:detect_1:
-      x: -740.0
-      y: -1980.0
+      x: -2240.0
+      y: -2360.0
+      w: 300.0
+      h: 260.0
       collapsed: false
+      custW: true
+      custH: false
     src:log_ee:
-      x: -2720.0
+      x: -4380.0
       y: -2120.0
       w: 360.0
       h: 740.0
@@ -1991,7 +2059,7 @@ layout:
       custW: true
       custH: false
     vt:src:log_ee:
-      x: -2320.0
+      x: -3980.0
       y: -1880.0
       w: 840.0
       h: 480.0
@@ -1999,31 +2067,35 @@ layout:
       custW: true
       custH: true
     glyphs:
-      x: -1340.0
-      y: -1620.0
-      w: 880.0
-      h: 686.0
+      x: -3000.0
+      y: -1560.0
+      w: 720.0
+      h: 589.0
       collapsed: false
       custW: true
       custH: false
     producer:wf_market_relic:
-      x: 4120.0
-      y: 2120.0
+      x: 2560.0
+      y: -2140.0
       w: 537.0
       h: 1704.0
       collapsed: false
       custW: true
       custH: false
     ds:relic_prices:
-      x: 4120.0
-      y: 1560.0
+      x: 2560.0
+      y: -2360.0
       collapsed: false
     vt:ds:relic_prices:
-      x: 4700.0
-      y: 1560.0
+      x: 3560.0
+      y: -2360.0
+      w: 760.0
+      h: 340.0
       collapsed: false
+      custW: true
+      custH: true
     prev:relic_rewards:
-      x: 4040.0
+      x: 3980.0
       y: 900.0
       w: 500.0
       h: 320.0
@@ -2031,13 +2103,41 @@ layout:
       custW: true
       custH: false
     trigger:trigger_on_new_relic:
-      x: 4120.0
-      y: 1780.0
+      x: 3140.0
+      y: -1120.0
       w: 420.0
-      h: 320.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+    vt:ds:relic_contents:
+      x: -1760.0
+      y: -2360.0
+      w: 640.0
+      h: 340.0
+      collapsed: false
+      custW: true
+      custH: true
+    vt:ds:mods:
+      x: -1760.0
+      y: -940.0
+      w: 640.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+    vt:ds:master:
+      x: -1760.0
+      y: -1400.0
+      w: 620.0
+      h: 360.0
       collapsed: false
       custW: true
       custH: false
+    dict:dict_1:
+      x: -2240.0
+      y: -1700.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -2178,8 +2278,21 @@ layout:
         dir: 1
     ds:relic_contents:
       sorts: []
-      widths: {}
-      order: []
+      widths:
+        ducats: 72
+        rarity: 69
+        _pos: 36
+        _batch: 43
+        _seq: 48
+        name: 66
+      order:
+      - _seq
+      - _batch
+      - name
+      - item
+      - rarity
+      - ducats
+      - _pos
     view:relics_with_content:
       widths:
         name: 101
@@ -2275,25 +2388,22 @@ layout:
   - id: group_9
     title: warframe
     members:
-    - ds:mods
     - game
-    - ds:master
     - dict:wiki
     - det:game:detect_1
-    - ds:relic_contents
-    - producer:producer
     - glyphs
+    - dict:dict_1
     outline:
-      color: '#8fe65a'
+      color: '#7ddc7d'
       style: none
       width: 2
       offset: 0
-    bg: '#232a20'
-    titleBg: '#8fe65a'
-    titleColor: '#0c1408'
+    bg: '#1f2a25'
+    titleBg: '#7ddc7d'
+    titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
-    schemeId: chartreuse
+    schemeId: green
   - id: group_11
     title: 'window: relic rewards'
     members:
@@ -2310,11 +2420,7 @@ layout:
     - sub:relic_rewards_price_from_stored
     - vt:sub:relic_rewards_price_from_stored
     - vt:ds:relics_offered
-    - producer:wf_market_relic
-    - ds:relic_prices
-    - vt:ds:relic_prices
     - prev:relic_rewards
-    - trigger:trigger_on_new_relic
     outline:
       color: '#5ae6c2'
       style: none
@@ -2389,7 +2495,7 @@ layout:
     h: 1500
     schemeId: orange
   - id: group_18
-    title: 'price: live'
+    title: 'price: stash'
     members:
     - ds:prices_live
     - sub:live_prices_joined
@@ -2519,6 +2625,47 @@ layout:
     w: 3260
     h: 2660
     schemeId: teal
+  - id: group_26
+    title: 'price: relic'
+    members:
+    - ds:relic_prices
+    - vt:ds:relic_prices
+    - producer:wf_market_relic
+    - trigger:trigger_on_new_relic
+    outline:
+      color: '#e69a5a'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
+    titleAlign: left
+    titlePos: tl
+    schemeId: orange
+  - id: group_27
+    title: data
+    members:
+    - ds:master
+    - ds:mods
+    - ds:relic_contents
+    - producer:producer
+    - vt:ds:relic_contents
+    - vt:ds:mods
+    - vt:ds:master
+    outline:
+      color: '#e6e05a'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#292820'
+    titleBg: '#e6e05a'
+    titleColor: '#14120a'
+    titleAlign: left
+    titlePos: tl
+    w: 1800
+    h: 2180
+    schemeId: yellow
   float_windows: {}
   super_groups:
   - id: sgroup_2
@@ -2539,6 +2686,7 @@ layout:
     members:
     - group_17
     - group_18
+    - group_26
     outline:
       color: '#e69a5a'
       style: none
@@ -2566,6 +2714,7 @@ layout:
     members:
     - group_9
     - group_24
+    - group_27
     outline:
       color: '#3a4154'
       style: none
@@ -2590,6 +2739,9 @@ layout:
   - vt:src:log_ee
   - vt:ds:relic_prices
   - prev:relic_rewards
+  - vt:ds:relic_contents
+  - vt:ds:mods
+  - vt:ds:master
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -2888,50 +3040,43 @@ layout:
     titleColor: '#2c313c'
     titleAlign: left
     schemeId: slate
-  - id: subgroup_23
-    parent: group_9
+  - id: subgroup_24
+    parent: group_27
     title: ''
     members:
-    - game
-    - dict:wiki
-    - det:game:detect_1
-    - glyphs
+    - ds:relic_contents
+    - vt:ds:relic_contents
+    - producer:producer
     outline:
-      color: '#8fe65a'
+      color: '#3a4154'
       style: none
-      width: 2
+      width: 1
       offset: 0
-    bg: '#243024'
+    bg: '#191c23'
     titleBg: ''
-    titleColor: '#8fe65a'
+    titleColor: ''
     titleAlign: left
-    schemeId: chartreuse
-  - id: subgroup_24
-    parent: group_9
+  - id: subgroup_25
+    parent: group_27
     title: ''
     members:
     - ds:master
-    - ds:mods
-    - ds:relic_contents
-    - producer:producer
+    - vt:ds:master
     outline:
-      color: '#8fe65a'
+      color: '#3a4154'
       style: none
-      width: 2
+      width: 1
       offset: 0
-    bg: '#243024'
+    bg: '#191c23'
     titleBg: ''
-    titleColor: '#8fe65a'
+    titleColor: ''
     titleAlign: left
-    schemeId: chartreuse
-  - id: subgroup_25
-    parent: group_11
+  - id: subgroup_26
+    parent: group_27
     title: ''
     members:
-    - ds:relic_prices
-    - vt:ds:relic_prices
-    - producer:wf_market_relic
-    - trigger:trigger_on_new_relic
+    - ds:mods
+    - vt:ds:mods
     outline:
       color: '#3a4154'
       style: none
