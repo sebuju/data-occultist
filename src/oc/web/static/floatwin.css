@@ -308,14 +308,13 @@
 .live-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .live-row > label { margin: 0; color: var(--text); font-weight: 600; }
 .live-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; flex: none; }
-.live-wins { margin-top: 12px; }       /* gap between the toggles and the window list */
-.live-statbox { margin-top: 12px; }    /* stats sit below the window list as fixed reserved rows */
+.live-wins { margin-top: 12px; margin-bottom: 4px; }       /* gap between the toggles and the window list */
 /* a stat sits at the right of its row, truncating with an ellipsis rather than wrapping */
 .live-statval, .live-imgstat { flex: 1; min-width: 0; text-align: right; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
 /* fixed stat-label width so every "phase / saved / rate / rows" label lines up */
 .live-int-lbl { flex: none; min-width: 72px; white-space: nowrap; color: var(--text); font-weight: 600; }
-.live-imgs { margin: 6px 0 0; }   /* the saved-images stat row, below the window list */
+.live-imgs { margin: 10px 0 0; }   /* the saved-images stat row, below the window list */
 .live-clear { flex: none; font-size: var(--fs-xs); padding: 1px 8px; border: 0;
     background: var(--danger); color: var(--on-danger); }
 .live-clear:hover { filter: brightness(1.12); }
@@ -329,17 +328,22 @@
 .live-wdot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--line); transition: background .15s; }
 .live-wdot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
 
-/* ---- live debug log -------------------------------------------------------- */
-.live-debug { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
-/* header row: chevron + title, with a right-aligned "clear" affordance */
-.live-dbg-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none;
-    border: 0; padding: 2px 0; color: var(--text); font-weight: 600; cursor: pointer; text-align: left; }
-.live-dbg-chev { flex: none; width: 12px; color: var(--muted); }
-.live-dbg-title { flex: 1; min-width: 0; }
+/* ---- collapsible sections (stats + OCR log) -------------------------------- */
+/* shared primitive: a top-bordered section with a chevron+title header toggling a body */
+.clps { margin-top: 6px; border-top: 1px solid var(--border); }
+.clps-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none;
+    border: 0; padding: 2px 0; color: var(--text); font-weight: 600; cursor: pointer; text-align: left; min-height: unset; }
+.clps-chev { flex: none; width: 6px; color: var(--muted); }
+.clps-title { flex: 1; min-width: 0; }
+.clps-body { margin-top: 4px; }
+/* stats body: same boxed panel as the OCR log body (no scroll — fixed rows) */
+.live-statbox { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
+/* the OCR log's right-aligned "clear" affordance in its header */
 .live-dbg-clear { flex: none; color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
 .live-dbg-clear:hover { color: var(--text); }
-/* scrollable log body; a data preview, not a grid — capped rows keep the DOM small (rule 4) */
-.live-dbg-body { margin-top: 6px; max-height: 260px; overflow-y: auto;
+/* scrollable log body; a data preview, not a grid — capped rows keep the DOM small (rule 4).
+   no margin-top: it sits flush under its collapsible header (overrides .clps-body). */
+.live-dbg-body { margin-top: 4px; max-height: 260px; overflow-y: auto;
     background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
 .live-dbg-empty { font-size: var(--fs-xs); padding: 4px 2px; }
 .live-dbg-list { display: flex; flex-direction: column; gap: 4px; }

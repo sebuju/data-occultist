@@ -48,14 +48,19 @@ let liveColStatus = null;   // latest server collector status (from the heartbea
 let liveColUnsub = null;    // hub subscription active while the server collector runs
 let liveSawServer = false;  // we've observed the server collector actually running this run (gates the external-stop reflect, so an optimistic pre-start beat can't kill a just-started toggle)
 let liveImg = { count: 0, bytes: 0 };   // saved live-image stat (live tuning saves one frame/round)
-// Debug log (expandable, below the stats): shows what OCR read, how it was corrected, and what
-// was pushed to which dataset. Polled from /api/live/{game}/debug ONLY while expanded (gated poll,
-// like precap), reconciled in place (keyed by seq, rule 1), and capped (rule 4).
-let dbgOpen = false;        // section expanded?
+// OCR log (expandable, below the stats): shows what OCR read, how it was corrected, and what
+// was pushed to which dataset. Polled from /api/live/{game}/debug ONLY while expanded AND live is
+// running (gated poll, like precap) — a stopped collector emits no reads. Reconciled in place
+// (keyed by seq, rule 1), and capped (rule 4).
+let dbgOpen = true;         // section expanded? (open by default)
 let dbgTimer = null;        // poll timer while open (null = not polling)
 let dbgSeq = 0;             // highest debug seq already rendered (incremental poll cursor)
 const dbgRows = new Map();  // seq -> row element, reused across polls
 const DBG_CAP = 200;        // max rendered debug rows — a log preview, not a data grid
+// Two collapsible sections (stats + OCR log) built on the shared `collapsible()` primitive; refs
+// stashed so their toggles reconcile chevron/body without re-querying (stats open by default).
+let statsOpen = true;
+let statsChev = null, statsBody = null, dbgChev = null, dbgBody = null;
 
 // ---- live floating panel --------------------------------------------------
 // Styled like the tasks panel: a master live toggle, live stats, and a list of every
@@ -106,36 +111,39 @@ function mountLive(adapter) {
                     h("button", { class: "act-enable live-save", role: "switch", "aria-checked": "true", title: "save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)" },
                         switchSvg()),
                     h("span", { class: "live-save-lbl" }, "save to datasets"))),
-            h("div", { class: "live-wins" }),
-            // Live stats sit BELOW the window list as fixed rows with "–" placeholders, so the
-            // panel height is identical whether live mode is on or off (no jump on enable).
-            h("div", { class: "live-statbox" },
-                h("div", { class: "live-row" },
-                    h("span", { class: "live-int-lbl", title: "the OCR-worthy phase being read right now (window/state), or idle when the worthiness gate is closed" }, "phase"),
-                    h("span", { class: "live-statval live-stat-phase muted" }, "–")),
-                h("div", { class: "live-row" },
-                    h("span", { class: "live-int-lbl", title: "records added/updated this run" }, "saved"),
-                    h("span", { class: "live-statval live-stat-saved muted" }, "–")),
-                h("div", { class: "live-row" },
-                    h("span", { class: "live-int-lbl", title: "collector rate (armed) or client image rate (tuning)" }, "rate"),
-                    h("span", { class: "live-statval live-stat-rate muted" }, "–")),
-                h("div", { class: "live-row" },
-                    h("span", { class: "live-int-lbl", title: "visible row-index span (mirror datasets only)" }, "rows"),
-                    h("span", { class: "live-statval live-stat-rows muted" }, "–"))),
-            h("div", { class: "live-row live-imgs" },
-                h("span", { class: "live-imgstat muted" }, " "),
-                h("button", { class: "live-clear", dataset: { armed: "0" }, title: "delete every saved live image" }, "clear")),
-            // Expandable debug log — collapsed by default; when open it polls the server's debug
-            // ring and shows, per OCR-heavy tick, every field's raw text -> resolved value (marking
-            // corrections) plus what was written to which dataset.
-            h("div", { class: "live-debug" },
-                h("button", { class: "live-dbg-head", title: "per-tick OCR reads, corrections, and dataset writes (polls only while open)" },
-                    h("span", { class: "live-dbg-chev" }, "▸"),
-                    h("span", { class: "live-dbg-title" }, "debug log"),
-                    h("span", { class: "live-dbg-clear", role: "button", title: "clear the debug view" }, "clear")),
-                h("div", { class: "live-dbg-body", hidden: true },
-                    h("div", { class: "live-dbg-empty muted" }, "waiting for reads…"),
-                    h("div", { class: "live-dbg-list" }))));
+            h("div", { class: "live-wins" }));
+        // Stats collapsible (open by default): live-run readouts as fixed rows with placeholders so
+        // the height is stable whether live is on or off. Boxed body, styled like the OCR log below.
+        const stats = collapsible({ title: "stats", open: statsOpen, bodyClass: "live-statbox", headTitle: "live run stats (phase / saved / rate / rows)" });
+        statsChev = stats.chev; statsBody = stats.body;
+        stats.body.append(
+            h("div", { class: "live-row" },
+                h("span", { class: "live-int-lbl", title: "the OCR-worthy phase being read right now (window/state), or idle when the worthiness gate is closed" }, "phase"),
+                h("span", { class: "live-statval live-stat-phase muted" }, "–")),
+            h("div", { class: "live-row" },
+                h("span", { class: "live-int-lbl", title: "records added/updated this run" }, "saved"),
+                h("span", { class: "live-statval live-stat-saved muted" }, "–")),
+            h("div", { class: "live-row" },
+                h("span", { class: "live-int-lbl", title: "collector rate (armed) or client image rate (tuning)" }, "rate"),
+                h("span", { class: "live-statval live-stat-rate muted" }, "–")),
+            h("div", { class: "live-row" },
+                h("span", { class: "live-int-lbl", title: "visible row-index span (mirror datasets only)" }, "rows"),
+                h("span", { class: "live-statval live-stat-rows muted" }, "–")));
+        // OCR-log collapsible -- collapsed by default; when open it polls the server's read ring and
+        // shows, per OCR-heavy tick, every field's raw text -> resolved value (marking corrections)
+        // plus what was written to which dataset.
+        const dbgClear = h("span", { class: "live-dbg-clear", role: "button", title: "clear the OCR log view" }, "clear");
+        const dbg = collapsible({ title: "OCR log", open: dbgOpen, headExtra: dbgClear, bodyClass: "live-dbg-body",
+            headTitle: "per-tick OCR reads, corrections, and dataset writes (polls only while open)" });
+        dbgChev = dbg.chev; dbgBody = dbg.body;
+        dbg.body.append(
+            h("div", { class: "live-dbg-empty muted" }, "waiting for reads…"),
+            h("div", { class: "live-dbg-list" }));
+        // saved-live-image stat + clear -- the LAST element of the whole panel, below both sections.
+        const imgsRow = h("div", { class: "live-row live-imgs" },
+            h("span", { class: "live-imgstat muted" }, " "),
+            h("button", { class: "live-clear", dataset: { armed: "0" }, title: "delete every saved live image" }, "flush"));
+        liveRoot.append(stats.section, dbg.section, imgsRow);
         liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
         // click a window row -> navigate to its window node on the graph (no-op in pretty)
         liveRoot.querySelector(".live-wins").addEventListener("click", (ev) => {
@@ -145,17 +153,18 @@ function mountLive(adapter) {
         });
         liveRoot.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
         liveRoot.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
-        // clear saved live images — armed two-click (no blocking confirm)
+        // clear saved live images -- armed two-click (no blocking confirm)
         const clr = liveRoot.querySelector(".live-clear");
         clr.addEventListener("click", () => {
-            if (clr.dataset.armed !== "1") { clr.dataset.armed = "1"; clr.textContent = "sure?"; setTimeout(() => { if (clr.dataset.armed === "1") { clr.dataset.armed = "0"; clr.textContent = "clear"; } }, 2500); return; }
-            clr.dataset.armed = "0"; clr.textContent = "clear";
+            if (clr.dataset.armed !== "1") { clr.dataset.armed = "1"; clr.textContent = "sure?"; setTimeout(() => { if (clr.dataset.armed === "1") { clr.dataset.armed = "0"; clr.textContent = "flush"; } }, 2500); return; }
+            clr.dataset.armed = "0"; clr.textContent = "flush";
             if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch((e) => log(`clear live images failed: ${e.message || e}`, "err"));
         });
         if (model.profile.name) api.liveCaptures.stats(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
-        // debug log: header toggles the section (and starts/stops its gated poll); clear wipes
-        // the rendered view without touching the server ring (a fresh poll re-fills from `after`).
-        liveRoot.querySelector(".live-dbg-head").addEventListener("click", (ev) => {
+        // stats header toggles its section; OCR-log header toggles its section (and its gated poll),
+        // or clears the rendered view when the inline "clear" is hit (server ring untouched).
+        stats.head.addEventListener("click", () => setStatsOpen(!statsOpen));
+        dbg.head.addEventListener("click", (ev) => {
             if (ev.target.closest(".live-dbg-clear")) { clearDebugView(); return; }
             setDebugOpen(!dbgOpen);
         });
@@ -168,7 +177,7 @@ function activateLive() {
     active = true;
     refreshLiveImgStat(true);   // re-pull the saved-image count: it may be stale (fetched before a profile loaded, or frames saved while hidden)
     renderLiveWindow();
-    if (dbgOpen) startDebugPoll();   // resume the debug poll if the section was left open
+    syncDebugPoll();   // resume the debug poll if the section was left open AND live is running
     requestAnimationFrame(() => fitLivePanelHeight());
     document.fonts?.ready?.then(() => { if (active) fitLivePanelHeight(); });
 }
@@ -178,18 +187,43 @@ function deactivateLive() { active = false; stopDebugPoll(); }   // hidden panel
 // Expandable section below the stats. Polls the server debug ring ONLY while open (gated, like
 // precap), reconciles rows in place (keyed by seq, rule 1), and caps the rendered rows (rule 4).
 
-function setDebugOpen(on) {
-    dbgOpen = on;
-    const body = liveRoot?.querySelector(".live-dbg-body");
-    const chev = liveRoot?.querySelector(".live-dbg-chev");
+// Shared collapsible primitive: a chevron+title header toggling a body. BOTH the stats section and
+// the OCR-log section are built on this (rule 7) — the caller wires its own click handler (the OCR
+// log also starts/stops a poll; stats just shows/hides) and reconciles via setCollapsed().
+function collapsible({ title, open = true, headExtra = null, headTitle = "", bodyClass = "" }) {
+    const chev = h("span", { class: "clps-chev" }, open ? "▾" : "▸");
+    const head = h("button", { class: "clps-head", title: headTitle },
+        chev, h("span", { class: "clps-title" }, title), headExtra);
+    const body = h("div", { class: "clps-body" + (bodyClass ? " " + bodyClass : "") });
+    if (!open) body.hidden = true;
+    return { section: h("div", { class: "clps" }, head, body), head, body, chev };
+}
+function setCollapsed(chev, body, on) {
     if (body) body.hidden = !on;
-    if (chev && chev.textContent !== (on ? "▾" : "▸")) chev.textContent = on ? "▾" : "▸";
-    if (on) startDebugPoll(); else stopDebugPoll();
+    const c = on ? "▾" : "▸";
+    if (chev && chev.textContent !== c) chev.textContent = c;
+}
+
+function setStatsOpen(on) {
+    statsOpen = on;
+    setCollapsed(statsChev, statsBody, on);
     fitLivePanelHeight();
 }
 
+function setDebugOpen(on) {
+    dbgOpen = on;
+    setCollapsed(dbgChev, dbgBody, on);
+    syncDebugPoll();
+    fitLivePanelHeight();
+}
+
+// Start/stop the debug poll to match the gate: poll ONLY while the section is open, the panel is
+// active, AND live mode is on (a stopped collector writes no new reads — nothing to poll for).
+// Callers fire this freely on any of those edges; it's a no-op when already in the right state.
+function syncDebugPoll() { if (dbgOpen && active && liveOn) startDebugPoll(); else stopDebugPoll(); }
+
 function startDebugPoll() {
-    if (dbgTimer || !active) return;
+    if (dbgTimer || !dbgOpen || !active || !liveOn) return;
     pollDebug();   // immediate first pull, then a gated cadence
 }
 function stopDebugPoll() {
@@ -199,12 +233,12 @@ function stopDebugPoll() {
 function pollDebug() {
     dbgTimer = null;
     const game = model.profile.name;
-    if (!dbgOpen || !active || !game) return;
+    if (!dbgOpen || !active || !liveOn || !game) return;
     api.live.debug(game, dbgSeq).then((r) => {
         if (r && r.entries && r.entries.length) renderDebugEntries(r.entries);
     }).catch(() => {}).finally(() => {
-        // keep polling while open — on bgtimer so a backgrounded tab still ticks (like liveTick)
-        if (dbgOpen && active) dbgTimer = bgSetTimeout(pollDebug, 700);
+        // keep polling while open + live — on bgtimer so a backgrounded tab still ticks (like liveTick)
+        if (dbgOpen && active && liveOn) dbgTimer = bgSetTimeout(pollDebug, 700);
     });
 }
 
@@ -473,6 +507,7 @@ async function syncLiveFromServer() {
     showLiveStats(true);
     subscribeCollector();
     hub.kick();
+    syncDebugPoll();   // adopted a server-side run on reload -> resume the OCR-log poll if open
     renderLiveWindow();   // reflect the adopted toggle
 }
 // Adopt a server collector observed running on the heartbeat (started by another client / a pretty
@@ -487,6 +522,7 @@ function adoptServerCollect(s) {
     showLiveStats(true);
     subscribeCollector();
     log("live collection adopted", "run");
+    syncDebugPoll();   // adopted a running collector -> resume the OCR-log poll if its section is open
     renderLiveWindow();
 }
 
@@ -500,6 +536,7 @@ function reflectExternalStop() {
     liveColStatus = null;
     unregisterWorker("live");
     showLiveStats(false);
+    stopDebugPoll();   // collector gone -> nothing to poll
     log("live mode stopped (external)");
     renderLiveWindow();
 }
@@ -551,6 +588,7 @@ function setLiveMode(on) {
         unregisterWorker("live");
         stopServerCollect();   // harmless if not running
     }
+    syncDebugPoll();   // live edge: start the OCR-log poll (if open) on, stop it on off
     renderLiveWindow();   // reflect the toggle + cleared dots
 }
 
