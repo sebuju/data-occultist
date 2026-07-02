@@ -2943,7 +2943,7 @@ function focusNode(id) {
 // focus). Snapping from an observer was the old jump-on-unfocus bug — a ResizeObserver can't tell a
 // user grip-drag from an incidental reflow, so it must never write size or settle.
 function snapResize(el, opts = {}) {
-    observeResize(el, () => requestEdges(), { gate: true });   // reflow -> edges follow; never snaps
+    observeResize(el, () => { requestEdges(); groups.renderGroups(); }, { gate: true });   // reflow (image load / content) -> edges follow AND boxes re-hug the node's new size; never snaps
     addResizeGrips(el, opts);   // custom grips on BOTH bottom corners; they own snap-on-release
 }
 
