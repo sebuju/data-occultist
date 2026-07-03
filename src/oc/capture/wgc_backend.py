@@ -149,6 +149,8 @@ def _client_crop(hwnd: int, win: WindowInfo, frame_w: int, frame_h: int) -> Pixe
 
 @register_capture("wgc")
 class WgcCaptureBackend(CaptureBackend):
+    streaming = True   # grab_window() reads a cached DWM frame — cheap, non-blocking, no re-render
+
     def __init__(self) -> None:
         self._session: _Session | None = None
         self._mss = None   # lazy fallback for arbitrary screen-region grabs

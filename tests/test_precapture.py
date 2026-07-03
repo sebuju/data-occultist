@@ -115,6 +115,39 @@ def test_save_commits_to_real_store(tmp_path):
     assert rows[0]["item_name"] == "Adra" and rows[0]["item_count"] == 3
 
 
+def test_grab_frame_uses_streaming_backend_for_both_paths(tmp_path):
+    # a streaming engine backend (WGC default) is read for foreground AND background -> the
+    # private mss grabber is never touched (its per-grab BitBlt leaves the hot path).
+    from oc.types import Frame, PixelBox
+    s = PrecaptureSession(_engine(tmp_path), _profile())
+    good = Frame(image=np.ones((4, 4, 3), np.uint8), client=PixelBox(0, 0, 4, 4))
+    calls = {"stream": 0, "mss": 0}
+    def stream_grab(win):
+        calls["stream"] += 1
+        return good
+    s._engine.capture = SimpleNamespace(streaming=True, grab_window=stream_grab)
+    s._screen = SimpleNamespace(grab_window=lambda win: calls.__setitem__("mss", calls["mss"] + 1) or good)
+    s._grab_frame(object(), foreground=True)
+    s._grab_frame(object(), foreground=False)
+    assert calls == {"stream": 2, "mss": 0}
+
+
+def test_grab_frame_falls_back_to_mss_when_backend_not_streaming(tmp_path):
+    # non-streaming engine backend (printwindow/mss): foreground uses the private mss grabber
+    # (avoids a per-poll re-render/BitBlt through the engine backend).
+    from oc.types import Frame, PixelBox
+    s = PrecaptureSession(_engine(tmp_path), _profile())
+    good = Frame(image=np.full((4, 4, 3), 200, np.uint8), client=PixelBox(0, 0, 4, 4))
+    calls = {"engine": 0, "mss": 0}
+    s._engine.capture = SimpleNamespace(  # no streaming attr -> getattr(..., False)
+        grab_window=lambda win: calls.__setitem__("engine", calls["engine"] + 1) or good)
+    s._screen = SimpleNamespace(grab_window=lambda win: calls.__setitem__("mss", calls["mss"] + 1) or good)
+    s._grab_frame(object(), foreground=True)
+    assert calls == {"engine": 0, "mss": 1}   # foreground -> mss, engine untouched
+    s._grab_frame(object(), foreground=False)
+    assert calls == {"engine": 1, "mss": 1}   # background -> engine backend
+
+
 def test_recording_skips_identical_frames(tmp_path):
     s = PrecaptureSession(_engine(tmp_path), _profile())
     from oc.types import Frame, PixelBox

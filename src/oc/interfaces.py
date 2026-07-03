@@ -50,6 +50,11 @@ class WindowProvider(ABC):
 class CaptureBackend(ABC):
     """Grab pixels from the screen."""
 
+    # True => grab_window() is a cheap, non-blocking read of a cached frame that captures the
+    # window's OWN surface (works backgrounded/occluded, no game re-render, no desktop BitBlt).
+    # A streaming backend can be polled tight-loop for free; a non-streaming one must not.
+    streaming: bool = False
+
     @abstractmethod
     def grab(self, box: PixelBox) -> Frame:
         """Capture an absolute-screen rectangle as a BGR :class:`Frame`."""

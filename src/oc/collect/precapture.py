@@ -200,10 +200,12 @@ class PrecaptureSession:
         # re-recording. ``_session`` selects the active one; ``_dir`` resolves to it.
         self._base = Path(engine.settings.captures_dir) / _safe(profile.name) / "precapture"
         self._session: str | None = None
-        # Recording copies pixels straight off the composited desktop (mss) instead of
-        # the engine's window capture: PrintWindow forces the game to re-render its whole
-        # surface every grab and tanks its frame rate. mss just reads what's already on
-        # screen (WindowInfo.client is absolute screen px) — near-zero game impact.
+        # Fallback foreground grabber used ONLY when the engine backend isn't streaming
+        # (see _grab_frame). A streaming backend (WGC default) reads the window's own cached
+        # surface for free; a non-streaming engine backend would either re-render the game
+        # (PrintWindow) or BitBlt the desktop per grab, so for a foreground window mss —
+        # reading what's already on screen (WindowInfo.client is absolute screen px) — is the
+        # cheaper, no-game-impact path. Unused entirely under the default WGC engine.
         self._screen = MssCaptureBackend()
 
         self._lock = threading.Lock()
@@ -560,14 +562,22 @@ class PrecaptureSession:
         self._thread.start()
 
     def _grab_frame(self, win, foreground: bool):
-        """Capture the game, picking the path PER FRAME by whether it's on top.
+        """Capture the game, picking the cheapest path that reads the RIGHT pixels.
 
-        mss copies the desktop at the window's screen rect — cheap and doesn't disturb the
-        game, but it sees whatever is *in front* of those pixels, so an occluded/background
-        window grabs the wrong app (the browser, the editor). Only trust mss when the game
-        is foreground (on top). Otherwise — and as a fallback if mss comes back black
-        (exclusive-fullscreen) — use the engine's window capture (PrintWindow), which reads
-        the window's OWN surface even when occluded or backgrounded."""
+        A STREAMING backend (WGC, the default) reads the window's OWN surface from a cached
+        DWM frame — cheap, non-blocking, background-safe, no re-render — so it's used for
+        BOTH foreground and background: the record loop polls it tight-loop for free. When
+        the engine backend is NOT streaming (user swapped to printwindow/mss), fall back to
+        the per-frame split: mss copies the desktop at the window's screen rect (cheap, but
+        sees whatever is *in front* of those pixels, so only trustworthy when the game is on
+        top); otherwise — and if mss comes back black (exclusive-fullscreen) — the engine's
+        own capture (PrintWindow reads the window's surface even occluded, at a re-render cost).
+
+        Snapshot the live backend once: a web-UI backend swap replaces engine.capture at
+        runtime, so read `streaming` and grab off the SAME object."""
+        cap = self._engine.capture
+        if getattr(cap, "streaming", False):
+            return cap.grab_window(win)
         if foreground:
             try:
                 f = self._screen.grab_window(win)
@@ -575,7 +585,7 @@ class PrecaptureSession:
                     return f
             except Exception:
                 pass
-        return self._engine.capture.grab_window(win)
+        return cap.grab_window(win)
 
     def _record_loop(self, max_frames: int, interval: float) -> None:
         prev_thumb: np.ndarray | None = None   # the immediately preceding grab
