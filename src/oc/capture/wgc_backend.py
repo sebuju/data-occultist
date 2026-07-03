@@ -11,10 +11,23 @@ WGC is a **streaming** API: frames arrive on a callback as the compositor
 presents (capped at the monitor refresh rate; with a static screen they simply
 stop arriving and the last one stands). The :class:`CaptureBackend` contract is a
 synchronous ``grab_window``, so we run one long-lived session per window on a
-dedicated thread (``windows-capture``'s ``start_free_threaded``), keep the latest
-frame under a lock, and hand it back on demand. A ``grab_window`` called faster
-than the refresh rate returns the most recent frame (``frame_seq`` lets a
-benchmark tell a fresh frame from a repeat).
+dedicated thread (``windows-capture``'s ``start_free_threaded``).
+
+**Pull, not push.** The callback fires at the game's present rate (up to monitor
+refresh — 144Hz+), but the collector only reads at its poll rate (~4Hz), so
+copying every delivered frame is ~35x wasted work — and it's worst exactly when
+the screen is MOVING (max presents), stealing CPU/memory-bandwidth from the game
+for frames the settle gate immediately discards. Instead ``grab_window`` *requests*
+a frame (``pull``); the callback copies only when one is wanted, then clears the
+flag. An unwanted frame costs a seq bump and nothing else. The copy itself is a
+plain contiguous memcpy of the whole BGRA buffer — the alpha drop (BGRA->BGR) is
+deferred to ``grab_window`` (~4Hz) so the hot capture thread never does the strided
+per-pixel gather that ``[:, :, :3]`` forces. ``frame_seq`` still counts every
+delivered frame so a benchmark can tell a fresh frame from a repeat.
+
+(Precapture recording, which wants max real-time throughput, doesn't read WGC for a
+foreground window at all — it uses mss, whose BitBlt returns the true on-screen
+pixels with no async-delivery lag. WGC here serves the live collector's cheap pull.)
 
 WGC captures the whole *window* surface (frame + borders), so we crop to the
 client area using win32 geometry — except the common borderless-fullscreen case,
@@ -46,8 +59,13 @@ class _Session:
     def __init__(self, title: str) -> None:
         self.title = title
         self._lock = threading.Lock()
-        self._latest: np.ndarray | None = None   # BGR, copied out of the native buffer
-        self._seq = 0                              # bumped per delivered frame
+        self._latest: np.ndarray | None = None   # BGRA, copied out of the native buffer
+        self._seq = 0                              # bumped per DELIVERED frame (frame_seq)
+        self._latest_seq = 0                       # _seq of the frame currently in _latest
+        # Pull gate: the callback copies a frame only while this is set. grab_window sets it
+        # (via pull()); the callback clears it after fulfilling one. Starts True so the very
+        # first delivered frame is captured (wait_first / a single-shot grab needs it).
+        self._want = True
         self._control = None
         self._closed = False
 
@@ -80,19 +98,50 @@ class _Session:
         return cap.start_free_threaded()
 
     def _on_frame(self, frame, _capture_control) -> None:
-        # frame_buffer is a view over native memory valid only for this call -> copy.
-        # [:, :, :3] drops alpha (BGRA -> BGR) before the copy so we don't copy alpha.
-        img = np.ascontiguousarray(frame.frame_buffer[:, :, :3])
+        # Count every delivery (frame_seq), but only pay for the copy when a grab wants one —
+        # the callback fires at the game's present rate, the collector reads at ~4Hz.
+        with self._lock:
+            self._seq += 1
+            seq = self._seq
+            wanted = self._want
+        if not wanted:
+            return
+        # frame_buffer is a view over native memory valid only for this call -> copy. Copy the
+        # WHOLE contiguous BGRA buffer (a plain memcpy); the alpha drop (BGRA->BGR) is a strided
+        # per-pixel gather, so defer it to grab_window (~4Hz) instead of doing it here per present.
+        img = np.array(frame.frame_buffer)
         with self._lock:
             self._latest = img
-            self._seq += 1
+            self._latest_seq = seq
+            self._want = False
 
     def _on_closed(self) -> None:
         self._closed = True
 
     def latest(self) -> tuple[np.ndarray | None, int]:
         with self._lock:
-            return self._latest, self._seq
+            return self._latest, self._latest_seq
+
+    def pull(self, timeout: float = 0.03) -> tuple[np.ndarray | None, int]:
+        """Request a fresh copy and return it. Sets the want flag so the next presented frame
+        is copied, and waits (bounded) for that copy to land — so a grab gets a current frame
+        instead of one up to a poll-interval stale. When the screen is STATIC no frame presents,
+        so no copy lands and the last one stands (correct: nothing changed); the wait just times
+        out cheaply. ``timeout`` stays well under the collector's poll interval so a tick never
+        stalls long."""
+        with self._lock:
+            self._want = True
+            start = self._latest_seq
+        deadline = time.perf_counter() + timeout
+        while time.perf_counter() < deadline:
+            with self._lock:
+                if self._latest_seq != start:
+                    return self._latest, self._latest_seq
+            if self._closed:
+                break
+            time.sleep(0.002)
+        with self._lock:
+            return self._latest, self._latest_seq
 
     def wait_first(self, timeout: float = 0.5) -> bool:
         """Block (bounded) until the first frame is delivered. WGC streams asynchronously,
@@ -191,7 +240,7 @@ class WgcCaptureBackend(CaptureBackend):
             return self.grab(window.client)
 
         session = self._ensure_session(window.title)
-        img, _seq = session.latest()
+        img, _seq = session.pull()
         if img is None:
             # No frame yet (session just started / window never presented). Empty
             # frame -> the collector treats it as an unread tick and retries.
@@ -201,7 +250,10 @@ class WgcCaptureBackend(CaptureBackend):
         box = _client_crop(window.handle, window, fw, fh)
         if box.w <= 0 or box.h <= 0:
             return Frame(image=np.zeros((1, 1, 3), np.uint8), client=window.client)
-        crop = img[box.y : box.y + box.h, box.x : box.x + box.w]
+        # ``img`` is the whole BGRA buffer; crop to the client area and drop alpha here (BGRA
+        # -> BGR). This is the strided gather the callback deferred — but at the collector's
+        # ~4Hz read rate, not the game's present rate.
+        crop = img[box.y : box.y + box.h, box.x : box.x + box.w, :3]
         return Frame(image=np.ascontiguousarray(crop), client=window.client)
 
     def grab(self, box: PixelBox) -> Frame:
