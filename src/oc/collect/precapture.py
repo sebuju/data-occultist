@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import threading
 import time
 from collections import Counter
@@ -45,7 +46,8 @@ from ..capture.mss_backend import MssCaptureBackend
 from ..ocr.device_switch import enter_device, exit_device
 from ..ocr.serialize import ocr_job
 from ..window.input import scroll_window
-from . import settle
+from . import detsig, settle
+from .scrollbar import scroll_position
 from .glyph_match import glyph_atlas
 from .items import item_templates
 from .reader import RegionReader
@@ -75,15 +77,21 @@ def _sig(image: np.ndarray) -> int:
     return hash(image[::sy, ::sx].tobytes())
 
 
-# Auto-scroll: while recording, nudge the game's list down once the view settles so the
-# user needn't scroll by hand. A kept frame means the last nudge surfaced new content; a
-# settled view with nothing new means the nudge did nothing. Give up after this many
-# BARREN nudges in a row (end of list, or the game ignores wheel input) by UNCHECKING the
-# flag — recording continues, and the user can re-enable it if it stopped too early.
+# Auto-scroll: while recording, nudge the game's list down so the user needn't scroll by hand.
 _AUTOSCROLL_CLICKS = 1       # wheel notches per nudge (small step keeps cross-scroll overlap)
-_AUTOSCROLL_GIVE_UP = 3      # barren nudges in a row -> pause recording (list end reached)
-_SCROLL_LAND_S = 0.35        # grace for a posted nudge to RENDER before it counts as barren
-                             # (WM_MOUSEWHEEL is async; the pre-scroll frame reads settled+stale)
+
+# TIMED step-and-shoot record. Dead simple, deterministic: scroll by the window's scroll_clicks on an
+# ABSOLUTE grid — each scroll fires exactly `interval` (the UI "target ms") after the previous one, so
+# `interval` IS the time BETWEEN SCROLLS. The grab lands a full interval after its scroll (ease finished
+# = settled), and grab/save/bookkeeping run AFTER the next scroll is fired, overlapping that interval
+# instead of stacking on top of it. The SCROLLBAR THUMB is the source of truth for progress: if a step
+# nudged the thumb even a hair, keep going; if it didn't move, that's the end (or a swallowed wheel) ->
+# park at the top and pause. Only ADVANCING grabs are saved, so end-confirmation frames never become dups.
+_PROF_LEN = 128        # samples in the row profile (used by _home_to_top's content settle; fixed length)
+_MOVE_EPS = 0.004      # row-profile scroll AT/ABOVE this counts as motion (homing's ease detection)
+_POS_EPS = 5e-4        # scrollbar thumb moved more than this (0..1) => the step advanced the list ("a tiny bit")
+_END_STALL = 3         # consecutive no-move steps before declaring the end (the thumb lags a step from the
+                       # top, so a single no-move is the render lag, not the bottom; the bottom plateaus)
 
 def _detect_boxes(profile: GameProfile) -> list[FractionBox]:
     """Every region used for window/state detection — detectors on windows and states."""
@@ -231,6 +239,8 @@ class PrecaptureSession:
         self._processed = 0
         self._read = 0          # records read this run (above the confidence floor)
         self._no_key = 0        # records dropped because they had no value under the dataset key
+        self._gaps = 0          # coverage gaps seen while recording (a step overshot the measurable overlap)
+        self._rec: dict = {}    # per-step recording timings (ms) so a loop hitch is VISIBLE, not guessed at
         # recognition during processing: the just-classified window/state, plus a per-frame
         # tally keyed "window/state" ("" = a miss, i.e. classify matched no window).
         self._cur_window: str | None = None
@@ -386,13 +396,7 @@ class PrecaptureSession:
         """Remove a session from disk. If it was active, fall back to the newest remaining."""
         self._join_prev()
         target = self._base / _safe(sid)
-        try:
-            if target.is_dir():
-                for f in target.iterdir():
-                    f.unlink()
-                target.rmdir()
-        except OSError:
-            pass
+        shutil.rmtree(target, ignore_errors=True)   # rmtree: handles the .thumb/ cache subdir too
         with self._lock:
             self._reset_locked()
             self._session = None
@@ -406,12 +410,7 @@ class PrecaptureSession:
         worker runs (the caller gates on busy), so frames in flight are never yanked."""
         self._join_prev()
         for p in list(self._session_dirs()):
-            try:
-                for f in p.iterdir():
-                    f.unlink()
-                p.rmdir()
-            except OSError:
-                pass
+            shutil.rmtree(p, ignore_errors=True)   # rmtree: handles the .thumb/ cache subdir too
         with self._lock:
             self._reset_locked()
             self._session = None
@@ -510,19 +509,62 @@ class PrecaptureSession:
 
     # ---- recording ---------------------------------------------------------
 
+    def _row_profile(self, img, da_frac, cw, ch):
+        """A cheap fixed-length (``_PROF_LEN``) 1-D vertical intensity profile of the data_area
+        (mean per row, downsampled). Cross-correlating two of these (``_vscroll``) gives how far
+        the LIST scrolled between the frames — in-place icon animation shifts no rows, so it
+        doesn't register. ``None`` when the crop is empty."""
+        pb = da_frac.to_pixels(cw, ch)
+        crop = img[pb.y:pb.y + pb.h, pb.x:pb.x + pb.w]
+        if crop.size == 0:
+            return None
+        g = crop.max(axis=2) if crop.ndim == 3 else crop
+        prof = g.mean(axis=1).astype(np.float32)
+        return cv2.resize(prof.reshape(-1, 1), (1, _PROF_LEN), interpolation=cv2.INTER_AREA).ravel()
+
+    @staticmethod
+    def _vscroll(a, b) -> float:
+        """Downward scroll from ``a`` to ``b`` as a fraction (0..1) of the profile height: the
+        offset of ``b`` that best matches ``a`` (content scrolled up and out the top), by minimum
+        SSD over the top half. 0 when they align in place — so in-place animation reads as no
+        scroll. ``a``/``b`` are ``_row_profile`` outputs; 0.0 if either is None."""
+        if a is None or b is None:
+            return 0.0
+        n = len(a)
+        best_ssd = None
+        best = 0
+        for dy in range(0, n // 2):
+            la = a[dy:]
+            lb = b[:len(la)]
+            d = la - lb
+            s = float(np.dot(d, d)) / len(la)
+            if best_ssd is None or s < best_ssd:
+                best_ssd, best = s, dy
+        return best / n
+
+    def _window_for_frame(self, frame):
+        """The WindowDef the frame classifies to, or None. Best-effort — a classify hiccup
+        must never break recording."""
+        try:
+            match = self._engine.classifier.classify(frame, self._profile)
+            if match:
+                return next((w for w in self._profile.windows if w.id == match[0]), None)
+        except Exception:  # pragma: no cover - a classify hiccup must not break recording
+            pass
+        return None
+
     def _scroll_cfg_for_frame(self, frame) -> tuple[bool, int]:
         """Classify the window shown in ``frame`` and return its ``(autoscroll, clicks)``.
         The ON-SCREEN window decides — so recording can start on any screen and auto-scroll
         engages once the user reaches a window configured for it (and disengages when they
         leave). Best-effort: no match / no scroll config -> auto-scroll off."""
-        try:
-            match = self._engine.classifier.classify(frame, self._profile)
-            wd = next((w for w in self._profile.windows if w.id == match[0]), None) if match else None
-            sc = wd.scroll if wd else None
-            if sc and sc.enabled and sc.autoscroll:
-                return True, max(1, int(sc.scroll_clicks or 1))
-        except Exception:  # pragma: no cover - a classify hiccup must not break recording
-            pass
+        return self._scroll_cfg_for_window(self._window_for_frame(frame))
+
+    @staticmethod
+    def _scroll_cfg_for_window(wd) -> tuple[bool, int]:
+        sc = wd.scroll if wd else None
+        if sc and sc.enabled and sc.autoscroll:
+            return True, max(1, int(sc.scroll_clicks or 1))
         return False, _AUTOSCROLL_CLICKS
 
     def _apply_window_autoscroll(self) -> None:
@@ -562,22 +604,27 @@ class PrecaptureSession:
         self._thread.start()
 
     def _grab_frame(self, win, foreground: bool):
-        """Capture the game, picking the cheapest path that reads the RIGHT pixels.
+        """Capture the game, picking the path that reads the RIGHT pixels with the least game
+        impact. A STREAMING backend (WGC, the default) is a passive readback of the frame DWM
+        already composited — no re-render, background-safe, and no per-grab full-desktop BitBlt
+        — so it's used for both foreground and background. Only a non-streaming engine backend
+        falls back to the per-frame split below.
 
-        A STREAMING backend (WGC, the default) reads the window's OWN surface from a cached
-        DWM frame — cheap, non-blocking, background-safe, no re-render — so it's used for
-        BOTH foreground and background: the record loop polls it tight-loop for free. When
-        the engine backend is NOT streaming (user swapped to printwindow/mss), fall back to
-        the per-frame split: mss copies the desktop at the window's screen rect (cheap, but
-        sees whatever is *in front* of those pixels, so only trustworthy when the game is on
-        top); otherwise — and if mss comes back black (exclusive-fullscreen) — the engine's
-        own capture (PrintWindow reads the window's surface even occluded, at a re-render cost).
-
-        Snapshot the live backend once: a web-UI backend swap replaces engine.capture at
-        runtime, so read `streaming` and grab off the SAME object."""
+        BACKGROUND / mss came back black (exclusive-fullscreen): fall back to the engine
+        capture — a streaming backend (WGC) reads the window's own cached surface even
+        occluded; a non-streaming one (PrintWindow) re-renders it. Snapshot the live backend
+        once: a web-UI swap replaces engine.capture at runtime, so grab off the SAME object."""
         cap = self._engine.capture
+        # Streaming backend (WGC): a passive readback of the already-composited frame — no
+        # re-render, and (unlike mss) no repeated full-desktop 4K BitBlt, which steals ~20% of
+        # the game's FPS while recording and thereby slows the very scroll animation the record
+        # loop waits on. Use it for BOTH foreground and background. (pull-gated, so a grab costs
+        # one on-demand copy, not the game's full present rate.)
         if getattr(cap, "streaming", False):
             return cap.grab_window(win)
+        # Non-streaming engine backend (printwindow/mss): foreground -> our own mss (a cheap
+        # desktop BitBlt of real pixels); background / mss-black -> engine capture (PrintWindow
+        # reads the window's own surface even occluded, at a re-render cost).
         if foreground:
             try:
                 f = self._screen.grab_window(win)
@@ -587,22 +634,137 @@ class PrecaptureSession:
                 pass
         return cap.grab_window(win)
 
+    def _home_to_top(self, win, wd) -> None:
+        """Park the list at the TOP before recording, so coverage starts from a known origin.
+        Coverage-driven capture assumes it begins at row 0; if the user opened the window
+        already scrolled, everything above is silently lost.
+
+        Nothing is captured while homing, so DON'T wait the ease per step — just hammer up as
+        fast as the wheel registers, polling the thumb, and stop when it reads the top. Only the
+        FINAL confirm waits the ease to settle, so the very first recorded frame is clean. The
+        thumb lags while spamming, so the break may land a few no-op up-scrolls late — harmless
+        (already at the top). Best-effort — a hiccup must never break recording."""
+        sc = wd.scroll if wd else None
+        if not (sc and sc.enabled):
+            return
+        orient = sc.scrollbar_orientation
+        up = max(5, 5 * int(sc.scroll_clicks or 1))     # big up-steps reach the top in few iters
+        da = wd.data_area.to_fraction() if wd.data_area is not None else None
+
+        def read():
+            """One grab -> (thumb pos 0..1 or None, data_area row-profile or None)."""
+            try:
+                f = self._grab_frame(win, True)
+            except Exception:   # pragma: no cover - a grab hiccup must not break homing
+                return None, None
+            img = f.image
+            if img is None or img.size == 0:
+                return None, None
+            pos = None
+            if sc.scrollbar is not None:
+                box = sc.scrollbar.to_fraction().to_pixels(f.client.w, f.client.h)
+                crop = img[box.y:box.y + box.h, box.x:box.x + box.w]
+                if crop.size:
+                    pos = scroll_position(crop, orient)
+            rp = self._row_profile(img, da, f.client.w, f.client.h) if da is not None else None
+            return pos, rp
+
+        def wait_settled():
+            """Grab until the scroll ease finishes — the indicator (thumb pos, else the row
+            profile) stops changing between consecutive grabs. Returns the settled (pos, rp)."""
+            pos, rp = read()
+            for _ in range(60):                         # cap: ~1.8s worst case per settle
+                if self._stop.is_set():
+                    return pos, rp
+                self._stop.wait(0.03)
+                npos, nrp = read()
+                if npos is not None and pos is not None:
+                    moved = abs(npos - pos) > 0.005
+                elif nrp is not None and rp is not None:
+                    moved = max(self._vscroll(nrp, rp), self._vscroll(rp, nrp)) >= _MOVE_EPS
+                else:
+                    moved = False                       # nothing to compare -> treat as settled
+                pos, rp = npos, nrp
+                if not moved:
+                    break
+            return pos, rp
+
+        prev_rp = None
+        for _ in range(120):                            # hard cap so a bad read can't spin forever
+            if self._stop.is_set():
+                return
+            scroll_window(win, -up)
+            self._stop.wait(0.02)                       # only enough for the wheel to register; NOT the ease
+            pos, rp = read()
+            if pos is not None:
+                if pos <= 0.02:                         # thumb at top -> done
+                    break
+            elif prev_rp is not None and rp is not None:
+                # no scrollbar: an up-scroll that moved the content nowhere == at top
+                if max(self._vscroll(rp, prev_rp), self._vscroll(prev_rp, rp)) < _MOVE_EPS:
+                    break
+            prev_rp = rp
+        # ONE safety scroll up, then WAIT for the ease to actually settle at the top (only here)
+        scroll_window(win, -up)
+        wait_settled()
+
+    def _save_frame(self, frame, gap: bool = False) -> bool:
+        """JPEG-encode a captured frame and stash it (RAM + disk). Returns True if kept."""
+        ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        if not ok:
+            return False
+        data = buf.tobytes()
+        with self._lock:
+            idx = len(self._frames)
+            self._frames.append(data)
+            self._client = (frame.client.w, frame.client.h)
+            if gap:
+                self._gaps += 1
+        try:
+            (self._dir / f"{idx:05d}.jpg").write_bytes(data)
+        except OSError:
+            pass
+        return True
+
+    def _scroll_pos(self, img, wd, cw, ch):
+        """The scrollbar thumb position (0..1) for this frame, or None if the window has no
+        scrollbar / it can't be read. Lets the list-end test KNOW it's at the bottom instead of
+        guessing from 'the content didn't move' (which a swallowed wheel event also looks like)."""
+        sc = wd.scroll if wd else None
+        if not (sc and sc.enabled and sc.scrollbar) or img is None or img.size == 0:
+            return None
+        box = sc.scrollbar.to_fraction().to_pixels(cw, ch)
+        crop = img[box.y:box.y + box.h, box.x:box.x + box.w]
+        if crop.size == 0:
+            return None
+        return scroll_position(crop, sc.scrollbar_orientation)
+
+    def _reclog(self, **rec) -> None:
+        """Append one per-step trace line to reclog.jsonl in the session dir — the record loop's
+        black box, so a bad run can be READ back instead of theorised about."""
+        try:
+            with (self._dir / "reclog.jsonl").open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec) + "\n")
+        except OSError:
+            pass
+
+    def _rec_note(self, **ms) -> None:
+        """Record per-step timings so a loop hitch is measured, not blamed on the game. Keeps the
+        latest values plus the worst cycle seen (surfaced in status/timing)."""
+        with self._lock:
+            cyc = ms.get("cycle_ms", 0.0)
+            self._rec = {**{k: round(v, 1) for k, v in ms.items()},
+                         "max_cycle_ms": round(max(self._rec.get("max_cycle_ms", 0.0), cyc), 1)}
+
     def _record_loop(self, max_frames: int, interval: float) -> None:
-        prev_thumb: np.ndarray | None = None   # the immediately preceding grab
-        saved_thumb: np.ndarray | None = None  # the last frame we kept
-        # Keep a frame only once the screen has SETTLED: the same frame twice in a row
-        # (small mouse movement ignored — it's below the diff threshold). Transition
-        # animations keep changing, so no two consecutive grabs match and they're all
-        # dropped; only the steady state survives. Of the matching pair, store just one.
-        # Capture FAST while anything is moving so the settle is caught promptly; once
-        # the screen is still, ease off to a gentle poll.
-        fast = max(interval, 0.03)
-        idle = max(interval, 0.5)
-        barren = 0                            # consecutive auto-scrolls that surfaced nothing new
-        pending_scroll = False                # a scroll was sent, awaiting its result
-        scroll_from: np.ndarray | None = None # thumb of the frame the pending nudge scrolled AWAY from
-        scroll_at = 0.0                       # monotonic time the pending nudge was posted
-        scroll_sig: int | None = None         # detect-region sig the auto-scroll cfg was read at
+        prev_thumb: np.ndarray | None = None   # the immediately preceding grab (fallback settle path)
+        saved_thumb: np.ndarray | None = None  # the last frame we kept        (fallback settle path)
+        idle = max(interval, 0.5)             # gentle poll when there's nothing to do (no window / not auto)
+        pos_ref = None                        # scrollbar thumb pos at the last captured frame (progress reference)
+        stall = 0                             # consecutive steps the thumb didn't move (end only after _END_STALL)
+        scroll_feat: np.ndarray | None = None  # tolerant detect-region features the scroll cfg was read at
+        wd = None                             # last-classified window (persists across skip-reclassify frames)
+        homed = False                         # parked the list at the top yet? (once, per auto-scroll window)
         natural_end = False                   # loop ended on its own (max_frames / list-end), not a user stop
         try:
             while not self._stop.is_set():
@@ -615,8 +777,7 @@ class PrecaptureSession:
                         self._stop.wait(0.05)
                     if self._stop.is_set():
                         break
-                    barren = 0                  # resumed -> retry scrolling from here
-                    pending_scroll = False
+                    pos_ref = None              # resumed -> re-anchor progress from the current position
                 win = self._locator.locate(self._profile)
                 if self._stop.is_set():       # locate can be slow (process scan) — bail promptly
                     break
@@ -627,93 +788,121 @@ class PrecaptureSession:
                     fg = self._engine.window.is_foreground(win)
                 except Exception:
                     fg = True   # provider can't say -> assume on top (mss path self-falls-back)
-                frame = self._grab_frame(win, fg)   # mss when on top, else PrintWindow's own surface
+                frame = self._grab_frame(win, fg)   # streaming (WGC) surface, or mss/PrintWindow fallback
                 img = frame.image
-                # crop the perf-overlay strip off the bottom for the staleness diff only
+                # Re-classify only when the detect anchors change beyond a noise floor (detsig is
+                # ~1ms; a scroll keeps the top/title anchors fixed so this holds through it and
+                # classify() — an OCR read per detector — runs once per window, not per row). From
+                # the classified window take BOTH the auto-scroll config and the data_area the
+                # scroll profile watches.
+                delta = detsig.changed(feat := detsig.features(frame, self._detect_fracs), scroll_feat)
+                if delta is None or delta >= detsig.MIN_CELLS:   # first frame / shape change / real switch
+                    scroll_feat = feat
+                    wd = self._window_for_frame(frame)
+                    if wd is not None:
+                        self.set_autoscroll(*self._scroll_cfg_for_window(wd))
+                auto = self._autoscroll.is_set()
+                # Park at the top once, the first time we reach an auto-scroll window on top — so
+                # capture always starts from row 0 (the user may have opened it mid-list).
+                if not homed and auto and fg and wd is not None and wd.scroll is not None:
+                    self._home_to_top(win, wd)
+                    homed = True
+                    pos_ref = None
+                    continue
+                # ---- TIMED step-and-shoot (auto-scroll window with a scrollbar) ----
+                # Scroll one step -> wait for the in-game scroll ease to finish -> capture. The
+                # scrollbar thumb decides progress: nudged even a hair, keep going; didn't move at
+                # all, that's the end (or a dead scroll) -> park at the top and pause.
+                has_bar = wd is not None and wd.scroll is not None and wd.scroll.scrollbar is not None
+                if auto and fg and has_bar:
+                    # TIME-BASED step-and-shoot. Scroll -> wait -> capture -> save, one frame per tick,
+                    # unconditionally (no dedup). Each next scroll is timed a full `interval` from the
+                    # ACTUAL fire time of the PREVIOUS scroll — NOT a fixed grid. So a scroll can only
+                    # ever fire LATE (if a cycle's work overran), NEVER early: the interval is ALWAYS
+                    # >= `interval`, and every capture gets at least a full ease. A fixed grid would
+                    # "catch up" after a hitch by firing the next scroll early -> gap < `interval`
+                    # -> that frame grabbed mid-animation. We don't do that. Overhead only pushes the
+                    # interval UP (by ~the one grab), never down. Grab lands a full interval since its
+                    # scroll (settled); the next scroll fires IMMEDIATELY after the grab so the slow work
+                    # (save = JPEG encode + disk) runs UNDER the following interval, off the path. The
+                    # thumb is read ONLY to detect the list end (sustained no-move), never to gate saves.
+                    if pos_ref is None:                        # FRESH scan (origin / post-home / post-resume):
+                        self._save_frame(frame)                # shoot row 0, THEN take the first step down.
+                        pos_ref = self._scroll_pos(img, wd, frame.client.w, frame.client.h)
+                        scroll_window(win, max(1, self._scroll_clicks))   # first step (only on a fresh scan)
+                    # RE-ENTRY (pos_ref already set) after a transient fg/detect blip broke the loop: a
+                    # scroll already fired before the break, so DON'T fire another here — that extra,
+                    # un-timed step was the double-scroll. Just resume the timed cadence below.
+                    now = t_prev = time.perf_counter()         # anchor the wait; grab is >= `interval` away
+                    while not self._stop.is_set() and not self._pause.is_set():
+                        with self._lock:
+                            if len(self._frames) >= max_frames:
+                                natural_end = True
+                                break
+                        # Sleep until `interval` past THIS scroll's real fire time. Never fires early;
+                        # if the prior cycle's work already ran past it, wait <= 0 and we grab at once
+                        # (still a full interval since the scroll — the work ate the wait, not the ease).
+                        wait = (now + interval) - time.perf_counter()
+                        if wait > 0:
+                            self._stop.wait(wait)
+                        if self._stop.is_set():
+                            break
+                        f = self._grab_frame(win, fg)           # settled: a full interval since its scroll
+                        scroll_window(win, max(1, self._scroll_clicks))   # next scroll fires NOW, before any work
+                        now = time.perf_counter()               # anchor the NEXT wait on this real fire
+                        self._save_frame(f)                     # slow (encode + disk) — runs UNDER the next interval
+                        pos = self._scroll_pos(f.image, wd, f.client.w, f.client.h)
+                        moved = pos is None or pos_ref is None or abs(pos - pos_ref) > _POS_EPS
+                        stall = 0 if moved else stall + 1
+                        self._rec_note(wait_ms=max(0.0, wait) * 1000, cycle_ms=(now - t_prev) * 1000,
+                                       clicks=self._scroll_clicks)
+                        self._reclog(pos=(None if pos is None else round(pos, 4)),
+                                     pos_ref=(None if pos_ref is None else round(pos_ref, 4)),
+                                     moved=moved, stall=stall, frames=len(self._frames),
+                                     dwell_ms=round(max(0.0, wait) * 1000, 1),
+                                     period_ms=round((now - t_prev) * 1000, 1))
+                        t_prev = now
+                        pos_ref = pos
+                        try:
+                            fg = self._engine.window.is_foreground(win)
+                        except Exception:
+                            fg = True
+                        # window changed under us (a popup / navigated away) -> back to the outer loop
+                        # to re-classify. Cheap: detsig runs on the frame we ALREADY captured.
+                        left = (not fg) or (detsig.changed(detsig.features(f, self._detect_fracs),
+                                                            scroll_feat) or 0) >= detsig.MIN_CELLS
+                        if left:
+                            break
+                        # The thumb LAGS a step from the top, so a single no-move is render lag, not the
+                        # bottom; end only on SUSTAINED no-movement (the bottom plateaus).
+                        if stall >= _END_STALL:
+                            self._home_to_top(win, wd)
+                            pos_ref = None
+                            stall = 0
+                            if self._auto_process:
+                                natural_end = True
+                            else:
+                                self.pause(True)
+                            break
+                    if natural_end:            # max_frames / auto-process end -> leave the outer loop too
+                        break
+                    continue
+
+                # ---- fallback: whole-frame settle (window declares no data_area) ----
                 thumb = settle.thumb(img, crop_px=settle.CROP_PX)
                 settled = settle.is_settled(thumb, prev_thumb)
-                new_view = saved_thumb is None or settle.changed_cells(thumb, saved_thumb) >= settle.MIN_CELLS
-                # Live-adopt the on-screen window's auto-scroll config: only on a SETTLED view
-                # (never mid-animation) and only re-classify when the detect anchors changed
-                # (a scroll keeps them fixed, so this stays cheap). Lets recording begin off the
-                # target screen and engage auto-scroll the moment the user reaches it.
-                if settled:
-                    sig = self._signature(frame, self._detect_fracs)
-                    if sig is None or sig != scroll_sig:
-                        scroll_sig = sig
-                        self.set_autoscroll(*self._scroll_cfg_for_frame(frame))
-                # Auto-scroll drives capture and can only scroll a focused window, so while
-                # it's on only save frames the user is actively scrolling (foreground). Manual
-                # recording keeps backgrounded capture (now the real surface via PrintWindow).
-                auto = self._autoscroll.is_set()
+                new_view = settled and (saved_thumb is None
+                                        or settle.changed_cells(thumb, saved_thumb) >= settle.MIN_CELLS)
                 kept = False
-                if settled and new_view and (fg or not auto):   # steady, new, and focused if auto
-                    ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
-                    if ok:
+                if new_view and (fg or not auto):
+                    if self._save_frame(frame):
                         kept = True
                         saved_thumb = thumb
-                        data = buf.tobytes()
-                        with self._lock:
-                            idx = len(self._frames)
-                            self._frames.append(data)
-                            self._client = (frame.client.w, frame.client.h)
-                        try:
-                            (self._dir / f"{idx:05d}.jpg").write_bytes(data)
-                        except OSError:
-                            pass
-
-                # ---- auto-scroll driver --------------------------------------
-                # Nudge the list down ONLY as a consequence of saving a good frame, and
-                # only when the view has SETTLED (never mid-animation) and the game is
-                # frontmost. A kept frame -> advance once. If a nudge then yields no new
-                # good frame the list may just be slow, so RETRY a few times; after that
-                # many barren nudges the list has ended -> PAUSE the recording (keep
-                # auto-scroll armed) so resuming retries from wherever the user left off.
                 scrolled = False
-                if auto:
-                    if settled and fg:
-                        if kept:                       # good frame saved -> advance
-                            barren = 0
-                            scrolled = scroll_window(win, self._scroll_clicks)
-                            if scrolled:
-                                pending_scroll = True
-                                scroll_from = saved_thumb    # frame we scrolled away from
-                                scroll_at = time.monotonic()
-                        elif pending_scroll:
-                            # Has the nudge actually LANDED? WM_MOUSEWHEEL is an async POST, so
-                            # the next fast grab often still shows the exact pre-scroll frame —
-                            # which reads settled+stale. Counting THAT barren fires a second
-                            # scroll before the first animates (double-scroll, skipped row, no
-                            # capture between). Only count it once the view has moved off
-                            # scroll_from, or a short land-timeout lapses (true list end never
-                            # moves, so the timeout is what ends it).
-                            landed = scroll_from is None or \
-                                settle.changed_cells(thumb, scroll_from) >= settle.MIN_CELLS
-                            if not landed and (time.monotonic() - scroll_at) < _SCROLL_LAND_S:
-                                pass                   # nudge not rendered yet -> keep waiting
-                            else:
-                                barren += 1
-                                if barren >= _AUTOSCROLL_GIVE_UP:
-                                    barren = 0
-                                    pending_scroll = False
-                                    if self._auto_process:   # list end -> end recording, then process
-                                        natural_end = True
-                                        break
-                                    self.pause(True)   # list end reached -> pause, don't uncheck
-                                else:
-                                    scrolled = scroll_window(win, self._scroll_clicks)   # retry
-                                    if scrolled:
-                                        scroll_from = thumb
-                                        scroll_at = time.monotonic()
-                else:
-                    barren = 0
-                    pending_scroll = False
-
-                moving = not settled           # screen changing (transition) -> grab fast to catch the settle
+                if auto and fg and kept:                       # one nudge per kept frame
+                    scrolled = scroll_window(win, self._scroll_clicks)
                 prev_thumb = thumb
-                # wait ON the stop event so cancel is instant even mid idle-poll. A pending nudge
-                # is about to animate the view, so poll fast to catch its settle too.
-                self._stop.wait(fast if (moving or scrolled or pending_scroll) else idle)
+                self._stop.wait(max(interval, 0.03) if (not settled or scrolled) else idle)
         except Exception as exc:  # pragma: no cover - defensive
             with self._lock:
                 self._error = str(exc)
@@ -993,6 +1182,8 @@ class PrecaptureSession:
         self._processed = 0
         self._read = 0
         self._no_key = 0
+        self._gaps = 0
+        self._rec = {}
         self._phase = Phase.idle
         self._error = None
 
@@ -1073,8 +1264,12 @@ class PrecaptureSession:
             pass
 
     def _warning(self) -> str | None:
-        """A human hint when records were read but nothing got staged — almost always a
-        dataset key that doesn't match any field."""
+        """A human hint when something needs attention: a coverage gap during recording
+        (a freeze jumped ~a viewport, so rows may be missing), or records read but nothing
+        staged (a dataset key that doesn't match any field)."""
+        if self._gaps > 0:
+            return (f"{self._gaps} coverage gap(s) while scrolling — the list jumped ~a viewport "
+                    "in one frame (freeze/lag); some rows may be missing, re-record that stretch")
         staged = sum(len(acc.rows) for acc in self._staged.values())
         if self._read > 0 and staged == 0 and self._no_key > 0:
             keys = ", ".join(sorted({f for acc in self._staged.values()
@@ -1116,6 +1311,8 @@ class PrecaptureSession:
                 "processed": self._processed,
                 "read": self._read,
                 "no_key": self._no_key,   # rows read but dropped (no complete dataset key)
+                "gaps": self._gaps,       # coverage gaps while recording (a step overshot the measurable overlap)
+                "rec": dict(self._rec),   # per-step recording timings (ms) — makes a loop hitch visible
                 "fps": round(fps, 1),
                 "timing": self._timing_locked(),
                 # recognition: the current frame's window/state, plus a per-frame tally

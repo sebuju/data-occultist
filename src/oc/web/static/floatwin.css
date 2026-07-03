@@ -398,6 +398,7 @@
 .precap { padding: 6px; display: flex; flex-direction: column; gap: 10px; height: 100%; }
 /* processing stats stack one per row (was a single ·-joined line) */
 .pc-bar { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.pc-bar[hidden], .pc-recog[hidden] { display: none; }   /* collapse when empty (no gap in the frames view) */
 /* paged layout: list page = session list; detail page = back bar + the selected pane.
    one page is shown at a time (the other carries [hidden]) */
 .pc-main { display: flex; flex: 1; min-height: 0; }
@@ -425,6 +426,8 @@
 .pc-opts { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 10px; }
 .pc-opts .flab { display: contents; }
 .pc-opts input[type="number"], .pc-opts input.pc-label { width: 100%; min-width: 0; }
+/* the auto-process toggle aligns LEFT with the value column, lined up under the inputs above */
+.pc-opts input[type="checkbox"] { justify-self: start; }
 /* controls stack one per row */
 .pc-ctl { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
 /* recognised window/state during processing + a tally with a distinct misses row */
@@ -434,8 +437,10 @@
 .pc-recog-chip.miss { color: var(--warn); border-color: var(--warn); }
 /* saved-session list */
 .pc-sess-h { font-size: var(--fs-xs); }
-/* footer pinned at the bottom of the list page: total size + clear-all, justified to the right */
-.pc-sess-foot { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+/* footer pinned at the bottom of the list page: total size + clear-all, justified to the right.
+   margin-top:auto keeps it at the bottom when a manual resize leaves free space below the
+   (height-capped) rows box; in the compact auto-fit case there's no free space so it's a no-op. */
+.pc-sess-foot { flex: none; margin-top: auto; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .pc-sess-foot[hidden], .pc-sess-rows[hidden] { display: none; }   /* no sessions -> collapse both */
 .pc-sess-clear { flex: none; height: 22px; padding: 0 8px; font-size: var(--fs-xs); border: 0; line-height: 1;
     background: var(--danger); color: var(--on-danger); border-radius: 4px; cursor: pointer; }
@@ -443,22 +448,65 @@
 .pc-sess-clear[disabled] { opacity: 0.5; cursor: default; }
 /* armed (first click): warn colour until the 2nd click confirms */
 .pc-sess-clear.armed { background: var(--warn); color: var(--on-accent); }
-/* session rows fill the remaining panel height and scroll; the rendered window grows as you
-   scroll toward the bottom (see renderPrecapLeft). */
-.pc-sess-rows { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; margin-top: 4px; }
+/* session rows scroll within a HEIGHT-CAPPED box; the rendered window grows as you scroll
+   toward the bottom (see renderPrecapLeft). The cap is what makes the box overflow (instead of
+   the panel auto-fitting to every row) so scroll-to-load can fire — ~5 rows tall on open. */
+.pc-sess-rows { flex: 1; min-height: 0; max-height: 232px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; padding-top: 4px; padding-bottom: 4px; }
 .pc-sess { display: grid; grid-template-columns: 1fr auto; column-gap: 6px; align-items: center; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
 .pc-sess:hover { background: var(--line); }
 .pc-sess.active { outline: 1px solid var(--accent); outline-offset: -1px; }
 .pc-sess-name { grid-row: 1; grid-column: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pc-sess-meta { grid-row: 2; grid-column: 1; font-size: var(--fs-xs); }
 .pc-sess-rename { min-width: 0; grid-column: 2; }
-.pc-sess-ren { width: 26px; grid-row: 1 / span 2; }
+.pc-sess-ren { width: 26px; grid-row: 1 / span 2; background: transparent; }
+/* hovering the row tints the rename button a shade off the row's own hover fill so it still
+   reads as a distinct, clickable button; hovering the button itself lifts it further */
+.pc-sess:hover .pc-sess-ren { background: var(--panel); }
+.pc-sess-ren:hover { background: var(--accent); color: var(--on-accent); }
 /* save button after a successful save — green, not dimmed like a normal disabled button */
 .pc-ctl button.pc-saved, .pc-ctl button.pc-saved:disabled {
     background: var(--phase-done); color: var(--white); opacity: 1; cursor: default; }
 .pc-progress { height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .pc-fill { height: 100%; background: var(--accent); transition: width 0.2s; }
 .pc-data { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.pc-data[hidden] { display: none; }
+/* the run control (process / stop recording) is pinned to the bottom of the detail pane so
+   "stop recording" stays visible while the frame grid above it scrolls. */
+.pc-right > .pc-ctl { margin-top: auto; }
+/* un-processed session: frame count header (top) + a thumbnail grid that fills the space */
+.pc-frames-h { font-size: var(--fs-xs); flex: none; }
+.pc-frames-h[hidden] { display: none; }
+/* two columns per row: thumbnail on the left, that frame's timing on the right */
+.pc-frames-grid { flex: 1; min-height: 0; overflow-y: auto; display: flex;
+    flex-direction: column; gap: 3px; align-content: start; }
+.pc-frames-grid[hidden] { display: none; }
+.pc-frames-grid.empty { display: flex; align-items: center; justify-content: center; }
+.pc-frames-empty { padding: 20px; text-align: center; }
+.pc-frame-row { display: grid; grid-template-columns: 128px 1fr; gap: 8px; align-items: center; }
+.pc-frame { width: 128px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 3px;
+    border: 1px solid var(--line); background: var(--bg); cursor: pointer; }
+.pc-frame:hover { border-color: var(--accent); }
+.pc-frame-time { font-size: var(--fs-xs); line-height: 1.35; color: var(--fg); min-width: 0; }
+.pc-frame-time .pc-ft-num { font-variant-numeric: tabular-nums; }
+.pc-frame-time .pc-ft-sub { color: var(--muted); }
+.pc-frame-time .pc-ft-warn { color: var(--warn, #d08770); }
+/* full-size frame viewer (lightbox): fixed overlay over everything, image nearly screen-sized */
+.pc-lightbox { position: fixed; inset: 0; z-index: 1000; background: #000000e6;
+    display: flex; align-items: center; justify-content: center; }
+.pc-lightbox[hidden] { display: none; }
+.pc-lb-stage { display: flex; align-items: center; justify-content: center; max-width: 92vw; max-height: 88vh; }
+.pc-lb-img { max-width: 92vw; max-height: 88vh; object-fit: contain; border-radius: 4px; box-shadow: 0 8px 40px #000; }
+.pc-lb-name { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%); color: #fff;
+    text-align: center; font-size: var(--fs-sm); background: #000000aa; padding: 5px 12px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.pc-lb-ts { display: block; margin-top: 2px; font-size: var(--fs-xs); opacity: 0.8; }
+.pc-lb-close { position: fixed; top: 14px; right: 16px; width: 34px; height: 34px; border: 0; border-radius: 6px;
+    background: #ffffff1a; color: #fff; font-size: 18px; cursor: pointer; line-height: 1; }
+.pc-lb-close:hover { background: #ffffff33; }
+.pc-lb-nav { position: fixed; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: 0;
+    border-radius: 8px; background: #ffffff1a; color: #fff; font-size: 30px; cursor: pointer; line-height: 1; }
+.pc-lb-nav:hover { background: #ffffff33; }
+.pc-lb-prev { left: 16px; }
+.pc-lb-next { right: 16px; }
 /* one VTable per staged dataset: a label row + a table host that fills the height.
    datasets share pc-data's height (each keeps a min so many datasets scroll the column) */
 .pc-ds { display: flex; flex-direction: column; gap: 4px; flex: 1 1 0; min-height: 160px; }

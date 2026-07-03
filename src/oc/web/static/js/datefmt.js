@@ -12,6 +12,15 @@ export function fmtDateTime(iso) {
         + `${p2(d.getHours())}:${p2(d.getMinutes())}`;
 }
 
+// "dd/mm/yy HH:MM:SS" (24-hour) — when both the date and per-second resolution matter
+// (e.g. a captured frame's exact stamp).
+export function fmtDateTimeSec(iso) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso ?? "");
+    return `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${p2(d.getFullYear() % 100)} `
+        + `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+}
+
 // "HH:MM:SS" (24-hour, time only) — for dense log rows that need per-second resolution.
 export function fmtTimeSec(iso) {
     const d = new Date(iso);

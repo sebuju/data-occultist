@@ -4,6 +4,7 @@ import * as api from "../../api.js";
 import * as hub from "../../hub.js";
 import { h, frag, TRASH, CAMERA, WARN, PAUSE, STAR } from "../../dom.js";
 import { openModal } from "../../modal.js";
+import { fmtDateTimeSec } from "../../datefmt.js";
 import { log } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
@@ -42,6 +43,57 @@ let precapPage = null;     // which page is shown: "list" (session list) or "det
 const pcState = { visible: false, x: null, y: null, w: null, h: null };
 
 const _pcDraw = (st) => { precapLast = st; renderPrecap(pcNode, st); };
+
+// Frame capture times (file mtimes) of the active session, reused by both the frames-grid
+// header and the processing-view stats bar. `want` is the live frame count: we (re)fetch when
+// the session changes OR more frames have landed than we hold times for — so the span/fps keep
+// climbing WHILE a recording writes frames, and settle right after it stops. On each load it
+// repaints the panel (and any open frame viewer) so the numbers appear without a poll.
+let pcTimes = { sid: null, times: null, busy: false };
+function ensureFrameTimes(game, sid, want) {
+    if (!sid) return null;
+    if (pcTimes.sid !== sid) pcTimes = { sid, times: null, busy: false };
+    const have = pcTimes.times ? pcTimes.times.length : 0;
+    if (!pcTimes.busy && (pcTimes.times === null || (want != null && have < want))) {
+        pcTimes.busy = true;
+        api.precapture.frameTimes(game, sid).then((r) => {
+            if (pcTimes.sid !== sid) return;                 // session switched mid-fetch
+            pcTimes.times = r.times || [];
+            pcTimes.busy = false;
+            if (precapLast) _pcDraw(precapLast);
+            if (pcLightbox && !pcLightbox.el.hidden && pcLightbox.sid === sid) setFramesLightboxIndex(pcLightbox.idx);
+        }).catch(() => { pcTimes.busy = false; });
+    }
+    return pcTimes.times;
+}
+// Per-step record trace (reclog.jsonl) of the active session, keyed by frame index, for the
+// per-thumbnail timing column. Same live-refetch discipline as ensureFrameTimes: refetch when the
+// session changes or more frames have landed than we hold steps for, so timings fill in as the
+// recording writes. Returns a Map<frameIndex, step> (a step's frame index is `frames - 1`).
+let pcRec = { sid: null, map: null, have: 0, busy: false };
+function ensureReclog(game, sid, want) {
+    if (!sid) return null;
+    if (pcRec.sid !== sid) pcRec = { sid, map: null, have: 0, busy: false };
+    if (!pcRec.busy && (pcRec.map === null || (want != null && pcRec.have < want))) {
+        pcRec.busy = true;
+        api.precapture.reclog(game, sid).then((r) => {
+            if (pcRec.sid !== sid) return;                   // session switched mid-fetch
+            const m = new Map();
+            for (const s of (r.steps || [])) if (Number.isInteger(s.frames)) m.set(s.frames - 1, s);
+            pcRec.map = m; pcRec.have = (r.steps || []).length; pcRec.busy = false;
+            if (precapLast) _pcDraw(precapLast);
+        }).catch(() => { pcRec.busy = false; });
+    }
+    return pcRec.map;
+}
+// "22s · 5.0/s" — recording span (first→last frame) and its effective capture rate; null until
+// at least two frame times are known.
+function spanFpsText(times) {
+    if (!times || times.length < 2) return null;
+    const span = times[times.length - 1] - times[0];
+    const fps = span > 0 ? (times.length - 1) / span : 0;   // n-1 intervals across the span
+    return `${fmtSpan(span)} · ${fps.toFixed(1)}/s`;
+}
 const _pcRun = async (fn) => {
     try { _pcDraw(await fn()); }
     catch (e) { if (e.name !== "AbortError") setStatus(String(e.message || e)); }   // ignore hide-aborts
@@ -114,11 +166,21 @@ function buildPrecap() {
         const iv = +pcNode.querySelector(".pc-interval")?.value || 0;
         const label = pcNode.querySelector(".pc-label")?.value || "";
         if (a === "recstop" || a === "cancel") { precapStopping = true; b.disabled = true; b.textContent = "stopping…"; }
-        if (a === "back") { precapPage = "list"; if (precapLast) _pcDraw(precapLast); }
+        // back to the list -> stop any in-progress recording first (leaving the pane must not
+        // leave a recorder running headless), then redraw + re-pull the sessions so their
+        // frame/record counts reflect whatever the just-left detail pane changed
+        if (a === "back") {
+            const p = precapLast || {};
+            if (p.phase === "recording" || (p.phase === "paused" && p.kind === "recording")) {
+                precapStopping = true; _pcRun(() => api.precapture.recordStop(game, pcSig)); hub.kick();
+            }
+            precapPage = "list"; if (precapLast) _pcDraw(precapLast); _pcLoadSessions();
+        }
         else if (a === "newsess") { precapView = "new"; precapPage = "detail"; if (precapLast) _pcDraw(precapLast); }
         // recordStart creates+persists a new session server-side, so leave the "new" pane at
-        // once and show it as the active loaded session (its row appears via loadSessions)
-        else if (a === "record") { setLiveMode(false); const ap = !!pcNode.querySelector(".pc-autoproc")?.checked; precapView = "loaded"; _pcRun(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, ap, pcSig); _pcLoadSessions(); return st; }); }
+        // once and show it as the active loaded session (its row appears via loadSessions).
+        // recordStart takes a beat to spin up the worker -> show the button busy meanwhile.
+        else if (a === "record") { b.classList.add("reading"); b.disabled = true; setLiveMode(false); const ap = !!pcNode.querySelector(".pc-autoproc")?.checked; precapView = "loaded"; precapPage = "detail"; _pcRun(async () => { const st = await api.precapture.recordStart(game, mf, iv, label, ap, pcSig); _pcLoadSessions(); return st; }); }
         else if (a === "recstop") _pcRun(() => api.precapture.recordStop(game, pcSig));
         else if (a === "process") { setLiveMode(false); _pcRun(() => api.precapture.processStart(game, pcSig)); }
         else if (a === "pause") _pcRun(() => api.precapture.pause(game, true, pcSig));
@@ -143,7 +205,7 @@ function buildPrecap() {
                 setTimeout(() => { b.dataset.armed = "0"; b.replaceChildren(TRASH()); b.classList.remove("armed"); }, 2500);
                 return;
             }
-            b.dataset.armed = "0";
+            b.dataset.armed = "0"; b.replaceChildren(TRASH()); b.classList.remove("armed");   // clear the confirm now — the shared button gets repointed to the next session
             precapPage = "list"; precapView = null;   // deleted session is gone -> back to the list
             _pcSessAct(api.precapture.deleteSession(game, sid, pcSig));
         }
@@ -213,6 +275,7 @@ function hidePrecap() {
     if (precapUnsub) { precapUnsub(); precapUnsub = null; }
     if (pcCtl) { pcCtl.abort(); pcCtl = null; }
     unregisterWorker("precap");
+    closeFramesLightbox();   // never leave the frame viewer floating over a hidden panel
     precapOpen = false; precapStopping = false;
     A?.setActive?.(false);
 }
@@ -262,6 +325,151 @@ function renderPrecapData(dataEl, datasets) {
         vt.pinned = null;   // fit the container height (datasets share pc-data, then scroll)
         vt.setData(cols, rows);
     }
+}
+
+// Thumbnail grid of a session's recorded frames (shown for an un-processed loaded session).
+// `head` gets the frame count (top of the pane); `grid` gets one keyed <img> per frame index,
+// reconciled IN PLACE and reused across polls (images are lazy so off-screen frames aren't
+// fetched). Capped so a huge recording never builds thousands of nodes (header shows the true
+// total). Zero frames -> a placeholder. Clicking a thumbnail opens the full-size viewer.
+const PC_FRAME_CAP = 400;
+// Human duration between first and last frame: "22s", "1m 05s". A span, not a clock time
+// (rule 9 is about dates/times-of-day), so it's fine to format inline here.
+function fmtSpan(sec) {
+    sec = Math.max(0, Math.round(sec));
+    if (sec < 60) return `${sec}s`;
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return s ? `${m}m ${String(s).padStart(2, "0")}s` : `${m}m`;
+}
+// Single-row frames header: "111 frames · 22s · 5.0/s" — count, then (once the frame times
+// have loaded) the recording span and its effective frames-per-second.
+function framesHeadText(total, times) {
+    const base = total === 0 ? "0 frames"
+        : total > PC_FRAME_CAP ? `${total} frames — showing first ${PC_FRAME_CAP}`
+        : `${total} frame${total === 1 ? "" : "s"}`;
+    const sf = spanFpsText(times);
+    return sf ? `${base} · ${sf}` : base;
+}
+function renderPrecapFrames(grid, head, st) {
+    const game = model.profile.name, sid = st.session;
+    const total = st.frames || 0;
+    const n = Math.min(total, PC_FRAME_CAP);
+    const times = ensureFrameTimes(game, sid, total);   // refetches as frames land; drives header span/fps + viewer stamps
+    if (head) {
+        const htxt = framesHeadText(total, times);
+        if (head.textContent !== htxt) head.textContent = htxt;
+    }
+    const rec = ensureReclog(game, sid, Math.max(0, total - 1));   // steps = frames-1 (frame 0 is the top, no step)
+    if (!grid._cells) { grid._cells = new Map(); grid._sid = null; grid._ph = null; }
+    if (grid._sid !== sid) { grid._sid = sid; grid._cells.clear(); grid._ph = null; grid.replaceChildren(); }   // new session -> fresh grid
+    grid._total = total;
+    if (total === 0) {   // nothing recorded yet -> centered placeholder (see .pc-frames-grid.empty)
+        grid.classList.add("empty");
+        if (!grid._ph) { grid._ph = h("div", { class: "pc-frames-empty muted" }, "no frames captured yet — record to fill this"); grid.replaceChildren(grid._ph); grid._cells.clear(); }
+        return;
+    }
+    if (grid._ph) { grid._ph.remove(); grid._ph = null; }
+    grid.classList.remove("empty");
+    const keepScroll = grid.scrollTop;   // a poll must NOT yank the list to the top (rule 1); pin it
+    for (let i = 0; i < n; i++) {
+        let cell = grid._cells.get(i);
+        if (!cell) {   // build the row ONCE (thumbnail left, timing right); reused across polls
+            const img = h("img", {
+                class: "pc-frame", loading: "lazy", src: api.precaptureFrameUrl(game, sid, i, 256),
+                alt: "", title: `frame ${i + 1} — click to view`,
+                onClick: () => openFramesLightbox(model.profile.name, grid._sid, grid._total, i),
+            });
+            const time = h("div", { class: "pc-frame-time" });
+            const row = h("div", { class: "pc-frame-row" }, img, time);
+            cell = { row, time, key: null };
+            grid._cells.set(i, cell); grid.appendChild(row);
+        }
+        // reconcile ONLY the timing text when it changes (poll-safe, rule 1)
+        const key = frameTimeKey(i, rec ? rec.get(i) : undefined);
+        if (cell.key !== key) { cell.key = key; cell.time.replaceChildren(...frameTimeNodes(i, rec ? rec.get(i) : undefined)); }
+    }
+    for (const [i, cell] of grid._cells) if (i >= n) { cell.row.remove(); grid._cells.delete(i); }   // shrank
+    if (grid.scrollTop !== keepScroll) grid.scrollTop = keepScroll;   // restore after any relayout/refit
+}
+// Per-frame timing cell content. Frame 0 is the top shot (no step); each later frame maps to its
+// reclog step by index. `key` gates the DOM rebuild so polls don't churn unchanged rows.
+function frameTimeKey(i, step) {
+    if (i === 0) return "top";
+    if (!step) return `f${i}`;
+    return `${step.period_ms}|${step.moved}|${step.stall}|${step.pos}`;
+}
+function frameTimeNodes(i, step) {
+    const num = h("div", { class: "pc-ft-num" }, `#${i + 1}`);   // image number (1-based)
+    if (i === 0) return [num, h("div", { class: "pc-ft-sub" }, "top of list")];
+    if (!step) return [num, h("div", { class: "pc-ft-sub" }, "…")];
+    const period = step.period_ms != null ? `${Math.round(step.period_ms)} ms` : "—";
+    const stalled = step.moved === false;
+    const sub = `${stalled ? `stall ${step.stall}` : "moved"}${step.pos != null ? ` · pos ${step.pos}` : ""}`;
+    return [h("div", { class: "pc-ft-num" }, `#${i + 1} · ${period}`),
+            h("div", { class: stalled ? "pc-ft-sub pc-ft-warn" : "pc-ft-sub" }, sub)];
+}
+
+// ---- full-size frame viewer (lightbox) ------------------------------------
+// A fullscreen overlay (built once, reused) showing one frame nearly screen-sized with its
+// name. Close: ✕ / Esc / backdrop click. Navigate: ‹ › buttons / Left+Right arrows (wraps).
+let pcLightbox = null;
+function openFramesLightbox(game, sid, total, startIdx) {
+    if (!total) return;
+    ensureFrameTimes(game, sid, total);   // warm the per-frame stamps (may already be cached)
+    if (!pcLightbox) {
+        const img = h("img", { class: "pc-lb-img", alt: "" });
+        const name = h("div", { class: "pc-lb-name" });
+        const stage = h("div", { class: "pc-lb-stage" }, img);
+        const closeBtn = h("button", { class: "pc-lb-close", title: "close (Esc)", "aria-label": "close" }, "✕");
+        const prev = h("button", { class: "pc-lb-nav pc-lb-prev", title: "previous (←)", "aria-label": "previous" }, "‹");
+        const next = h("button", { class: "pc-lb-nav pc-lb-next", title: "next (→)", "aria-label": "next" }, "›");
+        const el = h("div", { class: "pc-lightbox", hidden: true }, closeBtn, prev, stage, next, name);
+        document.body.appendChild(el);
+        pcLightbox = { el, img, name, idx: 0, total: 0, game: "", sid: "" };
+        closeBtn.onclick = closeFramesLightbox;
+        prev.onclick = (e) => { e.stopPropagation(); stepFramesLightbox(-1); };
+        next.onclick = (e) => { e.stopPropagation(); stepFramesLightbox(1); };
+        // click the dark backdrop (not the image itself) closes
+        el.addEventListener("click", (e) => { if (e.target === el || e.target === stage) closeFramesLightbox(); });
+        document.addEventListener("keydown", (e) => {
+            if (pcLightbox.el.hidden) return;
+            const k = e.key.toLowerCase();
+            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeFramesLightbox(); }
+            else if (e.key === "ArrowLeft" || k === "a") { e.preventDefault(); e.stopPropagation(); stepFramesLightbox(-1); }
+            else if (e.key === "ArrowRight" || k === "d") { e.preventDefault(); e.stopPropagation(); stepFramesLightbox(1); }
+        }, true);
+    }
+    Object.assign(pcLightbox, { game, sid, total, ts: fmtSessionStamp(sid) });
+    setFramesLightboxIndex(Math.max(0, Math.min(startIdx, total - 1)));
+    pcLightbox.el.hidden = false;
+}
+function stepFramesLightbox(d) {
+    if (!pcLightbox || pcLightbox.el.hidden) return;
+    let i = pcLightbox.idx + d;
+    if (i < 0) i = pcLightbox.total - 1;             // wrap around both ends
+    if (i >= pcLightbox.total) i = 0;
+    setFramesLightboxIndex(i);
+}
+function setFramesLightboxIndex(i) {
+    const lb = pcLightbox;
+    lb.idx = i;
+    lb.img.src = api.precaptureFrameUrl(lb.game, lb.sid, i);
+    // per-frame capture stamp (this frame's own mtime, from the shared cache) — falls back to
+    // the session start time only until the frame times have loaded
+    const times = pcTimes.sid === lb.sid ? pcTimes.times : null;
+    const t = times && times[i];
+    const ts = t ? fmtDateTimeSec(t * 1000) : lb.ts;
+    lb.name.replaceChildren(frag(
+        `${String(i).padStart(5, "0")}.jpg · ${i + 1} / ${lb.total}`,
+        ts ? h("span", { class: "pc-lb-ts" }, ts) : null));
+}
+// Session id is "YYYYMMDD-HHMMSS-ffffff" (the recording's capture time) -> dd/mm/yy HH:MM:SS.
+function fmtSessionStamp(sid) {
+    const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(sid || "");
+    return m ? fmtDateTimeSec(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`) : "";
+}
+function closeFramesLightbox() {
+    if (pcLightbox) { pcLightbox.el.hidden = true; pcLightbox.img.removeAttribute("src"); }
 }
 
 function renderPrecap(node, st) {
@@ -338,6 +546,11 @@ function renderPrecap(node, st) {
     const dDel = node.querySelector(".pc-detail-del");
     if (dDel) {
         dDel.hidden = precapView !== "loaded" || !st.session;
+        // one shared button, repointed per session -> a stale armed "delete?" must never carry
+        // over to a different session (looks like the wrong one is armed for a moment)
+        if (dDel.dataset.sid !== (st.session || "") && dDel.dataset.armed === "1") {
+            dDel.dataset.armed = "0"; dDel.replaceChildren(TRASH()); dDel.classList.remove("armed");
+        }
         dDel.dataset.sid = st.session || "";
         dDel.disabled = (recording || busyRun) || !st.session;
     }
@@ -353,17 +566,22 @@ function renderPrecap(node, st) {
             right.replaceChildren(
                 h("div", { class: "pc-opts" },
                     h("label", { class: "flab" }, "max frames ", h("input", { type: "number", class: "pc-frames", value: "1000", min: "1" })),
-                    h("label", { class: "flab" }, "interval ms ", h("input", { type: "number", class: "pc-interval", value: "0", min: "0" })),
+                    h("label", { class: "flab" }, "target ms ", h("input", { type: "number", class: "pc-interval", value: "500", min: "0" })),
                     h("label", { class: "flab" }, "label ", h("input", { type: "text", class: "pc-label", placeholder: "(optional)" })),
-                    h("label", { class: "flab" }, h("input", { type: "checkbox", class: "pc-autoproc" }), " auto-process when auto-scroll ends")),
+                    h("label", { class: "flab", title: "process the frames automatically when auto-scroll reaches the list end" }, "auto-process", h("input", { type: "checkbox", class: "pc-autoproc" }))),
                 h("div", { class: "pc-ctl" }));
         } else {
+            // frames count on top, then live bar/recog/progress, the frame grid (or data tables)
+            // fills the middle, and the run control (process / stop recording) is pinned to the
+            // BOTTOM (margin-top:auto) so "stop recording" is always visible while frames scroll.
             right.replaceChildren(
+                h("div", { class: "pc-frames-h muted", hidden: true }),
                 h("div", { class: "pc-bar" }),
-                h("div", { class: "pc-ctl" }),
-                h("div", { class: "pc-progress" }, h("div", { class: "pc-fill" })),
                 h("div", { class: "pc-recog" }),
-                h("div", { class: "pc-data" }));
+                h("div", { class: "pc-progress" }, h("div", { class: "pc-fill" })),
+                h("div", { class: "pc-frames-grid", hidden: true }),
+                h("div", { class: "pc-data" }),
+                h("div", { class: "pc-ctl" }));
         }
     }
 
@@ -377,23 +595,39 @@ function renderPrecap(node, st) {
     // shows its frame count; a processing run shows processed/read/fps + timing. An
     // idle/done/just-loaded session shows nothing (static text is just noise).
     const stats = [];
-    if (recLive || procLive) stats.push(`${st.frames} frames`);
+    if (procLive) stats.push(`${st.frames} frames`);   // recording's frame count lives in the frames-view header now
     if (procLive) stats.push(`${st.processed} processed`, `${st.read || 0} read`, `${st.fps} /s`);
     // one stat per row (.pc-bar is a column) — each counter, timing, window/state, and
     // warning/error is its own line instead of a single ·-joined run
     const barRows = stats.map((s) => h("span", { class: "muted" }, s));
+    // recording capture span + rate (first→last frame) — same stat the frames-grid header shows,
+    // surfaced here too so it stays visible once a session moves into the processing view
+    if (procLive) {
+        const cap = spanFpsText(ensureFrameTimes(model.profile.name, st.session, st.frames));
+        if (cap) barRows.push(h("span", { class: "muted" }, `captured ${cap}`));
+    }
     if (procLive) barRows.push(h("span", { class: "muted" }, `${tm.ms_per_frame || 0} ms/frame (${tm.device || "cpu"})`));
     if (procLive && st.window) barRows.push(h("span", { class: "conf-good", title: "window/state recognised this frame" }, `${st.window}/${st.state}`));
     if (recLive && st.auto_process) barRows.push(h("span", { class: "muted" }, "auto-process when auto-scroll ends"));
+    // recording: make the step-and-shoot LOOP TIMING visible so a hitch is measured, not guessed.
+    // cycle = one scroll+settle+write; max flags the worst stall; clicks = current self-tuned step.
+    // record-loop timing — shown while recording AND kept visible after stop (never reset here),
+    // so the last run's cadence stays readable.
+    {
+        const r = st.rec || {};
+        if (r.cycle_ms != null) barRows.push(h("span", { class: "muted" },
+            `period ${r.cycle_ms}ms (dwell ${r.wait_ms}) · worst ${r.max_cycle_ms}ms · ${r.clicks}-notch`));
+    }
     if (recPaused) barRows.push(h("span", { class: "conf-warn" }, PAUSE(), " auto-scroll reached the list end — resume to retry, or uncheck it"));
     if (st.warning) barRows.push(h("span", { class: "conf-warn" }, WARN(), " ", st.warning));
     if (st.error) barRows.push(h("span", { class: "conf-bad" }, st.error));
     const bar = right.querySelector(".pc-bar");   // absent in the new-session pane
-    if (bar) bar.replaceChildren(...barRows);
+    if (bar) { bar.replaceChildren(...barRows); bar.hidden = !barRows.length; }   // no live stats -> collapse (no empty gap)
     // recognition tally: per-window/state frame counts (the "" key is a miss — no window matched)
     const recogEl = right.querySelector(".pc-recog");
     if (recogEl) {
         const rec = st.recognized || [];
+        recogEl.hidden = !rec.length;   // nothing recognised yet -> collapse
         recogEl.replaceChildren(...rec.map((r) =>
             h("span", { class: "pc-recog-chip" + (r.miss ? " miss" : "") }, `${r.miss ? "no match" : r.key} · ${r.count}`)));
     }
@@ -437,9 +671,20 @@ function renderPrecap(node, st) {
     const editing = ctlEl.contains(document.activeElement) && document.activeElement.matches("input");
     if (!editing) ctlEl.replaceChildren(...ctlNodes.filter(Boolean));
 
+    // an un-processed loaded session (nothing staged yet) shows its captured frames as a
+    // thumbnail grid — so you can eyeball what was recorded before spending OCR on it. Empty
+    // shows a placeholder. Once processed (datasets present) the data tables take over; while a
+    // processing run is live the progress view owns the pane.
+    const showFrames = precapView === "loaded" && st.session && !(st.datasets || []).length && !procLive;
+    const gridEl = right.querySelector(".pc-frames-grid");
+    const headEl = right.querySelector(".pc-frames-h");
+    if (headEl) headEl.hidden = !showFrames;
+    if (gridEl) { gridEl.hidden = !showFrames; if (showFrames) renderPrecapFrames(gridEl, headEl, st); }
     const data = right.querySelector(".pc-data");
-    if (data) renderPrecapData(data, st.datasets);
+    if (data) { data.hidden = showFrames; renderPrecapData(data, st.datasets); }
+    const gridScroll = gridEl && showFrames ? gridEl.scrollTop : null;   // fit resizes the panel -> can drop scroll
     fitPrecapHeight();   // size the panel to what it's showing (skipped once the user resizes it)
+    if (gridScroll != null && gridEl.scrollTop !== gridScroll) gridEl.scrollTop = gridScroll;   // pin it back
 }
 
 // Auto-fit delegates to the host adapter (floatwin height-fit in graph; no-op in a pretty widget).
@@ -536,6 +781,22 @@ function renderPrecapLeft(left, st) {
     const empty = !precapSessions.length;
     left._rowsBox.hidden = empty;
     left._foot.hidden = empty;
+    // The rows box is height-capped (CSS), so a small first window might not overflow it — then
+    // there's nothing to scroll and the load-more handler can never fire. If more sessions remain
+    // and the box isn't scrollable yet, grow the window (once per frame) until it is. Measured
+    // after layout settles; a no-op once the box overflows, so it stays quiet in steady state.
+    // setTimeout (not rAF): the panel is height-fitted AFTER this render returns, and rAF is
+    // frozen in a backgrounded tab — a timer still fires (throttled) so the fill can't get stuck.
+    if (!empty && left._renderN < precapSessions.length && !left._fillT) {
+        left._fillT = setTimeout(() => {
+            left._fillT = 0;
+            const b = left._rowsBox;
+            if (!b.hidden && b.scrollHeight <= b.clientHeight + 4 && left._renderN < precapSessions.length) {
+                left._renderN += PC_PAGE;
+                renderPrecapLeft(left, left._st);
+            }
+        }, 0);
+    }
 }
 
 // Human-readable byte size (1 KB = 1024 B). Whole numbers for B and >=100;

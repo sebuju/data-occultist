@@ -116,11 +116,12 @@ def test_save_commits_to_real_store(tmp_path):
 
 
 def test_grab_frame_uses_streaming_backend_for_both_paths(tmp_path):
-    # a streaming engine backend (WGC default) is read for foreground AND background -> the
-    # private mss grabber is never touched (its per-grab BitBlt leaves the hot path).
+    # A streaming backend (WGC) is a passive readback of the composited frame — no re-render,
+    # and no repeated full-desktop 4K BitBlt (which steals game FPS during recording). So it's
+    # used for BOTH foreground and background; the private mss grabber is never touched.
     from oc.types import Frame, PixelBox
     s = PrecaptureSession(_engine(tmp_path), _profile())
-    good = Frame(image=np.ones((4, 4, 3), np.uint8), client=PixelBox(0, 0, 4, 4))
+    good = Frame(image=np.full((4, 4, 3), 200, np.uint8), client=PixelBox(0, 0, 4, 4))
     calls = {"stream": 0, "mss": 0}
     def stream_grab(win):
         calls["stream"] += 1

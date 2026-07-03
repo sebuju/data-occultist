@@ -7,10 +7,13 @@ records into the real datasets (the same ledger-backed stores live collection wr
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import cv2
+import numpy as np
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from ...collect.precapture import PrecaptureSession
 from ...profile import list_profiles
@@ -95,18 +98,89 @@ def list_sessions(game: str):
 
 
 @router.get("/{game}/{sid}/frame/{idx}")
-def session_frame(game: str, sid: str, idx: int):
+def session_frame(game: str, sid: str, idx: int, w: int = 0):
     """Serve one frame image (``NNNNN.jpg``) of a saved session, for the capture picker.
 
     Reads the file straight off disk (``captures/<game>/precapture/<sid>/<idx>.jpg``) — no
-    session/worker is created, so previewing frames never touches the OCR pipeline.
+    session/worker is created, so previewing frames never touches the OCR pipeline. ``w`` > 0
+    returns a width-``w`` THUMBNAIL instead of the full 4K frame (the grid uses this so the
+    browser doesn't decode hundreds of full-res images). Thumbs are generated once and cached to
+    ``<sid>/.thumb/`` — the source 4K is decoded a single time per frame, then served from cache.
     """
     if "/" in sid or "\\" in sid or ".." in sid or idx < 0:
         raise HTTPException(status_code=404, detail="bad frame reference")
-    path = Path(get_settings().captures_dir) / _safe(game) / "precapture" / _safe(sid) / f"{idx:05d}.jpg"
+    base = Path(get_settings().captures_dir) / _safe(game) / "precapture" / _safe(sid)
+    path = base / f"{idx:05d}.jpg"
     if not path.exists():
         raise HTTPException(status_code=404, detail="frame not found")
-    return FileResponse(str(path), media_type="image/jpeg")
+    if w <= 0:
+        return FileResponse(str(path), media_type="image/jpeg")
+    w = max(48, min(w, 1024))                          # clamp to sane thumbnail widths
+    cache = base / ".thumb" / f"{idx:05d}-{w}.jpg"
+    try:
+        if cache.exists() and cache.stat().st_mtime >= path.stat().st_mtime:
+            return FileResponse(str(cache), media_type="image/jpeg")
+    except OSError:
+        pass
+    img = cv2.imdecode(np.frombuffer(path.read_bytes(), np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(status_code=404, detail="frame unreadable")
+    h = max(1, round(img.shape[0] * w / img.shape[1]))
+    thumb = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", thumb, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    if not ok:
+        raise HTTPException(status_code=500, detail="thumbnail failed")
+    data = buf.tobytes()
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(data)
+    except OSError:
+        pass
+    return Response(content=data, media_type="image/jpeg")
+
+
+@router.get("/{game}/{sid}/reclog")
+def session_reclog(game: str, sid: str):
+    """The record loop's per-step trace (``reclog.jsonl``) for this session, one object per
+    captured step — used to show per-frame timing next to each thumbnail. A step's ``frames``
+    is the frame COUNT after that capture, so its frame index is ``frames - 1``. Read straight
+    off disk; missing/partial lines are skipped."""
+    if "/" in sid or "\\" in sid or ".." in sid:
+        raise HTTPException(status_code=404, detail="bad session reference")
+    path = Path(get_settings().captures_dir) / _safe(game) / "precapture" / _safe(sid) / "reclog.jsonl"
+    steps: list[dict] = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                steps.append(json.loads(line))
+            except ValueError:
+                continue
+    except OSError:
+        pass
+    return {"steps": steps}
+
+
+@router.get("/{game}/{sid}/frametimes")
+def session_frametimes(game: str, sid: str):
+    """Capture time (epoch seconds) of each saved frame, in index order — the file mtimes,
+    which track when each grab was written. Powers the frame viewer's per-frame stamp and
+    the frames pane's span/fps readout. Read straight off disk (no session/worker)."""
+    if "/" in sid or "\\" in sid or ".." in sid:
+        raise HTTPException(status_code=404, detail="bad session reference")
+    d = Path(get_settings().captures_dir) / _safe(game) / "precapture" / _safe(sid)
+    times: list[float] = []
+    i = 0
+    while True:
+        f = d / f"{i:05d}.jpg"
+        try:
+            times.append(f.stat().st_mtime)
+        except OSError:
+            break
+        i += 1
+    return {"times": times}
 
 
 @router.post("/{game}/sessions/{sid}/load")

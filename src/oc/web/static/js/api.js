@@ -273,8 +273,9 @@ export const liveCaptures = {
 };
 
 // URL of one frame image (NNNNN.jpg) of a saved precapture session — for the capture picker.
-export const precaptureFrameUrl = (game, sid, idx) =>
-    `/api/precapture/${encodeURIComponent(game)}/${encodeURIComponent(sid)}/frame/${idx}`;
+// `w` > 0 requests a width-w thumbnail (server-side, cached) instead of the full 4K frame.
+export const precaptureFrameUrl = (game, sid, idx, w = 0) =>
+    `/api/precapture/${encodeURIComponent(game)}/${encodeURIComponent(sid)}/frame/${idx}${w > 0 ? `?w=${w}` : ""}`;
 
 // Freeze an item cell from a stashed capture -> { name, url }. box is fractions.
 export async function itemCutout(game, capture, box) {
@@ -406,6 +407,8 @@ export const precapture = {
     status: (game, signal) => tfetch(`/api/precapture/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
     // saved recording sessions: list / load / rename / delete. Each returns { sessions, status }.
     sessions: (game, signal) => _pre(game, "sessions", signal, "GET"),
+    frameTimes: (game, sid, signal) => tfetch(`/api/precapture/${encodeURIComponent(game)}/${encodeURIComponent(sid)}/frametimes`, { signal }).then((r) => r.json()),
+    reclog: (game, sid, signal) => tfetch(`/api/precapture/${encodeURIComponent(game)}/${encodeURIComponent(sid)}/reclog`, { signal }).then((r) => r.json()),
     loadSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/load`, signal),
     renameSession: (game, sid, label, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}/rename?label=${encodeURIComponent(label || "")}`, signal),
     deleteSession: (game, sid, signal) => _pre(game, `sessions/${encodeURIComponent(sid)}`, signal, "DELETE"),
