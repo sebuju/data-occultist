@@ -2,24 +2,6 @@ name: warframe
 process_names:
 - Warframe.x64.exe
 window_title_hint: Warframe
-detect:
-- id: detect_1
-  enabled: true
-  search:
-    x: 0.967537611145707
-    y: 0.10164558137528797
-    w: 0.004
-    h: 0.008494271091003433
-  color: '#e0ebde'
-  tolerance: 32
-  width: 0.0
-  threshold: 0.5
-  match: partial
-  case_sensitive: false
-  min_chars: 0
-  strip: none
-  negate: true
-detect_mode: any
 fields:
 - id: name
   type: text
@@ -58,6 +40,38 @@ fields:
   glyph_check: false
   fold_accents: false
 windows:
+- id: gate
+  fields: []
+  detect:
+  - id: hud
+    enabled: true
+    search:
+      x: 0.967537611145707
+      y: 0.10164558137528797
+      w: 0.004
+      h: 0.008494271091003433
+    color: '#e0ebde'
+    tolerance: 32
+    width: 0.0
+    threshold: 0.5
+    match: partial
+    case_sensitive: false
+    min_chars: 0
+    strip: none
+    negate: false
+  detect_mode: any
+  states: []
+  regions: []
+  items: []
+  static_grid: true
+  preprocess:
+    mode: none
+    colors: []
+    tolerance: 60
+    scale: 1.0
+  live: true
+  item_fields: []
+  item_tells: []
 - id: equipment_window
   dataset: master
   key:
@@ -615,7 +629,7 @@ windows:
     separator: /
     rules: []
     dict_mode: correct
-    dictionary: ''
+    dictionary: dict_1
     fuzzy: 0.82
     min_confidence: 0.0
     isolate: false
@@ -793,8 +807,8 @@ windows:
     extract: text_before
     separator: relic
     rules: []
-    dict_mode: correct
-    dictionary: ''
+    dict_mode: correct_drop
+    dictionary: dict_1
     fuzzy: 0.82
     min_confidence: 0.75
     isolate: false
@@ -1019,6 +1033,11 @@ windows:
     min_chars: 0
     strip: alnum
     item: not_owned
+window_priority:
+- gate
+- relic_rewards
+- relic_select
+- relic_refinement
 datasets:
 - id: master
   aggregate: latest
@@ -1715,7 +1734,7 @@ glyphs:
 layout:
   nodes:
     game:
-      x: -3000.0
+      x: -2660.0
       y: -2360.0
       w: 720.0
       h: 763.0
@@ -1723,9 +1742,13 @@ layout:
       custW: true
       custH: false
     dict:wiki:
-      x: -2240.0
-      y: -2080.0
+      x: -3000.0
+      y: -2360.0
+      w: 280.0
+      h: 160.0
       collapsed: false
+      custW: true
+      custH: true
     ds:master:
       x: -1020.0
       y: -1400.0
@@ -2008,15 +2031,15 @@ layout:
       collapsed: false
     item:relic_refinement:not_owned:
       x: -160.0
-      y: 1560.0
+      y: 1640.0
       collapsed: false
     tell:relic_refinement:not_owned:tell_3:
       x: -420.0
-      y: 1920.0
+      y: 2000.0
       collapsed: false
     tell:relic_refinement:not_owned:tell_4:
       x: -420.0
-      y: 1560.0
+      y: 1640.0
       collapsed: false
     ds:relics_refinement:
       x: 1260.0
@@ -2067,12 +2090,12 @@ layout:
       custW: false
       custH: true
     ds:ee_log:
-      x: -4380.0
-      y: -2360.0
+      x: -5540.0
+      y: -1160.0
       collapsed: false
     vt:ds:ee_log:
-      x: -3980.0
-      y: -2360.0
+      x: -5140.0
+      y: -1160.0
       w: 840.0
       h: 460.0
       collapsed: false
@@ -2094,25 +2117,17 @@ layout:
       collapsed: false
       custW: false
       custH: true
-    det:game:detect_1:
-      x: -2240.0
-      y: -2360.0
-      w: 300.0
-      h: 260.0
-      collapsed: false
-      custW: true
-      custH: false
     src:log_ee:
-      x: -4380.0
-      y: -2120.0
+      x: -5540.0
+      y: -920.0
       w: 360.0
       h: 740.0
       collapsed: false
       custW: true
       custH: false
     vt:src:log_ee:
-      x: -3980.0
-      y: -1880.0
+      x: -5140.0
+      y: -680.0
       w: 840.0
       h: 480.0
       collapsed: false
@@ -2120,9 +2135,9 @@ layout:
       custH: true
     glyphs:
       x: -3000.0
-      y: -1560.0
-      w: 720.0
-      h: 589.0
+      y: -1860.0
+      w: 620.0
+      h: 551.0
       collapsed: false
       custW: true
       custH: false
@@ -2187,12 +2202,24 @@ layout:
       custW: true
       custH: false
     dict:dict_1:
-      x: -2240.0
-      y: -1700.0
+      x: -3000.0
+      y: -2160.0
+      w: 280.0
+      h: 260.0
       collapsed: false
+      custW: true
+      custH: true
     fld:relic_refinement:relic_item:count:
       x: -760.0
       y: 360.0
+      collapsed: false
+    win:gate:
+      x: -3900.0
+      y: -1200.0
+      collapsed: false
+    det:gate:hud:
+      x: -3360.0
+      y: -1200.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -2433,8 +2460,8 @@ layout:
       - message
       - _pos
   open_images:
-  - game
   - glyphs
+  - gate
   - equipment_window
   - mod_window
   - relic_rewards
@@ -2666,9 +2693,9 @@ layout:
     - sub:contents_with_price
     - vt:sub:relics_refinement_view_view
     - det:relic_refinement:detect_1
-    - vt:ds:relics_refinement
     - vt:sub:contents_with_price
     - fld:relic_refinement:relic_item:count
+    - vt:ds:relics_refinement
     outline:
       color: '#5ae6c2'
       style: none
@@ -2679,7 +2706,6 @@ layout:
     titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
-    w: 3260
     h: 2660
     schemeId: teal
   - id: group_26
@@ -2723,6 +2749,21 @@ layout:
     w: 1800
     h: 2180
     schemeId: yellow
+  - id: group_28
+    title: group_28
+    members:
+    - win:gate
+    - det:gate:hud
+    outline:
+      color: '#333333'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#191c21'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+    titlePos: tl
   float_windows: {}
   super_groups:
   - id: sgroup_2
@@ -2772,6 +2813,7 @@ layout:
     - group_9
     - group_24
     - group_27
+    - group_28
     outline:
       color: '#3a4154'
       style: none
@@ -2788,7 +2830,6 @@ layout:
   - prev:relic_refinement
   - vt:ds:relics_offered
   - vt:ds:ee_log_
-  - vt:ds:relics_refinement
   - vt:ds:relics_select
   - vtd:src:source
   - vt:ds:ee_log
@@ -2799,6 +2840,7 @@ layout:
   - vt:ds:mods
   - vt:sub:contents_with_price
   - vt:ds:master
+  - vt:ds:relics_refinement
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -2912,8 +2954,8 @@ layout:
     - sub:relics_refinement_with_contents
     - sub:contents_with_price
     - vt:sub:relics_refinement_view_view
-    - vt:ds:relics_refinement
     - vt:sub:contents_with_price
+    - vt:ds:relics_refinement
     outline:
       color: '#2c313c'
       style: none
