@@ -43,7 +43,7 @@ class LiveSession:
         self._written = 0                  # records added/updated this run
         self._frames = 0                   # ticks processed
         self._cur: tuple[str | None, str | None] = (None, None)
-        self._phase = False                # worthiness gate: was the latest tick OCR-worthy?
+        self._phase = False                # was the latest tick reading/holding a recognised window?
         self._last_status = "no_window"    # raw TickStatus of the latest tick (why we're not reading)
         self._scroll: tuple[float, float] | None = None   # latest mirror visible row-index span
         self._scroll_meta: dict | None = None             # latest mirror calibration snapshot
@@ -211,9 +211,8 @@ class LiveSession:
                 "fps": round(self._frames / elapsed, 1) if running else 0.0,
                 "window": self._cur[0],
                 "state": self._cur[1],
-                "phase": self._phase and running,   # worthiness gate: currently reading an OCR-worthy screen
-                "gated": bool(self._profile.detect),  # whether a gate is configured at all
-                "phase_status": self._last_status,  # raw TickStatus — distinguishes gate-closed from no-window
+                "phase": self._phase and running,   # currently reading a data window (a worthy screen)
+                "phase_status": self._last_status,  # raw TickStatus — WHY we're not reading (throttled / unrecognised / …)
                 "scroll": list(self._scroll) if self._scroll else None,   # [vlo,vhi] row-index span, or null
                 "scroll_meta": self._scroll_meta,   # {total,viewport,gain,confident,pinned} or null
                 "recognized": [{"key": k, "count": n, "miss": k in ("", "idle", "unrecognised", "no_window")}

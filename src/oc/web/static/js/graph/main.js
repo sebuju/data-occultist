@@ -41,7 +41,7 @@ import {
     applyView, resizeCanvas, onWheel, startPan, consumePanSuppress,
 } from "./camera.js";
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
-import { nodeParts, windowControls, gameControls, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved } from "./node_parts.js";
+import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved } from "./node_parts.js";
 import * as dsevents from "./dsevents.js";
 import { singleFlight } from "../singleflight.js";
 import {
@@ -70,7 +70,7 @@ import { pushHistory, resetHistory, undo, redo, hist } from "./history.js";
 import { createHistoryPanel } from "../history_panel.js";
 import { workers, unregisterWorker } from "./workers.js";
 import {
-    closeImage, openImage, openGameImage, openGlyphImage, armPreprocessPick, refreshDetect, nodeIdOf,
+    closeImage, openImage, openGlyphImage, armPreprocessPick, refreshDetect, nodeIdOf,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
     scheduleItemRead, itemReadout,
     previewBusy, previewAgain,
@@ -869,6 +869,8 @@ function wireWindowControls(div, n) {
     });
     div.querySelector(".winlive")?.addEventListener("change", (e) => {
         model.setWindowLive(n.ref.id, e.target.checked);
+        model._syncWindowPriority();   // add/drop this window from the game node's priority list
+        rebuildNode("game");           // reflect the add/drop in the priority list now
         autosave(null);          // a live-view flag changes nothing other nodes re-read
         renderLiveWindow();       // reflect in the live panel's window list
     });
@@ -924,6 +926,21 @@ function wireWindowControls(div, n) {
         panZoomTo(`item:${n.ref.id}:${el.closest(".wi-row").dataset.id}`);
     }));
     wireDetectsSection(div, n.ref.id);   // combine mode + per-detector polarity + name jumps
+}
+
+// The game node's window-priority list: ▲/▼ reorder (highest-priority on top) + click a name to
+// jump to that window's node. Reorder persists window_priority and refreshes the list's disabled
+// states. Bound on the initial build and re-bound by the _LIVE_SECTIONS rebuild (div = node el).
+function wireGamePriority(div) {
+    div.querySelectorAll(".wpmv").forEach((b) => b.addEventListener("click", () => {
+        if (model.moveWindowPriority(b.dataset.id, +b.dataset.d)) {
+            rebuildNode("game");   // refresh order + ▲/▼ disabled ends
+            autosave(null);        // priority only steers the live classifier — no node re-OCR
+        }
+    }));
+    div.querySelectorAll(".wp-row .wp-name").forEach((el) => el.addEventListener("click", () => {
+        panZoomTo(`win:${el.closest(".wp-row").dataset.id}`);
+    }));
 }
 
 // The detectors section (mode select + polarity selects + name jumps). Shared by the window
@@ -2311,8 +2328,8 @@ function buildNode(n, wire = true) {
 const _LIVE_SECTIONS = {
     window: { sel: ".win-controls", build: (n) => windowControls(n.ref), wire: wireWindowControls },
     item:   { sel: ".item-lists", build: (n) => itemLists(n.ref, n.win), wire: wireItemControls },
-    // game gate controls rebuild without disturbing the image canvas (like window controls)
-    game:   { sel: ".game-controls", build: (n) => gameControls(n.ref), wire: (el) => wireDetectsSection(el, "game") },
+    // game node: rebuild only the window-priority list, leaving the name/process/title inputs put
+    game:   { sel: ".game-priority", build: () => gamePriority(), wire: wireGamePriority },
 };
 
 // Rebuild ONE node's DOM in place (used when its own layout changes, e.g. type).
@@ -2475,7 +2492,7 @@ function selIcon(kind, verb) {
 }
 const SEL_LABELS = {
     group: { make: "group", add: "add", ungroup: "ungroup" },
-    sub: { make: "subgroup", add: "add", ungroup: "un-sub" },
+    sub: { make: "subgroup", add: "add", ungroup: "unsubgroup" },
     super: { make: "super-group", add: "add", ungroup: "un-super" },
 };
 const SEL_TITLES = {
@@ -2537,7 +2554,7 @@ function syncMultiSelect() {
     if (cln) cln.hidden = groupMode || !ids.some((id) => CLONEABLE.has(nodeTypeOf(id)));
     if (del) {
         del.hidden = groupMode || !ids.some((id) => REMOVABLE.has(nodeTypeOf(id)));
-        if (del.dataset.armed === "1") { del.dataset.armed = "0"; const dl = del.querySelector(".sel-lbl"); if (dl) dl.textContent = del.dataset.label || dl.textContent; }
+        if (del.dataset.armed === "1") { del.dataset.armed = "0"; const dl = del.querySelector(".sel-lbl"); if (dl) dl.textContent = del.dataset.label ?? dl.textContent; }   // label is legitimately "" now (icon-only) -> ?? not ||
     }
     drawEdges();   // selection changed -> repaint so selected nodes' lines pick up the `sel` colour
 }
@@ -2631,8 +2648,7 @@ function wireNode(div, n) {
             else if (k === "title") model.profile.window_title_hint = v.trim() || null;
             autosave(null);   // process/title/name affect window LOCATION, not stashed-image OCR
         }));
-        wireDetectsSection(div, "game");   // gate combine-mode + per-detector polarity (shared with windows)
-        openGameImage(div);   // mount the worthiness-gate image surface (built before nodeEls has the node)
+        wireGamePriority(div);   // window-priority list ▲/▼ + name jumps
         // node creation moved to the floating "create" toolbox (see buildToolbox)
     } else if (n.type === "glyphs") {
         openGlyphImage(div);   // mount the glyph-atlas image surface + taught-glyph list
@@ -2706,7 +2722,6 @@ function wireNode(div, n) {
             // change echo collapse into one batched /flow/details instead of a storm of per-node fetches.
             queueNodeRefresh({ datasets: [newId], subsets: (model.profile.subsets || []).map((s) => s.id) });
         });
-        div.querySelector(".dsclone")?.addEventListener("click", () => { model.cloneDataset(n.ref); render(); autosave(null); });
         // Any key change re-keys the ledger on disk, so flush BEFORE re-reading this node + its views.
         const rekeyDataset = async () => { autosave(null); await persist.flush(); refreshDataNode(n.ref); refreshAllSubsetNodes(); };
         div.querySelector(".dskey")?.addEventListener("change", async (e) => {
@@ -3526,7 +3541,45 @@ function cloneSelection() {
     selected.clear();
     for (const id of newIds) if (nodeEls.has(id)) selected.add(id);
     syncMultiSelect();
-    setStatus(`cloned ${targets.length} node${targets.length === 1 ? "" : "s"}`);
+    setStatus(`cloned ${targets.length} node${targets.length === 1 ? "" : "s"} — click to place`);
+    carryClones(newIds);   // grab the fresh copies onto the cursor; next click/key drops them
+}
+// After a clone the fresh copies ride the cursor (keeping their relative offsets) until the
+// user's next mouse click OR key press, which drops them where they are. That terminating
+// event is swallowed (preventDefault + stopPropagation) so the drop click doesn't also
+// select/drag a node underneath and a drop key doesn't fire a shortcut.
+function carryClones(ids) {
+    ids = ids.filter((id) => nodeEls.has(id) && pos.get(id));
+    if (!ids.length) return;
+    const btn = $("selCloneBtn"); btn?.classList.add("cloning");
+    const rect = $("graph").getBoundingClientRect();
+    const toWorld = (e) => ({ x: (e.clientX - rect.left - view.panX) / view.zoom, y: (e.clientY - rect.top - view.panY) / view.zoom });
+    const lead = pos.get(ids[0]);
+    const offs = ids.map((id) => { const p = pos.get(id); return { id, dx: p.x - lead.x, dy: p.y - lead.y }; });
+    setDraggingNodes(true, ids);   // freeze routing while the copies float
+    for (const id of ids) nodeEls.get(id)?.classList.add("snapping");
+    document.body.style.cursor = "grabbing";
+    const move = (e) => {
+        const w = toWorld(e);
+        for (const o of offs) { const p = pos.get(o.id); if (!p) continue; p.x = snap(w.x + o.dx); p.y = snap(w.y + o.dy); positionNode(o.id); }
+        requestEdges(); groups.renderGroups();
+    };
+    const drop = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mousedown", drop, true);
+        document.removeEventListener("keydown", drop, true);
+        document.body.style.cursor = "";
+        btn?.classList.remove("cloning");
+        for (const id of ids) nodeEls.get(id)?.classList.remove("snapping");
+        setDraggingNodes(false);
+        flushEdges();
+        groups.absorb(ids);   // dropped inside a group box -> join it
+        resizeCanvas(); groups.renderGroups(); persist.layout(); renderNodeViews();
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mousedown", drop, true);   // capture: beat node/canvas handlers
+    document.addEventListener("keydown", drop, true);
 }
 $("selCloneBtn").addEventListener("click", cloneSelection);
 // entity id -> node id (mirror of the `<type>:<id>` derivation in model.nodes()).
@@ -3720,6 +3773,9 @@ $("graph").addEventListener("mousedown", (ev) => {
 // group inside a super group frames the group. Node dblclick is handled on the node itself.
 $("graph").addEventListener("dblclick", (ev) => {
     if (ev.target.closest(".gnode")) return;
+    // a control living on a group box (title input, group/ungroup + colour buttons) must not
+    // double as a canvas zoom target — only an empty box double-click frames the group.
+    if (ev.target.closest("button, input, select, textarea, a")) return;
     const box = $("graph").getBoundingClientRect();
     const wx = (ev.clientX - box.left - view.panX) / view.zoom;
     const wy = (ev.clientY - box.top - view.panY) / view.zoom;

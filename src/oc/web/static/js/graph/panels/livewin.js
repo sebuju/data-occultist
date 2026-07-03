@@ -8,7 +8,7 @@ import { persist } from "../persist.js";
 import { $, setStatus, model } from "../state.js";
 import { registerWorker, unregisterWorker } from "../workers.js";
 import { pc, precapOpen, precapBusy, fmtBytes } from "./precap.js";
-import { prevHost, refreshDetect, refreshPreview, setGameGateBadge } from "../imaging.js";
+import { prevHost, refreshDetect, refreshPreview } from "../imaging.js";
 import { refreshLive } from "../main.js";
 import { panZoomTo } from "../camera.js";
 import { h, svg } from "../../dom.js";
@@ -118,7 +118,7 @@ function mountLive(adapter) {
         statsChev = stats.chev; statsBody = stats.body;
         stats.body.append(
             h("div", { class: "live-row" },
-                h("span", { class: "live-int-lbl", title: "the OCR-worthy phase being read right now (window/state), or idle when the worthiness gate is closed" }, "phase"),
+                h("span", { class: "live-int-lbl", title: "the window/state being read right now, or the reason we're not reading (throttled / no window / not recognised)" }, "phase"),
                 h("span", { class: "live-statval live-stat-phase muted" }, "–")),
             h("div", { class: "live-row" },
                 h("span", { class: "live-int-lbl", title: "records added/updated this run" }, "saved"),
@@ -336,14 +336,14 @@ function renderLiveWindow() {
         if (el && el.textContent !== txt) el.textContent = txt;
     };
     // current phase: the window/state being read now, else the REASON we aren't reading — taken
-    // from the raw tick status (gate-closed is only ONE of them; no-window is different).
+    // from the raw tick status (throttled between OCR slots, no-window, unrecognised, …).
     const win = collecting ? liveColStatus?.window : null;
-    const reasonText = { idle: "idle (gate closed)", unrecognised: "no window recognised",
+    const reasonText = { throttled: "waiting (throttle)", unrecognised: "no window recognised",
         no_window: "game not found", not_foreground: "window not focused",
         state_invalid: "wrong state", moving: "screen moving" };
     setStat(".live-stat-phase", !collecting ? "–"
         : win ? (liveColStatus.state ? `${win} / ${liveColStatus.state}` : win)
-        : (reasonText[liveColStatus?.phase_status] || "idle"));
+        : (reasonText[liveColStatus?.phase_status] || "waiting"));
     const phaseEl = liveRoot.querySelector(".live-stat-phase");
     // same scheme as the gate verdict: reading a phase = green, idle = amber, off = muted
     const phaseCls = "live-statval live-stat-phase " + (win ? "conf-ok" : collecting ? "conf-warn" : "muted");
@@ -469,8 +469,6 @@ function subscribeCollector() {
         // dot reflects what's detected RIGHT NOW (the current tick's window), NOT the cumulative
         // tally — else a window detected once stays green for the whole run after it left screen.
         if (liveColStatus?.window) liveRecog.set(liveColStatus.window, true);
-        // game node worthiness badge: live phase from the server collector (● collecting / ◯ waiting)
-        setGameGateBadge(liveColStatus?.gated ? !!liveColStatus.phase : null);
         refreshLiveImgStat();   // server collector saves frames to disk — keep the saved-image stat fresh
         renderLiveWindow();
     });

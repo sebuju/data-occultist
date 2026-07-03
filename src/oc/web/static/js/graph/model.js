@@ -270,10 +270,6 @@ export class GraphModel {
 
     nodes() {
         const ns = [{ id: "game", type: "game", ref: this.profile }];
-        // game-level worthiness-gate detectors — child detect nodes of the game node.
-        // win:{id:"game"} so the shared detect node body/wiring (rule 7) routes to the gate.
-        for (const d of this.profile.detect || [])
-            ns.push({ id: `det:game:${d.id}`, type: "detect", ref: d, win: { id: "game", isGame: true } });
         // standalone glyph-atlas node (its own image surface; teaches post-OCR glyph refinement)
         ns.push({ id: "glyphs", type: "glyphs", ref: this.profile });
         for (const w of this.profile.windows) {
@@ -312,11 +308,9 @@ export class GraphModel {
 
     edges() {
         const es = [];
-        for (const d of this.profile.detect || []) es.push({ from: "game", to: `det:game:${d.id}`, kind: "detect" });
         es.push({ from: "game", to: "glyphs", kind: "own" });   // glyph-atlas node hangs off the game node
         for (const w of this.profile.windows) {
-            // game→window line hidden by request — uncomment to restore the owns edge.
-            // es.push({ from: "game", to: `win:${w.id}`, kind: "own" });
+            es.push({ from: "game", to: `win:${w.id}`, kind: "own" });   // game node owns each window
             if (this.satelliteOn(`prev:${w.id}`)) es.push({ from: `win:${w.id}`, to: `prev:${w.id}`, kind: "img" });
             for (const r of w.regions || []) {
                 es.push({ from: `win:${w.id}`, to: `reg:${w.id}:${r.id}`, kind: "field" });
@@ -982,10 +976,37 @@ export class GraphModel {
     // whether the live view attempts this window (default true)
     setWindowLive(id, on) { const w = this.window(id); if (w) w.live = !!on; }
 
+    // ---- window recognition priority (game node) ----------------------------
+    // The live-toggled windows in classify order. Stored on profile.window_priority as an
+    // ordered id list; only `live` windows are shown/kept (a window turned live-off drops out,
+    // turned live-on re-appears at the end). Ids in window_priority come first (in order), then
+    // any live window not yet listed, in profile order.
+    liveWindowsInPriority() {
+        const order = this.profile.window_priority || [];
+        const rank = new Map(order.map((id, i) => [id, i]));
+        return this.profile.windows
+            .filter((w) => w.live !== false)
+            .sort((a, b) => (rank.has(a.id) ? rank.get(a.id) : Infinity) - (rank.has(b.id) ? rank.get(b.id) : Infinity));
+    }
+    // Persist the current live-window order back to window_priority (live ids only).
+    _syncWindowPriority() { this.profile.window_priority = this.liveWindowsInPriority().map((w) => w.id); }
+    // Move a live window up (-1) / down (+1) in the priority list, then re-persist the order.
+    moveWindowPriority(id, dir) {
+        const wins = this.liveWindowsInPriority();
+        const i = wins.findIndex((w) => w.id === id);
+        const j = i + (dir < 0 ? -1 : 1);
+        if (i < 0 || j < 0 || j >= wins.length) return false;
+        [wins[i], wins[j]] = [wins[j], wins[i]];
+        this.profile.window_priority = wins.map((w) => w.id);
+        return true;
+    }
+
     renameWindow(oldId, newId) {
         const w = this.window(oldId);
         if (!w || !newId || this.profile.windows.some((x) => x.id === newId)) return false;
         w.id = newId;
+        // repoint any priority entry so the order survives a rename
+        this.profile.window_priority = (this.profile.window_priority || []).map((id) => id === oldId ? newId : id);
         return true;
     }
 
@@ -1042,12 +1063,10 @@ export class GraphModel {
     }
     regions(winId) { const w = this.window(winId); return (w && w.regions) || []; }
 
-    // ---- detect (window-detect landmarks AND the game-level worthiness gate) ---
-    // Detectors live on a window OR on the game (the live-mode gate). The owner id "game"
-    // routes to profile.detect; any other id is a window. ONE set of methods serves both
-    // (rule 7) — the image/box machinery just passes the owner through as `winId`.
+    // ---- detect (a window's recognition landmarks) --------------------------
+    // Detectors live on a window; the image/box machinery passes the window id through.
 
-    _detectHost(ownerId) { return ownerId === "game" ? this.profile : this.window(ownerId); }
+    _detectHost(winId) { return this.window(winId); }
 
     addDetect(winId, box) {
         const host = this._detectHost(winId);
@@ -1072,8 +1091,7 @@ export class GraphModel {
         return true;
     }
     detects(winId) { const h = this._detectHost(winId); return (h && h.detect) || []; }
-    // how an owner's detectors combine: "all" (AND, default) or "any" (OR). Owner "game" =
-    // the worthiness gate (profile.detect_mode); any other id = a window.
+    // how a window's detectors combine: "all" (AND, default) or "any" (OR).
     detectMode(winId) { const h = this._detectHost(winId); return (h && h.detect_mode) || "all"; }
     setDetectMode(winId, mode) { const h = this._detectHost(winId); if (h) h.detect_mode = mode === "any" ? "any" : "all"; }
     // per-detector polarity: negate=true requires the landmark ABSENT (window fails if found)

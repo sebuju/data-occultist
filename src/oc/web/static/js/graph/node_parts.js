@@ -200,10 +200,8 @@ const optSel = (val, opts, cls, props = {}) =>
 // (reconciled in place, never rebuilt per tick) and hold blank until the first detect pass
 // returns. `.wd-collide` is the cross-window verdict (does this window WIN classify, or does a
 // sibling also match / steal the tie-break) — sourced from the whole-profile collision check.
-// Reused by BOTH the window node (its detectors) and the game node (worthiness-gate
-// detectors) — same markup/behaviour, only labels differ (rule 7). `opts`: heading,
-// matchLabel, defaultMode, collide (cross-window row — windows only). The owner object just
-// needs `.detect` + `.detect_mode`.
+// The detectors section of a window node (`opts`: heading, matchLabel, defaultMode, collide).
+// The owner object just needs `.detect` + `.detect_mode`.
 export function windowDetects(w, opts = {}) {
     const dets = w.detect || [];
     if (!dets.length) return null;
@@ -234,6 +232,17 @@ export function windowDetects(w, opts = {}) {
             : h("div", { class: "wd-collide", title: "cross-window: detection picks ONE winner across all windows — does this window actually win, or does a sibling also match / steal it" }));
 }
 
+// One reorderable priority row: a name + ▲/▼, HIGHEST on top. The single row primitive shared by
+// the item-template priority list AND the window-priority list (rule 7 — one builder, two callers,
+// no copy). The caller passes the wiring-hook classes (row/name/move) so main.js binds the right
+// move + name-jump handlers, and the per-context tooltips.
+function priorityRow(id, i, count, { rowCls, nameCls, mvCls, nameTitle, upTitle, downTitle }) {
+    return h("div", { class: rowCls, dataset: { id } },
+        h("span", { class: nameCls, title: nameTitle }, id),
+        h("button", { class: mvCls, dataset: { id, d: "-1" }, disabled: i === 0, title: upTitle }, "▲"),
+        h("button", { class: mvCls, dataset: { id, d: "1" }, disabled: i === count - 1, title: downTitle }, "▼"));
+}
+
 // Item templates listed in PRIORITY order, HIGHEST first — the top row wins when cells
 // overlap a tile; the BOTTOM row is priority 0 (the static grid's base cell, which sets the
 // grid pitch). Reordering IS how priority is set; the number itself is never shown. Click a
@@ -241,10 +250,11 @@ export function windowDetects(w, opts = {}) {
 export function windowItemOrder(w) {
     const items = [...(w.items || [])].sort((a, b) => (b.priority || 0) - (a.priority || 0));
     if (!items.length) return null;
-    const rows = items.map((it, i) => h("div", { class: "wi-row", dataset: { id: it.id } },
-        h("span", { class: "wi-name", title: "select this item's node" }, it.id),
-        h("button", { class: "wimv", dataset: { id: it.id, d: "-1" }, disabled: i === 0, title: "move up — higher priority (wins tile overlaps)" }, "▲"),
-        h("button", { class: "wimv", dataset: { id: it.id, d: "1" }, disabled: i === items.length - 1, title: "move down — lower priority (bottom = base cell, sets the grid pitch)" }, "▼")));
+    const rows = items.map((it, i) => priorityRow(it.id, i, items.length, {
+        rowCls: "wi-row", nameCls: "wi-name", mvCls: "wimv",
+        nameTitle: "select this item's node",
+        upTitle: "move up — higher priority (wins tile overlaps)",
+        downTitle: "move down — lower priority (bottom = base cell, sets the grid pitch)" }));
     return frag(
         h("div", { class: "muted il-h wi-h", title: "template priority order — highest on top (wins tile overlaps); the bottom template is the base cell that sets the grid pitch" }, "templates"),
         rows);
@@ -514,15 +524,23 @@ export function detectKind(a) {
     return "text";
 }
 
-// The game node's gate controls (the reused detectors section). In its own builder so
-// rebuildNode can refresh JUST this on a detector toggle/add/remove, leaving the image canvas
-// intact — mirrors windowControls for the window node (rule 7). The live verdict lives on the
-// section's .wd-verdict; the per-phase live status is shown in the live panel.
-export function gameControls(g) {
-    return windowDetects(g, { ownerId: "game", heading: "detects", matchLabel: "OCR-worthy if",
-        defaultMode: "any", collide: false,
-        verdictTitle: "whether the current capture counts as an OCR-worthy phase" })
-        || h("p", { class: "muted", style: "margin:4px 0" }, "draw a detect box below to gate live OCR");
+// The game node's WINDOW PRIORITY list: the live-toggled windows in recognition order, HIGHEST
+// first. During gameplay the classifier tries them in this order and early-returns on the first
+// match — cheaper than scoring every window, and it lands on the most important live screen (top
+// row) first. Reordering IS how priority is set (▲/▼); the number is never shown. Only windows
+// with `live` on appear here, and the list updates as that toggle flips on a window node.
+// In its own builder so rebuildNode refreshes JUST this section (rule 7, mirrors windowItemOrder).
+export function gamePriority() {
+    const wins = model.liveWindowsInPriority();   // ordered live WindowDefs (priority first)
+    const rows = wins.map((w, i) => priorityRow(w.id, i, wins.length, {
+        rowCls: "wp-row", nameCls: "wp-name", mvCls: "wpmv",
+        nameTitle: "select this window's node",
+        upTitle: "move up — higher priority (recognised sooner)",
+        downTitle: "move down — lower priority" }));
+    return frag(
+        h("div", { class: "muted il-h wi-h", title: "live-toggled windows in recognition priority — the classifier tries them top-first and stops at the first match. Turn a window's 'live' on to add it here." }, "window priority"),
+        wins.length ? rows
+            : h("p", { class: "muted", style: "margin:4px 0" }, "no live windows — turn on 'live' on a window to prioritise it"));
 }
 
 export function nodeParts(n) {
@@ -535,11 +553,9 @@ export function nodeParts(n) {
                     h("input", { class: "gi", dataset: { k: "proc" }, value: (g.process_names || []).join(", "), placeholder: "Warframe.x64.exe" })),
                 h("label", { class: "flab" }, "title hint ",
                     h("input", { class: "gi", dataset: { k: "title" }, value: g.window_title_hint || "", placeholder: "Warframe" })),
-                // gate badge + detector section, in their OWN wrapper so a rebuild (toggle/add/
-                // remove a gate detector) refreshes JUST this — the image canvas below is preserved
-                // (rebuildNode only re-renders `.game-controls`, like `.win-controls` on a window).
-                h("div", { class: "game-controls" }, gameControls(g)),
-                h("div", { class: "win-img" })),
+                // window-priority list in its OWN wrapper so rebuildNode refreshes JUST this
+                // (on reorder, or when a window's `live` toggle flips) — mirrors `.win-controls`.
+                h("div", { class: "game-priority" }, gamePriority())),
         };
     }
     if (n.type === "glyphs") {
@@ -577,7 +593,6 @@ export function nodeParts(n) {
     if (n.type === "detect") {
         const a = n.ref;
         const kind = detectKind(a);
-        const isGate = n.win?.id === "game";
         // text-kind controls (text/mode/min-chars/strip/case) — only OCR detectors use them
         const textBody = frag(
             h("label", { class: "flab" }, "text ",
@@ -611,7 +626,7 @@ export function nodeParts(n) {
                 "border width ", h("input", { type: "number", class: "aset", dataset: { k: "width" }, step: "0.01", min: "0", max: "0.5", value: a.width ?? 0.1 })));
         return {
             title: h("input", { class: "gi gi-id", dataset: { k: "detid" }, value: a.id,
-                title: isGate ? "worthiness-gate detector: any match => OCR-worthy phase" : "detector: all must match to capture" }),
+                title: "detector: the window's detect_mode decides how these combine" }),
             body: frag(
                 h("label", { class: "flab", title: "text = OCR a label (costs OCR); color/border = cheap pixel check (no OCR — use these for the live-mode gate)" },
                     "kind ", h("select", { class: "aset", dataset: { k: "kind" } },
@@ -649,7 +664,7 @@ export function nodeParts(n) {
                 h("div", { class: "nodehost scrollhost prev-host" },
                     h("p", { class: "muted", style: "padding:8px" }, "open the window image or edit it to preview what it reads")),
                 h("div", { class: "gn-foot" },
-                    h("button", { class: "prevcommit", title: "write these reads into the window's dataset (one revertable batch)" }, "commit to dataset"))),
+                    h("button", { class: "prevcommit", title: "write these reads into the window's dataset (one revertable batch)" }, "push to dataset"))),
         };
     }
     if (n.type === "vttable") {
@@ -778,7 +793,6 @@ export function nodeParts(n) {
                 h("select", { class: "dssync", title: "accumulate: only add/update. mirror: keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)." }, syncOpts)),
             concatEditor,
             h("div", { class: "gn-foot" },
-                h("button", { class: "dsclone" }, "clone"),
                 h("button", { class: "dsclear danger" }, "clear data"))),
         ports: h("span", { class: "port out", title: "drag to a subset to feed it this dataset" }),
     };

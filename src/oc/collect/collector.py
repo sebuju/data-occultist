@@ -17,9 +17,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from statistics import median
 
-import cv2
-import numpy as np
-
 from ..engine import Engine
 from ..learn.dictionary import build_dictionaries
 from ..learn.resolver import FieldResolver
@@ -27,7 +24,7 @@ from ..locate import WindowLocator
 from ..profile.models import GameProfile, WindowDef
 from ..store import DatasetStore, KeyMap, store_for
 from ..store.flow_events import publish_flow
-from . import settle
+from . import detsig, settle
 from .items import item_templates
 from .glyph_match import glyph_atlas
 from .commit import commit_records
@@ -42,15 +39,12 @@ from .stability import Confirmer
 # a faint/ambiguous thumb yields no slice, so a misread can never drive a false removal.
 _SCROLL_CONF_FLOOR = 0.35
 
-# Classify-cache tolerance (the detector regions). A bare hash of the regions has ZERO
-# tolerance, so a single changed pixel — capture noise, or the animated diorama behind the
-# UI — busts the cache and re-runs the (OCR-heavy) classify pass EVERY tick. Compare the
-# downsampled regions with a noise floor instead, exactly like the settle gate: only a change
-# bigger than transient flicker counts as "the window might have changed, re-classify". A real
-# window switch redraws the title text -> well over this -> re-classifies correctly.
-_DETECT_TOL = settle.THUMB_TOL          # per-sample brightness delta that counts as changed
-_DETECT_MIN_CELLS = 8                    # fewer changed samples than this -> treat as unchanged
-_DETECT_CELL = 16                        # each region downsampled to CELL x CELL (fixed -> shape-stable)
+# Classify-cache tolerance (the detector regions). The tolerant compare itself lives in
+# :mod:`detsig` (shared with precapture); these are the collector's thresholds for it: a
+# steady screen classifies once, a real window switch (title redraws, well over the floor)
+# re-classifies. See detsig for why a bare hash is wrong (busts on sub-threshold animation).
+_DETECT_TOL = detsig.TOL                 # per-sample brightness delta that counts as changed
+_DETECT_MIN_CELLS = detsig.MIN_CELLS     # fewer changed samples than this -> treat as unchanged
 # A real window switch redraws the title and stays changed for many frames; a transient (a
 # particle burst / glow pulse behind the UI) spikes for one or two. Require this many CONSECUTIVE
 # changed frames before paying the OCR-heavy re-classify, so flicker can't bust the cache.
@@ -92,8 +86,8 @@ class TickStatus(str, Enum):
     no_window = "no_window"
     not_foreground = "not_foreground"
     moving = "moving"                      # screen still animating/scrolling — wait for it to settle
-    idle = "idle"                          # worthiness gate inactive — no OCR-worthy phase on screen
-    throttled = "throttled"                # in a phase, but between OCR slots (two-rate) — skip OCR, hold
+    idle = "idle"                          # legacy: kept for status back-compat; no longer emitted (the worthiness gate is gone — cheapness is now priority-order classify)
+    throttled = "throttled"                # between OCR slots (two-rate) — skip classify/OCR, hold
     unrecognised = "unrecognised"          # no profile window matched
     state_invalid = "state_invalid"        # window matched but state not save-worthy
     saved = "saved"                        # frame processed (new may be 0)
@@ -229,32 +223,11 @@ class Collector:
         return [r for r in records if r.confidence >= floor]
 
     def _detect_features(self, frame):
-        """Coarse grayscale samples of every detector search region, concatenated — the input
-        to the classify-cache's tolerant compare (NOT a hash; see ``_classify``). The boxes are
-        fixed, so the vector has the same length every frame and lines up sample-for-sample."""
-        img = frame.image
-        if img is None or img.size == 0 or not self._detect_fracs:
-            return None
-        cw, ch = frame.client.w, frame.client.h
-        parts = []
-        for fb in self._detect_fracs:
-            pb = fb.to_pixels(cw, ch)
-            crop = img[pb.y : pb.y + pb.h, pb.x : pb.x + pb.w]
-            if crop.size:
-                # Stride-subsample the (wide, 4K) region FIRST so the area-resize doesn't read
-                # every pixel — same trick as settle.thumb; a coarse change signature needs no
-                # full res. Then resize to a FIXED size: a strided shape alone would flip on a
-                # 1px window-geometry jitter (forced cache miss); the fixed resize stays
-                # comparable sample-for-sample and barely moves the content.
-                hh, ww = crop.shape[:2]
-                step = max(1, min(hh, ww) // (_DETECT_CELL * 4))
-                g = crop[::step, ::step]
-                g = g.max(axis=2) if g.ndim == 3 else np.ascontiguousarray(g)
-                parts.append(cv2.resize(g, (_DETECT_CELL, _DETECT_CELL),
-                                        interpolation=cv2.INTER_AREA).reshape(-1))
-        if not parts:
-            return None
-        return np.concatenate(parts).astype(np.int16)   # int16: abs-diff without uint8 wrap
+        """Coarse grayscale samples of every detector search region — the input to the
+        classify-cache's tolerant compare (NOT a hash; see ``_classify``). Shared with
+        precapture via :mod:`detsig` so the "did the screen change enough to re-classify"
+        test is one primitive, not two copies."""
+        return detsig.features(frame, self._detect_fracs)
 
     def _classify(self, frame):
         """Classify, reusing the last result while the detector regions are unchanged WITHIN a
@@ -264,8 +237,8 @@ class Collector:
         so slow animation (a rotating background) is tracked, never accumulating into a false miss."""
         feat = self._detect_features(frame)
         prev, cres = self._classify_cache
-        if feat is not None and prev is not None and feat.shape == prev.shape:
-            changed = int((np.abs(feat - prev) > _DETECT_TOL).sum())
+        changed = detsig.changed(feat, prev, _DETECT_TOL)
+        if changed is not None:
             if changed < _DETECT_MIN_CELLS:
                 self._detect_miss_streak = 0
                 self._classify_cache = (feat, cres)   # under floor: same window, track drift
@@ -335,23 +308,11 @@ class Collector:
                 return TickResult(TickStatus.moving)
         t_settle = (time.perf_counter() - _ts) * 1000.0
 
-        # Worthiness gate (pre-OCR): a few-ms cheap check (no OCR) for whether an
-        # OCR-worthy phase is on screen. While it's inactive — or while it's active but
-        # the OCR throttle hasn't elapsed (``ocr_due``) — skip classify/OCR entirely and
-        # report idle, so a continuously-running live session costs almost nothing between
-        # the brief moments worth reading. No game-level gate detectors => always active.
-        if self._tuning.live_gate:
-            _tgate = time.perf_counter()
-            active = eng.classifier.gate_active(frame, self._profile)
-            # benchmark the cheap pre-OCR check on EVERY tick (idle ones too — that's the
-            # common case the gate exists to make cheap), not only when it passes.
-            stats_store.record_timing(self._profile.name, "game", "ga",
-                                      (time.perf_counter() - _tgate) * 1000.0)
-            if not active:
-                return TickResult(TickStatus.idle)   # gate closed: no OCR-worthy phase
-        # Two-rate throttle: between OCR slots, hold without classifying/OCR-ing. Distinct from
-        # idle — we ARE in a phase (the gate is open / absent), just not re-reading this tick, so
-        # the live view keeps showing the current window instead of flickering to "idle".
+        # Two-rate throttle: between OCR slots, hold without classifying/OCR-ing (throttled,
+        # not idle — the live view keeps showing the current window instead of flickering).
+        # Cheapness comes from priority-order classify: the top-priority window is a cheap
+        # (no-OCR) detector "gate" for the on-screen gameplay HUD with no dataset, so a settled
+        # gameplay frame early-returns on one colour check and reads nothing (see the classifier).
         if not ocr_due:
             return TickResult(TickStatus.throttled)
 
@@ -359,9 +320,6 @@ class Collector:
         match = self._classify(frame)
         t_classify = (time.perf_counter() - _tc) * 1000.0
         if match is None:
-            # gate opened (we're past the worthiness check) yet no window classified — wasted
-            # OCR. Attributed to the game node (the gate's owner) so the rate is visible.
-            stats_store.record_timing(self._profile.name, "game", "gn", t_classify)
             return TickResult(TickStatus.unrecognised)
 
         window_id, state_id = match
@@ -394,9 +352,6 @@ class Collector:
             records, sentinel_ypos = self._reader.read(frame, window, fields)
             oc_ms = (time.perf_counter() - _oc) * 1000.0
             stats_store.record_timing(self._profile.name, f"win:{window_id}", "oc", oc_ms, n=len(records))
-            # the gate let this OCR through — mirror its cost onto the game node (the gate owner)
-            # so "gate->ocr" shows how often / how long the worthiness gate triggered OCR.
-            stats_store.record_timing(self._profile.name, "game", "go", oc_ms, n=len(records))
             if sig is not None:
                 self._frame_cache[window_id] = (sig, records, sentinel_ypos)
 
@@ -595,12 +550,12 @@ class Collector:
     def run(self, interval: float | None = None, on_tick=None, should_stop=None) -> None:
         """Loop ticks until interrupted. ``on_tick(TickResult)`` is called each pass.
 
-        Two-rate: the loop polls the cheap worthiness gate every ``tuning.gate_interval``
-        (fast, no OCR), but the OCR-heavy path runs at most once per ``interval`` — the
-        slow OCR throttle. ``interval`` defaults to ``tuning.collect_interval``. A frame
-        that the gate rejects (or that is throttled between OCR slots) returns ``idle``
-        cheaply; the OCR clock only advances when a frame actually passes the gate, so an
-        OCR-worthy screen is read promptly the moment it appears.
+        Two-rate: the loop wakes every ``tuning.gate_interval`` (fast) but runs the
+        classify/OCR path at most once per ``interval`` — the slow OCR throttle.
+        ``interval`` defaults to ``tuning.collect_interval``. A frame between OCR slots
+        returns ``throttled`` cheaply; the OCR clock only advances when the heavy path
+        runs, and priority-order classify keeps a settled gameplay frame cheap (its
+        top-priority gate window early-returns on one colour check — see the classifier).
 
         ``should_stop`` — optional predicate checked before every tick AND in place of the
         plain ``sleep``, so a worker thread can end the loop promptly (the CLI relies on
@@ -628,8 +583,8 @@ class Collector:
                 # The collector only needs to drive the periodic (interval) triggers here.
                 if triggers is not None:
                     triggers.tick()
-                # Sleep the FAST gate poll, not the OCR interval — so the gate is checked
-                # often and an OCR-worthy phase is caught within ~gate_interval of opening.
+                # Sleep the FAST poll, not the OCR interval — so triggers fire and the OCR
+                # throttle is re-checked often, catching a worthy screen within ~gate_interval.
                 wait = gate_interval if gate_interval > 0 else interval
                 if should_stop is not None:
                     slept = 0.0

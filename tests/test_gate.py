@@ -1,6 +1,11 @@
-"""Live-mode worthiness gate: cheap colour detectors recognise an OCR-worthy phase
-with NO OCR, the classifier's gate_active decides whether OCR is worth it, and the
-two-rate run loop polls the gate fast while throttling the OCR-heavy path."""
+"""Window recognition + the priority-order classifier.
+
+The game-level worthiness gate is gone: cheapness now comes from priority-order classify.
+The top-priority window is a cheap (no-OCR) colour "gate" for the on-screen gameplay HUD
+with no dataset — when it matches, classify early-returns it and the collector reads
+nothing; when it doesn't, classify falls through to the real data windows. The two-rate
+run loop still polls fast while throttling the OCR-heavy path.
+"""
 
 import numpy as np
 
@@ -69,10 +74,10 @@ def test_evaluate_reports_color_kind():
     assert out["score"] >= 0.8
 
 
-# ---- gate_active: cheap-only, no OCR -------------------------------------------
+# ---- priority-order classify: first match wins, cheap-first, no wasted OCR -----
 
 class _RecordingOcr:
-    """An OCR stub that fails the test loudly if the gate ever asks it to read."""
+    """An OCR stub that fails the test loudly if classify ever asks it to read."""
     def __init__(self):
         self.reads = 0
 
@@ -85,61 +90,55 @@ class _RecordingOcr:
         return [("", 0.0) for _ in crops]
 
 
-def _gate_classifier(ocr):
+def _classifier(ocr):
     clf = DetectClassifier.__new__(DetectClassifier)
     clf._matcher = DetectMatcher(ocr=ocr, profile_dir=".")
     return clf
 
 
-def test_gate_active_when_color_anchor_present_no_ocr():
+def test_classify_priority_early_returns_first_match_no_ocr():
     ocr = _RecordingOcr()
-    clf = _gate_classifier(ocr)
-    profile = GameProfile(name="g", detect=[
-        DetectDef(id="reward", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8),
-        DetectDef(id="title", search=_full_box(), text="REWARD", threshold=0.8),  # ignored: not cheap
-    ])
-    assert clf.gate_active(_frame((0, 255, 0)), profile) is True
-    assert clf.gate_active(_frame((0, 0, 255)), profile) is False
-    assert ocr.reads == 0   # the gate never runs OCR, even with a text detector declared
-
-
-def test_gate_active_empty_or_text_only_is_always_active():
-    ocr = _RecordingOcr()
-    clf = _gate_classifier(ocr)
-    # no game-level gate at all -> always active (historical behaviour)
-    assert clf.gate_active(_frame((0, 0, 0)), GameProfile(name="g")) is True
-    # only a text detector -> nothing cheap to gate on -> always active, still no OCR
-    text_only = GameProfile(name="g", detect=[
-        DetectDef(id="t", search=_full_box(), text="REWARD", threshold=0.8)])
-    assert clf.gate_active(_frame((0, 0, 0)), text_only) is True
+    clf = _classifier(ocr)
+    # the gate window: a cheap colour probe for the HUD, listed FIRST, with no dataset. A later
+    # data window carries an OCR text detector — it must never be read while the gate matches.
+    gate = WindowDef(id="gate", detect=[
+        DetectDef(id="hud", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8)])
+    relic = WindowDef(id="relic", detect=[
+        DetectDef(id="title", search=_full_box(), text="REWARD", threshold=0.8)])
+    # relic listed BEFORE gate in profile order, but window_priority puts the gate first
+    profile = GameProfile(name="g", windows=[relic, gate], window_priority=["gate", "relic"])
+    # green (HUD present): gate matches -> returned first, and the relic's text detector is
+    # never OCR'd because the gate short-circuits before it (early-return).
+    assert clf.classify(_frame((0, 255, 0)), profile) == ("gate", None)
     assert ocr.reads == 0
 
 
-def test_gate_active_combine_mode():
-    clf = _gate_classifier(_RecordingOcr())
-    dets = [
-        DetectDef(id="g", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8),
-        DetectDef(id="r", search=_full_box(), color="#0000ff", tolerance=40, threshold=0.8),
-    ]
-    # green frame: the green detector passes, the red one fails
-    green = _frame((0, 255, 0))
-    any_p = GameProfile(name="g", detect=dets, detect_mode="any")
-    all_p = GameProfile(name="g", detect=dets, detect_mode="all")
-    assert clf.gate_active(green, any_p) is True    # OR: one match arms
-    assert clf.gate_active(green, all_p) is False   # AND: needs both
+def test_classify_priority_falls_through_when_gate_misses():
+    clf = _classifier(_RecordingOcr())
+    # colours are BGR frames vs #RRGGBB detectors: green HUD = BGR(0,255,0); blue data = BGR(255,0,0)
+    gate = WindowDef(id="gate", detect=[
+        DetectDef(id="hud", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8)])
+    data = WindowDef(id="data", detect=[
+        DetectDef(id="anchor", search=_full_box(), color="#0000ff", tolerance=40, threshold=0.8)])
+    profile = GameProfile(name="g", windows=[gate, data], window_priority=["gate", "data"])
+    # blue frame: the gate (green) misses, so classify falls through to the next priority window
+    assert clf.classify(_frame((255, 0, 0)), profile) == ("data", None)
+    # green frame: the gate matches first
+    assert clf.classify(_frame((0, 255, 0)), profile) == ("gate", None)
 
 
-def test_gate_active_honours_negate():
-    clf = _gate_classifier(_RecordingOcr())
-    profile = GameProfile(name="g", detect=[
-        DetectDef(id="not_green", search=_full_box(), color="#00ff00",
-                  tolerance=40, threshold=0.8, negate=True)])
-    # negate: passes when the colour is ABSENT
-    assert clf.gate_active(_frame((0, 0, 255)), profile) is True
-    assert clf.gate_active(_frame((0, 255, 0)), profile) is False
+def test_classify_empty_priority_uses_best_fit():
+    clf = _classifier(_RecordingOcr())
+    # no window_priority -> the best-fit branch. Only the green window matches a green frame.
+    green_win = WindowDef(id="green", detect=[
+        DetectDef(id="g", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8)])
+    blue_win = WindowDef(id="blue", detect=[
+        DetectDef(id="b", search=_full_box(), color="#0000ff", tolerance=40, threshold=0.8)])
+    profile = GameProfile(name="g", windows=[blue_win, green_win])   # profile order, no priority
+    assert clf.classify(_frame((0, 255, 0)), profile) == ("green", None)
 
 
-# ---- two-rate run(): poll gate fast, throttle OCR slow ------------------------
+# ---- two-rate run(): poll fast, throttle the OCR-heavy path slow ---------------
 
 def _run_collector(statuses, *, collect_interval, gate_interval):
     """Drive Collector.run with a scripted tick() and capture the ocr_due flag each
@@ -177,8 +176,8 @@ def _run_collector(statuses, *, collect_interval, gate_interval):
     return seen
 
 
-def test_two_rate_throttles_ocr_between_gate_polls():
-    # gate ACTIVE every poll (status=saved spends the OCR slot). collect_interval 1.0,
+def test_two_rate_throttles_ocr_between_polls():
+    # a matched window every poll (status=saved spends the OCR slot). collect_interval 1.0,
     # gate_interval 0.25 -> after an OCR tick the next ~3 polls are throttled (not due),
     # then due again once a full interval has elapsed.
     seen = _run_collector([TickStatus.saved] * 6, collect_interval=1.0, gate_interval=0.25)
@@ -205,40 +204,34 @@ def _live_session():
 
 
 def test_throttled_tick_keeps_phase_steady():
-    # the two-rate flicker fix: a `saved` tick sets the phase; the `throttled` holds between
-    # OCR slots must KEEP the current window (not reset to idle), so the live view is steady.
+    # the two-rate flicker fix: a `saved` tick sets the phase; the `throttled` hold between
+    # OCR slots must KEEP the current window (not reset), so the live view is steady.
     s = _live_session()
     s._on_tick(TickResult(TickStatus.saved, window_id="equipment", state_id="normal", new=1))
     assert s._cur == ("equipment", "normal") and s._phase is True
     s._on_tick(TickResult(TickStatus.throttled))     # between OCR slots, same screen
-    assert s._cur == ("equipment", "normal") and s._phase is True   # held, not flickered to idle
-    s._on_tick(TickResult(TickStatus.idle))          # gate genuinely closed
+    assert s._cur == ("equipment", "normal") and s._phase is True   # held, not flickered
+    s._on_tick(TickResult(TickStatus.unrecognised))  # nothing recognised now
     assert s._cur == (None, None) and s._phase is False
 
 
-def test_idle_polls_stay_due_so_a_phase_is_caught_instantly():
-    # while the gate is inactive (idle) the OCR clock never advances, so every fast poll
-    # stays "due" — the instant the phase appears, OCR fires without waiting out a slot.
-    seen = _run_collector([TickStatus.idle] * 4, collect_interval=1.0, gate_interval=0.25)
-    assert all(d is True for d, _ in seen)
-
-
 def test_ocr_clock_only_advances_on_heavy_path():
-    # a frame that PASSED the gate (status=saved) spends the OCR slot; an idle frame does
-    # not, so the next non-idle frame is immediately due even if <interval elapsed.
-    seen = _run_collector([TickStatus.idle, TickStatus.saved],
+    # a frame that ran the heavy path (status=saved) spends the OCR slot; a pre-classify skip
+    # (no_window is heavy-skipped) does not, so the next frame is immediately due even if
+    # <interval elapsed.
+    seen = _run_collector([TickStatus.no_window, TickStatus.saved],
                           collect_interval=1.0, gate_interval=0.25)
-    assert seen[0] == (True, TickStatus.idle)    # due, but gate idle -> no slot spent
-    assert seen[1][0] is True                    # still due (clock didn't advance on idle)
+    assert seen[0] == (True, TickStatus.no_window)   # due, but no slot spent (heavy-skipped)
+    assert seen[1][0] is True                        # still due (clock didn't advance)
 
 
 def test_detection_gap_counts_only_read_opportunities():
     # Regression: the detection-batch grace gap (batch_mode: detection) is measured in
-    # ``_tick_no``. Under the two-rate loop there are ~gate:collect throttle ticks between
-    # OCR slots; if those advanced the counter, the gap between two consecutive reads of the
-    # SAME visible window would exceed confirm_frames and reset the confirmer EVERY slot, so
-    # nothing ever confirmed and detection datasets never saved (relics_refinement bug).
-    # Only ocr_due ticks may advance the counter.
+    # ``_tick_no``. Under the two-rate loop there are throttle ticks between OCR slots; if
+    # those advanced the counter, the gap between two consecutive reads of the SAME visible
+    # window would exceed confirm_frames and reset the confirmer EVERY slot, so nothing ever
+    # confirmed and detection datasets never saved (relics_refinement bug). Only ocr_due ticks
+    # may advance the counter.
     import types
 
     c = Collector.__new__(Collector)
@@ -258,24 +251,13 @@ def test_detection_gap_counts_only_read_opportunities():
     assert c._tick_no == 2                     # two consecutive reads -> gap of 1 (<= confirm_frames)
 
 
-# ---- profile round-trip + merge -----------------------------------------------
+# ---- merge: window_priority is game-level, preserved on a single-window save --
 
-def test_game_detect_round_trips():
-    p = GameProfile(name="g", detect=[
-        DetectDef(id="reward", search=_full_box(), color="#00ff00",
-                  tolerance=40, width=0.1, threshold=0.8)])
-    again = GameProfile.model_validate(p.model_dump())
-    assert again.detect[0].color == "#00ff00"
-    assert again.detect[0].width == 0.1
-    assert again.detect[0].is_cheap
-
-
-def test_merge_preserves_game_gate_on_window_save():
-    existing = GameProfile(name="g", detect=[
-        DetectDef(id="reward", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8)],
-        windows=[WindowDef(id="w1")])
-    # a single-window teach save carries no game-level detect
+def test_merge_preserves_window_priority_on_window_save():
+    existing = GameProfile(name="g", windows=[WindowDef(id="w1")],
+                           window_priority=["w1"])
+    # a single-window teach save carries no game-level window_priority
     incoming = GameProfile(name="g", windows=[WindowDef(id="w2")])
     merged = merge_profiles(existing, incoming)
-    assert [d.id for d in merged.detect] == ["reward"]   # gate not wiped
+    assert merged.window_priority == ["w1"]              # not wiped
     assert {w.id for w in merged.windows} == {"w1", "w2"}

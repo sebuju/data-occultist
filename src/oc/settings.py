@@ -33,11 +33,10 @@ class Tuning:
     faster-changing views. Callers that don't pass an explicit interval fall back to
     this. 0 = no throttle (OCR every gate poll the pipeline allows).
 
-    ``gate_interval`` — the fast poll rate: how often the loop checks the cheap
-    worthiness gate (no OCR). Much smaller than ``collect_interval`` so an OCR-worthy
-    phase is caught promptly while idle ticks stay cheap. ``live_gate`` master-switches
-    the gate off (collector classifies every settled frame, the historical behaviour);
-    it's a no-op anyway when a profile declares no game-level ``detect`` gate.
+    ``gate_interval`` — the fast poll rate: how often the loop wakes to fire triggers and
+    re-check the OCR throttle. Much smaller than ``collect_interval`` so a worthy screen is
+    caught promptly; cheapness on idle frames comes from priority-order classify (the
+    top-priority gate window early-returns on one cheap check — see the classifier).
     """
 
     accept_confidence: float = 0.88
@@ -45,7 +44,6 @@ class Tuning:
     confirm_frames: int = 2
     collect_interval: float = 1.0
     gate_interval: float = 0.25
-    live_gate: bool = True
     # Only collect while the game window is focused. False suits window-targeted
     # capture (printwindow), which reads the window even when backgrounded.
     require_foreground: bool = False
@@ -98,7 +96,6 @@ class Settings:
                 confirm_frames=t.get("confirm_frames", s.tuning.confirm_frames),
                 collect_interval=t.get("collect_interval", s.tuning.collect_interval),
                 gate_interval=t.get("gate_interval", s.tuning.gate_interval),
-                live_gate=t.get("live_gate", s.tuning.live_gate),
                 require_foreground=t.get("require_foreground", s.tuning.require_foreground),
                 detect_removals=t.get("detect_removals", s.tuning.detect_removals),
             )

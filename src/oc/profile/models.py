@@ -1117,17 +1117,15 @@ class GameProfile(BaseModel):
     # Process executable names to match (case-insensitive), e.g. "Warframe.x64.exe".
     process_names: list[str] = Field(default_factory=list)
     window_title_hint: str | None = None
-    # Live-mode worthiness gate: cheap (no-OCR) detectors that say "an OCR-worthy phase
-    # is on screen". OR-combined — the gate is active if ANY passes. While none pass the
-    # collector stays idle (no classify, no OCR), so a continuously-running live session
-    # costs almost nothing between the brief moments worth reading. Empty = no gate (the
-    # collector classifies every settled frame, the historical behaviour).
-    detect: list[DetectDef] = Field(default_factory=list)
-    # How the gate detectors combine: ``any`` (OR — any anchor arms OCR, the default) or
-    # ``all`` (AND — every anchor must be present). Mirrors ``WindowDef.detect_mode``.
-    detect_mode: DetectCombine = DetectCombine.any
     fields: list[FieldDef] = Field(default_factory=list)
     windows: list[WindowDef] = Field(default_factory=list)
+    # Window recognition PRIORITY order (ordered window ids, highest-priority first). When
+    # non-empty the classifier tries these windows in this order and EARLY-RETURNS on the first
+    # that matches — cheaper than scoring every window, and it lands on the most important live
+    # screen (e.g. relic rewards) first. Ids not listed are tried afterwards in profile order.
+    # Empty = the historical best-fit classify (score every window, pick the highest). Authored
+    # in the teach UI over the live-toggled windows (see ``WindowDef.live``).
+    window_priority: list[str] = Field(default_factory=list)
     datasets: list[DatasetDef] = Field(default_factory=list)
     subsets: list[SubsetDef] = Field(default_factory=list)
     producers: list[ProducerDef] = Field(default_factory=list)

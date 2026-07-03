@@ -86,8 +86,7 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
         return {"detect": {}, "states": {}, "gate": {}}
     # Cache on the stashed image + the detectors that act on it (no fields/lexicon — detect
     # is template/text matching only). A box/detector edit changes the dump → fresh read.
-    cfg = {"window": window.model_dump(mode="json") if window else None,
-           "gate": [d.model_dump(mode="json") for d in profile.detect]}
+    cfg = {"window": window.model_dump(mode="json") if window else None}
     cache, key, hit = _ocr_cache_for(game, capture, cfg, prefer_cache)
     if hit is not None:
         return {**hit, "cached": True}
@@ -97,10 +96,6 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
 
     # one job: run the whole detect pass without interleaving with another OCR job
     with ocr_job(engine.ocr) as job:
-        # Game-level worthiness gate — OR over ENABLED detectors, each per its polarity.
-        gate = {d.id: matcher.evaluate(d, frame) for d in profile.detect}
-        gate_enabled = [gate[d.id]["passes"] for d in profile.detect if d.enabled]
-        gate_active = combine_passes(gate_enabled, profile.detect_mode) if gate_enabled else False
         detect = {d.id: matcher.evaluate(d, frame) for d in window.detect} if window else {}
         # overall window verdict — mirrors the classifier (only ENABLED detectors count,
         # each per its polarity, combined by detect_mode), so the UI shows pass/fail.
@@ -130,7 +125,6 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
             }
 
     result = {"detect": detect, "states": states, "scrollbar": scrollbar,
-              "gate": gate, "gate_active": gate_active,
               "window": {"pass": window_pass, "mode": window.detect_mode if window else "all"},
               "device": getattr(engine.ocr, "device", "cpu"), "ms": round(job.ms)}
     if cache is not None:
