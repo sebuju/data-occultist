@@ -436,7 +436,7 @@ windows:
     colors: []
     tolerance: 60
     scale: 1.0
-  live: true
+  live: false
   item_fields:
   - id: mod_name
     box:
@@ -625,7 +625,13 @@ windows:
     type: number
     extract: number
     separator: /
-    rules: []
+    rules:
+    - when: empty
+      then: set
+      value: '1'
+    - when: no_digit
+      then: set
+      value: '1'
     dict_mode: correct
     dictionary: ''
     fuzzy: 0.82
@@ -794,6 +800,24 @@ windows:
     isolate: false
     glyph_check: false
     fold_accents: true
+  - id: count
+    type: number
+    extract: whole
+    separator: /
+    rules:
+    - when: empty
+      then: set
+      value: '1'
+    - when: no_digit
+      then: set
+      value: '1'
+    dict_mode: correct
+    dictionary: ''
+    fuzzy: 0.82
+    min_confidence: 0.0
+    isolate: false
+    glyph_check: false
+    fold_accents: true
   data_area:
     x: 0.0449550474139316
     y: 0.17880592428756362
@@ -931,6 +955,21 @@ windows:
     locate: true
     align: bottom
     align_x: center
+    enabled: true
+    item: relic_item
+  - id: count
+    box:
+      x: 0.00194665804251878
+      y: 0.0031923258359432866
+      w: 0.17509426025364386
+      h: 0.16715803533328372
+    field: count
+    tell: false
+    tell_conf: 0.0
+    tell_allow_text: false
+    locate: false
+    align: ''
+    align_x: ''
     enabled: true
     item: relic_item
   item_tells:
@@ -1716,16 +1755,16 @@ layout:
       custW: true
       custH: false
     sub:relic_rewards_limit:
-      x: 3160.0
-      y: 1800.0
+      x: 3200.0
+      y: 1780.0
       w: 420.0
       h: 320.0
       collapsed: false
       custW: true
       custH: false
     ds:relics_offered:
-      x: 2700.0
-      y: 1560.0
+      x: 2740.0
+      y: 1540.0
       collapsed: false
     ds:mods:
       x: -1040.0
@@ -1820,8 +1859,8 @@ layout:
       custW: true
       custH: false
     sub:relic_rewards_price_from_stored:
-      x: 3620.0
-      y: 1800.0
+      x: 3660.0
+      y: 1780.0
       collapsed: false
     win:relic_select:
       x: 280.0
@@ -1844,7 +1883,7 @@ layout:
       y: 3100.0
       collapsed: false
     fld:relic_select:relic_item:count:
-      x: -660.0
+      x: -760.0
       y: 3100.0
       collapsed: false
     item:relic_select:guard:
@@ -1868,8 +1907,8 @@ layout:
       custW: true
       custH: false
     vt:sub:relic_rewards_price_from_stored:
-      x: 3160.0
-      y: 2620.0
+      x: 3200.0
+      y: 2600.0
       collapsed: false
     vt:sub:live_prices_joined:
       x: 1780.0
@@ -1916,44 +1955,44 @@ layout:
       custW: true
       custH: false
     win:relic_refinement:
-      x: 40.0
-      y: 380.0
+      x: 280.0
+      y: 360.0
       collapsed: false
     sb:relic_refinement:scrollbar:
-      x: 600.0
-      y: 1160.0
+      x: 840.0
+      y: 1140.0
       collapsed: false
     item:relic_refinement:relic_item:
-      x: -400.0
-      y: 380.0
+      x: -160.0
+      y: 360.0
       collapsed: false
     fld:relic_refinement:relic_item:name:
-      x: -660.0
-      y: 380.0
+      x: -420.0
+      y: 360.0
       collapsed: false
     win:relic_rewards:
-      x: 3400.0
-      y: 380.0
+      x: 3440.0
+      y: 360.0
       collapsed: false
     item:relic_rewards:item_1:
-      x: 2940.0
-      y: 380.0
+      x: 2980.0
+      y: 360.0
       collapsed: false
     fld:relic_rewards:item_1:name:
-      x: 2700.0
-      y: 380.0
+      x: 2740.0
+      y: 360.0
       collapsed: false
     det:relic_rewards:detect_h:
-      x: 3960.0
-      y: 380.0
+      x: 4000.0
+      y: 360.0
       collapsed: false
     det:relic_select:detect_h:
       x: 840.0
       y: 3100.0
       collapsed: false
     det:relic_refinement:detect_h:
-      x: 600.0
-      y: 380.0
+      x: 840.0
+      y: 360.0
       collapsed: false
     det:mod_window:detect_h:
       x: -1940.0
@@ -1964,56 +2003,56 @@ layout:
       y: 360.0
       collapsed: false
     prev:relic_refinement:
-      x: 40.0
-      y: 1620.0
+      x: 280.0
+      y: 1600.0
       collapsed: false
     item:relic_refinement:not_owned:
-      x: -400.0
-      y: 1580.0
+      x: -160.0
+      y: 1560.0
       collapsed: false
     tell:relic_refinement:not_owned:tell_3:
-      x: -660.0
-      y: 1940.0
+      x: -420.0
+      y: 1920.0
       collapsed: false
     tell:relic_refinement:not_owned:tell_4:
-      x: -660.0
-      y: 1580.0
+      x: -420.0
+      y: 1560.0
       collapsed: false
     ds:relics_refinement:
-      x: 1020.0
-      y: 380.0
+      x: 1260.0
+      y: 360.0
       collapsed: false
     sub:relics_refinement_with_contents:
-      x: 1480.0
-      y: 620.0
+      x: 1720.0
+      y: 600.0
       w: 360.0
       h: 1120.0
       collapsed: false
       custW: false
       custH: true
     sub:contents_with_price:
-      x: 1900.0
-      y: 620.0
+      x: 2140.0
+      y: 600.0
       collapsed: false
     vt:sub:contents_with_price:
-      x: 1020.0
-      y: 1800.0
+      x: 1260.0
+      y: 1780.0
       w: 1240.0
       h: 360.0
       collapsed: false
       custW: true
       custH: false
     det:relic_refinement:detect_1:
-      x: 600.0
-      y: 760.0
+      x: 840.0
+      y: 740.0
       collapsed: false
     ds:relics_select:
       x: 1260.0
       y: 3100.0
       collapsed: false
     vt:ds:relics_offered:
-      x: 2700.0
-      y: 1800.0
+      x: 2740.0
+      y: 1780.0
       w: 420.0
       h: 1140.0
       collapsed: false
@@ -2040,8 +2079,8 @@ layout:
       custW: true
       custH: true
     vt:ds:relics_refinement:
-      x: 1020.0
-      y: 620.0
+      x: 1260.0
+      y: 600.0
       w: 420.0
       h: 1120.0
       collapsed: false
@@ -2108,8 +2147,8 @@ layout:
       custW: true
       custH: true
     prev:relic_rewards:
-      x: 3980.0
-      y: 900.0
+      x: 4020.0
+      y: 880.0
       w: 500.0
       h: 320.0
       collapsed: false
@@ -2150,6 +2189,10 @@ layout:
     dict:dict_1:
       x: -2240.0
       y: -1700.0
+      collapsed: false
+    fld:relic_refinement:relic_item:count:
+      x: -760.0
+      y: 360.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -2625,6 +2668,7 @@ layout:
     - det:relic_refinement:detect_1
     - vt:ds:relics_refinement
     - vt:sub:contents_with_price
+    - fld:relic_refinement:relic_item:count
     outline:
       color: '#5ae6c2'
       style: none
@@ -2753,8 +2797,8 @@ layout:
   - prev:relic_rewards
   - vt:ds:relic_contents
   - vt:ds:mods
-  - vt:ds:master
   - vt:sub:contents_with_price
+  - vt:ds:master
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -2830,6 +2874,7 @@ layout:
     members:
     - item:relic_refinement:relic_item
     - fld:relic_refinement:relic_item:name
+    - fld:relic_refinement:relic_item:count
     outline:
       color: '#2c313c'
       style: none
