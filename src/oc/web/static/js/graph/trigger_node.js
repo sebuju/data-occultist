@@ -125,7 +125,7 @@ export function triggerParts(t, model) {
                 h("span", { class: "tg-prog muted" }, "idle"),
                 labCell("last fired", "last time this trigger fired"),
                 h("span", { class: "tg-last muted" }, "never fired")),
-            h("div", { class: "gn-foot" }, h("button", { class: "tg-fire" }, "↻ fire now"))),
+            h("div", { class: "gn-foot" }, h("button", { class: "tg-fire" }, "↻ fire"))),
         ports: frag(
             h("span", { class: "port out", title: "drag to a price node this trigger should fire" }),
             kind === "on_change" && h("span", { class: "port pwatch", title: "drag to a dataset or subset to watch for new rows" })),

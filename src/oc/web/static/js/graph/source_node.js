@@ -135,7 +135,7 @@ export function sourceParts(s) {
             throttle, tail, linePos, matchBlock, fields),
         h("div", { class: "src-found muted" }),
         h("div", { class: "gn-foot" },
-            h("button", { class: "src-read", title: "read the file now and write rows to the dataset (runs in the background; rows fill in live)" }, "read now")));
+            h("button", { class: "src-read", title: "read the file now and write rows to the dataset (runs in the background; rows fill in live)" }, "↻ read")));
 
     return {
         title: h("input", { class: "gi gi-id srcrename", value: s.id, title: "rename source" }),

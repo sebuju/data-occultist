@@ -3,6 +3,10 @@
    base -> chrome -> graph -> overlays -> controls -> flow -> tables. */
 
 :root {
+    /* dark native form controls: number-input spin buttons, select popups, date pickers,
+       autofill — all follow the browser's dark theme instead of a light widget on our dark UI */
+    color-scheme: dark;
+
     /* surfaces */
     --bg: #15171c;            /* app background */
     --panel: #1d2027;         /* nodes, panels, top bar */
@@ -33,6 +37,7 @@
     --trigger-line: #02d8ce;  /* trigger fire-control edge (cyan) */
     --watch-line: #2bd4c4;    /* on_change watch edge (teal) */
     --purple: #c98ae6;        /* scrollbar / raw detections */
+    --window: #ecd94a;        /* window node type + its game→window edge (yellow) */
     --neutral: #6b7280;       /* paused (grey) */
     --phase-done: #2f7d4f;    /* finished (deep green) */
     --on-accent: #08121d;     /* text on accent fill */

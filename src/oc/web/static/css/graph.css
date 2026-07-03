@@ -60,7 +60,7 @@
    read it, so they always match — change a type's colour in ONE place. */
 .gn-h { --ntint: var(--muted); }
 .gnode.game      .gn-h { --ntint: var(--text); }
-.gnode.window    .gn-h { --ntint: var(--accent); }
+.gnode.window    .gn-h { --ntint: var(--window); }
 .gnode.region    .gn-h { --ntint: var(--accent); }
 .gnode.detect    .gn-h { --ntint: var(--ok); }
 .gnode.scrollbar .gn-h { --ntint: var(--ok); }
@@ -195,6 +195,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    same box as a control row (1lh text + 12px padding + 2px border) so every grid row is one height. */
 .lab-grid > .tg-secs { min-height: calc(1lh + 14px); }
 .lab-grid > .tg-prog, .lab-grid > .tg-last, .lab-grid > .enr-prog { min-height: calc(1lh + 14px); display: inline-flex; align-items: center; }
+/* trigger node: pin EVERY cell (labels + bare selects too) to the control-row box so all its
+   grid rows share one height — a plain <select> or label alone would otherwise sit shorter. */
+.gnode.trigger .lab-grid > * { min-height: calc(1lh + 14px); }
 /* checkboxes are slide-toggles now (base.css). Keep them at the start of their grid cell
    and never let a flex row stretch them — their size is fixed by the toggle. */
 /* inside a node the toggle adopts the form-input palette so it doesn't pop next to the text
@@ -296,7 +299,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    direction reads at a glance. No animation (constant repaint is too costly). */
 .gedge.flow { stroke-width: 1.8; opacity: 1; marker-end: url(#flowarrow); }
 .flowarrow-head { fill: context-stroke; }   /* arrow takes the line's colour (orange, or accent when selected) */
-.gedge.ownwin { stroke: var(--accent); }   /* game→window: match the window icon tint */
+.gedge.ownwin { stroke: var(--window); }   /* game→window: match the window icon tint (yellow) */
 .gedge.owndict { stroke: var(--purple); }  /* game→dictionary: match the dict icon tint */
 .gedge.field { stroke: var(--accent); }
 .gedge.detect, .gedge.scrollbar { stroke: var(--ok); }
@@ -506,13 +509,14 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .key-row .kmv, .key-row .kdel { flex: 0 0 auto; padding: 0 10px; }
 .key-row .flab { display: inline-flex; gap: 4px; }
 .key-prev { margin-top: 4px; font-size: var(--fs-sm); word-break: break-all; }
-/* window node: item templates listed in priority order (top = priority 0). Reorder with the
-   ▲/▼ buttons to set priority; the number itself is never shown. */
-.win-controls .wi-h, .game-controls .wi-h { margin-top: 14px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 1px solid var(--muted); }
-.wi-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
-.wi-row .wi-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.wi-row .wi-name:hover { text-decoration: underline; color: var(--text); }
-.wi-row .wimv { flex: 0 0 auto; padding: 0 10px; }
+/* Reorderable priority list — shared by the window node's item templates (top = priority 0) and
+   the game node's window-priority list (top = recognised first). Reorder with the ▲/▼ buttons;
+   the number itself is never shown. One rule set, both callers (rule 7). */
+.win-controls .wi-h, .game-priority .wi-h { margin-top: 14px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 1px solid var(--muted); }
+.wi-row, .wp-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
+.wi-row .wi-name, .wp-row .wp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+.wi-row .wi-name:hover, .wp-row .wp-name:hover { background: var(--hover); }   /* rounded pill hover, like .if-sum */
+.wi-row .wimv, .wp-row .wpmv { flex: 0 0 auto; padding: 0 10px; }
 /* window node: detects section — combine mode + per-detector polarity, with a live verdict.
    Rows are three aligned columns (detector | pass | require); the wd-head row labels them.
    min-width:0 on every flex child lets the select shrink instead of clipping past the node.
@@ -551,14 +555,16 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
 .seltoolbar { position: fixed; left: 50%; top: 53px; transform: translateX(-50%);
     z-index: 200; display: flex; align-items: center; gap: 10px; padding: 6px 10px;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    background: var(--panel); border: 0; border-radius: 8px;
     /* stronger shadow + a faint inset ring so the pill pops off the canvas */
     box-shadow: 0 10px 30px #000000aa, 0 2px 6px #00000066, inset 0 0 0 1px #ffffff12; }
 /* slide-in: replayed by syncMultiSelect on the hidden->shown edge only (class toggled there) */
 .seltoolbar.slidein { animation: selSlideIn .18s cubic-bezier(.2, .7, .3, 1); }
 @keyframes selSlideIn { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
-/* lock the remove button's label width so arming (remove -> confirm) doesn't resize it (item 4) */
-#selDeleteBtn .sel-lbl { display: inline-block; min-width: 7ch; text-align: center; }
+/* remove is icon-only until armed; the (empty) label only takes width once it holds "confirm" */
+#selDeleteBtn .sel-lbl:not(:empty) { display: inline-block; min-width: 7ch; text-align: center; }
+/* clone shows an active accent tint while carrying its fresh copies to a drop point */
+#selCloneBtn.cloning { color: var(--accent); }
 .seltoolbar .sel-count { color: var(--muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 .seltoolbar button { display: inline-flex; align-items: center; gap: 5px; }
 .seltoolbar .sel-ic { display: inline-flex; align-items: center; }
@@ -566,7 +572,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* icon-only button (clear): square, no label, icon centred */
 .seltoolbar .sel-icon-only { gap: 0; padding: 4px 7px; line-height: 1; }
 /* thin divider before the clear button so it reads as a separate, always-on action */
-.seltoolbar .sel-sep { align-self: stretch; width: 1px; background: var(--line); margin: -2px 1px; }
+.seltoolbar .sel-sep { align-self: stretch; width: 1px; background: var(--line); margin: 6px 1px; }
 .seltoolbar .sel-del { color: var(--danger); }
 .seltoolbar .sel-del[data-armed="1"] { background: var(--warn); color: var(--on-accent); }
 
