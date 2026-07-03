@@ -51,6 +51,11 @@ class Record:
     # give a scroll-invariant list position, xpos pins the column. None when no data_area.
     ypos: float | None = None
     xpos: float | None = None
+    # The cell's DISCRETE column index (0..cols-1) as the grid built it — content-clustered for
+    # item windows, authored for static grids. Unlike ``xpos`` (a continuous centre fraction that
+    # jitters) this is stable frame-to-frame, so it's the mirror slot's column identity. None when
+    # no cell/grid produced it.
+    col: int | None = None
 
     def is_empty(self) -> bool:
         return all(v in (None, "") for v in self.values.values())
@@ -424,6 +429,7 @@ class RegionReader:
             # Position of the cell within the data_area, so a scrolling consumer can place this
             # row in the grid. Item cells carry their origin/size; a static grid cell takes the
             # mean centre of its field boxes.
+            rec.col = cells[ci].col   # discrete column index the grid assigned (stable slot identity)
             if ics is not None:
                 rec.ypos = self._data_yfrac(window, ics[ci].oy + ics[ci].ih / 2)
                 rec.xpos = self._data_xfrac(window, ics[ci].ox + ics[ci].iw / 2)

@@ -106,14 +106,14 @@ def test_positions_roundtrip_and_on_records(tmp_path):
     s = _store(tmp_path)
     s.record_seen({"name": "Lith G1"})
     s.record_seen({"name": "Meso F2"})
-    s.set_positions({"lith_g1": (0.1, 3.0), "meso_f2": (0.5, 7.0)})   # (xpos, vpos row index)
-    assert s.positions() == {"lith_g1": (0.1, 3.0), "meso_f2": (0.5, 7.0)}
-    s.set_positions({"lith_g1": (0.1, 5.0)})           # upsert one
-    assert s.positions()["lith_g1"] == (0.1, 5.0)
-    rows = {r["key"]: r["_pos"] for r in s.records()}   # _pos shows "(row, col)" (int vpos, xpos)
-    assert rows["lith_g1"] == "(5, 0.1)" and rows["meso_f2"] == "(7, 0.5)"
+    s.set_positions({"lith_g1": (0.0, 3.0), "meso_f2": (1.0, 7.0)})   # (col index, vpos row index)
+    assert s.positions() == {"lith_g1": (0.0, 3.0), "meso_f2": (1.0, 7.0)}
+    s.set_positions({"lith_g1": (0.0, 5.0)})           # upsert one
+    assert s.positions()["lith_g1"] == (0.0, 5.0)
+    rows = {r["key"]: r["_pos"] for r in s.records()}   # _pos shows "(row, col)" — both integer indices
+    assert rows["lith_g1"] == "(5, 0)" and rows["meso_f2"] == "(7, 1)"
     # positions survive a reopen (own table, not rebuilt with `current`)
-    assert DatasetStore(tmp_path, "game", "mods").positions()["meso_f2"] == (0.5, 7.0)
+    assert DatasetStore(tmp_path, "game", "mods").positions()["meso_f2"] == (1.0, 7.0)
 
 
 def test_pos_not_a_data_column(tmp_path):

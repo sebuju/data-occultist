@@ -232,6 +232,32 @@ def test_ocr_clock_only_advances_on_heavy_path():
     assert seen[1][0] is True                    # still due (clock didn't advance on idle)
 
 
+def test_detection_gap_counts_only_read_opportunities():
+    # Regression: the detection-batch grace gap (batch_mode: detection) is measured in
+    # ``_tick_no``. Under the two-rate loop there are ~gate:collect throttle ticks between
+    # OCR slots; if those advanced the counter, the gap between two consecutive reads of the
+    # SAME visible window would exceed confirm_frames and reset the confirmer EVERY slot, so
+    # nothing ever confirmed and detection datasets never saved (relics_refinement bug).
+    # Only ocr_due ticks may advance the counter.
+    import types
+
+    c = Collector.__new__(Collector)
+    c._tick_no = 0
+    c._profile = None
+    c._engine = object()
+    c._locator = types.SimpleNamespace(locate=lambda prof: None)   # no_window -> early return
+
+    assert c.tick(ocr_due=False).status is TickStatus.no_window
+    assert c._tick_no == 0                     # throttle tick: gap must NOT widen
+    c.tick(ocr_due=True)
+    assert c._tick_no == 1                     # a real read opportunity counts
+    c.tick(ocr_due=False)
+    c.tick(ocr_due=False)
+    assert c._tick_no == 1                     # throttle ticks between slots do nothing
+    c.tick(ocr_due=True)
+    assert c._tick_no == 2                     # two consecutive reads -> gap of 1 (<= confirm_frames)
+
+
 # ---- profile round-trip + merge -----------------------------------------------
 
 def test_game_detect_round_trips():

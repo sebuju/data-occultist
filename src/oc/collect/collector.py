@@ -149,12 +149,16 @@ class Collector:
         # scroll position + absence so a key gone from its slice is removed (see tick()).
         self._slice_sync: dict[str, SliceSync] = {}
         self._scroll_vis: dict[str, float] = {}   # mirror: rows-on-screen measured from row pitch
+        self._pos_sent: dict[str, dict] = {}       # mirror: last slot map published (skip unchanged re-writes)
         # Per-detection batching (``batch_mode: detection`` datasets, e.g. relic offerings):
         # a fresh window detection after a gap starts a NEW revertable batch. ``_tick_no``
-        # counts EVERY tick (incl. no-window/unrecognised), so the gap since a dataset was
-        # last fed is just a subtraction — no per-tick presence bookkeeping on every return
-        # path. ``_pending_batch`` defers ``begin_batch`` to the first actual write, so an
-        # empty detection (no confirmed rows) never spawns an empty batch.
+        # counts only OCR-HEAVY ticks (``ocr_due``) — NOT the throttle/idle/moving ticks the
+        # two-rate loop fires between OCR slots — so the gap since a dataset was last fed is a
+        # subtraction in *read opportunities*, not wall ticks. (Counting every tick made the gap
+        # between two consecutive reads of the SAME visible window ~gate:collect ticks wide, i.e.
+        # > confirm_frames, which reset the confirmer every slot and NOTHING ever confirmed.)
+        # ``_pending_batch`` defers ``begin_batch`` to the first actual write, so an empty
+        # detection (no confirmed rows) never spawns an empty batch.
         self._tick_no = 0
         self._last_seen_tick: dict[str, int] = {}
         self._pending_batch: set[str] = set()
@@ -302,7 +306,8 @@ class Collector:
     def tick(self, ocr_due: bool = True) -> TickResult:
         from ..store import stats_store
         t0 = time.perf_counter()
-        self._tick_no += 1   # counts EVERY tick, so the gap since a dataset was last fed is a subtraction
+        if ocr_due:
+            self._tick_no += 1   # count only read opportunities; throttle ticks must not widen the detection gap
         eng = self._engine
         win = self._locator.locate(self._profile)
         if win is None:
@@ -487,8 +492,10 @@ class Collector:
                     # row INDEX (integer, like the canvas #N) = floor(viewport top + row's spot).
                     # Floor the viewport-top too so a floored row index never falls just under vlo.
                     offset = p * gain
+                    # Geometric viewport span (top floored so a floored row index never falls just
+                    # under vlo). This is what slice_sync needs — the rows that SHOULD be on screen,
+                    # incl. partials — to decide which stored keys in view went missing.
                     vlo, vhi = float(int(offset)), offset + visible
-                    tick_scroll = (vlo, vhi)
                     tick_scroll_meta = {
                         "total": round(gain + visible, 1),
                         "visible": round(visible, 1),
@@ -496,14 +503,31 @@ class Collector:
                         "calibrated": sc is not None and sc.calib_gain is not None,
                     }
 
+                    # Both slot coordinates are DISCRETE indices: the row (offset+spot, floored) and
+                    # the column. The grid already assigned each cell a column index (content-clustered
+                    # for item windows, authored for static grids) — use it. Unlike xpos (a continuous
+                    # centre fraction that jitters every frame) it's stable, so a key's slot is
+                    # pixel-identical frame-to-frame and doesn't re-publish (or re-key slice_sync) on
+                    # noise (the row was already floored — this matches it).
                     read_cells: dict[str, tuple[float, float]] = {}
                     for r in kept:
                         k = store.key_of(r.values)
                         if k is None:
                             continue
                         yp = r.ypos if r.ypos is not None else 0.0
-                        xp = r.xpos if r.xpos is not None else 0.0
-                        read_cells[k] = (xp, float(int(offset + yp * visible)))   # integer row index
+                        col = float(r.col if r.col is not None else 0)
+                        read_cells[k] = (col, float(int(offset + yp * visible)))   # (col, row) indices
+
+                    # The UI readout shows the rows actually READ this frame (the integer indices we
+                    # just stored), NOT the geometric viewport — partial top/bottom rows fail the
+                    # item's coverage gate and aren't in read_cells, so this is the fully-visible span
+                    # the user sees (e.g. 2-5), matching what's saved. Fall back to geometry if nothing
+                    # keyed this frame.
+                    if read_cells:
+                        idxs = [ri for _, ri in read_cells.values()]
+                        tick_scroll = (min(idxs), max(idxs))
+                    else:
+                        tick_scroll = (vlo, vhi)
 
                     syncer = self._slice_sync.get(dataset)
                     if syncer is None:
@@ -513,10 +537,15 @@ class Collector:
                     gone = syncer.observe(vlo, vhi, read_cells, store.present_keys(), fresh)
                     if gone:
                         store.remove_keys(gone)
-                    if fresh and read_cells:
+                    if fresh and read_cells and read_cells != self._pos_sent.get(dataset):
                         # _pos column + next run: the same (column, row-index) slots slice_sync
                         # just used — column persisted so a gone relic stays a removal candidate.
+                        # Skip when the slot map is byte-identical to the last write: set_positions
+                        # fires a change-bus publish (live grid refresh), and with the coordinates
+                        # now discrete a steady screen produces the SAME map every frame — writing
+                        # it again would spam an unchanged _pos every tick for nothing.
                         store.set_positions(read_cells)
+                        self._pos_sent[dataset] = dict(read_cells)
                     # Terminator cut: a sentinel template (e.g. an unowned-relic placeholder) marks
                     # the end of the real list. On a clean frame it's visible, drop every stored key
                     # parked past its row index — stale misreads that scrolled out of view and were

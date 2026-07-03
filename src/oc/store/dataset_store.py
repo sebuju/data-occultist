@@ -110,13 +110,13 @@ def _num(v):
 
 
 def _fmt_pos(slot: tuple[float | None, float] | None) -> str | None:
-    """The ``_pos`` display for a learned grid slot ``(xpos, vpos)``: the row INDEX (a whole
-    number — the discrete list position) then the column (a 0..1 horizontal fraction) when
-    it's known (legacy rows have no column). ``None`` when not mirrored."""
+    """The ``_pos`` display for a learned grid slot ``(xpos, vpos)``: the row INDEX then the
+    column INDEX — both whole numbers (discrete list position, column 0..cols-1). Shown when
+    the column is known (legacy rows have no column). ``None`` when not mirrored."""
     if slot is None:
         return None
     x, v = slot
-    return f"({int(round(v))}, {round(x, 3)})" if x is not None else f"({int(round(v))},)"
+    return f"({int(round(v))}, {int(round(x))})" if x is not None else f"({int(round(v))},)"
 
 
 def aggregate_records(records: list[dict], policy: str = "latest") -> dict:
