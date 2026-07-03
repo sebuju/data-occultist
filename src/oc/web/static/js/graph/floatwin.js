@@ -381,8 +381,9 @@ export function createFloatWin({
     // always tracks what the body holds. Measured by briefly going height:auto (so flex-fill
     // panes collapse to their natural content), clamped to the viewport, written only on a real
     // >1px change so a steady poll-tick mutates nothing. No-op while collapsed/hidden or off.
+    let _resizing = false;   // true while a manual resize drag is live -> fitHeight must not fight it
     function fitHeight() {
-        if (!autoFit || el.hidden || state.collapsed || state.userSized || !el.offsetWidth) return;
+        if (!autoFit || el.hidden || state.collapsed || state.userSized || _resizing || !el.offsetWidth) return;
         const cur = el.offsetHeight;
         // going height:auto removes the body's overflow, so the browser clamps its scrollTop to 0
         // (a poll-driven fit would jump the list back to the top every tick); stash + restore it.
@@ -444,14 +445,20 @@ export function createFloatWin({
         screenClamp: true, margin: GAP, bottomMargin: _botGap,   // resize stops above the log bar, not under it
         left: (v) => { if (v === undefined) return el.offsetLeft; const x = Math.max(4, v); el.style.left = `${x}px`; state.x = x; },
         snapEdge: (axis, v) => snapEdgeVal(id, axis, v),   // align resize edges to other panels
+        // Mark the drag live so a poll/heartbeat-driven fitHeight() can't snap the height back to
+        // content mid-resize (userSized only flips on settle, so without this the panel "resists"
+        // a height drag whenever a beat lands during it).
+        onResizeStart: () => { _resizing = true; },
         // height ownership flips ONLY when the height axis actually moved — a width-only resize must
         // leave a content-driven panel (autoFit:false, e.g. inspector) height-auto, not pin state.h.
         // Each axis's flag is set only when THAT axis moved, so its reset control reveals per-axis
         // (state.sized = width sized, state.userSized = height sized).
         onSettle: ({ w = false, h = false } = {}) => {
+            _resizing = false;
             if (h) state.userSized = true;   // manual height -> stop auto-fitting
             if (w) state.sized = true;       // width sized (reveals only the width reset)
             markSized(); stashSize(); save();
+            if (w && !h) fitHeight();        // width-only resize rewrapped content -> re-fit height now
         },
         // reset dots (per axis; Shift-click either fires both). Width dot -> uniform preset (300);
         // height dot -> auto-fit. Each clears only its own axis so the other keeps the user's size.
