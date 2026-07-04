@@ -123,3 +123,38 @@ def test_no_persist_without_configure(tmp_path):
     ss.flush_all()
     assert ss.aggregate("g")[0]["count"] == 1     # still tracked in memory
     assert not (tmp_path / "g").exists()           # but nothing written
+
+
+def test_gate_ops_gone_from_ops():
+    # the worthiness gate was removed; its op codes must not linger (else stale cards render)
+    assert not ({"ga", "go", "gn"} & set(ss.OPS))
+    assert "rp" in ss.OPS               # replay is still a live op — kept
+
+
+def test_prune_stale_removes_orphans_keeps_live(tmp_path):
+    for node in ("ds:live", "win:eq", "producer:p", "ds:gone", "win:renamed_away", "price:legacy"):
+        ss.record_timing("g", node, "rp" if node.startswith(("ds:", "price:")) else "tk", 5)
+    ss.flush_all()
+    live = {"ds:live", "win:eq", "producer:p", "precap"}
+    purged = sorted(ss.prune_stale("g", live))
+    assert purged == ["ds:gone", "price:legacy", "win:renamed_away"]
+    assert not _csv(tmp_path, "ds:gone").exists()
+    assert _csv(tmp_path, "ds:live").exists()            # live nodes untouched
+    remaining = {r["node"] for r in ss.aggregate("g")}
+    assert remaining == {"ds:live", "win:eq", "producer:p"}
+
+
+def test_prune_stale_empty_live_set_is_noop(tmp_path):
+    # a failed profile load yields no live nodes — must NOT wipe every file
+    ss.record_timing("g", "ds:prices", "rp", 5)
+    ss.flush_all()
+    assert ss.prune_stale("g", set()) == []
+    assert _csv(tmp_path, "ds:prices").exists()
+
+
+def test_prune_stale_leaves_unrecognized_shape(tmp_path):
+    # an unknown node shape (not a stat kind) is left alone even if absent from the live set
+    ss.record_timing("g", "weird_node", "tk", 5)
+    ss.flush_all()
+    assert ss.prune_stale("g", {"ds:live"}) == []
+    assert _csv(tmp_path, "weird_node").exists()

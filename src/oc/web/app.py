@@ -166,6 +166,17 @@ async def lifespan(_app: FastAPI):
     try:
         from ..store import stats_store
         stats_store.configure(get_settings().data_dir)
+        # Sweep orphan stat CSVs once per boot: a renamed/deleted node (or an out-of-band write)
+        # leaves a file that _ensure_loaded would otherwise glob back as a ghost card forever.
+        # prune_stale is conservative (no-op on an empty live set), so a failed profile load skips.
+        for _name in list_profiles(get_settings().profiles_dir):
+            try:
+                _live = load_profile(get_settings().profiles_dir, _name).stat_node_ids()
+                _purged = stats_store.prune_stale(_name, _live)
+                if _purged:
+                    print(f"[stats] pruned {len(_purged)} orphan node file(s) for {_name}: {', '.join(_purged)}")
+            except Exception:  # noqa: BLE001 - one bad profile must not skip the rest
+                pass
     except Exception:  # noqa: BLE001 - best-effort
         pass
     threading.Thread(target=_warm, daemon=True).start()

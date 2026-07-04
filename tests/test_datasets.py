@@ -1,9 +1,27 @@
 """Record keys are taught on the item/window that reads them; datasets just store."""
 
 from oc.profile import load_profile
-from oc.profile.models import DatasetDef, GameProfile, KeyDef, WindowDef
+from oc.profile.models import (
+    DatasetDef, GameProfile, KeyDef, ProducerDef, SubsetDef, WindowDef,
+)
 from oc.store.dataset_store import DatasetStore
 from oc.store.keys import KeySpec
+
+
+def test_stat_node_ids_covers_every_emitting_node():
+    p = GameProfile(
+        name="g",
+        windows=[WindowDef(id="eq", dataset="master"), WindowDef(id="game")],
+        datasets=[DatasetDef(id="master"), DatasetDef(id="prices")],
+        subsets=[SubsetDef(id="joined")],
+        producers=[ProducerDef(id="wf_market")],
+    )
+    ids = p.stat_node_ids()
+    # one live id per record_timing node shape, incl. the window's fed dataset and constant precap
+    assert ids == {
+        "precap", "win:eq", "win:game", "ds:master", "ds:prices",
+        "sub:joined", "producer:wf_market",
+    }
 
 
 def test_key_map_uses_window_key():

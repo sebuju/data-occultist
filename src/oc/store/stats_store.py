@@ -52,9 +52,6 @@ _FLUSH_ROWS = 64           # ...or flush sooner once this many rows are buffered
 # display. A code not in here is rejected on write (so it can't smuggle a delimiter in).
 OPS = {
     "tk": "tick",        # win: — one whole collection pass
-    "ga": "pre-OCR gate", # game — cheap worthiness check (no OCR); runs every tick
-    "go": "gate->ocr",   # game — gate opened => the OCR-heavy path ran (gate-triggered OCR)
-    "gn": "gate, no window", # game — gate opened but classify found no window (wasted OCR)
     "oc": "ocr",         # win: — OCR inference only (the dominant cost)
     "cp": "capture",     # win: — window grab (capture backend)
     "st": "settle",      # win: — settle thumbnail + staleness diff
@@ -369,8 +366,7 @@ def rename_node(game: str, old: str, new: str) -> None:
 
 
 def remove_node(game: str, node: str) -> None:
-    """Drop a node's stats when the node is deleted (otherwise an orphan file is harmless and
-    the panel filters it out by the live-node check)."""
+    """Drop a node's stats when the node is deleted."""
     with _lock:
         _buffer.get(game, {}).pop(node, None)
         _cache.get(game, {}).pop(node, None)
@@ -380,6 +376,40 @@ def remove_node(game: str, node: str) -> None:
             path.unlink()
         except OSError:
             pass
+
+
+# Node-id shapes that record_timing emits (see the callers): the prefixed graph nodes plus the
+# few bare stat nodes. prune_stale only ever touches a file whose node id is one of these, so an
+# unexpected file in the stats dir is left alone rather than deleted on a wrong guess.
+_STAT_PREFIXES = ("win:", "ds:", "sub:", "producer:", "price:")   # price: = legacy sweep node, superseded by producer:
+_BARE_STAT_NODES = {"precap", "game", "gate"}   # precap = live; game/gate = the removed worthiness gate
+
+
+def _prunable(node: str) -> bool:
+    return node.startswith(_STAT_PREFIXES) or node in _BARE_STAT_NODES
+
+
+def prune_stale(game: str, live_nodes: set[str]) -> list[str]:
+    """Once-per-boot sweep: delete stat CSVs whose node id is no longer a live graph node, so a
+    renamed/deleted node (or an out-of-band write) can't leave an orphan card in the panel.
+    ``live_nodes`` is the current node-id set (see ``GameProfile.stat_node_ids``). Conservative by
+    design: does NOTHING when ``live_nodes`` is empty (a failed profile load must not wipe every
+    file), and only removes a file whose node id is a recognised stat kind (:func:`_prunable`) —
+    an unknown shape is untouched. Returns the purged node ids (log them; never silent)."""
+    if not live_nodes:
+        return []
+    d = _stats_dir(game)
+    if d is None or not d.exists():
+        return []
+    _flush(game)
+    purged: list[str] = []
+    for path in list(d.glob("*.csv")):
+        node, _ = _parse_file(path)   # node id from the self-describing header, not the lossy name
+        if not node or node in live_nodes or not _prunable(node):
+            continue
+        remove_node(game, node)
+        purged.append(node)
+    return purged
 
 
 def _reset_for_tests() -> None:
