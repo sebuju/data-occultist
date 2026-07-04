@@ -59,12 +59,10 @@ def patch_arena_shrinkage(infer_session_cls) -> None:
     gpu_mem_limit cap. It looks exactly like a leak because it IS one that never reclaims.
 
     ORT frees unused arena chunks at the END of a run when the run carries
-    ``memory.enable_memory_arena_shrinkage``, but neither RapidOCR distribution passes
-    RunOptions. Rather than reimplement ``__call__`` (the two backends shape their return
-    differently — v1 hands back the raw ``session.run`` list, v3 indexes ``[0]``), we
-    inject the RunOptions into ``session.run`` for the duration of the call and delegate
-    to the ORIGINAL ``__call__``, so each backend keeps its own output handling. ONE
-    patcher serves both. CPU sessions pass through untouched. Idempotent per class;
+    ``memory.enable_memory_arena_shrinkage``, but RapidOCR never passes RunOptions.
+    Rather than reimplement ``__call__``, we inject the RunOptions into ``session.run``
+    for the duration of the call and delegate to the ORIGINAL ``__call__``, so the
+    backend keeps its own output handling. CPU sessions pass through untouched. Idempotent per class;
     best-effort (a no-op if onnxruntime is absent). Costs a few cudaFrees per run — noise
     next to the inference — and idle GPU use falls back to the loaded models instead of
     gigabytes of dead arena. OCR is globally serialized (one shared lock), so the

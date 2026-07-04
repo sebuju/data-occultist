@@ -1,15 +1,14 @@
 """OCR via the new-gen ``rapidocr`` package (PP-OCRv5/v6 models, selectable
 inference engine: onnxruntime / openvino / …). Registered as ``ppocr5``.
 
-Coexists with the old ``rapidocr_onnxruntime`` backend (different distribution,
-different import name) — settings.yaml picks one by name, the other stays one
-name-flip away. Install the extra first: ``pip install -e ".[ppocr5]"`` (or
-``.[ppocr5-openvino]``); without it this module fails to import and the registry
-silently skips it, so ``ppocr5`` simply doesn't resolve.
+The ``rapidocr`` package is a core dependency; pick an inference runtime via an
+extra (``.[gpu]`` for CUDA, ``.[ppocr5-openvino]`` for OpenVINO — plain onnxruntime
+CPU otherwise). If no runtime is importable this module fails to import and the
+registry silently skips it, so ``ppocr5`` simply doesn't resolve.
 
-Differences from the old backend, on purpose:
+Design notes:
 - No ``rec_chunk``/``yield_ms`` GPU pacing — the v3 public API doesn't expose the
-  per-burst hooks those ride on. ``set_scale`` (the detection budget) IS ported:
+  per-burst hooks those ride on. ``set_scale`` (the detection budget) IS supported:
   v3 exposes det-only/rec-only calls plus its crop helper, which is exactly the
   split the downscaled read needs (see :meth:`Rapid3OcrEngine.read_image`).
 - Almost no monkeypatches: cls-off, thread caps and the CUDA conv-search fix are
@@ -39,13 +38,33 @@ from .rapidocr3_map import join_rec, to_lines, to_params
 from .serialize import OCR_LOCK as _INFER_LOCK
 
 if find_spec("rapidocr") is None:   # registry discovery must skip us cleanly
-    raise ImportError("rapidocr (v3) is not installed — pip install -e '.[ppocr5]'")
+    raise ImportError("rapidocr (v3) is not installed — pip install rapidocr")
 
 _BUILD_LOCK = threading.Lock()
 
 # Knobs that change how FAST a read runs but never what it reads — kept out of
 # ocr_sig so tuning them doesn't invalidate the web OCR cache.
 _PERF_ONLY = ("intra_op_num_threads", "inter_op_num_threads", "rec_batch_num")
+
+
+def _preload_onnxruntime(engine_type: str) -> None:
+    """Import onnxruntime NOW, at OCR-engine construction, to stake its DLL claim.
+
+    ``Engine.build()`` builds this OCR engine before the capture backend. The WGC
+    capture backend pulls in native D3D/WinRT DLLs; if those load into the process
+    before onnxruntime, its pybind extension fails to initialise ("DLL initialization
+    routine failed") and every OCR read 500s. Loading onnxruntime first — while we're
+    still the only native module in the process — avoids the clash. RapidOCR imports
+    it lazily at first read (too late), so we force it up front here.
+
+    Only for the onnxruntime engine (openvino brings its own runtime). Best-effort: a
+    genuinely missing/broken runtime surfaces with a full traceback at model build."""
+    if engine_type != "onnxruntime":
+        return
+    try:
+        import onnxruntime  # noqa: F401
+    except Exception:   # noqa: BLE001 - real failure re-raises later at RapidOCR build
+        pass
 
 
 def _to_enums(params: dict) -> dict:
@@ -83,6 +102,7 @@ class Rapid3OcrEngine(OcrEngine):
         self._gpu_mem_gb = 3.0   # CUDA arena ceiling; see _CUDA_PARAMS in the map module
         if self._gpu:
             register_cuda_dlls()
+        _preload_onnxruntime(self.engine_type)
 
     @property
     def gpu_mem_gb(self) -> float:

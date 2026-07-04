@@ -202,12 +202,16 @@ if (-not $pyCmd) {
   Info 'installing data-occultist (dev + desktop extras) ...'
   & $vpy -m pip install -e "$root[dev,desktop]"
 
+  # rapidocr (core dep) ships no ONNX runtime; install exactly one. Never both -
+  # a mixed CPU/GPU onnxruntime clobbers each other's DLLs and fails to load.
   if ($useGpu) {
     Info 'installing GPU OCR (onnxruntime-gpu + CUDA wheels) ...'
     & $vpy -m pip uninstall -y onnxruntime
     & $vpy -m pip install -e "$root[gpu]"
   } else {
-    Info 'using CPU OCR.'
+    Info 'installing CPU OCR (onnxruntime) ...'
+    & $vpy -m pip uninstall -y onnxruntime-gpu
+    & $vpy -m pip install onnxruntime
   }
 }
 

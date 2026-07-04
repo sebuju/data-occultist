@@ -76,7 +76,7 @@ class NumberConfig:
     detect: DetectConfig = field(default_factory=DetectConfig)
     track: TrackConfig = field(default_factory=TrackConfig)
 
-    ocr: str = "rapidocr"
+    ocr: str = "ppocr5"
     ocr_options: dict = field(default_factory=dict)
     min_conf: float = 0.30
     pad: int = 3

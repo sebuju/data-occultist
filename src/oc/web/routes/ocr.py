@@ -122,8 +122,8 @@ def _state() -> dict:
             # This process's dedicated VRAM (bytes; None = unreadable). With a GPU
             # session loaded that is effectively the OCR's footprint.
             "gpu_mem": process_gpu_mem(),
-            # None when the live engine lacks the knob, so the UI hides its control (ppocr5 has
-            # neither downscale nor yield; the old rapidocr backend has both).
+            # None when the live engine lacks the knob, so the UI hides its control
+            # (ppocr5 exposes set_scale but neither downscale nor yield).
             "scale": getattr(ocr, "scale", None) if hasattr(ocr, "set_scale") else None,
             "yield_ms": getattr(ocr, "yield_ms", None) if hasattr(ocr, "set_yield_ms") else None,
             "threads": getattr(ocr, "intra_threads", None),
