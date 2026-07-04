@@ -1,10 +1,17 @@
-"""Switch the capture backend (wgc / printwindow / mss) at runtime, persisted across restarts.
+"""Per-focus capture backends, persisted across restarts.
 
-Mirrors :mod:`routes.ocr`: ``settings.yaml`` holds the baseline ``capture:`` name (built at
-``Engine.build``); a sidecar file overrides it live so a UI pick survives reloads without
-rewriting the yaml. Swapping closes the outgoing backend first — the WGC backend runs a
-free-threaded native capture thread that MUST be joined (``close()``) or interpreter exit
-crashes ("Fatal Python error: ... import state already initialized").
+Capture always runs a per-grab focus switch: a FOREGROUND grabber (used while the game is
+the focused window — cheapest wins, e.g. ``mss``: a CPU BitBlt, no GPU) and a BACKGROUND
+grabber (used while it's occluded/backgrounded — must read the window's own surface, e.g.
+``printwindow`` or ``wgc``). Each is a plain capture backend chosen by name; the live engine
+runs the composite built from the two. Set both to the same name for single-backend
+behaviour.
+
+Mirrors :mod:`routes.ocr`: ``settings.yaml`` holds the baseline (built at ``Engine.build``);
+sidecar files override it live so a UI pick survives reloads without rewriting the yaml.
+Swapping closes the outgoing backend first — the WGC backend runs a free-threaded native
+capture thread that MUST be joined (``close()``) or interpreter exit crashes ("Fatal Python
+error: ... import state already initialized").
 """
 
 from __future__ import annotations
@@ -18,39 +25,62 @@ from ..deps import get_engine, get_settings
 
 router = APIRouter(prefix="/api/capture", tags=["capture"])
 
+# The internal per-grab focus dispatcher's registry name — never shown in the UI; the user
+# only picks its foreground/background sub-backends. A composite can't nest inside itself, so
+# it's excluded from the selectable grabber list.
+_COMPOSITE = "adaptive"
 
-def _backend_file() -> Path:
-    return Path(get_settings().data_dir) / ".capture_backend"
+
+def _sidecar(suffix: str) -> Path:
+    return Path(get_settings().data_dir) / f".capture_{suffix}"
 
 
-def read_backend() -> str:
-    """The persisted backend name, or the ``settings.yaml`` baseline if none/invalid.
-    Tolerates a sidecar naming a backend that no longer registers (e.g. ``wgc`` without
-    the wheel) by falling back to the settings default."""
-    names = capture_names()
+def _sub_names() -> list[str]:
+    """Backends selectable as the foreground/background grabber — every plain backend (the
+    composite dispatcher itself excluded so it can't nest)."""
+    return [n for n in capture_names() if n != _COMPOSITE]
+
+
+def _read_sub(suffix: str, default: str) -> str:
+    """A persisted grabber name (foreground/background), falling back to the settings.yaml
+    capture option then a hard default. Ignores a sidecar naming a gone/composite backend."""
+    valid = _sub_names()
     try:
-        v = _backend_file().read_text(encoding="utf-8").strip()
-        if v in names:
+        v = _sidecar(suffix).read_text(encoding="utf-8").strip()
+        if v in valid:
             return v
     except OSError:
         pass
-    return get_settings().capture.name
+    opt = get_settings().capture.options.get(suffix)
+    return opt if opt in valid else default
 
 
-def _write_backend(name: str) -> None:
+def read_foreground() -> str:
+    return _read_sub("foreground", "mss")
+
+
+def read_background() -> str:
+    return _read_sub("background", "printwindow")
+
+
+def _write_sidecar(suffix: str, value: str) -> None:
     try:
-        p = _backend_file()
+        p = _sidecar(suffix)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(name, encoding="utf-8")
+        p.write_text(value, encoding="utf-8")
     except OSError:
         pass
 
 
-def _swap(name: str) -> None:
-    """Point the live engine at a freshly-built backend, closing the outgoing one first
-    (joins WGC's native thread). No-op if it's already the active backend's class."""
+def _build():
+    return build_capture(_COMPOSITE, foreground=read_foreground(), background=read_background())
+
+
+def _swap() -> None:
+    """Rebuild the live composite from the persisted foreground/background, closing the
+    outgoing backend first (joins WGC's native thread)."""
     engine = get_engine()
-    new = build_capture(name)
+    new = _build()
     old = engine.capture
     engine.capture = new
     close = getattr(old, "close", None)
@@ -62,15 +92,19 @@ def _swap(name: str) -> None:
 
 
 def apply_persisted() -> None:
-    """Apply the persisted backend choice at startup, if it differs from the baseline the
-    engine was built with. Called from the web warmup after the engine exists."""
-    name = read_backend()
-    if name != get_settings().capture.name:
-        _swap(name)
+    """Point the live engine at the persisted foreground/background if they differ from what
+    it was built with. Called from the web warmup after the engine exists."""
+    cap = get_engine().capture
+    want = (read_foreground(), read_background())
+    cur = (getattr(cap, "foreground", None), getattr(cap, "background", None))
+    if cur != want:
+        _swap()
 
 
 def _state() -> dict:
-    return {"name": read_backend(), "names": capture_names()}
+    return {"sub_names": _sub_names(),
+            "foreground": read_foreground(),
+            "background": read_background()}
 
 
 @router.get("/backend")
@@ -79,9 +113,16 @@ def get_backend():
 
 
 @router.post("/backend")
-def set_backend(name: str):
-    if name not in capture_names():
-        return _state()
-    _swap(name)
-    _write_backend(name)
+def set_backend(foreground: str | None = None, background: str | None = None):
+    """Set the foreground and/or background grabber (each a plain backend name), then rebuild
+    the live composite. Unknown names are ignored."""
+    changed = False
+    if foreground in _sub_names():
+        _write_sidecar("foreground", foreground)
+        changed = True
+    if background in _sub_names():
+        _write_sidecar("background", background)
+        changed = True
+    if changed:
+        _swap()
     return _state()

@@ -2,10 +2,14 @@
 # Change a name here (and ensure a module registers it) to swap a backend.
 # A bare string is shorthand for {name: <str>, options: {}}.
 
-capture: wgc          # oc.capture.*    -> grabs pixels. wgc = DWM-composited (no per-grab
-                      #   game re-render hitch; works backgrounded/occluded; capped at
-                      #   monitor refresh). printwindow = window-targeted but forces a
-                      #   fresh render each grab. mss = screen-region (window must be on top).
+capture:              # oc.capture.*    -> grabs pixels. adaptive = pick per grab by focus:
+  name: adaptive      #   foreground -> mss (CPU BitBlt, no GPU) while you play; background ->
+  options:            #   printwindow (window's own surface, occlusion-safe, GPU-light). So GPU
+    foreground: mss   #   capture cost is paid ONLY when the game isn't on top.
+    background: printwindow
+                      # Bare backends: wgc = DWM-composited (no re-render, background-safe, but
+                      #   streams off the GPU). printwindow = window-targeted, forces a fresh
+                      #   render each grab. mss = screen-region only (window must be on top).
 window: win32       # oc.window.*       -> locates the game window (Windows)
 process: psutil     # oc.process.*      -> finds the running game
 ocr:                # oc.ocr.*          -> reads text from regions

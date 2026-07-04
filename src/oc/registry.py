@@ -51,6 +51,7 @@ _IMPL_MODULES = (
     "oc.capture.mss_backend",
     "oc.capture.printwindow_backend",
     "oc.capture.wgc_backend",
+    "oc.capture.adaptive_backend",
     "oc.window.win32_provider",
     "oc.process.psutil_detector",
     "oc.ocr.rapidocr3_engine",
