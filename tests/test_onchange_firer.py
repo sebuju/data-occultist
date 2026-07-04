@@ -56,3 +56,20 @@ def test_not_busy_fires_immediately():
     f._pending[("g", "prices")] = [{"name": "x"}]
     f._flush()
     assert sink == [("prices", ["x"])]
+
+
+def test_empty_records_enqueue_only_on_a_real_change():
+    # a clear / removal announces empty records with data_changed=True -> still enqueued (the
+    # watched data changed); a metadata-only ping (learned scroll positions, data_changed=False)
+    # is not a data change -> dropped, never fires a trigger.
+    f = OnChangeFirer(lambda _g: _Runner([]))
+
+    f("g", "prices", [], data_changed=False)          # metadata ping
+    assert ("g", "prices") not in f._pending
+    if f._timer:
+        f._timer.cancel()
+
+    f("g", "prices", [], data_changed=True)           # a clear
+    assert f._pending.get(("g", "prices")) == []      # enqueued for the flush to fire on_change
+    if f._timer:
+        f._timer.cancel()

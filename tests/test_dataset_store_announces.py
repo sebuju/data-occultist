@@ -14,9 +14,10 @@ def _spy():
     """A change-bus subscriber that counts publishes and remembers the last records list."""
     state = {"n": 0, "last": None}
 
-    def cb(_game, _dataset, records):
+    def cb(_game, _dataset, records, _data_changed=True):
         state["n"] += 1
         state["last"] = records
+        state["changed"] = _data_changed
     return state, cb
 
 

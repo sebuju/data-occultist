@@ -17,8 +17,11 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
-# subscriber signature: cb(game: str, dataset: str, records: list[dict])
-_Sub = Callable[[str, str, list], None]
+# subscriber signature: cb(game, dataset, records, data_changed=True). ``data_changed`` is
+# False only for a metadata-only ping (learned scroll positions) that refreshes the UI but is
+# not a change to the stored data — subscribers that fire on data changes (the OnChangeFirer)
+# must ignore it; the rest don't care and accept it via a default.
+_Sub = Callable[..., None]
 
 _lock = threading.Lock()
 _subs: list[_Sub] = []
@@ -36,14 +39,20 @@ def subscribe(cb: _Sub) -> Callable[[], None]:
     return _off
 
 
-def publish(game: str, dataset: str, records: list | None = None) -> None:
+def publish(game: str, dataset: str, records: list | None = None,
+            *, data_changed: bool = True) -> None:
     """Announce that ``dataset`` of ``game`` changed. ``records`` are the values just
-    added/updated (used by on_change trigger firing); empty/None still notifies the UI."""
+    added/updated (used by on_change trigger firing); empty/None still notifies the UI.
+
+    ``data_changed=False`` marks a metadata-only ping (learned scroll positions): it refreshes
+    the UI but did NOT change the stored data, so it must not fire on_change triggers. A real
+    change with no priceable records (a clear / removal) keeps the default ``True`` — the watched
+    data changed even though there is nothing new to price."""
     with _lock:
         subs = list(_subs)
     for cb in subs:
         try:
-            cb(game, dataset, records or [])
+            cb(game, dataset, records or [], data_changed)
         except Exception:  # noqa: BLE001 - one bad subscriber must never break a write
             pass
 
@@ -79,8 +88,16 @@ class OnChangeFirer:
         self._timer.daemon = True
         self._timer.start()
 
-    def __call__(self, game: str, dataset: str, records: list) -> None:
-        if not records or not dataset:
+    def __call__(self, game: str, dataset: str, records: list,
+                 data_changed: bool = True) -> None:
+        if not dataset:
+            return
+        # A metadata-only ping (learned scroll positions) is not a data change -> never fires.
+        # A real change with no priceable records (a clear / removal) DOES fire: the watched data
+        # changed. The empty ``records`` still enqueue so the trailing-window flush calls
+        # on_change, which re-evaluates every watch (direct = fire; subset = fire iff its output
+        # actually changed) and prices nothing.
+        if not records and not data_changed:
             return
         with self._lock:
             self._pending.setdefault((game, dataset), []).extend(records)

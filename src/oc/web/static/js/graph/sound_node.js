@@ -25,7 +25,6 @@ export function soundParts(x, model) {
                     h("input", { class: "sn-volume", type: "range", min: "0", max: "1", step: "0.05", value: vol }),
                     h("span", { class: "sn-volnum tg-volnum muted" }, `${Math.round(vol * 100)}%`))),
             h("div", { class: "gn-foot" },
-                h("span", { class: "sn-prog muted" }, ""),
-                h("button", { class: "sn-test", title: "play this sound now" }, iconFor("sound"), "test"))),
+                h("button", { class: "sn-test", title: "play this sound now" }, iconFor("sound")))),
     };
 }

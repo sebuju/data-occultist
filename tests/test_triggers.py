@@ -56,13 +56,23 @@ def test_on_change_fires_targets_for_changed_keys_only():
     assert calls == [("relic", ["Soma Prime", "Volt Prime"])]
 
 
-def test_on_change_ignores_empty_and_disabled():
+def test_on_change_ignores_disabled():
     profile = _profile()
     profile.triggers[1].enabled = False
     clock = [0.0]
     tr, calls = _runner(profile, clock)
     assert tr.on_change("relic_rewards", [{"name": "x"}]) == []   # disabled
-    assert tr.on_change("relic_rewards", []) == []               # nothing changed
+    assert tr.on_change("relic_rewards", []) == []               # disabled: no fire even on a clear
+    assert calls == []
+
+
+def test_on_change_fires_on_clear_but_prices_nothing():
+    # a clear / removal announces empty records: the watched data DID change, so a direct watch
+    # fires (last_fired updates), but there is nothing to price -> the producer sweep is skipped
+    # (firing it with no items would price the whole dataset).
+    clock = [0.0]
+    tr, calls = _runner(_profile(), clock)
+    assert tr.on_change("relic_rewards", []) == ["relicwatch"]
     assert calls == []
 
 

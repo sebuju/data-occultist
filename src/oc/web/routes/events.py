@@ -74,7 +74,7 @@ async def events(game: str, request: Request, after: int = 0):
         # is listening, and the GPU watchdog leaves the OCR session alone
         gpu_watch.client_connected()
 
-        def on_change(g: str, dataset: str, records: list) -> None:
+        def on_change(g: str, dataset: str, records: list, data_changed: bool = True) -> None:
             if g == game:
                 # carry the row count so the client can animate "n items flowed into this dataset"
                 push(("dataset", (dataset, len(records or []))))

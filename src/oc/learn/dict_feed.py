@@ -70,7 +70,7 @@ class DictFeeder:
         self._pending: set[tuple[str, str]] = set()
         self._timer: threading.Timer | None = None
 
-    def __call__(self, game: str, dataset: str, records: list) -> None:
+    def __call__(self, game: str, dataset: str, records: list, data_changed: bool = True) -> None:
         if not game or not dataset:
             return
         with self._lock:

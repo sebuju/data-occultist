@@ -32,7 +32,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import changes
+from . import changes, stats_store
 from .change import ChangeEvent, ChangeOp
 from .keys import KeyMap, KeySpec
 
@@ -485,10 +485,12 @@ class DatasetStore:
         self._conn.execute("UPDATE datasets SET batch=? WHERE dataset=?", (self._batch, self._dataset))
         return self._batch
 
-    def _announce(self, records: list) -> None:
+    def _announce(self, records: list, *, data_changed: bool = True) -> None:
         """Tell the change bus this dataset's data changed (UI push + on_change triggers).
-        ``records`` are the values just added/updated, for trigger pricing; [] = UI-only."""
-        changes.publish(self._game, self._dataset, records)
+        ``records`` are the values just added/updated, for trigger pricing; [] = UI-only.
+        ``data_changed=False`` marks a metadata-only ping (learned scroll positions) that
+        refreshes the UI but must not fire on_change triggers."""
+        changes.publish(self._game, self._dataset, records, data_changed=data_changed)
 
     def save(self) -> None:
         """No-op: writes are committed transactionally as they happen. Kept for callers that
@@ -685,7 +687,7 @@ class DatasetStore:
         self._conn.executemany(
             "INSERT OR REPLACE INTO positions(dataset, key, pos, xpos) VALUES(?,?,?,?)",
             [(self._dataset, k, float(v), float(x)) for k, (x, v) in mapping.items()])
-        self._announce([])   # UI-only: refresh the live grid's _pos; no pricing (empty), no rebuild
+        self._announce([], data_changed=False)   # UI-only: refresh the live grid's _pos; not a data change
 
     # ---- ledger / revert ---------------------------------------------------
 
@@ -716,7 +718,12 @@ class DatasetStore:
 
     def clear_data(self) -> None:
         """Empty the dataset — delete every event, keep the (now empty) dataset registered so
-        it still lists. Nothing stays restorable."""
+        it still lists. Nothing stays restorable. Clearing an already-empty dataset changes
+        nothing, so it does NOT bump ``rev`` or announce (an on_change watch must not fire on a
+        no-op clear)."""
+        if not self._conn.execute(
+                "SELECT 1 FROM events WHERE dataset=? LIMIT 1", (self._dataset,)).fetchone():
+            return
         c = self._conn
         c.execute("BEGIN IMMEDIATE")
         try:
@@ -865,7 +872,10 @@ class DatasetStore:
         if row is None or (row["cur_rev"] == row["rev"] and row["cur_agg"] == self._agg):
             return   # materialisation is current for this rev AND aggregate policy
         rev = row["rev"]
-        entries = self._compute_state()   # expensive — but only on a post-write rebuild
+        # the ledger->current rebuild is the "replay" cost — time it under the "rp" op (the
+        # stats-panel "replays" bucket). Only runs on a post-write rebuild, never a steady read.
+        with stats_store.time_block(self._game, f"ds:{self._dataset}", "rp", n_fn=lambda: len(entries)):
+            entries = self._compute_state()   # expensive — but only on a post-write rebuild
         c = self._conn
         c.execute("BEGIN IMMEDIATE")
         try:

@@ -1,11 +1,11 @@
 // Trigger node: fires its target price node(s) on a condition. `interval` fires every N
-// seconds; `on_change` fires when a watched dataset gains rows (pricing just those, live);
-// `manual` never auto-fires (the sweep button drives it). All config persists in the
+// seconds; `on_change` fires whenever a watched dataset gains rows (any write path, not only
+// live collection); `manual` never auto-fires (the sweep button drives it). All config persists in the
 // profile YAML. Targets are wired by dragging the out-port to a price node; watch datasets
 // and targets can also be added from the dropdowns here. Rendering only — wiring is in main.js.
 import { h, frag, TRASH, labCell } from "../dom.js";
 
-const KINDS = [["interval", "interval (periodic)"], ["on_change", "on change (live)"],
+const KINDS = [["interval", "interval (periodic)"], ["on_change", "on change"],
     ["on_app_start", "on app start"], ["on_capture", "on capture start"],
     ["on_live_start", "on live start"], ["on_live_stop", "on live stop"],
     ["on_readout", "on readout (threshold)"], ["manual", "manual only"]];
@@ -100,19 +100,18 @@ export function triggerParts(t, model) {
     const dsHave = new Set(t.dataset_targets || []);
     const dsFree = model.datasets().filter((d) => !dsHave.has(d));
     const dsAction = t.dataset_action || "";
+    const hasAction = dsAction !== "";
     const needsDest = dsAction.startsWith("clone_") || dsAction.startsWith("move_");
     const dsAction_ = frag(
-        labCell("datasets", "datasets this trigger acts on when it fires", true),
-        srcInputs(
-            (t.dataset_targets || []).map((d) => srcChip(d, "ds", "tg-rmds")),
-            "tg-addds",
-            [h("option", { value: "" }, "+ dataset"), dsFree.map((d) => h("option", d))],
-        ),
-        (t.dataset_targets || []).length ? labCell("action", "what to do to the target dataset(s)") : null,
-        (t.dataset_targets || []).length
-            ? h("select", { class: "tg-dsaction" },
-                DS_ACTIONS.map(([v, l]) => h("option", { value: v, selected: v === dsAction }, l)))
-            : null,
+        labCell("action", "what this trigger does to its target dataset(s) when it fires"),
+        h("select", { class: "tg-dsaction" },
+            DS_ACTIONS.map(([v, l]) => h("option", { value: v, selected: v === dsAction }, l))),
+        hasAction && h("div", { class: "gspan" },
+            srcInputs(
+                (t.dataset_targets || []).map((d) => srcChip(d, "ds", "tg-rmds")),
+                "tg-addds",
+                [h("option", { value: "" }, "+ dataset"), dsFree.map((d) => h("option", d))],
+            )),
         needsDest && labCell("into", "destination dataset for clone/move"),
         needsDest && h("select", { class: "tg-dsdest" },
             h("option", { value: "" }, "- dataset -"),
@@ -122,9 +121,9 @@ export function triggerParts(t, model) {
         title: h("input", { class: "gi gi-id tgrename", value: t.id, title: "rename trigger" }),
         body: frag(
             h("div", { class: "lab-grid" },
-                targets,
                 labCell("kind", "how the trigger decides to fire"),
                 h("select", { class: "tg-kind" }, KINDS.map(kopt)),
+                targets,
                 interval, watch, varwatch, dsAction_,
                 labCell("progress", "what the current/last sweep is doing"),
                 h("span", { class: "tg-prog muted" }, "idle"),
