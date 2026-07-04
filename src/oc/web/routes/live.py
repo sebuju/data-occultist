@@ -44,6 +44,19 @@ def any_running() -> bool:
     return any(s.is_running() for s in _sessions.values())
 
 
+def live_readouts(game: str) -> dict:
+    """Current ``{readout_id: value}`` for ``game``'s running live session, or ``{}`` if none.
+    The web-process source of live readouts so a toast fired from a route can interpolate
+    ``{{ro_1}}`` tokens (only a running live collector reads them off-screen)."""
+    s = _sessions.get(game)
+    if s is None or not s.is_running():
+        return {}
+    try:
+        return dict(s.status().get("readouts") or {})
+    except Exception:   # noqa: BLE001 - a status hiccup must never break a fire
+        return {}
+
+
 def _session(game: str, create: bool = False) -> LiveSession:
     s = _sessions.get(game)
     if s is None:

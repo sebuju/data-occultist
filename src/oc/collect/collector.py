@@ -105,6 +105,7 @@ class TickResult:
     dataset: str | None = None              # the dataset records were written to
     changed: list[dict] = field(default_factory=list)  # values added/updated this tick (for triggers)
     reads: list[dict] = field(default_factory=list)     # per-kept-record OCR detail (live debug log only)
+    readouts: dict = field(default_factory=dict)       # live ephemeral readout values read this tick (never stored)
     scroll: tuple[float, float] | None = None  # mirror datasets: visible row-index span (vlo,vhi)
     scroll_meta: dict | None = None            # mirror: {total, viewport, gain, confident, pinned}
 
@@ -156,6 +157,13 @@ class Collector:
         self._tick_no = 0
         self._last_seen_tick: dict[str, int] = {}
         self._pending_batch: set[str] = set()
+        # Latest live readout values (health/bars/counters), ephemeral — never persisted.
+        # Merged each tick and surfaced on TickResult; triggers watch it, the UI reads it.
+        self._readouts: dict[str, object] = {}
+        # Does ANY window declare readouts? Cached so the settle gate can keep its cheap
+        # fast-path (skip a moving frame outright) for HUD-less profiles, yet let a profile
+        # that opts into live readouts classify+read them even while the scene animates.
+        self._any_readouts = any(getattr(w, "readouts", None) for w in profile.windows)
         # Per-window cache of (region signature, last read records) so an unchanged
         # view re-feeds the confirmer without paying for OCR again.
         self._frame_cache: dict[str, tuple[int, list[Record]]] = {}
@@ -302,11 +310,19 @@ class Collector:
         # caught by the confirmer, which needs the SAME read twice before it saves.
         _ts = time.perf_counter()
         th = settle.thumb(frame.image, crop_px=settle.CROP_PX)
+        moving = False
         if th is not None:
             prev, self._settle_thumb = self._settle_thumb, th
             if prev is not None and not settle.is_settled(th, prev):
-                return TickResult(TickStatus.moving)
+                moving = True
         t_settle = (time.perf_counter() - _ts) * 1000.0
+        # Settle gate: a moving frame is too blurred for the grid OCR, so the DATASET path is
+        # skipped below. But live readouts (single stable HUD boxes) must surface even mid-
+        # combat — a HUD animates every frame and would otherwise never settle, so the values
+        # never show until the scene happens to still. So only take the cheap moving-skip here
+        # for a profile with NO readouts; a readouts profile classifies + reads them first.
+        if moving and not self._any_readouts:
+            return TickResult(TickStatus.moving)
 
         # Two-rate throttle: between OCR slots, hold without classifying/OCR-ing (throttled,
         # not idle — the live view keeps showing the current window instead of flickering).
@@ -326,8 +342,25 @@ class Collector:
         window = self._profile.window(window_id)
         if window is None:
             return TickResult(TickStatus.unrecognised, window_id=window_id)
+
+        # Live readouts (health/bars/counters): read EVERY OCR-due tick the window declares
+        # them, BEFORE the motion/state gates below — they're ephemeral HUD values, not the
+        # dataset, so a blurred/animating frame or a state that's invalid-for-save must not
+        # stop them surfacing (or feeding on_readout triggers). read_readouts plausibility-
+        # gates each box, so a garbage mid-animation reading is dropped, never shown.
+        readouts_now: dict[str, object] = {}
+        if window.readouts:
+            vfields = {f.id: f for f in self._profile.fields_for(window)}
+            readouts_now = self._reader.read_readouts(frame, window, vfields)
+            self._readouts.update(readouts_now)
+
+        # Moving frame: readouts were taken above; skip the grid OCR (blurred) and return them.
+        if moving:
+            return TickResult(TickStatus.moving, window_id=window_id, state_id=state_id,
+                              readouts=readouts_now)
         if not self._state_allows_save(window, state_id):
-            return TickResult(TickStatus.state_invalid, window_id=window_id, state_id=state_id)
+            return TickResult(TickStatus.state_invalid, window_id=window_id, state_id=state_id,
+                              readouts=readouts_now)
 
         # Per-stage timing: capture + settle + classify were measured above (windowless
         # until now); emit them under this window now that it's recognised + save-worthy.
@@ -360,6 +393,8 @@ class Collector:
         # re-feeds the same reads, so surfacing them would spam the log with duplicates).
         reads = [] if cache_hit else _debug_reads(kept)
 
+        # (Live readouts were read above, before the motion/state gates — they surface even
+        # on a blurred or state-invalid frame; the value flows on through to TickResult here.)
         dataset = window.dataset_id
         # A window with no dataset produces nothing storable — discard its reads
         # (no confirmer, no store, no disk file). An explicit sink overrides this.
@@ -377,6 +412,7 @@ class Collector:
                 dataset=None,
                 changed=[],
                 reads=reads,
+                readouts=readouts_now,
             )
 
         # Per-detection batching: when this dataset hasn't been fed within the grace window
@@ -530,6 +566,7 @@ class Collector:
             dataset=dataset,
             changed=changed,
             reads=reads,
+            readouts=readouts_now,
             scroll=tick_scroll,
             scroll_meta=tick_scroll_meta,
         )
@@ -540,7 +577,8 @@ class Collector:
         if not self._profile.triggers:
             return None
         from .triggers import TriggerRunner
-        return TriggerRunner(self._profile, self._engine.settings.data_dir)
+        return TriggerRunner(self._profile, self._engine.settings.data_dir,
+                             notifier=self._engine.notifier)
 
     # Pre-classify early returns: the tick never reached the OCR-heavy path, so they
     # don't "spend" an OCR slot (the throttle clock isn't reset on them).
@@ -582,7 +620,16 @@ class Collector:
                 # wherever it comes from, announces itself and the registered firer prices it.
                 # The collector only needs to drive the periodic (interval) triggers here.
                 if triggers is not None:
+                    # Cache this tick's readouts first so an interval/lifecycle toast firing in
+                    # tick() can interpolate {{ro_1}} tokens with the freshest live values.
+                    if result.readouts:
+                        triggers.set_readouts(result.readouts)
                     triggers.tick()
+                    # Live readouts are ephemeral (never written), so they can't ride the
+                    # dataset change bus — evaluate their threshold triggers straight off this
+                    # tick's readings (edge-triggered inside the runner).
+                    if result.readouts:
+                        triggers.on_readout(result.readouts)
                 # Sleep the FAST poll, not the OCR interval — so triggers fire and the OCR
                 # throttle is re-checked often, catching a worthy screen within ~gate_interval.
                 wait = gate_interval if gate_interval > 0 else interval

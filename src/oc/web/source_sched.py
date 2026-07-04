@@ -86,7 +86,8 @@ def _fire_kind_all(settings, fire) -> None:
         try:
             profile = load_live_profile(settings.profiles_dir, game)
             if profile.triggers:
-                fire(TriggerRunner(profile, settings.data_dir))
+                from .deps import get_notifier
+                fire(TriggerRunner(profile, settings.data_dir, notifier=get_notifier()))
         except Exception:   # noqa: BLE001
             continue
 
@@ -112,7 +113,8 @@ def _fire_lifecycle(game: str, settings, kind: str, fire) -> None:
     try:
         profile = load_live_profile(settings.profiles_dir, game)
         if any(t.enabled and t.kind == kind for t in profile.triggers):
-            fire(TriggerRunner(profile, settings.data_dir))
+            from .deps import get_notifier
+            fire(TriggerRunner(profile, settings.data_dir, notifier=get_notifier()))
     except Exception:   # noqa: BLE001
         pass
 

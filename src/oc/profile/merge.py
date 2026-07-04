@@ -50,6 +50,12 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
     triggers = {t.id: t for t in existing.triggers}
     for t in incoming.triggers:
         triggers[t.id] = t
+    toasts = {x.id: x for x in existing.toasts}
+    for x in incoming.toasts:
+        toasts[x.id] = x
+    sounds = {x.id: x for x in existing.sounds}
+    for x in incoming.sounds:
+        sounds[x.id] = x
 
     # Layout is also game-level UI data a single-window save doesn't carry — keep the
     # existing layout unless the incoming edit actually brought one (has nodes).
@@ -72,6 +78,8 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
         producers=list(producers.values()),
         file_sources=list(file_sources.values()),
         triggers=list(triggers.values()),
+        toasts=list(toasts.values()),
+        sounds=list(sounds.values()),
         glyphs=glyphs,
         layout=layout,
     )

@@ -28,5 +28,16 @@ def get_engine() -> Engine:
 
 
 @lru_cache(maxsize=1)
+def get_notifier():
+    """The OS-notification backend, built standalone (cheap — no OCR/capture stack) so the
+    trigger schedulers can raise toasts without forcing the heavy Engine to build. Falls back
+    to the ``null`` no-op notifier off-Windows (see :func:`oc.registry.build_notifier`)."""
+    from ..registry import build_notifier
+
+    s = get_settings()
+    return build_notifier(s.notifier.name, **s.notifier.options)
+
+
+@lru_cache(maxsize=1)
 def get_locator() -> WindowLocator:
     return WindowLocator(get_engine())

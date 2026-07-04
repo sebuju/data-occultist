@@ -79,11 +79,10 @@ def _frame_for(engine, profile, game, capture):
 @router.post("/detect")
 def detect(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None),
            prefer_cache: bool = Query(False)):
-    """Evaluate each window detector + state against the image: matched + what it read.
-    Also evaluates the game-level worthiness ``gate`` (cheap, no-OCR detectors)."""
+    """Evaluate each window detector + state against the image: matched + what it read."""
     window = profile.windows[0] if profile.windows else None
-    if window is None and not profile.detect:
-        return {"detect": {}, "states": {}, "gate": {}}
+    if window is None:
+        return {"detect": {}, "states": {}}
     # Cache on the stashed image + the detectors that act on it (no fields/lexicon — detect
     # is template/text matching only). A box/detector edit changes the dump → fresh read.
     cfg = {"window": window.model_dump(mode="json") if window else None}
@@ -273,6 +272,9 @@ def _read_window(engine, profile, game, capture):
     frame, window, fields, reader = _window_reader(engine, profile, game, capture)
     with ocr_job(engine.ocr) as job:   # one job: the whole window read runs without interleaving another
         result = reader.read_preview(frame, window, fields)
+        # what each readout box reads off THIS image — shown on the canvas at author time
+        # (the same values the live collector would surface). {readout_id: value}.
+        result["readouts"] = reader.read_readouts(frame, window, fields)
     result["ms"] = round(job.ms)   # real compute time (lock-wait excluded) for the log bar
     return frame, window, result
 

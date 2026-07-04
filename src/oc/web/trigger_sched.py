@@ -41,7 +41,9 @@ def _runner_for(game: str, settings):
     sig = _sig(profile)
     cur = _runners.get(game)
     if cur is None or cur[0] != sig:
-        runner = TriggerRunner(profile, settings.data_dir)   # fresh _last seeds to "now"
+        from .deps import get_notifier
+        runner = TriggerRunner(profile, settings.data_dir,   # fresh _last seeds to "now"
+                               notifier=get_notifier())
         _runners[game] = (sig, runner, profile)
         return runner, profile
     _, runner, _old = cur

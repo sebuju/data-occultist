@@ -13,6 +13,7 @@ from pathlib import Path
 from .interfaces import (
     CaptureBackend,
     Corrector,
+    Notifier,
     OcrEngine,
     ProcessDetector,
     WindowClassifier,
@@ -22,6 +23,7 @@ from .registry import (
     build_capture,
     build_classifier,
     build_corrector,
+    build_notifier,
     build_ocr,
     build_process,
     build_window,
@@ -40,6 +42,7 @@ class Engine:
     ocr: OcrEngine
     classifier: WindowClassifier
     corrector: Corrector
+    notifier: Notifier
 
     @classmethod
     def build(cls, settings: Settings | None = None) -> "Engine":
@@ -68,4 +71,5 @@ class Engine:
             ocr=ocr,
             classifier=build_classifier(settings.classifier.name, **classifier_opts),
             corrector=build_corrector(settings.corrector.name, **settings.corrector.options),
+            notifier=build_notifier(settings.notifier.name, **settings.notifier.options),
         )

@@ -47,6 +47,7 @@ class LiveSession:
         self._last_status = "no_window"    # raw TickStatus of the latest tick (why we're not reading)
         self._scroll: tuple[float, float] | None = None   # latest mirror visible row-index span
         self._scroll_meta: dict | None = None             # latest mirror calibration snapshot
+        self._readouts: dict[str, object] = {}           # latest live readout values (ephemeral)
         self._t0 = 0.0
         self._error: str | None = None
         # Debug log ring: recent OCR-heavy ticks (raw reads, corrections, what was written to
@@ -91,6 +92,7 @@ class LiveSession:
             self._last_status = "no_window"
             self._scroll = None
             self._scroll_meta = None
+            self._readouts = {}
             self._error = None
             self._debug.clear()
             self._debug_seq = 0
@@ -149,6 +151,8 @@ class LiveSession:
         with self._lock:
             self._frames += 1
             self._written += result.new
+            if result.readouts:
+                self._readouts.update(result.readouts)   # latest live values for the UI (ephemeral)
             self._last_status = result.status.value   # why we are / aren't reading right now
             # phase = we're in an OCR-worthy screen. A `saved` tick read it; a `throttled` tick
             # is the SAME screen between two-rate OCR slots (not re-read) — both count as "in a
@@ -215,6 +219,7 @@ class LiveSession:
                 "phase_status": self._last_status,  # raw TickStatus — WHY we're not reading (throttled / unrecognised / …)
                 "scroll": list(self._scroll) if self._scroll else None,   # [vlo,vhi] row-index span, or null
                 "scroll_meta": self._scroll_meta,   # {total,viewport,gain,confident,pinned} or null
+                "readouts": dict(self._readouts),   # {readout_id: value} live ephemeral values (never stored)
                 "recognized": [{"key": k, "count": n, "miss": k in ("", "idle", "unrecognised", "no_window")}
                                for k, n in sorted(self._recog.items(), key=lambda kv: kv[1], reverse=True)],
                 "error": self._error,

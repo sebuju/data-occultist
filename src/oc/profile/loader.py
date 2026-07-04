@@ -147,6 +147,81 @@ def _migrate_detect_thresholds(raw: dict) -> dict:
     return raw
 
 
+def _migrate_readout_ids(raw: dict) -> dict:
+    """Readouts used to carry an auto ``ro_N`` id PLUS a free-form ``name`` (the thing the UI
+    edited and a trigger watched), unlike every other node whose id IS its authored string.
+    Adopt each readout's ``name`` as its ``id`` and drop the split, repointing the references
+    that keyed off the old id: ``{{ro_N}}`` tokens in a toast's title/message/attribution and
+    each ``trigger.readout_watch`` entry. A blank/duplicate/unchanged name keeps the old id
+    (only the dead ``name`` field is dropped). Idempotent — a nameless readout is untouched, so
+    this no-ops on every load after the first save."""
+    if not isinstance(raw, dict):
+        return raw
+    windows = raw.get("windows") or []
+    taken = {v["id"] for w in windows for v in (w.get("readouts") or [])
+             if isinstance(v, dict) and v.get("id")}   # every readout id in use (globally unique)
+    renames: dict[str, str] = {}
+    for w in windows:
+        for v in (w.get("readouts") or []):
+            if not isinstance(v, dict):
+                continue
+            nm, old = (v.get("name") or "").strip(), v.get("id")
+            v.pop("name", None)   # the id/name split is gone regardless of the outcome
+            if not nm or nm == old or nm in taken:
+                continue
+            taken.discard(old)
+            taken.add(nm)
+            v["id"] = nm
+            renames[old] = nm
+    if not renames:
+        return raw
+    tok = {old: re.compile(r"\{\{\s*" + re.escape(old) + r"\s*\}\}") for old in renames}
+    for t in (raw.get("toasts") or []):
+        if not isinstance(t, dict):
+            continue
+        for k in ("title", "message", "attribution"):
+            s = t.get(k)
+            if isinstance(s, str) and "{{" in s:
+                for old, new in renames.items():
+                    s = tok[old].sub("{{" + new + "}}", s)
+                t[k] = s
+    for t in (raw.get("triggers") or []):
+        if isinstance(t, dict) and isinstance(t.get("readout_watch"), list):
+            t["readout_watch"] = [renames.get(x, x) for x in t["readout_watch"]]
+    return raw
+
+
+def _migrate_dictionary_ids(raw: dict) -> dict:
+    """Dictionaries carried an auto ``dict_N`` id PLUS a separate ``name`` (shown in the node
+    while a field pinned the id) — the same split readouts had. Adopt each dictionary's ``name``
+    as its ``id``, repointing every ``FieldDef.dictionary`` pin, and drop the split. A blank/
+    duplicate/unchanged name keeps the id (only ``name`` is dropped); ``source`` (the term file)
+    is left untouched. Idempotent — a nameless dictionary is a no-op."""
+    if not isinstance(raw, dict):
+        return raw
+    dicts = raw.get("dictionaries") or []
+    taken = {d["id"] for d in dicts if isinstance(d, dict) and d.get("id")}
+    renames: dict[str, str] = {}
+    for d in dicts:
+        if not isinstance(d, dict):
+            continue
+        nm, old = (d.get("name") or "").strip(), d.get("id")
+        d.pop("name", None)
+        if not nm or nm == old or nm in taken:
+            continue
+        taken.discard(old)
+        taken.add(nm)
+        d["id"] = nm
+        renames[old] = nm
+    if not renames:
+        return raw
+    for w in (raw.get("windows") or []):
+        for f in (w.get("fields") or []):
+            if isinstance(f, dict) and f.get("dictionary") in renames:
+                f["dictionary"] = renames[f["dictionary"]]
+    return raw
+
+
 # ---- dictionaries: terms live in their own files under config/dictionaries/ -------
 
 def dictionaries_dir(profiles_dir: Path | str) -> Path:
@@ -156,8 +231,8 @@ def dictionaries_dir(profiles_dir: Path | str) -> Path:
 
 
 def _default_source(dct) -> str:
-    """Filename for a dictionary that doesn't name one — a slug of its name/id."""
-    base = (dct.name or dct.id or "dictionary").lower()
+    """Filename for a dictionary that doesn't name one — a slug of its id."""
+    base = (dct.id or "dictionary").lower()
     slug = re.sub(r"[^a-z0-9._-]+", "_", base).strip("_") or "dictionary"
     return slug if slug.endswith(".txt") else f"{slug}.txt"
 
@@ -247,7 +322,7 @@ def load_profile(profiles_dir: Path | str, name: str) -> GameProfile:
             return hit[1].model_copy(deep=True)   # pristine cached -> own copy (callers mutate)
     raw = yaml.safe_load(_read_text_retry(path))
     if isinstance(raw, dict):
-        raw = _migrate_detect_thresholds(_migrate_keys(raw))
+        raw = _migrate_dictionary_ids(_migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw))))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
     if sig is not None:
@@ -385,7 +460,7 @@ def read_backup(profiles_dir: Path | str, name: str, stamp: str) -> GameProfile:
     path = backup_path(profiles_dir, name, stamp)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if isinstance(raw, dict):
-        raw = _migrate_detect_thresholds(_migrate_keys(raw))
+        raw = _migrate_dictionary_ids(_migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw))))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
     return profile

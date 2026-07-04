@@ -8,7 +8,7 @@ DatasetStore (the producer applies its own key transform, so this yields raw ite
 from oc import eventlog
 from oc.collect.triggers import TriggerRunner, read_subset_sigs
 from oc.enrich.http_producer import gather_source_names
-from oc.profile.models import GameProfile, JoinSource, ProducerDef, SubsetDef, TriggerDef
+from oc.profile.models import GameProfile, JoinSource, ProducerDef, SoundDef, SubsetDef, TriggerDef
 from oc.store import DatasetStore, KeySpec
 
 
@@ -84,14 +84,20 @@ def test_triggers_publish_activity_log_lines():
     assert all(e["game"] == "g" for e in lines)   # scoped to the profile's game
 
 
-def test_trigger_sound_defaults_empty_and_roundtrips():
-    # optional sound the web UI plays on fire — defaults to "", survives dump/reload
-    assert TriggerDef(id="t").sound == ""
-    assert TriggerDef(id="t").volume == 1.0
-    p = GameProfile(name="g", triggers=[TriggerDef(id="t", sound="chirp.wav", volume=0.4)])
+def test_sound_node_defaults_and_roundtrips():
+    # a sound node the web UI plays on fire — a trigger names its id in `targets`. Defaults to a
+    # silent, full-volume node; survives dump/reload.
+    assert SoundDef(id="s").file == ""
+    assert SoundDef(id="s").volume == 1.0
+    p = GameProfile(name="g",
+                    triggers=[TriggerDef(id="t", targets=["chime"])],
+                    sounds=[SoundDef(id="chime", file="chirp.wav", volume=0.4)])
     reloaded = GameProfile.model_validate(p.model_dump())
-    assert reloaded.triggers[0].sound == "chirp.wav"
-    assert reloaded.triggers[0].volume == 0.4
+    assert reloaded.sounds[0].file == "chirp.wav"
+    assert reloaded.sounds[0].volume == 0.4
+    assert reloaded.triggers[0].targets == ["chime"]
+    # sound/volume are gone from the trigger itself
+    assert not hasattr(reloaded.triggers[0], "sound")
 
 
 def _join_profile():

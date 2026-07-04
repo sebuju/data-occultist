@@ -216,3 +216,32 @@ class WindowClassifier(ABC):
 
     @abstractmethod
     def classify(self, frame: Frame, profile) -> tuple[str, str | None] | None: ...
+
+
+@dataclass
+class ToastSpec:
+    """One OS desktop notification to raise, backend-agnostic — the value a
+    :class:`Notifier` speaks. Authored per toast node in the profile (see
+    ``oc.profile.models.ToastDef``); ``app_name`` is the notification's source label
+    (its AppUserModelID), ``duration`` is ``"short"`` or ``"long"``, ``icon`` an
+    optional app-logo image path, ``muted`` silences the toast sound."""
+
+    title: str = ""
+    message: str = ""
+    app_name: str = "data-occultist"
+    duration: str = "short"
+    icon: str = ""
+    attribution: str = ""
+    muted: bool = False
+
+
+class Notifier(ABC):
+    """Raise an OS desktop notification. Fired server-side when a trigger targets a
+    toast node — never in the capture loop, so a notification backend can never hurt
+    collection robustness. Selected by name (``settings.notifier`` -> ``registry._NOTIFIER``);
+    a backend whose platform lib is missing simply doesn't register and the engine
+    falls back to the ``null`` no-op notifier."""
+
+    @abstractmethod
+    def notify(self, spec: ToastSpec) -> None:
+        """Raise one toast. Must never raise: a failed notification must not crash a fire."""

@@ -240,6 +240,23 @@ class RegionDef(BaseModel):
     enabled: bool = True  # disabled regions are skipped during reads
 
 
+class ReadoutDef(BaseModel):
+    """A definable area that reads a LIVE, EPHEMERAL scalar off a window box — health, a
+    buff counter — into an in-memory value that is never stored in a dataset nor written to
+    disk. Its own graph node (``ro:<win>:<id>``) so triggers can watch it.
+
+    Like a region, ``box`` is a window-fraction rectangle and ``field`` names the
+    :class:`FieldDef` (in the window's ``fields``) that carries the read config — so the
+    readout reuses all the existing field machinery inline.
+    """
+
+    id: str                              # the readout's identity (its authored name), like every
+                                         # other node; a trigger watches it and toasts token {{id}}
+    box: Box                             # window-fraction area
+    field: str = ""                      # FieldDef.id carrying the read config
+    enabled: bool = True                 # disabled readouts are skipped during reads
+
+
 class MatchMode(str, Enum):
     """How a text detector/tell compares its ``text`` against the OCR read.
 
@@ -583,6 +600,9 @@ class WindowDef(BaseModel):
     # scroll-parked list at an arbitrary sub-row offset.
     static_grid: bool = True
     scroll: ScrollDef | None = None
+    # Live, non-persisted scalars read off this window (health, buff counter, a bar's fill).
+    # Read every tick, surfaced to the UI + triggers, NEVER stored in a dataset. See ReadoutDef.
+    readouts: list[ReadoutDef] = Field(default_factory=list)
     preprocess: Preprocess = Field(default_factory=Preprocess)
     # whether this window is attempted in live view (the graph UI's continuous re-read).
     # Off = skipped by the live loop; pure UI control, the collector ignores it.
@@ -728,8 +748,8 @@ class DictionaryDef(BaseModel):
     from those datasets' columns (deduped) and REPLACE the hand-typed list — refreshed
     whenever the fed data changes or the feed config is saved (see ``oc.learn.dict_feed``)."""
 
-    id: str
-    name: str = ""
+    id: str                              # identity (its authored id), like every other node;
+                                         # a field pins it via ``FieldDef.dictionary``
     enabled: bool = True
     # Filename under config/dictionaries/ holding the term list (newline-delimited).
     source: str = ""
@@ -889,6 +909,8 @@ class TriggerDef(BaseModel):
     * ``on_capture``     — fire when a capture session starts (live OR precapture).
     * ``on_live_start``  — fire when the server live-collection session starts (armed collection).
     * ``on_live_stop``   — fire when the server live-collection session stops.
+    * ``on_readout``    — fire when a watched live readout (``readout_watch``) meets ``readout_op``
+      ``readout_value`` — edge-triggered (fires once on entering the condition). See ReadoutDef.
     * ``manual``         — never auto-fires; just declares the wiring (the sweep button drives it).
 
     A trigger's ``targets`` are producer ids (sweep/refresh) or file-source ids (read). It can
@@ -897,14 +919,18 @@ class TriggerDef(BaseModel):
     """
 
     id: str
-    # interval | on_change | on_app_start | on_capture | on_live_start | on_live_stop | manual
+    # interval | on_change | on_app_start | on_capture | on_live_start | on_live_stop | on_readout | manual
     kind: str = "interval"
     interval_s: float = 300.0               # for kind="interval": seconds between fires
     watch: list[str] = Field(default_factory=list)    # for kind="on_change": datasets to watch
-    targets: list[str] = Field(default_factory=list)  # producer / file-source ids this trigger fires
+    # for kind="on_readout": the readout ids this trigger watches, and the condition its value
+    # must meet to fire. readout_op ∈ gte|lte|gt|lt|eq|ne|crosses_up|crosses_down (crosses_* compare
+    # against the previous reading). Edge-triggered — fires once when the condition becomes true.
+    readout_watch: list[str] = Field(default_factory=list)
+    readout_op: str = "gte"
+    readout_value: float = 0.0
+    targets: list[str] = Field(default_factory=list)  # producer / file-source / toast / sound ids this trigger fires
     enabled: bool = True
-    sound: str = ""                         # optional sound file (in the web sounds folder) the UI plays on fire
-    volume: float = 1.0                     # playback volume for ``sound`` (0..1)
     # datasets this trigger acts on, and what it does to them. dataset_action is one of
     # "" (none) | clear | clone_batches | clone_resolved | move_batches | move_resolved.
     # clone/move copy each dataset_target's data into dataset_dest (batches = preserve batch
@@ -912,6 +938,45 @@ class TriggerDef(BaseModel):
     dataset_targets: list[str] = Field(default_factory=list)
     dataset_action: str = ""
     dataset_dest: str = ""                  # destination dataset for clone/move actions
+
+
+class ToastDef(BaseModel):
+    """A *toast node*: raises an OS desktop notification when fired. A trigger names its
+    ``id`` in ``targets`` (like a producer/file-source), so any trigger condition can pop a
+    Windows toast — or the node's own test button fires it on demand. Pure config; the OS
+    call is a :class:`oc.interfaces.Notifier` backend, never in the capture loop.
+
+    Every field maps to a :class:`oc.interfaces.ToastSpec` the notifier renders. ``duration``
+    is ``"short"`` or ``"long"``; ``app_name`` is the notification's source label (its
+    AppUserModelID); ``icon`` is an optional app-logo image path; ``muted`` silences its sound.
+    """
+
+    id: str
+    title: str = ""
+    message: str = ""
+    app_name: str = "data-occultist"
+    duration: str = "short"                 # short | long
+    icon: str = ""                          # optional app-logo image path
+    attribution: str = ""                   # small attribution line under the body
+    muted: bool = False                     # silence the toast sound
+    enabled: bool = True
+
+
+class SoundDef(BaseModel):
+    """A *sound node*: plays an audio file **in the browser** when fired. A trigger names its
+    ``id`` in ``targets`` (like a toast/producer), so any trigger condition can play a sound —
+    or the node's own test button auditions it. Purely a client-side effect: the web UI's
+    fire-detector plays it, so it never touches the collector loop or the server-side scheduler
+    (which simply skips a sound id among a trigger's targets).
+
+    ``file`` is a filename in the web ``static/sounds/`` folder (served at ``/sounds/<file>``);
+    ``volume`` is 0..1 playback gain.
+    """
+
+    id: str
+    file: str = ""                          # sound filename in the web sounds/ folder ("" = silent)
+    volume: float = 1.0                     # playback volume (0..1)
+    enabled: bool = True
 
 
 class SourceMatch(BaseModel):
@@ -1131,6 +1196,8 @@ class GameProfile(BaseModel):
     producers: list[ProducerDef] = Field(default_factory=list)
     file_sources: list[FileSourceDef] = Field(default_factory=list)
     triggers: list[TriggerDef] = Field(default_factory=list)
+    toasts: list[ToastDef] = Field(default_factory=list)
+    sounds: list[SoundDef] = Field(default_factory=list)
     dictionaries: list[DictionaryDef] = Field(default_factory=list)
     # Taught glyph atlas for post-OCR glyph refinement (see GlyphDef / FieldDef.glyph_check).
     glyphs: list[GlyphDef] = Field(default_factory=list)

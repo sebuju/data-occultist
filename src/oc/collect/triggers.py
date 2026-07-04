@@ -103,16 +103,29 @@ def write_subset_sigs(data_dir, game: str, sigs: dict) -> None:
 
 class TriggerRunner:
     def __init__(self, profile, data_dir, *, fire: Callable | None = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 notifier=None, clock: Callable[[], float] = time.monotonic) -> None:
         self._profile = profile
         self._data_dir = data_dir
         self._clock = clock
         self._fire = fire or self._default_fire
+        # OS-notification backend (oc.interfaces.Notifier) for toast-node targets; None ->
+        # toast targets are silently skipped (e.g. a runner built without one). Never used in
+        # the capture loop — only when a fired trigger names a toast node.
+        self._notifier = notifier
+        # Latest {readout_id: value} seen, so a fired toast can interpolate {{ro_1}} tokens in
+        # its text. Readouts are ephemeral (never stored) — the collector pushes them each tick
+        # via set_readouts(); other fire paths (web routes) supply their own values to fire_toast.
+        self._readouts_latest: dict = {}
         # last-fire time per interval trigger; seed to "now" so the first fire waits a
         # full interval rather than firing immediately on startup.
         now = clock()
         self._last: dict[str, float] = {
             t.id: now for t in profile.triggers if t.kind == "interval"}
+        # on_readout edge state: whether each trigger's condition was true last evaluation
+        # (so a held condition fires once, not every tick) + the previous value per watched
+        # readout (for crosses_up/crosses_down, which compare against the prior reading).
+        self._readout_state: dict[str, bool] = {}
+        self._readout_prev: dict[str, float] = {}
 
     # ---- interval ----------------------------------------------------------
 
@@ -206,6 +219,83 @@ class TriggerRunner:
             write_subset_sigs(self._data_dir, self._profile.name, {**stored, **new_sigs})
         return fired
 
+    # ---- on_readout -------------------------------------------------------
+
+    @staticmethod
+    def _num(v) -> float | None:
+        """Coerce a readout value to float, or None if it isn't a number."""
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _readout_meets(cls, op: str, val, thr: float, prev) -> bool:
+        """Does ``val`` satisfy ``op thr``? ``crosses_*`` compare against ``prev`` (the
+        previous reading) so they detect a transition; the level ops test the value alone
+        (the trigger's edge-state stops a held condition from re-firing)."""
+        v = cls._num(val)
+        if v is None:
+            return False
+        if op == "gte":
+            return v >= thr
+        if op == "lte":
+            return v <= thr
+        if op == "gt":
+            return v > thr
+        if op == "lt":
+            return v < thr
+        if op == "eq":
+            return v == thr
+        if op == "ne":
+            return v != thr
+        p = cls._num(prev)
+        if op == "crosses_up":
+            return p is not None and p < thr <= v
+        if op == "crosses_down":
+            return p is not None and p > thr >= v
+        return False
+
+    def set_readouts(self, values: dict) -> None:
+        """Cache the latest ``{readout_id: value}`` readings so a toast fired by ANY trigger
+        (interval / lifecycle / readout) can interpolate ``{{ro_1}}`` tokens with live values.
+        Called by the collector each tick before it evaluates triggers."""
+        if values:
+            self._readouts_latest.update(values)
+
+    def on_readout(self, values: dict) -> list[str]:
+        """Fire ``on_readout`` triggers whose watched readout(s) meet their condition.
+
+        Edge-triggered: a trigger fires the instant its condition becomes true (false->true),
+        not every tick while it holds. ``values`` is ``{readout_id: value}`` read this tick.
+        Returns fired trigger ids. Variables are ephemeral — nothing here touches a store."""
+        if not values:
+            return []
+        self.set_readouts(values)   # a readout-fired toast interpolates the freshest values
+        fired: list[str] = []
+        for t in self._profile.triggers:
+            if not t.enabled or t.kind != "on_readout":
+                continue
+            watched = [w for w in t.readout_watch if w in values]
+            cond = any(self._readout_meets(t.readout_op, values[w], t.readout_value, self._readout_prev.get(w))
+                       for w in watched)
+            was = self._readout_state.get(t.id, False)
+            self._readout_state[t.id] = cond
+            if cond and not was:
+                logev(f"trigger {t.id} fired (readout {t.readout_op} {t.readout_value})",
+                      level="run", game=self._profile.name)
+                slog(f"trigger {t.id} fired (readout {t.readout_op} {t.readout_value})",
+                     game=self._profile.name)
+                self._fire_targets(t, items=None)
+                record_fire(self._data_dir, self._profile.name, t.id)
+                fired.append(t.id)
+        # remember this tick's readings so crosses_* can see the transition next tick
+        for w, v in values.items():
+            n = self._num(v)
+            if n is not None:
+                self._readout_prev[w] = n
+        return fired
+
     # ---- helpers -----------------------------------------------------------
 
     def _watch_justifies(self, w: str, dataset: str, stored: dict,
@@ -275,15 +365,20 @@ class TriggerRunner:
 
     def _fire_targets(self, trigger, items) -> None:
         """Dispatch each target id by what owns it: a producer sweeps/refreshes, a file source
-        reads, and each ``dataset_targets`` entry runs the trigger's dataset action."""
+        reads, a toast node raises an OS notification, and each ``dataset_targets`` entry runs
+        the trigger's dataset action."""
         by_producer = {p.id: p for p in self._profile.producers}
         by_source = {s.id: s for s in self._profile.file_sources}
+        by_toast = {x.id: x for x in getattr(self._profile, "toasts", [])}
         for tid in trigger.targets:
             if tid in by_producer:
                 fire_target(self._profile.name, by_producer[tid], items,
                             trigger_id=trigger.id, fire=self._fire)
             elif tid in by_source:
                 self._read_source(by_source[tid], trigger.id)
+            elif tid in by_toast:
+                fire_toast(self._profile.name, by_toast[tid], self._notifier,
+                           trigger_id=trigger.id, values=self._readouts_latest)
         if getattr(trigger, "dataset_action", ""):
             from ..store.dataset_ops import fire_dataset_target
             for ds in getattr(trigger, "dataset_targets", []):
@@ -323,6 +418,36 @@ def fire_target(game: str, price_node, items, *, trigger_id: str,
         return True
     except Exception:   # a misbehaving fire must never crash the collector loop / a request
         return False
+
+
+def toast_spec(toast, values: dict | None = None):
+    """Build the :class:`oc.interfaces.ToastSpec` for a toast node, interpolating ``{{ro_1}}``
+    tokens in its title/message/attribution against ``values`` (a ``{readout_id: value}`` map)
+    — the ONE place a toast's text is rendered, shared by the fire funnel and the test route so
+    a test toast reads identically to a fired one. ``app_name``/``icon`` are literal."""
+    from ..interfaces import ToastSpec
+    from .templating import render_template
+    return ToastSpec(
+        title=render_template(toast.title, values),
+        message=render_template(toast.message, values),
+        app_name=toast.app_name, duration=toast.duration, icon=toast.icon,
+        attribution=render_template(toast.attribution, values), muted=toast.muted)
+
+
+def fire_toast(game: str, toast, notifier, *, trigger_id: str, values: dict | None = None) -> bool:
+    """Fire ONE toast-node target — the single funnel both the collector dispatch and the web
+    fire route use, so a manual fire behaves identically to an automatic one. Builds the spec
+    (interpolating ``{{ro_1}}`` tokens against ``values``) and hands it to the ``notifier``, then
+    emits the trigger->toast control pulse. A disabled node or a missing notifier is a no-op; the
+    notifier itself swallows OS errors, so this never crashes a fire. Returns True if raised."""
+    if toast is None or not getattr(toast, "enabled", True) or notifier is None:
+        return False
+    try:
+        notifier.notify(toast_spec(toast, values))
+    except Exception:   # noqa: BLE001 - a misbehaving notifier must never crash the loop / a request
+        return False
+    publish_flow(game, "trigger", f"trigger:{trigger_id}", f"toast:{toast.id}", 1)
+    return True
 
 
 def read_source_target(game: str, source, data_dir, *, profile, trigger_id: str) -> bool:

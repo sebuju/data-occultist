@@ -38,7 +38,7 @@ def run(args) -> int:
     # write announces itself. Register the firer for this game.
     if profile.triggers:
         from ..enrich.price_runner import sweep_status
-        runner = TriggerRunner(profile, engine.settings.data_dir)
+        runner = TriggerRunner(profile, engine.settings.data_dir, notifier=engine.notifier)
         # defer firing while a sweep is still writing the dataset -> one fire per sweep, not per row
         subscribe(OnChangeFirer(lambda _g: runner,
                                 busy=lambda g, ds: bool(sweep_status(g, ds).get("running"))))

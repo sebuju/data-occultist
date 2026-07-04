@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from ...collect.triggers import fire_target, read_source_target, record_fire
+from ...collect.triggers import fire_target, fire_toast, read_source_target, record_fire
 from ...enrich.price_runner import start_sweep, sweep_status
 from ...profile import list_profiles, load_profile
-from ..deps import get_settings
+from ..deps import get_notifier, get_settings
+from .live import live_readouts
 
 router = APIRouter(prefix="/api/triggers", tags=["triggers"])
 
@@ -37,6 +38,8 @@ def list_triggers(game: str):
                    for pid in t.targets if pid in by_id]
         out.append({"id": t.id, "kind": t.kind, "interval_s": t.interval_s,
                     "watch": t.watch, "enabled": t.enabled, "targets": targets,
+                    "readout_watch": t.readout_watch, "readout_op": t.readout_op,
+                    "readout_value": t.readout_value,
                     "dataset_targets": t.dataset_targets, "dataset_action": t.dataset_action,
                     "dataset_dest": t.dataset_dest})
     return {"game": game, "triggers": out}
@@ -52,6 +55,7 @@ def fire_trigger(game: str, trigger_id: str):
         raise HTTPException(status_code=404, detail=f"No trigger {trigger_id!r}")
     by_producer = {p.id: p for p in profile.producers}
     by_source = {s.id: s for s in profile.file_sources}
+    by_toast = {x.id: x for x in profile.toasts}
     data_dir = get_settings().data_dir
     # SAME funnels the collector uses (fire_target for producers, read_source_target for file
     # sources) so a manual fire behaves identically to an automatic one — no path drifts. A
@@ -74,6 +78,12 @@ def fire_trigger(game: str, trigger_id: str):
         if src is not None and read_source_target(game, src, data_dir, profile=profile,
                                                   trigger_id=trigger_id):
             started.append({"source": pid})
+            fired = True
+            continue
+        toast = by_toast.get(pid)
+        if toast is not None and fire_toast(game, toast, get_notifier(), trigger_id=trigger_id,
+                                            values=live_readouts(game)):
+            started.append({"toast": pid})
             fired = True
     # dataset actions (clear / clone / move) — same funnel the collector dispatch uses, so a
     # manual test fire behaves identically to an automatic one.

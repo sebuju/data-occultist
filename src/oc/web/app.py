@@ -34,6 +34,7 @@ from .routes import (
     sounds,
     sources,
     stats,
+    toasts,
     triggers,
     video,
 )
@@ -195,10 +196,14 @@ async def lifespan(_app: FastAPI):
         from ..runtime import load_live_profile
         from ..store.changes import OnChangeFirer, subscribe
 
+        from .deps import get_notifier
+
         def _runner_for(game: str):
             try:
                 profile = load_live_profile(get_settings().profiles_dir, game)
-                return TriggerRunner(profile, get_settings().data_dir) if profile.triggers else None
+                if not profile.triggers:
+                    return None
+                return TriggerRunner(profile, get_settings().data_dir, notifier=get_notifier())
             except Exception:  # noqa: BLE001
                 return None
         # defer firing while a sweep is still writing the dataset -> one fire per sweep, not per row
@@ -301,6 +306,7 @@ def create_app() -> FastAPI:
     app.include_router(prices.router)
     app.include_router(activity.router)
     app.include_router(triggers.router)
+    app.include_router(toasts.router)
     app.include_router(sources.router)
     app.include_router(sounds.router)
     app.include_router(dictionaries.router)

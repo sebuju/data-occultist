@@ -474,6 +474,45 @@ class RegionReader:
             out.append(records[ci])
         return out, sentinel_ypos
 
+    def read_readouts(self, frame: Frame, window: WindowDef,
+                       fields: dict[str, FieldDef]) -> dict[str, object]:
+        """Read the window's live, non-persisted readouts (health, a buff counter) ->
+        ``{readout_id: value}``. Each reads its box through the linked field, exactly like
+        a region.
+
+        A read that fails its field's plausibility gate (min confidence / out of range) or
+        yields nothing is OMITTED — a trigger must never fire on a garbage/occluded reading.
+        Nothing here is stored; the collector surfaces the dict and hands it to triggers.
+        """
+        out: dict[str, object] = {}
+        cw, ch = frame.client.w, frame.client.h
+        for v in window.readouts:
+            if not v.enabled:
+                continue
+            box = v.box.to_fraction().to_pixels(cw, ch)
+            fdef = fields.get(v.field)
+            if self._is_pip(fdef):
+                out[v.id] = self._pip_value(frame, box, fdef)
+                continue
+            text, conf = self._focus_reads(frame, window, [(v.id, box)]).get(v.id) or ("", 0.0)
+            substituted = None
+            if self._resolver and fdef:
+                resolved = self._resolver.resolve(fdef, text, conf)
+                value, substituted = resolved.value, resolved.substituted
+            elif fdef:
+                value, substituted = coerce_rule(fdef, text)
+            else:
+                value = text or None
+            if value is None:
+                continue
+            # a genuine read must clear the field's confidence floor and plausibility range
+            if substituted is None and fdef:
+                mc = getattr(fdef, "min_confidence", 0.0) or 0.0
+                if (mc and conf < mc) or out_of_range(fdef, value):
+                    continue
+            out[v.id] = value
+        return out
+
     def region_signature(self, frame: Frame, window: WindowDef) -> int | None:
         """Cheap hash of the grid region's pixels, to detect an unchanged view.
 
