@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, HTTPException
 
 from ...profile import list_profiles, load_profile, save_profile
 from ...profile.pretty import load_pretty, save_pretty
+from ...profile.pretty_repoint import repoint_pretty
 from ...runtime import apply_overrides, clear_override, get_overrides, set_override
 from ...store import store_for
 from ..deps import get_settings
@@ -39,6 +40,20 @@ def put_pretty(game: str, doc: dict = Body(...)):
     settings = _require_game(game)
     path = save_pretty(settings.profiles_dir, game, doc)
     return {"saved": str(path)}
+
+
+@router.post("/{game}/repoint")
+def repoint(game: str, body: dict = Body(...)):
+    """Rewrite ``{{token}}`` references after a graph-node rename so Pretty tokens don't go
+    stale. Body: ``{rewrites: [{kind, old, new, win?}]}``. Best-effort — a no-op (0 hits) never
+    touches the file. Works even when Pretty was never opened this session (edits the doc on
+    disk; a view switch reloads it)."""
+    settings = _require_game(game)
+    doc = load_pretty(settings.profiles_dir, game)
+    n = repoint_pretty(doc, (body or {}).get("rewrites") or [])
+    if n:
+        save_pretty(settings.profiles_dir, game, doc)
+    return {"repointed": n}
 
 
 # ---- transient overrides ----------------------------------------------------------
