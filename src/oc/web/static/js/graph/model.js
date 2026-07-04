@@ -790,20 +790,24 @@ export class GraphModel {
         this.profile.dictionaries.push({ id, enabled: true, source, terms: opts.terms || [] });
         return id;
     }
-    // Every FieldDef that pins a dictionary — the single place dict ids are referenced, so
-    // remove/rename repoint through here (a field's `dictionary` is a soft ref; the resolver
-    // already falls back to the pooled default when it points at nothing).
-    _dictFields() { return (this.profile.windows || []).flatMap((w) => w.fields || []); }
+    // Every `dictionary` RULE that pins a dictionary (its `dict_id`) — the single place dict ids
+    // are referenced now that dictionary config lives on the rule, so remove/rename repoint
+    // through here. dict_id is a soft ref; the resolver falls back to the pooled default when it
+    // points at nothing.
+    _dictRules() {
+        return (this.profile.windows || []).flatMap((w) => w.fields || [])
+            .flatMap((f) => (f.rules || []).filter((r) => r.then === "dictionary"));
+    }
     removeDictionary(id) {
         this.profile.dictionaries = (this.profile.dictionaries || []).filter((d) => d.id !== id);
-        for (const f of this._dictFields()) if (f.dictionary === id) f.dictionary = "";   // pinned field -> pooled
+        for (const r of this._dictRules()) if (r.dict_id === id) r.dict_id = "";   // pinned rule -> pooled
     }
     renameDictionary(oldId, newId) {
         newId = (newId || "").trim();
         const d = this.dictionary(oldId);
         if (!d || !newId || newId === oldId || this.dictionary(newId)) return false;
         d.id = newId;
-        for (const f of this._dictFields()) if (f.dictionary === oldId) f.dictionary = newId;   // keep pins pointing at it
+        for (const r of this._dictRules()) if (r.dict_id === oldId) r.dict_id = newId;   // keep pins pointing at it
         return true;
     }
     setDictionaryTerms(id, terms) { const d = this.dictionary(id); if (d) d.terms = terms; }
@@ -1116,7 +1120,7 @@ export class GraphModel {
         w.fields = w.fields || [];
         const fid = id || `field_${_fieldSeq++}`;
         if (!w.fields.some((f) => f.id === fid))
-            w.fields.push({ id: fid, type: "text", extract: "whole", separator: "/", fuzzy: 0.82 });
+            w.fields.push({ id: fid, type: "text", rules: [] });   // value processing is authored as rules
     }
     // ---- regions (drawn on the window image) --------------------------------
 

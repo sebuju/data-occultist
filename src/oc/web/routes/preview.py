@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from ...collect.commit import commit_records
+from ...collect.fields import run_rules
 from ...collect.glyph_match import glyph_atlas
 from ...collect.items import item_templates
 from ...collect.reader import RegionReader
@@ -331,6 +332,30 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
         cache.put(key, out)
         cache.save()
     return out
+
+
+@router.post("/rule_trace")
+def rule_trace(profile: GameProfile, game: str | None = Query(None),
+               capture: str | None = Query(None)):
+    """Debug EVERY field's rule pipeline in ONE window read: take a representative read of
+    each field off the CURRENT canvas, run its rules over that value, and return the
+    per-rule ``in -> out`` trace + final value per field. The field nodes all pull from
+    this single batch (coalesced client-side) so the trace fleet costs one OCR pass, not
+    one per node. Returns ``{fields: {field_id: {trace, value, dropped, raw}}}``."""
+    if not profile.windows:
+        raise HTTPException(status_code=400, detail="profile has no window")
+    engine = get_engine()
+    frame, window, fields, reader = _window_reader(engine, profile, game, capture)
+    with ocr_job(engine.ocr):
+        raws = reader.representative_raws(frame, window, fields)
+    out = {}
+    for fid, field in fields.items():
+        raw, conf = raws.get(fid, ("", 0.0))
+        res = run_rules(field, raw, dict_hook=reader._resolver.apply_dictionary,
+                        confidence=conf, trace=True)
+        out[fid] = {"trace": res.trace or [], "value": res.value,
+                    "dropped": res.dropped, "raw": raw}
+    return {"fields": out}
 
 
 @router.post("/preview/commit")

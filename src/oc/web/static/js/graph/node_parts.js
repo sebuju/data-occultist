@@ -10,7 +10,7 @@
 //   body  -> a Node or DocumentFragment
 //   ports -> a Node/frag or null (default null)
 //   pulse -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
-import { h, frag, svg, TRASH } from "../dom.js";
+import { h, frag, svg, TRASH, PLUS, COPY, PASTE } from "../dom.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
 import { ITEM_KINDS } from "./imaging.js";
@@ -63,7 +63,7 @@ export const vtShowRemoved = new Map();
 export const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds (rank)"]];
 export const EXTRACTS = ["whole", "number", "number_before", "number_after", "text_before", "text_after"];
 export const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text_after"]);
-// how the game dictionary participates in a text field's reads (FieldDef.dict_mode)
+// how the game dictionary participates in a ``dictionary`` rule (FieldRule.dict_mode)
 export const DICT_MODES = [
     ["off", "off"],
     ["correct", "correct"],
@@ -71,20 +71,63 @@ export const DICT_MODES = [
     ["correct_drop", "correct + drop"],
 ];
 
-// Conditional fallback rules (FieldRule). `when` is a predicate on the RAW read's
-// shape; `then` substitutes a value or drops the record. Rules run in order, first
-// match wins. Generalises the old empty / if_number / if_text one-offs.
+// The rule pipeline (FieldRule). The raw read flows top-to-bottom through a field's rules;
+// each fires when its `when` holds against the CURRENT value, then its `then` rewrites the
+// value (and flow continues) or `drop` early-returns (record dropped). Which ops a field can
+// use depends on its type — the codes gate the menus (see okRuleType), mirroring the plan's
+// type table. Codes: any | t=text | n=number | tn=text+number | nc=number+count(pips/diamonds).
+
+// condition (`when`): [value, label, needsArg, typeCode]
 export const RULE_WHEN = [
-    ["empty", "is empty"],
-    ["no_digit", "has no digit"],
-    ["all_digit", "is all digits"],
-    ["has_digit", "has a digit"],
-    ["no_letter", "has no letter"],
-    ["all_letter", "is all letters"],
-    ["has_letter", "has a letter"],
-    ["always", "always"],
+    ["always", "always", false, "any"],
+    ["empty", "is empty", false, "any"],
+    ["no_digit", "has no digit", false, "tn"],
+    ["all_digit", "is all digits", false, "tn"],
+    ["has_digit", "has a digit", false, "tn"],
+    ["no_letter", "has no letter", false, "tn"],
+    ["all_letter", "is all letters", false, "tn"],
+    ["has_letter", "has a letter", false, "tn"],
+    ["below", "if below", true, "nc"],
+    ["above", "if above", true, "nc"],
+    ["equal", "if equal", true, "any"],
+    ["not_equal", "if not equal", true, "any"],
+    ["contains", "if contains", true, "t"],
 ];
-export const RULE_THEN = [["set", "set value"], ["drop", "drop record"]];
+// action (`then`): [value, label, typeCode]
+export const RULE_THEN = [
+    ["set", "set value", "any"],
+    ["drop", "drop", "any"],
+    ["lowercase", "lowercase", "t"],
+    ["uppercase", "uppercase", "t"],
+    ["fold", "fold accents", "t"],
+    ["round", "round", "n"],
+    ["floor", "floor", "n"],
+    ["ceil", "ceil", "n"],
+    ["extract", "extract", "tn"],
+    ["dictionary", "dictionary", "t"],
+];
+const RULE_WHEN_ARG = new Set(RULE_WHEN.filter((r) => r[2]).map((r) => r[0]));
+const WHEN_CODE = Object.fromEntries(RULE_WHEN.map(([v, , , c]) => [v, c]));
+const THEN_CODE = Object.fromEntries(RULE_THEN.map(([v, , c]) => [v, c]));
+
+// whether a rule op's type code is allowed for a field of `ftype` (see the codes above)
+export function okRuleType(code, ftype) {
+    if (code === "any") return true;
+    const isText = ftype === "text", isNum = ftype === "number";
+    const isCount = ftype === "pips" || ftype === "diamonds";
+    if (code === "t") return isText;
+    if (code === "n") return isNum;
+    if (code === "tn") return isText || isNum;
+    if (code === "nc") return isNum || isCount;
+    return false;
+}
+
+// whether a whole rule fits `ftype` (its when AND then are both valid) — a rule that doesn't
+// is shown greyed and IGNORED by the executor (mirrors oc.collect.fields.rule_applies).
+export function ruleValidForType(r, ftype) {
+    return okRuleType(WHEN_CODE[r.when || "always"] ?? "any", ftype)
+        && okRuleType(THEN_CODE[r.then || "set"] ?? "any", ftype);
+}
 
 // <option> nodes for a field's dictionary picker: "all" (every enabled dictionary pooled)
 // + each named dictionary. `sel` is the field's pinned DictionaryDef.id ("" = pooled).
@@ -234,16 +277,23 @@ export function windowDetects(w, opts = {}) {
             : h("div", { class: "wd-collide", title: "cross-window: detection picks ONE winner across all windows — does this window actually win, or does a sibling also match / steal it" }));
 }
 
-// One reorderable priority row: a name + ▲/▼, HIGHEST on top. The single row primitive shared by
-// the item-template priority list AND the window-priority list (rule 7 — one builder, two callers,
-// no copy). The caller passes the wiring-hook classes (row/name/move) so main.js binds the right
-// move + name-jump handlers, and the per-context tooltips.
+// The ▲/▼ move pair shared by every reorderable list — priority rows AND rule rows (rule 7:
+// one primitive, many callers, no copied markup). `data` tags each button so the caller's
+// handler resolves the target; the ends are disabled. HIGHEST/first on top.
+export function moveButtons(i, count, mvCls, data, { upTitle, downTitle } = {}) {
+    return frag(
+        h("button", { class: mvCls, dataset: { ...data, d: "-1" }, disabled: i === 0, title: upTitle || "move up" }, "▲"),
+        h("button", { class: mvCls, dataset: { ...data, d: "1" }, disabled: i === count - 1, title: downTitle || "move down" }, "▼"));
+}
+
+// One reorderable priority row: a name + ▲/▼, HIGHEST on top. Shared by the item-template
+// priority list AND the window-priority list. The caller passes the wiring-hook classes
+// (row/name/move) so main.js binds the right move + name-jump handlers, and the tooltips.
 function priorityRow(id, i, count, { rowCls, nameCls, mvCls, nameTitle, upTitle, downTitle, dot }) {
     return h("div", { class: rowCls, dataset: { id } },
         dot && h("span", { class: "live-wdot", title: "live off" }),   // live-recognition dot (wp-rows only); syncWpDots toggles .on
         h("span", { class: nameCls, title: nameTitle }, id),
-        h("button", { class: mvCls, dataset: { id, d: "-1" }, disabled: i === 0, title: upTitle }, "▲"),
-        h("button", { class: mvCls, dataset: { id, d: "1" }, disabled: i === count - 1, title: downTitle }, "▼"));
+        moveButtons(i, count, mvCls, { id }, { upTitle, downTitle }));
 }
 
 // Item templates listed in PRIORITY order, HIGHEST first — the top row wins when cells
@@ -290,68 +340,86 @@ export function coverControls(it) {
             "cover y % ", h("input", { type: "number", class: "ccover", dataset: { k: "y" }, step: "5", min: "0", max: "100", value: pct(it.min_cover_y, 0.75) })));
 }
 
-// One field's fallback-rule rows (FieldRule list). `cls` is the change-class the node
-// wiring listens on; `fid` (item fields) tags each control so the wiring resolves the
-// field. The value input shows only for a `set` rule (a `drop` needs none).
+// The operand input(s) a rule's `then` needs, shown inline after the action select. Only the
+// relevant ones for the chosen action appear (a `drop`/`lowercase`/… needs none). `d` is the
+// shared dataset ({ri, fid?}) the node wiring reads.
+function ruleThenOperands(r, then, d) {
+    if (then === "set")
+        return [h("input", { class: "rule-val", dataset: d, value: r.value || "", placeholder: "value", title: "value written into the field" })];
+    if (then === "extract")
+        return [
+            h("select", { class: "rule-strategy", dataset: d, title: "which piece to pull out of the value" },
+                EXTRACTS.filter((v) => v !== "whole").map((v) => h("option", { value: v, selected: (r.strategy || "number") === v }, v))),
+            NEEDS_SEP.has(r.strategy || "number") && h("input", { class: "rule-sep", dataset: d, value: r.sep || "/", placeholder: "sep", title: "split token (e.g. / or Rank)" }),
+        ];
+    if (then === "dictionary") {
+        const hasDicts = (model.profile.dictionaries || []).length;
+        const dmode = r.dict_mode || "correct";
+        return [
+            h("select", { class: "rule-dmode", dataset: d, title: "off = not consulted; correct = fix words; drop = validate only; correct + drop = fix, drop unmatchable" },
+                DICT_MODES.map(([v, t]) => h("option", { value: v, selected: dmode === v }, t))),
+            (hasDicts && dmode !== "off") && h("select", { class: "rule-udict", dataset: d, title: "which authored dictionary (all = every enabled one pooled)" }, dictOptions(r.dict_id || "")),
+            dmode !== "off" && h("input", { type: "number", class: "rule-fuzzy", dataset: d, step: "0.05", min: "0", max: "1", value: r.fuzzy ?? 0.82, title: "similarity (0-1) an uncertain read must reach to snap to a known word" }),
+        ];
+    }
+    return [];
+}
+
+// One field's RULE PIPELINE rows (FieldRule list) — the value flows top-to-bottom. Each row:
+// ▲/▼ reorder, the `when` condition (+ its arg), the `then` action (+ its operands), delete;
+// and a `.frule-trace` slot below the row that the node wiring fills with `in → out` from a
+// live read of the current canvas. Menus are filtered to the field's type (okRuleType).
+// `cls` is unused here (rules have their own classes); `fid` (item fields) tags each control.
 export function ruleRows(fd, cls, fid) {
     const da = fid ? { fid } : {};
     const rules = fd.rules || [];
-    if (!rules.length) return h("div", { class: "muted frule-empty" }, "no rules — the read is used as-is");
+    const ftype = fd.type || "text";
+    // every op is listed; ones invalid for this type are DISABLED (greyed) so the current value
+    // still shows and can't be re-picked. `opts([v,label,code],...)` builds those <option>s.
+    const opts = (list, cur, codeIdx) => list.map((row) => h("option",
+        { value: row[0], selected: cur === row[0], disabled: !okRuleType(row[codeIdx], ftype) }, row[1]));
+    if (!rules.length) return h("div", { class: "muted frule-empty" }, "no rules — the read passes through");
     return rules.map((r, i) => {
-        const showVal = (r.then || "set") === "set";
-        return h("div", { class: "frule", dataset: { ri: i } },
-            h("select", { class: "rule-when", dataset: { ri: i, ...da }, title: "condition tested on the raw read" },
-                RULE_WHEN.map(([v, t]) => h("option", { value: v, selected: (r.when || "empty") === v }, t))),
-            h("select", { class: "rule-then", dataset: { ri: i, ...da }, title: "what to do when it matches" },
-                RULE_THEN.map(([v, t]) => h("option", { value: v, selected: (r.then || "set") === v }, t))),
-            showVal && h("input", { class: "rule-val", dataset: { ri: i, ...da }, value: r.value || "", placeholder: "value", title: "value substituted into the field" }),
-            h("button", { class: "rule-del danger", dataset: { ri: i, ...da }, title: "remove this rule" }, TRASH()));
+        const when = r.when || "always", then = r.then || "set";
+        const d = { ri: i, ...da };
+        const invalid = !ruleValidForType(r, ftype);   // whole rule doesn't fit -> greyed + ignored
+        return h("div", { class: `frule${invalid ? " frule-invalid" : ""}`, dataset: { ri: i },
+                          title: invalid ? "this rule doesn't apply to the field's type — greyed out and ignored" : "" },
+            h("div", { class: "frule-head" },
+                moveButtons(i, rules.length, "rulemv", d, { upTitle: "run earlier", downTitle: "run later" }),
+                h("select", { class: "rule-when", dataset: d, title: "condition tested on the running value" },
+                    opts(RULE_WHEN, when, 3)),
+                RULE_WHEN_ARG.has(when) && h("input", { class: "rule-arg", dataset: d, value: r.arg || "", placeholder: "value", title: "value the condition compares against" }),
+                h("span", { class: "rule-arrow muted" }, "→"),
+                h("select", { class: "rule-then", dataset: d, title: "action when it matches (drop stops here; others rewrite the value and continue)" },
+                    opts(RULE_THEN, then, 2)),
+                ...ruleThenOperands(r, then, d),
+                h("button", { class: "rule-del danger", dataset: d, title: "remove this rule" }, TRASH())),
+            h("div", { class: "frule-trace muted", dataset: d }));
     });
 }
 
-// The per-field config body, SHARED by the region node and the item-field node (one
-// renderer, not two copies). Inputs are grouped under .fgrp sub-headings and only the
-// ones that DO something for the current type/mode are shown. `cls` is the wiring's
-// change-class ("fset" | "ffset"); `fid` (item fields) tags each control.
+// The per-field config body, SHARED by the region / item-field / readout nodes (one renderer,
+// not three copies). All value processing is authored in the rule PIPELINE below; only the
+// capture/confidence knobs (type + isolate + glyph-check + conf) sit up top. `cls` is the
+// wiring's change-class ("fset" | "ffset" | "roset"); `fid` (item fields) tags each control.
 export function fieldConfigBody(fd, cls, fid) {
     const da = fid ? { fid } : {};
-    const pips = fd.type === "pips" || fd.type === "diamonds";
-    const isText = fd.type === "text";
-    const isNum = fd.type === "number";
-    const dictOn = (fd.dict_mode || "correct") !== "off";   // dictionary actually consulted
-    const hasDicts = (model.profile.dictionaries || []).length;
+    const isText = (fd.type || "text") === "text";
     return frag(
-        h("div", { class: "fgrp" }, "read"),
+        h("label", { class: "flab" }, "type ",
+            h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, t)))),
         h("label", { class: "flab", title: "read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. an '8' read as '81')" },
             "isolate ", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate })),
         isText && h("label", { class: "flab", title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the game node." },
             "glyph-check ", h("input", { type: "checkbox", class: cls, dataset: { k: "glyph_check", ...da }, checked: !!fd.glyph_check })),
-        h("label", { class: "flab", title: "fold accents: before anything else, convert accented characters to their plain ASCII base (ö→o, ä→a, é→e). On by default." },
-            "fold accents ", h("input", { type: "checkbox", class: cls, dataset: { k: "fold_accents", ...da }, checked: fd.fold_accents !== false })),
-        h("label", { class: "flab" }, "type ",
-            h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, t)))),
-        !pips && h("label", { class: "flab" }, "extract ",
-            h("select", { class: cls, dataset: { k: "extract", ...da } }, EXTRACTS.map((v) => h("option", { selected: (fd.extract || "whole") === v }, v)))),
-        (!pips && NEEDS_SEP.has(fd.extract)) && h("label", { class: "flab" }, "separator ",
-            h("input", { class: cls, type: "text", dataset: { k: "sep", ...da }, value: fd.separator || "/" })),
-        h("label", { class: "flab", title: "minimum OCR confidence this field must reach — a weaker read drops the whole record (0 = use the global floor)" },
+        h("label", { class: "flab", title: "minimum OCR confidence this field must reach — a weaker genuine read drops the whole record (0 = use the global floor)" },
             "conf ", h("input", { type: "number", class: cls, dataset: { k: "minconf", ...da }, step: "0.05", min: "0", max: "1", value: fd.min_confidence ?? 0 })),
-        isNum && frag(
-            h("label", { class: "flab", title: "lowest plausible value — a read below this is a misread and drops the record (blank = no minimum)" },
-                "min ", h("input", { type: "number", class: cls, dataset: { k: "min", ...da }, value: fd.min ?? "", placeholder: "(none)" })),
-            h("label", { class: "flab", title: "highest plausible value — a read above this is a misread and drops the record (blank = no maximum)" },
-                "max ", h("input", { type: "number", class: cls, dataset: { k: "max", ...da }, value: fd.max ?? "", placeholder: "(none)" }))),
-        isText && frag(
-            h("div", { class: "fgrp" }, "dictionary"),
-            h("label", { class: "flab", title: "off = dictionary not consulted; correct = fix words, keep unmatched; drop = no fixes, unmatched read dropped; correct + drop = fix words, unmatchable read dropped" },
-                "dict ", h("select", { class: cls, dataset: { k: "dictmode", ...da } },
-                    DICT_MODES.map(([v, t]) => h("option", { value: v, selected: (fd.dict_mode || "correct") === v }, t)))),
-            (hasDicts && dictOn) && h("label", { class: "flab", title: "which authored dictionary this field snaps to (all = every enabled one pooled)" },
-                "use dict ", h("select", { class: cls, dataset: { k: "usedict", ...da } }, dictOptions(fd.dictionary))),
-            dictOn && h("label", { class: "flab", title: "similarity (0-1) an uncertain read must reach to snap to a known word; higher = stricter" },
-                "fuzzy ", h("input", { type: "number", class: cls, dataset: { k: "fuzzy", ...da }, step: "0.05", min: "0", max: "1", value: fd.fuzzy ?? 0.82 }))),
         h("div", { class: "fgrp" }, "rules ",
-            h("button", { class: "ruleadd", dataset: { ...da }, title: "add a fallback rule" }, "+ rule")),
+            h("div", { class: "frule-btns" },
+                h("button", { class: "rulecopy", dataset: { ...da }, disabled: !(fd.rules || []).length, title: "copy this pipeline" }, COPY()),
+                h("button", { class: "rulepaste", dataset: { ...da }, title: "replace all rules with the copied pipeline" }, PASTE()),
+                h("button", { class: "ruleadd", dataset: { ...da }, title: "add a rule to the pipeline" }, PLUS()))),
         ruleRows(fd, cls, fid));
 }
 

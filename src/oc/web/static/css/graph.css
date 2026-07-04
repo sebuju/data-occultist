@@ -160,13 +160,27 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
     display: flex; align-items: center; justify-content: space-between; }
 .fgrp:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
-.fgrp .ruleadd { font-size: var(--fs-xs); line-height: 1; padding: 2px 6px; min-height: 0;
-    text-transform: none; letter-spacing: 0; }
-/* one fallback rule: when + then + value all on a single row, trash at the end */
-.frule { display: flex; flex-wrap: nowrap; gap: 4px; align-items: center; margin-top: 6px;
-    padding: 5px; border: 1px solid var(--line); border-radius: 4px; }
-.frule select, .frule .rule-val { flex: 1 1 0; min-width: 0; width: auto; }
-.frule .rule-del { flex: 0 0 auto; }
+.frule-btns { display: flex; gap: 4px; align-items: center; }
+.fgrp .ruleadd, .fgrp .rulecopy, .fgrp .rulepaste { font-size: var(--fs-xs); line-height: 1;
+    padding: 2px 6px; min-height: 0; text-transform: none; letter-spacing: 0; }
+.fgrp .rulecopy[disabled], .fgrp .rulepaste[disabled] { opacity: .4; cursor: default; }
+/* one pipeline rule: a head row (move + when(+arg) -> then(+operands) + trash) and, below it,
+   the live in->out trace slot */
+.frule { display: flex; flex-direction: column; gap: 3px; margin-top: 6px;
+    padding: 5px 0; }
+.frule-head { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.frule-head select, .frule-head .rule-val, .frule-head .rule-arg { flex: 1 1 0; min-width: 4ch; width: auto; }
+.frule-head .rulemv { flex: 0 0 auto; padding: 0 6px; }
+.frule-head .rule-arrow { flex: 0 0 auto; }
+.frule-head .rule-fuzzy { flex: 0 0 6ch; }
+.frule-head .rule-del { flex: 0 0 auto; }
+.frule-head .rule-del[data-armed="1"] { background: var(--warn); color: var(--on-accent); }
+/* always occupies one line so a row's height never changes as the trace fills in */
+.frule-trace { font-size: var(--fs-xs); font-family: var(--mono, monospace); padding-left: 2px;
+    min-height: 1.25em; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.frule-trace.frule-drop { color: var(--danger, #e06c6c); }
+/* a rule that doesn't fit the field's type: greyed and ignored by the executor */
+.frule-invalid { opacity: .45; }
 .frule-empty { margin-top: 6px; font-size: var(--fs-sm); }
 .flab select, .flab input[type="number"], .flab input[type="text"] { width: 100%; min-width: 0; }
 /* shared labelled grid (triggers, price node, view config): every label cell sizes to its own

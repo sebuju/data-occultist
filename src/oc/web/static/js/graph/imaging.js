@@ -43,11 +43,10 @@ const ITEM_KINDS = [
     ["diamonds", "diamonds", "◆", "Draw a 'diamonds' tell — the cell counts only if a rank-diamond strip (◇/◆) is present (e.g. a rank-pip row)."],
 ];
 
-// Graph node id for an image owner: a window is `win:<id>`, the game gate is the bare
-// `game` node. The image/box/detect machinery is shared between them (rule 7), so every
-// `win:${winId}` node-id lookup goes through this so "game" resolves to the game node.
+// Graph node id for an image owner: a window is `win:<id>`, the standalone glyph atlas is the
+// bare `glyphs` node (it reuses the image stack, rule 7). Every `win:${winId}` node-id lookup
+// goes through this so those special ids resolve to their own node.
 export function nodeIdOf(winId) {
-    if (winId === "game") return "game";
     if (winId === "glyphs") return "glyphs";   // the glyph-atlas node reuses the image stack
     return `win:${winId}`;
 }
@@ -835,7 +834,7 @@ function itemReadout(res, winId, itemId) {
 }
 
 function selectRegionNode(winId, boxId) {
-    const ids = [`reg:${winId}:${boxId}`, `det:${winId}:${boxId}`, `st:${winId}:${boxId}`, `sb:${winId}:${boxId}`];
+    const ids = [`reg:${winId}:${boxId}`, `det:${winId}:${boxId}`, `st:${winId}:${boxId}`, `sb:${winId}:${boxId}`, `ro:${winId}:${boxId}`];
     setSelectedNodeId(ids.find((id) => nodeEls.has(id)) || null);
     for (const [id, el] of nodeEls) el.classList.toggle("selected", id === selectedNodeId);
     drawEdges();   // restyle the selected node's line
@@ -851,6 +850,68 @@ function prevHost(winId) {
 function previewProfileFor(winId) {
     const w = model.window(winId);
     return { ...model.profile, windows: w ? [w] : [] };
+}
+
+// One rule-trace read per WINDOW, shared by every field node on it. At boot the whole field
+// fleet asks for its trace at once; without this each call re-OCR'd the entire window (N reads),
+// which stalled the renderer under load. A per-window in-flight promise coalesces that burst into
+// ONE `/api/rule_trace` batch (all fields, one OCR pass); the entry is dropped once it settles so
+// a later edit re-reads fresh. Keyed by winId — the profile is snapshot at request time.
+const _traceInFlight = new Map();   // winId -> Promise<{fields}>
+function windowTrace(winId) {
+    if (_traceInFlight.has(winId)) return _traceInFlight.get(winId);
+    const p = (async () => {
+        const cap = await curCapOf(winId);
+        return api.ruleTrace(previewProfileFor(winId), model.profile.name, cap);
+    })().finally(() => _traceInFlight.delete(winId));
+    _traceInFlight.set(winId, p);
+    return p;
+}
+
+// Every field node that has painted a trace, so an image swap can re-run them all (the trace is
+// on-demand, not polled — nothing re-reads it when the bound image changes underneath). Keyed by
+// nodeId; carries the winId + fieldId needed to replay refreshRuleTrace. Auto-pruned on replay.
+const _tracedNodes = new Map();   // nodeId -> { winId, fieldId }
+
+// Re-run the rule trace for every already-traced field node on a window — call after its bound
+// image changes so each `.frule-trace` reflects the NEW image, not the old read. Replays via the
+// nodeEls lookup (current body); a node that's since gone is dropped.
+function retraceWindow(winId) {
+    for (const [nodeId, t] of _tracedNodes) {
+        if (t.winId !== winId) continue;
+        if (!nodeEls.has(nodeId)) { _tracedNodes.delete(nodeId); continue; }
+        refreshRuleTrace(winId, t.fieldId, nodeId);
+    }
+}
+
+// Fill a field node's `.frule-trace` slots from the window's batched trace read: the server reads
+// every field off the bound image and runs each rule pipeline, returning each rule's `in → out`.
+// Shown under every rule row so the author sees the value travel top-to-bottom. On-demand (node
+// open + rule edit), not polled — a plain textContent fill is fine.
+async function refreshRuleTrace(winId, fieldId, nodeId, el) {
+    _tracedNodes.set(nodeId, { winId, fieldId });   // remember it so an image swap can replay the trace
+    // prefer the live node body the caller hands us: on the FIRST build the node isn't in
+    // `nodeEls` yet (wiring runs before registration), so a lookup would miss and the trace
+    // would only appear after an edit. `el` is always the current body.
+    const host = el || nodeEls.get(nodeId);
+    if (!host) return;
+    const slots = [...host.querySelectorAll(".frule-trace")];
+    if (!slots.length) return;
+    try {
+        const batch = await windowTrace(winId);
+        const steps = batch.fields?.[fieldId]?.trace || [];
+        for (const slot of slots) {
+            const s = steps[+slot.dataset.ri];
+            slot.classList.remove("frule-drop");
+            if (!s) { slot.textContent = ""; continue; }
+            const q = (v) => (v == null ? "∅" : `"${v}"`);
+            if (!s.fired) { slot.textContent = `${q(s.in)}  (skipped)`; continue; }
+            if (s.out == null) { slot.textContent = `${q(s.in)}  →  dropped`; slot.classList.add("frule-drop"); continue; }
+            slot.textContent = `${q(s.in)}  →  ${q(s.out)}`;
+        }
+    } catch {
+        for (const slot of slots) slot.textContent = "";   // a failed read just clears the hints
+    }
 }
 
 // Coalesce reads: at most ONE OCR request per window is ever in flight. Clicking
@@ -1050,7 +1111,6 @@ const detectAgain = new Map();
 async function refreshDetect(winId, live = false) {
     if (detectBusy.has(winId)) { detectAgain.set(winId, live); return; }
     detectBusy.add(winId);
-    const isGame = winId === "game";
     // spinner on every node whose value this detect refreshes
     const ids = [nodeIdOf(winId), ...model.detects(winId).map((a) => `det:${winId}:${a.id}`)];
     if (model.scrollbar(winId)) ids.push(`sb:${winId}:scrollbar`);
@@ -1188,7 +1248,7 @@ function setWindowDetectStatus(winId, res) {
             }
         }
     }
-    if (winId !== "game") setWindowCollideStatus(winId);   // cross-window outcome (windows only)
+    setWindowCollideStatus(winId);   // cross-window outcome
 }
 
 // Detection is a cross-window contest: classify() runs EVERY window's detectors against
@@ -1326,15 +1386,12 @@ async function loadImage(winId, recapture) {
         drawEdges();
         updateImageLabel(winId);     // button shows the (possibly new) filename
         // the image changed (recapture / picked a capture / first open) → READ it: full preview
-        // when the node exists, else just the grid overlay. Gate-like image-only nodes (game
-        // worthiness gate, glyph atlas) have no grid/preview — only their cheap detectors need
-        // re-evaluating. EXCEPT: the game gate can carry live readouts (health/counters), and
-        // those must be read on load so their values draw on the canvas (not only after an edit).
-        const wdef = model.window(winId);
-        const gateReadouts = winId === "game" && (wdef?.readouts || []).some((v) => v.enabled !== false);
-        if ((winId !== "game" && winId !== "glyphs") || gateReadouts) {
+        // when the node exists, else just the grid overlay. The glyph atlas is image-only (no
+        // grid/preview) — only its cheap detectors need re-evaluating.
+        if (winId !== "glyphs") {
             if (prevHost(winId)) refreshPreview(winId, false);
             else refreshGridPreview(winId);
+            retraceWindow(winId);   // the image changed → the field nodes' rule traces are stale, re-read them
         }
         if (winId !== "glyphs") refreshDetect(winId);   // glyph node has no detectors to evaluate
     };
@@ -1582,7 +1639,7 @@ export {
     KINDS, ITEM_KINDS, updateImageLabel, closeImage, openImage, createItemFromGeom,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
     itemReadTimers, itemReadBusy, itemReadAgain, scheduleItemRead, runItemRead, itemReadout,
-    prevHost, previewProfileFor, previewBusy, previewAgain, setReadBusy, refreshPreview,
+    prevHost, previewProfileFor, refreshRuleTrace, previewBusy, previewAgain, setReadBusy, refreshPreview,
     commitPreviewNode, tellChip, subLabel, previewCell, previewTable, prefillDetectText,
     detectBusy, detectAgain, refreshDetect, setDetectStatus, detectT, _detectPending,
     _detectAll, refreshOpenDetect, previewT, _previewPending, _previewAll, refreshOpenPreviews,

@@ -5,106 +5,79 @@ window_title_hint: Warframe
 fields:
 - id: name
   type: text
-  extract: whole
-  separator: /
   rules: []
-  dict_mode: correct
-  dictionary: ''
-  fuzzy: 0.82
   min_confidence: 0.0
   isolate: false
   glyph_check: false
-  fold_accents: false
 - id: count
   type: number
-  extract: whole
-  separator: /
   rules: []
-  dict_mode: correct
-  dictionary: ''
-  fuzzy: 0.82
   min_confidence: 0.0
   isolate: false
   glyph_check: false
-  fold_accents: false
 - id: rank
   type: number
-  extract: whole
-  separator: /
   rules: []
-  dict_mode: correct
-  dictionary: ''
-  fuzzy: 0.82
   min_confidence: 0.0
   isolate: false
   glyph_check: false
-  fold_accents: false
 windows:
 - id: game
   fields:
   - id: varf_2
     type: number
-    extract: whole
-    separator: /
     rules: []
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.82
     min_confidence: 0.0
     isolate: false
     glyph_check: false
-    fold_accents: true
   - id: rof_3
     type: number
-    extract: number
-    separator: /
     rules:
     - when: empty
-      then: set
-      value: ''
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.82
+      then: drop
+    - when: always
+      then: extract
+      strategy: number
+      sep: /
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    fold_accents: true
   - id: rof_5
     type: number
-    extract: number
-    separator: /
-    rules: []
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.82
+    rules:
+    - when: empty
+      then: drop
+    - when: always
+      then: extract
+      strategy: number
+      sep: /
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    fold_accents: true
   - id: rof_7
     type: number
-    extract: number
-    separator: /
-    rules: []
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.82
+    rules:
+    - when: empty
+      then: drop
+    - when: always
+      then: extract
+      strategy: number
+      sep: /
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    fold_accents: true
   - id: rof_9
     type: number
-    extract: number
-    separator: /
-    rules: []
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.82
+    rules:
+    - when: empty
+      then: drop
+    - when: always
+      then: extract
+      strategy: number
+      sep: /
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    fold_accents: true
   detect:
   - id: hud
     enabled: true
@@ -126,9 +99,9 @@ windows:
   states: []
   regions: []
   items: []
-  static_grid: true
+  static_grid: false
   readouts:
-  - id: ro_2
+  - id: ability_1_cd
     box:
       x: 0.8427847058918725
       y: 0.8959201792770625
@@ -136,7 +109,7 @@ windows:
       h: 0.020972435875160622
     field: rof_3
     enabled: true
-  - id: ro_4
+  - id: ability_2_cd
     box:
       x: 0.8661162701878437
       y: 0.8988094914664827
@@ -144,7 +117,7 @@ windows:
       h: 0.016791710558324402
     field: rof_5
     enabled: true
-  - id: ro_6
+  - id: ability_3_cd
     box:
       x: 0.888639364018298
       y: 0.8999249169406703
@@ -152,7 +125,7 @@ windows:
       h: 0.020186825847039236
     field: rof_7
     enabled: true
-  - id: ro_8
+  - id: ability_4_cd
     box:
       x: 0.913586173904563
       y: 0.9039627479471904
@@ -178,20 +151,21 @@ windows:
   fields:
   - id: name
     type: text
-    extract: text_before
-    separator: '['
-    rules: []
-    dict_mode: correct
-    dictionary: wiki
-    fuzzy: 0.82
+    rules:
+    - when: always
+      then: extract
+      strategy: text_before
+      sep: '['
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.05
     isolate: false
     glyph_check: false
-    fold_accents: false
   - id: count
     type: number
-    extract: whole
-    separator: /
     rules:
     - when: empty
       then: set
@@ -199,25 +173,15 @@ windows:
     - when: no_digit
       then: set
       value: '1'
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.82
     min_confidence: 0.0
     isolate: false
     glyph_check: false
-    fold_accents: false
   - id: arcane_level
     type: diamonds
-    extract: whole
-    separator: /
     rules: []
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.75
     min_confidence: 0.0
     isolate: false
     glyph_check: false
-    fold_accents: false
   data_area:
     x: 0.031884303692792056
     y: 0.17565452653306793
@@ -419,32 +383,26 @@ windows:
   fields:
   - id: mod_name
     type: text
-    extract: whole
-    separator: /
-    rules: []
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.82
+    rules:
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    fold_accents: false
   - id: mod_drain
     type: number
-    extract: number
-    separator: /
-    rules: []
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.8
+    rules:
+    - when: always
+      then: extract
+      strategy: number
+      sep: /
     min_confidence: 0.5
     isolate: true
     glyph_check: false
-    fold_accents: false
   - id: mod_count
     type: number
-    extract: number
-    separator: /
     rules:
     - when: empty
       then: set
@@ -455,13 +413,13 @@ windows:
     - when: all_letter
       then: set
       value: '1'
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.82
+    - when: always
+      then: extract
+      strategy: number
+      sep: /
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    fold_accents: false
   data_area:
     x: 0.04033210220688822
     y: 0.4859775443166545
@@ -629,16 +587,14 @@ windows:
   fields:
   - id: name
     type: text
-    extract: whole
-    separator: /
-    rules: []
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.82
+    rules:
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    fold_accents: false
   data_area:
     x: 0.2472434730244972
     y: 0.19635388680544943
@@ -724,20 +680,17 @@ windows:
   fields:
   - id: name
     type: text
-    extract: whole
-    separator: /
-    rules: []
-    dict_mode: correct
-    dictionary: relics
-    fuzzy: 0.82
+    rules:
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: relics
+      fuzzy: 0.82
     min_confidence: 0.0
     isolate: false
     glyph_check: false
-    fold_accents: false
   - id: count
     type: number
-    extract: number
-    separator: /
     rules:
     - when: empty
       then: set
@@ -745,13 +698,13 @@ windows:
     - when: no_digit
       then: set
       value: '1'
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.82
+    - when: always
+      then: extract
+      strategy: number
+      sep: /
     min_confidence: 0.4
     isolate: false
     glyph_check: false
-    fold_accents: false
   data_area:
     x: 0.04068236562341155
     y: 0.1729023165854181
@@ -904,20 +857,23 @@ windows:
   fields:
   - id: name
     type: text
-    extract: text_before
-    separator: relic
-    rules: []
-    dict_mode: correct_drop
-    dictionary: relics
-    fuzzy: 0.82
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: extract
+      strategy: text_before
+      sep: relic
+    - when: always
+      then: dictionary
+      dict_mode: correct_drop
+      dict_id: relics
+      fuzzy: 0.82
     min_confidence: 0.75
     isolate: false
     glyph_check: false
-    fold_accents: true
   - id: count
     type: number
-    extract: whole
-    separator: /
     rules:
     - when: empty
       then: set
@@ -925,13 +881,9 @@ windows:
     - when: no_digit
       then: set
       value: '1'
-    dict_mode: correct
-    dictionary: ''
-    fuzzy: 0.82
     min_confidence: 0.0
     isolate: false
     glyph_check: false
-    fold_accents: true
   data_area:
     x: 0.0449550474139316
     y: 0.17880592428756362
@@ -1808,7 +1760,6 @@ triggers:
   readout_value: 0.0
   targets:
   - wf_market_relic
-  - relic_sound
   enabled: true
   dataset_targets: []
   dataset_action: ''
@@ -1822,6 +1773,20 @@ triggers:
   readout_value: 0.0
   targets:
   - toast
+  enabled: true
+  dataset_targets: []
+  dataset_action: ''
+  dataset_dest: ''
+- id: on_new_relic_fetched
+  kind: on_change
+  interval_s: 300.0
+  watch:
+  - relic_rewards_price_from_stored
+  readout_watch: []
+  readout_op: gte
+  readout_value: 0.0
+  targets:
+  - relic_sound
   enabled: true
   dataset_targets: []
   dataset_action: ''
@@ -2323,15 +2288,19 @@ layout:
     trigger:trigger_on_new_relic:
       x: 3740.0
       y: -2900.0
-      w: 420.0
+      w: 280.0
       h: 360.0
       collapsed: false
-      custW: true
-      custH: true
+      custW: false
+      custH: false
     sound:relic_sound:
-      x: 3740.0
-      y: -2500.0
+      x: 3080.0
+      y: -1000.0
+      w: 220.0
+      h: 320.0
       collapsed: false
+      custW: false
+      custH: false
     vt:ds:relic_contents:
       x: -1680.0
       y: -2200.0
@@ -2361,49 +2330,77 @@ layout:
       y: 300.0
       collapsed: false
     win:game:
-      x: -2700.0
+      x: -2640.0
       y: -2200.0
       collapsed: false
     det:game:hud:
-      x: -2160.0
+      x: -2100.0
       y: -2200.0
+      w: 260.0
+      h: 241.0
       collapsed: false
+      custW: true
+      custH: false
     trigger:trigger:
-      x: -3660.0
-      y: -1320.0
+      x: -4100.0
+      y: -1300.0
       w: 380.0
       h: 460.0
       collapsed: false
       custW: true
       custH: true
     toast:toast:
-      x: -3240.0
-      y: -1320.0
+      x: -3660.0
+      y: -1300.0
       w: 420.0
       h: 160.0
       collapsed: false
       custW: true
       custH: true
-    ro:game:ro_2:
-      x: -3680.0
-      y: -2200.0
-      collapsed: false
-    ro:game:ro_4:
-      x: -3440.0
-      y: -2200.0
-      collapsed: false
-    ro:game:ro_6:
-      x: -3200.0
-      y: -2200.0
-      collapsed: false
-    ro:game:ro_8:
-      x: -2960.0
-      y: -2200.0
-      collapsed: false
     dict:relics:
       x: 20.0
       y: 20.0
       collapsed: false
+    ro:game:ability_1_cd:
+      x: -4260.0
+      y: -2200.0
+      w: 380.0
+      h: 480.0
+      collapsed: false
+      custW: true
+      custH: true
+    ro:game:ability_2_cd:
+      x: -3860.0
+      y: -2200.0
+      w: 380.0
+      h: 480.0
+      collapsed: false
+      custW: true
+      custH: true
+    ro:game:ability_3_cd:
+      x: -3460.0
+      y: -2200.0
+      w: 380.0
+      h: 480.0
+      collapsed: false
+      custW: true
+      custH: true
+    ro:game:ability_4_cd:
+      x: -3060.0
+      y: -2200.0
+      w: 380.0
+      h: 480.0
+      collapsed: false
+      custW: true
+      custH: true
+    trigger:on_new_relic_fetched:
+      x: 3080.0
+      y: -1360.0
+      w: 420.0
+      h: 340.0
+      collapsed: false
+      custW: true
+      custH: false
   tables:
     warframe:ds:master:
       sorts:
@@ -2887,7 +2884,6 @@ layout:
     - vt:ds:relic_prices
     - producer:wf_market_relic
     - trigger:trigger_on_new_relic
-    - sound:relic_sound
     outline:
       color: '#e69a5a'
       style: none
@@ -2928,10 +2924,10 @@ layout:
     - var:game:var_1
     - trigger:trigger
     - toast:toast
-    - ro:game:ro_2
-    - ro:game:ro_4
-    - ro:game:ro_6
-    - ro:game:ro_8
+    - ro:game:ability_1_cd
+    - ro:game:ability_2_cd
+    - ro:game:ability_3_cd
+    - ro:game:ability_4_cd
     outline:
       color: '#3a4150'
       style: none
@@ -2949,6 +2945,8 @@ layout:
     - sub:relic_rewards_limit
     - sub:relic_rewards_price_from_stored
     - vt:sub:relic_rewards_price_from_stored
+    - trigger:on_new_relic_fetched
+    - sound:relic_sound
     outline:
       color: '#c98ae6'
       style: none
@@ -3396,6 +3394,53 @@ layout:
     members:
     - ds:mods
     - vt:ds:mods
+    outline:
+      color: '#3a4154'
+      style: none
+      width: 1
+      offset: 0
+    bg: '#191c23'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+  - id: subgroup_27
+    parent: group_28
+    title: ''
+    members:
+    - ro:game:ability_1_cd
+    - ro:game:ability_2_cd
+    - ro:game:ability_3_cd
+    - ro:game:ability_4_cd
+    outline:
+      color: '#3a4154'
+      style: none
+      width: 1
+      offset: 0
+    bg: '#191c23'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+  - id: subgroup_28
+    parent: group_28
+    title: ''
+    members:
+    - win:game
+    - det:game:hud
+    outline:
+      color: '#3a4154'
+      style: none
+      width: 1
+      offset: 0
+    bg: '#191c23'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+  - id: subgroup_29
+    parent: group_28
+    title: ''
+    members:
+    - trigger:trigger
+    - toast:toast
     outline:
       color: '#3a4154'
       style: none

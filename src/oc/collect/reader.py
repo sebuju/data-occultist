@@ -18,7 +18,7 @@ import cv2
 from ..interfaces import OcrEngine
 from ..profile.models import FieldDef, FieldType, ItemDef, Preprocess, TellKind, WindowDef
 from ..types import FractionBox, Frame, OcrLine, PixelBox
-from .fields import coerce_rule, out_of_range
+from .fields import run_rules
 from .grid import Cell, cells_for_rows, expand_cells
 from .items import (
     ItemCell,
@@ -67,8 +67,8 @@ class _FieldRead:
     raw: str | None              # the raw OCR text (None for pip fields)
     conf: float
     value: object                # extracted/resolved value
-    substituted: object          # the fired fallback's value, else None (None => a genuine read)
-    out_of_range: bool
+    substituted: object          # a ``set`` rule's ``when`` label, else None (None => a genuine read)
+    dropped: bool                # a ``drop`` rule (range/dictionary/authored) fired -> drop the cell
     box: PixelBox                # where the field was read (image pixels)
     pip_unit: str | None = None  # "pips"/"filled" for visual-count fields, else None
     verified: str | None = None  # how the value was confirmed: dict/split/fuzzy/glyph, else None
@@ -368,7 +368,7 @@ class RegionReader:
                 c.values[field_id] = cnt
                 c.saw = True
                 c.fields[field_id] = _FieldRead(raw=f"{cnt} {unit}", conf=0.99, value=cnt,
-                                                substituted=None, out_of_range=False, box=box,
+                                                substituted=None, dropped=False, box=box,
                                                 pip_unit=unit)
                 continue
             text, conf = focus.get((ci, field_id)) or base[(ci, field_id)]
@@ -383,15 +383,18 @@ class RegionReader:
                 refined = new != text
                 text = new
             substituted = verified = None
+            dropped = False
             if self._resolver and fdef:
                 resolved = self._resolver.resolve(fdef, text, conf)
                 value = resolved.value
                 substituted = resolved.substituted
                 verified = resolved.verified
+                dropped = resolved.dropped
                 if resolved.corrected:
                     c.corrected.append(field_id)
             elif fdef:
-                value, substituted = coerce_rule(fdef, text)
+                res = run_rules(fdef, text)
+                value, substituted, dropped = res.value, res.substituted, res.dropped
             else:
                 value = text or None
             # a pixel-level glyph_check that actually changed the read is the salient tell for
@@ -399,21 +402,19 @@ class RegionReader:
             if refined and substituted is None:
                 verified = "glyph"
             c.values[field_id] = value
-            # out-of-range only counts for a GENUINE read (a fired fallback's value is authored)
-            oor = substituted is None and bool(fdef) and out_of_range(fdef, value)
             c.fields[field_id] = _FieldRead(raw=raw_ocr, conf=conf, value=value,
-                                            substituted=substituted, out_of_range=oor, box=box,
+                                            substituted=substituted, dropped=dropped, box=box,
                                             verified=verified)
+            if dropped:   # a drop rule (range/dictionary/authored) drops the whole cell
+                c.failed = True
             if text:
                 c.saw = True
                 c.confs[field_id] = conf   # so a field-tell's tell_conf can gate
-                if substituted is None:
+                if substituted is None and not dropped:
                     # garbage OCR that triggered a fallback must not sink the whole record
                     worst[ci] = min(worst[ci], conf)
                     mc = getattr(fdef, "min_confidence", 0.0) or 0.0
                     if mc and conf < mc:
-                        c.failed = True
-                    if oor:   # a glyph fused onto the digits — drop the cell, don't store it
                         c.failed = True
         for ci, c in enumerate(cr):
             c.confidence = worst[ci] if c.saw else 0.0
@@ -495,22 +496,60 @@ class RegionReader:
                 out[v.id] = self._pip_value(frame, box, fdef)
                 continue
             text, conf = self._focus_reads(frame, window, [(v.id, box)]).get(v.id) or ("", 0.0)
-            substituted = None
+            substituted, dropped = None, False
             if self._resolver and fdef:
                 resolved = self._resolver.resolve(fdef, text, conf)
-                value, substituted = resolved.value, resolved.substituted
+                value, substituted, dropped = resolved.value, resolved.substituted, resolved.dropped
             elif fdef:
-                value, substituted = coerce_rule(fdef, text)
+                res = run_rules(fdef, text)
+                value, substituted, dropped = res.value, res.substituted, res.dropped
             else:
                 value = text or None
-            if value is None:
+            if value is None or dropped:   # nothing read, or a drop rule rejected it
                 continue
-            # a genuine read must clear the field's confidence floor and plausibility range
+            # a genuine read must clear the field's confidence floor
             if substituted is None and fdef:
                 mc = getattr(fdef, "min_confidence", 0.0) or 0.0
-                if (mc and conf < mc) or out_of_range(fdef, value):
+                if mc and conf < mc:
                     continue
             out[v.id] = value
+        return out
+
+    def representative_raws(self, frame: Frame, window: WindowDef,
+                            fields: dict[str, FieldDef]) -> dict[str, tuple[str, float]]:
+        """One representative RAW read for EVERY field, from a SINGLE OCR pass — the batch
+        behind the field nodes' rule-trace panels. All the window's readout boxes read in
+        one focus pass and all region/grid fields come off ONE ``_read_cells`` pass, so the
+        whole node fleet's traces cost one window read instead of one read per field. A
+        readout field reads its own box; a region/grid field uses the first cell that read
+        it (else its first cell). Returns ``{field_id: (text, conf)}`` (fields never read
+        are omitted; the caller defaults them)."""
+        cw, ch = frame.client.w, frame.client.h
+        out: dict[str, tuple[str, float]] = {}
+        # readouts: one focus-read pass over every enabled readout box
+        ro_boxes = [(v.id, v.box.to_fraction().to_pixels(cw, ch)) for v in window.readouts if v.enabled]
+        ro_reads = self._focus_reads(frame, window, ro_boxes) if ro_boxes else {}
+        for v in window.readouts:
+            if v.enabled and v.field in fields and v.field not in out:
+                out[v.field] = ro_reads.get(v.id) or ("", 0.0)
+        # region/grid fields: ONE cell pass, first non-empty read per field (else its first cell)
+        if any(fid not in out for fid in fields):
+            _, _, _, cr = self._read_cells(frame, window, fields)
+            for fid in fields:
+                if fid in out:
+                    continue
+                fallback: tuple[str, float] | None = None
+                for c in cr:
+                    fr = c.fields.get(fid)
+                    if fr is None:
+                        continue
+                    if fr.raw:
+                        out[fid] = (fr.raw, fr.conf)
+                        break
+                    fallback = fallback or (fr.raw or "", fr.conf)
+                else:
+                    if fallback is not None:
+                        out[fid] = fallback
         return out
 
     def region_signature(self, frame: Frame, window: WindowDef) -> int | None:
@@ -547,10 +586,10 @@ class RegionReader:
                 d = {"raw": fr.raw, "value": fr.value, "confidence": round(fr.conf, 3),
                      "box": asfrac(fr.box)}
                 if fr.pip_unit is None:
-                    # out-of-range numbers stay VISIBLE in the preview (so the author sees the
+                    # a drop-ruled read stays VISIBLE in the preview (so the author sees the
                     # "81" misread) but flagged — the cell is dropped below, mirroring collection
                     d["substituted"] = fr.substituted
-                    d["out_of_range"] = fr.out_of_range
+                    d["dropped"] = fr.dropped
                     d["verified"] = fr.verified   # dict/split/fuzzy/glyph, else None
                 flds[fid] = d
             out.append({"row": cells[ci].row, "col": cells[ci].col, "fields": flds})
@@ -584,12 +623,12 @@ class RegionReader:
                                      else ("horiz", fx, ics[ci].item.min_cover_x))
                     cell["occ"] = f"{ax} {round(got * 100)}%"   # terse canvas label
                     cell["reason"] = f"occluded ({ax}): {round(got * 100)}% inside, need {round(need * 100)}%"
-                # an out-of-range field drops the cell too (same as collection) — record it
-                # as the reject reason; it does not count as a tell failure
-                oor_fids = [fid for fid, f in cell["fields"].items() if f.get("out_of_range")]
-                if oor_fids and not occ:
-                    cell["reason"] = "out of range: " + ", ".join(oor_fids)
-                if cell["tells_pass"] and not oor_fids and not occ:
+                # a drop-ruled field drops the cell too (same as collection) — record it as
+                # the reject reason; it does not count as a tell failure
+                drop_fids = [fid for fid, f in cell["fields"].items() if f.get("dropped")]
+                if drop_fids and not occ:
+                    cell["reason"] = "dropped by rule: " + ", ".join(drop_fids)
+                if cell["tells_pass"] and not drop_fids and not occ:
                     valid.append(ci)
             kept = set(resolve_overlaps(ics, valid))
             for ci, cell in enumerate(out):
@@ -664,18 +703,19 @@ class RegionReader:
                 vals[fid], confs[fid] = cnt, 0.99
                 continue
             text, conf = focus.get(fid) or base[fid]
-            verified = None
+            verified, dropped = None, False
             if self._resolver and fdef:
                 resolved = self._resolver.resolve(fdef, text, conf)
                 value, rule = resolved.value, resolved.substituted
                 verified = resolved.verified
+                dropped = resolved.dropped
             elif fdef:
-                value, rule = coerce_rule(fdef, text)
+                res = run_rules(fdef, text)
+                value, rule, dropped = res.value, res.substituted, res.dropped
             else:
                 value, rule = text or None, None
-            oor = rule is None and bool(fdef) and out_of_range(fdef, value)
             out_fields[fid] = {"raw": text, "value": value, "confidence": round(conf, 3),
-                               "substituted": rule, "out_of_range": oor, "box": bf,
+                               "substituted": rule, "dropped": dropped, "box": bf,
                                "verified": verified}
             vals[fid], confs[fid] = value, conf
 

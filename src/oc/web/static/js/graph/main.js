@@ -78,7 +78,7 @@ import {
     commitPreviewNode,
     detectBusy, detectAgain, _detectPending,
     _detectAll, refreshOpenDetect, _previewPending, _previewAll, refreshOpenPreviews,
-    refreshImageBoxes, refreshGridPreview, selectRegionNode,
+    refreshImageBoxes, refreshGridPreview, selectRegionNode, refreshRuleTrace,
 } from "./imaging.js";
 import {
     liveWin, liveWinState, buildLiveWindow, renderLiveWindow, syncLiveFromServer, applyLiveInterval, syncWpDots,
@@ -121,9 +121,9 @@ function overlaySelected(key, id) {
     // A box-backed NODE click (selectWindowBox) routes here with the window/game key even when that
     // window's image canvas is CLOSED (no overlay rec). Still highlight the box's node, or the
     // just-focused detect/region/scrollbar node would deselect itself on the trailing click.
-    const winKey = key === "game" || key.startsWith("win:");
-    if (id && (rec ? (rec.kind === "window" || rec.kind === "game") : winKey))
-        selectRegionNode(rec ? rec.winId : (key === "game" ? "game" : key.slice(4)), id);   // highlight its node
+    const winKey = key.startsWith("win:");
+    if (id && (rec ? rec.kind === "window" : winKey))
+        selectRegionNode(rec ? rec.winId : key.slice(4), id);   // highlight its node
     else { selectedNodeId = null; for (const [, el] of nodeEls) el.classList.remove("selected"); drawEdges(); }
 }
 
@@ -478,27 +478,62 @@ function syncCellSize(winId, itemId) {
 
 
 
-// Shared wiring for a field-config body's rule editor (region + item-field nodes both
-// call this). `rebuild` re-renders the node body (add/remove a rule, or a then-toggle
-// that shows/hides its value); `commit` persists a plain value edit without a rebuild.
-function wireFieldRules(div, fd, { rebuild, commit }) {
+// Shared wiring for a field's RULE PIPELINE editor (region / item-field / readout nodes all
+// call this). `rebuild` re-renders the node body (structure changed: add/remove/reorder a rule,
+// or a when/then whose operands differ); `commit` persists a plain operand edit in place;
+// `retrace` re-runs the live `in → out` trace under each row. A structural change rebuilds the
+// DOM, so `rebuild` re-traces itself (the caller wires that); a plain commit re-traces here.
+// Cross-field rule clipboard: "copy" stashes a field's whole pipeline here, "paste" replaces
+// another field's rules with a deep clone of it (survives across nodes for this session).
+let ruleClipboard = [];
+
+function wireFieldRules(div, fd, { rebuild, commit, retrace }) {
     fd.rules = fd.rules || [];
+    const doTrace = () => retrace?.(div);   // hand the live node body over (see refreshRuleTrace)
+    const rule = (e) => fd.rules[+e.target.dataset.ri];
+    const edit = (e, k) => { rule(e)[k] = e.target.value; commit(); doTrace(); };
+    const editNum = (e, k) => { rule(e)[k] = +e.target.value; commit(); doTrace(); };
+
     div.querySelector(".ruleadd")?.addEventListener("click", () => {
-        fd.rules.push({ when: "empty", then: "set", value: "" });
+        fd.rules.push({ when: "always", then: "set", value: "" });
         rebuild();
     });
-    div.querySelectorAll(".rule-when").forEach((s) => s.addEventListener("change", (e) => {
-        fd.rules[+e.target.dataset.ri].when = e.target.value; commit();
+    div.querySelector(".rulecopy")?.addEventListener("click", () => {
+        ruleClipboard = structuredClone(fd.rules);   // stash a deep copy
+        // enable EVERY paste button now something's on the clipboard (paste is cross-node, so a
+        // sibling node's button — rendered before this copy — must un-disable too)
+        document.querySelectorAll(".rulepaste").forEach((pb) => { pb.disabled = false; });
+    });
+    const pasteBtn = div.querySelector(".rulepaste");
+    if (pasteBtn) {
+        pasteBtn.disabled = !ruleClipboard.length;   // nothing copied yet -> nothing to paste
+        pasteBtn.addEventListener("click", () => {
+            if (!ruleClipboard.length) return;
+            fd.rules = structuredClone(ruleClipboard);   // paste REPLACES all current rules
+            rebuild();
+        });
+    }
+    div.querySelectorAll(".rulemv").forEach((b) => b.addEventListener("click", (e) => {
+        const i = +e.currentTarget.dataset.ri, j = i + +e.currentTarget.dataset.d;
+        if (j < 0 || j >= fd.rules.length) return;
+        const [r] = fd.rules.splice(i, 1); fd.rules.splice(j, 0, r); rebuild();   // reorder = pipeline order
     }));
-    div.querySelectorAll(".rule-then").forEach((s) => s.addEventListener("change", (e) => {
-        fd.rules[+e.target.dataset.ri].then = e.target.value; rebuild();   // show/hide the value input
-    }));
-    div.querySelectorAll(".rule-val").forEach((inp) => inp.addEventListener("input", (e) => {
-        fd.rules[+e.target.dataset.ri].value = e.target.value; commit();
-    }));
-    div.querySelectorAll(".rule-del").forEach((b) => b.addEventListener("click", (e) => {
-        fd.rules.splice(+e.target.dataset.ri, 1); rebuild();
-    }));
+    // when / then change the row's operands -> rebuild; the rest are plain in-place edits
+    div.querySelectorAll(".rule-when").forEach((s) => s.addEventListener("change", (e) => { rule(e).when = e.target.value; rebuild(); }));
+    div.querySelectorAll(".rule-then").forEach((s) => s.addEventListener("change", (e) => { rule(e).then = e.target.value; rebuild(); }));
+    div.querySelectorAll(".rule-dmode").forEach((s) => s.addEventListener("change", (e) => { rule(e).dict_mode = e.target.value; rebuild(); }));
+    div.querySelectorAll(".rule-strategy").forEach((s) => s.addEventListener("change", (e) => { rule(e).strategy = e.target.value; rebuild(); }));   // toggles the sep input
+    div.querySelectorAll(".rule-arg").forEach((inp) => inp.addEventListener("input", (e) => edit(e, "arg")));
+    div.querySelectorAll(".rule-val").forEach((inp) => inp.addEventListener("input", (e) => edit(e, "value")));
+    div.querySelectorAll(".rule-sep").forEach((inp) => inp.addEventListener("input", (e) => edit(e, "sep")));
+    div.querySelectorAll(".rule-udict").forEach((s) => s.addEventListener("change", (e) => edit(e, "dict_id")));
+    div.querySelectorAll(".rule-fuzzy").forEach((inp) => inp.addEventListener("change", (e) => editNum(e, "fuzzy")));
+    // delete is an armed two-click (rule 2): first click turns it yellow, a click anywhere else
+    // or Escape resets it, a second click removes the rule.
+    div.querySelectorAll(".rule-del").forEach((b) => armConfirm(b, () => {
+        fd.rules.splice(+b.dataset.ri, 1); rebuild();
+    }, { silent: true, resetOnOutside: true }));
+    doTrace();   // paint the trace for the freshly-built rows (uses the live body, not a nodeEls lookup)
 }
 
 
@@ -674,29 +709,24 @@ function wireItemField(div, n) {
             () => movePos(`fld:${winId}:${itemId}:${fid}`, `fld:${winId}:${itemId}:${n.ref.id}`),
             () => fieldChanged(winId, itemId, n.ref.id, { render: true }));
     });
+    // Only the capture/confidence knobs live on the field body now; all value processing is
+    // authored in the rule pipeline (wired below). `type` rebuilds so the rule menus re-filter.
     div.querySelectorAll(".ffset").forEach((inp) => inp.addEventListener("change", (e) => {
         const f = model.itemField(winId, itemId, fid);
         const fd = f && (n.win.fields || []).find((x) => x.id === f.field);
         if (!fd) return;
         const k = e.target.dataset.k;
-        let rebuild = false, doRender = false;
-        if (k === "type") { fd.type = e.target.value; rebuild = true; }       // toggles extract/sep/dict/min-max
-        else if (k === "extract") { fd.extract = e.target.value; rebuild = true; }  // toggles separator
-        else if (k === "sep") fd.separator = e.target.value || "/";
-        else if (k === "fuzzy") fd.fuzzy = +e.target.value;
+        let rebuild = false;
+        if (k === "type") { fd.type = e.target.value; rebuild = true; }       // re-filters the rule menus
         else if (k === "minconf") fd.min_confidence = +e.target.value || 0;
         else if (k === "isolate") fd.isolate = e.target.checked;
         else if (k === "glyph_check") fd.glyph_check = e.target.checked;
-        else if (k === "fold_accents") fd.fold_accents = e.target.checked;
-        else if (k === "min") fd.min = e.target.value === "" ? null : +e.target.value;
-        else if (k === "max") fd.max = e.target.value === "" ? null : +e.target.value;
-        else if (k === "dictmode") { fd.dict_mode = e.target.value; rebuild = true; }  // toggles use-dict/fuzzy
-        else if (k === "usedict") { fd.dictionary = e.target.value || ""; doRender = true; }   // redraw the dict link
-        fieldChanged(winId, itemId, fid, { rebuild, render: doRender });
+        fieldChanged(winId, itemId, fid, { rebuild });
     }));
     if (n.field) wireFieldRules(div, n.field, {
         rebuild: () => fieldChanged(winId, itemId, fid, { rebuild: true }),
         commit: () => fieldChanged(winId, itemId, fid),
+        retrace: (el) => refreshRuleTrace(winId, n.field.id, n.id, el),
     });
     div.querySelector(".itell")?.addEventListener("change", (e) => {
         model.setItemFieldTell(winId, itemId, fid, e.target.checked);
@@ -946,11 +976,10 @@ function wireGamePriority(div) {
     syncWpDots();   // paint the freshly-built dots to current live recognition (no wait for the next tick)
 }
 
-// The detectors section (mode select + polarity selects + name jumps). Shared by the window
-// node and the game node (rule 7); ownerId "game" routes to the gate. A change re-runs detect
-// for that owner so .wd-status/.wd-verdict refresh.
+// The detectors section (mode select + polarity selects + name jumps) on a window node. A
+// change re-runs detect for that window (autosave re-OCRs it) so .wd-status/.wd-verdict refresh.
 function wireDetectsSection(div, ownerId) {
-    const saveDet = () => { if (ownerId === "game") { autosave(null); refreshDetect("game"); } else autosave(ownerId); };
+    const saveDet = () => autosave(ownerId);
     div.querySelector(".wd-mode")?.addEventListener("change", (e) => {
         model.setDetectMode(ownerId, e.target.value); saveDet();
     });
@@ -1640,10 +1669,9 @@ function wireSound(div, n) {
     });
     // ▶ audition the sound now at the current volume (also unlocks browser autoplay for later auto-fires)
     $(".sn-test")?.addEventListener("click", () => {
-        const prog = $(".sn-prog");
         const s = model.soundNode(x.id);
-        if (!s?.file) { if (prog) prog.textContent = "no file"; return; }
-        playSound(s.file, s.volume ?? 1); if (prog) prog.textContent = "played";
+        if (!s?.file) return;
+        playSound(s.file, s.volume ?? 1);
     });
 }
 
@@ -1916,7 +1944,7 @@ function removeNode(n) {
         item:       { kill: () => { closeItemImage(win, n.ref.id); model.removeItem(win, n.ref.id); clearGrid(win); }, after: () => { refreshImageBoxes(win); autosave(win); } },
         region:     { kill: () => model.removeRegion(win, n.ref.id), after: () => { autosave(win); refreshImageBoxes(win); } },
         readout:   { kill: () => model.removeReadout(win, n.ref.id), after: () => { rebuildReadoutConsumers(); autosave(win); refreshImageBoxes(win); } },
-        detect:     { kill: () => model.removeDetect(win, n.ref.id), after: () => { rebuildNode(nodeIdOf(win)); if (win === "game") refreshDetect("game"); else autosave(win); refreshImageBoxes(win); } },
+        detect:     { kill: () => model.removeDetect(win, n.ref.id), after: () => { rebuildNode(nodeIdOf(win)); autosave(win); refreshImageBoxes(win); } },
         scrollbar:  { kill: () => model.removeScrollbar(win), after: () => { autosave(win); refreshImageBoxes(win); } },
         itemfield:  { kill: () => model.removeItemField(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
         itemtell:   { kill: () => model.removeItemTell(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
@@ -2427,12 +2455,13 @@ function rebuildNode(id) {
         return;
     }
     fillNode(el, n);
-    // fillNode rewrote the node's DOM, wiping the resize grips — re-add them. The ResizeObserver +
-    // mouseup listeners from the initial snapResize stay bound to `el` (reused across rebuild) and its
-    // `finish` still owns settling; only the grip DOM needs restoring, with grid snap and NO grip-side
-    // onSettle (matching snapResize — avoids the double settle).
+    // fillNode rewrote the node's DOM, wiping the resize grips — re-add them with the SAME opts as
+    // creation (snapResize), grip-side onSettle included. snapResize's ResizeObserver only glues edges
+    // on reflow; it does NOT settle/reroute (no mouseup/finish), so the grip loop's onSettle is the
+    // ONLY thing that clears the drag freeze and reroutes on release. Dropping it here left a rebuilt
+    // node's resize with no reroute after release (draggingNodes stuck true, lines frozen).
     // (window + item already returned above; every remaining node type is freely resizable.)
-    addResizeGrips(el, { ...nodeResizeOpts(el, n.id), snap: true, onSettle: null });
+    addResizeGrips(el, { ...nodeResizeOpts(el, n.id), snap: true });
     fitNodeHeight(el, n.id);   // a revealed input (e.g. dict -> fuzzy) may overflow the pinned height — grow to fit
 }
 
@@ -2967,26 +2996,21 @@ function wireNode(div, n) {
                 () => movePos(`reg:${n.win.id}:${oldId}`, `reg:${n.win.id}:${n.ref.id}`),
                 () => { render(); autosave(n.win.id); refreshImageBoxes(n.win.id); });   // re-OCR only this window
         });
+        // Only the capture/confidence knobs live on the field body now; all value processing is
+        // authored in the rule pipeline (wired below). `type` rebuilds so the rule menus re-filter.
         div.querySelectorAll(".fset").forEach((inp) => inp.addEventListener("change", (e) => {
             if (!fld) return;
             const k = e.target.dataset.k;
-            if (k === "type") { fld.type = e.target.value; rebuildNode(n.id); }  // toggles extract/sep/dict/min-max
-            else if (k === "extract") { fld.extract = e.target.value; rebuildNode(n.id); }  // toggles sep
-            else if (k === "sep") fld.separator = e.target.value || "/";
-            else if (k === "fuzzy") fld.fuzzy = +e.target.value;
+            if (k === "type") { fld.type = e.target.value; rebuildNode(n.id); }  // re-filters the rule menus
             else if (k === "isolate") fld.isolate = e.target.checked;
             else if (k === "glyph_check") fld.glyph_check = e.target.checked;
-            else if (k === "fold_accents") fld.fold_accents = e.target.checked;
             else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
-            else if (k === "min") fld.min = e.target.value === "" ? null : +e.target.value;
-            else if (k === "max") fld.max = e.target.value === "" ? null : +e.target.value;
-            else if (k === "dictmode") { fld.dict_mode = e.target.value; rebuildNode(n.id); }  // toggles use-dict/fuzzy
-            else if (k === "usedict") { fld.dictionary = e.target.value || ""; render(); }   // redraw the muted dict link
             autosave(n.win?.id);   // plain value edits: no DOM rebuild; re-OCR only this window
         }));
         if (fld) wireFieldRules(div, fld, {
             rebuild: () => { rebuildNode(n.id); autosave(n.win?.id); },
             commit: () => autosave(n.win?.id),
+            retrace: (el) => refreshRuleTrace(n.win.id, fld.id, n.id, el),
         });
     } else if (n.type === "detect") {
         const owner = n.win.id;                         // window id, or "game" for the gate
@@ -3055,27 +3079,21 @@ function wireReadout(div, n) {
             () => movePos(`ro:${winId}:${vid}`, `ro:${winId}:${n.ref.id}`),
             () => { render(); rebuildReadoutConsumers(); autosave(winId); });   // repoint toast chips + watch dropdown
     });
-    // inline read-config, edited straight on the FieldDef (like a region)
+    // inline read-config, edited straight on the FieldDef (like a region). Only the
+    // capture/confidence knobs live here; value processing is the rule pipeline (wired below).
     div.querySelectorAll(".roset").forEach((inp) => inp.addEventListener("change", (e) => {
         if (!fld) return;
         const k = e.target.dataset.k;
-        if (k === "type") { fld.type = e.target.value; rebuildNode(n.id); }
-        else if (k === "extract") { fld.extract = e.target.value; rebuildNode(n.id); }
-        else if (k === "sep") fld.separator = e.target.value || "/";
-        else if (k === "fuzzy") fld.fuzzy = +e.target.value;
+        if (k === "type") { fld.type = e.target.value; rebuildNode(n.id); }  // re-filters the rule menus
         else if (k === "isolate") fld.isolate = e.target.checked;
         else if (k === "glyph_check") fld.glyph_check = e.target.checked;
-        else if (k === "fold_accents") fld.fold_accents = e.target.checked;
         else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
-        else if (k === "min") fld.min = e.target.value === "" ? null : +e.target.value;
-        else if (k === "max") fld.max = e.target.value === "" ? null : +e.target.value;
-        else if (k === "dictmode") { fld.dict_mode = e.target.value; rebuildNode(n.id); }
-        else if (k === "usedict") { fld.dictionary = e.target.value || ""; render(); }
         autosave(winId);
     }));
     if (fld) wireFieldRules(div, fld, {
         rebuild: () => { rebuildNode(n.id); autosave(winId); },
         commit: () => autosave(winId),
+        retrace: (el) => refreshRuleTrace(winId, fld.id, n.id, el),
     });
 }
 
@@ -3646,10 +3664,13 @@ function refreshDirtyUI() {
     const c = $("prettyDirtyCount");
     if (c) c.textContent = has ? `${prettyOverrides.dirtyCount()} pretty` : "";
 }
-// Armed two-click confirm (no blocking dialogs — rule 2), shared by both buttons.
-// `silent`: don't swap the label to "confirm" — the armed state is signalled by CSS alone (the
-// icon-only delete button just turns yellow; a "confirm" word would force the empty label wide).
-function armConfirm(btn, run, { silent = false } = {}) {
+// Armed two-click confirm (no blocking dialogs — rule 2), the ONE shared arm helper (rule 7).
+// `silent`: don't swap the label to "confirm" — the armed state is signalled by CSS alone (an
+// icon-only delete just turns yellow; a "confirm" word would force the empty label wide).
+// `resetOnOutside`: disarm on ANY click that isn't this button, or on Escape (instead of the
+// default 2.5s auto-disarm) — for a delete sitting in a live list where a stray timeout is worse
+// than an explicit dismiss.
+function armConfirm(btn, run, { silent = false, resetOnOutside = false } = {}) {
     if (!btn) return;
     // Buttons with an icon keep it in a `.sel-ic` span; only the `.sel-lbl` text arms/disarms so
     // the icon survives (a whole-button textContent swap would wipe the SVG). Plain buttons fall
@@ -3657,9 +3678,25 @@ function armConfirm(btn, run, { silent = false } = {}) {
     const lbl = btn.querySelector(".sel-lbl");
     const get = () => (lbl ? lbl.textContent : btn.textContent);
     const set = (t) => { if (silent) return; if (lbl) setSelLbl(lbl, t); else btn.textContent = t; };
+    let timer = null, offGlobal = null;
+    const disarm = () => {
+        if (btn.dataset.armed !== "1") return;
+        btn.dataset.armed = "0"; set(btn.dataset.label ?? get());
+        clearTimeout(timer); offGlobal?.(); offGlobal = null;
+    };
+    const arm = () => {
+        btn.dataset.armed = "1"; btn.dataset.label = get(); set("confirm");
+        if (!resetOnOutside) { timer = setTimeout(disarm, 2500); return; }
+        // capture phase so we disarm before the outside target handles its own click
+        const onDown = (e) => { if (e.target !== btn && !btn.contains(e.target)) disarm(); };
+        const onKey = (e) => { if (e.key === "Escape") disarm(); };
+        document.addEventListener("pointerdown", onDown, true);
+        document.addEventListener("keydown", onKey, true);
+        offGlobal = () => { document.removeEventListener("pointerdown", onDown, true); document.removeEventListener("keydown", onKey, true); };
+    };
     btn.addEventListener("click", () => {
-        if (btn.dataset.armed !== "1") { btn.dataset.armed = "1"; btn.dataset.label = get(); set("confirm"); setTimeout(() => { if (btn.dataset.armed === "1") { btn.dataset.armed = "0"; set(btn.dataset.label); } }, 2500); return; }
-        btn.dataset.armed = "0"; set(btn.dataset.label || get()); run();
+        if (btn.dataset.armed !== "1") { arm(); return; }
+        disarm(); run();
     });
 }
 armConfirm($("prettyRevertBtn"), () => prettyOverrides.revertAll());
@@ -3864,9 +3901,14 @@ $("settingsBtn")?.addEventListener("click", () => {
                 h("button", { id: "newGameBtn" }, "create"))),
         h("section", { class: "set-sec" },
             h("h4", "capture"),
-            h("label", { class: "set-row", title: "How frames are grabbed from the game window. WGC reads the DWM-composited surface (no per-grab game re-render); PrintWindow re-renders the window each grab; MSS grabs the screen region. Options come from the live registry." },
-                h("span", "backend"),
-                h("select", { id: "captureBackend" }))),
+            // Capture is a per-grab focus switch: a foreground grabber (game on top) and a
+            // background grabber (occluded). Set both the same for single-backend capture.
+            h("label", { class: "set-row", title: "How frames are grabbed while the game IS the focused window — cheapest wins (MSS: CPU BitBlt, no GPU). Options come from the live registry." },
+                h("span", "foreground"),
+                h("select", { id: "captureFg" })),
+            h("label", { class: "set-row", title: "How frames are grabbed while the game is backgrounded/occluded — must read the window's own surface (PrintWindow: GPU-light, re-renders; WGC: GPU-streamed, no re-render). Set the same as foreground for single-backend capture." },
+                h("span", "background"),
+                h("select", { id: "captureBg" }))),
         h("section", { class: "set-sec" },
             h("h4", "OCR"),
             h("label", { class: "set-row", title: "OCR device — GPU needs onnxruntime-gpu + CUDA. Auto: CPU for editing, GPU for the precapture batch." },
@@ -4271,18 +4313,26 @@ const CAPTURE_LABELS = {
 };
 
 async function wireCaptureControls(root) {
-    const sel = root.querySelector("#captureBackend");
-    if (!sel) return;
+    const fgSel = root.querySelector("#captureFg"), bgSel = root.querySelector("#captureBg");
+    if (!fgSel || !bgSel) return;
     try {
         const st = await api.captureBackend.getBackend();
-        sel.replaceChildren(...(st.names || []).map((n) =>
-            h("option", { value: n }, CAPTURE_LABELS[n] || n)));
-        sel.value = st.name;
-        sel.addEventListener("change", async () => {
-            const done = timed(`capture backend → ${sel.value}`);
-            try { const r = await api.captureBackend.setBackend(sel.value); if (r.name) sel.value = r.name; done(); }
+        // Both grabbers pick from the same plain-backend list (sub_names).
+        const opts = () => (st.sub_names || []).map((n) => h("option", { value: n }, CAPTURE_LABELS[n] || n));
+        fgSel.replaceChildren(...opts());
+        bgSel.replaceChildren(...opts());
+        function sync(s) {
+            if (s.foreground) fgSel.value = s.foreground;
+            if (s.background) bgSel.value = s.background;
+        }
+        sync(st);
+        const change = async () => {
+            const done = timed(`capture: ${fgSel.value} fg / ${bgSel.value} bg`);
+            try { sync(await api.captureBackend.setBackend({ foreground: fgSel.value, background: bgSel.value })); done(); }
             catch (e) { done(String(e.message || e), "err"); }
-        });
+        };
+        fgSel.addEventListener("change", change);
+        bgSel.addEventListener("change", change);
     } catch { /* ignore */ }
 }
 
@@ -4293,10 +4343,24 @@ async function wireOcrControls(root) {
         const st = await api.ocr.getDevice();
         const gpuOpt = sel.querySelector('option[value="gpu"]');
         const autoOpt = sel.querySelector('option[value="auto"]');
-        // GPU + Auto both need CUDA (Auto bursts to GPU for the batch); grey them out without it
-        gpuOpt.disabled = !st.gpu_available;
-        if (autoOpt) autoOpt.disabled = !st.gpu_available;
-        if (!st.gpu_available) gpuOpt.textContent = "GPU (n/a)";
+        const GPU_LBL = gpuOpt ? gpuOpt.textContent : "GPU";
+        const AUTO_LBL = autoOpt ? autoOpt.textContent : "Auto";
+        // GPU + Auto need CUDA AND an engine that honours it. No CUDA install -> "(n/a)";
+        // an engine that can't use CUDA (OpenVINO runs CPU/iGPU) -> "(n/a: OpenVINO)". Either
+        // way the device switch would be a no-op, so grey them out. Re-run when the engine
+        // changes (cuda_capable is per-engine).
+        function gateDevice(s) {
+            const noCuda = !s.gpu_available, noEngine = s.cuda_capable === false;
+            if (gpuOpt) {
+                gpuOpt.disabled = noCuda || noEngine;
+                gpuOpt.textContent = noCuda ? "GPU (n/a)" : noEngine ? "GPU (n/a: OpenVINO)" : GPU_LBL;
+            }
+            if (autoOpt) {
+                autoOpt.disabled = noCuda || noEngine;
+                autoOpt.textContent = noEngine ? "Auto (n/a: OpenVINO)" : AUTO_LBL;
+            }
+        }
+        gateDevice(st);
         sel.value = st.mode || st.device;   // the select reflects the MODE, not the live device
         syncKillGpu(st);
         sel.addEventListener("change", async () => {
@@ -4316,8 +4380,14 @@ async function wireOcrControls(root) {
             engSel.value = st.engine_type;
             engSel.addEventListener("change", async () => {
                 const done = timed(`OCR engine → ${engSel.value}`);
-                try { const r = await api.ocr.setEngineType(engSel.value); if (r.engine_type) engSel.value = r.engine_type; done(); }
-                catch (e) { done(String(e.message || e), "err"); }
+                // GPU/Auto availability is per-engine (OpenVINO can't use CUDA), so re-gate
+                // the device select from the fresh state the switch returns.
+                try {
+                    const r = await api.ocr.setEngineType(engSel.value);
+                    if (r.engine_type) engSel.value = r.engine_type;
+                    gateDevice(r); syncKillGpu(r);
+                    done();
+                } catch (e) { done(String(e.message || e), "err"); }
             });
         }
         const thRow = root.querySelector("#ocrThreadsRow"), thIn = root.querySelector("#ocrThreads");

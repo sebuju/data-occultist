@@ -10,7 +10,8 @@ from oc.collect.triggers import TriggerRunner
 from oc.interfaces import OcrEngine
 from oc.profile.merge import merge_profiles
 from oc.profile.models import (
-    Box, FieldDef, FieldType, GameProfile, ReadoutDef, TriggerDef, WindowDef,
+    Box, FieldDef, FieldRule, FieldType, GameProfile, ReadoutDef, RuleThen, RuleWhen,
+    TriggerDef, WindowDef,
 )
 from oc.types import Frame, OcrLine, PixelBox
 
@@ -45,7 +46,8 @@ def test_ocr_readout_out_of_range_omitted():
     # a read above the field's plausible max is a misread -> the readout is OMITTED (no fire on junk)
     win = WindowDef(
         id="hud",
-        fields=[FieldDef(id="hpf", type=FieldType.number, max=1000)],
+        fields=[FieldDef(id="hpf", type=FieldType.number,
+                         rules=[FieldRule(when=RuleWhen.above, arg="1000", then=RuleThen.drop)])],
         readouts=[ReadoutDef(id="hp", box=Box(x=0, y=0, w=0.5, h=0.5), field="hpf")],
     )
     fields = {f.id: f for f in win.fields}

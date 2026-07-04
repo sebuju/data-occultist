@@ -212,6 +212,22 @@ export async function preview(profile, game, capture, preferCache = false) {
     return r.json();
 }
 
+// Debug the window's rule pipelines: read every field off the current canvas and trace each
+// value through its rules in ONE OCR pass. Field nodes coalesce into this single batch so the
+// whole trace fleet costs one window read. Returns
+// { fields: { [fieldId]: { trace:[{i,when,then,in,out,fired}], value, dropped, raw } } }.
+export async function ruleTrace(profile, game, capture) {
+    let url = "/api/rule_trace";
+    if (game && capture) url += `?game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}`;
+    const r = await tfetchOcr(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(profile),
+    }, OCR_MS);
+    if (!r.ok) throw new Error(`rule_trace: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+
 // Re-read the current layout and COMMIT the keyable cells into the window's dataset
 // store (one revertable batch). Returns { dataset, written, skipped, cells }.
 export async function previewCommit(profile, game, capture) {
@@ -358,7 +374,12 @@ export const ocr = {
 // registry list, so a backend that fails to import simply never appears in the dropdown.
 export const captureBackend = {
     getBackend: () => tfetch("/api/capture/backend").then((r) => r.json()),
-    setBackend: (name) => tfetch(`/api/capture/backend?name=${encodeURIComponent(name)}`, { method: "POST" }).then((r) => r.json()),
+    setBackend: ({ foreground, background } = {}) => {
+        const q = [];
+        if (foreground) q.push(`foreground=${encodeURIComponent(foreground)}`);
+        if (background) q.push(`background=${encodeURIComponent(background)}`);
+        return tfetch(`/api/capture/backend?${q.join("&")}`, { method: "POST" }).then((r) => r.json());
+    },
 };
 
 // Testing harness: a recorded video as a stand-in for the live game window.

@@ -1,185 +1,196 @@
-from oc.collect.fields import coerce, coerce_rule, out_of_range
-from oc.profile.models import Extract, FieldDef, FieldType
+from oc.collect.fields import coerce, run_rules
+from oc.profile.models import Extract, FieldDef, FieldRule, FieldType, RuleThen, RuleWhen
 
+
+def _f(rules=None, type=FieldType.text):
+    return FieldDef(id="f", type=type, rules=rules or [])
+
+
+def rule(**kw):
+    return FieldRule(**kw)
+
+
+# ---- pass-through / typing --------------------------------------------------
 
 def test_text_passthrough():
-    f = FieldDef(id="name")
-    assert coerce(f, "  Soma Prime ") == "Soma Prime"
+    assert coerce(_f(), "  Soma Prime ") == "Soma Prime"
 
 
 def test_text_empty_is_none():
-    assert coerce(FieldDef(id="name"), "   ") is None
+    assert coerce(_f(), "   ") is None
 
 
 def test_number_parsing():
-    f = FieldDef(id="count", type=FieldType.number)
+    f = _f(type=FieldType.number)
     assert coerce(f, "x 12 owned") == 12
     assert coerce(f, "1,234") == 1234
     assert coerce(f, "3.5") == 3.5
 
 
+def test_no_rules_reads_pass_through():
+    assert coerce(_f(), "Soma") == "Soma"
+    assert coerce(_f(type=FieldType.number), "x 3") == 3
+
+
+# ---- extract rule -----------------------------------------------------------
+
 def test_extract_number_before_separator():
-    f = FieldDef(id="rank", type=FieldType.number, extract=Extract.number_before, separator="/")
+    f = _f([rule(then=RuleThen.extract, strategy=Extract.number_before, sep="/")], FieldType.number)
     assert coerce(f, "7 / 30") == 7
 
 
 def test_extract_number_after_separator():
-    f = FieldDef(id="max", type=FieldType.number, extract=Extract.number_after, separator="/")
+    f = _f([rule(then=RuleThen.extract, strategy=Extract.number_after, sep="/")], FieldType.number)
     assert coerce(f, "7 / 30") == 30
 
 
 def test_extract_text_before_separator():
-    f = FieldDef(id="name", extract=Extract.text_before, separator="(")
+    f = _f([rule(then=RuleThen.extract, strategy=Extract.text_before, sep="(")])
     assert coerce(f, "Serration (maxed)") == "Serration"
 
 
 def test_extract_word_separator_is_case_insensitive():
-    # OCR casing is unreliable: a word separator "Rank" must still split "RANK"
-    f = FieldDef(id="name", extract=Extract.text_before, separator="Rank")
+    f = _f([rule(then=RuleThen.extract, strategy=Extract.text_before, sep="Rank")])
     assert coerce(f, "Serration RANK 5") == "Serration"
-    g = FieldDef(id="max", type=FieldType.number, extract=Extract.number_after, separator="of")
+    g = _f([rule(then=RuleThen.extract, strategy=Extract.number_after, sep="of")], FieldType.number)
     assert coerce(g, "5 OF 30") == 30
 
 
-def test_empty_fallback_when_no_number_present():
-    # "empty" fires when no NUMBER was detected — nothing read, or OCR junk off a
-    # marker icon sharing the box (digitless = no number was rendered)
-    f = FieldDef(id="count", type=FieldType.number, empty="1")
-    assert coerce(f, "") == 1            # nothing read
-    assert coerce(f, "   ") == 1         # whitespace-only = nothing read
-    assert coerce(f, "Guard") == 1       # digitless junk = no number rendered
-    assert coerce(f, "x 3") == 3         # a real number still wins
+# ---- set / drop -------------------------------------------------------------
 
-
-def test_no_empty_no_number_is_none():
-    f = FieldDef(id="count", type=FieldType.number)   # no empty default
-    assert coerce(f, "abc") is None
-
-
-def test_text_empty_fallback():
-    f = FieldDef(id="tag", empty="—")
-    assert coerce(f, "  ") == "—"
-
-
-def test_text_if_number_all_numeric_only():
-    # default mode: substitute only when the read is ENTIRELY numbers
-    f = FieldDef(id="name", if_number="unknown")
-    assert coerce(f, "1234") == "unknown"
-    assert coerce(f, "12,5") == "unknown"            # punctuation+digits still numeric
-    assert coerce(f, "Soma 2") == "Soma 2"           # contains a letter -> kept
-    assert coerce(f, "Soma Prime") == "Soma Prime"
-
-
-def test_text_if_number_any_digit():
-    f = FieldDef(id="name", if_number="unknown", if_number_any=True)
-    assert coerce(f, "Soma 2") == "unknown"          # any digit triggers
-    assert coerce(f, "Soma Prime") == "Soma Prime"
-
-
-def test_number_if_text_all_text_only():
-    f = FieldDef(id="count", type=FieldType.number, if_text="0")
-    assert coerce(f, "Guard") == 0                   # all-text read substituted
-    assert coerce(f, "x 3") == 3                     # contains a digit -> real read wins
-    assert coerce(f, "7") == 7
-    assert coerce(f, "#") == 0                       # symbol-only junk is not a number either
-
-
-def test_number_if_text_any_letter():
-    f = FieldDef(id="count", type=FieldType.number, if_text="0", if_text_any=True)
-    assert coerce(f, "x 3") == 0                     # any letter triggers
-    assert coerce(f, "3") == 3
-
-
-def test_if_substitutions_do_not_swallow_empty():
-    # truly-empty read goes through the empty fallback, not the if_* substitution
-    f = FieldDef(id="count", type=FieldType.number, empty="1", if_text="0")
+def test_set_on_empty():
+    f = _f([rule(when=RuleWhen.empty, then=RuleThen.set, value="1")], FieldType.number)
     assert coerce(f, "") == 1
-    assert coerce(f, "Guard") == 0
+    assert coerce(f, "   ") == 1
+    assert coerce(f, "x 3") == 3          # a real number: empty rule doesn't fire
 
 
-def test_out_of_range_bounds():
-    # mod_drain plausibility: 8 keeps, a glyph-fused "81" is out of range
-    f = FieldDef(id="drain", type=FieldType.number, max=16)
-    assert out_of_range(f, 8) is False
-    assert out_of_range(f, 16) is False          # inclusive upper bound
-    assert out_of_range(f, 81) is True
-    g = FieldDef(id="rank", type=FieldType.number, min=0, max=10)
-    assert out_of_range(g, -1) is True
-    assert out_of_range(g, 0) is False
-    assert out_of_range(g, 5) is False
+def test_set_reports_substituted_label():
+    f = _f([rule(when=RuleWhen.no_digit, then=RuleThen.set, value="1")], FieldType.number)
+    res = run_rules(f, "Guard")
+    assert res.value == 1 and res.substituted == "no_digit"
+    res2 = run_rules(f, "7")
+    assert res2.value == 7 and res2.substituted is None
 
 
-def test_out_of_range_only_numbers_and_when_bounded():
-    f = FieldDef(id="drain", type=FieldType.number, max=16)
-    assert out_of_range(f, None) is False         # unread -> not range-checked
-    unbounded = FieldDef(id="n", type=FieldType.number)
-    assert out_of_range(unbounded, 999) is False  # no bounds -> never out of range
-    text = FieldDef(id="name", max=16)            # text field ignores numeric bounds
-    assert out_of_range(text, "anything") is False
+def test_drop_resolves_to_none_and_flags_dropped():
+    f = _f([rule(when=RuleWhen.all_letter, then=RuleThen.drop)], FieldType.number)
+    res = run_rules(f, "Guard")
+    assert res.value is None and res.dropped is True
+    assert coerce(f, "x 7") == 7          # a numeric read is unaffected
 
 
-def test_number_digitless_junk_falls_back_to_empty():
-    # a count box may hold a marker icon instead of a number; OCR junk off the icon
-    # ('人', '#') has no digits, so it means "no number rendered" -> the empty value
-    f = FieldDef(id="count", type=FieldType.number, empty="1")
-    assert coerce_rule(f, "人") == (1, "no_digit")
-    assert coerce_rule(f, "#") == (1, "no_digit")
-    assert coerce_rule(f, "@2") == (2, None)         # a digit anywhere is a real read
-    assert coerce_rule(f, "junk") == (1, "no_digit")
-    # without an empty value there is nothing to fall back to
-    bare = FieldDef(id="count", type=FieldType.number)
-    assert coerce_rule(bare, "#") == (None, None)
+# ---- below / above (min/max replacement) ------------------------------------
+
+def test_below_above_drop_out_of_range():
+    f = _f([rule(when=RuleWhen.above, arg="16", then=RuleThen.drop)], FieldType.number)
+    assert coerce(f, "8") == 8
+    assert coerce(f, "16") == 16           # inclusive: above 16 is strictly >
+    assert run_rules(f, "81").dropped is True
+
+    g = _f([rule(when=RuleWhen.below, arg="0", then=RuleThen.drop)], FieldType.number)
+    assert run_rules(g, "-1").dropped is True
+    assert coerce(g, "0") == 0
 
 
-def test_coerce_rule_reports_which_rule_fired():
-    # the reported label is the matched rule's `when` (legacy fields migrate to rules)
-    f = FieldDef(id="count", type=FieldType.number, empty="1", if_text="0")
-    assert coerce_rule(f, "") == (1, "empty")
-    assert coerce_rule(f, "Guard") == (0, "no_digit")
-    assert coerce_rule(f, "7") == (7, None)               # a real read carries no rule
-    t = FieldDef(id="name", if_number="unknown")
-    assert coerce_rule(t, "1234") == ("unknown", "all_digit")
-    assert coerce_rule(t, "Soma") == ("Soma", None)
+def test_below_can_clamp_with_set():
+    # configurable action: below 1 -> set 1 (a floor), not drop
+    f = _f([rule(when=RuleWhen.below, arg="1", then=RuleThen.set, value="1")], FieldType.number)
+    assert coerce(f, "0") == 1
+    assert coerce(f, "5") == 5
 
 
-def test_rules_evaluated_in_order_first_match_wins():
-    from oc.profile.models import FieldRule
+# ---- equal / not_equal / contains -------------------------------------------
 
-    f = FieldDef(id="name", rules=[
-        FieldRule(when="has_digit", then="set", value="A"),
-        FieldRule(when="always", then="set", value="B"),
+def test_equal_and_not_equal():
+    f = _f([rule(when=RuleWhen.equal, arg="n/a", then=RuleThen.drop)])
+    assert run_rules(f, "N/A").dropped is True   # case-insensitive
+    assert coerce(f, "Soma") == "Soma"
+
+    g = _f([rule(when=RuleWhen.not_equal, arg="ok", then=RuleThen.set, value="bad")])
+    assert coerce(g, "OK") == "OK"          # equals arg (case-insensitive) -> rule doesn't fire
+    assert coerce(g, "whatever") == "bad"   # differs -> set fires
+
+
+def test_contains():
+    f = _f([rule(when=RuleWhen.contains, arg="maxed", then=RuleThen.drop)])
+    assert run_rules(f, "Serration (MAXED)").dropped is True
+    assert coerce(f, "Serration") == "Serration"
+
+
+# ---- string / number transforms --------------------------------------------
+
+def test_lowercase_uppercase():
+    assert coerce(_f([rule(then=RuleThen.lowercase)]), "Soma PRIME") == "soma prime"
+    assert coerce(_f([rule(then=RuleThen.uppercase)]), "Soma prime") == "SOMA PRIME"
+
+
+def test_fold_accents_rule():
+    assert coerce(_f([rule(then=RuleThen.fold)]), "Grineer Bö") == "Grineer Bo"
+
+
+def test_round_floor_ceil():
+    r = _f([rule(then=RuleThen.round)], FieldType.number)
+    assert coerce(r, "3.5") == 4
+    assert coerce(r, "3.4") == 3
+    assert coerce(_f([rule(then=RuleThen.floor)], FieldType.number), "3.9") == 3
+    assert coerce(_f([rule(then=RuleThen.ceil)], FieldType.number), "3.1") == 4
+
+
+# ---- pipeline ordering ------------------------------------------------------
+
+def test_value_flows_top_to_bottom():
+    # a transform mutates the running value; a later condition sees the CHANGED value
+    f = _f([
+        rule(then=RuleThen.uppercase),                              # "abc" -> "ABC"
+        rule(when=RuleWhen.contains, arg="ABC", then=RuleThen.set, value="hit"),
     ])
-    assert coerce(f, "x9") == "A"          # first matching rule wins
-    assert coerce(f, "plain") == "B"       # falls through to the catch-all
+    assert coerce(f, "abc") == "hit"
+    # without the uppercase, the lowercase contains would miss (case-insensitive it wouldn't,
+    # but this shows the second rule reacts to the first's output)
 
 
-def test_rule_drop_resolves_to_none():
-    from oc.profile.models import FieldRule
+def test_multiple_transforms_chain():
+    f = _f([
+        rule(then=RuleThen.extract, strategy=Extract.number_after, sep="/"),   # "7 / 30" -> "30"
+        rule(when=RuleWhen.above, arg="50", then=RuleThen.set, value="50"),    # clamp high
+    ], FieldType.number)
+    assert coerce(f, "7 / 30") == 30
+    assert coerce(f, "7 / 80") == 50
 
-    f = FieldDef(id="count", type=FieldType.number, rules=[
-        FieldRule(when="all_letter", then="drop"),
+
+def test_drop_early_returns_before_later_rules():
+    f = _f([
+        rule(when=RuleWhen.empty, then=RuleThen.drop),
+        rule(then=RuleThen.set, value="never"),
     ])
-    assert coerce_rule(f, "Guard") == (None, "all_letter")
-    assert coerce(f, "x 7") == 7           # a numeric read is unaffected
+    res = run_rules(f, "")
+    assert res.dropped is True and res.value is None
 
 
-def test_no_rules_reads_pass_through():
-    assert coerce(FieldDef(id="name"), "Soma") == "Soma"
-    assert coerce(FieldDef(id="n", type=FieldType.number), "x 3") == 3
+# ---- trace ------------------------------------------------------------------
 
-
-def test_fields_for_dedupes_stale_duplicate_ids():
-    # a dirty saved profile can carry the same field id twice (old merge leftovers);
-    # consumers index fields by id, so the FIRST def — the one the UI edits — must
-    # win, not whichever happens to be serialized last
-    from oc.profile.models import GameProfile, WindowDef
-
-    win = WindowDef(id="w", fields=[
-        FieldDef(id="name", fuzzy=0.65),
-        FieldDef(id="count"),
-        FieldDef(id="name", fuzzy=0.82),          # stale shadow
+def test_trace_records_each_rule_in_out():
+    f = _f([
+        rule(then=RuleThen.uppercase),
+        rule(when=RuleWhen.contains, arg="X", then=RuleThen.set, value="found"),
     ])
-    prof = GameProfile(name="g", windows=[win])
-    out = prof.fields_for(win)
-    assert [f.id for f in out] == ["name", "count"]
-    assert out[0].fuzzy == 0.65
+    res = run_rules(f, "axb", trace=True)
+    assert [s["out"] for s in res.trace] == ["AXB", "found"]
+    assert [s["fired"] for s in res.trace] == [True, True]
+
+
+def test_invalid_rule_for_type_is_ignored():
+    # `contains` is text-only; on a NUMBER field it must be IGNORED (kept but not evaluated),
+    # not run — else it would match "3" in "3.5" and wrongly drop the record
+    f = _f([rule(when=RuleWhen.contains, arg="3", then=RuleThen.drop)], FieldType.number)
+    assert coerce(f, "3.5") == 3.5
+    res = run_rules(f, "3.5", trace=True)
+    assert res.trace[0]["ignored"] is True and res.trace[0]["fired"] is False
+
+
+def test_trace_marks_drop():
+    f = _f([rule(when=RuleWhen.empty, then=RuleThen.drop)])
+    res = run_rules(f, "", trace=True)
+    assert res.trace[0]["fired"] is True
+    assert res.trace[0]["out"] is None

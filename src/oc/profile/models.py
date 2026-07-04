@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer, model_validator,
+)
 
 from ..store.keys import KeyMap, KeySpec
 from ..types import FractionBox
@@ -85,9 +87,13 @@ class DictMode(str, Enum):
 
 
 class RuleWhen(str, Enum):
-    """A condition tested against a field's RAW read (before extraction) to fire a
-    fallback. Each is a predicate on the read's shape (after a whitespace strip)."""
+    """A condition tested against the field's CURRENT running value when the rule pipeline
+    reaches it. Rules run top-to-bottom, so a transform ahead of this rule may already have
+    changed the value the condition sees. Shape predicates look at the text; ``below`` /
+    ``above`` compare it numerically to ``arg``; ``equal`` / ``not_equal`` / ``contains``
+    compare it to ``arg`` (case-insensitive)."""
 
+    always = "always"          # unconditional — the form a transform rule takes
     empty = "empty"            # nothing at all (no characters)
     no_digit = "no_digit"      # no digit anywhere (empty, symbol-only, or pure text)
     all_digit = "all_digit"    # has a digit and NO letter (a clean number)
@@ -95,118 +101,96 @@ class RuleWhen(str, Enum):
     no_letter = "no_letter"    # no letter anywhere
     all_letter = "all_letter"  # has a letter and NO digit (pure text)
     has_letter = "has_letter"  # at least one letter present
-    always = "always"          # unconditional catch-all (place last)
+    below = "below"            # numeric value < arg
+    above = "above"            # numeric value > arg
+    equal = "equal"            # value == arg
+    not_equal = "not_equal"    # value != arg
+    contains = "contains"      # arg is a substring of value
 
 
 class RuleThen(str, Enum):
-    """What a matched :class:`FieldRule` does to the read."""
+    """What a matched :class:`FieldRule` does. ``drop`` early-returns (the whole record is
+    dropped for that cell); every other action rewrites the running value and the pipeline
+    CONTINUES to the next rule."""
 
-    set = "set"    # substitute the rule's ``value`` (parsed to a number for number fields)
-    drop = "drop"  # resolve the read to None -> the record is dropped for this cell
+    drop = "drop"              # early-return: drop the record for this cell
+    set = "set"                # substitute ``value`` (authored, not OCR), continue
+    lowercase = "lowercase"    # value.lower()
+    uppercase = "uppercase"    # value.upper()
+    fold = "fold"              # fold accents to plain ASCII (ö -> o)
+    round = "round"            # round to nearest integer (number)
+    floor = "floor"            # round down (number)
+    ceil = "ceil"              # round up (number)
+    extract = "extract"        # pull a value out via ``strategy`` + ``sep``
+    dictionary = "dictionary"  # correct/validate against a game dictionary
 
 
 class FieldRule(BaseModel):
-    """One conditional fallback for a field. When the raw read matches ``when``, the
-    rule's ``then`` fires — substitute ``value`` or drop the read. Rules are evaluated
-    in order and the FIRST match wins, stopping evaluation; they run BEFORE extraction
-    so they react to the raw read's shape. Generalises the old fixed ``empty`` /
-    ``if_number`` / ``if_text`` one-offs into an authored, ordered list."""
+    """One step in a field's value pipeline. Rules run in authored order, top-to-bottom, and
+    the running value flows through each. A rule fires when ``when`` holds (``always`` for an
+    unconditional transform); ``then`` is the action. ``drop`` stops the pipeline and drops
+    the record; any other action rewrites the value and flow continues. Only the operand
+    field(s) relevant to the chosen ``when`` / ``then`` are used; the rest keep defaults."""
 
-    when: RuleWhen = RuleWhen.empty
+    when: RuleWhen = RuleWhen.always
+    arg: str = ""                            # operand for below/above/equal/not_equal/contains
     then: RuleThen = RuleThen.set
-    value: str = ""   # for ``set``: the substituted text; ignored for ``drop``
+    value: str = ""                          # for ``set``: the substituted text
+    strategy: Extract = Extract.number       # for ``extract``: which piece to pull
+    sep: str = "/"                           # for ``extract``: the *_before/_after split token
+    dict_mode: DictMode = DictMode.correct   # for ``dictionary``: how the vocabulary participates
+    dict_id: str = ""                        # for ``dictionary``: which DictionaryDef (blank = pooled)
+    fuzzy: float = 0.82                      # for ``dictionary``: fuzzy-snap similarity threshold
+
+    _ARG_WHENS = (RuleWhen.below, RuleWhen.above, RuleWhen.equal, RuleWhen.not_equal, RuleWhen.contains)
+
+    @model_serializer
+    def _ser(self) -> dict:
+        """Emit only the operand(s) the chosen ``when`` / ``then`` actually use, so a rule
+        stays terse on disk and over the wire (a bare ``fold`` is ``{when, then}``, not all
+        nine fields). Absent keys re-validate back to their defaults."""
+        out: dict = {"when": self.when.value, "then": self.then.value}
+        if self.when in self._ARG_WHENS:
+            out["arg"] = self.arg
+        if self.then is RuleThen.set:
+            out["value"] = self.value
+        elif self.then is RuleThen.extract:
+            out["strategy"] = self.strategy.value
+            out["sep"] = self.sep
+        elif self.then is RuleThen.dictionary:
+            out["dict_mode"] = self.dict_mode.value
+            if self.dict_id:
+                out["dict_id"] = self.dict_id
+            out["fuzzy"] = self.fuzzy
+        return out
 
 
 class FieldDef(BaseModel):
-    """One column in a game's data schema, read from a region."""
+    """One column in a game's data schema, read from a region. ALL value processing —
+    extraction, dictionary correction, range checks, case, rounding — lives in the ordered
+    ``rules`` pipeline (authored in the node UI), not in per-field scalars. Only the
+    capture / confidence knobs, which act before or around OCR rather than on the value
+    stream, sit on the field itself."""
 
     id: str
     type: FieldType = FieldType.text
-    # Declarative extraction strategy (replaces raw regex).
-    extract: Extract = Extract.whole
-    separator: str = "/"
-    # Ordered conditional fallbacks applied to the raw read BEFORE extraction (see
-    # FieldRule). Replaces the old fixed empty / if_number / if_text fields (migrated
-    # in from legacy profiles below). The first matching rule wins.
+    # The value pipeline: an ordered list of rules the raw read flows through, top-to-bottom
+    # (see FieldRule). Empty -> the read passes through and is typed to ``type`` at the end.
     rules: list[FieldRule] = Field(default_factory=list)
-    # How the game dictionary participates in this field's reads (see DictMode).
-    dict_mode: DictMode = DictMode.correct
-    # Which authored dictionary this field snaps to (a DictionaryDef.id). Empty ->
-    # the pooled vocabulary (every enabled dictionary). Lets one field key off relic
-    # names while another keys off arcane names, instead of one shared word soup.
-    dictionary: str = ""
-    # Similarity (0..1) an uncertain read must reach to be snapped to a known
-    # dictionary term (word-per-word fuzzy correction under the correcting dict modes).
-    fuzzy: float = 0.82
-    # Per-field minimum OCR confidence (0..1). A non-empty read below this drops the whole
+    # Per-field minimum OCR confidence (0..1). A GENUINE read below this drops the whole
     # record for that cell — a per-area floor on top of the global ``tuning.min_confidence``.
-    # 0 = no per-field floor (rely on the global one).
+    # 0 = no per-field floor (rely on the global one). A capture-quality gate, not a value rule.
     min_confidence: float = 0.0
-    # Number fields only: plausible value range. A genuine read outside [min, max] is
-    # implausible (e.g. a polarity glyph misread onto a drain digit -> "81" when the max is
-    # 16) and drops the whole record for that cell, same as a sub-confidence read. Either
-    # bound None -> that side unbounded. An authored ``set`` rule bypasses this.
-    min: float | None = None
-    max: float | None = None
     # Read this box in ISOLATION: OCR only its own crop instead of picking tokens out of the
-    # window-wide pass. The shared pass can recognise a digit and an adjacent glyph as ONE
-    # token ("8" + polarity -> "81"); a token is kept whole by where its CENTRE falls, so a
-    # tight box can't split it. Isolate crops just the box (upscaled) so it sees only those
-    # pixels — the fix for a number fused with a neighbouring symbol.
+    # window-wide pass. The shared pass can fuse a digit and an adjacent glyph into ONE token
+    # ("8" + polarity -> "81"); isolate crops just the box (upscaled) so it sees only those
+    # pixels. A capture-time choice, so it stays a field toggle rather than a value rule.
     isolate: bool = False
-    # Post-OCR GLYPH refinement: after this field is read, match each cleanly-separated
-    # glyph against the game's taught glyph atlas (GameProfile.glyphs) and substitute a
-    # character only when a *different* taught glyph out-scores the OCR's own by a margin.
-    # Fixes systematic single-glyph confusions the dictionary cannot (e.g. "Q3" vs "G3"
-    # where both are valid names). No atlas / no clean segmentation -> the read is untouched.
+    # Post-OCR GLYPH refinement: match each cleanly-separated glyph against the game's taught
+    # atlas (GameProfile.glyphs) and substitute a character only when a *different* taught
+    # glyph out-scores the OCR's own. Fixes systematic single-glyph confusions the dictionary
+    # cannot (e.g. "Q3" vs "G3"). Runs BEFORE the rule pipeline; a capture-time toggle.
     glyph_check: bool = False
-    # Fold accented characters to their plain ASCII base BEFORE anything else runs on the
-    # read (rules, extraction, dictionary): "ö" -> "o", "ä" -> "a", "é" -> "e". For games
-    # whose text is plain ASCII but OCR occasionally hallucinates diacritics, or whose
-    # dictionary is authored unaccented.
-    fold_accents: bool = True
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate(cls, data):
-        if not isinstance(data, dict):
-            return data
-        data = dict(data)
-        # legacy bool: dict_only true meant "correct AND drop unmatched"
-        if "dict_mode" not in data:
-            legacy = data.pop("dict_only", None)
-            if legacy is not None:
-                data["dict_mode"] = "correct_drop" if legacy else "correct"
-        # legacy fixed fallbacks (empty / if_number / if_text) -> the ordered rule list,
-        # preserving their exact firing order/priority so old profiles read identically.
-        empty = data.pop("empty", None)
-        if_number = data.pop("if_number", None)
-        if_number_any = bool(data.pop("if_number_any", False))
-        if_text = data.pop("if_text", None)
-        if_text_any = bool(data.pop("if_text_any", False))
-        if "rules" not in data and any(v is not None for v in (empty, if_number, if_text)):
-            ftype = data.get("type", "text")
-            ftype = getattr(ftype, "value", ftype)
-            rules: list[dict] = []
-            if ftype == "number":
-                # a number's ``empty`` value also covered the digitless case, but
-                # ``if_text`` took priority on a digitless read when both were set.
-                if empty is not None:
-                    rules.append({"when": "empty", "then": "set", "value": empty})
-                if if_text is not None:
-                    rules.append({"when": "has_letter" if if_text_any else "no_digit",
-                                  "then": "set", "value": if_text})
-                if empty is not None:
-                    rules.append({"when": "no_digit", "then": "set", "value": empty})
-            else:
-                if empty is not None:
-                    rules.append({"when": "empty", "then": "set", "value": empty})
-                if if_number is not None:
-                    rules.append({"when": "has_digit" if if_number_any else "all_digit",
-                                  "then": "set", "value": if_number})
-            if rules:
-                data["rules"] = rules
-        return data
 
 
 class RegionDef(BaseModel):
@@ -1237,6 +1221,21 @@ class GameProfile(BaseModel):
                 seen.add(t.lower())
                 out.append(t)
         return out
+
+    def stat_node_ids(self) -> set[str]:
+        """Every graph-node id that can emit an execution-timing sample — the live set the
+        stats store is pruned against (:func:`oc.store.stats_store.prune_stale`). Mirrors the
+        ``record_timing`` node ids exactly: ``win:<window>`` (incl. the HUD ``game`` window),
+        ``ds:<dataset>`` (declared datasets AND every window's fed dataset), ``sub:<subset>``,
+        ``producer:<producer>``, plus the constant ``precap``. A file whose node isn't here is
+        an orphan; keep this complete so a live node is never mistaken for one."""
+        ids: set[str] = {"precap"}
+        ids.update(f"win:{w.id}" for w in self.windows)
+        ids.update(f"ds:{d.id}" for d in self.datasets)
+        ids.update(f"ds:{w.dataset_id}" for w in self.windows if w.dataset_id)
+        ids.update(f"sub:{s.id}" for s in self.subsets)
+        ids.update(f"producer:{p.id}" for p in self.producers)
+        return ids
 
     def window(self, window_id: str) -> WindowDef | None:
         return next((w for w in self.windows if w.id == window_id), None)

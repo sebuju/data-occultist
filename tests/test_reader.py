@@ -4,7 +4,7 @@ import numpy as np
 
 from oc.collect.reader import RegionReader
 from oc.interfaces import OcrEngine
-from oc.profile.models import Box, FieldDef, FieldType, RegionDef, WindowDef
+from oc.profile.models import Box, FieldDef, FieldRule, FieldType, RegionDef, RuleThen, RuleWhen, WindowDef
 from oc.types import Frame, OcrLine, PixelBox
 
 
@@ -27,7 +27,8 @@ def _window():
         id="w",
         fields=[
             FieldDef(id="name"),
-            FieldDef(id="count", type=FieldType.number, empty="1", if_text_any=True),
+            FieldDef(id="count", type=FieldType.number,
+                     rules=[FieldRule(when=RuleWhen.no_digit, then=RuleThen.set, value="1")]),
         ],
         regions=[
             RegionDef(id="name", box=Box(x=0.0, y=0.0, w=0.5, h=0.1), field="name"),
@@ -37,7 +38,7 @@ def _window():
 
 
 def test_substituted_read_does_not_sink_confidence():
-    # OCR junk in the count box (icon art) trips the if_text fallback -> count = 1.
+    # OCR junk in the count box (icon art) trips the no_digit set-rule -> count = 1.
     # The substituted value is authored config, so the junk's low OCR confidence
     # must not drag the record below the save floor.
     ocr = StubOcr([
