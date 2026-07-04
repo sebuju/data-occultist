@@ -11,11 +11,9 @@ process: psutil     # oc.process.*      -> finds the running game
 ocr:                # oc.ocr.*          -> reads text from regions
   # Device (cpu/gpu/auto) is picked in the web UI and persisted to data/.ocr_device;
   # it defaults to GPU whenever CUDA is present (CPU is the no-CUDA fallback).
-  # ppocr5 = new-gen rapidocr package (PP-OCRv5/v6 models; needs the [ppocr5] extra).
-  # Rollback = the old tuned backend:
-  #   name: rapidocr
-  #   options: {rec_chunk: 8, yield_ms: 3,   # GPU pacing knobs (ppocr5 has none)
-  #             intra_op_num_threads: 2, inter_op_num_threads: 1}   # same CPU-cap intent
+  # ppocr5 = the rapidocr package (PP-OCRv5/v6 models); rapidocr is a core dep, so no
+  # extra needed for the default onnxruntime path (add [gpu] for CUDA, [ppocr5-openvino]
+  # for the OpenVINO engine).
   name: ppocr5
   options:
     engine_type: onnxruntime   # or openvino ([ppocr5-openvino] extra) — often faster on CPU
@@ -27,6 +25,8 @@ ocr:                # oc.ocr.*          -> reads text from regions
     inter_op_num_threads: 1
 classifier: detect  # oc.detect.*       -> decides window + state
 corrector: rapidfuzz  # oc.learn.*      -> fuzzy-corrects uncertain OCR
+notifier: windows   # oc.notify.*       -> raises OS toasts on trigger fire (windows =
+                    #   windows-toasts; falls back to null no-op off-Windows)
 
 tuning:
   accept_confidence: 0.88   # >= this: trust + learn the term

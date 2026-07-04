@@ -6,8 +6,9 @@ requires-python = ">=3.11"
 dependencies = [
     "mss>=9.0",
     "pywin32>=306; sys_platform == 'win32'",
+    "windows-toasts>=1.3; sys_platform == 'win32'",
     "psutil>=5.9",
-    "rapidocr-onnxruntime>=1.3",
+    "rapidocr>=3.4,<4",
     "opencv-python>=4.9",
     "numpy>=1.26",
     "pillow>=10.0",
@@ -35,20 +36,21 @@ desktop = ["pywebview>=5.0"]
 # PrintWindow does -> no per-grab stutter. Rust-backed WGC wheel; Win10 1803+.
 wgc = ["windows-capture>=1.5,<2"]
 # GPU OCR (Windows + NVIDIA CUDA 12 / cuDNN 9). Install with:
-#   pip uninstall -y onnxruntime && pip install -e ".[gpu]"
-# onnxruntime-gpu replaces onnxruntime; the nvidia-*-cu12 wheels ship the CUDA DLLs
+#   pip install -e ".[gpu]"
+# rapidocr (core dep) brings no onnxruntime of its own — install exactly one runtime.
+# This extra installs onnxruntime-gpu; the nvidia-*-cu12 wheels ship the CUDA DLLs
 # (the OCR engine adds them to PATH at runtime). Then pick "GPU" in the top bar.
+# CPU-only? `pip install onnxruntime` instead (never alongside onnxruntime-gpu — a
+# mixed CPU/GPU install clobbers one another's DLLs and fails to load).
 gpu = [
     "onnxruntime-gpu>=1.20",
     "nvidia-cudnn-cu12", "nvidia-cublas-cu12", "nvidia-cuda-runtime-cu12",
     "nvidia-cufft-cu12", "nvidia-curand-cu12", "nvidia-cusparse-cu12", "nvidia-cuda-nvrtc-cu12",
 ]
-# New-gen RapidOCR backend (ocr: ppocr5 in settings.yaml): PP-OCRv5/v6 models with a
-# selectable inference engine. Coexists with rapidocr-onnxruntime (different dist).
-# Models auto-download on first use. The -openvino variant adds the OpenVINO runtime,
-# usually the fastest CPU path on Intel (settings option: engine_type: openvino).
-ppocr5 = ["rapidocr>=3.4,<4"]
-ppocr5-openvino = ["rapidocr>=3.4,<4", "openvino>=2024.0"]
+# OpenVINO inference runtime for the rapidocr backend (settings option:
+# engine_type: openvino) — usually the fastest CPU path on Intel. Models
+# auto-download on first use.
+ppocr5-openvino = ["openvino>=2024.0"]
 
 [build-system]
 requires = ["setuptools>=68"]

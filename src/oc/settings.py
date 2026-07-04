@@ -57,9 +57,10 @@ class Settings:
     capture: BackendChoice = field(default_factory=lambda: BackendChoice("mss"))
     window: BackendChoice = field(default_factory=lambda: BackendChoice("win32"))
     process: BackendChoice = field(default_factory=lambda: BackendChoice("psutil"))
-    ocr: BackendChoice = field(default_factory=lambda: BackendChoice("rapidocr"))
+    ocr: BackendChoice = field(default_factory=lambda: BackendChoice("ppocr5"))
     classifier: BackendChoice = field(default_factory=lambda: BackendChoice("detect"))
     corrector: BackendChoice = field(default_factory=lambda: BackendChoice("rapidfuzz"))
+    notifier: BackendChoice = field(default_factory=lambda: BackendChoice("windows"))
 
     tuning: Tuning = field(default_factory=Tuning)
     profiles_dir: Path = Path("config/games")
@@ -88,6 +89,7 @@ class Settings:
         s.ocr = choice("ocr", s.ocr)
         s.classifier = choice("classifier", s.classifier)
         s.corrector = choice("corrector", s.corrector)
+        s.notifier = choice("notifier", s.notifier)
         if isinstance(raw.get("tuning"), dict):
             t = raw["tuning"]
             s.tuning = Tuning(

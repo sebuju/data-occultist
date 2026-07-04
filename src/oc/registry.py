@@ -2,12 +2,12 @@
 
 Each backend kind has its own registry. Implementations register with a decorator:
 
-    @register_ocr("rapidocr")
-    class RapidOcrEngine(OcrEngine): ...
+    @register_ocr("ppocr5")
+    class RapidOcr3Engine(OcrEngine): ...
 
 and are constructed by name:
 
-    engine = build_ocr("rapidocr", **opts)
+    engine = build_ocr("ppocr5", **opts)
 
 Importing :func:`build_*` triggers a lazy import of the bundled implementation
 modules so their decorators run. To add a backend, drop in a module that calls the
@@ -24,6 +24,7 @@ from typing import TypeVar
 from .interfaces import (
     CaptureBackend,
     Corrector,
+    Notifier,
     OcrEngine,
     ProcessDetector,
     ProducerSource,
@@ -42,6 +43,7 @@ _CLASSIFIER: dict[str, type[WindowClassifier]] = {}
 _CORRECTOR: dict[str, type[Corrector]] = {}
 _PRODUCER: dict[str, type[ProducerSource]] = {}
 _PARSER: dict[str, type[SourceParser]] = {}
+_NOTIFIER: dict[str, type[Notifier]] = {}
 
 # Modules that, when imported, self-register their backends. Add new backend
 # modules here (or rely on plugins importing them) so names resolve.
@@ -51,7 +53,6 @@ _IMPL_MODULES = (
     "oc.capture.wgc_backend",
     "oc.window.win32_provider",
     "oc.process.psutil_detector",
-    "oc.ocr.rapidocr_engine",
     "oc.ocr.rapidocr3_engine",
     "oc.detect.classifier",
     "oc.learn.rapidfuzz_corrector",
@@ -62,6 +63,8 @@ _IMPL_MODULES = (
     "oc.source.parsers.json",
     "oc.source.parsers.xml",
     "oc.source.parsers.yaml",
+    "oc.notify.null",
+    "oc.notify.windows_toast",
 )
 
 
@@ -103,6 +106,10 @@ def register_producer(name: str):
 
 def register_parser(name: str):
     return _register(_PARSER, name)
+
+
+def register_notifier(name: str):
+    return _register(_NOTIFIER, name)
 
 
 _loaded = False
@@ -161,6 +168,16 @@ def build_classifier(name: str, **opts) -> WindowClassifier:
 
 def build_corrector(name: str, **opts) -> Corrector:
     return _build(_CORRECTOR, "corrector", name, **opts)
+
+
+def build_notifier(name: str, **opts) -> Notifier:
+    """Build the named notifier, falling back to the ``null`` no-op if the requested
+    backend didn't register (e.g. ``windows`` on a box without ``windows-toasts``), so
+    a toast target on a non-Windows host degrades to silence instead of erroring."""
+    _ensure_loaded()
+    if name not in _NOTIFIER:
+        name = "null"
+    return _build(_NOTIFIER, "notifier", name, **opts)
 
 
 def build_producer(name: str, **opts) -> ProducerSource:
