@@ -118,6 +118,9 @@ def _state() -> dict:
     ocr = get_engine().ocr
     return {"device": getattr(ocr, "device", "cpu"), "mode": read_mode(),
             "gpu_available": cuda_available(),
+            # Whether the CURRENT inference engine can use CUDA at all (OpenVINO can't) —
+            # the UI greys out GPU/Auto when False, since the device switch is a no-op there.
+            "cuda_capable": bool(getattr(ocr, "cuda_capable", True)),
             "gpu_active": bool(getattr(ocr, "gpu_active", False)),
             # This process's dedicated VRAM (bytes; None = unreadable). With a GPU
             # session loaded that is effectively the OCR's footprint.

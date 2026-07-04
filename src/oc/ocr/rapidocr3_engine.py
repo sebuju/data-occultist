@@ -205,8 +205,18 @@ class Rapid3OcrEngine(OcrEngine):
         return f"ppocr5|{scale}" + json.dumps(opts, sort_keys=True, default=str)
 
     @property
+    def cuda_capable(self) -> bool:
+        """True only when the selected inference engine can use the NVIDIA CUDA provider.
+        The cpu/gpu device switch drives onnxruntime's CUDAExecutionProvider; OpenVINO runs
+        on CPU / Intel iGPU and IGNORES it, so 'gpu' is a no-op under OpenVINO — the UI greys
+        the GPU/Auto device options out (like a missing CUDA install) when this is False."""
+        return self.engine_type == "onnxruntime"
+
+    @property
     def gpu_active(self) -> bool:
-        return self._engine is not None and self._gpu
+        # 'gpu' selected AND the engine actually honours it (OpenVINO never does), so the
+        # readout / kill-GPU button reflect real CUDA use, not just the device flag.
+        return self._engine is not None and self._gpu and self.cuda_capable
 
     def set_device(self, gpu: bool) -> None:
         """Switch CPU<->GPU at runtime. Rebuilds the model on next use."""
