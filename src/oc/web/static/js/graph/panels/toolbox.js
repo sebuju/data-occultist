@@ -67,6 +67,20 @@ async function createFileSourceNode(at = null, group = null) {
     if (group) groups.addToGroup(group, [`src:${id}`]);
     autosave(null); if (!at) panTo(`src:${id}`);   // new node changes nothing open windows OCR
 }
+async function createToastNode(at = null, group = null) {
+    const id = model.addToast();   // raises an OS notification when a trigger fires it (wired after)
+    if (!id) return;
+    await placeNewNode(`toast:${id}`, "toast", null, at); render();
+    if (group) groups.addToGroup(group, [`toast:${id}`]);
+    autosave(null); if (!at) panTo(`toast:${id}`);   // new node changes nothing open windows OCR
+}
+async function createSoundNode(at = null, group = null) {
+    const id = model.addSound();   // plays an audio file (in the browser) when a trigger fires it (wired after)
+    if (!id) return;
+    await placeNewNode(`sound:${id}`, "sound", null, at); render();
+    if (group) groups.addToGroup(group, [`sound:${id}`]);
+    autosave(null); if (!at) panTo(`sound:${id}`);   // new node changes nothing open windows OCR
+}
 function createDictionaryNode(at = null, group = null) {
     const place = async (id) => {
         await placeNewNode(`dict:${id}`, "dictionary", null, at); render();
@@ -165,6 +179,21 @@ async function runCollisionCheck() {
 // on-screen viewport.
 const SHOT_MARGIN = 40;   // breathing room (world px) around the content
 const SHOT_SCALE = 2;     // output pixel-ratio — crisp without ballooning huge graphs
+// A browser 2D canvas is hard-capped (~16384 px per side, ~268M px total area on Chrome;
+// less on others). The whole-graph shot is content-sized, so a big map at SHOT_SCALE blows
+// that cap -> canvas.toBlob returns null -> the vendored lib silently emits a 54-byte corrupt
+// PNG (empty toDataURL). Clamp the effective scale so the OUTPUT stays in-bounds; big graphs
+// just render at a lower pixel-ratio instead of failing.
+const CANVAS_MAX_SIDE = 16384;
+const CANVAS_MAX_AREA = 16384 * 16384;
+
+// Largest scale (<= SHOT_SCALE) that keeps width*scale, height*scale, and their product under
+// the canvas caps. Never below a tiny floor so a giant graph still yields *something*.
+function safeShotScale(w, h) {
+    const s = Math.min(SHOT_SCALE, CANVAS_MAX_SIDE / w, CANVAS_MAX_SIDE / h,
+        Math.sqrt(CANVAS_MAX_AREA / (w * h)));
+    return Math.max(0.1, s);
+}
 
 // Tight bounding box of everything ACTUALLY rendered in the world layer — node elements
 // plus group + supergroup boxes (so their title bands / labels are included). We measure
@@ -201,6 +230,9 @@ async function stashShot(view, node, opts) {
     const done = timed("screenshot");
     try {
         const blob = await domToBlob(node, { scale: SHOT_SCALE, backgroundColor: graphBg(), ...opts });
+        // An over-cap canvas yields an empty/corrupt blob (the 54-byte artifact) instead of
+        // throwing — refuse to stash it and say so, rather than write a broken PNG.
+        if (!blob || blob.size < 100) throw new Error("render produced an empty image (graph too large for one canvas)");
         const { path } = await api.stashScreenshot(model.profile.name, blob, view);
         done();
         setStatus(`saved ${path}`);
@@ -217,7 +249,10 @@ async function screenshotCanvas() {
     const world = $("gworld");
     const box = graphBBox();
     if (!world || !box) { setStatus("nothing to screenshot — no placed nodes"); return; }
+    const scale = safeShotScale(box.w, box.h);
+    if (scale < SHOT_SCALE) setStatus(`large graph — rendering at ${scale.toFixed(2)}x to fit one canvas`);
     await stashShot("canvas", world, {
+        scale,
         width: box.w, height: box.h,
         style: { transform: `translate(${-box.minX}px, ${-box.minY}px)`, transformOrigin: "0 0" },
     });
@@ -272,5 +307,5 @@ function svgToPngBlob(svg, W, H) {
 export {
     tb, tbState, createWindowNode, createProducerNode, createTriggerNode,
     createDictionaryNode, createDatasetNode, createSubsetNode, createFileSourceNode,
-    buildToolbox, runCollisionCheck,
+    createToastNode, createSoundNode, buildToolbox, runCollisionCheck,
 };

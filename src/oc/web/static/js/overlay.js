@@ -19,6 +19,7 @@ const ROLE_COLOR = {
     scrollbar: "#7ddc7d",   // same green as detect boxes
     search: "#e89a4c",
     data_area: "#e89a4c",
+    readout: "#c58af0",   // purple — a live, non-persisted readout box
 };
 
 // How a read was validated against authored knowledge -> a coloured pill on the cell, so the
@@ -69,6 +70,7 @@ export class Overlay {
         this.canCreate = canCreate;
         this.picking = false;
         this.op = null;             // active interaction
+        this._pendingBoxes = null;  // box swap deferred until the current drag/resize ends (async OCR refresh mid-drag)
         this.scale = 1;
         this.gridCells = [];        // faint preview rectangles (fractions)
         this.cellBoxes = [];        // detected CELL outlines (the tiled item cells), drawn solid
@@ -115,7 +117,13 @@ export class Overlay {
         this.render();
     }
 
-    setBoxes(boxes) { this.boxes = boxes; this.render(); }
+    // A mid-drag refresh (live loop / async OCR) MUST NOT swap the boxes array under an active
+    // op — op.box is a live reference into the old array, so replacing it freezes the drag. Stash
+    // the new set and apply it when the op ends (see _onUp).
+    setBoxes(boxes) {
+        if (this.op) { this._pendingBoxes = boxes; return; }
+        this.boxes = boxes; this.render();
+    }
     setActive(id) { this.activeId = id; this.render(); }
 
     // ---- zoom (display only) ------------------------------------------------
@@ -225,10 +233,12 @@ export class Overlay {
         }
         // 2) clicking a box selects it AND immediately begins a move — drag from anywhere inside,
         //    no prior select needed (a press without a drag just selects; see _onUp's `moved`).
-        //    EXCEPT the data_area/bbox backdrop: you draw items inside it, so a drag there creates
-        //    a new box (a plain click still selects it).
+        //    EXCEPT the data_area/bbox backdrop, WHEN a draw tool is armed: you draw items inside
+        //    it, so a drag there creates a new box (a plain click still selects it). With no tool
+        //    armed (canCreate false) the backdrop is a plain box again — select/move, never draw.
+        const canDraw = !(this.canCreate && this.canCreate() === false);
         const hit = this._hitBox(p);
-        if (hit && (hit.role === "data_area" || hit.role === "bbox")) {
+        if (hit && canDraw && (hit.role === "data_area" || hit.role === "bbox")) {
             this.op = { type: "create", x0: p.x, y0: p.y, x1: p.x, y1: p.y, selHit: hit.id };
             return;
         }
@@ -240,7 +250,7 @@ export class Overlay {
         }
         // 4) empty space: deselect, then start a new box — unless creation is gated off
         if (this.activeId !== null) { this.activeId = null; this.onSelect?.(null); this.render(); }
-        if (this.canCreate && this.canCreate() === false) return;   // no draw tool -> no new box
+        if (!canDraw) return;   // no draw tool -> no new box
         this.op = { type: "create", x0: p.x, y0: p.y, x1: p.x, y1: p.y };
     }
 
@@ -294,18 +304,25 @@ export class Overlay {
         } else if (op.moved) {
             this.onChange?.(op.box);   // a real move/resize; a click-without-drag only selected
         }
+        // Apply any box swap that a live/async refresh deferred during the drag. onChange above
+        // usually rebuilds boxes itself (fresh model coords); this catches the no-onChange paths
+        // (plain select, create abort) so a deferred refresh isn't lost.
+        if (this._pendingBoxes) { this.boxes = this._pendingBoxes; this._pendingBoxes = null; this.render(); }
     }
 
     _updateCursor(p) {
         const active = this.boxes.find((b) => b.id === this.activeId);
         const h = active && !active.locked ? this._hitHandle(p, active) : null;
         if (h) { this.canvas.style.cursor = h.cur; return; }
-        // over a draggable box -> move; the data_area/bbox backdrop is a draw surface, not draggable
+        // over a draggable box -> move. The data_area/bbox backdrop is a DRAW surface only while a
+        // tool is armed (crosshair); with no tool it's a plain movable box (move), never crosshair.
+        const canDraw = !(this.canCreate && this.canCreate() === false);
         const hit = this._hitBox(p);
         if (hit && hit.locked) { this.canvas.style.cursor = "not-allowed"; return; }
-        if (hit && hit.role !== "data_area" && hit.role !== "bbox") { this.canvas.style.cursor = "move"; return; }
-        // backdrop / empty space: crosshair only when drawing is allowed, else the normal cursor
-        this.canvas.style.cursor = (this.canCreate && this.canCreate() === false) ? "default" : "crosshair";
+        if (hit && (hit.role === "data_area" || hit.role === "bbox")) { this.canvas.style.cursor = canDraw ? "crosshair" : "move"; return; }
+        if (hit) { this.canvas.style.cursor = "move"; return; }
+        // empty space: crosshair only when a draw tool is armed, else the normal cursor
+        this.canvas.style.cursor = canDraw ? "crosshair" : "default";
     }
 
     // ---- render -------------------------------------------------------------

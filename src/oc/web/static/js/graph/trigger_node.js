@@ -7,7 +7,13 @@ import { h, frag, TRASH, labCell } from "../dom.js";
 
 const KINDS = [["interval", "interval (periodic)"], ["on_change", "on change (live)"],
     ["on_app_start", "on app start"], ["on_capture", "on capture start"],
-    ["on_live_start", "on live start"], ["on_live_stop", "on live stop"], ["manual", "manual only"]];
+    ["on_live_start", "on live start"], ["on_live_stop", "on live stop"],
+    ["on_readout", "on readout (threshold)"], ["manual", "manual only"]];
+
+// comparison operators for an on_readout trigger, with human labels for the dropdown.
+const VAR_OPS = [["gte", "≥ (at least)"], ["lte", "≤ (at most)"], ["gt", "> (above)"],
+    ["lt", "< (below)"], ["eq", "= (equals)"], ["ne", "≠ (not equal)"],
+    ["crosses_up", "crosses up through"], ["crosses_down", "crosses down through"]];
 
 // dataset actions a trigger can perform on its dataset targets when it fires. "" = do nothing.
 // clone/move copy into `dataset_dest` (batches = keep batch grouping; resolved = collapse to one).
@@ -53,14 +59,35 @@ export function triggerParts(t, model) {
             ));
     }
 
+    // on_readout: watch one or more live readouts and fire when the condition is met. Chips
+    // show each watched readout's id (its identity); the op + threshold set the test.
+    let varwatch = null;
+    if (kind === "on_readout") {
+        const have = new Set(t.readout_watch || []);
+        const opts = model.readouts().filter((v) => !have.has(v.id)).map((v) => h("option", { value: v.id }, v.id));
+        varwatch = frag(
+            labCell("watch var", "live readouts; the trigger fires when the condition holds", true),
+            srcInputs(
+                (t.readout_watch || []).map((vid) => srcChip(vid, "v", "tg-rmvarwatch")),
+                "tg-addvarwatch",
+                [h("option", { value: "" }, "+ watch readout"), opts],
+            ),
+            labCell("when", "how the readout's value is compared to the threshold"),
+            h("select", { class: "tg-varop" }, VAR_OPS.map(([v, l]) => h("option", { value: v, selected: v === (t.readout_op || "gte") }, l))),
+            labCell("value", "the threshold the readout is compared against"),
+            h("input", { class: "tg-varval", type: "number", step: "any", value: t.readout_value ?? 0 }));
+    }
+
     // targets: drag the out-port to a producer / file source OR pick one here (same source-row UI
     // as watch). A target is a producer id (sweep/refresh) or a file-source id (read a log/config file).
     const haveT = new Set(t.targets || []);
     const tgtIds = [...(model.profile.producers || []).map((p) => p.id),
-                    ...(model.profile.file_sources || []).map((s) => s.id)];
+                    ...(model.profile.file_sources || []).map((s) => s.id),
+                    ...(model.profile.toasts || []).map((x) => x.id),
+                    ...(model.profile.sounds || []).map((x) => x.id)];
     const popts = tgtIds.filter((p) => !haveT.has(p)).map((p) => h("option", p));
     const targets = frag(
-        labCell("fires", "producers (sweep/refresh) or file sources (read) this trigger fires", true),
+        labCell("fires", "producers (sweep/refresh), file sources (read), toasts (notify), or sounds (play) this trigger fires", true),
         srcInputs(
             (t.targets || []).map((p) => srcChip(p, "p", "tg-rmtarget")),
             "tg-addfire",
@@ -91,28 +118,6 @@ export function triggerParts(t, model) {
             h("option", { value: "" }, "- dataset -"),
             dsFree.map((d) => h("option", { selected: d === t.dataset_dest }, d))));
 
-    // optional sound: the UI plays it (in the browser) when the trigger fires. Only shown when
-    // the sounds/ folder has files; the chosen name is just persisted on the trigger. ▶ auditions.
-    let sound = null;
-    if ((model.sounds || []).length) {
-        const cur = t.sound || "";
-        const sopt = (s) => h("option", { selected: s === cur }, s);
-        const vol = t.volume == null ? 1 : t.volume;
-        // preview button + volume row only make sense once a sound is picked — hide them at "none"
-        // (the select's change handler rebuilds the node, so picking a sound re-shows them).
-        sound = frag(
-            labCell("sound", "optional sound played (in the browser) when it fires"),
-            h("span", { class: "tg-secs" },
-                h("select", { class: "tg-sound" },
-                    h("option", { value: "", selected: !cur }, "none"),
-                    model.sounds.map(sopt)),
-                cur && h("button", { class: "tg-sound-preview", title: "play this sound" }, "▶")),
-            cur && labCell("volume", "playback volume for the sound"),
-            cur && h("span", { class: "tg-secs" },
-                h("input", { class: "tg-volume", type: "range", min: "0", max: "1", step: "0.05", value: vol }),
-                h("span", { class: "tg-volnum muted" }, `${Math.round(vol * 100)}%`)));
-    }
-
     return {
         title: h("input", { class: "gi gi-id tgrename", value: t.id, title: "rename trigger" }),
         body: frag(
@@ -120,7 +125,7 @@ export function triggerParts(t, model) {
                 targets,
                 labCell("kind", "how the trigger decides to fire"),
                 h("select", { class: "tg-kind" }, KINDS.map(kopt)),
-                interval, watch, dsAction_, sound,
+                interval, watch, varwatch, dsAction_,
                 labCell("progress", "what the current/last sweep is doing"),
                 h("span", { class: "tg-prog muted" }, "idle"),
                 labCell("last fired", "last time this trigger fired"),
@@ -128,6 +133,7 @@ export function triggerParts(t, model) {
             h("div", { class: "gn-foot" }, h("button", { class: "tg-fire" }, "↻ fire"))),
         ports: frag(
             h("span", { class: "port out", title: "drag to a price node this trigger should fire" }),
-            kind === "on_change" && h("span", { class: "port pwatch", title: "drag to a dataset or subset to watch for new rows" })),
+            kind === "on_change" && h("span", { class: "port pwatch", title: "drag to a dataset or subset to watch for new rows" }),
+            kind === "on_readout" && h("span", { class: "port pwatch", title: "drag to a readout node to watch its value" })),
     };
 }

@@ -36,6 +36,8 @@
     --record: #e0556b;        /* recording / item role (pink-red) */
     --trigger-line: #02d8ce;  /* trigger fire-control edge (cyan) */
     --watch-line: #2bd4c4;    /* on_change watch edge (teal) */
+    --toast: #e678b0;         /* toast node type (magenta) */
+    --sound: #8a8ae6;         /* sound node type (indigo) */
     --purple: #c98ae6;        /* scrollbar / raw detections */
     --window: #ecd94a;        /* window node type + its game→window edge (yellow) */
     --neutral: #6b7280;       /* paused (grey) */

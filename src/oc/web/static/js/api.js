@@ -472,6 +472,18 @@ export async function renameDataset(game, dataset, to) {
     return r.json();
 }
 
+// Repoint {{token}} references in the game's Pretty doc after a graph-node rename, so a
+// renamed dataset/subset/window/field/item/trigger/producer id doesn't leave stale tokens
+// (which resolve to empty). Best-effort: a failure never blocks the rename. `rewrites` is a
+// list of { kind, old, new, win? }.
+export async function repointPretty(game, rewrites) {
+    if (!game || !rewrites || !rewrites.length) return;
+    try {
+        await tfetch(`/api/pretty/${encodeURIComponent(game)}/repoint`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rewrites }) });
+    } catch { /* pretty token repoint is a convenience — never fail a rename over it */ }
+}
+
 // Revert (on=true) or restore (on=false) a whole dataset batch. Returns refreshed
 // { records, batches }.
 export async function revertDatasetBatch(game, dataset, batch, on = true) {
@@ -528,6 +540,12 @@ export const prices = {
 export const triggers = {
     list: (game) => tfetch(`/api/triggers/${_pg(game)}`).then((r) => ok(r, "triggers").then((x) => x.json())),
     fire: (game, id) => tfetch(`/api/triggers/${_pg(game)}/${encodeURIComponent(id)}/fire`, { method: "POST" }, 30_000).then((r) => ok(r, "fire trigger").then((x) => x.json())),
+};
+
+// Toast nodes: raise an OS desktop notification. `test` pops the toast now with its current
+// config (the node's test button) — behaves like a trigger firing it, minus the wiring.
+export const toasts = {
+    test: (game, id) => tfetch(`/api/toasts/${_pg(game)}/${encodeURIComponent(id)}/test`, { method: "POST" }, 10_000).then((r) => ok(r, "test toast").then((x) => x.json())),
 };
 
 // File sources: read a game log/config file into a dataset. `read` fires a read now; `preview`

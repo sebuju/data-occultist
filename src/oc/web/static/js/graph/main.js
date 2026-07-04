@@ -43,6 +43,7 @@ import {
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
 import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved } from "./node_parts.js";
 import * as dsevents from "./dsevents.js";
+import { wireTools, clearTools } from "./drawtool.js";
 import { singleFlight } from "../singleflight.js";
 import {
     nmState, nlState, buildNodeMap, buildNodeList, setNodeMapVisible, setNodeListVisible,
@@ -55,7 +56,7 @@ import { dbWin, dbState, buildDBStruct } from "./panels/dbstruct.js";
 import {
     tb, tbState, buildToolbox,
     createWindowNode, createProducerNode, createTriggerNode, createDictionaryNode, createFileSourceNode,
-    createDatasetNode, createSubsetNode,
+    createToastNode, createSoundNode, createDatasetNode, createSubsetNode,
 } from "./panels/toolbox.js";
 import { openContextMenu } from "../ctxmenu.js";
 import {
@@ -80,7 +81,7 @@ import {
     refreshImageBoxes, refreshGridPreview, selectRegionNode,
 } from "./imaging.js";
 import {
-    liveWin, liveWinState, buildLiveWindow, renderLiveWindow, syncLiveFromServer, applyLiveInterval,
+    liveWin, liveWinState, buildLiveWindow, renderLiveWindow, syncLiveFromServer, applyLiveInterval, syncWpDots,
 } from "./panels/livewin.js";
 
 const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, producer: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, vttable: 2300, prod: 1080, dictionary: 20 };
@@ -307,7 +308,7 @@ initPersist({
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", dict: "dictionary" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", reg: "region", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
 function nodeTypeOf(id) { return id === "game" ? "game" : id === "glyphs" ? "glyphs" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
     world: () => $("ggroups"),
@@ -589,10 +590,9 @@ function wireItemControls(div, n) {
         panZoomTo(`fld:${winId}:${itemId}:${row.dataset.fid}`);
     }));
     // cutout draw-mode buttons live in the node body now: pick the active draw kind. The canvas
-    // overlay reads `.tool.active` off this node (see openItemImage's kindOf).
-    div.querySelectorAll(".tool").forEach((b) => b.addEventListener("click", () => {
-        div.querySelectorAll(".tool").forEach((x) => x.classList.remove("active")); b.classList.add("active");
-    }));
+    // overlay reads the armed tool off this node (see openItemImage's kindOf). wireTools marks the
+    // whole node as the tool host so right-click / Escape / click-outside can drop the tool centrally.
+    wireTools(div);
     // record-key config: mutate the item's own KeyDef (created from the effective one on
     // first edit). The key preview recomputes from the cached read; itemChanged rebuilds.
     const keyEdit = (fn) => {
@@ -864,7 +864,9 @@ function wireWindowControls(div, n) {
         // a rename changes only the id/wiring — no pixels or boxes change, so DON'T trigger the
         // all-open-windows detect/preview refresh (autosave(null)). The reopened image below
         // re-detects just the renamed window.
-        render(); autosave(null);
+        render();
+        rebuildNode("game");   // refresh the game node's window-priority list — render() leaves an existing node body put
+        autosave(null);
         if (wasOpen) await openImage(newId);    // restore the image against the moved binding
     });
     div.querySelector(".winlive")?.addEventListener("change", (e) => {
@@ -941,6 +943,7 @@ function wireGamePriority(div) {
     div.querySelectorAll(".wp-row .wp-name").forEach((el) => el.addEventListener("click", () => {
         panZoomTo(`win:${el.closest(".wp-row").dataset.id}`);
     }));
+    syncWpDots();   // paint the freshly-built dots to current live recognition (no wait for the next tick)
 }
 
 // The detectors section (mode select + polarity selects + name jumps). Shared by the window
@@ -1550,20 +1553,15 @@ function wireTrigger(div, n) {
         model.setTriggerKind(t.id, e.target.value); rebuildNode(n.id); render(); autosave(null);
     });
     div.querySelector(".tg-interval")?.addEventListener("change", (e) => { model.setTriggerInterval(t.id, e.target.value); autosave(null); });
-    // rebuild the node: picking/clearing a sound shows/hides the preview button + volume row
-    div.querySelector(".tg-sound")?.addEventListener("change", (e) => { model.setTriggerSound(t.id, e.target.value); rebuildNode(n.id); autosave(null); });
-    // volume slider: `input` (not change) so the % label tracks the live drag; autosave coalesces the writes
-    div.querySelector(".tg-volume")?.addEventListener("input", (e) => {
-        model.setTriggerVolume(t.id, e.target.value);
-        const n = div.querySelector(".tg-volnum"); if (n) n.textContent = `${Math.round((model.trigger(t.id)?.volume ?? 1) * 100)}%`;
-        autosave(null);
-    });
-    // ▶ audition the currently-selected sound at the current volume (also unlocks browser autoplay for later auto-fires)
-    div.querySelector(".tg-sound-preview")?.addEventListener("click", () => { playSound(div.querySelector(".tg-sound")?.value, model.trigger(t.id)?.volume ?? 1); });
     // rebuildNode (not render) re-renders THIS node's chips — render() only builds NEW nodes,
     // so an in-place chip add/remove wouldn't show. drawEdges() drops/adds the trigger's edges
     // (watch source→trigger and trigger→price) so a chip change reflects on the canvas live.
     div.querySelector(".tg-addwatch")?.addEventListener("change", (e) => { if (model.addTriggerWatch(t.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
+    // on_readout: watched readouts (chips + edges) + the threshold condition
+    div.querySelector(".tg-addvarwatch")?.addEventListener("change", (e) => { if (model.addTriggerReadoutWatch(t.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
+    div.querySelectorAll(".tg-rmvarwatch").forEach((b) => b.addEventListener("click", () => { model.removeTriggerReadoutWatch(t.id, b.dataset.v); rebuildNode(n.id); drawEdges(); autosave(null); }));
+    div.querySelector(".tg-varop")?.addEventListener("change", (e) => { model.setTriggerReadoutOp(t.id, e.target.value); autosave(null); });
+    div.querySelector(".tg-varval")?.addEventListener("change", (e) => { model.setTriggerReadoutValue(t.id, e.target.value); autosave(null); });
     div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
     div.querySelectorAll(".tg-rmwatch").forEach((b) => b.addEventListener("click", () => { model.removeTriggerWatch(t.id, b.dataset.ds); rebuildNode(n.id); drawEdges(); autosave(null); }));
     div.querySelectorAll(".tg-rmtarget").forEach((b) => b.addEventListener("click", () => { model.removeTriggerTarget(t.id, b.dataset.p); rebuildNode(n.id); drawEdges(); autosave(null); }));
@@ -1578,6 +1576,74 @@ function wireTrigger(div, n) {
         prog.textContent = "firing…";
         try { const r = await api.triggers.fire(model.profile.name, t.id); const n = (r.started || []).length, sk = (r.skipped || []).length; prog.textContent = n ? `fired ${n} sweep(s)` : sk ? `already sweeping (${sk} skipped)` : "no targets to fire"; refreshLive(); }
         catch (err) { prog.textContent = String(err.message || err); }
+    });
+}
+
+// ---- toast node: raise an OS desktop notification when fired ---------------
+
+function wireToast(div, n) {
+    const x = n.ref;
+    const $ = (sel) => div.querySelector(sel);
+    $(".toastrename")?.addEventListener("change", (e) => {
+        const oldId = x.id;
+        renameNode(e.target, oldId,
+            () => model.renameToast(oldId, (e.target.value || "").trim()),
+            () => movePos(`toast:${oldId}`, `toast:${x.id}`),
+            () => { render(); autosave(null); });
+    });
+    $(".tn-title")?.addEventListener("change", (e) => { model.setToastProp(x.id, "title", e.target.value); autosave(null); });
+    $(".tn-message")?.addEventListener("change", (e) => { model.setToastProp(x.id, "message", e.target.value); autosave(null); });
+    $(".tn-app")?.addEventListener("change", (e) => { model.setToastProp(x.id, "app_name", e.target.value); autosave(null); });
+    $(".tn-duration")?.addEventListener("change", (e) => { model.setToastProp(x.id, "duration", e.target.value); autosave(null); });
+    $(".tn-icon")?.addEventListener("change", (e) => { model.setToastProp(x.id, "icon", e.target.value); autosave(null); });
+    $(".tn-attr")?.addEventListener("change", (e) => { model.setToastProp(x.id, "attribution", e.target.value); autosave(null); });
+    // readout token chips: click to append {{ro_id}} into the message (mirrors pretty's token insert)
+    div.querySelectorAll(".tn-rotoken").forEach((b) => b.addEventListener("click", () => {
+        const inp = div.querySelector(".tn-message"); if (!inp) return;
+        inp.value = (inp.value ? `${inp.value} ` : "") + `{{${b.dataset.token}}}`;
+        model.setToastProp(x.id, "message", inp.value); autosave(null); inp.focus();
+    }));
+    // gn-slide switch (role=switch, not a checkbox) — flip on click, toggle .on, persist the new value
+    $(".tn-muted")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const tog = e.currentTarget, on = tog.getAttribute("aria-checked") !== "true";
+        tog.setAttribute("aria-checked", on); tog.classList.toggle("on", on);
+        model.setToastProp(x.id, "muted", on); autosave(null);
+    });
+    // test button: pop the toast now with its current config (mirrors the trigger's ↻ fire)
+    $(".tn-test")?.addEventListener("click", async () => {
+        const prog = $(".tn-prog");
+        if (prog) prog.textContent = "popping…";
+        try { await api.toasts.test(model.profile.name, x.id); if (prog) prog.textContent = "sent"; }
+        catch (err) { if (prog) prog.textContent = String(err.message || err); }
+    });
+}
+
+// ---- sound node: play an audio file (in the browser) when fired ------------
+
+function wireSound(div, n) {
+    const x = n.ref;
+    const $ = (sel) => div.querySelector(sel);
+    $(".sndrename")?.addEventListener("change", (e) => {
+        const oldId = x.id;
+        renameNode(e.target, oldId,
+            () => model.renameSound(oldId, (e.target.value || "").trim()),
+            () => movePos(`sound:${oldId}`, `sound:${x.id}`),
+            () => { render(); autosave(null); });
+    });
+    $(".sn-file")?.addEventListener("change", (e) => { model.setSoundFile(x.id, e.target.value); autosave(null); });
+    // volume slider: `input` (not change) so the % label tracks the live drag; autosave coalesces the writes
+    $(".sn-volume")?.addEventListener("input", (e) => {
+        model.setSoundVolume(x.id, e.target.value);
+        const lab = $(".sn-volnum"); if (lab) lab.textContent = `${Math.round((model.soundNode(x.id)?.volume ?? 1) * 100)}%`;
+        autosave(null);
+    });
+    // ▶ audition the sound now at the current volume (also unlocks browser autoplay for later auto-fires)
+    $(".sn-test")?.addEventListener("click", () => {
+        const prog = $(".sn-prog");
+        const s = model.soundNode(x.id);
+        if (!s?.file) { if (prog) prog.textContent = "no file"; return; }
+        playSound(s.file, s.volume ?? 1); if (prog) prog.textContent = "played";
     });
 }
 
@@ -1829,7 +1895,12 @@ function renderPreview(host, rows) {
 }
 
 export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource"]);
-const REMOVABLE = new Set(["window", "item", "itemfield", "itemtell", "region", "detect", "scrollbar", "dictionary", "subset", "dataset", "producer", "trigger", "filesource"]);
+// Denylist, NOT allowlist: every node type is removable EXCEPT these. Inverted on purpose so a new
+// functional node type is deletable by default — the recurring bug was forgetting to add each new
+// type to an allowlist. Only the profile-root nodes (game, glyphs) and toggle-only satellites
+// (preview, vttable) are protected here; a satellite is dismissed via its toggle, never "deleted".
+const UNREMOVABLE = new Set(["game", "glyphs", "preview", "vttable"]);
+const isRemovable = (type) => !!type && !UNREMOVABLE.has(type);
 
 // One place to remove any node; each goes through render()+autosave() so undo/redo
 // records it (autosave -> pushHistory).
@@ -1844,6 +1915,7 @@ function removeNode(n) {
         window:     { kill: () => { closeImage(n.ref.id); model.removeWindow(n.ref.id); }, after: () => autosave(null) },
         item:       { kill: () => { closeItemImage(win, n.ref.id); model.removeItem(win, n.ref.id); clearGrid(win); }, after: () => { refreshImageBoxes(win); autosave(win); } },
         region:     { kill: () => model.removeRegion(win, n.ref.id), after: () => { autosave(win); refreshImageBoxes(win); } },
+        readout:   { kill: () => model.removeReadout(win, n.ref.id), after: () => { rebuildReadoutConsumers(); autosave(win); refreshImageBoxes(win); } },
         detect:     { kill: () => model.removeDetect(win, n.ref.id), after: () => { rebuildNode(nodeIdOf(win)); if (win === "game") refreshDetect("game"); else autosave(win); refreshImageBoxes(win); } },
         scrollbar:  { kill: () => model.removeScrollbar(win), after: () => { autosave(win); refreshImageBoxes(win); } },
         itemfield:  { kill: () => model.removeItemField(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
@@ -1852,11 +1924,15 @@ function removeNode(n) {
         subset:     { kill: () => model.removeSubset(n.ref.id), after: () => autosave(null) },
         producer:   { kill: () => model.removeProducer(n.ref.id), after: () => autosave(null) },
         trigger:    { kill: () => model.removeTrigger(n.ref.id), after: () => autosave(null) },
+        toast:      { kill: () => model.removeToast(n.ref.id), after: () => autosave(null) },
+        sound:      { kill: () => model.removeSound(n.ref.id), after: () => autosave(null) },
         filesource: { kill: () => model.removeFileSource(n.ref.id), after: () => autosave(null) },
         dataset:    { kill: () => { model.removeDataset(n.ref); purgeDatasetData(n.ref); }, after: () => autosave(null) },
     };
     const plan = PLAN[n.type];
-    if (!plan) return;
+    // isRemovable (denylist) let this node through, so a missing PLAN entry is a bug in a NEW node
+    // type, not an intentionally-protected node — warn instead of no-opping silently.
+    if (!plan) { console.warn(`removeNode: no removal plan for type "${n.type}" (add one to PLAN)`); return; }
     // Every node WIRED to this one shows the link in its own body (a producer's source chip, a
     // subset's input row, a trigger's target/watch chip). render() only BUILDS missing nodes — it
     // never re-fills an existing node — so those connected bodies keep the stale chip after the model
@@ -2013,8 +2089,8 @@ function outPortSpec(n) {
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setSourceDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
         };
         case "trigger": return {
-            // a trigger fires a PRODUCER node (sweep/refresh) or a FILE SOURCE (read)
-            target: ["producer", "filesource"],
+            // a trigger fires a PRODUCER node (sweep/refresh), a FILE SOURCE (read), a TOAST (notify), or a SOUND (play)
+            target: ["producer", "filesource", "toast", "sound"],
             onDrop: (pid) => { if (model.addTriggerTarget(n.ref.id, pid)) rebuildNode(n.id); },
         };
         default: return null;
@@ -2024,12 +2100,19 @@ function outPortSpec(n) {
 // The trigger's SECOND out-port (`.port.pwatch`, left face): drag to a dataset/view to make an
 // on_change trigger watch it. Separate from the fires port so the two control lines never share a dot.
 function watchPortSpec(n) {
-    if (n.type !== "trigger" || n.ref.kind !== "on_change") return null;
-    return {
+    if (n.type !== "trigger") return null;
+    if (n.ref.kind === "on_change") return {
         side: "L",
         target: ["dataset", "subset"],
         onDrop: (id) => { if (model.addTriggerWatch(n.ref.id, id)) rebuildNode(n.id); },
     };
+    if (n.ref.kind === "on_readout") return {
+        side: "L",
+        target: ["readout"],
+        // the dropped id is the readout NODE id (ro:<win>:<vid>) — the watch stores the bare vid
+        onDrop: (id) => { if (model.addTriggerReadoutWatch(n.ref.id, String(id).split(":").pop())) rebuildNode(n.id); },
+    };
+    return null;
 }
 
 function wireOutPort(div, n) {
@@ -2353,6 +2436,16 @@ function rebuildNode(id) {
     fitNodeHeight(el, n.id);   // a revealed input (e.g. dict -> fuzzy) may overflow the pinned height — grow to fit
 }
 
+// Toast nodes (their readout token chips) and on_readout trigger nodes (their watch-var
+// dropdown) list model.readouts(), built ONCE per node body. A readout added/removed/renamed
+// elsewhere leaves those bodies stale — render() reconciles, it never rebuilds a body. Sweep
+// them from ONE helper so every readout mutation site stays in lock-step (rule 7). rebuildNode
+// is a no-op for a node not currently in the DOM, so this is safe to call unconditionally.
+export function rebuildReadoutConsumers() {
+    for (const t of model.profile.toasts || []) rebuildNode(`toast:${t.id}`);
+    for (const t of model.profile.triggers || []) rebuildNode(`trigger:${t.id}`);
+}
+
 // A node with a manually-pinned height keeps that height across a rebuild, so revealing
 // extra inputs (a conditional row appearing) overflows its box. Grow the pinned height to
 // enclose the content — grow-only (never shrinks a deliberately-tall node) — and persist it
@@ -2408,6 +2501,21 @@ function render() {
     groups.renderGroups();
     syncMultiSelect();
     renderNodeViews();
+    // When the set of dataset/subset ids changes (add/rename/remove, or a producer/source
+    // discovering one at runtime), the sibling nodes that list every id in a <select> — trigger
+    // watch/dataset-action, producer source picker, subset join-source — are built ONCE and go
+    // stale (this reconcile reuses bodies, never rebuilds them). Rebuild them on a set change.
+    const dsKey = [...model.datasets(), " ", ...(model.profile.subsets || []).map((s) => s.id)].join("");
+    if (dsKey !== _lastDsSetKey) { _lastDsSetKey = dsKey; rebuildDatasetConsumers(); }
+}
+let _lastDsSetKey = null;
+
+// Rebuild every node whose body lists the dataset/subset id set in a dropdown — the delete/add/
+// rename-safe twin of rebuildReadoutConsumers (rule 7). rebuildNode no-ops for an absent node.
+function rebuildDatasetConsumers() {
+    for (const t of model.profile.triggers || []) rebuildNode(`trigger:${t.id}`);
+    for (const p of model.profile.producers || []) rebuildNode(`producer:${p.id}`);
+    for (const s of model.profile.subsets || []) rebuildNode(`sub:${s.id}`);
 }
 
 // Item nodes always show their frozen cutout canvas; open any that aren't yet.
@@ -2449,7 +2557,7 @@ function clearNodeSelections(keepId = null) {
 
 function deselectAll() {
     for (const [, rec] of overlays) rec.overlay.setActive(null);   // every overlay, centrally
-    document.querySelectorAll(".tool.active").forEach((b) => b.classList.remove("active"));   // drop any picked draw tool
+    clearTools();   // drop any armed draw tool on every surface
     for (const [, el] of nodeEls) el.classList.remove("selected");
     clearNodeSelections();
     selectedNodeId = null;
@@ -2520,13 +2628,16 @@ function subOfferable(ids) {
     return ids.every((id) => parent.members.includes(id));
 }
 function subState(ids) { return subOfferable(ids) ? tierState(ids, groups.subgroupOf, "sub") : null; }
+// Set a `.sel-lbl` span's text and hide it when empty — an empty label still eats padding/gap
+// (icon-only buttons) so it must collapse, not just blank. One writer for every sel-lbl set.
+function setSelLbl(lbl, text) { if (!lbl) return; lbl.textContent = text || ""; lbl.hidden = !text; }
 // Paint a tier button from a state (or hide it). Icon, label + tooltip all come from the state.
 function applyTierBtn(btn, state) {
     if (!btn) return;
     btn.hidden = !state;
     if (!state) return;
     const ic = btn.querySelector(".sel-ic"); if (ic) ic.replaceChildren(selIcon(state.kind, state.verb));
-    const lbl = btn.querySelector(".sel-lbl"); if (lbl) lbl.textContent = state.label;
+    setSelLbl(btn.querySelector(".sel-lbl"), state.label);
     btn.title = state.title;
 }
 function syncMultiSelect() {
@@ -2553,10 +2664,32 @@ function syncMultiSelect() {
     if (det) det.hidden = groupMode || !gs || gs.verb === "ungroup" || !ids.some((id) => groups.groupOf(id));
     if (cln) cln.hidden = groupMode || !ids.some((id) => CLONEABLE.has(nodeTypeOf(id)));
     if (del) {
-        del.hidden = groupMode || !ids.some((id) => REMOVABLE.has(nodeTypeOf(id)));
-        if (del.dataset.armed === "1") { del.dataset.armed = "0"; const dl = del.querySelector(".sel-lbl"); if (dl) dl.textContent = del.dataset.label ?? dl.textContent; }   // label is legitimately "" now (icon-only) -> ?? not ||
+        del.hidden = groupMode || !ids.some((id) => isRemovable(nodeTypeOf(id)));
+        if (del.dataset.armed === "1") { del.dataset.armed = "0"; const dl = del.querySelector(".sel-lbl"); if (dl) setSelLbl(dl, del.dataset.label ?? dl.textContent); }   // label is legitimately "" now (icon-only) -> ?? not ||
     }
+    if (bar) collapseSeparators(bar);   // hide any `.sel-sep` that now borders nothing (unremovable node, group-mode, etc.)
     drawEdges();   // selection changed -> repaint so selected nodes' lines pick up the `sel` colour
+}
+
+// A `.sel-sep` divides button groups; it means nothing unless a real (non-hidden) button is visible
+// in the run immediately before AND after it. Walk each side outward, stopping at the next sep (so
+// only the adjacent group counts — this also collapses doubled seps when a whole middle group hides).
+// Only <button>s count as content: the `.sel-count` span is always present and must not prop a sep up.
+function collapseSeparators(bar) {
+    const kids = [...bar.children];
+    const isSep = (el) => el.classList.contains("sel-sep");
+    const groupHasBtn = (from, dir) => {
+        for (let i = from; i >= 0 && i < kids.length; i += dir) {
+            if (isSep(kids[i])) return false;                      // adjacent group boundary
+            if (kids[i].tagName === "BUTTON" && !kids[i].hidden) return true;
+        }
+        return false;
+    };
+    for (let i = 0; i < kids.length; i++) {
+        if (!isSep(kids[i])) continue;
+        const show = groupHasBtn(i - 1, -1) && groupHasBtn(i + 1, 1);
+        if (kids[i].hidden === show) kids[i].hidden = !show;       // write only on change
+    }
 }
 
 
@@ -2815,6 +2948,10 @@ function wireNode(div, n) {
         wireProducer(div, n);
     } else if (n.type === "trigger") {
         wireTrigger(div, n);
+    } else if (n.type === "toast") {
+        wireToast(div, n);
+    } else if (n.type === "sound") {
+        wireSound(div, n);
     } else if (n.type === "filesource") {
         wireSource(div, n);
     } else if (n.type === "region") {
@@ -2898,7 +3035,48 @@ function wireNode(div, n) {
         wireItemField(div, n);
     } else if (n.type === "itemtell") {
         wireItemTell(div, n);
+    } else if (n.type === "readout") {
+        wireReadout(div, n);
     }
+}
+
+// Readout node (self-contained): its name (what a trigger watches) + the inline read-config
+// (`.roset` on the linked FieldDef, exactly like a region node).
+function wireReadout(div, n) {
+    const winId = n.win.id, vid = n.ref.id;
+    const fld = n.field;
+    div.addEventListener("click", (ev) => {
+        if (ev.target.closest("input,select,button")) return;
+        selectWindowBox(winId, vid);   // highlight this readout's box on the image
+    });
+    div.querySelector(".gi-id")?.addEventListener("change", (e) => {
+        renameNode(e.target, vid,
+            () => model.renameReadout(winId, vid, e.target.value.trim()),
+            () => movePos(`ro:${winId}:${vid}`, `ro:${winId}:${n.ref.id}`),
+            () => { render(); rebuildReadoutConsumers(); autosave(winId); });   // repoint toast chips + watch dropdown
+    });
+    // inline read-config, edited straight on the FieldDef (like a region)
+    div.querySelectorAll(".roset").forEach((inp) => inp.addEventListener("change", (e) => {
+        if (!fld) return;
+        const k = e.target.dataset.k;
+        if (k === "type") { fld.type = e.target.value; rebuildNode(n.id); }
+        else if (k === "extract") { fld.extract = e.target.value; rebuildNode(n.id); }
+        else if (k === "sep") fld.separator = e.target.value || "/";
+        else if (k === "fuzzy") fld.fuzzy = +e.target.value;
+        else if (k === "isolate") fld.isolate = e.target.checked;
+        else if (k === "glyph_check") fld.glyph_check = e.target.checked;
+        else if (k === "fold_accents") fld.fold_accents = e.target.checked;
+        else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
+        else if (k === "min") fld.min = e.target.value === "" ? null : +e.target.value;
+        else if (k === "max") fld.max = e.target.value === "" ? null : +e.target.value;
+        else if (k === "dictmode") { fld.dict_mode = e.target.value; rebuildNode(n.id); }
+        else if (k === "usedict") { fld.dictionary = e.target.value || ""; render(); }
+        autosave(winId);
+    }));
+    if (fld) wireFieldRules(div, fld, {
+        rebuild: () => { rebuildNode(n.id); autosave(winId); },
+        commit: () => autosave(winId),
+    });
 }
 
 // Scrollbar node: orientation + visible-rows, the cutout list (rows-from-top, remove,
@@ -2979,8 +3157,7 @@ function focusNode(id) {
     for (const [, rec] of overlays) rec.overlay.setActive(null);
     activeOverlayKey = null;
     // drop any picked draw tool on OTHER nodes — focusing elsewhere deselects their tools
-    const keep = nodeEls.get(id);
-    document.querySelectorAll(".tool.active").forEach((b) => { if (!keep || !keep.contains(b)) b.classList.remove("active"); });
+    clearTools(nodeEls.get(id));
     selectedNodeId = id;
     clearNodeSelections(id);   // drop any other node's inner selection
     for (const [nid, el] of nodeEls) el.classList.toggle("selected", nid === id);
@@ -3470,14 +3647,16 @@ function refreshDirtyUI() {
     if (c) c.textContent = has ? `${prettyOverrides.dirtyCount()} pretty` : "";
 }
 // Armed two-click confirm (no blocking dialogs — rule 2), shared by both buttons.
-function armConfirm(btn, run) {
+// `silent`: don't swap the label to "confirm" — the armed state is signalled by CSS alone (the
+// icon-only delete button just turns yellow; a "confirm" word would force the empty label wide).
+function armConfirm(btn, run, { silent = false } = {}) {
     if (!btn) return;
     // Buttons with an icon keep it in a `.sel-ic` span; only the `.sel-lbl` text arms/disarms so
     // the icon survives (a whole-button textContent swap would wipe the SVG). Plain buttons fall
     // back to button textContent.
     const lbl = btn.querySelector(".sel-lbl");
     const get = () => (lbl ? lbl.textContent : btn.textContent);
-    const set = (t) => { if (lbl) lbl.textContent = t; else btn.textContent = t; };
+    const set = (t) => { if (silent) return; if (lbl) setSelLbl(lbl, t); else btn.textContent = t; };
     btn.addEventListener("click", () => {
         if (btn.dataset.armed !== "1") { btn.dataset.armed = "1"; btn.dataset.label = get(); set("confirm"); setTimeout(() => { if (btn.dataset.armed === "1") { btn.dataset.armed = "0"; set(btn.dataset.label); } }, 2500); return; }
         btn.dataset.armed = "0"; set(btn.dataset.label || get()); run();
@@ -3492,6 +3671,11 @@ prettyOverrides.setOverrideHooks({
     persistFlush: () => persist.flush(),
 });
 setScrubHook(prettyOverrides.scrubForSave);
+
+// Renaming a graph id (dataset/subset/window/field/item/trigger/producer) repoints its
+// structured refs in the profile, but the Pretty doc references ids inside {{token}} strings
+// in a separate file — sweep those too so a rename never leaves a stale, empty-resolving token.
+model.setRenameHook((r) => { api.repointPretty(model.profile.name, [r]); });
 
 $("selGroupBtn").addEventListener("click", () => groupShortcut());
 $("selSubgroupBtn")?.addEventListener("click", () => subgroupShortcut());
@@ -3511,13 +3695,14 @@ $("selDetachBtn").addEventListener("click", () => {
 // and the Delete/Backspace hotkey so both behave identically (rule 7).
 function deleteSelection() {
     const byId = new Map(model.nodes().map((n) => [n.id, n]));
-    const targets = selectionIds().map((id) => byId.get(id)).filter((n) => n && REMOVABLE.has(n.type));
+    const targets = selectionIds().map((id) => byId.get(id)).filter((n) => n && isRemovable(n.type));
     if (!targets.length) return;
     for (const n of targets) removeNode(n);   // each renders + autosaves; undo records each
     deselectAll();
 }
-// Toolbar: armed two-click (rule 2) — a mis-click shouldn't nuke a node.
-armConfirm($("selDeleteBtn"), deleteSelection);
+// Toolbar: armed two-click (rule 2) — a mis-click shouldn't nuke a node. Silent: the yellow
+// armed background is the confirm cue; no "confirm" label (keeps the button icon-only).
+armConfirm($("selDeleteBtn"), deleteSelection, { silent: true });
 
 // Clone every cloneable node in the selection. Each clone is a full independent copy under a
 // fresh non-colliding id; the copies become the new selection so you can drag them off together.
@@ -3690,8 +3875,7 @@ $("settingsBtn")?.addEventListener("click", () => {
                     h("option", { value: "auto" }, "Auto (CPU; GPU for precapture)"),
                     h("option", { value: "cpu" }, "CPU"),
                     h("option", { value: "gpu" }, "GPU"))),
-            // Backend-specific knobs: hidden until the server reports the engine has them
-            // (ppocr5 exposes both; the old rapidocr backend only the thread cap).
+            // Backend-specific knobs: hidden until the server reports the engine has them.
             h("label", { class: "set-row", id: "ocrEngineRow", hidden: true, title: "Inference engine for the ppocr5 OCR backend. OpenVINO is often the faster CPU path on Intel; only installed runtimes are listed. Takes effect on the next read (model rebuilds lazily)." },
                 h("span", "engine"),
                 h("select", { id: "ocrEngine" })),
@@ -3763,10 +3947,20 @@ $("graph").addEventListener("mousedown", (ev) => {
     // right-drag pans ANYWHERE (even over nodes/canvas), except form controls so
     // their native menus still work. Don't preventDefault — a plain right click
     // must still open the context menu; only an actual drag suppresses it.
-    if (ev.button === 2) { if (!ev.target.closest("input,select,textarea")) startPan(ev); return; }
+    if (ev.button === 2) { clearTools(); if (!ev.target.closest("input,select,textarea")) startPan(ev); return; }   // right-click disarms any draw tool
     // left-drag on empty canvas: rubber-band multi-select (a plain click clears).
     if (ev.button === 0 && !ev.target.closest(".gnode, .ggroup")) startMarquee(ev);
 });
+// Click-outside disarms the draw tool: a left press anywhere NOT inside a drawing surface (its
+// canvas or its own toolbar/compose controls) drops the armed tool. Capture phase so it runs
+// before the canvas's own mousedown (which stops propagation) — a press ON the canvas is inside a
+// toolhost, so it's kept and draws; a press on the surface's buttons (glyph save, item fields) is
+// also inside, so it's kept; anything else clears. Central, tool-agnostic (rule 7).
+document.addEventListener("mousedown", (ev) => {
+    if (ev.button !== 0) return;   // right-click is handled on the graph mousedown above
+    if (ev.target.closest("[data-toolhost]")) return;
+    clearTools();
+}, true);
 // double-click a group's BACKGROUND (or a super group's) → frame it. The group box is
 // pointer-events:none so single clicks/drags fall through to the canvas (pan/marquee); we
 // hit-test the dblclick against the world rects instead. Innermost (smallest) wins, so a
@@ -3864,6 +4058,8 @@ window.addEventListener("contextmenu", (ev) => {
         { icon: iconFor("producer"),   title: "producer node",  tint: "var(--warn)",      onClick: () => ready() && createProducerNode(at) },
         { icon: iconFor("filesource"), title: "file source", tint: "var(--accent)",       onClick: () => ready() && createFileSourceNode(at) },
         { icon: iconFor("trigger"),    title: "trigger",     tint: "var(--trigger-line)", onClick: () => ready() && createTriggerNode(at) },
+        { icon: iconFor("toast"),      title: "toast",       tint: "var(--toast)",        onClick: () => ready() && createToastNode(at) },
+        { icon: iconFor("sound"),      title: "sound",       tint: "var(--sound)",        onClick: () => ready() && createSoundNode(at) },
         { icon: iconFor("dictionary"), title: "dictionary",  tint: "var(--purple)",       onClick: () => ready() && createDictionaryNode(at) },
     ]);
 }, true);
@@ -3892,6 +4088,8 @@ const MINB = 0.004;
 document.addEventListener("keydown", (ev) => {
     if (prettyActive) return;   // pretty view owns the keyboard (incl. its OWN undo/redo) while up
     if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+    // Escape disarms any drawing tool (a tool-input's own Escape is handled above — INPUT bails first).
+    if (ev.key === "Escape") { if (clearTools()) { ev.preventDefault(); return; } }
     if (ev.ctrlKey || ev.metaKey) {
         const k = ev.key.toLowerCase();
         if (k === "z" && !ev.shiftKey) { ev.preventDefault(); undo(); return; }
@@ -3985,8 +4183,12 @@ document.addEventListener("keydown", (ev) => {
     const ov = rec.overlay;
     const b = ov.boxes.find((x) => x.id === ov.activeId);
     if (!b || b.locked) return;   // a locked box (calibrated scrollbar) never nudges
-    // step exactly ONE image pixel, so it's the same feel on any canvas size
-    const sx = 1 / (ov.canvas.width || 1000), sy = 1 / (ov.canvas.height || 1000);
+    // step exactly ONE image-native pixel. Use the IMAGE's natural size, NOT canvas.width — the
+    // canvas backing is supersampled (up to 8× when zoomed in), so keying off it made a press move
+    // a fraction of a pixel that shrank further the more you zoomed, reading as "WASD does nothing".
+    const iw = ov.img?.naturalWidth || ov.canvas.width || 1000;
+    const ih = ov.img?.naturalHeight || ov.canvas.height || 1000;
+    const sx = 1 / iw, sy = 1 / ih;
     if (ev.shiftKey) {
         b.w = Math.min(Math.max(MINB, b.w + dir[0] * sx), 1 - b.x);
         b.h = Math.min(Math.max(MINB, b.h + dir[1] * sy), 1 - b.y);
@@ -4001,13 +4203,6 @@ document.addEventListener("keydown", (ev) => {
     ev.preventDefault();
 });
 
-function persistBox(winId, b) {
-    const box = { x: b.x, y: b.y, w: b.w, h: b.h };
-    if (b.role === "detect") model.setDetectBox(winId, b.id, box);
-    else if (b.role === "scrollbar") model.setScrollbar(winId, box);
-    else if (b.role === "data_area") model.setDataArea(winId, box);
-    else model.setRegionBox(winId, b.id, box);
-}
 
 // ---- init -----------------------------------------------------------------
 
@@ -4311,7 +4506,7 @@ export {
     refreshLive, subsetParts, wireOcrScale,
     refreshAllSubsetNodes, refreshDatasetConsumers,
     rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,
-    overlaySelected, selectWindowBox, persistBox, syncCellSize, itemChanged,
+    overlaySelected, selectWindowBox, syncCellSize, itemChanged,
     addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom,
     refreshItemTemplateRefs,
 };

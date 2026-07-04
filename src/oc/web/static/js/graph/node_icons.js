@@ -57,6 +57,11 @@ const INNER = {
         svg("rect", { x: "2.5", y: "7.5", width: "11", height: "9", rx: "2", "stroke-dasharray": "2.4 2" }),
         P("M5.5 12l2 2 3.4-3.8"), P("M17 9l3 3-3 3"),
     ],
+    // readout: a partly-filled bar/gauge — a live, non-persisted value read off the screen.
+    readout: () => [
+        svg("rect", { x: "3", y: "9", width: "18", height: "6", rx: "3" }),
+        svg("rect", { x: "3", y: "9", width: "10", height: "6", rx: "3", ...fill }),
+    ],
     dataset: () => [
         svg("ellipse", { cx: "12", cy: "6", rx: "7", ry: "2.6" }),
         P("M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6"),
@@ -90,6 +95,17 @@ const INNER = {
     // trigger has two looks, chosen by kind: a bolt for "on change", a clock for "interval".
     trigger_change: () => [P("M13 3L5 13h6l-1 8 8-10h-6z", fill)],
     trigger_timer: () => [C("12", "13", "7"), P("M12 9.5V13l2.5 1.5"), P("M9 3h6M12 3v3")],
+    // toast: a bell with a clapper — an OS desktop notification raised on fire.
+    toast: () => [
+        P("M18 15.5v-4.5a6 6 0 1 0-12 0v4.5l-1.6 2v.5h15.2v-.5z"),
+        P("M9.8 20.5a2.3 2.3 0 0 0 4.4 0"),
+    ],
+    // sound: a speaker cone + two sound waves — a browser-played sound raised on fire.
+    sound: () => [
+        P("M4 9v6h3l5 4V5L7 9z", fill),
+        P("M15.5 8.5a5 5 0 0 1 0 7"),
+        P("M18 6a8 8 0 0 1 0 12"),
+    ],
 };
 
 // the shared icon box + stroke style; the type's inner factory fills it. A fresh node each call.

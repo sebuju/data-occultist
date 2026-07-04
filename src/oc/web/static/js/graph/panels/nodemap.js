@@ -35,7 +35,7 @@ function nodeLabel(n) {
         case "dataset": return n.ref;
         case "subset": return n.ref.id;
         case "producer": return n.ref.id;
-        case "dictionary": return n.ref.name || n.ref.id;
+        case "dictionary": return n.ref.id;
         default: return n.id;
     }
 }

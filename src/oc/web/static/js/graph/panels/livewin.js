@@ -314,6 +314,7 @@ async function applyLiveInterval(seconds) {
 }
 
 function renderLiveWindow() {
+    syncWpDots();   // game-node priority dots update even when the live PANEL is closed (collector runs via hub)
     if (!liveRoot || !active) return;
     // sync the visual `.on` class INDEPENDENTLY of aria-checked — the markup ships
     // aria-checked already matching the default, so gating the class on an aria mismatch left
@@ -364,7 +365,22 @@ function renderLiveWindow() {
     const clr = liveRoot.querySelector(".live-clear");
     if (clr) clr.disabled = !liveImg.count;
     renderLiveWinList();
+    renderLiveReadouts();
     fitLivePanelHeight();
+}
+
+// Push the latest live readout values onto their readout nodes' `.ro-live` spans.
+// Reconciled in place (touch textContent/class only on change) so a steady value mutates the
+// DOM zero times per heartbeat (CLAUDE.md rule 1). "—" when not collecting / value absent.
+function renderLiveReadouts() {
+    const vals = liveColStatus?.readouts || null;
+    for (const el of document.querySelectorAll(".ro-live")) {
+        const id = el.dataset.ro;
+        const has = !!vals && Object.prototype.hasOwnProperty.call(vals, id);
+        const txt = has ? String(vals[id]) : "—";
+        if (el.textContent !== txt) el.textContent = txt;
+        if (el.classList.contains("muted") === has) el.classList.toggle("muted", !has);
+    }
 }
 
 // Reconcile the live-enabled window list in place (keyed Map, no innerHTML per tick).
@@ -392,14 +408,32 @@ function renderLiveWinList() {
         if (at !== r.row) list.insertBefore(r.row, at || null);
         i++;
         if (r.name.textContent !== w.id) r.name.textContent = w.id;
-        const det = liveOn && !!liveRecog.get(w.id);
-        if (r.dot.classList.contains("on") !== det) r.dot.classList.toggle("on", det);
-        const dt = det ? "detected" : (liveOn ? "not detected yet" : "live off");
-        if (r.dot.title !== dt) r.dot.title = dt;
+        paintWdot(r.dot, w.id);
         const n = liveDetCount.get(w.id) || 0;          // how many times detected this run
         const ctxt = n ? `${n}×` : "";
         if (r.cnt.textContent !== ctxt) r.cnt.textContent = ctxt;
         if (r.cnt.title !== `detected ${n}×`) r.cnt.title = `detected ${n}×`;
+    }
+}
+
+// The ONE live-recognition-dot painter, shared by the live panel's window list AND the game
+// node's window-priority rows (rule 7 — one predicate, no second copy). In place: only touches
+// the class/title when they actually change (rule 1). `.on` == this window is recognised on
+// screen right now (needs live running); off shows why (not-yet / live-off).
+function paintWdot(dot, winId) {
+    const det = liveOn && !!liveRecog.get(winId);
+    if (dot.classList.contains("on") !== det) dot.classList.toggle("on", det);
+    const t = det ? "detected" : (liveOn ? "not detected yet" : "live off");
+    if (dot.title !== t) dot.title = t;
+}
+
+// Repaint the game node's window-priority dots to match live recognition, in place. Called on
+// every live tick (renderLiveWindow) and after each gamePriority rebuild (wireGamePriority).
+// No-op when the game node isn't rendered — the query just matches nothing.
+export function syncWpDots() {
+    for (const row of document.querySelectorAll(".game-priority .wp-row")) {
+        const dot = row.querySelector(".live-wdot");
+        if (dot) paintWdot(dot, row.dataset.id);
     }
 }
 

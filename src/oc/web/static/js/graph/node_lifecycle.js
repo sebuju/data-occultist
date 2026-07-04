@@ -114,7 +114,7 @@ export function movePos(oldId, newId) {
 // separately in the handler, since their stored data moves too). Item fields/tells
 // (`fld:<win>:<item>:*` / `tell:<win>:<item>:*`) are window-owned too — omit them and a
 // window rename orphans every item-field/tell node's layout+group state (it jumps/resets).
-const WINDOW_NODE_TYPES = new Set(["win", "prev", "reg", "det", "item", "sb", "fld", "tell"]);
+const WINDOW_NODE_TYPES = new Set(["win", "prev", "reg", "det", "item", "sb", "fld", "tell", "ro"]);
 export function moveWindowPos(oldWin, newWin) {
     if (oldWin === newWin) return;
     statsRenameNode(`win:${oldWin}`, `win:${newWin}`);   // carry the window node's timing history

@@ -14,20 +14,21 @@ import {
 import { drawEdges } from "./routing.js";
 import { renderLiveWindow, liveDetCount, liveRecog } from "./panels/livewin.js";
 import {
-    render, autosave, rebuildNode, setNodeBusy, withBusy,
+    render, autosave, rebuildNode, rebuildReadoutConsumers, setNodeBusy, withBusy,
     registerOverlay, unregisterOverlay, overlaySelected, selectedNodeId, setSelectedNodeId,
-    placeNewNode, refreshLive, persistBox, syncCellSize, itemChanged,
+    placeNewNode, refreshLive, syncCellSize, itemChanged,
     addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom, showSatellite,
     refreshItemTemplateRefs,
 } from "./main.js";
 import { panZoomTo } from "./camera.js";
+import { wireTools, toolKind } from "./drawtool.js";
 import { keyPrevNode } from "./node_parts.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 import { verdictBadge } from "./collisions.js";
 
 // ---- window image / region drawing (in-graph) -----------------------------
 
-const KINDS = [["data_area", "data area", "▭"], ["item", "item", "▣"], ["detect", "detect", "◎"], ["scrollbar", "scrollbar", "↕"]];
+const KINDS = [["region", "region", "▤"], ["data_area", "data area", "▭"], ["item", "item", "▣"], ["detect", "detect", "◎"], ["scrollbar", "scrollbar", "↕"], ["readout", "readout", "▮"]];
 // kinds drawn INSIDE an item node (on its frozen cutout): the cell + fields + tells
 // [kind, label, icon, tooltip]. The tooltip explains what drawing that box does (shown on
 // the item node's draw buttons). Extra 4th element is ignored by the index destructures.
@@ -113,6 +114,23 @@ function closeImage(winId) {
     persist.layout();
 }
 
+// THE single writer for a window overlay box, by role. Both the mouse (overlay onChange) and the
+// keyboard (WASD/shift+WASD via the registry persist) route here, so a box moves/resizes to the
+// same model field whichever drives it — no role handled by one path and dropped by the other.
+// Callers own the generic aftermath (refreshImageBoxes/drawEdges/autosave); this does the model
+// write + the role-specific side effects (item cell redraw, stale-grid clear) only.
+function persistWinBox(winId, box) {
+    const r = box.role;
+    const b = { x: box.x, y: box.y, w: box.w, h: box.h };
+    if (r === "detect") model.setDetectBox(winId, box.id, b);
+    else if (r === "scrollbar") model.setScrollbar(winId, b);
+    else if (r === "data_area") model.setDataArea(winId, b);
+    else if (r === "item") { model.setItemBox(winId, box.id, b); refreshItemBoxes(winId, box.id); }
+    else if (r === "readout") model.setReadoutBox(winId, box.id, b);
+    else model.setRegionBox(winId, box.id, b);
+    clearGrid(winId);   // layout changed → detected grid is stale
+}
+
 // The image surface lives INSIDE the window node's `.win-img` host — one per window node,
 // built once and always present. Draw tools sit above the canvas; the page nav, image
 // selector, recapture and "preview all" sit BELOW it. There is no clear/close button.
@@ -147,48 +165,42 @@ async function openImage(winId, nodeEl = null) {
             h("button", { class: "imgall", title: "preview data read from ALL of this window's images" }, "preview all")),
         imgLayers());
     const canvas = host.querySelector("canvas");
-    const kindOf = () => host.querySelector(".tool.active")?.dataset.kind || "region";
+    const { kindOf, canCreate } = wireTools(host);   // one shared tool group; no draw until a tool is armed
     const overlay = new Overlay(canvas, {
         onCreate: async (geom) => {
             const k = kindOf();
+            if (!k) return;   // no draw tool armed → drawing is a no-op (canCreate also blocks it upstream)
             if (k === "item") { await createItemFromGeom(winId, geom); return; }   // freeze + spawn item node
             let newDetect = null, newNode = null;   // the node this draw spawned → inherit the window's group
             if (k === "detect") { newDetect = model.addDetect(winId, geom); newNode = `det:${winId}:${newDetect}`; }
             else if (k === "scrollbar") { model.setScrollbar(winId, geom); newNode = `sb:${winId}:scrollbar`; }
             else if (k === "data_area") model.setDataArea(winId, geom);   // a window box, not its own node
+            else if (k === "readout") newNode = `ro:${winId}:${model.addReadout(winId, geom)}`;
             else newNode = `reg:${winId}:${model.addRegion(winId, geom)}`;
             clearGrid(winId);   // layout changed → detected grid is stale
             // park the new node right BESIDE its window (srcId) before render() so ensurePositions
             // leaves it alone — no autoplacement into a far column.
             if (newNode) await placeNewNode(newNode, k, `win:${winId}`);
             render(); refreshImageBoxes(winId); autosave(winId);   // re-OCR only this window
+            if (k === "readout") rebuildReadoutConsumers();   // toast chips + on_readout watch dropdown list readouts
             if (newDetect) rebuildNode(`win:${winId}`);   // add the new detector to the window's detects section
             if (newNode) inheritGroupFrom(newNode, `win:${winId}`);   // box drawn on a grouped window → join its group
             if (newDetect) prefillDetectText(winId, newDetect);
             drawEdges();   // edge to the window drawn immediately
         },
-        onChange: (box) => {
-            const r = box.role;
-            if (r === "detect") model.setDetectBox(winId, box.id, box);
-            else if (r === "scrollbar") model.setScrollbar(winId, box);
-            else if (r === "data_area") model.setDataArea(winId, box);
-            else if (r === "item") { model.setItemBox(winId, box.id, box); refreshItemBoxes(winId, box.id); }
-            else model.setRegionBox(winId, box.id, box);
-            clearGrid(winId);   // layout changed → detected grid is stale
-            refreshImageBoxes(winId); drawEdges(); autosave(winId);   // re-OCR only this window
-        },
+        // mouse move/resize AND keyboard (WASD/shift+WASD) write through the SAME persistWinBox, so
+        // every role a box can have is honoured identically by both (rule 7 — the two writers used to
+        // diverge and readout/item boxes silently wrote as regions under WASD).
+        onChange: (box) => { persistWinBox(winId, box); refreshImageBoxes(winId); drawEdges(); autosave(winId); },
         onSelect: (id) => overlaySelected(`win:${winId}`, id),
+        canCreate,   // no crosshair / no new box until a draw tool is armed
     });
     imageCanvases.set(winId, { host, canvas, overlay });
     registerOverlay(`win:${winId}`, { overlay, kind: "window", winId,
-        persist: (b) => persistBox(winId, b), refresh: () => refreshImageBoxes(winId) });
+        persist: (b) => persistWinBox(winId, b), refresh: () => refreshImageBoxes(winId) });
     overlay.setWorldZoom(view.zoom);
     openImages.add(winId);
     persist.layout();
-    host.querySelectorAll(".tool").forEach((btn) => btn.addEventListener("click", () => {
-        host.querySelectorAll(".tool").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-    }));
     host.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal(winId));   // pick image(s)
     host.querySelector(".imgcap").addEventListener("click", () => loadImage(winId, true));   // recapture re-reads
     host.querySelector(".imgall").addEventListener("click", (e) => previewAll(winId, e.currentTarget));
@@ -415,7 +427,12 @@ export async function openGlyphImage(nodeEl = null) {
                 CAMERA(), h("span", { class: "imgbtn-lbl" }, "images")),
             h("button", { class: "imgcap", title: "capture the live game window into the current page" }, "recapture")));
     const canvas = host.querySelector("canvas");
-    const kindOf = () => host.querySelector(".tool.active")?.dataset.kind || null;   // no tool => no draw
+    // one shared tool group: arming shows the compose row, disarming (incl. a central clearTools
+    // from Escape/right-click/click-outside) clears the half-drawn box + compose row.
+    const { kindOf, canCreate } = wireTools(host, { onChange: (kind) => {
+        if (kind) setStatus("draw a box round one character, then label it");
+        else cancelGlyphCompose();
+    } });
     const overlay = new Overlay(canvas, {
         // The "glyph" draw tool creates the box for one manual glyph; the auto-glypher's arm rect
         // and each proposal box are created programmatically. All boxes are then drag/resizable
@@ -430,7 +447,7 @@ export async function openGlyphImage(nodeEl = null) {
         // make glyphs the active box overlay (WASD targets its box) AND mirror the selection into
         // the proposal list, so selecting a box on the canvas highlights its suggestion row
         onSelect: (id) => { overlaySelected("glyphs", id); markGlyphPropSelected(propIndexFromId(id)); },
-        canCreate: () => kindOf() === "glyph",   // no crosshair/draw without the glyph tool
+        canCreate,   // no crosshair/draw without the glyph tool armed
         minFrac: 0.0005,   // a single glyph is tiny vs the whole window — allow a much smaller box
     });
     imageCanvases.set(winId, { host, canvas, overlay });
@@ -439,13 +456,6 @@ export async function openGlyphImage(nodeEl = null) {
     overlay.setWorldZoom(view.zoom);
     openImages.add(winId);
     persist.layout();
-    host.querySelector(".gc-add").addEventListener("click", (e) => {
-        const btn = e.currentTarget;
-        const on = !btn.classList.contains("active");
-        host.querySelectorAll(".tool").forEach((b) => b.classList.remove("active"));
-        if (on) { btn.classList.add("active"); setStatus("draw a box round one character, then label it"); }
-        else cancelGlyphCompose();   // turning the tool off clears any half-drawn box + compose row
-    });
     host.querySelector(".gc-confirm").addEventListener("click", saveGlyph);
     host.querySelector(".gc-cancel").addEventListener("click", cancelGlyphCompose);
     host.querySelector(".gc-char").addEventListener("keydown", (e) => {
@@ -628,9 +638,26 @@ function openItemImage(winId, itemId) {
     const ibox = () => model.item(winId, itemId).box;
     const win2rel = (b) => { const ib = ibox(); return { x: (b.x - ib.x) / ib.w, y: (b.y - ib.y) / ib.h, w: b.w / ib.w, h: b.h / ib.h }; };
     const rel2win = (b) => { const ib = ibox(); return { x: ib.x + b.x * ib.w, y: ib.y + b.y * ib.h, w: b.w * ib.w, h: b.h * ib.h }; };
-    const kindOf = () => node.querySelector(".tool.active")?.dataset.kind || null;
+    const kindOf = () => toolKind(node);   // armed tool on the item node (wired in main.js), or null
+
+    // THE single writer for an item overlay box, by role. Both the mouse (overlay onChange) and the
+    // keyboard (WASD/shift+WASD via the registry persist) route here, so every role writes the same
+    // way whichever drives it (rule 7). `b` carries role/id in cutout fractions.
+    const persistItem = (b) => {
+        const w = cut2win(b);
+        if (b.role === "bbox") setItemCellKeepingChildren(winId, itemId, w);
+        else if (b.role === "field") model.setItemFieldBox(winId, itemId, b.id, win2rel(w));
+        else model.setItemTellBox(winId, itemId, b.id, win2rel(w));
+        itemChanged(winId, itemId);              // box moved/resized — no DOM rebuild
+        // a moved cell (remaps every tell) or a moved template tell shifts the crop region —
+        // redraw the live reference preview on each affected template tell node
+        if (b.role === "bbox" || model.itemTell(winId, itemId, b.id)?.kind === "template")
+            refreshItemTemplateRefs(winId, itemId);
+        if (b.role === "bbox") syncCellSize(winId, itemId);   // reflect new cell size in the inputs
+    };
 
     const overlay = new Overlay(canvas, {
+        canCreate: () => kindOf() !== null,          // no crosshair / no draw until a tool is armed
         onCreate: async (geom) => {                  // geom in cutout fractions
             const w = cut2win(geom);
             const k = kindOf();
@@ -665,30 +692,11 @@ function openItemImage(winId, itemId) {
             clearGrid(winId); scheduleItemRead(winId, itemId); autosave(winId);
             panZoomTo(`tell:${winId}:${itemId}:${tid}`);
         },
-        onChange: (box) => {                        // box in cutout fractions + role/id
-            const w = cut2win(box);
-            if (box.role === "bbox") setItemCellKeepingChildren(winId, itemId, w);
-            else if (box.role === "field") model.setItemFieldBox(winId, itemId, box.id, win2rel(w));
-            else model.setItemTellBox(winId, itemId, box.id, win2rel(w));
-            itemChanged(winId, itemId);              // box moved/resized — no DOM rebuild
-            // a moved cell (remaps every tell) or a moved template tell shifts the crop region —
-            // redraw the live reference preview on each affected template tell node
-            if (box.role === "bbox" || model.itemTell(winId, itemId, box.id)?.kind === "template")
-                refreshItemTemplateRefs(winId, itemId);
-            if (box.role === "bbox") syncCellSize(winId, itemId);   // reflect new cell size in the inputs
-        },
+        onChange: (box) => persistItem(box),        // mouse and WASD share ONE writer (rule 7)
         onSelect: (id) => overlaySelected(`item:${winId}:${itemId}`, id),
     });
     itemCanvases.set(`${winId}:${itemId}`, { host, canvas, overlay, cut2win, win2cut, win2rel, rel2win });
-    // central registry: cross-deselect + WASD for the item's boxes
-    const persistItem = (b) => {
-        const w = cut2win(b);
-        if (b.role === "bbox") setItemCellKeepingChildren(winId, itemId, w);
-        else if (b.role === "field") model.setItemFieldBox(winId, itemId, b.id, win2rel(w));
-        else model.setItemTellBox(winId, itemId, b.id, win2rel(w));
-        itemChanged(winId, itemId);
-        if (b.role === "bbox") syncCellSize(winId, itemId);   // reflect new cell size in the inputs
-    };
+    // central registry: cross-deselect + WASD for the item's boxes (same persistItem writer)
     registerOverlay(`item:${winId}:${itemId}`, { overlay, kind: "item", winId, itemId,
         persist: persistItem, refresh: () => { refreshItemBoxes(winId, itemId); refreshImageBoxes(winId); } });
     overlay.setWorldZoom(view.zoom);
@@ -1027,7 +1035,7 @@ async function prefillDetectText(winId, detectId) {
         const res = await api.detect(previewProfileFor(winId), model.profile.name, cap);
         const info = res.detect?.[detectId];
         const a = model.detect(winId, detectId);
-        if (a && !a.text && info && info.read && info.read !== "(template)") {
+        if (a && !a.text && info && info.read && info.read !== "(template)" && info.read !== "(color)") {
             a.text = info.read;
             render(); autosave(winId);   // re-detect only this window
         }
@@ -1180,7 +1188,7 @@ function setWindowDetectStatus(winId, res) {
             }
         }
     }
-    if (!isGame) setWindowCollideStatus(winId);   // cross-window outcome (windows only)
+    if (winId !== "game") setWindowCollideStatus(winId);   // cross-window outcome (windows only)
 }
 
 // Detection is a cross-window contest: classify() runs EVERY window's detectors against
@@ -1318,10 +1326,13 @@ async function loadImage(winId, recapture) {
         drawEdges();
         updateImageLabel(winId);     // button shows the (possibly new) filename
         // the image changed (recapture / picked a capture / first open) → READ it: full preview
-        // when the node exists, else just the grid overlay. The game gate has no grid/preview —
-        // only its cheap detectors need re-evaluating.
-        // gate-like image-only nodes (game worthiness gate, glyph atlas) have no grid/preview
-        if (winId !== "game" && winId !== "glyphs") {
+        // when the node exists, else just the grid overlay. Gate-like image-only nodes (game
+        // worthiness gate, glyph atlas) have no grid/preview — only their cheap detectors need
+        // re-evaluating. EXCEPT: the game gate can carry live readouts (health/counters), and
+        // those must be read on load so their values draw on the canvas (not only after an edit).
+        const wdef = model.window(winId);
+        const gateReadouts = winId === "game" && (wdef?.readouts || []).some((v) => v.enabled !== false);
+        if ((winId !== "game" && winId !== "glyphs") || gateReadouts) {
             if (prevHost(winId)) refreshPreview(winId, false);
             else refreshGridPreview(winId);
         }
@@ -1341,6 +1352,7 @@ function refreshImageBoxes(winId) {
     if (da) boxes.push({ id: "__data_area", role: "data_area", ...da });
     // disabled regions/detectors aren't read, so don't clutter the canvas with them
     for (const r of model.regions(winId)) if (r.enabled !== false) boxes.push({ id: r.id, role: "region", field: r.field, ...r.box });
+    for (const v of (model.window(winId)?.readouts || [])) if (v.enabled !== false) boxes.push({ id: v.id, role: "readout", label: v.id, ...v.box });
     for (const a of model.detects(winId)) if (a.enabled !== false) boxes.push({ id: a.id, role: "detect", ...a.search });
     // item template box is NOT drawn here — it's the authored cell at one spot, which
     // isn't where detection actually reads; the live grid (below) shows the real cells
@@ -1468,7 +1480,11 @@ async function refreshGridPreview(winId, live = false) {
     if (!entry) return;
     try {
         const cap = live ? null : await curCapOf(winId);   // the page on screen (live grabs fresh)
-        const res = await api.preview(previewProfileFor(winId), model.profile.name, cap);
+        // On boot serve the unchanged stashed image from the server OCR cache (no engine touch);
+        // a live read or a post-boot edit always re-OCRs fresh. Mirrors refreshPreview so the
+        // grid-only path (image open, no preview node — e.g. the game gate's readouts) doesn't
+        // re-OCR on every load.
+        const res = await api.preview(previewProfileFor(winId), model.profile.name, cap, boot.phase && !live);
         setGridFromPreview(winId, res);
     } catch { /* ignore */ }
 }
@@ -1537,6 +1553,13 @@ function setGridFromPreview(winId, res) {
             const w = Math.min(0.045, box.x) || 0.03;
             reads.push({ cell: { x: Math.max(0, box.x - w), y: box.y, w, h: box.h }, text: `#${idx}` });
         }
+    }
+    // readouts: draw each readout box's read value right on the canvas (author-time preview of
+    // what this image would produce for it), tinted like any other read.
+    const roVals = res.readouts || {};
+    for (const ro of (model.window(winId)?.readouts || [])) {
+        if (ro.enabled === false || !(ro.id in roVals)) continue;
+        reads.push({ ...ro.box, text: roVals[ro.id], confidence: 0.99 });
     }
     // the detected CELL outlines — the tiling the reader actually found
     const cells = kept.map((c) => c.box).filter(Boolean);

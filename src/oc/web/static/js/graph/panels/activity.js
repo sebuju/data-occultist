@@ -244,16 +244,23 @@ function activityJobs(data, elapsed = 0) {
 // Seeded on first sight (no replay of a pre-existing fire on page load / panel open).
 const triggerFireSeen = new Map();
 
-// Play a trigger's sound once per fresh fire. The heartbeat is the SINGLE funnel for every
-// fire source (interval / on_change / manual), so sound lives here, not on each fire button
-// (rule 7). A `last_fired` that differs from what we last saw = a new fire.
+// Play a fired trigger's SOUND NODES once per fresh fire. A sound is a node the trigger names in
+// its `targets` (browser-played, unlike a server-fired toast/producer), so a fire plays every sound
+// target. The heartbeat is the SINGLE funnel for every fire source (interval / on_change / manual),
+// so playback lives here, not on each fire button (rule 7). A `last_fired` that differs from what we
+// last saw = a new fire.
 function detectFires(data) {
     for (const t of (data.triggers || [])) {
         const ts = t.last_fired || null;
         if (!ts) continue;
         const prev = triggerFireSeen.get(t.id);
         triggerFireSeen.set(t.id, ts);
-        if (prev !== undefined && prev !== ts) { const tr = model.trigger(t.id); playSound(tr?.sound, tr?.volume ?? 1); }   // prev===undefined => first sight, don't replay
+        if (prev === undefined || prev === ts) continue;   // prev===undefined => first sight, don't replay
+        const tr = model.trigger(t.id);
+        for (const pid of tr?.targets || []) {
+            const sn = model.soundNode(pid);
+            if (sn) playSound(sn.file, sn.volume ?? 1);
+        }
     }
 }
 

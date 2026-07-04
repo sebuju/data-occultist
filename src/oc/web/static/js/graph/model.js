@@ -19,8 +19,11 @@ export class GraphModel {
         this.profile.producers = this.profile.producers || [];
         this.profile.file_sources = this.profile.file_sources || [];
         this.profile.triggers = this.profile.triggers || [];
+        this.profile.toasts = this.profile.toasts || [];   // OS-notification nodes (trigger targets)
+        this.profile.sounds = this.profile.sounds || [];   // browser-played sound nodes (trigger targets)
         this.profile.dictionaries = this.profile.dictionaries || [];
         this.profile.glyphs = this.profile.glyphs || [];   // taught glyph atlas (post-OCR refinement)
+        this._renameHook = null;   // (rewrite) called on every id rename so cross-doc token refs repoint
         // a subset joins many sources, each carrying its own join config (JoinSource)
         for (const s of this.profile.subsets) {
             s.sources = s.sources || [];
@@ -31,8 +34,9 @@ export class GraphModel {
         for (const pn of this.profile.producers) pn.sources = pn.sources || [];   // items the node prices (empty = catalogue)
         for (const s of this.profile.file_sources) { s.match = s.match || []; s.fields = s.fields || []; s.roots = s.roots || []; }
         for (const t of this.profile.triggers) {
-            t.watch = t.watch || []; t.targets = t.targets || []; if (t.volume == null) t.volume = 1;
+            t.watch = t.watch || []; t.targets = t.targets || [];
             t.dataset_targets = t.dataset_targets || []; t.dataset_action = t.dataset_action || ""; t.dataset_dest = t.dataset_dest || "";
+            t.readout_watch = t.readout_watch || []; t.readout_op = t.readout_op || "gte"; if (t.readout_value == null) t.readout_value = 0;
         }
         // Item children arrive HOISTED to the window (flat ``item_fields``/``item_tells``, each
         // with an ``item`` backref) so each is its own node. Fan them back onto each item's
@@ -50,6 +54,7 @@ export class GraphModel {
         };
         for (const w of this.profile.windows || []) {
             w.items = w.items || [];
+            w.readouts = w.readouts || [];   // live, non-persisted scalars (health/bars/counters)
             fanIn(w, "item_fields", "fields");
             fanIn(w, "item_tells", "tells");
         }
@@ -176,6 +181,17 @@ export class GraphModel {
     }
 
     // Repoint every reference site (consumers, not declarations) from oldId -> newId. Shared by
+    // Cross-document rename notification. A graph id can be referenced OUTSIDE the profile — the
+    // Pretty doc embeds ids inside {{token}} strings (dataset:/subset: heads, node: paths). Those
+    // live in a separate lazily-loaded model, so structured repointing (_datasetSites/_repointTargets)
+    // can't reach them. Every rename* emits {kind, old, new, win?} here; ONE subscriber (main.js)
+    // funnels them to the Pretty repoint endpoint. Wired via a hook so model.js stays UI-free.
+    setRenameHook(fn) { this._renameHook = fn; }
+    _emitRename(kind, oldId, newId, win) {
+        if (this._renameHook && oldId && newId && oldId !== newId)
+            try { this._renameHook({ kind, old: oldId, new: newId, win }); } catch { /* never fail a rename */ }
+    }
+
     // dataset AND subset renames: a subset.datasets entry can name either, and the ref site is
     // the same either way, so one helper keeps both rename paths complete.
     _repointRefs(oldId, newId) {
@@ -209,6 +225,7 @@ export class GraphModel {
         for (const st of this._datasetSites()) if (st.get() === oldId) st.set(newId);
         if (!this.datasetDef(newId)) this.ensureDatasetDef(newId);   // a def must exist for the new name
         if (this._extraDatasets) this._extraDatasets = this._extraDatasets.filter((x) => x !== oldId);   // drop stale disk entry
+        this._emitRename("dataset", oldId, newId);
         return true;
     }
     // field ids available to a dataset = the fields of every window feeding it
@@ -283,6 +300,10 @@ export class GraphModel {
                 for (const f of it.fields || []) ns.push({ id: `fld:${w.id}:${it.id}:${f.id}`, type: "itemfield", ref: f, win: w, item: it, field: this.fieldOf(w, f) });
                 for (const t of it.tells || []) ns.push({ id: `tell:${w.id}:${it.id}:${t.id}`, type: "itemtell", ref: t, win: w, item: it });
             }
+            // A readout is ONE node: it owns its box + source + (for ocr) its read config inline,
+            // like a region node. The linked FieldDef rides along as `field` for the config editor.
+            for (const v of w.readouts || [])
+                ns.push({ id: `ro:${w.id}:${v.id}`, type: "readout", ref: v, win: w, field: this.readoutField(w, v) });
         }
         for (const ds of this.datasets()) {
             ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
@@ -302,6 +323,8 @@ export class GraphModel {
             if (this.satelliteOn(`vtd:src:${s.id}`)) ns.push({ id: `vtd:src:${s.id}`, type: "vttable", ref: { kind: "sourcedismissed", id: s.id } });
         }
         for (const t of this.profile.triggers || []) ns.push({ id: `trigger:${t.id}`, type: "trigger", ref: t });
+        for (const x of this.profile.toasts || []) ns.push({ id: `toast:${x.id}`, type: "toast", ref: x });
+        for (const x of this.profile.sounds || []) ns.push({ id: `sound:${x.id}`, type: "sound", ref: x });
         for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
         return ns;
     }
@@ -324,6 +347,8 @@ export class GraphModel {
                 }
                 for (const t of it.tells || []) es.push({ from: `item:${w.id}:${it.id}`, to: `tell:${w.id}:${it.id}:${t.id}`, kind: "tell" });
             }
+            for (const v of w.readouts || [])
+                es.push({ from: `win:${w.id}`, to: `ro:${w.id}:${v.id}`, kind: "field" });
             if (this._windowHasDataset(w))   // no dataset node/wire until the window produces data
                 es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
         }
@@ -355,11 +380,19 @@ export class GraphModel {
             for (const pid of t.targets || []) {
                 if (this.producerNode(pid)) es.push({ from: `trigger:${t.id}`, to: `producer:${pid}`, kind: "trigger" });
                 else if (this.fileSource(pid)) es.push({ from: `trigger:${t.id}`, to: `src:${pid}`, kind: "trigger" });
+                else if (this.toastNode(pid)) es.push({ from: `trigger:${t.id}`, to: `toast:${pid}`, kind: "trigger" });
+                else if (this.soundNode(pid)) es.push({ from: `trigger:${t.id}`, to: `sound:${pid}`, kind: "trigger" });
             }
             if (t.kind === "on_change")
                 for (const w of t.watch || []) {
                     const to = this.subsetDef(w) ? `sub:${w}` : `ds:${w}`;
                     es.push({ from: `trigger:${t.id}`, to, kind: "watch" });
+                }
+            // an on_readout trigger WATCHES live readouts — dashed line to each watched var node
+            if (t.kind === "on_readout")
+                for (const vid of t.readout_watch || []) {
+                    const site = this.readoutSite(vid);
+                    if (site) es.push({ from: `trigger:${t.id}`, to: `ro:${site.win}:${vid}`, kind: "watch" });
                 }
             // a dataset-action trigger ACTS ON its dataset targets (trigger -> dataset)
             for (const ds of t.dataset_targets || [])
@@ -442,6 +475,7 @@ export class GraphModel {
         if (!newId || newId === oldId || this.producerNode(newId)) return false;
         this.producerNode(oldId).id = newId;
         this._repointTargets(oldId, newId);   // a trigger may target this producer — carry its wire
+        this._emitRename("producer", oldId, newId);
         return true;
     }
     // the producer backend (registry._PRODUCER): currently just http. Switching it rebuilds the node.
@@ -543,7 +577,7 @@ export class GraphModel {
         this.profile.triggers = this.profile.triggers || [];
         let n = 1, id = "trigger";
         while (this.trigger(id)) id = `trigger_${++n}`;
-        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, sound: "", volume: 1, dataset_targets: [], dataset_action: "", dataset_dest: "" });
+        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, dataset_targets: [], dataset_action: "", dataset_dest: "" });
         return id;
     }
     removeTrigger(id) { this.profile.triggers = (this.profile.triggers || []).filter((t) => t.id !== id); }
@@ -551,16 +585,15 @@ export class GraphModel {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.trigger(newId)) return false;
         this.trigger(oldId).id = newId;
+        this._emitRename("trigger", oldId, newId);
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "on_change", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "on_change", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
-    setTriggerSound(id, v) { const t = this.trigger(id); if (t) t.sound = v || ""; }
-    setTriggerVolume(id, v) { const t = this.trigger(id); const n = parseFloat(v); if (t && !Number.isNaN(n)) t.volume = Math.max(0, Math.min(1, n)); }
     addTriggerTarget(id, pid) {
         const t = this.trigger(id);
-        // a target is a price node (sweep) OR a file source (read) — accept either id
-        if (!t || !pid || !(this.producerNode(pid) || this.fileSource(pid))) return false;
+        // a target is a price node (sweep), a file source (read), a toast (notify), OR a sound (play) — accept any id
+        if (!t || !pid || !(this.producerNode(pid) || this.fileSource(pid) || this.toastNode(pid) || this.soundNode(pid))) return false;
         t.targets = t.targets || [];
         if (t.targets.includes(pid)) return false;
         t.targets.push(pid);
@@ -577,6 +610,20 @@ export class GraphModel {
     }
     removeTriggerWatch(id, ds) { const t = this.trigger(id); if (t) t.watch = (t.watch || []).filter((d) => d !== ds); }
 
+    // ---- on_readout: watch live readouts + a threshold condition ----
+    addTriggerReadoutWatch(id, vid) {
+        const t = this.trigger(id);
+        if (!t || !vid) return false;
+        t.readout_watch = t.readout_watch || [];
+        if (t.readout_watch.includes(vid)) return false;
+        t.readout_watch.push(vid);
+        return true;
+    }
+    removeTriggerReadoutWatch(id, vid) { const t = this.trigger(id); if (t) t.readout_watch = (t.readout_watch || []).filter((v) => v !== vid); }
+    static TRIGGER_READOUT_OPS = ["gte", "lte", "gt", "lt", "eq", "ne", "crosses_up", "crosses_down"];
+    setTriggerReadoutOp(id, op) { const t = this.trigger(id); if (t && GraphModel.TRIGGER_READOUT_OPS.includes(op)) t.readout_op = op; }
+    setTriggerReadoutValue(id, v) { const t = this.trigger(id); const n = parseFloat(v); if (t && !Number.isNaN(n)) t.readout_value = n; }
+
     // ---- dataset actions: a trigger can clear / clone / move a dataset's data ----
     static TRIGGER_DS_ACTIONS = ["", "clear", "clone_batches", "clone_resolved", "move_batches", "move_resolved"];
     addTriggerDataset(id, ds) {
@@ -590,6 +637,53 @@ export class GraphModel {
     removeTriggerDataset(id, ds) { const t = this.trigger(id); if (t) t.dataset_targets = (t.dataset_targets || []).filter((d) => d !== ds); }
     setTriggerDatasetAction(id, v) { const t = this.trigger(id); if (t && GraphModel.TRIGGER_DS_ACTIONS.includes(v)) t.dataset_action = v; }
     setTriggerDatasetDest(id, v) { const t = this.trigger(id); if (t) t.dataset_dest = v || ""; }
+
+    // ---- toasts: raise an OS notification when fired (a trigger target) -------
+    toastNode(id) { return (this.profile.toasts || []).find((x) => x.id === id) || null; }
+    addToast() {
+        this.profile.toasts = this.profile.toasts || [];
+        let n = 1, id = "toast";
+        while (this.toastNode(id)) id = `toast_${++n}`;
+        this.profile.toasts.push({ id, title: "", message: "", app_name: "data-occultist",
+            duration: "short", icon: "", attribution: "", muted: false, enabled: true });
+        return id;
+    }
+    removeToast(id) { this.profile.toasts = (this.profile.toasts || []).filter((x) => x.id !== id); this._dropTarget(id); }
+    renameToast(oldId, newId) {
+        newId = (newId || "").trim();
+        if (!newId || newId === oldId || this.toastNode(newId)) return false;
+        this.toastNode(oldId).id = newId;
+        this._repointTargets(oldId, newId);   // a toast id can be a trigger target — carry its wire
+        return true;
+    }
+    static TOAST_DURATIONS = ["short", "long"];
+    // scalar props: title | message | app_name | icon | attribution (text) | duration (short|long) | muted | enabled (bool)
+    setToastProp(id, key, val) {
+        const x = this.toastNode(id); if (!x) return;
+        if (key === "muted" || key === "enabled") x[key] = !!val;
+        else if (key === "duration") x.duration = GraphModel.TOAST_DURATIONS.includes(val) ? val : "short";
+        else if (["title", "message", "app_name", "icon", "attribution"].includes(key)) x[key] = val ?? "";
+    }
+
+    // ---- sounds: play an audio file (in the browser) when fired (a trigger target) ----
+    soundNode(id) { return (this.profile.sounds || []).find((x) => x.id === id) || null; }
+    addSound() {
+        this.profile.sounds = this.profile.sounds || [];
+        let n = 1, id = "sound";
+        while (this.soundNode(id)) id = `sound_${++n}`;
+        this.profile.sounds.push({ id, file: "", volume: 1, enabled: true });
+        return id;
+    }
+    removeSound(id) { this.profile.sounds = (this.profile.sounds || []).filter((x) => x.id !== id); this._dropTarget(id); }
+    renameSound(oldId, newId) {
+        newId = (newId || "").trim();
+        if (!newId || newId === oldId || this.soundNode(newId)) return false;
+        this.soundNode(oldId).id = newId;
+        this._repointTargets(oldId, newId);   // a sound id can be a trigger target — carry its wire
+        return true;
+    }
+    setSoundFile(id, v) { const x = this.soundNode(id); if (x) x.file = v || ""; }
+    setSoundVolume(id, v) { const x = this.soundNode(id); const n = parseFloat(v); if (x && !Number.isNaN(n)) x.volume = Math.max(0, Math.min(1, n)); }
 
     // ---- file sources: parse a game log/config file into a dataset -----------
     fileSource(id) { return (this.profile.file_sources || []).find((s) => s.id === id) || null; }
@@ -693,8 +787,7 @@ export class GraphModel {
         else if (this.dictionary(id)) return false;
         // terms live in config/dictionaries/<source>; default the filename to the id
         const source = opts.source || `${id}.txt`;
-        const name = opts.name || source.replace(/\.txt$/i, "") || id;
-        this.profile.dictionaries.push({ id, name, enabled: true, source, terms: opts.terms || [] });
+        this.profile.dictionaries.push({ id, enabled: true, source, terms: opts.terms || [] });
         return id;
     }
     // Every FieldDef that pins a dictionary — the single place dict ids are referenced, so
@@ -837,6 +930,7 @@ export class GraphModel {
         if (!newId || newId === oldId || this.subsetDef(newId)) return false;
         this.subsetDef(oldId).id = newId;
         this._repointRefs(oldId, newId);   // a subset can feed another subset — repoint those inputs too
+        this._emitRename("subset", oldId, newId);
         return true;
     }
     // does subset `fromId` use `targetId` as a (transitive) input? Used to refuse cycles.
@@ -960,7 +1054,12 @@ export class GraphModel {
         this.profile.windows.push({ id, dataset: null, fields: [], detect: [], states: [], regions: [] });
         return id;
     }
-    removeWindow(id) { this.profile.windows = this.profile.windows.filter((w) => w.id !== id); }
+    removeWindow(id) {
+        this.profile.windows = this.profile.windows.filter((w) => w.id !== id);
+        // prune the priority entry too — renameWindow repoints it, so delete must drop it (else a
+        // stale id lingers in window_priority and resurfaces if the id is ever reused)
+        this.profile.window_priority = (this.profile.window_priority || []).filter((x) => x !== id);
+    }
     window(id) { return this.profile.windows.find((w) => w.id === id); }
     // The single "follow the lines" resolver: which window's detect/OCR an edit can change.
     // Returns the owning window id for any window-structural node (the window itself, or any
@@ -970,7 +1069,7 @@ export class GraphModel {
     windowOf(id) {
         if (!id || typeof id !== "string") return null;
         if (this.window(id)) return id;                  // a bare window id resolves to itself
-        const m = /^(?:win|prev|reg|det|sb|item|fld|tell):([^:]+)/.exec(id);
+        const m = /^(?:win|prev|reg|det|sb|item|fld|tell|ro):([^:]+)/.exec(id);
         return m && this.window(m[1]) ? m[1] : null;     // validate the window still exists
     }
     // whether the live view attempts this window (default true)
@@ -1007,6 +1106,7 @@ export class GraphModel {
         w.id = newId;
         // repoint any priority entry so the order survives a rename
         this.profile.window_priority = (this.profile.window_priority || []).map((id) => id === oldId ? newId : id);
+        this._emitRename("window", oldId, newId);
         return true;
     }
 
@@ -1018,11 +1118,6 @@ export class GraphModel {
         if (!w.fields.some((f) => f.id === fid))
             w.fields.push({ id: fid, type: "text", extract: "whole", separator: "/", fuzzy: 0.82 });
     }
-    removeField(winId, fid) {
-        const w = this.window(winId);
-        if (w) w.fields = (w.fields || []).filter((f) => f.id !== fid);
-    }
-
     // ---- regions (drawn on the window image) --------------------------------
 
     // Create a region from a fraction box; also creates its linked field. Returns id.
@@ -1057,11 +1152,77 @@ export class GraphModel {
         const fld = this.fieldOf(w, r);
         // rename the FieldDef + repoint EVERY reference to it (region link, tells, keys, dataset
         // key_field) through the shared helper — not just this region's own link.
-        if (fld && fld.id === oldField) { fld.id = newId; this._repointField(w, oldField, newId); }
+        if (fld && fld.id === oldField) { fld.id = newId; this._repointField(w, oldField, newId); this._emitRename("field", oldField, newId, winId); }
         r.id = newId;
         return true;
     }
     regions(winId) { const w = this.window(winId); return (w && w.regions) || []; }
+
+    // ---- readouts (live, non-persisted values drawn on the window image) ----
+    // A readout OCRs its box into an ephemeral value that is NEVER stored, reusing a FieldDef
+    // for the read config (inline on the one readout node, like a region). Mirrors regions.
+
+    readoutField(w, v) { return (w && v) ? (w.fields || []).find((f) => f.id === v.field) || null : null; }
+
+    // Create a readout from a fraction box; also creates its linked (number) field. Returns id.
+    addReadout(winId, box) {
+        const w = this.window(winId);
+        if (!w) return null;
+        w.readouts = w.readouts || [];
+        let id = "ro_" + _fieldSeq++;
+        while (w.readouts.some((v) => v.id === id)) id = "ro_" + _fieldSeq++;
+        const fid = "rof_" + _fieldSeq++;
+        w.readouts.push({ id, box: { x: box.x, y: box.y, w: box.w, h: box.h }, field: fid, enabled: true });
+        this.addField(winId, fid);
+        const f = (w.fields || []).find((x) => x.id === fid);
+        if (f) f.type = "number";   // readouts read numbers by default (health/counters)
+        return id;
+    }
+    readout(winId, vid) { const w = this.window(winId); return w && (w.readouts || []).find((v) => v.id === vid); }
+    setReadoutBox(winId, vid, box) { const v = this.readout(winId, vid); if (v) v.box = { x: box.x, y: box.y, w: box.w, h: box.h }; }
+    setReadoutEnabled(winId, vid, on) { const v = this.readout(winId, vid); if (v) v.enabled = !!on; }
+    // Rename a readout: its id IS its identity (like every other node — no separate name). Ids are
+    // GLOBAL (model.readouts() spans all windows, the toast token {{id}} is global), so uniqueness
+    // is checked across every window. Repoints the refs that key off the id: {{id}} tokens in a
+    // toast's title/message/attribution and each trigger's readout_watch. Returns true on success.
+    renameReadout(winId, vid, newId) {
+        newId = (newId || "").trim();
+        if (!newId || newId === vid || this.readouts().some((v) => v.id === newId)) return false;
+        const v = this.readout(winId, vid);
+        if (!v) return false;
+        v.id = newId;
+        const re = new RegExp("\\{\\{\\s*" + vid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\}\\}", "g");
+        for (const t of this.profile.toasts || [])
+            for (const k of ["title", "message", "attribution"])
+                if (typeof t[k] === "string" && t[k].includes("{{")) t[k] = t[k].replace(re, `{{${newId}}}`);
+        for (const t of this.profile.triggers || [])
+            t.readout_watch = (t.readout_watch || []).map((x) => (x === vid ? newId : x));
+        return true;
+    }
+    removeReadout(winId, vid) {
+        const w = this.window(winId);
+        if (!w) return;
+        const v = this.readout(winId, vid);
+        w.readouts = (w.readouts || []).filter((x) => x.id !== vid);
+        // drop the linked field if nothing else uses it
+        if (v && v.field && !this._fieldUsed(w, v.field)) w.fields = (w.fields || []).filter((f) => f.id !== v.field);
+        // clear any trigger watch pointing at this readout (no dangling wire) — SSOT list
+        for (const t of this.profile.triggers || []) t.readout_watch = (t.readout_watch || []).filter((x) => x !== vid);
+        // strip its now-dead {{vid}} tokens from toast text (the readout they printed is gone) —
+        // the delete-twin of renameReadout's repoint, so a removed readout never leaves a live token
+        const re = new RegExp("\\{\\{\\s*" + vid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\}\\}", "g");
+        for (const t of this.profile.toasts || [])
+            for (const k of ["title", "message", "attribution"])
+                if (typeof t[k] === "string" && t[k].includes("{{")) t[k] = t[k].replace(re, "");
+    }
+    // Every readout across all windows, for trigger-watch listing: {id, win}.
+    readouts() {
+        const out = [];
+        for (const w of this.profile.windows || [])
+            for (const v of w.readouts || []) out.push({ id: v.id, win: w.id });
+        return out;
+    }
+    readoutSite(vid) { return this.readouts().find((v) => v.id === vid) || null; }
 
     // ---- detect (a window's recognition landmarks) --------------------------
     // Detectors live on a window; the image/box machinery passes the window id through.
@@ -1260,6 +1421,7 @@ export class GraphModel {
         const it = this.item(winId, id);
         if (!w || !it || !newId || w.items.some((x) => x.id === newId)) return false;
         it.id = newId;
+        this._emitRename("item", id, newId, winId);
         return true;
     }
     setItemBox(winId, id, box) { const it = this.item(winId, id); if (it) it.box = { x: box.x, y: box.y, w: box.w, h: box.h }; }
@@ -1306,7 +1468,7 @@ export class GraphModel {
         if (!it || !f || !newId || it.fields.some((x) => x.id === newId)) return false;
         const old = f.field;
         const fld = (w.fields || []).find((x) => x.id === old);
-        if (fld && fld.id === old) fld.id = newId;
+        if (fld && fld.id === old) { fld.id = newId; this._emitRename("field", old, newId, winId); }
         // repoint EVERY reference to this field (this item's tells + key, the WINDOW default key
         // items inherit, the dataset key_field, sibling regions/item-fields) through the shared
         // helper — a missed key part silently drops every record (see _repointField).

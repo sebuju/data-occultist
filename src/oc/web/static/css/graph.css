@@ -72,8 +72,16 @@
 .gnode.producer  .gn-h { --ntint: var(--warn); }
 .gnode.dictionary .gn-h { --ntint: var(--purple); }
 .gnode.trigger   .gn-h { --ntint: var(--trigger-line); }
+.gnode.toast     .gn-h { --ntint: var(--toast); }
+.gnode.sound     .gn-h { --ntint: var(--sound); }
 .gnode.filesource .gn-h { --ntint: var(--accent); }
 .gn-h .nicon { width: 18px; height: 18px; flex: 0 0 auto; color: var(--ntint); }
+/* the test button's bell glyph: shrink the shared 18px icon to button scale, inherit text colour (monochrome) */
+.tn-test { display: inline-flex; align-items: center; gap: 4px; }
+.tn-test .nicon { width: 13px; height: 13px; color: currentColor; }
+/* readout token chips in a toast node: click to insert a {{ro_1}} live-value token */
+.tn-rotokens { display: flex; flex-wrap: wrap; gap: 4px; }
+.tn-rotoken { font: inherit; font-size: 11px; cursor: pointer; }
 /* Nothing in the node canvas is text-selectable — kills the stray highlight that
    appears while dragging nodes around (user-select:none set on .graphcanvas above).
    Exceptions: form fields (so you can edit) and table cells (so you can copy rows). */
@@ -198,6 +206,13 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* trigger node: pin EVERY cell (labels + bare selects too) to the control-row box so all its
    grid rows share one height — a plain <select> or label alone would otherwise sit shorter. */
 .gnode.trigger .lab-grid > * { min-height: calc(1lh + 14px); }
+/* the min-height above makes each label's box a full control-row (1lh+14px), but a block label
+   renders its text at the TOP of that box while the controls center theirs — so every label rode
+   ~9px high. Center the label text within its own box. A .lab-top (fires/watch/datasets) still
+   keeps align-self:start (generic rule) so it pins to the FIRST row when its pills wrap to 2+
+   lines; drop its top padding since it's now centered within that one row. */
+.gnode.trigger .lab-grid > .lab { display: inline-flex; align-items: center; }
+.gnode.trigger .lab-grid > .lab-top { padding-top: 0; }
 /* checkboxes are slide-toggles now (base.css). Keep them at the start of their grid cell
    and never let a flex row stretch them — their size is fixed by the toggle. */
 /* inside a node the toggle adopts the form-input palette so it doesn't pop next to the text
@@ -428,7 +443,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .glyph-pending .gp-cell .gp-char { cursor: text; }
 .glyph-cell.gp-cell.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .imgtools { display: flex; align-items: center; gap: 6px; padding: 4px 0; flex-wrap: wrap; }
-.imgtools .tools { display: inline-flex; gap: 2px; flex-wrap: wrap; }
+.imgtools .tools { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .imgtools .spacer { flex: 1; }
 .imgtools .tool-div { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
 .win-img .canvas-wrap, .glyph-img .canvas-wrap, .item-img .canvas-wrap { width: 100%; overflow: hidden;
@@ -530,9 +545,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* three tracks: name | live status | require select. .wd-neg is width:100% inside its track
    (min-width:0 lets it shrink) so it never overflows the (overflow:hidden) window body. */
 .wd-row { display: grid; grid-template-columns: 2fr 1fr 1fr; align-items: center; gap: 6px; margin-top: 4px; font-size: var(--fs-sm); }
-.wd-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wd-row:not(.wd-head) .wd-name { cursor: pointer; }
-.wd-row:not(.wd-head) .wd-name:hover { background: var(--hover); }
+/* padding+radius on EVERY .wd-name (head + rows) so the name column stays aligned; the
+   rounded-pill hover then matches .wi-name/.wp-name (rule 7: one hover affordance for
+   every click-to-jump name). Disabled rows keep cursor:default and get no pill. */
+.wd-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border-radius: 4px; }
+.wd-row:not(.wd-head):not(.wd-disabled) .wd-name { cursor: pointer; }
+.wd-row:not(.wd-head):not(.wd-disabled) .wd-name:hover { background: var(--hover); }
 .wd-status { min-width: 0; white-space: nowrap; }
 .wd-neg { width: 100%; min-width: 0; }
 .wd-row.wd-disabled { opacity: 0.4; }                      /* disabled detector: greyed out */
@@ -561,6 +579,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* slide-in: replayed by syncMultiSelect on the hidden->shown edge only (class toggled there) */
 .seltoolbar.slidein { animation: selSlideIn .18s cubic-bezier(.2, .7, .3, 1); }
 @keyframes selSlideIn { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+/* an empty label must fully collapse — a zero-width flex child still contributes the button's
+   `gap`, nudging the icon off-centre. :empty covers static markup + JS-blanked labels alike. */
+.seltoolbar .sel-lbl:empty { display: none; }
 /* remove is icon-only until armed; the (empty) label only takes width once it holds "confirm" */
 #selDeleteBtn .sel-lbl:not(:empty) { display: inline-block; min-width: 7ch; text-align: center; }
 /* clone shows an active accent tint while carrying its fresh copies to a drop point */

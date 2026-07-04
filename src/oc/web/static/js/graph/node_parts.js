@@ -16,6 +16,8 @@ import { model, itemReads } from "./state.js";
 import { ITEM_KINDS } from "./imaging.js";
 import { producerParts } from "./producer_node.js";
 import { sourceParts } from "./source_node.js";
+import { toastParts } from "./toast_node.js";
+import { soundParts } from "./sound_node.js";
 import { triggerParts } from "./trigger_node.js";
 import { subsetParts } from "./main.js";
 
@@ -236,8 +238,9 @@ export function windowDetects(w, opts = {}) {
 // the item-template priority list AND the window-priority list (rule 7 — one builder, two callers,
 // no copy). The caller passes the wiring-hook classes (row/name/move) so main.js binds the right
 // move + name-jump handlers, and the per-context tooltips.
-function priorityRow(id, i, count, { rowCls, nameCls, mvCls, nameTitle, upTitle, downTitle }) {
+function priorityRow(id, i, count, { rowCls, nameCls, mvCls, nameTitle, upTitle, downTitle, dot }) {
     return h("div", { class: rowCls, dataset: { id } },
+        dot && h("span", { class: "live-wdot", title: "live off" }),   // live-recognition dot (wp-rows only); syncWpDots toggles .on
         h("span", { class: nameCls, title: nameTitle }, id),
         h("button", { class: mvCls, dataset: { id, d: "-1" }, disabled: i === 0, title: upTitle }, "▲"),
         h("button", { class: mvCls, dataset: { id, d: "1" }, disabled: i === count - 1, title: downTitle }, "▼"));
@@ -424,6 +427,25 @@ export function itemTellParts(n) {
     return { title: h("input", { class: "gi gi-id", dataset: { k: "tellid" }, value: t.id, title: "tell id" }), body };
 }
 
+// A readout is ONE self-contained node: it owns its box and its read config inline
+// (fieldConfigBody, exactly like a region node), reading a LIVE, non-persisted value the
+// triggers can watch. The live value shows in `.ro-live` (updated in place from the
+// heartbeat, never persisted), next to what the current image would read (`.ro-preview`).
+export function readoutParts(n) {
+    const v = n.ref;
+    const fd = n.field || { type: "number", extract: "whole", fuzzy: 0.82 };
+    const body = frag(
+        fieldConfigBody(fd, "roset", fd.id),   // the box's read config, like a region node
+        h("div", { class: "fgrp" }, "live value"),
+        h("div", { class: "ro-live muted", dataset: { ro: v.id } }, "—"),   // updated in place from the heartbeat
+        h("div", { class: "gn-foot" }));
+    return {
+        title: h("input", { class: "gi gi-id", dataset: { k: "roid" }, value: v.id,
+            title: "readout id — what a trigger watches and a toast tokens as {{id}}" }),
+        body,
+    };
+}
+
 export function itemLists(it, w) {
     // tells are their OWN nodes now — the item lists only a compact summary (id + kind + remove);
     // the full per-tell editor lives on each tell node (itemTellParts). Mirrors fieldsSummary below.
@@ -533,7 +555,7 @@ export function detectKind(a) {
 export function gamePriority() {
     const wins = model.liveWindowsInPriority();   // ordered live WindowDefs (priority first)
     const rows = wins.map((w, i) => priorityRow(w.id, i, wins.length, {
-        rowCls: "wp-row", nameCls: "wp-name", mvCls: "wpmv",
+        rowCls: "wp-row", nameCls: "wp-name", mvCls: "wpmv", dot: true,
         nameTitle: "select this window's node",
         upTitle: "move up — higher priority (recognised sooner)",
         downTitle: "move down — lower priority" }));
@@ -654,6 +676,7 @@ export function nodeParts(n) {
     }
     if (n.type === "itemfield") return itemFieldParts(n);
     if (n.type === "itemtell") return itemTellParts(n);
+    if (n.type === "readout") return readoutParts(n);
     if (n.type === "scrollbar") return { title: "scrollbar", body: scrollbarParts(n) };
     if (n.type === "preview") {
         // live-read node — what the current layout would read from this window. Runs OCR
@@ -729,6 +752,8 @@ export function nodeParts(n) {
         head: frag(satToggleBtn(`vt:src:${n.ref.id}`, "vttable"),
             satToggleBtn(`vtd:src:${n.ref.id}`, "dismissed")) };
     if (n.type === "trigger") return triggerParts(n.ref, model);
+    if (n.type === "toast") return toastParts(n.ref, model);
+    if (n.type === "sound") return soundParts(n.ref, model);
     if (n.type === "dictionary") {
         // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The
         // terms live in config/dictionaries/<source>; this node just references that file.
@@ -738,7 +763,7 @@ export function nodeParts(n) {
         const missing = !count && dict.source;   // a referenced file that resolved to nothing
         const fed = model.dictIsFed(dict.id);     // terms are pulled from datasets, not hand-typed
         return {
-            title: h("input", { class: "gi gi-id dictname", value: dict.name || dict.id, title: "dictionary name" }),
+            title: h("input", { class: "gi gi-id dictname", value: dict.id, title: "dictionary id" }),
             // wire a dataset's out-port here to feed its column values in as terms
             ports: h("span", { class: "port in", title: "drag a dataset here to feed it terms" }),
             body: frag(
