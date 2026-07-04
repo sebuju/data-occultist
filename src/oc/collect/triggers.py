@@ -1,9 +1,10 @@
 """Evaluate a profile's triggers and fire price-node sweeps.
 
 A :class:`TriggerDef` says *when* to price; this runner turns that into calls to the shared
-:func:`oc.enrich.price_runner.start_sweep`. It's driven by the collector loop (so on_change
-fires the moment a watched window reads new rows) and is independent of any window — interval
-triggers fire on schedule even with no game running.
+:func:`oc.enrich.price_runner.start_sweep`. ``on_change`` is driven by the dataset change bus
+(:mod:`oc.store.changes`), so it fires on ANY write to a watched dataset — collector, price
+sweep, manual form, batch restore — not only live collection. Interval triggers fire on
+schedule even with no game running.
 
 Kinds:
 
@@ -186,8 +187,12 @@ class TriggerRunner:
         A DIRECT dataset watch fires whenever the dataset changes (the records ARE new). A
         SUBSET watch fires only when the subset's COMPUTED output actually changes — a source
         update that leaves the join byte-for-byte identical (e.g. a price for an item the
-        inventory doesn't hold) is NOT a change to the watched data, so it must not fire."""
-        if not dataset or not changed_records:
+        inventory doesn't hold) is NOT a change to the watched data, so it must not fire.
+
+        ``changed_records`` may be empty — a clear / removal changed the watched data but leaves
+        nothing to price. A direct watch still fires (its data changed); a subset watch fires iff
+        its computed output changed. Either way ``_fire_targets`` prices nothing (empty items)."""
+        if not dataset:
             return []
         fired: list[str] = []
         items = None
@@ -372,6 +377,11 @@ class TriggerRunner:
         by_toast = {x.id: x for x in getattr(self._profile, "toasts", [])}
         for tid in trigger.targets:
             if tid in by_producer:
+                # items == [] means an on_change fire with nothing to price (a clear / removal):
+                # skip the sweep (items=None would price the WHOLE dataset — wrong). interval /
+                # lifecycle fires pass items=None and still sweep here.
+                if items == []:
+                    continue
                 fire_target(self._profile.name, by_producer[tid], items,
                             trigger_id=trigger.id, fire=self._fire)
             elif tid in by_source:
