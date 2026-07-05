@@ -20,6 +20,21 @@ export class GraphModel {
         this.profile.file_sources = this.profile.file_sources || [];
         this.profile.triggers = this.profile.triggers || [];
         this.profile.toasts = this.profile.toasts || [];   // OS-notification nodes (trigger targets)
+        for (const x of this.profile.toasts) {
+            x.sources = x.sources || [];   // wired {{token}} feeders (prefixed refs)
+            x.texts = x.texts || [];       // styled rich-text blocks (the toast body)
+            // generated hero/inline image specs (drawn server-side; message text painted on them)
+            GraphModel._migrateToastImages(x);   // fold legacy hero/inline -> images[] (placement)
+            if (x.show_icon === undefined) x.show_icon = true;   // draw the app-logo icon (default on)
+            // migrate the legacy title/message pair into styled blocks the first time (texts empty):
+            // title -> a "title"-styled block, message -> a default block. Clear the old fields so
+            // `texts` is the single source of truth from here on.
+            if (!x.texts.length && (x.title || x.message)) {
+                if (x.title) x.texts.push({ content: x.title, style: "title", align: "", max_lines: 0 });
+                if (x.message) x.texts.push({ content: x.message, style: "", align: "", max_lines: 0 });
+                x.title = ""; x.message = "";
+            }
+        }
         this.profile.sounds = this.profile.sounds || [];   // browser-played sound nodes (trigger targets)
         this.profile.dictionaries = this.profile.dictionaries || [];
         this.profile.glyphs = this.profile.glyphs || [];   // taught glyph atlas (post-OCR refinement)
@@ -177,6 +192,12 @@ export class GraphModel {
         for (const d of this.profile.dictionaries || [])                  // a dictionary feed is a dataset REF
             (d.feeds || []).forEach((_, i) =>
                 sites.push({ decl: false, get: () => d.feeds[i].dataset, set: (v) => { d.feeds[i].dataset = v; } }));
+        for (const x of this.profile.toasts || [])                        // a toast's dataset/subset {{token}} feeders are REFs
+            (x.sources || []).forEach((ref, i) => {
+                const c = ref.indexOf(":"), kind = c < 0 ? "" : ref.slice(0, c);
+                if (kind === "dataset" || kind === "subset")
+                    sites.push({ decl: false, get: () => x.sources[i].slice(x.sources[i].indexOf(":") + 1), set: (v) => { x.sources[i] = `${kind}:${v}`; } });
+            });
         return sites;
     }
 
@@ -383,7 +404,7 @@ export class GraphModel {
                 else if (this.toastNode(pid)) es.push({ from: `trigger:${t.id}`, to: `toast:${pid}`, kind: "trigger" });
                 else if (this.soundNode(pid)) es.push({ from: `trigger:${t.id}`, to: `sound:${pid}`, kind: "trigger" });
             }
-            if (t.kind === "on_change")
+            if (t.kind === "on_change" || t.kind === "on_any_change")
                 for (const w of t.watch || []) {
                     const to = this.subsetDef(w) ? `sub:${w}` : `ds:${w}`;
                     es.push({ from: `trigger:${t.id}`, to, kind: "watch" });
@@ -398,6 +419,13 @@ export class GraphModel {
             for (const ds of t.dataset_targets || [])
                 es.push({ from: `trigger:${t.id}`, to: `ds:${ds}`, kind: "trigger" });
         }
+        // a toast READS its wired sources' live values as {{tokens}} (readout/dataset/subset -> toast)
+        for (const x of this.profile.toasts || [])
+            for (const s of this.toastSources(x.id)) {
+                const from = s.kind === "readout" ? (this.readoutSite(s.id) && `ro:${this.readoutSite(s.id).win}:${s.id}`)
+                    : s.kind === "subset" ? `sub:${s.id}` : `ds:${s.id}`;
+                if (from) es.push({ from, to: `toast:${x.id}`, kind: "data" });
+            }
         for (const d of this.profile.dictionaries || []) {
             es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
             for (const fd of d.feeds || [])   // a dataset PUSHES its column values in as terms
@@ -588,7 +616,7 @@ export class GraphModel {
         this._emitRename("trigger", oldId, newId);
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "on_change", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "on_change", "on_any_change", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
     addTriggerTarget(id, pid) {
         const t = this.trigger(id);
@@ -645,10 +673,87 @@ export class GraphModel {
         let n = 1, id = "toast";
         while (this.toastNode(id)) id = `toast_${++n}`;
         this.profile.toasts.push({ id, title: "", message: "", app_name: "data-occultist",
-            duration: "short", icon: "", attribution: "", muted: false, enabled: true });
+            duration: "short", icon: "", attribution: "", muted: false, enabled: true, sources: [] });
         return id;
     }
     removeToast(id) { this.profile.toasts = (this.profile.toasts || []).filter((x) => x.id !== id); this._dropTarget(id); }
+    // A toast's wired {{token}} feeders are prefixed refs — "readout:<id>" | "dataset:<id>" |
+    // "subset:<id>", one per connected node. `toastSources` parses them to {kind, id, ref}; the UI
+    // builds token chips + edges from this, and ONLY these sources drive the suggestion chips.
+    toastSources(id) {
+        const x = this.toastNode(id);
+        return ((x && x.sources) || []).map((ref) => {
+            const i = ref.indexOf(":");
+            return i < 0 ? { kind: "", id: ref, ref } : { kind: ref.slice(0, i), id: ref.slice(i + 1), ref };
+        }).filter((s) => s.kind && s.id);
+    }
+    addToastSource(id, ref) {
+        const x = this.toastNode(id);
+        if (!x || !ref) return false;
+        x.sources = x.sources || [];
+        if (x.sources.includes(ref)) return false;
+        x.sources.push(ref);
+        return true;
+    }
+    removeToastSource(id, ref) { const x = this.toastNode(id); if (x) x.sources = (x.sources || []).filter((r) => r !== ref); }
+    // ---- toast rich-text blocks (the styled body) ----------------------------
+    toastTexts(id) { const x = this.toastNode(id); return (x && x.texts) || []; }
+    addToastText(id) { const x = this.toastNode(id); if (!x) return; x.texts = x.texts || []; x.texts.push({ content: "", style: "", align: "", max_lines: 0 }); }
+    removeToastText(id, i) { const x = this.toastNode(id); if (x && x.texts) x.texts.splice(i, 1); }
+    moveToastText(id, i, dir) {
+        const x = this.toastNode(id); if (!x || !x.texts) return false;
+        const j = i + dir; if (j < 0 || j >= x.texts.length) return false;
+        [x.texts[i], x.texts[j]] = [x.texts[j], x.texts[i]]; return true;
+    }
+    setToastText(id, i, key, val) {
+        const x = this.toastNode(id); const b = x && x.texts && x.texts[i]; if (!b) return;
+        if (key === "max_lines") b.max_lines = Math.max(0, parseInt(val, 10) || 0);
+        else if (["content", "style", "align"].includes(key)) b[key] = val ?? "";
+    }
+    // ---- toast generated images (a LIST; each has its own placement: hero|inline|none) --------
+    static _toastImageDefault(w = 364, h = 160) {
+        return { placement: "inline", width: w, height: h, bg_type: "solid",
+            color1: "#0a3d62", color2: "#061826", angle: 90, texts: [] };
+    }
+    // Migrate the legacy fixed hero/inline objects into the images list (once, when absent).
+    static _migrateToastImages(x) {
+        if (Array.isArray(x.images)) return;
+        x.images = [];
+        for (const which of ["hero", "inline"]) {
+            const im = x[which];
+            if (im && typeof im === "object") {
+                const { enabled, ...rest } = im;
+                x.images.push({ ...rest, placement: enabled ? which : "none" });
+            }
+        }
+        delete x.hero; delete x.inline;
+    }
+    toastImages(id) { const x = this.toastNode(id); return (x && x.images) || []; }
+    toastImage(id, i) { const x = this.toastNode(id); return x && x.images && x.images[+i]; }
+    addToastImage(id) { const x = this.toastNode(id); if (x) { x.images = x.images || []; x.images.push(GraphModel._toastImageDefault()); } }
+    removeToastImage(id, i) { const x = this.toastNode(id); if (x && x.images) x.images.splice(+i, 1); }
+    setToastImageProp(id, i, key, val) {
+        const im = this.toastImage(id, i); if (!im) return;
+        if (key === "placement") im.placement = ["hero", "inline", "none"].includes(val) ? val : "none";
+        else if (["width", "height", "angle"].includes(key)) im[key] = Math.max(0, parseInt(val, 10) || 0);
+        else if (["bg_type", "color1", "color2"].includes(key)) im[key] = val ?? "";
+    }
+    addToastImageText(id, i) {
+        const im = this.toastImage(id, i); if (!im) return;
+        im.texts = im.texts || [];
+        // seed the new line from the previous one's style, nudged down a line; content starts empty.
+        const prev = im.texts[im.texts.length - 1];
+        im.texts.push(prev
+            ? { content: "", x: prev.x, y: (prev.y || 0) + (prev.size || 20), size: prev.size, color: prev.color, align: prev.align, width: prev.width || 0, height: prev.height || 0, bg_color: prev.bg_color || "", wrap: prev.wrap !== false }
+            : { content: "", x: 12, y: 12, size: 20, color: "#ffffff", align: "left", width: 0, height: 0, bg_color: "", wrap: true });
+    }
+    removeToastImageText(id, i, j) { const im = this.toastImage(id, i); if (im && im.texts) im.texts.splice(j, 1); }
+    setToastImageText(id, i, j, key, val) {
+        const im = this.toastImage(id, i); const t = im && im.texts && im.texts[j]; if (!t) return;
+        if (["x", "y", "size", "width", "height"].includes(key)) t[key] = parseInt(val, 10) || 0;
+        else if (key === "wrap") t.wrap = !!val;
+        else if (["content", "color", "align", "bg_color"].includes(key)) t[key] = val ?? "";
+    }
     renameToast(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.toastNode(newId)) return false;
@@ -660,7 +765,7 @@ export class GraphModel {
     // scalar props: title | message | app_name | icon | attribution (text) | duration (short|long) | muted | enabled (bool)
     setToastProp(id, key, val) {
         const x = this.toastNode(id); if (!x) return;
-        if (key === "muted" || key === "enabled") x[key] = !!val;
+        if (key === "muted" || key === "enabled" || key === "show_icon") x[key] = !!val;
         else if (key === "duration") x.duration = GraphModel.TOAST_DURATIONS.includes(val) ? val : "short";
         else if (["title", "message", "app_name", "icon", "attribution"].includes(key)) x[key] = val ?? "";
     }
@@ -881,6 +986,9 @@ export class GraphModel {
             t.watch = (t.watch || []).filter(Boolean);
             t.dataset_targets = (t.dataset_targets || []).filter(Boolean);   // _datasetSites() blanked the deleted id
         }
+        // _datasetSites() blanked the id-part of any toast source pointing here -> "dataset:"/"subset:"; drop those
+        for (const x of this.profile.toasts || [])
+            x.sources = (x.sources || []).filter((ref) => ref.slice(ref.indexOf(":") + 1));
         if (this._extraDatasets) this._extraDatasets = this._extraDatasets.filter((x) => x !== id);
     }
 
@@ -1189,16 +1297,40 @@ export class GraphModel {
     // GLOBAL (model.readouts() spans all windows, the toast token {{id}} is global), so uniqueness
     // is checked across every window. Repoints the refs that key off the id: {{id}} tokens in a
     // toast's title/message/attribution and each trigger's readout_watch. Returns true on success.
+    // Every token-bearing string on a toast, as {get,set} accessors — the legacy title/message/
+    // attribution PLUS each rich-text block's content. Rename/remove of a readout rewrite tokens
+    // through this ONE list so a new text surface can never be missed (rule 7).
+    _toastTokenSites(t) {
+        const sites = [
+            { get: () => t.title, set: (v) => { t.title = v; } },
+            { get: () => t.message, set: (v) => { t.message = v; } },
+            { get: () => t.attribution, set: (v) => { t.attribution = v; } },
+        ];
+        (t.texts || []).forEach((b, i) =>
+            sites.push({ get: () => t.texts[i].content, set: (v) => { t.texts[i].content = v; } }));
+        (t.images || []).forEach((im, k) =>
+            (im.texts || []).forEach((b, i) =>
+                sites.push({ get: () => t.images[k].texts[i].content, set: (v) => { t.images[k].texts[i].content = v; } })));
+        return sites;
+    }
     renameReadout(winId, vid, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === vid || this.readouts().some((v) => v.id === newId)) return false;
         const v = this.readout(winId, vid);
         if (!v) return false;
         v.id = newId;
-        const re = new RegExp("\\{\\{\\s*" + vid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\}\\}", "g");
-        for (const t of this.profile.toasts || [])
-            for (const k of ["title", "message", "attribution"])
-                if (typeof t[k] === "string" && t[k].includes("{{")) t[k] = t[k].replace(re, `{{${newId}}}`);
+        const esc = vid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        // repoint both grammars: prefixed {{readout:vid}} and legacy bare {{vid}} (older toast text)
+        const rePref = new RegExp("\\{\\{\\s*readout:\\s*" + esc + "\\s*(\\|[^}]*)?\\}\\}", "g");
+        const reBare = new RegExp("\\{\\{\\s*" + esc + "\\s*\\}\\}", "g");
+        for (const t of this.profile.toasts || []) {
+            t.sources = (t.sources || []).map((r) => (r === `readout:${vid}` ? `readout:${newId}` : r));
+            for (const st of this._toastTokenSites(t)) {
+                const s = st.get();
+                if (typeof s === "string" && s.includes("{{"))
+                    st.set(s.replace(rePref, (_m, agg) => `{{readout:${newId}${agg || ""}}}`).replace(reBare, `{{readout:${newId}}}`));
+            }
+        }
         for (const t of this.profile.triggers || [])
             t.readout_watch = (t.readout_watch || []).map((x) => (x === vid ? newId : x));
         return true;
@@ -1212,12 +1344,18 @@ export class GraphModel {
         if (v && v.field && !this._fieldUsed(w, v.field)) w.fields = (w.fields || []).filter((f) => f.id !== v.field);
         // clear any trigger watch pointing at this readout (no dangling wire) — SSOT list
         for (const t of this.profile.triggers || []) t.readout_watch = (t.readout_watch || []).filter((x) => x !== vid);
-        // strip its now-dead {{vid}} tokens from toast text (the readout they printed is gone) —
+        // strip its now-dead tokens from toast text + drop the wired source (the readout is gone) —
         // the delete-twin of renameReadout's repoint, so a removed readout never leaves a live token
-        const re = new RegExp("\\{\\{\\s*" + vid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\}\\}", "g");
-        for (const t of this.profile.toasts || [])
-            for (const k of ["title", "message", "attribution"])
-                if (typeof t[k] === "string" && t[k].includes("{{")) t[k] = t[k].replace(re, "");
+        const esc = vid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const rePref = new RegExp("\\{\\{\\s*readout:\\s*" + esc + "\\s*(\\|[^}]*)?\\}\\}", "g");
+        const reBare = new RegExp("\\{\\{\\s*" + esc + "\\s*\\}\\}", "g");
+        for (const t of this.profile.toasts || []) {
+            t.sources = (t.sources || []).filter((r) => r !== `readout:${vid}`);
+            for (const st of this._toastTokenSites(t)) {
+                const s = st.get();
+                if (typeof s === "string" && s.includes("{{")) st.set(s.replace(rePref, "").replace(reBare, ""));
+            }
+        }
     }
     // Every readout across all windows, for trigger-watch listing: {id, win}.
     readouts() {

@@ -1195,7 +1195,7 @@ function subConfigNode(s) {
     const derived = (s.derived || []).map((d, i) => h("div", { class: "sub-row", dataset: { i } },
         h("input", { class: "sd-name", dataset: { i }, value: d.name || "", placeholder: "new column" }),
         h("span", { class: "muted" }, "="),
-        h("input", { class: "sd-tpl", dataset: { i }, value: d.template || "", placeholder: "{=count*price_median} plat" }),
+        h("input", { class: "sd-tpl", dataset: { i }, value: d.template || "", placeholder: "{=count*price_median|round:0} plat" }),
         h("button", { class: "sd-del danger", dataset: { i }, title: "remove column" }, TRASH())));
     // multi-column sort: primary row first, each a column + direction; applied before limit
     const sortRows = (s.sort || []).map((so, i) => h("div", { class: "sub-row", dataset: { i } },
@@ -1220,7 +1220,7 @@ function subConfigNode(s) {
         h("div", { class: "sub-sec" },
             h("div", { class: "sub-lbl", title: "all must pass" }, "filters", h("button", { class: "sub-addf", title: "add filter" }, "+")), filters),
         h("div", { class: "sub-sec" },
-            h("div", { class: "sub-lbl", title: "{col} text · {=expr} math · mix freely" }, "columns", h("button", { class: "sub-addd", title: "add column" }, "+")), derived),
+            h("div", { class: "sub-lbl", title: "{col} text · {=expr} math · |round:N decimals · mix freely" }, "columns", h("button", { class: "sub-addd", title: "add column" }, "+")), derived),
         h("div", { class: "sub-sec" },
             h("div", { class: "sub-lbl", title: "primary first; applied before limit" }, "sort", h("button", { class: "sub-adds", title: "add sort" }, "+")), sortRows),
         h("div", { class: "sub-sec" },
@@ -1620,32 +1620,115 @@ function wireToast(div, n) {
             () => movePos(`toast:${oldId}`, `toast:${x.id}`),
             () => { render(); autosave(null); });
     });
-    $(".tn-title")?.addEventListener("change", (e) => { model.setToastProp(x.id, "title", e.target.value); autosave(null); });
-    $(".tn-message")?.addEventListener("change", (e) => { model.setToastProp(x.id, "message", e.target.value); autosave(null); });
     $(".tn-app")?.addEventListener("change", (e) => { model.setToastProp(x.id, "app_name", e.target.value); autosave(null); });
     $(".tn-duration")?.addEventListener("change", (e) => { model.setToastProp(x.id, "duration", e.target.value); autosave(null); });
     $(".tn-icon")?.addEventListener("change", (e) => { model.setToastProp(x.id, "icon", e.target.value); autosave(null); });
     $(".tn-attr")?.addEventListener("change", (e) => { model.setToastProp(x.id, "attribution", e.target.value); autosave(null); });
-    // readout token chips: click to append {{ro_id}} into the message (mirrors pretty's token insert)
-    div.querySelectorAll(".tn-rotoken").forEach((b) => b.addEventListener("click", () => {
-        const inp = div.querySelector(".tn-message"); if (!inp) return;
-        inp.value = (inp.value ? `${inp.value} ` : "") + `{{${b.dataset.token}}}`;
-        model.setToastProp(x.id, "message", inp.value); autosave(null); inp.focus();
+    // rich-text blocks: content + per-block style/align/max-lines edits persist in place; add /
+    // remove / reorder rebuild the node body (the block list + its indices change).
+    div.querySelectorAll(".tn-bk-content").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "content", e.target.value); autosave(null); }));
+    div.querySelectorAll(".tn-bk-style").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "style", e.target.value); autosave(null); }));
+    div.querySelectorAll(".tn-bk-align").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "align", e.target.value); autosave(null); }));
+    div.querySelectorAll(".tn-bk-max").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "max_lines", e.target.value); autosave(null); }));
+    $(".tn-bk-add")?.addEventListener("click", () => { model.addToastText(x.id); rebuildNode(n.id); autosave(null); });
+    div.querySelectorAll(".tn-bk-del").forEach((b) => b.addEventListener("click", () => { model.removeToastText(x.id, +b.dataset.i); rebuildNode(n.id); autosave(null); }));
+    div.querySelectorAll(".tn-bk-up").forEach((b) => b.addEventListener("click", () => { if (model.moveToastText(x.id, +b.dataset.i, -1)) { rebuildNode(n.id); autosave(null); } }));
+    div.querySelectorAll(".tn-bk-dn").forEach((b) => b.addEventListener("click", () => { if (model.moveToastText(x.id, +b.dataset.i, 1)) { rebuildNode(n.id); autosave(null); } }));
+    // generated image editors — one wiring pass per image section (scoped by data-i), plus "+ image"
+    div.querySelectorAll(".tn-img").forEach((sec) => wireToastImage(sec, x, n));
+    div.querySelector(".tn-img-add")?.addEventListener("click", () => { model.addToastImage(x.id); rebuildNode(n.id); autosave(null); });
+    // sources row: add/remove a wired data feeder (readout/dataset/subset) — the picker twin of
+    // dragging a node's out-port here. Rebuild refreshes the pills + the {{token}} chips; drawEdges
+    // adds/drops the source's data edge.
+    $(".tn-addsrc")?.addEventListener("change", (e) => { if (model.addToastSource(x.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
+    div.querySelectorAll(".tn-rmsrc").forEach((b) => b.addEventListener("click", () => { model.removeToastSource(x.id, b.dataset.ref); rebuildNode(n.id); drawEdges(); autosave(null); }));
+    // token chips: click to COPY the source's {{token}} to the clipboard, ready to paste into any
+    // text block or image text line (the palette sits below the images, away from the fields).
+    div.querySelectorAll(".tn-rotoken").forEach((b) => b.addEventListener("click", async () => {
+        const token = `{{${b.dataset.token}}}`;
+        try { await navigator.clipboard.writeText(token); setStatus(`copied ${token}`); }
+        catch { setStatus(`copy failed — ${token}`); }
     }));
-    // gn-slide switch (role=switch, not a checkbox) — flip on click, toggle .on, persist the new value
+    // gn-slide switches (role=switch, not a checkbox) — flip on click, toggle .on, persist
     $(".tn-muted")?.addEventListener("click", (e) => {
         e.stopPropagation();
         const tog = e.currentTarget, on = tog.getAttribute("aria-checked") !== "true";
         tog.setAttribute("aria-checked", on); tog.classList.toggle("on", on);
         model.setToastProp(x.id, "muted", on); autosave(null);
     });
-    // test button: pop the toast now with its current config (mirrors the trigger's ↻ fire)
-    $(".tn-test")?.addEventListener("click", async () => {
-        const prog = $(".tn-prog");
-        if (prog) prog.textContent = "popping…";
-        try { await api.toasts.test(model.profile.name, x.id); if (prog) prog.textContent = "sent"; }
-        catch (err) { if (prog) prog.textContent = String(err.message || err); }
+    $(".tn-showicon")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const tog = e.currentTarget, on = tog.getAttribute("aria-checked") !== "true";
+        tog.setAttribute("aria-checked", on); tog.classList.toggle("on", on);
+        model.setToastProp(x.id, "show_icon", on); autosave(null);
     });
+    // test button: pop the toast now with its current config (mirrors the trigger's ↻ fire). The
+    // server reads the toast from the SAVED profile, so commit the live field values + FLUSH the
+    // pending save first — no need to defocus an input before clicking test.
+    $(".tn-test")?.addEventListener("click", async () => {
+        div.querySelectorAll(".tn-bk-content").forEach((el) => model.setToastText(x.id, +el.dataset.i, "content", el.value));
+        for (const [sel, key] of [[".tn-app", "app_name"], [".tn-icon", "icon"], [".tn-attr", "attribution"]]) {
+            const el = $(sel); if (el) model.setToastProp(x.id, key, el.value);
+        }
+        autosave(null);
+        try { await persist.flush(); await api.toasts.test(model.profile.name, x.id); }
+        catch (err) { setStatus(`toast test failed: ${err.message || err}`); }
+    });
+}
+
+// Wire ONE generated-image editor section (hero or inline). `sec` is the `.tn-img` element; its
+// data-which selects the spec. Every field edit updates the model + autosaves + refreshes the
+// live server-rendered preview (debounced); structural changes (bg type, add/remove line) rebuild
+// the node so the conditional controls / row indices are correct.
+function wireToastImage(sec, x, n) {
+    const idx = +sec.dataset.i;
+    const q = (s) => sec.querySelector(s);
+    let pvTimer = null;
+    let pvSeq = 0;          // monotonically rising id: only the LATEST request's response is applied
+    let focusLine = null;   // index of the text line being edited -> outlined in the preview
+    const refreshPreview = () => {
+        clearTimeout(pvTimer);
+        pvTimer = setTimeout(async () => {
+            const im = model.toastImage(x.id, idx);
+            const img = q(".tn-img-preview");
+            if (!img || !im) return;   // render even when placement=none: the design stays visible
+            // Debounce collapses a burst into one request, but a render slower than the debounce
+            // window lets several overlap. Tag each with a sequence id and, when a response lands,
+            // drop it if a newer request has since started — the stale frame never overwrites the
+            // latest, and its object URL is revoked so it doesn't leak.
+            const seq = ++pvSeq;
+            const url = await api.toasts.previewImage(model.profile.name, im, focusLine);
+            if (seq !== pvSeq) { if (url) URL.revokeObjectURL(url); return; }
+            if (url) { if (img._u) URL.revokeObjectURL(img._u); img._u = url; img.src = url; }
+        }, 250);
+    };
+    // focusing any control of a text line outlines that line in the preview; leaving the image
+    // editor clears it. focusout fires before the next focusin, so re-check on a microtask.
+    sec.querySelectorAll(".tn-il").forEach((row) => {
+        row.addEventListener("focusin", () => { const i = +row.dataset.i; if (focusLine !== i) { focusLine = i; refreshPreview(); } });
+    });
+    sec.addEventListener("focusout", () => setTimeout(() => {
+        if (!sec.contains(document.activeElement) && focusLine !== null) { focusLine = null; refreshPreview(); }
+    }, 0));
+    // placement (hero/inline/none) — no layout change, just persist + (nothing to repreview)
+    q(".tn-img-place")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "placement", e.target.value); autosave(null); });
+    q(".tn-img-del")?.addEventListener("click", () => { model.removeToastImage(x.id, idx); rebuildNode(n.id); autosave(null); });
+    // scalar props (size + gradient colours/angle) — persist + repreview on input
+    const scalar = (sel, key) => q(sel)?.addEventListener("input", (e) => { model.setToastImageProp(x.id, idx, key, e.target.value); autosave(null); refreshPreview(); });
+    scalar(".tn-img-w", "width"); scalar(".tn-img-h2", "height");
+    scalar(".tn-img-c1", "color1"); scalar(".tn-img-c2", "color2"); scalar(".tn-img-angle", "angle");
+    // bg type flips which controls show (color2/angle) -> rebuild the node body, then repreview
+    q(".tn-img-bgtype")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "bg_type", e.target.value); rebuildNode(n.id); autosave(null); });
+    // per-line edits: content / x / y / size / colour / align
+    const line = (cls, key) => sec.querySelectorAll(cls).forEach((el) => el.addEventListener("input", (e) => { model.setToastImageText(x.id, idx, +el.dataset.i, key, e.target.value); autosave(null); refreshPreview(); }));
+    line(".tn-il-content", "content"); line(".tn-il-x", "x"); line(".tn-il-y", "y");
+    line(".tn-il-size", "size"); line(".tn-il-color", "color"); line(".tn-il-w", "width");
+    line(".tn-il-h", "height"); line(".tn-il-bg", "bg_color");
+    sec.querySelectorAll(".tn-il-align").forEach((el) => el.addEventListener("change", (e) => { model.setToastImageText(x.id, idx, +el.dataset.i, "align", e.target.value); autosave(null); refreshPreview(); }));
+    sec.querySelectorAll(".tn-il-wrap").forEach((el) => el.addEventListener("change", (e) => { model.setToastImageText(x.id, idx, +el.dataset.i, "wrap", e.target.checked); autosave(null); refreshPreview(); }));
+    sec.querySelectorAll(".tn-il-del").forEach((b) => b.addEventListener("click", () => { model.removeToastImageText(x.id, idx, +b.dataset.i); rebuildNode(n.id); autosave(null); }));
+    q(".tn-img-addtext")?.addEventListener("click", () => { model.addToastImageText(x.id, idx); rebuildNode(n.id); autosave(null); });
+    refreshPreview();   // initial paint (also runs after a rebuild re-wires the section)
 }
 
 // ---- sound node: play an audio file (in the browser) when fired ------------
@@ -2089,12 +2172,13 @@ function outPortSpec(n) {
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setProducerDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
         };
         case "dataset": return {
-            // a dataset feeds a SUBSET (join), a PRODUCER node (price only these items), or a
-            // DICTIONARY (push its column values in as terms)
-            target: ["subset", "producer", "dictionary"],
+            // a dataset feeds a SUBSET (join), a PRODUCER node (price only these items), a
+            // DICTIONARY (push its column values in as terms), or a TOAST ({{dataset:id}} tokens)
+            target: ["subset", "producer", "dictionary", "toast"],
             onDrop: (id, ttype) => {
                 if (ttype === "producer") { if (model.addProducerSource(id, n.ref)) rebuildNode(`producer:${id}`); }
                 else if (ttype === "dictionary") { if (model.addDictFeed(id, n.ref)) rebuildNode(`dict:${id}`); }
+                else if (ttype === "toast") { if (model.addToastSource(id, `dataset:${n.ref}`)) rebuildNode(`toast:${id}`); }
                 // rebuild the subset node (its sources chips + join-on list), not just refresh the
                 // vtable — same as the in-panel add (.sv-addin); rebuild re-queues the refresh.
                 else if (model.addSubsetInput(id, n.ref)) rebuildNode(`sub:${id}`);
@@ -2102,14 +2186,21 @@ function outPortSpec(n) {
             onEmpty: (pt) => { const id = model.addSubset(n.ref); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
         };
         case "subset": return {
-            // a subset feeds another SUBSET or a PRODUCER node (price only the rows it returns, e.g. count>0)
-            target: ["subset", "producer"],
+            // a subset feeds another SUBSET, a PRODUCER node (price the rows it returns), or a
+            // TOAST ({{subset:id}} tokens)
+            target: ["subset", "producer", "toast"],
             selfId: n.ref.id,
             onDrop: (id, ttype) => {
                 if (ttype === "producer") { if (model.addProducerSource(id, n.ref.id)) rebuildNode(`producer:${id}`); }
+                else if (ttype === "toast") { if (model.addToastSource(id, `subset:${n.ref.id}`)) rebuildNode(`toast:${id}`); }
                 else if (model.addSubsetInput(id, n.ref.id)) rebuildNode(`sub:${id}`);
             },
             onEmpty: (pt) => { const id = model.addSubset(n.ref.id); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
+        };
+        case "readout": return {
+            // a readout feeds a TOAST its live value as a {{readout:id}} token
+            target: ["toast"],
+            onDrop: (id) => { if (model.addToastSource(id, `readout:${n.ref.id}`)) rebuildNode(`toast:${id}`); },
         };
         case "filesource": return {
             target: "dataset",
@@ -2199,7 +2290,7 @@ export function showSatellite(satId) {
 // the source id a drop target commits to: a dataset node's name, or a node's bare id
 // (subset/price/trigger carry a prefixed node id in data-id).
 function targetIdOf(el, target) {
-    return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|producer|trigger|src|dict):/, "");
+    return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|producer|trigger|src|dict|toast|sound):/, "");
 }
 
 // Host node types that resize at the NODE level (their body fills them) — one consistent
@@ -2536,6 +2627,12 @@ function render() {
     // stale (this reconcile reuses bodies, never rebuilds them). Rebuild them on a set change.
     const dsKey = [...model.datasets(), " ", ...(model.profile.subsets || []).map((s) => s.id)].join("");
     if (dsKey !== _lastDsSetKey) { _lastDsSetKey = dsKey; rebuildDatasetConsumers(); }
+    // A toast's token chips list the FIELDS/COLUMNS of its wired sources — those change without the
+    // dataset/subset id SET changing (add a field to a window, a derived column to a subset), so the
+    // dsKey gate above misses them. Toasts are few; rebuild their bodies every render so the chips
+    // (and the add-source select) always reflect the current columns. rebuildNode no-ops when the
+    // node isn't in the DOM, and message edits never call render(), so this can't eat a caret.
+    for (const t of model.profile.toasts || []) rebuildNode(`toast:${t.id}`);
 }
 let _lastDsSetKey = null;
 

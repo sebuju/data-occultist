@@ -149,6 +149,21 @@ export const TRASH = () =>
 export const labCell = (label, title = "", top = false) =>
     h("span", { class: "lab" + (top ? " lab-top" : ""), title: title || null }, label);
 
+// A removable source pill + the pills-plus-"add" row that holds them — the ONE primitive every
+// wired-source list builds on (trigger fires/watch, subset join sources, toast token feeders), so
+// they all look and wire the same (rule 7). `srcChip(val, attrKey, rmCls)`: a pill showing `val`
+// with a trash button carrying it back as `data-<attrKey>` and the wiring hook `rmCls` (e.g.
+// tg-rmtarget / tn-rmsrc). `srcInputs(chips, addCls, addOpts)`: those pills + a "+ …" add-select
+// (class `addCls`) whose `addOpts` are the <option> nodes. `label` overrides the pill's visible
+// text (else `val`) — used when the ref carries a prefix the pill shouldn't show verbatim.
+export const srcChip = (val, attrKey, rmCls, label = null) =>
+    h("span", { class: "sv-input" }, label == null ? val : label,
+        h("button", { class: `sv-rmin danger ${rmCls}`, dataset: { [attrKey]: val }, title: "remove" }, TRASH()));
+
+export const srcInputs = (chips, addCls, addOpts) =>
+    h("div", { class: "sv-inputs" }, chips,
+        h("span", { class: "sv-input sv-add" }, h("select", { class: `sv-addin ${addCls}` }, addOpts)));
+
 // Monochrome inline icons as node factories (fill = currentColor, sized to 1em) -- used
 // instead of colour emoji so icons match surrounding text colour. `.ic` aligns to baseline.
 const _ic = (d) => () => svg("svg", { class: "ic", viewBox: "0 0 24 24", width: "1em", height: "1em", "aria-hidden": "true" },

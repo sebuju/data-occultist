@@ -495,14 +495,23 @@ function fanFaceEnds(lines, byId, outPorts) {
             if (e.ln.pinSrc || e.ln.port || e.ln.tether || Math.abs(c - cur) > 0.5) setEnd(p, side, clamp(c), last);
             continue;
         }
-        const pref = Math.min(span - PORT_MARGIN, (n - 1) * C.laneGap);
-        const spread = Math.max(0, pref, (n - 1) * PORT_MIN);
-        const coords = arr.map((_, i) => mid - spread / 2 + (i * spread) / (n - 1));
-        for (let i = 0; i < n; i++) {
-            let c = coords[i];
-            if (reserveMid && Math.abs(c - mid) < PORT_MIN) c = mid + (c >= mid ? PORT_MIN : -PORT_MIN);
-            setEnd(arr[i].ln._pts, side, clamp(c), arr[i].end === "dst");
+        let coords;
+        if (reserveMid) {
+            // An idle out-port dot sits dead-centre of this face. Carve a PORT_MIN-wide gap around
+            // mid and fan the (sorted) endpoints OUTWARD on either side of it, so none lands on the
+            // dot — nor, when an endpoint would fall at mid, gets bumped straight onto its neighbour
+            // (the old per-endpoint "+PORT_MIN" nudge did exactly that, stacking two lines on one coord).
+            const step = Math.max(C.laneGap, PORT_MIN);
+            const below = Math.ceil(n / 2);   // endpoints seated below the gap; the rest go above
+            coords = arr.map((_, i) => i < below
+                ? mid - PORT_MIN - (below - 1 - i) * step
+                : mid + PORT_MIN + (i - below) * step);
+        } else {
+            const pref = Math.min(span - PORT_MARGIN, (n - 1) * C.laneGap);
+            const spread = Math.max(0, pref, (n - 1) * PORT_MIN);
+            coords = arr.map((_, i) => mid - spread / 2 + (i * spread) / (n - 1));
         }
+        for (let i = 0; i < n; i++) setEnd(arr[i].ln._pts, side, clamp(coords[i]), arr[i].end === "dst");
     }
 }
 // keep a fanned port endpoint within its node face span (perp coord already correct)

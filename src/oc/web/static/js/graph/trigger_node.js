@@ -1,11 +1,15 @@
 // Trigger node: fires its target price node(s) on a condition. `interval` fires every N
 // seconds; `on_change` fires whenever a watched dataset gains rows (any write path, not only
-// live collection); `manual` never auto-fires (the sweep button drives it). All config persists in the
-// profile YAML. Targets are wired by dragging the out-port to a price node; watch datasets
-// and targets can also be added from the dropdowns here. Rendering only — wiring is in main.js.
-import { h, frag, TRASH, labCell } from "../dom.js";
+// live collection), but a watched subset only fires when its computed output actually differs;
+// `on_any_change` uses the same watch list but fires on every write reaching it, even one that
+// leaves a watched subset's visible output unchanged; `manual` never auto-fires (the sweep
+// button drives it). All config persists in the profile YAML. Targets are wired by dragging the
+// out-port to a price node; watch datasets and targets can also be added from the dropdowns here.
+// Rendering only — wiring is in main.js.
+import { h, frag, labCell, srcChip, srcInputs } from "../dom.js";
 
 const KINDS = [["interval", "interval (periodic)"], ["on_change", "on change"],
+    ["on_any_change", "on any change"],
     ["on_app_start", "on app start"], ["on_capture", "on capture start"],
     ["on_live_start", "on live start"], ["on_live_stop", "on live stop"],
     ["on_readout", "on readout (threshold)"], ["manual", "manual only"]];
@@ -21,19 +25,6 @@ const DS_ACTIONS = [["", "no action"], ["clear", "clear dataset"],
     ["clone_batches", "clone data (batches)"], ["clone_resolved", "clone data (resolved)"],
     ["move_batches", "move data (batches)"], ["move_resolved", "move data (resolved)"]];
 
-// removable source pill — same look as a subset's join-source pills (.sv-input). `rmCls`
-// is the wiring hook (tg-rmwatch / tg-rmtarget); `attrKey`/`attrVal` carry the id back to
-// the handler (e.g. data-ds / data-p, read by the wiring as el.dataset.ds / .p).
-const srcChip = (val, attrKey, rmCls) =>
-    h("span", { class: "sv-input" }, val,
-        h("button", { class: `sv-rmin danger ${rmCls}`, dataset: { [attrKey]: val }, title: "remove" }, TRASH()));
-
-// the pills + a "+ …" add-select that go in a watch/fires control cell. `chips` is an array
-// of chip nodes; `addOpts` an array of <option> nodes.
-const srcInputs = (chips, addCls, addOpts) =>
-    h("div", { class: "sv-inputs" }, chips,
-        h("span", { class: "sv-input sv-add" }, h("select", { class: `sv-addin ${addCls}` }, addOpts)));
-
 export function triggerParts(t, model) {
     const kind = KINDS.some(([v]) => v === t.kind) ? t.kind : "interval";
     const kopt = ([v, l]) => h("option", { value: v, selected: v === kind }, l);
@@ -45,13 +36,16 @@ export function triggerParts(t, model) {
         : null;
 
     let watch = null;
-    if (kind === "on_change") {
+    if (kind === "on_change" || kind === "on_any_change") {
         const have = new Set(t.watch || []);
         // watch datasets OR subsets (a subset fires when any of its source datasets gains rows)
         const sources = [...model.datasets(), ...(model.profile.subsets || []).map((s) => s.id)];
         const opts = sources.filter((d) => !have.has(d)).map((d) => h("option", d));
+        const hint = kind === "on_any_change"
+            ? "datasets or subsets; fires on every write, even if a watched subset's visible output is unchanged"
+            : "datasets or subsets; the trigger fires when one gains rows";
         watch = frag(
-            labCell("watch", "datasets or subsets; the trigger fires when one gains rows", true),
+            labCell("watch", hint, true),
             srcInputs(
                 (t.watch || []).map((w) => srcChip(w, "ds", "tg-rmwatch")),
                 "tg-addwatch",
@@ -132,7 +126,7 @@ export function triggerParts(t, model) {
             h("div", { class: "gn-foot" }, h("button", { class: "tg-fire" }, "↻ fire"))),
         ports: frag(
             h("span", { class: "port out", title: "drag to a price node this trigger should fire" }),
-            kind === "on_change" && h("span", { class: "port pwatch", title: "drag to a dataset or subset to watch for new rows" }),
+            (kind === "on_change" || kind === "on_any_change") && h("span", { class: "port pwatch", title: "drag to a dataset or subset to watch for new rows" }),
             kind === "on_readout" && h("span", { class: "port pwatch", title: "drag to a readout node to watch its value" })),
     };
 }

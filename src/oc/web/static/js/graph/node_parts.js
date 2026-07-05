@@ -509,8 +509,10 @@ export function readoutParts(n) {
         h("div", { class: "gn-foot" }));
     return {
         title: h("input", { class: "gi gi-id", dataset: { k: "roid" }, value: v.id,
-            title: "readout id — what a trigger watches and a toast tokens as {{id}}" }),
+            title: "readout id — what a trigger watches and a toast tokens as {{readout:id}}" }),
         body,
+        // drag this readout's out-port onto a toast to feed it the live value as {{readout:id}}
+        ports: h("span", { class: "port out", title: "drag to a toast to feed it this readout's live value" }),
     };
 }
 

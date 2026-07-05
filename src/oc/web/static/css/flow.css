@@ -148,7 +148,7 @@ a.node.win:hover { border-color: var(--accent); }
 .sub-row button.danger { flex: 0 0 auto; padding: 0 6px; }
 .sub-row > span.muted { align-self: center; }
 .sub-row > select:is(.ss-dir, .sf-op) { width: fit-content; }
-.sv-inputs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.sv-inputs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; align-items: center; }
 .sv-input { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 7px; box-sizing: border-box;
     min-height: 22px;   /* pin chip + add-select to one height so the select's UA min never makes them differ */
     background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 10px; font-size: var(--fs-sm); }

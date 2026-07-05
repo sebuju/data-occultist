@@ -567,6 +567,14 @@ export const triggers = {
 // config (the node's test button) — behaves like a trigger firing it, minus the wiring.
 export const toasts = {
     test: (game, id) => tfetch(`/api/toasts/${_pg(game)}/${encodeURIComponent(id)}/test`, { method: "POST" }, 10_000).then((r) => ok(r, "test toast").then((x) => x.json())),
+    // render a hero/inline image SPEC to a live PNG (the node editor's preview) — returns an object
+    // URL for the blob (caller revokes it), or null on failure. Not funnelled through ok()/json().
+    previewImage: async (game, spec, focus = null) => {
+        const qs = focus == null ? "" : `?focus=${encodeURIComponent(focus)}`;
+        const r = await fetch(`/api/toasts/${_pg(game)}/preview${qs}`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(spec) });
+        return r.ok ? URL.createObjectURL(await r.blob()) : null;
+    },
 };
 
 // File sources: read a game log/config file into a dataset. `read` fires a read now; `preview`

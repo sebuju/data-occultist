@@ -79,9 +79,64 @@
 /* the test button's bell glyph: shrink the shared 18px icon to button scale, inherit text colour (monochrome) */
 .tn-test { display: inline-flex; align-items: center; gap: 4px; }
 .tn-test .nicon { width: 13px; height: 13px; color: currentColor; }
-/* readout token chips in a toast node: click to insert a {{ro_1}} live-value token */
+/* the toast body: an ordered list of styled text blocks + an "add block" button */
+.tn-blocks { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; min-width: 0; }
+.tn-blocks-h { font-size: 10px; letter-spacing: .02em; }
+.tn-block { display: flex; flex-direction: column; gap: 4px; padding: 5px; border-radius: 6px;
+    border: 1px solid color-mix(in srgb, currentColor 15%, transparent); min-width: 0; }
+.tn-block > textarea.tn-bk-content { width: 100%; box-sizing: border-box; resize: vertical;
+    min-height: calc(2lh + 8px); font: inherit; }
+.tn-bk-ctl { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.tn-bk-ctl select, .tn-bk-ctl input { font: inherit; font-size: 11px; min-width: 0; }
+.tn-bk-max { width: 4.5em; }
+.tn-bk-ctl button { font: inherit; font-size: 11px; cursor: pointer; padding: 1px 5px; }
+.tn-bk-ctl .tn-bk-del { margin-left: auto; }
+.tn-bk-add { align-self: start; font: inherit; font-size: 11px; cursor: pointer; }
+/* generated images: a list of editors, each with a placement dropdown, live preview, bg/size/text */
+.tn-imgs { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; min-width: 0; }
+.tn-img-add { align-self: start; font: inherit; font-size: 11px; cursor: pointer; }
+.tn-img { display: flex; flex-direction: column; gap: 6px; padding: 6px;
+    border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 15%, transparent); min-width: 0; }
+.tn-img-h { display: flex; align-items: center; gap: 8px; }
+.tn-img-h .muted { text-transform: lowercase; letter-spacing: .02em; font-size: 11px; white-space: nowrap; }
+.tn-img-place { font: inherit; font-size: 11px; }
+.tn-img-h .tn-img-del { margin-left: auto; cursor: pointer; }
+.tn-img-preview { max-width: 100%; height: auto; border-radius: 4px; align-self: center;
+    border: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+.tn-img-preview:not([src]) { display: none; }
+.tn-img-size, .tn-img-bg { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
+.tn-img-size input { width: 5.5em; }
+.tn-img-w, .tn-img-h2, .tn-img-angle { font: inherit; font-size: 11px; }
+.tn-img-angle-l { display: inline-flex; align-items: center; gap: 2px; }
+.tn-img-angle { width: 3.5em; }
+.tn-img-bg input[type="color"], .tn-il-color, .tn-il-bg { width: 26px; height: 20px; padding: 0; border: none; cursor: pointer; background: none; flex: 1 0 26px; }
+.tn-img-texts { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+/* one image text line: a content+delete row over a control row; padded so the zebra fill reads */
+.tn-il { display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 4px; }
+.tn-il:nth-child(even) { background: color-mix(in srgb, currentColor 7%, transparent); }
+.tn-il-row { display: flex; align-items: center; gap: 4px; }
+.tn-il-content { flex: 1; min-width: 0; box-sizing: border-box; font: inherit; font-size: 11px; }
+.tn-il-ctl { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; }
+.tn-il-ctl label { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; }
+.tn-il-ctl input[type="number"] { width: 5.5em; font: inherit; font-size: 11px; }
+.tn-il-ctl select { font: inherit; font-size: 11px; }
+.tn-il-del { cursor: pointer; flex: 0 0 auto; }
+.tn-img-addtext { align-self: start; font: inherit; font-size: 11px; cursor: pointer; }
+/* icon row: the show-icon toggle sits left of the icon path input */
+.tn-icon-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tn-icon-row .tn-icon { flex: 1; min-width: 0; }
+/* token chips in a toast node: click to copy a wired source's {{token}} to the clipboard; a small
+   syntax legend (slice/aggregate/decimals) sits beneath them. The whole palette sits below the
+   images inside a bordered box (.tn-tokbox); .tn-tokwrap is its inner column. */
+.tn-tokbox { margin-top: 8px; padding: 8px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: 6px; min-width: 0; }
+.tn-tokwrap { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+/* per-source subheading above its chip row — so a chip label is just the field, not "src.field" */
+.tn-tokhead { font-size: 10px; text-transform: lowercase; letter-spacing: .02em; margin-top: 2px; }
+.tn-tokhead:first-child { margin-top: 0; }
 .tn-rotokens { display: flex; flex-wrap: wrap; gap: 4px; }
 .tn-rotoken { font: inherit; font-size: 11px; cursor: pointer; }
+.tn-tokhint { font-size: 10px; line-height: 1.4; }
+.tn-tokhint code { font-size: 10px; padding: 0 2px; border-radius: 3px; background: color-mix(in srgb, currentColor 12%, transparent); }
 /* Nothing in the node canvas is text-selectable — kills the stray highlight that
    appears while dragging nodes around (user-select:none set on .graphcanvas above).
    Exceptions: form fields (so you can edit) and table cells (so you can copy rows). */
@@ -193,7 +248,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .lab-grid > .lab-top { align-self: start; padding-top: 4px; }
 /* full-width controls EXCEPT checkboxes — a checkbox keeps its base 28px toggle-switch size
    (base.css) and sits at the start of the control column instead of stretching. */
-.lab-grid > select, .lab-grid > input:not([type="checkbox"]), .lab-grid > .tg-secs { width: 100%; min-width: 0; }
+.lab-grid > select, .lab-grid > input:not([type="checkbox"]), .lab-grid > textarea, .lab-grid > .tg-secs { width: 100%; min-width: 0; }
+/* the toast's message is a textarea (multi-line body text) — resize vertically only, sane min height */
+.lab-grid > textarea { box-sizing: border-box; resize: vertical; min-height: calc(2lh + 8px); font: inherit; }
 .lab-grid > input[type="checkbox"], .lab-grid > .gn-slide { justify-self: start; }
 .lab-grid > .tg-secs input { width: 100%; }
 .lab-grid > .sv-inputs { margin: 0; min-width: 0; }
@@ -474,8 +531,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .img-pages { display: inline-flex; align-items: center; gap: 4px; }
 .img-pages[hidden] { display: none; }
 /* draw-layer toggles under the canvas: one .flab checkbox per row */
-.img-layers { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
-.img-layers .flab { font-size: var(--fs-sm); }
+.img-layers { display: grid; grid-template-columns: 1fr 1fr; column-gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.img-layers .flab { font-size: var(--fs-sm); grid-template-columns: 1fr 2fr; }
 .img-pageind { font-size: var(--fs-sm); color: var(--muted); min-width: 28px; text-align: center; }
 .imgpg { padding: 2px 8px; }
 
