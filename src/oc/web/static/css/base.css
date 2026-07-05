@@ -7,19 +7,22 @@
        autofill — all follow the browser's dark theme instead of a light widget on our dark UI */
     color-scheme: dark;
 
-    /* surfaces */
-    --bg: #15171c;            /* app background */
-    --panel: #1d2027;         /* nodes, panels, top bar */
-    --line: #2c313c;          /* borders, neutral button fill */
-    --float-panel: #232936;   /* floating windows — cooler/bluer than nodes */
-    --float-head: #2b3343;    /* float-window header bar */
-    --float-line: #3a4253;    /* float-window borders */
-    --node-head: #252a32;     /* graph-node header band */
-    --log-bg: #0a0e13;        /* terminal log bar */
+    /* surfaces — blueprint: near-black canvas, flat gradient cards, cool thin lines */
+    --bg: #0b0d12;            /* app background */
+    --panel: #14171e;         /* nodes, panels, top bar (card top) */
+    --card-2: #0f1218;        /* card gradient bottom — flat vertical wash on nodes/panels */
+    --line: #262c37;          /* borders, neutral button fill */
+    --line-soft: #1c212b;     /* faint inner dividers (header rule, body dividers) */
+    --float-panel: #171b23;   /* floating windows — cooler/bluer than nodes */
+    --float-head: #1e232d;    /* float-window header bar */
+    --float-line: #2b323f;    /* float-window borders */
+    --node-head: #1b1f27;     /* graph-node header band (neutral fallback; per-type wash rides --nt) */
+    --log-bg: #080b0f;        /* terminal log bar */
 
     /* text */
     --text: #d7dbe2;          /* primary */
     --muted: #8a93a3;         /* secondary / labels */
+    --dim: #565f6c;           /* dimmest text — node sub-headings / captions (blueprint) */
     --log-fg: #aeb8c2;        /* log body */
     --log-dim: #4a5560;       /* log timestamps */
     --white: #fff;
@@ -44,7 +47,29 @@
     --phase-done: #2f7d4f;    /* finished (deep green) */
     --on-accent: #08121d;     /* text on accent fill */
     --on-danger: #1a0a08;     /* text on danger fill */
-    --data: #ff8c2b;          /* data-flow edges + out-ports (orange) */
+    --data: #ff9d4d;          /* data-flow edges + out-ports (orange) */
+
+    /* per-type node identity (blueprint palette). ONE token per node type — drives that
+       type's card border tint, header wash, header icon, type tag AND its matching edge, so
+       a type's colour lives in exactly one place. `.gnode.<type> { --nt: … }` (graph.css)
+       reads these; nothing hard-codes a hue per node beyond this map. */
+    --nt-game: #e0c15f;        /* amber  */
+    --nt-window: #5aa9e6;      /* sky    */
+    --nt-region: #e2895f;      /* coral  */
+    --nt-detect: #e0c15f;      /* amber  */
+    --nt-scrollbar: #8a93a3;   /* grey   */
+    --nt-item: #f0a24a;        /* orange */
+    --nt-itemfield: #e2895f;   /* coral  */
+    --nt-itemtell: #5fd68f;    /* mint   */
+    --nt-readout: #57c8c0;     /* teal   */
+    --nt-dataset: #5fd68f;     /* mint   */
+    --nt-subset: #5fe0c4;      /* aqua   */
+    --nt-producer: #6fb2f0;    /* blue   */
+    --nt-dictionary: #b48cf0;  /* violet */
+    --nt-trigger: #b48cf0;     /* violet */
+    --nt-toast: #e878b0;       /* pink   */
+    --nt-sound: #c98cf0;       /* mauve  */
+    --nt-filesource: #9db0c4;  /* slate  */
 
     /* effects */
     --hover: #ffffff1a;       /* row / cell hover tint */

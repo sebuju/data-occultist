@@ -56,26 +56,106 @@
 
 /* per-type node-header glyph (declared once in node_icons.js). One size for every node;
    tinted by type so cards read apart at a glance. */
-/* one per-type tint set on the header (`--ntint`); BOTH the icon and the node-type tag
-   read it, so they always match — change a type's colour in ONE place. */
-.gn-h { --ntint: var(--muted); }
-.gnode.game      .gn-h { --ntint: var(--text); }
-.gnode.window    .gn-h { --ntint: var(--window); }
-.gnode.region    .gn-h { --ntint: var(--accent); }
-.gnode.detect    .gn-h { --ntint: var(--ok); }
-.gnode.scrollbar .gn-h { --ntint: var(--ok); }
-.gnode.item      .gn-h { --ntint: var(--record); }
-.gnode.itemfield .gn-h { --ntint: var(--accent); }
-.gnode.itemtell  .gn-h { --ntint: var(--ok); }   /* tells are pass/fail checks, like detect — match the tell edge colour */
-.gnode.dataset   .gn-h { --ntint: var(--ok); }
-.gnode.subset    .gn-h { --ntint: var(--purple); }
-.gnode.producer  .gn-h { --ntint: var(--warn); }
-.gnode.dictionary .gn-h { --ntint: var(--purple); }
-.gnode.trigger   .gn-h { --ntint: var(--trigger-line); }
-.gnode.toast     .gn-h { --ntint: var(--toast); }
-.gnode.sound     .gn-h { --ntint: var(--sound); }
-.gnode.filesource .gn-h { --ntint: var(--accent); }
+/* per-type identity: ONE token (`--nt`) on the CARD drives the header icon, the type tag,
+   the card border tint AND the header accent wash — a type's colour lives in exactly one
+   place (base.css `--nt-<type>`). The header re-exposes it as `--ntint` (icon + tag read
+   that name). Change a type's hue = edit base.css; nothing else per node. */
+.gnode { --nt: var(--muted); }
+.gnode.game       { --nt: var(--nt-game); }
+.gnode.window     { --nt: var(--nt-window); }
+.gnode.region     { --nt: var(--nt-region); }
+.gnode.detect     { --nt: var(--nt-detect); }
+.gnode.scrollbar  { --nt: var(--nt-scrollbar); }
+.gnode.glyphs     { --nt: var(--nt-scrollbar); }
+.gnode.item       { --nt: var(--nt-item); }
+.gnode.itemfield  { --nt: var(--nt-itemfield); }
+.gnode.itemtell   { --nt: var(--nt-itemtell); }
+.gnode.readout    { --nt: var(--nt-readout); }
+.gnode.dataset    { --nt: var(--nt-dataset); }
+.gnode.subset     { --nt: var(--nt-subset); }
+.gnode.producer   { --nt: var(--nt-producer); }
+.gnode.dictionary { --nt: var(--nt-dictionary); }
+.gnode.trigger    { --nt: var(--nt-trigger); }
+.gnode.toast      { --nt: var(--nt-toast); }
+.gnode.sound      { --nt: var(--nt-sound); }
+.gnode.filesource { --nt: var(--nt-filesource); }
+.gn-h { --ntint: var(--nt); }
 .gn-h .nicon { width: 18px; height: 18px; flex: 0 0 auto; color: var(--ntint); }
+
+/* ---- shared blueprint primitives (rule 7): ONE meter / chip / divider vocabulary every node
+   reuses instead of bespoke per-type bars. The segmented meter's colour rides `--mc` (defaults
+   to the node's own type tint --nt); add .good/.bad/.acc to override. Build the .segs scaffold
+   once and toggle each .seg's on/off class to reconcile in place — never rebuild it per tick. ---- */
+.meter { display: inline-flex; align-items: center; gap: 8px; min-width: 0; --mc: var(--nt, var(--accent)); }
+.meter .segs { display: flex; gap: 2px; flex: 0 0 auto; }
+.meter .seg { width: 7px; height: 12px; border-radius: 1.5px; border: 1px solid; }
+.meter .seg.on { background: var(--mc); border-color: var(--mc); }
+.meter .seg.off { background: transparent; border-color: color-mix(in oklab, var(--mc) 32%, transparent); }
+.meter .pct { font-size: var(--fs-xs); color: var(--mc); white-space: nowrap; font-variant-numeric: tabular-nums;
+    overflow: hidden; text-overflow: ellipsis; }
+.meter.good { --mc: var(--ok); } .meter.bad { --mc: var(--danger); } .meter.acc { --mc: var(--accent); }
+/* editable meter: a draggable threshold bar that REPLACES a number input (field conf, tell conf).
+   Segments flex to fill whatever cell it lands in (count is cosmetic), so it works at any node
+   width. The whole row is the hit target; the value reads to the right like the preview's bars. */
+.meter.editable { display: flex; width: 100%; min-width: 0; cursor: pointer; gap: 6px; align-items: center; }
+/* FIXED-width segments (not flex) — flex 1fr rounds to uneven sub-pixel widths that look ragged.
+   Fixed px keeps every segment identical at any node width; the value is pushed to the right edge. */
+.meter.editable .segs { flex: 0 0 auto; gap: 2px; flex-wrap: nowrap; }
+.meter.editable .seg { flex: 0 0 6px; width: 6px; height: 13px; transition: background .06s, border-color .06s; }
+.meter.editable .pct { margin-left: auto; }
+.meter.editable .seg.on { box-shadow: 0 0 4px -1px var(--mc); }   /* faint glow on the lit run — reads as "level" */
+/* hover preview: segments up to the cursor light in a mid-brightness fill (slider affordance —
+   shows where a click would land). Driven by meter.js toggling .hot on pointermove. */
+.meter.editable .seg.hot { background: color-mix(in oklab, var(--mc) 50%, transparent); border-color: var(--mc); }
+.meter.editable .pct { flex: 0 0 auto; min-width: 2.6em; text-align: right; }
+.meter.editable:focus-visible { outline: 1px solid color-mix(in oklab, var(--nt) 60%, var(--line)); outline-offset: 2px; border-radius: 3px; }
+/* chip: a bordered inline tag tinted by the node type — boxed sub-labels / key parts / token pills */
+.chip { border: 1px solid color-mix(in oklab, var(--nt) 38%, var(--line)); border-radius: 5px;
+    padding: 1.5px 6px; font-size: var(--fs-xs); color: var(--text); white-space: nowrap; }
+.chip.ghost { border-style: dashed; color: var(--muted); }
+/* dashed in-body divider (blueprint separator between field groups), softer than the .fgrp rule */
+.bdivider { height: 0; border-top: 1px dashed var(--line); margin: 2px 0; }
+
+/* ---- de-inputted controls: inside a node, text inputs / selects / textareas read like plain
+   VALUES (blueprint condensed look) — transparent + borderless at rest, revealing an edit
+   affordance (faint type-tinted fill + border) only on hover/focus. Keeps full editability but
+   kills the "wall of form fields". Higher specificity than controls.css `input{}` so it wins
+   regardless of load order. Checkboxes (slide-toggles), ranges and colour pickers keep their own
+   treatment (excluded). ---- */
+.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select, textarea) {
+    background: transparent; border: 1px solid transparent; border-radius: 5px;
+    padding: 0 4px; transition: background .12s ease, border-color .12s ease;
+}
+.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select):hover {
+    background: color-mix(in oklab, var(--nt) 6%, transparent);
+    border-color: color-mix(in oklab, var(--nt) 22%, var(--line));
+}
+.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select, textarea):focus {
+    background: var(--bg); border-color: color-mix(in oklab, var(--nt) 50%, var(--line)); outline: none;
+}
+/* the value now carries the primary text colour (it's the content, not chrome); the .flab/.lab
+   labels stay muted, so each row reads "muted key -> bright value" like the preview's k/v grid */
+.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select) { color: var(--text); }
+/* strip the native <select> chrome so its value text starts exactly at our padding-left (a native
+   select insets the text a few px past its padding, so it sat right of plain inputs in the same
+   column). Supply our own chevron on the right; the text now lines up with every input. */
+.gnode select:not([size]) {   /* :not([size]) lifts specificity to match the de-input rule so this padding wins */
+    appearance: none; -webkit-appearance: none; padding: 0 15px 0 4px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5l3.5 3.5 3.5-3.5' fill='none' stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 3px center; background-size: 11px;
+}
+
+/* icon-only remove buttons inside a node: hollow danger (border + danger-coloured trash icon),
+   NOT a solid red fill — reads lighter, matches the flat/de-chromed look. Fills solid on hover.
+   Scoped to buttons whose only content is the TRASH glyph (`.ic-trash`); text danger buttons
+   (e.g. "clear data") keep the solid fill. Mirrors the existing .killbtn treatment (rule 7). */
+.gnode button.danger:has(> .ic-trash) {
+    background: transparent; color: var(--danger);
+    box-shadow: inset 0 0 0 1px var(--danger);
+}
+.gnode button.danger:has(> .ic-trash):hover:not(:disabled) {
+    background: var(--danger); color: var(--on-danger); filter: none;
+}
 /* the test button's bell glyph: shrink the shared 18px icon to button scale, inherit text colour (monochrome) */
 .tn-test { display: inline-flex; align-items: center; gap: 4px; }
 .tn-test .nicon { width: 13px; height: 13px; color: currentColor; }
@@ -145,7 +225,10 @@
 
 .gnode {
     position: absolute; width: 220px; pointer-events: auto;   /* re-enable on the card (the #gnodes layer is none) */
-    background: var(--panel); border: 1px solid var(--line);
+    /* blueprint card: flat vertical wash (panel -> card-2), border TINTED by the type token
+       (--nt) so every card reads its type from the frame, not from a bespoke per-type rule */
+    background: linear-gradient(180deg, var(--panel), var(--card-2));
+    border: 1px solid color-mix(in oklab, var(--nt) 34%, var(--line));
     border-radius: 8px; padding: 6px 8px; font-size: var(--fs-base);
     cursor: grab;                 /* whole card drags; the exceptions below override */
     user-select: none;            /* don't select text while dragging */
@@ -179,7 +262,10 @@
 .gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 8px;
     flex: 0 0 auto;   /* in flex-column host nodes, the header must NOT shrink when content overflows */
     margin: -6px -8px 6px; padding: 5px 8px; overflow: hidden; position: relative; z-index: 2;
-    background: var(--node-head); border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
+    /* header carries a faint accent wash of the type token over the card — the second half of
+       "flat body, accent header" (the body stays neutral; only the header + border are tinted) */
+    background: linear-gradient(180deg, color-mix(in oklab, var(--nt) 12%, transparent), transparent);
+    border-bottom: 1px solid var(--line-soft); border-radius: 8px 8px 0 0; }
 /* collapsed: header IS the whole node. Keep the same top/side margins + border-bottom WIDTH
    as expanded (so toggling never changes its height), but pull the bottom margin to -7 too
    (matching the top) so the header covers the node's bottom padding — no empty strip below.
@@ -191,8 +277,8 @@
    the enable toggle stays clickable. */
 .gn-h .gn-type {
     font-size: var(--fs-xs); font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
-    color: var(--ntint); background: var(--node-head); padding-left: 8px;
-    pointer-events: none; opacity: 1; transition: opacity .12s ease; z-index: 0; }
+    color: var(--ntint); background: transparent; padding-left: 8px;
+    pointer-events: none; opacity: .92; transition: opacity .12s ease; z-index: 0; }
 .gn-h .gn-enable { position: relative; z-index: 1; }
 /* vttable/glyphs headers have no flex:1 title to push the type tag over, so pin it to the right edge */
 .gnode.vttable .gn-h .gn-type, .gnode.glyphs .gn-h .gn-type { margin-left: auto; }
@@ -205,16 +291,27 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gnode .big { font-size: var(--fs-xl); }
 /* labelled field controls — label + input in a 2-col grid so every input
    lines up and shares one width */
-.flab { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 6px;
-    margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap;
-    /* hold every row to one input-control height so slide-toggle rows match text/select rows
-     (the toggle is shorter than an input — without this its row sat lower) */
-    min-height: calc(1.4em + 14px); }
+/* blueprint k/v row: a FIXED narrow label column + the control fills the rest (like the preview's
+   `74px 1fr`). Each field row is its OWN `.flab` grid, so the label width must be fixed — `auto`
+   would size every row independently and the values wouldn't line up into a column. 80px fits the
+   longest field label (glyph-check); rare longer labels spill into the gap, never clipped. Rows
+   sit close together (small margin + tight min-height) for the condensed preview look. */
+.flab { display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 2px 10px;
+    margin: 1px 0 0; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap;   /* kill the global label{margin-bottom:6px} — that was the loose row gap */
+    /* hold every row to the de-chromed control height so slide-toggle rows line up with text/select
+       rows (the toggle is shorter) — kept just above the input's own box so rows sit tight like the
+       preview, no dead vertical space. */
+    min-height: calc(1.4em + 2px); }
 /* field-config sub-heading: groups the inputs under read / dictionary / rules / row role */
-.fgrp { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--line);
-    font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
-    display: flex; align-items: center; justify-content: space-between; }
-.fgrp:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+/* ONE node sub-heading look (blueprint caption): tiny, wide-tracked, uppercase, dimmest, NO rule
+   line — shared by EVERY in-node section header (RULES / row role / templates / detects / cell /
+   tells / fields / key / cutouts / window priority / text appearance) so they all read alike
+   (rule 7). Scoped to .gnode so it beats the `.muted` utility these elements also carry; each
+   header keeps only its own spacing on the class rules below. */
+.gnode :is(.fgrp, .il-h, .wi-h, .sb-h) {
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: .16em; color: var(--dim); }
+.fgrp { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; }
+.fgrp:first-child { margin-top: 0; }
 .frule-btns { display: flex; gap: 4px; align-items: center; }
 .fgrp .ruleadd, .fgrp .rulecopy, .fgrp .rulepaste { font-size: var(--fs-xs); line-height: 1;
     padding: 2px 6px; min-height: 0; text-transform: none; letter-spacing: 0; }
@@ -292,9 +389,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     background-color: var(--bg); border-color: var(--line);
     background-image: radial-gradient(circle at center, var(--muted) 0 5px, transparent 5.5px);
 }
+/* checked slide-toggle takes the NODE's type colour (--nt), not the global blue accent — so a
+   toggle reads as part of its node. Falls back to --accent on cards with no type tint. */
 .gnode input[type="checkbox"]:checked {
-    background-color: color-mix(in srgb, var(--accent) 18%, var(--bg)); border-color: var(--accent);
-    background-image: radial-gradient(circle at center, var(--accent) 0 5px, transparent 5.5px);
+    background-color: color-mix(in srgb, var(--nt, var(--accent)) 20%, var(--bg)); border-color: var(--nt, var(--accent));
+    background-image: radial-gradient(circle at center, var(--nt, var(--accent)) 0 5px, transparent 5.5px);
 }
 .flab input[type="checkbox"] { justify-self: start; margin-left: 0; margin-right: 0; }
 .gnode .gn-row input:not([type="checkbox"]) { flex: 1 1 0; min-width: 0; }
@@ -321,7 +420,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .sb-calib .sbc-row { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); }
 .sb-calib .sbc-row > span { color: var(--text); font-variant-numeric: tabular-nums; }
 /* scroll-calibration cutouts: a draggable list of scrollbar crops, each with rows-from-top */
-.sb-h { margin-top: 12px; margin-bottom: 4px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; }
+.sb-h { margin-top: 12px; margin-bottom: 4px; }   /* look = shared .gnode subheading rule */
 .sb-cuts { display: flex; flex-direction: column; gap: 4px; }
 .sb-cut { display: flex; align-items: flex-start; gap: 8px; padding: 4px; border: 1px solid var(--line); border-radius: 4px; cursor: grab; }
 .sb-cut:active { cursor: grabbing; }
@@ -385,13 +484,16 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    direction reads at a glance. No animation (constant repaint is too costly). */
 .gedge.flow { stroke-width: 1.8; opacity: 1; marker-end: url(#flowarrow); }
 .flowarrow-head { fill: context-stroke; }   /* arrow takes the line's colour (orange, or accent when selected) */
-.gedge.ownwin { stroke: var(--window); }   /* game→window: match the window icon tint (yellow) */
-.gedge.owndict { stroke: var(--purple); }  /* game→dictionary: match the dict icon tint */
-.gedge.field { stroke: var(--accent); }
-.gedge.detect, .gedge.scrollbar { stroke: var(--ok); }
+/* node-identity edges read the SAME per-type token as the node they leave, so a card's border
+   colour and its outgoing wire always match (change the hue once in base.css --nt-<type>). */
+.gedge.ownwin { stroke: var(--nt-window); }      /* game→window */
+.gedge.owndict { stroke: var(--nt-dictionary); } /* game→dictionary */
+.gedge.field { stroke: var(--nt-region); }
+.gedge.detect { stroke: var(--nt-detect); }
+.gedge.scrollbar { stroke: var(--nt-scrollbar); }
 .gedge.state { stroke: var(--warn); }
-.gedge.item { stroke: var(--record); }
-.gedge.tell { stroke: var(--ok); }   /* item -> its tell nodes (pass/fail checks) */
+.gedge.item { stroke: var(--nt-item); }
+.gedge.tell { stroke: var(--nt-itemtell); }   /* item -> its tell nodes (pass/fail checks) */
 .gedge.attach { stroke: var(--accent); }
 .gedge.img { stroke: var(--muted); stroke-dasharray: 2 4; }
 /* trigger -> the price node it fires: cyan, solid, ending in a filled hexagon (not the flow arrow).
@@ -573,7 +675,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .item-readout .ir-c { color: var(--muted); }                        /* the ":" separator column */
 .item-readout .ir-v { min-width: 0; overflow-wrap: anywhere; }       /* value column wraps, never widens the node */
 .item-lists { margin-top: 6px; }
-.item-lists .il-h { margin-top: 20px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--line); }
+.item-lists .il-h { margin-top: 16px; margin-bottom: 4px; }   /* look = shared .gnode subheading rule */
 .ti-row, .key-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
 .ti-row .ti-kind { min-width: 52px; color: var(--muted); }
 .ti-row input[type="number"] { width: 52px; }
@@ -598,7 +700,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* Reorderable priority list — shared by the window node's item templates (top = priority 0) and
    the game node's window-priority list (top = recognised first). Reorder with the ▲/▼ buttons;
    the number itself is never shown. One rule set, both callers (rule 7). */
-.win-controls .wi-h, .game-priority .wi-h { margin-top: 14px; margin-bottom: 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 1px solid var(--muted); }
+.win-controls .wi-h, .game-priority .wi-h { margin-top: 14px; margin-bottom: 4px; }   /* look = shared .gnode subheading rule */
 .wi-row, .wp-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
 .wi-row .wi-name, .wp-row .wp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
 .wi-row .wi-name:hover, .wp-row .wp-name:hover { background: var(--hover); }   /* rounded pill hover, like .if-sum */
@@ -638,7 +740,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .key-sec { margin: 6px 0; }
 .prev-count { padding: 4px 8px; font-size: var(--fs-sm); }
 
-.gnode.selected { border-color: var(--sel-node); box-shadow: 0 0 0 0px var(--sel-node); z-index: 20; }
+/* selected node: ringed + lit in its OWN type hue (blueprint reserves the accent glow for the
+   selection, so the resting board stays flat). Falls back to white-ish when a card has no --nt. */
+.gnode.selected { border-color: var(--nt); box-shadow: 0 0 0 1px var(--nt), 0 10px 30px #000000a6; z-index: 20; }
 .gnode.multisel { border-color: var(--sel); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sel) 60%, transparent); }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
