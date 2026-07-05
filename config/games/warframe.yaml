@@ -1797,6 +1797,7 @@ triggers:
   readout_value: 0.0
   targets:
   - relic_sound
+  - toast_2
   enabled: true
   dataset_targets: []
   dataset_action: ''
@@ -2442,11 +2443,7 @@ layout:
     sound:relic_sound:
       x: 3500.0
       y: -1320.0
-      w: 220.0
-      h: 320.0
       collapsed: false
-      custW: false
-      custH: false
     vt:ds:relic_contents:
       x: -1680.0
       y: -2200.0
