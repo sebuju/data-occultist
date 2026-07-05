@@ -11,6 +11,10 @@ Kinds:
 * ``interval``     — fire every ``interval_s`` seconds (:meth:`tick`, called each loop pass).
 * ``on_change``    — fire when a watched dataset gains records (:meth:`on_change`), pricing ONLY
   those changed keys (resolved to slugs) so a relic-reward read prices ~4 items, not the world.
+  A watched SUBSET only justifies a fire when its computed/visible output actually changed.
+* ``on_any_change``— same watch mechanics as ``on_change``, but a subset watch fires on EVERY
+  write reaching it, even one that leaves the subset's visible output unchanged (e.g. a hidden
+  join column). Use when "data entered" itself is the signal, not "the joined view differs".
 * ``on_app_start`` — fire once when the teach/web app boots (:meth:`fire_app_start`).
 * ``on_capture``   — fire when a capture session starts, live OR precapture (:meth:`fire_capture`).
 * ``on_live_start``— fire when the server live-collection session starts (:meth:`fire_live_start`).
@@ -181,17 +185,20 @@ class TriggerRunner:
     # ---- on_change ---------------------------------------------------------
 
     def on_change(self, dataset: str | None, changed_records: list[dict]) -> list[str]:
-        """Fire on_change triggers watching ``dataset``, pricing only ``changed_records``.
-        Returns fired trigger ids.
+        """Fire ``on_change``/``on_any_change`` triggers watching ``dataset``, pricing only
+        ``changed_records``. Returns fired trigger ids.
 
-        A DIRECT dataset watch fires whenever the dataset changes (the records ARE new). A
-        SUBSET watch fires only when the subset's COMPUTED output actually changes — a source
-        update that leaves the join byte-for-byte identical (e.g. a price for an item the
-        inventory doesn't hold) is NOT a change to the watched data, so it must not fire.
+        A DIRECT dataset watch fires whenever the dataset changes (the records ARE new) for
+        either kind. A SUBSET watch differs by kind: ``on_change`` fires only when the subset's
+        COMPUTED output actually changes — a source update that leaves the join byte-for-byte
+        identical (e.g. a price for an item the inventory doesn't hold) is NOT a change to the
+        watched data, so it must not fire; ``on_any_change`` skips that check and fires on every
+        write reaching the subset, regardless of whether its visible output moved.
 
         ``changed_records`` may be empty — a clear / removal changed the watched data but leaves
-        nothing to price. A direct watch still fires (its data changed); a subset watch fires iff
-        its computed output changed. Either way ``_fire_targets`` prices nothing (empty items)."""
+        nothing to price. A direct watch still fires (its data changed); an ``on_change`` subset
+        watch fires iff its computed output changed; an ``on_any_change`` subset watch always
+        fires. Either way ``_fire_targets`` prices nothing (empty items)."""
         if not dataset:
             return []
         fired: list[str] = []
@@ -200,10 +207,15 @@ class TriggerRunner:
         stored = read_subset_sigs(self._data_dir, self._profile.name)
         new_sigs: dict[str, str] = {}       # subset id -> fresh sig to persist
         for t in self._profile.triggers:
-            if not t.enabled or t.kind != "on_change":
+            if not t.enabled or t.kind not in ("on_change", "on_any_change"):
                 continue
-            justifying = [w for w in t.watch
-                          if self._watch_justifies(w, dataset, stored, sig_changed, new_sigs)]
+            if t.kind == "on_any_change":
+                # no output-changed gate: any write reaching a watched dataset/subset justifies.
+                justifying = [w for w in t.watch
+                              if w == dataset or self._subset_reaches(w, dataset, set())]
+            else:
+                justifying = [w for w in t.watch
+                              if self._watch_justifies(w, dataset, stored, sig_changed, new_sigs)]
             if not justifying:
                 continue
             if items is None:

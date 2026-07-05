@@ -159,6 +159,35 @@ def test_on_change_subset_fires_only_when_joined_output_changes(tmp_path):
     assert calls == ["px", "px"]   # fired twice total (baseline + real change), not on the no-ops
 
 
+def test_on_any_change_subset_fires_even_when_joined_output_unchanged(tmp_path):
+    # same join as test_on_change_subset_fires_only_when_joined_output_changes, but with
+    # kind="on_any_change" — every write reaching the subset must fire, including the two
+    # cases that on_change correctly suppresses (irrelevant row, hidden-column-only change).
+    inv = _ds(tmp_path, "inv")
+    inv.begin_batch(); inv.record_seen({"name": "Soma Prime", "count": 2}); inv.save()
+    prices = _ds(tmp_path, "prices")
+    prices.begin_batch(); prices.record_seen({"name": "Soma Prime", "price": 10, "updated": "t1"}); prices.save()
+
+    profile = _join_profile()
+    profile.triggers[0].kind = "on_any_change"
+    calls = []
+    tr = TriggerRunner(profile, tmp_path,
+                       fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+
+    assert tr.on_change("prices", [{"name": "Soma Prime", "price": 10}]) == ["watch"]
+
+    # a price for an item NOT in inventory -> on_change would drop this (join output unchanged)
+    prices.begin_batch(); prices.record_seen({"name": "Dagger", "price": 5}); prices.save()
+    assert tr.on_change("prices", [{"name": "Dagger", "price": 5}]) == ["watch"]
+
+    # only the HIDDEN `updated` timestamp changes -> on_change would drop this too
+    prices.begin_batch(); prices.record_seen({"name": "Soma Prime", "updated": "t2"}); prices.save()
+    assert tr.on_change("prices", [{"name": "Soma Prime", "updated": "t2"}]) == ["watch"]
+
+    assert calls == ["px", "px", "px"]
+    assert not read_subset_sigs(tmp_path, "g")   # no sig bookkeeping needed for on_any_change
+
+
 def test_gather_source_names_from_dataset(tmp_path):
     ds = DatasetStore(tmp_path, "g", "master", key=KeySpec(fields=("name",)))
     ds.begin_batch()

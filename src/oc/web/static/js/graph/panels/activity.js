@@ -216,17 +216,18 @@ function activityJobs(data, elapsed = 0) {
         const enabled = t.enabled !== false;
         const running = (t.targets || []).some((x) => x.running);
         let prog;
+        const watchLabel = t.kind === "on_any_change" ? "any change" : "on change";
         if (!enabled) {
             prog = t.kind === "interval" ? `disabled · every ${fmtDur(t.interval_s)}`
-                : t.kind === "on_change" ? `disabled · on change: ${(t.watch || []).join(", ") || "—"}`
+                : (t.kind === "on_change" || t.kind === "on_any_change") ? `disabled · ${watchLabel}: ${(t.watch || []).join(", ") || "—"}`
                 : "disabled";
         } else if (t.kind === "interval") {
             const remaining = Math.max(0, (t.next_in || 0) - elapsed);   // age locally between fetches
             prog = running ? "firing now…"
                 : remaining <= 0 ? `due… · every ${fmtDur(t.interval_s)}`
                 : `fires in ${fmtDur(remaining)} · every ${fmtDur(t.interval_s)}`;
-        } else if (t.kind === "on_change") {
-            prog = `on change: ${(t.watch || []).join(", ") || "—"}${running ? " · firing now…" : ""}`;
+        } else if (t.kind === "on_change" || t.kind === "on_any_change") {
+            prog = `${watchLabel}: ${(t.watch || []).join(", ") || "—"}${running ? " · firing now…" : ""}`;
         } else { prog = t.kind; }
         // last-activation gets its OWN (third) row, not crammed onto the status line. `lastTs`
         // (set only when it's a real elapsed time) drives the optimistic 1s "ago" tick; `last` is
