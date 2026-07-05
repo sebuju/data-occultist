@@ -97,7 +97,7 @@
 /* editable meter: a draggable threshold bar that REPLACES a number input (field conf, tell conf).
    Segments flex to fill whatever cell it lands in (count is cosmetic), so it works at any node
    width. The whole row is the hit target; the value reads to the right like the preview's bars. */
-.meter.editable { display: flex; width: 100%; min-width: 0; cursor: pointer; gap: 6px; align-items: center; }
+.meter.editable { display: flex; min-width: 0; cursor: pointer; gap: 6px; align-items: center; margin-left: 4px; }
 /* FIXED-width segments (not flex) — flex 1fr rounds to uneven sub-pixel widths that look ragged.
    Fixed px keeps every segment identical at any node width; the value is pushed to the right edge. */
 .meter.editable .segs { flex: 0 0 auto; gap: 2px; flex-wrap: nowrap; }
@@ -296,8 +296,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    would size every row independently and the values wouldn't line up into a column. 80px fits the
    longest field label (glyph-check); rare longer labels spill into the gap, never clipped. Rows
    sit close together (small margin + tight min-height) for the condensed preview look. */
-.flab { display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 2px 10px;
-    margin: 1px 0 0; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap;   /* kill the global label{margin-bottom:6px} — that was the loose row gap */
+.flab { display: grid; grid-template-columns: 80px 1fr; align-items: start; gap: 2px 10px;
+    margin: 1px 0 0; font-size: var(--fs-sm); color: var(--muted);   /* kill the global label{margin-bottom:6px} — that was the loose row gap */
     /* hold every row to the de-chromed control height so slide-toggle rows line up with text/select
        rows (the toggle is shorter) — kept just above the input's own box so rows sit tight like the
        preview, no dead vertical space. */
@@ -395,7 +395,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     background-color: color-mix(in srgb, var(--nt, var(--accent)) 20%, var(--bg)); border-color: var(--nt, var(--accent));
     background-image: radial-gradient(circle at center, var(--nt, var(--accent)) 0 5px, transparent 5.5px);
 }
-.flab input[type="checkbox"] { justify-self: start; margin-left: 0; margin-right: 0; }
+.flab input[type="checkbox"] { justify-self: start; align-self: center; margin-top: 1px; margin-left: 4px; margin-right: 0; }
 .gnode .gn-row input:not([type="checkbox"]) { flex: 1 1 0; min-width: 0; }
 .detect-status { margin-top: 4px; font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .detect-status:empty::before { content: "\00a0"; }   /* hold the row height when status is empty — no layout jump */
