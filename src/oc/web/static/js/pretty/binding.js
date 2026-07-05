@@ -168,10 +168,26 @@ export function resolveToken(ctx, inner) {
     return "";
 }
 
-// Replace every {{token}} in `text` with its resolved value (numbers trimmed to a tidy form).
+// A trailing `|round:N` / `|dp:N` / `|fixed:N` / `|.Nf` directive sets a fixed decimal count
+// (0 => integer). Kept as the last `|` segment so it never collides with an aggregate or a join
+// delimiter. Returns [core, dp|null]. Mirrors templating.py `_split_format`.
+const _FMT = /^(?:round|dp|fixed):(\d+)$|^\.(\d+)f$/i;
+function splitFormat(inner) {
+    const parts = inner.split("|");
+    if (parts.length > 1) {
+        const m = parts[parts.length - 1].trim().match(_FMT);
+        if (m) return [parts.slice(0, -1).join("|").trim(), +(m[1] != null ? m[1] : m[2])];
+    }
+    return [inner, null];
+}
+
+// Replace every {{token}} in `text` with its resolved value. A `|round:N` suffix formats to N
+// decimals; otherwise numbers trim to int-bare / 2dp.
 export function renderDynamicText(ctx, text) {
     return String(text == null ? "" : text).replace(/\{\{(.+?)\}\}/g, (_m, inner) => {
-        const v = resolveToken(ctx, inner.trim());
+        const [core, dp] = splitFormat(inner.trim());
+        const v = resolveToken(ctx, core);
+        if (dp != null) { const n = Number(v); return Number.isFinite(n) ? n.toFixed(dp) : (v == null ? "" : String(v)); }
         if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(2);
         return v == null ? "" : String(v);
     });

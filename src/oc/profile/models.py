@@ -757,7 +757,8 @@ class FilterRule(BaseModel):
 class DerivedColumn(BaseModel):
     """A column computed from other columns of a row. ``template`` is plain text with
     ``{column}`` placeholders substituted from the row's values, e.g. an arcane's display
-    string ``"{name} [{rank}]"`` or a market slug source ``"{name}"``."""
+    string ``"{name} [{rank}]"`` or a market slug source ``"{name}"``. A math form
+    (``={expr}`` or inline ``{=expr}``) may end with ``|round:N`` to fix its decimals."""
 
     name: str
     template: str = ""

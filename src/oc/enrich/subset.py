@@ -14,6 +14,10 @@ To mix literal text with math, use an inline ``{=expr}`` block inside an ordinar
 template (do NOT lead with ``=``): e.g. ``{=count*price_median} plat`` -> ``96 plat``.
 Inline math whose operands are missing/non-numeric collapses to an empty string, leaving
 the surrounding literal text intact.
+
+A math expression (either form) may carry a trailing ``|round:N`` directive to fix its
+decimals: ``={price_median}/{count}|round:0`` yields an integer, ``|round:1`` one decimal
+(``|dp:N`` / ``|fixed:N`` / ``|.Nf`` are aliases). Without it numbers tidy to int-bare / 2dp.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ import operator
 import re
 from functools import lru_cache
 
+from ..numfmt import split_dp
 from ..profile.models import DerivedColumn, FilterRule, JoinNorm, JoinSource, SortRule, SubsetDef
 from ..store.textnorm import norm_text
 
@@ -99,14 +104,29 @@ def match_rule(row: dict, rule: FilterRule) -> bool:
 
 
 def render_template(template: str, row: dict) -> str:
-    """Substitute ``{column}`` placeholders from a row's values (missing -> empty)."""
-    return _PLACEHOLDER.sub(lambda m: "" if row.get(m.group(1)) is None else str(row.get(m.group(1))), template)
+    """Substitute ``{column}`` placeholders from a row's values (missing -> empty). A placeholder
+    may carry a ``|round:N`` directive (``{price_min|round:0}``) to fix a numeric value's
+    decimals; a non-numeric value ignores it and substitutes as-is."""
+    def sub(m):
+        col, dp = split_dp(m.group(1))
+        v = row.get(col)
+        if v is None:
+            return ""
+        if dp is not None:
+            try:
+                return f"{float(v):.{dp}f}"
+            except (TypeError, ValueError):
+                return str(v)
+        return str(v)
+    return _PLACEHOLDER.sub(sub, template)
 
 
 def _eval_math(expr: str, row: dict):
     """Evaluate one arithmetic expression over a row's numeric ``{column}`` placeholders.
     Returns an int/float, or ``None`` if any operand is missing/non-numeric or the
-    expression is malformed."""
+    expression is malformed. A trailing ``|round:N`` directive fixes the result to N
+    decimals (``0`` => integer); absent it, numbers tidy to int-bare / 2dp."""
+    expr, dp = split_dp(expr)
     ok = True
 
     def sub(m):
@@ -124,6 +144,9 @@ def _eval_math(expr: str, row: dict):
         val = _eval_arith(substituted, row)
     except (ValueError, SyntaxError, ZeroDivisionError):
         return None
+    if dp is not None:
+        r = round(float(val), dp)
+        return int(r) if dp == 0 else r
     return int(val) if isinstance(val, float) and val.is_integer() else round(val, 2)
 
 
@@ -133,7 +156,8 @@ def _derive_cell(template: str, row: dict):
       expression (empty if any operand is missing/non-numeric);
     - otherwise it's text: inline ``{=expr}`` blocks evaluate to their number (empty on a
       missing/non-numeric operand), plain ``{column}`` placeholders substitute values, and
-      everything else is kept literally — so static strings and math freely mix."""
+      everything else is kept literally — so static strings and math freely mix.
+    Either math form may end with ``|round:N`` to fix its decimals (see :func:`_eval_math`)."""
     if template.startswith("=") and "{=" not in template:
         val = _eval_math(template[1:], row)
         return "" if val is None else val

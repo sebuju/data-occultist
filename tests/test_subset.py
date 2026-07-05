@@ -68,6 +68,32 @@ def test_inline_math_mixes_static_text():
     assert rows["Junk"]["worth"] == " plat"               # missing operand -> empty math, text stays
 
 
+def test_round_directive_fixes_derived_decimals():
+    inv = [{"name": "A", "count": 3, "present": True}]
+    prices = [{"name": "A", "price_median": 10, "present": True}]
+    sub = SubsetDef(id="v", sources=[_src("m"), _src("p")], derived=[
+        DerivedColumn(name="each0", template="={price_median}/{count}|round:0"),   # pure math
+        DerivedColumn(name="each1", template="={price_median}/{count}|round:1"),
+        DerivedColumn(name="inline", template="{=price_median/count|round:2} pl"),  # inline math
+        DerivedColumn(name="plain", template="={price_median}/{count}"),            # no directive
+    ])
+    row = compute_view([("m", inv), ("p", prices)], sub)["rows"][0]
+    assert row["each0"] == 3          # 3.333 -> integer (round:0)
+    assert row["each1"] == 3.3        # one decimal
+    assert row["inline"] == "3.33 pl"  # inline math rounded, literal text kept
+    assert row["plain"] == 3.33       # default tidy stays 2dp
+
+
+def test_round_directive_on_plain_placeholder_in_text():
+    inv = [{"name": "Acceltra", "count": 2, "present": True}]
+    prices = [{"name": "Acceltra", "price_min": 47.6, "present": True}]
+    sub = SubsetDef(id="v", sources=[_src("m"), _src("p")], derived=[
+        DerivedColumn(name="label", template="{name} {price_min|round:0}p"),
+    ])
+    row = compute_view([("m", inv), ("p", prices)], sub)["rows"][0]
+    assert row["label"] == "Acceltra 48p"   # placeholder rounds, name substitutes, text kept
+
+
 def test_leading_equals_still_pure_math():
     inv = [{"name": "X", "count": 2, "present": True}]
     prices = [{"name": "X", "price_median": 48}]
