@@ -184,7 +184,7 @@
    as expanded (so toggling never changes its height), but pull the bottom margin to -7 too
    (matching the top) so the header covers the node's bottom padding — no empty strip below.
    Divider colour hidden, all four corners rounded. */
-.gnode.collapsed .gn-h { margin: -7px -8px; border-bottom-color: transparent; border-radius: 8px; }
+.gnode.collapsed .gn-h { margin: -6px -8px; border-bottom-color: transparent; border-radius: 8px; }
 .gnode .gn-h.pulse { animation: pulse 1.2s ease-out; }
 /* node-type tag in the header, always shown (delete/detach moved to the selection toolbar, so
    nothing hover-reveals over it anymore). In normal flow now. pointer-events:none + lower z so
