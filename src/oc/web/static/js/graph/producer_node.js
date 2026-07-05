@@ -172,7 +172,13 @@ export function producerParts(pn, cols = [], free = []) {
             listBlock("pr-exp", spec.explode || [], "array path (e.g. relics)", "+ level", "a nested array path, relative to the prior level"),
             labCell("fields", "response → dataset columns", true), fieldsBlock(spec.fields || []),
             labCell("status", "live sweep progress ('idle' when not running)"),
-            h("div", { class: "enr-prog livestats" })),
+            h("div", { class: "enr-prog livestats" }),
+            // segmented progress meter (done/total) — built ONCE here; reflectStatus() only
+            // toggles each seg's on/off class + the pct text (reconcile in place, no rebuild).
+            // Hidden until a sweep is running (nothing to meter at idle).
+            h("div", { class: "enr-meter meter gspan", hidden: true },
+                h("div", { class: "segs" }, ...Array.from({ length: 12 }, () => h("span", { class: "seg off" }))),
+                h("span", { class: "pct" }))),
         h("div", { class: "gn-foot" },
             h("button", { class: "enr-refresh" }, "↻ fetch")));   // doubles as cancel while running
     return { title, body, ports: port };
@@ -203,11 +209,25 @@ export function wireProducerNode(div, game, dataset, mode = "", type = "http",
 
     // ONE button, like every other node: idle = start; while running it carries `.reading`
     // (CSS appends the spinner) and a second click cancels. No separate cancel button.
+    // Fill the segmented meter to done/total (0..1); hide it when there's nothing to meter.
+    // Toggles existing seg nodes' classes — never rebuilds the scaffold (reconcile in place).
+    function setMeter(frac) {
+        const m = $(".enr-meter");
+        if (!m) return;
+        if (frac == null) { m.hidden = true; return; }
+        m.hidden = false;
+        const segs = m.querySelectorAll(".seg");
+        const lit = Math.round(Math.max(0, Math.min(1, frac)) * segs.length);
+        segs.forEach((s, i) => { const on = i < lit; s.classList.toggle("on", on); s.classList.toggle("off", !on); });
+        m.querySelector(".pct").textContent = `${Math.round(frac * 100)}%`;
+    }
+
     function reflectStatus(st) {
         const prog = $(".enr-prog");
         if (st.blocked) {                             // another producer in this game is sweeping
             btn.classList.remove("reading"); btn.disabled = false; btn.textContent = startLabel;
             prog.textContent = "another producer is busy — try again when it finishes";
+            setMeter(null);
             return;
         }
         const running = !!st.running;
@@ -218,11 +238,14 @@ export function wireProducerNode(div, game, dataset, mode = "", type = "http",
         if (running) {
             const el = elapsed(st.started);
             prog.textContent = `${st.done}/${st.total || "…"} · ${st.fetched} ok · ${el} · ${st.last || ""}`.trim();
+            setMeter(st.total ? st.done / st.total : null);   // no total yet -> no bar (spinner covers it)
             if (!div._enrPoll) poll();
         } else if (st.finished) {
             prog.textContent = `done: ${st.fetched}/${st.total} (${st.failed} failed) in ${elapsed(st.started, st.finished)}`;
+            setMeter(null);
         } else {
             prog.textContent = "idle";
+            setMeter(null);
         }
     }
 

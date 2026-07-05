@@ -11,6 +11,7 @@
 //   ports -> a Node/frag or null (default null)
 //   pulse -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
 import { h, frag, svg, TRASH, PLUS, COPY, PASTE } from "../dom.js";
+import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
 import { ITEM_KINDS } from "./imaging.js";
@@ -42,18 +43,16 @@ export function satToggleBtn(satId, kind) {
     }, (_SAT_ICON[kind] || SAT_GRID)());
 }
 
-// SVG track+thumb shared by every header slide toggle (enable switch, vt-table "show removed").
-// The off/on look (--line vs --accent, thumb slides right) is driven by the `.gn-slide` CSS.
-const SLIDE_THUMB = () => svg("svg", { viewBox: "0 0 28 16", width: "28", height: "16", "aria-hidden": "true" },
-    svg("rect", { class: "gt-track", x: "1", y: "1", width: "26", height: "14", rx: "7" }),
-    svg("circle", { class: "gt-thumb", cx: "8", cy: "8", r: "5" }));
-// A header slide toggle (role=switch). `cls` = caller class for positioning/wiring; optional
-// `label`; `hidden` starts it display:none (revealed later, e.g. once data shows it's relevant).
+// A slide toggle: now a NATIVE checkbox (base.css renders every checkbox as a slide switch,
+// node-tinted via graph.css --nt) — one toggle primitive, no bespoke SVG switch (rule 7). `cls` =
+// caller class for positioning/wiring; optional `label` (wraps checkbox + text in a <label>);
+// `hidden` starts it display:none (revealed later, e.g. once data shows it's relevant). Handlers
+// read `.checked` on the `change` event (the class stays on the checkbox even when labelled).
 export function slideToggle({ on, title, cls = "", label = "", hidden = false }) {
-    return h("button", {
-        type: "button", class: `gn-slide ${cls}${on ? " on" : ""}`.trim(), role: "switch",
-        "aria-checked": String(on), title, hidden,
-    }, label ? h("span", { class: "gn-slide-lbl" }, label) : null, SLIDE_THUMB());
+    const box = h("input", { type: "checkbox", class: `gn-slide ${cls}`.trim(), checked: on, title });
+    const root = label ? h("label", { class: "gn-slide-wrap" }, box, h("span", { class: "gn-slide-lbl" }, label)) : box;
+    if (hidden) root.hidden = true;
+    return root;
 }
 
 // per-dataset "show removed (no-longer-present) rows" flag for the vt-table satellite (default
@@ -413,8 +412,8 @@ export function fieldConfigBody(fd, cls, fid) {
             "isolate ", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate })),
         isText && h("label", { class: "flab", title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the game node." },
             "glyph-check ", h("input", { type: "checkbox", class: cls, dataset: { k: "glyph_check", ...da }, checked: !!fd.glyph_check })),
-        h("label", { class: "flab", title: "minimum OCR confidence this field must reach — a weaker genuine read drops the whole record (0 = use the global floor)" },
-            "conf ", h("input", { type: "number", class: cls, dataset: { k: "minconf", ...da }, step: "0.05", min: "0", max: "1", value: fd.min_confidence ?? 0 })),
+        h("label", { class: "flab", title: "minimum OCR confidence this field must reach — a weaker genuine read drops the whole record (0 = use the global floor). Drag the bar to set it." },
+            "conf ", confMeter({ cls, k: "minconf", value: fd.min_confidence ?? 0, fid })),
         h("div", { class: "fgrp" }, "rules ",
             h("div", { class: "frule-btns" },
                 h("button", { class: "rulecopy", dataset: { ...da }, disabled: !(fd.rules || []).length, title: "copy this pipeline" }, COPY()),
@@ -435,8 +434,8 @@ export function itemFieldParts(n) {
         h("div", { class: "fgrp" }, "row role"),
         h("label", { class: "flab", title: "require this field to read something — it doubles as a tell" },
             "tell ", h("input", { type: "checkbox", class: "itell", dataset: { fid: f.id }, checked: !!f.tell })),
-        f.tell && h("label", { class: "flab", title: "minimum OCR confidence the read must reach (0 = any)" },
-            "tell conf ", h("input", { type: "number", class: "itellconf", dataset: { fid: f.id }, step: "0.05", min: "0", max: "1", value: f.tell_conf ?? 0 })),
+        f.tell && h("label", { class: "flab", title: "minimum OCR confidence the read must reach (0 = any). Drag the bar to set it." },
+            "tell conf ", confMeter({ cls: "itellconf", value: f.tell_conf ?? 0, fid: f.id })),
         (f.tell && fd.type === "number") && h("label", { class: "flab", title: "pass the tell even when the read carries text (e.g. a unit symbol or glyph), not only a clean number" },
             "allow text ", h("input", { type: "checkbox", class: "itelltext", dataset: { fid: f.id }, checked: !!f.tell_allow_text })),
         h("label", { class: "flab", title: "use this field to LOCATE rows (anchor the grid) — independent of tell; a reliable text field (e.g. the name) can locate without being a tell" },

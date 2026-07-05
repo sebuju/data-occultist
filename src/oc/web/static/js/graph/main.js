@@ -1649,18 +1649,12 @@ function wireToast(div, n) {
         try { await navigator.clipboard.writeText(token); setStatus(`copied ${token}`); }
         catch { setStatus(`copy failed — ${token}`); }
     }));
-    // gn-slide switches (role=switch, not a checkbox) — flip on click, toggle .on, persist
-    $(".tn-muted")?.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const tog = e.currentTarget, on = tog.getAttribute("aria-checked") !== "true";
-        tog.setAttribute("aria-checked", on); tog.classList.toggle("on", on);
-        model.setToastProp(x.id, "muted", on); autosave(null);
+    // slide toggles are native checkboxes now — read `.checked` on change
+    $(".tn-muted")?.addEventListener("change", (e) => {
+        model.setToastProp(x.id, "muted", e.currentTarget.checked); autosave(null);
     });
-    $(".tn-showicon")?.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const tog = e.currentTarget, on = tog.getAttribute("aria-checked") !== "true";
-        tog.setAttribute("aria-checked", on); tog.classList.toggle("on", on);
-        model.setToastProp(x.id, "show_icon", on); autosave(null);
+    $(".tn-showicon")?.addEventListener("change", (e) => {
+        model.setToastProp(x.id, "show_icon", e.currentTarget.checked); autosave(null);
     });
     // test button: pop the toast now with its current config (mirrors the trigger's ↻ fire). The
     // server reads the toast from the SAVED profile, so commit the live field values + FLUSH the
@@ -1744,10 +1738,10 @@ function wireSound(div, n) {
             () => { render(); autosave(null); });
     });
     $(".sn-file")?.addEventListener("change", (e) => { model.setSoundFile(x.id, e.target.value); autosave(null); });
-    // volume slider: `input` (not change) so the % label tracks the live drag; autosave coalesces the writes
-    $(".sn-volume")?.addEventListener("input", (e) => {
+    // volume is a segmented meter now (confMeter) — it dispatches `change` on drag; the bar shows
+    // its own level, so there's no separate % label to sync. autosave coalesces the writes.
+    $(".sn-volume")?.addEventListener("change", (e) => {
         model.setSoundVolume(x.id, e.target.value);
-        const lab = $(".sn-volnum"); if (lab) lab.textContent = `${Math.round((model.soundNode(x.id)?.volume ?? 1) * 100)}%`;
         autosave(null);
     });
     // ▶ audition the sound now at the current volume (also unlocks browser autoplay for later auto-fires)
@@ -1785,22 +1779,16 @@ function wireSource(div, n) {
     $(".src-filename")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "filename", e.target.value); autosave(null); schedulePreview(); });
     $(".src-path")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "path", e.target.value); autosave(null); schedulePreview(); });
     $(".src-throttle")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "throttle_s", e.target.value); autosave(null); });
-    // gn-slide switches report state via aria-checked (role=switch), not a checkbox `.checked` —
-    // flip it on click, toggle the .on class, return the new value.
-    const flipSlide = (e) => {
-        e.stopPropagation();
-        const tog = e.currentTarget, on = tog.getAttribute("aria-checked") !== "true";
-        tog.setAttribute("aria-checked", on); tog.classList.toggle("on", on);
-        return on;
-    };
+    // slide toggles are native checkboxes now — the new state is `.checked` after the change event
+    const flipSlide = (e) => { e.stopPropagation(); return e.currentTarget.checked; };
     // tail on/off rebuilds the node so the "tail lines" count input shows/hides with it
-    $(".src-tail")?.addEventListener("click", (e) => { model.setSourceProp(s.id, "tail", flipSlide(e)); rebuildNode(n.id); autosave(null); schedulePreview(); });
+    $(".src-tail")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "tail", flipSlide(e)); rebuildNode(n.id); autosave(null); schedulePreview(); });
     $(".src-taillines")?.addEventListener("change", (e) => {
         const v = parseInt(e.target.value, 10);
         model.setSourceProp(s.id, "tail_lines", Number.isNaN(v) || v < 1 ? 1 : v);
         autosave(null); schedulePreview();
     });
-    $(".src-linepos")?.addEventListener("click", (e) => { model.setSourceProp(s.id, "line_position", flipSlide(e)); autosave(null); });
+    $(".src-linepos")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "line_position", flipSlide(e)); autosave(null); });
 
     // line filters (match clauses). add/remove change the parse output, so they refresh the preview
     // too — not just the inline edits below (the bug was removals leaving the preview stale).
@@ -1828,7 +1816,7 @@ function wireSource(div, n) {
         e.target.closest(".src-delim-wrap")?.classList.toggle("has-ws", ws);
     }));
     // per-field "required" gn-slide — flips whether an invalid value dismisses the row; re-preview
-    div.querySelectorAll(".src-req").forEach((tog) => tog.addEventListener("click", (e) => {
+    div.querySelectorAll(".src-req").forEach((tog) => tog.addEventListener("change", (e) => {
         const on = flipSlide(e);
         model.setSourceFieldProp(s.id, +e.currentTarget.dataset.i, "required", on);
         autosave(null); schedulePreview();
@@ -2092,8 +2080,8 @@ function fillNode(div, n, wire = true) {
     div.className = `gnode ${n.type}${isCollapsed ? " collapsed" : ""}${enabled ? "" : " node-disabled"}${hasRules ? " has-rules" : ""}${prettyDirty ? " pretty-dirty" : ""}`;
     if (n.type === "dataset") div.dataset.ds = n.ref;   // out-port drop target id (tabs moved to the vt-table satellite)
     const parts = nodeParts(n);
-    // the enable slide-toggle (gn-enable) — only on toggleable node types; null otherwise. Its
-    // .gn-enable class / aria-checked / state class are read by the post-build wiring below.
+    // the enable toggle (gn-enable checkbox) — only on toggleable node types; null otherwise. Its
+    // .gn-enable class + `.checked` state are read by the post-build wiring below.
     const toggle = canToggle
         ? slideToggle({ on: enabled, cls: "gn-enable", title: "enabled — turn off to skip this node during detection" })
         : null;
@@ -2119,11 +2107,9 @@ function fillNode(div, n, wire = true) {
         ...(parts.ports ? [parts.ports] : []));   // vttable nodes have no ports — replaceChildren would stringify undefined to a "undefined" text node
     div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
     const tog = div.querySelector(".gn-enable");
-    tog?.addEventListener("click", (e) => {
+    tog?.addEventListener("change", (e) => {
         e.stopPropagation();
-        const on = tog.getAttribute("aria-checked") !== "true";   // flip current state
-        tog.setAttribute("aria-checked", on);
-        tog.classList.toggle("on", on);
+        const on = e.currentTarget.checked;   // native checkbox state
         n.ref.enabled = on;
         div.classList.toggle("node-disabled", !on);
         const winId = n.type === "window" ? n.ref.id : n.win?.id;
@@ -3045,13 +3031,10 @@ function wireNode(div, n) {
             const pre = _bootDetails?.subsets?.[r.id] || null;
             queueMicrotask(() => refreshSubsetNode(r.id, pre));
         } else {
-            const rmTog = div.querySelector(".vt-showrm");   // "show removed" header slide toggle
-            rmTog?.addEventListener("click", (e) => {
+            const rmTog = div.querySelector(".vt-showrm");   // "show removed" header toggle (checkbox)
+            rmTog?.addEventListener("change", (e) => {
                 e.stopPropagation();
-                const on = rmTog.getAttribute("aria-checked") !== "true";
-                rmTog.setAttribute("aria-checked", on);
-                rmTog.classList.toggle("on", on);
-                vtShowRemoved.set(r.ds, on);
+                vtShowRemoved.set(r.ds, e.currentTarget.checked);
                 refreshDataNode(r.ds);   // re-filter the table (and the data-tab count) to match
             });
             const cur = dsTab.get(r.ds) || "data";
@@ -4014,6 +3997,12 @@ $("settingsBtn")?.addEventListener("click", () => {
                     h("option", { value: "auto" }, "Auto (CPU; GPU for precapture)"),
                     h("option", { value: "cpu" }, "CPU"),
                     h("option", { value: "gpu" }, "GPU"))),
+            // Where OCR inference ACTUALLY runs. The device select above is the CUDA cpu/gpu
+            // MODE; it reads "cpu" even when OCR runs on a non-NVIDIA GPU via DirectML (the
+            // iGPU path), which is confusing — this line states the real compute target.
+            h("div", { class: "set-row muted", id: "ocrComputeRow", hidden: true, title: "The inference engine + adapter OCR is running on right now." },
+                h("span", "running on"),
+                h("span", { id: "ocrComputeLbl" }, "")),
             // Backend-specific knobs: hidden until the server reports the engine has them.
             h("label", { class: "set-row", id: "ocrEngineRow", hidden: true, title: "Inference engine for the ppocr5 OCR backend. OpenVINO is often the faster CPU path on Intel; only installed runtimes are listed. Takes effect on the next read (model rebuilds lazily)." },
                 h("span", "engine"),
@@ -4352,7 +4341,10 @@ document.addEventListener("keydown", (ev) => {
 // only on a real change (steady-state ticks mutate nothing).
 function syncKillGpu(ocr) {
     const k = $("killGpuBtn"); if (!k) return;
-    const hidden = !(ocr && ocr.gpu_active);
+    // A LOADED GPU OCR session — CUDA (gpu_active) OR DirectML (dml_active, e.g. the iGPU).
+    // gpu_mem sums this process's dedicated VRAM across adapters, so it already reports the
+    // iGPU's footprint; the button frees either session via release().
+    const hidden = !(ocr && (ocr.gpu_active || ocr.dml_active));
     if (k.hidden !== hidden) k.hidden = hidden;
     // VRAM readout beside the button: the server process's dedicated GPU memory
     // (gpu_mem, bytes; null when unreadable). Same visibility as the button, and
@@ -4457,14 +4449,32 @@ async function wireOcrControls(root) {
                 autoOpt.textContent = noEngine ? "Auto (n/a: OpenVINO)" : AUTO_LBL;
             }
         }
+        // "running on" line: the ACTUAL compute target, so DirectML (iGPU) never reads as
+        // "cpu". Prefers a live session (gpu_active/dml_active); falls back to what the config
+        // WILL run on the next read when the lazy session isn't built yet.
+        const computeRow = root.querySelector("#ocrComputeRow"), computeLbl = root.querySelector("#ocrComputeLbl");
+        function computeTarget(s) {
+            if (s.dml_active || s.dml_requested) return "GPU · DirectML" + (s.dml_active ? "" : " (loads on next read)");
+            if (s.gpu_active) return "GPU · CUDA";
+            if (s.mode === "gpu" && s.gpu_available && s.cuda_capable !== false) return "GPU · CUDA (loads on next read)";
+            if (s.engine_type === "openvino") return "CPU / iGPU · OpenVINO";
+            return "CPU";
+        }
+        function syncCompute(s) {
+            if (!computeRow || !computeLbl) return;
+            const txt = computeTarget(s);
+            if (computeLbl.textContent !== txt) computeLbl.textContent = txt;
+            if (computeRow.hidden) computeRow.hidden = false;
+        }
         gateDevice(st);
         sel.value = st.mode || st.device;   // the select reflects the MODE, not the live device
         syncKillGpu(st);
+        syncCompute(st);
         sel.addEventListener("change", async () => {
             const done = timed(`OCR device → ${sel.value}`);
             // Keep the user's pick; only correct it if the server reports a different MODE. (Never
             // fall back to the live device — under "auto" that's cpu and would yank the dropdown.)
-            try { const r = await api.ocr.setDevice(sel.value); if (r.mode) sel.value = r.mode; syncKillGpu(r); done(); }
+            try { const r = await api.ocr.setDevice(sel.value); if (r.mode) sel.value = r.mode; syncKillGpu(r); syncCompute(r); done(); }
             catch (e) { done(String(e.message || e), "err"); }
         });
 
@@ -4482,7 +4492,7 @@ async function wireOcrControls(root) {
                 try {
                     const r = await api.ocr.setEngineType(engSel.value);
                     if (r.engine_type) engSel.value = r.engine_type;
-                    gateDevice(r); syncKillGpu(r);
+                    gateDevice(r); syncKillGpu(r); syncCompute(r);
                     done();
                 } catch (e) { done(String(e.message || e), "err"); }
             });
