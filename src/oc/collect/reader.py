@@ -198,6 +198,38 @@ class RegionReader:
             return {}
         return dict(zip(keys, self._ocr.read_lines(crops)))
 
+    def _detect_reads(self, frame: Frame, window: WindowDef,
+                      pending: list[tuple]) -> dict:
+        """Detection+recognition read of each box -> {key: (text, conf)}, OMITTING boxes
+        where the detector found no text. Unlike ``_focus_reads`` (recognition-only, whose
+        rec head ALWAYS emits a string — it hallucinates a value on a blank crop), this
+        gates on detection: an EMPTY box yields nothing, so a legitimately-absent readout
+        (an ability off cooldown, a cleared counter) produces no phantom reading. This is
+        exactly what the window's raw-OCR layer shows, since both run detection."""
+        out = {}
+        for key, box in pending:
+            if box.w <= 0 or box.h <= 0:
+                continue
+            crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
+            if crop.size == 0:
+                continue
+            if window.preprocess is not None:
+                crop = apply_preprocess(crop, window.preprocess)
+            # NO tiny-crop upscale here (unlike _box_crop): upscaling amplifies faint
+            # noise/edges until the detector fires on a blank box and the rec head reads a
+            # phantom value. Native res keeps this read as sensitive as the window's raw-OCR
+            # layer — so an empty box reads empty in both, not just the raw layer.
+            lines = self._ocr.read_image(crop)
+            if not lines:
+                continue
+            lines.sort(key=lambda ln: (ln.box.y + ln.box.h / 2, ln.box.x))
+            text = " ".join(ln.text for ln in lines).strip()
+            if not text:
+                continue
+            conf = sum(ln.confidence for ln in lines) / len(lines)
+            out[key] = (text, conf)
+        return out
+
     def _read_tell_boxes(self, frame: Frame, window: WindowDef, ic) -> dict:
         """OCR each FIELDLESS ``text`` tell's own box (cell-relative) -> {tell_id:(text,conf)}.
         A text tell bound to a field reuses that field's read for free; a fieldless one has
@@ -292,6 +324,12 @@ class RegionReader:
         cells = expand_cells(window)
         targets = self._targets_from_cells(cells, frame)
         text_boxes = [b for _, fid, b in targets if not self._is_pip(fields.get(fid))]
+        # No data area set yet: nothing to clip to and maybe no taught boxes at all, so OCR the
+        # WHOLE canvas — the raw-OCR layer then shows every line the engine found (field reads are
+        # unaffected: _gather still assigns lines by their box). clip is None iff data_area is None.
+        if clip is None:
+            ih, iw = frame.image.shape[:2]
+            clip = PixelBox(0, 0, iw, ih)
         lines = self._ocr_union(frame, text_boxes, window.preprocess, clip)
         return cells, lines, None
 
@@ -495,7 +533,7 @@ class RegionReader:
             if self._is_pip(fdef):
                 out[v.id] = self._pip_value(frame, box, fdef)
                 continue
-            text, conf = self._focus_reads(frame, window, [(v.id, box)]).get(v.id) or ("", 0.0)
+            text, conf = self._detect_reads(frame, window, [(v.id, box)]).get(v.id) or ("", 0.0)
             substituted, dropped = None, False
             if self._resolver and fdef:
                 resolved = self._resolver.resolve(fdef, text, conf)
@@ -526,9 +564,10 @@ class RegionReader:
         are omitted; the caller defaults them)."""
         cw, ch = frame.client.w, frame.client.h
         out: dict[str, tuple[str, float]] = {}
-        # readouts: one focus-read pass over every enabled readout box
+        # readouts: detection-gated read of every enabled readout box (NOT recognition-only —
+        # a blank box must read as empty, not a hallucinated value; see _detect_reads)
         ro_boxes = [(v.id, v.box.to_fraction().to_pixels(cw, ch)) for v in window.readouts if v.enabled]
-        ro_reads = self._focus_reads(frame, window, ro_boxes) if ro_boxes else {}
+        ro_reads = self._detect_reads(frame, window, ro_boxes) if ro_boxes else {}
         for v in window.readouts:
             if v.enabled and v.field in fields and v.field not in out:
                 out[v.field] = ro_reads.get(v.id) or ("", 0.0)
