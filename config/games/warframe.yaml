@@ -39,6 +39,8 @@ windows:
       then: extract
       strategy: number
       sep: /
+    - when: always
+      then: floor
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -104,33 +106,33 @@ windows:
   - id: ability_1_cd
     box:
       x: 0.8427847058918725
-      y: 0.8959201792770625
+      y: 0.8977720311289145
       w: 0.020163108940952967
-      h: 0.020972435875160622
+      h: 0.014490954393679131
     field: rof_3
     enabled: true
   - id: ability_2_cd
     box:
-      x: 0.8661162701878437
-      y: 0.8988094914664827
+      x: 0.865503246867423
+      y: 0.8991874673537482
       w: 0.021519925109674487
-      h: 0.016791710558324402
+      h: 0.015487808745133523
     field: rof_5
     enabled: true
   - id: ability_3_cd
     box:
-      x: 0.888639364018298
-      y: 0.8999249169406703
-      w: 0.022523093830454588
-      h: 0.020186825847039236
+      x: 0.8888997806849647
+      y: 0.9022397317554853
+      w: 0.022002260497121257
+      h: 0.016020159180372563
     field: rof_7
     enabled: true
   - id: ability_4_cd
     box:
-      x: 0.913586173904563
-      y: 0.9039627479471904
+      x: 0.912804923904563
+      y: 0.9044257109101534
       w: 0.019425253559241407
-      h: 0.01863692854672072
+      h: 0.01585915076894294
     field: rof_9
     enabled: true
   preprocess:
@@ -191,7 +193,7 @@ windows:
   - id: detect_h
     enabled: true
     search:
-      x: 0.09868772375184379
+      x: 0.09946897375184378
       y: 0.04085933584041986
       w: 0.33869291031996673
       h: 0.04192976141839593
@@ -1224,7 +1226,7 @@ subsets:
   latest_batch: true
   limit: 4
   config_collapsed: true
-- id: relic_rewards_price_from_stored
+- id: relic_rewards_with_price
   sources:
   - dataset: relic_rewards_limit
     join_field: name
@@ -1247,7 +1249,9 @@ subsets:
   filters: []
   derived:
   - name: price
-    template: '{price_min} platinium'
+    template: '{price_min|round:0} p'
+  - name: combined
+    template: '{name} {price_min|round:0}p'
   hidden_columns:
   - total
   - volume
@@ -1261,9 +1265,11 @@ subsets:
   - price_median
   - live_ask
   - key
-  - price_min
   - _pos
-  sort: []
+  - price_min
+  sort:
+  - field: price_min
+    desc: true
   sort_by: ''
   sort_desc: false
   latest_batch: false
@@ -1768,9 +1774,13 @@ triggers:
   kind: on_readout
   interval_s: 300.0
   watch: []
-  readout_watch: []
-  readout_op: gte
-  readout_value: 0.0
+  readout_watch:
+  - ability_1_cd
+  - ability_2_cd
+  - ability_3_cd
+  - ability_4_cd
+  readout_op: lt
+  readout_value: 3.0
   targets:
   - toast
   enabled: true
@@ -1781,7 +1791,7 @@ triggers:
   kind: on_change
   interval_s: 300.0
   watch:
-  - relic_rewards_price_from_stored
+  - relic_rewards_with_price
   readout_watch: []
   readout_op: gte
   readout_value: 0.0
@@ -1795,12 +1805,156 @@ toasts:
 - id: toast
   title: ''
   message: ''
+  texts:
+  - content: 120p median
+    style: captionsubtle
+    align: ''
+    max_lines: 0
+  - content: cooldown
+    style: title
+    align: ''
+    max_lines: 0
+  images:
+  - placement: hero
+    width: 364
+    height: 180
+    bg_type: gradient
+    color1: '#0a3d62'
+    color2: '#061826'
+    angle: 90
+    texts:
+    - content: Hero {{dataset:master}}
+      x: 182
+      y: 70
+      size: 30
+      color: '#ffd479'
+      align: center
+      width: 0
+      height: 0
+      bg_color: ''
+      wrap: true
+  - placement: none
+    width: 360
+    height: 140
+    bg_type: solid
+    color1: '#0a3d62'
+    color2: '#061826'
+    angle: 90
+    texts: []
   app_name: data-occultist
   duration: short
   icon: ''
+  show_icon: true
   attribution: ''
   muted: false
   enabled: true
+  sources: []
+- id: toast_2
+  title: ''
+  message: ''
+  texts:
+  - content: Relic
+    style: caption
+    align: ''
+    max_lines: 0
+  images:
+  - placement: hero
+    width: 360
+    height: 180
+    bg_type: solid
+    color1: '#15171c'
+    color2: '#061826'
+    angle: 90
+    texts:
+    - content: '{{subset:relic_rewards_with_price.name[0]}}'
+      x: 10
+      y: 10
+      size: 22
+      color: '#ffffff'
+      align: left
+      width: 290
+      height: 0
+      bg_color: '#000000'
+      wrap: true
+    - content: '{{subset:relic_rewards_with_price.name[1]}}'
+      x: 10
+      y: 85
+      size: 18
+      color: '#ffffff'
+      align: left
+      width: 290
+      height: 0
+      bg_color: ''
+      wrap: false
+    - content: '{{subset:relic_rewards_with_price.name[2]}}'
+      x: 10
+      y: 115
+      size: 18
+      color: '#ffffff'
+      align: left
+      width: 290
+      height: 0
+      bg_color: ''
+      wrap: false
+    - content: '{{subset:relic_rewards_with_price.name[3]}}'
+      x: 10
+      y: 145
+      size: 18
+      color: '#ffffff'
+      align: left
+      width: 290
+      height: 0
+      bg_color: ''
+      wrap: false
+    - content: '{{subset:relic_rewards_with_price.price[0]}}'
+      x: 350
+      y: 10
+      size: 22
+      color: '#ffffff'
+      align: right
+      width: 50
+      height: 0
+      bg_color: ''
+      wrap: false
+    - content: '{{subset:relic_rewards_with_price.price[1]}}'
+      x: 350
+      y: 85
+      size: 18
+      color: '#ffffff'
+      align: right
+      width: 50
+      height: 0
+      bg_color: ''
+      wrap: false
+    - content: '{{subset:relic_rewards_with_price.price[2]}}'
+      x: 350
+      y: 115
+      size: 18
+      color: '#ffffff'
+      align: right
+      width: 50
+      height: 0
+      bg_color: ''
+      wrap: false
+    - content: '{{subset:relic_rewards_with_price.price[3]}}'
+      x: 350
+      y: 145
+      size: 18
+      color: '#ffffff'
+      align: right
+      width: 50
+      height: 0
+      bg_color: ''
+      wrap: false
+  app_name: data-occultist
+  duration: short
+  icon: ''
+  show_icon: false
+  attribution: ''
+  muted: false
+  enabled: true
+  sources:
+  - subset:relic_rewards_with_price
 sounds:
 - id: owned_refresh_sound
   file: ding.wav
@@ -1809,6 +1963,10 @@ sounds:
 - id: relic_sound
   file: two-tone.wav
   volume: 0.45
+  enabled: true
+- id: bob
+  file: bob.wav
+  volume: 0.5
   enabled: true
 dictionaries:
 - id: wiki
@@ -1856,8 +2014,8 @@ layout:
     ds:prices_live:
       x: 840.0
       y: -4140.0
-      w: 500.0
-      h: 193.0
+      w: 520.0
+      h: 200.0
       collapsed: false
       custW: true
       custH: false
@@ -1880,14 +2038,14 @@ layout:
     sub:relic_rewards_limit:
       x: 3080.0
       y: -1700.0
-      w: 420.0
-      h: 320.0
+      w: 360.0
+      h: 344.0
       collapsed: false
       custW: true
       custH: false
     ds:relics_offered:
-      x: 2000.0
-      y: 1500.0
+      x: 2120.0
+      y: 1400.0
       collapsed: false
     ds:mods:
       x: -940.0
@@ -1898,7 +2056,7 @@ layout:
       custW: false
       custH: true
     win:mod_window:
-      x: -1640.0
+      x: -1480.0
       y: 3100.0
       collapsed: false
     item:mod_window:mod:
@@ -1906,7 +2064,7 @@ layout:
       y: 3100.0
       collapsed: false
     win:equipment_window:
-      x: -1580.0
+      x: -1440.0
       y: 320.0
       w: 500.0
       h: 1227.0
@@ -1914,7 +2072,7 @@ layout:
       custW: true
       custH: false
     sb:equipment_window:scrollbar:
-      x: -1840.0
+      x: -1700.0
       y: 1140.0
       collapsed: false
     item:equipment_window:arcane:
@@ -1926,7 +2084,7 @@ layout:
       y: 320.0
       collapsed: false
     det:equipment_window:detect_1:
-      x: -1840.0
+      x: -1700.0
       y: 740.0
       collapsed: false
     item:mod_window:drop_item:
@@ -1962,7 +2120,7 @@ layout:
       y: 3100.0
       collapsed: false
     fld:mod_window:mod:mod_drain:
-      x: -2240.0
+      x: -2120.0
       y: 3100.0
       collapsed: false
     fld:mod_window:mod:mod_count:
@@ -1984,10 +2142,6 @@ layout:
     sound:owned_refresh_sound:
       x: 420.0
       y: -2680.0
-      collapsed: false
-    sub:relic_rewards_price_from_stored:
-      x: 3540.0
-      y: -1700.0
       collapsed: false
     win:relic_select:
       x: -640.0
@@ -2027,17 +2181,9 @@ layout:
       collapsed: false
     prev:relic_select:
       x: -640.0
-      y: 3900.0
+      y: 3800.0
       w: 520.0
       h: 320.0
-      collapsed: false
-      custW: true
-      custH: false
-    vt:sub:relic_rewards_price_from_stored:
-      x: 3060.0
-      y: -520.0
-      w: 840.0
-      h: 360.0
       collapsed: false
       custW: true
       custH: false
@@ -2098,27 +2244,27 @@ layout:
       y: 1080.0
       collapsed: false
     item:relic_refinement:relic_item:
-      x: 1480.0
+      x: 1600.0
       y: 300.0
       collapsed: false
     fld:relic_refinement:relic_item:name:
-      x: 1220.0
+      x: 1240.0
       y: 300.0
       collapsed: false
     win:relic_rewards:
-      x: 2000.0
+      x: 2120.0
       y: 300.0
       collapsed: false
     item:relic_rewards:item_1:
-      x: 3380.0
+      x: 3620.0
       y: 300.0
       collapsed: false
     fld:relic_rewards:item_1:name:
-      x: 3140.0
+      x: 3260.0
       y: 300.0
       collapsed: false
     det:relic_rewards:detect_h:
-      x: 2560.0
+      x: 2680.0
       y: 300.0
       collapsed: false
     det:relic_select:detect_h:
@@ -2130,11 +2276,11 @@ layout:
       y: 300.0
       collapsed: false
     det:mod_window:detect_h:
-      x: -1920.0
+      x: -1740.0
       y: 3100.0
       collapsed: false
     det:equipment_window:detect_h:
-      x: -1840.0
+      x: -1700.0
       y: 320.0
       collapsed: false
     prev:relic_refinement:
@@ -2187,11 +2333,11 @@ layout:
       collapsed: false
     ds:relics_select:
       x: -640.0
-      y: 4280.0
+      y: 4180.0
       collapsed: false
     vt:ds:relics_offered:
-      x: 2400.0
-      y: 1500.0
+      x: 2520.0
+      y: 1400.0
       w: 560.0
       h: 480.0
       collapsed: false
@@ -2227,7 +2373,7 @@ layout:
       custH: true
     vt:ds:relics_select:
       x: -220.0
-      y: 4280.0
+      y: 4180.0
       w: 460.0
       h: 500.0
       collapsed: false
@@ -2278,15 +2424,15 @@ layout:
       custW: true
       custH: true
     prev:relic_rewards:
-      x: 2580.0
-      y: 820.0
+      x: 2680.0
+      y: 900.0
       w: 500.0
       h: 320.0
       collapsed: false
       custW: true
       custH: false
     trigger:trigger_on_new_relic:
-      x: 3740.0
+      x: 3780.0
       y: -2900.0
       w: 280.0
       h: 360.0
@@ -2294,8 +2440,8 @@ layout:
       custW: false
       custH: false
     sound:relic_sound:
-      x: 3080.0
-      y: -1000.0
+      x: 3500.0
+      y: -1320.0
       w: 220.0
       h: 320.0
       collapsed: false
@@ -2342,28 +2488,28 @@ layout:
       custW: true
       custH: false
     trigger:trigger:
-      x: -4100.0
-      y: -1300.0
-      w: 380.0
-      h: 460.0
+      x: -4180.0
+      y: -2760.0
+      w: 280.0
+      h: 400.0
       collapsed: false
-      custW: true
-      custH: true
+      custW: false
+      custH: false
     toast:toast:
-      x: -3660.0
-      y: -1300.0
-      w: 420.0
-      h: 160.0
+      x: -3820.0
+      y: -2760.0
+      w: 400.0
+      h: 400.0
       collapsed: false
       custW: true
-      custH: true
+      custH: false
     dict:relics:
-      x: 20.0
-      y: 20.0
+      x: -280.0
+      y: -3820.0
       collapsed: false
     ro:game:ability_1_cd:
       x: -4260.0
-      y: -2200.0
+      y: -1700.0
       w: 380.0
       h: 480.0
       collapsed: false
@@ -2371,7 +2517,7 @@ layout:
       custH: true
     ro:game:ability_2_cd:
       x: -3860.0
-      y: -2200.0
+      y: -1700.0
       w: 380.0
       h: 480.0
       collapsed: false
@@ -2379,7 +2525,7 @@ layout:
       custH: true
     ro:game:ability_3_cd:
       x: -3460.0
-      y: -2200.0
+      y: -1700.0
       w: 380.0
       h: 480.0
       collapsed: false
@@ -2387,20 +2533,44 @@ layout:
       custH: true
     ro:game:ability_4_cd:
       x: -3060.0
-      y: -2200.0
+      y: -1700.0
       w: 380.0
       h: 480.0
       collapsed: false
       custW: true
       custH: true
     trigger:on_new_relic_fetched:
-      x: 3080.0
-      y: -1360.0
-      w: 420.0
-      h: 340.0
+      x: 3500.0
+      y: -1700.0
+      w: 480.0
+      h: 320.0
       collapsed: false
       custW: true
       custH: false
+    toast:toast_2:
+      x: 4020.0
+      y: -1700.0
+      w: 540.0
+      h: 580.0
+      collapsed: false
+      custW: true
+      custH: false
+    sub:relic_rewards_with_price:
+      x: 3080.0
+      y: -1320.0
+      collapsed: false
+    vt:sub:relic_rewards_with_price:
+      x: 3460.0
+      y: -480.0
+      w: 520.0
+      h: 420.0
+      collapsed: false
+      custW: true
+      custH: true
+    sound:bob:
+      x: -4120.0
+      y: -2220.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -2639,6 +2809,11 @@ layout:
       - severity
       - message
       - _pos
+    view:relic_rewards_with_price:
+      sorts: []
+      widths:
+        price: 134
+        name: 272
   open_images:
   - glyphs
   - game
@@ -2656,6 +2831,7 @@ layout:
     - det:game:detect_1
     - glyphs
     - dict:dict_1
+    - dict:relics
     outline:
       color: '#e6e05a'
       style: none
@@ -2733,8 +2909,6 @@ layout:
     titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
-    w: 2220
-    h: 2480
     schemeId: indigo
   - id: group_17
     title: 'price: stash'
@@ -2928,6 +3102,7 @@ layout:
     - ro:game:ability_2_cd
     - ro:game:ability_3_cd
     - ro:game:ability_4_cd
+    - sound:bob
     outline:
       color: '#3a4150'
       style: none
@@ -2943,10 +3118,11 @@ layout:
     title: 'subset: relic rewards'
     members:
     - sub:relic_rewards_limit
-    - sub:relic_rewards_price_from_stored
-    - vt:sub:relic_rewards_price_from_stored
+    - sub:relic_rewards_with_price
     - trigger:on_new_relic_fetched
     - sound:relic_sound
+    - toast:toast_2
+    - vt:sub:relic_rewards_with_price
     outline:
       color: '#c98ae6'
       style: none
@@ -3049,7 +3225,6 @@ layout:
     titleColor: '#7ddc7d'
   satellites:
   - prev:relic_select
-  - vt:sub:relic_rewards_price_from_stored
   - vt:sub:live_prices_joined
   - vt:sub:statistic_prices_joined
   - vt:sub:relics_with_content_view
@@ -3067,6 +3242,7 @@ layout:
   - vt:sub:contents_with_price
   - vt:ds:master
   - vt:ds:relics_refinement
+  - vt:sub:relic_rewards_with_price
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -3441,6 +3617,7 @@ layout:
     members:
     - trigger:trigger
     - toast:toast
+    - sound:bob
     outline:
       color: '#3a4154'
       style: none

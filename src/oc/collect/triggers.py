@@ -400,7 +400,8 @@ class TriggerRunner:
                 self._read_source(by_source[tid], trigger.id)
             elif tid in by_toast:
                 fire_toast(self._profile.name, by_toast[tid], self._notifier,
-                           trigger_id=trigger.id, values=self._readouts_latest)
+                           trigger_id=trigger.id, values=self._readouts_latest,
+                           data_dir=self._data_dir, profile=self._profile)
         if getattr(trigger, "dataset_action", ""):
             from ..store.dataset_ops import fire_dataset_target
             for ds in getattr(trigger, "dataset_targets", []):
@@ -442,30 +443,75 @@ def fire_target(game: str, price_node, items, *, trigger_id: str,
         return False
 
 
-def toast_spec(toast, values: dict | None = None):
-    """Build the :class:`oc.interfaces.ToastSpec` for a toast node, interpolating ``{{ro_1}}``
-    tokens in its title/message/attribution against ``values`` (a ``{readout_id: value}`` map)
-    — the ONE place a toast's text is rendered, shared by the fire funnel and the test route so
-    a test toast reads identically to a fired one. ``app_name``/``icon`` are literal."""
-    from ..interfaces import ToastSpec
-    from .templating import render_template
+def toast_spec(toast, values: dict | None = None, *, data_dir=None, profile=None, game=None):
+    """Build the :class:`oc.interfaces.ToastSpec` for a toast node, interpolating its
+    title/message/attribution ``{{tokens}}`` — the ONE place a toast's text is rendered, shared by
+    the fire funnel and the test route so a test toast reads identically to a fired one.
+
+    ``values`` is the live ``{readout_id: value}`` map (``{{readout:id}}`` / bare tokens). When
+    ``data_dir`` + ``profile`` are supplied the context ALSO resolves ``{{dataset:...}}`` /
+    ``{{subset:...}}`` tokens against the current stored records, mirroring the pretty page.
+    ``app_name``/``icon`` are literal. The styled ``texts`` blocks each render their own tokens;
+    when a toast has no blocks the legacy ``title``/``message`` are rendered instead (the notifier
+    falls back to them)."""
+    from ..interfaces import ToastSpec, ToastText
+    from .templating import TokenContext, render
+    game = game or getattr(profile, "name", None)
+    ctx = TokenContext(values, data_dir=data_dir, profile=profile, game=game)
+    texts = [ToastText(content=render(t.content, ctx), style=t.style, align=t.align,
+                       max_lines=t.max_lines)
+             for t in getattr(toast, "texts", None) or []]
+    hero, inline = _render_toast_images(toast, ctx, data_dir, game)
     return ToastSpec(
-        title=render_template(toast.title, values),
-        message=render_template(toast.message, values),
+        title=render(toast.title, ctx),
+        message=render(toast.message, ctx),
+        texts=texts,
         app_name=toast.app_name, duration=toast.duration, icon=toast.icon,
-        attribution=render_template(toast.attribution, values), muted=toast.muted)
+        show_icon=getattr(toast, "show_icon", True),
+        attribution=render(toast.attribution, ctx), muted=toast.muted,
+        hero_image=hero, inline_images=inline)
 
 
-def fire_toast(game: str, toast, notifier, *, trigger_id: str, values: dict | None = None) -> bool:
+def _render_toast_images(toast, ctx, data_dir, game):
+    """Render each of the toast's images to a stable per-toast cache PNG, grouped by placement.
+    Returns ``(hero_path, [inline_paths])`` — the FIRST ``hero``-placed image wins the single hero
+    slot; ``inline`` images stack in order; ``none`` is skipped. Paths are absolute (the notifier
+    turns them into ``file://`` URIs, which reject a relative path). Overwritten each fire so the
+    live token values are fresh."""
+    if not data_dir:
+        return "", []
+    from pathlib import Path
+
+    from ..notify.toast_image import render_to_file
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in f"{game}_{toast.id}")
+    base = Path(data_dir) / str(game) / ".toast_images"
+    hero, inline = "", []
+    for idx, spec in enumerate(getattr(toast, "images", None) or []):
+        place = getattr(spec, "placement", "none")
+        if place == "none" or (place == "hero" and hero):   # skip disabled + extra hero images
+            continue
+        out = render_to_file(spec, ctx, base / f"{safe}_img{idx}.png")
+        if not out:
+            continue
+        if place == "hero":
+            hero = str(out.resolve())
+        else:
+            inline.append(str(out.resolve()))
+    return hero, inline
+
+
+def fire_toast(game: str, toast, notifier, *, trigger_id: str, values: dict | None = None,
+               data_dir=None, profile=None) -> bool:
     """Fire ONE toast-node target — the single funnel both the collector dispatch and the web
     fire route use, so a manual fire behaves identically to an automatic one. Builds the spec
-    (interpolating ``{{ro_1}}`` tokens against ``values``) and hands it to the ``notifier``, then
-    emits the trigger->toast control pulse. A disabled node or a missing notifier is a no-op; the
-    notifier itself swallows OS errors, so this never crashes a fire. Returns True if raised."""
+    (interpolating its ``{{tokens}}`` against ``values`` + any wired datasets/subsets) and hands it
+    to the ``notifier``, then emits the trigger->toast control pulse. A disabled node or a missing
+    notifier is a no-op; the notifier itself swallows OS errors, so this never crashes a fire.
+    Returns True if raised."""
     if toast is None or not getattr(toast, "enabled", True) or notifier is None:
         return False
     try:
-        notifier.notify(toast_spec(toast, values))
+        notifier.notify(toast_spec(toast, values, data_dir=data_dir, profile=profile, game=game))
     except Exception:   # noqa: BLE001 - a misbehaving notifier must never crash the loop / a request
         return False
     publish_flow(game, "trigger", f"trigger:{trigger_id}", f"toast:{toast.id}", 1)

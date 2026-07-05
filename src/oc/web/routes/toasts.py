@@ -9,10 +9,11 @@ node), so there's no edit endpoint here.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from ...collect.triggers import toast_spec
 from ...profile import list_profiles, load_profile
+from ...profile.models import ToastImageDef
 from ..deps import get_notifier, get_settings
 from .live import live_readouts
 
@@ -36,7 +37,28 @@ def test_toast(game: str, toast_id: str):
     toast = next((x for x in profile.toasts if x.id == toast_id), None)
     if toast is None:
         raise HTTPException(status_code=404, detail=f"No toast {toast_id!r}")
-    # interpolate {{ro_1}} tokens against the running live session's readouts (empty if none —
-    # tokens then resolve to blank, same as the pretty renderer)
-    get_notifier().notify(toast_spec(toast, live_readouts(game)))
+    # interpolate tokens: {{readout:id}} against the running live session's readouts (empty if
+    # none), {{dataset:...}}/{{subset:...}} against the game's stored records — so a test toast
+    # reads exactly what a fired one would (mirrors the pretty renderer).
+    get_notifier().notify(toast_spec(toast, live_readouts(game),
+                                     data_dir=get_settings().data_dir, profile=profile, game=game))
     return {"toast": toast_id, "raised": True}
+
+
+@router.post("/{game}/preview")
+def preview_image(game: str, spec: ToastImageDef, focus: int | None = None):
+    """Render a hero/inline image spec to a live PNG for the node editor's preview. The posted
+    ``spec`` is the IN-PROGRESS edit (not the saved profile), so the preview updates as the user
+    types. Tokens resolve against the live readouts + the game's stored records; a token with no
+    live value stays as its literal ``{{...}}`` so the design is still legible without a session.
+    ``focus`` (a text-line index) outlines that line — the editor passes the line being edited."""
+    settings = get_settings()
+    profile = load_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
+    from ...collect.templating import TokenContext
+    from ...notify.toast_image import render_png
+    ctx = TokenContext(live_readouts(game), data_dir=settings.data_dir, profile=profile, game=game)
+    try:
+        png = render_png(spec, ctx, keep_missing=True, focus=focus)
+    except Exception as e:   # noqa: BLE001 - a bad design must not 500 the editor
+        raise HTTPException(status_code=422, detail=f"render failed: {e}") from e
+    return Response(content=png, media_type="image/png")

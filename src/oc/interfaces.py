@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .types import Frame, OcrLine, PixelBox, ProcessInfo, WindowInfo
 
@@ -219,20 +219,44 @@ class WindowClassifier(ABC):
 
 
 @dataclass
+class ToastText:
+    """One styled text block on a toast (a Windows ``AdaptiveText``). ``content`` is the
+    already-token-rendered line; ``style`` is a size/weight preset name (``""`` = default,
+    else ``caption|body|base|subtitle|title|subheader|header`` and their ``*subtle`` /
+    ``*numeral`` variants); ``align`` is ``""|left|center|right``; ``max_lines`` (0 = unset)
+    caps the block's height (a long body truncates instead of growing)."""
+
+    content: str = ""
+    style: str = ""
+    align: str = ""
+    max_lines: int = 0
+
+
+@dataclass
 class ToastSpec:
     """One OS desktop notification to raise, backend-agnostic — the value a
     :class:`Notifier` speaks. Authored per toast node in the profile (see
     ``oc.profile.models.ToastDef``); ``app_name`` is the notification's source label
     (its AppUserModelID), ``duration`` is ``"short"`` or ``"long"``, ``icon`` an
-    optional app-logo image path, ``muted`` silences the toast sound."""
+    optional app-logo image path, ``muted`` silences the toast sound.
+
+    ``texts`` is the ordered list of styled body blocks (rich text). When empty the notifier
+    falls back to ``title``/``message`` (legacy two-line form). ``attribution`` renders as the
+    small print under the body."""
 
     title: str = ""
     message: str = ""
+    texts: list[ToastText] = field(default_factory=list)
     app_name: str = "data-occultist"
     duration: str = "short"
     icon: str = ""
+    show_icon: bool = True   # draw the app-logo icon (an explicit `icon` path, else the default logo)
     attribution: str = ""
     muted: bool = False
+    # filesystem paths to already-rendered generated images. ``hero_image`` is the single top
+    # banner (empty = none); ``inline_images`` are body images shown in order.
+    hero_image: str = ""
+    inline_images: list[str] = field(default_factory=list)
 
 
 class Notifier(ABC):

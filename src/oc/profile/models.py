@@ -929,6 +929,52 @@ class TriggerDef(BaseModel):
     dataset_dest: str = ""                  # destination dataset for clone/move actions
 
 
+class ToastTextDef(BaseModel):
+    """One styled text block on a toast node (a Windows ``AdaptiveText`` line). ``content``
+    supports ``{{token}}`` interpolation like the legacy title/message. ``style`` is a font
+    preset (``""`` = default, else ``caption|body|base|subtitle|title|subheader|header`` +
+    ``*subtle``/``*numeral`` variants); ``align`` is ``""|left|center|right``; ``max_lines``
+    (0 = unset) truncates a long block instead of letting it grow."""
+
+    content: str = ""
+    style: str = ""
+    align: str = ""
+    max_lines: int = 0
+
+
+class ToastImageTextDef(BaseModel):
+    """One positioned text line drawn onto a generated toast image. ``content`` supports
+    ``{{token}}`` interpolation; ``x``/``y`` are pixel coordinates on the canvas; ``align`` picks
+    what ``x`` anchors (``left`` = left edge, ``center`` = centre, ``right`` = right edge)."""
+
+    content: str = ""
+    x: int = 12
+    y: int = 12
+    size: int = 20
+    color: str = "#ffffff"
+    align: str = "left"
+    width: int = 0          # box/text width in pixels the text is fit to (0 = unconstrained)
+    height: int = 0         # box height in pixels; >0 draws a bg_color-filled box behind the text
+    bg_color: str = ""      # box fill colour (hex); drawn only when width>0 and height>0
+    wrap: bool = True       # within width: True = word-wrap to more lines; False = one line, truncated with …
+
+
+class ToastImageDef(BaseModel):
+    """A generated toast image, drawn server-side with PIL: a solid or 2-colour gradient background
+    with positioned text lines painted over it. ``placement`` picks where it lands — ``hero`` (the
+    toast's top banner), ``inline`` (in the body), or ``none`` (temporarily off, not drawn).
+    ``angle`` is the gradient direction in degrees (0 = left→right, 90 = top→bottom)."""
+
+    placement: str = "inline"       # hero | inline | none
+    width: int = 364
+    height: int = 180
+    bg_type: str = "solid"          # solid | gradient
+    color1: str = "#0a3d62"
+    color2: str = "#061826"
+    angle: int = 90
+    texts: list[ToastImageTextDef] = Field(default_factory=list)
+
+
 class ToastDef(BaseModel):
     """A *toast node*: raises an OS desktop notification when fired. A trigger names its
     ``id`` in ``targets`` (like a producer/file-source), so any trigger condition can pop a
@@ -943,12 +989,44 @@ class ToastDef(BaseModel):
     id: str
     title: str = ""
     message: str = ""
+    # ordered rich-text blocks (each styled). When non-empty these REPLACE title/message as the
+    # toast body; title/message are kept only as the legacy seed (the UI migrates them into texts).
+    texts: list[ToastTextDef] = Field(default_factory=list)
+    # generated images drawn on the fly at fire time (message text painted onto a banner / body
+    # image). Each carries its own `placement` (hero | inline | none); several may share a toast.
+    images: list[ToastImageDef] = Field(default_factory=list)
     app_name: str = "data-occultist"
     duration: str = "short"                 # short | long
     icon: str = ""                          # optional app-logo image path
+    show_icon: bool = True                  # draw the app-logo icon (off = no logo on the toast)
     attribution: str = ""                   # small attribution line under the body
     muted: bool = False                     # silence the toast sound
     enabled: bool = True
+    # Wired data sources whose live values the text can interpolate as {{tokens}} — prefixed refs
+    # ("readout:<id>" | "dataset:<id>" | "subset:<id>"), one per connected node. Only these drive
+    # the node's token-suggestion chips; the toast still resolves any token typed by hand.
+    sources: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_images(cls, data):
+        """Fold the legacy fixed ``hero``/``inline`` image objects into the ``images`` list (each an
+        image with a ``placement``). A disabled legacy image becomes ``placement: none``. Runs only
+        when ``images`` isn't already present, so a new-style profile passes straight through."""
+        if isinstance(data, dict) and "images" not in data:
+            imgs = []
+            for which in ("hero", "inline"):
+                im = data.get(which)
+                if isinstance(im, dict):
+                    im = dict(im)
+                    enabled = im.pop("enabled", False)
+                    im["placement"] = which if enabled else "none"
+                    imgs.append(im)
+            if imgs:
+                data["images"] = imgs
+            data.pop("hero", None)
+            data.pop("inline", None)
+        return data
 
 
 class SoundDef(BaseModel):

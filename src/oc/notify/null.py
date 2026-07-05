@@ -1,5 +1,5 @@
 """No-op notifier: the fallback when no OS-toast backend is available (non-Windows,
-or ``windows-toasts`` not installed). A toast target simply raises nothing."""
+or ``toasted`` not installed). A toast target simply raises nothing."""
 
 from __future__ import annotations
 

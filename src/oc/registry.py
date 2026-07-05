@@ -173,7 +173,7 @@ def build_corrector(name: str, **opts) -> Corrector:
 
 def build_notifier(name: str, **opts) -> Notifier:
     """Build the named notifier, falling back to the ``null`` no-op if the requested
-    backend didn't register (e.g. ``windows`` on a box without ``windows-toasts``), so
+    backend didn't register (e.g. ``windows`` on a box without ``toasted``), so
     a toast target on a non-Windows host degrades to silence instead of erroring."""
     _ensure_loaded()
     if name not in _NOTIFIER:
