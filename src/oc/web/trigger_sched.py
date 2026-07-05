@@ -7,8 +7,8 @@ live "fires in Ns" countdown and the sweeps still happen. It reuses :class:`Trig
 
 * firing is guarded — :func:`start_sweep` no-ops a node whose sweep is already running, and a
   cross-process file lock stops it double-running alongside a real collector;
-* on_change triggers are NOT driven here (they need the collector's live record stream) — they
-  are listed for visibility only.
+* on_change/on_any_change triggers are NOT driven here (they need the collector's live record
+  stream) — they are listed for visibility only.
 
 A single daemon thread evaluates every profile's interval triggers once a second; the per-game
 runner is kept across ticks (so ``_last`` fire times persist) and rebuilt only when the
@@ -108,7 +108,7 @@ def schedule(game: str, settings) -> list[dict]:
                 if t.enabled:   # a disabled trigger never fires -> no countdown
                     nxt = runner._last.get(t.id, now) + t.interval_s
                     item["next_in"] = max(0, round(nxt - now))
-            elif t.kind == "on_change":
+            elif t.kind in ("on_change", "on_any_change"):
                 item["watch"] = list(t.watch)
             out.append(item)
         return out
