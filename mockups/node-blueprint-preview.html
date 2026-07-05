@@ -1,0 +1,507 @@
+<title>Node view — blueprint restyle preview</title>
+<style>
+  :root{
+    --bg:#0a0b0f;
+    --card:#10131a;
+    --card-2:#0d1016;
+    --line:#262c37;
+    --line-soft:#1c212b;
+    --text:#d9dde4;
+    --muted:#79828f;
+    --dim:#565f6c;
+    --faint:#3a414d;
+
+    --game:#e0c15f;   /* amber   */
+    --window:#5aa9e6; /* sky     */
+    --field:#e2895f;  /* coral   */
+    --detect:#e0c15f; /* amber-2 */
+    --item:#f0a24a;   /* orange  */
+    --readout:#57c8c0;/* teal    */
+    --scroll:#8a93a3; /* grey    */
+    --dataset:#5fd68f;/* mint    */
+    --subset:#5fe0c4; /* aqua    */
+    --producer:#6fb2f0;/* blue   */
+    --source:#9db0c4; /* slate   */
+    --trigger:#b48cf0;/* violet  */
+    --toast:#e878b0;  /* pink    */
+    --sound:#c98cf0;  /* mauve   */
+    --dict:#b48cf0;   /* violet  */
+    --glyph:#8a93a3;
+
+    --data:#ff9d4d;   /* data edge/port orange */
+    --good:#5fd68f;
+    --bad:#e2895f;
+  }
+
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg);color:var(--text);
+    font-family:ui-monospace,"Cascadia Code","JetBrains Mono","SFMono-Regular",Consolas,monospace;
+    font-size:12.5px;line-height:1.42;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{min-height:100%;display:flex;flex-direction:column}
+
+  header.top{
+    padding:16px 22px 12px;border-bottom:1px solid var(--line-soft);
+    display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px;position:sticky;left:0;
+  }
+  header.top h1{margin:0;font-size:15px;font-weight:700;letter-spacing:.02em;color:#f2f4f8}
+  header.top .sub{color:var(--muted);font-size:12px}
+  header.top .tag{margin-left:auto;color:var(--dim);font-size:11px;border:1px solid var(--line);border-radius:5px;padding:3px 8px}
+
+  .canvas{
+    position:relative;flex:1;min-height:640px;overflow:auto;
+    background:radial-gradient(circle at center, rgba(255,255,255,.04) 1px, transparent 1.4px);
+    background-size:22px 22px;background-position:-1px -1px;
+  }
+  .world{position:relative;width:1560px;height:1240px;margin:0 auto}
+
+  /* ---------- groups ---------- */
+  .group{position:absolute;border-radius:16px;pointer-events:none}
+  .group .glabel{
+    position:absolute;top:10px;left:14px;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);
+  }
+  .group.super{border:1px solid var(--line-soft);background:rgba(255,255,255,.008)}
+  .group.super .glabel{font-size:34px;letter-spacing:.14em;color:rgba(255,255,255,.035);top:auto;bottom:14px;left:22px;font-weight:700}
+  .group.grp{border:1px dashed var(--line);background:rgba(255,255,255,.012)}
+  .group.sub{border:1px dashed var(--line-soft);border-radius:10px}
+  .group.sub .glabel{font-size:9px;letter-spacing:.18em}
+
+  /* ---------- edges ---------- */
+  svg.edges{position:absolute;inset:0;width:1560px;height:1240px;pointer-events:none;overflow:visible}
+  .edge{fill:none;stroke-width:1.6}
+  .edge.data{stroke:var(--data)}
+  .edge.own{stroke:var(--game);stroke-dasharray:1 5;stroke-linecap:round;opacity:.75}
+  .edge.owndict{stroke:var(--dict);stroke-dasharray:1 5;stroke-linecap:round;opacity:.7}
+  .edge.toview{stroke:var(--subset)}
+  .edge.trigger{stroke:var(--toast);stroke-width:1.7}
+  .edge.watch{stroke:var(--trigger);stroke-dasharray:5 4;opacity:.8}
+  .edge.disabled{stroke:var(--faint);stroke-dasharray:2 4}
+  .edge.stale{stroke:var(--faint);opacity:.5}
+  .blob{fill:var(--data)}
+  .arrowcap{fill:context-stroke}
+
+  /* ---------- node card ---------- */
+  .gnode{
+    position:absolute;width:230px;
+    background:linear-gradient(180deg,var(--card),var(--card-2));
+    border:1px solid var(--line);border-radius:11px;
+    box-shadow:0 8px 26px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.012);
+  }
+  .gnode[data-acc]{border-color:color-mix(in oklab, var(--acc) 42%, var(--line))}
+  .gnode.game{--acc:var(--game)} .gnode.glyphs{--acc:var(--glyph)}
+  .gnode.dictionary{--acc:var(--dict)} .gnode.window{--acc:var(--window)}
+  .gnode.field{--acc:var(--field)} .gnode.detect{--acc:var(--detect)}
+  .gnode.item{--acc:var(--item)} .gnode.readout{--acc:var(--readout)}
+  .gnode.scrollbar{--acc:var(--scroll)} .gnode.dataset{--acc:var(--dataset)}
+  .gnode.subset{--acc:var(--subset)} .gnode.producer{--acc:var(--producer)}
+  .gnode.filesource{--acc:var(--source)} .gnode.trigger{--acc:var(--trigger)}
+  .gnode.toast{--acc:var(--toast)} .gnode.sound{--acc:var(--sound)}
+
+  .gnode.disabled{opacity:.5;filter:saturate(.4)}
+  .gnode.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc),0 10px 30px rgba(0,0,0,.6)}
+
+  .gn-h{
+    display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line-soft);
+    border-radius:11px 11px 0 0;
+    background:linear-gradient(180deg, color-mix(in oklab,var(--acc) 9%, transparent), transparent);
+  }
+  .gnode.collapsed .gn-h{border-bottom:none;border-radius:11px}
+  .nicon{width:16px;height:16px;flex:none;color:var(--acc)}
+  .nicon svg{display:block;width:100%;height:100%}
+  .gn-title{font-weight:700;color:#eef1f6;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .gn-type{margin-left:auto;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);opacity:.9;flex:none}
+  .gn-disc{color:var(--dim);flex:none;font-size:11px;user-select:none;width:10px;text-align:center}
+
+  .gn-body{padding:8px 10px 10px;display:flex;flex-direction:column;gap:7px}
+  .flab{display:grid;grid-template-columns:74px 1fr;gap:2px 9px;font-size:12px}
+  .flab.narrow{grid-template-columns:58px 1fr}
+  .flab .k{color:var(--muted)}
+  .flab .v{color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .flab .v.acc{color:var(--acc)}
+  .divider{height:0;border-top:1px dashed var(--line);margin:1px 0}
+  .fgrp{font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+
+  /* segmented meter */
+  .meter{display:flex;align-items:center;gap:8px}
+  .segs{display:flex;gap:2px}
+  .seg{width:7px;height:12px;border-radius:1.5px;border:1px solid}
+  .seg.on{background:var(--c);border-color:var(--c)}
+  .seg.off{background:transparent;border-color:color-mix(in oklab,var(--c) 32%, transparent)}
+  .meter .pct{font-size:11px;color:var(--c);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .meter.good{--c:var(--good)} .meter.bad{--c:var(--bad)} .meter.acc{--c:var(--acc)}
+
+  /* chips */
+  .chips{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+  .chip{border:1px solid color-mix(in oklab,var(--acc) 38%, var(--line));border-radius:5px;padding:1.5px 6px;font-size:11px;color:var(--text)}
+  .chip.ghost{border-style:dashed;color:var(--muted)}
+  .chip.on{background:color-mix(in oklab,var(--acc) 16%, transparent)}
+  .arr{color:var(--dim)}
+
+  /* rule / list rows */
+  .rule{display:flex;align-items:center;gap:7px;font-size:11.5px}
+  .rule .n{color:var(--dim);width:10px;text-align:right}
+  .rule .op{color:var(--acc)}
+  .rule .a{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lrow{display:flex;align-items:center;gap:7px;font-size:11.5px}
+  .lrow .dot{width:6px;height:6px;border-radius:50%;flex:none}
+  .lrow .nm{color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+  .lrow .rt{color:var(--muted);flex:none}
+
+  /* tiles */
+  .tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:3px}
+  .tiles i{aspect-ratio:1/.62;border:1px solid color-mix(in oklab,var(--acc) 28%, var(--line));border-radius:2px}
+  .tiles i.hot{background:color-mix(in oklab,var(--acc) 16%, transparent)}
+
+  /* toggles (slide) */
+  .tog{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted)}
+  .sw2{width:22px;height:12px;border-radius:7px;background:var(--line);position:relative;flex:none}
+  .sw2 b{position:absolute;top:1.5px;left:1.5px;width:9px;height:9px;border-radius:50%;background:var(--dim)}
+  .sw2.on{background:color-mix(in oklab,var(--acc) 42%, var(--line))}
+  .sw2.on b{left:auto;right:1.5px;background:var(--acc)}
+
+  /* action button */
+  .btn{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;
+    border:1px solid color-mix(in oklab,var(--acc) 40%, var(--line));border-radius:6px;
+    padding:3px 9px;font-size:11.5px;color:var(--acc);background:color-mix(in oklab,var(--acc) 7%, transparent)}
+  .spin{width:11px;height:11px;border-radius:50%;border:1.6px solid var(--line);border-top-color:var(--acc);animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){.spin{animation:none}}
+
+  /* state pill */
+  .state{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--good)}
+  .state .d{width:6px;height:6px;border-radius:50%;background:var(--good);box-shadow:0 0 0 3px color-mix(in oklab,var(--good) 22%, transparent)}
+  .state.warn{color:var(--field)} .state.warn .d{background:var(--field);box-shadow:0 0 0 3px color-mix(in oklab,var(--field) 22%, transparent)}
+
+  /* satellite vttable */
+  .sat{position:absolute;background:var(--card-2);border:1px solid var(--line);border-radius:9px;overflow:hidden;box-shadow:0 8px 22px rgba(0,0,0,.5)}
+  .sat-h{display:flex;align-items:center;gap:8px;padding:6px 9px;border-bottom:1px solid var(--line-soft);font-size:11px}
+  .sat-h .st-tab{color:var(--dim)} .sat-h .st-tab.on{color:var(--dataset)}
+  .sat-h .st-tab.on::after{content:"";display:block;height:1.5px;background:var(--dataset);margin-top:4px}
+  table.vt{width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums}
+  table.vt th{color:var(--dim);text-align:left;font-weight:400;padding:4px 9px;border-bottom:1px solid var(--line-soft);text-transform:uppercase;letter-spacing:.1em;font-size:9.5px}
+  table.vt td{padding:3px 9px;color:var(--text);border-bottom:1px solid var(--line-soft);white-space:nowrap}
+  table.vt tr:last-child td{border-bottom:none}
+  table.vt td.num{text-align:right;color:var(--muted)}
+  table.vt tr.gone td{color:var(--dim);text-decoration:line-through}
+
+  /* token palette */
+  .tokens{display:flex;flex-wrap:wrap;gap:4px}
+  .tok{border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:10.5px;color:var(--subset)}
+  .tok.rd{color:var(--readout)} .tok.ds{color:var(--dataset)}
+
+  /* ports */
+  .port{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--bg);border:1.5px solid var(--line)}
+  .port.out{right:-5px;top:50%;transform:translateY(-50%);border-color:var(--data)}
+  .port.in{left:-5px;top:50%;transform:translateY(-50%)}
+  .port.watch{border-color:var(--trigger)}
+  .port.top{top:-5px;left:50%;transform:translateX(-50%)}
+  .port.bot{bottom:-5px;left:50%;transform:translateX(-50%)}
+
+  /* legend */
+  footer.legend{border-top:1px solid var(--line-soft);padding:11px 22px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;color:var(--muted);font-size:11px;position:sticky;left:0}
+  .lg{display:inline-flex;align-items:center;gap:7px}
+  .sw{width:20px;height:0;border-top-width:2px;border-top-style:solid}
+  .sw.data{border-color:var(--data)} .sw.own{border-color:var(--game);border-top-style:dotted}
+  .sw.owndict{border-color:var(--dict);border-top-style:dotted} .sw.toview{border-color:var(--subset)}
+  .sw.trigger{border-color:var(--toast)} .sw.watch{border-color:var(--trigger);border-top-style:dashed}
+  .sw.disabled{border-color:var(--faint);border-top-style:dashed}
+  .sep{width:1px;height:14px;background:var(--line)}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>node view</h1>
+    <span class="sub">blueprint restyle &mdash; full-board look &amp; feel preview</span>
+    <span class="tag">mockup &middot; not wired</span>
+  </header>
+
+  <div class="canvas">
+    <div class="world">
+
+      <!-- ===== groups (behind nodes) ===== -->
+      <div class="group super" style="left:12px;top:44px;width:1536px;height:1176px"><span class="glabel">warframe</span></div>
+      <div class="group grp"   style="left:32px;top:96px;width:1180px;height:600px"><span class="glabel">capture</span></div>
+      <div class="group sub"   style="left:836px;top:150px;width:344px;height:452px"><span class="glabel">item &middot; cell</span></div>
+      <div class="group grp"   style="left:1232px;top:96px;width:300px;height:1088px"><span class="glabel">data</span></div>
+      <div class="group grp"   style="left:32px;top:724px;width:1180px;height:452px"><span class="glabel">react</span></div>
+
+      <!-- ===== edges ===== -->
+      <svg class="edges" viewBox="0 0 1560 1240" preserveAspectRatio="none">
+        <!-- game -> window : own -->
+        <path class="edge own"     d="M 273 168 H 300 Q 314 168 314 182 V 190 Q 314 204 328 204 H 344"/>
+        <!-- game -> dictionary : owndict -->
+        <path class="edge owndict" d="M 168 232 V 300 Q 168 314 154 314 H 150"/>
+        <!-- window -> field : own -->
+        <path class="edge own"     d="M 601 200 H 616 Q 630 200 630 214 V 210 Q 630 196 616 196"/>
+        <!-- window -> dataset : data (+ flow blobs) -->
+        <path id="e-data" class="edge data" d="M 601 250 H 720 Q 734 250 734 264 V 210 Q 734 196 748 196 H 1258"/>
+        <path class="arrowcap" style="stroke:var(--data)" d="M 1258 196 l -8 -4 v 8 z"/>
+        <circle class="blob" r="2.6"><animateMotion dur="2.4s" repeatCount="indefinite"><mpath href="#e-data"/></animateMotion></circle>
+        <circle class="blob" r="2.6"><animateMotion dur="2.4s" begin="1.2s" repeatCount="indefinite"><mpath href="#e-data"/></animateMotion></circle>
+        <!-- item -> dataset : data -->
+        <path class="edge data"    d="M 1113 320 H 1180 Q 1194 320 1194 306 V 250 Q 1194 236 1208 236 H 1258"/>
+        <!-- readout -> toast : trigger-ish data (goes down to react) -->
+        <path class="edge data"    d="M 1090 470 H 1150 Q 1164 470 1164 484 V 690 Q 1164 704 1150 704 H 760"/>
+        <!-- dataset -> subset : toview -->
+        <path class="edge toview"  d="M 1382 250 H 1400 Q 1414 250 1414 264 V 470 Q 1414 484 1400 484 H 1384"/>
+        <!-- subset -> producer : toview -->
+        <path class="edge toview"  d="M 1310 596 V 700 Q 1310 714 1310 714 V 792"/>
+        <!-- filesource -> dataset : data (long up) -->
+        <path class="edge data"    d="M 1085 900 H 1150 Q 1198 900 1198 852 V 300 Q 1198 250 1246 250 H 1258"/>
+        <!-- trigger -> toast : trigger -->
+        <path class="edge trigger" d="M 285 830 H 320 Q 334 830 334 830 H 356"/>
+        <!-- trigger -> sound : trigger -->
+        <path class="edge trigger" d="M 285 860 H 300 Q 314 860 314 874 V 946 Q 314 960 328 960 H 700"/>
+        <!-- trigger watch <- dataset : watch (pwatch up to data group) -->
+        <path class="edge watch"   d="M 170 786 V 640 Q 170 626 184 626 H 1246 Q 1260 626 1260 612 V 320"/>
+        <!-- disabled edge example : sound(disabled) -> (nothing) show greyed stub -->
+        <path class="edge disabled" d="M 922 960 H 970 Q 984 960 984 946 V 900"/>
+        <!-- stale edge example -->
+        <path class="edge stale"   d="M 601 470 H 660 Q 674 470 674 456 V 430"/>
+      </svg>
+
+      <!-- ============ CAPTURE ============ -->
+
+      <!-- GAME -->
+      <div class="gnode game" data-acc style="left:63px;top:128px;width:210px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><rect x="2" y="4" width="12" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="11" cy="8" r="1" fill="currentColor"/></svg></span><span class="gn-title">warframe</span><span class="gn-type">game</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab"><span class="k">process</span><span class="v">Warframe.x64.exe</span><span class="k">title hint</span><span class="v">Warframe</span><span class="k">windows</span><span class="v acc">3 priority</span></div>
+        </div>
+        <span class="port out"></span><span class="port bot"></span>
+      </div>
+
+      <!-- GLYPHS (collapsed) -->
+      <div class="gnode glyphs collapsed" data-acc style="left:63px;top:300px;width:210px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><text x="8" y="11.4" font-size="8" text-anchor="middle" fill="currentColor" font-family="monospace">A</text></svg></span><span class="gn-title">atlas</span><span class="gn-type">glyphs</span><span class="gn-disc">+</span></div>
+      </div>
+
+      <!-- DICTIONARY -->
+      <div class="gnode dictionary" data-acc style="left:63px;top:392px;width:210px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><path d="M8 3.5C6 2.5 3.5 2.5 2.5 3v9c1-.5 3.5-.5 5.5.5 2-1 4.5-1 5.5-.5V3c-1-.5-3.5-.5-5.5.5z" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M8 3.5v9.5" stroke="currentColor" stroke-width="1.1"/></svg></span><span class="gn-title">equipment</span><span class="gn-type">dict</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">terms</span><span class="v acc">418</span><span class="k">file</span><span class="v">equipment.json</span></div>
+          <div class="fgrp">pull terms from</div>
+          <div class="chips"><span class="chip on">equipment.name</span></div>
+        </div>
+        <span class="port in"></span>
+      </div>
+
+      <!-- WINDOW -->
+      <div class="gnode window" data-acc style="left:344px;top:128px;width:250px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><path d="M3 3h3M3 3v3M13 3h-3M13 3v3M3 13h3M3 13v-3M13 13h-3M13 13v-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span><span class="gn-title">equipment</span><span class="gn-type">window</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab"><span class="k">static grid</span><span class="v"><span class="tog"><span class="sw2 on"><b></b></span>on</span></span><span class="k">grid</span><span class="v acc">6 &times; 8</span><span class="k">grid drift</span><span class="v">0.4% / 1.1%</span><span class="k">appearance</span><span class="v">threshold</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">grid preview</div>
+          <div class="tiles"><i class="hot"></i><i></i><i class="hot"></i><i></i><i class="hot"></i><i></i><i></i><i class="hot"></i><i></i><i class="hot"></i><i></i><i class="hot"></i></div>
+          <div class="divider"></div>
+          <div class="fgrp">detects &middot; matches if ALL</div>
+          <div class="lrow"><span class="dot" style="background:var(--good)"></span><span class="nm">tab_equipment</span><span class="rt">pass</span></div>
+          <div class="lrow"><span class="dot" style="background:var(--good)"></span><span class="nm">sort_recent</span><span class="rt">pass</span></div>
+          <div class="lrow"><span class="dot" style="background:var(--bad)"></span><span class="nm">no_tooltip</span><span class="rt">absent</span></div>
+        </div>
+        <span class="port in"></span><span class="port out"></span>
+      </div>
+
+      <!-- FIELD -->
+      <div class="gnode field" data-acc style="left:630px;top:128px;width:250px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><rect x="2.5" y="4" width="11" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 1.6"/></svg></span><span class="gn-title">name</span><span class="gn-type">region</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">type</span><span class="v">text</span><span class="k">isolate</span><span class="v">keep color</span><span class="k">conf min</span><span class="v acc">0.60</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">rules</div>
+          <div class="rule"><span class="n">1</span><span class="op">extract</span><span class="a">^(?&lt;name&gt;.+?)\s*x?\d*$</span></div>
+          <div class="rule"><span class="n">2</span><span class="op">dict</span><span class="a">equipment &middot; 0.82</span></div>
+          <div class="rule"><span class="n">3</span><span class="op">glyph</span><span class="a">Q3 &harr; G3</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">confidence &middot; worst field</div>
+          <div class="meter bad"><span class="segs"><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg off"></b><b class="seg off"></b><b class="seg off"></b></span><span class="pct">0.71</span></div>
+        </div>
+        <span class="port in"></span>
+      </div>
+
+      <!-- DETECT (stale-edge target) -->
+      <div class="gnode detect" data-acc style="left:344px;top:392px;width:250px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span><span class="gn-title">sort_recent</span><span class="gn-type">detect</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">kind</span><span class="v">text</span><span class="k">text</span><span class="v acc">RECENT</span><span class="k">mode</span><span class="v">exact</span><span class="k">threshold</span><span class="v">0.80</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">detect status</div>
+          <div class="lrow"><span class="dot" style="background:var(--good)"></span><span class="nm">matched &middot; score 0.94</span><span class="rt">&hellip;RECENT&hellip;</span></div>
+        </div>
+        <span class="port in"></span>
+      </div>
+
+      <!-- SCROLLBAR -->
+      <div class="gnode scrollbar" data-acc style="left:344px;top:530px;width:250px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><rect x="6" y="2" width="4" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="6.5" y="5" width="3" height="5" rx="1.5" fill="currentColor"/></svg></span><span class="gn-title">list</span><span class="gn-type">scrollbar</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">orient</span><span class="v">vertical</span><span class="k">thumb</span><span class="v acc">18% &middot; 92px</span><span class="k">calib</span><span class="v">8 rows/nudge</span><span class="k">cutouts</span><span class="v">3 / 3 usable</span></div>
+        </div>
+      </div>
+
+      <!-- ITEM (sub-group host) -->
+      <div class="gnode item" data-acc style="left:868px;top:182px;width:280px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2 6h12M6 6v8" stroke="currentColor" stroke-width="1.1" opacity=".7"/></svg></span><span class="gn-title">cell</span><span class="gn-type">item</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">cell w/h</span><span class="v">0.163 / 0.118</span><span class="k">cover x/y</span><span class="v">55% / 40%</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">templates &middot; priority</div>
+          <div class="lrow"><span class="dot" style="background:var(--good)"></span><span class="nm">arcane_frame</span><span class="rt">on</span></div>
+          <div class="lrow"><span class="dot" style="background:var(--good)"></span><span class="nm">mod_frame</span><span class="rt">on</span></div>
+          <div class="lrow"><span class="dot" style="background:var(--dim)"></span><span class="nm">base cell</span><span class="rt">&mdash;</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">key</div>
+          <div class="chips"><span class="chip">name</span><span class="arr">+</span><span class="chip">level</span><span class="chip ghost">case-insens</span></div>
+        </div>
+        <span class="port out"></span>
+      </div>
+
+      <!-- child: itemfield -->
+      <div class="gnode field" data-acc style="left:868px;top:474px;width:132px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><rect x="2" y="4" width="7" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M9 8h4M11 6l2 2-2 2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></span><span class="gn-title">name</span><span class="gn-type" style="font-size:8px">field</span></div>
+        <div class="gn-body" style="padding:6px 8px"><div class="flab narrow" style="grid-template-columns:38px 1fr"><span class="k">role</span><span class="v acc">tell</span><span class="k">align</span><span class="v">L / top</span></div></div>
+      </div>
+      <!-- child: itemtell -->
+      <div class="gnode detect" data-acc style="left:1016px;top:474px;width:132px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><rect x="2" y="3.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.1" stroke-dasharray="2 1.4"/><path d="M4 7l1.6 1.6L8 5.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></span><span class="gn-title">is_arcane</span><span class="gn-type" style="font-size:8px">tell</span></div>
+        <div class="gn-body" style="padding:6px 8px"><div class="flab narrow" style="grid-template-columns:44px 1fr"><span class="k">kind</span><span class="v">template</span><span class="k">thresh</span><span class="v acc">0.86</span></div></div>
+      </div>
+
+      <!-- READOUT -->
+      <div class="gnode readout" data-acc style="left:868px;top:428px;width:0;height:0;visibility:hidden"></div>
+      <div class="gnode readout" data-acc style="left:868px;top:632px;width:222px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><path d="M2.5 11a5.5 5.5 0 0 1 11 0" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 11l3-3.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span><span class="gn-title">plat_price</span><span class="gn-type">readout</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">type</span><span class="v">number</span><span class="k">conf</span><span class="v acc">0.88</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">live value</div>
+          <div class="meter acc"><span class="pct" style="font-size:18px">45<span style="color:var(--muted);font-size:12px"> plat</span></span></div>
+        </div>
+        <span class="port out"></span>
+      </div>
+
+      <!-- ============ DATA ============ -->
+
+      <!-- DATASET -->
+      <div class="gnode dataset" data-acc style="left:1258px;top:128px;width:252px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><ellipse cx="8" cy="4" rx="5.2" ry="2.1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2.8 4v8c0 1.2 2.3 2.1 5.2 2.1s5.2-.9 5.2-2.1V4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></span><span class="gn-title">equipment</span><span class="gn-type">dataset</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">records</span><span class="v acc">1,284</span><span class="k">1 &rarr; many</span><span class="v">concat name+level</span><span class="k">batch</span><span class="v">per run</span><span class="k">sync</span><span class="v">accumulate</span><span class="k">changed</span><span class="v">5 min ago</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">keyed fill</div>
+          <div class="meter good"><span class="segs"><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg off"></b><b class="seg off"></b><b class="seg off"></b></span><span class="pct">68%</span></div>
+        </div>
+        <span class="port in"></span><span class="port out"></span><span class="port watch top"></span>
+      </div>
+
+      <!-- SATELLITE vttable -->
+      <div class="sat" style="left:1258px;top:340px;width:252px">
+        <div class="sat-h"><span class="st-tab on">data</span><span class="st-tab">batches</span><span style="margin-left:auto" class="tog"><span class="sw2"><b></b></span>removed</span></div>
+        <table class="vt"><thead><tr><th>name</th><th>lvl</th><th class="num">plat</th></tr></thead><tbody>
+          <tr><td>Arcane Aegis</td><td>5</td><td class="num">28</td></tr>
+          <tr><td>Arcane Energize</td><td>3</td><td class="num">140</td></tr>
+          <tr><td>Primed Flow</td><td>10</td><td class="num">75</td></tr>
+          <tr class="gone"><td>Vigilante Fury</td><td>5</td><td class="num">12</td></tr>
+        </tbody></table>
+      </div>
+
+      <!-- SUBSET (selected) -->
+      <div class="gnode subset sel" data-acc style="left:1258px;top:556px;width:252px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><path d="M2 4h4l4 4h4M2 12h4l3-3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span><span class="gn-title">priced</span><span class="gn-type">subset</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">sources</span><span class="v acc">equipment + market</span><span class="k">join</span><span class="v">name (norm)</span><span class="k">limit</span><span class="v">200 rows</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">columns</div>
+          <div class="chips"><span class="chip">name</span><span class="chip">level</span><span class="chip">{plat}</span><span class="chip ghost">{plat*count}</span></div>
+          <div class="fgrp">sort</div>
+          <div class="chips"><span class="chip on">plat &darr;</span></div>
+        </div>
+        <span class="port in"></span><span class="port out"></span>
+      </div>
+
+      <!-- PRODUCER -->
+      <div class="gnode producer" data-acc style="left:1258px;top:792px;width:252px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><path d="M4.5 10a2.5 2.5 0 0 1 .3-5 3.3 3.3 0 0 1 6.3.8A2.4 2.4 0 0 1 11 10z" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M8 8v4M6.4 10.4L8 12l1.6-1.6" fill="none" stroke="currentColor" stroke-width="1.1"/></svg></span><span class="gn-title">wf.market</span><span class="gn-type">producer</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">method</span><span class="v">GET</span><span class="k">url</span><span class="v">/items/{key}/orders</span><span class="k">key</span><span class="v">slugify</span><span class="k">throttle</span><span class="v">0.3 s</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">fields</div>
+          <div class="chips"><span class="chip">plat</span><span class="chip">qty</span><span class="chip ghost">status=ingame</span></div>
+          <div class="divider"></div>
+          <div class="meter acc"><span class="segs"><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg on"></b><b class="seg off"></b><b class="seg off"></b><b class="seg off"></b></span><span class="pct">142/240</span></div>
+          <button class="btn"><span class="spin"></span> fetch</button>
+        </div>
+        <span class="port in"></span><span class="port out"></span>
+      </div>
+
+      <!-- ============ REACT ============ -->
+
+      <!-- TRIGGER -->
+      <div class="gnode trigger" data-acc style="left:63px;top:786px;width:222px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><path d="M9 1.5 3 9h4l-1 5.5L13 6H8.6z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></span><span class="gn-title">on_any_change</span><span class="gn-type">trigger</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">kind</span><span class="v acc">on_any_change</span><span class="k">watch</span><span class="v">equipment</span><span class="k">fires</span><span class="v">toast, sound</span><span class="k">last</span><span class="v">17:42 &middot; 5m</span></div>
+        </div>
+        <span class="port watch top"></span><span class="port out"></span>
+      </div>
+
+      <!-- TOAST -->
+      <div class="gnode toast" data-acc style="left:356px;top:762px;width:296px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><path d="M4 11V7a4 4 0 0 1 8 0v4l1 1.5H3z" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M6.5 12.5a1.5 1.5 0 0 0 3 0" fill="none" stroke="currentColor" stroke-width="1.1"/></svg></span><span class="gn-title">toast_2</span><span class="gn-type">toast</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="fgrp">text blocks</div>
+          <div class="flab narrow"><span class="k">title</span><span class="v">Relic acquired</span><span class="k">body</span><span class="v">{{dataset:equipment.name}} &times;{{&hellip;}}</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">tokens</div>
+          <div class="tokens"><span class="tok rd">{{readout:plat_price}}</span><span class="tok ds">{{dataset:equipment.name}}</span><span class="tok">{{subset:priced.plat}}</span><span class="tok">|latest</span><span class="tok">|round:0</span></div>
+          <div class="divider"></div>
+          <div class="flab narrow"><span class="k">duration</span><span class="v">long</span><span class="k">muted</span><span class="v"><span class="tog"><span class="sw2"><b></b></span>off</span></span></div>
+          <button class="btn">&#128276; test</button>
+        </div>
+        <span class="port in"></span>
+      </div>
+
+      <!-- SOUND (disabled) -->
+      <div class="gnode sound disabled" data-acc style="left:700px;top:912px;width:222px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><path d="M3 6h2l3-2.5v9L5 10H3z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M10.5 6a3 3 0 0 1 0 4M12.5 4.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.1"/></svg></span><span class="gn-title">relic_get</span><span class="gn-type">sound</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">file</span><span class="v">relic_get.wav</span><span class="k">volume</span><span class="v acc">60%</span></div>
+          <button class="btn">&#9658; play</button>
+        </div>
+        <span class="port in"></span>
+      </div>
+
+      <!-- FILESOURCE -->
+      <div class="gnode filesource" data-acc style="left:960px;top:786px;width:250px">
+        <div class="gn-h"><span class="nicon"><svg viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M9 2v3h3M6 8h4M6 10.5h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg></span><span class="gn-title">EE.log</span><span class="gn-type">source</span><span class="gn-disc">&minus;</span></div>
+        <div class="gn-body">
+          <div class="flab narrow"><span class="k">format</span><span class="v">log_lines</span><span class="k">file</span><span class="v">EE.log</span><span class="k">read</span><span class="v acc">on change</span><span class="k">tail</span><span class="v">last 500</span></div>
+          <div class="divider"></div>
+          <div class="fgrp">fields</div>
+          <div class="chips"><span class="chip">relic</span><span class="chip">reward</span><span class="chip ghost">between "]" &hellip;</span></div>
+          <button class="btn">&#8635; read</button>
+        </div>
+        <span class="port out"></span>
+      </div>
+
+    </div>
+  </div>
+
+  <footer class="legend">
+    <span class="lg"><span class="sw data"></span>data</span>
+    <span class="lg"><span class="sw toview"></span>view</span>
+    <span class="lg"><span class="sw own"></span>owns</span>
+    <span class="lg"><span class="sw owndict"></span>dict</span>
+    <span class="lg"><span class="sw trigger"></span>trigger</span>
+    <span class="lg"><span class="sw watch"></span>watch</span>
+    <span class="lg"><span class="sw disabled"></span>disabled</span>
+    <span class="sep"></span>
+    <span class="lg" style="color:var(--dim)">states: selected ring &middot; disabled fade &middot; collapsed &middot; spinner</span>
+    <span class="sep"></span>
+    <span class="lg" style="color:var(--dim)">groups: SUPER &middot; GROUP &middot; SUB</span>
+  </footer>
+</div>
