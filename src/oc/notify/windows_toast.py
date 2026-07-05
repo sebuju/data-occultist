@@ -1,59 +1,72 @@
-"""Windows OS toast notifier, backed by the ``toasted`` WinRT library.
+"""Windows OS toast notifier — queues toasts and posts each in a throwaway CHILD PROCESS.
 
-The ``find_spec`` check below is the registration gate: on a host without the library (or
-off-Windows) this module fails to import and ``registry`` silently skips it, so
+The ``find_spec`` check below is the registration gate: on a host without the ``toasted`` library
+(or off-Windows) this module fails to import and ``registry`` silently skips it, so
 ``build_notifier`` falls back to the ``null`` no-op — exactly how the win32/wgc capture backends
-behave. The real ``toasted`` imports live inside :meth:`_show` so an API drift can't stop the
-backend registering.
+behave. The gate only *checks* the library is installed; the actual toast build + WinRT post live
+entirely in :mod:`oc.notify._toast_child`, which this process spawns and never imports. So the
+server process never loads ``toasted``/``winsdk`` (nor the WinRT runtime DLLs they pull in) — that
+matters because if those DLLs load ahead of onnxruntime's native extension, onnxruntime's pybind
+init fails ("DLL initialization routine failed") and every OCR read 500s.
 
-The gate must NOT actually ``import toasted`` at module load: it pulls in the WinRT runtime
-(``winsdk``) DLLs, and if they load into the process before onnxruntime's native extension does,
-onnxruntime's pybind init fails ("DLL initialization routine failed") and every OCR read 500s.
-Registry discovery imports this module eagerly (to register the name), long before the OCR engine
-loads. ``find_spec`` answers "is it installed?" without loading anything; the real WinRT imports
-stay lazy in the methods, by which point OCR is up.
-
-``toasted`` builds a toast from a list of ``elements`` (styled ``Text`` blocks, an ``Image``) and
-turns them into toast XML — that part we use. Its own ``Toast.show()`` coroutine we do NOT use:
-it registers activated/dismissed/failed handlers and awaits one of them before returning, i.e. it
-bundles "post the notification" with "wait for the user to click or dismiss it". We don't want
-click/dismiss callbacks at all (fire-and-forget only), and an unpackaged venv process frequently
-never gets that callback delivered by Windows anyway — so that wait can hang forever, and since
-every toast used to be posted through it, one hung wait permanently jammed the whole pipeline
-behind it. :meth:`_show` instead builds the XML with ``toasted`` and posts it with the raw
-``winsdk`` ``ToastNotifier`` directly (no event registration, nothing to await, nothing to hang
-on). Every toast still runs on its own throwaway thread, joined with a bound (see :meth:`_run`) —
-belt-and-suspenders against the native post call or a remote-icon download stalling.
+**Why a child process per toast.** Posting a toast is a synchronous WinRT/COM call into the Windows
+notification service (WpnUserService). That call occasionally stalls indefinitely, and ``winsdk``
+(pywinrt 1.0.0b10) does NOT release the GIL around it — a stuck post therefore freezes the *entire*
+interpreter (FastAPI, the asyncio loop, everything), and it never recovers: the process must be
+killed. Earlier revisions posted on a throwaway *thread* joined with a timeout, but that is no real
+defence — a Python thread can't be force-killed, and while the stuck thread holds the GIL the
+``join(timeout)`` can't even run to time out. A child *process* can be OS-killed regardless of what
+its GIL is doing. So :meth:`_run` spawns ``_toast_child`` per toast, waits on it with a hard
+timeout, and ``kill()``s it if it overruns — a hung post costs one abandoned child, never the
+server.
 """
 
 from __future__ import annotations
 
+import atexit
+import dataclasses
+import json
+import os
 import queue
+import subprocess
+import sys
+import tempfile
 import threading
 from importlib.util import find_spec
+from pathlib import Path
 
 if find_spec("toasted") is None:   # registration gate: absent -> module skipped
     raise ImportError("toasted is not installed")
 
-from ..interfaces import Notifier, ToastSpec, ToastText
+from ..interfaces import Notifier, ToastSpec
 from ..registry import register_notifier
+from ._killjob import KillJob
 
-# Outer bound on one toast's whole post (build XML + hand it to the OS). Posting a toast is
-# normally near-instant; this is just a backstop in case a remote icon:// / http(s):// image
-# download stalls. If a call ever exceeds this, _run abandons it (leaked daemon thread, nobody
-# waits on it) and moves straight to the next queued toast instead of stalling the pipeline.
-_JOIN_TIMEOUT = 15.0
+# Hard bound on one child's whole life (import toasted/winsdk + build XML + hand to the OS).
+# Posting is normally a second or two; this is the backstop for a WpnUserService stall or a remote
+# icon download hanging. On overrun the child is killed and _run moves to the next queued toast.
+_KILL_TIMEOUT = 20.0
+
+_CHILD = Path(__file__).with_name("_toast_child.py")
+
+# Suppress the console window Windows would otherwise flash for each child (pythonw isn't assumed).
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 @register_notifier("windows")
 class WindowsToastNotifier(Notifier):
     def __init__(self) -> None:
-        # registered AppUserModelIDs, keyed by source label (registration writes HKCU once).
-        self._app_ids: dict[str, str] = {}
         # Toasts are queued and drained by _run, never posted on the caller's (FastAPI request)
-        # thread — notify() always returns instantly, and a slow/stuck post only ever delays
-        # OTHER queued toasts, never a request.
+        # thread — notify() always returns instantly, and a slow/stuck post only ever delays OTHER
+        # queued toasts, never a request or the collector loop.
         self._queue: queue.Queue = queue.Queue()
+        # OS backstop against orphans: every child is assigned to this kill-on-close Job Object, so
+        # if THIS process dies mid-post (crash, taskkill) without _post's own kill running, the OS
+        # closes the job handle and terminates the child too. atexit.terminate covers the graceful
+        # path (don't leave a hung child running when the server exits cleanly).
+        self._job = KillJob()
+        self._current: subprocess.Popen | None = None
+        atexit.register(self._job.terminate)
         threading.Thread(target=self._run, daemon=True).start()
 
     def notify(self, spec: ToastSpec) -> None:
@@ -63,127 +76,41 @@ class WindowsToastNotifier(Notifier):
     def _run(self) -> None:
         while True:
             spec = self._queue.get()
-            # Each toast gets its OWN throwaway thread, joined with a bound, rather than calling
-            # _show inline on this loop's thread. _show no longer awaits anything (see module
-            # docstring), so this is just a backstop: if the native post call or a remote-icon
-            # download ever stalls past _JOIN_TIMEOUT, _run abandons that thread and moves on to
-            # the next queued toast instead of the whole pipeline waiting on it.
-            t = threading.Thread(target=self._show, args=(spec,), daemon=True)
-            t.start()
-            t.join(_JOIN_TIMEOUT)
+            self._post(spec)
 
-    def _app_id(self, app_name: str) -> str:
-        """Register (once) and return the AppUserModelID for this source label. A venv/non-UWP
-        process has no system-registered id, so a toast would otherwise show under a generic
-        'Python' name — registering writes the label + our logo into HKCU so the toast is ours."""
-        from pathlib import Path
-
-        from toasted import Toast
-
-        name = app_name or "data-occultist"
-        handle = self._app_ids.get(name)
-        if handle is None:
-            try:
-                logo = Path(__file__).resolve().parents[1] / "web" / "static" / "toast-logo.png"
-                handle = Toast.register_app_id(
-                    name, name, icon_uri=str(logo) if logo.exists() else None
-                )
-            except Exception:   # noqa: BLE001 - registration is best-effort; fall back to the raw id
-                handle = name
-            self._app_ids[name] = handle
-        return handle
-
-    def _show(self, spec: ToastSpec) -> None:
-        # A failed toast must never crash a trigger fire (a bad image path, a WinRT hiccup) —
-        # swallow everything.
+    def _post(self, spec: ToastSpec) -> None:
+        # Serialize the spec to a temp JSON file and post it in a child process, killed on overrun.
+        # A failed toast must never crash a trigger fire / a request — swallow everything.
+        path = ""
         try:
-            from pathlib import Path
-
-            from toasted import (
-                Image,
-                Text,
-                Toast,
-                ToastDuration,
-                ToastImagePlacement,
-                ToastTextAlign,
-                ToastTextStyle,
+            fd, path = tempfile.mkstemp(prefix="oc_toast_", suffix=".json")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(dataclasses.asdict(spec), f)
+            proc = subprocess.Popen(
+                [sys.executable, str(_CHILD), path],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=_NO_WINDOW,
             )
-
-            def _style(name: str):
+            # Enrol the child in the kill-on-close job the instant it exists, so a parent crash from
+            # here on takes the child down with it (tiny race: a crash in the microseconds between
+            # spawn and assign could leak this one child — the child does nothing until it posts, so
+            # even then it just exits normally).
+            self._current = proc
+            self._job.assign(proc)
+            try:
+                proc.wait(timeout=_KILL_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                proc.kill()   # OS-kill the stalled post; it can't touch this process
                 try:
-                    return ToastTextStyle[name.upper()] if name else None
-                except KeyError:
-                    return None
-
-            def _align(name: str):
-                try:
-                    return ToastTextAlign[name.upper()] if name else None
-                except KeyError:
-                    return None
-
-            # rich body: the styled block list, or the legacy title/message pair when empty.
-            blocks = spec.texts or [ToastText(content=spec.title), ToastText(content=spec.message)]
-            elements: list = []
-            # icon: an explicit path/URL, else the app's own logo PNG (svg/ico favicons don't
-            # render on toasts). A remote URL / icon:// scheme passes through (toasted downloads a
-            # URL itself); a local path must be a file:// URI (toasted rejects a raw Windows path);
-            # a missing local path is silently skipped (no image, no error).
-            icon = spec.icon or str(
-                Path(__file__).resolve().parents[1] / "web" / "static" / "toast-logo.png"
-            )
-            if not spec.show_icon:
-                icon = ""   # the toast opts out of the app-logo entirely
-            if not icon:
-                pass
-            elif icon.startswith(("http://", "https://", "icon://", "file://")):
-                elements.append(Image(icon, alt="data-occultist", placement=ToastImagePlacement.LOGO))
-            elif Path(icon).exists():
-                elements.append(Image(Path(icon).as_uri(), alt="data-occultist", placement=ToastImagePlacement.LOGO))
-            # generated top banner (hero) — a pre-rendered PNG on disk. resolve() first: as_uri()
-            # rejects a relative path (and would throw, dropping the whole toast).
-            if spec.hero_image and Path(spec.hero_image).exists():
-                elements.append(Image(Path(spec.hero_image).resolve().as_uri(), alt="", placement=ToastImagePlacement.HERO))
-            text_count = 0
-            for b in blocks:
-                if not b.content:
-                    continue
-                elements.append(Text(
-                    b.content, style=_style(b.style), align=_align(b.align),
-                    max_lines=b.max_lines or None,
-                ))
-                text_count += 1
-            # generated inline body images (no placement = inline), in order
-            for inl in spec.inline_images:
-                if inl and Path(inl).exists():
-                    elements.append(Image(Path(inl).resolve().as_uri(), alt=""))
-            if spec.attribution:
-                elements.append(Text(spec.attribution, is_attribution=True))
-                text_count += 1
-            # Windows injects a "New notification" placeholder title when a toast carries NO text
-            # element (e.g. an image-only toast). A blank text element suppresses that, BUT Windows
-            # trims WHITESPACE-only content (space, and the non-breaking space U+00A0 — both are
-            # Unicode category Zs) and still counts the toast as textless, so neither works. A
-            # zero-width space (U+200B) is category Cf (format), NOT whitespace: Windows keeps it,
-            # so the toast has content and shows no placeholder, while rendering nothing visible.
-            if text_count == 0:
-                elements.append(Text("\u200b"))
-            toast = Toast(
-                app_id=self._app_id(spec.app_name),
-                duration=ToastDuration.LONG if spec.duration == "long" else ToastDuration.SHORT,
-            )
-            toast.elements = elements
-            toast._xml_mute_sound = spec.muted   # read by to_xml_string()'s <audio silent=...>
-            # Build the XML with toasted (rich elements), then post it with the raw WinRT
-            # notifier ourselves -- see the module docstring for why we don't call toasted's own
-            # Toast.show(). download_media defaults False: a local file:// image URI resolves
-            # to a path either way (no network involved), and a remote http(s)/icon:// source is
-            # just left as a URL in the XML for Windows itself to fetch asynchronously -- we never
-            # do a synchronous download in this process at all.
-            import winsdk.windows.data.xml.dom as dom
-            from winsdk.windows.ui.notifications import ToastNotification, ToastNotificationManager
-
-            xml_doc = dom.XmlDocument()
-            xml_doc.load_xml(toast.to_xml_string())
-            ToastNotificationManager.create_toast_notifier(toast.app_id).show(ToastNotification(xml_doc))
+                    proc.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    pass
         except Exception:  # noqa: BLE001 - a toast must never break a fire
             pass
+        finally:
+            self._current = None
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
