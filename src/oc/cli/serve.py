@@ -7,7 +7,10 @@ def register(sub) -> None:
     p = sub.add_parser("serve", help="launch the web UI")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
-    p.add_argument("--reload", action="store_true", help="auto-reload on code change")
+    p.add_argument("--reload", dest="reload", action="store_true", default=True,
+                   help="auto-reload on code change (default on)")
+    p.add_argument("--no-reload", dest="reload", action="store_false",
+                   help="disable auto-reload")
     p.add_argument("--verbose-access", action="store_true",
                    help="log every request, including static-asset GETs (default hides them)")
     p.set_defaults(func=run)
@@ -28,10 +31,20 @@ def run(args) -> int:
     # SIGINT/SIGTERM handlers to flip a shutdown flag that every long-lived SSE stream watches
     # (see oc.web.shutdown / oc.web.sse), so the streams self-close and uvicorn's connection
     # drain finishes at once. No timeout band-aid needed.
+    # Watch the `oc` package source itself, not the process cwd. An installed/editable
+    # launch (e.g. .venv-dml\Scripts\data-occultist.exe) usually runs from a cwd that
+    # isn't the repo, so uvicorn's default (watch cwd) sees no code changes and never
+    # reloads. Pin the watch dir to where `oc` actually lives.
+    reload_kwargs = {}
+    if args.reload:
+        import oc
+        reload_kwargs["reload_dirs"] = [os.path.dirname(os.path.dirname(oc.__file__))]
+
     uvicorn.run(
         "oc.web.app:app",
         host=args.host,
         port=args.port,
         reload=args.reload,
+        **reload_kwargs,
     )
     return 0
