@@ -1864,6 +1864,7 @@ toasts:
       bg_color: ''
       wrap: true
       overflow: false
+      disable_if_empty: false
       match_w: ''
       match_h: ''
       match_w_pct: 100
@@ -1881,6 +1882,7 @@ toasts:
         to: ''
         corner: tl
         target: tl
+      z_index: 0
   - placement: none
     width: 360
     height: 140
@@ -1901,60 +1903,59 @@ toasts:
 - id: toast_2
   title: ''
   message: ''
-  texts:
-  - content: Relic
-    style: caption
-    align: ''
-    max_lines: 0
+  texts: []
   images:
   - placement: hero
     width: 360
     height: 180
-    bg_type: solid
-    color1: '#15171c'
+    bg_type: transparent
+    color1: '#272727'
     color2: '#061826'
     angle: 90
     unit: pct
     texts:
     - content: '{{subset:relic_rewards_with_price.name[0]}}'
       x: 3
-      y: 2
-      size: 22
-      color: '#ffffff'
-      align: tl
-      width: 80
-      height: 33
-      bg_color: '#000000'
+      y: 5
+      size: 18
+      color: '#5fd68f'
+      align: ml
+      width: 42
+      height: 25
+      bg_color: ''
       wrap: true
-      overflow: false
-      match_w: ''
+      overflow: true
+      disable_if_empty: false
+      match_w: image
       match_h: ''
-      match_w_pct: 100
+      match_w_pct: 78
       match_h_pct: 100
       font_family: ''
-      bold: false
+      bold: true
       italic: false
       underline: false
       border:
         w: 0
-        color: '#ffffff'
+        color: '#5fd68f'
         style: solid
       border_sides: {}
       anchor:
         to: ''
         corner: tl
         target: tl
+      z_index: 1
     - content: '{{subset:relic_rewards_with_price.name[1]}}'
       x: 0
-      y: 1
-      size: 18
-      color: '#ffffff'
-      align: tl
+      y: 18
+      size: 16
+      color: '#5fd68f'
+      align: ml
       width: 81
-      height: 20
+      height: 13
       bg_color: ''
       wrap: false
       overflow: false
+      disable_if_empty: false
       match_w: '0'
       match_h: ''
       match_w_pct: 100
@@ -1972,17 +1973,19 @@ toasts:
         to: '0'
         corner: tl
         target: bl
+      z_index: 0
     - content: '{{subset:relic_rewards_with_price.name[2]}}'
       x: 0
-      y: 1
-      size: 18
-      color: '#ffffff'
-      align: tl
+      y: 0
+      size: 15
+      color: '#5fd68f'
+      align: ml
       width: 81
       height: 0
       bg_color: ''
       wrap: false
       overflow: false
+      disable_if_empty: false
       match_w: '0'
       match_h: '1'
       match_w_pct: 100
@@ -2000,17 +2003,19 @@ toasts:
         to: '1'
         corner: tl
         target: bl
+      z_index: 0
     - content: '{{subset:relic_rewards_with_price.name[3]}}'
       x: 0
-      y: 1
-      size: 18
-      color: '#ffffff'
-      align: tl
+      y: 0
+      size: 15
+      color: '#5fd68f'
+      align: ml
       width: 81
       height: 0
       bg_color: ''
       wrap: false
       overflow: false
+      disable_if_empty: false
       match_w: '0'
       match_h: '1'
       match_w_pct: 100
@@ -2028,23 +2033,25 @@ toasts:
         to: '2'
         corner: tl
         target: bl
+      z_index: 0
     - content: '{{subset:relic_rewards_with_price.price[0]}}'
-      x: 85
-      y: 4
-      size: 22
-      color: '#ffffff'
-      align: tr
+      x: 0
+      y: 0
+      size: 16
+      color: '#5fd68f'
+      align: mr
       width: 14
-      height: 0
+      height: 12
       bg_color: ''
       wrap: false
       overflow: false
-      match_w: ''
-      match_h: ''
-      match_w_pct: 100
+      disable_if_empty: false
+      match_w: image
+      match_h: '0'
+      match_w_pct: 16
       match_h_pct: 100
       font_family: ''
-      bold: false
+      bold: true
       italic: false
       underline: false
       border:
@@ -2053,22 +2060,24 @@ toasts:
         style: solid
       border_sides: {}
       anchor:
-        to: ''
+        to: '0'
         corner: tl
-        target: tl
+        target: tr
+      z_index: 1
     - content: '{{subset:relic_rewards_with_price.price[1]}}'
-      x: 97
-      y: 47
-      size: 18
-      color: '#ffffff'
-      align: tr
+      x: 0
+      y: 0
+      size: 15
+      color: '#5fd68f'
+      align: mr
       width: 14
       height: 0
       bg_color: ''
       wrap: false
       overflow: false
-      match_w: ''
-      match_h: ''
+      disable_if_empty: false
+      match_w: '4'
+      match_h: '1'
       match_w_pct: 100
       match_h_pct: 100
       font_family: ''
@@ -2081,22 +2090,24 @@ toasts:
         style: solid
       border_sides: {}
       anchor:
-        to: ''
+        to: '1'
         corner: tl
-        target: tl
+        target: tr
+      z_index: 0
     - content: '{{subset:relic_rewards_with_price.price[2]}}'
-      x: 97
-      y: 64
-      size: 18
-      color: '#ffffff'
-      align: tr
+      x: 0
+      y: 0
+      size: 15
+      color: '#5fd68f'
+      align: mr
       width: 14
       height: 0
       bg_color: ''
       wrap: false
       overflow: false
-      match_w: ''
-      match_h: ''
+      disable_if_empty: false
+      match_w: '4'
+      match_h: '1'
       match_w_pct: 100
       match_h_pct: 100
       font_family: ''
@@ -2109,22 +2120,24 @@ toasts:
         style: solid
       border_sides: {}
       anchor:
-        to: ''
+        to: '2'
         corner: tl
-        target: tl
+        target: tr
+      z_index: 0
     - content: '{{subset:relic_rewards_with_price.price[3]}}'
-      x: 97
-      y: 81
-      size: 18
-      color: '#ffffff'
-      align: tr
+      x: 0
+      y: 0
+      size: 15
+      color: '#5fd68f'
+      align: mr
       width: 14
       height: 0
       bg_color: ''
       wrap: false
       overflow: false
-      match_w: ''
-      match_h: ''
+      disable_if_empty: false
+      match_w: '4'
+      match_h: '1'
       match_w_pct: 100
       match_h_pct: 100
       font_family: ''
@@ -2137,9 +2150,40 @@ toasts:
         style: solid
       border_sides: {}
       anchor:
+        to: '3'
+        corner: tl
+        target: tr
+      z_index: 0
+    - content: ''
+      x: 0
+      y: 0
+      size: 15
+      color: '#ffffff'
+      align: mr
+      width: 100
+      height: 35
+      bg_color: '#1d3234'
+      wrap: false
+      overflow: false
+      disable_if_empty: false
+      match_w: ''
+      match_h: ''
+      match_w_pct: 100
+      match_h_pct: 100
+      font_family: ''
+      bold: true
+      italic: false
+      underline: false
+      border:
+        w: 0
+        color: '#ffffff'
+        style: solid
+      border_sides: {}
+      anchor:
         to: ''
         corner: tl
         target: tl
+      z_index: 0
   app_name: data-occultist
   duration: short
   icon: ''

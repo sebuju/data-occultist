@@ -29,6 +29,35 @@ def test_sibling_anchor_positions_below():
     assert boxes[1]["x"] == 20 and boxes[1]["y"] == 68
 
 
+def test_disable_if_empty_collapses_gap_for_anchored_chain():
+    # middle element resolves empty with disable_if_empty -> it takes zero size/offset, so the
+    # element anchored below it shifts up to fill the gap instead of leaving a hole.
+    img = _img(width=300, height=200, texts=[
+        ToastImageTextDef(content="A", x=0, y=0, width=100, height=20),
+        ToastImageTextDef(content="", disable_if_empty=True, x=0, y=8, width=100, height=20,
+                          anchor=ToastAnchor(to="0", corner="tl", target="bl")),
+        ToastImageTextDef(content="C", x=0, y=0, width=100, height=20,
+                          anchor=ToastAnchor(to="1", corner="tl", target="bl")),
+    ])
+    _, boxes = render_png_boxes(img, ctx=None)
+    # C collapses onto A's bottom-left (0, 20), not below the (would-be) empty middle box
+    assert boxes[2]["x"] == 0 and boxes[2]["y"] == 20
+
+
+def test_disable_if_empty_keeps_gap_when_content_present():
+    # same layout, but the middle has content -> it occupies space and C sits below it as usual.
+    img = _img(width=300, height=200, texts=[
+        ToastImageTextDef(content="A", x=0, y=0, width=100, height=20),
+        ToastImageTextDef(content="B", disable_if_empty=True, x=0, y=8, width=100, height=20,
+                          anchor=ToastAnchor(to="0", corner="tl", target="bl")),
+        ToastImageTextDef(content="C", x=0, y=0, width=100, height=20,
+                          anchor=ToastAnchor(to="1", corner="tl", target="bl")),
+    ])
+    _, boxes = render_png_boxes(img, ctx=None)
+    # B at (0, 28); C below B at (0, 48)
+    assert boxes[1]["y"] == 28 and boxes[2]["y"] == 48
+
+
 def test_anchor_cycle_falls_back_to_image():
     # a self/mutual cycle must not hang; the element just anchors to the image
     img = _img(width=200, height=100, texts=[
@@ -66,6 +95,22 @@ def test_match_w_pct_scales_sibling_width():
     ])
     _, boxes = render_png_boxes(img, ctx=None)
     assert boxes[1]["w"] == 60
+
+
+def test_match_w_image_copies_canvas_width():
+    # match_w="image" copies the image's own width (300), overriding the element's auto size
+    img = _img(width=300, height=150, texts=[
+        ToastImageTextDef(content="A", x=0, y=0, height=20, match_w="image")])
+    _, boxes = render_png_boxes(img, ctx=None)
+    assert boxes[0]["w"] == 300
+
+
+def test_match_h_image_pct_scales_canvas_height():
+    # match_h="image" at 50% of a 150px canvas -> 75px, winning over the explicit height
+    img = _img(width=300, height=150, texts=[
+        ToastImageTextDef(content="A", x=0, y=0, width=40, height=20, match_h="image", match_h_pct=50)])
+    _, boxes = render_png_boxes(img, ctx=None)
+    assert boxes[0]["h"] == 75
 
 
 def test_match_cycle_falls_back_to_own_size():

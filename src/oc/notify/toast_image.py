@@ -90,8 +90,14 @@ def _len_px(val, ref: int, unit: str) -> int:
 def _background(width: int, height: int, spec):
     from PIL import Image
 
+    bg_type = getattr(spec, "bg_type", "solid")
+    # transparent: the Windows toast surface (a system-drawn dark acrylic, uneven + theme-tinted —
+    # not a flat colour you can match) shows straight through. RGBA with alpha 0; text + per-element
+    # bg boxes paint opaque over it, so the banner blends into the toast instead of a solid slab.
+    if bg_type == "transparent":
+        return Image.new("RGBA", (width, height), (0, 0, 0, 0))
     c1 = _rgb(getattr(spec, "color1", "#0a3d62"), (10, 61, 98))
-    if getattr(spec, "bg_type", "solid") != "gradient":
+    if bg_type != "gradient":
         return Image.new("RGB", (width, height), c1)
     c2 = _rgb(getattr(spec, "color2", "#061826"), (6, 24, 38))
     import math
@@ -270,8 +276,9 @@ def render_png_boxes(spec, ctx=None, *, keep_missing: bool = False, focus=None):
                       "xpx": _len_px(getattr(t, "x", 12), w, unit),
                       "ypx": _len_px(getattr(t, "y", 12), h, unit)})
 
-    # 1b) fixed length on one axis: a match_w/match_h (a sibling index) WINS — it copies that sibling's
-    # fixed-or-auto size scaled by match_w_pct/match_h_pct (percent; cycle-guarded, mirroring the pretty
+    # 1b) fixed length on one axis: a match_w/match_h ("image", or a sibling index) WINS — it copies the
+    # image canvas size, or that sibling's fixed-or-auto size, scaled by match_w_pct/match_h_pct (percent;
+    # cycle-guarded, mirroring the pretty
     # canvas). With no match on the axis, an explicit width/height is used. None = auto to the text.
     def _raw(i, axis):
         mw, mh = _measure(draw, metas[i]["content"], metas[i]["font"])
@@ -280,6 +287,10 @@ def render_png_boxes(spec, ctx=None, *, keep_missing: bool = False, focus=None):
     def _fixed(i, axis, stack):
         m = metas[i]
         ref = (getattr(m["t"], "match_w" if axis == "w" else "match_h", "") or "").strip()
+        if ref == "image":   # match the image canvas size on this axis, scaled by the percent
+            base = w if axis == "w" else h
+            pct = int(getattr(m["t"], "match_w_pct" if axis == "w" else "match_h_pct", 100) or 100)
+            return max(1, round(base * pct / 100.0))
         if ref.lstrip("-").isdigit():
             j = int(ref)
             if 0 <= j < len(metas) and j != i and j not in stack:
@@ -295,7 +306,17 @@ def render_png_boxes(spec, ctx=None, *, keep_missing: bool = False, focus=None):
     # `overflow` controls whether text may spill past the box (on = allowed to overflow, off = clipped
     # to the box and ended with … , i.e. overflow: hidden + text-overflow: ellipsis).
     for i, m in enumerate(metas):
-        fw, fh, t = _fixed(i, "w", set()), _fixed(i, "h", set()), m["t"]
+        t = m["t"]
+        # disable_if_empty: the resolved content is blank (a missing/blank {{token}}) -> drop the
+        # element AND collapse it: zero size and zero offset, so a chain of elements anchored to it
+        # shifts up to fill the gap instead of leaving a hole (see resolve + paint, both skip it).
+        if bool(getattr(t, "disable_if_empty", False)) and not str(m["content"]).strip():
+            m["off"] = True
+            m["content"] = ""
+            m["wpx"] = m["hpx"] = m["sw"] = m["sh"] = 0
+            m["xpx"] = m["ypx"] = 0
+            continue
+        fw, fh = _fixed(i, "w", set()), _fixed(i, "h", set())
         clip = not bool(getattr(t, "overflow", False))      # overflow off -> clip to the box
         if m["content"] and fw:
             if getattr(t, "wrap", True):
@@ -338,21 +359,25 @@ def render_png_boxes(spec, ctx=None, *, keep_missing: bool = False, focus=None):
     for i in range(len(metas)):
         resolve(i, set())
 
-    # 3) paint: background fill, borders, text (9-point aligned within the box), underline.
+    # 3) paint: background fill, borders, text (9-point aligned within the box), underline. Painted in
+    # z_index order (low first) so a higher z_index element sits on top where boxes overlap; ties keep
+    # list order. `boxes` is keyed by the ORIGINAL index (`i`), so the editor overlay is order-agnostic.
     boxes = []
-    for i, m in enumerate(metas):
+    order = sorted(range(len(metas)), key=lambda k: (int(getattr(metas[k]["t"], "z_index", 0) or 0), k))
+    for i in order:
+        m = metas[i]
         t = m["t"]
         bx, by = pos[i]
         sw, sh = m["sw"], m["sh"]
         boxes.append({"i": i, "x": int(bx), "y": int(by), "w": max(1, int(sw)), "h": max(1, int(sh))})
         boxed = m["wpx"] > 0 and m["hpx"] > 0
         bg_color = getattr(t, "bg_color", "") or ""
-        if boxed and bg_color:
+        if boxed and bg_color and not m.get("off"):
             draw.rectangle([bx, by, bx + sw, by + sh], fill=_rgb(bg_color))
-        if boxed:
+        if boxed and not m.get("off"):
             _draw_borders(draw, (bx, by, sw, sh), t)
         content = m["content"]
-        if content:
+        if content and not m.get("off"):
             color = _rgb(getattr(t, "color", "#ffffff"), (255, 255, 255))
             hf, vf = _frac(getattr(t, "align", "tl"))
             ah = "l" if not m["wpx"] or hf == 0.0 else ("m" if hf == 0.5 else "r")

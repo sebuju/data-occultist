@@ -978,8 +978,13 @@ class ToastImageTextDef(BaseModel):
     bg_color: str = ""      # box fill colour (hex); drawn when set and width & height > 0
     wrap: bool = True       # word-wrap within the box width: True = break onto more lines; False = one line
     overflow: bool = False  # allow text to spill past the box; False = clip to it and end with … (overflow: hidden + text-overflow: ellipsis)
-    # optional dimension matching: copy another element's resolved width/height. "" = own size, else a
-    # sibling element index (as a string), mirroring `anchor.to`. A set match WINS over the element's
+    # when the resolved content is empty (a missing/blank {{token}}), drop this element AND collapse
+    # the gap it left: it renders nothing and occupies zero size, so any element anchored to it (a
+    # chain) shifts up to fill the space instead of leaving a hole.
+    disable_if_empty: bool = False
+    # optional dimension matching: copy another element's resolved width/height. "" = own size, "image"
+    # = the image canvas size, else a sibling element index (as a string), mirroring `anchor.to`. A set
+    # match WINS over the element's
     # own width/height, scaled by match_w_pct/match_h_pct (percent, 100 = the sibling's full size, 50 =
     # half). The percent is ignored when no sibling is matched on that axis.
     match_w: str = ""
@@ -996,6 +1001,9 @@ class ToastImageTextDef(BaseModel):
     border_sides: dict[str, ToastBorderSide] = Field(default_factory=dict)
     # placement relative to the image / a sibling element
     anchor: ToastAnchor = Field(default_factory=ToastAnchor)
+    # paint/stacking order: elements are drawn low z_index first, so a higher z_index sits ON TOP of a
+    # lower one where they overlap. Ties keep list order. Independent of the anchor chain.
+    z_index: int = 0
 
     @field_validator("align", mode="before")
     @classmethod
@@ -1014,7 +1022,7 @@ class ToastImageDef(BaseModel):
     placement: str = "inline"       # hero | inline | none
     width: int = 364
     height: int = 180
-    bg_type: str = "solid"          # solid | gradient
+    bg_type: str = "solid"          # solid | gradient | transparent (toast surface shows through)
     color1: str = "#0a3d62"
     color2: str = "#061826"
     angle: int = 90
