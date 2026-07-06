@@ -420,6 +420,10 @@
    width = the resting size where the two method-input fields are comfortably usable; min-width =
    the grid's min-content floor, so resize can't crush past where the row still fits. */
 .gnode.filesource { width: 300px; min-width: 260px; }
+/* detect node: at 220px the 1fr column is only ~99px when labels like "case sensitive"
+   (~95px) are present — the meter (~116px) overflows the body → scrollbar. 250px gives
+   the meter enough room while staying compact. */
+.gnode.detect { width: 250px; }
 .gnode, .gnode * { box-sizing: border-box; }
 .gnode input, .gnode select { user-select: text; max-width: 100%; }
 /* text-selection highlight inside a node reads its own type colour (--nt) instead of the
