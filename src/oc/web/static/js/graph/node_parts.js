@@ -134,13 +134,14 @@ export function ruleValidForType(r, ftype) {
 // Returns an ARRAY of <option> nodes, consumed as h("select", {...}, dictOptions(sel)).
 export function dictOptions(sel) {
     const dicts = model.profile.dictionaries || [];
-    const opts = [h("option", { value: "", selected: !sel }, "all")];
+    const selWrap = (cond, text) => cond ? `<${text}>` : text;
+    const opts = [h("option", { value: "", selected: !sel }, selWrap(!sel, "all"))];
     for (const d of dicts)
-        opts.push(h("option", { value: d.id, selected: sel === d.id }, d.name || d.id));
+        opts.push(h("option", { value: d.id, selected: sel === d.id }, selWrap(sel === d.id, d.name || d.id)));
     // pin a referenced dictionary the profile no longer lists, so the field keeps pointing at it
     // (shown by bare id) instead of silently snapping to "all" on the next edit.
     if (sel && !dicts.some((d) => d.id === sel))
-        opts.push(h("option", { value: sel, selected: true }, sel));
+        opts.push(h("option", { value: sel, selected: true }, `<${sel}>`));
     return opts;
 }
 
@@ -178,7 +179,7 @@ export function preprocessControls(w) {
         trashBtn({ cls: "pp-cx", dataset: { i }, title: "remove color" })));
     return frag(
         kv("preprocess", h("select", { class: "ppmode" },
-            PP_MODES.map(([v, t]) => h("option", { value: v, selected: pp.mode === v }, t))),
+            PP_MODES.map(([v, t]) => h("option", { value: v, selected: pp.mode === v }, pp.mode === v ? `<${t}>` : t))),
             { title: "preprocess the crop before OCR: threshold = auto black/white (good default), color = keep only the taught text color(s), invert = flip light-on-dark" }),
         pp.mode === "color" && h("div", { class: "pp-color" },
             h("div", { class: "pp-chips" }, chips.length ? chips : h("span", { class: "muted" }, "no colors yet")),
@@ -211,8 +212,8 @@ function scrollbarParts(n) {
             h("div", { class: "sb-cut-pos muted" }, s.pos != null ? `thumb ${(s.pos * 100).toFixed(2)}% · ${s.px ?? "?"}px` : "thumb —")));
     return frag(
         kv("orientation", h("select", { class: "sbset", dataset: { k: "orient" } },
-            h("option", { selected: o === "vertical" }, "vertical"),
-            h("option", { selected: o === "horizontal" }, "horizontal"))),
+            h("option", { selected: o === "vertical" }, o === "vertical" ? "<vertical>" : "vertical"),
+            h("option", { selected: o === "horizontal" }, o === "horizontal" ? "<horizontal>" : "horizontal"))),
         subhead("cutouts", null, "capture the scrollbar at known scroll offsets, tag each with how many rows it has moved down from the top — the gain is fit automatically. Drag to reorder."),
         h("div", { class: "sb-cuts" }, samples.length
             ? samples.map(cut)
@@ -229,7 +230,7 @@ function scrollbarParts(n) {
 
 // One <select> built from [value,label] option pairs, marking `val` selected.
 const optSel = (val, opts, cls, props = {}) =>
-    h("select", { class: cls, ...props }, opts.map(([v, t]) => h("option", { value: v, selected: val === v }, t)));
+    h("select", { class: cls, ...props }, opts.map(([v, t]) => h("option", { value: v, selected: val === v }, val === v ? `<${t}>` : t)));
 
 // The window's detectors as rows below templates: how they combine (all/any) + each
 // detector's polarity (require present / require absent), with a LIVE per-row verdict and
@@ -343,7 +344,7 @@ function ruleThenOperands(r, then, d) {
     if (then === "extract")
         return [
             h("select", { class: "rule-strategy", dataset: d, title: "which piece to pull out of the value" },
-                EXTRACTS.filter((v) => v !== "whole").map((v) => h("option", { value: v, selected: (r.strategy || "number") === v }, v))),
+                EXTRACTS.filter((v) => v !== "whole").map((v) => h("option", { value: v, selected: (r.strategy || "number") === v }, (r.strategy || "number") === v ? `<${v}>` : v))),
             NEEDS_SEP.has(r.strategy || "number") && h("input", { class: "rule-sep", dataset: d, value: r.sep || "/", placeholder: "sep", title: "split token (e.g. / or Rank)" }),
         ];
     if (then === "dictionary") {
@@ -351,7 +352,7 @@ function ruleThenOperands(r, then, d) {
         const dmode = r.dict_mode || "correct";
         return [
             h("select", { class: "rule-dmode", dataset: d, title: "off = not consulted; correct = fix words; drop = validate only; correct + drop = fix, drop unmatchable" },
-                DICT_MODES.map(([v, t]) => h("option", { value: v, selected: dmode === v }, t))),
+                DICT_MODES.map(([v, t]) => h("option", { value: v, selected: dmode === v }, dmode === v ? `<${t}>` : t))),
             (hasDicts && dmode !== "off") && h("select", { class: "rule-udict", dataset: d, title: "which authored dictionary (all = every enabled one pooled)" }, dictOptions(r.dict_id || "")),
             dmode !== "off" && h("input", { type: "number", class: "rule-fuzzy", dataset: d, step: "0.05", min: "0", max: "1", value: r.fuzzy ?? 0.82, title: "similarity (0-1) an uncertain read must reach to snap to a known word" }),
         ];
@@ -371,7 +372,7 @@ export function ruleRows(fd, cls, fid) {
     // every op is listed; ones invalid for this type are DISABLED (greyed) so the current value
     // still shows and can't be re-picked. `opts([v,label,code],...)` builds those <option>s.
     const opts = (list, cur, codeIdx) => list.map((row) => h("option",
-        { value: row[0], selected: cur === row[0], disabled: !okRuleType(row[codeIdx], ftype) }, row[1]));
+        { value: row[0], selected: cur === row[0], disabled: !okRuleType(row[codeIdx], ftype) }, cur === row[0] ? `<${row[1]}>` : row[1]));
     if (!rules.length) return h("div", { class: "muted frule-empty" }, "no rules — the read passes through");
     return rules.map((r, i) => {
         const when = r.when || "always", then = r.then || "set";
@@ -402,7 +403,7 @@ export function fieldConfigBody(fd, cls, fid) {
     const da = fid ? { fid } : {};
     const isText = (fd.type || "text") === "text";
     return frag(
-        kv("type", h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, t)))),
+        kv("type", h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, fd.type === v ? `<${t}>` : t)))),
         kv("isolate", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate }),
             { title: "read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. an '8' read as '81')" }),
         isText && kv("glyph-check", h("input", { type: "checkbox", class: cls, dataset: { k: "glyph_check", ...da }, checked: !!fd.glyph_check }),
@@ -423,7 +424,7 @@ export function fieldConfigBody(fd, cls, fid) {
 export function itemFieldParts(n) {
     const f = n.ref, fd = n.field || { type: "text", extract: "whole", fuzzy: 0.82 };
     const alignSel = (cls, vals, cur) => h("select", { class: cls, dataset: { fid: f.id } },
-        vals.map((v) => h("option", { selected: cur === v }, v)));
+        vals.map((v) => h("option", { selected: cur === v }, cur === v ? `<${v}>` : v)));
     const body = frag(
         fieldConfigBody(fd, "ffset", f.id),
         subhead("row role"),
@@ -451,7 +452,7 @@ export function itemTellParts(n) {
     const t = n.ref, it = n.item, w = n.win;
     const staticOn = w.static_grid !== false;   // static grid tiles rows from the cell — locate is unused
     const tset = (k, opts, cur, def) => h("select", { class: "tset", dataset: { k } },
-        opts.map((v) => h("option", { value: v, selected: (cur ?? def) === v }, v)));
+        opts.map((v) => h("option", { value: v, selected: (cur ?? def) === v }, (cur ?? def) === v ? `<${v}>` : v)));
     const body = frag(
         t.kind === "text" && frag(
             kv("checks", h("select", { class: "tset", dataset: { k: "field" } }, _colOpts((it.fields || []).map((f) => f.field), t.field)),
@@ -561,7 +562,7 @@ export function keySection(it, w) {
     const rows = used.length
         ? used.map((fid, i) => h("div", { class: "key-row", dataset: { i } },
             h("select", { class: "kfield", dataset: { i } },
-                (fids.includes(fid) ? fids : [fid, ...fids]).map((f) => h("option", { selected: f === fid }, f))),
+                (fids.includes(fid) ? fids : [fid, ...fids]).map((f) => h("option", { selected: f === fid }, f === fid ? `<${f}>` : f))),
             h("button", { class: "btn-icon kmv", dataset: { i, d: "-1" }, disabled: i === 0, title: "earlier in the key" }, "▲"),
             h("button", { class: "btn-icon kmv", dataset: { i, d: "1" }, disabled: i === used.length - 1, title: "later in the key" }, "▼"),
             trashBtn({ cls: "kdel", dataset: { i }, disabled: used.length <= 1, title: "remove from the key" })))
@@ -678,17 +679,17 @@ export function nodeParts(n) {
         const textBody = frag(
             kv("text", h("input", { class: "aset", dataset: { k: "text" }, value: a.text || "", placeholder: "EQUIPMENT" })),
             kv("mode", h("select", { class: "aset", dataset: { k: "match" } },
-                h("option", { value: "partial", selected: (a.match ?? "partial") === "partial" }, "partial"),
-                h("option", { value: "full", selected: a.match === "full" }, "full"),
-                h("option", { value: "exact", selected: a.match === "exact" }, "exact"),
-                h("option", { value: "prefix", selected: a.match === "prefix" }, "prefix")),
+                h("option", { value: "partial", selected: (a.match ?? "partial") === "partial" }, (a.match ?? "partial") === "partial" ? "<partial>" : "partial"),
+                h("option", { value: "full", selected: a.match === "full" }, a.match === "full" ? "<full>" : "full"),
+                h("option", { value: "exact", selected: a.match === "exact" }, a.match === "exact" ? "<exact>" : "exact"),
+                h("option", { value: "prefix", selected: a.match === "prefix" }, a.match === "prefix" ? "<prefix>" : "prefix")),
                 { title: "how text is compared: partial=substring (loose); full=whole-string; exact=equal; prefix=starts-with" }),
             kv("min chars", h("input", { type: "number", class: "aset", dataset: { k: "minchars" }, step: "1", min: "0", value: a.min_chars ?? 0 }),
                 { title: "hard floor: reads shorter than this never match (kills tiny-blob false hits)" }),
             kv("strip", h("select", { class: "aset", dataset: { k: "strip" } },
-                h("option", { value: "none", selected: (a.strip ?? "none") === "none" }, "none"),
-                h("option", { value: "alnum", selected: a.strip === "alnum" }, "alnum"),
-                h("option", { value: "spaces", selected: a.strip === "spaces" }, "spaces")),
+                h("option", { value: "none", selected: (a.strip ?? "none") === "none" }, (a.strip ?? "none") === "none" ? "<none>" : "none"),
+                h("option", { value: "alnum", selected: a.strip === "alnum" }, a.strip === "alnum" ? "<alnum>" : "alnum"),
+                h("option", { value: "spaces", selected: a.strip === "spaces" }, a.strip === "spaces" ? "<spaces>" : "spaces")),
                 { title: "what to ignore before comparing (default: none — keep everything)" }),
             kv("case sensitive", h("input", { type: "checkbox", class: "aset", dataset: { k: "case" }, checked: !!a.case_sensitive, title: "off = fold case before comparing" })));
         // color/border-kind controls — cheap, no OCR. A color swatch + hex + eyedropper.
@@ -707,10 +708,10 @@ export function nodeParts(n) {
                 title: "detector: the window's detect_mode decides how these combine" }),
             body: frag(
                 kv("kind", h("select", { class: "aset", dataset: { k: "kind" } },
-                    h("option", { value: "text", selected: kind === "text" }, "text"),
-                    h("option", { value: "color", selected: kind === "color" }, "color"),
-                    h("option", { value: "border", selected: kind === "border" }, "border"),
-                    ...(kind === "template" ? [h("option", { value: "template", selected: true }, "template")] : [])),
+                    h("option", { value: "text", selected: kind === "text" }, kind === "text" ? "<text>" : "text"),
+                    h("option", { value: "color", selected: kind === "color" }, kind === "color" ? "<color>" : "color"),
+                    h("option", { value: "border", selected: kind === "border" }, kind === "border" ? "<border>" : "border"),
+                    ...(kind === "template" ? [h("option", { value: "template", selected: true }, "<template>")] : [])),
                     { title: "text = OCR a label (costs OCR); color/border = cheap pixel check (no OCR — use these for the live-mode gate)" }),
                 kind === "text" ? textBody : kind === "template"
                     ? h("div", { class: "muted" }, "template image (set on the box)") : colorBody,
@@ -847,19 +848,19 @@ export function nodeParts(n) {
     const keyFields = mode === "single" && kf && !kfields.includes(kf) ? [...kfields, kf] : kfields;
     const keyOpts = [
         // empty = no dataset-level override; key comes from whatever feeds it (a window's/item's
-        // key, a file source's, or a producer's — e.g. the relic table producer's name|item).
-        h("option", { value: "", selected: mode === "auto" }, "key: auto"),
-        keyFields.map((f) => h("option", { value: f, selected: mode === "single" && kf === f }, `key: ${f}`)),
-        h("option", { value: "__concat__", selected: mode === "concat" }, "concat (combine fields)"),
-        h("option", { value: "__nodedup__", selected: mode === "nodedup" }, "no dedup (keep every read)"),
+        // key, a file source's, or a producer's - e.g. the relic table producer's name|item).
+        h("option", { value: "", selected: mode === "auto" }, mode === "auto" ? "<key: auto>" : "key: auto"),
+        keyFields.map((f) => h("option", { value: f, selected: mode === "single" && kf === f }, mode === "single" && kf === f ? `<key: ${f}>` : `key: ${f}`)),
+        h("option", { value: "__concat__", selected: mode === "concat" }, mode === "concat" ? "<concat (combine fields)>" : "concat (combine fields)"),
+        h("option", { value: "__nodedup__", selected: mode === "nodedup" }, mode === "nodedup" ? "<no dedup (keep every read)>" : "no dedup (keep every read)"),
     ];
     const concatEditor = mode === "concat" ? datasetConcatEditor(ds) : null;
     const bm = model.datasetBatchMode(ds);
     const batchOpts = [["run", "per run"], ["detection", "per detection"]]
-        .map(([v, l]) => h("option", { value: v, selected: bm === v }, l));
+        .map(([v, l]) => h("option", { value: v, selected: bm === v }, bm === v ? `<${l}>` : l));
     const sm = model.datasetSyncMode(ds);
     const syncOpts = [["accumulate", "accumulate"], ["mirror", "mirror (sync removals)"]]
-        .map(([v, l]) => h("option", { value: v, selected: sm === v }, l));
+        .map(([v, l]) => h("option", { value: v, selected: sm === v }, sm === v ? `<${l}>` : l));
     return {
         title: h("input", { class: "gi gi-id dsrename", value: ds, title: "dataset name" }),
         head: satToggleBtn(`vt:ds:${ds}`, "vttable"),
@@ -941,7 +942,7 @@ export function clockTime(ts) { const m = /T(\d{2}:\d{2}:\d{2})/.exec(String(ts 
 // on the next edit. The one place every column/field dropdown gets this behaviour. Returns an ARRAY.
 export function _optList(opts, sel) {
     const all = sel && !opts.includes(sel) ? [...opts, sel] : opts;
-    return all.map((c) => h("option", { selected: c === sel }, c));
+    return all.map((c) => h("option", { selected: c === sel }, c === sel ? `<${c}>` : c));
 }
 
 export function _colOpts(cols, sel) {

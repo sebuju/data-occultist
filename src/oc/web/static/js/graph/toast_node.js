@@ -52,10 +52,10 @@ export function imageTextInspector(t, j, texts = [], unit = "px") {
     // sibling by index+content
     const matchSel = (cls, cur, title) => h("select", { class: cls, dataset: { i: ji }, title },
         h("option", { value: "", selected: !cur }, "—"),
-        h("option", { value: "image", selected: cur === "image" }, "image"),
+        h("option", { value: "image", selected: cur === "image" }, cur === "image" ? "<image>" : "image"),
         texts.map((tt, k) => k === ji ? null
             : h("option", { value: String(k), selected: String(cur) === String(k) },
-                `${k + 1}: ${(tt.content || "").trim() || "(empty)"}`)));
+                String(cur) === String(k) ? `<${k + 1}: ${(tt.content || "").trim() || "(empty)"}>` : `${k + 1}: ${(tt.content || "").trim() || "(empty)"}`)));
     return h("div", { class: "tn-il-insp" + (off ? " tn-il-off" : ""), dataset: { i: ji } },
         h("div", { class: "tn-il-insp-h tn-il-span" },
             h("span", { class: "muted" }, off ? "no element selected" : `element ${j + 1}`),
@@ -105,7 +105,7 @@ export function imageTextInspector(t, j, texts = [], unit = "px") {
 // selected element index (model.toastImageSel). Every control carries data-i (the image index) so
 // ONE wiring pass drives every image editor (rule 7).
 function imageEditor(im, idx, sel) {
-    const opt = (cur) => ([v, l]) => h("option", { value: v, selected: v === (cur || "") }, l);
+    const opt = (cur) => ([v, l]) => h("option", { value: v, selected: v === (cur || "") }, v === (cur || "") ? `<${l}>` : l);
     const grad = im.bg_type === "gradient";
     const trans = im.bg_type === "transparent";   // no fill — the toast surface shows through
     const texts = im.texts || [];
@@ -142,7 +142,7 @@ function imageEditor(im, idx, sel) {
                     ? h("select", { class: "tn-il-pick", title: "select an element (or none to deselect)" },
                         h("option", { value: "", selected: sel == null }, "(none)"),
                         texts.map((t, i) => h("option", { value: i, selected: i === sel },
-                            `${i + 1}: ${(t.content || "").trim() || "(empty)"}`)))
+                            i === sel ? `<${i + 1}: ${(t.content || "").trim() || "(empty)"}>` : `${i + 1}: ${(t.content || "").trim() || "(empty)"}`)))
                     : null,
                 h("button", { class: "tn-img-addtext", title: "add a text element" }, PLUS()),
                 h("button", { class: "tn-img-clone", title: "clone the selected element", disabled: sel == null }, COPY())),
@@ -175,7 +175,7 @@ function tokenGroups(model, x) {
 // One editable text block: a content textarea + its style/align/max-lines controls + reorder /
 // remove. `i` is its index (carried on every control as data-i for the wiring).
 function blockRow(b, i, n) {
-    const opt = (cur) => ([v, l]) => h("option", { value: v, selected: v === (cur || "") }, l);
+    const opt = (cur) => ([v, l]) => h("option", { value: v, selected: v === (cur || "") }, v === (cur || "") ? `<${l}>` : l);
     return h("div", { class: "tn-block", dataset: { i } },
         h("textarea", { class: "tn-bk-content", dataset: { i }, rows: "2",
             placeholder: "text — supports {{token}}" }, b.content || ""),
@@ -190,7 +190,7 @@ function blockRow(b, i, n) {
 }
 
 export function toastParts(x, model) {
-    const durOpt = ([v, l]) => h("option", { value: v, selected: v === (x.duration || "short") }, l);
+    const durOpt = ([v, l]) => h("option", { value: v, selected: v === (x.duration || "short") }, v === (x.duration || "short") ? `<${l}>` : l);
     const groups = model ? tokenGroups(model, x) : [];
     const titleDefault = (model && model.profile && model.profile.window_title_hint) || "Warframe";
     // sources row (FIRST): the data feeders wired to this toast — removable pills + an add-select.

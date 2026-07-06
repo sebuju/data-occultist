@@ -27,7 +27,7 @@ const DS_ACTIONS = [["", "no action"], ["clear", "clear dataset"],
 
 export function triggerParts(t, model) {
     const kind = KINDS.some(([v]) => v === t.kind) ? t.kind : "interval";
-    const kopt = ([v, l]) => h("option", { value: v, selected: v === kind }, l);
+    const kopt = ([v, l]) => h("option", { value: v, selected: v === kind }, v === kind ? `<${l}>` : l);
 
     const interval = kind === "interval"
         ? frag(labCell("every", "seconds between automatic sweeps"),
@@ -66,7 +66,7 @@ export function triggerParts(t, model) {
                     [h("option", { value: "" }, "+ watch readout"), opts],
                 )),
             labCell("when", "how the readout's value is compared to the threshold"),
-            h("select", { class: "tg-varop" }, VAR_OPS.map(([v, l]) => h("option", { value: v, selected: v === (t.readout_op || "gte") }, l))),
+            h("select", { class: "tg-varop" }, VAR_OPS.map(([v, l]) => h("option", { value: v, selected: v === (t.readout_op || "gte") }, v === (t.readout_op || "gte") ? `<${l}>` : l))),
             labCell("value", "the threshold the readout is compared against"),
             h("input", { class: "tg-varval", type: "number", step: "any", value: t.readout_value ?? 0 }));
     }
@@ -97,7 +97,7 @@ export function triggerParts(t, model) {
     const dsAction_ = frag(
         labCell("action", "what this trigger does to its target dataset(s) when it fires"),
         h("select", { class: "tg-dsaction" },
-            DS_ACTIONS.map(([v, l]) => h("option", { value: v, selected: v === dsAction }, l))),
+            DS_ACTIONS.map(([v, l]) => h("option", { value: v, selected: v === dsAction }, v === dsAction ? `<${l}>` : l))),
         hasAction && h("div", { class: "gspan" },
             srcInputs(
                 (t.dataset_targets || []).map((d) => srcChip(d, "ds", "tg-rmds")),
@@ -107,7 +107,7 @@ export function triggerParts(t, model) {
         needsDest && labCell("into", "destination dataset for clone/move"),
         needsDest && h("select", { class: "tg-dsdest" },
             h("option", { value: "" }, "- dataset -"),
-            dsFree.map((d) => h("option", { selected: d === t.dataset_dest }, d))));
+            dsFree.map((d) => h("option", { selected: d === t.dataset_dest }, d === t.dataset_dest ? `<${d}>` : d))));
 
     return {
         title: h("input", { class: "gi gi-id tgrename", value: t.id, title: "rename trigger" }),

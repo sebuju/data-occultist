@@ -10,7 +10,7 @@ import { iconFor } from "./node_icons.js";
 
 export function soundParts(x, model) {
     const cur = x.file || "";
-    const sopt = (s) => h("option", { selected: s === cur }, s);
+    const sopt = (s) => h("option", { selected: s === cur }, s === cur ? `<${s}>` : s);
     const vol = x.volume == null ? 1 : x.volume;
     return {
         title: h("input", { class: "gi gi-id sndrename", value: x.id, title: "rename sound" }),

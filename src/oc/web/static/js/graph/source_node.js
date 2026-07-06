@@ -19,7 +19,7 @@ const isStream = (s) => STREAM.has(s.format);
 
 // one line-filter (match) row: op + text + case toggle + remove
 function matchRow(m, i) {
-    const ops = OPS.map(([v, l]) => h("option", { value: v, selected: v === m.op }, l));
+    const ops = OPS.map(([v, l]) => h("option", { value: v, selected: v === m.op }, v === m.op ? `<${l}>` : l));
     return h("div", { class: "src-m", dataset: { i } },
         h("select", { class: "mset", dataset: { i, k: "op" } }, ops),
         h("input", { class: "mset", dataset: { i, k: "text" }, value: m.text || "", placeholder: "text" }),
@@ -57,7 +57,7 @@ function methodInputs(f, i) {
 // method+input columns instead (class `src-fpath`).
 function fieldRow(f, i, stream) {
     const idCell = h("input", { class: "fset2 src-fid", dataset: { i, k: "id" }, value: f.id || "", placeholder: "column", title: "output column id" });
-    const types = ["text", "number"].map((t) => h("option", { selected: t === f.type }, t));
+    const types = ["text", "number"].map((t) => h("option", { selected: t === f.type }, t === f.type ? `<${t}>` : t));
     const typeCell = h("select", { class: "fset2 src-ftype", dataset: { i, k: "type" }, title: "value type" }, types);
     // required toggle (default on): when on, this field MUST yield a valid value or the whole row is
     // dropped (and shown in the dismissed-rows preview). No label — the shared gn-slide switch.
@@ -70,7 +70,7 @@ function fieldRow(f, i, stream) {
     // document rows have no method: required + id + type + remove on line 1, path full-width below.
     if (stream) {
         const methodSel = h("select", { class: "fset2 src-fmethod", dataset: { i, k: "method" } },
-            METHODS.map(([v, l]) => h("option", { value: v, selected: v === f.method }, l)));
+            METHODS.map(([v, l]) => h("option", { value: v, selected: v === f.method }, v === f.method ? `<${l}>` : l)));
         const inputs = h("div", { class: "src-finputs" }, ...methodInputs(f, i));
         return h("div", { class: "src-f", dataset: { i } },
             h("div", { class: "src-frow" }, req, idCell, methodSel, typeCell, rm), inputs);
@@ -82,11 +82,11 @@ function fieldRow(f, i, stream) {
 
 export function sourceParts(s) {
     const stream = isStream(s);
-    const fmtOpts = FORMATS.map(([v, l]) => h("option", { value: v, selected: v === s.format }, l));
+    const fmtOpts = FORMATS.map(([v, l]) => h("option", { value: v, selected: v === s.format }, v === s.format ? `<${l}>` : l));
 
     const watchOpts = [
-        h("option", { value: "manual", selected: s.watch === "manual" }, "manual"),
-        h("option", { value: "on_change", selected: s.watch === "on_change" }, "on file change"),
+        h("option", { value: "manual", selected: s.watch === "manual" }, s.watch === "manual" ? "<manual>" : "manual"),
+        h("option", { value: "on_change", selected: s.watch === "on_change" }, s.watch === "on_change" ? "<on file change>" : "on file change"),
     ];
     const throttle = s.watch === "on_change"
         ? frag(labCell("throttle", "seconds to wait after the file stops changing — guarantees the latest content is read"),

@@ -28,10 +28,10 @@ const elapsed = (start, end) => {
 };
 
 const typeSel = (pn) => h("select", { class: "prtype" },
-    ...PRODUCER_TYPES.map((t) => h("option", { value: t, selected: t === (pn.type || "http") }, t)));
+    ...PRODUCER_TYPES.map((t) => h("option", { value: t, selected: t === (pn.type || "http") }, t === (pn.type || "http") ? `<${t}>` : t)));
 
 const sel = (cls, opts, cur, title = "") => h("select", { class: cls, title: title || null },
-    ...opts.map((o) => h("option", { value: o, selected: o === cur }, o)));
+    ...opts.map((o) => h("option", { value: o, selected: o === cur }, o === cur ? `<${o}>` : o)));
 
 // checkbox WITH an inline text label (for list rows that have no labCell of their own)
 const chk = (cls, on, label) =>
@@ -128,7 +128,7 @@ export function producerParts(pn, cols = [], free = []) {
             rmTitle: "stop fetching this source" }));
     // which source column names the item (only meaningful when sourcing from datasets/subsets).
     const nf = pn.source_field || "name";
-    const nfOpts = [...new Set([nf, ...cols])].map((c) => h("option", { selected: c === nf }, c));
+    const nfOpts = [...new Set([nf, ...cols])].map((c) => h("option", { selected: c === nf }, c === nf ? `<${c}>` : c));
     const keyFld = hasSrc
         ? frag(labCell("name by", "which source column names the item (fed to the URL / catalogue)"),
             h("select", { class: "enr-keyfld-sel" }, nfOpts))

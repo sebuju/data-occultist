@@ -1119,13 +1119,13 @@ function sourceCfgNode(s, ds, joined) {
     // "many ->" is the read/collapse policy, NOT a join input — render it FIRST, above the join config,
     // so it doesn't read as a join knob.
     if (showAgg) {
-        const aggOpts = AGGREGATES.map((a) => h("option", { value: a, selected: a === model.sourceAggregate(s.id, ds) }, AGG_LABEL[a] || a));
+        const aggOpts = AGGREGATES.map((a) => h("option", { value: a, selected: a === model.sourceAggregate(s.id, ds) }, a === model.sourceAggregate(s.id, ds) ? `<${AGG_LABEL[a] || a}>` : (AGG_LABEL[a] || a)));
         rows.push(labCell("many →", "how this source's many observations collapse to one value"),
             h("select", { class: "sv-sagg", dataset: { ds } }, aggOpts));
     }
     if (joined) {
         const joinOpts = [h("option", { value: "", selected: !jf }, "(no join)"),
-            ...[...new Set([jf, ...cols])].filter(Boolean).map((c) => h("option", { value: c, selected: c === jf }, c))];
+            ...[...new Set([jf, ...cols])].filter(Boolean).map((c) => h("option", { value: c, selected: c === jf }, c === jf ? `<${c}>` : c))];
         rows.push(labCell("join on", "this source's column used as the join key; (no join) stacks its rows"),
             h("select", { class: "sv-sjoin", dataset: { ds } }, joinOpts));
         if (jf) {
@@ -1215,7 +1215,7 @@ function subConfigNode(s) {
     const filters = listBlock({ items: s.filters, rowClass: "sub-row", del: { cls: "sf-del", title: "remove filter" },
         render: (f, i) => [
             h("select", { class: "sf-field", dataset: { i } }, _colOpts(cols, f.field)),
-            h("select", { class: "sf-op", dataset: { i } }, SUB_OPS.map((o) => h("option", { selected: o === f.op }, o))),
+            h("select", { class: "sf-op", dataset: { i } }, SUB_OPS.map((o) => h("option", { selected: o === f.op }, o === f.op ? `<${o}>` : o))),
             h("input", { class: "sf-val", dataset: { i }, value: f.value || "", placeholder: "value" })] });
     const derived = listBlock({ items: s.derived, rowClass: "sub-row", del: { cls: "sd-del", title: "remove column" },
         render: (d, i) => [
@@ -1227,8 +1227,8 @@ function subConfigNode(s) {
         render: (so, i) => [
             h("select", { class: "ss-field", dataset: { i } }, _colOpts(cols, so.field)),
             h("select", { class: "ss-dir", dataset: { i } },
-                h("option", { value: "asc", selected: !so.desc }, "asc"),
-                h("option", { value: "desc", selected: !!so.desc }, "desc"))] });
+                h("option", { value: "asc", selected: !so.desc }, !so.desc ? "<asc>" : "asc"),
+                h("option", { value: "desc", selected: !!so.desc }, !!so.desc ? "<desc>" : "desc"))] });
     // label + its inline "+" add button — a col-1 cell for the ONE node grid (matches labCell),
     // so filters/columns/sort/visible line up in the same label column as sources/limit/latest.
     const addLbl = (text, title, addCls, addTitle) =>

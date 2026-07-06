@@ -33,7 +33,7 @@ export function nineGrid(cur, cls, title = "") {
 // Font family dropdown (data-driven from FONT_CHOICES).
 export function fontSelect(cur, cls) {
     return h("select", { class: cls, title: "font family" },
-        FONT_CHOICES.map(([v, l]) => h("option", { value: v, selected: v === (cur || "") }, l)));
+        FONT_CHOICES.map(([v, l]) => h("option", { value: v, selected: v === (cur || "") }, v === (cur || "") ? `<${l}>` : l)));
 }
 
 // Bold / italic / underline toggle group. Each button carries data-k (the element field it flips)
@@ -70,7 +70,7 @@ export function borderEditor(t) {
         h("span", { class: "tn-il-u" }, "px"),
         colorPair("tn-bd-c", base.color || "#ffffff", "border colour"),
         h("select", { class: "tn-bd-s", title: "border style" },
-            BORDER_STYLES.map(([v, l]) => h("option", { value: v, selected: v === (base.style || "solid") }, l))));
+            BORDER_STYLES.map(([v, l]) => h("option", { value: v, selected: v === (base.style || "solid") }, v === (base.style || "solid") ? `<${l}>` : l))));
 }
 
 // Anchor row: "anchor to" (image or a sibling element index) + this-point + target-point grids. The
@@ -85,8 +85,8 @@ export function anchorRow(t, j, n) {
     // 9-point onto the image canvas's `target` 9-point (server: target box = whole image).
     return h("div", { class: "tn-anch" },
         h("select", { class: "tn-anch-to", title: "anchor this element to the image, or to another element" },
-            h("option", { value: "", selected: !a.to }, "image"),
-            sibs.map((k) => h("option", { value: String(k), selected: String(a.to) === String(k) }, `element ${k + 1}`))),
+            h("option", { value: "", selected: !a.to }, !a.to ? "<image>" : "image"),
+            sibs.map((k) => h("option", { value: String(k), selected: String(a.to) === String(k) }, String(a.to) === String(k) ? `<element ${k + 1}>` : `element ${k + 1}`))),
         h("label", { class: "tn-anch-gl" }, "this", nineGrid(a.corner, "tn-anch-corner", "which point of THIS element")),
         h("label", { class: "tn-anch-gl" }, "to", nineGrid(a.target, "tn-anch-target", "which point of the target")));
 }
