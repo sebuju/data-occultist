@@ -142,12 +142,63 @@ export const TRASH = () =>
     svg("svg", { class: "ic-trash", viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" },
         svg("path", { fill: "currentColor", d: "M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z" }));
 
-// One labelled control row inside a `.lab-grid` (graph.css): a label cell that sizes to its
-// own text (grid col 1) followed by whatever control the caller emits next (col 2). The ONE
-// label-grid primitive -- triggers, the price node, and view config build their config rows
-// from it so labels line up. `top` pins the label for control cells that wrap to several lines.
+// One labelled control row inside the node body grid (`.gn-grid`, graph.css): a label cell
+// that sizes to its own text (grid col 1) followed by whatever control the caller emits next
+// (col 2). The ONE label-cell primitive -- EVERY node's k/v rows build on it so labels line up
+// in one column node-wide, and grid children are never naked text (rule: wrap all labels).
+// `top` pins the label for control cells that wrap to several lines.
 export const labCell = (label, title = "", top = false) =>
     h("span", { class: "lab" + (top ? " lab-top" : ""), title: title || null }, label);
+
+// A k/v field row for the body grid: the wrapped label (col 1) + the control (col 2), emitted
+// as two DIRECT grid children (never a wrapping row element — that would break the shared
+// column). This is THE way to add a labelled control to a node body. `title` tooltips the label;
+// `top` aligns the label to the first line of a tall/wrapping control.
+export const kv = (label, control, { title = "", top = false } = {}) =>
+    frag(labCell(label, title, top), control);
+
+// A body-grid sub-heading: uppercase dim label that spans BOTH columns and carries the dashed
+// rule beneath it (graph.css `.fgrp`). `extra` is optional trailing content (e.g. rule +/copy
+// buttons) kept on the same line. The ONE subheading primitive (rule 7).
+export const subhead = (text, extra = null, title = "") =>
+    h("div", { class: "fgrp gspan", title: title || null }, text, extra);
+
+// A full-width body-grid block: any non-k/v content (image, list, table, textarea, multi-control
+// row) spans both columns. Wrap such content in this so it sits in the grid without breaking the
+// label column. `cls` adds caller classes; extra props merge in.
+export const gspan = (cls, ...children) => {
+    const c = typeof cls === "string" ? cls : "";
+    const kids = typeof cls === "string" ? children : [cls, ...children];
+    return h("div", { class: `gspan${c ? " " + c : ""}` }, ...kids);
+};
+
+// ---- the ONE button system (rule 7). Node buttons come in exactly three looks, by CLASS:
+//   .btn        accent action (footer fetch/read/fire/test/play/save) — node-coloured
+//   .btn-trash  hollow-danger remove/clear (the ONLY break from accent) — carries TRASH()
+//   .btn-icon   bare square for cog / ▲▼ / tiny inline actions
+// Base `button` (controls.css) supplies padding/radius/hover; these add only the colour/size
+// treatment. No `:has()` — the trash look is an explicit class, not inferred from the icon.
+// `btn(label, {cls, onClick, title, icon, disabled, dataset})` builds a labelled action button;
+// `icon` (a node factory or node) is placed before the label.
+export function btn(label, { cls = "btn", onClick, title, icon, disabled = false, dataset } = {}) {
+    return h("button", {
+        class: cls, title: title || null, disabled, dataset,
+        onClick: onClick || null,
+    }, typeof icon === "function" ? icon() : icon, label ? (icon ? " " : "") + label : null);
+}
+// An icon-only button (cog / move / tiny). `danger` swaps in the hollow-danger look.
+export function iconBtn(icon, { cls = "", title, onClick, disabled = false, dataset, danger = false } = {}) {
+    const base = danger ? "btn-trash" : "btn-icon";
+    return h("button", {
+        class: `${base}${cls ? " " + cls : ""}`, title: title || null, disabled, dataset,
+        onClick: onClick || null,
+    }, typeof icon === "function" ? icon() : icon);
+}
+// The ONE remove/clear button: hollow-danger square carrying the shared TRASH() glyph. Replaces
+// every hand-rolled `h("button",{class:"… danger"}, TRASH())` so the trash look never drifts and
+// no `:has(> .ic-trash)` rule is needed.
+export const trashBtn = ({ cls = "", title = "remove", dataset, onClick, disabled = false } = {}) =>
+    iconBtn(TRASH(), { cls, title, dataset, onClick, disabled, danger: true });
 
 // A removable source pill + the pills-plus-"add" row that holds them — the ONE primitive every
 // wired-source list builds on (trigger fires/watch, subset join sources, toast token feeders), so

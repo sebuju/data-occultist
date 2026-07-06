@@ -92,6 +92,7 @@ export class VTable {
         this.rowClass = null;
         this.sortCol = null;     // sorted column index, or null
         this.sortDir = 1;        // 1 asc, -1 desc
+        this._numCols = new Set();// column names whose every non-empty cell is numeric -> right-aligned
         this.expander = null;    // async fn(values) -> detail node; when set, a row click expands inline
         this.expandedRow = null; // the row record (in this.rows) whose detail is open, or null
         this.expandEl = null;    // the inline detail element, or null
@@ -215,6 +216,7 @@ export class VTable {
             values: row,
             text: this.columns.map((c) => cell(row, c)).join("  ").toLowerCase(),
         }));
+        this._computeNumCols();   // which columns are all-numeric -> right-aligned + muted (blueprint look)
         this._applySort();        // restore the persisted sort against the (possibly new) columns
         this._renderHead();
         this._filter();           // builds this.filtered + renders
@@ -233,11 +235,27 @@ export class VTable {
         this.meta.textContent = parts.join("  ·  ");
     }
 
+    // A column reads as numeric when it has ≥1 value and every non-empty cell parses as a plain number
+    // (see _numRe). Numeric columns right-align + mute, header and body alike — the blueprint table look.
+    _computeNumCols() {
+        this._numCols = new Set();
+        for (const col of this.columns) {
+            let any = false, allNum = true;
+            for (const rec of this.rows) {
+                const v = this._cell(rec.values, col).trim();
+                if (!v) continue;
+                any = true;
+                if (!_numRe.test(v)) { allNum = false; break; }
+            }
+            if (any && allNum) this._numCols.add(col);
+        }
+    }
+
     _renderHead() {
         this.head.textContent = "";
         this.columns.forEach((c, i) => {
             const h = document.createElement("span");
-            h.className = "vt-cell vt-th";
+            h.className = "vt-cell vt-th" + (this._numCols.has(c) ? " vt-num" : "");
             h.dataset.c = i;
             h.textContent = c;
             h.title = c;
@@ -598,6 +616,7 @@ export class VTable {
                 const v = this._cell(rec.values, this.columns[c]);
                 row._cells[c].textContent = v;
                 row._cells[c].title = v;
+                row._cells[c].classList.toggle("vt-num", this._numCols.has(this.columns[c]));
             }
         }
         this.vbar.sync(viewH, contentH);

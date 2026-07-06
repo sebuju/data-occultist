@@ -567,13 +567,18 @@ export const triggers = {
 // config (the node's test button) — behaves like a trigger firing it, minus the wiring.
 export const toasts = {
     test: (game, id) => tfetch(`/api/toasts/${_pg(game)}/${encodeURIComponent(id)}/test`, { method: "POST" }, 10_000).then((r) => ok(r, "test toast").then((x) => x.json())),
-    // render a hero/inline image SPEC to a live PNG (the node editor's preview) — returns an object
-    // URL for the blob (caller revokes it), or null on failure. Not funnelled through ok()/json().
+    // render a hero/inline image SPEC to a live PNG (the node editor's preview) — returns
+    // `{ url, boxes }`: an object URL for the blob (caller revokes it) plus the per-text-line pixel
+    // boxes (from the X-Text-Boxes header) the editor overlays as clickable elements. null on
+    // failure. Not funnelled through ok()/json().
     previewImage: async (game, spec, focus = null) => {
         const qs = focus == null ? "" : `?focus=${encodeURIComponent(focus)}`;
         const r = await fetch(`/api/toasts/${_pg(game)}/preview${qs}`, {
             method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(spec) });
-        return r.ok ? URL.createObjectURL(await r.blob()) : null;
+        if (!r.ok) return null;
+        let boxes = [];
+        try { boxes = JSON.parse(r.headers.get("X-Text-Boxes") || "[]"); } catch { boxes = []; }
+        return { url: URL.createObjectURL(await r.blob()), boxes };
     },
 };
 

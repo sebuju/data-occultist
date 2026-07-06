@@ -125,7 +125,7 @@
     container-type: inline-size; }
 /* too narrow to fit the bar controls -> keep only the search box (clear/rows/reset/count/meta drop) */
 @container (max-width: 200px) { .vt-bar > :not(.vt-search) { display: none; } }
-.vt-bar { display: flex; align-items: center; gap: 9px; flex: none; margin: 6px 0px 9px 0px; }
+.vt-bar { display: flex; align-items: center; gap: 9px; flex: none; margin: 0px 0px 9px 0px; }
 .vt-search { flex: 1; min-width: 0; padding: 3px 6px; font-size: var(--fs-sm); }
 .vt-clear { flex: none; width: 22px; height: 22px; min-height: 0; padding: 0; line-height: 1;
     border: 1px solid var(--line); background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; }
@@ -142,9 +142,14 @@
 
 /* overflow:hidden clips the header to the viewport; JS slides it via transform to track the
    body's horizontal scroll (see _syncHead) */
-.vt-head { display: flex; flex: none; padding-right: 9px; border-bottom: 1px solid var(--line); overflow: hidden; }
-.vt-th { position: relative; color: var(--muted); font-weight: 400; cursor: pointer; user-select: none; }
-.vt-th:hover { color: var(--text); }
+.vt-head { display: flex; flex: none; padding-right: 9px; border-bottom: 1px solid var(--line-soft); overflow: hidden; }
+/* blueprint header: uppercase, tracked, dim — matches the board's field labels (.fgrp / table.vt th) */
+.vt-th { position: relative; color: var(--dim); font-weight: 400; font-size: 9.5px; letter-spacing: 0.11em;
+    text-transform: uppercase; cursor: pointer; user-select: none; }
+.vt-th:hover { color: var(--muted); }
+/* numeric columns (detected in vtable.js) right-align + read muted, header and body alike */
+.vt-th.vt-num { text-align: right; }
+.vt-cell.vt-num { text-align: right; color: var(--muted); }
 .vt-sort { position: absolute; top: -2px; right: 2px; color: var(--accent); font-size: 8px; line-height: 1; pointer-events: none; }
 .vt-grip { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 1; }
 .vt-grip::after { content: ""; position: absolute; top: 0; right: 3px; width: 1px; height: 100%; background: var(--line); }
@@ -162,11 +167,12 @@
 .vt-scroll::-webkit-scrollbar { width: 0; height: 0; }   /* hide native (both axes) — custom ones below */
 .vt-spacer { width: 1px; }                                /* gives the scroll its full height */
 .vt-rows { position: absolute; top: 0; left: 0; right: 9px; }
-.vt-row { position: absolute; left: 0; right: 0; display: flex; height: 22px; align-items: center; }
-.vt-row.odd { background: var(--zebra); }
+.vt-row { position: absolute; left: 0; right: 0; display: flex; height: 22px; align-items: center;
+    border-bottom: 1px solid var(--line-soft); }   /* hairlines instead of zebra — matches the board's row rules */
 .vt-row:hover { background: var(--accent-bg); cursor: pointer; }
-.vt-row.gone { opacity: 0.5; text-decoration: line-through; }
 .vt-cell { flex: 1 1 0; min-width: 0; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* gone rows de-emphasise via colour (not opacity, so they don't ghost over the hairline) */
+.vt-row.gone .vt-cell { color: var(--dim); text-decoration: line-through; }
 
 /* inline row drill-down: parked under the clicked row, set apart from the data rows */
 .vt-detail { position: absolute; left: 0px; right: 0px; z-index: 2; box-sizing: border-box; background: var(--black);
