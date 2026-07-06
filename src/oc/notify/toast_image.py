@@ -103,6 +103,14 @@ def render_png(spec, ctx=None, *, keep_missing: bool = False, focus=None) -> byt
     against ``ctx``. ``keep_missing`` (preview) keeps an unresolvable token as its literal text so
     the design stays visible without a live session. ``focus`` (a text-line index) outlines that
     line's bounding box — the editor draws it around the line being edited."""
+    return render_png_boxes(spec, ctx, keep_missing=keep_missing, focus=focus)[0]
+
+
+def render_png_boxes(spec, ctx=None, *, keep_missing: bool = False, focus=None):
+    """Like :func:`render_png` but also returns the per-text-line pixel bounding boxes so the node
+    editor can overlay a clickable box on each element (its mini-inspector selects from there).
+    Returns ``(png_bytes, boxes)`` where ``boxes`` is ``[{"i", "x", "y", "w", "h"}]`` in image
+    pixels, one per text line (empty lines get a small stub box so they stay selectable)."""
     import io
 
     from PIL import ImageDraw
@@ -113,24 +121,39 @@ def render_png(spec, ctx=None, *, keep_missing: bool = False, focus=None) -> byt
     h = max(1, int(getattr(spec, "height", 180) or 180))
     img = _background(w, h, spec)
     draw = ImageDraw.Draw(img)
+    boxes = []
     for _idx, t in enumerate(getattr(spec, "texts", None) or []):
         content = render(getattr(t, "content", "") or "", ctx, keep_missing=keep_missing) if ctx is not None \
             else (getattr(t, "content", "") or "")
-        if not content:
-            continue
         font = _font(getattr(t, "size", 20) or 20)
-        color = _rgb(getattr(t, "color", "#ffffff"), (255, 255, 255))
         x, y = int(getattr(t, "x", 12) or 0), int(getattr(t, "y", 12) or 0)
         align = getattr(t, "align", "left") or "left"
         if align not in ("left", "center", "right"):
             align = "left"
         width = int(getattr(t, "width", 0) or 0)
         height = int(getattr(t, "height", 0) or 0)
-        if width > 0:
+        if content and width > 0:
             content = _wrap(content, font, width, draw) if getattr(t, "wrap", True) \
                 else _ellipsize(content, font, width, draw)
         # anchor sets the x reference (left edge / centre / right edge); vertical "a" = top.
         anchor = {"left": "la", "center": "ma", "right": "ra"}[align]
+        # bounding box for the editor overlay: the real text bbox when there's content, else a small
+        # stub at the anchor so an empty line is still clickable in the preview.
+        bb = None
+        if content:
+            try:
+                bb = draw.multiline_textbbox((x, y), content, font=font, anchor=anchor, align=align)
+            except Exception:   # noqa: BLE001 - geometry is a design aid, never fatal
+                bb = None
+        if bb is None:
+            sz = int(getattr(t, "size", 20) or 20)
+            left = x if align == "left" else x - 12 if align == "center" else x - 24
+            bb = (left, y, left + 24, y + max(8, sz))
+        boxes.append({"i": _idx, "x": int(bb[0]), "y": int(bb[1]),
+                      "w": max(1, int(bb[2] - bb[0])), "h": max(1, int(bb[3] - bb[1]))})
+        if not content:
+            continue
+        color = _rgb(getattr(t, "color", "#ffffff"), (255, 255, 255))
         # optional filled box behind the text — the box's left edge follows the same anchor as the
         # text so the fill stays under it. Drawn only when both dims and a colour are set.
         bg_color = getattr(t, "bg_color", "") or ""
@@ -139,14 +162,10 @@ def render_png(spec, ctx=None, *, keep_missing: bool = False, focus=None) -> byt
             draw.rectangle([left, y, left + width, y + height], fill=_rgb(bg_color))
         draw.multiline_text((x, y), content, font=font, fill=color, anchor=anchor, align=align)
         if focus is not None and _idx == focus:
-            try:
-                bb = draw.multiline_textbbox((x, y), content, font=font, anchor=anchor, align=align)
-                draw.rectangle([bb[0] - 2, bb[1] - 2, bb[2] + 2, bb[3] + 2], outline=(255, 96, 96), width=2)
-            except Exception:   # noqa: BLE001 - the outline is a design aid, never fatal
-                pass
+            draw.rectangle([bb[0] - 2, bb[1] - 2, bb[2] + 2, bb[3] + 2], outline=(255, 96, 96), width=2)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    return buf.getvalue()
+    return buf.getvalue(), boxes
 
 
 def render_to_file(spec, ctx, path: Path) -> Path | None:

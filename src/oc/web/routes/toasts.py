@@ -52,13 +52,18 @@ def preview_image(game: str, spec: ToastImageDef, focus: int | None = None):
     types. Tokens resolve against the live readouts + the game's stored records; a token with no
     live value stays as its literal ``{{...}}`` so the design is still legible without a session.
     ``focus`` (a text-line index) outlines that line — the editor passes the line being edited."""
+    import json
+
     settings = get_settings()
     profile = load_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
     from ...collect.templating import TokenContext
-    from ...notify.toast_image import render_png
+    from ...notify.toast_image import render_png_boxes
     ctx = TokenContext(live_readouts(game), data_dir=settings.data_dir, profile=profile, game=game)
     try:
-        png = render_png(spec, ctx, keep_missing=True, focus=focus)
+        png, boxes = render_png_boxes(spec, ctx, keep_missing=True, focus=focus)
     except Exception as e:   # noqa: BLE001 - a bad design must not 500 the editor
         raise HTTPException(status_code=422, detail=f"render failed: {e}") from e
-    return Response(content=png, media_type="image/png")
+    # per-line pixel boxes ride a header so the editor overlays a clickable box on each element
+    # (one render, no second round trip). Small JSON — a handful of boxes.
+    return Response(content=png, media_type="image/png",
+                    headers={"X-Text-Boxes": json.dumps(boxes, separators=(",", ":"))})
