@@ -1110,10 +1110,11 @@ windows:
   item_fields: []
   item_tells: []
 window_priority:
-- game
 - relic_rewards
 - relic_select
 - relic_refinement
+- mission_rewards
+- game
 datasets:
 - id: master
   aggregate: latest
@@ -1807,10 +1808,10 @@ triggers:
   - ability_2_cd
   - ability_3_cd
   - ability_4_cd
-  readout_op: lt
-  readout_value: 3.0
+  readout_op: crosses_down
+  readout_value: 2.0
   targets:
-  - toast
+  - bob
   enabled: true
   dataset_targets: []
   dataset_action: ''
@@ -1831,75 +1832,6 @@ triggers:
   dataset_action: ''
   dataset_dest: ''
 toasts:
-- id: toast
-  title: ''
-  message: ''
-  texts:
-  - content: 120p median
-    style: captionsubtle
-    align: ''
-    max_lines: 0
-  - content: cooldown
-    style: title
-    align: ''
-    max_lines: 0
-  images:
-  - placement: hero
-    width: 364
-    height: 180
-    bg_type: gradient
-    color1: '#0a3d62'
-    color2: '#061826'
-    angle: 90
-    unit: px
-    texts:
-    - content: Hero {{dataset:master}}
-      x: 182
-      y: 70
-      size: 30
-      color: '#ffd479'
-      align: tc
-      width: 0
-      height: 0
-      bg_color: ''
-      wrap: true
-      overflow: false
-      disable_if_empty: false
-      match_w: ''
-      match_h: ''
-      match_w_pct: 100
-      match_h_pct: 100
-      font_family: ''
-      bold: false
-      italic: false
-      underline: false
-      border:
-        w: 0
-        color: '#ffffff'
-        style: solid
-      border_sides: {}
-      anchor:
-        to: ''
-        corner: tl
-        target: tl
-      z_index: 0
-  - placement: none
-    width: 360
-    height: 140
-    bg_type: solid
-    color1: '#0a3d62'
-    color2: '#061826'
-    angle: 90
-    unit: px
-    texts: []
-  app_name: data-occultist
-  duration: short
-  icon: ''
-  show_icon: true
-  attribution: ''
-  muted: false
-  enabled: true
-  sources: []
 - id: toast_2
   title: ''
   message: ''
@@ -2783,14 +2715,6 @@ layout:
       collapsed: false
       custW: false
       custH: false
-    toast:toast:
-      x: -3820.0
-      y: -2760.0
-      w: 400.0
-      h: 400.0
-      collapsed: false
-      custW: true
-      custH: false
     dict:relics:
       x: -300.0
       y: -3700.0
@@ -3398,7 +3322,6 @@ layout:
     - det:game:hud
     - var:game:var_1
     - trigger:trigger
-    - toast:toast
     - ro:game:ability_1_cd
     - ro:game:ability_2_cd
     - ro:game:ability_3_cd
@@ -3833,7 +3756,6 @@ layout:
     title: ''
     members:
     - trigger:trigger
-    - toast:toast
     - sound:bob
     outline:
       color: '#2b323f'
