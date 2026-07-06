@@ -10,7 +10,7 @@
 //   body  -> a Node or DocumentFragment
 //   ports -> a Node/frag or null (default null)
 //   pulse -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
-import { h, frag, svg, TRASH, PLUS, COPY, PASTE } from "../dom.js";
+import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, labCell, btn, iconBtn, trashBtn } from "../dom.js";
 import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
@@ -20,6 +20,7 @@ import { sourceParts } from "./source_node.js";
 import { toastParts } from "./toast_node.js";
 import { soundParts } from "./sound_node.js";
 import { triggerParts } from "./trigger_node.js";
+import { sourcesInput } from "./sources_input.js";
 import { subsetParts } from "./main.js";
 
 // Header toggle button that shows/hides a node's opt-in satellite (preview / vt-table).
@@ -150,18 +151,16 @@ export function windowControls(w) {
     // below the canvas (built in openImage). "clicks" only shows when auto-scroll is on.
     const sc = w.scroll || {};
     return frag(
-        h("label", { class: "flab", title: "item rows: static tiles the data area into a fixed grid from the cell size (no OCR for location); off locates rows by OCR (a tell/locate field) — only needed for a scroll-parked list" },
-            "static grid ", h("input", { type: "checkbox", class: "winstatic", checked: w.static_grid !== false })),
-        h("label", { class: "flab", title: "precapture auto-scrolls this window's list while recording it" },
-            "auto-scroll ", h("input", { type: "checkbox", class: "winscroll", dataset: { k: "autoscroll" }, checked: !!sc.autoscroll })),
-        sc.autoscroll && h("label", { class: "flab", title: "wheel notches sent per auto-scroll nudge" },
-            "auto-scroll clicks ", h("input", { type: "number", class: "winscroll", dataset: { k: "clicks" }, value: sc.scroll_clicks ?? 1, min: "1" })),
-        h("label", { class: "flab", title: "attempt this window in live view" },
-            "live ", h("input", { type: "checkbox", class: "winlive", checked: w.live !== false })),
-        windowItemOrder(w),
-        (w.items || []).length && h("div", { class: "wi-drift muted", title: "how far located cells sit from the content they should bracket, split by axis — x and y as avg/max % of a CELL (25% = a quarter-cell off). 0 = dead-on; high = cells drift off their columns (x) or rows (y). Filled by the read." },
-            "grid drift: ", h("span", { class: "wd-drift" }, "—")),
+        kv("static grid", h("input", { type: "checkbox", class: "winstatic", checked: w.static_grid !== false }),
+            { title: "item rows: static tiles the data area into a fixed grid from the cell size (no OCR for location); off locates rows by OCR (a tell/locate field) — only needed for a scroll-parked list" }),
+        kv("auto-scroll", h("input", { type: "checkbox", class: "winscroll", dataset: { k: "autoscroll" }, checked: !!sc.autoscroll }),
+            { title: "precapture auto-scrolls this window's list while recording it" }),
+        sc.autoscroll && kv("auto-scroll clicks", h("input", { type: "number", class: "winscroll", dataset: { k: "clicks" }, value: sc.scroll_clicks ?? 1, min: "1" }),
+            { title: "wheel notches sent per auto-scroll nudge" }),
+        kv("live", h("input", { type: "checkbox", class: "winlive", checked: w.live !== false }),
+            { title: "attempt this window in live view" }),
         preprocessControls(w),
+        windowItemOrder(w),
         windowDetects(w));
 }
 
@@ -176,22 +175,21 @@ export function preprocessControls(w) {
     const pp = w.preprocess || { mode: "none", colors: [], tolerance: 60, scale: 1.0 };
     const chips = (pp.colors || []).map((c, i) => h("span", { class: "pp-chip", style: `border-color:${c}` },
         h("span", { class: "pp-sw", style: `background:${c}` }),
-        h("button", { class: "pp-cx danger", dataset: { i }, title: "remove color" }, TRASH())));
+        trashBtn({ cls: "pp-cx", dataset: { i }, title: "remove color" })));
     return frag(
-        h("div", { class: "muted il-h wi-h", title: "clean the OCR crop before reading — helps stylised / low-contrast text" }, "text appearance"),
-        h("label", { class: "flab", title: "preprocess the crop before OCR: threshold = auto black/white (good default), color = keep only the taught text color(s), invert = flip light-on-dark" },
-            "preprocess ", h("select", { class: "ppmode" },
-                PP_MODES.map(([v, t]) => h("option", { value: v, selected: pp.mode === v }, t)))),
+        kv("preprocess", h("select", { class: "ppmode" },
+            PP_MODES.map(([v, t]) => h("option", { value: v, selected: pp.mode === v }, t))),
+            { title: "preprocess the crop before OCR: threshold = auto black/white (good default), color = keep only the taught text color(s), invert = flip light-on-dark" }),
         pp.mode === "color" && h("div", { class: "pp-color" },
             h("div", { class: "pp-chips" }, chips.length ? chips : h("span", { class: "muted" }, "no colors yet")),
             h("div", { class: "pp-row" },
                 h("button", { class: "pp-pick", title: "sample the text color from the open image" }, "⊙ pick"),
                 h("input", { class: "pp-hex", placeholder: "#ffffff", style: "width:9ch" }),
                 h("button", { class: "pp-add" }, "add")),
-            h("label", { class: "flab", title: "how close a pixel must be to a taught color to be kept" },
-                "tolerance ", h("input", { type: "range", class: "pptol", min: "10", max: "200", value: pp.tolerance ?? 60 }))),
-        h("label", { class: "flab", title: "upscale the crop before OCR — helps small fonts" },
-            "upscale ", h("input", { type: "number", class: "ppscale", step: "0.5", min: "1", max: "4", value: pp.scale ?? 1 })));
+            kv("tolerance", h("input", { type: "range", class: "pptol", min: "10", max: "200", value: pp.tolerance ?? 60 }),
+                { title: "how close a pixel must be to a taught color to be kept" })),
+        kv("upscale", h("input", { type: "number", class: "ppscale", step: "0.5", min: "1", max: "4", value: pp.scale ?? 1 }),
+            { title: "upscale the crop before OCR — helps small fonts" }));
 }
 
 // Scrollbar node: orientation + the cutout-based scroll-calibration tool. Each cutout is a
@@ -208,16 +206,14 @@ function scrollbarParts(n) {
         h("img", { class: "sb-cut-img", src: s.img || "", alt: "" }),
         h("div", { class: "sb-cut-body" },
             h("div", { class: "sb-cut-top" },
-                h("label", { class: "flab" }, "rows from top ",
-                    h("input", { type: "number", class: "sbcut", dataset: { k: "rows", i }, value: s.rows ?? 0, min: "0" })),
-                h("button", { class: "sbcut-rm danger", dataset: { i }, title: "remove cutout" }, TRASH())),
+                kv("rows from top", h("input", { type: "number", class: "sbcut", dataset: { k: "rows", i }, value: s.rows ?? 0, min: "0" })),
+                trashBtn({ cls: "sbcut-rm", dataset: { i }, title: "remove cutout" })),
             h("div", { class: "sb-cut-pos muted" }, s.pos != null ? `thumb ${(s.pos * 100).toFixed(2)}% · ${s.px ?? "?"}px` : "thumb —")));
     return frag(
-        h("label", { class: "flab" }, "orientation ",
-            h("select", { class: "sbset", dataset: { k: "orient" } },
-                h("option", { selected: o === "vertical" }, "vertical"),
-                h("option", { selected: o === "horizontal" }, "horizontal"))),
-        h("div", { class: "sb-h muted", title: "capture the scrollbar at known scroll offsets, tag each with how many rows it has moved down from the top — the gain is fit automatically. Drag to reorder." }, "cutouts"),
+        kv("orientation", h("select", { class: "sbset", dataset: { k: "orient" } },
+            h("option", { selected: o === "vertical" }, "vertical"),
+            h("option", { selected: o === "horizontal" }, "horizontal"))),
+        subhead("cutouts", null, "capture the scrollbar at known scroll offsets, tag each with how many rows it has moved down from the top — the gain is fit automatically. Drag to reorder."),
         h("div", { class: "sb-cuts" }, samples.length
             ? samples.map(cut)
             : h("p", { class: "muted", style: "margin:2px 0" }, "no cutouts — open the window image, scroll, capture")),
@@ -228,8 +224,7 @@ function scrollbarParts(n) {
         h("div", { class: "sb-calib" },
             h("div", { class: "sbc-row", title: "scrollable rows = rows of content per full thumb travel, fit from the cutouts" },
                 "rows ", h("span", { class: "sbc-gain" }, gain != null ? `${gain}` : "—")),
-            h("div", { class: "sbc-row" }, "cutouts ", h("span", {}, `${usable}/${samples.length}`))),
-        h("div", { class: "gn-foot" }));
+            h("div", { class: "sbc-row" }, "cutouts ", h("span", {}, `${usable}/${samples.length}`))));
 }
 
 // One <select> built from [value,label] option pairs, marking `val` selected.
@@ -264,8 +259,8 @@ export function windowDetects(w, opts = {}) {
                 { dataset: { id: d.id }, title: "require this landmark PRESENT (positive), or ABSENT (negative — the window fails if it IS found)", disabled: off }));
     });
     return frag(
-        h("div", { class: "muted il-h wi-h", title: "how these detectors decide a match" }, opts.heading || "detects"),
-        h("label", { class: "wd-mode-line muted" }, (opts.matchLabel || "window matches if") + " ", modeSel),
+        subhead(opts.heading || "detects", null, "how these detectors decide a match"),
+        kv(opts.matchLabel || "window matches if", modeSel),
         h("div", { class: "wd-row wd-head muted" },
             h("span", { class: "wd-name" }, "detector"),
             h("span", { class: "wd-status" }, "pass"),
@@ -281,8 +276,8 @@ export function windowDetects(w, opts = {}) {
 // handler resolves the target; the ends are disabled. HIGHEST/first on top.
 export function moveButtons(i, count, mvCls, data, { upTitle, downTitle } = {}) {
     return frag(
-        h("button", { class: mvCls, dataset: { ...data, d: "-1" }, disabled: i === 0, title: upTitle || "move up" }, "▲"),
-        h("button", { class: mvCls, dataset: { ...data, d: "1" }, disabled: i === count - 1, title: downTitle || "move down" }, "▼"));
+        h("button", { class: `btn-icon ${mvCls}`, dataset: { ...data, d: "-1" }, disabled: i === 0, title: upTitle || "move up" }, "▲"),
+        h("button", { class: `btn-icon ${mvCls}`, dataset: { ...data, d: "1" }, disabled: i === count - 1, title: downTitle || "move down" }, "▼"));
 }
 
 // One reorderable priority row: a name + ▲/▼, HIGHEST on top. Shared by the item-template
@@ -308,7 +303,7 @@ export function windowItemOrder(w) {
         upTitle: "move up — higher priority (wins tile overlaps)",
         downTitle: "move down — lower priority (bottom = base cell, sets the grid pitch)" }));
     return frag(
-        h("div", { class: "muted il-h wi-h", title: "template priority order — highest on top (wins tile overlaps); the bottom template is the base cell that sets the grid pitch" }, "templates"),
+        subhead("templates", null, "template priority order — highest on top (wins tile overlaps); the bottom template is the base cell that sets the grid pitch"),
         rows);
 }
 
@@ -319,10 +314,10 @@ export function cellSizeControls(it) {
     const b = it.box || { w: 0, h: 0 };
     const v = (n) => +(+n || 0).toFixed(4);
     return frag(
-        h("label", { class: "flab", title: "cell width as a window fraction — the static grid's column pitch" },
-            "width ", h("input", { type: "number", class: "csize", dataset: { k: "w" }, step: "0.001", min: "0.001", value: v(b.w) })),
-        h("label", { class: "flab", title: "cell height as a window fraction — the static grid's row pitch" },
-            "height ", h("input", { type: "number", class: "csize", dataset: { k: "h" }, step: "0.001", min: "0.001", value: v(b.h) })),
+        kv("width", h("input", { type: "number", class: "csize", dataset: { k: "w" }, step: "0.001", min: "0.001", value: v(b.w) }),
+            { title: "cell width as a window fraction — the static grid's column pitch" }),
+        kv("height", h("input", { type: "number", class: "csize", dataset: { k: "h" }, step: "0.001", min: "0.001", value: v(b.h) }),
+            { title: "cell height as a window fraction — the static grid's row pitch" }),
         coverControls(it));
 }
 
@@ -333,10 +328,10 @@ export function cellSizeControls(it) {
 export function coverControls(it) {
     const pct = (n, d) => Math.round((n ?? d) * 100);
     return frag(
-        h("label", { class: "flab", title: "minimum % of the cell that must be inside the data area HORIZONTALLY to store the row — an edge column clipped past this is dismissed" },
-            "cover x % ", h("input", { type: "number", class: "ccover", dataset: { k: "x" }, step: "5", min: "0", max: "100", value: pct(it.min_cover_x, 0.75) })),
-        h("label", { class: "flab", title: "minimum % of the cell that must be inside the data area VERTICALLY to store the row — a top/bottom row the scroll occludes past this is dismissed" },
-            "cover y % ", h("input", { type: "number", class: "ccover", dataset: { k: "y" }, step: "5", min: "0", max: "100", value: pct(it.min_cover_y, 0.75) })));
+        kv("cover x %", h("input", { type: "number", class: "ccover", dataset: { k: "x" }, step: "5", min: "0", max: "100", value: pct(it.min_cover_x, 0.75) }),
+            { title: "minimum % of the cell that must be inside the data area HORIZONTALLY to store the row — an edge column clipped past this is dismissed" }),
+        kv("cover y %", h("input", { type: "number", class: "ccover", dataset: { k: "y" }, step: "5", min: "0", max: "100", value: pct(it.min_cover_y, 0.75) }),
+            { title: "minimum % of the cell that must be inside the data area VERTICALLY to store the row — a top/bottom row the scroll occludes past this is dismissed" }));
 }
 
 // The operand input(s) a rule's `then` needs, shown inline after the action select. Only the
@@ -385,15 +380,16 @@ export function ruleRows(fd, cls, fid) {
         return h("div", { class: `frule${invalid ? " frule-invalid" : ""}`, dataset: { ri: i },
                           title: invalid ? "this rule doesn't apply to the field's type — greyed out and ignored" : "" },
             h("div", { class: "frule-head" },
-                moveButtons(i, rules.length, "rulemv", d, { upTitle: "run earlier", downTitle: "run later" }),
+                h("span", { class: "frule-n", title: `rule ${i + 1}` }, String(i + 1) + ".",
+                    moveButtons(i, rules.length, "rulemv", d, { upTitle: "run earlier", downTitle: "run later" })),
                 h("select", { class: "rule-when", dataset: d, title: "condition tested on the running value" },
                     opts(RULE_WHEN, when, 3)),
                 RULE_WHEN_ARG.has(when) && h("input", { class: "rule-arg", dataset: d, value: r.arg || "", placeholder: "value", title: "value the condition compares against" }),
                 h("span", { class: "rule-arrow muted" }, "→"),
-                h("select", { class: "rule-then", dataset: d, title: "action when it matches (drop stops here; others rewrite the value and continue)" },
+                h("select", { class: "rule-then rule-op", dataset: d, title: "action when it matches (drop stops here; others rewrite the value and continue)" },
                     opts(RULE_THEN, then, 2)),
                 ...ruleThenOperands(r, then, d),
-                h("button", { class: "rule-del danger", dataset: d, title: "remove this rule" }, TRASH())),
+                trashBtn({ cls: "rule-del", dataset: d, title: "remove this rule" })),
             h("div", { class: "frule-trace muted", dataset: d }));
     });
 }
@@ -406,20 +402,19 @@ export function fieldConfigBody(fd, cls, fid) {
     const da = fid ? { fid } : {};
     const isText = (fd.type || "text") === "text";
     return frag(
-        h("label", { class: "flab" }, "type ",
-            h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, t)))),
-        h("label", { class: "flab", title: "read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. an '8' read as '81')" },
-            "isolate ", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate })),
-        isText && h("label", { class: "flab", title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the game node." },
-            "glyph-check ", h("input", { type: "checkbox", class: cls, dataset: { k: "glyph_check", ...da }, checked: !!fd.glyph_check })),
-        h("label", { class: "flab", title: "minimum OCR confidence this field must reach — a weaker genuine read drops the whole record (0 = use the global floor). Drag the bar to set it." },
-            "conf ", confMeter({ cls, k: "minconf", value: fd.min_confidence ?? 0, fid })),
-        h("div", { class: "fgrp" }, "rules ",
-            h("div", { class: "frule-btns" },
-                h("button", { class: "rulecopy", dataset: { ...da }, disabled: !(fd.rules || []).length, title: "copy this pipeline" }, COPY()),
-                h("button", { class: "rulepaste", dataset: { ...da }, title: "replace all rules with the copied pipeline" }, PASTE()),
-                h("button", { class: "ruleadd", dataset: { ...da }, title: "add a rule to the pipeline" }, PLUS()))),
-        ruleRows(fd, cls, fid));
+        kv("type", h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, t)))),
+        kv("isolate", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate }),
+            { title: "read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. an '8' read as '81')" }),
+        isText && kv("glyph-check", h("input", { type: "checkbox", class: cls, dataset: { k: "glyph_check", ...da }, checked: !!fd.glyph_check }),
+            { title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the game node." }),
+        kv("conf", confMeter({ cls, k: "minconf", value: fd.min_confidence ?? 0, fid }),
+            { title: "minimum OCR confidence this field must reach — a weaker genuine read drops the whole record (0 = use the global floor). Drag the bar to set it." }),
+        subhead("rules"),
+        gspan("frule-list", ruleRows(fd, cls, fid)),
+        h("div", { class: "frule-btns" },
+            h("button", { class: "rulecopy", dataset: { ...da }, disabled: !(fd.rules || []).length, title: "copy this pipeline" }, COPY()),
+            h("button", { class: "rulepaste", dataset: { ...da }, title: "replace all rules with the copied pipeline" }, PASTE()),
+            h("button", { class: "ruleadd", dataset: { ...da }, title: "add a rule to the pipeline" }, PLUS())));
 }
 
 // One item field is its OWN node (a child of its item node). It renders the shared
@@ -431,21 +426,20 @@ export function itemFieldParts(n) {
         vals.map((v) => h("option", { selected: cur === v }, v)));
     const body = frag(
         fieldConfigBody(fd, "ffset", f.id),
-        h("div", { class: "fgrp" }, "row role"),
-        h("label", { class: "flab", title: "require this field to read something — it doubles as a tell" },
-            "tell ", h("input", { type: "checkbox", class: "itell", dataset: { fid: f.id }, checked: !!f.tell })),
-        f.tell && h("label", { class: "flab", title: "minimum OCR confidence the read must reach (0 = any). Drag the bar to set it." },
-            "tell conf ", confMeter({ cls: "itellconf", value: f.tell_conf ?? 0, fid: f.id })),
-        (f.tell && fd.type === "number") && h("label", { class: "flab", title: "pass the tell even when the read carries text (e.g. a unit symbol or glyph), not only a clean number" },
-            "allow text ", h("input", { type: "checkbox", class: "itelltext", dataset: { fid: f.id }, checked: !!f.tell_allow_text })),
-        h("label", { class: "flab", title: "use this field to LOCATE rows (anchor the grid) — independent of tell; a reliable text field (e.g. the name) can locate without being a tell" },
-            "locate ", h("input", { type: "checkbox", class: "iloc", dataset: { fid: f.id }, checked: !!f.locate })),
+        subhead("row role"),
+        kv("tell", h("input", { type: "checkbox", class: "itell", dataset: { fid: f.id }, checked: !!f.tell }),
+            { title: "require this field to read something — it doubles as a tell" }),
+        f.tell && kv("tell conf", confMeter({ cls: "itellconf", value: f.tell_conf ?? 0, fid: f.id }),
+            { title: "minimum OCR confidence the read must reach (0 = any). Drag the bar to set it." }),
+        (f.tell && fd.type === "number") && kv("allow text", h("input", { type: "checkbox", class: "itelltext", dataset: { fid: f.id }, checked: !!f.tell_allow_text }),
+            { title: "pass the tell even when the read carries text (e.g. a unit symbol or glyph), not only a clean number" }),
+        kv("locate", h("input", { type: "checkbox", class: "iloc", dataset: { fid: f.id }, checked: !!f.locate }),
+            { title: "use this field to LOCATE rows (anchor the grid) — independent of tell; a reliable text field (e.g. the name) can locate without being a tell" }),
         (f.tell || f.locate) && frag(
-            h("label", { class: "flab", title: "vertical anchor: which line of a wrapped name fixes the ROW" },
-                "align y ", alignSel("itellalign", ["none", "top", "center", "bottom"], f.align || n.item.align || "center")),
-            h("label", { class: "flab", title: "horizontal anchor: which edge of the text fixes the COLUMN — pick the side the text is aligned to in the cell (e.g. left for a left-aligned name). Lets columns be found from content, immune to blank data-area margins." },
-                "align x ", alignSel("itellalignx", ["left", "center", "right"], f.align_x || n.item.align_x || "left"))),
-        h("div", { class: "gn-foot" }));
+            kv("align y", alignSel("itellalign", ["none", "top", "center", "bottom"], f.align || n.item.align || "center"),
+                { title: "vertical anchor: which line of a wrapped name fixes the ROW" }),
+            kv("align x", alignSel("itellalignx", ["left", "center", "right"], f.align_x || n.item.align_x || "left"),
+                { title: "horizontal anchor: which edge of the text fixes the COLUMN — pick the side the text is aligned to in the cell (e.g. left for a left-aligned name). Lets columns be found from content, immune to blank data-area margins." })));
     return { title: h("input", { class: "gi gi-id", dataset: { k: "fldid" }, value: f.id, title: "field id" }), body };
 }
 
@@ -460,37 +454,36 @@ export function itemTellParts(n) {
         opts.map((v) => h("option", { value: v, selected: (cur ?? def) === v }, v)));
     const body = frag(
         t.kind === "text" && frag(
-            h("label", { class: "flab", title: "which field's read this tell checks. Leave blank (—) to check ANY column's read — the tell isn't tied to one field." },
-                "checks ", h("select", { class: "tset", dataset: { k: "field" } }, _colOpts((it.fields || []).map((f) => f.field), t.field))),
-            h("label", { class: "flab", title: "optional: require the read to MATCH this text (scored like a detector). Empty = just needs to read SOMETHING (the chosen field, or any column when blank). NOTE: an empty-text tell bound to a field is identical to flagging that field 'tell' — use the field's own tell flag instead." },
-                "text ", h("input", { class: "tset", dataset: { k: "text" }, value: t.text || "", placeholder: "(any)" })),
+            kv("checks", h("select", { class: "tset", dataset: { k: "field" } }, _colOpts((it.fields || []).map((f) => f.field), t.field)),
+                { title: "which field's read this tell checks. Leave blank (—) to check ANY column's read — the tell isn't tied to one field." }),
+            kv("text", h("input", { class: "tset", dataset: { k: "text" }, value: t.text || "", placeholder: "(any)" }),
+                { title: "optional: require the read to MATCH this text (scored like a detector). Empty = just needs to read SOMETHING (the chosen field, or any column when blank). NOTE: an empty-text tell bound to a field is identical to flagging that field 'tell' — use the field's own tell flag instead." }),
             (t.text || "").trim() && frag(
-                h("label", { class: "flab", title: "how text is compared: partial=substring (loose); full=whole-string; exact=equal; prefix=starts-with" },
-                    "mode ", tset("match", ["partial", "full", "exact", "prefix"], t.match, "partial")),
-                h("label", { class: "flab", title: "hard floor: reads shorter than this never match (kills tiny-blob false hits)" },
-                    "min chars ", h("input", { type: "number", class: "tset", dataset: { k: "minchars" }, step: "1", min: "0", value: t.min_chars ?? 0 })),
-                h("label", { class: "flab", title: "what to ignore before comparing" },
-                    "strip ", tset("strip", ["alnum", "spaces", "none"], t.strip, "alnum")),
-                h("label", { class: "flab", title: "off = fold case before comparing" },
-                    "case sensitive ", h("input", { type: "checkbox", class: "tset", dataset: { k: "case" }, checked: !!t.case_sensitive })))),
-        (t.kind === "color" || t.kind === "border") && h("label", { class: "flab", title: t.kind === "border" ? "the color that must ride the box's perimeter band" : "the color that must be present in the tell box" },
-            "color ", h("input", { type: "color", class: "tset", dataset: { k: "color" }, value: t.color || "#ffcc00" })),
-        t.kind === "border" && h("label", { class: "flab", title: "thickness of the sampled perimeter band, as a fraction (0..1) of the box's shorter side. Only this ring is checked for the color; the fill is ignored." },
-            "width ", h("input", { type: "number", class: "tset", dataset: { k: "width" }, step: "0.02", min: "0", max: "0.5", value: t.width ?? 0.2 })),
+                kv("mode", tset("match", ["partial", "full", "exact", "prefix"], t.match, "partial"),
+                    { title: "how text is compared: partial=substring (loose); full=whole-string; exact=equal; prefix=starts-with" }),
+                kv("min chars", h("input", { type: "number", class: "tset", dataset: { k: "minchars" }, step: "1", min: "0", value: t.min_chars ?? 0 }),
+                    { title: "hard floor: reads shorter than this never match (kills tiny-blob false hits)" }),
+                kv("strip", tset("strip", ["alnum", "spaces", "none"], t.strip, "alnum"),
+                    { title: "what to ignore before comparing" }),
+                kv("case sensitive", h("input", { type: "checkbox", class: "tset", dataset: { k: "case" }, checked: !!t.case_sensitive }),
+                    { title: "off = fold case before comparing" }))),
+        (t.kind === "color" || t.kind === "border") && kv("color", h("input", { type: "color", class: "tset", dataset: { k: "color" }, value: t.color || "#ffcc00" }),
+            { title: t.kind === "border" ? "the color that must ride the box's perimeter band" : "the color that must be present in the tell box" }),
+        t.kind === "border" && kv("width", h("input", { type: "number", class: "tset", dataset: { k: "width" }, step: "0.02", min: "0", max: "0.5", value: t.width ?? 0.2 }),
+            { title: "thickness of the sampled perimeter band, as a fraction (0..1) of the box's shorter side. Only this ring is checked for the color; the fill is ignored." }),
         t.kind === "template" && h("div", { class: "tt-ref", title: "the saved sub-image this tell matches — the tell box cropped from the item's frozen cutout" },
             it.cutout ? h("canvas", { class: "tt-ref-canvas" }) : h("div", { class: "muted" }, "no cutout yet")),
-        t.kind === "template" && h("label", { class: "flab", title: "search margin: how far the live crop grows beyond the box (per side, as a fraction of the box) so the saved image is found even when the located cell drifts a few px. 0 = match the exact box only." },
-            "margin ", h("input", { type: "number", class: "tset", dataset: { k: "margin" }, step: "0.05", min: "0", max: "1", value: t.margin ?? 0.25 })),
-        h("label", { class: "flab", title: t.kind === "text" ? "pass score (0..1) the read-vs-text match must reach (when text is set)" : "pass score (0..1) the tell must reach" },
-            "threshold ", h("input", { type: "number", class: "tset", dataset: { k: "threshold" }, step: "0.05", min: "0", max: "1", value: t.threshold ?? 0.5 })),
-        !staticOn && h("label", { class: "flab", title: "use this tell to LOCATE rows (anchor the grid) — only one tell per item locates" },
-            "locate ", h("input", { type: "checkbox", class: "tloc", checked: !!t.locate })),
+        t.kind === "template" && kv("margin", h("input", { type: "number", class: "tset", dataset: { k: "margin" }, step: "0.05", min: "0", max: "1", value: t.margin ?? 0.25 }),
+            { title: "search margin: how far the live crop grows beyond the box (per side, as a fraction of the box) so the saved image is found even when the located cell drifts a few px. 0 = match the exact box only." }),
+        kv("threshold", h("input", { type: "number", class: "tset", dataset: { k: "threshold" }, step: "0.05", min: "0", max: "1", value: t.threshold ?? 0.5 }),
+            { title: t.kind === "text" ? "pass score (0..1) the read-vs-text match must reach (when text is set)" : "pass score (0..1) the tell must reach" }),
+        !staticOn && kv("locate", h("input", { type: "checkbox", class: "tloc", checked: !!t.locate }),
+            { title: "use this tell to LOCATE rows (anchor the grid) — only one tell per item locates" }),
         (t.locate && !staticOn) && frag(
-            h("label", { class: "flab", title: "vertical anchor: which line of a wrapped name fixes the ROW" },
-                "align y ", tset("align", ["none", "top", "center", "bottom"], t.align || it.align, "center")),
-            h("label", { class: "flab", title: "horizontal anchor: which edge of the text fixes the COLUMN — pick the side the text is aligned to in the cell. Lets columns be found from content, immune to blank data-area margins." },
-                "align x ", tset("align_x", ["left", "center", "right"], t.align_x || it.align_x, "left"))),
-        h("div", { class: "gn-foot" }));
+            kv("align y", tset("align", ["none", "top", "center", "bottom"], t.align || it.align, "center"),
+                { title: "vertical anchor: which line of a wrapped name fixes the ROW" }),
+            kv("align x", tset("align_x", ["left", "center", "right"], t.align_x || it.align_x, "left"),
+                { title: "horizontal anchor: which edge of the text fixes the COLUMN — pick the side the text is aligned to in the cell. Lets columns be found from content, immune to blank data-area margins." })));
     return { title: h("input", { class: "gi gi-id", dataset: { k: "tellid" }, value: t.id, title: "tell id" }), body };
 }
 
@@ -503,9 +496,8 @@ export function readoutParts(n) {
     const fd = n.field || { type: "number", extract: "whole", fuzzy: 0.82 };
     const body = frag(
         fieldConfigBody(fd, "roset", fd.id),   // the box's read config, like a region node
-        h("div", { class: "fgrp" }, "live value"),
-        h("div", { class: "ro-live muted", dataset: { ro: v.id } }, "—"),   // updated in place from the heartbeat
-        h("div", { class: "gn-foot" }));
+        subhead("live value"),
+        h("div", { class: "ro-live muted", dataset: { ro: v.id } }, "—"));   // updated in place from the heartbeat
     return {
         title: h("input", { class: "gi gi-id", dataset: { k: "roid" }, value: v.id,
             title: "readout id — what a trigger watches and a toast tokens as {{readout:id}}" }),
@@ -521,19 +513,19 @@ export function itemLists(it, w) {
     const tellsSummary = (it.tells || []).map((t) => h("div", { class: "ti-sum", dataset: { tid: t.id }, title: "select this tell's node" },
         h("span", { class: "ti-sum-name" }, t.id),
         h("span", { class: "ti-sum-kind muted" }, t.kind),
-        h("button", { class: "ti-del danger", dataset: { tid: t.id }, title: "remove" }, TRASH())));
+        trashBtn({ cls: "ti-del", dataset: { tid: t.id }, title: "remove" })));
     // fields flagged as tells (f.tell) show here too, read-only — they're edited in the fields
     // list below; the only action is remove, which just unchecks the field's tell flag.
     const fieldTells = (it.fields || []).filter((f) => f.tell).map((f) => h("div", { class: "ti-row ti-fieldtell", dataset: { fid: f.id } },
         h("span", { class: "ti-kind" }, "field"),
         h("span", { class: "ti-name" }, f.id),
         h("span", { class: "ti-ro muted" }, `tell · conf ${f.tell_conf ?? 0}`),
-        h("button", { class: "ti-untell danger", dataset: { fid: f.id }, title: "stop using this field as a tell" }, TRASH())));
+        trashBtn({ cls: "ti-untell", dataset: { fid: f.id }, title: "stop using this field as a tell" })));
     // fields are their OWN nodes now — the item lists only a compact summary (name + remove);
     // the full per-field editor lives on each field node (itemFieldParts).
     const fieldsSummary = (it.fields || []).map((f) => h("div", { class: "if-sum", dataset: { fid: f.id }, title: "select this field's node" },
         h("span", { class: "if-sum-name" }, f.id),
-        h("button", { class: "if-del danger", dataset: { fid: f.id }, title: "remove" }, TRASH())));
+        trashBtn({ cls: "if-del", dataset: { fid: f.id }, title: "remove" })));
     // the cutout draw-mode buttons, split by what they draw: cell under "cell", field under
     // "fields", every tell kind under "tells". Selecting one sets the active draw kind.
     const drawBtn = ([v, label, icon, tip]) => h("button", { class: "tool", dataset: { kind: v }, title: tip || `draw ${label}` }, icon, " ", label);
@@ -544,15 +536,15 @@ export function itemLists(it, w) {
     const fieldBtns = ITEM_KINDS.filter(([v]) => v === "field").map(drawBtn);
     const tellBtns = ITEM_KINDS.filter(([v]) => v !== "bbox" && v !== "field").map(drawBtn);
     return frag(
-        h("div", { class: "muted il-h" }, "cell"),
+        subhead("cell"),
         h("div", { class: "il-tools" }, cellBtns),
         cellSizeControls(it),
-        h("label", { class: "flab", title: "terminator: when this template is detected it marks the END of the list — every record positioned after it is discarded (an unowned/'no more results' placeholder). Ordered scroll/mirror datasets only." },
-            "terminator (ends the list) ", h("input", { type: "checkbox", class: "iterm", checked: !!it.terminator })),
-        h("div", { class: "muted il-h" }, "tells"),
+        kv("terminator (ends the list)", h("input", { type: "checkbox", class: "iterm", checked: !!it.terminator }),
+            { title: "terminator: when this template is detected it marks the END of the list — every record positioned after it is discarded (an unowned/'no more results' placeholder). Ordered scroll/mirror datasets only." }),
+        subhead("tells"),
         h("div", { class: "il-tools" }, tellBtns),
         (tellsSummary.length || fieldTells.length) ? [tellsSummary, fieldTells] : h("div", { class: "muted" }, "draw a tell on the cutout"),
-        h("div", { class: "muted il-h" }, "fields"),
+        subhead("fields"),
         h("div", { class: "il-tools" }, fieldBtns),
         fieldsSummary.length ? fieldsSummary : h("div", { class: "muted" }, "draw a field on the cutout"),
         keySection(it, w));
@@ -570,19 +562,19 @@ export function keySection(it, w) {
         ? used.map((fid, i) => h("div", { class: "key-row", dataset: { i } },
             h("select", { class: "kfield", dataset: { i } },
                 (fids.includes(fid) ? fids : [fid, ...fids]).map((f) => h("option", { selected: f === fid }, f))),
-            h("button", { class: "kmv", dataset: { i, d: "-1" }, disabled: i === 0, title: "earlier in the key" }, "▲"),
-            h("button", { class: "kmv", dataset: { i, d: "1" }, disabled: i === used.length - 1, title: "later in the key" }, "▼"),
-            h("button", { class: "kdel danger", dataset: { i }, disabled: used.length <= 1, title: "remove from the key" }, TRASH())))
+            h("button", { class: "btn-icon kmv", dataset: { i, d: "-1" }, disabled: i === 0, title: "earlier in the key" }, "▲"),
+            h("button", { class: "btn-icon kmv", dataset: { i, d: "1" }, disabled: i === used.length - 1, title: "later in the key" }, "▼"),
+            trashBtn({ cls: "kdel", dataset: { i }, disabled: used.length <= 1, title: "remove from the key" })))
         : h("div", { class: "key-row muted", title: "no fields yet — draw a field on the cutout to key on it" }, "—");
     const addable = fids.filter((f) => !used.includes(f));
     return frag(
-        h("div", { class: "muted il-h", title: "which fields identify a record — reads with the same key merge; a different key (e.g. another level) is its own record. A record missing any key part is dropped." }, "key"),
-        h("label", { class: "flab", title: "joins the parts in the stored key" },
-            "separator ", h("input", { class: "ksep", value: eff.sep ?? "|", size: "2" })),
-        addable.length && h("label", { class: "flab", title: "add a field to the key" },
-            "+ field ", h("select", { class: "kadd" }, h("option", { value: "" }, "field…"), addable.map((f) => h("option", f)))),
-        h("label", { class: "flab", title: "treat keys differing only in case as distinct" },
-            "is case-sensitive ", h("input", { type: "checkbox", class: "kcase", checked: !!eff.case_sensitive })),
+        subhead("key", null, "which fields identify a record — reads with the same key merge; a different key (e.g. another level) is its own record. A record missing any key part is dropped."),
+        kv("separator", h("input", { class: "ksep", value: eff.sep ?? "|", size: "2" }),
+            { title: "joins the parts in the stored key" }),
+        addable.length && kv("+ field", h("select", { class: "kadd" }, h("option", { value: "" }, "field…"), addable.map((f) => h("option", f))),
+            { title: "add a field to the key" }),
+        kv("is case-sensitive", h("input", { type: "checkbox", class: "kcase", checked: !!eff.case_sensitive }),
+            { title: "treat keys differing only in case as distinct" }),
         rows);
 }
 
@@ -629,7 +621,7 @@ export function gamePriority() {
         upTitle: "move up — higher priority (recognised sooner)",
         downTitle: "move down — lower priority" }));
     return frag(
-        h("div", { class: "muted il-h wi-h", title: "live-toggled windows in recognition priority — the classifier tries them top-first and stops at the first match. Turn a window's 'live' on to add it here." }, "window priority"),
+        subhead("window priority", null, "live-toggled windows in recognition priority — the classifier tries them top-first and stops at the first match. Turn a window's 'live' on to add it here."),
         wins.length ? rows
             : h("p", { class: "muted", style: "margin:4px 0" }, "no live windows — turn on 'live' on a window to prioritise it"));
 }
@@ -640,10 +632,8 @@ export function nodeParts(n) {
         return {
             title: h("input", { class: "gi gi-id", dataset: { k: "name" }, value: g.name, title: "game name" }),
             body: frag(
-                h("label", { class: "flab" }, "process ",
-                    h("input", { class: "gi", dataset: { k: "proc" }, value: (g.process_names || []).join(", "), placeholder: "Warframe.x64.exe" })),
-                h("label", { class: "flab" }, "title hint ",
-                    h("input", { class: "gi", dataset: { k: "title" }, value: g.window_title_hint || "", placeholder: "Warframe" })),
+                kv("process", h("input", { class: "gi", dataset: { k: "proc" }, value: (g.process_names || []).join(", "), placeholder: "Warframe.x64.exe" })),
+                kv("title hint", h("input", { class: "gi", dataset: { k: "title" }, value: g.window_title_hint || "", placeholder: "Warframe" })),
                 // window-priority list in its OWN wrapper so rebuildNode refreshes JUST this
                 // (on reorder, or when a window's `live` toggle flips) — mirrors `.win-controls`.
                 h("div", { class: "game-priority" }, gamePriority())),
@@ -669,7 +659,7 @@ export function nodeParts(n) {
             title: h("input", { class: "gi gi-id", dataset: { k: "winid" }, value: w.id }),
             head: satToggleBtn(`prev:${w.id}`, "preview"),
             body: frag(
-                h("div", { class: "win-controls" }, windowControls(w)),
+                h("div", { class: "win-controls gn-grid" }, windowControls(w)),
                 h("div", { class: "win-img" })),
             ports: h("span", { class: "port out", title: "drag to a dataset to send this window's rows there" }),
         };
@@ -678,7 +668,7 @@ export function nodeParts(n) {
         const f = n.field || { type: "text", extract: "whole", fuzzy: 0.82 };
         return {
             title: h("input", { class: "gi gi-id", dataset: { k: "regid" }, value: n.ref.id, title: "region / field id" }),
-            body: frag(fieldConfigBody(f, "fset"), h("div", { class: "gn-foot" })),
+            body: fieldConfigBody(f, "fset"),
         };
     }
     if (n.type === "detect") {
@@ -686,61 +676,56 @@ export function nodeParts(n) {
         const kind = detectKind(a);
         // text-kind controls (text/mode/min-chars/strip/case) — only OCR detectors use them
         const textBody = frag(
-            h("label", { class: "flab" }, "text ",
-                h("input", { class: "aset", dataset: { k: "text" }, value: a.text || "", placeholder: "EQUIPMENT" })),
-            h("label", { class: "flab", title: "how text is compared: partial=substring (loose); full=whole-string; exact=equal; prefix=starts-with" },
-                "mode ", h("select", { class: "aset", dataset: { k: "match" } },
-                    h("option", { value: "partial", selected: (a.match ?? "partial") === "partial" }, "partial"),
-                    h("option", { value: "full", selected: a.match === "full" }, "full"),
-                    h("option", { value: "exact", selected: a.match === "exact" }, "exact"),
-                    h("option", { value: "prefix", selected: a.match === "prefix" }, "prefix"))),
-            h("label", { class: "flab", title: "hard floor: reads shorter than this never match (kills tiny-blob false hits)" },
-                "min chars ", h("input", { type: "number", class: "aset", dataset: { k: "minchars" }, step: "1", min: "0", value: a.min_chars ?? 0 })),
-            h("label", { class: "flab", title: "what to ignore before comparing (default: none — keep everything)" },
-                "strip ", h("select", { class: "aset", dataset: { k: "strip" } },
-                    h("option", { value: "none", selected: (a.strip ?? "none") === "none" }, "none"),
-                    h("option", { value: "alnum", selected: a.strip === "alnum" }, "alnum"),
-                    h("option", { value: "spaces", selected: a.strip === "spaces" }, "spaces"))),
-            h("label", { class: "flab" }, "case sensitive ",
-                h("input", { type: "checkbox", class: "aset", dataset: { k: "case" }, checked: !!a.case_sensitive, title: "off = fold case before comparing" })));
+            kv("text", h("input", { class: "aset", dataset: { k: "text" }, value: a.text || "", placeholder: "EQUIPMENT" })),
+            kv("mode", h("select", { class: "aset", dataset: { k: "match" } },
+                h("option", { value: "partial", selected: (a.match ?? "partial") === "partial" }, "partial"),
+                h("option", { value: "full", selected: a.match === "full" }, "full"),
+                h("option", { value: "exact", selected: a.match === "exact" }, "exact"),
+                h("option", { value: "prefix", selected: a.match === "prefix" }, "prefix")),
+                { title: "how text is compared: partial=substring (loose); full=whole-string; exact=equal; prefix=starts-with" }),
+            kv("min chars", h("input", { type: "number", class: "aset", dataset: { k: "minchars" }, step: "1", min: "0", value: a.min_chars ?? 0 }),
+                { title: "hard floor: reads shorter than this never match (kills tiny-blob false hits)" }),
+            kv("strip", h("select", { class: "aset", dataset: { k: "strip" } },
+                h("option", { value: "none", selected: (a.strip ?? "none") === "none" }, "none"),
+                h("option", { value: "alnum", selected: a.strip === "alnum" }, "alnum"),
+                h("option", { value: "spaces", selected: a.strip === "spaces" }, "spaces")),
+                { title: "what to ignore before comparing (default: none — keep everything)" }),
+            kv("case sensitive", h("input", { type: "checkbox", class: "aset", dataset: { k: "case" }, checked: !!a.case_sensitive, title: "off = fold case before comparing" })));
         // color/border-kind controls — cheap, no OCR. A color swatch + hex + eyedropper.
         const colorBody = frag(
-            h("label", { class: "flab", title: "fraction of pixels near this color (border = only on the box perimeter)" },
-                "color ",
-                h("span", { class: "aset-color" },
-                    h("input", { class: "aset", dataset: { k: "color" }, value: a.color || "", placeholder: "#rrggbb", size: "8" }),
-                    h("input", { type: "color", class: "aset aset-swatch", dataset: { k: "colorpick" }, title: "pick a color",
-                        value: /^#[0-9a-fA-F]{6}$/.test(a.color || "") ? a.color : "#000000" }))),
-            h("label", { class: "flab", title: "how close a pixel's color must be (BGR distance) to count" },
-                "tolerance ", h("input", { type: "number", class: "aset", dataset: { k: "tol" }, step: "1", min: "0", value: a.tolerance ?? 32 })),
-            kind === "border" && h("label", { class: "flab", title: "perimeter band thickness as a fraction of the box's shorter side" },
-                "border width ", h("input", { type: "number", class: "aset", dataset: { k: "width" }, step: "0.01", min: "0", max: "0.5", value: a.width ?? 0.1 })));
+            kv("color", h("span", { class: "aset-color" },
+                h("input", { class: "aset", dataset: { k: "color" }, value: a.color || "", placeholder: "#rrggbb", size: "8" }),
+                h("input", { type: "color", class: "aset aset-swatch", dataset: { k: "colorpick" }, title: "pick a color",
+                    value: /^#[0-9a-fA-F]{6}$/.test(a.color || "") ? a.color : "#000000" })),
+                { title: "fraction of pixels near this color (border = only on the box perimeter)" }),
+            kv("tolerance", h("input", { type: "number", class: "aset", dataset: { k: "tol" }, step: "1", min: "0", value: a.tolerance ?? 32 }),
+                { title: "how close a pixel's color must be (BGR distance) to count" }),
+            kind === "border" && kv("border width", h("input", { type: "number", class: "aset", dataset: { k: "width" }, step: "0.01", min: "0", max: "0.5", value: a.width ?? 0.1 }),
+                { title: "perimeter band thickness as a fraction of the box's shorter side" }));
         return {
             title: h("input", { class: "gi gi-id", dataset: { k: "detid" }, value: a.id,
                 title: "detector: the window's detect_mode decides how these combine" }),
             body: frag(
-                h("label", { class: "flab", title: "text = OCR a label (costs OCR); color/border = cheap pixel check (no OCR — use these for the live-mode gate)" },
-                    "kind ", h("select", { class: "aset", dataset: { k: "kind" } },
-                        h("option", { value: "text", selected: kind === "text" }, "text"),
-                        h("option", { value: "color", selected: kind === "color" }, "color"),
-                        h("option", { value: "border", selected: kind === "border" }, "border"),
-                        ...(kind === "template" ? [h("option", { value: "template", selected: true }, "template")] : []))),
+                kv("kind", h("select", { class: "aset", dataset: { k: "kind" } },
+                    h("option", { value: "text", selected: kind === "text" }, "text"),
+                    h("option", { value: "color", selected: kind === "color" }, "color"),
+                    h("option", { value: "border", selected: kind === "border" }, "border"),
+                    ...(kind === "template" ? [h("option", { value: "template", selected: true }, "template")] : [])),
+                    { title: "text = OCR a label (costs OCR); color/border = cheap pixel check (no OCR — use these for the live-mode gate)" }),
                 kind === "text" ? textBody : kind === "template"
                     ? h("div", { class: "muted" }, "template image (set on the box)") : colorBody,
-                h("label", { class: "flab" }, "threshold ",
-                    h("input", { type: "number", class: "aset", dataset: { k: "thr" }, step: "0.05", min: "0", max: "1", value: a.threshold ?? 0.8 })),
+                kv("threshold", h("input", { type: "number", class: "aset", dataset: { k: "thr" }, step: "0.05", min: "0", max: "1", value: a.threshold ?? 0.8 })),
                 h("div", { class: "detect-status muted" },
                     h("div", { class: "ds-verdict" }, "◯ —"),
                     h("div", { class: "ds-line ds-before", hidden: true }),
                     h("div", { class: "ds-line ds-after", hidden: true }),
-                    h("div", { class: "ds-line ds-chars", hidden: true })),
-                h("div", { class: "gn-foot" })),
+                    h("div", { class: "ds-line ds-chars", hidden: true }))),
         };
     }
     if (n.type === "item") {
         return {
             title: h("input", { class: "gi gi-id", dataset: { k: "itemid" }, value: n.ref.id, title: "item template" }),
-            body: frag(h("div", { class: "item-img" }), h("div", { class: "item-lists" }, itemLists(n.ref, n.win))),
+            body: frag(h("div", { class: "item-img" }), h("div", { class: "item-lists gn-grid" }, itemLists(n.ref, n.win))),
         };
     }
     if (n.type === "itemfield") return itemFieldParts(n);
@@ -752,11 +737,9 @@ export function nodeParts(n) {
         // on demand (its own button, or the image's 👁), rendered inline.
         return {
             title: h("span", { class: "gi-id" }, `${n.ref.id} preview`),
-            body: frag(
-                h("div", { class: "nodehost scrollhost prev-host" },
-                    h("p", { class: "muted", style: "padding:8px" }, "open the window image or edit it to preview what it reads")),
-                h("div", { class: "gn-foot" },
-                    h("button", { class: "prevcommit", title: "write these reads into the window's dataset (one revertable batch)" }, "push to dataset"))),
+            body: h("div", { class: "nodehost scrollhost prev-host" },
+                h("p", { class: "muted", style: "padding:8px" }, "open the window image or edit it to preview what it reads")),
+            foot: h("button", { class: "prevcommit", title: "write these reads into the window's dataset (one revertable batch)" }, "push to dataset"),
         };
     }
     if (n.type === "vttable") {
@@ -779,12 +762,12 @@ export function nodeParts(n) {
                 title: h("span", { class: "gi-id" }, `${r.id} preview`),
                 body: frag(
                     h("div", { class: "pp-cols muted", style: "padding:4px 8px" }, "loading…"),
-                    h("div", { class: "gn-foot", style: "gap:6px" },
-                        h("input", { class: "pp-item", placeholder: "item to test (blank = first source)", style: "flex:1;min-width:0" }),
-                        h("button", { class: "pp-probe" }, "test fetch")),
                     h("div", { class: "pp-result" }),
                     h("div", { class: "nodehost scrollhost pp-inputs" },
                         h("p", { class: "muted", style: "padding:8px" }, "resolved item list appears here"))),
+                foot: frag(
+                    h("input", { class: "pp-item", placeholder: "item to test (blank = first source)", style: "flex:1;min-width:0" }),
+                    h("button", { class: "pp-probe" }, "test fetch")),
             };
         }
         if (r.kind === "source" || r.kind === "sourcedismissed") {
@@ -803,11 +786,13 @@ export function nodeParts(n) {
         }
         return {
             title: h("span", { class: "gi-id" }, `${r.ds} data`),
-            head: slideToggle({ on: vtShowRemoved.get(r.ds) || false, cls: "vt-showrm", label: "removed", hidden: true, title: "show removed (no-longer-present) rows in the table + counts" }),
-            body: frag(
+            // data | batches selector + the "show removed" toggle ride the node HEADER (gn-h), above the table
+            head: frag(
                 h("div", { class: "ds-tabs", role: "tablist" },
                     h("button", { class: "ds-tab on", dataset: { tab: "data" }, role: "tab" }, "data ", h("span", { class: "ds-tab-n data-n" })),
                     h("button", { class: "ds-tab", dataset: { tab: "batches" }, role: "tab", title: "this dataset's collection/save runs" }, "batches ", h("span", { class: "ds-tab-n bat-n" }))),
+                slideToggle({ on: vtShowRemoved.get(r.ds) || false, cls: "vt-showrm", label: "removed", hidden: true, title: "show removed (no-longer-present) rows in the table + counts" })),
+            body: frag(
                 h("div", { class: "nodehost scrollhost data-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
                 h("div", { class: "nodehost scrollhost bat-host" },
                     h("ul", { class: "history bat-list" }, h("li", { class: "muted" }, "loading…")),
@@ -845,8 +830,7 @@ export function nodeParts(n) {
                     h("textarea", { class: "dictterms", autocomplete: "off",
                         readOnly: fed, title: fed ? "terms are pulled from the wired dataset(s) — edit the source data, not this list" : "",
                         placeholder: "one word per line\nNeo V11\nSoma Prime\n…" },
-                        (dict.terms || []).join("\n"))),
-                h("div", { class: "gn-foot" })),
+                        (dict.terms || []).join("\n")))),
         };
     }
     // dataset — receives/stores rows, deduped by the keys the records arrive with.
@@ -878,40 +862,41 @@ export function nodeParts(n) {
         title: h("input", { class: "gi gi-id dsrename", value: ds, title: "dataset name" }),
         head: satToggleBtn(`vt:ds:${ds}`, "vttable"),
         body: frag(
-            h("div", { class: "lab-grid" },
-                "1 → many",
-                h("select", { class: "dskey", title: "the key the dataset collapses many reads on (or none)" }, keyOpts),
-                "batch",
-                h("select", { class: "dsbatch", title: "how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like a timed offer / pop-up)" }, batchOpts),
-                "sync",
-                h("select", { class: "dssync", title: "accumulate: only add/update. mirror: keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)." }, syncOpts)),
-            concatEditor,
-            h("div", { class: "gn-foot" },
-                h("button", { class: "dsclear danger" }, "clear data"))),
+            kv("1 → many", h("select", { class: "dskey", title: "the key the dataset collapses many reads on (or none)" }, keyOpts)),
+            kv("batch", h("select", { class: "dsbatch", title: "how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like a timed offer / pop-up)" }, batchOpts)),
+            kv("sync", h("select", { class: "dssync", title: "accumulate: only add/update. mirror: keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)." }, syncOpts)),
+            concatEditor && gspan(concatEditor)),
+        foot: h("button", { class: "dsclear danger" }, "clear data"),
         ports: h("span", { class: "port out", title: "drag to a subset to feed it this dataset" }),
     };
 }
 
-// Per-feed column pickers for a dictionary fed by dataset(s): each wired dataset lists its
-// columns as checkboxes — every ticked column's values become terms (pulled + deduped on save).
+// A dictionary fed by dataset(s): the SHARED sources-input widget (rule 7 — the same chip +
+// add-select the subset joins / producer sources use) holds the wired datasets, and each gets a
+// per-source column-picker block below — every ticked column's values become terms (pulled +
+// deduped on save). A dataset can be wired by dropping its out-port here OR via the "+ source"
+// select.
 function dictFeedsEditor(dict) {
     const feeds = model.dictFeeds(dict.id);
-    if (!feeds.length) return null;
-    return h("div", { class: "dict-feeds" },
-        h("div", { class: "mini muted" }, "pull terms from"),
-        feeds.map((fd) => {
-            const cols = model.datasetFields(fd.dataset);
-            const picked = fd.columns || [];
-            const shown = [...new Set([...cols, ...picked])];
-            return h("div", { class: "dict-feed", dataset: { ds: fd.dataset } },
-                h("div", { class: "df-head" },
-                    h("code", fd.dataset),
-                    h("button", { class: "df-rm danger", dataset: { ds: fd.dataset }, title: "stop feeding from this dataset" }, TRASH())),
-                shown.length
-                    ? h("div", { class: "df-cols" }, shown.map((c) => h("label", { class: "chk" },
-                        h("input", { type: "checkbox", class: "dfcol", dataset: { ds: fd.dataset, col: c }, checked: picked.includes(c) }), c)))
-                    : h("div", { class: "mini muted" }, "no columns — dataset has no data yet"));
-        }));
+    const free = model.dictFeedable(dict.id);   // datasets not already feeding it
+    if (!feeds.length && !free.length) return null;
+    // per-source column pickers: each wired dataset lists its columns as checkboxes (full-width
+    // blocks below the sources row)
+    const cols = feeds.map((fd) => {
+        const shown = [...new Set([...model.datasetFields(fd.dataset), ...(fd.columns || [])])];
+        return h("div", { class: "gspan dict-feed", dataset: { ds: fd.dataset } },
+            h("div", { class: "df-src mini muted" }, h("code", fd.dataset), " columns"),
+            shown.length
+                ? h("div", { class: "df-cols" }, shown.map((c) => h("label", { class: "chk" },
+                    h("input", { type: "checkbox", class: "dfcol", dataset: { ds: fd.dataset, col: c }, checked: (fd.columns || []).includes(c) }), c)))
+                : h("div", { class: "mini muted" }, "no columns — dataset has no data yet"));
+    });
+    // laid out like the subset/producer "sources" row: a labelled sources-input widget, its
+    // per-source column blocks spanning below.
+    return h("div", { class: "dict-feeds lab-grid" },
+        labCell("source", "datasets whose column values become terms", true),
+        sourcesInput({ ids: feeds.map((fd) => fd.dataset), free, rmTitle: "stop feeding from this dataset" }),
+        ...cols);
 }
 
 // The concat-key editor: which fields combine into the identity, plus the same canonicalisation

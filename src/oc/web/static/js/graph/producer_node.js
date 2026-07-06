@@ -6,7 +6,8 @@
 // + controls; joining/deriving is a view's job.
 import * as api from "../api.js";
 import { isOnline } from "../conn.js";
-import { h, frag, TRASH, labCell } from "../dom.js";
+import { h, frag, TRASH, labCell, kv, subhead, gspan, trashBtn } from "../dom.js";
+import { sourcesInput } from "./sources_input.js";
 import * as hub from "../hub.js";
 import { log } from "../log.js";
 
@@ -45,7 +46,7 @@ const mapBlock = (kind, obj) => {
     const row = (k, v, committed) => h("div", { class: "pr-row pr-map-row", dataset: { kind } },
         h("input", { class: "pr-map-k", value: k, placeholder: "name" }),
         h("input", { class: "pr-map-v", value: v, placeholder: "value" }),
-        committed ? h("button", { class: "sv-rmin danger pr-map-del", dataset: { kind }, title: "remove" }, TRASH()) : null);
+        committed ? trashBtn({ cls: "sv-rmin pr-map-del", dataset: { kind }, title: "remove" }) : null);
     return h("div", { class: "pr-rows" },
         ...Object.entries(obj || {}).map(([k, v]) => row(k, v, true)), row("", "", false));
 };
@@ -74,7 +75,7 @@ const catalogueRows = (c) => [
 const listBlock = (cls, items, placeholder, addLabel, itemTitle) => {
     const row = (v, i) => h("div", { class: `pr-row ${cls}-row`, dataset: { i } },
         h("input", { class: `${cls}-v`, value: v, placeholder, title: itemTitle }),
-        h("button", { class: `sv-rmin danger ${cls}-del`, dataset: { i }, title: "remove" }, TRASH()));
+        trashBtn({ cls: `sv-rmin ${cls}-del`, dataset: { i }, title: "remove" }));
     return h("div", { class: "pr-rows" }, ...(items || []).map(row), h("button", { class: `${cls}-add` }, addLabel));
 };
 
@@ -91,7 +92,7 @@ const fieldsBlock = (fields) => {
                 sel("pr-f-type", ["text", "number"], f.type || "text", "text keeps the raw value; number coerces (drops non-numeric)"),
                 chk("pr-f-req", f.required, "required"),
                 chk("pr-f-arr", !!arr, "array"),
-                h("button", { class: "sv-rmin danger pr-f-del", dataset: { i }, title: "remove column" }, TRASH())),
+                trashBtn({ cls: "sv-rmin pr-f-del", dataset: { i }, title: "remove column" })),
             h("div", { class: "pr-row" },
                 h("input", { class: "pr-f-tmpl", value: f.template || "", placeholder: "template (optional): {path} {path}",
                     title: "compose the column from several fields, e.g. '{tier} {relicName}' -> 'Axi A1'. Overrides path/array." })),
@@ -103,7 +104,7 @@ const fieldsBlock = (fields) => {
                     h("input", { class: "pr-ff-path", value: flt.path || "", placeholder: "field", title: "path within each element to test" }),
                     sel("pr-ff-op", FILTER_OPS, flt.op || "eq", "comparison (in/nin take a comma list)"),
                     h("input", { class: "pr-ff-val", value: Array.isArray(flt.value) ? flt.value.join(", ") : (flt.value ?? ""), placeholder: "value", title: "value to compare against" }),
-                    h("button", { class: "sv-rmin danger pr-ff-del", dataset: { i, fi }, title: "remove filter" }, TRASH()))),
+                    trashBtn({ cls: "sv-rmin pr-ff-del", dataset: { i, fi }, title: "remove filter" }))),
                 h("button", { class: "pr-ff-add", dataset: { i } }, "+ filter"),
             ) : null);
     };
@@ -121,15 +122,11 @@ export function producerParts(pn, cols = [], free = []) {
     const req = spec.request || {};
     const isList = (spec.explode || []).length > 0;     // list mode: one fetch expanded into rows
     const hasSrc = (pn.sources || []).length;
-    // item sources use the SAME chip + add-select input the subset's sources use.
-    const chips = (pn.sources || []).map((s) =>
-        h("span", { class: "sv-input" }, s,
-            h("button", { class: "sv-rmin danger pr-rmsrc", dataset: { ds: s }, title: "stop fetching this source" }, TRASH())));
-    const addOpts = [h("option", { value: "" }, "+ source"), free.map((d) => h("option", { value: d }, d))];
+    // item sources use the SHARED sources-input widget (rule 7 — same as subset joins / dict feeds).
     const srcs = frag(
         labCell("sources", "datasets/subsets whose item names to fetch", true),
-        h("div", { class: "sv-inputs" }, chips,
-            h("span", { class: "sv-input sv-add" }, h("select", { class: "sv-addin pr-addsrc" }, addOpts))));
+        sourcesInput({ ids: pn.sources || [], free, rmCls: "sv-rmin pr-rmsrc", addinCls: "sv-addin pr-addsrc",
+            rmTitle: "stop fetching this source" }));
     // which source column names the item (only meaningful when sourcing from datasets/subsets).
     const nf = pn.source_field || "name";
     const nfOpts = [...new Set([nf, ...cols])].map((c) => h("option", { selected: c === nf }, c));
@@ -178,10 +175,9 @@ export function producerParts(pn, cols = [], free = []) {
             // Hidden until a sweep is running (nothing to meter at idle).
             h("div", { class: "enr-meter meter gspan", hidden: true },
                 h("div", { class: "segs" }, ...Array.from({ length: 12 }, () => h("span", { class: "seg off" }))),
-                h("span", { class: "pct" }))),
-        h("div", { class: "gn-foot" },
-            h("button", { class: "enr-refresh" }, "↻ fetch")));   // doubles as cancel while running
-    return { title, body, ports: port };
+                h("span", { class: "pct" }))));
+    // the fetch button doubles as cancel while running
+    return { title, body, foot: h("button", { class: "enr-refresh" }, "↻ fetch"), ports: port };
 }
 
 // Wire the producer panel: load status, drive the refresh/sweep.

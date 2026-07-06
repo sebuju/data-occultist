@@ -4,7 +4,9 @@
 import * as api from "../api.js";
 import * as conn from "../conn.js";
 import * as hub from "../hub.js";
-import { h, frag, svg, TRASH, labCell, observeResize } from "../dom.js";
+import { h, frag, svg, TRASH, labCell, observeResize, kv, subhead, gspan, trashBtn } from "../dom.js";
+import { listBlock } from "./list_block.js";
+import { sourcesInput } from "./sources_input.js";
 import { nodeIcon, iconFor } from "./node_icons.js";
 import { openModal } from "../modal.js";
 import { since } from "../datefmt.js";
@@ -41,6 +43,7 @@ import {
     applyView, resizeCanvas, onWheel, startPan, consumePanSuppress,
 } from "./camera.js";
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
+import { imageTextInspector } from "./toast_node.js";
 import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved } from "./node_parts.js";
 import * as dsevents from "./dsevents.js";
 import { wireTools, clearTools } from "./drawtool.js";
@@ -313,6 +316,7 @@ function nodeTypeOf(id) { return id === "game" ? "game" : id === "glyphs" ? "gly
 groups.initGroups({
     world: () => $("ggroups"),
     superWorld: () => $("sgroups"),
+    zoom: () => view.zoom,   // current camera scale, so a fresh group box picks the right border width
     nodeRect: (id) => nodeRect(id),
     nodeType: nodeTypeOf,
     // every visible satellite (a window's preview, a dataset/subset's vt-table) is bonded to its
@@ -1121,10 +1125,10 @@ function sourceCfgNode(s, ds, joined) {
             h("select", { class: "sv-sjoin", dataset: { ds } }, joinOpts));
         if (jf) {
             rows.push(labCell("required", "key must exist in this source (inner-style); off = optional outer fill"),
-                h("label", { class: "flab" }, h("input", { type: "checkbox", class: "sv-sreq", dataset: { ds }, checked: !!src.required })));
+                h("input", { type: "checkbox", class: "sv-sreq", dataset: { ds }, checked: !!src.required }));
             const jn = model.sourceJoinNorm(s.id, ds);
             const ckRow = (lbl, title, cls, on) => frag(labCell(lbl, title),
-                h("label", { class: "flab" }, h("input", { type: "checkbox", class: cls, dataset: { ds }, checked: !!on })));
+                h("input", { type: "checkbox", class: cls, dataset: { ds }, checked: !!on }));
             rows.push(
                 ckRow("ignore case", "fold case before matching", "sn-ci", jn.case_insensitive),
                 ckRow("strip punctuation", "drop punctuation (collapse to spaces)", "sn-punct", jn.strip_punct),
@@ -1179,36 +1183,36 @@ function subConfigNode(s) {
     const cols = viewColumns(s);
     const inputs = model.subsetInputs(s);
     const free = model.joinableInputs(s);   // datasets + other subsets (cycle-free)
-    // sources are removable pills; the "+ join source" select sits on the SAME row as them
-    const chips = inputs.map((d) => h("span", { class: "sv-input" }, d,
-        h("button", { class: "sv-rmin danger", dataset: { ds: d }, title: "remove input" }, TRASH())));
-    const addOpts = [h("option", { value: "" }, "+ join source"), free.map((d) => h("option", d))];
+    // sources are removable pills + a "+ join source" select — the SHARED sources-input widget
+    // (rule 7 — same as producer sources / dict feeds).
     // join is PER-SOURCE now: each input carries its own join column, match-norm, many->one
     // collapse, and required flag (see model JoinSource). One config block per source.
     const joined = inputs.length > 1;
     const srcCfgs = inputs.map((ds) => sourceCfgNode(s, ds, joined)).filter(Boolean);
-    const filters = (s.filters || []).map((f, i) => h("div", { class: "sub-row", dataset: { i } },
-        h("select", { class: "sf-field", dataset: { i } }, _colOpts(cols, f.field)),
-        h("select", { class: "sf-op", dataset: { i } }, SUB_OPS.map((o) => h("option", { selected: o === f.op }, o))),
-        h("input", { class: "sf-val", dataset: { i }, value: f.value || "", placeholder: "value" }),
-        h("button", { class: "sf-del danger", dataset: { i }, title: "remove filter" }, TRASH())));
-    const derived = (s.derived || []).map((d, i) => h("div", { class: "sub-row", dataset: { i } },
-        h("input", { class: "sd-name", dataset: { i }, value: d.name || "", placeholder: "new column" }),
-        h("span", { class: "muted" }, "="),
-        h("input", { class: "sd-tpl", dataset: { i }, value: d.template || "", placeholder: "{=count*price_median|round:0} plat" }),
-        h("button", { class: "sd-del danger", dataset: { i }, title: "remove column" }, TRASH())));
+    // filters / derived / sort are three add-delete lists — all on the shared listBlock primitive
+    // (rule 7); each supplies only its per-row cells + wiring classes, so main.js handlers still key
+    // off .sf-*/.sd-*/.ss-* + data-i as before.
+    const filters = listBlock({ items: s.filters, rowClass: "sub-row", del: { cls: "sf-del", title: "remove filter" },
+        render: (f, i) => [
+            h("select", { class: "sf-field", dataset: { i } }, _colOpts(cols, f.field)),
+            h("select", { class: "sf-op", dataset: { i } }, SUB_OPS.map((o) => h("option", { selected: o === f.op }, o))),
+            h("input", { class: "sf-val", dataset: { i }, value: f.value || "", placeholder: "value" })] });
+    const derived = listBlock({ items: s.derived, rowClass: "sub-row", del: { cls: "sd-del", title: "remove column" },
+        render: (d, i) => [
+            h("input", { class: "sd-name", dataset: { i }, value: d.name || "", placeholder: "new column" }),
+            h("span", { class: "muted" }, "="),
+            h("input", { class: "sd-tpl", dataset: { i }, value: d.template || "", placeholder: "{=count*price_median|round:0} plat" })] });
     // multi-column sort: primary row first, each a column + direction; applied before limit
-    const sortRows = (s.sort || []).map((so, i) => h("div", { class: "sub-row", dataset: { i } },
-        h("select", { class: "ss-field", dataset: { i } }, _colOpts(cols, so.field)),
-        h("select", { class: "ss-dir", dataset: { i } },
-            h("option", { value: "asc", selected: !so.desc }, "asc"),
-            h("option", { value: "desc", selected: !!so.desc }, "desc")),
-        h("button", { class: "ss-del danger", dataset: { i }, title: "remove sort" }, TRASH())));
+    const sortRows = listBlock({ items: s.sort, rowClass: "sub-row", del: { cls: "ss-del", title: "remove sort" },
+        render: (so, i) => [
+            h("select", { class: "ss-field", dataset: { i } }, _colOpts(cols, so.field)),
+            h("select", { class: "ss-dir", dataset: { i } },
+                h("option", { value: "asc", selected: !so.desc }, "asc"),
+                h("option", { value: "desc", selected: !!so.desc }, "desc"))] });
     return frag(
         h("div", { class: "sub-sec lab-grid" },
             labCell("sources", "datasets or subsets; each joins on its own field", true),
-            h("div", { class: "sv-inputs" }, chips,
-                h("span", { class: "sv-input sv-add" }, h("select", { class: "sv-addin" }, addOpts))),
+            sourcesInput({ ids: inputs, free, addLabel: "+ join source", rmTitle: "remove input" }),
             ...srcCfgs,
             // close the per-source section so the view-level rows below (limit, latest batch) don't
             // read as part of the last source's block
@@ -1216,7 +1220,7 @@ function subConfigNode(s) {
             labCell("limit", "cap the number of result rows (0 = no limit)"),
             h("input", { type: "number", class: "sv-limit", min: "0", step: "1", value: s.limit || 0, placeholder: "0" }),
             labCell("latest batch only", "only pull rows from each source's most recent collection batch (applied before everything else)"),
-            h("label", { class: "flab" }, h("input", { type: "checkbox", class: "sv-latest", checked: !!s.latest_batch }))),
+            h("input", { type: "checkbox", class: "sv-latest", checked: !!s.latest_batch })),
         h("div", { class: "sub-sec" },
             h("div", { class: "sub-lbl", title: "all must pass" }, "filters", h("button", { class: "sub-addf", title: "add filter" }, "+")), filters),
         h("div", { class: "sub-sec" },
@@ -1670,16 +1674,34 @@ function wireToast(div, n) {
     });
 }
 
-// Wire ONE generated-image editor section (hero or inline). `sec` is the `.tn-img` element; its
-// data-which selects the spec. Every field edit updates the model + autosaves + refreshes the
-// live server-rendered preview (debounced); structural changes (bg type, add/remove line) rebuild
-// the node so the conditional controls / row indices are correct.
+// Wire ONE generated-image editor section. `sec` is the `.tn-img` element (data-i = image index).
+// The text elements are edited through a mini-inspector: the preview overlays a clickable box on
+// every element, and the compact list + boxes SELECT which element the inspector edits (its full
+// controls). Field edits persist + autosave + repreview (debounced); structural changes (bg type,
+// add/remove element/image) rebuild the node so indices + conditional controls stay correct.
 function wireToastImage(sec, x, n) {
     const idx = +sec.dataset.i;
     const q = (s) => sec.querySelector(s);
     let pvTimer = null;
     let pvSeq = 0;          // monotonically rising id: only the LATEST request's response is applied
-    let focusLine = null;   // index of the text line being edited -> outlined in the preview
+    let curBoxes = [];      // per-element pixel boxes from the last preview (image-space)
+    let sel = model.toastImageSel(x.id, idx);   // selected element index (null when no elements)
+    // Lay the clickable boxes over the preview, scaling image-space px -> the displayed img size.
+    const layoutBoxes = () => {
+        const img = q(".tn-img-preview"); const ov = q(".tn-img-boxes");
+        if (!img || !ov) return;
+        const nw = img.naturalWidth, nh = img.naturalHeight;
+        if (!nw || !nh) { ov.replaceChildren(); return; }
+        const cw = img.clientWidth, ch = img.clientHeight, sx = cw / nw, sy = ch / nh;
+        ov.style.width = `${cw}px`; ov.style.height = `${ch}px`;
+        ov.replaceChildren(...curBoxes.map((b) => {
+            const d = h("div", { class: "tn-box" + (b.i === sel ? " sel" : ""), dataset: { i: b.i },
+                title: "select this element",
+                style: `left:${(b.x * sx).toFixed(1)}px;top:${(b.y * sy).toFixed(1)}px;width:${Math.max(6, b.w * sx).toFixed(1)}px;height:${Math.max(6, b.h * sy).toFixed(1)}px` });
+            d.addEventListener("click", () => selectLine(b.i));
+            return d;
+        }));
+    };
     const refreshPreview = () => {
         clearTimeout(pvTimer);
         pvTimer = setTimeout(async () => {
@@ -1691,37 +1713,76 @@ function wireToastImage(sec, x, n) {
             // drop it if a newer request has since started — the stale frame never overwrites the
             // latest, and its object URL is revoked so it doesn't leak.
             const seq = ++pvSeq;
-            const url = await api.toasts.previewImage(model.profile.name, im, focusLine);
-            if (seq !== pvSeq) { if (url) URL.revokeObjectURL(url); return; }
-            if (url) { if (img._u) URL.revokeObjectURL(img._u); img._u = url; img.src = url; }
+            const res = await api.toasts.previewImage(model.profile.name, im);
+            if (seq !== pvSeq) { if (res && res.url) URL.revokeObjectURL(res.url); return; }
+            if (res && res.url) {
+                curBoxes = res.boxes || [];
+                if (img._u) URL.revokeObjectURL(img._u);
+                img._u = res.url; img.src = res.url;
+                if (img.complete && img.naturalWidth) layoutBoxes();   // cached decode: lay out now
+            }
         }, 250);
     };
-    // focusing any control of a text line outlines that line in the preview; leaving the image
-    // editor clears it. focusout fires before the next focusin, so re-check on a microtask.
-    sec.querySelectorAll(".tn-il").forEach((row) => {
-        row.addEventListener("focusin", () => { const i = +row.dataset.i; if (focusLine !== i) { focusLine = i; refreshPreview(); } });
+    // the new frame's true dimensions are known on load -> (re)lay the boxes then
+    q(".tn-img-preview")?.addEventListener("load", layoutBoxes);
+    // select element `j`: persist the (transient) selection, re-point the inspector + highlights in
+    // place (no preview refetch — the image is unchanged, only which element is active).
+    const selectLine = (j) => {
+        if (j === sel) return;
+        model.setToastImageSel(x.id, idx, j); sel = j;
+        sec.querySelectorAll(".tn-il-list .tn-il-item").forEach((it) => it.classList.toggle("sel", +it.dataset.i === j));
+        sec.querySelectorAll(".tn-img-boxes .tn-box").forEach((b) => b.classList.toggle("sel", +b.dataset.i === j));
+        const texts = (model.toastImage(x.id, idx) || {}).texts || [];
+        sec.querySelector(".tn-il-insp")?.replaceWith(imageTextInspector(texts[j], texts.length ? j : null));
+        wireInspector();
+    };
+    // wire the mini-inspector's controls (exactly one set exists in `sec`); rebound after each
+    // selection replaces the inspector node. Content edits also refresh the list row's summary.
+    const wireInspector = () => {
+        const line = (cls, key) => sec.querySelectorAll(cls).forEach((el) => el.addEventListener("input", () => {
+            model.setToastImageText(x.id, idx, +el.dataset.i, key, el.value); autosave(null);
+            if (key === "content") {
+                const lab = sec.querySelector(`.tn-il-list .tn-il-item[data-i="${el.dataset.i}"] .tn-il-text`);
+                if (lab) { const v = (el.value || "").trim(); lab.textContent = v || "(empty)"; lab.classList.toggle("muted", !v); }
+            }
+            refreshPreview();
+        }));
+        line(".tn-il-content", "content"); line(".tn-il-x", "x"); line(".tn-il-y", "y");
+        line(".tn-il-size", "size"); line(".tn-il-color", "color"); line(".tn-il-w", "width");
+        line(".tn-il-h", "height"); line(".tn-il-bg", "bg_color");
+        sec.querySelectorAll(".tn-il-align").forEach((el) => el.addEventListener("change", () => { model.setToastImageText(x.id, idx, +el.dataset.i, "align", el.value); autosave(null); refreshPreview(); }));
+        sec.querySelectorAll(".tn-il-wrap").forEach((el) => el.addEventListener("change", () => { model.setToastImageText(x.id, idx, +el.dataset.i, "wrap", el.checked); autosave(null); refreshPreview(); }));
+    };
+    // element list: click a row (not its trash) to select; trash removes + shifts the selection.
+    sec.querySelectorAll(".tn-il-list .tn-il-item").forEach((it) => {
+        it.addEventListener("click", (e) => { if (!e.target.closest(".tn-il-del")) selectLine(+it.dataset.i); });
     });
-    sec.addEventListener("focusout", () => setTimeout(() => {
-        if (!sec.contains(document.activeElement) && focusLine !== null) { focusLine = null; refreshPreview(); }
-    }, 0));
+    sec.querySelectorAll(".tn-il-del").forEach((b) => b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const j = +b.dataset.i;
+        model.removeToastImageText(x.id, idx, j);
+        const texts = (model.toastImage(x.id, idx) || {}).texts || [];
+        let ns = j < sel ? sel - 1 : sel;               // removed an earlier row -> keep same element
+        ns = texts.length ? Math.max(0, Math.min(texts.length - 1, ns)) : null;
+        model.setToastImageSel(x.id, idx, ns);
+        rebuildNode(n.id); autosave(null);
+    }));
+    q(".tn-img-addtext")?.addEventListener("click", () => {
+        model.addToastImageText(x.id, idx);
+        const texts = (model.toastImage(x.id, idx) || {}).texts || [];
+        model.setToastImageSel(x.id, idx, texts.length - 1);   // open the new element in the inspector
+        rebuildNode(n.id); autosave(null);
+    });
     // placement (hero/inline/none) — no layout change, just persist + (nothing to repreview)
     q(".tn-img-place")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "placement", e.target.value); autosave(null); });
     q(".tn-img-del")?.addEventListener("click", () => { model.removeToastImage(x.id, idx); rebuildNode(n.id); autosave(null); });
     // scalar props (size + gradient colours/angle) — persist + repreview on input
-    const scalar = (sel, key) => q(sel)?.addEventListener("input", (e) => { model.setToastImageProp(x.id, idx, key, e.target.value); autosave(null); refreshPreview(); });
+    const scalar = (s, key) => q(s)?.addEventListener("input", (e) => { model.setToastImageProp(x.id, idx, key, e.target.value); autosave(null); refreshPreview(); });
     scalar(".tn-img-w", "width"); scalar(".tn-img-h2", "height");
     scalar(".tn-img-c1", "color1"); scalar(".tn-img-c2", "color2"); scalar(".tn-img-angle", "angle");
     // bg type flips which controls show (color2/angle) -> rebuild the node body, then repreview
     q(".tn-img-bgtype")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "bg_type", e.target.value); rebuildNode(n.id); autosave(null); });
-    // per-line edits: content / x / y / size / colour / align
-    const line = (cls, key) => sec.querySelectorAll(cls).forEach((el) => el.addEventListener("input", (e) => { model.setToastImageText(x.id, idx, +el.dataset.i, key, e.target.value); autosave(null); refreshPreview(); }));
-    line(".tn-il-content", "content"); line(".tn-il-x", "x"); line(".tn-il-y", "y");
-    line(".tn-il-size", "size"); line(".tn-il-color", "color"); line(".tn-il-w", "width");
-    line(".tn-il-h", "height"); line(".tn-il-bg", "bg_color");
-    sec.querySelectorAll(".tn-il-align").forEach((el) => el.addEventListener("change", (e) => { model.setToastImageText(x.id, idx, +el.dataset.i, "align", e.target.value); autosave(null); refreshPreview(); }));
-    sec.querySelectorAll(".tn-il-wrap").forEach((el) => el.addEventListener("change", (e) => { model.setToastImageText(x.id, idx, +el.dataset.i, "wrap", e.target.checked); autosave(null); refreshPreview(); }));
-    sec.querySelectorAll(".tn-il-del").forEach((b) => b.addEventListener("click", () => { model.removeToastImageText(x.id, idx, +b.dataset.i); rebuildNode(n.id); autosave(null); }));
-    q(".tn-img-addtext")?.addEventListener("click", () => { model.addToastImageText(x.id, idx); rebuildNode(n.id); autosave(null); });
+    wireInspector();
     refreshPreview();   // initial paint (also runs after a rebuild re-wires the section)
 }
 
@@ -2102,7 +2163,13 @@ function fillNode(div, n, wire = true) {
             parts.title, parts.head, toggle,
             h("span", { class: "gn-type", "aria-hidden": "true" }, typeLabel),
             h("span", { class: "gn-pretty-dirty", title: "held by a pretty override — not saved to yaml" }, "pretty")),
-        h("div", { class: "gn-body" }, parts.body),
+        // body is ONE two-column grid (`.gn-grid`) — every builder emits flat wrapped-label +
+        // control children into it (rule 7: one body layout). Action buttons live in the
+        // separate `.gn-foot` slot below (parts.foot), never inside the body grid.
+        h("div", { class: "gn-body" }, h("div", { class: "gn-grid" }, parts.body)),
+        // spread so a missing foot contributes NOTHING — replaceChildren stringifies a bare
+        // `null` arg into a "null" text node (unlike h(), which skips it).
+        ...(parts.foot ? [h("div", { class: "gn-foot" }, parts.foot)] : []),
         h("span", { class: "gn-spin", title: "working…" }),
         ...(parts.ports ? [parts.ports] : []));   // vttable nodes have no ports — replaceChildren would stringify undefined to a "undefined" text node
     div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
@@ -2926,9 +2993,14 @@ function wireNode(div, n) {
             model.toggleDictFeedColumn(n.ref.id, el.dataset.ds, el.dataset.col);
             autosave(null); refetchFedTerms();
         }));
-        div.querySelectorAll(".df-rm").forEach((el) => el.addEventListener("click", () => {
+        // wiring a source in/out of the sources-input widget changes an edge (render) AND the
+        // node's chips + per-source column blocks (rebuild) — mirror the subset add/remove path.
+        div.querySelector(".sv-addin")?.addEventListener("change", (e) => {
+            if (model.addDictFeed(n.ref.id, e.target.value)) { render(); rebuildNode(n.id); autosave(null); refetchFedTerms(); }
+        });
+        div.querySelectorAll(".sv-rmin").forEach((el) => el.addEventListener("click", () => {
             model.removeDictFeed(n.ref.id, el.dataset.ds);
-            rebuildNode(n.id); autosave(null); refetchFedTerms();
+            render(); rebuildNode(n.id); autosave(null); refetchFedTerms();
         }));
     } else if (n.type === "window") {
         wireWindowControls(div, n);   // out-port wiring is handled generically in wireOutPort
@@ -4071,11 +4143,18 @@ $("settingsBtn")?.addEventListener("click", () => {
         bkHost.replaceChildren(h("div", { class: "muted bk-pad" }, "load a game to see its backups"));
     }
 });
+// Right-drag pans from ANYWHERE over the graph, incl. over inputs/selects/textareas. CAPTURE
+// phase on window so it runs before any descendant's mousedown — a meter bar / group cog /
+// resize grip / form control that stopPropagation()s the press can no longer swallow the pan.
+// Don't preventDefault — a plain right click must still open the native context menu; only an
+// actual drag suppresses it (startPan sets suppressNextMenu, read by the contextmenu handler).
+window.addEventListener("mousedown", (ev) => {
+    if (ev.button !== 2) return;
+    if (!ev.target.closest("#graph")) return;
+    clearTools();   // right-click disarms any draw tool
+    startPan(ev);
+}, true);
 $("graph").addEventListener("mousedown", (ev) => {
-    // right-drag pans ANYWHERE (even over nodes/canvas), except form controls so
-    // their native menus still work. Don't preventDefault — a plain right click
-    // must still open the context menu; only an actual drag suppresses it.
-    if (ev.button === 2) { clearTools(); if (!ev.target.closest("input,select,textarea")) startPan(ev); return; }   // right-click disarms any draw tool
     // left-drag on empty canvas: rubber-band multi-select (a plain click clears).
     if (ev.button === 0 && !ev.target.closest(".gnode, .ggroup")) startMarquee(ev);
 });

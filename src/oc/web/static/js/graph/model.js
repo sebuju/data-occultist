@@ -8,7 +8,7 @@ import { DEFAULT_DETECT_THRESHOLD } from "../defaults.js";
 let _fieldSeq = 1;
 
 export class GraphModel {
-    constructor() { this.profile = blank(""); this.sounds = []; this.shownSatellites = new Set(); }   // sounds: available trigger-sound filenames (fetched once); shownSatellites: ids of opt-in follower nodes (preview / vt-table) currently visible
+    constructor() { this.profile = blank(""); this.sounds = []; this.shownSatellites = new Set(); this._imgSel = new Map(); }   // sounds: available trigger-sound filenames (fetched once); shownSatellites: ids of opt-in follower nodes (preview / vt-table) currently visible; _imgSel: transient (not saved) toast-image selected-text-line index, keyed "toastId#imgIdx"
 
     load(profile) {
         this.profile = profile || blank("");
@@ -754,6 +754,16 @@ export class GraphModel {
         else if (key === "wrap") t.wrap = !!val;
         else if (["content", "color", "align", "bg_color"].includes(key)) t[key] = val ?? "";
     }
+    // Which text line the image editor's mini-inspector currently edits (transient UI state, never
+    // saved). Clamped to the texts list; null when the image has no text lines. `setToastImageSel`
+    // stores the raw index; the getter resolves the effective (clamped) selection.
+    toastImageSel(id, i) {
+        const im = this.toastImage(id, i); const n = (im && im.texts && im.texts.length) || 0;
+        if (!n) return null;
+        const raw = this._imgSel.get(`${id}#${i}`);
+        return raw == null ? 0 : Math.max(0, Math.min(n - 1, raw));
+    }
+    setToastImageSel(id, i, j) { this._imgSel.set(`${id}#${i}`, j == null ? null : Math.max(0, j | 0)); }
     renameToast(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.toastNode(newId)) return false;
@@ -935,6 +945,12 @@ export class GraphModel {
     removeDictFeed(id, ds) {
         const d = this.dictionary(id); if (!d) return;
         d.feeds = (d.feeds || []).filter((f) => f.dataset !== ds);
+    }
+    // datasets that could feed this dictionary (all datasets minus the ones already wired) — the
+    // candidate list for the sources-input "+ source" select
+    dictFeedable(id) {
+        const fed = new Set(this.dictFeeds(id).map((f) => f.dataset));
+        return this.datasets().filter((ds) => !fed.has(ds));
     }
     // columns of one feed pulled into the dictionary (each selected column's values become terms)
     dictFeedColumns(id, ds) { const f = this.dictFeed(id, ds); return (f && f.columns) || []; }

@@ -6,6 +6,7 @@ import { $, view, pos, nodeEls, overlays } from "./state.js";
 import { floatWins } from "./floatwin.js";
 import { persist } from "./persist.js";
 import { nmUpdateViewport } from "./panels/nodemap.js";
+import { scaleGroupBorders } from "./groups.js";
 
 let panAnim = null;
 export function cancelPan() { if (panAnim) { cancelAnimationFrame(panAnim); panAnim = null; } }
@@ -118,8 +119,12 @@ export function viewportCenterWorld() {
     return { x: (u.left + u.w / 2 - view.panX) / view.zoom, y: (u.top + u.h / 2 - view.panY) / view.zoom };
 }
 
+let _lastBorderZoom = null;
 export function applyView() {
     $("gworld").style.transform = `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`;
+    // group outline width is zoom-scaled; rewrite it ONLY when zoom actually changed (not on pure
+    // pan) so a pan-drag mutates zero group DOM in steady state.
+    if (view.zoom !== _lastBorderZoom) { _lastBorderZoom = view.zoom; scaleGroupBorders(view.zoom); }
     nmUpdateViewport();   // keep the node-map's viewport indicator in sync with pan/zoom
 }
 

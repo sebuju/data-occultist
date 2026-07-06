@@ -943,7 +943,6 @@ async function refreshPreview(winId, live = false) {
         const res = await api.preview(previewProfileFor(winId), model.profile.name, cap, boot.phase && !live);
         host.replaceChildren(previewTable(res.cells));
         setGridFromPreview(winId, res);   // same OCR pass drives the dashed grid
-        setWindowDrift(winId, res.drift);   // grid-fit score on the window node
         done(`· ${res.device || "?"} · ${(res.cells || []).length} cells`, "ok", res.ms);
     } catch (e) {
         done(String(e.message || e), "err");
@@ -1162,20 +1161,6 @@ function hlSpan(text, span) {
 // Two consumers share `.detect-status`: the DETECT node (rich, multi-row scaffold built in
 // node_parts) and state/scrollbar nodes (a plain div). Detect node => fill the rows; the
 // others => the legacy single line. Either way reconciles in place (no rebuild per tick).
-// Window node grid-fit score: mean / max distance the located cells drift off the content
-// they should bracket (from read_preview's `drift`). Reconciled in place — only the span's
-// text/class change. Green <1%, amber <3%, red beyond — 0 = dead on the grid.
-function setWindowDrift(winId, drift) {
-    const el = nodeEls.get(`win:${winId}`);
-    const span = el && el.querySelector(".wd-drift");
-    if (!span) return;
-    if (!drift || !drift.n) { span.textContent = "—"; span.className = "wd-drift muted"; return; }
-    const pct = (v) => `${(v * 100).toFixed(0)}%`;   // % of a CELL (1.0 = a whole cell off)
-    span.textContent = `x ${pct(drift.x.mean)}/${pct(drift.x.max)} · y ${pct(drift.y.mean)}/${pct(drift.y.max)} · ${drift.n} cells`;
-    const worst = Math.max(drift.x.max, drift.y.max);
-    span.className = "wd-drift " + (worst < 0.05 ? "conf-ok" : worst < 0.15 ? "conf-warn" : "conf-bad");
-}
-
 function setDetectStatus(nodeId, info) {
     const el = nodeEls.get(nodeId);
     const box = el && el.querySelector(".detect-status");

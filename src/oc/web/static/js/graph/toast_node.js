@@ -5,7 +5,7 @@
 // alignment + max-lines; the server renders them as a toast's stacked AdaptiveText lines. Every
 // field maps to the ToastSpec the toasted-backed notifier renders. Rendering only — wiring is in
 // main.js (wireToast). Config persists in the profile YAML like any other node.
-import { h, frag, labCell, srcChip, srcInputs, TRASH } from "../dom.js";
+import { h, frag, labCell, srcChip, srcInputs, TRASH, kv, subhead, gspan, trashBtn } from "../dom.js";
 import { slideToggle } from "./node_parts.js";
 import { iconFor } from "./node_icons.js";
 
@@ -24,33 +24,58 @@ const IMG_ALIGNS = [["left", "left"], ["center", "center"], ["right", "right"]];
 // carries data-which so ONE wiring pass drives both editors (rule 7).
 const IMG_PLACE = [["hero", "hero (top banner)"], ["inline", "inline (body)"], ["none", "none (off)"]];
 
+// One row in the image's text-element list: a compact, selectable summary (index badge + content
+// preview + delete). Clicking it selects the element; the full controls live in the inspector, not
+// here. `sel` marks the row that's currently open in the inspector.
+export function imageTextItem(t, i, sel) {
+    const label = (t.content || "").trim();
+    return h("div", { class: "tn-il-item" + (i === sel ? " sel" : ""), dataset: { i }, title: "select this element" },
+        h("span", { class: "tn-il-num" }, `${i + 1}`),
+        h("span", { class: "tn-il-text" + (label ? "" : " muted") }, label || "(empty)"),
+        trashBtn({ cls: "tn-il-del", dataset: { i }, title: "remove element" }));
+}
+
+// The mini-inspector: the full controls for ONE selected text element (index `j`). Replaces the
+// old per-element control strip — only the selected element's fields are shown. Every control
+// carries data-i (the element index) so the SAME wiring selectors drive it (rule 7). `null` when
+// no element is selected (empty image) — shown as a hint.
+export function imageTextInspector(t, j) {
+    const opt = (cur) => ([v, l]) => h("option", { value: v, selected: v === (cur || "") }, l);
+    if (t == null || j == null)
+        return h("div", { class: "tn-il-insp tn-il-empty muted" }, "no text elements — add one below");
+    return h("div", { class: "tn-il-insp", dataset: { i: j } },
+        h("input", { class: "tn-il-content", dataset: { i: j }, value: t.content || "", placeholder: "text — supports {{token}}" }),
+        h("div", { class: "tn-il-ctl" },
+            h("label", {}, "x", h("input", { class: "tn-il-x", dataset: { i: j }, type: "number", value: t.x ?? 0 })),
+            h("label", {}, "y", h("input", { class: "tn-il-y", dataset: { i: j }, type: "number", value: t.y ?? 0 })),
+            h("label", {}, "size", h("input", { class: "tn-il-size", dataset: { i: j }, type: "number", min: "6", value: t.size ?? 20 })),
+            h("label", {}, "w", h("input", { class: "tn-il-w", dataset: { i: j }, type: "number", min: "0", value: t.width || "", placeholder: "∞", title: "text/box width in px (blank / 0 = unconstrained)" })),
+            h("label", {}, "h", h("input", { class: "tn-il-h", dataset: { i: j }, type: "number", min: "0", value: t.height || "", placeholder: "0", title: "box height in px (0 = no box; >0 draws a background box behind the text)" })),
+            h("label", { title: "within width: on = wrap to more lines; off = one line, truncated with …" }, "wrap", h("input", { class: "tn-il-wrap", dataset: { i: j }, type: "checkbox", checked: t.wrap !== false })),
+            h("input", { class: "tn-il-color", dataset: { i: j }, type: "color", value: t.color || "#ffffff", title: "text colour" }),
+            h("input", { class: "tn-il-bg", dataset: { i: j }, type: "color", value: t.bg_color || "#000000", title: "background box colour (drawn only when width and height > 0)" }),
+            h("select", { class: "tn-il-align", dataset: { i: j }, title: "horizontal anchor at x" }, IMG_ALIGNS.map(opt(t.align)))));
+}
+
 // Editor for one generated image at index `idx` in the toast's images list. A placement dropdown
-// (hero/inline/none — "none" temporarily disables it), a live server-rendered preview, background
-// (solid/gradient) + canvas size, and a list of positioned text lines. Every control carries
-// data-i (the image index) so ONE wiring pass drives every image editor (rule 7).
-function imageEditor(im, idx) {
+// (hero/inline/none — "none" temporarily disables it), a live server-rendered preview WITH a
+// clickable box overlaid on every text element, background (solid/gradient) + canvas size, a
+// compact selectable element list, and a mini-inspector editing the selected element. `sel` is the
+// selected element index (model.toastImageSel). Every control carries data-i (the image index) so
+// ONE wiring pass drives every image editor (rule 7).
+function imageEditor(im, idx, sel) {
     const opt = (cur) => ([v, l]) => h("option", { value: v, selected: v === (cur || "") }, l);
     const grad = im.bg_type === "gradient";
-    const textLine = (t, i) => h("div", { class: "tn-il", dataset: { i } },
-        h("div", { class: "tn-il-row" },
-            h("input", { class: "tn-il-content", dataset: { i }, value: t.content || "", placeholder: "text — supports {{token}}" }),
-            h("button", { class: "tn-il-del danger", dataset: { i }, title: "remove line" }, TRASH())),
-        h("div", { class: "tn-il-ctl" },
-            h("label", {}, "x", h("input", { class: "tn-il-x", dataset: { i }, type: "number", value: t.x ?? 0 })),
-            h("label", {}, "y", h("input", { class: "tn-il-y", dataset: { i }, type: "number", value: t.y ?? 0 })),
-            h("label", {}, "size", h("input", { class: "tn-il-size", dataset: { i }, type: "number", min: "6", value: t.size ?? 20 })),
-            h("label", {}, "w", h("input", { class: "tn-il-w", dataset: { i }, type: "number", min: "0", value: t.width || "", placeholder: "∞", title: "text/box width in px (blank / 0 = unconstrained)" })),
-            h("label", {}, "h", h("input", { class: "tn-il-h", dataset: { i }, type: "number", min: "0", value: t.height || "", placeholder: "0", title: "box height in px (0 = no box; >0 draws a background box behind the text)" })),
-            h("label", { title: "within width: on = wrap to more lines; off = one line, truncated with …" }, "wrap", h("input", { class: "tn-il-wrap", dataset: { i }, type: "checkbox", checked: t.wrap !== false })),
-            h("input", { class: "tn-il-color", dataset: { i }, type: "color", value: t.color || "#ffffff", title: "text colour" }),
-            h("input", { class: "tn-il-bg", dataset: { i }, type: "color", value: t.bg_color || "#000000", title: "background box colour (drawn only when width and height > 0)" }),
-            h("select", { class: "tn-il-align", dataset: { i }, title: "horizontal anchor at x" }, IMG_ALIGNS.map(opt(t.align)))));
+    const texts = im.texts || [];
     return h("div", { class: "tn-img", dataset: { i: idx } },
         h("div", { class: "tn-img-h" },
             h("span", { class: "muted" }, `image ${idx + 1}`),
             h("select", { class: "tn-img-place", title: "where this image sits — none temporarily disables it" }, IMG_PLACE.map(opt(im.placement || "inline"))),
-            h("button", { class: "tn-img-del danger", title: "remove this image" }, TRASH())),
-        h("img", { class: "tn-img-preview", dataset: { i: idx }, alt: `image ${idx + 1} preview` }),
+            trashBtn({ cls: "tn-img-del", title: "remove this image" })),
+        // preview + box overlay share one positioned wrapper so a box's px coords line up over the img
+        h("div", { class: "tn-img-pv" },
+            h("img", { class: "tn-img-preview", dataset: { i: idx }, alt: `image ${idx + 1} preview` }),
+            h("div", { class: "tn-img-boxes" })),
         h("div", { class: "lab-grid" },
             labCell("size", "canvas size in pixels (hero renders ~364×180; inline is body-width)"),
             h("div", { class: "tn-img-size" },
@@ -63,8 +88,9 @@ function imageEditor(im, idx) {
                 grad ? h("input", { class: "tn-img-c2", type: "color", value: im.color2 || "#061826", title: "colour 2" }) : null,
                 grad ? h("label", { class: "tn-img-angle-l" }, "∠", h("input", { class: "tn-img-angle", type: "number", value: im.angle ?? 90, title: "gradient angle (deg)" })) : null)),
         h("div", { class: "tn-img-texts" },
-            (im.texts || []).map(textLine),
-            h("button", { class: "tn-img-addtext" }, "+ add text line")));
+            h("div", { class: "tn-il-list" }, texts.map((t, i) => imageTextItem(t, i, sel))),
+            h("button", { class: "tn-img-addtext" }, "+ add text element"),
+            imageTextInspector(texts[sel], texts.length ? sel : null)));
 }
 
 // The {{token}} chips a toast offers, grouped by wired source so a chip label needn't repeat the
@@ -104,7 +130,7 @@ function blockRow(b, i, n) {
                 value: b.max_lines || "", placeholder: "lines", title: "max lines (blank / 0 = unlimited)" }),
             h("button", { class: "tn-bk-up", dataset: { i }, title: "move up", disabled: i === 0 }, "▲"),
             h("button", { class: "tn-bk-dn", dataset: { i }, title: "move down", disabled: i === n - 1 }, "▼"),
-            h("button", { class: "tn-bk-del danger", dataset: { i }, title: "remove block" }, TRASH())));
+            trashBtn({ cls: "tn-bk-del", dataset: { i }, title: "remove block" })));
 }
 
 export function toastParts(x, model) {
@@ -128,15 +154,15 @@ export function toastParts(x, model) {
     // the rich-text body: an ordered, styled block list + an "add block" button
     const blocks = (x.texts || []);
     const blocksSection = h("div", { class: "tn-blocks" },
-        h("div", { class: "muted tn-blocks-h", title: "the toast body — one styled line per block; the first is the bold title line" }, "text blocks"),
+        subhead("text blocks", null, "the toast body — one styled line per block; the first is the bold title line"),
         blocks.map((b, i) => blockRow(b, i, blocks.length)),
         h("button", { class: "tn-bk-add", title: "add another text block" }, "+ add text block"));
     // token chips (rendered below the images, inside a .tn-tokbox): click a chip to copy its
     // {{token}} to the clipboard, ready to paste into any text block or image text line.
     const hint = groups.length ? h("div", { class: "tn-tokwrap" },
-        h("div", { class: "muted tn-tokhead" }, "insert token"),
+        subhead("insert token"),
         groups.map((g) => frag(
-            groups.length > 1 ? h("div", { class: "tn-tokhead muted", title: `tokens from ${g.head}` }, g.head) : null,
+            groups.length > 1 ? subhead(g.head, null, `tokens from ${g.head}`) : null,
             h("div", { class: "tn-rotokens" },
                 g.chips.map((c) => h("button", { class: "tn-rotoken", type: "button", dataset: { token: c.token }, title: c.title }, c.label))))),
         h("div", { class: "tn-tokhint muted" },
@@ -152,7 +178,7 @@ export function toastParts(x, model) {
             // generated images (drawn on the fly, message text painted on) — a list, each with its
             // own placement (hero / inline / none); "+ image" appends another.
             h("div", { class: "tn-imgs" },
-                model ? model.toastImages(x.id).map((im, idx) => imageEditor(im, idx)) : null,
+                model ? model.toastImages(x.id).map((im, idx) => imageEditor(im, idx, model.toastImageSel(x.id, idx))) : null,
                 h("button", { class: "tn-img-add" }, "+ image")),
             // token palette sits BELOW the images (its tokens feed both text blocks and image text
             // lines), wrapped in its own bordered box; clicking a chip copies {{token}} to clipboard.
@@ -169,10 +195,9 @@ export function toastParts(x, model) {
                 labCell("attribution", "small attribution line under the body — supports {{token}}"),
                 h("input", { class: "tn-attr", value: x.attribution || "", placeholder: "(none)" }),
                 labCell("muted", "silence the toast's notification sound"),
-                slideToggle({ on: !!x.muted, cls: "tn-muted", title: "silence the toast sound" })),
-            h("div", { class: "gn-foot" },
-                // monochrome bell from the ONE icon source (not a colour emoji) + label
-                h("button", { class: "tn-test", title: "pop this toast now" }, iconFor("toast"), "test"))),
+                slideToggle({ on: !!x.muted, cls: "tn-muted", title: "silence the toast sound" }))),
+        // monochrome bell from the ONE icon source (not a colour emoji) + label
+        foot: h("button", { class: "tn-test", title: "pop this toast now" }, iconFor("toast"), "test"),
         // drop a readout / dataset / subset out-port onto this toast to wire it as a {{token}} feeder
         ports: h("span", { class: "port in", title: "drag a readout, dataset or subset here to feed its live value as a {{token}}" }),
     };

@@ -6,7 +6,7 @@
 // button drives it). All config persists in the profile YAML. Targets are wired by dragging the
 // out-port to a price node; watch datasets and targets can also be added from the dropdowns here.
 // Rendering only — wiring is in main.js.
-import { h, frag, labCell, srcChip, srcInputs } from "../dom.js";
+import { h, frag, labCell, srcChip, srcInputs, kv, subhead, gspan, trashBtn } from "../dom.js";
 
 const KINDS = [["interval", "interval (periodic)"], ["on_change", "on change"],
     ["on_any_change", "on any change"],
@@ -122,8 +122,8 @@ export function triggerParts(t, model) {
                 labCell("progress", "what the current/last sweep is doing"),
                 h("span", { class: "tg-prog muted" }, "idle"),
                 labCell("last fired", "last time this trigger fired"),
-                h("span", { class: "tg-last muted" }, "never fired")),
-            h("div", { class: "gn-foot" }, h("button", { class: "tg-fire" }, "↻ fire"))),
+                h("span", { class: "tg-last muted" }, "never fired"))),
+        foot: h("button", { class: "tg-fire" }, "↻ fire"),
         ports: frag(
             h("span", { class: "port out", title: "drag to a price node this trigger should fire" }),
             (kind === "on_change" || kind === "on_any_change") && h("span", { class: "port pwatch", title: "drag to a dataset or subset to watch for new rows" }),

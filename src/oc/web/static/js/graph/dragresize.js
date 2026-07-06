@@ -121,7 +121,7 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
         r.className = `rz-reset rz-reset-${axis} rz-reset-${corner}`;
         r.title = `reset ${axis === "w" ? "width" : "height"} (shift: both)`;
         el.appendChild(r);
-        r.addEventListener("mousedown", (ev) => { ev.preventDefault(); ev.stopPropagation(); });   // don't start a drag/resize
+        r.addEventListener("mousedown", (ev) => { if (ev.button !== 0) return; ev.preventDefault(); ev.stopPropagation(); });   // left only: don't start a drag/resize; right-click keeps its menu + pans
         r.addEventListener("click", (ev) => {
             ev.preventDefault(); ev.stopPropagation();
             if (ev.shiftKey) { onResetW && onResetW(); onResetH && onResetH(); }   // both axes

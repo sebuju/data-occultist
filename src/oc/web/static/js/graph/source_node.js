@@ -3,7 +3,7 @@
 // Reading is driven by the node's own watch (manual / on file-change) and by trigger nodes that
 // target it. Rendering only — every input is wired in main.js (wireSource). A live preview of
 // what the current rules produce is fetched there too.
-import { h, frag, TRASH, labCell } from "../dom.js";
+import { h, frag, TRASH, labCell, kv, subhead, gspan, trashBtn } from "../dom.js";
 import { slideToggle } from "./node_parts.js";   // shared gn-slide switch (rule 7: one toggle primitive)
 
 // formats mirror the registered parsers (oc.source.parsers / registry._PARSER). `log_lines` is the
@@ -25,7 +25,7 @@ function matchRow(m, i) {
         h("input", { class: "mset", dataset: { i, k: "text" }, value: m.text || "", placeholder: "text" }),
         h("label", { class: "src-cs", title: "case sensitive" },
             h("input", { type: "checkbox", class: "mset", dataset: { i, k: "case_sensitive" }, checked: !!m.case_sensitive }), "Aa"),
-        h("button", { class: "src-rmm danger", dataset: { i }, title: "remove" }, TRASH()));
+        trashBtn({ cls: "src-rmm", dataset: { i }, title: "remove" }));
 }
 
 // The two method-specific input cells for one extraction field. ALWAYS exactly two cells (empty
@@ -64,7 +64,7 @@ function fieldRow(f, i, stream) {
     const req = slideToggle({ on: f.required !== false, cls: "src-req",
         title: "required — drop the row if this field has no valid value (number: a clean number; text: non-empty)" });
     req.dataset.i = i;   // which field this toggle drives (wireSource reads it)
-    const rm = h("button", { class: "src-rmf danger", dataset: { i }, title: "remove" }, TRASH());
+    const rm = trashBtn({ cls: "src-rmf", dataset: { i }, title: "remove" });
     // line 1 (`.src-frow`, nowrap) always holds required + id + method + type + remove together; the
     // method inputs sit on their own full-width line below (`.src-finputs`) so they stay roomy.
     // document rows have no method: required + id + type + remove on line 1, path full-width below.
@@ -133,13 +133,12 @@ export function sourceParts(s) {
             labCell("read", "when to read: a manual button, or whenever the file changes"),
             h("select", { class: "src-watch" }, watchOpts),
             throttle, tail, linePos, matchBlock, fields),
-        h("div", { class: "src-found muted" }),
-        h("div", { class: "gn-foot" },
-            h("button", { class: "src-read", title: "read the file now and write rows to the dataset (runs in the background; rows fill in live)" }, "↻ read")));
+        h("div", { class: "src-found muted" }));
 
     return {
         title: h("input", { class: "gi gi-id srcrename", value: s.id, title: "rename source" }),
         body,
+        foot: h("button", { class: "src-read", title: "read the file now and write rows to the dataset (runs in the background; rows fill in live)" }, "↻ read"),
         ports: h("span", { class: "port out", title: "drag to a dataset to write parsed rows there" }),
     };
 }

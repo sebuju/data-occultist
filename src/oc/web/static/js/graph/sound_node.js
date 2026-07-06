@@ -4,7 +4,7 @@
 // server). The ▶ test button auditions it now at the current volume (and unlocks browser autoplay
 // for later auto-fires). `file` is a name from the sounds/ folder (model.sounds); "" = silent.
 // Rendering only — wiring is in main.js (wireSound). Config persists in the profile YAML.
-import { h, frag, labCell } from "../dom.js";
+import { h, frag, labCell, kv, subhead, gspan, trashBtn } from "../dom.js";
 import { confMeter } from "./meter.js";
 import { iconFor } from "./node_icons.js";
 
@@ -23,7 +23,7 @@ export function soundParts(x, model) {
                 labCell("volume", "playback volume — drag the bar to set it"),
                 // same segmented meter as the confidence bars (rule 7): volume 0..1 as a draggable bar
                 confMeter({ cls: "sn-volume", value: vol })),
-            h("div", { class: "gn-foot" },
-                h("button", { class: "sn-test", title: "play this sound now" }, iconFor("sound"), "play"))),
+        ),
+        foot: h("button", { class: "sn-test", title: "play this sound now" }, iconFor("sound"), "play"),
     };
 }
