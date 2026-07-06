@@ -736,23 +736,76 @@ export class GraphModel {
         const im = this.toastImage(id, i); if (!im) return;
         if (key === "placement") im.placement = ["hero", "inline", "none"].includes(val) ? val : "none";
         else if (["width", "height", "angle"].includes(key)) im[key] = Math.max(0, parseInt(val, 10) || 0);
+        else if (key === "unit") im.unit = val === "pct" ? "pct" : "px";
         else if (["bg_type", "color1", "color2"].includes(key)) im[key] = val ?? "";
+    }
+    static _toastTextDefault() {
+        return { content: "", x: 12, y: 12, size: 20, color: "#ffffff", align: "tl",
+            width: 120, height: 28, bg_color: "", wrap: true, overflow: false,
+            match_w: "", match_h: "", match_w_pct: 100, match_h_pct: 100,
+            font_family: "", bold: false, italic: false, underline: false,
+            border: { w: 0, color: "#ffffff", style: "solid" }, border_sides: {},
+            anchor: { to: "", corner: "tl", target: "tl" } };
     }
     addToastImageText(id, i) {
         const im = this.toastImage(id, i); if (!im) return;
         im.texts = im.texts || [];
-        // seed the new line from the previous one's style, nudged down a line; content starts empty.
+        // seed the new element from the previous one's style, nudged down a line; content empty.
         const prev = im.texts[im.texts.length - 1];
-        im.texts.push(prev
-            ? { content: "", x: prev.x, y: (prev.y || 0) + (prev.size || 20), size: prev.size, color: prev.color, align: prev.align, width: prev.width || 0, height: prev.height || 0, bg_color: prev.bg_color || "", wrap: prev.wrap !== false }
-            : { content: "", x: 12, y: 12, size: 20, color: "#ffffff", align: "left", width: 0, height: 0, bg_color: "", wrap: true });
+        const t = GraphModel._toastTextDefault();
+        if (prev) Object.assign(t, {
+            x: prev.x, y: (prev.y || 0) + (prev.height || prev.size || 20) + 4,
+            size: prev.size, color: prev.color, align: prev.align,
+            width: prev.width || 120, height: prev.height || 28, bg_color: prev.bg_color || "",
+            wrap: prev.wrap !== false, font_family: prev.font_family || "",
+            bold: !!prev.bold, italic: !!prev.italic, underline: !!prev.underline,
+        });
+        im.texts.push(t);
     }
     removeToastImageText(id, i, j) { const im = this.toastImage(id, i); if (im && im.texts) im.texts.splice(j, 1); }
+    // duplicate element j, inserting the copy right after it (returns the copy's index).
+    cloneToastImageText(id, i, j) {
+        const im = this.toastImage(id, i); if (!im || !im.texts || !im.texts[j]) return null;
+        im.texts.splice(j + 1, 0, JSON.parse(JSON.stringify(im.texts[j])));
+        return j + 1;
+    }
     setToastImageText(id, i, j, key, val) {
         const im = this.toastImage(id, i); const t = im && im.texts && im.texts[j]; if (!t) return;
         if (["x", "y", "size", "width", "height"].includes(key)) t[key] = parseInt(val, 10) || 0;
-        else if (key === "wrap") t.wrap = !!val;
-        else if (["content", "color", "align", "bg_color"].includes(key)) t[key] = val ?? "";
+        else if (["match_w_pct", "match_h_pct"].includes(key)) t[key] = Math.max(1, parseInt(val, 10) || 100);
+        else if (["wrap", "overflow", "bold", "italic", "underline"].includes(key)) t[key] = !!val;
+        else if (["content", "color", "align", "bg_color", "font_family", "match_w", "match_h"].includes(key)) t[key] = val ?? "";
+    }
+    // per-side border: `side` "" = the base (all sides), else "t"/"r"/"b"/"l" overrides that side.
+    setToastImageBorder(id, i, j, side, key, val) {
+        const im = this.toastImage(id, i); const t = im && im.texts && im.texts[j]; if (!t) return;
+        t.border = t.border || { w: 0, color: "#ffffff", style: "solid" };
+        t.border_sides = t.border_sides || {};
+        const tgt = side ? (t.border_sides[side] = t.border_sides[side] || { w: 0, color: "#ffffff", style: "solid" }) : t.border;
+        if (key === "w") tgt.w = Math.max(0, parseInt(val, 10) || 0);
+        else if (key === "color") tgt.color = val || "#ffffff";
+        else if (key === "style") tgt.style = ["solid", "dashed", "dotted"].includes(val) ? val : "solid";
+    }
+    setToastImageAnchor(id, i, j, key, val) {
+        const im = this.toastImage(id, i); const t = im && im.texts && im.texts[j]; if (!t) return;
+        t.anchor = t.anchor || { to: "", corner: "tl", target: "tl" };
+        if (key === "to") t.anchor.to = val ?? "";
+        else if (key === "corner" || key === "target") t.anchor[key] = val || "tl";
+    }
+    // Flip an image between px and % units, rewriting every element's x/y/width/height so the
+    // on-screen design is preserved (x/width scale by the image width, y/height by its height).
+    convertToastImageUnit(id, i, newUnit) {
+        const im = this.toastImage(id, i); if (!im) return;
+        newUnit = newUnit === "pct" ? "pct" : "px";
+        const cur = im.unit === "pct" ? "pct" : "px";
+        if (newUnit === cur) { im.unit = newUnit; return; }
+        const W = Math.max(1, im.width || 1), H = Math.max(1, im.height || 1);
+        const conv = (v, dim) => newUnit === "pct" ? Math.round((v || 0) / dim * 100) : Math.round((v || 0) / 100 * dim);
+        for (const t of (im.texts || [])) {
+            t.x = conv(t.x, W); t.width = t.width ? conv(t.width, W) : t.width;
+            t.y = conv(t.y, H); t.height = t.height ? conv(t.height, H) : t.height;
+        }
+        im.unit = newUnit;
     }
     // Which text line the image editor's mini-inspector currently edits (transient UI state, never
     // saved). Clamped to the texts list; null when the image has no text lines. `setToastImageSel`
@@ -760,8 +813,11 @@ export class GraphModel {
     toastImageSel(id, i) {
         const im = this.toastImage(id, i); const n = (im && im.texts && im.texts.length) || 0;
         if (!n) return null;
-        const raw = this._imgSel.get(`${id}#${i}`);
-        return raw == null ? 0 : Math.max(0, Math.min(n - 1, raw));
+        const key = `${id}#${i}`;
+        if (!this._imgSel.has(key)) return null;   // never touched -> nothing selected on load
+        const raw = this._imgSel.get(key);
+        if (raw == null) return null;           // explicitly deselected (picker "(none)")
+        return Math.max(0, Math.min(n - 1, raw));
     }
     setToastImageSel(id, i, j) { this._imgSel.set(`${id}#${i}`, j == null ? null : Math.max(0, j | 0)); }
     renameToast(oldId, newId) {

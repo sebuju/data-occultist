@@ -55,9 +55,19 @@ def preview_image(game: str, spec: ToastImageDef, focus: int | None = None):
     import json
 
     settings = get_settings()
-    profile = load_profile(settings.profiles_dir, game) if game in list_profiles(settings.profiles_dir) else None
     from ...collect.templating import TokenContext
     from ...notify.toast_image import render_png_boxes
+
+    # Parsing the game YAML costs ~150ms and the preview re-renders on every keystroke/WASD nudge —
+    # but the profile is ONLY needed to resolve dataset:/subset: tokens (readouts + literals don't
+    # touch it). Skip the load entirely unless a text line actually names one, so dragging a box or
+    # typing plain text stays cheap. keep_missing already leaves an unresolved token as its literal.
+    wants_data = any(
+        ("dataset:" in c or "subset:" in c)
+        for t in (spec.texts or [])
+        for c in [getattr(t, "content", "") or ""]
+    )
+    profile = load_profile(settings.profiles_dir, game) if (wants_data and game in list_profiles(settings.profiles_dir)) else None
     ctx = TokenContext(live_readouts(game), data_dir=settings.data_dir, profile=profile, game=game)
     try:
         png, boxes = render_png_boxes(spec, ctx, keep_missing=True, focus=focus)

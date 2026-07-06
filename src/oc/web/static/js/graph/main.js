@@ -4,7 +4,7 @@
 import * as api from "../api.js";
 import * as conn from "../conn.js";
 import * as hub from "../hub.js";
-import { h, frag, svg, TRASH, labCell, observeResize, kv, subhead, gspan, trashBtn } from "../dom.js";
+import { h, frag, svg, TRASH, labCell, srcRow, observeResize, kv, subhead, gspan, trashBtn } from "../dom.js";
 import { listBlock } from "./list_block.js";
 import { sourcesInput } from "./sources_input.js";
 import { nodeIcon, iconFor } from "./node_icons.js";
@@ -111,6 +111,11 @@ export function setSelectedNodeId(v) { selectedNodeId = v; }
 // box hotkeys are handled in ONE place here — any new overlay registers and gets
 // cross-deselect + WASD for free. rec = { overlay, kind, winId, itemId?, persist(box), refresh() }.
 let activeOverlayKey = null;        // which overlay holds the live box selection
+
+// THE ONE WASD nudge convention, shared by every mover: WASD = move one step, Shift+WASD =
+// resize (A/D width, W/S height). Both the graph handler (nodes + registry box overlays) and the
+// toast-image element editor read this SAME map — no per-editor copy, no divergent modifier.
+const NUDGE = { w: [0, -1], a: [-1, 0], s: [0, 1], d: [1, 0] };
 
 function registerOverlay(key, rec) { overlays.set(key, { key, ...rec }); }
 function unregisterOverlay(key) { overlays.delete(key); if (activeOverlayKey === key) activeOverlayKey = null; }
@@ -305,7 +310,7 @@ initPersist({
     onContentSaved: (err) => {
         if (err) { setStatus(err); return; }
         setStatus("saved ✓");
-        refreshAllSubsetNodes();   // backend now knows new/edited subsets -> fill them (no more 404)
+        refreshChangedSubsetNodes();   // backend now knows new/edited subsets -> fill ONLY those (no more 404)
     },
 });
 
@@ -1109,8 +1114,8 @@ function sourceCfgNode(s, ds, joined) {
     const showAgg = !isView && model.datasetDedup(ds);
     if (!joined && !showAgg) return null;   // single non-dedup source: nothing to configure
     const cols = model.inputColumns(ds);
-    // source header spans BOTH grid columns (gspan), a full-width band above its settings
-    const rows = [h("span", { class: "lab lab-top gspan sv-src-h", title: "this source's settings" }, ds)];
+    // source header spans BOTH grid columns (gspan) — a shared node subheading above its settings
+    const rows = [h("span", { class: "gspan sv-src-h", title: "this source's settings" }, ds)];
     // "many ->" is the read/collapse policy, NOT a join input — render it FIRST, above the join config,
     // so it doesn't read as a join knob.
     if (showAgg) {
@@ -1131,14 +1136,14 @@ function sourceCfgNode(s, ds, joined) {
                 h("input", { type: "checkbox", class: cls, dataset: { ds }, checked: !!on }));
             rows.push(
                 ckRow("ignore case", "fold case before matching", "sn-ci", jn.case_insensitive),
-                ckRow("strip punctuation", "drop punctuation (collapse to spaces)", "sn-punct", jn.strip_punct),
-                ckRow("collapse spaces", "runs of whitespace -> one space, trimmed", "sn-ws", jn.collapse_ws),
+                ckRow("strip punc", "strip punctuation (collapse to spaces)", "sn-punct", jn.strip_punct),
+                ckRow("collapse ws", "runs of whitespace -> one space, trimmed", "sn-ws", jn.collapse_ws),
                 labCell("drop words", "whole words removed from this side; space- or comma-separated"),
-                h("input", { type: "text", class: "sn-words", dataset: { ds }, value: (jn.strip_words || []).join(" "), placeholder: "e.g. relic" }));
+                h("input", { type: "text", class: "sn-words", dataset: { ds }, value: (jn.strip_words || []).join(" "), placeholder: "(none)" }));
             // live worked example: a REAL sample join value from this source, transformed by the knobs
             // above. Filled async (fillNormSamples) since the sample is fetched; updates in place as the
             // knobs change. Shows a "no data" note when the source has no value to preview.
-            rows.push(labCell("example", "how these settings canonicalise a real join value from this source"),
+            rows.push(labCell("example", "how these settings canonicalise a real join value from this source", false, "eg-lab"),
                 h("span", { class: "sv-norm-eg", dataset: { ds, jf } }, h("span", { class: "muted" }, "loading…")));
         }
     }
@@ -1152,19 +1157,23 @@ function sourceCfgNode(s, ds, joined) {
 function renderNormEg(el, sid) {
     const ds = el.dataset.ds;
     const jn = model.sourceJoinNorm(sid, ds);
+    const many = (el._samples?.length || 0) > 1;   // clickable only when there's another to show
+    el.classList.toggle("clickable", many);
+    el.title = many ? "click for another example" : "";
     if (el._sample === undefined) { el.replaceChildren(h("span", { class: "muted" }, "loading example…")); return; }
     if (el._sample === null) { el.replaceChildren(h("span", { class: "muted" }, `no ${el.dataset.jf} data to preview`)); return; }
-    el.replaceChildren(`${el._sample} → ${normPreview(jn, el._sample) || "∅"}`);
+    el.replaceChildren(el._sample, h("span", { class: "eg-arrow" }, " → "), normPreview(jn, el._sample) || "∅");
 }
 
-// Fetch a real sample join value for every source's worked example, then render each. The sample is
-// the first non-empty value in the source's join column (its own rows for a dataset, computed rows
-// for a subset). Failures / empty sources resolve to the "no data" state, never an error.
+// Fetch real sample join values for every source's worked example, then render each. Collects every
+// DISTINCT non-empty value in the source's join column (its own rows for a dataset, computed rows for
+// a subset) into `el._samples` so clicking the example cycles through them (cycleNormEg); the first is
+// shown. Failures / empty sources resolve to the "no data" state, never an error.
 async function fillNormSamples(div, s) {
     const game = encodeURIComponent(model.profile.name);
     await Promise.all([...div.querySelectorAll(".sv-norm-eg")].map(async (el) => {
         const ds = el.dataset.ds, jf = el.dataset.jf;
-        let sample = null;
+        const seen = new Set(), list = [];
         try {
             const isView = !!model.subsetDef(ds);
             // boot batch already carries every source's rows — sample from it (no extra fetch); the
@@ -1172,11 +1181,22 @@ async function fillNormSamples(div, s) {
             const cached = isView ? _bootDetails?.subsets?.[ds] : _bootDetails?.datasets?.[ds];
             const data = cached || await (await fetch(`/api/flow/${game}/${isView ? "subset" : "dataset"}/${encodeURIComponent(ds)}`)).json();
             const recs = isView ? (data.rows || []) : (data.records || []);
-            for (const r of recs) { const v = r[jf]; if (v != null && String(v).trim() !== "") { sample = String(v); break; } }
-        } catch { /* leave null -> "no data" */ }
-        el._sample = sample;
+            for (const r of recs) { const v = r[jf]; if (v != null && String(v).trim() !== "" && !seen.has(String(v))) { seen.add(String(v)); list.push(String(v)); } }
+        } catch { /* leave empty -> "no data" */ }
+        el._samples = list;
+        el._sampleIdx = 0;
+        el._sample = list.length ? list[0] : null;
         renderNormEg(el, s.id);
     }));
+}
+
+// Advance a worked example to its NEXT distinct sample (wraps). No-op with <2 samples.
+function cycleNormEg(el, sid) {
+    const list = el._samples || [];
+    if (list.length < 2) return;
+    el._sampleIdx = ((el._sampleIdx | 0) + 1) % list.length;
+    el._sample = list[el._sampleIdx];
+    renderNormEg(el, sid);
 }
 
 function subConfigNode(s) {
@@ -1209,27 +1229,31 @@ function subConfigNode(s) {
             h("select", { class: "ss-dir", dataset: { i } },
                 h("option", { value: "asc", selected: !so.desc }, "asc"),
                 h("option", { value: "desc", selected: !!so.desc }, "desc"))] });
-    return frag(
-        h("div", { class: "sub-sec lab-grid" },
-            labCell("sources", "datasets or subsets; each joins on its own field", true),
-            sourcesInput({ ids: inputs, free, addLabel: "+ join source", rmTitle: "remove input" }),
-            ...srcCfgs,
-            // close the per-source section so the view-level rows below (limit, latest batch) don't
-            // read as part of the last source's block
-            ...(srcCfgs.length ? [h("div", { class: "gspan sv-sec-end" })] : []),
-            labCell("limit", "cap the number of result rows (0 = no limit)"),
-            h("input", { type: "number", class: "sv-limit", min: "0", step: "1", value: s.limit || 0, placeholder: "0" }),
-            labCell("latest batch only", "only pull rows from each source's most recent collection batch (applied before everything else)"),
-            h("input", { type: "checkbox", class: "sv-latest", checked: !!s.latest_batch })),
-        h("div", { class: "sub-sec" },
-            h("div", { class: "sub-lbl", title: "all must pass" }, "filters", h("button", { class: "sub-addf", title: "add filter" }, "+")), filters),
-        h("div", { class: "sub-sec" },
-            h("div", { class: "sub-lbl", title: "{col} text · {=expr} math · |round:N decimals · mix freely" }, "columns", h("button", { class: "sub-addd", title: "add column" }, "+")), derived),
-        h("div", { class: "sub-sec" },
-            h("div", { class: "sub-lbl", title: "primary first; applied before limit" }, "sort", h("button", { class: "sub-adds", title: "add sort" }, "+")), sortRows),
-        h("div", { class: "sub-sec" },
-            h("div", { class: "sub-lbl", title: "click to hide/show" }, "visible"),
-            h("div", { class: "sv-hides" }, hideToggleNodes(s))));
+    // label + its inline "+" add button — a col-1 cell for the ONE node grid (matches labCell),
+    // so filters/columns/sort/visible line up in the same label column as sources/limit/latest.
+    const addLbl = (text, title, addCls, addTitle) =>
+        h("span", { class: "lab sub-lbl", title }, text, h("button", { class: addCls, title: addTitle }, "+"));
+    // ONE grid for the whole config: sources, per-source join, limit/latest, then filters/columns/
+    // sort/visible — every label in col 1, its control(s) in col 2.
+    return h("div", { class: "lab-grid" },
+        srcRow("sources", "datasets or subsets; each joins on its own field",
+            sourcesInput({ ids: inputs, free, addLabel: "+ join source", rmTitle: "remove input" })),
+        ...srcCfgs,
+        // close the per-source section so the view-level rows below (limit, latest batch) don't
+        // read as part of the last source's block
+        ...(srcCfgs.length ? [h("div", { class: "gspan sv-sec-end" })] : []),
+        labCell("limit", "cap the number of result rows (0 = no limit)"),
+        h("input", { type: "number", class: "sv-limit", min: "0", step: "1", value: s.limit || 0, placeholder: "0" }),
+        labCell("latest batch", "only pull rows from each source's most recent collection batch (applied before everything else)"),
+        h("input", { type: "checkbox", class: "sv-latest", checked: !!s.latest_batch }),
+        addLbl("filters", "all must pass", "sub-addf", "add filter"),
+        h("div", { class: "sub-rows" }, filters),
+        addLbl("columns", "{col} text · {=expr} math · |round:N decimals · mix freely", "sub-addd", "add column"),
+        h("div", { class: "sub-rows" }, derived),
+        addLbl("sort", "primary first; applied before limit", "sub-adds", "add sort"),
+        h("div", { class: "sub-rows" }, sortRows),
+        labCell("visible", "click to hide/show", false, "vis-lab"),
+        h("div", { class: "sv-hides" }, hideToggleNodes(s)));
 }
 
 function subsetParts(s) {
@@ -1329,6 +1353,28 @@ function refreshAllSubsetNodes() {
     queueNodeRefresh({ subsets: (model.profile.subsets || []).map((s) => s.id) });
 }
 
+// Snapshot of each subset's serialized definition at the last load/save. The post-save refresh
+// must recompute ONLY subsets whose definition actually changed — otherwise EVERY content save
+// (a toast nudge, a window box, any unrelated edit) recomputed every open subset: each is a
+// server view-join + a full satellite-table DOM rebuild, and doing all of them (~140ms server +
+// hundreds of rows of layout thrash) on every keystroke was pinning the CPU. Seeded at load so an
+// unrelated save refreshes nothing; a genuinely new/edited subset differs from the snapshot and is
+// the only one filled (its whole purpose — a just-added subset 404s until the profile saves).
+let _subsetSig = new Map();
+function _subsetSigs() {
+    const m = new Map();
+    for (const s of model.profile.subsets || []) m.set(s.id, JSON.stringify(s));
+    return m;
+}
+function seedSubsetSig() { _subsetSig = _subsetSigs(); }
+function refreshChangedSubsetNodes() {
+    const cur = _subsetSigs();
+    const changed = [];
+    for (const [id, sig] of cur) if (_subsetSig.get(id) !== sig) changed.push(id);
+    _subsetSig = cur;
+    if (changed.length) queueNodeRefresh({ subsets: changed });
+}
+
 // Refresh every subset that READS from `ds` (directly or through an upstream subset). Batch edits
 // (revert / remove) change a dataset's contents WITHOUT appending a history event, so its ledger
 // last_ts is unchanged and refreshLive's last_ts gate misses them — callers fixing a dataset's
@@ -1388,6 +1434,7 @@ function wireSubset(div, s) {
         el.addEventListener("change", () => { model.setSourceStripWords(s.id, el.dataset.ds, el.value); recompute(); });
     });
     fillNormSamples(div, s);   // sample each source's real join value, then render its example
+    div.querySelectorAll(".sv-norm-eg").forEach((el) => el.addEventListener("click", () => cycleNormEg(el, s.id)));
     div.querySelector(".sv-latest")?.addEventListener("change", (e) => { model.setSubsetLatestBatch(s.id, e.target.checked); recompute(); });
     div.querySelector(".sv-limit")?.addEventListener("change", (e) => { model.setSubsetLimit(s.id, e.target.value); e.target.value = s.limit || 0; recompute(); });
 
@@ -1679,47 +1726,209 @@ function wireToast(div, n) {
 // every element, and the compact list + boxes SELECT which element the inspector edits (its full
 // controls). Field edits persist + autosave + repreview (debounced); structural changes (bg type,
 // add/remove element/image) rebuild the node so indices + conditional controls stay correct.
+// 9-point code ("tl".."br") -> [fx, fy] fractions of a box (mirrors toast_image._frac server-side).
+function _frac9(code) {
+    const c = (code || "tl").toLowerCase();
+    const v = { t: 0, m: 0.5, b: 1 }[c[0]] ?? 0;
+    const hh = { l: 0, c: 0.5, r: 1 }[c[1]] ?? 0;
+    return [hh, v];
+}
+// resize handle directions (edges + corners), like the OCR-cell canvas overlay
+const _TN_HANDLES = [["nw", -1, -1], ["n", 0, -1], ["ne", 1, -1], ["e", 1, 0],
+    ["se", 1, 1], ["s", 0, 1], ["sw", -1, 1], ["w", -1, 0]];
+
 function wireToastImage(sec, x, n) {
     const idx = +sec.dataset.i;
     const q = (s) => sec.querySelector(s);
     let pvTimer = null;
     let pvSeq = 0;          // monotonically rising id: only the LATEST request's response is applied
     let curBoxes = [];      // per-element pixel boxes from the last preview (image-space)
+    let scale = { sx: 1, sy: 1 };   // display px per image px, from the last layout
     let sel = model.toastImageSel(x.id, idx);   // selected element index (null when no elements)
-    // Lay the clickable boxes over the preview, scaling image-space px -> the displayed img size.
+    let bdSide = "";                 // active border side in the inspector ("" = base/all)
+    let syncInspector = null;        // reconcile-in-place fn (assigned once by wireInspector)
+    const im = () => model.toastImage(x.id, idx);
+    const texts = () => (im() || {}).texts || [];
+    const nw = () => (im() || {}).width || 1;      // image size in image px
+    const nh = () => (im() || {}).height || 1;
+    const boxByI = (i) => curBoxes.find((b) => b.i === i);
+    const focusPv = () => q(".tn-img-pv")?.focus();
+    // px delta -> the image's stored unit (px, or % of the image dimension), as an int.
+    const toUnit = (px, dim) => Math.round((im() || {}).unit === "pct" ? px / dim * 100 : px);
+    const unitMin = () => ((im() || {}).unit === "pct" ? 1 : 4);
+    const setText = (i, k, v) => model.setToastImageText(x.id, idx, i, k, v);
+
+    // ---- anchor guides: an SVG overlay drawing the selected element's anchor leg (target point ->
+    // the element's own corner), so anchoring reads like pretty's cue layer. Redrawn on select/drag.
+    const drawGuides = (i) => {
+        const g = q(".tn-guides"); if (!g) return;
+        const b = i == null ? null : boxByI(i);
+        if (!b) { g.replaceChildren(); return; }
+        const t = texts()[i] || {};
+        const a = t.anchor || { to: "", corner: "tl", target: "tl" };
+        let tb = { x: 0, y: 0, w: nw(), h: nh() };                 // anchor target = image, or a sibling
+        if (a.to !== "" && a.to != null) { const sb = boxByI(+a.to); if (sb) tb = sb; }
+        const [tfx, tfy] = _frac9(a.target); const [cfx, cfy] = _frac9(a.corner);
+        const tp = [(tb.x + tfx * tb.w) * scale.sx, (tb.y + tfy * tb.h) * scale.sy];
+        const cp = [(b.x + cfx * b.w) * scale.sx, (b.y + cfy * b.h) * scale.sy];
+        g.replaceChildren(
+            svg("line", { x1: tp[0], y1: tp[1], x2: cp[0], y2: cp[1], class: "tn-guide-leg" }),
+            svg("circle", { cx: tp[0], cy: tp[1], r: 3.5, class: "tn-guide-t" }),
+            svg("rect", { x: cp[0] - 3, y: cp[1] - 3, width: 6, height: 6, class: "tn-guide-c" }));
+    };
+
+    // px value of a stored coord in the image's unit (inverse of toUnit) — for local box resolve.
+    const unitToPx = (v, dim) => ((im() || {}).unit === "pct" ? Math.round((v || 0) / 100 * dim) : (v || 0));
+    // resolve one element's box (image px) straight from the model — mirrors the server so the
+    // overlay can be moved/resized LOCALLY during a drag/nudge without a server round-trip.
+    // mirror the server's _fixed: a match_w/match_h (sibling index) WINS, scaled by match_*_pct;
+    // else an explicit width/height; else null = auto (fall back to the last server box's size).
+    const rawLocal = (i, axis) => { const b = boxByI(i); return b ? (axis === "w" ? b.w : b.h) : 0; };
+    const fixedLocal = (i, axis, stack) => {
+        const t = texts()[i]; if (!t) return null;
+        const ref = String((axis === "w" ? t.match_w : t.match_h) || "").trim();
+        if (/^-?\d+$/.test(ref)) {
+            const j = +ref;
+            if (j >= 0 && j < texts().length && j !== i && !stack.has(j)) {
+                const base = fixedLocal(j, axis, new Set(stack).add(i)) ?? rawLocal(j, axis);
+                if (base) {
+                    const pct = (axis === "w" ? t.match_w_pct : t.match_h_pct) || 100;
+                    return Math.max(1, Math.round(base * pct / 100));
+                }
+            }
+        }
+        const explicit = axis === "w" ? unitToPx(t.width, nw()) : unitToPx(t.height, nh());
+        return explicit > 0 ? explicit : null;
+    };
+    const resolveLocal = (i) => {
+        const t = texts()[i]; if (!t) return null;
+        const b0 = boxByI(i); const W = nw(), H = nh();
+        const fw = fixedLocal(i, "w", new Set()), fh = fixedLocal(i, "h", new Set());
+        const sw = fw != null ? fw : (b0 ? b0.w : 1), sh = fh != null ? fh : (b0 ? b0.h : 1);
+        const a = t.anchor || { to: "", corner: "tl", target: "tl" };
+        let tb = { x: 0, y: 0, w: W, h: H };
+        if (a.to !== "" && a.to != null) { const sb = boxByI(+a.to); if (sb) tb = sb; }
+        const [tfx, tfy] = _frac9(a.target); const [cfx, cfy] = _frac9(a.corner);
+        return { x: Math.round(tb.x + tfx * tb.w - cfx * sw + unitToPx(t.x, W)),
+                 y: Math.round(tb.y + tfy * tb.h - cfy * sh + unitToPx(t.y, H)), w: sw, h: sh };
+    };
+    // repaint the selected box + guides locally from the model (no server); update curBoxes too so
+    // guides and later local resolves stay consistent through a continuous drag/nudge.
+    const paintSel = () => {
+        if (sel == null) return;
+        const b = resolveLocal(sel); if (!b) return;
+        const cb = boxByI(sel); if (cb) { cb.x = b.x; cb.y = b.y; cb.w = b.w; cb.h = b.h; }
+        const el = sec.querySelector(`.tn-img-boxes .tn-box[data-i="${sel}"]`);
+        if (el) { const { sx, sy } = scale; el.style.left = `${(b.x * sx).toFixed(1)}px`; el.style.top = `${(b.y * sy).toFixed(1)}px`;
+            el.style.width = `${Math.max(6, b.w * sx).toFixed(1)}px`; el.style.height = `${Math.max(6, b.h * sy).toFixed(1)}px`; }
+        drawGuides(sel);
+    };
+    let _raf = 0;
+    const rafPaint = () => { if (_raf) return; _raf = requestAnimationFrame(() => { _raf = 0; paintSel(); }); };
+    // defer the expensive save + server re-render until edits settle, so holding WASD or dragging
+    // fires ONE render+save at the end, not one per step (the overlay updates live via paintSel).
+    let _commit = 0;
+    const commitEdit = (now = false) => {
+        clearTimeout(_commit);
+        if (now) { autosave(null); refreshPreview(); } else _commit = setTimeout(() => { autosave(null); refreshPreview(); }, 300);
+    };
+
+    // one draggable/resizable overlay box for element b.i
+    const makeBox = (b) => {
+        const sx = scale.sx, sy = scale.sy;
+        const nameOf = (bi) => { const t = texts()[bi]; const c = (t?.content || "").trim(); return `${bi + 1}: ${c || "(empty)"}`; };
+        const d = h("div", { class: "tn-box" + (b.i === sel ? " sel" : ""), dataset: { i: b.i },
+            title: "drag to move · drag an edge to resize · click to select (click again to deselect)",
+            style: `left:${(b.x * sx).toFixed(1)}px;top:${(b.y * sy).toFixed(1)}px;width:${Math.max(6, b.w * sx).toFixed(1)}px;height:${Math.max(6, b.h * sy).toFixed(1)}px` },
+            h("span", { class: "tn-box-lab" }, nameOf(b.i)));
+        // MOVE: press inside (not on a handle) -> beginDrag (shared loop). A press w/o drag on an
+        // UNselected box selects it; the same press on the ALREADY-selected box toggles it off
+        // (deselect -> pick back to "(none)"). A real drag never deselects.
+        d.addEventListener("mousedown", (ev) => {
+            if (ev.button !== 0 || ev.target.classList.contains("tn-box-h")) return;
+            ev.preventDefault();
+            const wasSel = (b.i === sel);
+            selectLine(b.i); focusPv();
+            let dragged = false;
+            document.addEventListener("mouseup", () => { if (!dragged && wasSel) selectLine(null); }, { once: true });
+            const t = texts()[b.i]; if (!t) return;
+            const ox = t.x, oy = t.y;
+            beginDrag(ev, { threshold: 3, cursor: "grabbing",
+                onStart: () => { dragged = true; },
+                onMove: (e) => {
+                    setText(b.i, "x", ox + toUnit((e.clientX - ev.clientX) / sx, nw()));
+                    setText(b.i, "y", oy + toUnit((e.clientY - ev.clientY) / sy, nh()));
+                    rafPaint();                              // local overlay only — no server render
+                },
+                onSettle: () => { syncGeomInputs(); commitEdit(true); } });
+        });
+        // RESIZE: 8 edge/corner handles, each a beginDrag adjusting width/height (+ x/y for top/left).
+        for (const [k, hx, hy] of _TN_HANDLES) {
+            const g = h("div", { class: `tn-box-h tn-box-${k}`, dataset: { d: k } });
+            g.addEventListener("mousedown", (ev) => {
+                if (ev.button !== 0) return;
+                ev.preventDefault(); ev.stopPropagation(); selectLine(b.i); focusPv();
+                const t = texts()[b.i]; if (!t) return;
+                // seed from the stored size, or the auto (measured) box when width/height is 0
+                const seedW = t.width || toUnit(b.w, nw()), seedH = t.height || toUnit(b.h, nh());
+                const o = { x: t.x, y: t.y, w: seedW, h: seedH };
+                beginDrag(ev, { threshold: 0, cursor: getComputedStyle(g).cursor,
+                    onMove: (e) => {
+                        const ux = toUnit((e.clientX - ev.clientX) / sx, nw()), uy = toUnit((e.clientY - ev.clientY) / sy, nh());
+                        const mn = unitMin();
+                        let nx = o.x, ny = o.y, nwd = o.w, nhd = o.h;
+                        if (hx > 0) nwd = Math.max(mn, o.w + ux);
+                        if (hx < 0) { nx = o.x + ux; nwd = Math.max(mn, o.w - ux); }
+                        if (hy > 0) nhd = Math.max(mn, o.h + uy);
+                        if (hy < 0) { ny = o.y + uy; nhd = Math.max(mn, o.h - uy); }
+                        if (hx) { setText(b.i, "x", nx); setText(b.i, "width", nwd); }
+                        if (hy) { setText(b.i, "y", ny); setText(b.i, "height", nhd); }
+                        rafPaint();                          // local overlay only — no server render
+                    },
+                    onSettle: () => { syncGeomInputs(); commitEdit(true); } });
+            });
+            d.appendChild(g);
+        }
+        return d;
+    };
+    // Lay the draggable boxes over the preview, scaling image-space px -> the displayed img size.
     const layoutBoxes = () => {
-        const img = q(".tn-img-preview"); const ov = q(".tn-img-boxes");
-        if (!img || !ov) return;
-        const nw = img.naturalWidth, nh = img.naturalHeight;
-        if (!nw || !nh) { ov.replaceChildren(); return; }
-        const cw = img.clientWidth, ch = img.clientHeight, sx = cw / nw, sy = ch / nh;
+        const el = q(".tn-img-preview"); const ov = q(".tn-img-boxes");
+        if (!el || !ov) return;
+        const iw = el.naturalWidth, ih = el.naturalHeight;
+        if (!iw || !ih) { ov.replaceChildren(); return; }
+        // the img is width:100% + height:auto -> UNIFORMLY scaled (aspect preserved), so sy == sx.
+        // Derive the displayed height from clientWidth; DON'T read clientHeight — after a canvas-size
+        // change it can still hold the old value in the load handler, leaving boxes mis-scaled.
+        const cw = el.clientWidth, s = cw / iw, ch = ih * s;
+        scale = { sx: s, sy: s };
         ov.style.width = `${cw}px`; ov.style.height = `${ch}px`;
-        ov.replaceChildren(...curBoxes.map((b) => {
-            const d = h("div", { class: "tn-box" + (b.i === sel ? " sel" : ""), dataset: { i: b.i },
-                title: "select this element",
-                style: `left:${(b.x * sx).toFixed(1)}px;top:${(b.y * sy).toFixed(1)}px;width:${Math.max(6, b.w * sx).toFixed(1)}px;height:${Math.max(6, b.h * sy).toFixed(1)}px` });
-            d.addEventListener("click", () => selectLine(b.i));
-            return d;
-        }));
+        const gv = q(".tn-guides"); if (gv) { gv.setAttribute("width", cw); gv.setAttribute("height", ch); }
+        ov.replaceChildren(...curBoxes.map((b) => makeBox(b)));
+        drawGuides(sel);
+        // A server frame carries the box positions AS OF the request it answered — stale if the
+        // user kept nudging (WASD/drag) while it rendered. Re-snap the selected box to the CURRENT
+        // model so a late frame never yanks it back to where it was when the request left.
+        if (sel != null) paintSel();
     };
     const refreshPreview = () => {
         clearTimeout(pvTimer);
         pvTimer = setTimeout(async () => {
-            const im = model.toastImage(x.id, idx);
-            const img = q(".tn-img-preview");
-            if (!img || !im) return;   // render even when placement=none: the design stays visible
+            const spec = im();
+            const el = q(".tn-img-preview");
+            if (!el || !spec) return;   // render even when placement=none: the design stays visible
             // Debounce collapses a burst into one request, but a render slower than the debounce
             // window lets several overlap. Tag each with a sequence id and, when a response lands,
             // drop it if a newer request has since started — the stale frame never overwrites the
             // latest, and its object URL is revoked so it doesn't leak.
             const seq = ++pvSeq;
-            const res = await api.toasts.previewImage(model.profile.name, im);
+            const res = await api.toasts.previewImage(model.profile.name, spec);
             if (seq !== pvSeq) { if (res && res.url) URL.revokeObjectURL(res.url); return; }
             if (res && res.url) {
                 curBoxes = res.boxes || [];
-                if (img._u) URL.revokeObjectURL(img._u);
-                img._u = res.url; img.src = res.url;
-                if (img.complete && img.naturalWidth) layoutBoxes();   // cached decode: lay out now
+                if (el._u) URL.revokeObjectURL(el._u);
+                el._u = res.url; el.src = res.url;
+                if (el.complete && el.naturalWidth) layoutBoxes();   // cached decode: lay out now
             }
         }, 250);
     };
@@ -1728,53 +1937,218 @@ function wireToastImage(sec, x, n) {
     // select element `j`: persist the (transient) selection, re-point the inspector + highlights in
     // place (no preview refetch — the image is unchanged, only which element is active).
     const selectLine = (j) => {
-        if (j === sel) return;
         model.setToastImageSel(x.id, idx, j); sel = j;
-        sec.querySelectorAll(".tn-il-list .tn-il-item").forEach((it) => it.classList.toggle("sel", +it.dataset.i === j));
-        sec.querySelectorAll(".tn-img-boxes .tn-box").forEach((b) => b.classList.toggle("sel", +b.dataset.i === j));
-        const texts = (model.toastImage(x.id, idx) || {}).texts || [];
-        sec.querySelector(".tn-il-insp")?.replaceWith(imageTextInspector(texts[j], texts.length ? j : null));
-        wireInspector();
+        sec.querySelectorAll(".tn-img-boxes .tn-box").forEach((b) => b.classList.toggle("sel", j != null && +b.dataset.i === j));
+        const pk = sec.querySelector(".tn-il-pick"); if (pk) pk.value = j == null ? "" : String(j);
+        if (syncInspector) syncInspector(j);   // reconcile the existing inspector, don't rebuild it
+        drawGuides(j);
     };
+    // click on the empty preview (not on a box) deselects the element — but clicking the inspector
+    // never deselects (those clicks don't reach the preview), so editing the element still works.
+    q(".tn-img-preview")?.addEventListener("mousedown", (ev) => { if (ev.button === 0) selectLine(null); });
+    // click ANYWHERE outside this image's editor (another node, the canvas, another image) also
+    // deselects it — so the selection isn't stuck when you move on. Clicks inside this section
+    // (preview/boxes/inspector/pick) are handled by their own wiring above, never here. The listener
+    // self-removes once this section is torn down by a rebuild (its `sec` leaves the document).
+    const outsideDeselect = (ev) => {
+        if (!document.contains(sec)) { document.removeEventListener("mousedown", outsideDeselect, true); return; }
+        if (ev.button === 0 && sel != null && !sec.contains(ev.target)) selectLine(null);
+    };
+    document.addEventListener("mousedown", outsideDeselect, true);
+    // keep the inspector's x/y/w/h number inputs in step with a model change from mouse/keyboard.
+    const syncGeomInputs = () => {
+        const t = texts()[sel]; if (!t) return;
+        const set = (cls, v) => { const el = q(cls); if (el && document.activeElement !== el) el.value = v; };
+        set(".tn-il-x", t.x ?? 0); set(".tn-il-y", t.y ?? 0);
+        set(".tn-il-w", t.width || ""); set(".tn-il-h", t.height || "");
+    };
+    // Changing the anchor (to / corner / target) must keep the element visually PUT: back-solve a new
+    // x/y offset so the resolved box top-left stays where it is now, then apply the anchor change.
+    const reanchor = (i, key, val) => {
+        const t = texts()[i]; const b = boxByI(i);
+        if (!t || !b) { model.setToastImageAnchor(x.id, idx, i, key, val); autosave(null); refreshPreview(); return; }
+        const a = { to: "", corner: "tl", target: "tl", ...(t.anchor || {}), [key]: val };
+        let tb = { x: 0, y: 0, w: nw(), h: nh() };
+        if (a.to !== "" && a.to != null) { const sb = boxByI(+a.to); if (sb) tb = sb; }
+        const [tfx, tfy] = _frac9(a.target); const [cfx, cfy] = _frac9(a.corner);
+        const offX = b.x - (tb.x + tfx * tb.w) + cfx * b.w;   // offset that lands the box back at (b.x,b.y)
+        const offY = b.y - (tb.y + tfy * tb.h) + cfy * b.h;
+        model.setToastImageAnchor(x.id, idx, i, key, val);
+        setText(i, "x", toUnit(offX, nw())); setText(i, "y", toUnit(offY, nh()));
+        syncGeomInputs(); autosave(null); refreshPreview();
+    };
+    // WASD nudges the selected element; Shift+WASD resizes it (A/D width, W/S height) — the SAME
+    // convention every other box in the editor uses (shared NUDGE map), no per-editor modifier.
+    // Scoped to the focused preview so it never fights the page or other images. Held keys only paint
+    // the local overlay; the (expensive) save + server re-render defers to keyup — one render per
+    // gesture, never once per key-repeat (the debounce alone leaks a refresh mid-hold on the OS's
+    // initial key-repeat delay).
+    let wasdDirty = false;
+    q(".tn-img-pv")?.addEventListener("keydown", (e) => {
+        if (sel == null) return;
+        const dir = NUDGE[e.key.toLowerCase()]; if (!dir) return;
+        e.preventDefault(); e.stopPropagation();   // don't let the graph's WASD also move the node
+        const t = texts()[sel]; if (!t) return;
+        const [ux, uy] = dir;
+        if (e.shiftKey) {                           // resize — matches every box overlay's Shift+WASD
+            if (ux) setText(sel, "width", Math.max(1, (t.width || 0) + ux));
+            if (uy) setText(sel, "height", Math.max(1, (t.height || 0) + uy));
+        } else {                                    // move
+            if (ux) setText(sel, "x", (t.x || 0) + ux);
+            if (uy) setText(sel, "y", (t.y || 0) + uy);
+        }
+        syncGeomInputs(); rafPaint(); wasdDirty = true;   // local overlay now; commit on keyup/blur
+    });
+    const wasdCommit = () => { if (!wasdDirty) return; wasdDirty = false; commitEdit(true); };
+    q(".tn-img-pv")?.addEventListener("keyup", (e) => { if ("wasd".includes(e.key.toLowerCase())) wasdCommit(); });
+    q(".tn-img-pv")?.addEventListener("blur", wasdCommit);   // release/refocus mid-hold still saves
     // wire the mini-inspector's controls (exactly one set exists in `sec`); rebound after each
-    // selection replaces the inspector node. Content edits also refresh the list row's summary.
+    // selection replaces the inspector node.
     const wireInspector = () => {
+        // Target the CURRENTLY selected element (`sel`), not the control's build-time data-i: the
+        // inspector DOM is reconciled in place on a selection change (syncInspector), so a control's
+        // own data-i goes stale — writing x/y/w/h/etc. to the previously selected element. Every other
+        // handler below already keys off `sel`; these must too.
         const line = (cls, key) => sec.querySelectorAll(cls).forEach((el) => el.addEventListener("input", () => {
-            model.setToastImageText(x.id, idx, +el.dataset.i, key, el.value); autosave(null);
-            if (key === "content") {
-                const lab = sec.querySelector(`.tn-il-list .tn-il-item[data-i="${el.dataset.i}"] .tn-il-text`);
-                if (lab) { const v = (el.value || "").trim(); lab.textContent = v || "(empty)"; lab.classList.toggle("muted", !v); }
-            }
-            refreshPreview();
+            setText(sel, key, el.value); autosave(null); refreshPreview();
         }));
         line(".tn-il-content", "content"); line(".tn-il-x", "x"); line(".tn-il-y", "y");
-        line(".tn-il-size", "size"); line(".tn-il-color", "color"); line(".tn-il-w", "width");
-        line(".tn-il-h", "height"); line(".tn-il-bg", "bg_color");
-        sec.querySelectorAll(".tn-il-align").forEach((el) => el.addEventListener("change", () => { model.setToastImageText(x.id, idx, +el.dataset.i, "align", el.value); autosave(null); refreshPreview(); }));
-        sec.querySelectorAll(".tn-il-wrap").forEach((el) => el.addEventListener("change", () => { model.setToastImageText(x.id, idx, +el.dataset.i, "wrap", el.checked); autosave(null); refreshPreview(); }));
+        line(".tn-il-size", "size"); line(".tn-il-w", "width"); line(".tn-il-h", "height");
+        sec.querySelectorAll(".tn-il-wrap").forEach((el) => el.addEventListener("change", () => { setText(sel, "wrap", el.checked); autosave(null); refreshPreview(); }));
+        sec.querySelectorAll(".tn-il-over").forEach((el) => el.addEventListener("change", () => { setText(sel, "overflow", el.checked); autosave(null); refreshPreview(); }));
+        // match this element's width / height to a sibling's resolved size ("" = own size), scaled by
+        // the adjacent percent input (100 = full, 50 = half).
+        // paintSel() gives the box overlay its new matched size instantly; the server re-render (text
+        // re-fit) follows debounced. syncGeomInputs keeps the w/h number fields honest.
+        const matchEdit = (key, v) => { setText(sel, key, v); syncGeomInputs(); paintSel(); autosave(null); refreshPreview(); };
+        sec.querySelector(".tn-il-mw")?.addEventListener("change", (e) => matchEdit("match_w", e.target.value));
+        sec.querySelector(".tn-il-mh")?.addEventListener("change", (e) => matchEdit("match_h", e.target.value));
+        sec.querySelector(".tn-il-mwp")?.addEventListener("input", (e) => matchEdit("match_w_pct", e.target.value));
+        sec.querySelector(".tn-il-mhp")?.addEventListener("input", (e) => matchEdit("match_h_pct", e.target.value));
+        // colour = native picker + linked hex text, kept in sync (edit either). Returns a bound
+        // hex-setter so a caller (e.g. the border side-picker) can push a new value into both.
+        const normHex = (v) => { v = (v || "").trim().replace(/^#?/, "#"); if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase(); if (/^#[0-9a-fA-F]{3}$/.test(v)) return ("#" + v[1] + v[1] + v[2] + v[2] + v[3] + v[3]).toLowerCase(); return null; };
+        const cpair = (cls, apply) => {
+            const c = sec.querySelector(cls), tx = sec.querySelector(cls + "-hex");
+            c?.addEventListener("input", () => { if (tx) tx.value = c.value; apply(c.value); });
+            tx?.addEventListener("change", () => { const n = normHex(tx.value); if (n) { c.value = n; tx.value = n; apply(n); } });
+            return (v) => { if (c) c.value = v || "#000000"; if (tx) tx.value = v || ""; };
+        };
+        const setTextColor = cpair(".tn-il-color", (v) => { setText(sel, "color", v); autosave(null); refreshPreview(); });
+        const setBgColor = cpair(".tn-il-bg", (v) => { setText(sel, "bg_color", v); autosave(null); refreshPreview(); });
+        // font family
+        sec.querySelector(".tn-il-font")?.addEventListener("change", (e) => { setText(sel, "font_family", e.target.value); autosave(null); refreshPreview(); });
+        // bold / italic / underline toggles
+        sec.querySelectorAll(".tn-il-biu .tn-biu-b").forEach((b) => b.addEventListener("click", () => {
+            const k = b.dataset.k, on = !(texts()[sel] || {})[k];
+            b.classList.toggle("on", on); setText(sel, k, on); autosave(null); refreshPreview();
+        }));
+        // 9-point align grid
+        sec.querySelectorAll(".tn-il-align .tn-nine-b").forEach((b) => b.addEventListener("click", () => {
+            sec.querySelectorAll(".tn-il-align .tn-nine-b").forEach((o) => o.classList.remove("on"));
+            b.classList.add("on"); setText(sel, "align", b.dataset.code); autosave(null); refreshPreview();
+        }));
+        // per-side border editor: a side picker retargets the w/color/style controls (bdSide is
+        // hoisted to the section scope so the reconcile can reset it when the selection changes).
+        const syncBorder = () => {
+            const t = texts()[sel] || {};
+            const src = bdSide ? ((t.border_sides || {})[bdSide] || t.border || {}) : (t.border || {});
+            const w = q(".tn-bd-w"), s = q(".tn-bd-s");
+            if (w) w.value = src.w ?? 0; if (s) s.value = src.style || "solid";
+            setBdColor(src.color || "#ffffff");   // push into the picker + its hex text
+        };
+        // accent each side button whose border is set (w>0); "all" reflects the base border
+        const refreshSetFlags = () => {
+            const t = texts()[sel] || {};
+            sec.querySelectorAll(".tn-bd-side").forEach((o) => {
+                const sv = o.dataset.side;
+                const set = sv ? ((t.border_sides || {})[sv]?.w > 0) : ((t.border || {}).w > 0);
+                o.classList.toggle("set", !!set);
+            });
+        };
+        sec.querySelectorAll(".tn-bd-side").forEach((b) => b.addEventListener("click", () => {
+            bdSide = b.dataset.side;
+            sec.querySelectorAll(".tn-bd-side").forEach((o) => o.classList.toggle("on", o === b));
+            syncBorder();
+        }));
+        const bd = (cls, key, ev) => q(cls)?.addEventListener(ev, (e) => { model.setToastImageBorder(x.id, idx, sel, bdSide, key, e.target.value); refreshSetFlags(); autosave(null); refreshPreview(); });
+        bd(".tn-bd-w", "w", "input"); bd(".tn-bd-s", "style", "change");
+        const setBdColor = cpair(".tn-bd-c", (v) => { model.setToastImageBorder(x.id, idx, sel, bdSide, "color", v); refreshSetFlags(); autosave(null); refreshPreview(); });
+        // anchor: target select + this/target 9-point grids. reanchor() keeps the element visually put.
+        sec.querySelector(".tn-anch-to")?.addEventListener("change", (e) => {
+            reanchor(sel, "to", e.target.value);   // grids stay enabled for the image (pins to the canvas)
+        });
+        const anchGrid = (cls, key) => sec.querySelectorAll(`${cls} .tn-nine-b`).forEach((b) => b.addEventListener("click", () => {
+            sec.querySelectorAll(`${cls} .tn-nine-b`).forEach((o) => o.classList.remove("on"));
+            b.classList.add("on"); reanchor(sel, key, b.dataset.code);
+        }));
+        anchGrid(".tn-anch-corner", "corner"); anchGrid(".tn-anch-target", "target");
+        // delete the selected element (the inspector's one trash button) -> shift selection + rebuild
+        sec.querySelector(".tn-il-del")?.addEventListener("click", () => {
+            const j = model.toastImageSel(x.id, idx); if (j == null) return;
+            model.removeToastImageText(x.id, idx, j);
+            model.setToastImageSel(x.id, idx, texts().length ? Math.max(0, Math.min(texts().length - 1, j)) : null);
+            rebuildNode(n.id); autosave(null);
+        });
+        // reconcile the EXISTING inspector DOM to element j (or off = null) — reuse elements, never
+        // rebuild from scratch on a selection change (rule 1). Captures the wired helpers above.
+        syncInspector = (j) => {
+            const insp = sec.querySelector(".tn-il-insp"); if (!insp) return;
+            const offNow = j == null, e = offNow ? {} : (texts()[j] || {});
+            insp.classList.toggle("tn-il-off", offNow);
+            insp.dataset.i = offNow ? 0 : j;
+            const head = insp.querySelector(".tn-il-insp-h .muted"); if (head) head.textContent = offNow ? "no element selected" : `element ${j + 1}`;
+            const setV = (cls, v) => { const el = insp.querySelector(cls); if (el && document.activeElement !== el) el.value = v; };
+            setV(".tn-il-content", e.content || ""); setV(".tn-il-size", e.size ?? 20);
+            setV(".tn-il-x", e.x ?? 0); setV(".tn-il-y", e.y ?? 0);
+            setV(".tn-il-w", e.width || ""); setV(".tn-il-h", e.height || ""); setV(".tn-il-font", e.font_family || "");
+            const wr = insp.querySelector(".tn-il-wrap"); if (wr) wr.checked = e.wrap !== false;
+            const ov = insp.querySelector(".tn-il-over"); if (ov) ov.checked = !!e.overflow;
+            // rebuild each match select's sibling <option>s (self excluded), then set the current value
+            const matchOpts = (cls, cur) => {
+                const s = insp.querySelector(cls); if (!s) return;
+                const opts = [h("option", { value: "" }, "—")];
+                for (let k = 0; k < texts().length; k++) if (k !== j)
+                    opts.push(h("option", { value: String(k) }, `${k + 1}: ${(texts()[k].content || "").trim() || "(empty)"}`));
+                s.replaceChildren(...opts); s.value = cur || "";
+            };
+            matchOpts(".tn-il-mw", e.match_w); matchOpts(".tn-il-mh", e.match_h);
+            setV(".tn-il-mwp", e.match_w_pct ?? 100); setV(".tn-il-mhp", e.match_h_pct ?? 100);
+            insp.querySelectorAll(".tn-il-biu .tn-biu-b").forEach((b) => b.classList.toggle("on", !!e[b.dataset.k]));
+            setTextColor(e.color || "#ffffff"); setBgColor(e.bg_color || "#000000");
+            const acode = { left: "tl", center: "tc", right: "tr" }[e.align] || e.align || "tl";
+            insp.querySelectorAll(".tn-il-align .tn-nine-b").forEach((b) => b.classList.toggle("on", b.dataset.code === acode));
+            bdSide = "";   // reset the border side-picker to the base for the new element
+            insp.querySelectorAll(".tn-bd-side").forEach((o) => o.classList.toggle("on", o.dataset.side === ""));
+            refreshSetFlags(); syncBorder();
+            const a = e.anchor || { to: "", corner: "tl", target: "tl" };
+            const toSel = insp.querySelector(".tn-anch-to");
+            if (toSel) {   // rebuild only the sibling <option>s (self excluded), not the whole inspector
+                const opts = [h("option", { value: "" }, "image")];
+                for (let k = 0; k < texts().length; k++) if (k !== j) opts.push(h("option", { value: String(k) }, `element ${k + 1}`));
+                toSel.replaceChildren(...opts); toSel.value = a.to || "";
+            }
+            insp.querySelectorAll(".tn-anch-corner .tn-nine-b").forEach((b) => b.classList.toggle("on", b.dataset.code === (a.corner || "tl")));
+            insp.querySelectorAll(".tn-anch-target .tn-nine-b").forEach((b) => b.classList.toggle("on", b.dataset.code === (a.target || "tl")));
+        };
     };
-    // element list: click a row (not its trash) to select; trash removes + shifts the selection.
-    sec.querySelectorAll(".tn-il-list .tn-il-item").forEach((it) => {
-        it.addEventListener("click", (e) => { if (!e.target.closest(".tn-il-del")) selectLine(+it.dataset.i); });
-    });
-    sec.querySelectorAll(".tn-il-del").forEach((b) => b.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const j = +b.dataset.i;
-        model.removeToastImageText(x.id, idx, j);
-        const texts = (model.toastImage(x.id, idx) || {}).texts || [];
-        let ns = j < sel ? sel - 1 : sel;               // removed an earlier row -> keep same element
-        ns = texts.length ? Math.max(0, Math.min(texts.length - 1, ns)) : null;
-        model.setToastImageSel(x.id, idx, ns);
-        rebuildNode(n.id); autosave(null);
-    }));
     q(".tn-img-addtext")?.addEventListener("click", () => {
         model.addToastImageText(x.id, idx);
-        const texts = (model.toastImage(x.id, idx) || {}).texts || [];
-        model.setToastImageSel(x.id, idx, texts.length - 1);   // open the new element in the inspector
+        model.setToastImageSel(x.id, idx, texts().length - 1);   // open the new element in the inspector
         rebuildNode(n.id); autosave(null);
     });
+    q(".tn-img-clone")?.addEventListener("click", () => {
+        const j = model.toastImageSel(x.id, idx); if (j == null) return;
+        const nj = model.cloneToastImageText(x.id, idx, j);
+        if (nj != null) model.setToastImageSel(x.id, idx, nj);   // open the clone
+        rebuildNode(n.id); autosave(null);
+    });
+    // element picker dropdown — jump to an element, or "(none)" to deselect
+    q(".tn-il-pick")?.addEventListener("change", (e) => selectLine(e.target.value === "" ? null : +e.target.value));
     // placement (hero/inline/none) — no layout change, just persist + (nothing to repreview)
     q(".tn-img-place")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "placement", e.target.value); autosave(null); });
+    // unit toggle (px / % of image) — convert stored coords so the on-screen design is preserved
+    q(".tn-img-unit")?.addEventListener("change", (e) => { model.convertToastImageUnit(x.id, idx, e.target.value); rebuildNode(n.id); autosave(null); });
     q(".tn-img-del")?.addEventListener("click", () => { model.removeToastImage(x.id, idx); rebuildNode(n.id); autosave(null); });
     // scalar props (size + gradient colours/angle) — persist + repreview on input
     const scalar = (s, key) => q(s)?.addEventListener("input", (e) => { model.setToastImageProp(x.id, idx, key, e.target.value); autosave(null); refreshPreview(); });
@@ -2947,7 +3321,7 @@ function wireNode(div, n) {
             if (zoomToNode(n.id)) { ev.preventDefault(); idInput.blur(); disarmGiId(); }
             return;
         }
-        if (ev.target.closest("input,select,button,textarea,a,.port,.collapse")) return;
+        if (ev.target.closest("input,select,button,textarea,a,.port,.collapse,.sv-norm-eg")) return;
         ev.preventDefault();
         zoomToNode(n.id);
     });
@@ -3592,6 +3966,7 @@ async function loadGame(name) {
     const { profile, local, migrated } = opened;
     done();
     model.load(profile);
+    seedSubsetSig();        // baseline subset defs so an unrelated save recomputes NO subset (only new/edited ones diff)
     nodeEls.clear();
     $("gnodes").replaceChildren();
     for (const winId of [...imageCanvases.keys()]) closeImage(winId);
@@ -4289,12 +4664,13 @@ function glideStep(el) {
 }
 
 // WASD moves the selected rectangle; Shift+WASD resizes it (A/D width, W/S height).
-// Ignored while typing in a field.
-const NUDGE = { w: [0, -1], a: [-1, 0], s: [0, 1], d: [1, 0] };
+// Ignored while typing in a field. NUDGE (the shared dir map) is declared at module scope.
 const MINB = 0.004;
 document.addEventListener("keydown", (ev) => {
     if (prettyActive) return;   // pretty view owns the keyboard (incl. its OWN undo/redo) while up
     if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+    // a focused toast-image preview owns WASD for nudging its element — don't also move the node
+    if (document.activeElement?.closest?.(".tn-img-pv")) return;
     // Escape disarms any drawing tool (a tool-input's own Escape is handled above — INPUT bails first).
     if (ev.key === "Escape") { if (clearTools()) { ev.preventDefault(); return; } }
     if (ev.ctrlKey || ev.metaKey) {

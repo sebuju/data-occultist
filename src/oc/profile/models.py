@@ -942,28 +942,74 @@ class ToastTextDef(BaseModel):
     max_lines: int = 0
 
 
+class ToastBorderSide(BaseModel):
+    """One border spec (a box's whole outline, or one overridden side). ``w`` 0 = no border."""
+
+    w: int = 0
+    color: str = "#ffffff"
+    style: str = "solid"    # solid | dashed | dotted
+
+
+class ToastAnchor(BaseModel):
+    """Positions a text element relative to a reference: ``to`` ("" = the image, else a sibling
+    element index as a string) resolves a reference box; the element's own ``corner`` 9-point sits on
+    the target's ``target`` 9-point, then the element's ``x``/``y`` add a pixel offset. Nine-point
+    codes are two chars: vertical ``t``/``m``/``b`` + horizontal ``l``/``c``/``r`` (e.g. ``tl``)."""
+
+    to: str = ""            # "" = image canvas; else sibling text-element index (as a string)
+    corner: str = "tl"      # which point of THIS element lands on the target point
+    target: str = "tl"      # which point of the reference box the element anchors to
+
+
 class ToastImageTextDef(BaseModel):
-    """One positioned text line drawn onto a generated toast image. ``content`` supports
-    ``{{token}}`` interpolation; ``x``/``y`` are pixel coordinates on the canvas; ``align`` picks
-    what ``x`` anchors (``left`` = left edge, ``center`` = centre, ``right`` = right edge)."""
+    """One positioned text element drawn onto a generated toast image. ``content`` supports
+    ``{{token}}`` interpolation. The element is a box of ``width``×``height`` px (0 = auto to the
+    text). Its position comes from ``anchor`` + the ``x``/``y`` offset. ``align`` is a 9-point code
+    (vertical ``t``/``m``/``b`` + horizontal ``l``/``c``/``r``) placing the text WITHIN the box."""
 
     content: str = ""
     x: int = 12
     y: int = 12
     size: int = 20
     color: str = "#ffffff"
-    align: str = "left"
-    width: int = 0          # box/text width in pixels the text is fit to (0 = unconstrained)
-    height: int = 0         # box height in pixels; >0 draws a bg_color-filled box behind the text
-    bg_color: str = ""      # box fill colour (hex); drawn only when width>0 and height>0
-    wrap: bool = True       # within width: True = word-wrap to more lines; False = one line, truncated with …
+    align: str = "tl"       # 9-point text placement within the box (vertical+horizontal)
+    width: int = 0          # box width in px the text is fit to (0 = auto to the text)
+    height: int = 0         # box height in px (0 = auto to the text)
+    bg_color: str = ""      # box fill colour (hex); drawn when set and width & height > 0
+    wrap: bool = True       # word-wrap within the box width: True = break onto more lines; False = one line
+    overflow: bool = False  # allow text to spill past the box; False = clip to it and end with … (overflow: hidden + text-overflow: ellipsis)
+    # optional dimension matching: copy another element's resolved width/height. "" = own size, else a
+    # sibling element index (as a string), mirroring `anchor.to`. A set match WINS over the element's
+    # own width/height, scaled by match_w_pct/match_h_pct (percent, 100 = the sibling's full size, 50 =
+    # half). The percent is ignored when no sibling is matched on that axis.
+    match_w: str = ""
+    match_h: str = ""
+    match_w_pct: int = 100
+    match_h_pct: int = 100
+    # typography
+    font_family: str = ""   # "" = the platform default face (Segoe UI); else a known family name
+    bold: bool = False
+    italic: bool = False
+    underline: bool = False
+    # borders: a base outline + optional per-side overrides keyed "t"/"r"/"b"/"l"
+    border: ToastBorderSide = Field(default_factory=ToastBorderSide)
+    border_sides: dict[str, ToastBorderSide] = Field(default_factory=dict)
+    # placement relative to the image / a sibling element
+    anchor: ToastAnchor = Field(default_factory=ToastAnchor)
+
+    @field_validator("align", mode="before")
+    @classmethod
+    def _migrate_align(cls, v):
+        # legacy horizontal-only values (top vertical): left/center/right -> tl/tc/tr
+        return {"left": "tl", "center": "tc", "right": "tr"}.get(v, v) or "tl"
 
 
 class ToastImageDef(BaseModel):
     """A generated toast image, drawn server-side with PIL: a solid or 2-colour gradient background
     with positioned text lines painted over it. ``placement`` picks where it lands — ``hero`` (the
     toast's top banner), ``inline`` (in the body), or ``none`` (temporarily off, not drawn).
-    ``angle`` is the gradient direction in degrees (0 = left→right, 90 = top→bottom)."""
+    ``angle`` is the gradient direction in degrees (0 = left→right, 90 = top→bottom). ``unit`` picks
+    how every element's x/y/width/height read: ``px`` (absolute) or ``pct`` (% of image w/h)."""
 
     placement: str = "inline"       # hero | inline | none
     width: int = 364
@@ -972,6 +1018,7 @@ class ToastImageDef(BaseModel):
     color1: str = "#0a3d62"
     color2: str = "#061826"
     angle: int = 90
+    unit: str = "px"                # px | pct — how element coords are interpreted
     texts: list[ToastImageTextDef] = Field(default_factory=list)
 
 

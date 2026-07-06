@@ -145,7 +145,7 @@
    select insets the text a few px past its padding, so it sat right of plain inputs in the same
    column). Supply our own chevron on the right; the text now lines up with every input. */
 .gnode select:not([size]) {   /* :not([size]) lifts specificity to match the de-input rule so this padding wins */
-    appearance: none; -webkit-appearance: none; padding: 0 4px 0 4px; text-overflow: ellipsis;
+    appearance: none; -webkit-appearance: none; padding: 0 4px 0 4px; text-overflow: ellipsis; color: var(--nt);
 }
 /* a select that ISN'T the control right after a .lab (rule-pipeline / inline selects) drops the
    chevron, sits on tight padding, and carries a resting muted border so it reads as an editable
@@ -203,77 +203,176 @@
 /* the toast body: an ordered list of styled text blocks + an "add block" button */
 .tn-blocks { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; min-width: 0; }
 .tn-blocks-h { font-size: 10px; letter-spacing: .02em; }
-.tn-block { display: flex; flex-direction: column; gap: 4px; padding: 5px; border-radius: 6px;
-    border: 1px solid color-mix(in srgb, currentColor 15%, transparent); min-width: 0; }
+.tn-block { display: flex; flex-direction: column; gap: 4px; padding: 0px 6px;
+    border-left: 10px solid color-mix(in srgb, var(--nt) 15%, transparent); min-width: 0; }
 .tn-block > textarea.tn-bk-content { width: 100%; box-sizing: border-box; resize: vertical;
-    min-height: calc(2lh + 8px); font: inherit; }
+    min-height: calc(2lh + 8px); font: inherit; border-color: var(--line); }
 .tn-bk-ctl { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .tn-bk-ctl select, .tn-bk-ctl input { font: inherit; font-size: 11px; min-width: 0; }
 .tn-bk-max { width: 4.5em; }
 .tn-bk-ctl button { font: inherit; font-size: 11px; cursor: pointer; padding: 1px 5px; }
 .tn-bk-ctl .tn-bk-del { margin-left: auto; }
-.tn-bk-add { align-self: start; font: inherit; font-size: 11px; cursor: pointer; }
+/* every <select> in the toast node carries the node colour at REST — a node-tinted border + a
+   faint --nt wash — so the dropdowns read as this node's controls, not neutral grey fields (the
+   generic .gnode rule only lit --nt on hover/focus, leaving a --line grey border at rest). The
+   trailing `:not([multiple])` is a no-op filter that lifts specificity above the non-lab resting
+   `--line` border rule (`.gnode select:not([size]):not(.lab + select)`) so this tint actually
+   wins — the same specificity-lever idiom `:not([size])` uses above. Hover/focus are re-supplied
+   here (else this rest rule would outrank the generic ones). Value text stays --text for legibility. */
+.gnode.toast select:not([size]):not([multiple]) {
+    border-color: color-mix(in oklab, var(--nt) 45%, var(--line));
+    background: color-mix(in oklab, var(--nt) 8%, transparent);
+}
+.gnode.toast select:not([size]):not([multiple]):hover {
+    border-color: color-mix(in oklab, var(--nt) 60%, var(--line));
+    background: color-mix(in oklab, var(--nt) 14%, transparent);
+}
+.gnode.toast select:not([size]):not([multiple]):focus {
+    border-color: color-mix(in oklab, var(--nt) 70%, var(--line));
+    background: var(--bg); outline: none;
+}
+/* the "add" / clone buttons carry the node colour so they read as this node's actions */
+.tn-bk-add, .tn-img-add {
+    align-self: start; font: inherit; font-size: 12px; line-height: 1; cursor: pointer; padding: 3px 9px;
+    border: 1px solid var(--nt); color: var(--nt); border-radius: 4px;
+    background: color-mix(in srgb, var(--nt) 12%, transparent); }
+.tn-bk-add:hover, .tn-img-add:hover {
+    background: color-mix(in srgb, var(--nt) 22%, transparent); }
 /* generated images: a list of editors, each with a placement dropdown, live preview, bg/size/text */
 .tn-imgs { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; min-width: 0; }
-.tn-img-add { align-self: start; font: inherit; font-size: 11px; cursor: pointer; }
-.tn-img { display: flex; flex-direction: column; gap: 6px; padding: 6px;
-    border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 15%, transparent); min-width: 0; }
-.tn-img-h { display: flex; align-items: center; gap: 8px; }
-.tn-img-h .muted { text-transform: lowercase; letter-spacing: .02em; font-size: 11px; white-space: nowrap; }
-.tn-img-place { font: inherit; font-size: 11px; }
-.tn-img-h .tn-img-del { margin-left: auto; cursor: pointer; }
+.tn-img { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 0px 6px;
+    border-left: 10px solid color-mix(in srgb, var(--nt) 15%, transparent); min-width: 0; }
+.tn-img-place, .tn-img-unit { font: inherit; font-size: 11px; }
+.tn-img-del { position: absolute; top: 4px; right: 4px; z-index: 2; }
 /* preview + clickable box overlay share one positioned wrapper so the boxes line up over the img */
-.tn-img-pv { position: relative; align-self: center; max-width: 100%; line-height: 0; }
-.tn-img-preview { display: block; max-width: 100%; height: auto; border-radius: 4px;
+/* border lives on the WRAPPER, not the img: the box/guide overlays are inset:0 of this wrapper, so
+   putting a border on the img would shift the img content 1px inside the overlay origin (boxes drift). */
+.tn-img-pv { position: relative; align-self: center; width: 100%; line-height: 0; border-radius: 4px;
     border: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+.tn-img-preview { display: block; max-width: 100%; width: 100%; object-fit: contain; height: auto; border-radius: 4px; }
 .tn-img-preview:not([src]) { display: none; }
 /* overlay sits exactly over the img (JS sizes it to the displayed img); only the boxes catch clicks */
-.tn-img-boxes { position: absolute; inset: 0; pointer-events: none; }
+/* the box + guide overlays reveal only while the toast image is focused (click/tab into it), so the
+   preview reads clean otherwise. Focus-within covers the preview wrapper AND the inspector inputs. */
+.tn-img-boxes { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .1s; }
+.tn-img:focus-within .tn-img-boxes, .tn-img:focus-within .tn-guides { opacity: 1; }
+/* boxes stay clickable even while faded, so the first click both selects the element and focuses
+   the preview (which reveals the overlay) — no dead first click. */
 .tn-box { position: absolute; box-sizing: border-box; cursor: pointer; border-radius: 2px;
-    pointer-events: auto; border: 1px solid color-mix(in srgb, #6cf 60%, transparent);
+    pointer-events: auto; border: 1px dashed color-mix(in srgb, #6cf 70%, transparent);
     background: color-mix(in srgb, #6cf 8%, transparent); }
 .tn-box:hover { border-color: #6cf; background: color-mix(in srgb, #6cf 18%, transparent); }
-.tn-box.sel { border: 2px solid #ff6060; background: color-mix(in srgb, #ff6060 14%, transparent); }
+.tn-box.sel { border: 1px dashed var(--nt); background: color-mix(in srgb, var(--nt) 14%, transparent); }
+/* element name/number badge inside each box */
+.tn-box-lab { position: absolute; left: 0; top: 0; max-width: 100%; padding: 0 3px; font-size: 9px;
+    line-height: 1.4; color: #fff; background: color-mix(in srgb, #000 55%, transparent);
+    border-radius: 0 0 3px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+/* resize handles — shown on the selected box only (edges + corners, like the OCR canvas) */
+.tn-box-h { position: absolute; width: 9px; height: 9px; box-sizing: border-box; display: none;
+    background: var(--nt); border: 1px solid #fff; border-radius: 2px; z-index: 2; }
+.tn-box.sel .tn-box-h { display: block; }
+.tn-box-nw { left: -5px; top: -5px; cursor: nwse-resize; }
+.tn-box-n { left: 50%; top: -5px; transform: translateX(-50%); cursor: ns-resize; }
+.tn-box-ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.tn-box-e { right: -5px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+.tn-box-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.tn-box-s { left: 50%; bottom: -5px; transform: translateX(-50%); cursor: ns-resize; }
+.tn-box-sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.tn-box-w { left: -5px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+.tn-img-pv:focus-visible { outline: unset; }
+/* anchor guide overlay (target point -> element corner), like pretty's cue layer */
+.tn-guides { position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 3; opacity: 0; transition: opacity .1s; }
+.tn-guide-leg { stroke: #ffcf5a; stroke-width: 1; stroke-dasharray: 4 3; }
+.tn-guide-t, .tn-guide-c { fill: none; stroke: #ffcf5a; stroke-width: 1.5; }
+/* inspector buttons: no inherited min-height, and match the inputs' height so they don't look
+   out of place (the small 3x3 grid cells are exempt — they're a fixed-size picker). */
+.tn-nine-b, .tn-biu-b, .tn-bd-side, .tn-bk-ctl button { min-height: unset; }
+.tn-il-insp input:not([type="color"]):not([type="checkbox"]), .tn-il-insp select,
+.tn-biu-b, .tn-bd-side, .tn-bk-ctl button { height: 22px; box-sizing: border-box; }
+/* 9-point anchor/align picker */
+.tn-nine { display: inline-grid; grid-template-columns: repeat(3, 14px); grid-auto-rows: 14px; gap: 2px; }
+.tn-nine-b { width: 14px; height: 14px; padding: 0; border-radius: 2px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: none; }
+.tn-nine-b.on { background: var(--nt); border-color: var(--nt); }   /* selected square = node colour */
+/* bold / italic / underline toggles */
+.tn-biu { display: inline-flex; gap: 2px; }
+.tn-biu-b { width: 22px; font-size: 11px; cursor: pointer; padding: 0; border-radius: 3px;
+    border: 1px solid color-mix(in srgb, currentColor 25%, transparent); background: none; }
+.tn-biu-b:nth-child(1) { font-weight: 700; }
+.tn-biu-b:nth-child(2) { font-style: italic; }
+.tn-biu-b:nth-child(3) { text-decoration: underline; }
+.tn-biu-b.on { background: color-mix(in srgb, var(--nt) 30%, transparent); border-color: var(--nt); }
+.tn-il-font { font: inherit; font-size: 11px; max-width: 7em; }
+.tn-il-cl { display: inline-flex; align-items: center; gap: 3px; margin: 0px; }
+.tn-il-u { font-size: 9px; opacity: .55; margin-left: 1px; }
+/* the leading label column is sized by the grid to the widest label (not a hardcoded width); tall
+   rows keep the label at the top so a nine-grid's first row lines up with it. */
+.tn-il-ll { grid-column: 1; align-self: start; line-height: 22px; white-space: nowrap; }
+.tn-il-rc { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.tn-il-rc input[type="number"] { flex: 0 0 3.5em; width: 3.5em; min-width: 0; font: inherit; font-size: 11px; }
+.tn-il-rc select { font: inherit; font-size: 11px; }
+/* the two match selects carry long "N: <element text>" options; cap them so the value ellipsises
+   instead of stretching the row (both w + h share one row). */
+.gnode select.tn-il-mw, .gnode select.tn-il-mh { max-width: 6.5em; min-width: 0; }
+.tn-il-chk { display: inline-flex; align-items: center; gap: 3px; margin: 0; }
+/* colour control: native picker (fixed 26px) + a linked hex text input */
+.tn-cpair { display: inline-flex; align-items: center; gap: 4px; }
+.tn-cpair input[type="color"] { flex: 0 0 26px; width: 26px; height: 22px; padding: 0; border: none; background: none; cursor: pointer; }
+.tn-cpair input[type="text"] { width: 6.5em; font: inherit; font-size: 11px; }
+/* per-side border editor — everything on one row; a narrow width field (2 digits) + px unit */
+.tn-bd { display: flex; align-items: center; gap: 3px; flex-wrap: nowrap; }
+.tn-bd-sides { display: inline-flex; gap: 2px; }
+.tn-bd-side { width: 22px; font-size: 10px; cursor: pointer; padding: 0 2px; position: relative;
+    border: 1px solid color-mix(in srgb, currentColor 25%, transparent); background: none; }
+.tn-bd-side.on { outline: 1px solid #6cf; outline-offset: -1px; }
+/* a side that HAS a border set fills with the node colour (distinct from the blue "active" outline) */
+.tn-bd-side.set { background: color-mix(in srgb, var(--nt) 55%, transparent); border-color: var(--nt); }
+.tn-bd-w { width: 2.6em; font: inherit; font-size: 11px; }
+.tn-bd-s { font: inherit; font-size: 11px; }
+.tn-bd .tn-cpair input[type="text"] { width: 4.5em; }   /* narrower hex so the border row fits one line */
+/* anchor row: target select + this/target grids on one line; grids grow downward from the top */
+.tn-anch { display: flex; align-items: flex-start; gap: 8px; font-size: 10px; flex-wrap: wrap; }
+.tn-anch-to, .tn-il-pick { font: inherit; font-size: 11px; max-width: 12em; }
+.tn-anch-gl { display: inline-flex; align-items: flex-start; gap: 4px; margin: 5px 0px 0px 0px; }
 .tn-img-size, .tn-img-bg { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
-.tn-img-size input { width: 5.5em; }
+.tn-img-size input { width: 4em; }
 .tn-img-w, .tn-img-h2, .tn-img-angle { font: inherit; font-size: 11px; }
 .tn-img-angle-l { display: inline-flex; align-items: center; gap: 2px; }
 .tn-img-angle { width: 3.5em; }
-.tn-img-bg input[type="color"], .tn-il-color, .tn-il-bg { width: 26px; height: 20px; padding: 0; border: none; cursor: pointer; background: none; flex: 1 0 26px; }
+.tn-img-bg input[type="color"] { width: 26px; height: 20px; padding: 0; border: none; cursor: pointer; background: none; flex: 0 0 26px; }
 .tn-img-texts { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-/* compact, selectable element list — one row per text element; the selected row opens the inspector */
-.tn-il-list { display: flex; flex-direction: column; gap: 2px; }
-.tn-il-item { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px;
-    cursor: pointer; border: 1px solid transparent; }
-.tn-il-item:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
-.tn-il-item.sel { border-color: color-mix(in srgb, #ff6060 55%, transparent);
-    background: color-mix(in srgb, #ff6060 12%, transparent); }
-.tn-il-num { flex: 0 0 auto; min-width: 1.4em; text-align: center; font-size: 10px; opacity: .7; }
-.tn-il-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.tn-il-del { cursor: pointer; flex: 0 0 auto; }
-.tn-img-addtext { align-self: start; font: inherit; font-size: 11px; cursor: pointer; }
-/* mini-inspector: the full controls for the ONE selected element */
-.tn-il-insp { display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 4px;
-    background: color-mix(in srgb, currentColor 7%, transparent); }
+.tn-il-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* node-coloured actions (see .tn-img-addtext/.tn-img-clone): centre their SVG icon and sit at the
+   bar's right edge — first button carries margin-left:auto to push the button group past the picker. */
+.tn-il-bar button { align-self: center; display: inline-flex; align-items: center; color: var(--nt); background: none; border: none; box-shadow: none; padding: 0; }
+.tn-il-bar > button:first-of-type { margin-left: auto; }
+/* mini-inspector: a 2-col grid (label | controls); the label column auto-sizes to the widest label
+   so every row starts with an aligned, equal-width label. */
+.tn-il-insp { display: grid; grid-template-columns: max-content 1fr; gap: 5px 8px; align-items: start;
+    padding: 6px; border-radius: 4px; font-size: 10px; background: color-mix(in srgb, var(--nt) 7%, transparent); }
+.tn-il-span { grid-column: 1 / -1; }
+.tn-il-insp-h { display: flex; align-items: center; gap: 8px; min-height: 20px; }   /* stable height */
+.tn-il-insp-h .muted { text-transform: lowercase; }
+.tn-il-off { opacity: .5; }                        /* deselected: greyed out */
+.tn-il-off .tn-il-rc { pointer-events: none; }     /* ...and its controls inert */
+.tn-il-off .tn-il-del { display: none; }           /* nothing selected -> no delete */
+.tn-il-del { cursor: pointer; flex: 0 0 auto; margin-left: auto; }
 .tn-il-empty { padding: 6px; font-size: 11px; }
-.tn-il-content { flex: 1; min-width: 0; box-sizing: border-box; font: inherit; font-size: 11px; }
-.tn-il-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.tn-il-ctl label { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; }
-.tn-il-ctl input[type="number"] { width: 5.5em; font: inherit; font-size: 11px; }
-.tn-il-ctl select { font: inherit; font-size: 11px; }
+.tn-il-content { width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; resize: vertical; min-height: 22px; }
+.gnode .tn-il-content { border-color: var(--line) !important; padding: 1px 4px !important; }
 /* icon row: the show-icon toggle sits left of the icon path input */
 .tn-icon-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tn-icon-row .tn-icon { flex: 1; min-width: 0; }
 /* token chips in a toast node: click to copy a wired source's {{token}} to the clipboard; a small
    syntax legend (slice/aggregate/decimals) sits beneath them. The whole palette sits below the
    images inside a bordered box (.tn-tokbox); .tn-tokwrap is its inner column. */
-.tn-tokbox { margin-top: 8px; padding: 8px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: 6px; min-width: 0; }
+.tn-tokbox { margin-top: 4px; min-width: 0; }
 .tn-tokwrap { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 /* per-source subheading above its chip row — so a chip label is just the field, not "src.field" */
 .tn-tokhead { font-size: 10px; text-transform: lowercase; letter-spacing: .02em; margin-top: 2px; }
 .tn-tokhead:first-child { margin-top: 0; }
 .tn-rotokens { display: flex; flex-wrap: wrap; gap: 4px; }
-.tn-rotoken { font: inherit; font-size: 11px; cursor: pointer; }
+.tn-rotoken { font: inherit; font-size: 11px; cursor: pointer; min-height: unset; color: var(--nt); background: color-mix(in srgb, var(--nt) 12%, transparent); }
 .tn-tokhint { font-size: 10px; line-height: 1.4; }
 .tn-tokhint code { font-size: 10px; padding: 0 2px; border-radius: 3px; background: color-mix(in srgb, currentColor 12%, transparent); }
 /* Nothing in the node canvas is text-selectable — kills the stray highlight that
@@ -309,6 +408,9 @@
 .gnode.filesource { width: 300px; min-width: 260px; }
 .gnode, .gnode * { box-sizing: border-box; }
 .gnode input, .gnode select { user-select: text; max-width: 100%; }
+/* text-selection highlight inside a node reads its own type colour (--nt) instead of the
+   browser default — a faint --nt wash so selected text stays legible. */
+.gnode ::selection { background: color-mix(in oklab, var(--nt, var(--accent)) 40%, transparent); }
 /* the node-wide cursor:grab (set on .gnode above) gives way to these — form fields,
    buttons, scroll/resize areas — so the cursor always tells the truth. Only the header
    (.gn-h) and the outer frame padding actually drag, so the body + footer (which just
@@ -419,7 +521,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    tells / fields / key / cutouts / window priority / text appearance) so they all read alike
    (rule 7). Scoped to .gnode so it beats the `.muted` utility these elements also carry; each
    header keeps only its own spacing on the class rules below. */
-.gnode :is(.fgrp, .il-h, .wi-h, .sb-h) {
+.gnode :is(.fgrp, .il-h, .wi-h, .sb-h, .sv-src-h) {
     font-size: 9.5px; text-transform: uppercase; letter-spacing: .16em; color: var(--dim);
     /* the blueprint dashed rule sits ABOVE every sub-heading (mockup .divider) — it separates the
        heading from the section before it. One look, every node. */
@@ -478,16 +580,18 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .lab-grid > textarea { box-sizing: border-box; resize: vertical; min-height: calc(2lh + 8px); font: inherit; }
 .lab-grid > input[type="checkbox"], .lab-grid > .gn-slide { justify-self: start; }
 .lab-grid > .tg-secs input { width: 100%; }
-.lab-grid > .sv-inputs { margin: 0; min-width: 0; }
+.lab-grid > .sv-inputs { margin: 0px 0px 0px 4px; min-width: 0; }
 /* a pill-list row (sources): the label pins to the FIRST pill line — not the top of the wrapped
    block (lab-top's job, which sits a hair high) nor the centre of all rows. A 22px inline-flex box
-   (the pill's min-height) centres the label text on the pill text. */
-.lab-grid > .lab:has(+ .sv-inputs) { align-self: start; padding-top: 0; min-height: 22px;
+   (the pill's min-height) centres the label text on the pill text. `.sv-lab` is set by the srcRow
+   primitive (dom.js) on every label that precedes a .sv-inputs list — no :has() needed. */
+.lab-grid > .lab.sv-lab { align-self: start; padding-top: 0; min-height: 22px;
     display: inline-flex; align-items: center; }
 /* full-width cells inside the grid (e.g. the price node's source-pill list) span both columns */
 .lab-grid > .gspan { grid-column: 1 / -1; }
-/* a subset source's heading band: full-width rule above each source's per-source join settings */
-.lab-grid > .sv-src-h { border-bottom: 1px solid var(--muted); padding-top: 6px; margin-top: 4px; }
+/* a subset source's heading = shared node subheading look (dashed top rule from the .sv-src-h rule
+   above); just add the section's top gap here */
+.lab-grid > .sv-src-h { margin-top: 8px; }
 /* closes the per-source section: a rule below the last source block so view-level rows (limit,
    latest batch) read as separate, not part of that source */
 .lab-grid > .sv-sec-end { border-top: 1px solid var(--muted); margin-top: 8px; margin-bottom: 8px; }
@@ -499,6 +603,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    the thumb travels the full track end to end. The label takes only its own width. */
 .tg-secs input[type="range"] { flex: 1; width: auto; min-width: 0; margin: 0; }
 .tg-volnum { flex: 0 0 auto; min-width: 2.4em; text-align: right; }
+
+/* status / readout TEXT cells (progress, last-fired, sweep stats) share a lab-grid control
+   column with real inputs but aren't inputs, so they miss the input's horizontal padding and
+   their text sits 4px left of the values above/below. Match it so the column lines up. */
+.gnode :is(.tg-prog, .tg-last, .enr-prog) { padding-inline: 4px; }
 
 /* trigger node uses the same natural row sizing as every other lab-grid node — the specific
    .tg-secs / .tg-prog / .tg-last cells (above) are the only ones pinned to a control-row box. */
@@ -520,7 +629,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    fills the box with a dark on-accent tick. Overrides base.css's global slide-toggle sizing. */
 .gnode input[type="checkbox"]:not(.gn-enable) {
     width: 15px; height: 15px; border-radius: 4px; box-sizing: border-box;
-    background-color: var(--bg); border: 1px solid var(--line);
+    background-color: var(--bg); border: 1px solid var(--nt);
     background-image: none; background-repeat: no-repeat;
     background-position: center; background-size: 11px 11px;
     transition: background-color .15s ease, border-color .15s ease;
@@ -612,7 +721,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    out-port (.flow/.watch) start with the PORT DOT itself (#portcap): the dot is the line's own
    marker-start, so it sits exactly on the start and paints over it — nothing shows beneath it.
    (The DOM .port element is only the invisible grab handle riding the same point.) */
-.gedge { fill: none; stroke: var(--line); stroke-width: 1.8; marker-start: url(#squarecap); marker-end: url(#squarecap); }
+.gedge { fill: none; stroke: var(--line); stroke-width: 1.8; marker-start: url(#squarecap); marker-end: url(#squarecap); transition: filter 100ms linear; }
 .gedge.flow, .gedge.watch { marker-start: url(#portcap); }
 .gedge.flow.sel, .gedge.watch.sel { marker-start: url(#portcap-sel); }   /* selected -> grown dot + --sel ring */
 .squarecap-head { fill: context-stroke; }   /* square takes the line's colour (or accent when selected) */
@@ -664,9 +773,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .stealthcap-head { fill: context-stroke; }
 .circlebar-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; }
 .gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; marker-start: none; marker-end: none; }   /* live drag line: no caps */
-/* selected edge keeps its OWN colour; highlight is a whitish outline (halo) around the stroke,
-   not a recolour. One soft, wider drop-shadow in --sel — a gentle glow, not a crisp sparkle. */
-.gedge.sel { stroke-width: 2.2; opacity: 1 !important; filter: drop-shadow(0 0 0.1px var(--sel)); }
+/* a selection greys + fades EVERY line except the selected one(s), so the focus reads from the
+   contrast alone — the selected line needs no extra highlight, it's just the one left un-dimmed. */
+.sel-active .gedge:not(.sel) { filter: grayscale(1) opacity(0.1); }
+.gedge.sel { opacity: 1 !important; }
 /* a line touching a disabled node is greyed (it carries no live data); a stale-edge is a line whose
    node has been dragged off its routed endpoint — greyed + faded the same way until it re-routes */
 .gedge.dis-edge, .gedge.stale-edge { filter: grayscale(1); }
@@ -790,7 +900,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* draw-mode buttons (the ones that paint a box onto a canvas): a dashed accent outline marks
    them as "draw a box" tools, distinct from the solid action buttons. The picked tool (.active)
    fills solid accent. Shared by the window image tools AND the item cutout tools. */
-.tool { background: transparent; color: var(--accent); border: 1px dashed var(--accent); padding: 3px 9px; }
+.tool { background: transparent; color: var(--nt); border: 1px dashed var(--nt); padding: 3px 9px; }
 .tool:hover:not(:disabled) { background: var(--accent-bg); filter: none; }
 .tool.active { background: var(--accent); color: var(--on-accent); border-style: solid; }
 /* item node: draw-mode button rows under the tells / cell-and-fields headers */

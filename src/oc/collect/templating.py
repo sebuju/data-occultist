@@ -95,20 +95,22 @@ def _aggregate(rows: list, field: str, agg: str):
             nums.append(float(v))
         except (TypeError, ValueError):
             pass
+    # empty result -> None (not "") so render()'s keep_missing keeps the literal {{token}} in the
+    # PREVIEW when a source has no data yet; a real fire (keep_missing=False) still renders empty.
     if agg == "count":
         return len(rows)
     if agg == "sum":
         return sum(nums)
     if agg == "mean":
-        return sum(nums) / len(nums) if nums else ""
+        return sum(nums) / len(nums) if nums else None
     if agg == "min":
-        return min(nums) if nums else ""
+        return min(nums) if nums else None
     if agg == "max":
-        return max(nums) if nums else ""
+        return max(nums) if nums else None
     if agg == "first":
-        return vals[0] if vals else ""
+        return vals[0] if vals else None
     # "latest" and any unknown -> last observed value
-    return vals[-1] if vals else ""
+    return vals[-1] if vals else None
 
 
 def _join_rows(rows: list, field: str | None, delim: str) -> str:
@@ -204,7 +206,7 @@ def resolve_token(ctx: TokenContext, inner: str):
     # bare token (no known prefix) == a readout id — back-compat with older {{ro_id}} toast text
     if ":" not in src:
         return ctx.readouts.get(src)
-    return ""
+    return None
 
 
 def render(text: str, ctx: TokenContext, *, keep_missing: bool = False) -> str:
