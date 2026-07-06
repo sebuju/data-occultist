@@ -2478,11 +2478,11 @@ layout:
     det:relic_refinement:detect_h:
       x: -100.0
       y: 300.0
-      w: 240.0
-      h: 260.0
+      w: 300.0
+      h: 280.0
       collapsed: false
       custW: false
-      custH: false
+      custH: true
     det:mod_window:detect_h:
       x: -1720.0
       y: 2740.0
