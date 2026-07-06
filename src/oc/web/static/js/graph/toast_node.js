@@ -40,13 +40,19 @@ export function imageTextInspector(t, j, texts = [], unit = "px") {
     const us = () => h("span", { class: "tn-il-u" }, u);
     // every row starts with a leading label (grid col 1 — all labels share the widest one's width,
     // sized by the grid, not a hardcoded width) followed by its controls (col 2).
+    // per-row reset: restores this row's field(s) to the element defaults (label doubles as the
+    // reset group key, see GraphModel._toastTextResetGroups). "background" reset drops bg entirely.
+    const rst = (label) => h("button", { class: "tn-il-rst", type: "button", dataset: { row: label, i: ji },
+        title: "reset to default" }, "↺");
     const row = (label, ...ctrl) => frag(
         h("span", { class: "tn-il-ll" }, label),
-        h("div", { class: "tn-il-rc" }, ...ctrl));
+        h("div", { class: "tn-il-rc" }, ...ctrl, rst(label)));
     const num = (cls, val, attrs) => h("input", { class: cls, dataset: { i: ji }, type: "number", value: val, ...attrs });
-    // a "match another element's size" dropdown: "—" (own size) + every sibling by index+content
+    // a "match another element's size" dropdown: "—" (own size) + "image" (the canvas size) + every
+    // sibling by index+content
     const matchSel = (cls, cur, title) => h("select", { class: cls, dataset: { i: ji }, title },
         h("option", { value: "", selected: !cur }, "—"),
+        h("option", { value: "image", selected: cur === "image" }, "image"),
         texts.map((tt, k) => k === ji ? null
             : h("option", { value: String(k), selected: String(cur) === String(k) },
                 `${k + 1}: ${(tt.content || "").trim() || "(empty)"}`)));
@@ -58,14 +64,17 @@ export function imageTextInspector(t, j, texts = [], unit = "px") {
             num("tn-il-x", e.x ?? 0, { title: "x offset from the anchor point" }), us(),
             num("tn-il-y", e.y ?? 0, { title: "y offset from the anchor point" }), us()),
         row("anchor", anchorRow(e, ji, texts.length)),
+        // a match on an axis WINS over that axis's own width/height — so the dimension input is dead
+        // while a match is set; likewise a match-percent does nothing with no match. Disable the inert
+        // input so it's obvious the value isn't read (syncInspector keeps this in step on edits).
         row("dimension",
-            num("tn-il-w", e.width || "", { min: "0", placeholder: "auto", title: "box width — 0/blank = auto to the text; drag a box edge to resize" }), us(),
-            num("tn-il-h", e.height || "", { min: "0", placeholder: "auto", title: "box height — 0/blank = auto to the text; drag a box edge to resize" }), us()),
+            num("tn-il-w", e.width || "", { min: "0", placeholder: "auto", disabled: !!e.match_w, title: "box width — 0/blank = auto to the text; drag a box edge to resize" }), us(),
+            num("tn-il-h", e.height || "", { min: "0", placeholder: "auto", disabled: !!e.match_h, title: "box height — 0/blank = auto to the text; drag a box edge to resize" }), us()),
         row("match",
             h("span", { class: "tn-il-u" }, "w"), matchSel("tn-il-mw", e.match_w, "match width to another element's size"),
-            num("tn-il-mwp", e.match_w_pct ?? 100, { min: "1", title: "percent of the matched width (100 = full, 50 = half)" }), h("span", { class: "tn-il-u" }, "%"),
+            num("tn-il-mwp", e.match_w_pct ?? 100, { min: "1", disabled: !e.match_w, title: "percent of the matched width (100 = full, 50 = half)" }), h("span", { class: "tn-il-u" }, "%"),
             h("span", { class: "tn-il-u" }, "h"), matchSel("tn-il-mh", e.match_h, "match height to another element's size"),
-            num("tn-il-mhp", e.match_h_pct ?? 100, { min: "1", title: "percent of the matched height (100 = full, 50 = half)" }), h("span", { class: "tn-il-u" }, "%")),
+            num("tn-il-mhp", e.match_h_pct ?? 100, { min: "1", disabled: !e.match_h, title: "percent of the matched height (100 = full, 50 = half)" }), h("span", { class: "tn-il-u" }, "%")),
         row("content", h("textarea", { class: "tn-il-content", dataset: { i: ji }, rows: "2", placeholder: "text — supports {{token}}" }, e.content || "")),
         // font: size (px) + family + B/I/U + wrap + overflow
         row("font",
@@ -76,7 +85,14 @@ export function imageTextInspector(t, j, texts = [], unit = "px") {
                 h("input", { class: "tn-il-wrap", dataset: { i: ji }, type: "checkbox", checked: e.wrap !== false }), "wrap"),
             h("label", { class: "tn-il-chk", title: "allow text to spill past the box; off = clip to it and end with … (overflow: hidden; text-overflow: ellipsis)" },
                 h("input", { class: "tn-il-over", dataset: { i: ji }, type: "checkbox", checked: !!e.overflow }), "overflow")),
+        // conditional: drop this element when its text resolves empty and collapse the gap so anchored
+        // siblings shift up to fill it (see toast_image render — zero size + zero offset when disabled).
+        row("cond",
+            h("label", { class: "tn-il-chk", title: "when this element's text resolves empty (a missing/blank {{token}}), drop it AND collapse the gap: it draws nothing and takes no space, so elements anchored to it shift up to fill the hole" },
+                h("input", { class: "tn-il-cond", dataset: { i: ji }, type: "checkbox", checked: !!e.disable_if_empty }), "disable if empty")),
         row("align", nineGrid({ left: "tl", center: "tc", right: "tr" }[e.align] || e.align, "tn-il-align", "text placement within the box")),
+        // stacking order — higher z draws on top of a lower one where boxes overlap (ties keep list order)
+        row("layer", num("tn-il-z", e.z_index ?? 0, { title: "stacking order — higher draws on top where elements overlap" })),
         row("text", h("label", { class: "tn-il-cl" }, colorPair("tn-il-color", e.color || "#ffffff", "text colour"))),
         row("background", colorPair("tn-il-bg", e.bg_color || "#000000", "background box colour (drawn only when width and height > 0)")),
         row("border", borderEditor(e)));
@@ -91,6 +107,7 @@ export function imageTextInspector(t, j, texts = [], unit = "px") {
 function imageEditor(im, idx, sel) {
     const opt = (cur) => ([v, l]) => h("option", { value: v, selected: v === (cur || "") }, l);
     const grad = im.bg_type === "gradient";
+    const trans = im.bg_type === "transparent";   // no fill — the toast surface shows through
     const texts = im.texts || [];
     return h("div", { class: "tn-img", dataset: { i: idx } },
         // floating remove — top-right, reveals on hover of this image (shared trashBtn look)
@@ -113,9 +130,9 @@ function imageEditor(im, idx, sel) {
                 h("input", { class: "tn-img-h2", type: "number", min: "1", value: im.height, title: "height" }), h("span", { class: "tn-il-u" }, "px")),
             labCell("background", "solid colour or a 2-colour gradient"),
             h("div", { class: "tn-img-bg" },
-                h("select", { class: "tn-img-bgtype" }, [["solid", "solid"], ["gradient", "gradient"]].map(opt(im.bg_type))),
-                h("input", { class: "tn-img-c1", type: "color", value: im.color1 || "#0a3d62", title: "colour 1" }),
-                grad ? h("input", { class: "tn-img-c2", type: "color", value: im.color2 || "#061826", title: "colour 2" }) : null,
+                h("select", { class: "tn-img-bgtype" }, [["solid", "solid"], ["gradient", "gradient"], ["transparent", "transparent"]].map(opt(im.bg_type))),
+                trans ? null : colorPair("tn-img-c1", im.color1 || "#0a3d62", "colour 1"),
+                grad ? colorPair("tn-img-c2", im.color2 || "#061826", "colour 2") : null,
                 grad ? h("label", { class: "tn-img-angle-l" }, "∠", h("input", { class: "tn-img-angle", type: "number", value: im.angle ?? 90, title: "gradient angle (deg)" })) : null)),
         h("div", { class: "tn-img-texts" },
             // element picker (dropdown) + add / clone buttons; the inspector below edits the selected

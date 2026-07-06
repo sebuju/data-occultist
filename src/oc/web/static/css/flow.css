@@ -152,13 +152,13 @@ a.node.win:hover { border-color: var(--accent); }
 .lab-grid > .lab.eg-lab { align-self: start; }
 /* "visible" label centres on the FIRST toggle row (buttons are taller than the label's text line) */
 .lab-grid > .lab.vis-lab { align-self: start; }
-.sv-hides { display: flex; flex-wrap: wrap; gap: 4px; }
+.sv-hides { display: flex; flex-wrap: wrap; gap: 4px; margin-left: 4px; }
 /* visible toggles carry the node colour (--nt) like the source pills — tinted fill + outline */
 .sv-hide { font-size: var(--fs-sm); padding: 2px 8px; min-height: unset; border-radius: 10px;
     background: color-mix(in oklab, var(--nt, var(--accent)) 14%, transparent);
-    color: #fff; }
+    color: var(--nt); }
 .sv-hide.off { opacity: 0.5; text-decoration: line-through; }
-.sub-row { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+.sub-row { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; margin-left: 4px; }
 .sub-row select, .sub-row input { min-width: 0; }
 .sub-row select { max-width: 140px; }
 .sub-row .sf-val, .sub-row .sd-tpl, .sub-row .sd-name { flex: 1 1 0; }
@@ -174,7 +174,7 @@ a.node.win:hover { border-color: var(--accent); }
 .sv-inputs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; align-items: center; }
 .sv-input { position: relative; display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; box-sizing: border-box;
     min-height: 22px;   /* pin chip + add-select to one height so the select's UA min never makes them differ */
-    background: color-mix(in oklab, var(--nt, var(--accent)) 14%, transparent); color: #fff;
+    background: color-mix(in oklab, var(--nt, var(--accent)) 14%, transparent); color: var(--nt);
     border-radius: 10px; font-size: var(--fs-sm); word-break: break-all;}
 /* the remove button lives INSIDE the pill — the pill supplies the outline, so the button is a
    borderless glyph (no box-shadow ring, no border), even though it carries .btn-trash. The .gnode

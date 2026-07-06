@@ -742,10 +742,29 @@ export class GraphModel {
     static _toastTextDefault() {
         return { content: "", x: 12, y: 12, size: 20, color: "#ffffff", align: "tl",
             width: 120, height: 28, bg_color: "", wrap: true, overflow: false,
+            disable_if_empty: false,
             match_w: "", match_h: "", match_w_pct: 100, match_h_pct: 100,
             font_family: "", bold: false, italic: false, underline: false,
             border: { w: 0, color: "#ffffff", style: "solid" }, border_sides: {},
-            anchor: { to: "", corner: "tl", target: "tl" } };
+            anchor: { to: "", corner: "tl", target: "tl" }, z_index: 0 };
+    }
+    // which element field(s) each inspector row owns — a row's reset button restores exactly these
+    // to their _toastTextDefault value (keys mirror the row labels in imageTextInspector). Resetting
+    // `background` sets bg_color back to "" which drops the box entirely (no bg drawn).
+    static _toastTextResetGroups() {
+        return { position: ["x", "y"], anchor: ["anchor"], dimension: ["width", "height"],
+            match: ["match_w", "match_h", "match_w_pct", "match_h_pct"], content: ["content"],
+            font: ["size", "font_family", "bold", "italic", "underline", "wrap", "overflow"],
+            cond: ["disable_if_empty"], layer: ["z_index"],
+            align: ["align"], text: ["color"], background: ["bg_color"],
+            border: ["border", "border_sides"] };
+    }
+    // reset one inspector row's field(s) on element j back to the element defaults.
+    resetToastImageTextRow(id, i, j, rowKey) {
+        const im = this.toastImage(id, i); const t = im && im.texts && im.texts[j]; if (!t) return;
+        const keys = GraphModel._toastTextResetGroups()[rowKey]; if (!keys) return;
+        const d = GraphModel._toastTextDefault();
+        for (const k of keys) t[k] = JSON.parse(JSON.stringify(d[k]));
     }
     addToastImageText(id, i) {
         const im = this.toastImage(id, i); if (!im) return;
@@ -771,7 +790,7 @@ export class GraphModel {
     }
     setToastImageText(id, i, j, key, val) {
         const im = this.toastImage(id, i); const t = im && im.texts && im.texts[j]; if (!t) return;
-        if (["x", "y", "size", "width", "height"].includes(key)) t[key] = parseInt(val, 10) || 0;
+        if (["x", "y", "size", "width", "height", "z_index"].includes(key)) t[key] = parseInt(val, 10) || 0;
         else if (["match_w_pct", "match_h_pct"].includes(key)) t[key] = Math.max(1, parseInt(val, 10) || 100);
         else if (["wrap", "overflow", "bold", "italic", "underline"].includes(key)) t[key] = !!val;
         else if (["content", "color", "align", "bg_color", "font_family", "match_w", "match_h"].includes(key)) t[key] = val ?? "";

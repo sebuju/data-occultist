@@ -1737,6 +1737,18 @@ function _frac9(code) {
 const _TN_HANDLES = [["nw", -1, -1], ["n", 0, -1], ["ne", 1, -1], ["e", 1, 0],
     ["se", 1, 1], ["s", 0, 1], ["sw", -1, 1], ["w", -1, 0]];
 
+// canonicalise a typed hex ("#abc" -> "#aabbcc", "abc123" -> "#abc123"); null = reject (not 3/6 hex)
+const normHex = (v) => { v = (v || "").trim().replace(/^#?/, "#"); if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase(); if (/^#[0-9a-fA-F]{3}$/.test(v)) return ("#" + v[1] + v[1] + v[2] + v[2] + v[3] + v[3]).toLowerCase(); return null; };
+// Wire a colorPair (native picker `cls` + linked hex text `cls`-hex) inside `root`, kept in sync:
+// edit either, the other follows; `apply(hex)` persists. Returns a setter that pushes a value into
+// both inputs (so a caller e.g. the border side-picker can repoint them).
+function bindColorPair(root, cls, apply) {
+    const c = root.querySelector(cls), tx = root.querySelector(cls + "-hex");
+    c?.addEventListener("input", () => { if (tx) tx.value = c.value; apply(c.value); });
+    tx?.addEventListener("change", () => { const n = normHex(tx.value); if (n) { c.value = n; tx.value = n; apply(n); } });
+    return (v) => { if (c) c.value = v || "#000000"; if (tx) tx.value = v || ""; };
+}
+
 function wireToastImage(sec, x, n) {
     const idx = +sec.dataset.i;
     const q = (s) => sec.querySelector(s);
@@ -1787,6 +1799,11 @@ function wireToastImage(sec, x, n) {
     const fixedLocal = (i, axis, stack) => {
         const t = texts()[i]; if (!t) return null;
         const ref = String((axis === "w" ? t.match_w : t.match_h) || "").trim();
+        if (ref === "image") {   // match the image canvas size on this axis, scaled by the percent
+            const base = axis === "w" ? nw() : nh();
+            const pct = (axis === "w" ? t.match_w_pct : t.match_h_pct) || 100;
+            return base ? Math.max(1, Math.round(base * pct / 100)) : null;
+        }
         if (/^-?\d+$/.test(ref)) {
             const j = +ref;
             if (j >= 0 && j < texts().length && j !== i && !stack.has(j)) {
@@ -1881,8 +1898,10 @@ function wireToastImage(sec, x, n) {
                         if (hx < 0) { nx = o.x + ux; nwd = Math.max(mn, o.w - ux); }
                         if (hy > 0) nhd = Math.max(mn, o.h + uy);
                         if (hy < 0) { ny = o.y + uy; nhd = Math.max(mn, o.h - uy); }
-                        if (hx) { setText(b.i, "x", nx); setText(b.i, "width", nwd); }
-                        if (hy) { setText(b.i, "y", ny); setText(b.i, "height", nhd); }
+                        // a matched axis is locked to the match target — dragging it must NOT write a
+                        // (dead, then persisted) width/height. Skip both x and size on a matched axis.
+                        if (hx && !t.match_w) { setText(b.i, "x", nx); setText(b.i, "width", nwd); }
+                        if (hy && !t.match_h) { setText(b.i, "y", ny); setText(b.i, "height", nhd); }
                         rafPaint();                          // local overlay only — no server render
                     },
                     onSettle: () => { syncGeomInputs(); commitEdit(true); } });
@@ -1917,6 +1936,10 @@ function wireToastImage(sec, x, n) {
             const spec = im();
             const el = q(".tn-img-preview");
             if (!el || !spec) return;   // render even when placement=none: the design stays visible
+            // Reserve the slot's height up front from the canvas size (img is width:100% + height:auto,
+            // so aspect-ratio fixes the height before/while the frame loads) — the box never collapses
+            // during the fetch or a swap, so nothing below it jumps. Matches the server's render aspect.
+            if (spec.width && spec.height) el.style.aspectRatio = `${spec.width} / ${spec.height}`;
             // Debounce collapses a burst into one request, but a render slower than the debounce
             // window lets several overlap. Tag each with a sequence id and, when a response lands,
             // drop it if a newer request has since started — the stale frame never overwrites the
@@ -1925,10 +1948,19 @@ function wireToastImage(sec, x, n) {
             const res = await api.toasts.previewImage(model.profile.name, spec);
             if (seq !== pvSeq) { if (res && res.url) URL.revokeObjectURL(res.url); return; }
             if (res && res.url) {
+                // Decode the new frame OFF-DOM first, then swap. Assigning el.src straight away blanks
+                // the on-screen <img> until the new blob decodes — a blank img collapses to height:0,
+                // so the whole node jerks down and back (layout shift). Pre-decoding warms the blob so
+                // the visible swap is instant, and we keep the OLD url alive until after the swap.
+                const pre = new Image();
+                pre.src = res.url;
+                try { await pre.decode(); } catch { /* superseded/aborted decode — swap anyway, load fires */ }
+                if (seq !== pvSeq) { URL.revokeObjectURL(res.url); return; }
+                const old = el._u;
                 curBoxes = res.boxes || [];
-                if (el._u) URL.revokeObjectURL(el._u);
                 el._u = res.url; el.src = res.url;
-                if (el.complete && el.naturalWidth) layoutBoxes();   // cached decode: lay out now
+                if (old) URL.revokeObjectURL(old);   // revoke the previous frame only after it's replaced
+                if (el.complete && el.naturalWidth) layoutBoxes();   // warmed decode: lay out now
             }
         }, 250);
     };
@@ -1950,11 +1982,28 @@ function wireToastImage(sec, x, n) {
     // deselects it — so the selection isn't stuck when you move on. Clicks inside this section
     // (preview/boxes/inspector/pick) are handled by their own wiring above, never here. The listener
     // self-removes once this section is torn down by a rebuild (its `sec` leaves the document).
+    // remember the last press so the focus-leave handler below can tell a genuine "left the editor"
+    // blur from one that merely lands on a non-focusable gap INSIDE the inspector (keep editing) or is
+    // a right-click (never deselects). This document-capture mousedown runs BEFORE the focusout it fires.
+    let downInInsp = false, downRight = false;
     const outsideDeselect = (ev) => {
         if (!document.contains(sec)) { document.removeEventListener("mousedown", outsideDeselect, true); return; }
+        downRight = ev.button !== 0;
+        downInInsp = !downRight && sec.contains(ev.target) && !!ev.target.closest?.(".tn-il-insp");
         if (ev.button === 0 && sel != null && !sec.contains(ev.target)) selectLine(null);
     };
     document.addEventListener("mousedown", outsideDeselect, true);
+    // The box overlay + guides reveal on `.tn-img:focus-within` (graph.css) — so the MOMENT focus
+    // leaves this section they visually disappear. The inspector is driven by `sel`, which a click on
+    // a non-focusable gap OUTSIDE the inspector (blurs the preview, doesn't reach outsideDeselect) never
+    // clears — box looks deselected while the inspector stays populated. Tie the two to ONE boundary:
+    // focus leaving the section IS a real deselect — but a gap-click still inside the inspector (mid
+    // edit) and any right-click must NOT trip it (relatedTarget is null for a non-focusable gap either
+    // way, so the recorded click target — not where focus landed — is what disambiguates).
+    sec.addEventListener("focusout", (ev) => {
+        if (downRight || downInInsp) return;
+        if (sel != null && !sec.contains(ev.relatedTarget)) selectLine(null);
+    });
     // keep the inspector's x/y/w/h number inputs in step with a model change from mouse/keyboard.
     const syncGeomInputs = () => {
         const t = texts()[sel]; if (!t) return;
@@ -1991,8 +2040,9 @@ function wireToastImage(sec, x, n) {
         const t = texts()[sel]; if (!t) return;
         const [ux, uy] = dir;
         if (e.shiftKey) {                           // resize — matches every box overlay's Shift+WASD
-            if (ux) setText(sel, "width", Math.max(1, (t.width || 0) + ux));
-            if (uy) setText(sel, "height", Math.max(1, (t.height || 0) + uy));
+            // a matched axis is locked to its match target — don't write a dead width/height on it.
+            if (ux && !t.match_w) setText(sel, "width", Math.max(1, (t.width || 0) + ux));
+            if (uy && !t.match_h) setText(sel, "height", Math.max(1, (t.height || 0) + uy));
         } else {                                    // move
             if (ux) setText(sel, "x", (t.x || 0) + ux);
             if (uy) setText(sel, "y", (t.y || 0) + uy);
@@ -2014,26 +2064,35 @@ function wireToastImage(sec, x, n) {
         }));
         line(".tn-il-content", "content"); line(".tn-il-x", "x"); line(".tn-il-y", "y");
         line(".tn-il-size", "size"); line(".tn-il-w", "width"); line(".tn-il-h", "height");
+        line(".tn-il-z", "z_index");   // stacking order — only affects paint order, so repreview (no box repaint)
+        // per-row reset: restore that row's field(s) to the element defaults, then reconcile the
+        // inspector + overlay in place (syncInspector repaints every control incl. border/anchor).
+        sec.querySelectorAll(".tn-il-rst").forEach((b) => b.addEventListener("click", () => {
+            if (sel == null) return;
+            model.resetToastImageTextRow(x.id, idx, sel, b.dataset.row);
+            syncInspector(sel); paintSel(); autosave(null); refreshPreview();
+        }));
         sec.querySelectorAll(".tn-il-wrap").forEach((el) => el.addEventListener("change", () => { setText(sel, "wrap", el.checked); autosave(null); refreshPreview(); }));
         sec.querySelectorAll(".tn-il-over").forEach((el) => el.addEventListener("change", () => { setText(sel, "overflow", el.checked); autosave(null); refreshPreview(); }));
+        sec.querySelectorAll(".tn-il-cond").forEach((el) => el.addEventListener("change", () => { setText(sel, "disable_if_empty", el.checked); autosave(null); refreshPreview(); }));
         // match this element's width / height to a sibling's resolved size ("" = own size), scaled by
         // the adjacent percent input (100 = full, 50 = half).
         // paintSel() gives the box overlay its new matched size instantly; the server re-render (text
         // re-fit) follows debounced. syncGeomInputs keeps the w/h number fields honest.
-        const matchEdit = (key, v) => { setText(sel, key, v); syncGeomInputs(); paintSel(); autosave(null); refreshPreview(); };
+        const matchEdit = (key, v) => {
+            setText(sel, key, v); syncGeomInputs(); paintSel(); autosave(null); refreshPreview();
+            // picking/clearing a match flips whether that axis's dimension input + percent are read —
+            // toggle their disabled state live (syncInspector does the same on the next reconcile).
+            if (key === "match_w") { const w = q(".tn-il-w"); if (w) w.disabled = !!v; const p = q(".tn-il-mwp"); if (p) p.disabled = !v; }
+            if (key === "match_h") { const hh = q(".tn-il-h"); if (hh) hh.disabled = !!v; const p = q(".tn-il-mhp"); if (p) p.disabled = !v; }
+        };
         sec.querySelector(".tn-il-mw")?.addEventListener("change", (e) => matchEdit("match_w", e.target.value));
         sec.querySelector(".tn-il-mh")?.addEventListener("change", (e) => matchEdit("match_h", e.target.value));
         sec.querySelector(".tn-il-mwp")?.addEventListener("input", (e) => matchEdit("match_w_pct", e.target.value));
         sec.querySelector(".tn-il-mhp")?.addEventListener("input", (e) => matchEdit("match_h_pct", e.target.value));
         // colour = native picker + linked hex text, kept in sync (edit either). Returns a bound
         // hex-setter so a caller (e.g. the border side-picker) can push a new value into both.
-        const normHex = (v) => { v = (v || "").trim().replace(/^#?/, "#"); if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase(); if (/^#[0-9a-fA-F]{3}$/.test(v)) return ("#" + v[1] + v[1] + v[2] + v[2] + v[3] + v[3]).toLowerCase(); return null; };
-        const cpair = (cls, apply) => {
-            const c = sec.querySelector(cls), tx = sec.querySelector(cls + "-hex");
-            c?.addEventListener("input", () => { if (tx) tx.value = c.value; apply(c.value); });
-            tx?.addEventListener("change", () => { const n = normHex(tx.value); if (n) { c.value = n; tx.value = n; apply(n); } });
-            return (v) => { if (c) c.value = v || "#000000"; if (tx) tx.value = v || ""; };
-        };
+        const cpair = (cls, apply) => bindColorPair(sec, cls, apply);
         const setTextColor = cpair(".tn-il-color", (v) => { setText(sel, "color", v); autosave(null); refreshPreview(); });
         const setBgColor = cpair(".tn-il-bg", (v) => { setText(sel, "bg_color", v); autosave(null); refreshPreview(); });
         // font family
@@ -2102,18 +2161,25 @@ function wireToastImage(sec, x, n) {
             setV(".tn-il-content", e.content || ""); setV(".tn-il-size", e.size ?? 20);
             setV(".tn-il-x", e.x ?? 0); setV(".tn-il-y", e.y ?? 0);
             setV(".tn-il-w", e.width || ""); setV(".tn-il-h", e.height || ""); setV(".tn-il-font", e.font_family || "");
+            setV(".tn-il-z", e.z_index ?? 0);
             const wr = insp.querySelector(".tn-il-wrap"); if (wr) wr.checked = e.wrap !== false;
             const ov = insp.querySelector(".tn-il-over"); if (ov) ov.checked = !!e.overflow;
+            const cd = insp.querySelector(".tn-il-cond"); if (cd) cd.checked = !!e.disable_if_empty;
             // rebuild each match select's sibling <option>s (self excluded), then set the current value
             const matchOpts = (cls, cur) => {
                 const s = insp.querySelector(cls); if (!s) return;
-                const opts = [h("option", { value: "" }, "—")];
+                const opts = [h("option", { value: "" }, "—"), h("option", { value: "image" }, "image")];
                 for (let k = 0; k < texts().length; k++) if (k !== j)
                     opts.push(h("option", { value: String(k) }, `${k + 1}: ${(texts()[k].content || "").trim() || "(empty)"}`));
                 s.replaceChildren(...opts); s.value = cur || "";
             };
             matchOpts(".tn-il-mw", e.match_w); matchOpts(".tn-il-mh", e.match_h);
             setV(".tn-il-mwp", e.match_w_pct ?? 100); setV(".tn-il-mhp", e.match_h_pct ?? 100);
+            // a match on an axis WINS over its own width/height (dimension input dead); a match-percent
+            // is inert with no match. Disable the inputs that aren't read, so nothing edits a dead value.
+            const dis = (cls, on) => { const el = insp.querySelector(cls); if (el) el.disabled = on; };
+            dis(".tn-il-w", !!e.match_w); dis(".tn-il-h", !!e.match_h);
+            dis(".tn-il-mwp", !e.match_w); dis(".tn-il-mhp", !e.match_h);
             insp.querySelectorAll(".tn-il-biu .tn-biu-b").forEach((b) => b.classList.toggle("on", !!e[b.dataset.k]));
             setTextColor(e.color || "#ffffff"); setBgColor(e.bg_color || "#000000");
             const acode = { left: "tl", center: "tc", right: "tr" }[e.align] || e.align || "tl";
@@ -2152,8 +2218,10 @@ function wireToastImage(sec, x, n) {
     q(".tn-img-del")?.addEventListener("click", () => { model.removeToastImage(x.id, idx); rebuildNode(n.id); autosave(null); });
     // scalar props (size + gradient colours/angle) — persist + repreview on input
     const scalar = (s, key) => q(s)?.addEventListener("input", (e) => { model.setToastImageProp(x.id, idx, key, e.target.value); autosave(null); refreshPreview(); });
-    scalar(".tn-img-w", "width"); scalar(".tn-img-h2", "height");
-    scalar(".tn-img-c1", "color1"); scalar(".tn-img-c2", "color2"); scalar(".tn-img-angle", "angle");
+    scalar(".tn-img-w", "width"); scalar(".tn-img-h2", "height"); scalar(".tn-img-angle", "angle");
+    // bg colours are colorPairs (picker + linked hex text) — edit either, kept in sync
+    const imgColor = (key) => (v) => { model.setToastImageProp(x.id, idx, key, v); autosave(null); refreshPreview(); };
+    bindColorPair(sec, ".tn-img-c1", imgColor("color1")); bindColorPair(sec, ".tn-img-c2", imgColor("color2"));
     // bg type flips which controls show (color2/angle) -> rebuild the node body, then repreview
     q(".tn-img-bgtype")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "bg_type", e.target.value); rebuildNode(n.id); autosave(null); });
     wireInspector();

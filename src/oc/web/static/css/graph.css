@@ -247,9 +247,12 @@
 /* preview + clickable box overlay share one positioned wrapper so the boxes line up over the img */
 /* border lives on the WRAPPER, not the img: the box/guide overlays are inset:0 of this wrapper, so
    putting a border on the img would shift the img content 1px inside the overlay origin (boxes drift). */
-.tn-img-pv { position: relative; align-self: center; width: 100%; line-height: 0; border-radius: 4px;
-    border: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
-.tn-img-preview { display: block; max-width: 100%; width: 100%; object-fit: contain; height: auto; border-radius: 4px; }
+.tn-img-pv { position: relative; align-self: center; width: 100%; line-height: 0;
+    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+    /* a dark toast-surface backdrop so a transparent-bg image previews as it will on the real toast
+       (opaque solid/gradient images cover this fully — no effect on them). */
+    background: linear-gradient(180deg, #2b2b2b, #202020); }
+.tn-img-preview { display: block; max-width: 100%; width: 100%; object-fit: contain; height: auto; }
 .tn-img-preview:not([src]) { display: none; }
 /* overlay sits exactly over the img (JS sizes it to the displayed img); only the boxes catch clicks */
 /* the box + guide overlays reveal only while the toast image is focused (click/tab into it), so the
@@ -308,9 +311,18 @@
 /* the leading label column is sized by the grid to the widest label (not a hardcoded width); tall
    rows keep the label at the top so a nine-grid's first row lines up with it. */
 .tn-il-ll { grid-column: 1; align-self: start; line-height: 22px; white-space: nowrap; }
-.tn-il-rc { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.tn-il-rc { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; position: relative; }
 .tn-il-rc input[type="number"] { flex: 0 0 3.5em; width: 3.5em; min-width: 0; font: inherit; font-size: 11px; }
 .tn-il-rc select { font: inherit; font-size: 11px; }
+/* per-row reset: sits at the row's right edge; faint until hovered so it doesn't compete with the
+   controls. Restores that row's field(s) to the element defaults (background reset drops the bg). */
+.tn-il-rc:not(:hover) > .tn-il-rst { visibility: hidden; }
+.tn-il-rst { margin-left: auto; flex: 0 0 auto; width: 20px; height: 20px; min-height: unset; padding: 0; cursor: pointer;
+    font-size: 12px; line-height: 1; background: none; opacity: .35; position: absolute; top: 0px; right: 0px; }
+.tn-il-rst:hover { opacity: 1; border-color: var(--nt); color: var(--nt); }
+/* a dimension/percent input goes disabled when its axis is match-driven (value isn't read) — grey it
+   out + not-allowed cursor so it reads as inert, matching the deselected (.tn-il-off) treatment. */
+.tn-il-insp input:disabled, .tn-il-insp select:disabled { opacity: .4; cursor: not-allowed; }
 /* the two match selects carry long "N: <element text>" options; cap them so the value ellipsises
    instead of stretching the row (both w + h share one row). */
 .gnode select.tn-il-mw, .gnode select.tn-il-mh { max-width: 6.5em; min-width: 0; }
@@ -334,8 +346,10 @@
 .tn-anch { display: flex; align-items: flex-start; gap: 8px; font-size: 10px; flex-wrap: wrap; }
 .tn-anch-to, .tn-il-pick { font: inherit; font-size: 11px; max-width: 12em; }
 .tn-anch-gl { display: inline-flex; align-items: flex-start; gap: 4px; margin: 5px 0px 0px 0px; }
-.tn-img-size, .tn-img-bg { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
-.tn-img-size input { width: 4em; }
+.tn-img-size { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
+.tn-img-bg { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }   /* two colorPairs (picker+hex) may not fit one line */
+.tn-img-bg .tn-cpair input[type="text"] { width: 5em; }   /* narrower hex so a solid bg fits one line */
+.tn-img-size input { width: 4em !important; }
 .tn-img-w, .tn-img-h2, .tn-img-angle { font: inherit; font-size: 11px; }
 .tn-img-angle-l { display: inline-flex; align-items: center; gap: 2px; }
 .tn-img-angle { width: 3.5em; }
@@ -452,7 +466,7 @@
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap; }
 .gnode input.gi { width: 100%; }
 .gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; border: unset; background: transparent; margin-left: -35px; padding-left: 35px;
-    cursor: inherit; }   /* click-to-arm: it's a drag handle until the 2nd click focuses it, so don't show the text I-beam until editing */
+    cursor: inherit; color: var(--nt); }   /* click-to-arm: it's a drag handle until the 2nd click focuses it, so don't show the text I-beam until editing */
 .gnode input.gi-id:focus { cursor: text; }
 input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gnode .big { font-size: var(--fs-xl); }
