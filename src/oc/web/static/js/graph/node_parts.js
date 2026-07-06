@@ -476,8 +476,8 @@ export function itemTellParts(n) {
             it.cutout ? h("canvas", { class: "tt-ref-canvas" }) : h("div", { class: "muted" }, "no cutout yet")),
         t.kind === "template" && kv("margin", h("input", { type: "number", class: "tset", dataset: { k: "margin" }, step: "0.05", min: "0", max: "1", value: t.margin ?? 0.25 }),
             { title: "search margin: how far the live crop grows beyond the box (per side, as a fraction of the box) so the saved image is found even when the located cell drifts a few px. 0 = match the exact box only." }),
-        kv("threshold", h("input", { type: "number", class: "tset", dataset: { k: "threshold" }, step: "0.05", min: "0", max: "1", value: t.threshold ?? 0.5 }),
-            { title: t.kind === "text" ? "pass score (0..1) the read-vs-text match must reach (when text is set)" : "pass score (0..1) the tell must reach" }),
+        kv("threshold", confMeter({ cls: "tset", k: "threshold", value: t.threshold ?? 0.5,
+            title: t.kind === "text" ? "pass score (0..1) the read-vs-text match must reach (when text is set)" : "pass score (0..1) the tell must reach" })),
         !staticOn && kv("locate", h("input", { type: "checkbox", class: "tloc", checked: !!t.locate }),
             { title: "use this tell to LOCATE rows (anchor the grid) — only one tell per item locates" }),
         (t.locate && !staticOn) && frag(
