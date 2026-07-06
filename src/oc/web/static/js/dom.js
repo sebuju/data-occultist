@@ -147,8 +147,8 @@ export const TRASH = () =>
 // (col 2). The ONE label-cell primitive -- EVERY node's k/v rows build on it so labels line up
 // in one column node-wide, and grid children are never naked text (rule: wrap all labels).
 // `top` pins the label for control cells that wrap to several lines.
-export const labCell = (label, title = "", top = false) =>
-    h("span", { class: "lab" + (top ? " lab-top" : ""), title: title || null }, label);
+export const labCell = (label, title = "", top = false, cls = "") =>
+    h("span", { class: "lab" + (top ? " lab-top" : "") + (cls ? " " + cls : ""), title: title || null }, label);
 
 // A k/v field row for the body grid: the wrapped label (col 1) + the control (col 2), emitted
 // as two DIRECT grid children (never a wrapping row element — that would break the shared
@@ -211,9 +211,22 @@ export const srcChip = (val, attrKey, rmCls, label = null) =>
     h("span", { class: "sv-input" }, label == null ? val : label,
         h("button", { class: `sv-rmin danger ${rmCls}`, dataset: { [attrKey]: val }, title: "remove" }, TRASH()));
 
-export const srcInputs = (chips, addCls, addOpts) =>
-    h("div", { class: "sv-inputs" }, chips,
-        h("span", { class: "sv-input sv-add" }, h("select", { class: `sv-addin ${addCls}` }, addOpts)));
+export const srcInputs = (chips, addCls, addOpts) => {
+    // the add-select shows only a "+" glyph (node-coloured, borderless via .sv-add); the caller's
+    // placeholder option text (e.g. "+ watch source") becomes the select's hover title so the
+    // context isn't lost. addOpts[0] is that placeholder option.
+    const sel = h("select", { class: `sv-addin ${addCls}` }, addOpts);
+    const ph = sel.firstElementChild;
+    if (ph) { sel.title = ph.textContent.replace(/^\+\s*/, "add "); ph.textContent = "+"; }
+    return h("div", { class: "sv-inputs" }, chips,
+        h("span", { class: "sv-input sv-add" }, sel));
+};
+
+// A wired-sources row: the pinned label (col 1) + a `.sv-inputs` pill list (col 2), as two grid
+// children. THE way to add a source-pill list to a node body (rule 7) — every srcInputs/sourcesInput
+// site builds on it. The label carries `.sv-lab` so graph.css aligns it to the first pill line
+// (defined once here, not detected per-site via a :has() selector). `inputs` is the built .sv-inputs.
+export const srcRow = (label, title, inputs) => frag(labCell(label, title, true, "sv-lab"), inputs);
 
 // Monochrome inline icons as node factories (fill = currentColor, sized to 1em) -- used
 // instead of colour emoji so icons match surrounding text colour. `.ic` aligns to baseline.

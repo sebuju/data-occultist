@@ -20,7 +20,9 @@ import { h, trashBtn } from "../dom.js";
 export function sourcesInput({ ids, free, addLabel = "+ source", rmCls = "sv-rmin", addinCls = "sv-addin", rmTitle = "remove input" }) {
     const chips = (ids || []).map((d) => h("span", { class: "sv-input" }, d,
         trashBtn({ cls: rmCls, dataset: { ds: d }, title: rmTitle })));
-    const addOpts = [h("option", { value: "" }, addLabel), (free || []).map((d) => h("option", { value: d }, d))];
+    // add-select shows only a "+" glyph; addLabel becomes the hover title (see srcInputs in dom.js).
+    const addOpts = [h("option", { value: "" }, "+"), (free || []).map((d) => h("option", { value: d }, d))];
     return h("div", { class: "sv-inputs" }, chips,
-        h("span", { class: "sv-input sv-add" }, h("select", { class: addinCls }, addOpts)));
+        h("span", { class: "sv-input sv-add" },
+            h("select", { class: addinCls, title: addLabel.replace(/^\+\s*/, "add ") }, addOpts)));
 }

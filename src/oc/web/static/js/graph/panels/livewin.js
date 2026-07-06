@@ -136,6 +136,7 @@ function mountLive(adapter) {
         const dbg = collapsible({ title: "OCR log", open: dbgOpen, headExtra: dbgClear, bodyClass: "live-dbg-body",
             headTitle: "per-tick OCR reads, corrections, and dataset writes (polls only while open)" });
         dbgChev = dbg.chev; dbgBody = dbg.body;
+        dbg.section.classList.toggle("live-dbg-open", dbgOpen);   // section flex-grows while open (CSS, no :has)
         dbg.body.append(
             h("div", { class: "live-dbg-empty muted" }, "waiting for reads…"),
             h("div", { class: "live-dbg-list" }));
@@ -213,6 +214,7 @@ function setStatsOpen(on) {
 function setDebugOpen(on) {
     dbgOpen = on;
     setCollapsed(dbgChev, dbgBody, on);
+    dbgBody.parentElement.classList.toggle("live-dbg-open", on);   // .clps section grows to fill (CSS, no :has)
     syncDebugPoll();
     fitLivePanelHeight();
 }

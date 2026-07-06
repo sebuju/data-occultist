@@ -10,7 +10,7 @@
 //   body  -> a Node or DocumentFragment
 //   ports -> a Node/frag or null (default null)
 //   pulse -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
-import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, labCell, btn, iconBtn, trashBtn } from "../dom.js";
+import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, srcRow, btn, iconBtn, trashBtn } from "../dom.js";
 import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
@@ -539,7 +539,7 @@ export function itemLists(it, w) {
         subhead("cell"),
         h("div", { class: "il-tools" }, cellBtns),
         cellSizeControls(it),
-        kv("terminator (ends the list)", h("input", { type: "checkbox", class: "iterm", checked: !!it.terminator }),
+        kv("terminator", h("input", { type: "checkbox", class: "iterm", checked: !!it.terminator }),
             { title: "terminator: when this template is detected it marks the END of the list — every record positioned after it is discarded (an unowned/'no more results' placeholder). Ordered scroll/mirror datasets only." }),
         subhead("tells"),
         h("div", { class: "il-tools" }, tellBtns),
@@ -794,9 +794,11 @@ export function nodeParts(n) {
                 slideToggle({ on: vtShowRemoved.get(r.ds) || false, cls: "vt-showrm", label: "removed", hidden: true, title: "show removed (no-longer-present) rows in the table + counts" })),
             body: frag(
                 h("div", { class: "nodehost scrollhost data-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+                // detail is placed BEFORE the list so flow.css can grow the list via a `.bat-detail:empty
+                // + .bat-list` adjacent-sibling rule (no :has()); CSS `order` puts the list back on top.
                 h("div", { class: "nodehost scrollhost bat-host" },
-                    h("ul", { class: "history bat-list" }, h("li", { class: "muted" }, "loading…")),
-                    h("div", { class: "bat-detail muted" }, "select a batch to see its events and what applying it changes"))),
+                    h("div", { class: "bat-detail muted" }, "select a batch to see its events and what applying it changes"),
+                    h("ul", { class: "history bat-list" }, h("li", { class: "muted" }, "loading…")))),
         };
     }
     if (n.type === "subset") return subsetParts(n.ref);
@@ -894,8 +896,8 @@ function dictFeedsEditor(dict) {
     // laid out like the subset/producer "sources" row: a labelled sources-input widget, its
     // per-source column blocks spanning below.
     return h("div", { class: "dict-feeds lab-grid" },
-        labCell("source", "datasets whose column values become terms", true),
-        sourcesInput({ ids: feeds.map((fd) => fd.dataset), free, rmTitle: "stop feeding from this dataset" }),
+        srcRow("source", "datasets whose column values become terms",
+            sourcesInput({ ids: feeds.map((fd) => fd.dataset), free, rmTitle: "stop feeding from this dataset" })),
         ...cols);
 }
 

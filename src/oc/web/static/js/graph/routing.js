@@ -419,6 +419,11 @@ function lineCrossesDragged(pts, aId, bId) {
 function drawEdges() {
     const svg = $("gedges"), top = $("gedges-top");
     const links = buildLinks();
+    // a selection dims every UNselected line (grayscale + near-transparent) so the selected
+    // node's own lines read at a glance; flag lives on the svg (no :has) — CSS keys off it.
+    const anySel = selectedNodeId != null || selected.size > 0;
+    svg.classList.toggle("sel-active", anySel);
+    top.classList.toggle("sel-active", anySel);
     drawSig = ROUTE.enabled ? linksSig(links) : "";   // change-gate: from the geometric facing ports
     // adopt the routed result's chosen faces/ports so the port dots + freshness check line up with
     // the painted path (the router, not the facing default, owns a routed line's endpoints).

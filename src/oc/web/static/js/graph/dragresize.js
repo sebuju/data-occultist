@@ -52,13 +52,20 @@ export function hideSizeHud() { if (_sizeHud) _sizeHud.style.display = "none"; }
 // not viewport space, so a viewport clamp would be meaningless there).
 export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onResizeStart = null, onSettle = null, snapEdge = null, onResetW = null, onResetH = null, screenClamp = false, margin = 0, bottomMargin = null } = {}) {
     if (el.querySelector(":scope > .rz-grip")) return;   // once only
-    el.classList.add("rz-host");   // marks the near-hover cluster parent (CSS :has reveals grips/dots)
+    el.classList.add("rz-host");   // marks the near-hover cluster parent
     const q = (v) => (snapGrid ? snapUp(v) : v);   // grid-step nodes (round up); panels resize smoothly
+    // Near-hover reveal (no CSS :has): entering a corner's grip or reset dot flags .rzc-r/.rzc-l on
+    // the host so that whole corner cluster (grip + its dots) fades in; leaving clears it.
+    const hoverCluster = (elm, corner) => {
+        elm.addEventListener("mouseenter", () => el.classList.add(`rzc-${corner}`));
+        elm.addEventListener("mouseleave", () => el.classList.remove(`rzc-${corner}`));
+    };
     for (const side of ["left", "right"]) {
         if (side === "left" && !left) continue;            // left grip needs a left-edge accessor
         const g = document.createElement("div");
         g.className = `rz-grip rz-${side[0]}grip`; g.title = "resize";
         el.appendChild(g);
+        hoverCluster(g, side[0]);
         g.addEventListener("mousedown", (ev) => {
             if (ev.button !== 0) return;   // left button only — right/middle never starts a resize
             ev.preventDefault(); ev.stopPropagation();
@@ -121,6 +128,7 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
         r.className = `rz-reset rz-reset-${axis} rz-reset-${corner}`;
         r.title = `reset ${axis === "w" ? "width" : "height"} (shift: both)`;
         el.appendChild(r);
+        hoverCluster(r, corner);
         r.addEventListener("mousedown", (ev) => { if (ev.button !== 0) return; ev.preventDefault(); ev.stopPropagation(); });   // left only: don't start a drag/resize; right-click keeps its menu + pans
         r.addEventListener("click", (ev) => {
             ev.preventDefault(); ev.stopPropagation();

@@ -6,7 +6,7 @@
 // + controls; joining/deriving is a view's job.
 import * as api from "../api.js";
 import { isOnline } from "../conn.js";
-import { h, frag, TRASH, labCell, kv, subhead, gspan, trashBtn } from "../dom.js";
+import { h, frag, TRASH, labCell, srcRow, kv, subhead, gspan, trashBtn } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
 import * as hub from "../hub.js";
 import { log } from "../log.js";
@@ -123,8 +123,7 @@ export function producerParts(pn, cols = [], free = []) {
     const isList = (spec.explode || []).length > 0;     // list mode: one fetch expanded into rows
     const hasSrc = (pn.sources || []).length;
     // item sources use the SHARED sources-input widget (rule 7 — same as subset joins / dict feeds).
-    const srcs = frag(
-        labCell("sources", "datasets/subsets whose item names to fetch", true),
+    const srcs = srcRow("sources", "datasets/subsets whose item names to fetch",
         sourcesInput({ ids: pn.sources || [], free, rmCls: "sv-rmin pr-rmsrc", addinCls: "sv-addin pr-addsrc",
             rmTitle: "stop fetching this source" }));
     // which source column names the item (only meaningful when sourcing from datasets/subsets).

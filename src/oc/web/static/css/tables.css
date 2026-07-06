@@ -14,11 +14,11 @@
    when hovering anywhere on the node/panel. Kept small so it doesn't swallow nearby content clicks. */
 .rz-grip::before, .rz-reset::before { content: ""; position: absolute; inset: -6px; }
 /* each bottom corner is its OWN cluster: that corner's grip + its two reset dots reveal together
-   when the cursor nears any of them (right corner keys off .rz-reset-r, left off .rz-reset-l).
-   `.rz-host` is set on every resizable node/panel in addResizeGrips, so this one rule set covers
-   both graph nodes and floating panels. */
-.rz-host:has(> :is(.rz-rgrip, .rz-reset-r):hover) > .rz-rgrip,
-.rz-host:has(> :is(.rz-lgrip, .rz-reset-l):hover) > .rz-lgrip { opacity: 0.5; }
+   when the cursor nears any of them. addResizeGrips (dragresize.js) toggles .rzc-r / .rzc-l on the
+   host on grip/dot mouseenter/leave (no :has() selector). `.rz-host` is set on every resizable
+   node/panel, so this one rule set covers both graph nodes and floating panels. */
+.rz-host.rzc-r > .rz-rgrip,
+.rz-host.rzc-l > .rz-lgrip { opacity: 0.5; }
 .rz-grip:hover { opacity: 1; }
 .rz-rgrip { right: 1px; cursor: nwse-resize;
     background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><g stroke='%238a93a3' stroke-width='1.4' stroke-linecap='round'><line x1='13' y1='9' x2='9' y2='13'/><line x1='13' y1='4' x2='4' y2='13'/></g></svg>"); }
@@ -29,7 +29,7 @@
    a single chevron pointing AT that edge, its tip touching the border, distinct from the grip's
    outward resize arrows. It's a CSS mask
    so `background-color` tints it (grey at rest, --accent on hover). Present (but invisible) once a
-   custom size exists so they can be hovered; the cluster :has rules below reveal on near-hover.
+   custom size exists so they can be hovered; the .rzc-r/.rzc-l cluster rules below reveal on near-hover.
    Shift-click either = both axes. */
 .rz-reset { position: absolute; width: 11px; height: 11px; z-index: 3; opacity: 0; cursor: pointer;
     background-color: #8a93a3; transition: opacity 0.12s, background-color 0.12s; display: none;
@@ -53,15 +53,15 @@
 .rz-reset-h.rz-reset-l { left: 20px; bottom: 0; }     /* flush against the bottom edge (touching) */
 /* the reset icons only exist once a custom size has been set (a node carries .has-size, a panel
    .fw-sized) — there's nothing to reset back to before then. Displayed (invisible) so near-hover
-   can reveal them; the cluster :has rules above raise their opacity. */
+   can reveal them; the .rzc-r/.rzc-l cluster rules above raise their opacity. */
 .gnode.has-size > .rz-reset, .floatwin.fw-sized:not(.collapsed) > .rz-reset { display: block; }
 /* per-axis: a reset is only useful when THAT axis carries a user-set size a reset would undo. The
    host marks each axis via .rz-has-w / .rz-has-h (node: nodeSizes.custW/H; panel: state.sized/
    userSized); an unmarked axis re-hides its control even though the whole node is sized. */
 .rz-host:not(.rz-has-w) > .rz-reset-w { display: none; }
 .rz-host:not(.rz-has-h) > .rz-reset-h { display: none; }
-.rz-host:has(> :is(.rz-rgrip, .rz-reset-r):hover) > .rz-reset-r,
-.rz-host:has(> :is(.rz-lgrip, .rz-reset-l):hover) > .rz-reset-l { opacity: 0.6; }
+.rz-host.rzc-r > .rz-reset-r,
+.rz-host.rzc-l > .rz-reset-l { opacity: 0.6; }
 .rz-reset:hover { opacity: 1; background-color: var(--accent); }
 
 /* ---- backups browser modal -------------------------------------------------- */

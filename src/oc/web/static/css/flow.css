@@ -130,17 +130,35 @@ a.node.win:hover { border-color: var(--accent); }
 .gn-h .collapse { opacity: 1; }   /* collapse caret stays visible at rest — it's a primary toggle, not a hover-only action */
 .sub-sec { margin-top: 6px; }
 .sub-cfg > .sub-sec:first-child { margin-top: 0; }
-.sub-lbl { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; }
+.sub-lbl { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; justify-content: space-between; }
+/* filters/columns/sort/visible ride the node's ONE lab-grid: the label (with its + button) is a
+   col-1 cell, its rows/toggles fill col 2 — aligned with sources/limit/latest above them. */
+.lab-grid > .sub-lbl { margin-bottom: 0; align-self: start; }
+.lab-grid > .sub-rows, .lab-grid > .sv-hides { min-width: 0; align-self: start; }
+.sub-rows > .sub-row:first-child { margin-top: 0; }
 .sub-empty { font-size: var(--fs-sm); padding: 1px 2px; }
-/* + buttons now sit inline after the section label — sized to the label height, not a wide row */
-.sub-addf, .sub-addd, .sub-adds { padding: 0 7px; font-size: var(--fs-sm); width: 16px; height: 16px; min-height: unset; }
+/* + buttons sit inline after the section label — bare "+" glyph tinted the node colour (--nt),
+   no button chrome (border/background), sized to the label height. */
+.sub-addf, .sub-addd, .sub-adds {
+    background: transparent; border: 0; padding: 0; min-height: unset;
+    width: 16px; height: 16px; line-height: 1; font-size: 16px;
+    color: var(--nt, var(--accent)); cursor: pointer; opacity: .7; }
+.sub-addf:hover, .sub-addd:hover, .sub-adds:hover { opacity: 1; }
 /* per-source join worked example: raw value -> normalised, reflecting the knobs above it */
-.sv-norm-eg { font-size: var(--fs-sm); color: var(--muted); margin-top: 4px; word-break: break-word; }
+.sv-norm-eg { font-size: var(--fs-sm); color: var(--muted); margin-left: 4px; word-break: break-word; align-self: start; }
+.sv-norm-eg .eg-arrow { color: var(--nt, var(--accent)); }
+.sv-norm-eg.clickable { cursor: pointer; }
+/* "example" label centres on the worked-example's first line: match the control's 4px top offset */
+.lab-grid > .lab.eg-lab { align-self: start; }
+/* "visible" label centres on the FIRST toggle row (buttons are taller than the label's text line) */
+.lab-grid > .lab.vis-lab { align-self: start; }
 .sv-hides { display: flex; flex-wrap: wrap; gap: 4px; }
-.sv-hide { font-size: var(--fs-sm); padding: 1px 6px; }
+/* visible toggles carry the node colour (--nt) like the source pills — tinted fill + outline */
+.sv-hide { font-size: var(--fs-sm); padding: 2px 8px; min-height: unset; border-radius: 10px;
+    background: color-mix(in oklab, var(--nt, var(--accent)) 14%, transparent);
+    color: #fff; }
 .sv-hide.off { opacity: 0.5; text-decoration: line-through; }
 .sub-row { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
-.sub-row:hover { filter: brightness(1.25); background-color: #ffffff12; }
 .sub-row select, .sub-row input { min-width: 0; }
 .sub-row select { max-width: 140px; }
 .sub-row .sf-val, .sub-row .sd-tpl, .sub-row .sd-name { flex: 1 1 0; }
@@ -150,24 +168,33 @@ a.node.win:hover { border-color: var(--accent); }
 .sub-row .ss-field { flex: 1 1 0; max-width: none; }
 /* the view's sources/join-on/limit/many-> rows now build on the shared `.lab-grid` primitive
    (graph.css) instead of a per-row `.sub-row .flab` — labels line up in col 1, inputs fill col 2. */
-.sub-row button.danger { flex: 0 0 auto; padding: 0 6px; }
+.sub-row button.danger, .sub-row .btn-trash { flex: 0 0 auto; padding: 0; }
 .sub-row > span.muted { align-self: center; }
 .sub-row > select:is(.ss-dir, .sf-op) { width: fit-content; }
 .sv-inputs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; align-items: center; }
-.sv-input { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 7px; box-sizing: border-box;
+.sv-input { position: relative; display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; box-sizing: border-box;
     min-height: 22px;   /* pin chip + add-select to one height so the select's UA min never makes them differ */
-    background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 10px; font-size: var(--fs-sm); word-break: break-all;}
+    background: color-mix(in oklab, var(--nt, var(--accent)) 14%, transparent); color: #fff;
+    border-radius: 10px; font-size: var(--fs-sm); word-break: break-all;}
 /* the remove button lives INSIDE the pill — the pill supplies the outline, so the button is a
    borderless glyph (no box-shadow ring, no border), even though it carries .btn-trash. The .gnode
-   prefix out-specifies the node trash rule (.gnode .btn-trash) that would otherwise ring it. */
-.sv-input .sv-rmin { padding: 0 3px; min-height: 0; }
-.gnode .sv-input .sv-rmin { background: transparent; color: var(--danger); border: 0; box-shadow: none; }
-.gnode .sv-input .sv-rmin:hover:not(:disabled) { background: transparent; color: var(--danger); filter: brightness(1.3); }
+   prefix out-specifies the node trash rule (.gnode .btn-trash) that would otherwise ring it.
+   It's HOVER-ONLY and ABSOLUTELY placed over the pill's right end, so it neither widens the pill
+   nor shifts the layout when it appears; a node-tint gradient fades the text out beneath it. */
+.gnode .sv-input .sv-rmin {
+    position: absolute; top: 0; right: 0; height: 100%; padding: 0 4px 0 12px; min-height: 0;
+    display: inline-flex; align-items: center; visibility: hidden; border-radius: 0 10px 10px 0;
+    background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--nt, var(--accent)) 14%, var(--panel)) 45%);
+    color: var(--danger); border: 0; box-shadow: none; }
+.gnode .sv-input:hover .sv-rmin { visibility: visible; }
+.gnode .sv-input .sv-rmin:hover:not(:disabled) { color: var(--danger); filter: brightness(1.3); }
 /* the "+ join source" add control is a pill like the source pills; the select inside is
    borderless/transparent so the pill (.sv-input) supplies the look */
-.sv-add { padding: 0; overflow: hidden; }
-.sv-add .sv-addin { max-width: 150px; border: 0; background: transparent; color: var(--text);
-    font-size: var(--fs-sm); padding: 1px 7px; cursor: pointer;
+/* the add control is a plain "+" glyph, not a pill: drop the .sv-input border/fill so only the
+   node-coloured "+" shows. */
+.sv-add { padding: 0; overflow: hidden; border: 0; background: transparent; }
+.gnode .sv-add .sv-addin { max-width: 150px; border: 0; background: transparent; color: var(--nt, var(--accent));
+    font-weight: 700; font-size: calc(var(--fs-sm) + 2px); line-height: 1; padding: 1px 6px; cursor: pointer;
     appearance: none; -webkit-appearance: none;   /* drop the native dropdown caret — the pill is the affordance */
     field-sizing: content;   /* size to the SELECTED text ("+ source…"), not the widest option */
     align-self: stretch; min-height: 0; box-sizing: border-box; }   /* fill the pill, drop the select UA min-height */
@@ -184,15 +211,17 @@ a.node.win:hover { border-color: var(--accent); }
     border: 0; border-radius: 6px; padding: 6px; }
 /* batches sub-layout: ledger list on top, selected-batch contents + preview below */
 .bat-host { display: flex; flex-direction: column; gap: 8px; }   /* fills the node (see .nodehost) */
-.bat-list { max-height: 45%; overflow: auto; flex: 0 0 auto; }
+.bat-list { max-height: 45%; overflow: auto; flex: 0 0 auto; order: 1; }
 /* no batch selected -> .bat-detail is empty (display:none above): drop the 45% cap and let the
-   list grow into the freed space instead of leaving the bottom of the node blank */
-.bat-host:has(.bat-detail:empty) .bat-list { max-height: 100%; flex: 1 1 auto; }
+   list grow into the freed space instead of leaving the bottom of the node blank. The detail is
+   FIRST in the DOM (see node_parts bat-host template) purely so this adjacent-sibling rule can
+   reach the list without :has(); `order` restores the visual order (list on top, detail below). */
+.bat-detail:empty + .bat-list { max-height: 100%; flex: 1 1 auto; }
 .bat-list .batrow { cursor: pointer; flex-wrap: nowrap; }
 .batmeta { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bat-list .batrow.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .bat-list .batrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.bat-detail { border-top: 1px solid var(--line); padding-top: 6px; overflow: auto; flex: 1 1 auto; min-height: 0; }
+.bat-detail { border-top: 1px solid var(--line); padding-top: 6px; overflow: auto; flex: 1 1 auto; min-height: 0; order: 2; }
 .bat-detail:empty { display: none; }   /* hidden entirely when no batch is selected — no divider, no reserved flex space */
 .bat-detail .ds-h { margin: 8px 0 4px; }
 /* no batches yet: don't render a tall empty bordered box (its side borders read as two lines) */
