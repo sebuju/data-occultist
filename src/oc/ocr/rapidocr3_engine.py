@@ -34,6 +34,7 @@ from ..interfaces import OcrEngine
 from ..registry import register_ocr
 from ..types import OcrLine
 from .cuda import patch_arena_shrinkage, register_cuda_dlls
+from .directml import patch_dml_provider_cfg
 from .rapidocr3_map import join_rec, to_lines, to_params
 from .serialize import OCR_LOCK as _INFER_LOCK
 
@@ -218,6 +219,23 @@ class Rapid3OcrEngine(OcrEngine):
         # readout / kill-GPU button reflect real CUDA use, not just the device flag.
         return self._engine is not None and self._gpu and self.cuda_capable
 
+    @property
+    def dml_requested(self) -> bool:
+        """settings.yaml asked for the DirectML EP (use_dml) AND this really is the
+        onnxruntime-directml build — how OCR runs on a non-NVIDIA GPU (e.g. an idle iGPU
+        off the game's card). False under the CUDA/CPU builds, where use_dml is a no-op
+        (the shared settings.yaml carries it either way), so the UI never mislabels CUDA
+        as DirectML."""
+        from .directml import dml_available
+        return bool(self._options.get("EngineConfig.onnxruntime.use_dml")) and dml_available()
+
+    @property
+    def dml_active(self) -> bool:
+        # DML session actually loaded (an engine built + DML configured & available).
+        # Distinct from gpu_active (CUDA) — DML runs while the device flag is 'cpu', so the
+        # readout would otherwise call the iGPU "cpu".
+        return self._engine is not None and self.dml_requested
+
     def set_device(self, gpu: bool) -> None:
         """Switch CPU<->GPU at runtime. Rebuilds the model on next use."""
         gpu = bool(gpu)
@@ -245,6 +263,12 @@ class Rapid3OcrEngine(OcrEngine):
                     from rapidocr import RapidOCR
 
                     params = to_params(self._options, gpu=self._gpu)
+                    if params.get("EngineConfig.onnxruntime.use_dml"):
+                        # DirectML path (non-NVIDIA GPU, e.g. an idle iGPU off the game's
+                        # card). Without this, rapidocr hands ORT a raw DictConfig for the
+                        # DML EP options and session creation silently falls back to CPU —
+                        # a pinned dml_ep_cfg.device_id would never reach the adapter.
+                        patch_dml_provider_cfg()
                     if self._gpu:
                         # v3 exposes no RunOptions hook, so the CUDA arena would ratchet
                         # VRAM upward every read (varied crop widths = new shapes, never

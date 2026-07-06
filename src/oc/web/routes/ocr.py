@@ -122,6 +122,12 @@ def _state() -> dict:
             # the UI greys out GPU/Auto when False, since the device switch is a no-op there.
             "cuda_capable": bool(getattr(ocr, "cuda_capable", True)),
             "gpu_active": bool(getattr(ocr, "gpu_active", False)),
+            # DirectML session live (OCR on a non-NVIDIA GPU, e.g. the iGPU). Separate from
+            # gpu_active/CUDA and runs while the device flag is 'cpu', so the UI must read
+            # this to avoid labelling the iGPU "cpu". dml_requested = configured but the
+            # session may not be built yet (lazy) — lets the UI say "DirectML" while idle.
+            "dml_active": bool(getattr(ocr, "dml_active", False)),
+            "dml_requested": bool(getattr(ocr, "dml_requested", False)),
             # This process's dedicated VRAM (bytes; None = unreadable). With a GPU
             # session loaded that is effectively the OCR's footprint.
             "gpu_mem": process_gpu_mem(),

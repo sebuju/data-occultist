@@ -27,6 +27,12 @@ ocr:                # oc.ocr.*          -> reads text from regions
     # polite; the same option caps openvino's pool when that engine is selected.
     intra_op_num_threads: 2
     inter_op_num_threads: 1
+    # THROWAWAY TEST: run OCR on the idle AMD 7600X iGPU via DirectML so it never
+    # contends with the game's dGPU/CPU. Needs the .venv-dml venv (onnxruntime-directml).
+    # Under the CUDA .venv this is a harmless no-op (no DmlExecutionProvider present).
+    # device_id 1 = AMD iGPU (DXGI EnumAdapters order; 0 = RTX 3070 Ti). Revert: git checkout.
+    EngineConfig.onnxruntime.use_dml: true
+    EngineConfig.onnxruntime.dml_ep_cfg.device_id: "1"   # STRING: DML EP rejects int option values
 classifier: detect  # oc.detect.*       -> decides window + state
 corrector: rapidfuzz  # oc.learn.*      -> fuzzy-corrects uncertain OCR
 notifier: windows   # oc.notify.*       -> raises OS toasts on trigger fire (windows =
