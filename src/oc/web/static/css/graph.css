@@ -140,7 +140,7 @@
 }
 /* the value now carries the primary text colour (it's the content, not chrome); the .flab/.lab
    labels stay muted, so each row reads "muted key -> bright value" like the preview's k/v grid */
-.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select) { color: var(--text); }
+.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select) { color: var(--nt); }
 /* strip the native <select> chrome so its value text starts exactly at our padding-left (a native
    select insets the text a few px past its padding, so it sat right of plain inputs in the same
    column). Supply our own chevron on the right; the text now lines up with every input. */
@@ -300,7 +300,7 @@
 /* bold / italic / underline toggles */
 .tn-biu { display: inline-flex; gap: 2px; }
 .tn-biu-b { width: 22px; font-size: 11px; cursor: pointer; padding: 0; border-radius: 3px;
-    border: 1px solid color-mix(in srgb, currentColor 25%, transparent); background: none; }
+    border: 1px solid color-mix(in oklab, var(--nt) 45%, var(--line)); background: color-mix(in oklab, var(--nt) 8%, transparent); }
 .tn-biu-b:nth-child(1) { font-weight: 700; }
 .tn-biu-b:nth-child(2) { font-style: italic; }
 .tn-biu-b:nth-child(3) { text-decoration: underline; }
@@ -373,7 +373,7 @@
 .tn-il-del { cursor: pointer; flex: 0 0 auto; margin-left: auto; }
 .tn-il-empty { padding: 6px; font-size: 11px; }
 .tn-il-content { width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; resize: vertical; min-height: 22px; }
-.gnode .tn-il-content { border-color: var(--line) !important; padding: 1px 4px !important; }
+.gnode .tn-il-content { border-color: var(--line) !important; padding: 1px 4px !important; color: var(--nt); }
 /* icon row: the show-icon toggle sits left of the icon path input */
 .tn-icon-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tn-icon-row .tn-icon { flex: 1; min-width: 0; }
@@ -436,6 +436,7 @@
 .gnode .gn-body, .gnode .gn-foot { cursor: default; }
 .gnode input:not([type="checkbox"], [type="color"]), .gnode textarea, .gnode [contenteditable="true"] { cursor: text; }
 .gnode button, .gnode select, .gnode a, .gnode .collapse, .gnode .port, .gnode .gn-enable, input[type="checkbox"] { cursor: pointer; }
+.gnode button { color: var(--nt); background: color-mix(in srgb, var(--nt) 12%, transparent); }
 .gnode .scrollhost, .gnode .nodehost, .gnode .canvas-wrap, .gnode table { cursor: auto; }
 .glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; overflow: hidden; }
 .glab input { margin-top: 2px; }
