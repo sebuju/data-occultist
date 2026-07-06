@@ -613,7 +613,7 @@ windows:
     text: rewards
     tolerance: 32
     width: 0.0
-    threshold: 0.8
+    threshold: 0.75
     match: partial
     case_sensitive: false
     min_chars: 0
@@ -2284,7 +2284,7 @@ layout:
       custW: true
       custH: false
     ds:relics_offered:
-      x: 2120.0
+      x: 2140.0
       y: 1240.0
       collapsed: false
     ds:mods:
@@ -2312,9 +2312,13 @@ layout:
       custW: true
       custH: false
     sb:equipment_window:scrollbar:
-      x: -1700.0
+      x: -1720.0
       y: 940.0
+      w: 240.0
+      h: 260.0
       collapsed: false
+      custW: true
+      custH: true
     item:equipment_window:arcane:
       x: -2980.0
       y: 1420.0
@@ -2324,9 +2328,13 @@ layout:
       y: 320.0
       collapsed: false
     det:equipment_window:detect_1:
-      x: -1700.0
+      x: -1720.0
       y: 640.0
+      w: 240.0
+      h: 260.0
       collapsed: false
+      custW: false
+      custH: false
     item:mod_window:drop_item:
       x: -2980.0
       y: 3760.0
@@ -2490,9 +2498,13 @@ layout:
     sb:relic_refinement:scrollbar:
       x: -100.0
       y: 980.0
+      w: 240.0
+      h: 920.0
       collapsed: false
+      custW: true
+      custH: false
     item:relic_refinement:relic_item:
-      x: 1600.0
+      x: 1620.0
       y: 300.0
       collapsed: false
     fld:relic_refinement:relic_item:name:
@@ -2504,40 +2516,56 @@ layout:
       custW: true
       custH: false
     win:relic_rewards:
-      x: 2120.0
+      x: 2140.0
       y: 300.0
       collapsed: false
     item:relic_rewards:item_1:
-      x: 3620.0
+      x: 3640.0
       y: 300.0
       collapsed: false
     fld:relic_rewards:item_1:name:
-      x: 3260.0
+      x: 3280.0
       y: 300.0
       collapsed: false
     det:relic_rewards:detect_h:
-      x: 2680.0
+      x: 2700.0
       y: 300.0
+      w: 240.0
+      h: 280.0
       collapsed: false
+      custW: false
+      custH: true
     det:relic_select:detect_h:
       x: -100.0
       y: 2740.0
-      collapsed: false
-    det:relic_refinement:detect_h:
-      x: -100.0
-      y: 300.0
-      collapsed: false
-    det:mod_window:detect_h:
-      x: -1720.0
-      y: 2740.0
-      collapsed: false
-    det:equipment_window:detect_h:
-      x: -1700.0
-      y: 320.0
-      w: 200.0
+      w: 240.0
       h: 280.0
       collapsed: false
       custW: true
+      custH: false
+    det:relic_refinement:detect_h:
+      x: -100.0
+      y: 300.0
+      w: 240.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: false
+    det:mod_window:detect_h:
+      x: -1720.0
+      y: 2740.0
+      w: 240.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: false
+    det:equipment_window:detect_h:
+      x: -1720.0
+      y: 320.0
+      w: 240.0
+      h: 289.0
+      collapsed: false
+      custW: false
       custH: false
     prev:relic_refinement:
       x: -660.0
@@ -2586,13 +2614,17 @@ layout:
     det:relic_refinement:detect_1:
       x: -100.0
       y: 680.0
+      w: 240.0
+      h: 260.0
       collapsed: false
+      custW: false
+      custH: false
     ds:relics_select:
       x: -660.0
       y: 4220.0
       collapsed: false
     vt:ds:relics_offered:
-      x: 2520.0
+      x: 2540.0
       y: 1240.0
       w: 560.0
       h: 480.0
@@ -2680,7 +2712,7 @@ layout:
       custW: true
       custH: true
     prev:relic_rewards:
-      x: 2680.0
+      x: 2700.0
       y: 780.0
       w: 500.0
       h: 320.0
@@ -2726,7 +2758,11 @@ layout:
     fld:relic_refinement:relic_item:count:
       x: 880.0
       y: 300.0
+      w: 320.0
+      h: 360.0
       collapsed: false
+      custW: false
+      custH: true
     win:game:
       x: -2640.0
       y: -2200.0
@@ -2828,11 +2864,11 @@ layout:
       y: -2220.0
       collapsed: false
     win:mission_rewards:
-      x: 2140.0
+      x: 2160.0
       y: 1880.0
       collapsed: false
     ds:mission_rewards:
-      x: 2760.0
+      x: 2780.0
       y: 2860.0
       collapsed: false
   tables:

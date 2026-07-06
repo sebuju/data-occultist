@@ -714,7 +714,7 @@ export function nodeParts(n) {
                     { title: "text = OCR a label (costs OCR); color/border = cheap pixel check (no OCR — use these for the live-mode gate)" }),
                 kind === "text" ? textBody : kind === "template"
                     ? h("div", { class: "muted" }, "template image (set on the box)") : colorBody,
-                kv("threshold", h("input", { type: "number", class: "aset", dataset: { k: "thr" }, step: "0.05", min: "0", max: "1", value: a.threshold ?? 0.8 })),
+                kv("threshold", confMeter({ cls: "aset", k: "thr", value: a.threshold ?? 0.8, title: "pass score (0..1) the detector must reach. Drag the bar to set it." })),
                 h("div", { class: "detect-status muted" },
                     h("div", { class: "ds-verdict" }, "◯ —"),
                     h("div", { class: "ds-line ds-before", hidden: true }),
