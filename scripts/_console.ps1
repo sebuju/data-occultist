@@ -5,6 +5,18 @@
 # "<-[32mINFO<-[0m" in legacy conhost. PowerShell's own Write-Host colors use the
 # console color API and work without this; uvicorn (and most CLIs) emit ANSI and need it.
 
+function Resolve-VenvScripts {
+    # Return the venv's Scripts dir to launch from, so one launcher can target either
+    # the default CUDA venv (.venv) or the DirectML venv (.venv-dml, OCR on an iGPU off
+    # the game's card). $Venv is a name (.venv-dml), a relative path, or absolute; blank
+    # means the default. The caller Tests-Path the exe/python inside and falls back to
+    # PATH python when the venv is absent, so a fresh checkout still runs.
+    param([string]$Root, [string]$Venv = ".venv")
+    if (-not $Venv) { $Venv = ".venv" }
+    $dir = if ([System.IO.Path]::IsPathRooted($Venv)) { $Venv } else { Join-Path $Root $Venv }
+    return (Join-Path $dir "Scripts")
+}
+
 function Enable-AnsiColors {
     # Persistent fix: tell conhost to enable VT for every NEW console at creation time
     # (HKCU, user scope, reversible). This is what actually survives the

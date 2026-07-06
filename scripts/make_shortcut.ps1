@@ -1,8 +1,10 @@
-# make_shortcut.ps1 - (re)create the data-occultist app shortcut (.lnk) without a full reinstall.
+# make_shortcut.ps1 - (re)create the data-occultist app shortcuts (.lnk) without a full reinstall.
 #
-# Drops data-occultist.lnk in the repo root, on the Desktop, and in the Start menu
-# (target: .venv\Scripts\pythonw.exe -m oc.desktop_main, icon: assets\data-occultist.ico).
-# This is the bat-free replacement for #app.bat - double-click the .lnk to launch the app.
+# Drops "data-occultist (cuda).lnk" and "data-occultist (igpu).lnk" in the repo root, on the
+# Desktop, and in the Start menu (target: <venv>\Scripts\pythonw.exe -m oc.desktop_main, icon:
+# assets\data-occultist.ico). (cuda) launches from .venv; (igpu) from .venv-dml (DirectML OCR
+# on a non-NVIDIA GPU) and is only made when that venv exists. Removes the old un-suffixed
+# data-occultist.lnk. Bat-free replacement for #app.bat - double-click a .lnk to launch.
 #
 #     powershell -ExecutionPolicy Bypass -File scripts\make_shortcut.ps1
 

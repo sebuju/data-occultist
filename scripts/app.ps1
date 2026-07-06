@@ -4,11 +4,22 @@
 # shortcut and `data-occultist app` (both call oc.desktop_main.run_release).
 #
 #     powershell -ExecutionPolicy Bypass -File scripts\app.ps1
+#     powershell -ExecutionPolicy Bypass -File scripts\app.ps1 -Dml   # OCR on the iGPU
+#
+# -Venv / -Dml pick the virtualenv (default .venv); -Dml = .venv-dml (DirectML, iGPU OCR).
+
+param(
+    [string]$Venv = '.venv',
+    [switch]$Dml
+)
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_console.ps1')          # Resolve-VenvScripts
 $root = Split-Path -Parent $PSScriptRoot            # repo root (parent of scripts\)
-$pyw  = Join-Path $root '.venv\Scripts\pythonw.exe' # no-console python
-$py   = Join-Path $root '.venv\Scripts\python.exe'  # fallback (a console will show)
+if ($Dml) { $Venv = '.venv-dml' }
+$scripts = Resolve-VenvScripts $root $Venv
+$pyw  = Join-Path $scripts 'pythonw.exe'            # no-console python
+$py   = Join-Path $scripts 'python.exe'             # fallback (a console will show)
 
 if (Test-Path $pyw) {
     Start-Process -FilePath $pyw -ArgumentList '-m', 'oc.desktop_main' -WorkingDirectory $root

@@ -7,18 +7,29 @@
   a fresh OCR engine. Stop the supervisor with Ctrl+C (or close the window).
 
       powershell -ExecutionPolicy Bypass -File scripts\serve.ps1
+      powershell -ExecutionPolicy Bypass -File scripts\serve.ps1 -Dml   # OCR on the iGPU
+
+  -Venv picks which virtualenv to launch (default .venv = CUDA/CPU). -Dml is sugar for
+  -Venv .venv-dml, the DirectML build that runs OCR on a non-NVIDIA GPU (e.g. the idle
+  iGPU) so it never contends with the game's card. Both read the same settings.yaml; the
+  installed onnxruntime build decides which path actually runs (use_dml is a no-op under
+  the CUDA venv).
 #>
 
 param(
     [int]$Port = 8000,
-    [string]$BindHost = "127.0.0.1"
+    [string]$BindHost = "127.0.0.1",
+    [string]$Venv = ".venv",
+    [switch]$Dml
 )
 
 $ErrorActionPreference = "SilentlyContinue"
 . (Join-Path $PSScriptRoot '_console.ps1'); Enable-AnsiColors   # render uvicorn's ANSI colors
 $root = Split-Path -Parent $PSScriptRoot           # repo root (parent of scripts\)
-$oc = Join-Path $root ".venv\Scripts\data-occultist.exe" # the `data-occultist` console script (has `serve`)
-$py = Join-Path $root ".venv\Scripts\python.exe"
+if ($Dml) { $Venv = ".venv-dml" }                  # sugar: OCR on the iGPU via DirectML
+$scripts = Resolve-VenvScripts $root $Venv
+$oc = Join-Path $scripts "data-occultist.exe"      # the `data-occultist` console script (has `serve`)
+$py = Join-Path $scripts "python.exe"
 if (-not (Test-Path $py)) { $py = "python" }
 
 function Test-ServerUp {
@@ -53,7 +64,7 @@ function Start-Server {
     }
 }
 
-Write-Host ("[serve] supervising {0}:{1}" -f $BindHost, $Port)
+Write-Host ("[serve] supervising {0}:{1} (venv {2})" -f $BindHost, $Port, $Venv)
 $fails = 0
 while ($true) {
     if (Test-ServerUp) { Start-Sleep -Seconds 3; $fails = 0; continue }   # already running -> watch

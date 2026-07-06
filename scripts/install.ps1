@@ -122,11 +122,16 @@ function Install-Winget($id, $label, $url, [switch]$Machine) {
 }
 
 function New-AppShortcut {
-  $pyw = Join-Path $venv 'Scripts\pythonw.exe'
+  # One shortcut per installed venv: (cuda) launches from .venv (CUDA/CPU OCR), (igpu) from
+  # .venv-dml (OCR on a non-NVIDIA GPU via DirectML, e.g. the iGPU, off the game's card). A
+  # variant whose venv is absent is skipped, so a CUDA-only box still gets the (cuda) shortcut.
   $ico = Join-Path $root 'assets\data-occultist.ico'
-  if (-not (Test-Path $pyw)) { return }
+  $variants = @(
+    @{ Suffix = 'cuda'; Venv = '.venv';     Desc = 'data-occultist - CUDA/CPU OCR' },
+    @{ Suffix = 'igpu'; Venv = '.venv-dml'; Desc = 'data-occultist - iGPU OCR (DirectML)' }
+  )
   $dirs = @(
-    $root,                                          # repo-root data-occultist.lnk (replaces #app.bat)
+    $root,                                          # repo-root .lnk (replaces #app.bat)
     [Environment]::GetFolderPath('Desktop'),
     (Join-Path ([Environment]::GetFolderPath('Programs')) 'data-occultist')
   )
@@ -134,16 +139,25 @@ function New-AppShortcut {
   $made = @()
   foreach ($d in $dirs) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
-    $lnk = $ws.CreateShortcut((Join-Path $d 'data-occultist.lnk'))
-    $lnk.TargetPath = $pyw
-    $lnk.Arguments = '-m oc.desktop_main'
-    $lnk.WorkingDirectory = $root
-    if (Test-Path $ico) { $lnk.IconLocation = $ico }
-    $lnk.Description = 'data-occultist (desktop)'
-    $lnk.Save()
-    $made += $d
+    # drop the old single, un-suffixed shortcut so it doesn't linger beside the new pair
+    $stale = Join-Path $d 'data-occultist.lnk'
+    if (Test-Path $stale) { Remove-Item $stale -Force -ErrorAction SilentlyContinue }
+    foreach ($v in $variants) {
+      $pyw = Join-Path $root (Join-Path $v.Venv 'Scripts\pythonw.exe')
+      if (-not (Test-Path $pyw)) { continue }       # venv not installed -> skip this variant
+      $lnk = $ws.CreateShortcut((Join-Path $d ("data-occultist ({0}).lnk" -f $v.Suffix)))
+      $lnk.TargetPath = $pyw
+      $lnk.Arguments = '-m oc.desktop_main'
+      $lnk.WorkingDirectory = $root
+      # Explicit ",0" resource index: a bare path does not reliably apply, so the shortcut
+      # falls back to pythonw.exe's Python icon (the "wrong icon"). The index forces our .ico.
+      if (Test-Path $ico) { $lnk.IconLocation = "$ico,0" }
+      $lnk.Description = $v.Desc
+      $lnk.Save()
+      $made += (Split-Path $lnk.FullName -Leaf)
+    }
   }
-  Ok ("shortcut created in: " + ($made -join ', '))
+  Ok ("shortcuts created: " + (($made | Select-Object -Unique) -join ', '))
 }
 
 # Test hook: dot-source with OC_INSTALL_TEST=1 to load the functions above WITHOUT

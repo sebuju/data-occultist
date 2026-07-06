@@ -13,18 +13,21 @@
 param(
   [int]$Port = 8000,
   [switch]$Background,
-  [switch]$NoReload
+  [switch]$NoReload,
+  [string]$Venv = '.venv',
+  [switch]$Dml
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
 . (Join-Path $PSScriptRoot '_console.ps1'); Enable-AnsiColors   # render uvicorn's ANSI colors
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Definition)
 Set-Location $root
-$py = Join-Path $root '.venv\Scripts\python.exe'
+if ($Dml) { $Venv = '.venv-dml' }                              # OCR on the iGPU via DirectML
+$py = Join-Path (Resolve-VenvScripts $root $Venv) 'python.exe'
 
 # remind me of the flags without opening this file
-Write-Host "flags: -Port <n> (default 8000)  -Background (detached)  -NoReload (single process)" -ForegroundColor DarkGray
-Write-Host ("active: port=$Port  reload=" + (-not $NoReload) + "  background=$Background") -ForegroundColor DarkGray
+Write-Host "flags: -Port <n> (default 8000)  -Background (detached)  -NoReload (single process)  -Dml (iGPU OCR venv)" -ForegroundColor DarkGray
+Write-Host ("active: port=$Port  reload=" + (-not $NoReload) + "  background=$Background  venv=$Venv") -ForegroundColor DarkGray
 
 # kill any running uvicorn worker(s)
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
