@@ -116,6 +116,6 @@ def fire_trigger(game: str, trigger_id: str):
         from datetime import datetime, timezone
 
         from ...collect.trigger_history import record as record_hist
-        record_hist(game, trigger_id, why="manual (fire button)", targets=list(trig.targets),
-                    throttled=False, ts=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        record_hist(game, trigger_id, why="manual", targets=list(trig.targets),
+                    throttled=False, ts=datetime.now(timezone.utc).isoformat(timespec="milliseconds"))
     return {"trigger": trigger_id, "started": started, "skipped": skipped}

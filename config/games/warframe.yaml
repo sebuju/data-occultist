@@ -2931,8 +2931,8 @@ layout:
       custW: true
       custH: true
     sound:bob:
-      x: -3860.0
-      y: -2720.0
+      x: -3820.0
+      y: -2800.0
       collapsed: false
     win:mission_rewards:
       x: 1900.0
@@ -2971,13 +2971,21 @@ layout:
       y: 3600.0
       collapsed: false
     trigger:ab_trigger:
-      x: -3600.0
-      y: -2720.0
+      x: -3560.0
+      y: -2800.0
+      w: 280.0
+      h: 320.0
       collapsed: false
+      custW: false
+      custH: true
     hist:ab_trigger:
-      x: -3260.0
-      y: -2720.0
+      x: -3220.0
+      y: -2800.0
+      w: 420.0
+      h: 320.0
       collapsed: false
+      custW: false
+      custH: true
   tables:
     warframe:ds:master:
       sorts:
@@ -3227,8 +3235,8 @@ layout:
       sorts: []
     hist:ab_trigger:
       widths:
-        when: 101
-        why: 140
+        when: 147
+        why: 48
         throttled: 69
         fires: 69
   open_images:

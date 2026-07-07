@@ -156,7 +156,7 @@ class TriggerRunner:
         The single funnel every AUTO fire path (interval/lifecycle/on_change/on_readout) routes
         through, so throttle + history behave identically regardless of what fired the trigger."""
         from .trigger_history import record as record_hist
-        ts = self._wall().isoformat(timespec="seconds")
+        ts = self._wall().isoformat(timespec="milliseconds")
         if self._throttled(t):
             logev(f"trigger {t.id} throttled ({why})", level="info", game=self._profile.name)
             record_hist(self._profile.name, t.id, why=why, targets=list(t.targets),

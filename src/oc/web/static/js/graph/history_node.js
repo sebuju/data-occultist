@@ -11,7 +11,7 @@
 // while it fires (activity.js), so a live/throttled fire shows up as it's made.
 import * as api from "../api.js";
 import { model, nodeEls } from "./state.js";
-import { fmtDateTime } from "../datefmt.js";
+import { fmtDateTimeMs } from "../datefmt.js";
 import { VTable } from "../vtable.js";
 
 const COLS = ["when", "why", "fires", "throttled"];
@@ -36,7 +36,7 @@ export function refreshTriggerHistory(triggerId) {
     api.triggers.history(model.profile.name, triggerId)
         .then((r) => {
             const rows = (r.history || []).map((e) => ({
-                when: fmtDateTime(e.ts),
+                when: fmtDateTimeMs(e.ts),
                 why: e.why || "",
                 fires: (e.targets || []).join(", ") || "-",
                 throttled: e.throttled ? "yes" : "",
