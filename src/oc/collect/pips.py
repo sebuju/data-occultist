@@ -1,8 +1,15 @@
 """Count glowing pips/dots in a region (e.g. a Warframe mod's rank).
 
 Some values aren't text: mod rank is a row of lit dots. OCR can't read that, so a
-``pips`` field counts bright blobs instead. Heuristic and teachable-friendly:
-threshold on brightness, then count connected components within a size range.
+``pips`` field counts them from pixels instead.
+
+Counting bright BLOBS (connected components) fails on the real strip: the pips are
+strung along a thin, continuous glow LINE, so adjacent pips fuse into one component
+(a maxed 10-pip strip read as ~4-6). Instead project the lit mask onto the x-axis as
+a per-column VERTICAL THICKNESS: the thin line is a low baseline, each pip a tall
+peak. Isolating the peaks (above the baseline) and counting the runs recovers the
+count regardless of the connecting glow — the same pitch/row idea the diamonds
+counter uses. No per-game count/spacing is baked in.
 """
 
 from __future__ import annotations
@@ -11,23 +18,47 @@ import cv2
 import numpy as np
 
 
-def count_pips(image: np.ndarray, threshold: int = 170, min_area: int = 6, max_area_frac: float = 0.25) -> int:
-    """Count bright blobs in a BGR crop. ``threshold`` is on the brightness (max of
-    BGR); ``min_area`` filters noise; ``max_area_frac`` rejects big bright regions."""
+def count_pips(image: np.ndarray, threshold: int | None = None, min_pip_h: int = 3) -> int:
+    """Count lit rank pips in a BGR crop by column thickness (see module docstring).
+
+    ``threshold`` is the brightness (max of BGR) a pixel must exceed to count as lit;
+    ``None`` picks it relative to the crop's brightest pixel so a dim capture still
+    reads. ``min_pip_h`` is the smallest pip height (px) — a crop whose tallest lit
+    column is thinner than this is treated as bare line / noise (0 pips)."""
     if image is None or image.size == 0:
         return 0
     bright = image.max(axis=2)  # brightest channel per pixel
-    _, mask = cv2.threshold(bright, threshold, 255, cv2.THRESH_BINARY)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
-
-    n, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    max_area = max_area_frac * image.shape[0] * image.shape[1]
-    count = 0
-    for i in range(1, n):  # skip background label 0
-        area = stats[i, cv2.CC_STAT_AREA]
-        if min_area <= area <= max_area:
-            count += 1
-    return count
+    top = int(bright.max())
+    if top < 60:  # nothing lit
+        return 0
+    thr = threshold if threshold is not None else max(100, int(0.55 * top))
+    mask = bright > thr
+    if not mask.any():
+        return 0
+    # Focus on the pip ROW: the densest lit row ± H/3, so stray bright pixels above or
+    # below it (a frame sliver, a neighbouring line) don't distort the projection.
+    yc = int(mask.sum(axis=1).argmax())
+    r = max(2, image.shape[0] // 3)
+    colh = mask[max(0, yc - r): yc + r + 1, :].sum(axis=0).astype(int)  # thickness per column
+    peak = int(colh.max())
+    if peak < min_pip_h:  # only a thin line / noise — no pip peaks
+        return 0
+    # Columns riding a pip sit well above the bare-line baseline; 0.6·peak splits them
+    # from the line (and from the dip between two adjacent pips).
+    lit = colh >= max(min_pip_h, 0.6 * peak)
+    widths: list[int] = []
+    start: int | None = None
+    for i, on in enumerate(np.append(lit, False)):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            widths.append(i - start)
+            start = None
+    if not widths:
+        return 0
+    # A run wider than one pip is fused neighbours — split it by the median pip width.
+    w0 = float(np.median(widths))
+    return sum(max(1, round(w / w0)) for w in widths)
 
 
 def count_filled_diamonds(image: np.ndarray) -> int:
