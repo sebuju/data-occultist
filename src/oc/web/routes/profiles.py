@@ -12,6 +12,7 @@ from ...profile import (
     list_profiles,
     load_graph_local,
     load_profile,
+    profile_write_lock,
     read_backup,
     restore_backup,
     save_graph_local,
@@ -59,18 +60,23 @@ def put_profile(name: str, profile: GameProfile, merge: bool = True):
     if profile.name != name:
         raise HTTPException(status_code=400, detail="Body name must match URL name")
     settings = get_settings()
-    existing = load_profile(settings.profiles_dir, name) if name in list_profiles(settings.profiles_dir) else None
-    if merge and existing is not None:
-        profile = merge_profiles(existing, profile)
-    _preserve_producer_http(existing, profile)   # never let a stale save strip an http node's spec
-    # Re-pull fed dictionaries so a feed-config change (columns/wiring) refreshes terms now —
-    # save_profile then externalises the derived (deduped) list to each dictionary's term file.
-    try:
-        from ...learn.dict_feed import apply_feeds
-        apply_feeds(settings.data_dir, name, profile)
-    except Exception:  # noqa: BLE001 - best-effort; never block a save
-        pass
-    path = save_profile(settings.profiles_dir, profile)
+    # The read (existing) -> merge -> write is a read-modify-write: two overlapping autosaves
+    # (rapid edits fire a PUT each) would otherwise race and the later write silently drops
+    # whatever the other one added (lost update) — same failure class the OCR cache already
+    # locks against. A cross-process lock on the profile file serializes the whole cycle.
+    with profile_write_lock(settings.profiles_dir, name):
+        existing = load_profile(settings.profiles_dir, name) if name in list_profiles(settings.profiles_dir) else None
+        if merge and existing is not None:
+            profile = merge_profiles(existing, profile)
+        _preserve_producer_http(existing, profile)   # never let a stale save strip an http node's spec
+        # Re-pull fed dictionaries so a feed-config change (columns/wiring) refreshes terms now —
+        # save_profile then externalises the derived (deduped) list to each dictionary's term file.
+        try:
+            from ...learn.dict_feed import apply_feeds
+            apply_feeds(settings.data_dir, name, profile)
+        except Exception:  # noqa: BLE001 - best-effort; never block a save
+            pass
+        path = save_profile(settings.profiles_dir, profile)
     return {"saved": str(path), "windows": [w.id for w in profile.windows]}
 
 

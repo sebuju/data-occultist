@@ -22,18 +22,21 @@ splits that keep the profile YAML small, safe, and versioned:
 from __future__ import annotations
 
 import copy
+import itertools
 import json
 import os
 import re
 import stat
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 
 from .. import backup
+from ..filelock import file_lock
 from .models import DEFAULT_DETECT_THRESHOLD, GameProfile
 
 # Re-exported for callers/tests that imported these from here before the stamp/list/prune
@@ -44,6 +47,27 @@ _STAMP_FMT = backup.STAMP_FMT
 
 def profile_path(profiles_dir: Path | str, name: str) -> Path:
     return Path(profiles_dir) / f"{name}.yaml"
+
+
+_tmp_seq = itertools.count()   # per-call uniqueness for _atomic_write_text's temp filename
+
+_save_locks: dict[str, threading.Lock] = {}
+_save_locks_guard = threading.Lock()
+
+
+@contextmanager
+def profile_write_lock(profiles_dir: Path | str, name: str):
+    """Serialize a profile's whole read-existing -> merge -> write cycle, so two overlapping
+    saves (rapid UI edits each autosave a PUT) can't lost-update each other. Two layers, both
+    needed: a per-name ``threading.Lock`` for the common case (FastAPI's sync routes run on a
+    threadpool — two overlapping requests share ONE process), nested inside ``file_lock`` for
+    the cross-process case (the desktop app + ``serve`` saving the same profile). ``file_lock``
+    alone does NOT cover the first case: on Windows its msvcrt region lock is not reliably
+    enforced between two handles opened by the SAME process."""
+    with _save_locks_guard:
+        lock = _save_locks.setdefault(name, threading.Lock())
+    with lock, file_lock(profile_path(profiles_dir, name)):
+        yield
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -57,7 +81,11 @@ def _atomic_write_text(path: Path, text: str) -> None:
     few times with a short backoff, and clear a read-only attribute if that's the cause,
     rather than failing the whole save on a momentary lock."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")   # pid-scoped: concurrent saves don't clobber
+    # pid+thread+counter scoped: a bare pid collides when the SAME process handles two
+    # overlapping saves on different threadpool threads (every sync FastAPI route does) —
+    # both would `write_text` the identical temp path and interleave, splicing one call's
+    # leftover tail onto the other's shorter content before either `os.replace` ever runs.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.{next(_tmp_seq)}.tmp")
     try:
         tmp.write_text(text, encoding="utf-8")
         delays = (0.05, 0.1, 0.2, 0.4, 0.0)   # ~0.75s total; last attempt re-raises
