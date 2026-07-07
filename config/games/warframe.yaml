@@ -847,7 +847,7 @@ windows:
     width: 0.2
     template: null
     margin: 0.25
-    threshold: 0.9
+    threshold: 0.8
     locate: true
     align: ''
     align_x: center
@@ -1108,6 +1108,146 @@ windows:
     scale: 1.0
   live: true
   item_fields: []
+  item_tells: []
+- id: arsenal_warframe
+  fields:
+  - id: name
+    type: text
+    rules: []
+    min_confidence: 0.7
+    isolate: false
+    glyph_check: false
+  - id: drain
+    type: number
+    rules: []
+    min_confidence: 0.7
+    isolate: true
+    glyph_check: false
+  - id: rank
+    type: pips
+    rules: []
+    min_confidence: 0.65
+    isolate: false
+    glyph_check: false
+  - id: rof_9
+    type: number
+    rules: []
+    min_confidence: 0.0
+    isolate: false
+    glyph_check: false
+  data_area:
+    x: 0.04487653197464019
+    y: 0.6312240313174259
+    w: 0.9163171558941904
+    h: 0.2558888701633505
+  detect:
+  - id: detect_7
+    enabled: true
+    search:
+      x: 0.09942229875265082
+      y: 0.03567429963508541
+      w: 0.16203904272647127
+      h: 0.05486627363839321
+    text: upgrade
+    tolerance: 32
+    width: 0.0
+    threshold: 0.8
+    match: partial
+    case_sensitive: false
+    min_chars: 0
+    strip: alnum
+    negate: false
+  detect_mode: all
+  states: []
+  regions: []
+  items:
+  - id: mod
+    enabled: true
+    box:
+      x: 0.18215754729150546
+      y: 0.6433038682435758
+      w: 0.13183922591219355
+      h: 0.12326345641076773
+    cutout: item-20260707-072412-227629.png
+    cutout_box:
+      x: 0.1622776664825623
+      y: 0.6068847724423255
+      w: 0.17943655683636756
+      h: 0.20694741413325424
+    align: center
+    align_x: left
+    priority: 0
+    key:
+      fields:
+      - name
+      - drain
+      sep: '|'
+      case_sensitive: false
+    min_cover_x: 0.75
+    min_cover_y: 0.75
+    terminator: false
+  static_grid: false
+  readouts:
+  - id: ro_8
+    box:
+      x: 0.3469919096608924
+      y: 0.3491234077894415
+      w: 0.048518956444592753
+      h: 0.04248994746538909
+    field: rof_9
+    enabled: true
+  preprocess:
+    mode: none
+    colors: []
+    tolerance: 60
+    scale: 1.0
+  live: true
+  item_fields:
+  - id: name
+    box:
+      x: 0.004688613729187282
+      y: 0.2743669945183465
+      w: 0.875758174580641
+      h: 0.35059118172418413
+    field: name
+    tell: true
+    tell_conf: 0.55
+    tell_allow_text: false
+    locate: true
+    align: ''
+    align_x: center
+    enabled: true
+    item: mod
+  - id: drain
+    box:
+      x: 0.708074154405999
+      y: 0.08488458414218623
+      w: 0.08794034361601441
+      h: 0.14744023175046223
+    field: drain
+    tell: true
+    tell_conf: 0.6
+    tell_allow_text: false
+    locate: true
+    align: ''
+    align_x: ''
+    enabled: true
+    item: mod
+  - id: rank
+    box:
+      x: 0.1513909821064666
+      y: 0.7040038985095695
+      w: 0.6110428651872989
+      h: 0.13630775935811942
+    field: rank
+    tell: false
+    tell_conf: 0.0
+    tell_allow_text: false
+    locate: false
+    align: ''
+    align_x: ''
+    enabled: true
+    item: mod
   item_tells: []
 window_priority:
 - relic_rewards
@@ -1371,6 +1511,7 @@ subsets:
   - updated
   - ducats
   - live_median
+  - _pos
   sort: []
   sort_by: ''
   sort_desc: false
@@ -2208,8 +2349,8 @@ layout:
       custW: true
       custH: false
     sub:relic_rewards_limit:
-      x: 3040.0
-      y: -1640.0
+      x: 2200.0
+      y: -1840.0
       w: 360.0
       h: 344.0
       collapsed: false
@@ -2270,7 +2411,11 @@ layout:
     item:mod_window:drop_item:
       x: -2980.0
       y: 3760.0
+      w: 380.0
+      h: 815.0
       collapsed: false
+      custW: false
+      custH: false
     fld:equipment_window:normal:name:
       x: -2200.0
       y: 320.0
@@ -2305,7 +2450,7 @@ layout:
       collapsed: false
     fld:mod_window:mod:mod_name:
       x: -2560.0
-      y: 3320.0
+      y: 3240.0
       collapsed: false
     fld:mod_window:mod:mod_drain:
       x: -2200.0
@@ -2404,25 +2549,25 @@ layout:
       custW: false
       custH: false
     sub:relics_with_content:
-      x: 860.0
-      y: -1640.0
+      x: 460.0
+      y: -1840.0
       w: 360.0
-      h: 820.0
+      h: 700.0
       collapsed: false
       custW: false
       custH: true
     sub:relics_with_content_view:
-      x: 1280.0
-      y: -1640.0
+      x: 880.0
+      y: -1840.0
       w: 360.0
-      h: 820.0
+      h: 700.0
       collapsed: false
       custW: false
-      custH: true
+      custH: false
     vt:sub:relics_with_content_view:
-      x: 400.0
-      y: -740.0
-      w: 1240.0
+      x: 460.0
+      y: -1000.0
+      w: 780.0
       h: 400.0
       collapsed: false
       custW: true
@@ -2505,7 +2650,7 @@ layout:
       custH: false
     prev:relic_refinement:
       x: -660.0
-      y: 1200.0
+      y: 1220.0
       w: 520.0
       h: 320.0
       collapsed: false
@@ -2528,21 +2673,25 @@ layout:
       y: 2080.0
       collapsed: false
     sub:relics_refinement_with_contents:
-      x: 2140.0
-      y: -1640.0
+      x: 1300.0
+      y: -1840.0
       w: 360.0
-      h: 840.0
+      h: 700.0
       collapsed: false
       custW: false
       custH: true
     sub:contents_with_price:
-      x: 2560.0
-      y: -1640.0
+      x: 1720.0
+      y: -1840.0
+      w: 360.0
+      h: 700.0
       collapsed: false
+      custW: false
+      custH: false
     vt:sub:contents_with_price:
-      x: 1680.0
-      y: -740.0
-      w: 1240.0
+      x: 1300.0
+      y: -1000.0
+      w: 760.0
       h: 400.0
       collapsed: false
       custW: true
@@ -2664,8 +2813,8 @@ layout:
       custW: false
       custH: false
     sound:relic_sound:
-      x: 3440.0
-      y: -1260.0
+      x: 2600.0
+      y: -1460.0
       collapsed: false
     vt:ds:relic_contents:
       x: -1680.0
@@ -2707,9 +2856,9 @@ layout:
       x: -2100.0
       y: -2200.0
       w: 260.0
-      h: 241.0
+      h: 180.0
       collapsed: false
-      custW: true
+      custW: false
       custH: false
     trigger:trigger:
       x: -3600.0
@@ -2756,34 +2905,34 @@ layout:
       custW: true
       custH: true
     trigger:on_new_relic_fetched:
-      x: 3440.0
-      y: -1640.0
+      x: 2600.0
+      y: -1840.0
       w: 480.0
       h: 320.0
       collapsed: false
       custW: true
       custH: false
     toast:toast_2:
-      x: 3960.0
-      y: -1640.0
-      w: 540.0
-      h: 1200.0
-      collapsed: false
-      custW: true
-      custH: false
-    sub:relic_rewards_with_price:
-      x: 3040.0
-      y: -1260.0
-      w: 360.0
-      h: 920.0
+      x: 3120.0
+      y: -1840.0
+      w: 520.0
+      h: 1220.0
       collapsed: false
       custW: false
       custH: false
+    sub:relic_rewards_with_price:
+      x: 2200.0
+      y: -1460.0
+      w: 360.0
+      h: 860.0
+      collapsed: false
+      custW: false
+      custH: true
     vt:sub:relic_rewards_with_price:
-      x: 3440.0
-      y: -720.0
+      x: 2600.0
+      y: -1000.0
       w: 480.0
-      h: 380.0
+      h: 400.0
       collapsed: false
       custW: true
       custH: true
@@ -2798,6 +2947,34 @@ layout:
     ds:mission_rewards:
       x: 2480.0
       y: 1900.0
+      collapsed: false
+    win:arsenal_warframe:
+      x: 1920.0
+      y: 2740.0
+      collapsed: false
+    item:arsenal_warframe:mod:
+      x: 2980.0
+      y: 2720.0
+      collapsed: false
+    fld:arsenal_warframe:mod:name:
+      x: 3420.0
+      y: 2720.0
+      collapsed: false
+    fld:arsenal_warframe:mod:drain:
+      x: 3420.0
+      y: 3100.0
+      collapsed: false
+    fld:arsenal_warframe:mod:rank:
+      x: 3420.0
+      y: 3500.0
+      collapsed: false
+    det:arsenal_warframe:detect_7:
+      x: 2480.0
+      y: 2740.0
+      collapsed: false
+    ro:arsenal_warframe:ro_8:
+      x: 1920.0
+      y: 3600.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -3051,6 +3228,7 @@ layout:
   - relic_select
   - relic_refinement
   - mission_rewards
+  - arsenal_warframe
   groups:
   - id: group_9
     title: warframe
@@ -3386,6 +3564,26 @@ layout:
     members:
     - win:mission_rewards
     - ds:mission_rewards
+    outline:
+      color: '#262c37'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#10141c'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+    titlePos: tl
+  - id: group_32
+    title: 'window: arsenal warframe'
+    members:
+    - win:arsenal_warframe
+    - item:arsenal_warframe:mod
+    - fld:arsenal_warframe:mod:name
+    - fld:arsenal_warframe:mod:drain
+    - fld:arsenal_warframe:mod:rank
+    - det:arsenal_warframe:detect_7
+    - ro:arsenal_warframe:ro_8
     outline:
       color: '#262c37'
       style: none
@@ -3871,6 +4069,24 @@ layout:
     titleColor: '#5aa9e6'
     titleAlign: left
     schemeId: blue
+  - id: subgroup_36
+    parent: group_32
+    title: ''
+    members:
+    - item:arsenal_warframe:mod
+    - fld:arsenal_warframe:mod:name
+    - fld:arsenal_warframe:mod:drain
+    - fld:arsenal_warframe:mod:rank
+    outline:
+      color: '#e69a5a'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#261e1b'
+    titleBg: ''
+    titleColor: '#e69a5a'
+    titleAlign: left
+    schemeId: orange
   schemes:
   - id: s_f7c53c61-d630-4b1b-9fc4-17c3356055d9
     name: custom 1
