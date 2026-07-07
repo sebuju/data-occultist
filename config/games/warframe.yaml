@@ -1138,73 +1138,181 @@ windows:
     glyph_check: false
   - id: rof_9
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
   - id: rof_2
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
   - id: rof_4
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
   - id: rof_6
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.0
     isolate: false
     glyph_check: false
   - id: rof_8
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
   - id: rof_10
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
   - id: rof_12
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
   - id: rof_14
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
   - id: rof_16
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
   - id: rof_18
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
   - id: rof_20
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
   - id: rof_22
     type: text
-    rules: []
+    rules:
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: dictionary
+      dict_mode: correct
+      dict_id: wiki
+      fuzzy: 0.82
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1254,6 +1362,7 @@ windows:
       fields:
       - name
       - drain
+      - rank
       sep: '|'
       case_sensitive: false
     min_cover_x: 0.75
@@ -1488,13 +1597,6 @@ datasets:
   dedup: true
   batch_mode: run
   sync_mode: accumulate
-- id: dataset
-  aggregate: latest
-  key_field: ''
-  key_fields: []
-  dedup: true
-  batch_mode: run
-  sync_mode: mirror
 subsets:
 - id: live_prices_joined
   sources:
@@ -2443,6 +2545,23 @@ actions:
   datasets: []
   dest: ''
   enabled: true
+registers:
+- id: register
+  sources:
+  - readout:slot_arcane_1
+  - readout:slot_4
+  - readout:slot_8
+  - readout:slot_1
+  - readout:slot_2
+  - readout:slot_3
+  - readout:slot_5
+  - readout:slot_6
+  - readout:slot_7
+  - readout:slot_aura
+  - readout:slot_exilus
+  - readout:slot_arcane_2
+  title: ''
+  enabled: true
 dictionaries:
 - id: wiki
   enabled: true
@@ -3121,32 +3240,32 @@ layout:
       y: 1900.0
       collapsed: false
     win:arsenal_warframe:
-      x: 1900.0
-      y: 2760.0
+      x: 4300.0
+      y: 320.0
       w: 780.0
       h: 1104.0
       collapsed: false
       custW: true
       custH: false
     item:arsenal_warframe:mod:
-      x: 3180.0
-      y: 2760.0
+      x: 5440.0
+      y: 320.0
       collapsed: false
     fld:arsenal_warframe:mod:name:
-      x: 3620.0
-      y: 2760.0
+      x: 6100.0
+      y: 320.0
       collapsed: false
     fld:arsenal_warframe:mod:drain:
-      x: 3620.0
-      y: 3140.0
+      x: 5860.0
+      y: 320.0
       collapsed: false
     fld:arsenal_warframe:mod:rank:
-      x: 3620.0
-      y: 3540.0
+      x: 5860.0
+      y: 700.0
       collapsed: false
     det:arsenal_warframe:detect_7:
-      x: 2740.0
-      y: 2760.0
+      x: 5120.0
+      y: 320.0
       collapsed: false
     trigger:ab_trigger:
       x: -3560.0
@@ -3185,105 +3304,109 @@ layout:
       y: -2680.0
       collapsed: false
     ro:arsenal_warframe:slot_aura:
-      x: 2180.0
-      y: 4020.0
-      w: 220.0
-      h: 260.0
+      x: 4640.0
+      y: 1700.0
+      w: 320.0
+      h: 337.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     ro:arsenal_warframe:slot_exilus:
-      x: 2540.0
-      y: 4020.0
-      w: 220.0
-      h: 260.0
+      x: 5000.0
+      y: 1700.0
+      w: 320.0
+      h: 337.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     ro:arsenal_warframe:slot_1:
-      x: 1920.0
-      y: 4300.0
-      w: 220.0
-      h: 260.0
+      x: 4300.0
+      y: 2060.0
+      w: 320.0
+      h: 340.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     ro:arsenal_warframe:slot_2:
-      x: 2180.0
-      y: 4300.0
-      w: 220.0
-      h: 260.0
+      x: 4640.0
+      y: 2060.0
+      w: 320.0
+      h: 340.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     ro:arsenal_warframe:slot_3:
-      x: 2540.0
-      y: 4300.0
-      w: 220.0
-      h: 260.0
+      x: 5000.0
+      y: 2060.0
+      w: 320.0
+      h: 340.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     ro:arsenal_warframe:slot_4:
-      x: 2800.0
-      y: 4300.0
-      w: 220.0
-      h: 260.0
+      x: 5340.0
+      y: 2060.0
+      w: 320.0
+      h: 340.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     ro:arsenal_warframe:slot_5:
-      x: 1920.0
-      y: 4580.0
-      w: 220.0
-      h: 260.0
+      x: 4300.0
+      y: 2420.0
+      w: 320.0
+      h: 340.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     ro:arsenal_warframe:slot_6:
-      x: 2180.0
-      y: 4580.0
-      w: 220.0
-      h: 260.0
+      x: 4640.0
+      y: 2420.0
+      w: 320.0
+      h: 340.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     ro:arsenal_warframe:slot_7:
-      x: 2540.0
-      y: 4580.0
-      w: 220.0
-      h: 260.0
+      x: 5000.0
+      y: 2420.0
+      w: 320.0
+      h: 340.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     ro:arsenal_warframe:slot_8:
-      x: 2800.0
-      y: 4580.0
-      w: 220.0
-      h: 260.0
+      x: 5340.0
+      y: 2420.0
+      w: 320.0
+      h: 340.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     ro:arsenal_warframe:slot_arcane_1:
-      x: 3100.0
-      y: 4020.0
-      w: 220.0
-      h: 260.0
+      x: 5700.0
+      y: 1700.0
+      w: 320.0
+      h: 340.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     ro:arsenal_warframe:slot_arcane_2:
-      x: 3100.0
-      y: 4300.0
-      w: 220.0
-      h: 260.0
+      x: 5700.0
+      y: 2080.0
+      w: 320.0
+      h: 340.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
-    ds:dataset:
-      x: 3480.0
-      y: 4020.0
+    register:register:
+      x: 5440.0
+      y: 1100.0
+      w: 640.0
+      h: 460.0
       collapsed: false
+      custW: true
+      custH: true
   tables:
     warframe:ds:master:
       sorts:
@@ -3546,6 +3669,10 @@ layout:
         price_min: 70
         price_median: 90
         volume: 53
+    register:register:
+      widths: {}
+      order: []
+      sorts: []
   open_images:
   - glyphs
   - game
@@ -3925,7 +4052,7 @@ layout:
     - ro:arsenal_warframe:slot_exilus
     - ro:arsenal_warframe:slot_arcane_1
     - ro:arsenal_warframe:slot_arcane_2
-    - ds:dataset
+    - register:register
     outline:
       color: '#262c37'
       style: none
@@ -3971,7 +4098,6 @@ layout:
     - group_11
     - group_22
     - group_25
-    - group_32
     - group_31
     outline:
       color: '#2c313c'
@@ -4469,14 +4595,15 @@ layout:
     - win:arsenal_warframe
     - det:arsenal_warframe:detect_7
     outline:
-      color: '#2b323f'
+      color: '#5aa9e6'
       style: none
-      width: 1
+      width: 2
       offset: 0
-    bg: '#0f1117'
+    bg: '#15202c'
     titleBg: ''
-    titleColor: ''
+    titleColor: '#5aa9e6'
     titleAlign: left
+    schemeId: blue
   schemes:
   - id: s_f7c53c61-d630-4b1b-9fc4-17c3356055d9
     name: custom 1
