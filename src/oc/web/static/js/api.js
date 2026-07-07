@@ -455,6 +455,19 @@ export const live = {
     setInterval: (seconds) => tfetch(`/api/live/interval?seconds=${encodeURIComponent(seconds)}`, { method: "POST" }).then((r) => r.json()),
 };
 
+// A register node's held in-memory map (live session memory only). registerDetail → { records };
+// empty when no session runs. clearRegister wipes the held map.
+export async function registerDetail(game, id) {
+    const r = await tfetch(`/api/live/${encodeURIComponent(game)}/register/${encodeURIComponent(id)}`);
+    if (!r.ok) throw new Error(`register: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+export async function clearRegister(game, id) {
+    const r = await tfetch(`/api/live/${encodeURIComponent(game)}/register/${encodeURIComponent(id)}/clear`, { method: "POST" });
+    if (!r.ok) throw new Error(`clear register: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+
 // Wipe a dataset's stored records + ledger.
 export async function clearDataset(game, dataset) {
     const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/clear`, { method: "POST" });

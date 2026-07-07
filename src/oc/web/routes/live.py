@@ -138,6 +138,25 @@ def status(game: str):
     return s.status()
 
 
+@router.get("/{game}/register/{register_id}")
+def register(game: str, register_id: str):
+    """Current held map of a register node — ``{records: [...]}``. Empty list when no live
+    session runs (the map lives only in the running session's memory; graceful like status)."""
+    s = _sessions.get(game)
+    if s is None:
+        return {"records": []}
+    return {"records": s.register_records(register_id)}
+
+
+@router.post("/{game}/register/{register_id}/clear")
+def clear_register(game: str, register_id: str):
+    """Wipe a register's held entries (its clear-data button). No-op when no session exists."""
+    s = _sessions.get(game)
+    if s is not None:
+        s.clear_register(register_id)
+    return {"records": []}
+
+
 @router.get("/{game}/debug")
 def debug(game: str, after: int = 0):
     """Incremental debug-log poll: entries newer than ``after`` (the last seq the client has).

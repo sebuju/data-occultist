@@ -49,6 +49,10 @@ class LiveSession:
         self._scroll_meta: dict | None = None             # latest mirror calibration snapshot
         self._readouts: dict[str, object] = {}           # latest live readout values (ephemeral)
         self._readout_confs: dict[str, float] = {}       # confidence per readout value (UI display only)
+        # Register-node maps: {register_id: {readout_id: {value, conf, first_seen, last_seen}}}. Held
+        # in server memory only (never persisted). Fed from readouts each tick; deliberately NOT
+        # reset by start() — a register accumulates across runs and is wiped only by clear_register.
+        self._registers: dict[str, dict[str, dict]] = {}
         self._t0 = 0.0
         self._error: str | None = None
         # Debug log ring: recent OCR-heavy ticks (raw reads, corrections, what was written to
@@ -156,6 +160,10 @@ class LiveSession:
             if result.readouts:
                 self._readouts.update(result.readouts)   # latest live values for the UI (ephemeral)
                 self._readout_confs.update(result.readout_confs or {})
+                # feed from the full accumulated map (every readout seen all session), not just this
+                # tick's delta -- a register wired to a readout from a window that isn't the one just
+                # read would otherwise wait for that window to be revisited before showing anything.
+                self._feed_registers(self._readouts, self._readout_confs)
             self._last_status = result.status.value   # why we are / aren't reading right now
             # phase = we're in an OCR-worthy screen. A `saved` tick read it; a `throttled` tick
             # is the SAME screen between two-rate OCR slots (not re-read) — both count as "in a
@@ -193,6 +201,55 @@ class LiveSession:
                     "changed": [{k: v for k, v in c.items() if not str(k).startswith("_")}
                                 for c in (result.changed or [])],
                 })
+
+    # ---- registers ---------------------------------------------------------
+
+    @staticmethod
+    def _readout_ref(src: str) -> str | None:
+        """Bare readout id from a register source ref. Sources are prefixed ``"readout:<id>"``
+        (the ToastDef.sources shape); a bare ``"<id>"`` is tolerated. Non-readout refs -> None."""
+        if ":" in src:
+            kind, _, rid = src.partition(":")
+            return rid if kind == "readout" else None
+        return src or None
+
+    def _feed_registers(self, readouts: dict, confs: dict) -> None:
+        """Overwrite each register's held entries from the accumulated live-readout map (caller
+        holds the lock) -- so a newly-wired source picks up its value immediately from whatever
+        window last reported it, not only when its own window is next read. Key = readout id;
+        value/conf/last_seen overwrite, first_seen is kept. A source never seen this session is
+        simply skipped (nothing to show yet)."""
+        now = time.time()
+        for reg in getattr(self._profile, "registers", []) or []:
+            if not getattr(reg, "enabled", True):
+                continue
+            for src in reg.sources or []:
+                rid = self._readout_ref(src)
+                if rid is None or rid not in readouts:
+                    continue
+                m = self._registers.setdefault(reg.id, {})
+                prev = m.get(rid)
+                m[rid] = {
+                    "value": readouts[rid],
+                    "conf": confs.get(rid),
+                    "first_seen": prev["first_seen"] if prev else now,
+                    "last_seen": now,
+                }
+
+    def register_records(self, reg_id: str) -> list[dict]:
+        """Current held map for one register as table rows (newest last_seen first)."""
+        with self._lock:
+            m = self._registers.get(reg_id) or {}
+            rows = [{"key": rid, "value": e["value"], "conf": e["conf"],
+                     "first_seen": e["first_seen"], "last_seen": e["last_seen"]}
+                    for rid, e in m.items()]
+        rows.sort(key=lambda r: r["last_seen"], reverse=True)
+        return rows
+
+    def clear_register(self, reg_id: str) -> None:
+        """Drop every held entry for one register (its map button)."""
+        with self._lock:
+            self._registers.pop(reg_id, None)
 
     # ---- status ------------------------------------------------------------
 
