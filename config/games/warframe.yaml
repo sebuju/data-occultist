@@ -3453,19 +3453,19 @@ layout:
       custH: false
     item:arsenal_warframe:mod:
       x: 4320.0
-      y: -440.0
+      y: 1980.0
       collapsed: false
     fld:arsenal_warframe:mod:name:
       x: 4980.0
-      y: -440.0
+      y: 1980.0
       collapsed: false
     fld:arsenal_warframe:mod:drain:
       x: 4740.0
-      y: -440.0
+      y: 1980.0
       collapsed: false
     fld:arsenal_warframe:mod:rank:
       x: 4740.0
-      y: -60.0
+      y: 2360.0
       collapsed: false
     det:arsenal_warframe:detect_7:
       x: 5120.0
