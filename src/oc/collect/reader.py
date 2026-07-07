@@ -146,22 +146,30 @@ class RegionReader:
         ]
 
     @staticmethod
-    def _gather(lines: list[OcrLine], box: PixelBox) -> tuple[str, float]:
-        hits = [ln for ln in lines if _center_in(ln, box)]
-        if not hits:
-            return "", 0.0
-        # reading order, not bare x-order: a wrapped name's second line often starts
-        # left of the first, so sorting by x alone scrambles it ("Empowered Cascadia").
-        # Cluster into visual lines (a hit joins the current line while its centre is
-        # inside that line's vertical extent), top-to-bottom, then x within each line.
-        hits.sort(key=lambda ln: ln.box.y + ln.box.h / 2)
-        rows: list[list[OcrLine]] = [[hits[0]]]
-        for ln in hits[1:]:
+    def _reading_order(lines: list[OcrLine]) -> list[OcrLine]:
+        """Order OCR fragments the way a human reads them: cluster into visual rows
+        (a fragment joins the current row while its centre is within that row's
+        vertical extent), top-to-bottom, then left-to-right within each row. Sorting
+        by x alone -- or by y-then-x without clustering -- scrambles a multi-word or
+        wrapped read ("Empowered Cascadia" -> "Cascadia Empowered", "augur reach" ->
+        "r reach augur") whenever two fragments' boxes differ by even a pixel in y."""
+        if not lines:
+            return []
+        by_y = sorted(lines, key=lambda ln: ln.box.y + ln.box.h / 2)
+        rows: list[list[OcrLine]] = [[by_y[0]]]
+        for ln in by_y[1:]:
             if ln.box.y + ln.box.h / 2 <= max(h.box.bottom for h in rows[-1]):
                 rows[-1].append(ln)
             else:
                 rows.append([ln])
-        ordered = [ln for row in rows for ln in sorted(row, key=lambda ln: ln.box.x)]
+        return [ln for row in rows for ln in sorted(row, key=lambda ln: ln.box.x)]
+
+    @staticmethod
+    def _gather(lines: list[OcrLine], box: PixelBox) -> tuple[str, float]:
+        hits = [ln for ln in lines if _center_in(ln, box)]
+        if not hits:
+            return "", 0.0
+        ordered = RegionReader._reading_order(hits)
         text = " ".join(ln.text for ln in ordered).strip()
         conf = sum(ln.confidence for ln in hits) / len(hits)
         return text, conf
@@ -222,8 +230,8 @@ class RegionReader:
             lines = self._ocr.read_image(crop)
             if not lines:
                 continue
-            lines.sort(key=lambda ln: (ln.box.y + ln.box.h / 2, ln.box.x))
-            text = " ".join(ln.text for ln in lines).strip()
+            ordered = self._reading_order(lines)
+            text = " ".join(ln.text for ln in ordered).strip()
             if not text:
                 continue
             conf = sum(ln.confidence for ln in lines) / len(lines)

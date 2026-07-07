@@ -4,7 +4,9 @@ import numpy as np
 
 from oc.collect.reader import RegionReader
 from oc.interfaces import OcrEngine
-from oc.profile.models import Box, FieldDef, FieldRule, FieldType, RegionDef, RuleThen, RuleWhen, WindowDef
+from oc.profile.models import (
+    Box, FieldDef, FieldRule, FieldType, ReadoutDef, RegionDef, RuleThen, RuleWhen, WindowDef,
+)
 from oc.types import Frame, OcrLine, PixelBox
 
 
@@ -52,6 +54,27 @@ def test_substituted_read_does_not_sink_confidence():
     rec = records[0]
     assert rec.values == {"name": "Soma Prime", "count": 1}
     assert rec.confidence >= 0.9     # the name's confidence, not the junk's
+
+
+def test_readout_multiword_read_stays_in_reading_order():
+    # "augur" (left word) has a slightly LOWER box than "reach" (right word) -- e.g.
+    # font kerning/OCR box jitter of a few px. A naive y-then-x sort (the prior bug)
+    # would sort by y first and emit "reach augur", reordering the words. Row
+    # clustering must recognise both fragments share one visual line and keep them
+    # in left-to-right (x) order regardless of the y jitter.
+    ocr = StubOcr([
+        OcrLine("reach", PixelBox(120, 38, 100, 20), 0.90),
+        OcrLine("augur", PixelBox(40, 45, 70, 20), 0.90),
+    ])
+    window = WindowDef(
+        id="w",
+        fields=[FieldDef(id="rof_8")],
+        readouts=[ReadoutDef(id="slot_5", box=Box(x=0.0, y=0.0, w=1.0, h=0.1), field="rof_8")],
+    )
+    fields = {f.id: f for f in window.fields}
+    frame = Frame(image=np.zeros((100, 300, 3), np.uint8), client=PixelBox(0, 0, 300, 100))
+    out = RegionReader(ocr).read_readouts(frame, window, fields)
+    assert out["slot_5"] == "augur reach"
 
 
 def test_real_low_confidence_read_still_sinks_record():
