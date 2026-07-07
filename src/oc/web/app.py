@@ -187,7 +187,7 @@ async def lifespan(_app: FastAPI):
         _start_triggers(get_settings())
     except Exception:  # noqa: BLE001 - best-effort
         pass
-    # Watch on_change file sources (trailing-throttle reads) and fire on_app_start triggers.
+    # Watch on_change file sources (trailing-throttle reads).
     try:
         from .source_sched import start as _start_sources
         _start_sources(get_settings())

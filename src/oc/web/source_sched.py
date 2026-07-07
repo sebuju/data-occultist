@@ -7,8 +7,8 @@ Two jobs, both driven by the web process (file sources never run in the OCR capt
   ``throttle_s`` rate-limits reads while a file keeps changing AND guarantees the latest state
   is read once it settles (read at most once per window, always eventually catching the newest
   signature). Coalesced via the shared :class:`SourceReader`, so two nodes on one file = one read.
-* **Lifecycle triggers** — fire ``on_app_start`` triggers once when this daemon launches, and
-  expose :func:`fire_capture` for the live/precapture routes to call when a capture session starts.
+* **Lifecycle triggers** — expose :func:`fire_capture` for the live/precapture routes, and
+  :func:`fire_live_start` / :func:`fire_live_stop` for the server live session.
 
 Reuses :class:`TriggerRunner` so firing logic is identical to the collector's.
 """
@@ -80,18 +80,6 @@ def _loop(settings) -> None:
         time.sleep(0.5)
 
 
-def _fire_kind_all(settings, fire) -> None:
-    """Run ``fire(runner)`` for every profile that has a matching enabled lifecycle trigger."""
-    for game in list_profiles(settings.profiles_dir):
-        try:
-            profile = load_live_profile(settings.profiles_dir, game)
-            if profile.triggers:
-                from .deps import get_notifier
-                fire(TriggerRunner(profile, settings.data_dir, notifier=get_notifier()))
-        except Exception:   # noqa: BLE001
-            continue
-
-
 def fire_capture(game: str, settings) -> None:
     """Fire ``on_capture`` triggers for ``game`` — called when a live/precapture session starts."""
     _fire_lifecycle(game, settings, "on_capture", lambda r: r.fire_capture())
@@ -120,12 +108,11 @@ def _fire_lifecycle(game: str, settings, kind: str, fire) -> None:
 
 
 def start(settings) -> None:
-    """Launch the watcher thread once and fire ``on_app_start`` triggers (called from lifespan)."""
+    """Launch the watcher thread once (called from lifespan)."""
     global _started
     if _started:
         return
     _started = True
-    _fire_kind_all(settings, lambda r: r.fire_app_start())
     threading.Thread(target=_loop, args=(settings,), daemon=True).start()
 
 
