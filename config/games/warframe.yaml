@@ -2216,8 +2216,8 @@ layout:
       custW: true
       custH: false
     ds:relics_offered:
-      x: 2140.0
-      y: 1240.0
+      x: 1900.0
+      y: 1260.0
       collapsed: false
     ds:mods:
       x: -940.0
@@ -2340,7 +2340,7 @@ layout:
       y: 3160.0
       collapsed: false
     item:relic_select:relic_item:
-      x: 1600.0
+      x: 1340.0
       y: 2740.0
       w: 380.0
       h: 1239.0
@@ -2348,15 +2348,15 @@ layout:
       custW: true
       custH: false
     fld:relic_select:relic_item:name:
-      x: 1240.0
+      x: 980.0
       y: 2740.0
       collapsed: false
     fld:relic_select:relic_item:count:
-      x: 900.0
-      y: 2740.0
+      x: 980.0
+      y: 3160.0
       collapsed: false
     item:relic_select:guard:
-      x: 420.0
+      x: 500.0
       y: 2740.0
       w: 400.0
       h: 1156.0
@@ -2364,12 +2364,16 @@ layout:
       custW: true
       custH: false
     tell:relic_select:guard:tell_no_relic:
-      x: 180.0
+      x: 220.0
       y: 2740.0
+      w: 240.0
+      h: 280.0
       collapsed: false
+      custW: false
+      custH: false
     prev:relic_select:
       x: -660.0
-      y: 3840.0
+      y: 3600.0
       w: 520.0
       h: 320.0
       collapsed: false
@@ -2425,43 +2429,43 @@ layout:
       custH: true
     win:relic_refinement:
       x: -660.0
-      y: 300.0
+      y: 320.0
       collapsed: false
     sb:relic_refinement:scrollbar:
       x: -100.0
-      y: 980.0
+      y: 1000.0
       w: 240.0
       h: 920.0
       collapsed: false
       custW: true
       custH: false
     item:relic_refinement:relic_item:
-      x: 1620.0
-      y: 300.0
+      x: 1340.0
+      y: 320.0
       collapsed: false
     fld:relic_refinement:relic_item:name:
-      x: 1240.0
-      y: 300.0
-      w: 340.0
+      x: 960.0
+      y: 320.0
+      w: 320.0
       h: 460.0
       collapsed: false
-      custW: true
+      custW: false
       custH: false
     win:relic_rewards:
-      x: 2140.0
-      y: 300.0
+      x: 1900.0
+      y: 320.0
       collapsed: false
     item:relic_rewards:item_1:
-      x: 3640.0
-      y: 300.0
+      x: 3400.0
+      y: 320.0
       collapsed: false
     fld:relic_rewards:item_1:name:
-      x: 3280.0
-      y: 300.0
+      x: 3040.0
+      y: 320.0
       collapsed: false
     det:relic_rewards:detect_h:
-      x: 2700.0
-      y: 300.0
+      x: 2460.0
+      y: 320.0
       w: 240.0
       h: 280.0
       collapsed: false
@@ -2470,14 +2474,14 @@ layout:
     det:relic_select:detect_h:
       x: -100.0
       y: 2740.0
-      w: 240.0
+      w: 260.0
       h: 280.0
       collapsed: false
-      custW: true
+      custW: false
       custH: false
     det:relic_refinement:detect_h:
       x: -100.0
-      y: 300.0
+      y: 320.0
       w: 300.0
       h: 280.0
       collapsed: false
@@ -2501,27 +2505,27 @@ layout:
       custH: false
     prev:relic_refinement:
       x: -660.0
-      y: 1180.0
+      y: 1200.0
       w: 520.0
       h: 320.0
       collapsed: false
       custW: true
       custH: false
     item:relic_refinement:not_owned:
-      x: 440.0
-      y: 300.0
+      x: 480.0
+      y: 320.0
       collapsed: false
     tell:relic_refinement:not_owned:tell_3:
-      x: 180.0
-      y: 660.0
+      x: 220.0
+      y: 680.0
       collapsed: false
     tell:relic_refinement:not_owned:tell_4:
-      x: 180.0
-      y: 300.0
+      x: 220.0
+      y: 320.0
       collapsed: false
     ds:relics_refinement:
       x: -660.0
-      y: 2060.0
+      y: 2080.0
       collapsed: false
     sub:relics_refinement_with_contents:
       x: 2140.0
@@ -2545,7 +2549,7 @@ layout:
       custH: true
     det:relic_refinement:detect_1:
       x: -100.0
-      y: 680.0
+      y: 700.0
       w: 240.0
       h: 260.0
       collapsed: false
@@ -2553,11 +2557,11 @@ layout:
       custH: false
     ds:relics_select:
       x: -660.0
-      y: 4220.0
+      y: 4000.0
       collapsed: false
     vt:ds:relics_offered:
-      x: 2540.0
-      y: 1240.0
+      x: 2300.0
+      y: 1260.0
       w: 560.0
       h: 480.0
       collapsed: false
@@ -2585,7 +2589,7 @@ layout:
       custH: true
     vt:ds:relics_refinement:
       x: -240.0
-      y: 2060.0
+      y: 2080.0
       w: 500.0
       h: 440.0
       collapsed: false
@@ -2593,7 +2597,7 @@ layout:
       custH: true
     vt:ds:relics_select:
       x: -240.0
-      y: 4220.0
+      y: 4000.0
       w: 460.0
       h: 500.0
       collapsed: false
@@ -2644,8 +2648,8 @@ layout:
       custW: true
       custH: true
     prev:relic_rewards:
-      x: 2700.0
-      y: 780.0
+      x: 2460.0
+      y: 800.0
       w: 500.0
       h: 320.0
       collapsed: false
@@ -2688,8 +2692,8 @@ layout:
       custW: true
       custH: false
     fld:relic_refinement:relic_item:count:
-      x: 880.0
-      y: 300.0
+      x: 960.0
+      y: 820.0
       w: 320.0
       h: 360.0
       collapsed: false
@@ -2708,8 +2712,8 @@ layout:
       custW: true
       custH: false
     trigger:trigger:
-      x: -4180.0
-      y: -2760.0
+      x: -3600.0
+      y: -2720.0
       w: 280.0
       h: 400.0
       collapsed: false
@@ -2721,7 +2725,7 @@ layout:
       collapsed: false
     ro:game:ability_1_cd:
       x: -4260.0
-      y: -1700.0
+      y: -1940.0
       w: 380.0
       h: 480.0
       collapsed: false
@@ -2729,7 +2733,7 @@ layout:
       custH: true
     ro:game:ability_2_cd:
       x: -3860.0
-      y: -1700.0
+      y: -1940.0
       w: 380.0
       h: 480.0
       collapsed: false
@@ -2737,7 +2741,7 @@ layout:
       custH: true
     ro:game:ability_3_cd:
       x: -3460.0
-      y: -1700.0
+      y: -1940.0
       w: 380.0
       h: 480.0
       collapsed: false
@@ -2745,7 +2749,7 @@ layout:
       custH: true
     ro:game:ability_4_cd:
       x: -3060.0
-      y: -1700.0
+      y: -1940.0
       w: 380.0
       h: 480.0
       collapsed: false
@@ -2784,16 +2788,16 @@ layout:
       custW: true
       custH: true
     sound:bob:
-      x: -4120.0
-      y: -2220.0
+      x: -3860.0
+      y: -2720.0
       collapsed: false
     win:mission_rewards:
-      x: 2160.0
-      y: 1880.0
+      x: 1900.0
+      y: 1900.0
       collapsed: false
     ds:mission_rewards:
-      x: 2780.0
-      y: 2860.0
+      x: 2480.0
+      y: 1900.0
       collapsed: false
   tables:
     warframe:ds:master:
