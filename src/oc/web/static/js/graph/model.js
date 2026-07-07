@@ -7,6 +7,37 @@ import { DEFAULT_DETECT_THRESHOLD } from "../defaults.js";
 
 let _fieldSeq = 1;
 
+// Mint `${prefix}${_fieldSeq++}` skipping any id an `exists` check rejects. `exists` must cover
+// EVERY pool the id could collide with (a shared FieldDef pool as well as the node's own list) —
+// checking only the node's own list let two nodes mint the same field id and silently share one
+// FieldDef (rules pipeline) once `addField` saw the id already "existed" and skipped creating it.
+function _mint(prefix, exists) {
+    let id;
+    do { id = prefix + _fieldSeq++; } while (exists(id));
+    return id;
+}
+
+// Re-seed the counter above the highest trailing `_<int>` suffix anywhere in the loaded profile.
+// `_fieldSeq` is a module global that otherwise restarts at 1 every page load while the saved
+// profile already holds ids far past that — new mints then collide with existing ones.
+function _seedFieldSeq(profile) {
+    let max = 0;
+    const scan = (node) => {
+        if (Array.isArray(node)) { for (const x of node) scan(x); return; }
+        if (node && typeof node === "object") {
+            for (const k in node) {
+                const v = node[k];
+                if (k === "id" && typeof v === "string") {
+                    const m = /_(\d+)$/.exec(v);
+                    if (m) { const n = +m[1]; if (n > max) max = n; }
+                } else scan(v);
+            }
+        }
+    };
+    scan(profile);
+    if (max + 1 > _fieldSeq) _fieldSeq = max + 1;
+}
+
 export class GraphModel {
     constructor() { this.profile = blank(""); this.sounds = []; this.shownSatellites = new Set(); this._imgSel = new Map(); }   // sounds: available trigger-sound filenames (fetched once); shownSatellites: ids of opt-in follower nodes (preview / vt-table) currently visible; _imgSel: transient (not saved) toast-image selected-text-line index, keyed "toastId#imgIdx"
 
@@ -75,6 +106,7 @@ export class GraphModel {
             fanIn(w, "item_fields", "fields");
             fanIn(w, "item_tells", "tells");
         }
+        _seedFieldSeq(this.profile);   // new mints must start above every id already in this profile
     }
 
     // ---- taught glyph atlas (reference characters for post-OCR glyph refinement) ----
@@ -1442,23 +1474,29 @@ export class GraphModel {
         return true;
     }
 
+    // `id`, when passed, MUST already be free of `w.fields` (see `_mint` callers below) — a
+    // colliding id here silently reuses the existing FieldDef instead of creating one, so two
+    // nodes end up sharing one `rules` pipeline object.
     addField(winId, id) {
         const w = this.window(winId);
         if (!w) return;
         w.fields = w.fields || [];
-        const fid = id || `field_${_fieldSeq++}`;
+        const fid = id || _mint("field_", (x) => w.fields.some((f) => f.id === x));
         if (!w.fields.some((f) => f.id === fid))
             w.fields.push({ id: fid, type: "text", rules: [] });   // value processing is authored as rules
     }
     // ---- regions (drawn on the window image) --------------------------------
 
     // Create a region from a fraction box; also creates its linked field. Returns id.
+    // A region's id IS its linked field id (one FieldDef, not two), so minting must dodge BOTH
+    // pools (`w.regions` for the node id, `w.fields` for the FieldDef) or a fresh region can land
+    // on an existing field id and silently inherit that field's rules (see `addField` above).
     addRegion(winId, box) {
         const w = this.window(winId);
         if (!w) return null;
         w.regions = w.regions || [];
-        let id = "field_" + _fieldSeq++;
-        while (w.regions.some((r) => r.id === id)) id = "field_" + _fieldSeq++;
+        w.fields = w.fields || [];
+        const id = _mint("field_", (x) => w.regions.some((r) => r.id === x) || w.fields.some((f) => f.id === x));
         w.regions.push({ id, box: { x: box.x, y: box.y, w: box.w, h: box.h }, field: id });
         this.addField(winId, id);
         return id;
@@ -1497,13 +1535,17 @@ export class GraphModel {
     readoutField(w, v) { return (w && v) ? (w.fields || []).find((f) => f.id === v.field) || null : null; }
 
     // Create a readout from a fraction box; also creates its linked (number) field. Returns id.
+    // Readout ids are GLOBAL (checked across every window, see `renameReadout` below) — minting
+    // must match that scope, and the linked field id must dodge `w.fields` — else a fresh readout
+    // can collide with another readout's id (cross-window bleed) or share a FieldDef with an
+    // existing field/region/readout (settings bleed onto a node the user never touched).
     addReadout(winId, box) {
         const w = this.window(winId);
         if (!w) return null;
         w.readouts = w.readouts || [];
-        let id = "ro_" + _fieldSeq++;
-        while (w.readouts.some((v) => v.id === id)) id = "ro_" + _fieldSeq++;
-        const fid = "rof_" + _fieldSeq++;
+        w.fields = w.fields || [];
+        const id = _mint("ro_", (x) => this.readouts().some((v) => v.id === x));
+        const fid = _mint("rof_", (x) => w.fields.some((f) => f.id === x));
         w.readouts.push({ id, box: { x: box.x, y: box.y, w: box.w, h: box.h }, field: fid, enabled: true });
         this.addField(winId, fid);
         const f = (w.fields || []).find((x) => x.id === fid);
@@ -1601,8 +1643,7 @@ export class GraphModel {
         const host = this._detectHost(winId);
         if (!host) return null;
         host.detect = host.detect || [];
-        let id = "detect_" + _fieldSeq++;
-        while (host.detect.some((d) => d.id === id)) id = "detect_" + _fieldSeq++;
+        const id = _mint("detect_", (x) => host.detect.some((d) => d.id === x));
         // game gate detectors default to the cheap COLOUR kind (no OCR); window detectors
         // stay text by default. A colour detector seeds an empty colour (sample it on the image).
         const base = { id, search: { x: box.x, y: box.y, w: box.w, h: box.h }, threshold: DEFAULT_DETECT_THRESHOLD };
@@ -1703,8 +1744,7 @@ export class GraphModel {
         const w = this.window(winId);
         if (!w) return null;
         w.states = w.states || [];
-        let id = "state_" + _fieldSeq++;
-        while (w.states.some((s) => s.id === id)) id = "state_" + _fieldSeq++;
+        const id = _mint("state_", (x) => w.states.some((s) => s.id === x));
         w.states.push({ id, kind: "ordering", valid_for_save: true,
             detect: [{ id: id + "_a", search: { x: box.x, y: box.y, w: box.w, h: box.h }, text: "", threshold: DEFAULT_DETECT_THRESHOLD }] });
         return id;
@@ -1728,8 +1768,7 @@ export class GraphModel {
         const w = this.window(winId);
         if (!w) return null;
         w.items = w.items || [];
-        let id = "item_" + _fieldSeq++;
-        while (w.items.some((it) => it.id === id)) id = "item_" + _fieldSeq++;
+        const id = _mint("item_", (x) => w.items.some((it) => it.id === x));
         const cell = box || cutout_box;
         w.items.push({ id, cutout: cutout || null, cutout_box: cutout_box || null,
             box: { x: cell.x, y: cell.y, w: cell.w, h: cell.h }, align: "center", priority: 0,
@@ -1799,12 +1838,16 @@ export class GraphModel {
     }
 
     // fields inside an item (cell-relative box). Also creates the schema FieldDef.
+    // Same id-IS-the-field-id shape as `addRegion` — must dodge both `it.fields` (this item's list)
+    // and `w.fields` (the FieldDef pool) or a fresh item-field can share a FieldDef with an
+    // unrelated field/region/readout.
     addItemField(winId, itemId, box) {
         const it = this.item(winId, itemId);
         if (!it) return null;
         it.fields = it.fields || [];
-        let id = "field_" + _fieldSeq++;
-        while (it.fields.some((f) => f.id === id)) id = "field_" + _fieldSeq++;
+        const w = this.window(winId);
+        w.fields = w.fields || [];
+        const id = _mint("field_", (x) => it.fields.some((f) => f.id === x) || w.fields.some((f) => f.id === x));
         it.fields.push({ id, box: { x: box.x, y: box.y, w: box.w, h: box.h }, field: id });
         this.addField(winId, id);
         return id;
@@ -1876,8 +1919,7 @@ export class GraphModel {
         const it = this.item(winId, itemId);
         if (!it) return null;
         it.tells = it.tells || [];
-        let id = "tell_" + _fieldSeq++;
-        while (it.tells.some((t) => t.id === id)) id = "tell_" + _fieldSeq++;
+        const id = _mint("tell_", (x) => it.tells.some((t) => t.id === x));
         const first = !it.tells.length;
         const k = kind || "filled";
         // a text tell defaults to the field it's drawn over (else the first field), so it
