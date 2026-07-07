@@ -5,7 +5,11 @@ an injected clock and a captured ``fire``. ``gather_source_names`` is tested aga
 DatasetStore (the producer applies its own key transform, so this yields raw item names).
 """
 
+import json
+from datetime import datetime, timedelta, timezone
+
 from oc import eventlog
+from oc.collect import trigger_history
 from oc.collect.triggers import TriggerRunner, read_subset_sigs
 from oc.enrich.http_producer import gather_source_names
 from oc.profile.models import GameProfile, JoinSource, ProducerDef, SoundDef, SubsetDef, TriggerDef
@@ -76,6 +80,70 @@ def test_on_change_fires_on_clear_but_prices_nothing():
     assert calls == []
 
 
+# ---- true_interval: real elapsed time off the PERSISTED last-fire ----------
+
+def _ti_profile():
+    return GameProfile(
+        name="g",
+        producers=[ProducerDef(id="live", dataset="prices_live", mode="orders", sources=["master"])],
+        triggers=[TriggerDef(id="ti", kind="true_interval", interval_s=100, targets=["live"])],
+    )
+
+
+def test_true_interval_due_uses_persisted_time(tmp_path):
+    p = _ti_profile()
+    now = datetime(2026, 7, 7, 12, 0, 0, tzinfo=timezone.utc)
+    tr = TriggerRunner(p, tmp_path, clock=lambda: 0.0, wall=lambda: now)
+    t = p.triggers[0]
+    assert tr._true_interval_due(t, None) is True                                     # never fired -> due
+    assert tr._true_interval_due(t, (now - timedelta(seconds=50)).isoformat()) is False   # 50s < 100s
+    assert tr._true_interval_due(t, (now - timedelta(seconds=150)).isoformat()) is True    # overdue
+
+
+def test_true_interval_fires_when_overdue_after_restart(tmp_path):
+    # a freshly built runner (simulating a restart) reads the persisted last-fire and fires
+    # immediately when the real interval has already elapsed — cadence survives the restart.
+    p = _ti_profile()
+    (tmp_path / "g").mkdir()
+    now = datetime(2026, 7, 7, 12, 0, 0, tzinfo=timezone.utc)
+    (tmp_path / "g" / ".trigger_fires.json").write_text(
+        json.dumps({"ti": (now - timedelta(seconds=200)).isoformat()}), encoding="utf-8")
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id),
+                       clock=lambda: 0.0, wall=lambda: now)
+    assert tr.tick() == ["ti"]
+    assert calls == ["live"]
+
+
+# ---- throttle: minimum ms between fires, suppressed fires go to history ------
+
+def test_throttle_suppresses_within_window_and_records(tmp_path):
+    trigger_history.clear("g")
+    p = _profile()
+    p.triggers[1].throttle_ms = 5000   # relicwatch: 5s between fires
+    clock = [0.0]
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: clock[0])
+    assert tr.on_change("relic_rewards", [{"name": "A"}]) == ["relicwatch"]
+    clock[0] = 1.0
+    assert tr.on_change("relic_rewards", [{"name": "B"}]) == []          # inside 5s window -> suppressed
+    clock[0] = 10.0
+    assert tr.on_change("relic_rewards", [{"name": "C"}]) == ["relicwatch"]   # window elapsed -> fires
+    hist = trigger_history.recent("g", "relicwatch")
+    assert [h["throttled"] for h in hist] == [False, True, False]        # newest first: fire, throttled, fire
+
+
+def test_history_records_why_and_targets(tmp_path):
+    trigger_history.clear("g")
+    p = _profile()
+    clock = [0.0]
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: clock[0])
+    tr.on_change("relic_rewards", [{"name": "A"}])
+    hist = trigger_history.recent("g", "relicwatch")
+    assert len(hist) == 1 and hist[0]["throttled"] is False
+    assert "relic_rewards changed" in hist[0]["why"]
+    assert hist[0]["targets"] == ["relic"]
+
+
 def test_triggers_publish_activity_log_lines():
     # every watch+fire and interval fire emits a log-bar line via the eventlog bus
     lines = []
@@ -89,7 +157,7 @@ def test_triggers_publish_activity_log_lines():
     finally:
         off()
     msgs = [e["msg"] for e in lines]
-    assert any("relicwatch <- relic_rewards changed" in m for m in msgs)
+    assert any("relicwatch fired (relic_rewards changed" in m for m in msgs)
     assert any("periodic fired (interval" in m for m in msgs)
     assert all(e["game"] == "g" for e in lines)   # scoped to the profile's game
 

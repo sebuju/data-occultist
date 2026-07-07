@@ -6,7 +6,7 @@ route dispatch that funnels through it.
 """
 
 from oc.collect.triggers import TriggerRunner
-from oc.profile.models import DatasetDef, GameProfile, TriggerDef
+from oc.profile.models import ActionDef, DatasetDef, GameProfile, TriggerDef
 from oc.store import store_for
 from oc.store.dataset_ops import run_dataset_action
 
@@ -89,11 +89,14 @@ def test_guards_prevent_data_loss_and_noops(tmp_path):
 
 
 def _lifecycle_profile():
-    return GameProfile(name="g", triggers=[
-        TriggerDef(id="start", kind="on_live_start", dataset_action="clear", dataset_targets=["d"]),
-        TriggerDef(id="stop", kind="on_live_stop", dataset_targets=["d"]),
-        TriggerDef(id="cap", kind="on_capture"),
-    ])
+    # the dataset action (clear "d") is its own node now, fired via the trigger's targets.
+    return GameProfile(name="g",
+        actions=[ActionDef(id="clr", action="clear", datasets=["d"])],
+        triggers=[
+            TriggerDef(id="start", kind="on_live_start", targets=["clr"]),
+            TriggerDef(id="stop", kind="on_live_stop"),
+            TriggerDef(id="cap", kind="on_capture"),
+        ])
 
 
 def test_fire_live_start_stop_only_fire_their_kind():
