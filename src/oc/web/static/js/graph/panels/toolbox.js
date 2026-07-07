@@ -88,6 +88,13 @@ async function createActionNode(at = null, group = null) {
     if (group) groups.addToGroup(group, [`action:${id}`]);
     autosave(null); if (!at) panTo(`action:${id}`);   // new node changes nothing open windows OCR
 }
+async function createRegisterNode(at = null, group = null) {
+    const id = model.addRegister();   // holds wired readouts' live values in an in-memory map (wired after)
+    if (!id) return;
+    await placeNewNode(`register:${id}`, "register", null, at); render();
+    if (group) groups.addToGroup(group, [`register:${id}`]);
+    autosave(null); if (!at) panTo(`register:${id}`);   // new node changes nothing open windows OCR
+}
 function createDictionaryNode(at = null, group = null) {
     const place = async (id) => {
         await placeNewNode(`dict:${id}`, "dictionary", null, at); render();
@@ -314,5 +321,5 @@ function svgToPngBlob(svg, W, H) {
 export {
     tb, tbState, createWindowNode, createProducerNode, createTriggerNode,
     createDictionaryNode, createDatasetNode, createSubsetNode, createFileSourceNode,
-    createToastNode, createSoundNode, createActionNode, buildToolbox, runCollisionCheck,
+    createToastNode, createSoundNode, createActionNode, createRegisterNode, buildToolbox, runCollisionCheck,
 };

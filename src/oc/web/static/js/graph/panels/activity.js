@@ -12,6 +12,8 @@ import { since, countdown } from "../../datefmt.js";
 import { liveAgo, liveUntil, stopAgo } from "../../ago.js";
 import { autosave } from "../main.js";
 import { refreshTriggerHistory } from "../history_node.js";
+import { refreshRegister } from "../register_node.js";
+import { liveCollecting } from "./livewin.js";
 import { panZoomTo } from "../camera.js";
 import { playSound } from "../sound.js";
 import { svg } from "../../dom.js";
@@ -293,6 +295,12 @@ function updateTriggerNodes(data) {
         }
         if (span.textContent !== txt) span.textContent = txt;
     }
+    // Register nodes hold live readout values that only move while the collector runs — refetch each
+    // beat while collecting (no-op / no host when the node isn't shown; VTable reconciles in place).
+    // Gated on liveCollecting so an idle session never fires a fetch. A stopped session's persisted
+    // map is shown by the node's own build-time refresh, not here.
+    if (liveCollecting())
+        for (const id of model.registers()) refreshRegister(id);
 }
 
 function renderActivity(data, elapsed = 0) {
