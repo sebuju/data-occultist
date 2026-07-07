@@ -126,21 +126,11 @@ function overlaySelected(key, id) {
     activeOverlayKey = id ? key : (activeOverlayKey === key ? null : activeOverlayKey);
     for (const [k, rec] of overlays) if (k !== key) rec.overlay.setActive(null);
     const rec = overlays.get(key);
-    // A box-backed NODE click (selectWindowBox) routes here with the window/game key even when that
-    // window's image canvas is CLOSED (no overlay rec). Still highlight the box's node, or the
-    // just-focused detect/region/scrollbar node would deselect itself on the trailing click.
+    // A canvas box click (onSelect) routes here with the overlay key. Highlight the box's node.
     const winKey = key.startsWith("win:");
     if (id && (rec ? rec.kind === "window" : winKey))
         selectRegionNode(rec ? rec.winId : key.slice(4), id);   // highlight its node
     else { selectedNodeId = null; for (const [, el] of nodeEls) el.classList.remove("selected"); drawEdges(); }
-}
-
-// Select a window box from its NODE (routes through the chokepoint so other
-// overlays deselect and WASD targets it).
-function selectWindowBox(winId, boxId) {
-    const e = imageCanvases.get(winId);
-    if (e) e.overlay.setActive(boxId);
-    overlaySelected(nodeIdOf(winId), boxId);
 }
 
 // Switch a detector between kinds by toggling the discriminating fields (the model infers
@@ -3579,10 +3569,6 @@ function wireNode(div, n) {
         wireSource(div, n);
     } else if (n.type === "region") {
         const fld = n.field;
-        div.addEventListener("click", (ev) => {
-            if (ev.target.closest("input,select,button")) return;
-            selectWindowBox(n.win.id, n.ref.id);   // highlight this region's box on the image
-        });
         div.querySelector(".gi-id").addEventListener("change", (e) => {
             const oldId = n.ref.id;
             renameNode(e.target, oldId,
@@ -3613,10 +3599,6 @@ function wireNode(div, n) {
         // persist a detector edit: window detectors re-OCR their window; gate detectors just
         // save + re-run the cheap gate (autosave(null) doesn't re-read a window).
         const saveDet = () => { if (isGate) { autosave(null); refreshDetect("game"); } else autosave(owner); };
-        div.addEventListener("click", (ev) => {
-            if (ev.target.closest("input,select,button")) return;
-            selectWindowBox(owner, n.ref.id);
-        });
         div.querySelector(".gi-id").addEventListener("change", (e) => {
             const oldId = n.ref.id;
             renameNode(e.target, oldId,
@@ -3642,10 +3624,6 @@ function wireNode(div, n) {
             saveDet();   // a detector knob re-runs detect for ONLY this owner
         }));
     } else if (n.type === "scrollbar") {
-        div.addEventListener("click", (ev) => {
-            if (ev.target.closest("input,select,button,.sb-cut")) return;
-            selectWindowBox(n.win.id, "scrollbar");
-        });
         wireScrollbar(div, n);
     } else if (n.type === "item") {
         wireItemControls(div, n);
@@ -3663,10 +3641,6 @@ function wireNode(div, n) {
 function wireReadout(div, n) {
     const winId = n.win.id, vid = n.ref.id;
     const fld = n.field;
-    div.addEventListener("click", (ev) => {
-        if (ev.target.closest("input,select,button")) return;
-        selectWindowBox(winId, vid);   // highlight this readout's box on the image
-    });
     div.querySelector(".gi-id")?.addEventListener("change", (e) => {
         renameNode(e.target, vid,
             () => model.renameReadout(winId, vid, e.target.value.trim()),
@@ -5206,7 +5180,7 @@ export {
     refreshLive, subsetParts, wireOcrScale,
     refreshAllSubsetNodes, refreshDatasetConsumers,
     rebuildNode, setNodeBusy, withBusy, registerOverlay, unregisterOverlay,
-    overlaySelected, selectWindowBox, syncCellSize, itemChanged,
+    overlaySelected, syncCellSize, itemChanged,
     addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom,
     refreshItemTemplateRefs,
 };
