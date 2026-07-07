@@ -572,7 +572,7 @@ export function keySection(it, w) {
         subhead("key", null, "which fields identify a record — reads with the same key merge; a different key (e.g. another level) is its own record. A record missing any key part is dropped."),
         kv("separator", h("input", { class: "ksep", value: eff.sep ?? "|", size: "2" }),
             { title: "joins the parts in the stored key" }),
-        addable.length && kv("+ field", h("select", { class: "kadd" }, h("option", { value: "" }, "field…"), addable.map((f) => h("option", f))),
+        addable.length > 0 && kv("+ field", h("select", { class: "kadd" }, h("option", { value: "" }, "field…"), addable.map((f) => h("option", f))),
             { title: "add a field to the key" }),
         kv("is case-sensitive", h("input", { type: "checkbox", class: "kcase", checked: !!eff.case_sensitive }),
             { title: "treat keys differing only in case as distinct" }),
