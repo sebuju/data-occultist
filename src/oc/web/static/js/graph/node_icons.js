@@ -106,6 +106,12 @@ const INNER = {
         P("M15.5 8.5a5 5 0 0 1 0 7"),
         P("M18 6a8 8 0 0 1 0 12"),
     ],
+    // action: a database with a curved arrow — clears/clones/moves a dataset's data on fire.
+    action: () => [
+        svg("ellipse", { cx: "9", cy: "6", rx: "5.5", ry: "2.2" }),
+        P("M3.5 6v5c0 1.2 2.5 2.2 5.5 2.2s5.5-1 5.5-2.2V6"),
+        P("M14 14.5a4 4 0 1 1-1.2-2.9M13 10.5v2.2h-2.2", { opacity: ".9" }),
+    ],
 };
 
 // the shared icon box + stroke style; the type's inner factory fills it. A fresh node each call.
@@ -120,7 +126,7 @@ function icon(key) {
 
 // the header glyph for a node. `interval` triggers = clock; every other trigger = bolt.
 export function nodeIcon(n) {
-    if (n.type === "trigger") return icon(n.ref?.kind === "interval" ? "trigger_timer" : "trigger_change");
+    if (n.type === "trigger") return icon(["interval", "true_interval"].includes(n.ref?.kind) ? "trigger_timer" : "trigger_change");
     return icon(n.type);
 }
 

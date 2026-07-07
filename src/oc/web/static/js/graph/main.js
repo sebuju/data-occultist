@@ -45,6 +45,7 @@ import {
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
 import { imageTextInspector } from "./toast_node.js";
 import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved } from "./node_parts.js";
+import { refreshTriggerHistory } from "./history_node.js";
 import * as dsevents from "./dsevents.js";
 import { wireTools, clearTools } from "./drawtool.js";
 import { singleFlight } from "../singleflight.js";
@@ -59,7 +60,7 @@ import { dbWin, dbState, buildDBStruct } from "./panels/dbstruct.js";
 import {
     tb, tbState, buildToolbox,
     createWindowNode, createProducerNode, createTriggerNode, createDictionaryNode, createFileSourceNode,
-    createToastNode, createSoundNode, createDatasetNode, createSubsetNode,
+    createToastNode, createSoundNode, createActionNode, createDatasetNode, createSubsetNode,
 } from "./panels/toolbox.js";
 import { openContextMenu } from "../ctxmenu.js";
 import {
@@ -81,13 +82,14 @@ import {
     commitPreviewNode,
     detectBusy, detectAgain, _detectPending,
     _detectAll, refreshOpenDetect, _previewPending, _previewAll, refreshOpenPreviews,
-    refreshImageBoxes, refreshGridPreview, selectRegionNode, refreshRuleTrace,
+    refreshImageBoxes, refreshGridPreview, selectRegionNode, refreshRuleTrace, refreshReadoutValues,
 } from "./imaging.js";
 import {
     liveWin, liveWinState, buildLiveWindow, renderLiveWindow, syncLiveFromServer, applyLiveInterval, syncWpDots,
+    liveCollecting,
 } from "./panels/livewin.js";
 
-const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, producer: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, vttable: 2300, prod: 1080, dictionary: 20 };
+const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, action: 620, producer: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, vttable: 2300, prod: 1080, dictionary: 20 };
 // Nodes resized on the WIDTH axis only — height always fits content (never stamped/restored).
 // item/window wrap a fixed-aspect canvas; dataset/subset/price are config-only, reworked often
 // with visibility-toggleable inputs, so a frozen height would clip or leave dead space.
@@ -306,7 +308,7 @@ initPersist({
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", reg: "region", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", hist: "vttable", reg: "region", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
 function nodeTypeOf(id) { return id === "game" ? "game" : id === "glyphs" ? "glyphs" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
     world: () => $("ggroups"),
@@ -1643,18 +1645,18 @@ function wireTrigger(div, n) {
     div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
     div.querySelectorAll(".tg-rmwatch").forEach((b) => b.addEventListener("click", () => { model.removeTriggerWatch(t.id, b.dataset.ds); rebuildNode(n.id); drawEdges(); autosave(null); }));
     div.querySelectorAll(".tg-rmtarget").forEach((b) => b.addEventListener("click", () => { model.removeTriggerTarget(t.id, b.dataset.p); rebuildNode(n.id); drawEdges(); autosave(null); }));
-    // dataset action: add/remove target datasets (chips + edges), pick the action (rebuild so the
-    // dest select shows/hides for clone/move), and pick the destination dataset.
-    div.querySelector(".tg-addds")?.addEventListener("change", (e) => { if (model.addTriggerDataset(t.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
-    div.querySelectorAll(".tg-rmds").forEach((b) => b.addEventListener("click", () => { model.removeTriggerDataset(t.id, b.dataset.ds); rebuildNode(n.id); drawEdges(); autosave(null); }));
-    div.querySelector(".tg-dsaction")?.addEventListener("change", (e) => { model.setTriggerDatasetAction(t.id, e.target.value); rebuildNode(n.id); autosave(null); });
-    div.querySelector(".tg-dsdest")?.addEventListener("change", (e) => { model.setTriggerDatasetDest(t.id, e.target.value); autosave(null); });
+    // throttle: minimum ms between fires (empty = none). Rebuild so the input re-normalises (null -> placeholder).
+    div.querySelector(".tg-throttle")?.addEventListener("change", (e) => { model.setTriggerThrottle(t.id, e.target.value); rebuildNode(n.id); autosave(null); });
     div.querySelector(".tg-fire")?.addEventListener("click", async () => {
         const prog = div.querySelector(".tg-prog");
         prog.textContent = "firing…";
-        try { const r = await api.triggers.fire(model.profile.name, t.id); const n = (r.started || []).length, sk = (r.skipped || []).length; prog.textContent = n ? `fired ${n} sweep(s)` : sk ? `already sweeping (${sk} skipped)` : "no targets to fire"; refreshLive(); }
+        try { const r = await api.triggers.fire(model.profile.name, t.id); const n = (r.started || []).length, sk = (r.skipped || []).length; prog.textContent = n ? `fired ${n} target(s)` : sk ? `already sweeping (${sk} skipped)` : "no targets to fire"; refreshLive(); refreshTriggerHistory(t.id); }
         catch (err) { prog.textContent = String(err.message || err); }
     });
+    // fill the history satellite when it's open (this runs on every render, incl. right after the
+    // satellite is toggled on — the parent trigger rebuilds and populates its follower, exactly like
+    // a dataset/subset fills its vt-table satellite). No-op when the satellite is hidden.
+    refreshTriggerHistory(t.id);
 }
 
 // ---- toast node: raise an OS desktop notification when fired ---------------
@@ -2253,6 +2255,25 @@ function wireSound(div, n) {
     });
 }
 
+// ---- action node: clear / clone / move a dataset's data when fired ----------
+
+function wireAction(div, n) {
+    const x = n.ref;
+    const $ = (sel) => div.querySelector(sel);
+    $(".acrename")?.addEventListener("change", (e) => {
+        const oldId = x.id;
+        renameNode(e.target, oldId,
+            () => model.renameAction(oldId, (e.target.value || "").trim()),
+            () => movePos(`action:${oldId}`, `action:${x.id}`),
+            () => { render(); autosave(null); });
+    });
+    // action kind: rebuild so the dest select shows/hides for clone/move; edges follow (dest edge)
+    $(".ac-action")?.addEventListener("change", (e) => { model.setActionKind(x.id, e.target.value); rebuildNode(n.id); drawEdges(); autosave(null); });
+    $(".ac-addds")?.addEventListener("change", (e) => { if (model.addActionDataset(x.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
+    div.querySelectorAll(".ac-rmds").forEach((b) => b.addEventListener("click", () => { model.removeActionDataset(x.id, b.dataset.ds); rebuildNode(n.id); drawEdges(); autosave(null); }));
+    $(".ac-dest")?.addEventListener("change", (e) => { model.setActionDest(x.id, e.target.value); drawEdges(); autosave(null); });
+}
+
 // ---- file-source node: parse a game log/config file into its dataset --------
 
 function wireSource(div, n) {
@@ -2494,7 +2515,7 @@ function renderPreview(host, rows) {
             h("tr", cols.map((c) => h("td", { class: isLine(c) ? "src-pline" : "" }, r[c] == null ? "" : String(r[c]))))))));
 }
 
-export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource"]);
+export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource", "action"]);
 // Denylist, NOT allowlist: every node type is removable EXCEPT these. Inverted on purpose so a new
 // functional node type is deletable by default — the recurring bug was forgetting to add each new
 // type to an allowlist. Only the profile-root nodes (game, glyphs) and toggle-only satellites
@@ -2526,6 +2547,7 @@ function removeNode(n) {
         trigger:    { kill: () => model.removeTrigger(n.ref.id), after: () => autosave(null) },
         toast:      { kill: () => model.removeToast(n.ref.id), after: () => autosave(null) },
         sound:      { kill: () => model.removeSound(n.ref.id), after: () => autosave(null) },
+        action:     { kill: () => model.removeAction(n.ref.id), after: () => autosave(null) },
         filesource: { kill: () => model.removeFileSource(n.ref.id), after: () => autosave(null) },
         dataset:    { kill: () => { model.removeDataset(n.ref); purgeDatasetData(n.ref); }, after: () => autosave(null) },
     };
@@ -2701,9 +2723,14 @@ function outPortSpec(n) {
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setSourceDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
         };
         case "trigger": return {
-            // a trigger fires a PRODUCER node (sweep/refresh), a FILE SOURCE (read), a TOAST (notify), or a SOUND (play)
-            target: ["producer", "filesource", "toast", "sound"],
+            // a trigger fires a PRODUCER (sweep), FILE SOURCE (read), TOAST (notify), SOUND (play), or ACTION (dataset op)
+            target: ["producer", "filesource", "toast", "sound", "action"],
             onDrop: (pid) => { if (model.addTriggerTarget(n.ref.id, pid)) rebuildNode(n.id); },
+        };
+        case "action": return {
+            // an action node operates on the DATASET(s) it's wired to
+            target: "dataset",
+            onDrop: (ds) => { if (model.addActionDataset(n.ref.id, ds)) { rebuildNode(n.id); drawEdges(); } },
         };
         default: return null;
     }
@@ -3341,11 +3368,20 @@ function wireNode(div, n) {
     // drag-move from the node header / frame, NOT the body — so interacting with body content
     // (selects, chips, tables) never drags the node. The header + outer padding stay grab zones.
     div.addEventListener("mousedown", (ev) => {
-        if (ev.button !== 0) return;   // only left-drag moves; right-drag pans the canvas
+        if (ev.button !== 0) {
+            // ONLY a left second-click may edit the id. A non-left press on the id input would
+            // otherwise focus it natively (no arm needed) -> instant edit; suppress that focus.
+            // preventDefault (not stopPropagation) so the press still bubbles to pan the canvas.
+            if (ev.target.closest("input.gi-id")) ev.preventDefault();
+            return;   // only left-drag moves; right-drag pans the canvas
+        }
         // ctrl/cmd-click ANYWHERE on the node (header, frame, OR body content) toggles it in/out
         // of the multi-selection and NEVER drags — handled first so body fields don't swallow it.
         if (ev.ctrlKey || ev.metaKey) {
             ev.preventDefault();
+            // seed the multi-select set with the currently single-focused node so a ctrl-click
+            // on a 2nd node ADDS to the selection instead of dropping the 1st.
+            if (!selected.size && selectedNodeId && nodeEls.has(selectedNodeId)) selected.add(selectedNodeId);
             if (selected.has(n.id)) selected.delete(n.id); else selected.add(n.id);
             syncMultiSelect();
             return;
@@ -3368,10 +3404,17 @@ function wireNode(div, n) {
         if (!selected.has(n.id)) clearMultiSelect();
         focusNode(n.id);   // select on click / drag start (every node is focusable)
         // id input is click-to-arm: block native focus on the FIRST click (just arm + select);
-        // a second click on the same armed input falls through to native focus → editing.
-        if (handle && handle.matches?.("input.gi-id") && handle !== armedGiId) {
-            ev.preventDefault();   // suppress focus/caret on this click
-            armedGiId = handle;
+        // a second (left) click on the same armed input falls through to native focus → editing.
+        if (handle && handle.matches?.("input.gi-id")) {
+            if (handle !== armedGiId) {
+                ev.preventDefault();   // first click: suppress focus/caret, just arm
+                armedGiId = handle;
+            } else {
+                // second click: native focus lands after this handler — preselect the whole id so
+                // typing replaces it. Guard on activeElement so a drag (which blurs) doesn't reselect.
+                const el = handle;
+                setTimeout(() => { if (document.activeElement === el) el.select(); }, 0);
+            }
         }
         if (handle) dragFromHandle(n.id, ev, div, handle);   // drag past threshold, else click
         else startMove(n.id, ev);
@@ -3379,14 +3422,10 @@ function wireNode(div, n) {
 
     // double-click anywhere non-interactive on the node: fit + centre it
     div.addEventListener("dblclick", (ev) => {
-        // fast double-click on the id input pans/zooms to the node instead of editing it;
-        // only when the camera is ALREADY framing the node (nothing to pan) does it fall
-        // through to native focus → rename.
-        const idInput = ev.target.closest("input.gi-id");
-        if (idInput) {
-            if (zoomToNode(n.id)) { ev.preventDefault(); idInput.blur(); disarmGiId(); }
-            return;
-        }
+        // a fast arm+edit on the id input registers as a native dblclick — it must EDIT, not
+        // pan/zoom. Do nothing here so the second click's native focus (+ preselect) stands.
+        // Pan/zoom-to-node is still available by double-clicking the node body/header padding.
+        if (ev.target.closest("input.gi-id")) return;
         if (ev.target.closest("input,select,button,textarea,a,.port,.collapse,.sv-norm-eg")) return;
         ev.preventDefault();
         zoomToNode(n.id);
@@ -3573,6 +3612,8 @@ function wireNode(div, n) {
         wireToast(div, n);
     } else if (n.type === "sound") {
         wireSound(div, n);
+    } else if (n.type === "action") {
+        wireAction(div, n);
     } else if (n.type === "filesource") {
         wireSource(div, n);
     } else if (n.type === "region") {
@@ -3649,6 +3690,9 @@ function wireNode(div, n) {
 function wireReadout(div, n) {
     const winId = n.win.id, vid = n.ref.id;
     const fld = n.field;
+    // With live mode OFF the collector isn't feeding values, so read this readout's value off the
+    // current image (coalesced per window). Called on build + whenever the read config/rules change.
+    const refetch = () => { if (!liveCollecting()) refreshReadoutValues(winId); };
     div.querySelector(".gi-id")?.addEventListener("change", (e) => {
         renameNode(e.target, vid,
             () => model.renameReadout(winId, vid, e.target.value.trim()),
@@ -3665,12 +3709,14 @@ function wireReadout(div, n) {
         else if (k === "glyph_check") fld.glyph_check = e.target.checked;
         else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
         autosave(winId);
+        refetch();   // read config changed -> re-read the value off the current image
     }));
     if (fld) wireFieldRules(div, fld, {
         rebuild: () => { rebuildNode(n.id); autosave(winId); },
-        commit: () => autosave(winId),
+        commit: () => { autosave(winId); refetch(); },
         retrace: (el) => refreshRuleTrace(winId, fld.id, n.id, el),
     });
+    refetch();   // initial value off the current image (no-op while the collector is running)
 }
 
 // Scrollbar node: orientation + visible-rows, the cutout list (rows-from-top, remove,
@@ -4327,6 +4373,7 @@ const CLONE = {
     subset: (n) => model.cloneSubset(n.ref.id),
     producer: (n) => model.cloneProducer(n.ref.id),
     trigger: (n) => model.cloneTrigger(n.ref.id),
+    action: (n) => model.cloneAction(n.ref.id),
     filesource: (n) => model.cloneFileSource(n.ref.id),
     dictionary: (n) => model.cloneDictionary(n.ref.id),
 };
@@ -4692,6 +4739,7 @@ window.addEventListener("contextmenu", (ev) => {
         { icon: iconFor("trigger"),    title: "trigger",     tint: "var(--trigger-line)", onClick: () => ready() && createTriggerNode(at) },
         { icon: iconFor("toast"),      title: "toast",       tint: "var(--toast)",        onClick: () => ready() && createToastNode(at) },
         { icon: iconFor("sound"),      title: "sound",       tint: "var(--sound)",        onClick: () => ready() && createSoundNode(at) },
+        { icon: iconFor("action"),     title: "action",      tint: "var(--warn)",         onClick: () => ready() && createActionNode(at) },
         { icon: iconFor("dictionary"), title: "dictionary",  tint: "var(--purple)",       onClick: () => ready() && createDictionaryNode(at) },
     ]);
 }, true);

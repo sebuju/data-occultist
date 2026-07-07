@@ -81,6 +81,13 @@ async function createSoundNode(at = null, group = null) {
     if (group) groups.addToGroup(group, [`sound:${id}`]);
     autosave(null); if (!at) panTo(`sound:${id}`);   // new node changes nothing open windows OCR
 }
+async function createActionNode(at = null, group = null) {
+    const id = model.addAction();   // clears/clones/moves a dataset when a trigger fires it (wired after)
+    if (!id) return;
+    await placeNewNode(`action:${id}`, "action", null, at); render();
+    if (group) groups.addToGroup(group, [`action:${id}`]);
+    autosave(null); if (!at) panTo(`action:${id}`);   // new node changes nothing open windows OCR
+}
 function createDictionaryNode(at = null, group = null) {
     const place = async (id) => {
         await placeNewNode(`dict:${id}`, "dictionary", null, at); render();
@@ -307,5 +314,5 @@ function svgToPngBlob(svg, W, H) {
 export {
     tb, tbState, createWindowNode, createProducerNode, createTriggerNode,
     createDictionaryNode, createDatasetNode, createSubsetNode, createFileSourceNode,
-    createToastNode, createSoundNode, buildToolbox, runCollisionCheck,
+    createToastNode, createSoundNode, createActionNode, buildToolbox, runCollisionCheck,
 };

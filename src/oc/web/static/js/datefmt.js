@@ -49,6 +49,18 @@ export function since(iso) {
     return fmtDateTime(iso);
 }
 
+// Human-readable duration for a FUTURE countdown: 45s / 5m / 5m 30s / 2h 10m. The one countdown
+// formatter (rule 7) — shared by the Activity panel's "fires in …" and the trigger node's
+// "next in …". Clamps negatives to 0.
+export function countdown(secs) {
+    let s = Math.max(0, Math.round(secs || 0));
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60); s %= 60;
+    if (m < 60) return s ? `${m}m ${s}s` : `${m}m`;
+    const h = Math.floor(m / 60), rm = m % 60;
+    return rm ? `${h}h ${rm}m` : `${h}h`;
+}
+
 // Compact relative age: no "ago", single-letter units (12s, 5m, 3h, 2d, 1w). Falls back to the
 // absolute dd/mm/yy HH:MM once older than a few weeks. For dense lists (e.g. the history panel).
 export function sinceShort(iso) {

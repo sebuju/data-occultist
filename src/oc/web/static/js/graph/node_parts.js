@@ -20,6 +20,7 @@ import { sourceParts } from "./source_node.js";
 import { toastParts } from "./toast_node.js";
 import { soundParts } from "./sound_node.js";
 import { triggerParts } from "./trigger_node.js";
+import { actionParts } from "./action_node.js";
 import { sourcesInput } from "./sources_input.js";
 import { subsetParts } from "./main.js";
 
@@ -33,8 +34,12 @@ const SAT_GRID = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "
 const SAT_DISMISS = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
     svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.3", d: "M2.5 2.5h11v11h-11zM2.5 6.5h11M6.5 2.5v11" }),
     svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.4", d: "M3 13L13 3" }));
-const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table", producer: "preview (inputs + test fetch)" };
-const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS };
+// fire history: a clock face — recent fires (when/why/what), non-persisted.
+const SAT_HIST = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
+    svg("circle", { cx: "8", cy: "8", r: "5.5", fill: "none", stroke: "currentColor", "stroke-width": "1.3" }),
+    svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round", d: "M8 5v3l2 1.5" }));
+const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table", producer: "preview (inputs + test fetch)", history: "fire history" };
+const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS, history: SAT_HIST };
 export function satToggleBtn(satId, kind) {
     const on = model.satelliteOn(satId);
     const title = `${on ? "hide" : "show"} ${_SAT_LABEL[kind] || "data table"}`;
@@ -396,7 +401,7 @@ export function ruleRows(fd, cls, fid) {
 // not three copies). All value processing is authored in the rule PIPELINE below; only the
 // capture/confidence knobs (type + isolate + glyph-check + conf) sit up top. `cls` is the
 // wiring's change-class ("fset" | "ffset" | "roset"); `fid` (item fields) tags each control.
-export function fieldConfigBody(fd, cls, fid) {
+export function fieldConfigBody(fd, cls, fid, afterConf = null) {
     const da = fid ? { fid } : {};
     const isText = (fd.type || "text") === "text";
     return frag(
@@ -407,6 +412,7 @@ export function fieldConfigBody(fd, cls, fid) {
             { title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the game node." }),
         kv("conf", confMeter({ cls, k: "minconf", value: fd.min_confidence ?? 0, fid }),
             { title: "minimum OCR confidence this field must reach — a weaker genuine read drops the whole record (0 = use the global floor). Drag the bar to set it." }),
+        afterConf,   // optional extra row right below conf (readout node slots its live value here)
         subhead("rules"),
         gspan("frule-list", ruleRows(fd, cls, fid)),
         h("div", { class: "frule-btns" },
@@ -495,10 +501,10 @@ export function itemTellParts(n) {
 export function readoutParts(n) {
     const v = n.ref;
     const fd = n.field || { type: "number", extract: "whole", fuzzy: 0.82 };
-    const body = frag(
-        fieldConfigBody(fd, "roset", fd.id),   // the box's read config, like a region node
-        subhead("live value"),
-        h("div", { class: "ro-live muted", dataset: { ro: v.id } }, "—"));   // updated in place from the heartbeat
+    const body = fieldConfigBody(fd, "roset", fd.id,   // the box's read config, like a region node
+        // the value sits directly below the conf meter, labelled "value". Shows `value (conf)`:
+        // live from the collector when collecting, else what the current image reads (from preview).
+        kv("value", h("div", { class: "ro-live muted", dataset: { ro: v.id } }, "—")));
     return {
         title: h("input", { class: "gi gi-id", dataset: { k: "roid" }, value: v.id,
             title: "readout id — what a trigger watches and a toast tokens as {{readout:id}}" }),
@@ -757,6 +763,14 @@ export function nodeParts(n) {
                 body: h("div", { class: "nodehost scrollhost sub-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
             };
         }
+        if (r.kind === "triggerhistory") {
+            // a trigger's recent fires (non-persisted) as a standard records grid — filled by
+            // refreshTriggerHistory (history_node.js), which mounts a VTable in the .hist-host.
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} fires`),
+                body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+            };
+        }
         if (r.kind === "producer") {
             // an http producer's preview: what it WILL fetch (resolved names -> keys), the columns
             // it emits, and a live one-item test-fetch (raw response vs mapped row). Filled by
@@ -810,9 +824,10 @@ export function nodeParts(n) {
     if (n.type === "filesource") return { ...sourceParts(n.ref),
         head: frag(satToggleBtn(`vt:src:${n.ref.id}`, "vttable"),
             satToggleBtn(`vtd:src:${n.ref.id}`, "dismissed")) };
-    if (n.type === "trigger") return triggerParts(n.ref, model);
+    if (n.type === "trigger") return { ...triggerParts(n.ref, model), head: satToggleBtn(`hist:${n.ref.id}`, "history") };
     if (n.type === "toast") return toastParts(n.ref, model);
     if (n.type === "sound") return soundParts(n.ref, model);
+    if (n.type === "action") return actionParts(n.ref, model);
     if (n.type === "dictionary") {
         // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The
         // terms live in config/dictionaries/<source>; this node just references that file.

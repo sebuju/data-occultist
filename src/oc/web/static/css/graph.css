@@ -78,6 +78,8 @@
 .gnode.trigger    { --nt: var(--nt-trigger); }
 .gnode.toast      { --nt: var(--nt-toast); }
 .gnode.sound      { --nt: var(--nt-sound); }
+.gnode.action     { --nt: var(--nt-action); }
+.gnode.history    { --nt: var(--nt-history); }
 .gnode.filesource { --nt: var(--nt-filesource); }
 .gn-h { --ntint: var(--nt); }
 .gn-h .nicon { width: 18px; height: 18px; flex: 0 0 auto; color: var(--ntint); }
@@ -516,7 +518,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    blocks use gspan(). A new full-width block class = add one selector. */
 .gn-grid > :is(
     .win-controls, .win-img, .item-img, .item-lists, .nodehost, .glyph-img, .glyph-preview,
-    .glyph-pending, .glyph-atlas, .detect-status, .ds-tabs, .dict-feeds, .dsconcat, .ro-live,
+    .glyph-pending, .glyph-atlas, .detect-status, .ds-tabs, .dict-feeds, .dsconcat,
     .sb-cuts, .sb-cut-acts, .sb-calib, .sb-lock, .pp-color, .game-priority, .game-gate,
     .wd-verdict, .wd-collide, .prev-host, .pp-cols, .pp-result,
     .frule, .frule-list, .frule-empty, .tn-blocks, .tn-imgs, .tn-tokbox, .il-tools,
@@ -579,6 +581,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .frule-trace { font-size: var(--fs-xs); font-family: var(--mono, monospace); padding-left: 2px;
     min-height: 1.25em; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .frule-trace.frule-drop { color: var(--danger, #e06c6c); }
+.frule-trace:empty:after { content: "-"; }
 /* a rule that doesn't fit the field's type: greyed and ignored by the executor */
 .frule-invalid { opacity: .45; }
 .frule-empty { margin-top: 6px; font-size: var(--fs-sm); }
@@ -625,7 +628,14 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* status / readout TEXT cells (progress, last-fired, sweep stats) share a lab-grid control
    column with real inputs but aren't inputs, so they miss the input's horizontal padding and
    their text sits 4px left of the values above/below. Match it so the column lines up. */
-.gnode :is(.tg-prog, .tg-last, .enr-prog) { padding-inline: 4px; }
+.gnode :is(.tg-prog, .tg-last, .enr-prog, .ro-live) { padding-inline: 4px; }
+
+/* history satellite: a standard VTable records grid of recent fires. The .hist-host is a
+   nodehost/scrollhost like every other vt-table satellite (so it fills + resizes the node); the
+   VTable owns the rows. A throttled (suppressed) fire reads muted, its cells warn-tinted. */
+.hist-host { min-height: 120px; }
+.hist-host .vt-row.hist-throttled { color: var(--muted); }
+.hist-host .vt-row.hist-throttled .vt-cell { color: var(--warn); }
 
 /* trigger node uses the same natural row sizing as every other lab-grid node — the specific
    .tg-secs / .tg-prog / .tg-last cells (above) are the only ones pinned to a control-row box. */
@@ -841,28 +851,26 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    first child of the .glyph-atlas wrapper, so .fgrp:first-child would strip it. Restore it. */
 .glyph-atlas > .fgrp { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--line); }
 .glyph-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-/* the taught atlas lays out as a neat, uniform grid: auto-fill columns, each cell a row of the
-   cutout + its char input (like the auto strip). (The pending strip keeps the inline flex-wrap.) */
-.glyph-atlas .glyph-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 6px; align-items: start; }
-.glyph-atlas .glyph-cell { justify-self: start; }
+/* the taught atlas is the SAME flex-wrap of content-sized cells as the pending strip — each cell a
+   compact in-flow row [enable][thumb][char][trash], so nothing overlaps. (Was a 120px-min grid with
+   tiny 44px thumbs -> huge gaps, plus absolute corner controls sitting on top of the char/thumb.) */
 .glyph-cell { position: relative; display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--line);
     border-radius: 4px; padding: 2px 3px; background: var(--panel, transparent); }
 .glyph-thumb { height: 44px; width: 44px; object-fit: contain; image-rendering: pixelated;
     background: #000; border-radius: 2px; border: 2px solid var(--accent); }
-.glyph-char { width: 2.2em; text-align: center; padding: 1px 2px; }
-.glyph-rm { padding: 1px 4px; }
-/* remove button: icon-only red trash, floats in the cell's top-right corner, revealed only on
-   hover (visibility, not display, so the grid never reflows) */
-.glyph-cell .glyph-rm, .glyph-cell .gp-rm { position: absolute; top: 1px; right: 1px; z-index: 2;
-    padding: 1px; margin: 0; background: none; border: 0; line-height: 0; cursor: pointer; min-height: unset;
+.glyph-char { width: 2.2em; text-align: center; padding: 1px 2px; flex: 0 0 auto; }
+/* atlas cell controls sit IN FLOW and stay visible (no absolute overlay, no hover-reveal) so the
+   enable checkbox and trash never cover the thumbnail or the char input. */
+.glyph-atlas .glyph-en { margin: 0; cursor: pointer; flex: 0 0 auto; }
+.glyph-atlas .glyph-rm { flex: 0 0 auto; padding: 1px; margin: 0; background: none; border: 0;
+    line-height: 0; cursor: pointer; min-height: unset; color: var(--danger); }
+.glyph-atlas .glyph-rm svg { width: 12px; height: 12px; display: block; fill: currentColor; }
+/* pending cell: trash floats top-right, hover-revealed (the 88px correction thumbs leave room). */
+.glyph-cell .gp-rm { position: absolute; top: 1px; right: 1px; z-index: 2; padding: 1px; margin: 0;
+    background: none; border: 0; line-height: 0; cursor: pointer; min-height: unset;
     color: var(--danger); visibility: hidden; }
-.glyph-cell .glyph-rm svg, .glyph-cell .gp-rm svg { width: 12px; height: 12px; display: block; fill: currentColor; }
-.glyph-cell:hover .glyph-rm, .glyph-cell:hover .gp-rm { visibility: visible; }
-/* per-glyph enable toggle: top-left corner, hover-revealed; a disabled glyph is greyed and
-   ignored by refinement (glyph_atlas skips it) */
-.glyph-cell .glyph-en { position: absolute; top: 1px; left: 1px; z-index: 2; margin: 0; cursor: pointer; visibility: hidden; }
-.glyph-cell:hover .glyph-en { visibility: visible; }
+.glyph-cell .gp-rm svg { width: 12px; height: 12px; display: block; fill: currentColor; }
+.glyph-cell:hover .gp-rm { visibility: visible; }
 .glyph-cell.disabled .glyph-thumb { opacity: 0.3; filter: grayscale(1); }
 .glyph-cell.disabled .glyph-char { opacity: 0.5; }
 /* glyph compose bar (arm rect / type char / save; auto-glypher button) */

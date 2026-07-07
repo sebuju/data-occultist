@@ -7,10 +7,11 @@ import * as hub from "../../hub.js";
 import { log } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
-import { $, model, nodeEls } from "../state.js";
-import { since } from "../../datefmt.js";
-import { liveAgo, stopAgo } from "../../ago.js";
+import { $, model, nodeEls, readoutPreview } from "../state.js";
+import { since, countdown } from "../../datefmt.js";
+import { liveAgo, liveUntil, stopAgo } from "../../ago.js";
 import { autosave } from "../main.js";
+import { refreshTriggerHistory } from "../history_node.js";
 import { panZoomTo } from "../camera.js";
 import { playSound } from "../sound.js";
 import { svg } from "../../dom.js";
@@ -57,11 +58,11 @@ function buildActivity() {
     winAdapter = { host: act.body, fit: () => act.fitHeight(), nav: (id) => panZoomTo(id) };
     // regaining focus -> the backgrounded cadence is stale; beat the hub right away
     window.addEventListener("focus", () => { if (active) hub.kick(); });
-    // Trigger NODE labels (.tg-last "last fired") track EVERY heartbeat, panel open or not —
-    // a trigger that fires while the tasks panel is closed must still update its node, else the
-    // label sticks at "never fired" forever. The panel's own render (gated on `active`) only
-    // drives the panel rows; the node labels are independent. Reconciles in place (textContent
-    // only when changed), so an always-on beat costs nothing at steady state (rule 1).
+    // Trigger NODE progress (.tg-prog: live countdown / idle) tracks EVERY heartbeat, panel open
+    // or not — a timed trigger must keep counting down (and a fire must refresh its history) even
+    // while the tasks panel is closed. The panel's own render (gated on `active`) only drives the
+    // panel rows; the node progress is independent. Reconciles in place (textContent only when
+    // changed; countdown via the shared ago.js ticker), so an always-on beat costs nothing (rule 1).
     hub.subscribe((s) => updateTriggerNodes(s));
     mountActivity(winAdapter);
 }
@@ -129,15 +130,9 @@ function wireActivityClicks(root) {
     });
 }
 
-// Human-readable duration: 45s / 5m / 5m 30s / 2h 10m.
-function fmtDur(s) {
-    s = Math.max(0, Math.round(s || 0));
-    if (s < 60) return `${s}s`;
-    const m = Math.floor(s / 60), rs = s % 60;
-    if (m < 60) return rs ? `${m}m ${rs}s` : `${m}m`;
-    const h = Math.floor(m / 60), rm = m % 60;
-    return rm ? `${h}h ${rm}m` : `${h}h`;
-}
+// duration formatting is the shared `countdown` (datefmt.js) — one formatter for the panel's
+// "fires in …" and the node's "next in …" (rule 7).
+const fmtDur = countdown;
 
 function deactivateActivity() {
     active = false;
@@ -158,7 +153,7 @@ function showActLoading() {
 // any interval trigger whose countdown has just hit zero since the last fetch -> it fired,
 // so the server state changed and a refresh is due (don't wait out the cadence)
 function actDueForRefresh(elapsed) {
-    return (actData?.triggers || []).some((t) => t.kind === "interval" && (t.next_in || 0) > 0 && (t.next_in - elapsed) <= 0);
+    return (actData?.triggers || []).some((t) => (t.kind === "interval" || t.kind === "true_interval") && (t.next_in || 0) > 0 && (t.next_in - elapsed) <= 0);
 }
 
 function activateActivity() {
@@ -217,11 +212,12 @@ function activityJobs(data, elapsed = 0) {
         const running = (t.targets || []).some((x) => x.running);
         let prog;
         const watchLabel = t.kind === "on_any_change" ? "any change" : "on change";
+        const timed = t.kind === "interval" || t.kind === "true_interval";
         if (!enabled) {
-            prog = t.kind === "interval" ? `disabled · every ${fmtDur(t.interval_s)}`
+            prog = timed ? `disabled · every ${fmtDur(t.interval_s)}`
                 : (t.kind === "on_change" || t.kind === "on_any_change") ? `disabled · ${watchLabel}: ${(t.watch || []).join(", ") || "—"}`
                 : "disabled";
-        } else if (t.kind === "interval") {
+        } else if (timed) {
             const remaining = Math.max(0, (t.next_in || 0) - elapsed);   // age locally between fetches
             prog = running ? "firing now…"
                 : remaining <= 0 ? `due… · every ${fmtDur(t.interval_s)}`
@@ -265,22 +261,37 @@ function detectFires(data) {
     }
 }
 
-// Reflect each trigger's last-activation onto its node (reconcile-in-place: textContent set
-// only when it actually changes — steady-state is zero DOM writes except as the "since" label
-// ticks over).
+// Reflect each trigger's live PROGRESS onto its node's `.tg-prog` span (reconcile-in-place:
+// textContent set only when it changes — steady-state is zero DOM writes except as a countdown
+// ticks). Timed kinds show a live "idle (next in: …)"; an on_readout crosses shows the saved
+// value it compares against; every other kind shows plain idle / firing now.
 function updateTriggerNodes(data) {
     detectFires(data);
     for (const t of (data.triggers || [])) {
-        const span = nodeEls.get(`trigger:${t.id}`)?.querySelector(".tg-last");
+        // keep an OPEN history satellite live — the heartbeat can't signal a throttled fire (it
+        // doesn't move last_fired), so refetch each beat while it's shown (no-op / no network when
+        // the satellite is hidden). Cheap: the ring is in-memory and the satellite is opt-in.
+        refreshTriggerHistory(t.id);
+        const span = nodeEls.get(`trigger:${t.id}`)?.querySelector(".tg-prog");
         if (!span) continue;
         const running = (t.targets || []).some((x) => x.running);
-        if (!running && t.last_fired) {
-            liveAgo(span, t.last_fired, (s) => s);   // ticks every 1s, panel open or not (label cell already says "last fired")
-        } else {
-            stopAgo(span);
-            const txt = running ? "firing now…" : "never fired";
-            if (span.textContent !== txt) span.textContent = txt;
+        const timed = t.kind === "interval" || t.kind === "true_interval";
+        if (!running && timed && t.next_in != null) {
+            // live countdown, panel open or not — re-registered each beat so the deadline re-syncs
+            liveUntil(span, t.next_in, (s, r) => (r <= 0 ? "due…" : `idle (next in: ${s})`));
+            continue;
         }
+        stopAgo(span);
+        let txt = running ? "firing now…" : "idle";
+        if (!running) {
+            const tr = model.trigger(t.id);
+            if (tr && tr.kind === "on_readout" && /^crosses/.test(tr.readout_op || "")) {
+                const w = (tr.readout_watch || [])[0];
+                const v = w != null ? readoutPreview.vals[w] : undefined;
+                if (v != null) txt = `idle (prev: ${v})`;   // the saved value the cross compares against
+            }
+        }
+        if (span.textContent !== txt) span.textContent = txt;
     }
 }
 

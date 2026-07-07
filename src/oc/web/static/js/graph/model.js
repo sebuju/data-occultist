@@ -50,9 +50,11 @@ export class GraphModel {
         for (const s of this.profile.file_sources) { s.match = s.match || []; s.fields = s.fields || []; s.roots = s.roots || []; }
         for (const t of this.profile.triggers) {
             t.watch = t.watch || []; t.targets = t.targets || [];
-            t.dataset_targets = t.dataset_targets || []; t.dataset_action = t.dataset_action || ""; t.dataset_dest = t.dataset_dest || "";
             t.readout_watch = t.readout_watch || []; t.readout_op = t.readout_op || "gte"; if (t.readout_value == null) t.readout_value = 0;
+            if (t.throttle_ms === undefined) t.throttle_ms = null;
         }
+        this.profile.actions = this.profile.actions || [];
+        for (const x of this.profile.actions) { x.datasets = x.datasets || []; x.action = x.action || ""; x.dest = x.dest || ""; if (x.enabled == null) x.enabled = true; }
         // Item children arrive HOISTED to the window (flat ``item_fields``/``item_tells``, each
         // with an ``item`` backref) so each is its own node. Fan them back onto each item's
         // ``fields``/``tells`` for the per-item editing logic, and drop the flat key so saving
@@ -182,12 +184,13 @@ export class GraphModel {
         for (const s of this.profile.subsets || [])                       // each subset source is a REF
             (s.sources || []).forEach((_, i) =>
                 sites.push({ decl: false, get: () => s.sources[i].dataset, set: (v) => { s.sources[i].dataset = v; } }));
-        for (const t of this.profile.triggers || []) {                    // trigger dataset REFs
-            (t.watch || []).forEach((_, i) =>                             // on_change watch
+        for (const t of this.profile.triggers || [])                      // on_change watch is a dataset REF
+            (t.watch || []).forEach((_, i) =>
                 sites.push({ decl: false, get: () => t.watch[i], set: (v) => { t.watch[i] = v; } }));
-            (t.dataset_targets || []).forEach((_, i) =>                   // datasets it acts on
-                sites.push({ decl: false, get: () => t.dataset_targets[i], set: (v) => { t.dataset_targets[i] = v; } }));
-            sites.push({ decl: false, get: () => t.dataset_dest || "", set: (v) => { t.dataset_dest = v; } });   // clone/move dest
+        for (const x of this.profile.actions || []) {                     // action node dataset REFs
+            (x.datasets || []).forEach((_, i) =>                          // datasets it acts on
+                sites.push({ decl: false, get: () => x.datasets[i], set: (v) => { x.datasets[i] = v; } }));
+            sites.push({ decl: false, get: () => x.dest || "", set: (v) => { x.dest = v; } });   // clone/move dest
         }
         for (const d of this.profile.dictionaries || [])                  // a dictionary feed is a dataset REF
             (d.feeds || []).forEach((_, i) =>
@@ -298,6 +301,7 @@ export class GraphModel {
         if (id.startsWith("vt:")) return id.slice(3);
         if (id.startsWith("prev:")) return `win:${id.slice(5)}`;
         if (id.startsWith("prod:")) return `producer:${id.slice(5)}`;   // producer preview (inputs/schema/test)
+        if (id.startsWith("hist:")) return `trigger:${id.slice(5)}`;    // trigger's recent-fires history
         return null;
     }
     satelliteBonds() {
@@ -343,9 +347,15 @@ export class GraphModel {
             if (this.satelliteOn(`vt:src:${s.id}`)) ns.push({ id: `vt:src:${s.id}`, type: "vttable", ref: { kind: "source", id: s.id } });
             if (this.satelliteOn(`vtd:src:${s.id}`)) ns.push({ id: `vtd:src:${s.id}`, type: "vttable", ref: { kind: "sourcedismissed", id: s.id } });
         }
-        for (const t of this.profile.triggers || []) ns.push({ id: `trigger:${t.id}`, type: "trigger", ref: t });
+        for (const t of this.profile.triggers || []) {
+            ns.push({ id: `trigger:${t.id}`, type: "trigger", ref: t });
+            // history satellite (opt-in): recent fires (why/what), non-persisted — a standard vttable
+            // grid (kind "triggerhistory"), so it resizes like every other node. See history_node.js.
+            if (this.satelliteOn(`hist:${t.id}`)) ns.push({ id: `hist:${t.id}`, type: "vttable", ref: { kind: "triggerhistory", id: t.id } });
+        }
         for (const x of this.profile.toasts || []) ns.push({ id: `toast:${x.id}`, type: "toast", ref: x });
         for (const x of this.profile.sounds || []) ns.push({ id: `sound:${x.id}`, type: "sound", ref: x });
+        for (const x of this.profile.actions || []) ns.push({ id: `action:${x.id}`, type: "action", ref: x });
         for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
         return ns;
     }
@@ -403,6 +413,7 @@ export class GraphModel {
                 else if (this.fileSource(pid)) es.push({ from: `trigger:${t.id}`, to: `src:${pid}`, kind: "trigger" });
                 else if (this.toastNode(pid)) es.push({ from: `trigger:${t.id}`, to: `toast:${pid}`, kind: "trigger" });
                 else if (this.soundNode(pid)) es.push({ from: `trigger:${t.id}`, to: `sound:${pid}`, kind: "trigger" });
+                else if (this.actionNode(pid)) es.push({ from: `trigger:${t.id}`, to: `action:${pid}`, kind: "trigger" });
             }
             if (t.kind === "on_change" || t.kind === "on_any_change")
                 for (const w of t.watch || []) {
@@ -415,9 +426,14 @@ export class GraphModel {
                     const site = this.readoutSite(vid);
                     if (site) es.push({ from: `trigger:${t.id}`, to: `ro:${site.win}:${vid}`, kind: "watch" });
                 }
-            // a dataset-action trigger ACTS ON its dataset targets (trigger -> dataset)
-            for (const ds of t.dataset_targets || [])
-                es.push({ from: `trigger:${t.id}`, to: `ds:${ds}`, kind: "trigger" });
+            // history satellite: dotted "img" edge trigger -> its recent-fires grid (opt-in)
+            if (this.satelliteOn(`hist:${t.id}`)) es.push({ from: `trigger:${t.id}`, to: `hist:${t.id}`, kind: "img" });
+        }
+        // an action node ACTS ON its dataset targets (action -> dataset), and WRITES into its
+        // clone/move destination (action -> dest).
+        for (const x of this.profile.actions || []) {
+            for (const ds of x.datasets || []) es.push({ from: `action:${x.id}`, to: `ds:${ds}`, kind: "trigger" });
+            if (x.dest && (x.action || "").match(/^(clone|move)_/)) es.push({ from: `action:${x.id}`, to: `ds:${x.dest}`, kind: "data" });
         }
         // a toast READS its wired sources' live values as {{tokens}} (readout/dataset/subset -> toast)
         for (const x of this.profile.toasts || [])
@@ -605,7 +621,7 @@ export class GraphModel {
         this.profile.triggers = this.profile.triggers || [];
         let n = 1, id = "trigger";
         while (this.trigger(id)) id = `trigger_${++n}`;
-        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, dataset_targets: [], dataset_action: "", dataset_dest: "" });
+        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, readout_watch: [], readout_op: "gte", readout_value: 0, throttle_ms: null });
         return id;
     }
     removeTrigger(id) { this.profile.triggers = (this.profile.triggers || []).filter((t) => t.id !== id); }
@@ -616,12 +632,14 @@ export class GraphModel {
         this._emitRename("trigger", oldId, newId);
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "on_change", "on_any_change", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
+    // minimum ms between fires — empty/invalid clears it (null = no throttle).
+    setTriggerThrottle(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.throttle_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }
     addTriggerTarget(id, pid) {
         const t = this.trigger(id);
-        // a target is a price node (sweep), a file source (read), a toast (notify), OR a sound (play) — accept any id
-        if (!t || !pid || !(this.producerNode(pid) || this.fileSource(pid) || this.toastNode(pid) || this.soundNode(pid))) return false;
+        // a target is a price node (sweep), a file source (read), a toast (notify), a sound (play), OR an action (dataset op) — accept any id
+        if (!t || !pid || !(this.producerNode(pid) || this.fileSource(pid) || this.toastNode(pid) || this.soundNode(pid) || this.actionNode(pid))) return false;
         t.targets = t.targets || [];
         if (t.targets.includes(pid)) return false;
         t.targets.push(pid);
@@ -652,19 +670,36 @@ export class GraphModel {
     setTriggerReadoutOp(id, op) { const t = this.trigger(id); if (t && GraphModel.TRIGGER_READOUT_OPS.includes(op)) t.readout_op = op; }
     setTriggerReadoutValue(id, v) { const t = this.trigger(id); const n = parseFloat(v); if (t && !Number.isNaN(n)) t.readout_value = n; }
 
-    // ---- dataset actions: a trigger can clear / clone / move a dataset's data ----
-    static TRIGGER_DS_ACTIONS = ["", "clear", "clone_batches", "clone_resolved", "move_batches", "move_resolved"];
-    addTriggerDataset(id, ds) {
-        const t = this.trigger(id);
-        if (!t || !ds || !this.datasets().includes(ds)) return false;
-        t.dataset_targets = t.dataset_targets || [];
-        if (t.dataset_targets.includes(ds)) return false;
-        t.dataset_targets.push(ds);
+    // ---- action nodes: clear / clone / move a dataset's data when fired (a trigger target) ----
+    static ACTION_KINDS = ["", "clear", "clone_batches", "clone_resolved", "move_batches", "move_resolved"];
+    actionNode(id) { return (this.profile.actions || []).find((x) => x.id === id) || null; }
+    addAction() {
+        this.profile.actions = this.profile.actions || [];
+        let n = 1, id = "action";
+        while (this.actionNode(id)) id = `action_${++n}`;
+        this.profile.actions.push({ id, action: "", datasets: [], dest: "", enabled: true });
+        return id;
+    }
+    removeAction(id) { this.profile.actions = (this.profile.actions || []).filter((x) => x.id !== id); this._dropTarget(id); }
+    renameAction(oldId, newId) {
+        newId = (newId || "").trim();
+        if (!newId || newId === oldId || this.actionNode(newId)) return false;
+        this.actionNode(oldId).id = newId;
+        this._repointTargets(oldId, newId);   // an action id can be a trigger target — carry its wire
         return true;
     }
-    removeTriggerDataset(id, ds) { const t = this.trigger(id); if (t) t.dataset_targets = (t.dataset_targets || []).filter((d) => d !== ds); }
-    setTriggerDatasetAction(id, v) { const t = this.trigger(id); if (t && GraphModel.TRIGGER_DS_ACTIONS.includes(v)) t.dataset_action = v; }
-    setTriggerDatasetDest(id, v) { const t = this.trigger(id); if (t) t.dataset_dest = v || ""; }
+    setActionKind(id, v) { const x = this.actionNode(id); if (x && GraphModel.ACTION_KINDS.includes(v)) x.action = v; }
+    addActionDataset(id, ds) {
+        const x = this.actionNode(id);
+        if (!x || !ds || !this.datasets().includes(ds)) return false;
+        x.datasets = x.datasets || [];
+        if (x.datasets.includes(ds)) return false;
+        x.datasets.push(ds);
+        return true;
+    }
+    removeActionDataset(id, ds) { const x = this.actionNode(id); if (x) x.datasets = (x.datasets || []).filter((d) => d !== ds); }
+    setActionDest(id, v) { const x = this.actionNode(id); if (x) x.dest = v || ""; }
+    cloneAction(id) { this.profile.actions = this.profile.actions || []; return this._cloneById(this.profile.actions, id, (x) => !!this.actionNode(x)); }
 
     // ---- toasts: raise an OS notification when fired (a trigger target) -------
     toastNode(id) { return (this.profile.toasts || []).find((x) => x.id === id) || null; }
@@ -1073,10 +1108,10 @@ export class GraphModel {
         for (const st of this._datasetSites()) if (st.get() === id) st.set("");   // decl: unwire feeder; ref: emptied
         for (const pn of this.profile.producers || []) pn.sources = (pn.sources || []).filter(Boolean);
         for (const s of this.profile.subsets || []) s.sources = (s.sources || []).filter((src) => src.dataset);
-        for (const t of this.profile.triggers || []) {
+        for (const t of this.profile.triggers || [])
             t.watch = (t.watch || []).filter(Boolean);
-            t.dataset_targets = (t.dataset_targets || []).filter(Boolean);   // _datasetSites() blanked the deleted id
-        }
+        for (const x of this.profile.actions || [])                        // _datasetSites() blanked the deleted id
+            x.datasets = (x.datasets || []).filter(Boolean);
         // _datasetSites() blanked the id-part of any toast source pointing here -> "dataset:"/"subset:"; drop those
         for (const x of this.profile.toasts || [])
             x.sources = (x.sources || []).filter((ref) => ref.slice(ref.indexOf(":") + 1));
