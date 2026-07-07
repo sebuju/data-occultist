@@ -7,6 +7,7 @@ import { timed } from "../log.js";
 import { Overlay } from "../overlay.js";
 import { persist } from "./persist.js";
 import * as groups from "./groups.js";
+import { singleFlight, pendingCount } from "../singleflight.js";
 import {
     setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases,
     gridPreviews, gridReads, gridCellBoxes, gridGuards, gridOccluded, gridDetections, itemReads, clearGrid, view, boot,
@@ -605,7 +606,7 @@ function closeItemImage(winId, itemId) {
     if (e && e.host) e.host.replaceChildren();
     itemCanvases.delete(key);
     itemReads.delete(key);
-    clearTimeout(itemReadTimers.get(key)); itemReadTimers.delete(key); itemReadAgain.delete(key);
+    clearTimeout(itemReadTimers.get(key)); itemReadTimers.delete(key);
     unregisterOverlay(`item:${winId}:${itemId}`);
     drawEdges();
 }
@@ -779,12 +780,11 @@ function refreshItemBoxes(winId, itemId) {
     refreshItemReadout(winId, itemId);   // keep the merged fields/tells table in sync with this read
 }
 
-// Re-read the cutout whenever its settings change, debounced and coalesced: config
-// edits fire a burst of change events and OCR is heavy, so wait for the dust to settle
-// and never run two reads for the same item at once (queue a single re-run instead).
+// Re-read the cutout whenever its settings change, debounced and coalesced: config edits fire a
+// burst of change events and OCR is heavy, so wait for the dust to settle before firing — the
+// shared singleFlight primitive (below) then owns "never run two reads for the same item at
+// once, queue a single trailing re-run instead" (same pattern as refreshPreview/refreshDetect).
 const itemReadTimers = new Map();   // "winId:itemId" -> debounce timer
-const itemReadBusy = new Set();     // items with a read in flight
-const itemReadAgain = new Set();    // items whose settings changed mid-read
 function scheduleItemRead(winId, itemId, delay = 500) {
     const key = `${winId}:${itemId}`;
     clearTimeout(itemReadTimers.get(key));
@@ -793,11 +793,14 @@ function scheduleItemRead(winId, itemId, delay = 500) {
 
 // Read the item's frozen cutout with the current settings and show what it extracts:
 // field values tinted on the canvas + the merged fields/tells table in the item node body.
-async function runItemRead(winId, itemId) {
+function runItemRead(winId, itemId) {
     const key = `${winId}:${itemId}`;
-    if (!itemCanvases.has(key)) return;
-    if (itemReadBusy.has(key)) { itemReadAgain.add(key); return; }   // re-run once after
-    itemReadBusy.add(key);
+    if (!itemCanvases.has(key)) return Promise.resolve();
+    return singleFlight(`item:${key}`, () => doItemRead(winId, itemId, key));
+}
+
+async function doItemRead(winId, itemId, key) {
+    if (!itemCanvases.has(key)) return;   // closed while a debounced/coalesced rerun was queued
     const done = timed(`item read ${key}`);
     try {
         const res = await api.itemRead(previewProfileFor(winId), model.profile.name, winId, itemId, boot.phase);
@@ -808,9 +811,6 @@ async function runItemRead(winId, itemId) {
         done(String(e.message || e), "err");
         const st = nodeEls.get(`item:${winId}:${itemId}`)?.querySelector(".mr-status");
         if (st) { st.textContent = String(e.message || e); st.className = "mr-status tc-bad"; }
-    } finally {
-        itemReadBusy.delete(key);
-        if (itemReadAgain.has(key)) { itemReadAgain.delete(key); runItemRead(winId, itemId); }
     }
 }
 
@@ -869,18 +869,27 @@ function previewProfileFor(winId) {
 
 // One rule-trace read per WINDOW, shared by every field node on it. At boot the whole field
 // fleet asks for its trace at once; without this each call re-OCR'd the entire window (N reads),
-// which stalled the renderer under load. A per-window in-flight promise coalesces that burst into
-// ONE `/api/rule_trace` batch (all fields, one OCR pass); the entry is dropped once it settles so
-// a later edit re-reads fresh. Keyed by winId — the profile is snapshot at request time.
-const _traceInFlight = new Map();   // winId -> Promise<{fields}>
-function windowTrace(winId) {
-    if (_traceInFlight.has(winId)) return _traceInFlight.get(winId);
-    const p = (async () => {
-        const cap = await curCapOf(winId);
-        return api.ruleTrace(previewProfileFor(winId), model.profile.name, cap);
-    })().finally(() => _traceInFlight.delete(winId));
-    _traceInFlight.set(winId, p);
-    return p;
+// which stalled the renderer under load. Debounced + singleFlighted per window: a burst of rule
+// edits (or the initial node-build fleet) collapses into ONE `/api/rule_trace` request, and a call
+// that lands while one is in flight is remembered and ALWAYS re-run once it settles, with the
+// latest profile. (The old design returned the in-flight promise itself, snapshotted at first-call
+// time, with no re-run — a rule edit landing mid-flight silently got served the pre-edit reads,
+// and only a LATER edit — landing when nothing was in flight — ever refreshed the label. That's
+// the "wrong values until you nudge another input" bug this replaces.)
+const _lastTrace = new Map();    // winId -> last successful batch {fields}
+const _traceTimers = new Map();  // winId -> debounce timer
+
+function fetchWindowTrace(winId, immediate = false) {
+    clearTimeout(_traceTimers.get(winId));
+    const fire = () => { _traceTimers.delete(winId); singleFlight(`trace:${winId}`, () => doWindowTrace(winId)); };
+    if (immediate) fire(); else _traceTimers.set(winId, setTimeout(fire, 350));
+}
+
+async function doWindowTrace(winId) {
+    const cap = await curCapOf(winId);
+    const batch = await api.ruleTrace(previewProfileFor(winId), model.profile.name, cap);
+    _lastTrace.set(winId, batch);
+    repaintTracedNodes(winId);   // a fresh batch landed -> repaint EVERY traced node on this window
 }
 
 // Stash what a window's readout boxes read off a preview result into readoutPreview (the NON-LIVE
@@ -904,74 +913,84 @@ function storeReadoutPreview(winId, res) {
 }
 
 // One readouts read per WINDOW for its readout nodes, used when live mode is OFF (no collector
-// feeding values). Coalesced like windowTrace so several readout nodes on one window share ONE OCR
-// pass. Reads the current bound image and stores each readout's value (+conf) into readoutPreview.
-const _roInFlight = new Map();   // winId -> Promise
+// feeding values). Coalesced (singleFlight) the same way as the rule trace above, so a config edit
+// landing mid-flight always gets a trailing re-run instead of being served a stale in-flight
+// result. Reads the current bound image and stores each readout's value (+conf) into readoutPreview.
 export function refreshReadoutValues(winId) {
-    if (_roInFlight.has(winId)) return _roInFlight.get(winId);
     const w = model.window(winId);
     if (!w || !(w.readouts || []).length) return Promise.resolve();
-    const p = (async () => {
-        const cap = await curCapOf(winId);
-        const res = await api.preview(previewProfileFor(winId), model.profile.name, cap, boot.phase);
-        storeReadoutPreview(winId, res);
-    })().catch(() => {}).finally(() => _roInFlight.delete(winId));
-    _roInFlight.set(winId, p);
-    return p;
+    return singleFlight(`ro:${winId}`, () => doRefreshReadoutValues(winId));
 }
 
-// Every field node that has painted a trace, so an image swap can re-run them all (the trace is
-// on-demand, not polled — nothing re-reads it when the bound image changes underneath). Keyed by
-// nodeId; carries the winId + fieldId needed to replay refreshRuleTrace. Auto-pruned on replay.
+async function doRefreshReadoutValues(winId) {
+    const cap = await curCapOf(winId);
+    const res = await api.preview(previewProfileFor(winId), model.profile.name, cap, boot.phase);
+    storeReadoutPreview(winId, res);
+}
+
+// Every field node that has painted a trace, so an image swap (or a fresh batch landing) can
+// repaint them all (the trace is on-demand, not polled — nothing re-reads it when the bound image
+// changes underneath). Keyed by nodeId; carries the winId + fieldId needed to repaint. Auto-pruned
+// when its node is gone.
 const _tracedNodes = new Map();   // nodeId -> { winId, fieldId }
 
-// Re-run the rule trace for every already-traced field node on a window — call after its bound
-// image changes so each `.frule-trace` reflects the NEW image, not the old read. Replays via the
-// nodeEls lookup (current body); a node that's since gone is dropped.
-function retraceWindow(winId) {
-    for (const [nodeId, t] of _tracedNodes) {
-        if (t.winId !== winId) continue;
-        if (!nodeEls.has(nodeId)) { _tracedNodes.delete(nodeId); continue; }
-        refreshRuleTrace(winId, t.fieldId, nodeId);
+// Paint one field node's `.frule-trace` slots from the last stashed batch for its window — pure,
+// no fetch. `host` is the live node body.
+function paintRuleTrace(winId, fieldId, host) {
+    const slots = [...host.querySelectorAll(".frule-trace")];
+    if (!slots.length) return;
+    const steps = _lastTrace.get(winId)?.fields?.[fieldId]?.trace || [];
+    for (const slot of slots) {
+        const s = steps[+slot.dataset.ri];
+        slot.classList.remove("frule-drop");
+        if (!s) { slot.textContent = ""; continue; }
+        const q = (v) => (v == null ? "∅" : `"${v}"`);
+        if (!s.fired) { slot.textContent = `${q(s.in)}  (skipped)`; continue; }
+        if (s.out == null) { slot.textContent = `${q(s.in)}  →  dropped`; slot.classList.add("frule-drop"); continue; }
+        slot.textContent = `${q(s.in)}  →  ${q(s.out)}`;
     }
 }
 
-// Fill a field node's `.frule-trace` slots from the window's batched trace read: the server reads
-// every field off the bound image and runs each rule pipeline, returning each rule's `in → out`.
-// Shown under every rule row so the author sees the value travel top-to-bottom. On-demand (node
-// open + rule edit), not polled — a plain textContent fill is fine.
-async function refreshRuleTrace(winId, fieldId, nodeId, el) {
-    _tracedNodes.set(nodeId, { winId, fieldId });   // remember it so an image swap can replay the trace
+// Repaint every already-traced field node on a window from the last stashed batch (no fetch) —
+// called once a fresh batch lands (doWindowTrace).
+function repaintTracedNodes(winId) {
+    for (const [nodeId, t] of _tracedNodes) {
+        if (t.winId !== winId) continue;
+        const host = nodeEls.get(nodeId);
+        if (!host) { _tracedNodes.delete(nodeId); continue; }
+        paintRuleTrace(winId, t.fieldId, host);
+    }
+}
+
+// Re-run the rule trace for every already-traced field node on a window — call after its bound
+// image changes so each `.frule-trace` reflects the NEW image, not the old read. The stashed batch
+// is for the PREVIOUS image, so this drops it and forces an immediate (non-debounced) fresh fetch
+// rather than repainting stale data.
+function retraceWindow(winId) {
+    _lastTrace.delete(winId);
+    fetchWindowTrace(winId, true);
+}
+
+// Fill a field node's `.frule-trace` slots: paint immediately from the last cached batch (no blank
+// flash), then kick a debounced fresh read so a rule/input edit is reflected without needing to
+// "nudge" another input afterwards. Called on every rule edit — the debounce+singleFlight collapse
+// a keystroke burst into one OCR pass while still guaranteeing a trailing run with the latest
+// rules (never silently served a pre-edit snapshot).
+function refreshRuleTrace(winId, fieldId, nodeId, el) {
+    _tracedNodes.set(nodeId, { winId, fieldId });   // remember it so an image swap / fresh batch can repaint it
     // prefer the live node body the caller hands us: on the FIRST build the node isn't in
     // `nodeEls` yet (wiring runs before registration), so a lookup would miss and the trace
     // would only appear after an edit. `el` is always the current body.
     const host = el || nodeEls.get(nodeId);
-    if (!host) return;
-    const slots = [...host.querySelectorAll(".frule-trace")];
-    if (!slots.length) return;
-    try {
-        const batch = await windowTrace(winId);
-        const steps = batch.fields?.[fieldId]?.trace || [];
-        for (const slot of slots) {
-            const s = steps[+slot.dataset.ri];
-            slot.classList.remove("frule-drop");
-            if (!s) { slot.textContent = ""; continue; }
-            const q = (v) => (v == null ? "∅" : `"${v}"`);
-            if (!s.fired) { slot.textContent = `${q(s.in)}  (skipped)`; continue; }
-            if (s.out == null) { slot.textContent = `${q(s.in)}  →  dropped`; slot.classList.add("frule-drop"); continue; }
-            slot.textContent = `${q(s.in)}  →  ${q(s.out)}`;
-        }
-    } catch {
-        for (const slot of slots) slot.textContent = "";   // a failed read just clears the hints
-    }
+    if (!host || !host.querySelectorAll(".frule-trace").length) return;
+    paintRuleTrace(winId, fieldId, host);
+    fetchWindowTrace(winId);
 }
 
-// Coalesce reads: at most ONE OCR request per window is ever in flight. Clicking
-// "read" again while one runs doesn't stack another (which would serialize on the OCR
-// lock and starve the server threadpool) — it just flags a single re-run with the
-// latest inputs once the current one returns. The button stays live.
-const previewBusy = new Set();        // winId -> a read is in flight
-const previewAgain = new Map();       // winId -> live flag of a queued re-run
+// Coalesce reads: at most ONE OCR request per window is ever in flight (shared singleFlight
+// primitive — see singleflight.js). Clicking "read" again while one runs doesn't stack another
+// (which would serialize on the OCR lock and starve the server threadpool) — it re-runs once with
+// the latest inputs once the current one returns.
 // disable + spin the read buttons for this window (preview node + image toolbar) while
 // an OCR read runs, so it's obvious it's working and the button can't be re-fired.
 function setReadBusy(winId, on) {
@@ -979,12 +998,16 @@ function setReadBusy(winId, on) {
     const btns = [...(pnode?.querySelectorAll(".prevrun") || []), ...(wnode?.querySelectorAll(".imgprev") || [])];
     for (const b of btns) { b.disabled = on; b.classList.toggle("reading", on); }
 }
-async function refreshPreview(winId, live = false) {
+function refreshPreview(winId, live = false) {
+    const host = prevHost(winId);
+    if (!host) return Promise.resolve();
+    host.dataset.ran = "1";   // marks it for live re-reads
+    return singleFlight(`prev:${winId}`, () => doPreview(winId, live));
+}
+
+async function doPreview(winId, live) {
     const host = prevHost(winId);
     if (!host) return;
-    host.dataset.ran = "1";   // marks it for live re-reads
-    if (previewBusy.has(winId)) { previewAgain.set(winId, live); return; }   // already reading → re-run once after
-    previewBusy.add(winId);
     setReadBusy(winId, true);
     if (!live) host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, "reading…"));
     const done = timed(`OCR preview ${winId}`);
@@ -1001,12 +1024,7 @@ async function refreshPreview(winId, live = false) {
         done(String(e.message || e), "err");
         host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, String(e.message || e)));
     } finally {
-        previewBusy.delete(winId);
-        if (previewAgain.has(winId)) {   // a click landed mid-read → run once more (button stays busy, no flicker)
-            const lv = previewAgain.get(winId); previewAgain.delete(winId); refreshPreview(winId, lv);
-        } else {
-            setReadBusy(winId, false);
-        }
+        setReadBusy(winId, false);
     }
 }
 
@@ -1157,52 +1175,52 @@ async function prefillDetectText(winId, detectId) {
     } catch { /* ignore */ }
 }
 
-// Coalesce detect the same way as preview: at most one in flight per window, with a
-// single queued re-run. Without this, live mode would enqueue a detect every round and
-// they'd stack on the OCR queue until each takes tens of seconds.
-const detectBusy = new Set();
-const detectAgain = new Map();
-async function refreshDetect(winId, live = false) {
-    if (detectBusy.has(winId)) { detectAgain.set(winId, live); return; }
-    detectBusy.add(winId);
+// Coalesce detect the same way as preview (shared singleFlight primitive): at most one in flight
+// per window, with a single trailing re-run using the latest inputs. Without this, live mode would
+// enqueue a detect every round and they'd stack on the OCR queue until each takes tens of seconds.
+function refreshDetect(winId, live = false) {
+    return singleFlight(`det:${winId}`, () => doDetect(winId, live));
+}
+
+async function doDetect(winId, live) {
     // spinner on every node whose value this detect refreshes
     const ids = [nodeIdOf(winId), ...model.detects(winId).map((a) => `det:${winId}:${a.id}`)];
     if (model.scrollbar(winId)) ids.push(`sb:${winId}:scrollbar`);
     const done = timed(`detect ${winId}`);
-    try {
-        await withBusy(ids, async () => {
-            try {
-                const cap = live ? null : await curCapOf(winId);   // the page on screen (live grabs fresh)
-                const res = await api.detect(previewProfileFor(winId), model.profile.name, cap, boot.phase && !live);
-                const dstatus = {};   // mirror onto the window canvas: colour/tint each detect box by its verdict
-                for (const [aid, info] of Object.entries(res.detect || {})) { setDetectStatus(`det:${winId}:${aid}`, info); dstatus[aid] = info; }
-                for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);
-                setWindowDetectStatus(winId, res);   // detects section: per-row + overall verdict
-                const dent = imageCanvases.get(winId);
-                if (dent) dent.overlay.setDetectStatus(dstatus);
-                if (live) {   // is this window currently recognised on screen? (drives the live panel dot)
-                    const svals = Object.values(res.states || {});
-                    // mode/negate-aware verdict (matching states win over the bare window pass)
-                    const recognized = svals.length ? svals.some((s) => s.matched) : (res.window?.pass ?? false);
-                    liveRecog.set(winId, recognized);
-                    if (recognized) liveDetCount.set(winId, (liveDetCount.get(winId) || 0) + 1);
-                    renderLiveWindow();
-                }
-                const sbEl = nodeEls.get(`sb:${winId}:scrollbar`);
-                const sbSpan = sbEl && sbEl.querySelector(".detect-status");
-                if (sbSpan) {
-                    const sb = res.scrollbar;
-                    sbSpan.textContent = sb == null ? "position: —"
-                        : `position: ${Math.round(sb.pos * 100)}% · ${sb.px}px · ${Math.round(sb.conf * 100)}%`;
-                }
-                done(`· ${res.device || "?"}`, "ok", res.ms);
-            } catch (e) { done(String(e.message || e), "err"); }
-        });
-    } finally {
-        detectBusy.delete(winId);
-        if (detectAgain.has(winId)) { const lv = detectAgain.get(winId); detectAgain.delete(winId); refreshDetect(winId, lv); }
-    }
+    await withBusy(ids, async () => {
+        try {
+            const cap = live ? null : await curCapOf(winId);   // the page on screen (live grabs fresh)
+            const res = await api.detect(previewProfileFor(winId), model.profile.name, cap, boot.phase && !live);
+            const dstatus = {};   // mirror onto the window canvas: colour/tint each detect box by its verdict
+            for (const [aid, info] of Object.entries(res.detect || {})) { setDetectStatus(`det:${winId}:${aid}`, info); dstatus[aid] = info; }
+            for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);
+            setWindowDetectStatus(winId, res);   // detects section: per-row + overall verdict
+            const dent = imageCanvases.get(winId);
+            if (dent) dent.overlay.setDetectStatus(dstatus);
+            if (live) {   // is this window currently recognised on screen? (drives the live panel dot)
+                const svals = Object.values(res.states || {});
+                // mode/negate-aware verdict (matching states win over the bare window pass)
+                const recognized = svals.length ? svals.some((s) => s.matched) : (res.window?.pass ?? false);
+                liveRecog.set(winId, recognized);
+                if (recognized) liveDetCount.set(winId, (liveDetCount.get(winId) || 0) + 1);
+                renderLiveWindow();
+            }
+            const sbEl = nodeEls.get(`sb:${winId}:scrollbar`);
+            const sbSpan = sbEl && sbEl.querySelector(".detect-status");
+            if (sbSpan) {
+                const sb = res.scrollbar;
+                sbSpan.textContent = sb == null ? "position: —"
+                    : `position: ${Math.round(sb.pos * 100)}% · ${sb.px}px · ${Math.round(sb.conf * 100)}%`;
+            }
+            done(`· ${res.device || "?"}`, "ok", res.ms);
+        } catch (e) { done(String(e.message || e), "err"); }
+    });
 }
+
+// How many detect/preview reads (incl. a queued trailing rerun) are still outstanding across
+// every window — the boot veil polls this to know when the boot OCR fan-out has fully drained,
+// not just momentarily empty between two reads (bootSettle, main.js).
+export function ocrBusyCount() { return pendingCount("det:") + pendingCount("prev:"); }
 // Wrap the [s,e) slice of `text` in a hit marker so the matched characters stand out;
 // everything outside stays plain. `span` is null when nothing aligned (no highlight).
 function hlSpan(text, span) {
@@ -1683,10 +1701,10 @@ function setGridFromPreview(winId, res) {
 export {
     KINDS, ITEM_KINDS, TELL_KINDS, updateImageLabel, closeImage, openImage, createItemFromGeom,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
-    itemReadTimers, itemReadBusy, itemReadAgain, scheduleItemRead, runItemRead, refreshItemReadout,
-    prevHost, previewProfileFor, refreshRuleTrace, previewBusy, previewAgain, setReadBusy, refreshPreview,
+    itemReadTimers, scheduleItemRead, runItemRead, refreshItemReadout,
+    prevHost, previewProfileFor, refreshRuleTrace, setReadBusy, refreshPreview,
     commitPreviewNode, tellChip, subLabel, previewCell, previewTable, prefillDetectText,
-    detectBusy, detectAgain, refreshDetect, setDetectStatus, detectT, _detectPending,
+    refreshDetect, setDetectStatus, detectT, _detectPending,
     _detectAll, refreshOpenDetect, previewT, _previewPending, _previewAll, refreshOpenPreviews,
     loadImage, refreshImageBoxes, itemLocatorBox, staticGridOrigins, buildGridGuides,
     staticFieldPreview, refreshGridPreview, cellKept, setGridFromPreview, selectRegionNode,

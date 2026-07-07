@@ -574,7 +574,6 @@ export const prices = {
 export const triggers = {
     list: (game) => tfetch(`/api/triggers/${_pg(game)}`).then((r) => ok(r, "triggers").then((x) => x.json())),
     fire: (game, id) => tfetch(`/api/triggers/${_pg(game)}/${encodeURIComponent(id)}/fire`, { method: "POST" }, 30_000).then((r) => ok(r, "fire trigger").then((x) => x.json())),
-    history: (game, id) => tfetch(`/api/triggers/${_pg(game)}/${encodeURIComponent(id)}/history`).then((r) => ok(r, "trigger history").then((x) => x.json())),
 };
 
 // Actions: run a dataset op (clear / clone / move) NOW on the action node's targets — the manual

@@ -11,7 +11,7 @@ import { $, model, nodeEls, readoutPreview } from "../state.js";
 import { since, countdown } from "../../datefmt.js";
 import { liveAgo, liveUntil, stopAgo } from "../../ago.js";
 import { autosave } from "../main.js";
-import { refreshTriggerHistory } from "../history_node.js";
+import { renderTriggerHistory } from "../history_node.js";
 import { refreshRegister } from "../register_node.js";
 import { liveCollecting } from "./livewin.js";
 import { panZoomTo } from "../camera.js";
@@ -270,10 +270,9 @@ function detectFires(data) {
 function updateTriggerNodes(data) {
     detectFires(data);
     for (const t of (data.triggers || [])) {
-        // keep an OPEN history satellite live — the heartbeat can't signal a throttled fire (it
-        // doesn't move last_fired), so refetch each beat while it's shown (no-op / no network when
-        // the satellite is hidden). Cheap: the ring is in-memory and the satellite is opt-in.
-        refreshTriggerHistory(t.id);
+        // the heartbeat carries each trigger's history now (trigger_sched.py), so this just
+        // paints it into an OPEN satellite — no-op / no network when it's hidden.
+        renderTriggerHistory(t.id, t.history);
         const span = nodeEls.get(`trigger:${t.id}`)?.querySelector(".tg-prog");
         if (!span) continue;
         const running = (t.targets || []).some((x) => x.running);

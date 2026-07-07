@@ -55,7 +55,7 @@ export function registerParts(x, model) {
 }
 
 // Fetch + render a register's held map into its node body. No-op when the node isn't in the DOM.
-// Modeled on refreshTriggerHistory (history_node.js) — VTable reconciles in place (rule 1).
+// Modeled on renderTriggerHistory (history_node.js) — VTable reconciles in place (rule 1).
 // With live mode OFF the collector never feeds the server-side map, so a wired source with no
 // server row falls back to readoutPreview — the same per-window /api/preview read a readout
 // node's `.ro-live` uses (see panels/livewin.js renderReadoutValues). A "readout-preview" event

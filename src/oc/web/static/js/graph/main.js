@@ -45,7 +45,7 @@ import {
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
 import { imageTextInspector } from "./toast_node.js";
 import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved } from "./node_parts.js";
-import { refreshTriggerHistory } from "./history_node.js";
+import { renderTriggerHistory } from "./history_node.js";
 import { refreshRegister } from "./register_node.js";
 import * as dsevents from "./dsevents.js";
 import { wireTools, clearTools } from "./drawtool.js";
@@ -79,9 +79,9 @@ import {
     closeImage, openImage, openGlyphImage, armPreprocessPick, refreshDetect, nodeIdOf,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
     scheduleItemRead, refreshItemReadout,
-    previewBusy, previewAgain,
+    ocrBusyCount,
     commitPreviewNode,
-    detectBusy, detectAgain, _detectPending,
+    _detectPending,
     _detectAll, refreshOpenDetect, _previewPending, _previewAll, refreshOpenPreviews,
     refreshImageBoxes, refreshGridPreview, selectRegionNode, refreshRuleTrace, refreshReadoutValues,
 } from "./imaging.js";
@@ -1642,13 +1642,13 @@ function wireTrigger(div, n) {
     div.querySelector(".tg-fire")?.addEventListener("click", async () => {
         const prog = div.querySelector(".tg-prog");
         prog.textContent = "firing…";
-        try { const r = await api.triggers.fire(model.profile.name, t.id); const n = (r.started || []).length, sk = (r.skipped || []).length; prog.textContent = n ? `fired ${n} target(s)` : sk ? `already sweeping (${sk} skipped)` : "no targets to fire"; refreshLive(); refreshTriggerHistory(t.id); }
+        try { const r = await api.triggers.fire(model.profile.name, t.id); const n = (r.started || []).length, sk = (r.skipped || []).length; prog.textContent = n ? `fired ${n} target(s)` : sk ? `already sweeping (${sk} skipped)` : "no targets to fire"; refreshLive(); hub.kick(); }
         catch (err) { prog.textContent = String(err.message || err); }
     });
     // fill the history satellite when it's open (this runs on every render, incl. right after the
     // satellite is toggled on — the parent trigger rebuilds and populates its follower, exactly like
     // a dataset/subset fills its vt-table satellite). No-op when the satellite is hidden.
-    refreshTriggerHistory(t.id);
+    renderTriggerHistory(t.id);
 }
 
 // ---- toast node: raise an OS desktop notification when fired ---------------
@@ -3120,14 +3120,16 @@ function rebuildNode(id) {
     fitNodeHeight(el, n.id);   // a revealed input (e.g. dict -> fuzzy) may overflow the pinned height — grow to fit
 }
 
-// Toast nodes (their readout token chips) and on_readout trigger nodes (their watch-var
-// dropdown) list model.readouts(), built ONCE per node body. A readout added/removed/renamed
-// elsewhere leaves those bodies stale — render() reconciles, it never rebuilds a body. Sweep
-// them from ONE helper so every readout mutation site stays in lock-step (rule 7). rebuildNode
-// is a no-op for a node not currently in the DOM, so this is safe to call unconditionally.
+// Toast nodes (their readout token chips), on_readout trigger nodes (their watch-var dropdown),
+// and register nodes (their "+ readout" add-select) all list model.readouts(), built ONCE per
+// node body. A readout added/removed/renamed elsewhere leaves those bodies stale — render()
+// reconciles, it never rebuilds a body. Sweep them from ONE helper so every readout mutation
+// site stays in lock-step (rule 7). rebuildNode is a no-op for a node not currently in the DOM,
+// so this is safe to call unconditionally.
 export function rebuildReadoutConsumers() {
     for (const t of model.profile.toasts || []) rebuildNode(`toast:${t.id}`);
     for (const t of model.profile.triggers || []) rebuildNode(`trigger:${t.id}`);
+    for (const id of model.registers()) rebuildNode(`register:${id}`);
 }
 
 // A node with a manually-pinned height keeps that height across a rebuild, so revealing
@@ -4020,7 +4022,7 @@ async function refreshLive() {
     // A push that lands DURING an in-flight fetch must not be dropped — the last write of an
     // async sweep (prices) often arrives while we're still fetching the previous event, and
     // losing it would strand the final data until some later unrelated event. Mark "run again"
-    // and re-fire once this fetch completes (the detectAgain/previewAgain idiom).
+    // and re-fire once this fetch completes (the same "Busy/Again" idiom singleFlight hoists).
     if (refreshLiveInFlight) { refreshLiveAgain = true; return; }
     refreshLiveInFlight = true;
     try {
@@ -5189,7 +5191,7 @@ async function bootSettle(maxMs = 30000, quietMs = 600) {
     const t0 = performance.now();
     let quiet = 0;
     while (performance.now() - t0 < maxMs) {
-        const busy = detectBusy.size + previewBusy.size + detectAgain.size + previewAgain.size;
+        const busy = ocrBusyCount();
         quiet = busy ? 0 : quiet + 150;
         if (quiet >= quietMs) return;
         await new Promise((res) => setTimeout(res, 150));

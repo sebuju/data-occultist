@@ -20,6 +20,7 @@ from __future__ import annotations
 import threading
 import time
 
+from ..collect.trigger_history import recent as recent_history
 from ..collect.triggers import TriggerRunner
 from ..enrich.price_runner import sweep_status
 from ..profile import list_profiles
@@ -106,7 +107,7 @@ def schedule(game: str, settings) -> list[dict]:
                         "running": bool(sweep_status(game, by_id[pid].dataset).get("running"))}
                        for pid in t.targets if pid in by_id]
             item = {"id": t.id, "kind": t.kind, "targets": targets, "enabled": bool(t.enabled),
-                    "last_fired": fires.get(t.id)}
+                    "last_fired": fires.get(t.id), "history": recent_history(game, t.id)}
             if t.kind == "interval":
                 item["interval_s"] = t.interval_s
                 if t.enabled:   # a disabled trigger never fires -> no countdown

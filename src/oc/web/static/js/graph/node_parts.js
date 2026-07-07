@@ -787,7 +787,7 @@ export function nodeParts(n) {
         }
         if (r.kind === "triggerhistory") {
             // a trigger's recent fires (non-persisted) as a standard records grid — filled by
-            // refreshTriggerHistory (history_node.js), which mounts a VTable in the .hist-host.
+            // renderTriggerHistory (history_node.js), which mounts a VTable in the .hist-host.
             return {
                 title: h("span", { class: "gi-id" }, `${r.id} fires`),
                 body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
