@@ -46,6 +46,7 @@ import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from
 import { imageTextInspector } from "./toast_node.js";
 import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved } from "./node_parts.js";
 import { refreshTriggerHistory } from "./history_node.js";
+import { refreshRegister } from "./register_node.js";
 import * as dsevents from "./dsevents.js";
 import { wireTools, clearTools } from "./drawtool.js";
 import { singleFlight } from "../singleflight.js";
@@ -60,7 +61,7 @@ import { dbWin, dbState, buildDBStruct } from "./panels/dbstruct.js";
 import {
     tb, tbState, buildToolbox,
     createWindowNode, createProducerNode, createTriggerNode, createDictionaryNode, createFileSourceNode,
-    createToastNode, createSoundNode, createActionNode, createDatasetNode, createSubsetNode,
+    createToastNode, createSoundNode, createActionNode, createRegisterNode, createDatasetNode, createSubsetNode,
 } from "./panels/toolbox.js";
 import { openContextMenu } from "../ctxmenu.js";
 import {
@@ -89,7 +90,7 @@ import {
     liveCollecting,
 } from "./panels/livewin.js";
 
-const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, action: 620, producer: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, vttable: 2300, prod: 1080, dictionary: 20 };
+const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, action: 620, register: 660, producer: 700, preview: 1580, region: 600, detect: 600, state: 600, scrollbar: 600, item: 600, itemfield: 850, itemtell: 1080, dataset: 900, subset: 1900, vttable: 2300, prod: 1080, dictionary: 20 };
 // Nodes resized on the WIDTH axis only — height always fits content (never stamped/restored).
 // item/window wrap a fixed-aspect canvas; dataset/subset/price are config-only, reworked often
 // with visibility-toggleable inputs, so a frozen height would clip or leave dead space.
@@ -308,7 +309,7 @@ initPersist({
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", hist: "vttable", reg: "region", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", hist: "vttable", reg: "region", register: "register", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
 function nodeTypeOf(id) { return id === "game" ? "game" : id === "glyphs" ? "glyphs" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
     world: () => $("ggroups"),
@@ -2273,6 +2274,43 @@ function wireAction(div, n) {
     });
 }
 
+// ---- register node: hold wired readouts' live values in an in-memory keyed map --------
+
+function wireRegister(div, n) {
+    const x = n.ref;
+    const $ = (sel) => div.querySelector(sel);
+    $(".regrename")?.addEventListener("change", (e) => {
+        const oldId = x.id;
+        renameNode(e.target, oldId,
+            () => model.renameRegister(oldId, (e.target.value || "").trim()),
+            () => movePos(`register:${oldId}`, `register:${x.id}`),
+            () => { render(); autosave(null); });
+    });
+    // readout source chips: add via the "+ readout" select, remove via each chip's trash. Rebuild so
+    // the chips + edges follow; the readout out-port drag hits the SAME model.addRegisterSource path.
+    $(".reg-addsrc")?.addEventListener("change", (e) => { if (model.addRegisterSource(x.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
+    div.querySelectorAll(".reg-rmsrc").forEach((b) => b.addEventListener("click", () => { model.removeRegisterSource(x.id, b.dataset.regsrc); rebuildNode(n.id); drawEdges(); autosave(null); }));
+    // clear the held map server-side (armed two-click, no blocking dialog). Values live only in the
+    // running session, so this just empties that map; the table repopulates as readouts are read.
+    const clearBtn = $(".regclear");
+    clearBtn?.addEventListener("click", async () => {
+        if (clearBtn.dataset.armed !== "1") {
+            clearBtn.dataset.armed = "1"; clearBtn.textContent = "confirm?";
+            setTimeout(() => { clearBtn.dataset.armed = "0"; clearBtn.textContent = "clear data"; }, 2500);
+            return;
+        }
+        clearBtn.dataset.armed = "0"; clearBtn.textContent = "clear data";
+        try {
+            await withBusy([n.id], () => api.clearRegister(model.profile.name, x.id));
+            refreshRegister(x.id);
+            setStatus(`cleared ${x.id}`);
+        } catch (e) { setStatus(String(e.message || e)); }
+    });
+    // show the persisted map immediately on (re)build — a page load with a running/prior session
+    // has data even before the next heartbeat tick.
+    queueMicrotask(() => refreshRegister(x.id));
+}
+
 // ---- file-source node: parse a game log/config file into its dataset --------
 
 function wireSource(div, n) {
@@ -2547,6 +2585,7 @@ function removeNode(n) {
         toast:      { kill: () => model.removeToast(n.ref.id), after: () => autosave(null) },
         sound:      { kill: () => model.removeSound(n.ref.id), after: () => autosave(null) },
         action:     { kill: () => model.removeAction(n.ref.id), after: () => autosave(null) },
+        register:   { kill: () => model.removeRegister(n.ref.id), after: () => autosave(null) },
         filesource: { kill: () => model.removeFileSource(n.ref.id), after: () => autosave(null) },
         dataset:    { kill: () => { model.removeDataset(n.ref); purgeDatasetData(n.ref); }, after: () => autosave(null) },
     };
@@ -2712,9 +2751,15 @@ function outPortSpec(n) {
             onEmpty: (pt) => { const id = model.addSubset(n.ref.id); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
         };
         case "readout": return {
-            // a readout feeds a TOAST its live value as a {{readout:id}} token
-            target: ["toast"],
-            onDrop: (id) => { if (model.addToastSource(id, `readout:${n.ref.id}`)) rebuildNode(`toast:${id}`); },
+            // a readout feeds a TOAST its live value as a {{readout:id}} token, or a REGISTER that
+            // holds its latest value in an in-memory keyed map
+            target: ["toast", "register"],
+            onDrop: (id, ttype) => {
+                const ref = `readout:${n.ref.id}`;
+                if (ttype === "register") { if (model.addRegisterSource(id, ref)) rebuildNode(`register:${id}`); }
+                else if (model.addToastSource(id, ref)) rebuildNode(`toast:${id}`);
+            },
+            onEmpty: (pt) => { const id = model.addRegister(); model.addRegisterSource(id, `readout:${n.ref.id}`); placeAt(`register:${id}`, pt); return `register:${id}`; },
         };
         case "filesource": return {
             target: "dataset",
@@ -2809,7 +2854,7 @@ export function showSatellite(satId) {
 // the source id a drop target commits to: a dataset node's name, or a node's bare id
 // (subset/price/trigger carry a prefixed node id in data-id).
 function targetIdOf(el, target) {
-    return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|producer|trigger|src|dict|toast|sound):/, "");
+    return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|producer|trigger|src|dict|toast|sound|register):/, "");
 }
 
 // Host node types that resize at the NODE level (their body fills them) — one consistent
@@ -3487,6 +3532,16 @@ function wireNode(div, n) {
         // auto-reads on image change + any window edit; the one button commits the read to the dataset
         div.querySelector(".prevcommit")?.addEventListener("click", (e) => commitPreviewNode(n.ref.id, e.currentTarget));
     } else if (n.type === "dataset") {
+        // sources chips: add via the "+ source" select, remove via each chip's trash. Both paths
+        // call the SAME model setters the drag-a-window/producer/file-source-onto-this-dataset
+        // wiring already uses, so the two ways of wiring stay in sync (rebuild re-queues edges).
+        div.querySelector(".ds-addsrc")?.addEventListener("change", (e) => {
+            if (model.addDatasetSource(n.ref, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); }
+        });
+        div.querySelectorAll(".ds-rmsrc").forEach((b) => b.addEventListener("click", () => {
+            model.removeDatasetSource(n.ref, b.dataset.dssrc);
+            rebuildNode(n.id); drawEdges(); autosave(null);
+        }));
         div.querySelector(".dsrename")?.addEventListener("change", async (e) => {
             const oldId = n.ref, newId = (e.target.value || "").trim();
             if (!model.renameDataset(oldId, newId)) { e.target.value = oldId; return; }
@@ -3613,6 +3668,8 @@ function wireNode(div, n) {
         wireSound(div, n);
     } else if (n.type === "action") {
         wireAction(div, n);
+    } else if (n.type === "register") {
+        wireRegister(div, n);
     } else if (n.type === "filesource") {
         wireSource(div, n);
     } else if (n.type === "region") {
@@ -4735,12 +4792,13 @@ window.addEventListener("contextmenu", (ev) => {
         ["window", "window", createWindowNode],
         ["dataset", "dataset", createDatasetNode],
         ["subset", "subset", createSubsetNode],
-        ["producer", "producer node", createProducerNode],
+        ["producer", "producer", createProducerNode],
         ["filesource", "file source", createFileSourceNode],
         ["trigger", "trigger", createTriggerNode],
         ["toast", "toast", createToastNode],
         ["sound", "sound", createSoundNode],
         ["action", "action", createActionNode],
+        ["register", "register", createRegisterNode],
         ["dictionary", "dictionary", createDictionaryNode],
     ];
     openContextMenu(ev.clientX, ev.clientY, ADD_ITEMS.map(([type, title, make]) => ({

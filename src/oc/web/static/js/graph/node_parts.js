@@ -10,7 +10,7 @@
 //   body  -> a Node or DocumentFragment
 //   ports -> a Node/frag or null (default null)
 //   pulse -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
-import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, srcRow, btn, iconBtn, trashBtn } from "../dom.js";
+import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, srcRow, srcChip, srcInputs, btn, iconBtn, trashBtn } from "../dom.js";
 import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
@@ -21,6 +21,7 @@ import { toastParts } from "./toast_node.js";
 import { soundParts } from "./sound_node.js";
 import { triggerParts } from "./trigger_node.js";
 import { actionParts } from "./action_node.js";
+import { registerParts } from "./register_node.js";
 import { sourcesInput } from "./sources_input.js";
 import { subsetParts } from "./main.js";
 
@@ -384,7 +385,7 @@ export function ruleRows(fd, cls, fid) {
     // still shows and can't be re-picked. `opts([v,label,code],...)` builds those <option>s.
     const opts = (list, cur, codeIdx) => list.map((row) => h("option",
         { value: row[0], selected: cur === row[0], disabled: !okRuleType(row[codeIdx], ftype) }, cur === row[0] ? `<${row[1]}>` : row[1]));
-    if (!rules.length) return h("div", { class: "muted frule-empty" }, "no rules — the read passes through");
+    if (!rules.length) return h("div", { class: "muted frule-empty" }, "-");
     return rules.map((r, i) => {
         const when = r.when || "always", then = r.then || "set";
         const d = { ri: i, ...da };
@@ -849,6 +850,7 @@ export function nodeParts(n) {
     if (n.type === "toast") return toastParts(n.ref, model);
     if (n.type === "sound") return soundParts(n.ref, model);
     if (n.type === "action") return actionParts(n.ref, model);
+    if (n.type === "register") return registerParts(n.ref, model);
     if (n.type === "dictionary") {
         // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The
         // terms live in config/dictionaries/<source>; this node just references that file.
@@ -899,16 +901,29 @@ export function nodeParts(n) {
     const sm = model.datasetSyncMode(ds);
     const syncOpts = [["accumulate", "accumulate"], ["mirror", "mirror (sync removals)"]]
         .map(([v, l]) => h("option", { value: v, selected: sm === v }, sm === v ? `<${l}>` : l));
+    // sources row (FIRST, like toast/action/register): the windows/producers/file-sources
+    // currently feeding this dataset — removable pills + an add-select. Add here, or drag a
+    // node's out-port onto this dataset (same wiring, both paths call the same model setters).
+    const sourcesRow = h("div", { class: "lab-grid" },
+        srcRow("sources", "windows, producers, or file sources feeding this dataset",
+            srcInputs(
+                model.datasetSources(ds).map((s) => srcChip(s.ref, "dssrc", "ds-rmsrc")),
+                "ds-addsrc",
+                [h("option", { value: "" }, "+ source"),
+                    model.datasetFreeSources(ds).map((s) => h("option", { value: s.ref }, s.ref))])));
     return {
         title: h("input", { class: "gi gi-id dsrename", value: ds, title: "dataset name" }),
         head: satToggleBtn(`vt:ds:${ds}`, "vttable"),
         body: frag(
+            sourcesRow,
             kv("1 → many", h("select", { class: "dskey", title: "the key the dataset collapses many reads on (or none)" }, keyOpts)),
             kv("batch", h("select", { class: "dsbatch", title: "how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like a timed offer / pop-up)" }, batchOpts)),
             kv("sync", h("select", { class: "dssync", title: "accumulate: only add/update. mirror: keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)." }, syncOpts)),
             concatEditor && gspan(concatEditor)),
         foot: h("button", { class: "dsclear danger" }, "clear data"),
-        ports: h("span", { class: "port out", title: "drag to a subset to feed it this dataset" }),
+        ports: frag(
+            h("span", { class: "port in", title: "drag a window/producer/file source here to feed this dataset" }),
+            h("span", { class: "port out", title: "drag to a subset to feed it this dataset" })),
     };
 }
 

@@ -272,6 +272,55 @@ export class GraphModel {
         }
         return [...out];
     }
+    // Every window/producer/file-source currently pointing at this dataset — same three-collection
+    // scan as datasetFields(), just for display/edit rather than column collection. `ref` is a
+    // full-word-prefixed id ("window:<id>"/"producer:<id>"/"filesource:<id>"), matching how
+    // RegisterDef/ToastDef name their sources (not the short node-id prefixes used elsewhere).
+    datasetSources(id) {
+        const out = [];
+        for (const w of this.profile.windows)
+            if (this.datasetOf(w) === id) out.push({ kind: "window", id: w.id, ref: `window:${w.id}` });
+        for (const s of this.profile.file_sources || [])
+            if (s.dataset === id) out.push({ kind: "filesource", id: s.id, ref: `filesource:${s.id}` });
+        for (const p of this.profile.producers || [])
+            if (p.dataset === id) out.push({ kind: "producer", id: p.id, ref: `producer:${p.id}` });
+        return out;
+    }
+    // Window/producer/file-source ids NOT currently pointing at this dataset (may be unwired or
+    // wired elsewhere — picking one just repoints it, the same "last wire wins" the drag path has).
+    datasetFreeSources(id) {
+        const out = [];
+        for (const w of this.profile.windows)
+            if (this.datasetOf(w) !== id) out.push({ kind: "window", id: w.id, ref: `window:${w.id}` });
+        for (const s of this.profile.file_sources || [])
+            if (s.dataset !== id) out.push({ kind: "filesource", id: s.id, ref: `filesource:${s.id}` });
+        for (const p of this.profile.producers || [])
+            if (p.dataset !== id) out.push({ kind: "producer", id: p.id, ref: `producer:${p.id}` });
+        return out;
+    }
+    // Wire an existing window/producer/file-source onto this dataset (the "+ add source" select —
+    // the in-panel twin of dragging that node's out-port onto the dataset).
+    addDatasetSource(id, ref) {
+        const i = (ref || "").indexOf(":");
+        if (i < 0) return false;
+        const kind = ref.slice(0, i), rid = ref.slice(i + 1);
+        if (kind === "window") this.setDataset(rid, id);
+        else if (kind === "producer") this.setProducerDataset(rid, id);
+        else if (kind === "filesource") this.setSourceDataset(rid, id);
+        else return false;
+        return true;
+    }
+    // Unwire a chip. Windows have a real "no dataset" state (setDataset("") already supports it);
+    // producers/file-sources don't (their setters require a truthy target), so blank the field
+    // directly — same "needs rewiring" state as any half-configured node.
+    removeDatasetSource(id, ref) {
+        const i = (ref || "").indexOf(":");
+        if (i < 0) return;
+        const kind = ref.slice(0, i), rid = ref.slice(i + 1);
+        if (kind === "window") this.setDataset(rid, "");
+        else if (kind === "producer") { const p = this.producerNode(rid); if (p) p.dataset = ""; }
+        else if (kind === "filesource") { const s = this.fileSource(rid); if (s) s.dataset = ""; }
+    }
     // The output columns a producer writes — ONE source of truth for the key picker and the
     // subset column list (a producer dataset isn't fed by windows, so its columns can't be read
     // off a schema). An http node writes each mapped out_field; per-item mode also injects `name`
@@ -356,6 +405,9 @@ export class GraphModel {
         for (const x of this.profile.toasts || []) ns.push({ id: `toast:${x.id}`, type: "toast", ref: x });
         for (const x of this.profile.sounds || []) ns.push({ id: `sound:${x.id}`, type: "sound", ref: x });
         for (const x of this.profile.actions || []) ns.push({ id: `action:${x.id}`, type: "action", ref: x });
+        // in-memory keyed map fed by readouts (never persisted). Id prefix is `register:` — NOT
+        // `reg:`, which _TYPE_BY_PREFIX already maps to a region node.
+        for (const x of this.profile.registers || []) ns.push({ id: `register:${x.id}`, type: "register", ref: x });
         for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
         return ns;
     }
@@ -441,6 +493,13 @@ export class GraphModel {
                 const from = s.kind === "readout" ? (this.readoutSite(s.id) && `ro:${this.readoutSite(s.id).win}:${s.id}`)
                     : s.kind === "subset" ? `sub:${s.id}` : `ds:${s.id}`;
                 if (from) es.push({ from, to: `toast:${x.id}`, kind: "data" });
+            }
+        // a register HOLDS its wired readouts' live values (readout -> register)
+        for (const x of this.profile.registers || [])
+            for (const s of this.registerSources(x.id)) {
+                if (s.kind !== "readout") continue;
+                const site = this.readoutSite(s.id);
+                if (site) es.push({ from: `ro:${site.win}:${s.id}`, to: `register:${x.id}`, kind: "data" });
             }
         for (const d of this.profile.dictionaries || []) {
             es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
@@ -700,6 +759,41 @@ export class GraphModel {
     removeActionDataset(id, ds) { const x = this.actionNode(id); if (x) x.datasets = (x.datasets || []).filter((d) => d !== ds); }
     setActionDest(id, v) { const x = this.actionNode(id); if (x) x.dest = v || ""; }
     cloneAction(id) { this.profile.actions = this.profile.actions || []; return this._cloneById(this.profile.actions, id, (x) => !!this.actionNode(x)); }
+
+    // ---- register nodes: in-memory keyed map holding wired readouts' live values (never persisted) ----
+    registerNode(id) { return (this.profile.registers || []).find((x) => x.id === id) || null; }
+    registers() { return (this.profile.registers || []).map((x) => x.id); }
+    addRegister() {
+        this.profile.registers = this.profile.registers || [];
+        let n = 1, id = "register";
+        while (this.registerNode(id)) id = `register_${++n}`;
+        this.profile.registers.push({ id, sources: [], title: "", enabled: true });
+        return id;
+    }
+    removeRegister(id) { this.profile.registers = (this.profile.registers || []).filter((x) => x.id !== id); }
+    renameRegister(oldId, newId) {
+        newId = (newId || "").trim();
+        if (!newId || newId === oldId || this.registerNode(newId)) return false;
+        this.registerNode(oldId).id = newId;
+        return true;
+    }
+    // Wired readout feeders as prefixed refs "readout:<id>" (mirrors toastSources). -> {kind,id,ref}.
+    registerSources(id) {
+        const x = this.registerNode(id);
+        return ((x && x.sources) || []).map((ref) => {
+            const i = ref.indexOf(":");
+            return i < 0 ? { kind: "", id: ref, ref } : { kind: ref.slice(0, i), id: ref.slice(i + 1), ref };
+        }).filter((s) => s.kind && s.id);
+    }
+    addRegisterSource(id, ref) {
+        const x = this.registerNode(id);
+        if (!x || !ref) return false;
+        x.sources = x.sources || [];
+        if (x.sources.includes(ref)) return false;
+        x.sources.push(ref);
+        return true;
+    }
+    removeRegisterSource(id, ref) { const x = this.registerNode(id); if (x) x.sources = (x.sources || []).filter((r) => r !== ref); }
 
     // ---- toasts: raise an OS notification when fired (a trigger target) -------
     toastNode(id) { return (this.profile.toasts || []).find((x) => x.id === id) || null; }
@@ -1459,6 +1553,9 @@ export class GraphModel {
         }
         for (const t of this.profile.triggers || [])
             t.readout_watch = (t.readout_watch || []).map((x) => (x === vid ? newId : x));
+        // registers hold this readout by its "readout:<id>" source ref — carry it across the rename
+        for (const x of this.profile.registers || [])
+            x.sources = (x.sources || []).map((r) => (r === `readout:${vid}` ? `readout:${newId}` : r));
         return true;
     }
     removeReadout(winId, vid) {
@@ -1482,6 +1579,9 @@ export class GraphModel {
                 if (typeof s === "string" && s.includes("{{")) st.set(s.replace(rePref, "").replace(reBare, ""));
             }
         }
+        // drop the wired source from any register holding this readout (the readout is gone)
+        for (const x of this.profile.registers || [])
+            x.sources = (x.sources || []).filter((r) => r !== `readout:${vid}`);
     }
     // Every readout across all windows, for trigger-watch listing: {id, win}.
     readouts() {

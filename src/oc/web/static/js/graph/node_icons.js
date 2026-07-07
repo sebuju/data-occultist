@@ -62,6 +62,15 @@ const INNER = {
         svg("rect", { x: "3", y: "9", width: "18", height: "6", rx: "3" }),
         svg("rect", { x: "3", y: "9", width: "10", height: "6", rx: "3", ...fill }),
     ],
+    // register: a key -> value lookup map (left column of keys, right column of held values).
+    register: () => [
+        svg("rect", { x: "4", y: "5", width: "16", height: "14", rx: "2" }),
+        svg("line", { x1: "10", y1: "5", x2: "10", y2: "19" }),
+        C("7", "9", "1", fill), C("7", "12", "1", fill), C("7", "15", "1", fill),
+        svg("line", { x1: "12.5", y1: "9", x2: "17", y2: "9" }),
+        svg("line", { x1: "12.5", y1: "12", x2: "17", y2: "12" }),
+        svg("line", { x1: "12.5", y1: "15", x2: "17", y2: "15" }),
+    ],
     dataset: () => [
         svg("ellipse", { cx: "12", cy: "6", rx: "7", ry: "2.6" }),
         P("M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6"),
