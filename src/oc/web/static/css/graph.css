@@ -79,6 +79,7 @@
 .gnode.toast      { --nt: var(--nt-toast); }
 .gnode.sound      { --nt: var(--nt-sound); }
 .gnode.action     { --nt: var(--nt-action); }
+.gnode.register   { --nt: var(--nt-register); }
 .gnode.history    { --nt: var(--nt-history); }
 .gnode.filesource { --nt: var(--nt-filesource); }
 .gn-h { --ntint: var(--nt); }
@@ -507,7 +508,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gnode.vttable > .gn-body > .gn-grid,
 .gnode.dictionary > .gn-body > .gn-grid,
 .gnode.preview > .gn-body > .gn-grid,
-.gnode.subset > .gn-body > .gn-grid {
+.gnode.subset > .gn-body > .gn-grid,
+.gnode.register > .gn-body > .gn-grid {
     /* align-items:stretch (NOT the base grid's center) so the scroll host fills the node width —
        under center a data-less host shrank to min-content (~12px) and the table vanished. */
     display: flex; flex-direction: column; align-items: stretch; flex: 1 1 auto; min-height: 0;

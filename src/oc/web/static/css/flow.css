@@ -65,7 +65,7 @@ a.node.win:hover { border-color: var(--accent); }
    tables never blow the node up. ONE look + ONE behaviour, no per-kind panel code. */
 /* host nodes (dataset/preview/batches/dictionary/subset): the NODE itself resizes and
    its body + content host fill it. ONE behaviour — no separate resize handle inside. */
-.gnode.dataset, .gnode.preview, .gnode.dictionary, .gnode.subset, .gnode.producer, .gnode.vttable {
+.gnode.dataset, .gnode.preview, .gnode.dictionary, .gnode.subset, .gnode.producer, .gnode.vttable, .gnode.register {
     display: flex; flex-direction: column; resize: none; overflow: hidden; min-width: 280px; }
 /* trigger node: compact, fixed; out-port must show so it can be wired to a price node */
 .gnode.trigger { width: 280px; overflow: visible; }
@@ -84,13 +84,14 @@ a.node.win:hover { border-color: var(--accent); }
    default height so the inner viewport isn't 0 — height:auto would collapse them; resize to taste. */
 .gnode.preview { width: 360px; height: 320px; }
 .gnode.dictionary { width: 300px; height: 360px; }
+.gnode.register { width: 300px; height: 300px; }
 /* nodes with an out-port dot at their right edge (producer, dataset, view): node-level clipping
    would cut the port in half, so clip the BODY instead and let the node (hence the port) overflow */
 .gnode.producer, .gnode.dataset, .gnode.subset { overflow: visible; }
 .gnode.producer > .gn-body, .gnode.dataset > .gn-body, .gnode.subset > .gn-body { overflow: auto; }   /* scroll when too small instead of squishing/clipping */
 .gnode.dataset > .gn-body, .gnode.preview > .gn-body,
 .gnode.dictionary > .gn-body, .gnode.subset > .gn-body, .gnode.producer > .gn-body,
-.gnode.vttable > .gn-body {
+.gnode.vttable > .gn-body, .gnode.register > .gn-body {
     flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 /* vt-table satellite: the records grid split out of its dataset/subset (dotted edge to parent) */
 .gnode.vttable { width: 420px; height: 360px; min-width: 280px; }
