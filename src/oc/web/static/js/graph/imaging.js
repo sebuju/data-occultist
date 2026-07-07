@@ -10,6 +10,7 @@ import * as groups from "./groups.js";
 import {
     setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases,
     gridPreviews, gridReads, gridCellBoxes, gridGuards, gridOccluded, gridDetections, itemReads, clearGrid, view, boot,
+    readoutPreview,
 } from "./state.js";
 import { drawEdges } from "./routing.js";
 import { renderLiveWindow, liveDetCount, liveRecog } from "./panels/livewin.js";
@@ -409,7 +410,7 @@ export async function openGlyphImage(nodeEl = null) {
         h("div", { class: "glyph-compose" },
             h("span", { class: "tools" },
                 h("button", { class: "tool gc-add", dataset: { kind: "glyph" }, title: "draw tool: activate, then drag a box round ONE character on the image (drag/resize to fine-tune), type the character, then Save" }, "◻ glyph")),
-            h("input", { class: "gc-char", maxlength: "1", placeholder: "char", hidden: true, title: "the single character inside the box (Enter to save, Esc to cancel)" }),
+            h("input", { class: "gc-char", maxlength: "1", size: "1", placeholder: "char", hidden: true, title: "the single character inside the box (Enter to save, Esc to cancel)" }),
             h("button", { class: "gc-confirm", hidden: true, title: "save this glyph permanently" }, "save"),
             h("button", { class: "gc-cancel", hidden: true, title: "cancel" }, "✕"),
             h("span", { class: "gc-div" }),
@@ -499,7 +500,7 @@ export function refreshGlyphPending(nodeEl = null) {
     const rows = glyphPending.map((p, i) => h("div", { class: "glyph-cell gp-cell", dataset: { i } },
         h("img", { class: "glyph-thumb gp-thumb", src: glyphThumbSrc(p.box), alt: p.char || "?",
             title: "the glyph this box covers — click to select its box, then drag/resize or WASD-nudge it", dataset: { i } }),
-        h("input", { class: "gp-char", maxlength: "1", value: p.char || "", placeholder: "?",
+        h("input", { class: "gp-char", maxlength: "1", size: "1", value: p.char || "", placeholder: "?",
             title: "which character this box is; the box is on the image — click the image to select it", dataset: { i } }),
         h("button", { class: "gp-rm danger", dataset: { i }, title: "discard this suggestion" }, TRASH())));
     host.replaceChildren(
@@ -543,7 +544,7 @@ export function refreshGlyphAtlas(focusLast = false, nodeEl = null) {
             h("input", { type: "checkbox", class: "glyph-en", checked: on, dataset: { i },
                 title: on ? "glyph enabled — click to mute it (kept, but ignored by refinement)" : "glyph muted — click to enable" }),
             h("img", { class: "glyph-thumb", src: api.glyphUrl(game, g.image), alt: g.char || "?", title: "taught glyph (cutout is frozen)" }),
-            h("input", { class: "glyph-char", maxlength: "1", value: g.char || "", placeholder: "?",
+            h("input", { class: "glyph-char", maxlength: "1", size: "1", value: g.char || "", placeholder: "?",
                 title: "which character this glyph is", dataset: { i } }),
             h("button", { class: "glyph-rm danger", dataset: { i }, title: "remove glyph" }, TRASH()));
     });
@@ -868,6 +869,43 @@ function windowTrace(winId) {
     return p;
 }
 
+// Stash what a window's readout boxes read off a preview result into readoutPreview (the NON-LIVE
+// source for each readout node's value). Scope to THIS window's ids: set the ones that read, drop
+// the ones that didn't (occluded), leave other windows' entries alone; then repaint the .ro-live
+// rows via the shared event (livewin listens).
+function storeReadoutPreview(winId, res) {
+    const rw = model.window(winId);
+    if (!rw || !(rw.readouts || []).length) return;
+    const rv = res.readouts || {}, rc = res.readout_confs || {};
+    for (const v of rw.readouts) {
+        if (Object.prototype.hasOwnProperty.call(rv, v.id)) {
+            readoutPreview.vals[v.id] = rv[v.id];
+            readoutPreview.confs[v.id] = rc[v.id];
+        } else {
+            delete readoutPreview.vals[v.id];
+            delete readoutPreview.confs[v.id];
+        }
+    }
+    window.dispatchEvent(new CustomEvent("readout-preview"));
+}
+
+// One readouts read per WINDOW for its readout nodes, used when live mode is OFF (no collector
+// feeding values). Coalesced like windowTrace so several readout nodes on one window share ONE OCR
+// pass. Reads the current bound image and stores each readout's value (+conf) into readoutPreview.
+const _roInFlight = new Map();   // winId -> Promise
+export function refreshReadoutValues(winId) {
+    if (_roInFlight.has(winId)) return _roInFlight.get(winId);
+    const w = model.window(winId);
+    if (!w || !(w.readouts || []).length) return Promise.resolve();
+    const p = (async () => {
+        const cap = await curCapOf(winId);
+        const res = await api.preview(previewProfileFor(winId), model.profile.name, cap, boot.phase);
+        storeReadoutPreview(winId, res);
+    })().catch(() => {}).finally(() => _roInFlight.delete(winId));
+    _roInFlight.set(winId, p);
+    return p;
+}
+
 // Every field node that has painted a trace, so an image swap can re-run them all (the trace is
 // on-demand, not polled — nothing re-reads it when the bound image changes underneath). Keyed by
 // nodeId; carries the winId + fieldId needed to replay refreshRuleTrace. Auto-pruned on replay.
@@ -943,6 +981,7 @@ async function refreshPreview(winId, live = false) {
         const res = await api.preview(previewProfileFor(winId), model.profile.name, cap, boot.phase && !live);
         host.replaceChildren(previewTable(res.cells));
         setGridFromPreview(winId, res);   // same OCR pass drives the dashed grid
+        storeReadoutPreview(winId, res);   // feed the readout nodes' value (+conf) off this same read
         done(`· ${res.device || "?"} · ${(res.cells || []).length} cells`, "ok", res.ms);
     } catch (e) {
         done(String(e.message || e), "err");

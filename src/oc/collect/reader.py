@@ -514,16 +514,25 @@ class RegionReader:
         return out, sentinel_ypos
 
     def read_readouts(self, frame: Frame, window: WindowDef,
-                       fields: dict[str, FieldDef]) -> dict[str, object]:
+                      fields: dict[str, FieldDef]) -> dict[str, object]:
         """Read the window's live, non-persisted readouts (health, a buff counter) ->
-        ``{readout_id: value}``. Each reads its box through the linked field, exactly like
-        a region.
+        ``{readout_id: value}`` — the scalar map triggers/toasts consume. Thin wrapper over
+        :meth:`read_readouts_detailed` (drops the confidence)."""
+        return {k: value for k, (value, _conf) in
+                self.read_readouts_detailed(frame, window, fields).items()}
+
+    def read_readouts_detailed(self, frame: Frame, window: WindowDef,
+                               fields: dict[str, FieldDef]) -> dict[str, tuple[object, float]]:
+        """Read the window's readouts -> ``{readout_id: (value, confidence)}``. Each reads its
+        box through the linked field, exactly like a region.
 
         A read that fails its field's plausibility gate (min confidence / out of range) or
         yields nothing is OMITTED — a trigger must never fire on a garbage/occluded reading.
-        Nothing here is stored; the collector surfaces the dict and hands it to triggers.
+        The confidence is the raw OCR confidence of the read (1.0 for a deterministic pip/bar
+        value). Nothing here is stored; the collector surfaces the values and hands them to
+        triggers, and the UI shows ``value (conf)`` on each readout node.
         """
-        out: dict[str, object] = {}
+        out: dict[str, tuple[object, float]] = {}
         cw, ch = frame.client.w, frame.client.h
         for v in window.readouts:
             if not v.enabled:
@@ -531,7 +540,7 @@ class RegionReader:
             box = v.box.to_fraction().to_pixels(cw, ch)
             fdef = fields.get(v.field)
             if self._is_pip(fdef):
-                out[v.id] = self._pip_value(frame, box, fdef)
+                out[v.id] = (self._pip_value(frame, box, fdef), 1.0)
                 continue
             text, conf = self._detect_reads(frame, window, [(v.id, box)]).get(v.id) or ("", 0.0)
             substituted, dropped = None, False
@@ -550,7 +559,7 @@ class RegionReader:
                 mc = getattr(fdef, "min_confidence", 0.0) or 0.0
                 if mc and conf < mc:
                     continue
-            out[v.id] = value
+            out[v.id] = (value, conf)
         return out
 
     def representative_raws(self, frame: Frame, window: WindowDef,

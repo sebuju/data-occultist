@@ -5,7 +5,7 @@ import * as hub from "../../hub.js";
 import { log } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
-import { $, setStatus, model } from "../state.js";
+import { $, setStatus, model, readoutPreview } from "../state.js";
 import { registerWorker, unregisterWorker } from "../workers.js";
 import { pc, precapOpen, precapBusy, fmtBytes } from "./precap.js";
 import { prevHost, refreshDetect, refreshPreview } from "../imaging.js";
@@ -367,23 +367,40 @@ function renderLiveWindow() {
     const clr = liveRoot.querySelector(".live-clear");
     if (clr) clr.disabled = !liveImg.count;
     renderLiveWinList();
-    renderLiveReadouts();
+    renderReadoutValues();
     fitLivePanelHeight();
 }
 
-// Push the latest live readout values onto their readout nodes' `.ro-live` spans.
-// Reconciled in place (touch textContent/class only on change) so a steady value mutates the
-// DOM zero times per heartbeat (CLAUDE.md rule 1). "—" when not collecting / value absent.
-function renderLiveReadouts() {
-    const vals = liveColStatus?.readouts || null;
+// Fill each readout node's `.ro-live` span with `value (conf)`. Source is single: the live
+// collector's values+confidence while it's running, else what the current image last read via
+// /api/preview (readoutPreview) so the value shows even with live mode OFF. Reconciled in place
+// (touch textContent/class only on change) so a steady value mutates the DOM zero times per
+// heartbeat (CLAUDE.md rule 1). "—" when neither source has the readout.
+function renderReadoutValues() {
+    // Per readout, prefer the running collector's value (+conf); else fall back to what the
+    // current image last read via /api/preview (readoutPreview). So a readout shows a value
+    // with live mode OFF, and one the live pass hasn't produced yet still shows its preview.
+    const running = !!(liveColStatus && liveColStatus.running);
+    const lv = running ? (liveColStatus.readouts || {}) : {};
+    const lc = running ? (liveColStatus.readout_confs || {}) : {};
+    const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
     for (const el of document.querySelectorAll(".ro-live")) {
         const id = el.dataset.ro;
-        const has = !!vals && Object.prototype.hasOwnProperty.call(vals, id);
-        const txt = has ? String(vals[id]) : "—";
+        let val, conf, found = true;
+        if (has(lv, id)) { val = lv[id]; conf = lc[id]; }
+        else if (has(readoutPreview.vals, id)) { val = readoutPreview.vals[id]; conf = readoutPreview.confs[id]; }
+        else found = false;
+        const txt = !found ? "—" : (conf == null ? String(val) : `${val} (${(+conf).toFixed(2)})`);
         if (el.textContent !== txt) el.textContent = txt;
-        if (el.classList.contains("muted") === has) el.classList.toggle("muted", !has);
+        if (el.classList.contains("muted") === found) el.classList.toggle("muted", !found);
     }
 }
+// A fresh /api/preview readout batch landed (non-live source) — repaint the readout values.
+window.addEventListener("readout-preview", renderReadoutValues);
+
+// Is the server live collector running (feeding readout values)? When false, readout nodes read
+// their value off the current image via a preview instead (see imaging.refreshReadoutValues).
+export function liveCollecting() { return !!(liveColStatus && liveColStatus.running); }
 
 // Reconcile the live-enabled window list in place (keyed Map, no innerHTML per tick).
 function renderLiveWinList() {

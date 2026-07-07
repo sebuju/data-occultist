@@ -106,6 +106,7 @@ class TickResult:
     changed: list[dict] = field(default_factory=list)  # values added/updated this tick (for triggers)
     reads: list[dict] = field(default_factory=list)     # per-kept-record OCR detail (live debug log only)
     readouts: dict = field(default_factory=dict)       # live ephemeral readout values read this tick (never stored)
+    readout_confs: dict = field(default_factory=dict)  # {readout_id: confidence} for the values above (UI display only)
     scroll: tuple[float, float] | None = None  # mirror datasets: visible row-index span (vlo,vhi)
     scroll_meta: dict | None = None            # mirror: {total, viewport, gain, confident, pinned}
 
@@ -349,18 +350,21 @@ class Collector:
         # stop them surfacing (or feeding on_readout triggers). read_readouts plausibility-
         # gates each box, so a garbage mid-animation reading is dropped, never shown.
         readouts_now: dict[str, object] = {}
+        readout_confs_now: dict[str, float] = {}
         if window.readouts:
             vfields = {f.id: f for f in self._profile.fields_for(window)}
-            readouts_now = self._reader.read_readouts(frame, window, vfields)
+            detailed = self._reader.read_readouts_detailed(frame, window, vfields)
+            readouts_now = {k: value for k, (value, _c) in detailed.items()}
+            readout_confs_now = {k: conf for k, (_v, conf) in detailed.items()}
             self._readouts.update(readouts_now)
 
         # Moving frame: readouts were taken above; skip the grid OCR (blurred) and return them.
         if moving:
             return TickResult(TickStatus.moving, window_id=window_id, state_id=state_id,
-                              readouts=readouts_now)
+                              readouts=readouts_now, readout_confs=readout_confs_now)
         if not self._state_allows_save(window, state_id):
             return TickResult(TickStatus.state_invalid, window_id=window_id, state_id=state_id,
-                              readouts=readouts_now)
+                              readouts=readouts_now, readout_confs=readout_confs_now)
 
         # Per-stage timing: capture + settle + classify were measured above (windowless
         # until now); emit them under this window now that it's recognised + save-worthy.
@@ -413,6 +417,7 @@ class Collector:
                 changed=[],
                 reads=reads,
                 readouts=readouts_now,
+                readout_confs=readout_confs_now,
             )
 
         # Per-detection batching: when this dataset hasn't been fed within the grace window
@@ -567,6 +572,7 @@ class Collector:
             changed=changed,
             reads=reads,
             readouts=readouts_now,
+            readout_confs=readout_confs_now,
             scroll=tick_scroll,
             scroll_meta=tick_scroll_meta,
         )

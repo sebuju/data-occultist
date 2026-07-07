@@ -46,6 +46,12 @@ export const gridOccluded = new Map();   // winId -> cells DISMISSED because scr
 export const gridDetections = new Map(); // winId -> raw OCR lines {box,text,confidence} the engine found (opt-in overlay layer)
 export const itemReads = new Map();      // "winId:itemId" -> last cutout read {fields,tells,valid,cell}
 
+// Last /api/preview readout values + their confidence, keyed by readout id. The NON-LIVE
+// source for each readout node's `.ro-live` value: when the collector isn't running there's no
+// heartbeat value, so the readout shows what the current image reads (written by refreshPreview).
+// A holder object (not a `let`) so both writer (imaging) and reader (livewin) share one ref.
+export const readoutPreview = { vals: {}, confs: {} };
+
 // Live dataset counts (from the heartbeat) + change-detection bookkeeping.
 export const prevPresent = {};
 export const prevLastTs = {};            // dataset -> last ledger event ts (changes on ANY batch)

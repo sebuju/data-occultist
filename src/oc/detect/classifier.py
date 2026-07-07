@@ -45,6 +45,8 @@ class DetectClassifier(WindowClassifier):
         return sorted((d for d in detectors if d.enabled), key=lambda d: 0 if d.is_cheap else 1)
 
     def _window_matches(self, window: WindowDef, frame: Frame) -> bool:
+        if not window.enabled:   # disabled window: never classified/read/saved (UI disable toggle)
+            return False
         active = self._cheap_first(window.detect)
         if not active:
             return False
@@ -79,6 +81,8 @@ class DetectClassifier(WindowClassifier):
         for every window. State detectors are left out (read only for the window that wins)."""
         boxes = []
         for w in profile.windows:
+            if not w.enabled:   # disabled window is never classified — don't OCR its detect boxes
+                continue
             for d in w.detect:
                 # text-kind = needs OCR = not a cheap (template/colour) detector. Includes an
                 # empty-text "any text present" detector.

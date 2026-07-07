@@ -274,8 +274,11 @@ def _read_window(engine, profile, game, capture):
     with ocr_job(engine.ocr) as job:   # one job: the whole window read runs without interleaving another
         result = reader.read_preview(frame, window, fields)
         # what each readout box reads off THIS image — shown on the canvas at author time
-        # (the same values the live collector would surface). {readout_id: value}.
-        result["readouts"] = reader.read_readouts(frame, window, fields)
+        # (the same values the live collector would surface), with their read confidence so a
+        # readout node can show ``value (conf)`` even when live mode is off.
+        detailed = reader.read_readouts_detailed(frame, window, fields)
+        result["readouts"] = {k: value for k, (value, _c) in detailed.items()}
+        result["readout_confs"] = {k: conf for k, (_v, conf) in detailed.items()}
     result["ms"] = round(job.ms)   # real compute time (lock-wait excluded) for the log bar
     return frame, window, result
 

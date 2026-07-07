@@ -17,19 +17,19 @@ const FACE_MARGIN = 12;   // keep the fan this far inside the face corners
 const rectCenter = (r) => [r.x + r.w / 2, r.y + r.h / 2];
 
 // which face of `box` points toward `pt` — the face whose outward normal best aligns with the direction
-// to `pt`. The TOP face is FORBIDDEN when the box has a title band (band > 0): a gate there would sit on
-// the colored ggroup-title, and its stub would cross the heading (never allowed — cf. route.js headCross).
-// Such crossings are steered to L/R/B instead (the line wraps around to a side).
+// to `pt`. All four faces (incl. TOP) are eligible even when the box has a title band: a top gate is
+// permitted, and route.js's headCross SOFT penalty still steers wires around the heading when a clear
+// side is available, so top is used only when the geometry genuinely favors it.
 function faceToward(box, pt, band) {
     const c = rectCenter(box), dx = pt[0] - c[0], dy = pt[1] - c[1];
-    const score = { L: -dx, R: dx, T: band > 0 ? -Infinity : -dy, B: dy };
+    const score = { L: -dx, R: dx, T: -dy, B: dy };
     let best = "R", bv = -Infinity;
     for (const f of ["L", "R", "T", "B"]) if (score[f] > bv) { bv = score[f]; best = f; }
     return best;
 }
-// Move every single-exit face's end onto the busiest OTHER occupied face (never onto the title-band top
-// face when band > 0). Counts are recomputed live, so two lone singles collapse onto one side rather than
-// swapping. A single that has no company anywhere (all other faces empty) stays put — one line, one gate.
+// Move every single-exit face's end onto the busiest OTHER occupied face. Counts are recomputed live, so
+// two lone singles collapse onto one side rather than swapping. A single that has no company anywhere
+// (all other faces empty) stays put — one line, one gate.
 function mergeLonelyFaces(ends, band) {
     const FACES = ["L", "R", "T", "B"];
     const tally = () => { const m = { L: 0, R: 0, T: 0, B: 0 }; for (const e of ends) m[e.face]++; return m; };
@@ -37,7 +37,7 @@ function mergeLonelyFaces(ends, band) {
         const m = tally();
         if (m[lf] !== 1) continue;                       // only a face with exactly one exit is merged
         let target = null, best = 0;
-        for (const f of FACES) { if (f === lf || (band > 0 && f === "T")) continue; if (m[f] > best) { best = m[f]; target = f; } }
+        for (const f of FACES) { if (f === lf) continue; if (m[f] > best) { best = m[f]; target = f; } }
         if (!target) continue;                           // nothing to merge onto — leave the lone exit
         for (const e of ends) if (e.face === lf) e.face = target;
     }
@@ -97,7 +97,7 @@ export function classifyAndGate({ nodeRects, groupBox, groupOf, edges, laneGap =
         // face per end, with hysteresis: keep last frame's face unless it's no longer on the right side
         for (const en of ends) {
             let f = faceToward(box, en.outside, band);
-            if (prevFace) { const pf = prevFace.get(en.cr.key + "|" + gid); if (pf && !(band > 0 && pf === "T") && pf !== f && faceStillOk(box, en.outside, pf)) f = pf; }
+            if (prevFace) { const pf = prevFace.get(en.cr.key + "|" + gid); if (pf && pf !== f && faceStillOk(box, en.outside, pf)) f = pf; }
             en.face = f;
         }
         // consolidate: a face carrying only ONE exit is merged onto the busiest OTHER occupied face, so a
