@@ -248,14 +248,26 @@ class DetectMatcher:
         does. (The old preview used ``read_region`` — full detection — and silently
         disagreed with the recognition-only runtime read.)"""
         if det.template or det.color:
-            s = self.score(det, frame)
-            matched = s >= det.threshold
             # colour/border/template: the "read" concept doesn't apply — the verdict row
             # already carries the pixel-match %/threshold, so echo the detector kind.
-            label = "(template)" if det.template else "(color)"
+            extra: dict = {}
+            if det.color:
+                from ..collect.tells import border_score, color_distance, color_score
+                crop = self._crop(det, frame)
+                s = (border_score(crop, det.color, det.tolerance, det.width)
+                     if det.width else color_score(crop, det.color, det.tolerance))
+                # closest-pixel BGR distance to the target — the editor shows it beside the
+                # "(color)" read so the user can tune `tolerance` above it (None = untestable).
+                dist = color_distance(crop, det.color, det.width)
+                label = "(color)"
+                extra["dist"] = None if dist is None else round(dist, 1)
+            else:
+                s = self.score(det, frame)
+                label = "(template)"
+            matched = s >= det.threshold
             return {"matched": matched, "passes": detector_passes(matched, det.negate),
                     "negate": det.negate, "read": label,
-                    "score": round(s, 2), "threshold": det.threshold}
+                    "score": round(s, 2), "threshold": det.threshold, **extra}
         read, s = self._text_score(det, frame)
         matched = s >= det.threshold   # empty text ("any") scores 1.0 on any read meeting min_chars
         out = {"matched": matched, "passes": detector_passes(matched, det.negate),

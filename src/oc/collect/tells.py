@@ -38,15 +38,35 @@ def filled_score(crop: np.ndarray) -> float:
     return float(min(1.0, gray.std() / 64.0))
 
 
+def _color_dist(crop: np.ndarray, hex_color: str | None) -> np.ndarray | None:
+    """Per-pixel BGR distance from every pixel of ``crop`` to ``hex_color`` — the shared
+    colour primitive both the mask (presence) and the distance readout derive from. None
+    when there's nothing to test."""
+    if crop is None or crop.size == 0 or not hex_color:
+        return None
+    bgr = np.array(hex_to_bgr(hex_color), dtype=np.float32)
+    return np.linalg.norm(crop.astype(np.float32) - bgr, axis=2)
+
+
+def _perimeter_ring(shape: tuple[int, int], width: float) -> np.ndarray | None:
+    """Boolean mask of the box's perimeter band (thickness ``width`` as a fraction of the
+    shorter side). None when the band would swallow the whole box — the caller then treats
+    it as a whole-fill region, not a ring."""
+    h, w = shape
+    band = max(1, int(round((width or 0.0) * min(h, w))))
+    if band * 2 >= min(h, w):     # band swallows the whole box -> it's just a color tell
+        return None
+    ring = np.zeros((h, w), dtype=bool)
+    ring[:band, :] = ring[-band:, :] = ring[:, :band] = ring[:, -band:] = True
+    return ring
+
+
 def _color_mask(crop: np.ndarray, hex_color: str | None, tolerance: int) -> np.ndarray | None:
     """Boolean mask of pixels within ``tolerance`` BGR distance of ``hex_color`` — the
     shared colour-presence primitive both ``color`` (whole fill) and ``border`` (perimeter
     band only) score on. None when there's nothing to test."""
-    if crop is None or crop.size == 0 or not hex_color:
-        return None
-    bgr = np.array(hex_to_bgr(hex_color), dtype=np.float32)
-    dist = np.linalg.norm(crop.astype(np.float32) - bgr, axis=2)
-    return dist < tolerance
+    dist = _color_dist(crop, hex_color)
+    return None if dist is None else dist < tolerance
 
 
 def color_score(crop: np.ndarray, hex_color: str | None, tolerance: int) -> float:
@@ -61,13 +81,22 @@ def border_score(crop: np.ndarray, hex_color: str | None, tolerance: int, width:
     near = _color_mask(crop, hex_color, tolerance)
     if near is None:
         return 0.0
-    h, w = near.shape
-    band = max(1, int(round((width or 0.0) * min(h, w))))
-    if band * 2 >= min(h, w):     # band swallows the whole box -> it's just a color tell
-        return float(near.mean())
-    ring = np.zeros((h, w), dtype=bool)
-    ring[:band, :] = ring[-band:, :] = ring[:, :band] = ring[:, -band:] = True
-    return float(near[ring].mean())
+    ring = _perimeter_ring(near.shape, width)
+    return float(near.mean()) if ring is None else float(near[ring].mean())
+
+
+def color_distance(crop: np.ndarray, hex_color: str | None, width: float = 0.0) -> float | None:
+    """Smallest BGR distance from any tested pixel to ``hex_color`` — the editor's tuning
+    aid: set ``tolerance`` above this to start catching the target. ``width>0`` measures
+    only the perimeter band (matching ``border_score``). None when there's nothing to test."""
+    dist = _color_dist(crop, hex_color)
+    if dist is None:
+        return None
+    if width:
+        ring = _perimeter_ring(dist.shape, width)
+        if ring is not None:
+            dist = dist[ring]
+    return float(dist.min())
 
 
 def template_score(crop: np.ndarray, template: np.ndarray | None) -> float:

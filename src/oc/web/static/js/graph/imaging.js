@@ -1097,7 +1097,9 @@ async function prefillDetectText(winId, detectId) {
         const a = model.detect(winId, detectId);
         if (a && !a.text && info && info.read && info.read !== "(template)" && info.read !== "(color)") {
             a.text = info.read;
-            render(); autosave(winId);   // re-detect only this window
+            // render() reuses the already-built detect node element (it only reconciles the node
+            // SET), so it never repaints the input value — rebuild THIS node's body to show the read.
+            rebuildNode(`det:${winId}:${detectId}`); autosave(winId);   // re-detect only this window
         }
     } catch { /* ignore */ }
 }
@@ -1182,10 +1184,14 @@ function setDetectStatus(nodeId, info) {
     const after = box.querySelector(".ds-after");
     const chars = box.querySelector(".ds-chars");
     const raw = info.got_raw, norm = info.got_norm;
-    if (norm == null) {            // template detector: no normalised text, just echo the read
+    if (norm == null) {            // colour/border/template detector: no normalised text, echo the read
         before.hidden = true; chars.hidden = true;
-        if (info.read) { after.hidden = false; after.replaceChildren("read: ", h("span", { class: "ds-txt" }, info.read)); }
-        else after.hidden = true;
+        if (info.read) {
+            // colour/border also carry `dist` — the closest-pixel BGR distance to the target,
+            // shown beside "(color)" so the user can set tolerance just above it.
+            const txt = info.dist != null ? `${info.read} · nearest ${info.dist} BGR` : info.read;
+            after.hidden = false; after.replaceChildren("read: ", h("span", { class: "ds-txt" }, txt));
+        } else after.hidden = true;
         return;
     }
     // highlight the matched characters in the AFTER (normalised) text — only on a real match
