@@ -141,6 +141,7 @@ windows:
     tolerance: 60
     scale: 1.0
   live: true
+  enabled: true
   item_fields: []
   item_tells: []
 - id: equipment_window
@@ -298,6 +299,7 @@ windows:
     tolerance: 60
     scale: 1.0
   live: false
+  enabled: true
   item_fields:
   - id: name
     box:
@@ -509,6 +511,7 @@ windows:
     tolerance: 60
     scale: 1.0
   live: false
+  enabled: true
   item_fields:
   - id: mod_name
     box:
@@ -655,6 +658,7 @@ windows:
     tolerance: 60
     scale: 1.0
   live: true
+  enabled: true
   item_fields:
   - id: name
     box:
@@ -802,6 +806,7 @@ windows:
     tolerance: 60
     scale: 1.0
   live: true
+  enabled: true
   item_fields:
   - id: name
     box:
@@ -1013,6 +1018,7 @@ windows:
     tolerance: 60
     scale: 1.0
   live: true
+  enabled: true
   item_fields:
   - id: name
     box:
@@ -1107,6 +1113,7 @@ windows:
     tolerance: 60
     scale: 1.0
   live: true
+  enabled: true
   item_fields: []
   item_tells: []
 - id: arsenal_warframe
@@ -1202,6 +1209,7 @@ windows:
     tolerance: 60
     scale: 1.0
   live: true
+  enabled: true
   item_fields:
   - id: name
     box:
@@ -1923,9 +1931,6 @@ triggers:
   - wf_market_live
   - owned_refresh_sound
   enabled: true
-  dataset_targets: []
-  dataset_action: ''
-  dataset_dest: ''
 - id: trigger_on_new_relic
   kind: on_change
   interval_s: 300.0
@@ -1937,10 +1942,7 @@ triggers:
   targets:
   - wf_market_relic
   enabled: true
-  dataset_targets: []
-  dataset_action: ''
-  dataset_dest: ''
-- id: trigger
+- id: ab_trigger
   kind: on_readout
   interval_s: 300.0
   watch: []
@@ -1954,9 +1956,7 @@ triggers:
   targets:
   - bob
   enabled: true
-  dataset_targets: []
-  dataset_action: ''
-  dataset_dest: ''
+  throttle_ms: 1000.0
 - id: on_new_relic_fetched
   kind: on_change
   interval_s: 300.0
@@ -1969,9 +1969,6 @@ triggers:
   - relic_sound
   - toast_2
   enabled: true
-  dataset_targets: []
-  dataset_action: ''
-  dataset_dest: ''
 toasts:
 - id: toast_2
   title: ''
@@ -2279,6 +2276,7 @@ sounds:
   file: bob.wav
   volume: 0.5
   enabled: true
+actions: []
 dictionaries:
 - id: wiki
   enabled: true
@@ -2370,11 +2368,11 @@ layout:
       custH: false
     win:mod_window:
       x: -1460.0
-      y: 2740.0
+      y: 2780.0
       collapsed: false
     item:mod_window:mod:
       x: -2980.0
-      y: 2740.0
+      y: 2780.0
       collapsed: false
     win:equipment_window:
       x: -1440.0
@@ -2410,7 +2408,7 @@ layout:
       custH: false
     item:mod_window:drop_item:
       x: -2980.0
-      y: 3760.0
+      y: 3800.0
       w: 380.0
       h: 815.0
       collapsed: false
@@ -2450,19 +2448,19 @@ layout:
       collapsed: false
     fld:mod_window:mod:mod_name:
       x: -2560.0
-      y: 3240.0
+      y: 3280.0
       collapsed: false
     fld:mod_window:mod:mod_drain:
       x: -2200.0
-      y: 2740.0
+      y: 2780.0
       collapsed: false
     fld:mod_window:mod:mod_count:
       x: -2560.0
-      y: 2740.0
+      y: 2780.0
       collapsed: false
     tell:mod_window:drop_item:tell_3:
       x: -2580.0
-      y: 3760.0
+      y: 3800.0
       collapsed: false
     trigger:owned_refresh:
       x: 480.0
@@ -2478,15 +2476,15 @@ layout:
       collapsed: false
     win:relic_select:
       x: -660.0
-      y: 2740.0
+      y: 2760.0
       collapsed: false
     sb:relic_select:scrollbar:
       x: -100.0
-      y: 3160.0
+      y: 3180.0
       collapsed: false
     item:relic_select:relic_item:
       x: 1340.0
-      y: 2740.0
+      y: 2760.0
       w: 380.0
       h: 1239.0
       collapsed: false
@@ -2494,15 +2492,15 @@ layout:
       custH: false
     fld:relic_select:relic_item:name:
       x: 980.0
-      y: 2740.0
+      y: 2760.0
       collapsed: false
     fld:relic_select:relic_item:count:
       x: 980.0
-      y: 3160.0
+      y: 3180.0
       collapsed: false
     item:relic_select:guard:
       x: 500.0
-      y: 2740.0
+      y: 2760.0
       w: 400.0
       h: 1156.0
       collapsed: false
@@ -2510,7 +2508,7 @@ layout:
       custH: false
     tell:relic_select:guard:tell_no_relic:
       x: 220.0
-      y: 2740.0
+      y: 2760.0
       w: 240.0
       h: 280.0
       collapsed: false
@@ -2518,7 +2516,7 @@ layout:
       custH: false
     prev:relic_select:
       x: -660.0
-      y: 3600.0
+      y: 3620.0
       w: 520.0
       h: 320.0
       collapsed: false
@@ -2618,7 +2616,7 @@ layout:
       custH: true
     det:relic_select:detect_h:
       x: -100.0
-      y: 2740.0
+      y: 2760.0
       w: 260.0
       h: 280.0
       collapsed: false
@@ -2634,7 +2632,7 @@ layout:
       custH: true
     det:mod_window:detect_h:
       x: -1720.0
-      y: 2740.0
+      y: 2780.0
       w: 240.0
       h: 260.0
       collapsed: false
@@ -2706,7 +2704,7 @@ layout:
       custH: false
     ds:relics_select:
       x: -660.0
-      y: 4000.0
+      y: 4020.0
       collapsed: false
     vt:ds:relics_offered:
       x: 2300.0
@@ -2746,7 +2744,7 @@ layout:
       custH: true
     vt:ds:relics_select:
       x: -240.0
-      y: 4000.0
+      y: 4020.0
       w: 460.0
       h: 500.0
       collapsed: false
@@ -2849,22 +2847,18 @@ layout:
       custW: false
       custH: true
     win:game:
-      x: -2640.0
-      y: -2200.0
+      x: -2780.0
+      y: -2280.0
+      w: 680.0
+      h: 806.0
       collapsed: false
+      custW: true
+      custH: false
     det:game:hud:
-      x: -2100.0
-      y: -2200.0
+      x: -2060.0
+      y: -2280.0
       w: 260.0
       h: 180.0
-      collapsed: false
-      custW: false
-      custH: false
-    trigger:trigger:
-      x: -3600.0
-      y: -2720.0
-      w: 280.0
-      h: 400.0
       collapsed: false
       custW: false
       custH: false
@@ -2873,34 +2867,34 @@ layout:
       y: -3700.0
       collapsed: false
     ro:game:ability_1_cd:
-      x: -4260.0
-      y: -1940.0
+      x: -4400.0
+      y: -2280.0
       w: 380.0
-      h: 480.0
+      h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:game:ability_2_cd:
-      x: -3860.0
-      y: -1940.0
+      x: -4020.0
+      y: -2280.0
       w: 380.0
-      h: 480.0
+      h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:game:ability_3_cd:
-      x: -3460.0
-      y: -1940.0
+      x: -3620.0
+      y: -2280.0
       w: 380.0
-      h: 480.0
+      h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:game:ability_4_cd:
-      x: -3060.0
-      y: -1940.0
+      x: -3200.0
+      y: -2280.0
       w: 380.0
-      h: 480.0
+      h: 340.0
       collapsed: false
       custW: true
       custH: true
@@ -2975,6 +2969,14 @@ layout:
     ro:arsenal_warframe:ro_8:
       x: 1920.0
       y: 3600.0
+      collapsed: false
+    trigger:ab_trigger:
+      x: -3600.0
+      y: -2720.0
+      collapsed: false
+    hist:ab_trigger:
+      x: -3260.0
+      y: -2720.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -3219,6 +3221,16 @@ layout:
       widths:
         price: 78
       order: []
+    hist:trigger:
+      widths: {}
+      order: []
+      sorts: []
+    hist:ab_trigger:
+      widths:
+        when: 101
+        why: 140
+        throttled: 69
+        fires: 69
   open_images:
   - glyphs
   - game
@@ -3503,12 +3515,13 @@ layout:
     - win:game
     - det:game:hud
     - var:game:var_1
-    - trigger:trigger
+    - trigger:ab_trigger
     - ro:game:ability_1_cd
     - ro:game:ability_2_cd
     - ro:game:ability_3_cd
     - ro:game:ability_4_cd
     - sound:bob
+    - hist:ab_trigger
     outline:
       color: '#3a4150'
       style: none
@@ -3683,6 +3696,8 @@ layout:
   - vt:ds:master
   - vt:ds:relics_refinement
   - vt:sub:relic_rewards_with_price
+  - hist:trigger
+  - hist:ab_trigger
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -3957,8 +3972,9 @@ layout:
     parent: group_28
     title: ''
     members:
-    - trigger:trigger
+    - trigger:ab_trigger
     - sound:bob
+    - hist:ab_trigger
     outline:
       color: '#2b323f'
       style: none
