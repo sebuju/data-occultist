@@ -689,14 +689,25 @@ class RegionReader:
                     failed = [r["id"] for r in cell["tells"] if not r["pass"]]
                     cell["reason"] = "tell failed: " + ", ".join(failed)
 
-        detections = [
-            {
+        def _detection(ln):
+            return {
                 "text": ln.text,
                 "confidence": round(ln.confidence, 3),
                 "box": {"x": ln.box.x / cw, "y": ln.box.y / ch, "w": ln.box.w / cw, "h": ln.box.h / ch},
             }
-            for ln in lines
-        ]
+
+        detections = [_detection(ln) for ln in lines]
+        # The main read pass is clipped to the data area (items/regions tile there), so the raw-OCR
+        # layer would go blank everywhere OUTSIDE it — including where the window's readout boxes
+        # live. When there's a data area AND at least one readout, run ONE extra full-frame pass at
+        # author time and add just the lines that fall outside the data area, so the raw layer covers
+        # the readouts (and the UI can click-snap a readout box to a recognised line). Purely an
+        # author-time preview aid: item location, stored reads, and live collection are untouched.
+        if window.data_area is not None and any(v.enabled for v in window.readouts):
+            da = self._clip(frame, window)
+            ih, iw = frame.image.shape[:2]
+            extra = self._ocr_union(frame, [], window.preprocess, PixelBox(0, 0, iw, ih))
+            detections.extend(_detection(ln) for ln in extra if not _center_in(ln, da))
         result = {"cells": out, "detections": detections}
         if ics is not None:                       # located grid: how far cells drift off content
             result["drift"] = grid_drift(ics, lines, cw, ch)

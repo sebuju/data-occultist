@@ -8,19 +8,34 @@
 
 import { observeResize } from "./dom.js";
 
+// Fallback hues for roles that DON'T map to a graph node type (data_area/search/state are
+// window-internal boxes, not their own node). Node-backed roles resolve their colour from the
+// node type token instead (see roleColor) so a box reads as the node it spawns.
 const ROLE_COLOR = {
-    region: "#5aa9e6",
-    field: "#5aa9e6",
-    item: "#e0556b",
-    bbox: "#e0556b",
-    detect: "#7ddc7d",
     state_detect: "#e6c25a",
     state: "#e6c25a",
-    scrollbar: "#7ddc7d",   // same green as detect boxes
     search: "#e89a4c",
     data_area: "#e89a4c",
-    readout: "#c58af0",   // purple — a live, non-persisted readout box
 };
+
+// A draw-tool box should read in the colour of the NODE it creates. That colour lives in exactly
+// one place — the `--nt-<type>` tokens in base.css (mirrored onto nodes in graph.css) — so resolve
+// it from there rather than duplicating hexes here (a hue edit in base.css then propagates to the
+// canvas too). Cached per type; the vars are static after load.
+const ROLE_NODE_TYPE = {
+    region: "region", field: "itemfield", item: "item", bbox: "item",
+    detect: "detect", scrollbar: "scrollbar", readout: "readout",
+};
+const _ntCache = {};
+function roleColor(role) {
+    const t = ROLE_NODE_TYPE[role];
+    if (!t) return ROLE_COLOR[role] || "#fff";
+    if (!_ntCache[t]) {
+        _ntCache[t] = getComputedStyle(document.documentElement)
+            .getPropertyValue(`--nt-${t}`).trim() || "#fff";
+    }
+    return _ntCache[t];
+}
 
 // How a read was validated against authored knowledge -> a coloured pill on the cell, so the
 // author sees a value is TRUSTED (confirmed by the dictionary / a snap / glyph pixels), not just
@@ -188,6 +203,17 @@ export class Overlay {
         return null;
     }
 
+    // A raw-OCR detection rect under the cursor (topmost first). Used only to SNAP a new draw-tool
+    // box to a recognised line: with a tool armed and the raw-OCR layer on, clicking a raw rect
+    // creates the tool's box at that rect's position/size (see _onDown/_onUp fromDet).
+    _hitDetection(p) {
+        for (let i = this.detections.length - 1; i >= 0; i--) {
+            const b = this.detections[i].box;
+            if (b && p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return this.detections[i];
+        }
+        return null;
+    }
+
     _clampBox(b) {
         b.w = Math.max(this.minFrac, b.w);
         b.h = Math.max(this.minFrac, b.h);
@@ -251,7 +277,10 @@ export class Overlay {
         // 4) empty space: deselect, then start a new box — unless creation is gated off
         if (this.activeId !== null) { this.activeId = null; this.onSelect?.(null); this.render(); }
         if (!canDraw) return;   // no draw tool -> no new box
-        this.op = { type: "create", x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+        // remember a raw-OCR rect under the press: a click (no drag) on it snaps the new box to
+        // that recognised line's geometry (see _onUp); dragging still draws freehand.
+        const det = this.vis.raw ? this._hitDetection(p) : null;
+        this.op = { type: "create", x0: p.x, y0: p.y, x1: p.x, y1: p.y, fromDet: det ? { ...det.box } : null };
     }
 
     _onMove(ev) {
@@ -299,7 +328,8 @@ export class Overlay {
                 w: Math.abs(op.x1 - op.x0), h: Math.abs(op.y1 - op.y0),
             };
             this.render();
-            if (b.w > this.minFrac && b.h > this.minFrac) this.onCreate?.(b);
+            if (b.w > this.minFrac && b.h > this.minFrac) this.onCreate?.(b);   // real drag -> freehand box
+            else if (op.fromDet) this.onCreate?.(op.fromDet);   // click on a raw-OCR rect -> snap the tool's box to it
             else if (op.selHit != null) { this.activeId = op.selHit; this.onSelect?.(op.selHit); this.render(); }  // click = select the backdrop
         } else if (op.moved) {
             this.onChange?.(op.box);   // a real move/resize; a click-without-drag only selected
@@ -458,7 +488,7 @@ export class Overlay {
             // a detect box carries its LIVE outcome: green/✓ when matched, red/✗ when not (a
             // faint fill so the verdict reads at a glance, with score% on the label)
             const st = b.role === "detect" ? this.detectStatus[b.id] : null;
-            const color = st ? (st.matched ? "#7ddc7d" : "#e6685a") : (ROLE_COLOR[b.role] || "#fff");
+            const color = st ? (st.matched ? "#7ddc7d" : "#e6685a") : roleColor(b.role);
             const isActive = b.id === this.activeId;
             ctx.lineWidth = (isActive ? 2.4 : 1.6) * u;
             ctx.strokeStyle = color;
@@ -472,7 +502,7 @@ export class Overlay {
             let label = b.label || b.id || b.role;
             if (b.locked) label += " 🔒";   // position pinned (e.g. scrollbar with calibration cutouts)
             if (st) label += `  ${st.matched ? "✓" : "✗"}${st.score != null ? ` ${Math.round(st.score * 100)}%` : ""}`;
-            this._label(label, b.x * W, b.y * H, color, labelFs);
+            if (b.role !== "bbox") this._label(label, b.x * W, b.y * H, color, labelFs);   // the item cell needs no label
             this._alignArrow(b, W, H, u, color);   // anchor snap point (align x/y) drawn, not written
             if (isActive && !this.op && !b.locked) this._drawHandles(b, W, H, u);   // hide handles while dragging; a locked box has none
         }

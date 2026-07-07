@@ -151,7 +151,7 @@
 /* a select that ISN'T the control right after a .lab (rule-pipeline / inline selects) drops the
    chevron, sits on tight padding, and carries a resting muted border so it reads as an editable
    field on its own — the k/v label that would otherwise mark it isn't there */
-.gnode input:not([size], .gi-id):not(.lab + input),
+.gnode input:not([size], .gi-id):not(.lab + input):not(.tg-interval):not(.tg-throttle),
 .gnode select:not([size]):not(.lab + select) {
    border-color: var(--line);
    width: auto;
@@ -930,25 +930,28 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .tool:hover:not(:disabled) { background: var(--accent-bg); filter: none; }
 .tool.active { background: var(--accent); color: var(--on-accent); border-style: solid; }
 /* item node: draw-mode button rows under the tells / cell-and-fields headers */
-.il-tools { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0px 8px 0px; }
+.il-tools { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0px -4px 0px; }
 .il-tools .tool { font-size: var(--fs-xs); padding: 1px 7px; }
-/* compact field / tell summary row (the full editor is the child's own node) */
-.if-sum, .ti-sum { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
-.if-sum:hover, .ti-sum:hover { background: var(--line); }
-.if-sum .if-sum-name, .ti-sum .ti-sum-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ti-sum .ti-sum-kind { flex: 0 0 auto; font-size: var(--fs-xs); }   /* the tell's kind, dimmed */
+/* single toolbar (cell/field/tell) under the item cutout */
+.il-toolbar { margin-top: 2px; }
 /* template tell: the saved reference sub-image (the tell box cropped from the item cutout) */
 .tt-ref { display: flex; flex-direction: column; gap: 3px; grid-column: span 2; }
 .tt-ref-canvas { width: 100%; height: auto; image-rendering: pixelated; cursor: default;
     border: 1px solid var(--line); border-radius: 3px; background: #0003; }
-/* readout: 3-col grid (label · ":" · value) — the colon sits in its OWN column so every
-   label and value lines up regardless of label width */
-.item-readout { display: grid; grid-template-columns: auto auto 1fr; gap: 0 6px; font-size: var(--fs-sm); line-height: 1.5; }
-.item-readout:empty { display: none; }
-.item-readout .ir-row { grid-column: 1 / -1; }   /* status spans all columns, on its own row */
-.item-readout .ir-k { color: var(--muted); white-space: nowrap; }   /* field / tell / "key" label column */
-.item-readout .ir-c { color: var(--muted); }                        /* the ":" separator column */
-.item-readout .ir-v { min-width: 0; overflow-wrap: anywhere; }       /* value column wraps, never widens the node */
+/* merged fields+tells table (item node): one row per field/tell with the live read folded in —
+   each field's value+conf, each tell's pass+score, plus overall validity + record key in the
+   head (the old item-readout panel). Removal is on the child node, so no trash here; a row click
+   pans to it. Live spans (.mr-status/.mr-val/.mr-mark/.mr-key-v) are filled in place per read. */
+.mr-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    margin: 2px 0 5px; font-size: var(--fs-sm); grid-column: span 2; }
+.mr-key { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mr-table { display: flex; flex-direction: column; grid-column: span 2; }
+.mr-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; cursor: pointer; font-size: var(--fs-sm); }
+.mr-row:hover { background: var(--line); }
+.mr-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-kind { flex: 0 0 auto; font-size: var(--fs-xs); }   /* the field type / tell kind, dimmed */
+.mr-badge { flex: 0 0 auto; font-size: var(--fs-xs); padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); }
+.mr-val, .mr-mark { flex: 0 0 auto; min-width: 0; overflow-wrap: anywhere; text-align: right; }
 .item-lists { margin-top: 6px; }
 .item-lists .il-h { margin-top: 16px; margin-bottom: 4px; }   /* look = shared .gnode subheading rule */
 .ti-row, .key-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
@@ -976,9 +979,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    the game node's window-priority list (top = recognised first). Reorder with the ▲/▼ buttons;
    the number itself is never shown. One rule set, both callers (rule 7). */
 .win-controls .wi-h, .game-priority .wi-h { margin-top: 14px; margin-bottom: 4px; }   /* look = shared .gnode subheading rule */
-.wi-row, .wp-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
-.wi-row .wi-name, .wp-row .wp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
-.wi-row .wi-name:hover, .wp-row .wp-name:hover { background: var(--hover); }   /* rounded pill hover, like .if-sum */
+.wi-row, .wp-row, .wi-ro-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
+.wi-row .wi-name, .wp-row .wp-name, .wi-ro-row .wi-ro-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+.wi-row .wi-name:hover, .wp-row .wp-name:hover, .wi-ro-row .wi-ro-name:hover { background: var(--hover); }   /* rounded pill hover, like .if-sum */
 .wi-row .wimv, .wp-row .wpmv { flex: 0 0 auto; padding: 0 10px; }
 /* window node: detects section — combine mode + per-detector polarity, with a live verdict.
    Rows are three aligned columns (detector | pass | require); the wd-head row labels them.

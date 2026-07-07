@@ -14,7 +14,7 @@ import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, srcRow, btn
 import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
-import { ITEM_KINDS } from "./imaging.js";
+import { ITEM_KINDS, TELL_KINDS } from "./imaging.js";
 import { producerParts } from "./producer_node.js";
 import { sourceParts } from "./source_node.js";
 import { toastParts } from "./toast_node.js";
@@ -296,21 +296,30 @@ function priorityRow(id, i, count, { rowCls, nameCls, mvCls, nameTitle, upTitle,
         moveButtons(i, count, mvCls, { id }, { upTitle, downTitle }));
 }
 
-// Item templates listed in PRIORITY order, HIGHEST first — the top row wins when cells
-// overlap a tile; the BOTTOM row is priority 0 (the static grid's base cell, which sets the
-// grid pitch). Reordering IS how priority is set; the number itself is never shown. Click a
-// name to jump to that item's node.
+// The window's readable things, under one "items/readouts" heading:
+//  - item templates in PRIORITY order, HIGHEST first — the top row wins when cells overlap a tile;
+//    the BOTTOM row is priority 0 (the static grid's base cell, which sets the pitch). Reordering IS
+//    how priority is set; the number itself is never shown.
+//  - readouts as plain rows (no ordering — readouts don't contest tiles), each a jump to its node.
+// Click any name to jump to that node.
 export function windowItemOrder(w) {
     const items = [...(w.items || [])].sort((a, b) => (b.priority || 0) - (a.priority || 0));
-    if (!items.length) return null;
-    const rows = items.map((it, i) => priorityRow(it.id, i, items.length, {
+    const readouts = w.readouts || [];
+    if (!items.length && !readouts.length) return null;
+    const itemRows = items.map((it, i) => priorityRow(it.id, i, items.length, {
         rowCls: "wi-row", nameCls: "wi-name", mvCls: "wimv",
         nameTitle: "select this item's node",
         upTitle: "move up — higher priority (wins tile overlaps)",
         downTitle: "move down — lower priority (bottom = base cell, sets the grid pitch)" }));
+    // readouts are unordered — a plain name row that jumps to the `ro:<win>:<id>` node
+    const roRows = readouts.map((ro) => h("div", { class: "wi-ro-row", dataset: { id: ro.id } },
+        h("span", { class: "wi-ro-name", title: "select this readout's node" }, ro.id)));
     return frag(
-        subhead("templates", null, "template priority order — highest on top (wins tile overlaps); the bottom template is the base cell that sets the grid pitch"),
-        rows);
+        subhead("items/readouts", null, "item templates (priority order — highest on top wins tile overlaps; bottom = base cell that sets the grid pitch) + the window's live readouts"),
+        itemRows,
+        // label the readouts group only when items are also present, so the split is clear
+        (items.length && readouts.length) ? h("div", { class: "flab muted" }, "readouts") : null,
+        roRows);
 }
 
 // The cell size (item.box w/h, window fractions) shown as editable inputs below the cutout
@@ -456,7 +465,12 @@ export function itemTellParts(n) {
     const staticOn = w.static_grid !== false;   // static grid tiles rows from the cell — locate is unused
     const tset = (k, opts, cur, def) => h("select", { class: "tset", dataset: { k } },
         opts.map((v) => h("option", { value: v, selected: (cur ?? def) === v }, (cur ?? def) === v ? `<${v}>` : v)));
+    // the tell's kind is picked HERE now (one "tell" draw tool creates it, this chooses what it
+    // checks). Changing it swaps the kind-specific controls below.
+    const kindSel = h("select", { class: "tkind", title: "what this tell checks: filled/text/color/border/template/diamonds" },
+        TELL_KINDS.map(([v, label]) => h("option", { value: v, selected: t.kind === v }, t.kind === v ? `<${label}>` : label)));
     const body = frag(
+        kv("kind", kindSel),
         t.kind === "text" && frag(
             kv("checks", h("select", { class: "tset", dataset: { k: "field" } }, _colOpts((it.fields || []).map((f) => f.field), t.field)),
                 { title: "which field's read this tell checks. Leave blank (—) to check ANY column's read — the tell isn't tied to one field." }),
@@ -514,46 +528,53 @@ export function readoutParts(n) {
     };
 }
 
+// The item template's body below the cutout canvas: ONE toolbar (cell/field/tell draw tools),
+// then ONE merged fields+tells table carrying the live read (each field's value+conf, each
+// tell's pass/score, overall validity, and the record key it stores under — the old separate
+// item-readout panel folded in here), then the cell + key config. Each field/tell is its OWN
+// node; a row click pans to it, and removal is done there (no indirect trash here). The live
+// `.mr-*` spans are filled in place by imaging.refreshItemReadout (rule 1), so this scaffold is
+// rebuilt only on config change, never per read.
 export function itemLists(it, w) {
-    // tells are their OWN nodes now — the item lists only a compact summary (id + kind + remove);
-    // the full per-tell editor lives on each tell node (itemTellParts). Mirrors fieldsSummary below.
-    const tellsSummary = (it.tells || []).map((t) => h("div", { class: "ti-sum", dataset: { tid: t.id }, title: "select this tell's node" },
-        h("span", { class: "ti-sum-name" }, t.id),
-        h("span", { class: "ti-sum-kind muted" }, t.kind),
-        trashBtn({ cls: "ti-del", dataset: { tid: t.id }, title: "remove" })));
-    // fields flagged as tells (f.tell) show here too, read-only — they're edited in the fields
-    // list below; the only action is remove, which just unchecks the field's tell flag.
-    const fieldTells = (it.fields || []).filter((f) => f.tell).map((f) => h("div", { class: "ti-row ti-fieldtell", dataset: { fid: f.id } },
-        h("span", { class: "ti-kind" }, "field"),
-        h("span", { class: "ti-name" }, f.id),
-        h("span", { class: "ti-ro muted" }, `tell · conf ${f.tell_conf ?? 0}`),
-        trashBtn({ cls: "ti-untell", dataset: { fid: f.id }, title: "stop using this field as a tell" })));
-    // fields are their OWN nodes now — the item lists only a compact summary (name + remove);
-    // the full per-field editor lives on each field node (itemFieldParts).
-    const fieldsSummary = (it.fields || []).map((f) => h("div", { class: "if-sum", dataset: { fid: f.id }, title: "select this field's node" },
-        h("span", { class: "if-sum-name" }, f.id),
-        trashBtn({ cls: "if-del", dataset: { fid: f.id }, title: "remove" })));
-    // the cutout draw-mode buttons, split by what they draw: cell under "cell", field under
-    // "fields", every tell kind under "tells". Selecting one sets the active draw kind.
-    const drawBtn = ([v, label, icon, tip]) => h("button", { class: "tool", dataset: { kind: v }, title: tip || `draw ${label}` }, icon, " ", label);
-    // copy w/h from the priority-0 base cell — sits next to the cell draw button (non-base only)
+    const tip = (k) => (ITEM_KINDS.find(([v]) => v === k) || [])[3] || "";
+    const drawBtn = ([v, label, icon, tt]) => h("button", { class: "tool", dataset: { kind: v }, title: tt || `draw ${label}` }, icon, " ", label);
+    // one toolbar under the canvas: the cell, the field, and a single "tell" tool (its kind is
+    // chosen on the tell node afterwards). "match base" copies the base cell's pitch (non-base only).
+    const tools = [
+        ["bbox", "cell", "▣", tip("bbox")],
+        ["field", "field", "▦", tip("field")],
+        ["tell", "tell", "⊙", "Draw a tell box, then pick its kind (filled/text/color/border/template/diamonds) on the tell node."],
+    ];
     const matchBtn = (it.priority || 0) === 0 ? null
         : h("button", { class: "csize-match", title: "copy width & height from the base cell (priority 0 — the bottom template, the static grid's base pitch)" }, "match base");
-    const cellBtns = [ITEM_KINDS.filter(([v]) => v === "bbox").map(drawBtn), matchBtn];
-    const fieldBtns = ITEM_KINDS.filter(([v]) => v === "field").map(drawBtn);
-    const tellBtns = ITEM_KINDS.filter(([v]) => v !== "bbox" && v !== "field").map(drawBtn);
+
+    // merged table: one row per field then per tell. `.mr-val`/`.mr-mark`/`.mr-status`/`.mr-key-v`
+    // start blank and are filled live by refreshItemReadout. A field-tell shows a "tell" badge.
+    const fieldRows = (it.fields || []).map((f) => h("div", { class: "mr-row", dataset: { fid: f.id }, title: "select this field's node" },
+        h("span", { class: "mr-name" }, f.id),
+        h("span", { class: "mr-kind muted" }, f.type || "text"),
+        f.tell ? h("span", { class: "mr-badge", title: "this field doubles as a tell" }, "tell") : null,
+        h("span", { class: "mr-val muted", dataset: { fid: f.id } }, "—")));
+    const tellRows = (it.tells || []).map((t) => h("div", { class: "mr-row", dataset: { tid: t.id }, title: "select this tell's node" },
+        h("span", { class: "mr-name" }, t.id),
+        h("span", { class: "mr-kind muted" }, t.kind),
+        h("span", { class: "mr-mark muted", dataset: { tid: t.id } }, "")));
+    const rows = [...fieldRows, ...tellRows];
+    const table = frag(
+        h("div", { class: "mr-head" },
+            h("span", { class: "mr-status muted" }, "—"),
+            h("span", { class: "mr-key muted" }, "key ", h("b", { class: "mr-key-v" }, "—"))),
+        rows.length ? h("div", { class: "mr-table" }, rows)
+            : h("div", { class: "gspan muted" }, "draw a field or tell on the cutout"));
+
     return frag(
+        h("div", { class: "il-tools il-toolbar" }, tools.map(drawBtn), matchBtn),
+        subhead("reads"),
+        table,
         subhead("cell"),
-        h("div", { class: "il-tools" }, cellBtns),
         cellSizeControls(it),
         kv("terminator", h("input", { type: "checkbox", class: "iterm", checked: !!it.terminator }),
             { title: "terminator: when this template is detected it marks the END of the list — every record positioned after it is discarded (an unowned/'no more results' placeholder). Ordered scroll/mirror datasets only." }),
-        subhead("tells"),
-        h("div", { class: "il-tools" }, tellBtns),
-        (tellsSummary.length || fieldTells.length) ? [tellsSummary, fieldTells] : h("div", { class: "muted" }, "draw a tell on the cutout"),
-        subhead("fields"),
-        h("div", { class: "il-tools" }, fieldBtns),
-        fieldsSummary.length ? fieldsSummary : h("div", { class: "gspan muted" }, "draw a field on the cutout"),
         keySection(it, w));
 }
 
@@ -578,7 +599,7 @@ export function keySection(it, w) {
         subhead("key", null, "which fields identify a record — reads with the same key merge; a different key (e.g. another level) is its own record. A record missing any key part is dropped."),
         kv("separator", h("input", { class: "ksep", value: eff.sep ?? "|", size: "2" }),
             { title: "joins the parts in the stored key" }),
-        addable.length > 0 && kv("+ field", h("select", { class: "kadd" }, h("option", { value: "" }, "field…"), addable.map((f) => h("option", f))),
+        addable.length > 0 && kv("+ field", h("select", { class: "kadd" }, h("option", { value: "" }, "<field>"), addable.map((f) => h("option", f))),
             { title: "add a field to the key" }),
         kv("case-sensitive", h("input", { type: "checkbox", class: "kcase", checked: !!eff.case_sensitive }),
             { title: "treat keys differing only in case as distinct" }),

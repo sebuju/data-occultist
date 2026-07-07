@@ -1,7 +1,7 @@
 // Window image / region drawing, item cutouts, OCR read pipeline (preview + detect + grid).
 // Extracted from main.js verbatim.
 import * as api from "../api.js";
-import { h, frag, CAMERA, TRASH } from "../dom.js";
+import { h, frag, TRASH } from "../dom.js";
 import { openCaptureModal } from "./panels/precap.js";
 import { timed } from "../log.js";
 import { Overlay } from "../overlay.js";
@@ -29,7 +29,16 @@ import { verdictBadge } from "./collisions.js";
 
 // ---- window image / region drawing (in-graph) -----------------------------
 
-const KINDS = [["region", "region", "▤"], ["data_area", "data area", "▭"], ["item", "item", "▣"], ["detect", "detect", "◎"], ["scrollbar", "scrollbar", "↕"], ["readout", "readout", "▮"]];
+// Window draw tools: [kind, label, icon, tooltip]. The tooltip explains what dragging that
+// box does (shown on the window canvas draw buttons), same shape as ITEM_KINDS below.
+const KINDS = [
+    ["region", "region", "▤", "Draw a region — a fixed text area OCR'd every read and stored as one field/column of the record."],
+    ["data_area", "data area", "▭", "Draw the data area — the region item rows tile across. Item location + grid OCR are bounded to this box; drag items inside it."],
+    ["item", "item", "▣", "Draw an item — freeze this cell as a template cutout and spawn an item node to teach its fields/tells."],
+    ["detect", "detect", "◎", "Draw a detector — a landmark box (text/color/template) that recognises this window or one of its states."],
+    ["scrollbar", "scrollbar", "↕", "Draw the scrollbar — the scroll track; its thumb position drives scroll-invariant row indexing."],
+    ["readout", "readout", "▮", "Draw a readout — a live single value (health, a counter) read off this box for triggers/toasts; never stored."],
+];
 // kinds drawn INSIDE an item node (on its frozen cutout): the cell + fields + tells
 // [kind, label, icon, tooltip]. The tooltip explains what drawing that box does (shown on
 // the item node's draw buttons). Extra 4th element is ignored by the index destructures.
@@ -43,6 +52,10 @@ const ITEM_KINDS = [
     ["template", "template", "⧉", "Draw a 'template' tell — the cell counts only if a saved sub-image matches in this box."],
     ["diamonds", "diamonds", "◆", "Draw a 'diamonds' tell — the cell counts only if a rank-diamond strip (◇/◆) is present (e.g. a rank-pip row)."],
 ];
+// the tell KINDS a single "tell" tool can become — every ITEM_KINDS entry that isn't the
+// cell or a field. One source for the tell-node kind dropdown (rule 7), so a new tell kind is
+// just another ITEM_KINDS row. `tid` default kind when the tell tool draws one is "filled".
+const TELL_KINDS = ITEM_KINDS.filter(([v]) => v !== "bbox" && v !== "field");
 
 // Graph node id for an image owner: a window is `win:<id>`, the standalone glyph atlas is the
 // bare `glyphs` node (it reuses the image stack, rule 7). Every `win:${winId}` node-id lookup
@@ -151,8 +164,8 @@ async function openImage(winId, nodeEl = null) {
     host.replaceChildren(
         h("div", { class: "imgtools" },
             h("span", { class: "tools" },
-                KINDS.map(([v, label, icon]) =>
-                    h("button", { class: "tool", dataset: { kind: v }, title: `draw ${label}` }, `${icon} ${label}`)))),
+                KINDS.map(([v, label, icon, tip]) =>
+                    h("button", { class: "tool", dataset: { kind: v }, title: tip || `draw ${label}` }, `${icon} ${label}`)))),
         h("div", { class: "canvas-wrap" }, h("canvas")),
         h("div", { class: "img-foot" },
             h("span", { class: "img-pages", hidden: true },
@@ -160,8 +173,8 @@ async function openImage(winId, nodeEl = null) {
                 h("span", { class: "img-pageind" }),
                 h("button", { class: "imgpg", dataset: { d: "1" }, title: "next image" }, "›")),
             h("button", { class: "imgbtn", title: "choose which stashed images this window uses" },
-                CAMERA(), h("span", { class: "imgbtn-lbl" }, "images")),
-            h("button", { class: "imgcap", title: "capture the live window into the current page" }, "recapture"),
+                h("span", { class: "imgbtn-lbl" }, "images")),
+            h("button", { class: "imgcap", title: "capture the live window as a new image for this window" }, "capture"),
             h("button", { class: "imgall", title: "preview data read from ALL of this window's images" }, "preview all")),
         imgLayers());
     const canvas = host.querySelector("canvas");
@@ -182,7 +195,7 @@ async function openImage(winId, nodeEl = null) {
             // leaves it alone — no autoplacement into a far column.
             if (newNode) await placeNewNode(newNode, k, `win:${winId}`);
             render(); refreshImageBoxes(winId); autosave(winId);   // re-OCR only this window
-            if (k === "readout") rebuildReadoutConsumers();   // toast chips + on_readout watch dropdown list readouts
+            if (k === "readout") { rebuildReadoutConsumers(); rebuildNode(`win:${winId}`); }   // toast/watch dropdowns + the window's items/readouts list
             if (newDetect) rebuildNode(`win:${winId}`);   // add the new detector to the window's detects section
             if (newNode) inheritGroupFrom(newNode, `win:${winId}`);   // box drawn on a grouped window → join its group
             if (newDetect) prefillDetectText(winId, newDetect);
@@ -367,7 +380,7 @@ async function saveGlyph() {
     if (!ch) { setStatus("type the character under the box first"); char?.focus(); return; }
     const game = model.profile.name;
     const cap = await curCapOf("glyphs");
-    if (!cap) { setStatus("pick an image (or recapture) to teach glyphs from first"); return; }
+    if (!cap) { setStatus("pick an image (or capture) to teach glyphs from first"); return; }
     let cut;
     try { cut = await api.glyphCutout(game, cap, glyphRect); }   // freeze the crop NOW (independent of the canvas image after)
     catch (e) { setStatus(String(e.message || e)); return; }
@@ -381,7 +394,7 @@ async function runAutoGlypher() {
     if (!glyphRect) return;   // button is only shown while a rect is armed; guard anyway
     const game = model.profile.name;
     const cap = await curCapOf("glyphs");
-    if (!cap) { setStatus("pick an image (or recapture) first"); return; }
+    if (!cap) { setStatus("pick an image (or capture) first"); return; }
     let props;
     try { props = await api.glyphAuto(game, cap, glyphRect); }
     catch (e) { setStatus(String(e.message || e)); return; }
@@ -424,8 +437,8 @@ export async function openGlyphImage(nodeEl = null) {
                 h("span", { class: "img-pageind" }),
                 h("button", { class: "imgpg", dataset: { d: "1" }, title: "next image" }, "›")),
             h("button", { class: "imgbtn", title: "choose which stashed images to teach glyphs from" },
-                CAMERA(), h("span", { class: "imgbtn-lbl" }, "images")),
-            h("button", { class: "imgcap", title: "capture the live game window into the current page" }, "recapture")));
+                h("span", { class: "imgbtn-lbl" }, "images")),
+            h("button", { class: "imgcap", title: "capture the live game window as a new image" }, "capture")));
     const canvas = host.querySelector("canvas");
     // one shared tool group: arming shows the compose row, disarming (incl. a central clearTools
     // from Escape/right-click/click-outside) clears the half-drawn box + compose row.
@@ -479,7 +492,7 @@ export async function openGlyphImage(nodeEl = null) {
 export async function commitGlyphProposals(node) {
     const game = model.profile.name;
     const cap = await curCapOf("glyphs");
-    if (!cap) { setStatus("pick an image (or recapture) to teach glyphs from first"); return; }
+    if (!cap) { setStatus("pick an image (or capture) to teach glyphs from first"); return; }
     const wanted = glyphPending.filter((p) => p.char);   // skip any the user blanked out
     const added = [];
     for (const p of wanted) {
@@ -571,7 +584,7 @@ export function refreshGlyphAtlas(focusLast = false, nodeEl = null) {
 async function createItemFromGeom(winId, geom) {
     const game = model.profile.name;
     const cap = await curCapOf(winId);   // freeze the crop from the page on screen
-    if (!cap) { setStatus("recapture the window first"); return; }
+    if (!cap) { setStatus("capture the window first"); return; }
     let cut;
     try { cut = await api.itemCutout(game, cap, geom); }
     catch (e) { setStatus(String(e.message || e)); return; }
@@ -620,11 +633,9 @@ function openItemImage(winId, itemId) {
     if (!host) return;
     const it = model.item(winId, itemId);
     if (!it || !it.cutout_box) return;
-    // draw-mode buttons live in the node body now (itemLists: cell/field + tell sections);
-    // this host is just the readout + cutout canvas.
-    host.replaceChildren(
-        h("div", { class: "item-readout muted", title: "what the current setup reads + the key it stores under" }),
-        h("div", { class: "canvas-wrap" }, h("canvas")));
+    // draw-mode buttons + the merged fields/tells readout table live in the node body now
+    // (itemLists); this host is just the cutout canvas.
+    host.replaceChildren(h("div", { class: "canvas-wrap" }, h("canvas")));
     const canvas = host.querySelector("canvas");
     const cb = it.cutout_box;
     // Give the cutout box its true aspect up front (it's a crop of the window image) so it
@@ -681,8 +692,9 @@ function openItemImage(winId, itemId) {
                 itemChanged(winId, itemId, { rebuild: true });
                 return;
             }
-            // a tell SPAWNS its own node too, grouped with the item (mirror the field path above)
-            const tid = model.addItemTell(winId, itemId, k, win2rel(w));   // filled/text/color/template/diamonds
+            // a tell SPAWNS its own node too, grouped with the item (mirror the field path above).
+            // The one "tell" tool draws a neutral 'filled' tell; the user picks the kind on the node.
+            const tid = model.addItemTell(winId, itemId, k === "tell" ? "filled" : k, win2rel(w));
             await placeNewNode(`tell:${winId}:${itemId}:${tid}`, "itemtell", `item:${winId}:${itemId}`);
             render();
             addTellToItemGroup(winId, itemId, tid);
@@ -764,6 +776,7 @@ function refreshItemBoxes(winId, itemId) {
     const reads = rd ? Object.values(rd.fields).filter((f) => f.box)
         .map((f) => ({ ...f.box, text: f.value, raw: f.raw, confidence: f.confidence, substituted: f.substituted, verified: f.verified || null })) : [];
     ent.overlay.setPreview(reads);
+    refreshItemReadout(winId, itemId);   // keep the merged fields/tells table in sync with this read
 }
 
 // Re-read the cutout whenever its settings change, debounced and coalesced: config
@@ -779,59 +792,60 @@ function scheduleItemRead(winId, itemId, delay = 500) {
 }
 
 // Read the item's frozen cutout with the current settings and show what it extracts:
-// field values tinted on the canvas + a compact tell/validity read-out under the toolbar.
+// field values tinted on the canvas + the merged fields/tells table in the item node body.
 async function runItemRead(winId, itemId) {
     const key = `${winId}:${itemId}`;
     if (!itemCanvases.has(key)) return;
     if (itemReadBusy.has(key)) { itemReadAgain.add(key); return; }   // re-run once after
     itemReadBusy.add(key);
-    const node = nodeEls.get(`item:${winId}:${itemId}`);
-    const out = node?.querySelector(".item-readout");
-    if (out && !out.childElementCount && !out.textContent) out.replaceChildren("reading…");
     const done = timed(`item read ${key}`);
     try {
         const res = await api.itemRead(previewProfileFor(winId), model.profile.name, winId, itemId, boot.phase);
         itemReads.set(key, res);
-        refreshItemBoxes(winId, itemId);
-        if (out) out.replaceChildren(itemReadout(res, winId, itemId));
+        refreshItemBoxes(winId, itemId);   // draws the cutout boxes AND refreshes the merged table
         done(`· ${res.device || "?"} · ${res.valid ? "valid" : "rejected"}`, "ok", res.ms);
     } catch (e) {
         done(String(e.message || e), "err");
-        if (out) out.replaceChildren(h("span", { class: "tc-bad" }, String(e.message || e)));
+        const st = nodeEls.get(`item:${winId}:${itemId}`)?.querySelector(".mr-status");
+        if (st) { st.textContent = String(e.message || e); st.className = "mr-status tc-bad"; }
     } finally {
         itemReadBusy.delete(key);
         if (itemReadAgain.has(key)) { itemReadAgain.delete(key); runItemRead(winId, itemId); }
     }
 }
 
-// Compact readout of a cutout read: validity, each field's value, the record key it stores
-// under, and each tell — a 3-col grid (label · ":" · value) so the colon sits in its OWN
-// column and every label/value lines up. One `row()` builds a grid line for fields, key, AND
-// tells alike, so they all share the columns.
-function itemReadout(res, winId, itemId) {
-    const status = res.valid
-        ? h("span", { class: "tc-ok" }, "✓ valid")
-        : h("span", { class: "tc-bad" }, "✗ rejected");
-    // one 3-col grid line: label · ":" · value. `label`/`value` are nodes (or strings).
-    const row = (label, value) => frag(
-        h("span", { class: "ir-k" }, label),
-        h("span", { class: "ir-c" }, ":"),
-        h("span", { class: "ir-v" }, value));
-    const fields = Object.entries(res.fields || {}).map(([k, v]) => {
+// Fill the item node's merged fields/tells table from the last cutout read (`itemReads`) — the
+// validity status, each field's value+conf, each tell's pass/score, and the record key. Updates
+// the existing `.mr-*` spans IN PLACE (rule 1: no rebuild), so it's cheap to call on every read
+// or config edit; the scaffold is built once by node_parts.itemLists. Blank ("—") when no read.
+function refreshItemReadout(winId, itemId) {
+    const node = nodeEls.get(`item:${winId}:${itemId}`);
+    if (!node) return;
+    const rd = itemReads.get(`${winId}:${itemId}`);
+    const status = node.querySelector(".mr-status");
+    if (status) {
+        status.textContent = !rd ? "—" : rd.valid ? "✓ valid" : "✗ rejected";
+        status.className = `mr-status ${!rd ? "muted" : rd.valid ? "tc-ok" : "tc-bad"}`;
+    }
+    const fvals = rd?.fields || {};
+    node.querySelectorAll(".mr-val[data-fid]").forEach((el) => {
+        const v = fvals[el.dataset.fid];
+        if (!v) { el.textContent = "—"; el.className = "mr-val muted"; return; }
         const cls = v.substituted ? "conf-sub" : v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
-        return row(k, h("b", { class: cls }, String(v.value ?? "∅")));
+        el.textContent = String(v.value ?? "∅");
+        el.className = `mr-val ${cls}`;
     });
-    const kv = keyPrevNode(winId, itemId);   // the record key this read would store under (a node, or null)
-    const key = kv ? row("key", kv) : null;
-    // each tell is its OWN readout row (id : ✓/✗ score) so it aligns in the same columns as the
-    // fields, instead of a separate full-width chip band.
-    const tells = (res.tells || []).map((t) =>
-        row(
-            h("span", { title: t.detail || null }, t.id),
-            h("span", { class: t.pass ? "tc-ok" : "tc-bad" },
-                `${t.pass ? "✓" : "✗"} ${String(t.score)}`,
-                t.threshold == null ? null : h("span", { class: "muted" }, `/${String(t.threshold)}`))));
-    return frag(h("div", { class: "ir-row" }, status), fields, key, tells);
+    const tmark = {};
+    for (const t of rd?.tells || []) tmark[t.id] = t;
+    node.querySelectorAll(".mr-mark[data-tid]").forEach((el) => {
+        const t = tmark[el.dataset.tid];
+        if (!t) { el.textContent = ""; el.className = "mr-mark muted"; return; }
+        el.textContent = `${t.pass ? "✓" : "✗"} ${String(t.score)}${t.threshold == null ? "" : `/${String(t.threshold)}`}`;
+        el.className = `mr-mark ${t.pass ? "tc-ok" : "tc-bad"}`;
+        el.title = t.detail || "";
+    });
+    const keyEl = node.querySelector(".mr-key-v");
+    if (keyEl) keyEl.replaceChildren(keyPrevNode(winId, itemId) || h("span", { class: "muted" }, "—"));
 }
 
 function selectRegionNode(winId, boxId) {
@@ -1384,11 +1398,12 @@ async function loadImage(winId, recapture) {
     setNodeBusy(nodeIdOf(winId), true);   // capturing/fetching the image
     try {
         if (recapture) {
-            // grab the live window and store it as the CURRENT page (append when there are none)
+            // grab the live window and ADD it as a new bound image (never overwrite a page);
+            // the freshly captured image becomes the shown page (mirrors precap's onCapNew).
             const c = await api.capture(game);
             const list = await capListOf(winId);
-            const p = winPageOf(winId);
-            if (p < list.length) list[p] = c.name; else { list.push(c.name); winPage.set(winId, list.length - 1); }
+            list.push(c.name);
+            winPage.set(winId, list.length - 1);   // newly added image = shown page
             await api.setBindings(game, winId, list);
             url = c.url;
         } else {
@@ -1666,9 +1681,9 @@ function setGridFromPreview(winId, res) {
 }
 
 export {
-    KINDS, ITEM_KINDS, updateImageLabel, closeImage, openImage, createItemFromGeom,
+    KINDS, ITEM_KINDS, TELL_KINDS, updateImageLabel, closeImage, openImage, createItemFromGeom,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
-    itemReadTimers, itemReadBusy, itemReadAgain, scheduleItemRead, runItemRead, itemReadout,
+    itemReadTimers, itemReadBusy, itemReadAgain, scheduleItemRead, runItemRead, refreshItemReadout,
     prevHost, previewProfileFor, refreshRuleTrace, previewBusy, previewAgain, setReadBusy, refreshPreview,
     commitPreviewNode, tellChip, subLabel, previewCell, previewTable, prefillDetectText,
     detectBusy, detectAgain, refreshDetect, setDetectStatus, detectT, _detectPending,

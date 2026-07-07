@@ -31,7 +31,7 @@ initTitlebar();   // custom window chrome — no-op outside the desktop window
 import {
     $, setStatus, model, pos, nodeEls, collapsed, view, selected, nodeSizes, openImages,
     imageCanvases, itemCanvases, busy, overlays,
-    itemReads, prevPresent, prevLastTs, dsTab, clearGrid, nw, nh, boot,
+    prevPresent, prevLastTs, dsTab, clearGrid, nw, nh, boot,
 } from "./state.js";
 import {
     drawEdges, requestEdges, flushEdges, nodeRect, freezeRouting,
@@ -77,7 +77,7 @@ import { workers, unregisterWorker } from "./workers.js";
 import {
     closeImage, openImage, openGlyphImage, armPreprocessPick, refreshDetect, nodeIdOf,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
-    scheduleItemRead, itemReadout,
+    scheduleItemRead, refreshItemReadout,
     previewBusy, previewAgain,
     commitPreviewNode,
     detectBusy, detectAgain, _detectPending,
@@ -601,27 +601,11 @@ function wireItemControls(div, n) {
             () => moveItemPos(winId, itemId, n.ref.id),   // carry the item AND its field/tell child nodes (no jump)
             () => itemChanged(winId, n.ref.id, { render: true, reread: false }));   // id only — no pixels/boxes change
     });
-    // a tell's full editor is its OWN node now; the item shows a summary. Removing a tell
-    // drops its node (full render). Clicking a summary row pans to the tell node (below).
-    div.querySelectorAll(".ti-del").forEach((b) => b.addEventListener("click", () => {
-        model.removeItemTell(winId, itemId, b.dataset.tid);
-        itemChanged(winId, itemId, { render: true });   // the tell node is gone -> re-render
-    }));
-    // a field-tell's remove just clears the field's tell flag (the field itself stays). Render
-    // so the field's OWN node also reflects the unchecked tell.
-    div.querySelectorAll(".ti-untell").forEach((b) => b.addEventListener("click", () => {
-        model.setItemFieldTell(winId, itemId, b.dataset.fid, false);
-        itemChanged(winId, itemId, { render: true });
-    }));
-    // a field's full editor is its OWN node now; the item shows a summary. Removing a field
-    // drops its node (full render). Clicking a summary row pans to the field node.
-    div.querySelectorAll(".if-del").forEach((b) => b.addEventListener("click", () => {
-        model.removeItemField(winId, itemId, b.dataset.fid);
-        itemChanged(winId, itemId, { render: true });   // the field node is gone -> re-render
-    }));
-    div.querySelectorAll(".if-sum").forEach((row) => row.addEventListener("mousedown", (ev) => {
-        if (ev.target.closest("button")) return;
-        panZoomTo(`fld:${winId}:${itemId}:${row.dataset.fid}`);
+    // the merged fields/tells table has no indirect removal buttons — a field/tell is removed on
+    // its OWN node. A row click just pans to that child node (its box is selectable on the cutout).
+    div.querySelectorAll(".mr-row").forEach((row) => row.addEventListener("mousedown", () => {
+        if (row.dataset.fid) panZoomTo(`fld:${winId}:${itemId}:${row.dataset.fid}`);
+        else if (row.dataset.tid) panZoomTo(`tell:${winId}:${itemId}:${row.dataset.tid}`);
     }));
     // cutout draw-mode buttons live in the node body now: pick the active draw kind. The canvas
     // overlay reads the armed tool off this node (see openItemImage's kindOf). wireTools marks the
@@ -634,9 +618,7 @@ function wireItemControls(div, n) {
         if (!k) return;
         fn(k);
         itemChanged(winId, itemId, { rebuild: true, reread: false });   // record identity only — no OCR change
-        const out = div.querySelector(".item-readout");   // key lives in the readout now; refresh it now (the re-read is debounced)
-        const rd = itemReads.get(`${winId}:${itemId}`);
-        if (out && rd) out.replaceChildren(itemReadout(rd, winId, itemId));
+        refreshItemReadout(winId, itemId);   // the key lives in the merged table now; refresh it (the re-read is debounced)
     };
     div.querySelectorAll(".kfield").forEach((s) => s.addEventListener("change", (e) =>
         keyEdit((k) => { k.fields[+e.target.dataset.i] = e.target.value; })));
@@ -652,11 +634,9 @@ function wireItemControls(div, n) {
     });
     div.querySelector(".ksep")?.addEventListener("change", (e) => keyEdit((k) => { k.sep = e.target.value || "|"; }));
     div.querySelector(".kcase")?.addEventListener("change", (e) => keyEdit((k) => { k.case_sensitive = e.target.checked; }));
-    // a tell summary row pans to that tell's OWN node (its box is selectable on the cutout)
-    div.querySelectorAll(".ti-sum").forEach((row) => row.addEventListener("mousedown", (ev) => {
-        if (ev.target.closest("button")) return;
-        panZoomTo(`tell:${winId}:${itemId}:${row.dataset.tid}`);
-    }));
+    // fill the freshly-built merged table from the last cached read (the canvas may be closed, so
+    // refreshItemBoxes wouldn't run) — subsequent reads update it in place via refreshItemBoxes.
+    refreshItemReadout(winId, itemId);
 }
 
 // Add a freshly-created field/tell node to whatever group its item node belongs to, so a
@@ -776,6 +756,13 @@ function wireItemTell(div, n) {
             () => model.renameItemTell(winId, itemId, tid, e.target.value.trim()),
             () => movePos(`tell:${winId}:${itemId}:${tid}`, `tell:${winId}:${itemId}:${n.ref.id}`),
             () => tellChanged(winId, itemId, n.ref.id, { render: true, reread: false }));   // id only — no pixels/boxes
+    });
+    // the tell's KIND: swaps which kind-specific controls show (rebuild this node) and what the
+    // merged table shows (rebuild the item node). A re-read reflects the new check.
+    div.querySelector(".tkind")?.addEventListener("change", (e) => {
+        model.setItemTellProp(winId, itemId, tid, "kind", e.target.value);
+        rebuildNode(`item:${winId}:${itemId}`);   // merged table shows the kind
+        tellChanged(winId, itemId, tid, { rebuild: true });
     });
     div.querySelectorAll(".tset").forEach((inp) => inp.addEventListener("change", (e) => {
         const k = e.target.dataset.k;
@@ -965,6 +952,10 @@ function wireWindowControls(div, n) {
     // click a template name -> jump to its item node (don't swallow the ▲/▼ button clicks)
     div.querySelectorAll(".wi-row .wi-name").forEach((el) => el.addEventListener("click", (e) => {
         panZoomTo(`item:${n.ref.id}:${el.closest(".wi-row").dataset.id}`);
+    }));
+    // click a readout name -> jump to its readout node (same list, no reorder for readouts)
+    div.querySelectorAll(".wi-ro-row .wi-ro-name").forEach((el) => el.addEventListener("click", () => {
+        panZoomTo(`ro:${n.ref.id}:${el.closest(".wi-ro-row").dataset.id}`);
     }));
     wireDetectsSection(div, n.ref.id);   // combine mode + per-detector polarity + name jumps
 }
@@ -2272,6 +2263,14 @@ function wireAction(div, n) {
     $(".ac-addds")?.addEventListener("change", (e) => { if (model.addActionDataset(x.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
     div.querySelectorAll(".ac-rmds").forEach((b) => b.addEventListener("click", () => { model.removeActionDataset(x.id, b.dataset.ds); rebuildNode(n.id); drawEdges(); autosave(null); }));
     $(".ac-dest")?.addEventListener("change", (e) => { model.setActionDest(x.id, e.target.value); drawEdges(); autosave(null); });
+    // manual fire: run the action NOW on its target dataset(s) via the same funnel a trigger uses.
+    // Transient feedback by swapping the button label (no progress line on the node).
+    $(".ac-fire")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget; btn.disabled = true; btn.textContent = "firing…";
+        try { const r = await api.actions.fire(model.profile.name, x.id); btn.textContent = r.ran ? "fired ✓" : "no-op"; refreshLive(); }
+        catch (err) { btn.textContent = String(err.message || err); }
+        finally { setTimeout(() => { btn.textContent = "↻ fire"; btn.disabled = false; }, 1500); }
+    });
 }
 
 // ---- file-source node: parse a game log/config file into its dataset --------
@@ -2536,7 +2535,7 @@ function removeNode(n) {
         window:     { kill: () => { closeImage(n.ref.id); model.removeWindow(n.ref.id); }, after: () => autosave(null) },
         item:       { kill: () => { closeItemImage(win, n.ref.id); model.removeItem(win, n.ref.id); clearGrid(win); }, after: () => { refreshImageBoxes(win); autosave(win); } },
         region:     { kill: () => model.removeRegion(win, n.ref.id), after: () => { autosave(win); refreshImageBoxes(win); } },
-        readout:   { kill: () => model.removeReadout(win, n.ref.id), after: () => { rebuildReadoutConsumers(); autosave(win); refreshImageBoxes(win); } },
+        readout:   { kill: () => model.removeReadout(win, n.ref.id), after: () => { rebuildReadoutConsumers(); rebuildNode(nodeIdOf(win)); autosave(win); refreshImageBoxes(win); } },
         detect:     { kill: () => model.removeDetect(win, n.ref.id), after: () => { rebuildNode(nodeIdOf(win)); autosave(win); refreshImageBoxes(win); } },
         scrollbar:  { kill: () => model.removeScrollbar(win), after: () => { autosave(win); refreshImageBoxes(win); } },
         itemfield:  { kill: () => model.removeItemField(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
@@ -2611,7 +2610,7 @@ function fillNode(div, n, wire = true) {
     // delete + detach moved to the selection toolbar (act on the selection); nodes carry
     // neither button anymore — select a node (or several) and use the toolbar.
     const typeLabel = n.type === "itemfield" ? "field"
-        : n.type === "itemtell" ? `tell: ${n.ref.kind}`   // merge the kind into the type tag -> "TELL: TEXT"
+        : n.type === "itemtell" ? "tell"   // kind now lives in the node's own dropdown, not the tag
         : n.type;
     div.replaceChildren(
         h("div", { class: `gn-h ${parts.pulse || ""}` },
@@ -4728,20 +4727,26 @@ window.addEventListener("contextmenu", (ev) => {
     // silently absorbed the new node into a group the user didn't aim at. Drag a node into a group
     // to add it (groups.absorb on drop); creation no longer joins by geometry.
     const ready = () => { if (model.profile.name) return true; setStatus("load a game first"); return false; };
-    // icons + tints come from the ONE shared source (node_icons / graph.css --ntint) so a menu row
-    // reads in the same glyph + colour as the node it mints (rule 7).
-    openContextMenu(ev.clientX, ev.clientY, [
-        { icon: iconFor("window"),     title: "window",      tint: "var(--accent)",       onClick: () => ready() && createWindowNode(at) },
-        { icon: iconFor("dataset"),    title: "dataset",     tint: "var(--ok)",           onClick: () => ready() && createDatasetNode(at) },
-        { icon: iconFor("subset"),     title: "subset",      tint: "var(--purple)",       onClick: () => ready() && createSubsetNode(at) },
-        { icon: iconFor("producer"),   title: "producer node",  tint: "var(--warn)",      onClick: () => ready() && createProducerNode(at) },
-        { icon: iconFor("filesource"), title: "file source", tint: "var(--accent)",       onClick: () => ready() && createFileSourceNode(at) },
-        { icon: iconFor("trigger"),    title: "trigger",     tint: "var(--trigger-line)", onClick: () => ready() && createTriggerNode(at) },
-        { icon: iconFor("toast"),      title: "toast",       tint: "var(--toast)",        onClick: () => ready() && createToastNode(at) },
-        { icon: iconFor("sound"),      title: "sound",       tint: "var(--sound)",        onClick: () => ready() && createSoundNode(at) },
-        { icon: iconFor("action"),     title: "action",      tint: "var(--warn)",         onClick: () => ready() && createActionNode(at) },
-        { icon: iconFor("dictionary"), title: "dictionary",  tint: "var(--purple)",       onClick: () => ready() && createDictionaryNode(at) },
-    ]);
+    // icons AND tints come from the ONE shared source keyed by type id — the glyph via iconFor and
+    // the colour via that type's own node var (--nt-<type>, the same token graph.css maps onto the
+    // node's --nt). So a menu row always reads in the exact glyph + colour of the node it mints and
+    // can never drift from it (rule 7). Add a node type = add one row here, nothing else.
+    const ADD_ITEMS = [
+        ["window", "window", createWindowNode],
+        ["dataset", "dataset", createDatasetNode],
+        ["subset", "subset", createSubsetNode],
+        ["producer", "producer node", createProducerNode],
+        ["filesource", "file source", createFileSourceNode],
+        ["trigger", "trigger", createTriggerNode],
+        ["toast", "toast", createToastNode],
+        ["sound", "sound", createSoundNode],
+        ["action", "action", createActionNode],
+        ["dictionary", "dictionary", createDictionaryNode],
+    ];
+    openContextMenu(ev.clientX, ev.clientY, ADD_ITEMS.map(([type, title, make]) => ({
+        icon: iconFor(type), title, tint: `var(--nt-${type})`,
+        onClick: () => ready() && make(at),
+    })));
 }, true);
 $("graph").addEventListener("wheel", onWheel, { passive: false });
 // any user action cancels an in-flight smooth pan-to-new-node
