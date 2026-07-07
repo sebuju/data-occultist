@@ -22,7 +22,7 @@ fields:
   isolate: false
   glyph_check: false
 windows:
-- id: game
+- id: live_game_window
   fields:
   - id: varf_2
     type: number
@@ -1404,10 +1404,10 @@ windows:
     enabled: true
   - id: slot_5
     box:
-      x: 0.3146668522116611
-      y: 0.48333333333333334
+      x: 0.3144064355449944
+      y: 0.47685185185185214
       w: 0.11256450460818707
-      h: 0.025925925925925925
+      h: 0.03564814814814816
     field: rof_8
     enabled: true
   - id: slot_6
@@ -1421,33 +1421,33 @@ windows:
   - id: slot_7
     box:
       x: 0.5681708473541986
-      y: 0.47962962962962963
+      y: 0.4782407407407408
       w: 0.11443538280112098
-      h: 0.03148148148148148
+      h: 0.03333333333333333
     field: rof_12
     enabled: true
   - id: slot_8
     box:
       x: 0.695390564473701
-      y: 0.47962962962962963
+      y: 0.4786114241730477
       w: 0.11599444796189906
-      h: 0.03148148148148148
+      h: 0.03287037037037037
     field: rof_14
     enabled: true
   - id: slot_aura
     box:
       x: 0.44244791666666705
-      y: 0.22962962962962963
+      y: 0.22444475750638093
       w: 0.1122395833333333
-      h: 0.025925925925925925
+      h: 0.037962962962962976
     field: rof_16
     enabled: true
   - id: slot_exilus
     box:
       x: 0.5701322932366342
-      y: 0.2303643083828312
+      y: 0.2257346787532015
       w: 0.11360073863268058
-      h: 0.030445382648510433
+      h: 0.03785279005591785
     field: rof_18
     enabled: true
   - id: slot_arcane_1
@@ -1525,7 +1525,7 @@ window_priority:
 - relic_select
 - relic_refinement
 - mission_rewards
-- game
+- live_game_window
 datasets:
 - id: master
   aggregate: latest
@@ -3143,58 +3143,10 @@ layout:
       collapsed: false
       custW: false
       custH: false
-    win:game:
-      x: -2780.0
-      y: -2280.0
-      w: 680.0
-      h: 806.0
-      collapsed: false
-      custW: true
-      custH: false
-    det:game:hud:
-      x: -2060.0
-      y: -2280.0
-      w: 260.0
-      h: 180.0
-      collapsed: false
-      custW: false
-      custH: false
     dict:relics:
       x: -300.0
       y: -3700.0
       collapsed: false
-    ro:game:ability_1_cd:
-      x: -4400.0
-      y: -2280.0
-      w: 380.0
-      h: 340.0
-      collapsed: false
-      custW: true
-      custH: true
-    ro:game:ability_2_cd:
-      x: -4020.0
-      y: -2280.0
-      w: 380.0
-      h: 340.0
-      collapsed: false
-      custW: true
-      custH: true
-    ro:game:ability_3_cd:
-      x: -3620.0
-      y: -2280.0
-      w: 380.0
-      h: 340.0
-      collapsed: false
-      custW: true
-      custH: true
-    ro:game:ability_4_cd:
-      x: -3200.0
-      y: -2280.0
-      w: 380.0
-      h: 340.0
-      collapsed: false
-      custW: true
-      custH: true
     trigger:on_new_relic_fetched:
       x: 2860.0
       y: -1840.0
@@ -3384,7 +3336,7 @@ layout:
       custW: true
       custH: true
     ro:arsenal_warframe:slot_arcane_1:
-      x: 5700.0
+      x: 5740.0
       y: 1700.0
       w: 320.0
       h: 340.0
@@ -3392,7 +3344,7 @@ layout:
       custW: true
       custH: true
     ro:arsenal_warframe:slot_arcane_2:
-      x: 5700.0
+      x: 5740.0
       y: 2080.0
       w: 320.0
       h: 340.0
@@ -3402,8 +3354,56 @@ layout:
     register:register:
       x: 5440.0
       y: 1100.0
-      w: 640.0
+      w: 680.0
       h: 460.0
+      collapsed: false
+      custW: true
+      custH: true
+    win:live_game_window:
+      x: -2780.0
+      y: -2280.0
+      w: 680.0
+      h: 806.0
+      collapsed: false
+      custW: true
+      custH: false
+    det:live_game_window:hud:
+      x: -2060.0
+      y: -2280.0
+      w: 260.0
+      h: 180.0
+      collapsed: false
+      custW: false
+      custH: false
+    ro:live_game_window:ability_1_cd:
+      x: -4400.0
+      y: -2280.0
+      w: 380.0
+      h: 340.0
+      collapsed: false
+      custW: true
+      custH: true
+    ro:live_game_window:ability_2_cd:
+      x: -4020.0
+      y: -2280.0
+      w: 380.0
+      h: 340.0
+      collapsed: false
+      custW: true
+      custH: true
+    ro:live_game_window:ability_3_cd:
+      x: -3620.0
+      y: -2280.0
+      w: 380.0
+      h: 340.0
+      collapsed: false
+      custW: true
+      custH: true
+    ro:live_game_window:ability_4_cd:
+      x: -3200.0
+      y: -2280.0
+      w: 380.0
+      h: 340.0
       collapsed: false
       custW: true
       custH: true
@@ -3675,7 +3675,7 @@ layout:
       sorts: []
   open_images:
   - glyphs
-  - game
+  - live_game_window
   - equipment_window
   - mod_window
   - relic_rewards
@@ -3689,7 +3689,7 @@ layout:
     members:
     - game
     - dict:wiki
-    - det:game:detect_1
+    - det:live_game_window:detect_1
     - glyphs
     - dict:dict_1
     - dict:relics
@@ -3956,14 +3956,14 @@ layout:
   - id: group_28
     title: group_28
     members:
-    - win:game
-    - det:game:hud
+    - win:live_game_window
+    - det:live_game_window:hud
     - var:game:var_1
     - trigger:ab_trigger
-    - ro:game:ability_1_cd
-    - ro:game:ability_2_cd
-    - ro:game:ability_3_cd
-    - ro:game:ability_4_cd
+    - ro:live_game_window:ability_1_cd
+    - ro:live_game_window:ability_2_cd
+    - ro:live_game_window:ability_3_cd
+    - ro:live_game_window:ability_4_cd
     - sound:bob
     - hist:ab_trigger
     outline:
@@ -4399,10 +4399,10 @@ layout:
     parent: group_28
     title: ''
     members:
-    - ro:game:ability_1_cd
-    - ro:game:ability_2_cd
-    - ro:game:ability_3_cd
-    - ro:game:ability_4_cd
+    - ro:live_game_window:ability_1_cd
+    - ro:live_game_window:ability_2_cd
+    - ro:live_game_window:ability_3_cd
+    - ro:live_game_window:ability_4_cd
     outline:
       color: '#2b323f'
       style: none
@@ -4416,8 +4416,8 @@ layout:
     parent: group_28
     title: ''
     members:
-    - win:game
-    - det:game:hud
+    - win:live_game_window
+    - det:live_game_window:hud
     outline:
       color: '#2b323f'
       style: none
@@ -4576,8 +4576,6 @@ layout:
     - ro:arsenal_warframe:slot_6
     - ro:arsenal_warframe:slot_7
     - ro:arsenal_warframe:slot_8
-    - ro:arsenal_warframe:slot_arcane_2
-    - ro:arsenal_warframe:slot_arcane_1
     outline:
       color: '#5ae6c2'
       style: none
@@ -4604,6 +4602,21 @@ layout:
     titleColor: '#5aa9e6'
     titleAlign: left
     schemeId: blue
+  - id: subgroup_39
+    parent: group_32
+    title: ''
+    members:
+    - ro:arsenal_warframe:slot_arcane_1
+    - ro:arsenal_warframe:slot_arcane_2
+    outline:
+      color: '#2b323f'
+      style: none
+      width: 1
+      offset: 0
+    bg: '#0f1117'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
   schemes:
   - id: s_f7c53c61-d630-4b1b-9fc4-17c3356055d9
     name: custom 1
