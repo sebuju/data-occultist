@@ -1124,6 +1124,28 @@ class ActionDef(BaseModel):
     enabled: bool = True
 
 
+class RegisterDef(BaseModel):
+    """A *register node*: an in-memory keyed map that HOLDS the latest live value of the
+    readouts wired into it — fast O(1) lookup, **never persisted** and with no batching /
+    one-to-many features (the lightweight counterpart to a :class:`DatasetDef`).
+
+    ``sources`` are prefixed readout refs ("readout:<id>"), one per connected readout node —
+    the same token shape :class:`ToastDef` uses. Each collector tick, every source readout's
+    current value overwrites its entry in the map (key = readout id), keeping first/last-seen.
+    The map lives only in the running :class:`oc.collect.live.LiveSession` (server memory):
+    it survives page reloads and collector start/stop, but is dropped when the session/server
+    ends or the node's *clear* button is hit. Only this definition (id + wired sources) is
+    saved to the profile YAML; the held values are never written to disk.
+    """
+
+    id: str
+    # Wired readout sources whose live value this register holds — prefixed refs ("readout:<id>"),
+    # one per connected readout node (mirrors ToastDef.sources).
+    sources: list[str] = Field(default_factory=list)
+    title: str = ""                         # optional display label (unused by the collector)
+    enabled: bool = True
+
+
 class SourceMatch(BaseModel):
     """One line-filter clause for a ``log_lines`` source: keep a line only when its text
     relates to ``text`` per ``op``. Several clauses on a field all-must-hold (AND). No regex
@@ -1344,6 +1366,9 @@ class GameProfile(BaseModel):
     toasts: list[ToastDef] = Field(default_factory=list)
     sounds: list[SoundDef] = Field(default_factory=list)
     actions: list[ActionDef] = Field(default_factory=list)
+    # In-memory keyed maps fed by readouts (never persisted; see RegisterDef). Only the node
+    # definitions live here — the held values stay in the live session's server memory.
+    registers: list[RegisterDef] = Field(default_factory=list)
     dictionaries: list[DictionaryDef] = Field(default_factory=list)
     # Taught glyph atlas for post-OCR glyph refinement (see GlyphDef / FieldDef.glyph_check).
     glyphs: list[GlyphDef] = Field(default_factory=list)
