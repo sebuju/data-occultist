@@ -327,12 +327,9 @@ export function cellSizeControls(it) {
 // canvas) — guards against reading a half-visible top/bottom row. Shown as a percent (stored
 // 0..1). Does NOT affect grid location, only the forwarded/stored data.
 export function coverControls(it) {
-    const pct = (n, d) => Math.round((n ?? d) * 100);
     return frag(
-        kv("cover x %", h("input", { type: "number", class: "ccover", dataset: { k: "x" }, step: "5", min: "0", max: "100", value: pct(it.min_cover_x, 0.75) }),
-            { title: "minimum % of the cell that must be inside the data area HORIZONTALLY to store the row — an edge column clipped past this is dismissed" }),
-        kv("cover y %", h("input", { type: "number", class: "ccover", dataset: { k: "y" }, step: "5", min: "0", max: "100", value: pct(it.min_cover_y, 0.75) }),
-            { title: "minimum % of the cell that must be inside the data area VERTICALLY to store the row — a top/bottom row the scroll occludes past this is dismissed" }));
+        kv("cover x", confMeter({ cls: "ccover", k: "x", value: it.min_cover_x ?? 0.75, step: 0.05, title: "minimum % of the cell that must be inside the data area HORIZONTALLY to store the row — an edge column clipped past this is dismissed" })),
+        kv("cover y", confMeter({ cls: "ccover", k: "y", value: it.min_cover_y ?? 0.75, step: 0.05, title: "minimum % of the cell that must be inside the data area VERTICALLY to store the row — a top/bottom row the scroll occludes past this is dismissed" })));
 }
 
 // The operand input(s) a rule's `then` needs, shown inline after the action select. Only the
@@ -468,7 +465,10 @@ export function itemTellParts(n) {
                     { title: "what to ignore before comparing" }),
                 kv("case sensitive", h("input", { type: "checkbox", class: "tset", dataset: { k: "case" }, checked: !!t.case_sensitive }),
                     { title: "off = fold case before comparing" }))),
-        (t.kind === "color" || t.kind === "border") && kv("color", h("input", { type: "color", class: "tset", dataset: { k: "color" }, value: t.color || "#ffcc00" }),
+        (t.kind === "color" || t.kind === "border") && kv("color", h("span", { class: "aset-color" },
+            h("input", { type: "text", class: "tset", dataset: { k: "color" }, value: t.color || "", placeholder: "#rrggbb" }),
+            h("input", { type: "color", class: "tset aset-swatch", dataset: { k: "color" }, title: "pick a color",
+                value: /^#[0-9a-fA-F]{6}$/.test(t.color || "") ? t.color : "#ffcc00" })),
             { title: t.kind === "border" ? "the color that must ride the box's perimeter band" : "the color that must be present in the tell box" }),
         t.kind === "border" && kv("width", h("input", { type: "number", class: "tset", dataset: { k: "width" }, step: "0.02", min: "0", max: "0.5", value: t.width ?? 0.2 }),
             { title: "thickness of the sampled perimeter band, as a fraction (0..1) of the box's shorter side. Only this ring is checked for the color; the fill is ignored." }),
@@ -547,7 +547,7 @@ export function itemLists(it, w) {
         (tellsSummary.length || fieldTells.length) ? [tellsSummary, fieldTells] : h("div", { class: "muted" }, "draw a tell on the cutout"),
         subhead("fields"),
         h("div", { class: "il-tools" }, fieldBtns),
-        fieldsSummary.length ? fieldsSummary : h("div", { class: "muted" }, "draw a field on the cutout"),
+        fieldsSummary.length ? fieldsSummary : h("div", { class: "gspan muted" }, "draw a field on the cutout"),
         keySection(it, w));
 }
 
@@ -574,7 +574,7 @@ export function keySection(it, w) {
             { title: "joins the parts in the stored key" }),
         addable.length > 0 && kv("+ field", h("select", { class: "kadd" }, h("option", { value: "" }, "field…"), addable.map((f) => h("option", f))),
             { title: "add a field to the key" }),
-        kv("is case-sensitive", h("input", { type: "checkbox", class: "kcase", checked: !!eff.case_sensitive }),
+        kv("case-sensitive", h("input", { type: "checkbox", class: "kcase", checked: !!eff.case_sensitive }),
             { title: "treat keys differing only in case as distinct" }),
         rows);
 }
@@ -677,7 +677,8 @@ export function nodeParts(n) {
         const kind = detectKind(a);
         // text-kind controls (text/mode/min-chars/strip/case) — only OCR detectors use them
         const textBody = frag(
-            kv("text", h("input", { class: "aset", dataset: { k: "text" }, value: a.text || "", placeholder: "EQUIPMENT" })),
+            kv("text", h("input", { class: "aset", dataset: { k: "text" }, value: a.text || "", placeholder: "(none)" }),
+                { title: "label to look for. Empty = match ANY read meeting min-chars (presence-only landmark). Auto-prefilled from the OCR read when you draw the box; edit to pin an exact label." }),
             kv("mode", h("select", { class: "aset", dataset: { k: "match" } },
                 h("option", { value: "partial", selected: (a.match ?? "partial") === "partial" }, (a.match ?? "partial") === "partial" ? "<partial>" : "partial"),
                 h("option", { value: "full", selected: a.match === "full" }, a.match === "full" ? "<full>" : "full"),
@@ -691,16 +692,17 @@ export function nodeParts(n) {
                 h("option", { value: "alnum", selected: a.strip === "alnum" }, a.strip === "alnum" ? "<alnum>" : "alnum"),
                 h("option", { value: "spaces", selected: a.strip === "spaces" }, a.strip === "spaces" ? "<spaces>" : "spaces")),
                 { title: "what to ignore before comparing (default: none — keep everything)" }),
-            kv("case sensitive", h("input", { type: "checkbox", class: "aset", dataset: { k: "case" }, checked: !!a.case_sensitive, title: "off = fold case before comparing" })));
+            kv("case sensitive", h("input", { type: "checkbox", class: "aset", dataset: { k: "case" }, checked: !!a.case_sensitive }),
+                { title: "off (default) = fold case before comparing, so EQUIPMENT matches equipment" }));
         // color/border-kind controls — cheap, no OCR. A color swatch + hex + eyedropper.
         const colorBody = frag(
             kv("color", h("span", { class: "aset-color" },
-                h("input", { class: "aset", dataset: { k: "color" }, value: a.color || "", placeholder: "#rrggbb", size: "8" }),
+                h("input", { type: "text", class: "aset", dataset: { k: "color" }, value: a.color || "", placeholder: "#rrggbb" }),
                 h("input", { type: "color", class: "aset aset-swatch", dataset: { k: "colorpick" }, title: "pick a color",
                     value: /^#[0-9a-fA-F]{6}$/.test(a.color || "") ? a.color : "#000000" })),
                 { title: "fraction of pixels near this color (border = only on the box perimeter)" }),
             kv("tolerance", h("input", { type: "number", class: "aset", dataset: { k: "tol" }, step: "1", min: "0", value: a.tolerance ?? 32 }),
-                { title: "how close a pixel's color must be (BGR distance) to count" }),
+                { title: "how far a pixel's color can sit from the target (BGR distance) and still count. Higher = looser match (more pixels qualify); 0 = exact color only. Default 32." }),
             kind === "border" && kv("border width", h("input", { type: "number", class: "aset", dataset: { k: "width" }, step: "0.01", min: "0", max: "0.5", value: a.width ?? 0.1 }),
                 { title: "perimeter band thickness as a fraction of the box's shorter side" }));
         return {
@@ -716,7 +718,7 @@ export function nodeParts(n) {
                 kind === "text" ? textBody : kind === "template"
                     ? h("div", { class: "muted" }, "template image (set on the box)") : colorBody,
                 kv("threshold", confMeter({ cls: "aset", k: "thr", value: a.threshold ?? 0.8, title: "pass score (0..1) the detector must reach. Drag the bar to set it." })),
-                h("div", { class: "detect-status muted" },
+                h("div", { class: "detect-status muted", title: "live verdict on the current capture: ◯ not run · ✓ pass · ✗ fail. Extra lines show the read text (before/after strip) and which chars carried the match." },
                     h("div", { class: "ds-verdict" }, "◯ —"),
                     h("div", { class: "ds-line ds-before", hidden: true }),
                     h("div", { class: "ds-line ds-after", hidden: true }),

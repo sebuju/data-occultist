@@ -102,7 +102,6 @@
    Fixed px keeps every segment identical at any node width; the value is pushed to the right edge. */
 .meter.editable .segs { flex: 0 0 auto; gap: 2px; flex-wrap: nowrap; }
 .meter.editable .seg { flex: 0 0 6px; width: 6px; height: 13px; transition: background .06s, border-color .06s; }
-.meter.editable .pct { margin-left: auto; }
 /* hover preview: segments up to the cursor light in a mid-brightness fill (slider affordance —
    shows where a click would land). Driven by meter.js toggling .hot on pointermove. */
 .meter.editable .seg.hot { background: color-mix(in oklab, var(--mc) 50%, transparent); border-color: var(--mc); }
@@ -489,7 +488,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    label (`.lab`, via dom.js labCell) + its control — so labels line up in one column
    node-wide. Non-k/v blocks span both columns (`.gspan`). No naked grid children.
    Style once here; per-node tweaks are the rare exception below. */
-.gn-grid { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 10px;
+.gn-grid { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 8px;
     font-size: var(--fs-sm); color: var(--muted); }
 .gn-grid > .lab { white-space: nowrap; align-self: center; }
 .gn-grid > .lab-top { align-self: start; padding-top: 4px; }
@@ -588,7 +587,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    text in col 1 and the control fills col 2 — short labels (kind/source/join on/limit) no longer
    eat half the row like a 1fr/1fr .flab does. Built from dom.js `labCell`; the cell AFTER each
    .lab is its control. .lab-top pins a label to the top of a control that wraps to many lines. */
-.lab-grid { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 8px;
+.lab-grid { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 8px;
     margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
 .lab-grid > .lab { white-space: nowrap; }
 .lab-grid > .lab-top { align-self: start; padding-top: 4px; }
@@ -671,9 +670,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* matched characters in the after-text — the chars that carried a successful detect */
 .detect-status .ds-hit { background: var(--nt, var(--accent)); color: var(--on-accent, #06121f); border-radius: 2px; }
 /* detect node color kind: hex input beside a native color swatch/picker */
-.aset-color { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.aset-color input[type="text"], .aset-color .aset:not(.aset-swatch) { flex: 1; min-width: 0; }
-.aset-swatch { flex: 0 0 auto; width: 22px; height: 18px; padding: 0; border: 1px solid var(--border, #444); border-radius: 2px; cursor: pointer; background: none; }
+.aset-color { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px; min-width: 0; }
+.gnode .gn-grid .aset-color input[type="text"] { width: 100%; min-width: 0; }
+.gnode .gn-grid .aset-color .aset-swatch { width: 22px; height: 18px; padding: 0; border: 1px solid var(--border, #444); border-radius: 2px; cursor: pointer; background: none; }
 .aset-swatch::-webkit-color-swatch-wrapper { padding: 0; }
 .aset-swatch::-webkit-color-swatch { border: none; border-radius: 1px; }
 /* game node worthiness gate: the live ●/◯ badge + detector count */

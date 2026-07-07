@@ -585,9 +585,7 @@ function wireItemControls(div, n) {
         const it = model.item(winId, itemId);
         if (!it) return;
         const axis = e.target.dataset.k;
-        const pct = Math.max(0, Math.min(100, Math.round(+e.target.value || 0)));
-        e.target.value = pct;                       // reflect the clamp
-        model.setItemCover(winId, itemId, axis, pct / 100);
+        model.setItemCover(winId, itemId, axis, +e.target.value || 0);
         itemChanged(winId, itemId);
     }));
     // terminator toggle — pure config (no pixels change), so persist without a re-read
@@ -794,6 +792,16 @@ function wireItemTell(div, n) {
         // (ignored by full/exact) -> rebuild this node's body in both cases
         tellChanged(winId, itemId, tid, (k === "text" || k === "match") ? { rebuild: true } : {});
     }));
+    // sync hex text <-> color swatch on color/border tells
+    const _colorSpan = div.querySelector(".aset-color");
+    if (_colorSpan) {
+        const _hex = _colorSpan.querySelector("input[type='text']");
+        const _picker = _colorSpan.querySelector("input[type='color']");
+        if (_hex && _picker) {
+            _hex.addEventListener("input", () => { _picker.value = _hex.value || "#000000"; });
+            _picker.addEventListener("input", () => { _hex.value = _picker.value; });
+        }
+    }
     div.querySelector(".tloc")?.addEventListener("change", (e) => {
         // locate is single-choice across the item's tells — clear the others, set this one
         for (const t of n.item.tells || []) model.setItemTellProp(winId, itemId, t.id, "locate", false);
