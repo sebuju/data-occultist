@@ -32,7 +32,8 @@ _started = False
 
 def _sig(profile) -> str:
     """Identity of the trigger config — rebuild the runner (reseeding the clock) when it moves."""
-    return repr([(t.id, t.kind, t.interval_s, tuple(t.targets), t.enabled) for t in profile.triggers])
+    return repr([(t.id, t.kind, t.interval_s, tuple(t.targets), t.enabled, t.throttle_ms)
+                 for t in profile.triggers])
 
 
 def _runner_for(game: str, settings):
@@ -56,8 +57,8 @@ def _tick(settings) -> None:
     for game in list_profiles(settings.profiles_dir):
         try:
             runner, profile = _runner_for(game, settings)
-            if any(t.enabled and t.kind == "interval" for t in profile.triggers):
-                runner.tick()   # fire due interval triggers (guarded inside _fire_targets)
+            if any(t.enabled and t.kind in ("interval", "true_interval") for t in profile.triggers):
+                runner.tick()   # fire due interval / true_interval triggers (guarded inside _fire_targets)
         except Exception:       # one bad profile must never kill the loop
             continue
 
@@ -93,8 +94,11 @@ def schedule(game: str, settings) -> list[dict]:
         except Exception:
             return []
         now = runner._clock()
+        from datetime import datetime, timezone
+
         from ..collect.triggers import read_fires
         fires = read_fires(settings.data_dir, game)
+        now_wall = datetime.now(timezone.utc)
         by_id = {p.id: p for p in profile.producers}
         out: list[dict] = []
         for t in profile.triggers:
@@ -108,7 +112,26 @@ def schedule(game: str, settings) -> list[dict]:
                 if t.enabled:   # a disabled trigger never fires -> no countdown
                     nxt = runner._last.get(t.id, now) + t.interval_s
                     item["next_in"] = max(0, round(nxt - now))
+            elif t.kind == "true_interval":
+                item["interval_s"] = t.interval_s
+                if t.enabled:
+                    # countdown off the PERSISTED last fire (wall clock) — continues across restarts
+                    last = _parse_iso(fires.get(t.id))
+                    item["next_in"] = 0 if last is None else max(
+                        0, round(t.interval_s - (now_wall - last).total_seconds()))
             elif t.kind in ("on_change", "on_any_change"):
                 item["watch"] = list(t.watch)
             out.append(item)
         return out
+
+
+def _parse_iso(s):
+    """Parse an ISO timestamp to an aware UTC datetime, or None if absent/unparseable."""
+    if not s:
+        return None
+    from datetime import datetime, timezone
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)

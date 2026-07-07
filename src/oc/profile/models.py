@@ -591,6 +591,10 @@ class WindowDef(BaseModel):
     # whether this window is attempted in live view (the graph UI's continuous re-read).
     # Off = skipped by the live loop; pure UI control, the collector ignores it.
     live: bool = True
+    # whether this window is active at all. Off = the collector never classifies, reads, or
+    # saves it (and its readouts never surface) — the window node's disable toggle. Distinct
+    # from ``live``, which only gates the graph UI's continuous re-read, not the collector.
+    enabled: bool = True
 
     @model_validator(mode="before")
     @classmethod
@@ -887,7 +891,11 @@ class TriggerDef(BaseModel):
     automatically instead of only on a manual button. Pure config — the runner that evaluates
     triggers lives in the collector / web app, never in the capture loop. Kinds:
 
-    * ``interval``       — fire every ``interval_s`` seconds (periodic refresh).
+    * ``interval``       — fire every ``interval_s`` seconds; reseeds its clock to "now" on
+      restart/config edit (a fresh full wait each time).
+    * ``true_interval``  — fire every ``interval_s`` seconds of REAL elapsed time, anchored to the
+      PERSISTED last-fired timestamp, so the cadence continues across restarts and config edits
+      (an overdue trigger fires immediately on start).
     * ``on_change``      — fire when a dataset/subset in ``watch`` gains new/changed records,
       pricing only those changed keys (real-time, e.g. relic-reward items the moment they're read).
       A watched subset only fires when its computed/visible output actually changes.
@@ -901,16 +909,16 @@ class TriggerDef(BaseModel):
       ``readout_value`` — edge-triggered (fires once on entering the condition). See ReadoutDef.
     * ``manual``         — never auto-fires; just declares the wiring (the sweep button drives it).
 
-    A trigger's ``targets`` are producer ids (sweep/refresh) or file-source ids (read). It can
-    ALSO act on datasets: ``dataset_targets`` names datasets and ``dataset_action`` says what to
-    do to them when it fires (clear, or clone/move their data into ``dataset_dest``).
+    A trigger's ``targets`` are producer ids (sweep/refresh), file-source ids (read), toast/sound
+    ids (notify/play), or ACTION ids (clear/clone/move a dataset — see :class:`ActionDef`). A
+    dataset action is its own node fired via ``targets``, exactly like a toast or sound.
     """
 
     id: str
-    # interval | on_change | on_any_change | on_app_start | on_capture | on_live_start |
-    # on_live_stop | on_readout | manual
+    # interval | true_interval | on_change | on_any_change | on_app_start | on_capture |
+    # on_live_start | on_live_stop | on_readout | manual
     kind: str = "interval"
-    interval_s: float = 300.0               # for kind="interval": seconds between fires
+    interval_s: float = 300.0               # for kind="interval"/"true_interval": seconds between fires
     watch: list[str] = Field(default_factory=list)    # for kind="on_change"/"on_any_change": datasets to watch
     # for kind="on_readout": the readout ids this trigger watches, and the condition its value
     # must meet to fire. readout_op ∈ gte|lte|gt|lt|eq|ne|crosses_up|crosses_down (crosses_* compare
@@ -918,15 +926,12 @@ class TriggerDef(BaseModel):
     readout_watch: list[str] = Field(default_factory=list)
     readout_op: str = "gte"
     readout_value: float = 0.0
-    targets: list[str] = Field(default_factory=list)  # producer / file-source / toast / sound ids this trigger fires
+    targets: list[str] = Field(default_factory=list)  # producer / file-source / toast / sound / action ids this trigger fires
     enabled: bool = True
-    # datasets this trigger acts on, and what it does to them. dataset_action is one of
-    # "" (none) | clear | clone_batches | clone_resolved | move_batches | move_resolved.
-    # clone/move copy each dataset_target's data into dataset_dest (batches = preserve batch
-    # grouping; resolved = collapse current records into one new batch). move also clears source.
-    dataset_targets: list[str] = Field(default_factory=list)
-    dataset_action: str = ""
-    dataset_dest: str = ""                  # destination dataset for clone/move actions
+    # minimum time (milliseconds) between actual fires — a global rate limit across ALL kinds.
+    # None = no throttle. A fire suppressed inside the window is recorded in the trigger's
+    # (non-persisted) history as "throttled". Manual "fire now" bypasses it (explicit user action).
+    throttle_ms: float | None = None
 
 
 class ToastTextDef(BaseModel):
@@ -1098,6 +1103,24 @@ class SoundDef(BaseModel):
     id: str
     file: str = ""                          # sound filename in the web sounds/ folder ("" = silent)
     volume: float = 1.0                     # playback volume (0..1)
+    enabled: bool = True
+
+
+class ActionDef(BaseModel):
+    """An *action node*: runs a dataset operation (clear, or clone/move data into ``dest``) when
+    fired. A trigger names its ``id`` in ``targets`` (like a toast/sound/producer), so any trigger
+    condition can act on datasets — the shared :func:`oc.store.dataset_ops.fire_dataset_target`
+    funnel does the work, both from the collector dispatch and the web fire-now route.
+
+    ``action`` ∈ "" (none) | clear | clone_batches | clone_resolved | move_batches | move_resolved.
+    clone/move copy each of ``datasets`` into ``dest`` (batches = preserve batch grouping; resolved
+    = collapse current records into one new batch). move also clears the source.
+    """
+
+    id: str
+    action: str = ""                        # "" | clear | clone_batches | clone_resolved | move_batches | move_resolved
+    datasets: list[str] = Field(default_factory=list)  # datasets this action operates on
+    dest: str = ""                          # destination dataset for clone/move actions
     enabled: bool = True
 
 
@@ -1320,6 +1343,7 @@ class GameProfile(BaseModel):
     triggers: list[TriggerDef] = Field(default_factory=list)
     toasts: list[ToastDef] = Field(default_factory=list)
     sounds: list[SoundDef] = Field(default_factory=list)
+    actions: list[ActionDef] = Field(default_factory=list)
     dictionaries: list[DictionaryDef] = Field(default_factory=list)
     # Taught glyph atlas for post-OCR glyph refinement (see GlyphDef / FieldDef.glyph_check).
     glyphs: list[GlyphDef] = Field(default_factory=list)

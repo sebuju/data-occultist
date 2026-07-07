@@ -106,20 +106,20 @@ def run_dataset_action(data_dir, game: str, profile, *, source: str, action: str
     return {"action": action, "source": source, "dest": dest, "rows": written}
 
 
-def fire_dataset_target(game: str, data_dir, profile, trigger, dataset_id: str) -> bool:
-    """Run ``trigger``'s dataset action on ``dataset_id`` — the shared funnel both the collector
-    dispatch and the web fire-now route call, so automatic and manual fires can't drift. Runs
-    nothing (returns False) when the trigger has no action set. On a real action it emits the
-    trigger->dataset control pulse (for the canvas flow animation) and returns True. A misbehaving
-    action must never crash the collector loop / a request."""
-    if not getattr(trigger, "dataset_action", ""):
+def fire_dataset_target(game: str, data_dir, profile, action, dataset_id: str) -> bool:
+    """Run ``action``'s dataset op (clear/clone/move) on ``dataset_id`` — the shared funnel both
+    the collector dispatch and the web fire-now route call, so automatic and manual fires can't
+    drift. Runs nothing (returns False) when the action has no op set. On a real op it emits the
+    action->dataset control pulse (for the canvas flow animation) and returns True. A misbehaving
+    op must never crash the collector loop / a request."""
+    if not getattr(action, "action", ""):
         return False
     try:
         result = run_dataset_action(data_dir, game, profile, source=dataset_id,
-                                    action=trigger.dataset_action, dest=trigger.dataset_dest)
+                                    action=action.action, dest=action.dest)
     except Exception:   # noqa: BLE001
         return False
     if not result:
         return False
-    publish_flow(game, "trigger", f"trigger:{trigger.id}", f"ds:{dataset_id}", 1)
+    publish_flow(game, "trigger", f"action:{action.id}", f"ds:{dataset_id}", 1)
     return True

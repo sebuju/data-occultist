@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from ...collect.triggers import fire_target, fire_toast, read_source_target, record_fire
+from ...collect.triggers import (
+    fire_action, fire_target, fire_toast, read_source_target, record_fire)
+from ...collect.trigger_history import recent as recent_history
 from ...enrich.price_runner import start_sweep, sweep_status
 from ...profile import list_profiles, load_profile
 from ..deps import get_notifier, get_settings
@@ -39,10 +41,16 @@ def list_triggers(game: str):
         out.append({"id": t.id, "kind": t.kind, "interval_s": t.interval_s,
                     "watch": t.watch, "enabled": t.enabled, "targets": targets,
                     "readout_watch": t.readout_watch, "readout_op": t.readout_op,
-                    "readout_value": t.readout_value,
-                    "dataset_targets": t.dataset_targets, "dataset_action": t.dataset_action,
-                    "dataset_dest": t.dataset_dest})
+                    "readout_value": t.readout_value, "throttle_ms": t.throttle_ms})
     return {"game": game, "triggers": out}
+
+
+@router.get("/{game}/{trigger_id}/history")
+def trigger_history(game: str, trigger_id: str):
+    """Recent (non-persisted, this-session) fires of ``trigger_id`` — newest first, each with
+    when / why / what it fired and whether it was throttled. Backs the history satellite node."""
+    _profile_or_404(game)
+    return {"game": game, "trigger": trigger_id, "history": recent_history(game, trigger_id)}
 
 
 @router.post("/{game}/{trigger_id}/fire")
@@ -56,6 +64,8 @@ def fire_trigger(game: str, trigger_id: str):
     by_producer = {p.id: p for p in profile.producers}
     by_source = {s.id: s for s in profile.file_sources}
     by_toast = {x.id: x for x in profile.toasts}
+    by_action = {x.id: x for x in profile.actions}
+    by_sound = {x.id: x for x in profile.sounds}
     data_dir = get_settings().data_dir
     # SAME funnels the collector uses (fire_target for producers, read_source_target for file
     # sources) so a manual fire behaves identically to an automatic one — no path drifts. A
@@ -85,14 +95,27 @@ def fire_trigger(game: str, trigger_id: str):
                                             values=live_readouts(game)):
             started.append({"toast": pid})
             fired = True
-    # dataset actions (clear / clone / move) — same funnel the collector dispatch uses, so a
-    # manual test fire behaves identically to an automatic one.
-    if trig.dataset_action:
-        from ...store.dataset_ops import fire_dataset_target
-        for ds in trig.dataset_targets:
-            if fire_dataset_target(game, data_dir, profile, trig, ds):
-                started.append({"dataset": ds, "action": trig.dataset_action})
-                fired = True
+            continue
+        # action nodes (clear / clone / move a dataset) — same funnel the collector dispatch uses,
+        # so a manual test fire behaves identically to an automatic one.
+        action = by_action.get(pid)
+        if action is not None and fire_action(game, action, data_dir, profile=profile,
+                                              trigger_id=trigger_id):
+            started.append({"action": pid})
+            fired = True
+            continue
+        # sound nodes are played CLIENT-SIDE (the activity heartbeat's fire-detector), never here —
+        # but the fire must still be RECORDED (stamp last_fired) so that detector notices it and
+        # plays. Count an enabled sound as fired; the browser does the actual playback.
+        snd = by_sound.get(pid)
+        if snd is not None and getattr(snd, "enabled", True):
+            started.append({"sound": pid})
+            fired = True
     if fired:
         record_fire(data_dir, game, trigger_id)   # stamp the sidecar so the fire countdown is right
+        from datetime import datetime, timezone
+
+        from ...collect.trigger_history import record as record_hist
+        record_hist(game, trigger_id, why="manual (fire button)", targets=list(trig.targets),
+                    throttled=False, ts=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     return {"trigger": trigger_id, "started": started, "skipped": skipped}

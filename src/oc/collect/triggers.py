@@ -21,10 +21,10 @@ Kinds:
 * ``on_live_stop`` — fire when the server live-collection session stops (:meth:`fire_live_stop`).
 * ``manual``       — never auto-fires (the sweep button drives it); declared only for wiring.
 
-A trigger ``target`` is a price-node id OR a file-source id: pricing nodes sweep the market,
-file sources read a log/config file. The runner dispatches by which kind owns the id. A trigger
-can ALSO act on datasets — see ``dataset_targets``/``dataset_action`` and
-:func:`oc.store.dataset_ops.fire_dataset_target`.
+A trigger ``target`` is a price-node id, a file-source id, a toast/sound id, OR an action id:
+pricing nodes sweep the market, file sources read a log/config file, toasts/sounds notify, and an
+action node clears/clones/moves a dataset (see :class:`oc.profile.models.ActionDef` and
+:func:`oc.store.dataset_ops.fire_dataset_target`). The runner dispatches by which kind owns the id.
 
 ``fire`` and ``clock`` are injectable so the scheduling logic is unit-testable without sleeping
 or hitting the network.
@@ -108,10 +108,15 @@ def write_subset_sigs(data_dir, game: str, sigs: dict) -> None:
 
 class TriggerRunner:
     def __init__(self, profile, data_dir, *, fire: Callable | None = None,
-                 notifier=None, clock: Callable[[], float] = time.monotonic) -> None:
+                 notifier=None, clock: Callable[[], float] = time.monotonic,
+                 wall: Callable[[], datetime] | None = None) -> None:
         self._profile = profile
         self._data_dir = data_dir
         self._clock = clock
+        # wall-clock provider (real UTC time) for kind="true_interval", which measures elapsed
+        # time against the PERSISTED last-fired timestamp (survives restart/config edit) rather
+        # than the injectable monotonic clock. Injectable so true_interval stays unit-testable.
+        self._wall = wall or (lambda: datetime.now(timezone.utc))
         self._fire = fire or self._default_fire
         # OS-notification backend (oc.interfaces.Notifier) for toast-node targets; None ->
         # toast targets are silently skipped (e.g. a runner built without one). Never used in
@@ -131,26 +136,82 @@ class TriggerRunner:
         # readout (for crosses_up/crosses_down, which compare against the prior reading).
         self._readout_state: dict[str, bool] = {}
         self._readout_prev: dict[str, float] = {}
+        # monotonic time of each trigger's LAST actual fire (any kind) — the throttle clock. A
+        # fire within throttle_ms of this is suppressed (recorded as throttled, not fired).
+        self._last_fire_any: dict[str, float] = {}
+
+    # ---- throttle + shared fire funnel -------------------------------------
+
+    def _throttled(self, t) -> bool:
+        """Is a fire of ``t`` inside its ``throttle_ms`` window since its last actual fire?"""
+        thr = getattr(t, "throttle_ms", None)
+        if not thr or thr <= 0:
+            return False
+        last = self._last_fire_any.get(t.id)
+        return last is not None and (self._clock() - last) < (thr / 1000.0)
+
+    def _emit_fire(self, t, why: str, items) -> bool:
+        """Throttle-gate then fire ``t``'s targets, stamping the last-fired sidecar and the
+        (non-persisted) fire history. Returns True if it fired, False if throttle suppressed it.
+        The single funnel every AUTO fire path (interval/lifecycle/on_change/on_readout) routes
+        through, so throttle + history behave identically regardless of what fired the trigger."""
+        from .trigger_history import record as record_hist
+        ts = self._wall().isoformat(timespec="seconds")
+        if self._throttled(t):
+            logev(f"trigger {t.id} throttled ({why})", level="info", game=self._profile.name)
+            record_hist(self._profile.name, t.id, why=why, targets=list(t.targets),
+                        throttled=True, ts=ts)
+            return False
+        logev(f"trigger {t.id} fired ({why})", level="run", game=self._profile.name)
+        slog(f"trigger {t.id} fired ({why})", game=self._profile.name)
+        self._fire_targets(t, items=items)
+        record_fire(self._data_dir, self._profile.name, t.id)
+        record_hist(self._profile.name, t.id, why=why, targets=list(t.targets),
+                    throttled=False, ts=ts)
+        self._last_fire_any[t.id] = self._clock()
+        return True
 
     # ---- interval ----------------------------------------------------------
 
     def tick(self) -> list[str]:
-        """Fire every interval trigger whose interval has elapsed. Returns fired ids."""
+        """Fire every interval / true_interval trigger whose interval has elapsed. Returns
+        fired ids.
+
+        ``interval`` measures against the monotonic clock, reseeded to "now" whenever the runner
+        is (re)built — so a restart or config edit starts a fresh full wait. ``true_interval``
+        measures REAL elapsed time against the PERSISTED last-fired timestamp, so its cadence
+        continues across restarts/config edits (an overdue trigger fires immediately)."""
         now = self._clock()
         fired: list[str] = []
+        fires = None   # persisted last-fired map, read lazily only if a true_interval exists
         for t in self._profile.triggers:
-            if not t.enabled or t.kind != "interval":
+            if not t.enabled:
                 continue
-            if now - self._last.get(t.id, now) >= t.interval_s:
-                self._last[t.id] = now
-                logev(f"trigger {t.id} fired (interval, every {int(t.interval_s)}s)",
-                      level="run", game=self._profile.name)
-                slog(f"trigger {t.id} fired (interval, every {int(t.interval_s)}s)",
-                     game=self._profile.name)
-                self._fire_targets(t, items=None)   # node sources / catalogue decide
-                record_fire(self._data_dir, self._profile.name, t.id)
-                fired.append(t.id)
+            if t.kind == "interval":
+                if now - self._last.get(t.id, now) >= t.interval_s:
+                    self._last[t.id] = now
+                    if self._emit_fire(t, f"interval, every {int(t.interval_s)}s", items=None):
+                        fired.append(t.id)
+            elif t.kind == "true_interval":
+                if fires is None:
+                    fires = read_fires(self._data_dir, self._profile.name)
+                if self._true_interval_due(t, fires.get(t.id)):
+                    if self._emit_fire(t, f"true interval, every {int(t.interval_s)}s", items=None):
+                        fired.append(t.id)
         return fired
+
+    def _true_interval_due(self, t, last_iso: str | None) -> bool:
+        """Has ``t``'s real-time interval elapsed since its persisted last fire? Never fired /
+        unparseable timestamp = due now (fire immediately, e.g. right after a restart)."""
+        if not last_iso:
+            return True
+        try:
+            last = datetime.fromisoformat(last_iso)
+        except ValueError:
+            return True
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        return (self._wall() - last).total_seconds() >= t.interval_s
 
     # ---- one-shot lifecycle kinds (app boot / capture start) ---------------
 
@@ -175,11 +236,8 @@ class TriggerRunner:
         for t in self._profile.triggers:
             if not t.enabled or t.kind != kind:
                 continue
-            logev(f"trigger {t.id} fired ({why})", level="run", game=self._profile.name)
-            slog(f"trigger {t.id} fired ({why})", game=self._profile.name)
-            self._fire_targets(t, items=None)
-            record_fire(self._data_dir, self._profile.name, t.id)
-            fired.append(t.id)
+            if self._emit_fire(t, why, items=None):
+                fired.append(t.id)
         return fired
 
     # ---- on_change ---------------------------------------------------------
@@ -220,17 +278,14 @@ class TriggerRunner:
                 continue
             if items is None:
                 items = self._items_for(changed_records)
-            logev(f"trigger {t.id} <- {dataset} changed ({len(changed_records)} rows, "
-                  f"{len(items)} to price)", level="run", game=self._profile.name)
-            slog(f"trigger {t.id} <- {dataset} changed ({len(changed_records)} rows, "
-                 f"{len(items)} to price)", game=self._profile.name)
+            why = f"{dataset} changed ({len(changed_records)} rows, {len(items)} to price)"
+            if not self._emit_fire(t, why, items=items):
+                continue   # throttled — no fire, no watch-hop animation
             # animate the watch hop watched dataset/view -> trigger (the change that fired it
             # flows INTO the trigger), only for the watches that actually justified this fire
             for w in justifying:
                 node = f"sub:{w}" if self._profile.subset_def(w) else f"ds:{w}"
                 publish_flow(self._profile.name, "watch", node, f"trigger:{t.id}", 1)
-            self._fire_targets(t, items=items)
-            record_fire(self._data_dir, self._profile.name, t.id)
             fired.append(t.id)
         if new_sigs:
             write_subset_sigs(self._data_dir, self._profile.name, {**stored, **new_sigs})
@@ -299,13 +354,8 @@ class TriggerRunner:
             was = self._readout_state.get(t.id, False)
             self._readout_state[t.id] = cond
             if cond and not was:
-                logev(f"trigger {t.id} fired (readout {t.readout_op} {t.readout_value})",
-                      level="run", game=self._profile.name)
-                slog(f"trigger {t.id} fired (readout {t.readout_op} {t.readout_value})",
-                     game=self._profile.name)
-                self._fire_targets(t, items=None)
-                record_fire(self._data_dir, self._profile.name, t.id)
-                fired.append(t.id)
+                if self._emit_fire(t, f"readout {t.readout_op} {t.readout_value}", items=None):
+                    fired.append(t.id)
         # remember this tick's readings so crosses_* can see the transition next tick
         for w, v in values.items():
             n = self._num(v)
@@ -382,11 +432,12 @@ class TriggerRunner:
 
     def _fire_targets(self, trigger, items) -> None:
         """Dispatch each target id by what owns it: a producer sweeps/refreshes, a file source
-        reads, a toast node raises an OS notification, and each ``dataset_targets`` entry runs
-        the trigger's dataset action."""
+        reads, a toast node raises an OS notification, and an action node clears/clones/moves a
+        dataset (sounds are skipped here — the web UI plays them client-side)."""
         by_producer = {p.id: p for p in self._profile.producers}
         by_source = {s.id: s for s in self._profile.file_sources}
         by_toast = {x.id: x for x in getattr(self._profile, "toasts", [])}
+        by_action = {x.id: x for x in getattr(self._profile, "actions", [])}
         for tid in trigger.targets:
             if tid in by_producer:
                 # items == [] means an on_change fire with nothing to price (a clear / removal):
@@ -402,10 +453,9 @@ class TriggerRunner:
                 fire_toast(self._profile.name, by_toast[tid], self._notifier,
                            trigger_id=trigger.id, values=self._readouts_latest,
                            data_dir=self._data_dir, profile=self._profile)
-        if getattr(trigger, "dataset_action", ""):
-            from ..store.dataset_ops import fire_dataset_target
-            for ds in getattr(trigger, "dataset_targets", []):
-                fire_dataset_target(self._profile.name, self._data_dir, self._profile, trigger, ds)
+            elif tid in by_action:
+                fire_action(self._profile.name, by_action[tid], self._data_dir,
+                            profile=self._profile, trigger_id=trigger.id)
 
     def _read_source(self, source, trigger_id: str) -> None:
         """Fire a file-source target via the shared funnel (see :func:`read_source_target`)."""
@@ -516,6 +566,24 @@ def fire_toast(game: str, toast, notifier, *, trigger_id: str, values: dict | No
         return False
     publish_flow(game, "trigger", f"trigger:{trigger_id}", f"toast:{toast.id}", 1)
     return True
+
+
+def fire_action(game: str, action, data_dir, *, profile, trigger_id: str) -> bool:
+    """Fire ONE action-node target of a trigger — run its dataset op (clear/clone/move) on each of
+    its ``datasets``. The single funnel both the collector dispatch and the web fire-now route use,
+    so automatic and manual fires can't drift (the action node is fired via ``targets`` exactly like
+    a toast). Emits the trigger->action control pulse, then each action->dataset pulse (inside
+    :func:`oc.store.dataset_ops.fire_dataset_target`). A disabled / actionless node is a no-op.
+    Returns True if it ran on any dataset."""
+    if action is None or not getattr(action, "enabled", True) or not getattr(action, "action", ""):
+        return False
+    publish_flow(game, "trigger", f"trigger:{trigger_id}", f"action:{action.id}", 1)
+    from ..store.dataset_ops import fire_dataset_target
+    ran = False
+    for ds in getattr(action, "datasets", []):
+        if fire_dataset_target(game, data_dir, profile, action, ds):
+            ran = True
+    return ran
 
 
 def read_source_target(game: str, source, data_dir, *, profile, trigger_id: str) -> bool:
