@@ -564,6 +564,12 @@ export const triggers = {
     history: (game, id) => tfetch(`/api/triggers/${_pg(game)}/${encodeURIComponent(id)}/history`).then((r) => ok(r, "trigger history").then((x) => x.json())),
 };
 
+// Actions: run a dataset op (clear / clone / move) NOW on the action node's targets — the manual
+// fire button. Same funnel a trigger uses, so a test fire matches an automatic one.
+export const actions = {
+    fire: (game, id) => tfetch(`/api/actions/${_pg(game)}/${encodeURIComponent(id)}/fire`, { method: "POST" }, 30_000).then((r) => ok(r, "fire action").then((x) => x.json())),
+};
+
 // Toast nodes: raise an OS desktop notification. `test` pops the toast now with its current
 // config (the node's test button) — behaves like a trigger firing it, minus the wiring.
 export const toasts = {

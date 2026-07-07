@@ -24,7 +24,7 @@ export function actionParts(x, model) {
                 labCell("action", "what this node does to its target dataset(s) when fired"),
                 h("select", { class: "ac-action" },
                     ACTIONS.map(([v, l]) => h("option", { value: v, selected: v === cur }, v === cur ? `<${l}>` : l))),
-                srcRow("datasets", "datasets this action operates on when fired",
+                srcRow("nodes", "nodes this action operates on when fired",
                     srcInputs(
                         (x.datasets || []).map((d) => srcChip(d, "ds", "ac-rmds")),
                         "ac-addds",
@@ -33,6 +33,7 @@ export function actionParts(x, model) {
                 needsDest && h("select", { class: "ac-dest" },
                     h("option", { value: "" }, "- dataset -"),
                     dsFree.map((d) => h("option", { selected: d === x.dest }, d === x.dest ? `<${d}>` : d))))),
+        foot: h("button", { class: "ac-fire", title: "run this action now on its target dataset(s)" }, "↻ fire"),
         ports: h("span", { class: "port out", title: "drag to a dataset this action operates on" }),
     };
 }

@@ -568,7 +568,7 @@ def fire_toast(game: str, toast, notifier, *, trigger_id: str, values: dict | No
     return True
 
 
-def fire_action(game: str, action, data_dir, *, profile, trigger_id: str) -> bool:
+def fire_action(game: str, action, data_dir, *, profile, trigger_id: str | None = None) -> bool:
     """Fire ONE action-node target of a trigger — run its dataset op (clear/clone/move) on each of
     its ``datasets``. The single funnel both the collector dispatch and the web fire-now route use,
     so automatic and manual fires can't drift (the action node is fired via ``targets`` exactly like
@@ -577,7 +577,10 @@ def fire_action(game: str, action, data_dir, *, profile, trigger_id: str) -> boo
     Returns True if it ran on any dataset."""
     if action is None or not getattr(action, "enabled", True) or not getattr(action, "action", ""):
         return False
-    publish_flow(game, "trigger", f"trigger:{trigger_id}", f"action:{action.id}", 1)
+    # a manual web fire has no trigger node (trigger_id is None), so skip the trigger->action
+    # control pulse — the action->dataset pulses inside fire_dataset_target still fire.
+    if trigger_id:
+        publish_flow(game, "trigger", f"trigger:{trigger_id}", f"action:{action.id}", 1)
     from ..store.dataset_ops import fire_dataset_target
     ran = False
     for ds in getattr(action, "datasets", []):

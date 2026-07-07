@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from ..profile import list_profiles, load_profile
 from .deps import get_locator, get_settings
 from .routes import (
+    actions,
     activity,
     bench,
     capture,
@@ -317,6 +318,7 @@ def create_app() -> FastAPI:
     app.include_router(prices.router)
     app.include_router(activity.router)
     app.include_router(triggers.router)
+    app.include_router(actions.router)
     app.include_router(toasts.router)
     app.include_router(sources.router)
     app.include_router(sounds.router)
