@@ -278,7 +278,7 @@ windows:
     terminator: false
   static_grid: false
   scroll:
-    enabled: true
+    enabled: false
     scrollbar:
       x: 0.6952714896173537
       y: 0.18788002826304379
@@ -1133,13 +1133,79 @@ windows:
   - id: rank
     type: pips
     rules: []
-    min_confidence: 0.65
+    min_confidence: 0.6
     isolate: false
     glyph_check: false
   - id: rof_9
-    type: number
+    type: text
+    rules: []
+    min_confidence: 0.5
+    isolate: false
+    glyph_check: false
+  - id: rof_2
+    type: text
+    rules: []
+    min_confidence: 0.5
+    isolate: false
+    glyph_check: false
+  - id: rof_4
+    type: text
+    rules: []
+    min_confidence: 0.5
+    isolate: false
+    glyph_check: false
+  - id: rof_6
+    type: text
     rules: []
     min_confidence: 0.0
+    isolate: false
+    glyph_check: false
+  - id: rof_8
+    type: text
+    rules: []
+    min_confidence: 0.5
+    isolate: false
+    glyph_check: false
+  - id: rof_10
+    type: text
+    rules: []
+    min_confidence: 0.5
+    isolate: false
+    glyph_check: false
+  - id: rof_12
+    type: text
+    rules: []
+    min_confidence: 0.5
+    isolate: false
+    glyph_check: false
+  - id: rof_14
+    type: text
+    rules: []
+    min_confidence: 0.5
+    isolate: false
+    glyph_check: false
+  - id: rof_16
+    type: text
+    rules: []
+    min_confidence: 0.5
+    isolate: false
+    glyph_check: false
+  - id: rof_18
+    type: text
+    rules: []
+    min_confidence: 0.5
+    isolate: false
+    glyph_check: false
+  - id: rof_20
+    type: text
+    rules: []
+    min_confidence: 0.5
+    isolate: false
+    glyph_check: false
+  - id: rof_22
+    type: text
+    rules: []
+    min_confidence: 0.5
     isolate: false
     glyph_check: false
   data_area:
@@ -1195,13 +1261,101 @@ windows:
     terminator: false
   static_grid: false
   readouts:
-  - id: ro_8
+  - id: slot_1
     box:
-      x: 0.3469919096608924
+      x: 0.31622591737243927
       y: 0.3491234077894415
-      w: 0.048518956444592753
+      w: 0.1122526915760314
       h: 0.04248994746538909
     field: rof_9
+    enabled: true
+  - id: slot_2
+    box:
+      x: 0.442198382363319
+      y: 0.3500000000000003
+      w: 0.113499943704654
+      h: 0.040740740740740765
+    field: rof_2
+    enabled: true
+  - id: slot_3
+    box:
+      x: 0.5698122757019974
+      y: 0.35
+      w: 0.11279395445332219
+      h: 0.04248904697870126
+    field: rof_4
+    enabled: true
+  - id: slot_4
+    box:
+      x: 0.6970293153193048
+      y: 0.3512997424614134
+      w: 0.11373207105198402
+      h: 0.04174454678510553
+    field: rof_6
+    enabled: true
+  - id: slot_5
+    box:
+      x: 0.3146668522116611
+      y: 0.48333333333333334
+      w: 0.11256450460818707
+      h: 0.025925925925925925
+    field: rof_8
+    enabled: true
+  - id: slot_6
+    box:
+      x: 0.4409511302346964
+      y: 0.4777777777777778
+      w: 0.11349994370465394
+      h: 0.03518518518518519
+    field: rof_10
+    enabled: true
+  - id: slot_7
+    box:
+      x: 0.5681708473541986
+      y: 0.47962962962962963
+      w: 0.11443538280112098
+      h: 0.03148148148148148
+    field: rof_12
+    enabled: true
+  - id: slot_8
+    box:
+      x: 0.695390564473701
+      y: 0.47962962962962963
+      w: 0.11599444796189906
+      h: 0.03148148148148148
+    field: rof_14
+    enabled: true
+  - id: slot_aura
+    box:
+      x: 0.44244791666666705
+      y: 0.22962962962962963
+      w: 0.1122395833333333
+      h: 0.025925925925925925
+    field: rof_16
+    enabled: true
+  - id: slot_exilus
+    box:
+      x: 0.5701322932366342
+      y: 0.2303643083828312
+      w: 0.11360073863268058
+      h: 0.030445382648510433
+    field: rof_18
+    enabled: true
+  - id: slot_arcane_1
+    box:
+      x: 0.834375
+      y: 0.2462962962962963
+      w: 0.09166666666666666
+      h: 0.024074074074074074
+    field: rof_20
+    enabled: true
+  - id: slot_arcane_2
+    box:
+      x: 0.8343750000000004
+      y: 0.4462962962962963
+      w: 0.09036458333333328
+      h: 0.02962962962962963
+    field: rof_22
     enabled: true
   preprocess:
     mode: none
@@ -1334,6 +1488,13 @@ datasets:
   dedup: true
   batch_mode: run
   sync_mode: accumulate
+- id: dataset
+  aggregate: latest
+  key_field: ''
+  key_fields: []
+  dedup: true
+  batch_mode: run
+  sync_mode: mirror
 subsets:
 - id: live_prices_joined
   sources:
@@ -2276,7 +2437,12 @@ sounds:
   file: bob.wav
   volume: 0.5
   enabled: true
-actions: []
+actions:
+- id: action
+  action: ''
+  datasets: []
+  dest: ''
+  enabled: true
 dictionaries:
 - id: wiki
   enabled: true
@@ -2325,29 +2491,29 @@ layout:
     ds:prices_live:
       x: 900.0
       y: -4000.0
-      w: 520.0
-      h: 200.0
+      w: 360.0
+      h: 144.0
       collapsed: false
-      custW: true
+      custW: false
       custH: false
     sub:live_prices_joined:
-      x: 1500.0
+      x: 1340.0
       y: -4000.0
-      w: 380.0
-      h: 1260.0
+      w: 360.0
+      h: 720.0
       collapsed: false
-      custW: true
+      custW: false
       custH: false
     producer:wf_market_live:
       x: 900.0
-      y: -3780.0
-      w: 520.0
-      h: 1837.0
+      y: -3760.0
+      w: 360.0
+      h: 1320.0
       collapsed: false
-      custW: true
-      custH: false
+      custW: false
+      custH: true
     sub:relic_rewards_limit:
-      x: 2200.0
+      x: 2460.0
       y: -1840.0
       w: 360.0
       h: 344.0
@@ -2392,66 +2558,78 @@ layout:
       custH: true
     item:equipment_window:arcane:
       x: -2980.0
-      y: 1420.0
+      y: 1320.0
+      w: 540.0
+      h: 1066.0
       collapsed: false
+      custW: true
+      custH: false
     item:equipment_window:normal:
       x: -2980.0
       y: 320.0
+      w: 540.0
+      h: 957.0
       collapsed: false
+      custW: true
+      custH: false
     det:equipment_window:detect_1:
       x: -1720.0
-      y: 640.0
+      y: 620.0
       w: 240.0
       h: 260.0
       collapsed: false
-      custW: false
+      custW: true
       custH: false
     item:mod_window:drop_item:
       x: -2980.0
-      y: 3800.0
+      y: 3620.0
       w: 380.0
       h: 815.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:normal:name:
-      x: -2200.0
-      y: 320.0
-      w: 380.0
+      x: -2400.0
+      y: 660.0
+      w: 320.0
       h: 420.0
       collapsed: false
-      custW: true
+      custW: false
       custH: false
     fld:equipment_window:normal:count:
-      x: -2560.0
+      x: -2400.0
       y: 320.0
       collapsed: false
     fld:equipment_window:arcane:name:
-      x: -1900.0
-      y: 1420.0
+      x: -2400.0
+      y: 2040.0
       w: 320.0
       h: 360.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:arcane:arcane_level:
-      x: -2560.0
-      y: 1420.0
-      w: 260.0
-      h: 380.0
+      x: -2400.0
+      y: 1320.0
+      w: 320.0
+      h: 340.0
       collapsed: false
       custW: true
-      custH: false
+      custH: true
     fld:equipment_window:arcane:count:
-      x: -2260.0
-      y: 1420.0
+      x: -2400.0
+      y: 1680.0
+      w: 320.0
+      h: 340.0
       collapsed: false
+      custW: false
+      custH: false
     fld:mod_window:mod:mod_name:
       x: -2560.0
-      y: 3280.0
+      y: 3220.0
       collapsed: false
     fld:mod_window:mod:mod_drain:
-      x: -2200.0
+      x: -2220.0
       y: 2780.0
       collapsed: false
     fld:mod_window:mod:mod_count:
@@ -2460,19 +2638,19 @@ layout:
       collapsed: false
     tell:mod_window:drop_item:tell_3:
       x: -2580.0
-      y: 3800.0
+      y: 3620.0
       collapsed: false
     trigger:owned_refresh:
-      x: 480.0
-      y: -2940.0
+      x: 500.0
+      y: -4000.0
       w: 360.0
       h: 363.0
       collapsed: false
       custW: true
       custH: false
     sound:owned_refresh_sound:
-      x: 480.0
-      y: -2660.0
+      x: 500.0
+      y: -3380.0
       collapsed: false
     win:relic_select:
       x: -660.0
@@ -2523,10 +2701,10 @@ layout:
       custW: true
       custH: false
     vt:sub:live_prices_joined:
-      x: 1920.0
+      x: 1740.0
       y: -4000.0
-      w: 731.0
-      h: 1220.0
+      w: 600.0
+      h: 1460.0
       collapsed: false
       custW: true
       custH: true
@@ -2576,9 +2754,9 @@ layout:
       collapsed: false
     sb:relic_refinement:scrollbar:
       x: -100.0
-      y: 1000.0
+      y: 920.0
       w: 240.0
-      h: 920.0
+      h: 910.0
       collapsed: false
       custW: true
       custH: false
@@ -2625,10 +2803,10 @@ layout:
     det:relic_refinement:detect_h:
       x: -100.0
       y: 320.0
-      w: 300.0
+      w: 240.0
       h: 280.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     det:mod_window:detect_h:
       x: -1720.0
@@ -2642,9 +2820,9 @@ layout:
       x: -1720.0
       y: 320.0
       w: 240.0
-      h: 289.0
+      h: 278.0
       collapsed: false
-      custW: false
+      custW: true
       custH: false
     prev:relic_refinement:
       x: -660.0
@@ -2660,7 +2838,7 @@ layout:
       collapsed: false
     tell:relic_refinement:not_owned:tell_3:
       x: 220.0
-      y: 680.0
+      y: 640.0
       collapsed: false
     tell:relic_refinement:not_owned:tell_4:
       x: 220.0
@@ -2696,11 +2874,11 @@ layout:
       custH: true
     det:relic_refinement:detect_1:
       x: -100.0
-      y: 700.0
+      y: 640.0
       w: 240.0
       h: 260.0
       collapsed: false
-      custW: false
+      custW: true
       custH: false
     ds:relics_select:
       x: -660.0
@@ -2715,13 +2893,13 @@ layout:
       custW: true
       custH: true
     sub:master_prime_parts:
-      x: 2700.0
-      y: -4000.0
+      x: 1340.0
+      y: -3240.0
       w: 360.0
-      h: 1220.0
+      h: 700.0
       collapsed: false
       custW: false
-      custH: true
+      custH: false
     ds:ee_log:
       x: -3440.0
       y: -4020.0
@@ -2775,22 +2953,22 @@ layout:
       custW: true
       custH: false
     producer:wf_market_relic:
-      x: 3200.0
-      y: -3780.0
-      w: 537.0
-      h: 1704.0
+      x: 2780.0
+      y: -3800.0
+      w: 360.0
+      h: 1360.0
       collapsed: false
-      custW: true
-      custH: false
+      custW: false
+      custH: true
     ds:relic_prices:
-      x: 3200.0
+      x: 2780.0
       y: -4000.0
       collapsed: false
     vt:ds:relic_prices:
-      x: 3800.0
+      x: 3180.0
       y: -4000.0
-      w: 1140.0
-      h: 1200.0
+      w: 720.0
+      h: 1560.0
       collapsed: false
       custW: true
       custH: true
@@ -2803,15 +2981,15 @@ layout:
       custW: true
       custH: false
     trigger:trigger_on_new_relic:
-      x: 3840.0
-      y: -2760.0
+      x: 2460.0
+      y: -3800.0
       w: 280.0
       h: 360.0
       collapsed: false
       custW: false
       custH: false
     sound:relic_sound:
-      x: 2600.0
+      x: 2860.0
       y: -1460.0
       collapsed: false
     vt:ds:relic_contents:
@@ -2840,12 +3018,12 @@ layout:
       custH: false
     fld:relic_refinement:relic_item:count:
       x: 960.0
-      y: 820.0
+      y: 780.0
       w: 320.0
-      h: 360.0
+      h: 340.0
       collapsed: false
       custW: false
-      custH: true
+      custH: false
     win:game:
       x: -2780.0
       y: -2280.0
@@ -2899,7 +3077,7 @@ layout:
       custW: true
       custH: true
     trigger:on_new_relic_fetched:
-      x: 2600.0
+      x: 2860.0
       y: -1840.0
       w: 480.0
       h: 320.0
@@ -2907,15 +3085,15 @@ layout:
       custW: true
       custH: false
     toast:toast_2:
-      x: 3120.0
+      x: 3380.0
       y: -1840.0
       w: 520.0
-      h: 1220.0
+      h: 1240.0
       collapsed: false
       custW: false
-      custH: false
+      custH: true
     sub:relic_rewards_with_price:
-      x: 2200.0
+      x: 2460.0
       y: -1460.0
       w: 360.0
       h: 860.0
@@ -2923,7 +3101,7 @@ layout:
       custW: false
       custH: true
     vt:sub:relic_rewards_with_price:
-      x: 2600.0
+      x: 2860.0
       y: -1000.0
       w: 480.0
       h: 400.0
@@ -2943,32 +3121,32 @@ layout:
       y: 1900.0
       collapsed: false
     win:arsenal_warframe:
-      x: 1920.0
-      y: 2740.0
+      x: 1900.0
+      y: 2760.0
+      w: 780.0
+      h: 1104.0
       collapsed: false
+      custW: true
+      custH: false
     item:arsenal_warframe:mod:
-      x: 2980.0
-      y: 2720.0
+      x: 3180.0
+      y: 2760.0
       collapsed: false
     fld:arsenal_warframe:mod:name:
-      x: 3420.0
-      y: 2720.0
+      x: 3620.0
+      y: 2760.0
       collapsed: false
     fld:arsenal_warframe:mod:drain:
-      x: 3420.0
-      y: 3100.0
+      x: 3620.0
+      y: 3140.0
       collapsed: false
     fld:arsenal_warframe:mod:rank:
-      x: 3420.0
-      y: 3500.0
+      x: 3620.0
+      y: 3540.0
       collapsed: false
     det:arsenal_warframe:detect_7:
-      x: 2480.0
-      y: 2740.0
-      collapsed: false
-    ro:arsenal_warframe:ro_8:
-      x: 1920.0
-      y: 3600.0
+      x: 2740.0
+      y: 2760.0
       collapsed: false
     trigger:ab_trigger:
       x: -3560.0
@@ -2986,6 +3164,126 @@ layout:
       collapsed: false
       custW: false
       custH: true
+    hist:trigger_on_new_relic:
+      x: 2460.0
+      y: -3580.0
+      w: 280.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: false
+    hist:owned_refresh:
+      x: 500.0
+      y: -3760.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: false
+    action:action:
+      x: -2600.0
+      y: -2680.0
+      collapsed: false
+    ro:arsenal_warframe:slot_aura:
+      x: 2180.0
+      y: 4020.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ro:arsenal_warframe:slot_exilus:
+      x: 2540.0
+      y: 4020.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ro:arsenal_warframe:slot_1:
+      x: 1920.0
+      y: 4300.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ro:arsenal_warframe:slot_2:
+      x: 2180.0
+      y: 4300.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ro:arsenal_warframe:slot_3:
+      x: 2540.0
+      y: 4300.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ro:arsenal_warframe:slot_4:
+      x: 2800.0
+      y: 4300.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ro:arsenal_warframe:slot_5:
+      x: 1920.0
+      y: 4580.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ro:arsenal_warframe:slot_6:
+      x: 2180.0
+      y: 4580.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ro:arsenal_warframe:slot_7:
+      x: 2540.0
+      y: 4580.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ro:arsenal_warframe:slot_8:
+      x: 2800.0
+      y: 4580.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ro:arsenal_warframe:slot_arcane_1:
+      x: 3100.0
+      y: 4020.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ro:arsenal_warframe:slot_arcane_2:
+      x: 3100.0
+      y: 4300.0
+      w: 220.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    ds:dataset:
+      x: 3480.0
+      y: 4020.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -3027,13 +3325,14 @@ layout:
         volume: 53
     view:live_prices_joined:
       widths:
-        volume: 70
-        price_min: 90
-        price_median: 110
+        volume: 53
+        price_min: 67
+        price_median: 84
         live_sellers: 110
         live_median: 103
-        count: 63
+        count: 41
         name: 189
+        total: 99
       order:
       - name
       - count
@@ -3239,6 +3538,14 @@ layout:
         why: 48
         throttled: 69
         fires: 69
+    ds:relic_prices:
+      widths:
+        _seq: 49
+        _batch: 57
+        _pos: 53
+        price_min: 70
+        price_median: 90
+        volume: 53
   open_images:
   - glyphs
   - game
@@ -3365,6 +3672,7 @@ layout:
     - sound:owned_refresh_sound
     - vt:sub:live_prices_joined
     - sub:master_prime_parts
+    - hist:owned_refresh
     outline:
       color: '#e69a5a'
       style: none
@@ -3485,6 +3793,7 @@ layout:
     - vt:ds:relic_prices
     - producer:wf_market_relic
     - trigger:trigger_on_new_relic
+    - hist:trigger_on_new_relic
     outline:
       color: '#e69a5a'
       style: none
@@ -3604,7 +3913,19 @@ layout:
     - fld:arsenal_warframe:mod:drain
     - fld:arsenal_warframe:mod:rank
     - det:arsenal_warframe:detect_7
-    - ro:arsenal_warframe:ro_8
+    - ro:arsenal_warframe:slot_1
+    - ro:arsenal_warframe:slot_2
+    - ro:arsenal_warframe:slot_3
+    - ro:arsenal_warframe:slot_4
+    - ro:arsenal_warframe:slot_5
+    - ro:arsenal_warframe:slot_6
+    - ro:arsenal_warframe:slot_7
+    - ro:arsenal_warframe:slot_8
+    - ro:arsenal_warframe:slot_aura
+    - ro:arsenal_warframe:slot_exilus
+    - ro:arsenal_warframe:slot_arcane_1
+    - ro:arsenal_warframe:slot_arcane_2
+    - ds:dataset
     outline:
       color: '#262c37'
       style: none
@@ -3650,6 +3971,8 @@ layout:
     - group_11
     - group_22
     - group_25
+    - group_32
+    - group_31
     outline:
       color: '#2c313c'
       style: none
@@ -3706,6 +4029,8 @@ layout:
   - vt:sub:relic_rewards_with_price
   - hist:trigger
   - hist:ab_trigger
+  - hist:trigger_on_new_relic
+  - hist:owned_refresh
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -4111,6 +4436,47 @@ layout:
     titleColor: '#e69a5a'
     titleAlign: left
     schemeId: orange
+  - id: subgroup_37
+    parent: group_32
+    title: ''
+    members:
+    - ro:arsenal_warframe:slot_aura
+    - ro:arsenal_warframe:slot_exilus
+    - ro:arsenal_warframe:slot_1
+    - ro:arsenal_warframe:slot_2
+    - ro:arsenal_warframe:slot_3
+    - ro:arsenal_warframe:slot_4
+    - ro:arsenal_warframe:slot_5
+    - ro:arsenal_warframe:slot_6
+    - ro:arsenal_warframe:slot_7
+    - ro:arsenal_warframe:slot_8
+    - ro:arsenal_warframe:slot_arcane_2
+    - ro:arsenal_warframe:slot_arcane_1
+    outline:
+      color: '#5ae6c2'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#152727'
+    titleBg: ''
+    titleColor: '#5ae6c2'
+    titleAlign: left
+    schemeId: teal
+  - id: subgroup_38
+    parent: group_32
+    title: ''
+    members:
+    - win:arsenal_warframe
+    - det:arsenal_warframe:detect_7
+    outline:
+      color: '#2b323f'
+      style: none
+      width: 1
+      offset: 0
+    bg: '#0f1117'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
   schemes:
   - id: s_f7c53c61-d630-4b1b-9fc4-17c3356055d9
     name: custom 1
