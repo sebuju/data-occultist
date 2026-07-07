@@ -2,8 +2,9 @@
 // Extracted from main.js verbatim.
 import * as api from "../../api.js";
 import * as hub from "../../hub.js";
-import { h, frag, TRASH, CAMERA, WARN, PAUSE, STAR } from "../../dom.js";
+import { h, frag, TRASH, WARN, PAUSE } from "../../dom.js";
 import { openModal } from "../../modal.js";
+import { makeReorderable, arrayMove } from "../../pretty/reorder.js";
 import { fmtDateTimeSec } from "../../datefmt.js";
 import { log } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
@@ -822,7 +823,6 @@ async function openCaptureModal(winId) {
     const game = model.profile.name;
     const node = document.createElement("div");
     node.replaceChildren(h("p", { class: "muted", style: "padding:12px" }, "loading…"));
-    const modal = openModal({ title: `${winId} — choose images`, size: "data", node });
     // load the picked pages, flip to page 0, and refresh the canvas + label
     const apply = async (names) => {
         await api.setBindings(game, winId, names);
@@ -831,24 +831,30 @@ async function openCaptureModal(winId) {
         else await loadImage(winId, false);
         updateImageLabel(winId);
     };
+    let order = [], dirty = false;
+    const orderedSel = () => order.filter((n) => caps.includes(n));   // guard against stale names
+    // save on ANY close (×, Esc, backdrop) — only if something changed. Fire-and-forget: apply
+    // reloads the canvas + label itself, and onClose isn't awaited.
+    const modal = openModal({
+        title: `${winId} — choose images`, size: "data", node,
+        onClose: () => { if (dirty) apply(orderedSel()).catch((e) => setStatus(String(e.message || e))); },
+    });
+    let caps = [], binds = {};
     try {
-        const [caps, binds] = await Promise.all([api.listCaptures(game), api.getBindings(game)]);
+        [caps, binds] = await Promise.all([api.listCaptures(game), api.getBindings(game)]);
         const cur = binds[winId];
-        const sel = new Set(Array.isArray(cur) ? cur : (cur ? [cur] : []));
-        // which selected image LEADS (becomes page 0). Seeded from the current page-0 binding;
-        // the star icon on a selected cell repoints it. Falls back to the first selected in
-        // listing order when unset (or when the chosen one is deselected).
-        let first = (Array.isArray(cur) ? cur[0] : cur) || null;
-        // selection in commit order: the lead first, then the rest in listing (newest-first) order.
-        const orderedSel = () => {
-            const picks = caps.filter((c) => sel.has(c));
-            return first && sel.has(first) ? [first, ...picks.filter((c) => c !== first)] : picks;
+        // chosen captures in page order (page 0 = order[0]). Selection membership = order.includes.
+        order = Array.isArray(cur) ? [...cur] : (cur ? [cur] : []);
+        // toggle a pool cell in/out of the selection; a fresh pick appends to the end (last page).
+        const toggle = (name) => {
+            const i = order.indexOf(name);
+            if (i >= 0) order.splice(i, 1); else order.push(name);
+            dirty = true; draw();
         };
-        const leadName = () => orderedSel()[0] || null;   // effective first, default included
-        // which windows each capture is bound to — current window tracked by live `sel`, the
+        // which windows each capture is bound to — current window tracked by live `order`, the
         // rest from the persisted map. One image can be used by several windows (multi-bind).
         const usedBy = (name) => {
-            const wins = sel.has(name) ? [winId] : [];
+            const wins = order.includes(name) ? [winId] : [];
             for (const [w, v] of Object.entries(binds)) {
                 if (w === winId) continue;
                 const list = Array.isArray(v) ? v : (v ? [v] : []);
@@ -856,54 +862,47 @@ async function openCaptureModal(winId) {
             }
             return wins;
         };
+        // fresh grab → appended as the last page and left selected; the picker stays open and
+        // close persists it (save-on-close owns the commit).
         const onCapNew = async () => {
-            modal.close();
             try {
-                const c = await api.capture(game);            // fresh grab → appended as a new last page
-                const list = await api.bindingList(game, winId);
-                list.push(c.name);
-                await api.setBindings(game, winId, list);
-                winPage.set(winId, list.length - 1);
-                if (!imageCanvases.has(winId)) await openImage(winId);
-                else await loadImage(winId, false);
-                updateImageLabel(winId);
+                const c = await api.capture(game);
+                if (!caps.includes(c.name)) caps.unshift(c.name);   // newest-first listing order
+                if (!order.includes(c.name)) order.push(c.name);
+                dirty = true; draw();
             } catch (e) { setStatus(String(e.message || e)); }
         };
+        // one thumb factory shared by both grids: badgeNum (1-based page order) shown only when set.
+        const cell = (name, badgeNum, onClick) => {
+            const wins = usedBy(name), label = wins.join(", ");
+            return h("button", {
+                class: "cap-cell" + (order.includes(name) ? " sel" : "") + (wins.length ? " used" : ""),
+                dataset: { name }, title: name, onClick,
+            },
+                h("img", { loading: "lazy", src: api.captureUrl(game, name), alt: "" }),
+                badgeNum ? h("span", { class: "cap-order" }, String(badgeNum)) : null,
+                h("span", { class: "cap-time" }, fmtCaptureTime(name)),
+                h("span", { class: "cap-wins", title: label }, label));
+        };
         const draw = () => {
-            const lead = leadName();
-            const grid = caps.map((name) => {
-                const wins = usedBy(name), label = wins.join(", ");
-                const isFirst = name === lead;
-                return h("button", {
-                    class: "cap-cell" + (sel.has(name) ? " sel" : "") + (wins.length ? " used" : "") + (isFirst ? " is-first" : ""),
-                    dataset: { name }, title: name,
-                    // toggle a cell in/out of the selection (modal redraw on click is fine — not a poll)
-                    onClick: () => { if (sel.has(name)) sel.delete(name); else sel.add(name); draw(); },
-                },
-                    h("img", { loading: "lazy", src: api.captureUrl(game, name), alt: "" }),
-                    // star: pin this image as the lead (page 0). Selects it if it wasn't, and stops the
-                    // click from also toggling the cell off.
-                    h("span", {
-                        class: "cap-first" + (isFirst ? " on" : ""),
-                        title: isFirst ? "first image (page 1)" : "make this the first image",
-                        "aria-label": "make first image",
-                        onClick: (e) => { e.stopPropagation(); first = name; sel.add(first); draw(); },
-                    }, STAR()),
-                    h("span", { class: "cap-time" }, fmtCaptureTime(name)),
-                    h("span", { class: "cap-wins", title: label }, label));
-            });
+            // chosen row (page order, drag to reorder) sits above the full pool grid.
+            const chosen = order.length
+                ? h("div", { class: "cap-chosen" }, order.map((n, i) => cell(n, i + 1, null)))
+                : null;
+            const pool = caps.length
+                ? h("div", { class: "cap-grid" },
+                    caps.map((n) => cell(n, order.includes(n) ? order.indexOf(n) + 1 : 0, () => toggle(n))))
+                : h("p", { class: "cap-empty" }, "no stashed captures yet");
             node.replaceChildren(
                 h("div", { class: "cap-head" },
-                    h("button", { class: "cap-new", onClick: onCapNew }, CAMERA(), " capture new"),
-                    h("span", { class: "muted" }, `${sel.size} of ${caps.length} selected`),
-                    h("span", { class: "spacer" }),
-                    h("button", {
-                        class: "cap-use", disabled: !sel.size,
-                        onClick: async () => { await apply(orderedSel()); modal.close(); },   // lead first, then listing order
-                    }, `use ${sel.size || ""}`)),
-                caps.length
-                    ? h("div", { class: "cap-grid" }, grid)
-                    : h("p", { class: "cap-empty" }, "no stashed captures yet"));
+                    h("button", { class: "cap-new", onClick: onCapNew }, "capture"),
+                    h("span", { class: "muted" }, `${order.length} of ${caps.length} selected`)),
+                chosen, pool);
+            // drag-to-reorder the chosen row via the shared primitive (marks only, never mutates DOM).
+            if (chosen) makeReorderable(chosen, {
+                itemSel: ".cap-cell", axis: "x",
+                onReorder: (from, insertBefore) => { arrayMove(order, from, insertBefore); dirty = true; draw(); },
+            });
         };
         draw();
     } catch (e) {

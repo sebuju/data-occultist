@@ -57,16 +57,17 @@
 .cap-cell.used { border-color: color-mix(in srgb, var(--line), #fff 25%); }
 .cap-cell:hover { border-color: var(--accent); }
 .cap-cell.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-/* "make first" star — top-left badge. Hidden by default; revealed on hover of a SELECTED
-   cell, and shown persistently (accent) on the current lead so the first image is obvious. */
-.cap-first { position: absolute; top: 7px; left: 7px; z-index: 1; display: none;
-    align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0;
-    border-radius: 5px; border: 1px solid var(--line); cursor: pointer; line-height: 0;
-    background: color-mix(in srgb, var(--black) 55%, transparent); color: var(--muted); }
-.cap-first .ic { width: 14px; height: 14px; }
-.cap-cell.sel:hover .cap-first { display: inline-flex; }
-.cap-first:hover { color: var(--accent); border-color: var(--accent); }
-.cap-cell.is-first .cap-first { display: inline-flex; color: var(--accent); border-color: var(--accent); }
+/* page-order badge — top-left, accent chip with the 1-based page number. Rendered only on
+   chosen cells (in both the chosen row and the pool grid), so it doubles as the "selected" mark. */
+.cap-order { position: absolute; top: 7px; left: 7px; z-index: 1; min-width: 20px; height: 20px;
+    display: inline-flex; align-items: center; justify-content: center; padding: 0 5px;
+    border-radius: 5px; font-size: var(--fs-xs); font-weight: 600; line-height: 1;
+    color: var(--black); background: var(--accent); }
+/* chosen row: the picked captures in page order, above the pool. Single horizontal scroll row
+   (fixed-width thumbs) so the axis-x drag-reorder math stays in one line. */
+.cap-chosen { display: flex; gap: 8px; padding: 0 12px 10px; overflow-x: auto;
+    border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.cap-chosen .cap-cell { width: 150px; flex: 0 0 auto; cursor: grab; }
 .cap-cell img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px;
     display: block; background: var(--black); }
 .cap-time { font-size: var(--fs-xs); color: var(--muted); text-align: center; white-space: nowrap; }
