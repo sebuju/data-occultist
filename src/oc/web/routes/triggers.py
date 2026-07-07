@@ -12,7 +12,6 @@ from fastapi import APIRouter, HTTPException
 
 from ...collect.triggers import (
     fire_action, fire_target, fire_toast, read_source_target, record_fire)
-from ...collect.trigger_history import recent as recent_history
 from ...enrich.price_runner import start_sweep, sweep_status
 from ...profile import list_profiles, load_profile
 from ..deps import get_notifier, get_settings
@@ -43,14 +42,6 @@ def list_triggers(game: str):
                     "readout_watch": t.readout_watch, "readout_op": t.readout_op,
                     "readout_value": t.readout_value, "throttle_ms": t.throttle_ms})
     return {"game": game, "triggers": out}
-
-
-@router.get("/{game}/{trigger_id}/history")
-def trigger_history(game: str, trigger_id: str):
-    """Recent (non-persisted, this-session) fires of ``trigger_id`` — newest first, each with
-    when / why / what it fired and whether it was throttled. Backs the history satellite node."""
-    _profile_or_404(game)
-    return {"game": game, "trigger": trigger_id, "history": recent_history(game, trigger_id)}
 
 
 @router.post("/{game}/{trigger_id}/fire")
