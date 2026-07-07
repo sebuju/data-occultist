@@ -21,6 +21,7 @@ splits that keep the profile YAML small, safe, and versioned:
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -191,6 +192,49 @@ def _migrate_readout_ids(raw: dict) -> dict:
     return raw
 
 
+def _split_shared_readout_fields(raw: dict) -> dict:
+    """A front-end id-minting bug (fixed in ``model.js``) let a fresh readout's linked field id
+    collide with an already-in-use one, so the client silently reused the existing ``FieldDef``
+    instead of creating a new one — two readouts (or a readout and a region/item-field box) ended
+    up sharing ONE field, incl. its ``rules`` pipeline. Editing/pasting rules on one readout then
+    silently changed a sibling readout the user never touched. Heal it: a region/item-field always
+    owns its field (its own id IS the field id); the first readout to reference a field keeps it;
+    every later readout sharing that field id gets its own DEEP COPY appended to the window, with
+    its ``field`` repointed. Idempotent — a window with no shared readout fields is untouched."""
+    if not isinstance(raw, dict):
+        return raw
+    for w in (raw.get("windows") or []):
+        if not isinstance(w, dict):
+            continue
+        fields = w.get("fields") or []
+        by_id = {f["id"]: f for f in fields if isinstance(f, dict) and f.get("id")}
+        claimed = {r["field"] for r in (w.get("regions") or [])
+                   if isinstance(r, dict) and r.get("field")}
+        claimed |= {itf["field"] for it in (w.get("items") or []) if isinstance(it, dict)
+                    for itf in (it.get("fields") or []) if isinstance(itf, dict) and itf.get("field")}
+        for v in (w.get("readouts") or []):
+            if not isinstance(v, dict):
+                continue
+            fid = v.get("field")
+            if not fid or fid not in by_id:
+                continue
+            if fid not in claimed:
+                claimed.add(fid)
+                continue
+            n, new_id = 1, f"{fid}_split1"
+            while new_id in by_id:
+                n += 1
+                new_id = f"{fid}_split{n}"
+            clone = copy.deepcopy(by_id[fid])
+            clone["id"] = new_id
+            fields.append(clone)
+            by_id[new_id] = clone
+            v["field"] = new_id
+            claimed.add(new_id)
+        w["fields"] = fields
+    return raw
+
+
 def _migrate_dictionary_ids(raw: dict) -> dict:
     """Dictionaries carried an auto ``dict_N`` id PLUS a separate ``name`` (shown in the node
     while a field pinned the id) — the same split readouts had. Adopt each dictionary's ``name``
@@ -322,7 +366,8 @@ def load_profile(profiles_dir: Path | str, name: str) -> GameProfile:
             return hit[1].model_copy(deep=True)   # pristine cached -> own copy (callers mutate)
     raw = yaml.safe_load(_read_text_retry(path))
     if isinstance(raw, dict):
-        raw = _migrate_dictionary_ids(_migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw))))
+        raw = _migrate_dictionary_ids(_split_shared_readout_fields(
+            _migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw)))))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
     if sig is not None:
@@ -460,7 +505,8 @@ def read_backup(profiles_dir: Path | str, name: str, stamp: str) -> GameProfile:
     path = backup_path(profiles_dir, name, stamp)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if isinstance(raw, dict):
-        raw = _migrate_dictionary_ids(_migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw))))
+        raw = _migrate_dictionary_ids(_split_shared_readout_fields(
+            _migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw)))))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
     return profile
