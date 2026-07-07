@@ -19,8 +19,11 @@ import hashlib
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
+
+from ..filelock import file_lock
 
 
 def cache_key(image_id: str, config: Any, engine_sig: str = "") -> str:
@@ -44,12 +47,17 @@ class OcrCache:
         self._lock = threading.Lock()
         self._load()
 
-    def _load(self) -> None:
+    def _read_disk(self) -> dict:
+        """Whatever is currently on disk, or ``{}`` if missing/corrupt (rebuildable)."""
         if self._path.exists():
             try:
-                self._entries = json.loads(self._path.read_text(encoding="utf-8"))
+                return json.loads(self._path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
-                self._entries = {}   # a corrupt cache is rebuildable — just recompute
+                return {}
+        return {}
+
+    def _load(self) -> None:
+        self._entries = self._read_disk()
 
     def get(self, key: str) -> dict | None:
         with self._lock:
@@ -62,24 +70,44 @@ class OcrCache:
             self._entries[key] = value
             self._dirty = True
 
+    def _replace(self, tmp: Path) -> None:
+        # Windows can transiently fail a rename over a file another process just touched
+        # (WinError 32, sharing violation) — retry briefly rather than dropping the save.
+        for attempt in range(5):
+            try:
+                os.replace(tmp, self._path)
+                return
+            except OSError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.02)
+
     def save(self) -> None:
         with self._lock:
             if not self._dirty:
                 return
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            # Unique temp per writer so two concurrent saves never share (or clobber) one tmp; the
-            # whole swap stays under the lock so only one rename targets the cache at a time.
-            tmp = self._path.with_name(f"{self._path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-            try:
-                tmp.write_text(json.dumps(self._entries, ensure_ascii=False), encoding="utf-8")
-                os.replace(tmp, self._path)   # atomic swap so a crash mid-write can't truncate it
-                self._dirty = False
-            except OSError:
-                # rebuildable cache — a transient lock collision must never 500 the read it rode in on
+            # Cross-process guard: another OcrCache instance (desktop app run alongside `serve`,
+            # or a `--reload` worker overlapping its predecessor) may have saved keys since we
+            # last loaded — re-read + merge under a file lock instead of clobbering them. Entries
+            # are deterministic by key (a hash of the immutable image id + every OCR-affecting
+            # input), so two processes computing the same key always agree: a merge can only
+            # UNION, never conflict.
+            with file_lock(self._path):
+                merged = {**self._read_disk(), **self._entries}
+                # Unique temp per writer so two concurrent saves never share (or clobber) one tmp.
+                tmp = self._path.with_name(f"{self._path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
                 try:
-                    tmp.unlink()
+                    tmp.write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
+                    self._replace(tmp)   # atomic swap so a crash mid-write can't truncate it
+                    self._entries = merged   # adopt the merge so we don't re-save the other side's keys
+                    self._dirty = False
                 except OSError:
-                    pass
+                    # rebuildable cache — a transient lock collision must never 500 the read it rode in on
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
 
     @classmethod
     def for_game(cls, data_dir: Path | str, game: str) -> "OcrCache":

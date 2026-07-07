@@ -84,3 +84,21 @@ def test_concurrent_saves_dont_race(tmp_path):
         t.join()
     assert errs == []
     assert len(OcrCache(tmp_path / "ocr_cache.json")._entries) == 12 * 40   # all persisted
+
+
+def test_two_instances_dont_clobber_each_other(tmp_path):
+    """The desktop app and `serve` (or a `--reload` worker overlapping its predecessor) are
+    each a SEPARATE process/instance over the SAME sidecar. A `threading.Lock` inside one
+    `OcrCache` does nothing for the other instance, so `save()` must re-read + merge rather
+    than blindly overwrite with its own once-loaded snapshot — else the second save clobbers
+    the first instance's key (the "doesn't stick when multiple running" bug)."""
+    p = tmp_path / "ocr_cache.json"
+    a = OcrCache(p)   # both load the same (empty) starting state
+    b = OcrCache(p)
+    a.put("ka", {"v": "a"})
+    a.save()
+    b.put("kb", {"v": "b"})
+    b.save()          # must NOT clobber ka even though b never saw it in its own _entries
+    fresh = OcrCache(p)
+    assert fresh.get("ka") == {"v": "a"}
+    assert fresh.get("kb") == {"v": "b"}
