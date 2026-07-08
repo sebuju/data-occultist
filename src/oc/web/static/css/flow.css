@@ -193,12 +193,13 @@ a.node.win:hover { border-color: var(--accent); }
    borderless/transparent so the pill (.sv-input) supplies the look */
 /* the add control is a plain "+" glyph, not a pill: drop the .sv-input border/fill so only the
    node-coloured "+" shows. */
-.sv-add { padding: 0; overflow: hidden; border: 0; background: transparent; }
+.sv-add { padding: 0; overflow: hidden; border: 0; background: transparent; border-radius: 0 !important; }
+select.sv-addin:not(:hover) { opacity: 0.7; }
 .gnode .sv-add .sv-addin { max-width: 150px; border: 0; background: transparent; color: var(--nt, var(--accent));
-    font-weight: 700; font-size: calc(var(--fs-sm) + 2px); line-height: 1; padding: 1px 6px; cursor: pointer;
+    font-weight: 700; font-size: calc(var(--fs-sm) + 2px); line-height: 1; padding: 0; cursor: pointer;
     appearance: none; -webkit-appearance: none;   /* drop the native dropdown caret — the pill is the affordance */
     field-sizing: content;   /* size to the SELECTED text ("+ source…"), not the widest option */
-    align-self: stretch; min-height: 0; box-sizing: border-box; }   /* fill the pill, drop the select UA min-height */
+    align-self: stretch; min-height: 0; box-sizing: border-box; background: unset !important; }   /* fill the pill, drop the select UA min-height */
 /* the dropdown popup inherits the select's bg — transparent renders white, so set the
    options to the panel colour so they stay readable when opened */
 .sv-add .sv-addin option { background: var(--panel); color: var(--text); }
