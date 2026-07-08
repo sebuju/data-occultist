@@ -1117,6 +1117,7 @@ windows:
   item_fields: []
   item_tells: []
 - id: arsenal_warframe
+  dataset: dataset
   fields:
   - id: name
     type: text
@@ -1507,9 +1508,9 @@ windows:
     isolate: false
     glyph_check: false
   data_area:
-    x: 0.04487653197464019
-    y: 0.6358536609470559
-    w: 0.9163171558941904
+    x: 0.044274970740152624
+    y: 0.6241895892853566
+    w: 0.9181558380269483
     h: 0.2558888701633505
   detect:
   - id: detect_7
@@ -1555,8 +1556,8 @@ windows:
       - rank
       sep: '|'
       case_sensitive: false
-    min_cover_x: 0.75
-    min_cover_y: 0.75
+    min_cover_x: 0.9
+    min_cover_y: 0.9
     terminator: false
   static_grid: false
   readouts:
@@ -1963,6 +1964,13 @@ datasets:
   dedup: true
   batch_mode: run
   sync_mode: accumulate
+- id: dataset
+  aggregate: latest
+  key_field: ''
+  key_fields: []
+  dedup: true
+  batch_mode: run
+  sync_mode: accumulate
 subsets:
 - id: live_prices_joined
   sources:
@@ -2255,6 +2263,17 @@ subsets:
   - field: name
     op: contains
     value: Blueprint
+  derived: []
+  hidden_columns: []
+  sort: []
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  config_collapsed: false
+- id: subset
+  sources: []
+  filters: []
   derived: []
   hidden_columns: []
   sort: []
@@ -3598,32 +3617,32 @@ layout:
       y: 1900.0
       collapsed: false
     win:arsenal_warframe:
-      x: 4620.0
-      y: 1180.0
+      x: 4700.0
+      y: 1500.0
       w: 780.0
       h: 1104.0
       collapsed: false
       custW: true
       custH: false
     item:arsenal_warframe:mod:
-      x: 4700.0
-      y: 2720.0
+      x: 5140.0
+      y: 2580.0
       collapsed: false
     fld:arsenal_warframe:mod:name:
-      x: 5360.0
-      y: 2720.0
+      x: 5800.0
+      y: 2580.0
       collapsed: false
     fld:arsenal_warframe:mod:drain:
-      x: 5120.0
-      y: 2720.0
+      x: 5560.0
+      y: 2580.0
       collapsed: false
     fld:arsenal_warframe:mod:rank:
-      x: 5120.0
-      y: 3100.0
+      x: 5560.0
+      y: 2980.0
       collapsed: false
     det:arsenal_warframe:detect_7:
-      x: 5420.0
-      y: 2120.0
+      x: 5520.0
+      y: 1500.0
       collapsed: false
     trigger:ab_trigger:
       x: -3560.0
@@ -3662,23 +3681,23 @@ layout:
       y: -2680.0
       collapsed: false
     ro:arsenal_warframe:slot_arcane_1:
-      x: 9140.0
-      y: -1040.0
+      x: 8400.0
+      y: -1020.0
       w: 320.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:arsenal_warframe:slot_arcane_2:
-      x: 9140.0
-      y: -660.0
+      x: 8400.0
+      y: -640.0
       w: 320.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     register:register:
-      x: 7740.0
+      x: 7780.0
       y: 2380.0
       w: 740.0
       h: 880.0
@@ -3814,7 +3833,7 @@ layout:
       custW: true
       custH: true
     ro:arsenal_warframe:slot_aura_name:
-      x: 6800.0
+      x: 6740.0
       y: -640.0
       w: 500.0
       h: 337.0
@@ -3822,7 +3841,7 @@ layout:
       custW: true
       custH: true
     ro:arsenal_warframe:slot_exilus_name:
-      x: 7420.0
+      x: 7400.0
       y: -640.0
       w: 500.0
       h: 337.0
@@ -3830,7 +3849,7 @@ layout:
       custW: true
       custH: true
     ro:arsenal_warframe:slot_aura_drain:
-      x: 6800.0
+      x: 6740.0
       y: -1020.0
       w: 240.0
       h: 240.0
@@ -3838,7 +3857,7 @@ layout:
       custW: true
       custH: true
     ro:arsenal_warframe:slot_aura_school:
-      x: 7060.0
+      x: 7000.0
       y: -1020.0
       w: 240.0
       h: 240.0
@@ -3846,7 +3865,7 @@ layout:
       custW: true
       custH: true
     ro:arsenal_warframe:slot_exilus_drain:
-      x: 7420.0
+      x: 7400.0
       y: -1020.0
       w: 240.0
       h: 240.0
@@ -3854,7 +3873,7 @@ layout:
       custW: true
       custH: true
     ro:arsenal_warframe:slot_exilus_school:
-      x: 7680.0
+      x: 7660.0
       y: -1020.0
       w: 240.0
       h: 240.0
@@ -3986,6 +4005,30 @@ layout:
       y: 1200.0
       w: 240.0
       h: 240.0
+      collapsed: false
+      custW: true
+      custH: true
+    sub:subset:
+      x: 8820.0
+      y: 2560.0
+      collapsed: false
+    ds:dataset:
+      x: 7580.0
+      y: 3540.0
+      collapsed: false
+    vt:ds:dataset:
+      x: 7240.0
+      y: 3760.0
+      w: 700.0
+      h: 400.0
+      collapsed: false
+      custW: true
+      custH: true
+    prev:arsenal_warframe:
+      x: 4240.0
+      y: 2580.0
+      w: 780.0
+      h: 340.0
       collapsed: false
       custW: true
       custH: true
@@ -4746,6 +4789,26 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: cyan
+  - id: group_45
+    title: group_45
+    members:
+    - win:arsenal_warframe
+    - det:arsenal_warframe:detect_7
+    - item:arsenal_warframe:mod
+    - fld:arsenal_warframe:mod:name
+    - fld:arsenal_warframe:mod:drain
+    - fld:arsenal_warframe:mod:rank
+    - prev:arsenal_warframe
+    outline:
+      color: '#262c37'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#10141c'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+    titlePos: tl
   float_windows: {}
   super_groups:
   - id: sgroup_2
@@ -4840,6 +4903,8 @@ layout:
   - hist:ab_trigger
   - hist:trigger_on_new_relic
   - hist:owned_refresh
+  - vt:ds:dataset
+  - prev:arsenal_warframe
   sub_groups:
   - id: subgroup_5
     parent: group_22
