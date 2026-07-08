@@ -1449,7 +1449,7 @@ windows:
   - id: rof_48
     type: symbol
     rules: []
-    min_confidence: 0.0
+    min_confidence: 0.7
     isolate: false
     glyph_check: false
   data_area:
@@ -1669,9 +1669,9 @@ windows:
   - id: drain_8
     box:
       x: 0.7890813911597554
-      y: 0.4520905859285882
+      y: 0.4530165118545141
       w: 0.011115606748181638
-      h: 0.01943348727666433
+      h: 0.017581635424812475
     field: rof_18_split1
     enabled: true
   - id: drain_exilus
@@ -1701,9 +1701,9 @@ windows:
   - id: school_8
     box:
       x: 0.8004048693179817
-      y: 0.45152195609493695
-      w: 0.009726682526316255
-      h: 0.020044735382487133
+      y: 0.4533738079467887
+      w: 0.009466265859649587
+      h: 0.01726695760470935
     field: rof_48
     enabled: true
   preprocess:
@@ -3767,8 +3767,12 @@ layout:
       collapsed: false
     ro:arsenal_warframe:school_8:
       x: 4300.0
-      y: 1660.0
+      y: 1700.0
+      w: 220.0
+      h: 200.0
       collapsed: false
+      custW: false
+      custH: false
     atlas:
       x: -1900.0
       y: -4020.0
