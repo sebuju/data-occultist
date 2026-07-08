@@ -11,6 +11,7 @@ import { h } from "../dom.js";
 
 const SEGS = 10;   // segment count (visual only; value is continuous, quantised by `step`). Fixed
                    // 6px-wide segs (graph.css) -> 10 fits the narrowest node value cell without clipping.
+                   // Painted at half-step (0.05) granularity via `.half` so the 0.05 quantisation shows.
 
 // opts: { cls, k, value, fid, title, step }
 //   cls   - change-class the node already wires (e.g. "ffset" / "fset" / "roset" / "itellconf")
@@ -28,8 +29,14 @@ export function confMeter({ cls, k = null, value = 0, fid = null, title = "", st
 
     const clamp = (v) => Math.max(0, Math.min(1, v));
     function paint(v) {
-        const lit = Math.round(v * SEGS);
-        segEls.forEach((s, i) => { const on = i < lit; s.classList.toggle("on", on); s.classList.toggle("off", !on); });
+        const units = Math.round(v * SEGS * 2);   // half-units lit (each 0.05, matching the default step)
+        segEls.forEach((s, i) => {
+            const full = units >= (i + 1) * 2;
+            const half = !full && units === i * 2 + 1;
+            s.classList.toggle("on", full);
+            s.classList.toggle("half", half);
+            s.classList.toggle("off", !full && !half);
+        });
         pct.textContent = v.toFixed(2);
     }
     function set(v, commit) {
@@ -53,8 +60,15 @@ export function confMeter({ cls, k = null, value = 0, fid = null, title = "", st
     });
     // hover preview: with no button down, light segments up to the cursor (slider affordance —
     // shows where a click lands) via a .hot class; committed .on state is untouched until a press.
-    const hover = (frac) => { const lit = Math.round(clamp(frac) * SEGS); segEls.forEach((s, i) => s.classList.toggle("hot", i < lit)); };
-    const clearHover = () => segEls.forEach((s) => s.classList.remove("hot"));
+    const hover = (frac) => {
+        const units = Math.round(clamp(frac) * SEGS * 2);
+        segEls.forEach((s, i) => {
+            const full = units >= (i + 1) * 2;
+            s.classList.toggle("hot", full);
+            s.classList.toggle("hot-half", !full && units === i * 2 + 1);
+        });
+    };
+    const clearHover = () => segEls.forEach((s) => s.classList.remove("hot", "hot-half"));
     bar.addEventListener("pointermove", (e) => { if (dragging) set(fromX(e.clientX), true); else hover(fromX(e.clientX)); });
     bar.addEventListener("pointerleave", clearHover);
     const end = (e) => { dragging = false; try { bar.releasePointerCapture(e.pointerId); } catch {} };

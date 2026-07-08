@@ -94,6 +94,7 @@
 .meter .seg { width: 7px; height: 12px; border-radius: 1.5px; border: 1px solid; }
 .meter .seg.on { background: var(--mc); border-color: var(--mc); }
 .meter .seg.off { background: transparent; border-color: color-mix(in oklab, var(--mc) 32%, transparent); }
+.meter .seg.half { background: linear-gradient(90deg, var(--mc) 50%, transparent 50%); border-color: var(--mc); }
 .meter .pct { font-size: var(--fs-xs); color: var(--mc); white-space: nowrap; font-variant-numeric: tabular-nums;
     overflow: hidden; text-overflow: ellipsis; }
 .meter.good { --mc: var(--ok); } .meter.bad { --mc: var(--danger); } .meter.acc { --mc: var(--accent); }
@@ -108,6 +109,7 @@
 /* hover preview: segments up to the cursor light in a mid-brightness fill (slider affordance —
    shows where a click would land). Driven by meter.js toggling .hot on pointermove. */
 .meter.editable .seg.hot { background: color-mix(in oklab, var(--mc) 50%, transparent); border-color: var(--mc); }
+.meter.editable .seg.hot-half { background: linear-gradient(90deg, color-mix(in oklab, var(--mc) 50%, transparent) 50%, transparent 50%); border-color: var(--mc); }
 .meter.editable .pct { flex: 0 0 auto; min-width: 2.6em; text-align: right; }
 .meter.editable:focus-visible { outline: 1px solid color-mix(in oklab, var(--nt) 60%, var(--line)); outline-offset: 2px; border-radius: 3px; }
 /* chip: a bordered inline tag tinted by the node type — boxed sub-labels / key parts / token pills */
@@ -555,7 +557,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .frule-btns { display: flex; gap: 4px; align-items: center; place-self: flex-end; }
 .frule-btns > button { min-height: unset; padding: 0px; background: unset; color: var(--nt, var(--accent)); }
 .fgrp .ruleadd, .fgrp .rulecopy, .fgrp .rulepaste { font-size: var(--fs-xs); line-height: 1;
-    padding: 2px 6px; min-height: 0; text-transform: none; letter-spacing: 0; }
+    min-height: 0; text-transform: none; letter-spacing: 0; }
 .fgrp .rulecopy[disabled], .fgrp .rulepaste[disabled] { opacity: .4; cursor: default; }
 /* one pipeline rule: a head row (move + when(+arg) -> then(+operands) + trash) and, below it,
    the live in->out trace slot */
@@ -578,7 +580,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .frule-head .rule-arrow { flex: 0 0 auto; }
 .frule-head .rule-fuzzy { flex: 0 0 6ch; }
 .frule-head .rule-del { flex: 0 0 auto; padding: 0; }
-.frule-head .rule-del[data-armed="1"] { background: var(--warn); color: var(--on-accent); }
+.frule-head .rule-del[data-armed="1"] { background: var(--warn); color: var(--on-accent); visibility: visible !important; }
 /* always occupies one line so a row's height never changes as the trace fills in */
 .frule-trace { font-size: var(--fs-xs); font-family: var(--mono, monospace); padding-left: 2px;
     min-height: 1.25em; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
