@@ -57,9 +57,10 @@ export function registerParts(x, model) {
 // Fetch + render a register's held map into its node body. No-op when the node isn't in the DOM.
 // Modeled on renderTriggerHistory (history_node.js) — VTable reconciles in place (rule 1).
 // With live mode OFF the collector never feeds the server-side map, so a wired source with no
-// server row falls back to readoutPreview — the same per-window /api/preview read a readout
-// node's `.ro-live` uses (see panels/livewin.js renderReadoutValues). A "readout-preview" event
-// (imaging.js, fired whenever that fallback source updates) repaints every open register too.
+// server row falls back to readoutPreview.all — the FULL (empty-inclusive) per-window
+// /api/preview read a readout node's `.ro-live` uses (see panels/livewin.js renderReadoutValues).
+// A "readout-preview" event (imaging.js, fired whenever that fallback source updates) repaints
+// every open register too.
 export function refreshRegister(id) {
     const host = nodeEls.get(`register:${id}`)?.querySelector(".data-host");
     if (!host) return;
@@ -69,8 +70,8 @@ export function refreshRegister(id) {
             const byKey = new Map((r.records || []).map((e) => [e.key, e]));
             if (!liveCollecting()) {
                 for (const rid of wired) {
-                    if (byKey.has(rid) || !Object.prototype.hasOwnProperty.call(readoutPreview.vals, rid)) continue;
-                    byKey.set(rid, { key: rid, value: readoutPreview.vals[rid], conf: readoutPreview.confs[rid], last_seen: null });
+                    if (byKey.has(rid) || !Object.prototype.hasOwnProperty.call(readoutPreview.all, rid)) continue;
+                    byKey.set(rid, { key: rid, value: readoutPreview.all[rid], conf: readoutPreview.allConfs[rid], last_seen: null });
                 }
             }
             const rows = [...byKey.values()].map((e) => ({

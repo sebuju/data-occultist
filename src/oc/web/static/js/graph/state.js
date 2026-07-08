@@ -50,7 +50,10 @@ export const itemReads = new Map();      // "winId:itemId" -> last cutout read {
 // source for each readout node's `.ro-live` value: when the collector isn't running there's no
 // heartbeat value, so the readout shows what the current image reads (written by refreshPreview).
 // A holder object (not a `let`) so both writer (imaging) and reader (livewin) share one ref.
-export const readoutPreview = { vals: {}, confs: {} };
+// `vals`/`confs` are GATED (empty/low-confidence reads omitted) -- used only for the crosses_*
+// trigger "prev" chip. `all`/`allConfs` are the FULL map (empty/low-confidence as "") -- drive
+// .ro-live + the register's non-live fallback so a blank slot shows/holds empty, not nothing.
+export const readoutPreview = { vals: {}, confs: {}, all: {}, allConfs: {} };
 
 // Live dataset counts (from the heartbeat) + change-detection bookkeeping.
 export const prevPresent = {};

@@ -107,6 +107,12 @@ class TickResult:
     reads: list[dict] = field(default_factory=list)     # per-kept-record OCR detail (live debug log only)
     readouts: dict = field(default_factory=dict)       # live ephemeral readout values read this tick (never stored)
     readout_confs: dict = field(default_factory=dict)  # {readout_id: confidence} for the values above (UI display only)
+    # Every ENABLED readout of the classified window, keyed by id, with an empty/low-confidence
+    # read defaulted to "" instead of omitted (unlike `readouts` above). Feeds registers + the
+    # readout node's own .ro-live display, so a slot that reads empty shows/holds blank instead
+    # of nothing (and clears a stale prior value); triggers/toasts keep using the gated `readouts`.
+    readouts_all: dict = field(default_factory=dict)
+    readout_confs_all: dict = field(default_factory=dict)
     scroll: tuple[float, float] | None = None  # mirror datasets: visible row-index span (vlo,vhi)
     scroll_meta: dict | None = None            # mirror: {total, viewport, gain, confident, pinned}
 
@@ -351,20 +357,29 @@ class Collector:
         # gates each box, so a garbage mid-animation reading is dropped, never shown.
         readouts_now: dict[str, object] = {}
         readout_confs_now: dict[str, float] = {}
+        readouts_all_now: dict[str, object] = {}
+        readout_confs_all_now: dict[str, float] = {}
         if window.readouts:
             vfields = {f.id: f for f in self._profile.fields_for(window)}
             detailed = self._reader.read_readouts_detailed(frame, window, vfields)
             readouts_now = {k: value for k, (value, _c) in detailed.items()}
             readout_confs_now = {k: conf for k, (_v, conf) in detailed.items()}
             self._readouts.update(readouts_now)
+            # Full map: every ENABLED readout, empty/low-confidence defaulted to "" instead of
+            # omitted -- so a blank slot pushes an empty value (register/.ro-live) rather than
+            # nothing, and a slot that goes empty overwrites its stale prior value with "".
+            readouts_all_now = {v.id: readouts_now.get(v.id, "") for v in window.readouts if v.enabled}
+            readout_confs_all_now = {v.id: readout_confs_now.get(v.id) for v in window.readouts if v.enabled}
 
         # Moving frame: readouts were taken above; skip the grid OCR (blurred) and return them.
         if moving:
             return TickResult(TickStatus.moving, window_id=window_id, state_id=state_id,
-                              readouts=readouts_now, readout_confs=readout_confs_now)
+                              readouts=readouts_now, readout_confs=readout_confs_now,
+                              readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now)
         if not self._state_allows_save(window, state_id):
             return TickResult(TickStatus.state_invalid, window_id=window_id, state_id=state_id,
-                              readouts=readouts_now, readout_confs=readout_confs_now)
+                              readouts=readouts_now, readout_confs=readout_confs_now,
+                              readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now)
 
         # Per-stage timing: capture + settle + classify were measured above (windowless
         # until now); emit them under this window now that it's recognised + save-worthy.
@@ -418,6 +433,8 @@ class Collector:
                 reads=reads,
                 readouts=readouts_now,
                 readout_confs=readout_confs_now,
+                readouts_all=readouts_all_now,
+                readout_confs_all=readout_confs_all_now,
             )
 
         # Per-detection batching: when this dataset hasn't been fed within the grace window
@@ -573,6 +590,8 @@ class Collector:
             reads=reads,
             readouts=readouts_now,
             readout_confs=readout_confs_now,
+            readouts_all=readouts_all_now,
+            readout_confs_all=readout_confs_all_now,
             scroll=tick_scroll,
             scroll_meta=tick_scroll_meta,
         )

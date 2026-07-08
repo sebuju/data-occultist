@@ -82,3 +82,39 @@ def test_clear_wipes_map():
     assert s.register_records("hp")
     s.clear_register("hp")
     assert s.register_records("hp") == []
+
+
+def test_feed_holds_empty_value():
+    # a readout that read empty (or dropped below confidence) must still push an entry, not be
+    # skipped -- the full map hands "" for it (see TickResult.readouts_all), and the register
+    # holds "" like any other value, overwriting a stale prior reading.
+    s = _session()
+    s._feed_registers({"health": 100, "shield": 50}, {"health": 0.9, "shield": 0.9})
+    s._feed_registers({"health": "", "shield": 50}, {"health": None, "shield": 0.9})
+    rows = {r["key"]: r for r in s.register_records("hp")}
+    assert rows["health"]["value"] == ""
+
+
+def test_on_tick_routes_gated_vs_full_readout_maps():
+    # `_on_tick` must feed the register from `readouts_all` (empty-inclusive) while keeping
+    # `_readouts`/`_readout_confs` (status()'s gated map for toasts/triggers) fed only from the
+    # gated `readouts`. A dataclass-like stub stands in for TickResult.
+    from types import SimpleNamespace
+
+    from oc.collect.collector import TickStatus
+
+    s = _session()
+    # status=moving (not saved/throttled) so _on_tick's bookkeeping only needs .status/.new --
+    # the readout split under test doesn't depend on which status this is.
+    result = SimpleNamespace(
+        status=TickStatus.moving, new=0,
+        readouts={"shield": 50},                      # health dropped (empty/low-conf) -> omitted
+        readout_confs={"shield": 0.9},
+        readouts_all={"health": "", "shield": 50},     # full map: health present as ""
+        readout_confs_all={"health": None, "shield": 0.9},
+    )
+    s._on_tick(result)
+    assert s._readouts == {"shield": 50}               # gated map never sees "health"
+    rows = {r["key"]: r for r in s.register_records("hp")}
+    assert rows["health"]["value"] == ""                # register still got the empty entry
+    assert rows["shield"]["value"] == 50

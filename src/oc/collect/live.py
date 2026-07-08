@@ -47,8 +47,14 @@ class LiveSession:
         self._last_status = "no_window"    # raw TickStatus of the latest tick (why we're not reading)
         self._scroll: tuple[float, float] | None = None   # latest mirror visible row-index span
         self._scroll_meta: dict | None = None             # latest mirror calibration snapshot
-        self._readouts: dict[str, object] = {}           # latest live readout values (ephemeral)
+        self._readouts: dict[str, object] = {}           # latest live readout values (ephemeral, GATED)
         self._readout_confs: dict[str, float] = {}       # confidence per readout value (UI display only)
+        # Full readout map: every enabled readout of a classified window, empty/low-confidence
+        # defaulted to "" instead of omitted (see TickResult.readouts_all). Feeds registers +
+        # .ro-live so a blank slot shows/holds empty rather than nothing or a stale prior value.
+        # `_readouts`/`_readout_confs` above stay gated -- triggers/toasts must never see this.
+        self._readouts_all: dict[str, object] = {}
+        self._readout_confs_all: dict[str, float] = {}
         # Register-node maps: {register_id: {readout_id: {value, conf, first_seen, last_seen}}}. Held
         # in server memory only (never persisted). Fed from readouts each tick; deliberately NOT
         # reset by start() — a register accumulates across runs and is wiped only by clear_register.
@@ -99,6 +105,8 @@ class LiveSession:
             self._scroll_meta = None
             self._readouts = {}
             self._readout_confs = {}
+            self._readouts_all = {}
+            self._readout_confs_all = {}
             self._error = None
             self._debug.clear()
             self._debug_seq = 0
@@ -158,12 +166,15 @@ class LiveSession:
             self._frames += 1
             self._written += result.new
             if result.readouts:
-                self._readouts.update(result.readouts)   # latest live values for the UI (ephemeral)
+                self._readouts.update(result.readouts)   # GATED values -- toasts/triggers (never garbage)
                 self._readout_confs.update(result.readout_confs or {})
+            if result.readouts_all:
+                self._readouts_all.update(result.readouts_all)   # FULL map incl. "" -- registers + .ro-live
+                self._readout_confs_all.update(result.readout_confs_all or {})
                 # feed from the full accumulated map (every readout seen all session), not just this
                 # tick's delta -- a register wired to a readout from a window that isn't the one just
                 # read would otherwise wait for that window to be revisited before showing anything.
-                self._feed_registers(self._readouts, self._readout_confs)
+                self._feed_registers(self._readouts_all, self._readout_confs_all)
             self._last_status = result.status.value   # why we are / aren't reading right now
             # phase = we're in an OCR-worthy screen. A `saved` tick read it; a `throttled` tick
             # is the SAME screen between two-rate OCR slots (not re-read) — both count as "in a
@@ -279,8 +290,13 @@ class LiveSession:
                 "phase_status": self._last_status,  # raw TickStatus — WHY we're not reading (throttled / unrecognised / …)
                 "scroll": list(self._scroll) if self._scroll else None,   # [vlo,vhi] row-index span, or null
                 "scroll_meta": self._scroll_meta,   # {total,viewport,gain,confident,pinned} or null
-                "readouts": dict(self._readouts),   # {readout_id: value} live ephemeral values (never stored)
+                "readouts": dict(self._readouts),   # {readout_id: value} GATED live values (never stored)
                 "readout_confs": dict(self._readout_confs),   # {readout_id: confidence} for the values above (UI only)
+                # Full map: every enabled readout, empty/low-confidence as "" instead of omitted.
+                # Drives .ro-live + the register non-live fallback so a blank slot shows/holds
+                # empty rather than nothing (see TickResult.readouts_all / _feed_registers).
+                "readouts_all": dict(self._readouts_all),
+                "readout_confs_all": dict(self._readout_confs_all),
                 "recognized": [{"key": k, "count": n, "miss": k in ("", "idle", "unrecognised", "no_window")}
                                for k, n in sorted(self._recog.items(), key=lambda kv: kv[1], reverse=True)],
                 "error": self._error,

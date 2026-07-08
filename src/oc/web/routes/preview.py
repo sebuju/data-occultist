@@ -279,6 +279,11 @@ def _read_window(engine, profile, game, capture):
         detailed = reader.read_readouts_detailed(frame, window, fields)
         result["readouts"] = {k: value for k, (value, _c) in detailed.items()}
         result["readout_confs"] = {k: conf for k, (_v, conf) in detailed.items()}
+        # Full map: every enabled readout, empty/low-confidence defaulted to "" instead of
+        # omitted -- mirrors TickResult.readouts_all so the register/.ro-live preview fallback
+        # shows a blank slot as empty rather than missing (see live.py/register_node.js).
+        result["readouts_all"] = {v.id: result["readouts"].get(v.id, "") for v in window.readouts if v.enabled}
+        result["readout_confs_all"] = {v.id: result["readout_confs"].get(v.id) for v in window.readouts if v.enabled}
     result["ms"] = round(job.ms)   # real compute time (lock-wait excluded) for the log bar
     return frame, window, result
 
