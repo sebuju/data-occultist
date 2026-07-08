@@ -2,9 +2,11 @@
 // membership of its two endpoints and assigns each boundary-CROSSING edge a GATE: one fanned crossing
 // point per group-box face. A group becomes an opaque box to the outside; every line that crosses its
 // boundary funnels through the gate on the face nearest its outside end, fanned so multiple crossings
-// never stack on one point. hierRoute.js then routes the inside half (member -> gate) and the outside
-// half (gate -> free node / other group's gate) as separate A* sub-problems and stitches them at the
-// shared gate point (route.js gate terminals keep both halves meeting there exactly).
+// never stack on one point. The fan's CENTRE is free, not fixed at the face midpoint: it slides toward
+// the mean straight member<->outside pierce point (pierceCoord), so a side's gates track where its wires
+// actually point instead of always sitting dead-centre. hierRoute.js then routes the inside half (member
+// -> gate) and the outside half (gate -> free node / other group's gate) as separate A* sub-problems and
+// stitches them at the shared gate point (route.js gate terminals keep both halves meeting there exactly).
 //
 // Edge classes:
 //   outer     — both ends free (no group)                -> routed whole in the outer pass
@@ -50,6 +52,23 @@ function faceStillOk(box, pt, f) {
     if (f === "T") return pt[1] <= c[1];
     return pt[1] >= c[1];
 }
+// coord (along the face's own axis) where the straight line from inside point `A` to
+// outside point `B` pierces face `f` of `box` — the "straightest wire" gate position.
+// Degenerates to A's own coord on that axis when the segment runs parallel to the face.
+function pierceCoord(box, f, A, B) {
+    if (f === "L" || f === "R") {
+        const faceX = f === "L" ? box.x : box.x + box.w;
+        const dx = B[0] - A[0];
+        if (Math.abs(dx) < 1e-6) return A[1];
+        const t = (faceX - A[0]) / dx;
+        return A[1] + t * (B[1] - A[1]);
+    }
+    const faceY = f === "T" ? box.y : box.y + box.h;
+    const dy = B[1] - A[1];
+    if (Math.abs(dy) < 1e-6) return A[0];
+    const t = (faceY - A[1]) / dy;
+    return A[0] + t * (B[0] - A[0]);
+}
 // point on `box` face `f` at perpendicular coord `c`
 function facePoint(box, f, c) {
     if (f === "L") return [box.x, c];
@@ -87,9 +106,17 @@ export function classifyAndGate({ nodeRects, groupBox, groupOf, edges, laneGap =
         if (otherGid && groupBox.has(otherGid)) return rectCenter(groupBox.get(otherGid));
         const r = nodeRects.get(otherId); return r ? rectCenter(r) : [0, 0];
     };
+    // the INSIDE anchor of a gated end (the member driving this crossing) — used to aim the gate at the
+    // straight member<->outside line instead of always sitting at the face midpoint
+    const insidePtOf = (cr, which, gid) => {
+        const insideId = which === "from" ? cr.from : cr.to;
+        const r = nodeRects.get(insideId);
+        if (r) return rectCenter(r);
+        const b = groupBox.get(gid); return b ? rectCenter(b) : [0, 0];
+    };
     // gather every gated END per group
-    const byGroup = new Map();   // gid -> [{cr, which, outside:[x,y]}]
-    const addEnd = (gid, cr, which) => (byGroup.get(gid) || byGroup.set(gid, []).get(gid)).push({ cr, which, outside: outsidePtOf(cr, which) });
+    const byGroup = new Map();   // gid -> [{cr, which, outside:[x,y], inside:[x,y]}]
+    const addEnd = (gid, cr, which) => (byGroup.get(gid) || byGroup.set(gid, []).get(gid)).push({ cr, which, outside: outsidePtOf(cr, which), inside: insidePtOf(cr, which, gid) });
     for (const cr of crossings) { if (cr.fromGid) addEnd(cr.fromGid, cr, "from"); if (cr.toGid) addEnd(cr.toGid, cr, "to"); }
 
     for (const [gid, ends] of byGroup) {
@@ -114,11 +141,18 @@ export function classifyAndGate({ nodeRects, groupBox, groupOf, edges, laneGap =
             let hi = horiz ? box.y + box.h : box.x + box.w;
             lo += FACE_MARGIN; hi -= FACE_MARGIN;
             if (hi < lo) { const m = (lo + hi) / 2; lo = hi = m; }
-            const mid = (lo + hi) / 2, n = arr.length;
+            const n = arr.length;
             arr.sort((u, v) => (horiz ? u.outside[1] - v.outside[1] : u.outside[0] - v.outside[0]));
+            // free fan centre: the mean straight-wire pierce point of this face's ends, instead of the
+            // fixed face midpoint — the fan still spreads/orders exactly as before, it just slides to
+            // where the wires actually point.
+            let cFree = 0;
+            for (const en of arr) cFree += pierceCoord(box, f, en.inside, en.outside);
+            cFree = Math.max(lo, Math.min(hi, cFree / n));
             const spread = Math.min(hi - lo, Math.max((n - 1) * laneGap, (n - 1) * PORT_MIN));
+            const center = Math.max(lo + spread / 2, Math.min(hi - spread / 2, cFree));
             for (let i = 0; i < n; i++) {
-                const c = n < 2 ? mid : mid - spread / 2 + (i * spread) / (n - 1);
+                const c = n < 2 ? cFree : center - spread / 2 + (i * spread) / (n - 1);
                 const pt = facePoint(box, f, Math.max(lo, Math.min(hi, c)));
                 const gate = { pt, face: f, gid, out: OUT_DIR[f], in: IN_DIR[f] };
                 if (arr[i].which === "from") arr[i].cr.fromGate = gate; else arr[i].cr.toGate = gate;
