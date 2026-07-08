@@ -66,7 +66,7 @@ export function slideToggle({ on, title, cls = "", label = "", hidden = false })
 // off). Toggle lives in the satellite header; datanodes reads this to filter present===false rows.
 export const vtShowRemoved = new Map();
 
-export const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds (rank)"]];
+export const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds (rank)"], ["symbol", "symbol (glyph match)"]];
 export const EXTRACTS = ["whole", "number", "number_before", "number_after", "text_before", "text_after"];
 export const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text_after"]);
 // how the game dictionary participates in a ``dictionary`` rule (FieldRule.dict_mode)
@@ -419,7 +419,9 @@ export function fieldConfigBody(fd, cls, fid, afterConf = null) {
         kv("isolate", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate }),
             { title: "read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. an '8' read as '81')" }),
         isText && kv("glyph-check", h("input", { type: "checkbox", class: cls, dataset: { k: "glyph_check", ...da }, checked: !!fd.glyph_check }),
-            { title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the game node." }),
+            { title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the atlas node." }),
+        fd.type === "symbol" && kv("symbol", h("span", { class: "muted" }, "matches taught SYMBOL cutouts"),
+            { title: "this box is classified (colour-agnostic) against every SYMBOL-kind cutout taught on the atlas node — the best-matching label is the value, or nothing when none clears the threshold. Teach symbols on the atlas node." }),
         kv("conf", confMeter({ cls, k: "minconf", value: fd.min_confidence ?? 0, fid }),
             { title: "minimum OCR confidence this field must reach — a weaker genuine read drops the whole record (0 = use the global floor). Drag the bar to set it." }),
         afterConf,   // optional extra row right below conf (readout node slots its live value here)
@@ -668,18 +670,20 @@ export function nodeParts(n) {
                 h("div", { class: "game-priority" }, gamePriority())),
         };
     }
-    if (n.type === "glyphs") {
-        // Standalone glyph-atlas node (attached to the game node). Its OWN image surface
-        // (.glyph-img, wired by imaging.js openGlyphImage) — kept separate from the game
-        // node whose canvas already hosts gate detectors — plus the taught-glyph list
-        // (.glyph-atlas, populated by refreshGlyphAtlas).
+    if (n.type === "atlas") {
+        // Standalone cutout-atlas node (attached to the game node). Its OWN image surface
+        // (.glyph-img, wired by imaging.js openAtlasImage) — kept separate from the game
+        // node whose canvas already hosts gate detectors — plus the taught-cutout list
+        // (.glyph-atlas, populated by refreshAtlasList). Teaches BOTH glyph-kind cutouts
+        // (post-OCR character refinement) and symbol-kind cutouts (whole-box classification
+        // for `type: symbol` fields, e.g. a mod school glyph) in one shared list.
         return {
-            title: h("span", { class: "gi-id", title: "taught glyph atlas — fixes confident single-glyph misreads (e.g. Q↔G) on glyph-check fields" }, "glyphs"),
+            title: h("span", { class: "gi-id", title: "taught cutout atlas — glyph entries fix confident single-glyph misreads (e.g. Q↔G) on glyph-check fields; symbol entries classify a whole box for `symbol` fields" }, "atlas"),
             body: frag(
                 h("div", { class: "glyph-img" }),        // image surface + positioning rect + compose bar
                 h("div", { class: "glyph-preview" }),    // live cutout of the drawn box (manual flow)
                 h("div", { class: "glyph-pending" }),    // auto-glypher proposals awaiting correct+confirm
-                h("div", { class: "glyph-atlas" })),     // the taught atlas (alphabetical)
+                h("div", { class: "glyph-atlas" })),     // the taught atlas (glyph pool then symbol pool)
         };
     }
     if (n.type === "window") {

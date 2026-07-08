@@ -68,7 +68,9 @@ export class GraphModel {
         }
         this.profile.sounds = this.profile.sounds || [];   // browser-played sound nodes (trigger targets)
         this.profile.dictionaries = this.profile.dictionaries || [];
-        this.profile.glyphs = this.profile.glyphs || [];   // taught glyph atlas (post-OCR refinement)
+        // taught cutout atlas: kind=glyph feeds post-OCR refinement, kind=symbol feeds whole-box
+        // classification (`type: symbol` fields) — one atlas, two match pools (see atlas_match.py)
+        this.profile.atlas = this.profile.atlas || [];
         this._renameHook = null;   // (rewrite) called on every id rename so cross-doc token refs repoint
         // a subset joins many sources, each carrying its own join config (JoinSource)
         for (const s of this.profile.subsets) {
@@ -109,15 +111,30 @@ export class GraphModel {
         _seedFieldSeq(this.profile);   // new mints must start above every id already in this profile
     }
 
-    // ---- taught glyph atlas (reference characters for post-OCR glyph refinement) ----
-    glyphs() { return this.profile.glyphs || (this.profile.glyphs = []); }
-    // alphabetical by char (case-insensitive, then case, then image) so the atlas list is ordered
-    sortGlyphs() { this.glyphs().sort((a, b) => (a.char || "").localeCompare(b.char || "", undefined, { sensitivity: "base" }) || (a.char || "").localeCompare(b.char || "") || (a.image || "").localeCompare(b.image || "")); }
-    addGlyph({ char = "", image, enabled = true }) { this.glyphs().push({ char, image, enabled }); this.sortGlyphs(); return this.glyphs().findIndex((g) => g.image === image); }
-    addGlyphs(list) { for (const g of list) this.glyphs().push({ char: g.char || "", image: g.image, enabled: g.enabled !== false }); this.sortGlyphs(); }
-    setGlyphChar(i, char) { const g = this.glyphs()[i]; if (g) { g.char = char; this.sortGlyphs(); } }
-    setGlyphEnabled(i, on) { const g = this.glyphs()[i]; if (g) g.enabled = !!on; }
-    removeGlyph(i) { this.glyphs().splice(i, 1); }
+    // ---- taught cutout atlas: kind=glyph (post-OCR refinement) + kind=symbol (whole-box
+    // classification for `type: symbol` fields) share one list, teaching UI, and match kernel ----
+    atlas() { return this.profile.atlas || (this.profile.atlas = []); }
+    // grouped by kind (glyph before symbol) so the two pools stay visually separate in the list,
+    // then alphabetical by label (case-insensitive, then case, then image)
+    sortAtlas() {
+        this.atlas().sort((a, b) =>
+            (a.kind || "glyph").localeCompare(b.kind || "glyph")
+            || (a.label || "").localeCompare(b.label || "", undefined, { sensitivity: "base" })
+            || (a.label || "").localeCompare(b.label || "")
+            || (a.image || "").localeCompare(b.image || ""));
+    }
+    addCutout({ label = "", image, enabled = true, kind = "glyph" }) {
+        this.atlas().push({ label, image, enabled, kind }); this.sortAtlas();
+        return this.atlas().findIndex((c) => c.image === image);
+    }
+    addCutouts(list, kind = "glyph") {
+        for (const c of list) this.atlas().push({ label: c.label ?? c.char ?? "", image: c.image, enabled: c.enabled !== false, kind });
+        this.sortAtlas();
+    }
+    setCutoutLabel(i, label) { const c = this.atlas()[i]; if (c) { c.label = label; this.sortAtlas(); } }
+    setCutoutEnabled(i, on) { const c = this.atlas()[i]; if (c) c.enabled = !!on; }
+    setCutoutKind(i, kind) { const c = this.atlas()[i]; if (c) { c.kind = kind; this.sortAtlas(); } }
+    removeCutout(i) { this.atlas().splice(i, 1); }
 
     // effective dataset id for a window (defaults to its own id)
     datasetOf(win) { return win.dataset || null; }
@@ -393,8 +410,8 @@ export class GraphModel {
 
     nodes() {
         const ns = [{ id: "game", type: "game", ref: this.profile }];
-        // standalone glyph-atlas node (its own image surface; teaches post-OCR glyph refinement)
-        ns.push({ id: "glyphs", type: "glyphs", ref: this.profile });
+        // standalone cutout-atlas node (its own image surface; teaches glyph refinement + symbol classification)
+        ns.push({ id: "atlas", type: "atlas", ref: this.profile });
         for (const w of this.profile.windows) {
             ns.push({ id: `win:${w.id}`, type: "window", ref: w });
             if (this.satelliteOn(`prev:${w.id}`)) ns.push({ id: `prev:${w.id}`, type: "preview", ref: w });
@@ -446,7 +463,7 @@ export class GraphModel {
 
     edges() {
         const es = [];
-        es.push({ from: "game", to: "glyphs", kind: "own" });   // glyph-atlas node hangs off the game node
+        es.push({ from: "game", to: "atlas", kind: "own" });   // cutout-atlas node hangs off the game node
         for (const w of this.profile.windows) {
             es.push({ from: "game", to: `win:${w.id}`, kind: "own" });   // game node owns each window
             if (this.satelliteOn(`prev:${w.id}`)) es.push({ from: `win:${w.id}`, to: `prev:${w.id}`, kind: "img" });

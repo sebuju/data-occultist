@@ -1,7 +1,7 @@
 // Window image / region drawing, item cutouts, OCR read pipeline (preview + detect + grid).
 // Extracted from main.js verbatim.
 import * as api from "../api.js";
-import { h, frag, TRASH } from "../dom.js";
+import { h, frag, TRASH, subhead } from "../dom.js";
 import { openCaptureModal } from "./panels/precap.js";
 import { timed } from "../log.js";
 import { Overlay } from "../overlay.js";
@@ -58,11 +58,11 @@ const ITEM_KINDS = [
 // just another ITEM_KINDS row. `tid` default kind when the tell tool draws one is "filled".
 const TELL_KINDS = ITEM_KINDS.filter(([v]) => v !== "bbox" && v !== "field");
 
-// Graph node id for an image owner: a window is `win:<id>`, the standalone glyph atlas is the
-// bare `glyphs` node (it reuses the image stack, rule 7). Every `win:${winId}` node-id lookup
+// Graph node id for an image owner: a window is `win:<id>`, the standalone cutout atlas is the
+// bare `atlas` node (it reuses the image stack, rule 7). Every `win:${winId}` node-id lookup
 // goes through this so those special ids resolve to their own node.
 export function nodeIdOf(winId) {
-    if (winId === "glyphs") return "glyphs";   // the glyph-atlas node reuses the image stack
+    if (winId === "atlas") return "atlas";   // the cutout-atlas node reuses the image stack
     return `win:${winId}`;
 }
 
@@ -263,56 +263,60 @@ function applyPickedColor(winId, hex) {
     refreshImageBoxes(winId); autosave(null); refreshDetect(winId);
 }
 
-// ---- glyph-atlas node -----------------------------------------------------
-// Standalone node (its OWN image surface, keyed winId "glyphs"; the image/box stack is shared
+// ---- cutout atlas node -----------------------------------------------------
+// Standalone node (its OWN image surface, keyed winId "atlas"; the image/box stack is shared
 // via nodeIdOf, rule 7). Separate from the game node because that canvas already hosts gate
-// detectors. Teaching model: pick the "glyph" draw tool, drag a box round ONE character, type
-// the character, confirm -> the crop is frozen into the atlas and the box is cleared. Boxes are
-// dragged/resized with the mouse (the app-wide dragresize, precise), same as every other overlay
-// box. The auto-glypher segments a labelled word into per-character proposals the user edits +
-// confirms (its boxes are editable the same way).
+// detectors. Teaches TWO kinds of cutout in one shared list (CLAUDE.md rule 7 — one atlas, not
+// a second copy for symbols): GLYPH (a single OCR character, refines text reads) and SYMBOL (a
+// whole icon, e.g. a mod school glyph, classified for a `type: symbol` field). Teaching model:
+// pick the "glyph" or "symbol" draw tool, drag a box round the cutout (it's selected immediately
+// so WASD can nudge it without an extra click), type its label, confirm -> the crop is frozen
+// into the atlas and the box is cleared. Boxes are dragged/resized with the mouse (the app-wide
+// dragresize, precise), same as every other overlay box. The auto-glypher (glyph kind only — a
+// whole icon isn't a segmentable word) segments a labelled word into per-character proposals the
+// user edits + confirms (its boxes are editable the same way).
 
-const GLYPH_RECT_ID = "__glyphrect";
-const GLYPH_PROP_PREFIX = "__glyphprop:";   // per-proposal editable box id -> `${prefix}${index}`
-let glyphRect = null;        // pending glyph box on the glyph surface (fractions); null = hidden
+const CUT_RECT_ID = "__cutrect";
+const GLYPH_PROP_PREFIX = "__glyphprop:";   // per-proposal editable box id -> `${prefix}${index}` (auto-glypher, glyph-only)
+let cutRect = null;          // pending manual cutout box on the atlas surface (fractions); null = hidden
+let composeKind = "glyph";   // which pool the compose row currently teaches: "glyph" | "symbol"
 let glyphPending = [];       // auto-glypher proposals awaiting edit+confirm: [{char, box:{x,y,w,h}}]
 
-// Redraw the glyph box (refreshImageBoxes folds glyphRect in for the "glyphs" surface). Auto only
-// makes sense on an existing box, so its button is shown only while a glyph rect is armed.
-function drawGlyphRect() {
-    refreshImageBoxes("glyphs");
-    const auto = nodeEls.get("glyphs")?.querySelector(".gc-auto");
-    if (auto) auto.hidden = !glyphRect;
-    refreshGlyphPreview();
+// Redraw the pending cutout box (refreshImageBoxes folds cutRect in for the "atlas" surface).
+// Auto only applies to glyph-kind (word segmentation), so its button is shown only while a box
+// is armed AND the compose row is teaching a glyph.
+function drawCutRect() {
+    refreshImageBoxes("atlas");
+    const auto = nodeEls.get("atlas")?.querySelector(".gc-auto");
+    if (auto) auto.hidden = !cutRect || composeKind !== "glyph";
+    refreshCutPreview();
 }
 
-// Live cutout of the currently-drawn glyph box, shown below the canvas so the user can see exactly
-// what will be saved (the manual flow: before auto is clicked, or when auto found nothing). Hidden
-// while auto proposals are on screen (those carry their own thumbnails).
-function refreshGlyphPreview() {
-    const host = nodeEls.get("glyphs")?.querySelector(".glyph-preview");
-    if (!host) return;
-    if (!glyphRect || glyphPending.length) { host.replaceChildren(); return; }
-    host.replaceChildren(
-        h("img", { class: "glyph-thumb", src: glyphThumbSrc(glyphRect), alt: "cutout", title: "the box's cutout — this is what gets saved" }));
+// Live cutout of the currently-drawn box, on the SAME row as its label/save/cancel controls
+// (.glyph-preview — a static row built once in openAtlasImage, so typing/focus survive every
+// box move/nudge instead of being rebuilt from scratch). Repoints the thumb's `src` in place;
+// visibility is driven entirely by showCompose (thumb/char/confirm/cancel show/hide together).
+function refreshCutPreview() {
+    const { thumb } = composeEls();
+    if (thumb && !thumb.hidden && cutRect) thumb.src = cutThumbSrc(cutRect);
 }
 
-// Write a moved/resized/nudged glyph box back to its source (the armed rect or a proposal). The
-// overlay's onChange (mouse) and the shared WASD nudge (registry persist) both route here — one
-// writer, so a 1-pixel WASD step and a drag land in the same place (rule 7).
-function persistGlyphBox(b) {
-    if (b.id === GLYPH_RECT_ID) { glyphRect = { x: b.x, y: b.y, w: b.w, h: b.h }; refreshGlyphPreview(); return; }
+// Write a moved/resized/nudged box back to its source (the armed rect or an auto-glypher
+// proposal). The overlay's onChange (mouse) and the shared WASD nudge (registry persist) both
+// route here — one writer, so a 1-pixel WASD step and a drag land in the same place (rule 7).
+function persistCutBox(b) {
+    if (b.id === CUT_RECT_ID) { cutRect = { x: b.x, y: b.y, w: b.w, h: b.h }; refreshCutPreview(); return; }
     if (b.id.startsWith(GLYPH_PROP_PREFIX)) {
         const i = +b.id.slice(GLYPH_PROP_PREFIX.length);
         if (glyphPending[i]) { glyphPending[i].box = { x: b.x, y: b.y, w: b.w, h: b.h }; refreshGlyphThumb(i); }
     }
 }
 
-// Crop a box (window fractions) out of the glyph surface's LOADED image into a small data URL —
-// the preview thumbnail beside a proposal's char input, so the user can see which glyph to label.
+// Crop a box (window fractions) out of the atlas surface's LOADED image into a small data URL —
+// the preview thumbnail beside a cutout's label, so the user can see what they're labelling.
 // Client-side (no server round-trip / no saved PNG); the real crop is frozen on save.
-function glyphThumbSrc(box) {
-    const img = imageCanvases.get("glyphs")?.overlay?.img;
+function cutThumbSrc(box) {
+    const img = imageCanvases.get("atlas")?.overlay?.img;
     if (!img || !img.naturalWidth) return "";
     const sx = box.x * img.naturalWidth, sy = box.y * img.naturalHeight;
     const sw = Math.max(1, box.w * img.naturalWidth), sh = Math.max(1, box.h * img.naturalHeight);
@@ -325,8 +329,8 @@ function glyphThumbSrc(box) {
 
 // Repoint one proposal's thumbnail after its box moved/resized (no DOM rebuild -> no focus loss).
 function refreshGlyphThumb(i) {
-    const img = nodeEls.get("glyphs")?.querySelector(`.gp-thumb[data-i="${i}"]`);
-    if (img && glyphPending[i]) img.src = glyphThumbSrc(glyphPending[i].box);
+    const img = nodeEls.get("atlas")?.querySelector(`.gp-thumb[data-i="${i}"]`);
+    if (img && glyphPending[i]) img.src = cutThumbSrc(glyphPending[i].box);
 }
 
 // proposal box id <-> list index, and the two-way selection mirror between canvas box and row.
@@ -334,102 +338,127 @@ function propIndexFromId(id) {
     return (id && id.startsWith(GLYPH_PROP_PREFIX)) ? +id.slice(GLYPH_PROP_PREFIX.length) : null;
 }
 function markGlyphPropSelected(i) {
-    nodeEls.get("glyphs")?.querySelectorAll(".gp-cell")
+    nodeEls.get("atlas")?.querySelectorAll(".gp-cell")
         .forEach((c) => c.classList.toggle("selected", +c.dataset.i === i));
 }
 function selectGlyphProp(i) {   // clicking a suggestion image selects its box on the canvas
     const id = `${GLYPH_PROP_PREFIX}${i}`;
-    imageCanvases.get("glyphs")?.overlay.setActive(id);
-    overlaySelected("glyphs", id);
+    imageCanvases.get("atlas")?.overlay.setActive(id);
+    overlaySelected("atlas", id);
     markGlyphPropSelected(i);
 }
 function discardGlyphProp(node, i) {   // drop ONE suggestion (+ its box); ids reindex on rebuild
     glyphPending.splice(i, 1);
-    imageCanvases.get("glyphs")?.overlay.setActive(null);   // stale selection after reindex
+    imageCanvases.get("atlas")?.overlay.setActive(null);   // stale selection after reindex
     refreshGlyphPending(node);
-    drawGlyphRect();
+    drawCutRect();
 }
 
-// "auto after draw" toggle state (glyph node checkbox): drawing a box runs auto immediately.
-function glyphAutoOn() { return !!nodeEls.get("glyphs")?.querySelector(".gc-autochk")?.checked; }
+// "auto after draw" toggle state (atlas node checkbox): drawing a box runs auto immediately
+// (glyph kind only).
+function glyphAutoOn() { return !!nodeEls.get("atlas")?.querySelector(".gc-autochk")?.checked; }
 
-function glyphComposeEls() {
-    const node = nodeEls.get("glyphs");
-    const host = node && node.querySelector(".glyph-img");
-    return host ? {
-        char: host.querySelector(".gc-char"), confirm: host.querySelector(".gc-confirm"),
-        cancel: host.querySelector(".gc-cancel"), add: host.querySelector(".gc-add"),
-    } : {};
+function composeEls() {
+    const node = nodeEls.get("atlas");
+    const toolHost = node && node.querySelector(".glyph-img");
+    const previewHost = node && node.querySelector(".glyph-preview");
+    return {
+        thumb: previewHost?.querySelector(".glyph-thumb"),
+        char: previewHost?.querySelector(".gc-char"), confirm: previewHost?.querySelector(".gc-confirm"),
+        cancel: previewHost?.querySelector(".gc-cancel"),
+        auto: toolHost?.querySelector(".gc-auto"), autotoggle: toolHost?.querySelector(".gc-autotoggle"), div: toolHost?.querySelector(".gc-div"),
+    };
 }
 
-function showGlyphCompose(on) {
-    const { char, confirm, cancel } = glyphComposeEls();
-    for (const el of [char, confirm, cancel]) if (el) el.hidden = !on;
-    if (on && char) { char.value = ""; setTimeout(() => char.focus(), 0); }
+// Sync the compose row to whichever draw tool is ARMED right now (null = none): GLYPH (single
+// OCR char, word auto-segmenter available) or SYMBOL (a whole icon/label, e.g. a mod school
+// glyph — no segmentation). The tool buttons themselves show which is armed (wireTools' own
+// .active class) — this only adjusts the label input + auto-glypher visibility to match. The
+// auto-glypher row is visible ONLY while the glyph tool is the one currently armed (`kind`, not
+// the remembered `composeKind` — disarming must hide it even though a box may still be pending).
+function applyComposeKind(kind) {
+    if (kind) composeKind = kind;   // remember for the pending box's label/save; null keeps it
+    const { char, auto, autotoggle, div } = composeEls();
+    if (char && kind) {
+        char.maxLength = kind === "glyph" ? 1 : 40;
+        char.placeholder = kind === "glyph" ? "char" : "label";
+        char.classList.toggle("wide", kind === "symbol");   // widen for a multi-char label
+        char.title = kind === "glyph" ? "the single character inside the box (Enter to save, Esc to cancel)"
+            : "the school/category this icon stands for, e.g. Madurai (Enter to save, Esc to cancel)";
+    }
+    const showAuto = kind === "glyph";   // only while GLYPH is the armed tool
+    if (auto) auto.hidden = showAuto ? !cutRect : true;
+    if (autotoggle) autotoggle.hidden = !showAuto;
+    if (div) div.hidden = !showAuto;
 }
 
-function cancelGlyphCompose() {
-    glyphRect = null;
-    showGlyphCompose(false);
-    drawGlyphRect();
+function showCompose(on) {
+    const { thumb, char, confirm, cancel } = composeEls();
+    for (const el of [thumb, char, confirm, cancel]) if (el) el.hidden = !on;
+    if (on && char) char.value = "";   // no auto-focus — typing shouldn't be forced on the user
+    if (on) refreshCutPreview();       // thumb just became visible -> give it its crop now
 }
 
-async function saveGlyph() {
-    const { char } = glyphComposeEls();
-    const ch = (char?.value || "").trim();
-    if (!glyphRect) return;
-    if (!ch) { setStatus("type the character under the box first"); char?.focus(); return; }
+function cancelCompose() {
+    cutRect = null;
+    showCompose(false);
+    drawCutRect();
+}
+
+async function saveCutout() {
+    const { char } = composeEls();
+    const label = (char?.value || "").trim();
+    if (!cutRect) return;
+    if (!label) { setStatus(`type the ${composeKind === "glyph" ? "character" : "label"} under the box first`); char?.focus(); return; }
     const game = model.profile.name;
-    const cap = await curCapOf("glyphs");
-    if (!cap) { setStatus("pick an image (or capture) to teach glyphs from first"); return; }
+    const cap = await curCapOf("atlas");
+    if (!cap) { setStatus("pick an image (or capture) to teach the atlas from first"); return; }
     let cut;
-    try { cut = await api.glyphCutout(game, cap, glyphRect); }   // freeze the crop NOW (independent of the canvas image after)
+    try { cut = await api.atlasCutout(game, cap, cutRect); }   // freeze the crop NOW (independent of the canvas image after)
     catch (e) { setStatus(String(e.message || e)); return; }
-    model.addGlyph({ char: ch, image: cut.name });
-    cancelGlyphCompose();          // permanent now: clear the rect + compose row
-    refreshGlyphAtlas();
+    model.addCutout({ label, image: cut.name, kind: composeKind });
+    cancelCompose();          // permanent now: clear the rect + compose row
+    refreshAtlasList();
     autosave(null);
 }
 
 async function runAutoGlypher() {
-    if (!glyphRect) return;   // button is only shown while a rect is armed; guard anyway
+    if (!cutRect || composeKind !== "glyph") return;   // word segmentation is glyph-kind only
     const game = model.profile.name;
-    const cap = await curCapOf("glyphs");
+    const cap = await curCapOf("atlas");
     if (!cap) { setStatus("pick an image (or capture) first"); return; }
     let props;
-    try { props = await api.glyphAuto(game, cap, glyphRect); }
+    try { props = await api.glyphAuto(game, cap, cutRect); }
     catch (e) { setStatus(String(e.message || e)); return; }
     glyphPending = props || [];
     if (glyphPending.length) {
-        glyphRect = null; showGlyphCompose(false); drawGlyphRect();   // hand off to the editable boxes
+        cutRect = null; showCompose(false); drawCutRect();   // hand off to the editable boxes
         refreshGlyphPending();
         setStatus(`auto: ${glyphPending.length} glyphs — drag/resize the boxes, fix labels, then save all`);
     } else {
         // nothing recognised: keep the box and fall back to manual — its cutout preview stays up
-        showGlyphCompose(true); drawGlyphRect();
+        showCompose(true); drawCutRect();
         refreshGlyphPending();
         setStatus("auto found no text — label the box by hand, or adjust it and try auto again");
     }
 }
 
-export async function openGlyphImage(nodeEl = null) {
-    const winId = "glyphs";
-    const node = nodeEl || nodeEls.get("glyphs");
+export async function openAtlasImage(nodeEl = null) {
+    const winId = "atlas";
+    const node = nodeEl || nodeEls.get("atlas");
     const host = node && node.querySelector(".glyph-img");
     if (!host) return;
     const prev = imageCanvases.get(winId);
-    if (prev && prev.host === host) { refreshGlyphAtlas(false, node); return; }
-    if (prev) { unregisterOverlay("glyphs"); imageCanvases.delete(winId); openImages.delete(winId); }
+    if (prev && prev.host === host) { refreshAtlasList(false, node); return; }
+    if (prev) { unregisterOverlay("atlas"); imageCanvases.delete(winId); openImages.delete(winId); }
     host.replaceChildren(
-        h("div", { class: "glyph-compose" },
+        h("div", { class: "imgtools glyph-compose" },
             h("span", { class: "tools" },
-                h("button", { class: "tool gc-add", dataset: { kind: "glyph" }, title: "draw tool: activate, then drag a box round ONE character on the image (drag/resize to fine-tune), type the character, then Save" }, "◻ glyph")),
-            h("input", { class: "gc-char", maxlength: "1", size: "1", placeholder: "char", hidden: true, title: "the single character inside the box (Enter to save, Esc to cancel)" }),
-            h("button", { class: "gc-confirm", hidden: true, title: "save this glyph permanently" }, "save"),
-            h("button", { class: "gc-cancel", hidden: true, title: "cancel" }, "✕"),
-            h("span", { class: "gc-div" }),
+                h("button", { class: "tool", dataset: { kind: "glyph" }, title: "draw tool: GLYPH — drag a box round ONE character (drag/resize to fine-tune), label it, then Save. Refines text reads (e.g. Q↔G) on glyph-check fields." }, "◻ glyph"),
+                h("button", { class: "tool", dataset: { kind: "symbol" }, title: "draw tool: SYMBOL — drag a box round a whole icon (e.g. a mod school glyph), label it, then Save. Classified for a `symbol` field, colour-agnostically." }, "◈ symbol")),
+            h("span", { class: "gc-div", hidden: true }),
             h("button", { class: "gc-auto", hidden: true, title: "auto: OCR the drawn box and split it into one glyph per character (labels prefilled) for you to correct + confirm" }, "auto"),
-            h("label", { class: "gc-autotoggle", title: "auto after draw: drawing a box immediately runs OCR instead of asking for a single char" },
+            h("label", { class: "gc-autotoggle", hidden: true, title: "auto after draw: drawing a box immediately runs OCR instead of asking for a single char" },
                 h("input", { type: "checkbox", class: "gc-autochk" }), "auto after draw")),
         h("div", { class: "canvas-wrap" }, h("canvas")),
         h("div", { class: "img-foot" },
@@ -437,82 +466,101 @@ export async function openGlyphImage(nodeEl = null) {
                 h("button", { class: "imgpg", dataset: { d: "-1" }, title: "previous image" }, "‹"),
                 h("span", { class: "img-pageind" }),
                 h("button", { class: "imgpg", dataset: { d: "1" }, title: "next image" }, "›")),
-            h("button", { class: "imgbtn", title: "choose which stashed images to teach glyphs from" },
+            h("button", { class: "imgbtn", title: "choose which stashed images to teach the atlas from" },
                 h("span", { class: "imgbtn-lbl" }, "images")),
             h("button", { class: "imgcap", title: "capture the live game window as a new image" }, "capture")));
+    // label/save/cancel sit on the SAME ROW as the live cutout preview (.glyph-preview, a sibling
+    // node-template div) — built once, statically, so typing/focus survive every box move/nudge
+    // instead of being rebuilt (refreshCutPreview only repoints the thumb's `src` in place).
+    const previewHost = node.querySelector(".glyph-preview");
+    if (previewHost) previewHost.replaceChildren(
+        h("img", { class: "glyph-thumb", hidden: true, alt: "cutout", title: "the box's cutout — this is what gets saved" }),
+        h("input", { class: "gc-char", maxlength: "1", size: "6", placeholder: "char", hidden: true, title: "the single character inside the box (Enter to save, Esc to cancel)" }),
+        h("button", { class: "gc-confirm", hidden: true, title: "save this cutout permanently" }, "save"),
+        h("button", { class: "gc-cancel", hidden: true, title: "cancel" }, "✕"));
     const canvas = host.querySelector("canvas");
-    // one shared tool group: arming shows the compose row, disarming (incl. a central clearTools
-    // from Escape/right-click/click-outside) clears the half-drawn box + compose row.
+    // two draw tools (glyph/symbol) in one radio group: arming one shows the compose row primed
+    // for that kind. Disarming (incl. a central clearTools from Escape/right-click/click-outside)
+    // only stops a NEW box being drawn — it must NOT discard an already-drawn, unsaved cutout
+    // (e.g. a right-click to pan the reference image mid-edit shouldn't wipe pending work).
+    // Abandoning it is an explicit act: the ✕ cancel button, or Escape while the label is focused.
     const { kindOf, canCreate } = wireTools(host, { onChange: (kind) => {
-        if (kind) setStatus("draw a box round one character, then label it");
-        else cancelGlyphCompose();
+        applyComposeKind(kind);   // null on disarm -> hides the auto-glypher row regardless of the last-drawn kind
+        if (kind) setStatus(`draw a box round the ${kind === "glyph" ? "character" : "icon"}, then label it`);
     } });
     const overlay = new Overlay(canvas, {
-        // The "glyph" draw tool creates the box for one manual glyph; the auto-glypher's arm rect
-        // and each proposal box are created programmatically. All boxes are then drag/resizable
-        // with the mouse (the app-wide dragresize), same as every other overlay box.
+        // The armed tool creates the box for one manual cutout, tagged with its kind; the
+        // auto-glypher's arm rect and each proposal box are created programmatically. All boxes
+        // are then drag/resizable with the mouse (the app-wide dragresize), same as every other
+        // overlay box.
         onCreate: (geom) => {
-            if (kindOf() !== "glyph") return;   // drawing is a no-op until the glyph tool is picked
-            glyphRect = { x: geom.x, y: geom.y, w: geom.w, h: geom.h };
-            if (glyphAutoOn()) { drawGlyphRect(); runAutoGlypher(); }   // "auto after draw": OCR the box immediately
-            else { showGlyphCompose(true); drawGlyphRect(); }           // else the manual single-char flow
+            const k = kindOf();
+            if (!k) return;   // drawing is a no-op until a draw tool is picked
+            cutRect = { x: geom.x, y: geom.y, w: geom.w, h: geom.h };
+            composeKind = k;
+            // select the just-drawn box immediately so WASD can nudge it without an extra click
+            overlay.setActive(CUT_RECT_ID);
+            overlaySelected("atlas", CUT_RECT_ID);
+            if (k === "glyph" && glyphAutoOn()) { drawCutRect(); runAutoGlypher(); }   // "auto after draw": OCR the box immediately
+            else { showCompose(true); drawCutRect(); }           // else the manual label flow
         },
-        onChange: (box) => persistGlyphBox(box),
-        // make glyphs the active box overlay (WASD targets its box) AND mirror the selection into
+        onChange: (box) => persistCutBox(box),
+        // make atlas the active box overlay (WASD targets its box) AND mirror the selection into
         // the proposal list, so selecting a box on the canvas highlights its suggestion row
-        onSelect: (id) => { overlaySelected("glyphs", id); markGlyphPropSelected(propIndexFromId(id)); },
-        canCreate,   // no crosshair/draw without the glyph tool armed
-        minFrac: 0.0005,   // a single glyph is tiny vs the whole window — allow a much smaller box
+        onSelect: (id) => { overlaySelected("atlas", id); markGlyphPropSelected(propIndexFromId(id)); },
+        canCreate,   // no crosshair/draw without a draw tool armed
+        minFrac: 0.0005,   // a single glyph/icon is tiny vs the whole window — allow a much smaller box
     });
     imageCanvases.set(winId, { host, canvas, overlay });
-    registerOverlay("glyphs", { overlay, kind: "glyphs", winId,
-        persist: (b) => persistGlyphBox(b), refresh: () => refreshImageBoxes("glyphs") });
+    registerOverlay("atlas", { overlay, kind: "atlas", winId,
+        persist: (b) => persistCutBox(b), refresh: () => refreshImageBoxes("atlas") });
     overlay.setWorldZoom(view.zoom);
     openImages.add(winId);
     persist.layout();
-    host.querySelector(".gc-confirm").addEventListener("click", saveGlyph);
-    host.querySelector(".gc-cancel").addEventListener("click", cancelGlyphCompose);
-    host.querySelector(".gc-char").addEventListener("keydown", (e) => {
-        if (e.key === "Enter") { e.preventDefault(); saveGlyph(); }
-        else if (e.key === "Escape") { e.preventDefault(); cancelGlyphCompose(); }
+    previewHost?.querySelector(".gc-confirm").addEventListener("click", saveCutout);
+    previewHost?.querySelector(".gc-cancel").addEventListener("click", cancelCompose);
+    previewHost?.querySelector(".gc-char").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); saveCutout(); }
+        else if (e.key === "Escape") { e.preventDefault(); cancelCompose(); }
     });
     host.querySelector(".gc-auto").addEventListener("click", runAutoGlypher);
-    host.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal("glyphs"));
-    host.querySelector(".imgcap").addEventListener("click", () => loadImage("glyphs", true));
-    host.querySelectorAll(".imgpg").forEach((b) => b.addEventListener("click", () => stepWinPage("glyphs", +b.dataset.d)));
-    refreshGlyphAtlas(false, node);
+    host.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal("atlas"));
+    host.querySelector(".imgcap").addEventListener("click", () => loadImage("atlas", true));
+    host.querySelectorAll(".imgpg").forEach((b) => b.addEventListener("click", () => stepWinPage("atlas", +b.dataset.d)));
+    applyComposeKind(null);   // nothing armed yet -> auto-glypher row starts hidden
+    refreshAtlasList(false, node);
     refreshGlyphPending(node);
-    await loadImage("glyphs", false);
+    await loadImage("atlas", false);
     drawEdges();
 }
 
 // Auto-glypher proposals: one editable char per proposal box (the boxes themselves live on the
 // canvas — drag/resize to adjust), plus save-all / discard. Nothing is cropped or saved until
-// "save all": each box is frozen into a glyph THEN, so box edits are honoured. A blanked char is
-// skipped. Editing a char here relabels its box live (refreshImageBoxes).
+// "save all": each box is frozen into a glyph-kind cutout THEN, so box edits are honoured. A
+// blanked char is skipped. Editing a char here relabels its box live (refreshImageBoxes).
 export async function commitGlyphProposals(node) {
     const game = model.profile.name;
-    const cap = await curCapOf("glyphs");
+    const cap = await curCapOf("atlas");
     if (!cap) { setStatus("pick an image (or capture) to teach glyphs from first"); return; }
     const wanted = glyphPending.filter((p) => p.char);   // skip any the user blanked out
     const added = [];
     for (const p of wanted) {
-        try { const cut = await api.glyphCutout(game, cap, p.box); added.push({ char: p.char, image: cut.name }); }
+        try { const cut = await api.atlasCutout(game, cap, p.box); added.push({ char: p.char, image: cut.name }); }
         catch (e) { setStatus(String(e.message || e)); return; }   // stop on first failure, keep the rest editable
     }
-    if (added.length) model.addGlyphs(added);
+    if (added.length) model.addCutouts(added, "glyph");
     glyphPending = [];
-    refreshGlyphPending(node); refreshGlyphAtlas(); drawGlyphRect(); autosave(null);
+    refreshGlyphPending(node); refreshAtlasList(); drawCutRect(); autosave(null);
     setStatus(`saved ${added.length} glyph${added.length === 1 ? "" : "s"}`);
 }
 
 export function refreshGlyphPending(nodeEl = null) {
-    const node = nodeEl || nodeEls.get("glyphs");
+    const node = nodeEl || nodeEls.get("atlas");
     const host = node && node.querySelector(".glyph-pending");
     if (!host) return;
     if (!glyphPending.length) { host.replaceChildren(); return; }
     const rows = glyphPending.map((p, i) => h("div", { class: "glyph-cell gp-cell", dataset: { i } },
-        h("img", { class: "glyph-thumb gp-thumb", src: glyphThumbSrc(p.box), alt: p.char || "?",
+        h("img", { class: "glyph-thumb gp-thumb", src: cutThumbSrc(p.box), alt: p.char || "?",
             title: "the glyph this box covers — click to select its box, then drag/resize or WASD-nudge it", dataset: { i } }),
         h("input", { class: "gp-char", maxlength: "1", size: "1", value: p.char || "", placeholder: "?",
             title: "which character this box is; the box is on the image — click the image to select it", dataset: { i } }),
@@ -526,7 +574,7 @@ export function refreshGlyphPending(nodeEl = null) {
     host.querySelectorAll(".gp-char").forEach((inp) =>
         inp.addEventListener("input", (e) => {
             glyphPending[+e.target.dataset.i].char = e.target.value.trim();
-            drawGlyphRect();   // relabel the box on the canvas live
+            drawCutRect();   // relabel the box on the canvas live
         }));
     // clicking anywhere in a cell selects its box (so it drags/WASD-nudges); the trash button keeps
     // its own action. WASD never moves the box while the char input is focused — the global key
@@ -539,44 +587,55 @@ export function refreshGlyphPending(nodeEl = null) {
     host.querySelectorAll(".gp-rm").forEach((btn) =>
         btn.addEventListener("click", (e) => discardGlyphProp(node, +e.currentTarget.dataset.i)));
     host.querySelector(".gp-confirm").addEventListener("click", () => commitGlyphProposals(node));
-    host.querySelector(".gp-discard").addEventListener("click", () => { glyphPending = []; refreshGlyphPending(node); drawGlyphRect(); });
-    markGlyphPropSelected(propIndexFromId(imageCanvases.get("glyphs")?.overlay.activeId));   // keep highlight across rebuilds
+    host.querySelector(".gp-discard").addEventListener("click", () => { glyphPending = []; refreshGlyphPending(node); drawCutRect(); });
+    markGlyphPropSelected(propIndexFromId(imageCanvases.get("atlas")?.overlay.activeId));   // keep highlight across rebuilds
 }
 
-// The taught glyph atlas list: a thumbnail + editable character + delete per glyph, kept
-// alphabetical (model.sortGlyphs). Event-driven (rebuilt on add/edit/delete, not a poll), so a
-// full rebuild of this small list is fine (rule 1 is about steady-state poll redraws).
-export function refreshGlyphAtlas(focusLast = false, nodeEl = null) {
-    const node = nodeEl || nodeEls.get("glyphs");
+// The taught cutout atlas list: a thumbnail + editable label + kind chip + delete per cutout,
+// kept grouped by kind then alphabetical (model.sortAtlas). Event-driven (rebuilt on
+// add/edit/delete, not a poll), so a full rebuild of this small list is fine (rule 1 is about
+// steady-state poll redraws).
+export function refreshAtlasList(focusLast = false, nodeEl = null) {
+    const node = nodeEl || nodeEls.get("atlas");
     const host = node && node.querySelector(".glyph-atlas");
     if (!host) return;
     const game = model.profile.name;
-    const glyphs = model.glyphs();
-    const rows = glyphs.map((g, i) => {
-        const on = g.enabled !== false;
+    const cutouts = model.atlas();
+    const rows = cutouts.map((c, i) => {
+        const on = c.enabled !== false;
+        const kind = c.kind || "glyph";
         return h("div", { class: on ? "glyph-cell" : "glyph-cell disabled", dataset: { i } },
             h("input", { type: "checkbox", class: "glyph-en", checked: on, dataset: { i },
-                title: on ? "glyph enabled — click to mute it (kept, but ignored by refinement)" : "glyph muted — click to enable" }),
-            h("img", { class: "glyph-thumb", src: api.glyphUrl(game, g.image), alt: g.char || "?", title: "taught glyph (cutout is frozen)" }),
-            h("input", { class: "glyph-char", maxlength: "1", size: "1", value: g.char || "", placeholder: "?",
-                title: "which character this glyph is", dataset: { i } }),
-            h("button", { class: "glyph-rm danger", dataset: { i }, title: "remove glyph" }, TRASH()));
+                title: on ? "cutout enabled — click to mute it (kept, but ignored by matching)" : "cutout muted — click to enable" }),
+            h("img", { class: "glyph-thumb", src: api.atlasUrl(game, c.image), alt: c.label || "?", title: "taught cutout (crop is frozen)" }),
+            h("button", { class: `glyph-kind-chip glyph-kind-${kind}`, dataset: { i },
+                title: kind === "glyph" ? "glyph — click to switch to symbol" : "symbol — click to switch to glyph" }, kind),
+            h("input", { class: kind === "symbol" ? "glyph-char wide" : "glyph-char", maxlength: kind === "symbol" ? 40 : 1,
+                size: kind === "symbol" ? 10 : 1, value: c.label || "", placeholder: kind === "symbol" ? "label" : "?",
+                title: kind === "glyph" ? "which character this glyph is" : "the school/category this icon stands for", dataset: { i } }),
+            h("button", { class: "glyph-rm danger", dataset: { i }, title: "remove cutout" }, TRASH()));
     });
     host.replaceChildren(...[
-        glyphs.length ? h("div", { class: "fgrp" }, "glyph atlas") : null,   // subheading only when non-empty
-        glyphs.length ? h("div", { class: "glyph-grid" }, ...rows) : null,
+        cutouts.length ? subhead("cutout atlas") : null,   // subheading only when non-empty (rule 7 — shared primitive)
+        cutouts.length ? h("div", { class: "glyph-grid" }, ...rows) : null,
     ].filter(Boolean));   // never pass null to replaceChildren -> it stringifies to a "null" text node
     host.querySelectorAll(".glyph-char").forEach((inp) => {
-        inp.addEventListener("change", (e) => { model.setGlyphChar(+e.target.dataset.i, e.target.value.trim()); refreshGlyphAtlas(); autosave(null); });
+        inp.addEventListener("change", (e) => { model.setCutoutLabel(+e.target.dataset.i, e.target.value.trim()); refreshAtlasList(); autosave(null); });
         inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } });
     });
     host.querySelectorAll(".glyph-en").forEach((chk) => chk.addEventListener("change", (e) => {
-        model.setGlyphEnabled(+e.target.dataset.i, e.target.checked); refreshGlyphAtlas(); autosave(null);
+        model.setCutoutEnabled(+e.target.dataset.i, e.target.checked); refreshAtlasList(); autosave(null);
+    }));
+    host.querySelectorAll(".glyph-kind-chip").forEach((chip) => chip.addEventListener("click", (e) => {
+        const i = +e.currentTarget.dataset.i;
+        const cur = cutouts[i]?.kind || "glyph";
+        model.setCutoutKind(i, cur === "glyph" ? "symbol" : "glyph");
+        refreshAtlasList(); autosave(null);
     }));
     host.querySelectorAll(".glyph-rm").forEach((btn) => btn.addEventListener("click", () => {
-        model.removeGlyph(+btn.dataset.i); refreshGlyphAtlas(); autosave(null);
+        model.removeCutout(+btn.dataset.i); refreshAtlasList(); autosave(null);
     }));
-    if (focusLast && glyphs.length) host.querySelector(`.glyph-char[data-i="${glyphs.length - 1}"]`)?.focus();
+    if (focusLast && cutouts.length) host.querySelector(`.glyph-char[data-i="${cutouts.length - 1}"]`)?.focus();
 }
 
 // ---- item template nodes (frozen cutout + cell-relative fields/tells) ------
@@ -1449,14 +1508,14 @@ async function loadImage(winId, recapture) {
         drawEdges();
         updateImageLabel(winId);     // button shows the (possibly new) filename
         // the image changed (recapture / picked a capture / first open) → READ it: full preview
-        // when the node exists, else just the grid overlay. The glyph atlas is image-only (no
+        // when the node exists, else just the grid overlay. The cutout atlas is image-only (no
         // grid/preview) — only its cheap detectors need re-evaluating.
-        if (winId !== "glyphs") {
+        if (winId !== "atlas") {
             if (prevHost(winId)) refreshPreview(winId, false);
             else refreshGridPreview(winId);
             retraceWindow(winId);   // the image changed → the field nodes' rule traces are stale, re-read them
         }
-        if (winId !== "glyphs") refreshDetect(winId);   // glyph node has no detectors to evaluate
+        if (winId !== "atlas") refreshDetect(winId);   // atlas node has no detectors to evaluate
     };
     img.onerror = () => setNodeBusy(nodeIdOf(winId), false);
     img.src = url;
@@ -1479,10 +1538,11 @@ function refreshImageBoxes(winId) {
     const sb = model.scrollbar(winId);
     // locked once calibration cutouts exist — their crops are tied to this exact origin
     if (sb) boxes.push({ id: "scrollbar", role: "scrollbar", locked: model.scrollbarLocked(winId), ...sb });
-    // the glyph surface has no model boxes — its boxes are the armed positioning rect and the
-    // auto-glypher's per-character proposals (editable until confirmed), each labelled by its char
-    if (winId === "glyphs") {
-        if (glyphRect) boxes.push({ id: GLYPH_RECT_ID, role: "glyphrect", label: "glyph", ...glyphRect });
+    // the atlas surface has no model boxes — its boxes are the armed positioning rect (labelled
+    // by the current compose kind) and the auto-glypher's per-character proposals (editable
+    // until confirmed, each labelled by its char)
+    if (winId === "atlas") {
+        if (cutRect) boxes.push({ id: CUT_RECT_ID, role: "glyphrect", label: composeKind, ...cutRect });
         glyphPending.forEach((p, i) =>
             boxes.push({ id: `${GLYPH_PROP_PREFIX}${i}`, role: "glyphprop", label: p.char || "?", ...p.box }));
     }

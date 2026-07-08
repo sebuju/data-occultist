@@ -304,16 +304,17 @@ export function cutoutUrl(game, name) {
     return `/api/item/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
 
-// Freeze a taught glyph from a stashed capture -> { name, url }. box is fractions. The crop
-// is one reference character for the game's glyph atlas (post-OCR glyph refinement).
-export async function glyphCutout(game, capture, box) {
+// Freeze a taught cutout from a stashed capture -> { name, url }. box is fractions. The crop
+// is one reference glyph/symbol for the game's cutout atlas (which pool it joins is tagged
+// client-side onto the CutoutDef — the store itself doesn't care).
+export async function atlasCutout(game, capture, box) {
     const q = `game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}&x=${box.x}&y=${box.y}&w=${box.w}&h=${box.h}`;
-    const r = await tfetch(`/api/glyph/cutout?${q}`, { method: "POST" });
-    if (!r.ok) throw new Error(`glyph: ${r.status} ${await r.text()}`);
+    const r = await tfetch(`/api/atlas/cutout?${q}`, { method: "POST" });
+    if (!r.ok) throw new Error(`cutout: ${r.status} ${await r.text()}`);
     return r.json();
 }
-export function glyphUrl(game, name) {
-    return `/api/glyph/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
+export function atlasUrl(game, name) {
+    return `/api/atlas/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
 // Auto-glypher: OCR a region box, split each recognised word into one crop per character with
 // the label prefilled from OCR. Returns [{char, image, url}] for the user to correct + confirm

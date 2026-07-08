@@ -21,8 +21,8 @@ const INNER = {
         C("15.5", "11.5", "1", fill), C("18", "13.5", "1", fill),
     ],
     window: () => [P("M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3")],
-    // glyphs: a character "A" in a card — the taught glyph atlas (font reference for OCR)
-    glyphs: () => [
+    // atlas: a character "A" in a card — the taught cutout atlas (glyph + symbol references)
+    atlas: () => [
         svg("rect", { x: "4", y: "4", width: "16", height: "16", rx: "2.5" }),
         P("M8.5 16.5 12 7.5 15.5 16.5"),
         svg("line", { x1: "9.6", y1: "13.4", x2: "14.4", y2: "13.4" }),

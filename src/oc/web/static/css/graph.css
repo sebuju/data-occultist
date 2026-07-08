@@ -66,7 +66,7 @@
 .gnode.region     { --nt: var(--nt-region); }
 .gnode.detect     { --nt: var(--nt-detect); }
 .gnode.scrollbar  { --nt: var(--nt-scrollbar); }
-.gnode.glyphs     { --nt: var(--nt-scrollbar); }
+.gnode.atlas      { --nt: var(--nt-scrollbar); }
 .gnode.item       { --nt: var(--nt-item); }
 .gnode.itemfield  { --nt: var(--nt-itemfield); }
 .gnode.itemtell   { --nt: var(--nt-itemtell); }
@@ -468,8 +468,8 @@
 /* surface the header enable switch only on header hover (or keyboard focus) — opacity so revealing
    it never reshuffles the header row */
 .gn-h:hover .gn-enable, .gn-h .gn-enable:focus-visible { opacity: 1; }
-/* vttable/glyphs headers have no flex:1 title to push the type tag over, so pin it to the right edge */
-.gnode.vttable .gn-h .gn-type, .gnode.glyphs .gn-h .gn-type { margin-left: auto; }
+/* vttable/atlas headers have no flex:1 title to push the type tag over, so pin it to the right edge */
+.gnode.vttable .gn-h .gn-type, .gnode.atlas .gn-h .gn-type { margin-left: auto; }
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap; }
 .gnode input.gi { width: 100%; }
 .gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; border: unset; background: transparent; margin-left: -35px; padding-left: 35px;
@@ -851,21 +851,30 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* the atlas is the LAST section of the node body (below the image/preview/pending), so its
    heading needs the same top-border divider other mid-body sub-headings get — but it's the
    first child of the .glyph-atlas wrapper, so .fgrp:first-child would strip it. Restore it. */
-.glyph-atlas > .fgrp { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--line); }
-.glyph-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.glyph-atlas > .fgrp { padding-top: 6px; }
+.glyph-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 /* the taught atlas is the SAME flex-wrap of content-sized cells as the pending strip — each cell a
    compact in-flow row [enable][thumb][char][trash], so nothing overlaps. (Was a 120px-min grid with
    tiny 44px thumbs -> huge gaps, plus absolute corner controls sitting on top of the char/thumb.) */
-.glyph-cell { position: relative; display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--line);
+.glyph-cell { position: relative; display: grid; grid-template-columns: auto 1fr; grid-template-rows: 1fr 1fr; align-items: center; gap: 3px; border: 1px solid var(--line);
     border-radius: 4px; padding: 2px 3px; background: var(--panel, transparent); }
-.glyph-thumb { height: 44px; width: 44px; object-fit: contain; image-rendering: pixelated;
-    background: #000; border-radius: 2px; border: 2px solid var(--accent); }
-.glyph-char { width: 2.2em; text-align: center; padding: 1px 2px; flex: 0 0 auto; }
+.glyph-thumb { grid-row: span 2; height: 44px; width: 44px; object-fit: contain; image-rendering: pixelated;
+    background: #000; border-radius: 2px; }
+.glyph-preview .glyph-thumb { width: 100%; height: 300px; object-fit: contain; }
+.glyph-char { width: 2.2em; text-align: left; padding: 1px 2px; flex: 0 0 auto; }
+/* symbol-kind cutouts carry a multi-char label (e.g. "Madurai"), not one glyph */
+.glyph-char.wide { width: 7em; text-align: left; }
+/* kind chip (glyph/symbol) toggled by click — a small pill matching the atlas cell's compact row */
+.glyph-kind-chip { flex: 0 0 auto; line-height: 1; padding: 4px 0px; gap: 0;
+    border: unset; color: var(--nt); min-height: unset; margin-left: 4px; background: unset !important; place-self: baseline; }
+.glyph-kind-chip:before { content: "<"; }
+.glyph-kind-chip:after { content: ">"; }
 /* atlas cell controls sit IN FLOW and stay visible (no absolute overlay, no hover-reveal) so the
    enable checkbox and trash never cover the thumbnail or the char input. */
-.glyph-atlas .glyph-en { margin: 0; cursor: pointer; flex: 0 0 auto; }
+.glyph-cell:not(:hover) > .glyph-en { visibility: hidden; }
+.glyph-atlas .glyph-en { margin: 0 !important; cursor: pointer; flex: 0 0 auto; position: absolute; right: 3px; bottom: 4px; }
 .glyph-atlas .glyph-rm { flex: 0 0 auto; padding: 1px; margin: 0; background: none; border: 0;
-    line-height: 0; cursor: pointer; min-height: unset; color: var(--danger); }
+    line-height: 0; cursor: pointer; min-height: unset; color: var(--danger); position: absolute; right: 5px; top: 5px; }
 .glyph-atlas .glyph-rm svg { width: 12px; height: 12px; display: block; fill: currentColor; }
 /* pending cell: trash floats top-right, hover-revealed (the 88px correction thumbs leave room). */
 .glyph-cell .gp-rm { position: absolute; top: 1px; right: 1px; z-index: 2; padding: 1px; margin: 0;
@@ -875,14 +884,15 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .glyph-cell:hover .gp-rm { visibility: visible; }
 .glyph-cell.disabled .glyph-thumb { opacity: 0.3; filter: grayscale(1); }
 .glyph-cell.disabled .glyph-char { opacity: 0.5; }
-/* glyph compose bar (arm rect / type char / save; auto-glypher button) */
-.glyph-compose { display: flex; align-items: center; gap: 4px; padding: 4px 0; flex-wrap: wrap; }
-.glyph-compose .gc-char { width: 2.4em; text-align: center; }
+/* glyph compose bar: same toolbar row as the window canvas (.imgtools, rule 7 — one shared
+   layout, not a duplicate); these are its atlas-specific children only. */
 .glyph-compose .gc-div { flex: 0 0 6px; }
-.glyph-compose .gc-autotoggle { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
-/* live cutout preview of the drawn box (manual flow) */
-.glyph-preview:empty { display: none; }
-.glyph-preview { margin: 4px 0; }
+.glyph-compose .gc-autotoggle { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; margin: 0; }
+/* live cutout preview row: thumb + label + save/cancel, built once and left in place (their
+   `hidden` toggles together) so typing/focus survive every box move/nudge. */
+.glyph-preview { margin: 4px 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.glyph-preview .gc-char { width: 2.4em; text-align: center; }
+.glyph-preview .gc-char.wide { width: 7em; text-align: left; min-height: 26px; }
 /* auto-glypher proposals awaiting correct + save-all */
 .glyph-pending:empty { display: none; }
 .glyph-pending { margin: 4px 0; padding: 4px 6px; border: 1px dashed var(--accent); border-radius: 4px; }
@@ -929,7 +939,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    them as "draw a box" tools, distinct from the solid action buttons. The picked tool (.active)
    fills solid accent. Shared by the window image tools AND the item cutout tools. */
 .tool { background: transparent; color: var(--nt); border: 1px dashed var(--nt); padding: 3px 9px; }
-.tool:hover:not(:disabled) { background: var(--accent-bg); filter: none; }
+.tool:hover:not(:disabled) { background: var(--accent-bg); filter: none; color: var(--muted); }
 .tool.active { background: var(--accent); color: var(--on-accent); border-style: solid; }
 /* item node: draw-mode button rows under the tells / cell-and-fields headers */
 .il-tools { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0px -4px 0px; }

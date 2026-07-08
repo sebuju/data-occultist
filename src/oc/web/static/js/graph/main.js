@@ -76,7 +76,7 @@ import { pushHistory, resetHistory, undo, redo, hist } from "./history.js";
 import { createHistoryPanel } from "../history_panel.js";
 import { workers, unregisterWorker } from "./workers.js";
 import {
-    closeImage, openImage, openGlyphImage, armPreprocessPick, refreshDetect, nodeIdOf,
+    closeImage, openImage, openAtlasImage, armPreprocessPick, refreshDetect, nodeIdOf,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
     scheduleItemRead, refreshItemReadout,
     ocrBusyCount,
@@ -96,7 +96,7 @@ const COLX = { game: 20, window: 300, filesource: 460, trigger: 560, action: 620
 // with visibility-toggleable inputs, so a frozen height would clip or leave dead space.
 // Only the fixed-aspect canvas nodes are width-only (height follows their image aspect).
 // Every other node — incl. the config nodes (dataset/subset/producer) — is freely resizable.
-const WIDTH_ONLY_NODES = new Set(["item", "window", "game", "glyphs"]);
+const WIDTH_ONLY_NODES = new Set(["item", "window", "game", "atlas"]);
 const FLOW_FALLBACK_MS = 15000;   // safety-net /api/flow poll; the dataset-change bus is the real mechanism
 // One-shot boot prefetch: every dataset detail + subset view fetched in a SINGLE /details request
 // before the nodes are built, so each node renders from this map instead of firing its own fetch
@@ -310,7 +310,7 @@ initPersist({
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
 const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", hist: "vttable", reg: "region", register: "register", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
-function nodeTypeOf(id) { return id === "game" ? "game" : id === "glyphs" ? "glyphs" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
+function nodeTypeOf(id) { return id === "game" ? "game" : id === "atlas" ? "atlas" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
     world: () => $("ggroups"),
     superWorld: () => $("sgroups"),
@@ -2555,9 +2555,9 @@ function renderPreview(host, rows) {
 export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource", "action"]);
 // Denylist, NOT allowlist: every node type is removable EXCEPT these. Inverted on purpose so a new
 // functional node type is deletable by default — the recurring bug was forgetting to add each new
-// type to an allowlist. Only the profile-root nodes (game, glyphs) and toggle-only satellites
+// type to an allowlist. Only the profile-root nodes (game, atlas) and toggle-only satellites
 // (preview, vttable) are protected here; a satellite is dismissed via its toggle, never "deleted".
-const UNREMOVABLE = new Set(["game", "glyphs", "preview", "vttable"]);
+const UNREMOVABLE = new Set(["game", "atlas", "preview", "vttable"]);
 const isRemovable = (type) => !!type && !UNREMOVABLE.has(type);
 
 // One place to remove any node; each goes through render()+autosave() so undo/redo
@@ -3487,8 +3487,8 @@ function wireNode(div, n) {
         }));
         wireGamePriority(div);   // window-priority list ▲/▼ + name jumps
         // node creation moved to the floating "create" toolbox (see buildToolbox)
-    } else if (n.type === "glyphs") {
-        openGlyphImage(div);   // mount the glyph-atlas image surface + taught-glyph list
+    } else if (n.type === "atlas") {
+        openAtlasImage(div);   // mount the cutout-atlas image surface + taught glyph/symbol list
     } else if (n.type === "dictionary") {
         // the title doubles as both name and id (renamed in place)
         div.querySelector(".dictname")?.addEventListener("change", (e) => {
@@ -4681,8 +4681,10 @@ $("settingsBtn")?.addEventListener("click", () => {
 window.addEventListener("mousedown", (ev) => {
     if (ev.button !== 2) return;
     if (!ev.target.closest("#graph")) return;
-    clearTools();   // right-click disarms any draw tool
-    startPan(ev);
+    const cleared = clearTools();   // right-click disarms any draw tool
+    // a click (not just a drag) that just disarmed a tool must also suppress the upcoming
+    // contextmenu — else the native/add-node menu pops up right after, over the canvas.
+    startPan(ev, { forceSuppress: cleared });
 }, true);
 $("graph").addEventListener("mousedown", (ev) => {
     // left-drag on empty canvas: rubber-band multi-select (a plain click clears).

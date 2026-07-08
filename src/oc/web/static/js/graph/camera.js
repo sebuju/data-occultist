@@ -149,7 +149,7 @@ let suppressNextMenu = false;   // set when a right-drag pan actually moved
 // The contextmenu handler asks this: did a pan-drag just end (so swallow the menu)? Reading clears it.
 export function consumePanSuppress() { const v = suppressNextMenu; suppressNextMenu = false; return v; }
 
-export function startPan(ev) {
+export function startPan(ev, { forceSuppress = false } = {}) {
     const s = { x: ev.clientX, y: ev.clientY, px: view.panX, py: view.panY };
     let moved = false;
     const mv = (e) => {
@@ -160,7 +160,9 @@ export function startPan(ev) {
     const up = () => {
         document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
         $("graph").classList.remove("panning");
-        suppressNextMenu = moved;   // only a real drag eats the context menu; a plain click keeps it
+        // a real drag eats the context menu; so does a plain click that just disarmed a draw
+        // tool (forceSuppress) — otherwise the native/add-node menu would pop up right after.
+        suppressNextMenu = moved || forceSuppress;
         if (moved) persist.local();
     };
     document.addEventListener("mousemove", mv);
