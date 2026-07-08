@@ -64,9 +64,9 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
     # existing layout unless the incoming edit actually brought one (has nodes).
     layout = incoming.layout if incoming.layout.nodes else existing.layout
 
-    # Glyph atlas is game-level (no per-entry id to merge on): a single-window teach save
-    # carries none, so keep existing unless the incoming edit actually brought glyphs.
-    glyphs = incoming.glyphs if incoming.glyphs else existing.glyphs
+    # Cutout atlas is game-level (no per-entry id to merge on): a single-window teach save
+    # carries none, so keep existing unless the incoming edit actually brought one.
+    atlas = incoming.atlas if incoming.atlas else existing.atlas
 
     return GameProfile(
         name=name,
@@ -84,6 +84,6 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
         toasts=list(toasts.values()),
         sounds=list(sounds.values()),
         actions=list(actions.values()),
-        glyphs=glyphs,
+        atlas=atlas,
         layout=layout,
     )

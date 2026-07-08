@@ -294,6 +294,29 @@ def _migrate_dictionary_ids(raw: dict) -> dict:
     return raw
 
 
+def _migrate_glyph_node_id(raw: dict) -> dict:
+    """The glyph atlas graph node was renamed ``"glyphs"`` -> ``"atlas"`` when it grew to teach
+    both glyph- and symbol-kind cutouts. ``GameProfile.glyphs`` -> ``GameProfile.atlas`` is
+    handled by a model validator, but the graph-layout node id is opaque UI data (a plain dict
+    key), so repoint every place a layout references it by that literal string. Idempotent — a
+    profile that never had the node, or already renamed it, is untouched."""
+    if not isinstance(raw, dict):
+        return raw
+    layout = raw.get("layout")
+    if not isinstance(layout, dict):
+        return raw
+    nodes = layout.get("nodes")
+    if isinstance(nodes, dict) and "glyphs" in nodes and "atlas" not in nodes:
+        nodes["atlas"] = nodes.pop("glyphs")
+    imgs = layout.get("open_images")
+    if isinstance(imgs, list):
+        layout["open_images"] = ["atlas" if i == "glyphs" else i for i in imgs]
+    for g in (layout.get("groups") or []):
+        if isinstance(g, dict) and isinstance(g.get("members"), list):
+            g["members"] = ["atlas" if m == "glyphs" else m for m in g["members"]]
+    return raw
+
+
 # ---- dictionaries: terms live in their own files under config/dictionaries/ -------
 
 def dictionaries_dir(profiles_dir: Path | str) -> Path:
@@ -394,8 +417,8 @@ def load_profile(profiles_dir: Path | str, name: str) -> GameProfile:
             return hit[1].model_copy(deep=True)   # pristine cached -> own copy (callers mutate)
     raw = yaml.safe_load(_read_text_retry(path))
     if isinstance(raw, dict):
-        raw = _migrate_dictionary_ids(_split_shared_readout_fields(
-            _migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw)))))
+        raw = _migrate_glyph_node_id(_migrate_dictionary_ids(_split_shared_readout_fields(
+            _migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw))))))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
     if sig is not None:
@@ -533,8 +556,8 @@ def read_backup(profiles_dir: Path | str, name: str, stamp: str) -> GameProfile:
     path = backup_path(profiles_dir, name, stamp)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if isinstance(raw, dict):
-        raw = _migrate_dictionary_ids(_split_shared_readout_fields(
-            _migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw)))))
+        raw = _migrate_glyph_node_id(_migrate_dictionary_ids(_split_shared_readout_fields(
+            _migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw))))))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
     return profile

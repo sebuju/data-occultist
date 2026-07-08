@@ -54,6 +54,7 @@ class FieldType(str, Enum):
     number = "number"
     pips = "pips"          # value = count of glowing dots/pips in the region (e.g. mod rank)
     diamonds = "diamonds"  # value = count of FILLED diamonds in a rank strip (e.g. arcane level)
+    symbol = "symbol"      # value = label of the best-matching taught atlas cutout (colour-agnostic)
 
 
 class Extract(str, Enum):
@@ -187,9 +188,9 @@ class FieldDef(BaseModel):
     # pixels. A capture-time choice, so it stays a field toggle rather than a value rule.
     isolate: bool = False
     # Post-OCR GLYPH refinement: match each cleanly-separated glyph against the game's taught
-    # atlas (GameProfile.glyphs) and substitute a character only when a *different* taught
-    # glyph out-scores the OCR's own. Fixes systematic single-glyph confusions the dictionary
-    # cannot (e.g. "Q3" vs "G3"). Runs BEFORE the rule pipeline; a capture-time toggle.
+    # atlas (GameProfile.atlas, kind=glyph) and substitute a character only when a *different*
+    # taught glyph out-scores the OCR's own. Fixes systematic single-glyph confusions the
+    # dictionary cannot (e.g. "Q3" vs "G3"). Runs BEFORE the rule pipeline; a capture-time toggle.
     glyph_check: bool = False
 
 
@@ -1327,19 +1328,33 @@ class GraphLayout(BaseModel):
     float_windows: dict[str, dict] = Field(default_factory=dict)
 
 
-class GlyphDef(BaseModel):
-    """One taught reference glyph: a single character plus the saved crop of how that
-    character looks in this game's font. Several samples of the same character are several
-    ``GlyphDef`` entries (same ``char``, different ``image``) — more samples make the match
-    sturdier. ``image`` is a bare filename under ``captures/<game>/glyphs/`` (mirrors item
-    cutouts). Post-OCR glyph refinement (``FieldDef.glyph_check``) matches ambiguous glyphs
-    against this atlas. This is game DATA authored in the UI — no glyph knowledge in Python."""
+class CutoutKind(str, Enum):
+    """What a taught :class:`CutoutDef` is used for — the two kinds share teaching, storage
+    and the NCC match kernel, but never compete against each other in a match."""
 
-    char: str
+    glyph = "glyph"    # a single character; matched per-glyph to refine an OCR text field
+    symbol = "symbol"  # an icon (e.g. a mod school glyph); the WHOLE box is classified against it
+
+
+class CutoutDef(BaseModel):
+    """One taught reference cutout: a label plus the saved crop of how it looks in this game.
+    Several samples of the same label are several ``CutoutDef`` entries (same ``label``,
+    different ``image``) — more samples make the match sturdier. ``image`` is a bare filename
+    under ``captures/<game>/atlas/`` (mirrors item cutouts).
+
+    ``kind=glyph``: ``label`` is a single character; post-OCR refinement
+    (``FieldDef.glyph_check``) matches ambiguous glyphs against the glyph-kind entries.
+    ``kind=symbol``: ``label`` is a category name (e.g. a mod school); a ``FieldDef`` of
+    ``type: symbol`` classifies its whole box against the symbol-kind entries.
+
+    This is game DATA authored in the UI — no glyph/symbol knowledge in Python."""
+
+    label: str
     image: str
-    # Disabled glyphs stay in the atlas (and the UI) but are skipped when building the matcher, so
-    # a bad sample can be muted without deleting it. Default on (older profiles have no flag).
+    # Disabled cutouts stay in the atlas (and the UI) but are skipped when building the matcher,
+    # so a bad sample can be muted without deleting it. Default on (older profiles have no flag).
     enabled: bool = True
+    kind: CutoutKind = CutoutKind.glyph
 
 
 class GameProfile(BaseModel):
@@ -1370,11 +1385,29 @@ class GameProfile(BaseModel):
     # definitions live here — the held values stay in the live session's server memory.
     registers: list[RegisterDef] = Field(default_factory=list)
     dictionaries: list[DictionaryDef] = Field(default_factory=list)
-    # Taught glyph atlas for post-OCR glyph refinement (see GlyphDef / FieldDef.glyph_check).
-    glyphs: list[GlyphDef] = Field(default_factory=list)
+    # Taught cutout atlas: glyph-kind entries feed post-OCR refinement (FieldDef.glyph_check),
+    # symbol-kind entries feed whole-box classification (FieldDef.type == symbol). See CutoutDef.
+    atlas: list[CutoutDef] = Field(default_factory=list)
     # Teach-UI node layout (positions/sizes/collapse/tables/open-images). Pure UI
     # data; the collector ignores it. Lives here so layout travels with the profile.
     layout: GraphLayout = Field(default_factory=GraphLayout)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_glyphs(cls, data):
+        """Fold the legacy game-level ``glyphs: [{char,image,enabled}]`` atlas into the unified
+        ``atlas: [{label,image,enabled,kind}]`` list (kind=glyph). Runs only when ``atlas`` isn't
+        already present, so a new-style profile passes straight through."""
+        if isinstance(data, dict) and "atlas" not in data:
+            legacy = data.get("glyphs")
+            if legacy:
+                data["atlas"] = [
+                    {"label": g.get("char", ""), "image": g.get("image", ""),
+                     "enabled": g.get("enabled", True), "kind": "glyph"}
+                    for g in legacy
+                ]
+            data.pop("glyphs", None)
+        return data
 
     def dictionary_terms(self) -> list[str]:
         """Every term from every ENABLED dictionary, de-duplicated (case-insensitive),
