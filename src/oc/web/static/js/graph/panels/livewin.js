@@ -372,25 +372,27 @@ function renderLiveWindow() {
 }
 
 // Fill each readout node's `.ro-live` span with `value (conf)`. Source is single: the live
-// collector's values+confidence while it's running, else what the current image last read via
-// /api/preview (readoutPreview) so the value shows even with live mode OFF. Reconciled in place
+// collector's FULL values+confidence while it's running, else what the current image last read
+// via /api/preview (readoutPreview.all) so the value shows even with live mode OFF. Mirrors the
+// register: an evaluated-but-empty/low-confidence readout shows blank (not "—"), same as a
+// register row. "—" only when the readout hasn't been evaluated at all yet. Reconciled in place
 // (touch textContent/class only on change) so a steady value mutates the DOM zero times per
-// heartbeat (CLAUDE.md rule 1). "—" when neither source has the readout.
+// heartbeat (CLAUDE.md rule 1).
 function renderReadoutValues() {
-    // Per readout, prefer the running collector's value (+conf); else fall back to what the
-    // current image last read via /api/preview (readoutPreview). So a readout shows a value
+    // Per readout, prefer the running collector's FULL value (+conf); else fall back to what the
+    // current image last read via /api/preview (readoutPreview.all). So a readout shows a value
     // with live mode OFF, and one the live pass hasn't produced yet still shows its preview.
     const running = !!(liveColStatus && liveColStatus.running);
-    const lv = running ? (liveColStatus.readouts || {}) : {};
-    const lc = running ? (liveColStatus.readout_confs || {}) : {};
+    const lv = running ? (liveColStatus.readouts_all || {}) : {};
+    const lc = running ? (liveColStatus.readout_confs_all || {}) : {};
     const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
     for (const el of document.querySelectorAll(".ro-live")) {
         const id = el.dataset.ro;
         let val, conf, found = true;
         if (has(lv, id)) { val = lv[id]; conf = lc[id]; }
-        else if (has(readoutPreview.vals, id)) { val = readoutPreview.vals[id]; conf = readoutPreview.confs[id]; }
+        else if (has(readoutPreview.all, id)) { val = readoutPreview.all[id]; conf = readoutPreview.allConfs[id]; }
         else found = false;
-        const txt = !found ? "—" : (conf == null ? String(val) : `${val} (${(+conf).toFixed(2)})`);
+        const txt = !found ? "—" : (val === "" ? "" : (conf == null ? String(val) : `${val} (${(+conf).toFixed(2)})`));
         if (el.textContent !== txt) el.textContent = txt;
         if (el.classList.contains("muted") === found) el.classList.toggle("muted", !found);
     }

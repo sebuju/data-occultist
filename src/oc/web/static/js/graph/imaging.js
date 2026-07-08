@@ -960,6 +960,7 @@ function storeReadoutPreview(winId, res) {
     const rw = model.window(winId);
     if (!rw || !(rw.readouts || []).length) return;
     const rv = res.readouts || {}, rc = res.readout_confs || {};
+    const rva = res.readouts_all || {}, rca = res.readout_confs_all || {};
     for (const v of rw.readouts) {
         if (Object.prototype.hasOwnProperty.call(rv, v.id)) {
             readoutPreview.vals[v.id] = rv[v.id];
@@ -967,6 +968,15 @@ function storeReadoutPreview(winId, res) {
         } else {
             delete readoutPreview.vals[v.id];
             delete readoutPreview.confs[v.id];
+        }
+        // full map: present (incl. "") for every ENABLED readout the server evaluated this pass;
+        // absent only when the readout itself is disabled (server never returns it).
+        if (Object.prototype.hasOwnProperty.call(rva, v.id)) {
+            readoutPreview.all[v.id] = rva[v.id];
+            readoutPreview.allConfs[v.id] = rca[v.id];
+        } else {
+            delete readoutPreview.all[v.id];
+            delete readoutPreview.allConfs[v.id];
         }
     }
     window.dispatchEvent(new CustomEvent("readout-preview"));
