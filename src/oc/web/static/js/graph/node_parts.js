@@ -297,30 +297,21 @@ function priorityRow(id, i, count, { rowCls, nameCls, mvCls, nameTitle, upTitle,
         moveButtons(i, count, mvCls, { id }, { upTitle, downTitle }));
 }
 
-// The window's readable things, under one "items/readouts" heading:
-//  - item templates in PRIORITY order, HIGHEST first — the top row wins when cells overlap a tile;
-//    the BOTTOM row is priority 0 (the static grid's base cell, which sets the pitch). Reordering IS
-//    how priority is set; the number itself is never shown.
-//  - readouts as plain rows (no ordering — readouts don't contest tiles), each a jump to its node.
-// Click any name to jump to that node.
+// The window's item templates, in PRIORITY order, HIGHEST first — the top row wins when
+// cells overlap a tile; the BOTTOM row is priority 0 (the static grid's base cell, which
+// sets the pitch). Reordering IS how priority is set; the number itself is never shown.
+// Click a name to jump to that item's node.
 export function windowItemOrder(w) {
     const items = [...(w.items || [])].sort((a, b) => (b.priority || 0) - (a.priority || 0));
-    const readouts = w.readouts || [];
-    if (!items.length && !readouts.length) return null;
+    if (!items.length) return null;
     const itemRows = items.map((it, i) => priorityRow(it.id, i, items.length, {
         rowCls: "wi-row", nameCls: "wi-name", mvCls: "wimv",
         nameTitle: "select this item's node",
         upTitle: "move up — higher priority (wins tile overlaps)",
         downTitle: "move down — lower priority (bottom = base cell, sets the grid pitch)" }));
-    // readouts are unordered — a plain name row that jumps to the `ro:<win>:<id>` node
-    const roRows = readouts.map((ro) => h("div", { class: "wi-ro-row", dataset: { id: ro.id } },
-        h("span", { class: "wi-ro-name", title: "select this readout's node" }, ro.id)));
     return frag(
-        subhead("items/readouts", null, "item templates (priority order — highest on top wins tile overlaps; bottom = base cell that sets the grid pitch) + the window's live readouts"),
-        itemRows,
-        // label the readouts group only when items are also present, so the split is clear
-        (items.length && readouts.length) ? h("div", { class: "flab muted" }, "readouts") : null,
-        roRows);
+        subhead("items", null, "item templates — priority order, highest on top wins tile overlaps; bottom = base cell that sets the grid pitch"),
+        itemRows);
 }
 
 // The cell size (item.box w/h, window fractions) shown as editable inputs below the cutout

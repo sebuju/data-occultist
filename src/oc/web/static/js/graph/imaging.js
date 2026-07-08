@@ -196,7 +196,7 @@ async function openImage(winId, nodeEl = null) {
             // leaves it alone — no autoplacement into a far column.
             if (newNode) await placeNewNode(newNode, k, `win:${winId}`);
             render(); refreshImageBoxes(winId); autosave(winId);   // re-OCR only this window
-            if (k === "readout") { rebuildReadoutConsumers(); rebuildNode(`win:${winId}`); }   // toast/watch dropdowns + the window's items/readouts list
+            if (k === "readout") rebuildReadoutConsumers();   // toast/watch dropdowns
             if (newDetect) rebuildNode(`win:${winId}`);   // add the new detector to the window's detects section
             if (newNode) inheritGroupFrom(newNode, `win:${winId}`);   // box drawn on a grouped window → join its group
             if (newDetect) prefillDetectText(winId, newDetect);
@@ -653,6 +653,7 @@ async function createItemFromGeom(winId, geom) {
     // park beside its window before render() so ensurePositions skips it — no autoplacement.
     await placeNewNode(`item:${winId}:${itemId}`, "item", `win:${winId}`);
     render(); refreshImageBoxes(winId); autosave(winId);   // re-OCR only this window
+    rebuildNode(`win:${winId}`);   // new template into the window's items list (render() keeps existing bodies)
     inheritGroupFrom(`item:${winId}:${itemId}`, `win:${winId}`);   // box drawn on a grouped window → join its group
     drawEdges();   // edge to the window drawn immediately
     openItemImage(winId, itemId);

@@ -600,7 +600,7 @@ function wireItemControls(div, n) {
         renameNode(e.target, itemId,
             () => model.renameItem(winId, itemId, e.target.value.trim()),
             () => moveItemPos(winId, itemId, n.ref.id),   // carry the item AND its field/tell child nodes (no jump)
-            () => itemChanged(winId, n.ref.id, { render: true, reread: false }));   // id only — no pixels/boxes change
+            () => { itemChanged(winId, n.ref.id, { render: true, reread: false }); rebuildNode(`win:${winId}`); });   // id only — no pixels/boxes change; refresh the window's items list too
     });
     // the merged fields/tells table has no indirect removal buttons — a field/tell is removed on
     // its OWN node. A row click just pans to that child node (its box is selectable on the cutout).
@@ -953,10 +953,6 @@ function wireWindowControls(div, n) {
     // click a template name -> jump to its item node (don't swallow the ▲/▼ button clicks)
     div.querySelectorAll(".wi-row .wi-name").forEach((el) => el.addEventListener("click", (e) => {
         panZoomTo(`item:${n.ref.id}:${el.closest(".wi-row").dataset.id}`);
-    }));
-    // click a readout name -> jump to its readout node (same list, no reorder for readouts)
-    div.querySelectorAll(".wi-ro-row .wi-ro-name").forEach((el) => el.addEventListener("click", () => {
-        panZoomTo(`ro:${n.ref.id}:${el.closest(".wi-ro-row").dataset.id}`);
     }));
     wireDetectsSection(div, n.ref.id);   // combine mode + per-detector polarity + name jumps
 }
@@ -2573,7 +2569,7 @@ function removeNode(n) {
         window:     { kill: () => { closeImage(n.ref.id); model.removeWindow(n.ref.id); }, after: () => autosave(null) },
         item:       { kill: () => { closeItemImage(win, n.ref.id); model.removeItem(win, n.ref.id); clearGrid(win); }, after: () => { refreshImageBoxes(win); autosave(win); } },
         region:     { kill: () => model.removeRegion(win, n.ref.id), after: () => { autosave(win); refreshImageBoxes(win); } },
-        readout:   { kill: () => model.removeReadout(win, n.ref.id), after: () => { rebuildReadoutConsumers(); rebuildNode(nodeIdOf(win)); autosave(win); refreshImageBoxes(win); } },
+        readout:   { kill: () => model.removeReadout(win, n.ref.id), after: () => { rebuildReadoutConsumers(); autosave(win); refreshImageBoxes(win); } },
         detect:     { kill: () => model.removeDetect(win, n.ref.id), after: () => { rebuildNode(nodeIdOf(win)); autosave(win); refreshImageBoxes(win); } },
         scrollbar:  { kill: () => model.removeScrollbar(win), after: () => { autosave(win); refreshImageBoxes(win); } },
         itemfield:  { kill: () => model.removeItemField(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
@@ -3291,9 +3287,9 @@ function selIcon(kind, verb) {
     return g;
 }
 const SEL_LABELS = {
-    group: { make: "group", add: "add", ungroup: "ungroup" },
-    sub: { make: "subgroup", add: "add", ungroup: "unsubgroup" },
-    super: { make: "super-group", add: "add", ungroup: "un-super" },
+    group: { make: "group", add: "add to group", ungroup: "ungroup" },
+    sub: { make: "subgroup", add: "add to subgroup", ungroup: "unsubgroup" },
+    super: { make: "super-group", add: "add to super group", ungroup: "un-super" },
 };
 const SEL_TITLES = {
     group: { make: "group the selection", add: "add the loose nodes to the group", ungroup: "ungroup the selection" },
@@ -4399,13 +4395,13 @@ $("selGroupBtn").addEventListener("click", () => groupShortcut());
 $("selSubgroupBtn")?.addEventListener("click", () => subgroupShortcut());
 $("selSuperBtn")?.addEventListener("click", () => superGroupShortcut());
 
-// Detach every selected node that's in a group. Mirrors the per-node unlock icon that
+// Remove every selected node from its group. Mirrors the per-node unlock icon that
 // used to live on each node — now one toolbar action over the whole selection.
 $("selDetachBtn").addEventListener("click", () => {
     const ids = selectionIds().filter((id) => groups.groupOf(id));
     if (!ids.length) return;
     groups.detachNodes(ids);
-    setStatus(`detached ${ids.length} node${ids.length === 1 ? "" : "s"}`);
+    setStatus(`removed ${ids.length} node${ids.length === 1 ? "" : "s"} from group`);
 });
 
 // Delete every removable node in the selection. Each goes through removeNode() so undo/redo
@@ -4513,7 +4509,6 @@ function superGroupShortcut() {
     if (gids.length === 1) {
         if (groups.superGroupOf(gids[0])) { groups.detachGroups(gids); setStatus("removed from super group"); }
         else { const sg = groups.createSuperGroup(gids); if (sg) setStatus("super-grouped 1 group"); }   // a super group of one is allowed
-        groups.clearGroupSelection();
         return true;
     }
     const sset = new Set(gids.map((id) => groups.superGroupOf(id)).filter(Boolean));
@@ -4526,7 +4521,6 @@ function superGroupShortcut() {
         const sg = groups.createSuperGroup(gids);
         if (sg) setStatus(`super-grouped ${sg.members.length} groups`);
     }
-    groups.clearGroupSelection();
     return true;
 }
 
@@ -4556,7 +4550,7 @@ function groupShortcut() {
     const ids = selectionIds();
     if (!ids.length) return;
     if (ids.length === 1) {
-        if (groups.groupOf(ids[0])) { groups.detachNode(ids[0]); setStatus("detached from group"); }
+        if (groups.groupOf(ids[0])) { groups.detachNode(ids[0]); setStatus("removed from group"); }
         else { const g = groups.createGroup(ids); if (g) setStatus("grouped 1 node"); }   // a group of one is allowed
         return;
     }
@@ -4565,10 +4559,10 @@ function groupShortcut() {
     if (gset.size === 1) {
         const g = [...gset][0];
         if (ungrouped.length) { groups.addToGroup(g.id, ungrouped); setStatus(`added ${ungrouped.length} to group`); }
-        else { groups.detachNodes(ids); setStatus("ungrouped"); clearMultiSelect(); }
+        else { groups.detachNodes(ids); setStatus("ungrouped"); }
     } else {
         const g = groups.createGroup(ids);   // pulls members out of any prior group
-        if (g) { setStatus(`grouped ${g.members.length} nodes`); clearMultiSelect(); }
+        if (g) setStatus(`grouped ${g.members.length} nodes`);
     }
 }
 $("selClearBtn").addEventListener("click", () => deselectAll());
