@@ -2696,6 +2696,9 @@ function fillNode(div, n, wire = true) {
         const on = model.toggleSatellite(btn.dataset.sat);
         paintSatToggle(btn, on);   // render() keeps existing node DOM, so flip the button by hand
         applySatellite(btn.dataset.sat, on);
+        // opening a preview satellite = the setup changed -> read the window's bound image now,
+        // instead of waiting for the next picture change / edit (it used to sit on the placeholder)
+        if (on && btn.dataset.sat.startsWith("prev:")) refreshOpenPreviews(btn.dataset.sat.slice(5));
     }));
     if (busy.get(n.id)) div.classList.add("busy");   // preserve spinner across rebuilds
     if (!wire) return;   // measurement probe: skip side-effecting wiring (openImage, out-port drag)
@@ -2708,6 +2711,8 @@ function fillNode(div, n, wire = true) {
 // what committing the drop does (`onDrop(targetId)`), and what an empty-canvas drop mints
 // (`onEmpty(worldPt) -> newNodeId`). Producers (window/price) feed a DATASET; datasets and
 // subsets feed a SUBSET. `selfId` blocks dropping a node onto itself.
+// onDrop/onEmpty are PURE model mutations — startWire's onUp rebuilds both the source and the
+// drop-target node itself after calling these, so no spec here needs its own rebuildNode.
 function outPortSpec(n) {
     switch (n.type) {
         case "window": return {
@@ -2717,20 +2722,18 @@ function outPortSpec(n) {
         };
         case "producer": return {
             target: "dataset",
-            onDrop: (ds) => { model.setProducerDataset(n.ref.id, ds); rebuildNode(n.id); },
-            onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setProducerDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
+            onDrop: (ds) => model.setProducerDataset(n.ref.id, ds),
+            onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setProducerDataset(n.ref.id, ds); return `ds:${ds}`; },
         };
         case "dataset": return {
             // a dataset feeds a SUBSET (join), a PRODUCER node (price only these items), a
             // DICTIONARY (push its column values in as terms), or a TOAST ({{dataset:id}} tokens)
             target: ["subset", "producer", "dictionary", "toast"],
             onDrop: (id, ttype) => {
-                if (ttype === "producer") { if (model.addProducerSource(id, n.ref)) rebuildNode(`producer:${id}`); }
-                else if (ttype === "dictionary") { if (model.addDictFeed(id, n.ref)) rebuildNode(`dict:${id}`); }
-                else if (ttype === "toast") { if (model.addToastSource(id, `dataset:${n.ref}`)) rebuildNode(`toast:${id}`); }
-                // rebuild the subset node (its sources chips + join-on list), not just refresh the
-                // vtable — same as the in-panel add (.sv-addin); rebuild re-queues the refresh.
-                else if (model.addSubsetInput(id, n.ref)) rebuildNode(`sub:${id}`);
+                if (ttype === "producer") model.addProducerSource(id, n.ref);
+                else if (ttype === "dictionary") model.addDictFeed(id, n.ref);
+                else if (ttype === "toast") model.addToastSource(id, `dataset:${n.ref}`);
+                else model.addSubsetInput(id, n.ref);
             },
             onEmpty: (pt) => { const id = model.addSubset(n.ref); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
         };
@@ -2740,9 +2743,9 @@ function outPortSpec(n) {
             target: ["subset", "producer", "toast"],
             selfId: n.ref.id,
             onDrop: (id, ttype) => {
-                if (ttype === "producer") { if (model.addProducerSource(id, n.ref.id)) rebuildNode(`producer:${id}`); }
-                else if (ttype === "toast") { if (model.addToastSource(id, `subset:${n.ref.id}`)) rebuildNode(`toast:${id}`); }
-                else if (model.addSubsetInput(id, n.ref.id)) rebuildNode(`sub:${id}`);
+                if (ttype === "producer") model.addProducerSource(id, n.ref.id);
+                else if (ttype === "toast") model.addToastSource(id, `subset:${n.ref.id}`);
+                else model.addSubsetInput(id, n.ref.id);
             },
             onEmpty: (pt) => { const id = model.addSubset(n.ref.id); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
         };
@@ -2752,25 +2755,25 @@ function outPortSpec(n) {
             target: ["toast", "register"],
             onDrop: (id, ttype) => {
                 const ref = `readout:${n.ref.id}`;
-                if (ttype === "register") { if (model.addRegisterSource(id, ref)) rebuildNode(`register:${id}`); }
-                else if (model.addToastSource(id, ref)) rebuildNode(`toast:${id}`);
+                if (ttype === "register") model.addRegisterSource(id, ref);
+                else model.addToastSource(id, ref);
             },
             onEmpty: (pt) => { const id = model.addRegister(); model.addRegisterSource(id, `readout:${n.ref.id}`); placeAt(`register:${id}`, pt); return `register:${id}`; },
         };
         case "filesource": return {
             target: "dataset",
-            onDrop: (ds) => { model.setSourceDataset(n.ref.id, ds); rebuildNode(n.id); },
-            onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setSourceDataset(n.ref.id, ds); rebuildNode(n.id); return `ds:${ds}`; },
+            onDrop: (ds) => model.setSourceDataset(n.ref.id, ds),
+            onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setSourceDataset(n.ref.id, ds); return `ds:${ds}`; },
         };
         case "trigger": return {
             // a trigger fires a PRODUCER (sweep), FILE SOURCE (read), TOAST (notify), SOUND (play), or ACTION (dataset op)
             target: ["producer", "filesource", "toast", "sound", "action"],
-            onDrop: (pid) => { if (model.addTriggerTarget(n.ref.id, pid)) rebuildNode(n.id); },
+            onDrop: (pid) => model.addTriggerTarget(n.ref.id, pid),
         };
         case "action": return {
             // an action node operates on the DATASET(s) it's wired to
             target: "dataset",
-            onDrop: (ds) => { if (model.addActionDataset(n.ref.id, ds)) { rebuildNode(n.id); drawEdges(); } },
+            onDrop: (ds) => model.addActionDataset(n.ref.id, ds),
         };
         default: return null;
     }
@@ -2783,13 +2786,13 @@ function watchPortSpec(n) {
     if (n.ref.kind === "on_change") return {
         side: "L",
         target: ["dataset", "subset"],
-        onDrop: (id) => { if (model.addTriggerWatch(n.ref.id, id)) rebuildNode(n.id); },
+        onDrop: (id) => model.addTriggerWatch(n.ref.id, id),
     };
     if (n.ref.kind === "on_readout") return {
         side: "L",
         target: ["readout"],
         // the dropped id is the readout NODE id (ro:<win>:<vid>) — the watch stores the bare vid
-        onDrop: (id) => { if (model.addTriggerReadoutWatch(n.ref.id, String(id).split(":").pop())) rebuildNode(n.id); },
+        onDrop: (id) => model.addTriggerReadoutWatch(n.ref.id, String(id).split(":").pop()),
     };
     return null;
 }
@@ -3997,9 +4000,18 @@ export function startWire(srcId, ev, spec) {
         if (target) {
             const ttype = targets.find((t) => target.matches(`.gnode.${t}`));
             const tid = targetIdOf(target, ttype);
-            if (tid != null && tid !== spec.selfId) { spec.onDrop(tid, ttype); render(); autosave(null); return; }
+            if (tid != null && tid !== spec.selfId) {
+                spec.onDrop(tid, ttype);
+                // refresh BOTH ends here — the ONE place a wire commits — so no onDrop/onEmpty
+                // needs its own rebuild. render() only builds MISSING nodes; it never re-fills an
+                // already-present node's body (e.g. a dataset's derived "sources" chips), so the
+                // drop target would otherwise go stale.
+                rebuildNode(srcId); rebuildNode(target.dataset.id);
+                render(); autosave(null); return;
+            }
         } else if (dragged && !overNode && spec.onEmpty) {   // empty canvas (not over another node) -> mint a node
             const newId = spec.onEmpty(toWorld(e));
+            rebuildNode(srcId);   // the new target node is built fresh by render() below
             render(); autosave(null); if (newId) panTo(newId);
             return;
         }
