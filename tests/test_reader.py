@@ -1,7 +1,9 @@
 """RegionReader.read() record assembly — pure logic, OCR stubbed."""
 
+import cv2
 import numpy as np
 
+from oc.collect.atlas_match import AtlasMatcher
 from oc.collect.reader import RegionReader
 from oc.interfaces import OcrEngine
 from oc.profile.models import (
@@ -89,3 +91,58 @@ def test_real_low_confidence_read_still_sinks_record():
     assert len(records) == 1
     assert records[0].values["count"] == 3
     assert records[0].confidence == 0.30
+
+
+def _symbol_marker(box, color):
+    """A filled square drawn directly into ``img`` at ``box`` (a numpy slice is a VIEW, so
+    the draw mutates the frame in place) — the taught template and the live crop use the
+    SAME shape so classification is a trivial self-match."""
+    marker = np.zeros((box.h, box.w, 3), np.uint8)
+    cv2.rectangle(marker, (4, 4), (box.w - 5, box.h - 5), color, -1)
+    return marker
+
+
+def test_symbol_readout_reads_the_matching_label():
+    # a readout on a `symbol` field is never OCR'd — it's classified against the taught atlas
+    box = PixelBox(10, 10, 40, 40)
+    img = np.zeros((100, 100, 3), np.uint8)
+    img[box.y : box.y + box.h, box.x : box.x + box.w] = _symbol_marker(box, (0, 200, 0))
+    atlas = AtlasMatcher.build(symbol_samples={"Madurai": [_symbol_marker(box, (0, 200, 0))]})
+    frame = Frame(image=img, client=PixelBox(0, 0, 100, 100))
+    window = WindowDef(
+        id="w", fields=[FieldDef(id="school", type=FieldType.symbol)],
+        readouts=[ReadoutDef(id="school_8", box=Box(x=0.10, y=0.10, w=0.40, h=0.40), field="school")],
+    )
+    fields = {f.id: f for f in window.fields}
+    out = RegionReader(StubOcr([]), atlas=atlas).read_readouts(frame, window, fields)
+    assert out["school_8"] == "Madurai"
+
+
+def test_symbol_readout_omitted_when_nothing_matches():
+    # an occluded/blank glyph must never fire a trigger on a guessed school
+    img = np.zeros((100, 100, 3), np.uint8)   # nothing drawn -> no match to any taught template
+    atlas = AtlasMatcher.build(symbol_samples={"Madurai": [_symbol_marker(PixelBox(0, 0, 40, 40), (0, 200, 0))]})
+    frame = Frame(image=img, client=PixelBox(0, 0, 100, 100))
+    window = WindowDef(
+        id="w", fields=[FieldDef(id="school", type=FieldType.symbol)],
+        readouts=[ReadoutDef(id="school_8", box=Box(x=0.10, y=0.10, w=0.40, h=0.40), field="school")],
+    )
+    fields = {f.id: f for f in window.fields}
+    out = RegionReader(StubOcr([]), atlas=atlas).read_readouts(frame, window, fields)
+    assert "school_8" not in out
+
+
+def test_symbol_key_field_unmatched_drops_the_record():
+    # a stored (non-readout) symbol field that fails to classify is never guessed: its value
+    # is left unset, so a window keyed on it alone produces an empty (dropped) record
+    box = PixelBox(10, 10, 40, 40)
+    img = np.zeros((100, 100, 3), np.uint8)   # blank crop -> no match
+    atlas = AtlasMatcher.build(symbol_samples={"Madurai": [_symbol_marker(box, (0, 200, 0))]})
+    frame = Frame(image=img, client=PixelBox(0, 0, 100, 100))
+    window = WindowDef(
+        id="w", fields=[FieldDef(id="school", type=FieldType.symbol)],
+        regions=[RegionDef(id="school", box=Box(x=0.10, y=0.10, w=0.40, h=0.40), field="school")],
+    )
+    fields = {f.id: f for f in window.fields}
+    records, _sentinel = RegionReader(StubOcr([]), atlas=atlas).read(frame, window, fields)
+    assert records == []

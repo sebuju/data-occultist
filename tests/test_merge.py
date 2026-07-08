@@ -40,3 +40,29 @@ def test_merge_preserves_triggers_and_price_sources():
     assert m.producers[0].sources == ["master"]
     assert [t.id for t in m.triggers] == ["t"]
     assert m.triggers[0].watch == ["relic_rewards"] and m.triggers[0].targets == ["live"]
+
+
+def test_merge_preserves_atlas():
+    # the cutout atlas is game-level (no per-entry id to upsert on) -- a single-window save
+    # carries none, so it must survive untouched.
+    existing = GameProfile(
+        name="g", windows=[],
+        atlas=[{"label": "H", "image": "cutout-1.png", "kind": "glyph"}],
+    )
+    incoming = GameProfile(name="g", windows=[_WIN])
+    m = merge_profiles(existing, incoming)
+    assert [c.label for c in m.atlas] == ["H"]
+
+
+def test_legacy_glyphs_key_migrates_into_atlas():
+    # older profiles keyed the atlas as `glyphs: [{char,image,enabled}]`; loading one must
+    # fold it into the unified `atlas` list as kind=glyph, no ``glyphs`` attribute surviving.
+    profile = GameProfile.model_validate({
+        "name": "g", "windows": [],
+        "glyphs": [{"char": "Q", "image": "glyph-1.png", "enabled": True}],
+    })
+    assert len(profile.atlas) == 1
+    assert profile.atlas[0].label == "Q"
+    assert profile.atlas[0].image == "glyph-1.png"
+    assert profile.atlas[0].kind == "glyph"
+    assert not hasattr(profile, "glyphs")
