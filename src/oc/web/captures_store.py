@@ -111,32 +111,38 @@ def cutout_loader(captures_dir: Path | str, game: str):
     return load
 
 
-# ---- taught glyph atlas (reference character crops) -----------------------
+# ---- taught cutout atlas (reference glyph/symbol crops) --------------------
 
-def save_glyph(captures_dir: Path | str, game: str, data: bytes, clock=None) -> str:
-    """Save a taught glyph PNG under ``captures/<game>/glyphs/`` and return its name."""
+def save_atlas_cutout(captures_dir: Path | str, game: str, data: bytes, clock=None) -> str:
+    """Save a taught cutout PNG under ``captures/<game>/atlas/`` and return its name."""
     stamp = (clock or (lambda: datetime.now(timezone.utc)))().strftime("%Y%m%d-%H%M%S-%f")
-    name = f"glyph-{stamp}.png"
-    path = Path(captures_dir) / _safe(game) / "glyphs" / name
+    name = f"cutout-{stamp}.png"
+    path = Path(captures_dir) / _safe(game) / "atlas" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return name
 
 
-def glyph_path(captures_dir: Path | str, game: str, name: str) -> Path | None:
+def atlas_path(captures_dir: Path | str, game: str, name: str) -> Path | None:
+    """Look under the current ``atlas/`` dir first, then the legacy ``glyphs/`` dir (pre-
+    unification profiles reference glyph PNGs there and are never moved on migration)."""
     if "/" in name or "\\" in name or ".." in name:
         return None
-    p = Path(captures_dir) / _safe(game) / "glyphs" / name
-    return p if p.exists() else None
+    base = Path(captures_dir) / _safe(game)
+    for sub in ("atlas", "glyphs"):
+        p = base / sub / name
+        if p.exists():
+            return p
+    return None
 
 
-def glyph_loader(captures_dir: Path | str, game: str):
-    """Return ``name -> BGR ndarray | None`` for a game's taught glyph crops — feeds the
-    GlyphMatcher its reference character images (see ``collect.glyph_match.glyph_atlas``)."""
+def atlas_loader(captures_dir: Path | str, game: str):
+    """Return ``name -> BGR ndarray | None`` for a game's taught atlas crops — feeds the
+    AtlasMatcher its reference glyph/symbol images (see ``collect.atlas_match.build_atlas``)."""
     import cv2
 
     def load(name: str):
-        p = glyph_path(captures_dir, game, name)
+        p = atlas_path(captures_dir, game, name)
         return cv2.imread(str(p)) if p else None
 
     return load

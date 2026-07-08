@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from ...collect.commit import commit_records
 from ...collect.fields import run_rules
-from ...collect.glyph_match import glyph_atlas
+from ...collect.atlas_match import build_atlas
 from ...collect.items import item_templates
 from ...collect.reader import RegionReader
 from ...detect.matcher import DetectMatcher, combine_passes
@@ -261,9 +261,9 @@ def _window_reader(engine, profile, game, capture):
                              dictionary=pooled, dictionaries=dict_map)
     templates = item_templates([window], captures_store.cutout_loader(
         get_settings().captures_dir, game or profile.name))
-    glyphs = glyph_atlas(profile.glyphs,
-                         captures_store.glyph_loader(get_settings().captures_dir, game or profile.name))
-    reader = RegionReader(engine.ocr, resolver, templates, glyphs)
+    atlas = build_atlas(profile.atlas,
+                       captures_store.atlas_loader(get_settings().captures_dir, game or profile.name))
+    reader = RegionReader(engine.ocr, resolver, templates, atlas)
     return frame, window, fields, reader
 
 
@@ -435,9 +435,9 @@ def item_read(profile: GameProfile, game: str = Query(...), win: str = Query(...
     resolver = FieldResolver(engine.corrector, engine.settings.tuning.accept_confidence,
                              dictionary=pooled, dictionaries=dict_map)
     templates = item_templates([window], lambda _name: cut)   # the cutout IS this item's reference
-    glyphs = glyph_atlas(profile.glyphs,
-                         captures_store.glyph_loader(get_settings().captures_dir, profile.name))
-    reader = RegionReader(engine.ocr, resolver, templates, glyphs)
+    atlas = build_atlas(profile.atlas,
+                       captures_store.atlas_loader(get_settings().captures_dir, profile.name))
+    reader = RegionReader(engine.ocr, resolver, templates, atlas)
     with ocr_job(engine.ocr) as job:
         result = reader.read_cutout(cut, window, it, fields)
     h, w = cut.shape[:2]

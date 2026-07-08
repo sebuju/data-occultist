@@ -168,14 +168,15 @@ def get_cutout(game: str, name: str):
     return FileResponse(str(path), media_type="image/png")
 
 
-@router.post("/glyph/cutout")
-def glyph_cutout(
+@router.post("/atlas/cutout")
+def atlas_cutout(
     game: str = Query(...), capture: str = Query(...),
     x: float = Query(...), y: float = Query(...), w: float = Query(...), h: float = Query(...),
 ):
-    """Freeze a taught glyph: crop the bound capture to the fraction box, save a PNG under
-    ``captures/<game>/glyphs/``. The crop is the reference image for one character in the
-    game's glyph atlas (see GameProfile.glyphs)."""
+    """Freeze a taught cutout (glyph or symbol): crop the bound capture to the fraction box,
+    save a PNG under ``captures/<game>/atlas/``. The crop is the reference image for one entry
+    in the game's cutout atlas (see GameProfile.atlas); which pool (glyph/symbol) it belongs to
+    is tagged client-side onto the ``CutoutDef`` — the store itself doesn't care."""
     settings = get_settings()
     path = captures_store.path_for(settings.captures_dir, game, capture)
     if path is None:
@@ -189,17 +190,17 @@ def glyph_cutout(
     crop = img[py : py + ph, px : px + pw]
     ok, buf = cv2.imencode(".png", crop)
     if not ok:
-        raise HTTPException(status_code=500, detail="failed to encode glyph")
-    name = captures_store.save_glyph(settings.captures_dir, game, buf.tobytes())
-    return {"name": name, "url": f"/api/glyph/cutout/{game}/{name}"}
+        raise HTTPException(status_code=500, detail="failed to encode cutout")
+    name = captures_store.save_atlas_cutout(settings.captures_dir, game, buf.tobytes())
+    return {"name": name, "url": f"/api/atlas/cutout/{game}/{name}"}
 
 
-@router.get("/glyph/cutout/{game}/{name}")
-def get_glyph(game: str, name: str):
-    """Serve a taught glyph PNG."""
-    path = captures_store.glyph_path(get_settings().captures_dir, game, name)
+@router.get("/atlas/cutout/{game}/{name}")
+def get_atlas_cutout(game: str, name: str):
+    """Serve a taught atlas cutout PNG."""
+    path = captures_store.atlas_path(get_settings().captures_dir, game, name)
     if path is None:
-        raise HTTPException(status_code=404, detail="glyph not found")
+        raise HTTPException(status_code=404, detail="cutout not found")
     return FileResponse(str(path), media_type="image/png")
 
 
@@ -214,7 +215,7 @@ def glyph_auto(
     user can nudge/resize + relabel, and the crops are frozen only on confirm.
 
     Returns 422 when OCR finds no text in the box."""
-    from ...collect.glyph_match import segment_boxes
+    from ...collect.atlas_match import segment_boxes
     from ...ocr.serialize import ocr_job
 
     settings = get_settings()
