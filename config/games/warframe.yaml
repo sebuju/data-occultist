@@ -1447,7 +1447,7 @@ windows:
     isolate: false
     glyph_check: false
   - id: rof_48
-    type: number
+    type: symbol
     rules: []
     min_confidence: 0.0
     isolate: false
@@ -1698,7 +1698,7 @@ windows:
       h: 0.018413729333551808
     field: rof_6_split2
     enabled: true
-  - id: ro_47
+  - id: school_8
     box:
       x: 0.8004048693179817
       y: 0.45152195609493695
@@ -2830,13 +2830,39 @@ dictionaries:
     - name
     - item
     - rarity
-glyphs:
-- char: G
+atlas:
+- label: G
   image: glyph-20260702-101221-085106.png
   enabled: true
-- char: Q
+  kind: glyph
+- label: Q
   image: glyph-20260702-101328-422407.png
   enabled: true
+  kind: glyph
+- label: any
+  image: cutout-20260708-113552-069600.png
+  enabled: true
+  kind: symbol
+- label: madurai
+  image: cutout-20260708-110249-573572.png
+  enabled: true
+  kind: symbol
+- label: naramon
+  image: cutout-20260708-121532-848287.png
+  enabled: true
+  kind: symbol
+- label: umbra
+  image: cutout-20260708-113508-387698.png
+  enabled: true
+  kind: symbol
+- label: vazarin
+  image: cutout-20260708-113147-583791.png
+  enabled: true
+  kind: symbol
+- label: zenurik
+  image: cutout-20260708-113358-550225.png
+  enabled: true
+  kind: symbol
 layout:
   nodes:
     game:
@@ -3315,14 +3341,6 @@ layout:
       collapsed: false
       custW: true
       custH: true
-    glyphs:
-      x: -2100.0
-      y: -4020.0
-      w: 620.0
-      h: 551.0
-      collapsed: false
-      custW: true
-      custH: false
     producer:wf_market_relic:
       x: 2780.0
       y: -3800.0
@@ -3747,10 +3765,18 @@ layout:
       x: 5900.0
       y: 480.0
       collapsed: false
-    ro:arsenal_warframe:ro_47:
+    ro:arsenal_warframe:school_8:
       x: 4300.0
       y: 1660.0
       collapsed: false
+    atlas:
+      x: -1900.0
+      y: -4020.0
+      w: 620.0
+      h: 551.0
+      collapsed: false
+      custW: true
+      custH: false
   tables:
     warframe:ds:master:
       sorts:
@@ -4020,7 +4046,7 @@ layout:
       - col: key
         dir: 1
   open_images:
-  - glyphs
+  - atlas
   - live_game_window
   - equipment_window
   - mod_window
@@ -4036,7 +4062,7 @@ layout:
     - game
     - dict:wiki
     - det:live_game_window:detect_1
-    - glyphs
+    - atlas
     - dict:dict_1
     - dict:relics
     outline:
@@ -4411,7 +4437,7 @@ layout:
     - ro:arsenal_warframe:drain_exilus
     - ro:arsenal_warframe:mod_drain_remaining
     - ro:arsenal_warframe:mod_drain_max
-    - ro:arsenal_warframe:ro_47
+    - ro:arsenal_warframe:school_8
     outline:
       color: '#262c37'
       style: none
@@ -4927,7 +4953,7 @@ layout:
     members:
     - win:arsenal_warframe
     - det:arsenal_warframe:detect_7
-    - ro:arsenal_warframe:ro_47
+    - ro:arsenal_warframe:school_8
     outline:
       color: '#5aa9e6'
       style: none
