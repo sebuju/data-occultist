@@ -66,7 +66,7 @@ export function slideToggle({ on, title, cls = "", label = "", hidden = false })
 // off). Toggle lives in the satellite header; datanodes reads this to filter present===false rows.
 export const vtShowRemoved = new Map();
 
-export const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds (rank)"], ["symbol", "symbol (glyph match)"]];
+export const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds"], ["symbol", "symbol"]];
 export const EXTRACTS = ["whole", "number", "number_before", "number_after", "text_before", "text_after"];
 export const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text_after"]);
 // how the game dictionary participates in a ``dictionary`` rule (FieldRule.dict_mode)
@@ -420,17 +420,14 @@ export function fieldConfigBody(fd, cls, fid, afterConf = null) {
             { title: "read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. an '8' read as '81')" }),
         isText && kv("glyph-check", h("input", { type: "checkbox", class: cls, dataset: { k: "glyph_check", ...da }, checked: !!fd.glyph_check }),
             { title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the atlas node." }),
-        fd.type === "symbol" && kv("symbol", h("span", { class: "muted" }, "matches taught SYMBOL cutouts"),
-            { title: "this box is classified (colour-agnostic) against every SYMBOL-kind cutout taught on the atlas node — the best-matching label is the value, or nothing when none clears the threshold. Teach symbols on the atlas node." }),
         kv("conf", confMeter({ cls, k: "minconf", value: fd.min_confidence ?? 0, fid }),
             { title: "minimum OCR confidence this field must reach — a weaker genuine read drops the whole record (0 = use the global floor). Drag the bar to set it." }),
         afterConf,   // optional extra row right below conf (readout node slots its live value here)
-        subhead("rules"),
-        gspan("frule-list", ruleRows(fd, cls, fid)),
-        h("div", { class: "frule-btns" },
+        subhead("rules", h("div", { class: "frule-btns" },
             h("button", { class: "rulecopy", dataset: { ...da }, disabled: !(fd.rules || []).length, title: "copy this pipeline" }, COPY()),
             h("button", { class: "rulepaste", dataset: { ...da }, title: "replace all rules with the copied pipeline" }, PASTE()),
-            h("button", { class: "ruleadd", dataset: { ...da }, title: "add a rule to the pipeline" }, PLUS())));
+            h("button", { class: "ruleadd", dataset: { ...da }, title: "add a rule to the pipeline" }, PLUS()))),
+        gspan("frule-list", ruleRows(fd, cls, fid)));
 }
 
 // One item field is its OWN node (a child of its item node). It renders the shared

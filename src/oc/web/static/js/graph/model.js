@@ -1566,7 +1566,7 @@ export class GraphModel {
         w.readouts.push({ id, box: { x: box.x, y: box.y, w: box.w, h: box.h }, field: fid, enabled: true });
         this.addField(winId, fid);
         const f = (w.fields || []).find((x) => x.id === fid);
-        if (f) f.type = "number";   // readouts read numbers by default (health/counters)
+        if (f) { f.type = "number"; f.min_confidence = 0.7; }   // readouts: numbers, 0.7 conf floor by default
         return id;
     }
     readout(winId, vid) { const w = this.window(winId); return w && (w.readouts || []).find((v) => v.id === vid); }
