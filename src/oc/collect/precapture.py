@@ -48,7 +48,7 @@ from ..ocr.serialize import ocr_job
 from ..window.input import scroll_window
 from . import detsig, settle
 from .scrollbar import scroll_position
-from .glyph_match import glyph_atlas
+from .atlas_match import build_atlas
 from .items import item_templates
 from .reader import RegionReader
 
@@ -268,9 +268,9 @@ class PrecaptureSession:
         from ..web import captures_store
         templates = item_templates(profile.windows,
                                    captures_store.cutout_loader(eng.settings.captures_dir, profile.name))
-        glyphs = glyph_atlas(profile.glyphs,
-                             captures_store.glyph_loader(eng.settings.captures_dir, profile.name))
-        self._reader = RegionReader(eng.ocr, resolver, templates, glyphs)
+        atlas = build_atlas(profile.atlas,
+                           captures_store.atlas_loader(eng.settings.captures_dir, profile.name))
+        self._reader = RegionReader(eng.ocr, resolver, templates, atlas)
         self._detect_fracs = _detect_boxes(profile)
         self._key_maps = {}
 

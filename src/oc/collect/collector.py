@@ -26,7 +26,7 @@ from ..store import DatasetStore, KeyMap, store_for
 from ..store.flow_events import publish_flow
 from . import detsig, settle
 from .items import item_templates
-from .glyph_match import glyph_atlas
+from .atlas_match import build_atlas
 from .commit import commit_records
 from .reader import Record, RegionReader
 from .scrollbar import scroll_detail
@@ -129,9 +129,9 @@ class Collector:
         from ..web import captures_store
         templates = item_templates(profile.windows,
                                    captures_store.cutout_loader(engine.settings.captures_dir, profile.name))
-        glyphs = glyph_atlas(profile.glyphs,
-                             captures_store.glyph_loader(engine.settings.captures_dir, profile.name))
-        self._reader = RegionReader(engine.ocr, resolver, templates, glyphs)
+        atlas = build_atlas(profile.atlas,
+                           captures_store.atlas_loader(engine.settings.captures_dir, profile.name))
+        self._reader = RegionReader(engine.ocr, resolver, templates, atlas)
 
         # Confirmers, stores, and observed-key sets are keyed by DATASET, not
         # window, so windows that share a dataset dedup against each other and

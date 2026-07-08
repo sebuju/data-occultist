@@ -106,15 +106,16 @@ def _center_in(line: OcrLine, box: PixelBox) -> bool:
 
 
 class RegionReader:
-    def __init__(self, ocr: OcrEngine, resolver=None, templates=None, glyphs=None) -> None:
+    def __init__(self, ocr: OcrEngine, resolver=None, templates=None, atlas=None) -> None:
         self._ocr = ocr
         self._resolver = resolver
         # {tell_id: image} for ``template`` tells; loaded by the caller (knows the
         # profile dir). None/absent -> template tells score 0.
         self._templates = templates or {}
-        # Optional GlyphMatcher (taught glyph atlas) for post-OCR glyph refinement on
-        # ``glyph_check`` fields. None -> refinement skipped.
-        self._glyphs = glyphs
+        # Optional AtlasMatcher (taught glyph+symbol atlas): post-OCR glyph refinement on
+        # ``glyph_check`` fields, and whole-box classification for ``type: symbol`` fields.
+        # None -> both skipped.
+        self._atlas = atlas
 
     # ---- batched OCR -------------------------------------------------------
 
@@ -331,7 +332,7 @@ class RegionReader:
 
         cells = expand_cells(window)
         targets = self._targets_from_cells(cells, frame)
-        text_boxes = [b for _, fid, b in targets if not self._is_pip(fields.get(fid))]
+        text_boxes = [b for _, fid, b in targets if not self._is_visual(fields.get(fid))]
         # No data area set yet: nothing to clip to and maybe no taught boxes at all, so OCR the
         # WHOLE canvas — the raw-OCR layer then shows every line the engine found (field reads are
         # unaffected: _gather still assigns lines by their box). clip is None iff data_area is None.
@@ -348,11 +349,31 @@ class RegionReader:
         # "visual count" fields aren't OCR'd — they're counted from pixels
         return fdef is not None and fdef.type in (FieldType.pips, FieldType.diamonds)
 
+    @staticmethod
+    def _is_symbol(fdef: FieldDef | None) -> bool:
+        # "symbol" fields aren't OCR'd either — they're classified against the taught atlas
+        return fdef is not None and fdef.type is FieldType.symbol
+
+    @classmethod
+    def _is_visual(cls, fdef: FieldDef | None) -> bool:
+        # any field type that skips OCR entirely (counted or classified from pixels)
+        return cls._is_pip(fdef) or cls._is_symbol(fdef)
+
     def _pip_value(self, frame: Frame, box: PixelBox, fdef: FieldDef | None = None) -> int:
         crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
         if fdef is not None and fdef.type is FieldType.diamonds:
             return count_filled_diamonds(crop)
         return count_pips(crop)
+
+    def _symbol_value(self, frame: Frame, box: PixelBox) -> tuple[str, float]:
+        """Classify a box against the taught symbol atlas -> ``(label, conf)``, or
+        ``("", 0.0)`` when nothing is taught or nothing clears the match threshold — never a
+        guess (an unread key part must drop the record, not fabricate a school)."""
+        if self._atlas is None:
+            return "", 0.0
+        crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
+        label, score = self._atlas.classify(crop)
+        return (label, 0.99) if label else ("", 0.0)
 
     def _clip(self, frame: Frame, window: WindowDef) -> PixelBox | None:
         if window.data_area is None:
@@ -395,7 +416,7 @@ class RegionReader:
         base, pending = {}, []
         for ci, field_id, box in targets:
             fdef = fields.get(field_id)
-            if self._is_pip(fdef):
+            if self._is_visual(fdef):
                 continue
             tc = self._gather(lines, box)
             base[(ci, field_id)] = tc
@@ -417,15 +438,26 @@ class RegionReader:
                                                 substituted=None, dropped=False, box=box,
                                                 pip_unit=unit)
                 continue
+            if self._is_symbol(fdef):
+                label, conf = self._symbol_value(frame, box)
+                if not label:
+                    continue   # unclassified: field stays unset -> a key part drops the record
+                c.values[field_id] = label
+                c.saw = True
+                c.confs[field_id] = conf
+                c.fields[field_id] = _FieldRead(raw=label, conf=conf, value=label,
+                                                substituted=None, dropped=False, box=box)
+                worst[ci] = min(worst[ci], conf)
+                continue
             text, conf = focus.get((ci, field_id)) or base[(ci, field_id)]
             raw_ocr = text   # the genuine OCR read, kept so the UI can show the ORIGINAL vs value
             # Post-OCR glyph refinement (runs BEFORE resolve, so the dictionary then sees the
             # corrected glyphs). Matches this box's pixels against the taught atlas — fixes a
             # Q<->G-class confusion the dictionary can't, since both readings are valid terms.
             refined = False
-            if text and self._glyphs is not None and fdef and getattr(fdef, "glyph_check", False):
+            if text and self._atlas is not None and fdef and getattr(fdef, "glyph_check", False):
                 gcrop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
-                new = self._glyphs.refine(text, gcrop)
+                new = self._atlas.refine(text, gcrop)
                 refined = new != text
                 text = new
             substituted = verified = None
@@ -550,6 +582,11 @@ class RegionReader:
             if self._is_pip(fdef):
                 out[v.id] = (self._pip_value(frame, box, fdef), 1.0)
                 continue
+            if self._is_symbol(fdef):
+                label, conf = self._symbol_value(frame, box)
+                if label:   # unclassified -> omit (a trigger must never fire on garbage)
+                    out[v.id] = (label, conf)
+                continue
             text, conf = self._detect_reads(frame, window, [(v.id, box)]).get(v.id) or ("", 0.0)
             substituted, dropped = None, False
             if self._resolver and fdef:
@@ -581,9 +618,15 @@ class RegionReader:
         are omitted; the caller defaults them)."""
         cw, ch = frame.client.w, frame.client.h
         out: dict[str, tuple[str, float]] = {}
+        # symbol readouts aren't OCR'd — classify each against the atlas directly
+        for v in window.readouts:
+            if v.enabled and self._is_symbol(fields.get(v.field)) and v.field in fields and v.field not in out:
+                box = v.box.to_fraction().to_pixels(cw, ch)
+                out[v.field] = self._symbol_value(frame, box) or ("", 0.0)
         # readouts: detection-gated read of every enabled readout box (NOT recognition-only —
         # a blank box must read as empty, not a hallucinated value; see _detect_reads)
-        ro_boxes = [(v.id, v.box.to_fraction().to_pixels(cw, ch)) for v in window.readouts if v.enabled]
+        ro_boxes = [(v.id, v.box.to_fraction().to_pixels(cw, ch)) for v in window.readouts
+                    if v.enabled and not self._is_symbol(fields.get(v.field))]
         ro_reads = self._detect_reads(frame, window, ro_boxes) if ro_boxes else {}
         for v in window.readouts:
             if v.enabled and v.field in fields and v.field not in out:

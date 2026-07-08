@@ -14,10 +14,10 @@ cheap (no OCR), so one of them can also locate rows by sliding down a column.
 
 from __future__ import annotations
 
-import cv2
 import numpy as np
 
 from ..profile.models import Tell, TellKind
+from .matchcore import ncc_scaled
 from .pips import count_diamonds
 
 
@@ -100,21 +100,10 @@ def color_distance(crop: np.ndarray, hex_color: str | None, width: float = 0.0) 
 
 
 def template_score(crop: np.ndarray, template: np.ndarray | None) -> float:
-    if crop is None or template is None or crop.size == 0 or template.size == 0:
-        return 0.0
-    ch, cw = crop.shape[:2]
-    th, tw = template.shape[:2]
-    # matchTemplate requires template <= crop. Rows here are OCR-located (not a fixed grid),
-    # so a located cell is a few px smaller/larger than the authoring cutout frame-to-frame.
-    # A template authored a hair larger than the live crop would otherwise hard-fail to 0
-    # (the old guard) — making the tell flicker. Shrink the template to fit (aspect-preserving)
-    # instead of dropping the read, so the match degrades gracefully rather than vanishing.
-    if th > ch or tw > cw:
-        scale = min(ch / th, cw / tw)
-        nw, nh = max(1, int(tw * scale)), max(1, int(th * scale))
-        template = cv2.resize(template, (nw, nh), interpolation=cv2.INTER_AREA)
-    res = cv2.matchTemplate(crop, template, cv2.TM_CCOEFF_NORMED)
-    return float(res.max())
+    # Rows here are OCR-located (not a fixed grid), so a located cell is a few px smaller/
+    # larger than the authoring cutout frame-to-frame; ncc_scaled shrinks an oversized
+    # template to fit instead of hard-failing, so the match degrades gracefully.
+    return ncc_scaled(crop, template)
 
 
 def diamonds_score(crop: np.ndarray) -> float:
