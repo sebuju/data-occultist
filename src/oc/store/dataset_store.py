@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS events (
   reverted     INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (dataset, id)
 );
-CREATE INDEX IF NOT EXISTS ix_events_ds_key   ON events(dataset, key);
+CREATE INDEX IF NOT EXISTS ix_events_ds_key   ON events(dataset, key, id);
 CREATE INDEX IF NOT EXISTS ix_events_ds_batch ON events(dataset, batch);
 -- Covering partial index for the `current` boundary rebuild (_compute_boundary): the
 -- per-key COUNT / MIN(id) / MAX(id) over live rows scan this index-only instead of the
@@ -216,6 +216,22 @@ def replay(events: list[ChangeEvent], reverted: set[int],
 
 # ---- connection ------------------------------------------------------------
 
+def _migrate_ds_key_index(conn: sqlite3.Connection) -> None:
+    """One-time repair for a DB created before ``ix_events_ds_key`` widened to
+    ``(dataset, key, id)``. The old 2-column ``(dataset, key)`` shape sent the
+    "last event for this key" lookup in :meth:`DatasetStore._plan_observation` down the
+    ``(dataset, id)`` primary-key index instead (SQLite's planner preferred it to avoid a
+    sort) — for a key not yet in the ledger (the common case: writing fresh rows) that's a
+    full scan of the dataset's whole event partition per row, turning ``record_many`` O(n^2).
+    ``CREATE INDEX IF NOT EXISTS`` never widens an existing index under the same name, so a
+    pre-existing 2-column index must be dropped and rebuilt once; a fresh or already-migrated
+    DB sees 3 columns and this is a single cheap no-op ``PRAGMA``."""
+    cols = conn.execute("PRAGMA index_info(ix_events_ds_key)").fetchall()
+    if 0 < len(cols) < 3:
+        conn.execute("DROP INDEX ix_events_ds_key")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_events_ds_key ON events(dataset, key, id)")
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     """Open (creating) the per-game DB in WAL mode. ``isolation_level=None`` = autocommit;
     multi-statement writes wrap themselves in explicit ``BEGIN IMMEDIATE``/``COMMIT``."""
@@ -233,6 +249,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.executescript(_SCHEMA)
+            _migrate_ds_key_index(conn)
             return conn
         except sqlite3.OperationalError as e:
             if not delay or "locked" not in str(e).lower():
