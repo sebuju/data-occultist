@@ -163,6 +163,133 @@ def test_readout_adjacent_words_are_not_deduped():
     assert out["slot_5"] == "Augur Reach"
 
 
+class SequencedOcr(OcrEngine):
+    """Returns each configured response in CALL ORDER (not content-keyed) -- exactly
+    matches how ``_readout_text_reads`` drives OCR: one isolated ``read_image`` per
+    pending box (via ``_detect_reads``), THEN, only if at least one box came back
+    present, one more ``read_image`` for the wider union+margin pass (via
+    ``_ocr_union``). Counting ``.calls`` after a run proves whether that second,
+    wider call happened at all -- the cheapest way to assert "no wide pass when
+    nothing is present" without inspecting crop geometry."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = 0
+
+    def read_image(self, image):
+        resp = self._responses[self.calls] if self.calls < len(self._responses) else []
+        self.calls += 1
+        return list(resp)
+
+
+def test_readout_crosscheck_prefers_clean_wide_over_split_iso():
+    # THE motivating case, confirmed on a real capture during Phase-0 probing
+    # (09/07/26): a tight isolated crop doesn't just split text at a word boundary
+    # (the older "Augur"/"r Reach" bug, already patched by _drop_stutter_words) -- it
+    # can fuse a DOUBLED letter INSIDE one token ("Umbral" + "IIntensify"), which no
+    # existing text-level cleanup catches because there's no lone 1-letter word and no
+    # duplicate box. The wider cross-check pass reads the same text cleanly.
+    box = Box(x=0.1, y=0.1, w=0.2, h=0.2)   # -> pixels (100, 40, 200, 80) on a 1000x400 frame
+    window = WindowDef(
+        id="w", fields=[FieldDef(id="rof_8")],
+        readouts=[ReadoutDef(id="slot_8", box=box, field="rof_8")],
+    )
+    frame = Frame(image=np.zeros((400, 1000, 3), np.uint8), client=PixelBox(0, 0, 1000, 400))
+    ocr = SequencedOcr([
+        # call 1: isolated crop -- the corrupted read that ships today
+        [OcrLine("Umbral", PixelBox(10, 10, 90, 50), 0.99),
+         OcrLine("IIntensify", PixelBox(105, 10, 120, 50), 0.99)],
+        # call 2: wider union+margin pass -- one clean detection
+        [OcrLine("Umbral Intensify", PixelBox(30, 30, 220, 50), 0.99)],
+    ])
+    reader = RegionReader(ocr)
+    pending = [("slot_8", box.to_fraction().to_pixels(1000, 400))]
+    out = reader._readout_text_reads(frame, window, pending)
+    assert out["slot_8"][0] == "Umbral Intensify"   # NOT "Umbral IIntensify"
+
+
+def test_readout_crosscheck_absent_box_never_hallucinated():
+    # Two readouts: one the isolated (presence-oracle) read finds EMPTY, one it finds
+    # present. The wide pass geometrically covers both boxes (adjacent, inside the
+    # grown union) and returns a stray line centred squarely inside the EMPTY box --
+    # simulating exactly the hallucination a large OCR pass can produce on blank
+    # space. It must never surface: absence is decided by the isolated read alone,
+    # and the wide pass is never even consulted for a key that isn't already present.
+    box_empty = Box(x=0.28, y=0.1, w=0.02, h=0.2)     # pixels (280, 40, 20, 80) -> center (290, 80)
+    box_present = Box(x=0.3, y=0.1, w=0.2, h=0.2)     # pixels (300, 40, 200, 80)
+    window = WindowDef(
+        id="w", fields=[FieldDef(id="rof_e"), FieldDef(id="rof_p")],
+        readouts=[
+            ReadoutDef(id="empty_slot", box=box_empty, field="rof_e"),
+            ReadoutDef(id="present_slot", box=box_present, field="rof_p"),
+        ],
+    )
+    frame = Frame(image=np.zeros((400, 1000, 3), np.uint8), client=PixelBox(0, 0, 1000, 400))
+    ocr = SequencedOcr([
+        [],                                                              # call 1: empty_slot isolated -- nothing
+        [OcrLine("Clean Text", PixelBox(10, 10, 150, 50), 0.9)],         # call 2: present_slot isolated
+        [                                                                # call 3: wide union+margin pass
+            OcrLine("Ghost", PixelBox(2, 57, 40, 30), 0.9),               # centres at frame (290, 80) -- inside box_empty
+            OcrLine("Clean Text", PixelBox(57, 47, 150, 50), 0.95),       # centres inside box_present
+        ],
+    ])
+    reader = RegionReader(ocr)
+    pending = [
+        ("empty_slot", box_empty.to_fraction().to_pixels(1000, 400)),
+        ("present_slot", box_present.to_fraction().to_pixels(1000, 400)),
+    ]
+    out = reader._readout_text_reads(frame, window, pending)
+    assert "empty_slot" not in out                 # never hallucinated, despite a covering wide line
+    assert out["present_slot"][0] == "Clean Text"
+
+
+def test_readout_crosscheck_rejects_overmerged_wide():
+    # Two ADJACENT present boxes, each with its own clean isolated read. The wide
+    # pass over-merges them into ONE line spanning both -- its own box only ~57%
+    # contained within either readout box, well under the containment guard. Both
+    # boxes must fall back to their (already correct) isolated reads rather than
+    # accept a merged/ambiguous wide line.
+    box_a = Box(x=0.1, y=0.1, w=0.2, h=0.2)   # pixels (100, 40, 200, 80)
+    box_b = Box(x=0.3, y=0.1, w=0.2, h=0.2)   # pixels (300, 40, 200, 80), touching box_a
+    window = WindowDef(
+        id="w", fields=[FieldDef(id="rof_a"), FieldDef(id="rof_b")],
+        readouts=[
+            ReadoutDef(id="slot_a", box=box_a, field="rof_a"),
+            ReadoutDef(id="slot_b", box=box_b, field="rof_b"),
+        ],
+    )
+    frame = Frame(image=np.zeros((400, 1000, 3), np.uint8), client=PixelBox(0, 0, 1000, 400))
+    ocr = SequencedOcr([
+        [OcrLine("AaText", PixelBox(10, 10, 150, 50), 0.9)],    # call 1: slot_a isolated
+        [OcrLine("BbText", PixelBox(10, 10, 150, 50), 0.9)],    # call 2: slot_b isolated
+        [OcrLine("AaText BbText", PixelBox(62, 52, 300, 40), 0.99)],   # call 3: wide -- over-merged
+    ])
+    reader = RegionReader(ocr)
+    pending = [
+        ("slot_a", box_a.to_fraction().to_pixels(1000, 400)),
+        ("slot_b", box_b.to_fraction().to_pixels(1000, 400)),
+    ]
+    out = reader._readout_text_reads(frame, window, pending)
+    assert out["slot_a"][0] == "AaText"    # kept the isolated read, not the merged line
+    assert out["slot_b"][0] == "BbText"
+
+
+def test_readout_crosscheck_no_wide_pass_when_all_empty():
+    # Nothing present -> zero added OCR cost: the wide pass must never even run.
+    box = Box(x=0.1, y=0.1, w=0.2, h=0.2)
+    window = WindowDef(
+        id="w", fields=[FieldDef(id="rof_8")],
+        readouts=[ReadoutDef(id="slot_5", box=box, field="rof_8")],
+    )
+    frame = Frame(image=np.zeros((400, 1000, 3), np.uint8), client=PixelBox(0, 0, 1000, 400))
+    ocr = SequencedOcr([[]])   # call 1: isolated -- nothing detected
+    reader = RegionReader(ocr)
+    pending = [("slot_5", box.to_fraction().to_pixels(1000, 400))]
+    out = reader._readout_text_reads(frame, window, pending)
+    assert out == {}
+    assert ocr.calls == 1   # only the isolated call -- no wide pass
+
+
 def test_real_low_confidence_read_still_sinks_record():
     # an uncertain read that did NOT substitute (a real number) must still gate
     ocr = StubOcr([

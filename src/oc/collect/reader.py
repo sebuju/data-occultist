@@ -247,11 +247,86 @@ class RegionReader:
         return text, conf
 
     @staticmethod
+    def _hits_in(lines: list[OcrLine], box: PixelBox) -> list[OcrLine]:
+        """Lines whose centre falls inside ``box`` — the shared "which fragments
+        belong to this field" selection ``_gather`` and the readout cross-check
+        (``_readout_text_reads``) both use (CLAUDE.md rule 7)."""
+        return [ln for ln in lines if _center_in(ln, box)]
+
+    @staticmethod
     def _gather(lines: list[OcrLine], box: PixelBox) -> tuple[str, float]:
-        hits = [ln for ln in lines if _center_in(ln, box)]
+        hits = RegionReader._hits_in(lines, box)
         if not hits:
             return "", 0.0
         return RegionReader._order_join(hits)
+
+    # Readout cross-check tuning (see _readout_text_reads). Margin: how much extra
+    # whitespace context (scaled off the tallest present box) surrounds the union
+    # crop, so even a single present box gets some room to segment cleanly instead
+    # of being cropped as tightly as the isolated read. Cover: how much of a WIDE
+    # line's own box must sit inside a readout box before that line is trusted as
+    # THIS box's text -- guards against an over-merged wide line (one that spans two
+    # neighbouring readouts) silently winning over the safe isolated read.
+    _RO_MARGIN = 0.4
+    _RO_COVER = 0.85
+
+    @staticmethod
+    def _covers(line_box: PixelBox, box: PixelBox, thresh: float) -> bool:
+        """True if ``line_box`` sits mostly INSIDE ``box`` (intersection / line_box
+        area >= thresh) -- same containment math as ``_dedup_fragments``, applied
+        here to reject a wide-pass line that over-merged across a box boundary."""
+        ix = max(0, min(line_box.right, box.right) - max(line_box.x, box.x))
+        iy = max(0, min(line_box.bottom, box.bottom) - max(line_box.y, box.y))
+        area = line_box.w * line_box.h
+        return bool(area) and (ix * iy) / area >= thresh
+
+    @staticmethod
+    def _grow(box: PixelBox, margin: int, frame: Frame) -> PixelBox:
+        """``box`` expanded by ``margin`` on every side, clamped to the frame."""
+        ih, iw = frame.image.shape[:2]
+        x0, y0 = max(0, box.x - margin), max(0, box.y - margin)
+        x1, y1 = min(iw, box.right + margin), min(ih, box.bottom + margin)
+        return PixelBox(x0, y0, x1 - x0, y1 - y0)
+
+    def _readout_text_reads(self, frame: Frame, window: WindowDef,
+                            pending: list[tuple]) -> dict:
+        """Text-readout reads -> ``{key: (text, conf)}``, refined by a scoped
+        cross-check against a wider OCR pass. ``pending`` is ``[(key, box)]``.
+
+        A tight isolated crop (:meth:`_detect_reads`) routinely makes the detector
+        SPLIT clean text at a word boundary, or even misread glyphs near the crop
+        edge (confirmed on real captures: "Umbral Intensify" -> "Umbral IIntensify";
+        "-60% Ability Strength WARFRAME" -> "-6U% Abmity Strength WARERAME") -- a
+        small-crop segmentation/recognition artifact, not something specific to any
+        one field. A single wider pass over the union of the PRESENT boxes reads
+        cleaner (measured: union+margin matches or beats a full-frame pass on both
+        text and confidence, at a fraction of the detected-line cost).
+
+        Absence must stay authoritative: a large pass can hallucinate text into a
+        blank box (an ability off cooldown, an empty mod slot), so ``_detect_reads``
+        (isolated, detection-gated) decides presence FIRST and unconditionally --
+        the wider pass only ever refines the text of a box already confirmed
+        present, and is never run at all when nothing is present (zero added cost
+        on an empty tick). A wide line only wins when it cleanly covers the box
+        (:meth:`_covers`) -- an over-merged line that spans a neighbour is rejected
+        and the isolated read is kept, so a bad merge can only ever fall back to the
+        already-safe isolated text, never corrupt it.
+        """
+        iso = self._detect_reads(frame, window, pending)
+        present = [(k, b) for k, b in pending if k in iso]
+        if not present:
+            return iso
+        clip = self._grow(_union([b for _, b in present]),
+                          int(self._RO_MARGIN * max(b.h for _, b in present)), frame)
+        wide = self._ocr_union(frame, [], window.preprocess, clip)
+        out = dict(iso)
+        for key, box in present:
+            hits = self._hits_in(wide, box)
+            if hits and all(self._covers(ln.box, box, self._RO_COVER) for ln in hits):
+                text, conf = self._order_join(hits)
+                if text:
+                    out[key] = (text, conf)
+        return out
 
     def _box_crop(self, frame: Frame, box: PixelBox, preprocess: Preprocess | None):
         """Prepared recognition input for a single field box: crop, preprocess, and
@@ -650,10 +725,17 @@ class RegionReader:
         """
         out: dict[str, tuple[object, float]] = {}
         cw, ch = frame.client.w, frame.client.h
+        boxes = {v.id: v.box.to_fraction().to_pixels(cw, ch) for v in window.readouts if v.enabled}
+        # Text readouts all cross-check together in ONE wider pass (see _readout_text_reads)
+        # instead of each paying its own isolated-only read.
+        text_pending = [(v.id, boxes[v.id]) for v in window.readouts
+                        if v.enabled and not self._is_pip(fields.get(v.field))
+                        and not self._is_symbol(fields.get(v.field))]
+        text_reads = self._readout_text_reads(frame, window, text_pending) if text_pending else {}
         for v in window.readouts:
             if not v.enabled:
                 continue
-            box = v.box.to_fraction().to_pixels(cw, ch)
+            box = boxes[v.id]
             fdef = fields.get(v.field)
             if self._is_pip(fdef):
                 out[v.id] = (self._pip_value(frame, box, fdef), 1.0)
@@ -663,7 +745,7 @@ class RegionReader:
                 if label:   # unclassified -> omit (a trigger must never fire on garbage)
                     out[v.id] = (label, conf)
                 continue
-            text, conf = self._detect_reads(frame, window, [(v.id, box)]).get(v.id) or ("", 0.0)
+            text, conf = text_reads.get(v.id) or ("", 0.0)
             substituted, dropped = None, False
             if self._resolver and fdef:
                 resolved = self._resolver.resolve(fdef, text, conf)
@@ -700,10 +782,11 @@ class RegionReader:
                 box = v.box.to_fraction().to_pixels(cw, ch)
                 out[v.field] = self._symbol_value(frame, box) or ("", 0.0)
         # readouts: detection-gated read of every enabled readout box (NOT recognition-only —
-        # a blank box must read as empty, not a hallucinated value; see _detect_reads)
+        # a blank box must read as empty, not a hallucinated value), cross-checked against a
+        # wider pass for boxes found present; see _readout_text_reads.
         ro_boxes = [(v.id, v.box.to_fraction().to_pixels(cw, ch)) for v in window.readouts
                     if v.enabled and not self._is_symbol(fields.get(v.field))]
-        ro_reads = self._detect_reads(frame, window, ro_boxes) if ro_boxes else {}
+        ro_reads = self._readout_text_reads(frame, window, ro_boxes) if ro_boxes else {}
         for v in window.readouts:
             if v.enabled and v.field in fields and v.field not in out:
                 out[v.field] = ro_reads.get(v.id) or ("", 0.0)
