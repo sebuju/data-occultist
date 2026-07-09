@@ -1,6 +1,6 @@
 """Subset compute + profile round-trip."""
 
-from oc.profile.loader import load_profile, save_profile
+from oc.profile.loader import _migrate_join_exclude, load_profile, save_profile
 from oc.profile.models import (
     DerivedColumn, FilterRule, GameProfile, JoinNorm, JoinSource, SubsetDef,
 )
@@ -255,7 +255,7 @@ def test_exclude_source_drops_matching_keys():
     owned = [{"name": "Vitality", "count": 1, "present": True},
              {"name": "Serration", "count": 1, "present": True}]
     equipped = [{"name": "Vitality", "present": True}]
-    sub = SubsetDef(id="v", sources=[_src("owned"), JoinSource(dataset="equipped", join_field="name", exclude=True)])
+    sub = SubsetDef(id="v", sources=[_src("owned"), JoinSource(dataset="equipped", join_field="name", mode="exclude")])
     rows = compute_view([("owned", owned), ("equipped", equipped)], sub)["rows"]
     assert {r["name"] for r in rows} == {"Serration"}       # Vitality dropped, equipped's own cols never appear
 
@@ -266,7 +266,7 @@ def test_exclude_independent_of_required():
     blocked = [{"name": "X", "present": True}]
     sub = SubsetDef(id="v", sources=[
         _src("owned", required=True),
-        JoinSource(dataset="blocked", join_field="name", required=True, exclude=True),
+        JoinSource(dataset="blocked", join_field="name", required=True, mode="exclude"),
     ])
     rows = compute_view([("owned", owned), ("blocked", blocked)], sub)["rows"]
     assert {r["name"] for r in rows} == {"Y"}
@@ -278,7 +278,7 @@ def test_exclude_never_drops_keyless_standalone_rows():
     blocked = [{"name": "X", "present": True}]
     sub = SubsetDef(id="v", sources=[
         _src("owned"),
-        JoinSource(dataset="blocked", join_field="name", exclude=True),
+        JoinSource(dataset="blocked", join_field="name", mode="exclude"),
     ])
     rows = compute_view([("owned", owned), ("blocked", blocked)], sub)["rows"]
     assert {r.get("extra") for r in rows} == {"junk"}       # the keyless row survives; "X" was excluded
@@ -289,19 +289,116 @@ def test_all_sources_excluded_yields_nothing():
     a = [{"name": "X", "present": True}]
     b = [{"name": "Y", "present": True}]
     sub = SubsetDef(id="v", sources=[
-        JoinSource(dataset="a", join_field="name", exclude=True),
-        JoinSource(dataset="b", join_field="name", exclude=True),
+        JoinSource(dataset="a", join_field="name", mode="exclude"),
+        JoinSource(dataset="b", join_field="name", mode="exclude"),
     ])
     assert compute_view([("a", a), ("b", b)], sub)["rows"] == []
 
 
 def test_exclude_round_trips_through_profile(tmp_path):
     p = GameProfile(name="g", subsets=[SubsetDef(id="v", sources=[
-        _src("owned"), JoinSource(dataset="blocked", join_field="name", exclude=True)])])
+        _src("owned"), JoinSource(dataset="blocked", join_field="name", mode="exclude")])])
     save_profile(tmp_path, p)
     s = load_profile(tmp_path, "g").subset_def("v")
-    assert s.sources[1].exclude is True
-    assert s.sources[0].exclude is False                     # default stays off
+    assert s.sources[1].mode == "exclude"
+    assert s.sources[0].mode == "join"                       # default stays plain join
+
+
+def test_migration_folds_old_exclude_flag_into_mode():
+    raw = {"name": "g", "subsets": [{"id": "v", "sources": [
+        {"dataset": "owned", "join_field": "name", "exclude": False},
+        {"dataset": "blocked", "join_field": "name", "exclude": True},
+    ]}]}
+    out = _migrate_join_exclude(raw)
+    srcs = out["subsets"][0]["sources"]
+    assert "exclude" not in srcs[0] and "exclude" not in srcs[1]   # old key always dropped
+    assert "mode" not in srcs[0]                                   # false -> nothing (model default covers it)
+    assert srcs[1]["mode"] == "exclude"
+    GameProfile.model_validate(out)                                # validates post-migration
+
+
+def test_mark_annotates_without_multiplying():
+    # semi-join: a mod's polarity may match TWO empty slots sharing that polarity, but the
+    # mod must still surface ONCE with the match flagged, not once per matching slot.
+    mods = [{"name": "Vitality", "polarity": "vazarin", "present": True},
+            {"name": "Serration", "polarity": "madurai", "present": True}]
+    empty_slots = [{"slot": "slot_1", "school": "vazarin"}, {"slot": "slot_2", "school": "vazarin"}]
+    sub = SubsetDef(id="v", sources=[
+        _src("mods", join_field="polarity"),
+        JoinSource(dataset="empty_slots", join_field="school", mode="mark"),
+    ])
+    rows = {r["name"]: r for r in compute_view([("mods", mods), ("empty_slots", empty_slots)], sub)["rows"]}
+    assert len(rows) == 2                                    # NOT 3 -- Vitality appears once
+    assert rows["Vitality"]["slot"] == "slot_1"               # first match wins
+    assert rows["Serration"].get("slot") in (None, "")        # no matching empty slot -> unmarked
+
+
+def test_mark_never_matches_keyless_standalone():
+    a = [{"name": "", "extra": "junk", "present": True}]
+    mark = [{"name": "X", "tag": "hot", "present": True}]
+    sub = SubsetDef(id="v", sources=[_src("a"), JoinSource(dataset="mark", join_field="name", mode="mark")])
+    rows = compute_view([("a", a), ("mark", mark)], sub)["rows"]
+    assert rows[0].get("tag") in (None, "")
+
+
+def test_broadcast_merges_onto_every_row():
+    owned = [{"name": "X", "base_drain": 4, "present": True}, {"name": "Y", "base_drain": 9, "present": True}]
+    scalar = [{"drain_remaining": "7"}]
+    sub = SubsetDef(id="v", sources=[
+        _src("owned", join_field=""),
+        JoinSource(dataset="scalar", join_field="", mode="broadcast"),
+    ])
+    rows = {r["name"]: r for r in compute_view([("owned", owned), ("scalar", scalar)], sub)["rows"]}
+    assert rows["X"]["drain_remaining"] == "7" and rows["Y"]["drain_remaining"] == "7"
+
+
+def test_broadcast_never_overwrites_real_join_columns():
+    owned = [{"name": "X", "drain_remaining": "already-set", "present": True}]
+    scalar = [{"drain_remaining": "7"}]
+    sub = SubsetDef(id="v", sources=[
+        _src("owned", join_field=""),
+        JoinSource(dataset="scalar", join_field="", mode="broadcast"),
+    ])
+    rows = compute_view([("owned", owned), ("scalar", scalar)], sub)["rows"]
+    assert rows[0]["drain_remaining"] == "already-set"       # broadcast only fills missing/empty cells
+
+
+def test_mode_default_is_join():
+    src = JoinSource(dataset="d")
+    assert src.mode == "join"
+
+
+def test_pivot_folds_flat_rows_by_shared_prefix():
+    from oc.profile.models import PivotSpec
+    flat = [{"name": "slot_1_name", "value": "Rising Storm"}, {"name": "slot_1_school", "value": "madurai"},
+            {"name": "slot_2_name", "value": ""}, {"name": "slot_2_school", "value": "naramon"},
+            {"name": "mod_drain_remaining", "value": "12"}]   # matches no taught suffix -> dropped
+    sub = SubsetDef(id="v", sources=[_src("loadout", join_field="")],
+                    pivot=PivotSpec(attributes=["_name", "_school"]))
+    rows = {r["slot"]: r for r in compute_subset(flat, sub)["rows"]}
+    assert set(rows) == {"slot_1", "slot_2"}                          # scalar row dropped, not a group
+    assert rows["slot_1"] == {"slot": "slot_1", "name": "Rising Storm", "school": "madurai"}
+    assert rows["slot_2"]["name"] == "" and rows["slot_2"]["school"] == "naramon"
+
+
+def test_pivot_empty_slot_is_filterable_after_reshape():
+    from oc.profile.models import PivotSpec
+    flat = [{"name": "slot_1_name", "value": "Vitality"}, {"name": "slot_1_school", "value": "vazarin"},
+            {"name": "slot_2_name", "value": ""}, {"name": "slot_2_school", "value": "naramon"}]
+    sub = SubsetDef(id="v", sources=[_src("loadout", join_field="")],
+                    pivot=PivotSpec(attributes=["_name", "_school"]),
+                    filters=[FilterRule(field="name", op="empty")])
+    rows = compute_subset(flat, sub)["rows"]
+    assert len(rows) == 1 and rows[0]["slot"] == "slot_2"
+
+
+def test_pivot_longest_suffix_wins():
+    from oc.profile.models import PivotSpec
+    flat = [{"name": "aura_school", "value": "zenurik"}]
+    sub = SubsetDef(id="v", sources=[_src("loadout", join_field="")],
+                    pivot=PivotSpec(attributes=["_school", "aura_school"]))
+    rows = compute_subset(flat, sub)["rows"]
+    assert rows[0]["slot"] == ""                              # longer "aura_school" suffix matched, not "_school"
 
 
 def test_subset_round_trips_through_profile(tmp_path):

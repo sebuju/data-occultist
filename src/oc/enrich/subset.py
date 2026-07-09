@@ -30,6 +30,7 @@ from functools import lru_cache
 from ..numfmt import split_dp
 from ..profile.models import DerivedColumn, FilterRule, JoinNorm, JoinSource, SortRule, SubsetDef
 from ..store.textnorm import norm_text
+from .pivot import apply_pivot
 
 _PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 _INLINE_MATH = re.compile(r"\{=([^{}]+)\}")   # an inline arithmetic block within a text template
@@ -217,15 +218,25 @@ def _join(pairs: list[tuple[JoinSource, list[dict]]]) -> list[dict]:
     source (all required == the old ``inner``); standalones are dropped when any source is
     required. Earlier sources win column collisions (their non-empty value is kept).
 
-    A source marked ``exclude`` is an ANTI-join: it contributes no columns at all — every key
-    it contains is simply dropped from the output (e.g. "owned mods minus already-equipped
-    names"). It is independent of ``required`` and never affects keyless standalone rows (they
-    have nothing to match an excluded key against)."""
+    A source's ``mode`` (see :class:`JoinSource`) picks how it combines, beyond a plain
+    key-matched ``join``:
+
+    - ``exclude`` is an ANTI-join: it contributes no columns at all — every key it contains is
+      simply dropped from the output (e.g. "owned mods minus already-equipped names"). It is
+      independent of ``required`` and never affects keyless standalone rows.
+    - ``mark`` is a SEMI-join: for each output row whose ``join``-derived key also appears in
+      this source, its columns are merged in — but it can never multiply rows (unlike a plain
+      ``join`` source, which cross-products). A key matching several of this source's rows
+      still contributes only the first. Use to flag/annotate a row (e.g. "this mod's polarity
+      matches an empty slot's") without risking a duplicate per match.
+    - ``broadcast`` merges this source's row(s) into EVERY output row, unkeyed — several rows
+      collapse into one merged dict first (first-wins), then fill only each output row's
+      missing/empty cells (real join columns always win)."""
     from itertools import product
 
     strip = lambda rec: {k: v for k, v in rec.items() if k not in _HIDDEN}   # noqa: E731
     # A single source isn't joined — pass its rows through 1:1 (stripping bookkeeping cols).
-    # (``exclude`` is meaningless with nothing else to join against, so it's a no-op here.)
+    # (a non-``join`` mode is meaningless with nothing else to combine with, so it's a no-op.)
     if len(pairs) == 1:
         return [strip(rec) for rec in pairs[0][1]]
 
@@ -237,19 +248,31 @@ def _join(pairs: list[tuple[JoinSource, list[dict]]]) -> list[dict]:
                          strip_punct=n.strip_punct, collapse_ws=n.collapse_ws,
                          strip_words=tuple(n.strip_words))
 
-    # Anti-join sources contribute no columns — pull them out into a plain key blocklist and
-    # join only the rest.
+    # Peel off the non-plain-join sources first: exclude -> a key blocklist, mark -> a
+    # key->row annotate map, broadcast -> one merged row applied to everything at the end.
+    # What's left (``join_pairs``) goes through the ordinary keyed join below.
     excluded_keys: set[str] = set()
+    mark_map: dict[str, dict] = {}
+    broadcast_rows: list[dict] = []
     join_pairs: list[tuple[JoinSource, list[dict]]] = []
     for src, recs in pairs:
-        if src.exclude:
+        if src.mode == "exclude":
             for rec in recs:
                 k = kof(strip(rec), src)
                 if k:
                     excluded_keys.add(k)
+        elif src.mode == "mark":
+            for rec in recs:
+                row = strip(rec)
+                k = kof(row, src)
+                if k and k not in mark_map:             # first match wins
+                    mark_map[k] = row
+        elif src.mode == "broadcast":
+            broadcast_rows.extend(strip(rec) for rec in recs)
         else:
             join_pairs.append((src, recs))
-    if not join_pairs:                                  # every source was an exclude source
+    broadcast_row = _merge_rows(broadcast_rows) if broadcast_rows else None
+    if not join_pairs:                       # every source was exclude/mark/broadcast
         return []
 
     per_source: list[dict[str, list[dict]]] = []   # source idx -> {key -> [rows]}
@@ -282,10 +305,16 @@ def _join(pairs: list[tuple[JoinSource, list[dict]]]) -> list[dict]:
         # each source contributes its matching rows; an optional source missing the key pairs in
         # one empty placeholder so the present sources' rows still appear.
         lists = [gs.get(k) or [{}] for gs in per_source]
+        mark = mark_map.get(k)
         for combo in product(*lists):
-            out.append(_merge_rows(combo))
+            row = _merge_rows(combo)
+            if mark:
+                row = _merge_rows([row, mark])          # annotate only, never multiplies
+            out.append(row)
     if not strict:
         out.extend(standalones)
+    if broadcast_row:
+        out = [_merge_rows([row, broadcast_row]) for row in out]
     return out
 
 
@@ -293,8 +322,9 @@ def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
     """Return ``{columns, rows}`` for a view over its joined sources.
 
     ``inputs`` is ``[(dataset_id, records), ...]`` aligned by index with ``sub.sources`` — the
-    sources the view joins (each on its OWN ``join_field``). Latest-batch -> merge -> derive ->
-    filter -> sort -> limit, so filters and sort can reference joined and derived columns alike."""
+    sources the view joins (each on its OWN ``join_field``). Latest-batch -> merge -> pivot ->
+    derive -> filter -> sort -> limit, so filters and sort can reference joined, pivoted, and
+    derived columns alike."""
     # latest-batch first: trim each source to its most recent batch BEFORE the join, so the
     # rest of the pipeline only ever sees the latest pass.
     if getattr(sub, "latest_batch", False):
@@ -302,6 +332,8 @@ def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
     # pair each source's join config with its records (aligned by position) and join.
     pairs = [(src, recs) for src, (_ds, recs) in zip(sub.sources, inputs)]
     rows = _join(pairs)
+    if sub.pivot is not None:
+        rows = apply_pivot(rows, sub.pivot)
     for row in rows:
         apply_derived(row, sub.derived)
     rows = [r for r in rows if all(match_rule(r, f) for f in sub.filters if f.field)]
