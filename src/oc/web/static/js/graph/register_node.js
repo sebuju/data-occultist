@@ -1,8 +1,11 @@
 // Register node: an in-memory keyed map that HOLDS the latest live value of the readouts wired
-// into it (key = readout id). It's the lightweight, NON-persisted counterpart to a dataset —
-// fast lookup, no batching / one-to-many. The held map lives only in the running live session's
-// server memory (GET /api/live/<game>/register/<id>); it survives page reloads and collector
-// start/stop, and is wiped only by the footer's clear button.
+// into it (key = readout id) — fast lookup, no batching / one-to-many. The held map itself
+// lives only in the running live session's server memory (GET /api/live/<game>/register/<id>);
+// it survives page reloads and collector start/stop, and is wiped only by the footer's clear
+// button. Dragging the node's OUT port onto a dataset ALSO mirrors the held map there
+// (RegisterDef.persist) — same wiring shape a window/producer/file source uses to feed a
+// dataset — so that state becomes joinable/excludable by a subset; with nothing wired it stays
+// memory-only.
 //
 // Like the trigger-history node (rule 7) the records grid is a standard VTable mounted in a
 // `.data-host` scrollhost — but here it sits INSIDE the node body, not a satellite. Fed by
@@ -35,8 +38,14 @@ export function registerParts(x, model) {
     const free = model.readouts().map((v) => v.id).filter((id) => !have.has(id));
     return {
         title: h("input", { class: "gi gi-id regrename", value: x.id, title: "rename register" }),
-        // drop target for a readout's out-port (like the dictionary's feed port)
-        ports: h("span", { class: "port in", title: "drag a readout here to hold its live value" }),
+        ports: frag(
+            // drop target for a readout's out-port (like the dictionary's feed port)
+            h("span", { class: "port in", title: "drag a readout here to hold its live value" }),
+            // drag to a dataset to ALSO mirror the held map there (RegisterDef.persist) — same
+            // out-port mechanism every other feeder (window/producer/file source) uses, so it
+            // shows up as a real wire + a chip in the dataset's own "sources" list, not a
+            // hidden side-channel setting.
+            h("span", { class: "port out", title: "drag to a dataset to also mirror the held map there" })),
         body: frag(
             // wrapped in .lab-grid like every other top-level srcRow (toast/action/producer) — a
             // bare .sv-inputs is a full-width block in the outer node grid (graph.css), so without

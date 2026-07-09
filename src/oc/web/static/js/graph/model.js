@@ -250,6 +250,8 @@ export class GraphModel {
                 if (kind === "dataset" || kind === "subset")
                     sites.push({ decl: false, get: () => x.sources[i].slice(x.sources[i].indexOf(":") + 1), set: (v) => { x.sources[i] = `${kind}:${v}`; } });
             });
+        for (const r of this.profile.registers || [])                     // a register's persist target is a dataset REF
+            sites.push({ decl: false, get: () => r.persist || "", set: (v) => { r.persist = v; } });
         return sites;
     }
 
@@ -319,12 +321,16 @@ export class GraphModel {
             if (p.dataset !== id) continue;
             this.producerColumns(p).forEach((c) => out.add(c));
         }
+        // a persisting register writes one row per wired readout, always shaped {name, value}.
+        for (const r of this.profile.registers || [])
+            if (r.persist === id) { out.add("name"); out.add("value"); }
         return [...out];
     }
-    // Every window/producer/file-source currently pointing at this dataset — same three-collection
+    // Every window/producer/file-source/register currently pointing at this dataset — same
     // scan as datasetFields(), just for display/edit rather than column collection. `ref` is a
-    // full-word-prefixed id ("window:<id>"/"producer:<id>"/"filesource:<id>"), matching how
-    // RegisterDef/ToastDef name their sources (not the short node-id prefixes used elsewhere).
+    // full-word-prefixed id ("window:<id>"/"producer:<id>"/"filesource:<id>"/"register:<id>"),
+    // matching how RegisterDef/ToastDef name their sources (not the short node-id prefixes used
+    // elsewhere).
     datasetSources(id) {
         const out = [];
         for (const w of this.profile.windows)
@@ -333,10 +339,13 @@ export class GraphModel {
             if (s.dataset === id) out.push({ kind: "filesource", id: s.id, ref: `filesource:${s.id}` });
         for (const p of this.profile.producers || [])
             if (p.dataset === id) out.push({ kind: "producer", id: p.id, ref: `producer:${p.id}` });
+        for (const r of this.profile.registers || [])
+            if (r.persist === id) out.push({ kind: "register", id: r.id, ref: `register:${r.id}` });
         return out;
     }
-    // Window/producer/file-source ids NOT currently pointing at this dataset (may be unwired or
-    // wired elsewhere — picking one just repoints it, the same "last wire wins" the drag path has).
+    // Window/producer/file-source/register ids NOT currently pointing at this dataset (may be
+    // unwired or wired elsewhere — picking one just repoints it, the same "last wire wins" the
+    // drag path has).
     datasetFreeSources(id) {
         const out = [];
         for (const w of this.profile.windows)
@@ -345,10 +354,12 @@ export class GraphModel {
             if (s.dataset !== id) out.push({ kind: "filesource", id: s.id, ref: `filesource:${s.id}` });
         for (const p of this.profile.producers || [])
             if (p.dataset !== id) out.push({ kind: "producer", id: p.id, ref: `producer:${p.id}` });
+        for (const r of this.profile.registers || [])
+            if (r.persist !== id) out.push({ kind: "register", id: r.id, ref: `register:${r.id}` });
         return out;
     }
-    // Wire an existing window/producer/file-source onto this dataset (the "+ add source" select —
-    // the in-panel twin of dragging that node's out-port onto the dataset).
+    // Wire an existing window/producer/file-source/register onto this dataset (the "+ add source"
+    // select — the in-panel twin of dragging that node's out-port onto the dataset).
     addDatasetSource(id, ref) {
         const i = (ref || "").indexOf(":");
         if (i < 0) return false;
@@ -356,12 +367,13 @@ export class GraphModel {
         if (kind === "window") this.setDataset(rid, id);
         else if (kind === "producer") this.setProducerDataset(rid, id);
         else if (kind === "filesource") this.setSourceDataset(rid, id);
+        else if (kind === "register") this.setRegisterPersist(rid, id);
         else return false;
         return true;
     }
     // Unwire a chip. Windows have a real "no dataset" state (setDataset("") already supports it);
-    // producers/file-sources don't (their setters require a truthy target), so blank the field
-    // directly — same "needs rewiring" state as any half-configured node.
+    // producers/file-sources/registers don't (their setters require a truthy target), so blank the
+    // field directly — same "needs rewiring" state as any half-configured node.
     removeDatasetSource(id, ref) {
         const i = (ref || "").indexOf(":");
         if (i < 0) return;
@@ -369,6 +381,7 @@ export class GraphModel {
         if (kind === "window") this.setDataset(rid, "");
         else if (kind === "producer") { const p = this.producerNode(rid); if (p) p.dataset = ""; }
         else if (kind === "filesource") { const s = this.fileSource(rid); if (s) s.dataset = ""; }
+        else if (kind === "register") { const r = this.registerNode(rid); if (r) r.persist = ""; }
     }
     // The output columns a producer writes — ONE source of truth for the key picker and the
     // subset column list (a producer dataset isn't fed by windows, so its columns can't be read
@@ -543,13 +556,17 @@ export class GraphModel {
                     : s.kind === "subset" ? `sub:${s.id}` : `ds:${s.id}`;
                 if (from) es.push({ from, to: `toast:${x.id}`, kind: "data" });
             }
-        // a register HOLDS its wired readouts' live values (readout -> register)
-        for (const x of this.profile.registers || [])
+        // a register HOLDS its wired readouts' live values (readout -> register), and — when
+        // `persist` names a dataset — ALSO writes the held map there (register -> dataset), so
+        // that state becomes joinable/excludable like any other dataset.
+        for (const x of this.profile.registers || []) {
             for (const s of this.registerSources(x.id)) {
                 if (s.kind !== "readout") continue;
                 const site = this.readoutSite(s.id);
                 if (site) es.push({ from: `ro:${site.win}:${s.id}`, to: `register:${x.id}`, kind: "data" });
             }
+            if (x.persist) es.push({ from: `register:${x.id}`, to: `ds:${x.persist}`, kind: "data" });
+        }
         for (const d of this.profile.dictionaries || []) {
             es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
             for (const fd of d.feeds || [])   // a dataset PUSHES its column values in as terms
@@ -809,14 +826,15 @@ export class GraphModel {
     setActionDest(id, v) { const x = this.actionNode(id); if (x) x.dest = v || ""; }
     cloneAction(id) { this.profile.actions = this.profile.actions || []; return this._cloneById(this.profile.actions, id, (x) => !!this.actionNode(x)); }
 
-    // ---- register nodes: in-memory keyed map holding wired readouts' live values (never persisted) ----
+    // ---- register nodes: in-memory keyed map holding wired readouts' live values (optionally
+    // ALSO mirrored to a dataset via `persist` — see RegisterDef) ----
     registerNode(id) { return (this.profile.registers || []).find((x) => x.id === id) || null; }
     registers() { return (this.profile.registers || []).map((x) => x.id); }
     addRegister() {
         this.profile.registers = this.profile.registers || [];
         let n = 1, id = "register";
         while (this.registerNode(id)) id = `register_${++n}`;
-        this.profile.registers.push({ id, sources: [], title: "", enabled: true });
+        this.profile.registers.push({ id, sources: [], title: "", enabled: true, persist: "" });
         return id;
     }
     removeRegister(id) { this.profile.registers = (this.profile.registers || []).filter((x) => x.id !== id); }
@@ -843,6 +861,12 @@ export class GraphModel {
         return true;
     }
     removeRegisterSource(id, ref) { const x = this.registerNode(id); if (x) x.sources = (x.sources || []).filter((r) => r !== ref); }
+    // ALSO mirror the held map into a dataset (see RegisterDef.persist) — same shape as
+    // setProducerDataset/setSourceDataset: a truthy target wires it, ensuring the dataset exists.
+    setRegisterPersist(id, ds) {
+        const x = this.registerNode(id);
+        if (x && ds) { x.persist = ds; this.ensureDatasetDef(ds); }
+    }
 
     // ---- toasts: raise an OS notification when fired (a trigger target) -------
     toastNode(id) { return (this.profile.toasts || []).find((x) => x.id === id) || null; }

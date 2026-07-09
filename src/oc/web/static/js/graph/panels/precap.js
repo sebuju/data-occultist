@@ -45,47 +45,56 @@ const pcState = { visible: false, x: null, y: null, w: null, h: null };
 
 const _pcDraw = (st) => { precapLast = st; renderPrecap(pcNode, st); };
 
+// Shared "refetch as frames land" guard for a per-session cache (frame times / reclog steps
+// below are the two callers). Gate on the highest `want` already REQUESTED, not on what the
+// response came back holding: refetching whenever `have < want` (have = length of the received
+// payload) re-trips on the fetch's own completion redraw whenever the server-side count the
+// payload is keyed off (e.g. reclog's steps, which lag the frame counter until each step's
+// trace line flushes) never quite reaches `want` — the success callback repaints the panel,
+// the panel re-derives the same `want`, `have` is still short, and it fetches again with zero
+// delay, hammering the server. Gating on `lastWant` instead means each distinct `want` is
+// requested at most once, so the loop always terminates even when the payload permanently
+// undercounts. `state` = { sid, [dataField], busy, lastWant }; `fetchFn(game, sid)` resolves
+// the raw response; `onResult(r)` stores whatever shape the caller wants into `state[dataField]`
+// (and may run an extra side effect, e.g. repainting an open lightbox).
+function ensureLiveFetch(state, dataField, game, sid, want, fetchFn, onResult) {
+    if (!sid) return null;
+    if (state.sid !== sid) { state.sid = sid; state[dataField] = null; state.busy = false; state.lastWant = -1; }
+    if (!state.busy && (state[dataField] === null || (want != null && want > state.lastWant))) {
+        state.busy = true;
+        state.lastWant = want != null ? want : state.lastWant;
+        fetchFn(game, sid).then((r) => {
+            if (state.sid !== sid) return;                   // session switched mid-fetch
+            onResult(r);
+            state.busy = false;
+            if (precapLast) _pcDraw(precapLast);
+        }).catch(() => { state.busy = false; });
+    }
+    return state[dataField];
+}
 // Frame capture times (file mtimes) of the active session, reused by both the frames-grid
 // header and the processing-view stats bar. `want` is the live frame count: we (re)fetch when
-// the session changes OR more frames have landed than we hold times for — so the span/fps keep
+// the session changes OR more frames have landed than we last asked for — so the span/fps keep
 // climbing WHILE a recording writes frames, and settle right after it stops. On each load it
 // repaints the panel (and any open frame viewer) so the numbers appear without a poll.
-let pcTimes = { sid: null, times: null, busy: false };
+let pcTimes = { sid: null, times: null, busy: false, lastWant: -1 };
 function ensureFrameTimes(game, sid, want) {
-    if (!sid) return null;
-    if (pcTimes.sid !== sid) pcTimes = { sid, times: null, busy: false };
-    const have = pcTimes.times ? pcTimes.times.length : 0;
-    if (!pcTimes.busy && (pcTimes.times === null || (want != null && have < want))) {
-        pcTimes.busy = true;
-        api.precapture.frameTimes(game, sid).then((r) => {
-            if (pcTimes.sid !== sid) return;                 // session switched mid-fetch
-            pcTimes.times = r.times || [];
-            pcTimes.busy = false;
-            if (precapLast) _pcDraw(precapLast);
-            if (pcLightbox && !pcLightbox.el.hidden && pcLightbox.sid === sid) setFramesLightboxIndex(pcLightbox.idx);
-        }).catch(() => { pcTimes.busy = false; });
-    }
-    return pcTimes.times;
+    return ensureLiveFetch(pcTimes, "times", game, sid, want, api.precapture.frameTimes, (r) => {
+        pcTimes.times = r.times || [];
+        if (pcLightbox && !pcLightbox.el.hidden && pcLightbox.sid === sid) setFramesLightboxIndex(pcLightbox.idx);
+    });
 }
 // Per-step record trace (reclog.jsonl) of the active session, keyed by frame index, for the
 // per-thumbnail timing column. Same live-refetch discipline as ensureFrameTimes: refetch when the
-// session changes or more frames have landed than we hold steps for, so timings fill in as the
+// session changes or more frames have landed than we last asked for, so timings fill in as the
 // recording writes. Returns a Map<frameIndex, step> (a step's frame index is `frames - 1`).
-let pcRec = { sid: null, map: null, have: 0, busy: false };
+let pcRec = { sid: null, map: null, busy: false, lastWant: -1 };
 function ensureReclog(game, sid, want) {
-    if (!sid) return null;
-    if (pcRec.sid !== sid) pcRec = { sid, map: null, have: 0, busy: false };
-    if (!pcRec.busy && (pcRec.map === null || (want != null && pcRec.have < want))) {
-        pcRec.busy = true;
-        api.precapture.reclog(game, sid).then((r) => {
-            if (pcRec.sid !== sid) return;                   // session switched mid-fetch
-            const m = new Map();
-            for (const s of (r.steps || [])) if (Number.isInteger(s.frames)) m.set(s.frames - 1, s);
-            pcRec.map = m; pcRec.have = (r.steps || []).length; pcRec.busy = false;
-            if (precapLast) _pcDraw(precapLast);
-        }).catch(() => { pcRec.busy = false; });
-    }
-    return pcRec.map;
+    return ensureLiveFetch(pcRec, "map", game, sid, want, api.precapture.reclog, (r) => {
+        const m = new Map();
+        for (const s of (r.steps || [])) if (Number.isInteger(s.frames)) m.set(s.frames - 1, s);
+        pcRec.map = m;
+    });
 }
 // "22s · 5.0/s" — recording span (first→last frame) and its effective capture rate; null until
 // at least two frame times are known.

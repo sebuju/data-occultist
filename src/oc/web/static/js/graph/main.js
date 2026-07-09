@@ -2760,6 +2760,14 @@ function outPortSpec(n) {
             },
             onEmpty: (pt) => { const id = model.addRegister(); model.addRegisterSource(id, `readout:${n.ref.id}`); placeAt(`register:${id}`, pt); return `register:${id}`; },
         };
+        case "register": return {
+            // a register OPTIONALLY mirrors its held map into a DATASET too (RegisterDef.persist),
+            // so that state becomes joinable/excludable like any other dataset — same wiring shape
+            // as window/producer/filesource -> dataset.
+            target: "dataset",
+            onDrop: (ds) => model.setRegisterPersist(n.ref.id, ds),
+            onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setRegisterPersist(n.ref.id, ds); return `ds:${ds}`; },
+        };
         case "filesource": return {
             target: "dataset",
             onDrop: (ds) => model.setSourceDataset(n.ref.id, ds),
@@ -3198,6 +3206,12 @@ function render() {
     // (and the add-source select) always reflect the current columns. rebuildNode no-ops when the
     // node isn't in the DOM, and message edits never call render(), so this can't eat a caret.
     for (const t of model.profile.toasts || []) rebuildNode(`toast:${t.id}`);
+    // Same problem, one level up: a DATASET's own "sources" chip list names whichever window/
+    // producer/file-source/register feeds it BY ID — renaming ANY of those feeders changes that
+    // id but not the dataset id SET, so the dsKey gate above misses it too (the dataset node's id
+    // never changed, so the top loop just repositions it — never rebuilds its body). Datasets are
+    // few; rebuild every one's body every render, same trade-off as the toast fix above.
+    for (const d of model.datasets()) rebuildNode(`ds:${d}`);
 }
 let _lastDsSetKey = null;
 
