@@ -7,6 +7,9 @@ shape a read change, and a put MUST survive a reload (next boot hits).
 
 from __future__ import annotations
 
+import json
+
+from oc.web import ocr_cache as ocr_cache_mod
 from oc.web.ocr_cache import OcrCache, cache_key
 
 
@@ -102,3 +105,54 @@ def test_two_instances_dont_clobber_each_other(tmp_path):
     fresh = OcrCache(p)
     assert fresh.get("ka") == {"v": "a"}
     assert fresh.get("kb") == {"v": "b"}
+
+
+def test_code_sig_bust_wipes_and_notifies(tmp_path, monkeypatch):
+    """A moved code sig must wipe prior entries (stale reads of the old code must
+    never be served) and announce it once to the game's activity feed."""
+    p = tmp_path / "ocr_cache.json"
+    monkeypatch.setattr(ocr_cache_mod, "ocr_code_sig", lambda: "sig-a")
+    c = OcrCache(p, game="warframe")
+    c.put("k", {"v": 1})
+    c.save()
+
+    published = []
+    monkeypatch.setattr(ocr_cache_mod, "ocr_code_sig", lambda: "sig-b")
+    monkeypatch.setattr("oc.eventlog.publish",
+                         lambda *a, **kw: published.append((a, kw)))
+    reopened = OcrCache(p, game="warframe")
+    assert reopened.get("k") is None                     # stale entry dropped
+    assert len(published) == 1
+    msg, kw = published[0][0][0], published[0][1]
+    assert "busted" in msg
+    assert kw["game"] == "warframe"
+
+    reopened.save()
+    on_disk = json.loads(p.read_text(encoding="utf-8"))
+    assert on_disk["sig"] == "sig-b"
+    assert on_disk["entries"] == {}
+
+
+def test_code_sig_unchanged_keeps_entries_and_is_silent(tmp_path, monkeypatch):
+    p = tmp_path / "ocr_cache.json"
+    monkeypatch.setattr(ocr_cache_mod, "ocr_code_sig", lambda: "same-sig")
+    c = OcrCache(p)
+    c.put("k", {"v": 1})
+    c.save()
+
+    published = []
+    monkeypatch.setattr("oc.eventlog.publish",
+                         lambda *a, **kw: published.append((a, kw)))
+    reopened = OcrCache(p)
+    assert reopened.get("k") == {"v": 1}
+    assert published == []
+
+
+def test_old_flat_format_busts_on_upgrade(tmp_path, monkeypatch):
+    """A cache written before the code-sig bust existed has no "entries" wrapper —
+    treat it as sig-less so upgrading to this code always busts it once."""
+    p = tmp_path / "ocr_cache.json"
+    p.write_text(json.dumps({"k": {"v": 1}}), encoding="utf-8")
+    monkeypatch.setattr(ocr_cache_mod, "ocr_code_sig", lambda: "sig-a")
+    c = OcrCache(p)
+    assert c.get("k") is None
