@@ -36,7 +36,8 @@
 /* collapse works the SAME for every node: header only. !important overrides the inline
    width/height a resizable host node carries, and resizing is off while collapsed. */
 .gnode.collapsed { height: auto !important; min-height: 0 !important; resize: none !important; }
-.gnode.collapsed .gn-spin { display: none; }
+/* header loader stays visible even collapsed (header IS the whole node then) — a collapsed
+   node that refreshes now shows it, instead of the old full-node overlay being hidden. */
 .gn-h .collapse { background: transparent; color: var(--muted); padding: 0; min-height: 0; flex: 0 0 auto;
     width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; }
 .gn-h .collapse:hover { color: var(--text); }
@@ -843,21 +844,24 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    to scroll (a reset, which drops to natural size, is therefore never scrollable). */
 .gnode:not(.window):not(.item):not(.collapsed) { display: flex; flex-direction: column; }
 .gnode:not(.window):not(.item):not(.collapsed) > .gn-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
-/* busy state: just a centred spinner — no dimming scrim over the node (reads fire on every
-   edit now, so a full-node dim would flash constantly). The header (z2, set above) stays above it. */
-.gn-spin { position: absolute; inset: 0; z-index: 1; pointer-events: none; border-radius: 8px;
-    opacity: 0; visibility: hidden;
-    transition: opacity 0.18s ease, visibility 0.18s ease; }
-/* centre with absolute pos + a fixed margin offset (NOT flexbox) so the ring's rotation is
-   layout-independent: while the node is busy it reflows (OCR reads fire), and flex re-centring
-   each frame landed the rotation origin on a half-pixel — the ring visibly wobbled. The only
-   transform now is the pure rotate, spun about the ring's own centre. */
-.gn-spin::after { content: ""; position: absolute; top: 50%; left: 50%; margin: -15px 0 0 -15px;
-    width: 30px; height: 30px; border-radius: 50%;
-    border: 3px solid #ffffff26; border-top-color: var(--accent); }
-.gnode.busy .gn-spin { opacity: 1; visibility: visible; }
-.gnode.busy .gn-spin::after { animation: spin 0.7s linear infinite; }
+/* busy state: a TINY spinner living in the header (gn-h), not a full-node overlay — the node
+   locks instead (below), so the loader only needs to say "something's happening", not cover
+   the card. display:none (not opacity/visibility) when idle so it takes NO space in the header's
+   flex row — a hidden 13px circle still reserves its box (and the row's `gap`) under visibility,
+   the same reason .gn-pretty-dirty (above) collapses via display:none rather than hiding in place.
+   No margin-left:auto — it's the LAST header child, so it already rides to the right edge with
+   whichever group is already pushed there (the title's flex:1 for a normal header, or .gn-type's
+   own margin-left:auto for vttable/atlas below); a second auto-margin here would split the free
+   space between the two, landing the type tag short of the edge. */
+.gn-hspin { display: none; flex: 0 0 auto; width: 13px; height: 13px; border-radius: 50%;
+    pointer-events: none; border: 2px solid #ffffff26; border-top-color: var(--accent); }
+.gnode.busy .gn-hspin { display: block; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* lock while busy: block + subtly dim the BODY only. Grips/reset-dots/header-drag live on the
+   node FRAME (not .gn-body) and WASD move/resize is a document-level keydown on pos/nodeSizes
+   (main.js) — none of that touches .gn-body, so moving/resizing a busy node (or a busy node's
+   in-image rect) still works; only its editable content locks. */
+.gnode.busy > .gn-body { pointer-events: none; opacity: .55; transition: opacity .15s ease; }
 
 /* the image drawing surface lives INSIDE the window node (one DOM element) */
 .win-img, .glyph-img { width: auto; margin-top: 8px; }

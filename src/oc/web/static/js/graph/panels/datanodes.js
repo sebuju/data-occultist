@@ -85,13 +85,16 @@ async function _datasetPayload(ds, pre) {
     return r.json();
 }
 
-function refreshDataNode(ds, pre = null) { singleFlight(_dnKey(ds), () => _refreshDataNode(ds, pre)); }
-async function _refreshDataNode(ds, pre) {
+function refreshDataNode(ds, pre = null) { singleFlight(_dnKey(ds), (ctx) => _refreshDataNode(ds, pre, ctx)); }
+async function _refreshDataNode(ds, pre, { superseded } = {}) {
     const host = dataHost(ds);
     if (!host) return;
     setNodeBusy(`vt:ds:${ds}`, true);   // spin the records-grid satellite while it recomputes
     try {
         const payload = await _datasetPayload(ds, pre);
+        // a newer request is already queued behind us — its result supersedes ours; skip the
+        // paint and let the trailing rerun (singleflight.js) write the fresh one instead.
+        if (superseded?.()) return;
         const raw = payload.records || [];
         syncShowRemovedToggle(ds, raw);
         const recs = visibleRecs(ds, raw);
@@ -104,7 +107,10 @@ async function _refreshDataNode(ds, pre) {
         });
         vt.setBatchCount(batchN);                   // line + batch tally in the table's search bar
         setTabCount(ds, ".data-n", recs.length);   // item count on the data tab
-    } catch (e) { vtables.delete(`ds:${ds}`); host.replaceChildren(mutedP(String(e), true)); }
+    } catch (e) {
+        if (superseded?.()) return;
+        vtables.delete(`ds:${ds}`); host.replaceChildren(mutedP(String(e), true));
+    }
     finally { setNodeBusy(`vt:ds:${ds}`, false); }
 }
 
@@ -207,11 +213,13 @@ function batState(ds) {
 async function loadBatchesNode(ds, pre = null) {
     const els = batEls(ds);
     if (!els) return;
+    setNodeBusy(`vt:ds:${ds}`, true);   // same host id as the records grid — refcounted, so an overlapping data refresh is unaffected
     try {
         const batches = (await _datasetPayload(ds, pre)).batches || [];
         renderBatchesList(ds, batches);
         setTabCount(ds, ".bat-n", batches.filter((b) => !b.reverted).length);   // applied batch count (reverted/unapplied excluded)
     } catch (e) { els.list.replaceChildren(h("li", { class: "muted" }, String(e))); }
+    finally { setNodeBusy(`vt:ds:${ds}`, false); }
 }
 
 // refresh every batches host that currently exists (i.e. whose vt-table satellite is shown)
@@ -376,14 +384,17 @@ function fmtVals(v) {
 
 // ONE fetch updates BOTH a dataset node's data tab and its batches tab — they share the same
 // endpoint, so on a live change refresh both from a single request instead of two.
-function refreshDatasetNode(ds) { singleFlight(_dnKey(ds), () => _refreshDatasetNode(ds)); }
-async function _refreshDatasetNode(ds) {
+function refreshDatasetNode(ds) { singleFlight(_dnKey(ds), (ctx) => _refreshDatasetNode(ds, ctx)); }
+async function _refreshDatasetNode(ds, { superseded } = {}) {
     const host = dataHost(ds), els = batEls(ds);
     if (!host && !els) return;
     setNodeBusy(`vt:ds:${ds}`, true);   // spin the records-grid satellite while it recomputes
     try {
         const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
         const j = await r.json();
+        // a newer request is already queued behind us — its result supersedes ours; skip the
+        // paint and let the trailing rerun (singleflight.js) write the fresh one instead.
+        if (superseded?.()) return;
         const batches = j.batches || [];
         const batchN = batches.filter((b) => !b.reverted).length;   // applied batches
         if (host) {
@@ -400,7 +411,7 @@ async function _refreshDatasetNode(ds) {
             renderBatchesList(ds, batches);
             setTabCount(ds, ".bat-n", batchN);
         }
-    } catch (e) { if (host) { vtables.delete(`ds:${ds}`); host.replaceChildren(mutedP(String(e), true)); } }
+    } catch (e) { if (host && !superseded?.()) { vtables.delete(`ds:${ds}`); host.replaceChildren(mutedP(String(e), true)); } }
     finally { setNodeBusy(`vt:ds:${ds}`, false); }
 }
 

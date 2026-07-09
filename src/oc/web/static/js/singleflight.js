@@ -10,8 +10,16 @@
 // sweep) often lands while the previous fetch is still in flight — a bare `if (inFlight) return`
 // drops it and strands the final data until some later unrelated refresh. Here it always re-runs.
 //
-// `fn` is invoked with no args and may be async; its result/rejection is swallowed (callers own
-// their own error handling). Keys are independent — work on different keys runs concurrently.
+// `fn` is invoked as `fn({ superseded })` and may be async; its result/rejection is swallowed
+// (callers own their own error handling). Keys are independent — work on different keys runs
+// concurrently.
+//
+// `superseded()` tells a running `fn` whether a newer call for the same key is ALREADY queued to
+// run right after it — i.e. this run's result is about to be stale. There's no cancellation here
+// (the fetch already in flight still completes), but a `fn` that checks `superseded()` right
+// before its DOM write can SKIP that write and let the trailing rerun paint the fresh result
+// instead, closing the "stale response paints, then gets overwritten a beat later" flash every
+// singleFlight consumer otherwise has. Callers that ignore the arg behave exactly as before.
 //
 // Returns the PROMISE of the run it started: the non-busy (first) caller gets the real run's
 // promise, so it can `await` its own work finishing — the busy branch resolves immediately
@@ -23,7 +31,8 @@ const _again = new Map();      // key -> the LATEST fn requested while busy (run
 
 export function singleFlight(key, fn) {
     if (_inflight.has(key)) { _again.set(key, fn); return Promise.resolve(); }   // busy -> remember the latest request
-    const p = Promise.resolve().then(fn).catch(() => {}).finally(() => {
+    const superseded = () => _again.has(key);
+    const p = Promise.resolve().then(() => fn({ superseded })).catch(() => {}).finally(() => {
         _inflight.delete(key);
         const next = _again.get(key);
         if (next) { _again.delete(key); singleFlight(key, next); }   // a call arrived mid-flight -> run it now

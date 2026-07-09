@@ -81,8 +81,7 @@ import {
     scheduleItemRead, refreshItemReadout,
     ocrBusyCount,
     commitPreviewNode,
-    _detectPending,
-    _detectAll, refreshOpenDetect, _previewPending, _previewAll, refreshOpenPreviews,
+    scheduleWindowRead,
     refreshImageBoxes, refreshGridPreview, selectRegionNode, refreshRuleTrace, refreshReadoutValues,
     RECT_TYPES, toggleRectEditor, rectEditCanvasSync,
 } from "./imaging.js";
@@ -149,11 +148,21 @@ function setDetectKind(a, kind) {
 }
 let pendingOpenImages = [];
 
-// Show/hide a node's spinner via a ref count, so overlapping async tasks behave.
+// Show/hide a node's spinner via a ref count, so overlapping async tasks behave. Also locks the
+// body against KEYBOARD input, not just mouse: the CSS `.gnode.busy > .gn-body` rule
+// (pointer-events:none) only blocks pointer interaction — an input already focused when the node
+// went busy would keep taking keystrokes, and Tab can still focus INTO a pointer-events:none
+// subtree (pointer-events has no effect on tab order). `inert` is the one attribute that blocks
+// pointer AND keyboard AND tab-focus, and — per the HTML spec — forcibly blurs anything already
+// focused inside the subtree the moment it's set, so a mid-edit input doesn't keep accepting input.
 function setNodeBusy(nodeId, on) {
     const n = (busy.get(nodeId) || 0) + (on ? 1 : -1);
     if (n <= 0) busy.delete(nodeId); else busy.set(nodeId, n);
-    nodeEls.get(nodeId)?.classList.toggle("busy", (busy.get(nodeId) || 0) > 0);
+    const el = nodeEls.get(nodeId);
+    const isBusy = (busy.get(nodeId) || 0) > 0;
+    el?.classList.toggle("busy", isBusy);
+    const body = el?.querySelector(".gn-body");
+    if (body) body.inert = isBusy;
     if (on) freezeRouting();   // OCR shouldn't make the node lines re-route — freeze them
 }
 
@@ -191,16 +200,13 @@ $("logWorkers").addEventListener("click", (ev) => {
 // window id, or any reg/det/sb/item/fld/tell id under it). A data-plane node id (ds/sub/
 // producer/src/trigger/dict) or null/omitted resolves to no window -> nothing re-fires. This
 // is the safe default: a forgotten arg persists only, it can never fan out to all windows.
-// A genuine all-windows refresh (image load/recapture/page nav) calls refreshOpen*(null)
-// DIRECTLY (imaging.js) — autosave is no longer one of those callers.
+// scheduleWindowRead (imaging.js) is the ONE shared settle clock for preview+detect(+trace/item
+// reads) — a genuine all-windows refresh calls it with no id.
 function autosave(changed = null) {
     if (!model.profile.name) return;
     persist.content();                 // debounced profile save; onContentSaved fires on success
     const win = model.windowOf(changed);
-    if (win) {                         // edit lies in this window's subgraph -> re-read just it
-        refreshOpenPreviews(win);
-        refreshOpenDetect(win);
-    }
+    if (win) scheduleWindowRead(win);  // edit lies in this window's subgraph -> re-read just it
     pushHistory();                     // record this change for undo/redo
 }
 
@@ -1323,8 +1329,8 @@ function repaintSubsetCols(el, s) {
 // the FINAL data instead of stalling on a stale mid-sweep snapshot.
 // `pre` (an already-computed view, e.g. from the one-shot boot batch) renders without a network
 // round-trip; omit it for the live path and it fetches its own.
-function refreshSubsetNode(id, pre = null) { singleFlight(`sub:${id}`, () => _refreshSubsetNode(id, pre)); }
-async function _refreshSubsetNode(id, pre) {
+function refreshSubsetNode(id, pre = null) { singleFlight(`sub:${id}`, (ctx) => _refreshSubsetNode(id, pre, ctx)); }
+async function _refreshSubsetNode(id, pre, { superseded } = {}) {
     const el = nodeEls.get(`sub:${id}`);                              // config node (hide toggles live here)
     const vtId = `vt:sub:${id}`;
     const host = nodeEls.get(vtId)?.querySelector(".sub-host");       // records grid — opt-in satellite
@@ -1334,6 +1340,9 @@ async function _refreshSubsetNode(id, pre) {
     if (vtShown) setNodeBusy(vtId, true);
     try {
         const r = pre || await api.getSubset(model.profile.name, id);
+        // a newer request is already queued behind us — its result supersedes ours; skip the
+        // paint and let the trailing rerun (singleflight.js) write the fresh one instead.
+        if (superseded?.()) return;
         const s = model.subsetDef(id);
         if (host) {
             const vt = vtableFor(`view:${id}`, host);
@@ -1347,6 +1356,7 @@ async function _refreshSubsetNode(id, pre) {
         subsetLiveCols.set(id, r.columns || []);
         if (s && el) { renderHideToggles(el, s); repaintSubsetCols(el, s); }
     } catch (e) {
+        if (superseded?.()) return;
         // a just-added subset isn't on the backend until the profile saves (debounced) —
         // that's a transient 404, not an error; the post-save refresh fills it in.
         const msg = /\b404\b/.test(String(e.message || e)) ? "no data yet" : String(e.message || e);
@@ -1368,20 +1378,39 @@ async function _refreshSubsetNode(id, pre) {
 const _refDs = new Set(), _refSub = new Set();
 let _refTimer = null;
 function queueNodeRefresh({ datasets = [], subsets = [] } = {}) {
-    for (const d of datasets) if (d) _refDs.add(d);
-    for (const s of subsets) if (s) _refSub.add(s);
+    // spin the CONFIG node's header the moment it's queued, not only once the batch fetch below
+    // actually starts — a node "about to refresh" should already show it's about to refresh.
+    // Guarded by `!has` so a burst of pushes for the same id before the debounce fires doesn't
+    // inflate the busy refcount (flushNodeRefresh clears it exactly once per queued id).
+    for (const d of datasets) if (d) {
+        if (!_refDs.has(d) && nodeEls.has(`ds:${d}`)) setNodeBusy(`ds:${d}`, true);
+        _refDs.add(d);
+    }
+    for (const s of subsets) if (s) {
+        if (!_refSub.has(s) && nodeEls.has(`sub:${s}`)) setNodeBusy(`sub:${s}`, true);
+        _refSub.add(s);
+    }
     if (_refTimer === null) _refTimer = setTimeout(flushNodeRefresh, 120);   // coalesce a burst into one batch
 }
 async function flushNodeRefresh() {
     _refTimer = null;
-    const dss = [..._refDs].filter((d) => nodeEls.has(`vt:ds:${d}`) || nodeEls.has(`ds:${d}`));
-    const subs = [..._refSub].filter((s) => nodeEls.has(`vt:sub:${s}`) || nodeEls.has(`sub:${s}`));
+    const queuedDs = [..._refDs], queuedSub = [..._refSub];   // snapshot before clearing — clears the queue-time busy set above, whatever the outcome
+    const dss = queuedDs.filter((d) => nodeEls.has(`vt:ds:${d}`) || nodeEls.has(`ds:${d}`));
+    const subs = queuedSub.filter((s) => nodeEls.has(`vt:sub:${s}`) || nodeEls.has(`sub:${s}`));
     _refDs.clear(); _refSub.clear();
-    if (!dss.length && !subs.length) return;
-    let details = null;
-    try { details = await api.flowDetails(model.profile.name, dss, subs); } catch { /* batch failed -> per-node fetch */ }
-    for (const d of dss) { const pre = details?.datasets?.[d] || null; refreshDataNode(d, pre); loadBatchesNode(d, pre); }
-    for (const s of subs) refreshSubsetNode(s, details?.subsets?.[s] || null);
+    try {
+        if (!dss.length && !subs.length) return;
+        let details = null;
+        try { details = await api.flowDetails(model.profile.name, dss, subs); } catch { /* batch failed -> per-node fetch */ }
+        for (const d of dss) { const pre = details?.datasets?.[d] || null; refreshDataNode(d, pre); loadBatchesNode(d, pre); }
+        for (const s of subs) refreshSubsetNode(s, details?.subsets?.[s] || null);
+    } finally {
+        // drop the queue-time header spinner now the batch fetch settled and the per-node
+        // refreshes above have been kicked off — each carries its own satellite spinner
+        // (setNodeBusy on vt:ds:/vt:sub:) for the rest of its own repaint work.
+        for (const d of queuedDs) if (nodeEls.has(`ds:${d}`)) setNodeBusy(`ds:${d}`, false);
+        for (const s of queuedSub) if (nodeEls.has(`sub:${s}`)) setNodeBusy(`sub:${s}`, false);
+    }
 }
 
 function refreshAllSubsetNodes() {
@@ -2716,7 +2745,10 @@ function fillNode(div, n, wire = true) {
             parts.title, parts.head, toggle,
             RECT_TYPES.has(n.type) ? rectEditBtn() : null,
             h("span", { class: "gn-type", "aria-hidden": "true" }, typeLabel),
-            h("span", { class: "gn-pretty-dirty", title: "held by a pretty override — not saved to yaml" }, "pretty")),
+            h("span", { class: "gn-pretty-dirty", title: "held by a pretty override — not saved to yaml" }, "pretty"),
+            // tiny loader — lives IN the header (not a full-node overlay), shown by .gnode.busy.
+            // The body locks (CSS .gnode.busy > .gn-body) while it spins.
+            h("span", { class: "gn-hspin", title: "working…" })),
         // body is ONE two-column grid (`.gn-grid`) — every builder emits flat wrapped-label +
         // control children into it (rule 7: one body layout). Action buttons live in the
         // separate `.gn-foot` slot below (parts.foot), never inside the body grid.
@@ -2724,7 +2756,6 @@ function fillNode(div, n, wire = true) {
         // spread so a missing foot contributes NOTHING — replaceChildren stringifies a bare
         // `null` arg into a "null" text node (unlike h(), which skips it).
         ...(parts.foot ? [h("div", { class: "gn-foot" }, parts.foot)] : []),
-        h("span", { class: "gn-spin", title: "working…" }),
         ...(parts.ports ? [parts.ports] : []));   // vttable nodes have no ports — replaceChildren would stringify undefined to a "undefined" text node
     div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
     const tog = div.querySelector(".gn-enable");
@@ -2736,11 +2767,10 @@ function fillNode(div, n, wire = true) {
         const winId = n.type === "window" ? n.ref.id : n.win?.id;
         if (winId) { clearGrid(winId); refreshImageBoxes(winId); }
         // a toggled detector changes the owner's detects section (its row greys / un-greys, and
-        // the game gate's enabled count) — rebuild that section + re-run detect for the verdict.
-        if (n.type === "detect" && winId) {
-            rebuildNode(nodeIdOf(winId));
-            if (winId === "game") refreshDetect("game");
-        }
+        // the game gate's enabled count) — rebuild that section; autosave (below) re-runs detect
+        // for the verdict on the SAME shared settle clock (scheduleWindowRead), so this doesn't
+        // also fire an immediate, un-coalesced detect of its own.
+        if (n.type === "detect" && winId) rebuildNode(nodeIdOf(winId));
         autosave(winId);   // window id (or undefined for data-plane) -> scoped; re-fires only on enable
     });
     // satellite show/hide (preview on a window; vt-table on a dataset/subset) — one handler for
@@ -2756,7 +2786,7 @@ function fillNode(div, n, wire = true) {
         applySatellite(btn.dataset.sat, on);
         // opening a preview satellite = the setup changed -> read the window's bound image now,
         // instead of waiting for the next picture change / edit (it used to sit on the placeholder)
-        if (on && btn.dataset.sat.startsWith("prev:")) refreshOpenPreviews(btn.dataset.sat.slice(5));
+        if (on && btn.dataset.sat.startsWith("prev:")) scheduleWindowRead(btn.dataset.sat.slice(5));
     }));
     // rect-edit toggle: reveals typed x/y/w/h for this node's box (imaging.js owns the open/
     // apply/cancel transaction — one editor open at a time, synced with the canvas it draws on).
@@ -2764,7 +2794,11 @@ function fillNode(div, n, wire = true) {
         e.stopPropagation();
         toggleRectEditor(div, n);
     });
-    if (busy.get(n.id)) div.classList.add("busy");   // preserve spinner across rebuilds
+    if (busy.get(n.id)) {   // preserve spinner + keyboard lock across rebuilds (fillNode just built a fresh .gn-body)
+        div.classList.add("busy");
+        const body = div.querySelector(".gn-body");
+        if (body) body.inert = true;
+    }
     if (!wire) return;   // measurement probe: skip side-effecting wiring (openImage, out-port drag)
     wireNode(div, n);
     wireOutPort(div, n);   // any node with a `.port.out` drags to a dataset — one mechanism
@@ -3826,8 +3860,12 @@ function wireReadout(div, n) {
     const winId = n.win.id, vid = n.ref.id;
     const fld = n.field;
     // With live mode OFF the collector isn't feeding values, so read this readout's value off the
-    // current image (coalesced per window). Called on build + whenever the read config/rules change.
+    // current image. `refetch` = immediate (node just opened — show a value right away, matches
+    // scheduleItemRead's img.onload pattern). `scheduleRefetch` = an EDIT changed the read config —
+    // queue it on the shared window-read clock (scheduleWindowRead) instead of firing its own
+    // separate un-debounced fetch, so it settles in the SAME beat as the rest of that edit's fallout.
     const refetch = () => { if (!liveCollecting()) refreshReadoutValues(winId); };
+    const scheduleRefetch = () => { if (!liveCollecting()) scheduleWindowRead(winId, { readouts: true }); };
     div.querySelector(".gi-id")?.addEventListener("change", (e) => {
         renameNode(e.target, vid,
             () => model.renameReadout(winId, vid, e.target.value.trim()),
@@ -3844,11 +3882,11 @@ function wireReadout(div, n) {
         else if (k === "glyph_check") fld.glyph_check = e.target.checked;
         else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
         autosave(winId);
-        refetch();   // read config changed -> re-read the value off the current image
+        scheduleRefetch();   // read config changed -> re-read the value off the current image
     }));
     if (fld) wireFieldRules(div, fld, {
         rebuild: () => { rebuildNode(n.id); autosave(winId); },
-        commit: () => { autosave(winId); refetch(); },
+        commit: () => { autosave(winId); scheduleRefetch(); },
         retrace: (el) => refreshRuleTrace(winId, fld.id, n.id, el),
     });
     refetch();   // initial value off the current image (no-op while the collector is running)
@@ -5015,6 +5053,14 @@ document.addEventListener("keydown", (ev) => {
     const ov = rec.overlay;
     const b = ov.boxes.find((x) => x.id === ov.activeId);
     if (!b || b.locked) return;   // a locked box (calibrated scrollbar) never nudges
+    // Mouse-driven box edits are already blocked while the owning node is busy (the canvas lives
+    // inside .gn-body, which CSS locks via pointer-events:none — see .gnode.busy). WASD bypasses
+    // that entirely (it's a document keydown, no pointer event involved), so it needs its OWN
+    // check here — otherwise a rect on a loading window/item could still be nudged by keyboard.
+    const busyId = rec.kind === "window" ? nodeIdOf(rec.winId)
+        : rec.kind === "item" ? `item:${rec.winId}:${rec.itemId}`
+        : rec.kind === "atlas" ? "atlas" : null;
+    if (busyId && busy.get(busyId)) return;
     // step exactly ONE image-native pixel. Use the IMAGE's natural size, NOT canvas.width — the
     // canvas backing is supersampled (up to 8× when zoomed in), so keying off it made a press move
     // a fraction of a pixel that shrank further the more you zoomed, reading as "WASD does nothing".

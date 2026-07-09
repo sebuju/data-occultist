@@ -791,7 +791,7 @@ function closeItemImage(winId, itemId) {
     if (e && e.host) e.host.replaceChildren();
     itemCanvases.delete(key);
     itemReads.delete(key);
-    clearTimeout(itemReadTimers.get(key)); itemReadTimers.delete(key);
+    _readItems.delete(key);   // drop a still-pending scheduled read (runItemRead no-ops anyway once itemCanvases loses the key)
     unregisterOverlay(`item:${winId}:${itemId}`);
     drawEdges();
 }
@@ -837,21 +837,34 @@ function openItemImage(winId, itemId) {
     const rel2win = (b) => { const ib = ibox(); return { x: ib.x + b.x * ib.w, y: ib.y + b.y * ib.h, w: b.w * ib.w, h: b.h * ib.h }; };
     const kindOf = () => toolKind(node);   // armed tool on the item node (wired in main.js), or null
 
-    // THE single writer for an item overlay box, by role. Both the mouse (overlay onChange) and the
-    // keyboard (WASD/shift+WASD via the registry persist) route here, so every role writes the same
-    // way whichever drives it (rule 7). `b` carries role/id in cutout fractions.
+    // THE single writer for an item overlay box, by role — a PURE model write (mirrors
+    // persistWinBox), no aftermath. Both the mouse (overlay onChange, below) and the keyboard
+    // (WASD/shift+WASD via the registry `persist`, main.js) route here, so every role writes the
+    // same way whichever drives it (rule 7); each caller then runs its OWN aftermath exactly once
+    // — folding the aftermath in here too (as it used to) meant the shared WASD handler's generic
+    // refresh+autosave ran a SECOND time on top of it, double-firing the cutout re-read + autosave
+    // on every WASD nudge.
     const persistItem = (b) => {
         const w = cut2win(b);
         if (b.role === "bbox") setItemCellKeepingChildren(winId, itemId, w);
         else if (b.role === "field") model.setItemFieldBox(winId, itemId, b.id, win2rel(w));
         else model.setItemTellBox(winId, itemId, b.id, win2rel(w));
-        itemChanged(winId, itemId);              // box moved/resized — no DOM rebuild
         // a moved cell (remaps every tell) or a moved template tell shifts the crop region —
         // redraw the live reference preview on each affected template tell node
         if (b.role === "bbox" || model.itemTell(winId, itemId, b.id)?.kind === "template")
             refreshItemTemplateRefs(winId, itemId);
         if (b.role === "bbox") syncCellSize(winId, itemId);   // reflect new cell size in the inputs
-        rectEditCanvasSync(`item:${winId}:${itemId}`);
+        clearGrid(winId);   // layout changed → detected grid is stale (mirrors persistWinBox)
+    };
+    // The repaint + re-read a box write needs (mirrors what persistWinBox's callers add): redraw
+    // the cutout + window boxes, re-read the cutout (coalesced with any other pending read for
+    // this window/item — see scheduleWindowRead). Deliberately excludes autosave/rectEditCanvasSync
+    // — those are each CALLER's own job (mouse onChange below; the shared WASD handler in main.js),
+    // so a WASD nudge doesn't fire them via BOTH this and the outer handler (the old bug: itemChanged
+    // was embedded in persistItem itself, so the WASD path's generic epilogue ran everything twice).
+    const afterItemBoxWrite = () => {
+        refreshItemBoxes(winId, itemId); refreshImageBoxes(winId);
+        scheduleItemRead(winId, itemId);
     };
 
     const overlay = new Overlay(canvas, {
@@ -891,13 +904,23 @@ function openItemImage(winId, itemId) {
             clearGrid(winId); scheduleItemRead(winId, itemId); autosave(winId);
             panZoomTo(`tell:${winId}:${itemId}:${tid}`);
         },
-        onChange: (box) => persistItem(box),        // mouse and WASD share ONE writer (rule 7)
+        // mouse and WASD share ONE writer (persistItem, rule 7); each then runs the shared repaint
+        // (afterItemBoxWrite) plus its OWN autosave/sync exactly once — mouse here (self-contained,
+        // like the window overlay's onChange), WASD via the shared handler in main.js.
+        onChange: (box) => {
+            persistItem(box);
+            afterItemBoxWrite();
+            autosave(winId);
+            rectEditCanvasSync(`item:${winId}:${itemId}`);
+        },
         onSelect: (id) => overlaySelected(`item:${winId}:${itemId}`, id),
     });
     itemCanvases.set(`${winId}:${itemId}`, { host, canvas, overlay, cut2win, win2cut, win2rel, rel2win });
-    // central registry: cross-deselect + WASD for the item's boxes (same persistItem writer)
+    // central registry: cross-deselect + WASD for the item's boxes (same persistItem writer,
+    // same afterItemBoxWrite repaint — the shared WASD handler in main.js follows this with its
+    // own autosave/rectEditCanvasSync, exactly once, same as every other overlay kind).
     registerOverlay(`item:${winId}:${itemId}`, { overlay, kind: "item", winId, itemId,
-        persist: persistItem, refresh: () => { refreshItemBoxes(winId, itemId); refreshImageBoxes(winId); } });
+        persist: persistItem, refresh: afterItemBoxWrite });
     overlay.setWorldZoom(view.zoom);
 
     const img = new Image();
@@ -966,15 +989,15 @@ function refreshItemBoxes(winId, itemId) {
     refreshItemReadout(winId, itemId);   // keep the merged fields/tells table in sync with this read
 }
 
-// Re-read the cutout whenever its settings change, debounced and coalesced: config edits fire a
-// burst of change events and OCR is heavy, so wait for the dust to settle before firing — the
-// shared singleFlight primitive (below) then owns "never run two reads for the same item at
-// once, queue a single trailing re-run instead" (same pattern as refreshPreview/refreshDetect).
-const itemReadTimers = new Map();   // "winId:itemId" -> debounce timer
-function scheduleItemRead(winId, itemId, delay = 500) {
-    const key = `${winId}:${itemId}`;
-    clearTimeout(itemReadTimers.get(key));
-    itemReadTimers.set(key, setTimeout(() => { itemReadTimers.delete(key); runItemRead(winId, itemId); }, delay));
+// Re-read the cutout whenever its settings change — coalesced onto the SAME shared clock as
+// scheduleWindowRead (below): an edit touching both an item AND its window (e.g. WASD-nudging a
+// field's rect, which also autosaves the window) settles at ONE moment instead of two staggered
+// ones (the old separate 500ms item timer vs 700ms window timer). `runItemRead`'s own singleFlight
+// then owns "never run two reads for the same item at once, queue a single trailing re-run
+// instead" (same pattern as refreshPreview/refreshDetect).
+function scheduleItemRead(winId, itemId) {
+    _readItems.set(`${winId}:${itemId}`, { winId, itemId });
+    armReadTimer();
 }
 
 // Read the item's frozen cutout with the current settings and show what it extracts:
@@ -982,21 +1005,26 @@ function scheduleItemRead(winId, itemId, delay = 500) {
 function runItemRead(winId, itemId) {
     const key = `${winId}:${itemId}`;
     if (!itemCanvases.has(key)) return Promise.resolve();
-    return singleFlight(`item:${key}`, () => doItemRead(winId, itemId, key));
+    return singleFlight(`item:${key}`, (ctx) => doItemRead(winId, itemId, key, ctx));
 }
 
-async function doItemRead(winId, itemId, key) {
+async function doItemRead(winId, itemId, key, { superseded } = {}) {
     if (!itemCanvases.has(key)) return;   // closed while a debounced/coalesced rerun was queued
     const done = timed(`item read ${key}`);
+    setNodeBusy(`item:${winId}:${itemId}`, true);
     try {
         const res = await api.itemRead(previewProfileFor(winId), model.profile.name, winId, itemId, boot.phase);
+        done(`· ${res.device || "?"} · ${res.valid ? "valid" : "rejected"}`, "ok", res.ms);
+        if (superseded?.()) return;   // a newer read is already queued — let it paint instead
         itemReads.set(key, res);
         refreshItemBoxes(winId, itemId);   // draws the cutout boxes AND refreshes the merged table
-        done(`· ${res.device || "?"} · ${res.valid ? "valid" : "rejected"}`, "ok", res.ms);
     } catch (e) {
         done(String(e.message || e), "err");
+        if (superseded?.()) return;
         const st = nodeEls.get(`item:${winId}:${itemId}`)?.querySelector(".mr-status");
         if (st) { st.textContent = String(e.message || e); st.className = "mr-status tc-bad"; }
+    } finally {
+        setNodeBusy(`item:${winId}:${itemId}`, false);
     }
 }
 
@@ -1055,25 +1083,24 @@ function previewProfileFor(winId) {
 
 // One rule-trace read per WINDOW, shared by every field node on it. At boot the whole field
 // fleet asks for its trace at once; without this each call re-OCR'd the entire window (N reads),
-// which stalled the renderer under load. Debounced + singleFlighted per window: a burst of rule
-// edits (or the initial node-build fleet) collapses into ONE `/api/rule_trace` request, and a call
-// that lands while one is in flight is remembered and ALWAYS re-run once it settles, with the
-// latest profile. (The old design returned the in-flight promise itself, snapshotted at first-call
-// time, with no re-run — a rule edit landing mid-flight silently got served the pre-edit reads,
-// and only a LATER edit — landing when nothing was in flight — ever refreshed the label. That's
-// the "wrong values until you nudge another input" bug this replaces.)
+// which stalled the renderer under load. Singleflighted per window: a burst of rule edits (or the
+// initial node-build fleet) collapses into ONE `/api/rule_trace` request, and a call that lands
+// while one is in flight is remembered and ALWAYS re-run once it settles, with the latest profile.
+// (The old design returned the in-flight promise itself, snapshotted at first-call time, with no
+// re-run — a rule edit landing mid-flight silently got served the pre-edit reads, and only a LATER
+// edit — landing when nothing was in flight — ever refreshed the label. That's the "wrong values
+// until you nudge another input" bug this replaces.) Debouncing a rule edit's trace refresh is now
+// the shared clock's job (scheduleWindowRead, below) — this fires immediately when called.
 const _lastTrace = new Map();    // winId -> last successful batch {fields}
-const _traceTimers = new Map();  // winId -> debounce timer
 
-function fetchWindowTrace(winId, immediate = false) {
-    clearTimeout(_traceTimers.get(winId));
-    const fire = () => { _traceTimers.delete(winId); singleFlight(`trace:${winId}`, () => doWindowTrace(winId)); };
-    if (immediate) fire(); else _traceTimers.set(winId, setTimeout(fire, 350));
+function fetchWindowTrace(winId) {
+    singleFlight(`trace:${winId}`, (ctx) => doWindowTrace(winId, ctx));
 }
 
-async function doWindowTrace(winId) {
+async function doWindowTrace(winId, { superseded } = {}) {
     const cap = await curCapOf(winId);
     const batch = await api.ruleTrace(previewProfileFor(winId), model.profile.name, cap);
+    if (superseded?.()) return;   // a newer trace is already queued — let it paint instead
     _lastTrace.set(winId, batch);
     repaintTracedNodes(winId);   // a fresh batch landed -> repaint EVERY traced node on this window
 }
@@ -1112,16 +1139,27 @@ function storeReadoutPreview(winId, res) {
 // feeding values). Coalesced (singleFlight) the same way as the rule trace above, so a config edit
 // landing mid-flight always gets a trailing re-run instead of being served a stale in-flight
 // result. Reads the current bound image and stores each readout's value (+conf) into readoutPreview.
+// Callers driven by an EDIT (not the initial fetch on node-open) should go through
+// scheduleWindowRead(winId, {readouts:true}) instead of calling this directly — it shares the
+// window's read settle clock, so a readout edit doesn't fire its own separate un-debounced fetch
+// alongside the coalesced preview/detect/trace one.
 export function refreshReadoutValues(winId) {
     const w = model.window(winId);
     if (!w || !(w.readouts || []).length) return Promise.resolve();
-    return singleFlight(`ro:${winId}`, () => doRefreshReadoutValues(winId));
+    return singleFlight(`ro:${winId}`, (ctx) => doRefreshReadoutValues(winId, ctx));
 }
 
-async function doRefreshReadoutValues(winId) {
-    const cap = await curCapOf(winId);
-    const res = await api.preview(previewProfileFor(winId), model.profile.name, cap, boot.phase);
-    storeReadoutPreview(winId, res);
+async function doRefreshReadoutValues(winId, { superseded } = {}) {
+    const roIds = (model.window(winId)?.readouts || []).map((v) => `ro:${winId}:${v.id}`);
+    roIds.forEach((id) => setNodeBusy(id, true));
+    try {
+        const cap = await curCapOf(winId);
+        const res = await api.preview(previewProfileFor(winId), model.profile.name, cap, boot.phase);
+        if (superseded?.()) return;   // a newer read is already queued — let it paint instead
+        storeReadoutPreview(winId, res);
+    } finally {
+        roIds.forEach((id) => setNodeBusy(id, false));
+    }
 }
 
 // Every field node that has painted a trace, so an image swap (or a fresh batch landing) can
@@ -1160,18 +1198,18 @@ function repaintTracedNodes(winId) {
 
 // Re-run the rule trace for every already-traced field node on a window — call after its bound
 // image changes so each `.frule-trace` reflects the NEW image, not the old read. The stashed batch
-// is for the PREVIOUS image, so this drops it and forces an immediate (non-debounced) fresh fetch
-// rather than repainting stale data.
+// is for the PREVIOUS image, so this drops it and forces an immediate fresh fetch rather than
+// repainting stale data.
 function retraceWindow(winId) {
     _lastTrace.delete(winId);
-    fetchWindowTrace(winId, true);
+    fetchWindowTrace(winId);
 }
 
 // Fill a field node's `.frule-trace` slots: paint immediately from the last cached batch (no blank
-// flash), then kick a debounced fresh read so a rule/input edit is reflected without needing to
-// "nudge" another input afterwards. Called on every rule edit — the debounce+singleFlight collapse
-// a keystroke burst into one OCR pass while still guaranteeing a trailing run with the latest
-// rules (never silently served a pre-edit snapshot).
+// flash), then queue a fresh read on the shared settle clock (scheduleWindowRead) so a rule/input
+// edit is reflected without needing to "nudge" another input afterwards — coalesced with any other
+// pending read for this window (preview/detect/item), so a rule edit settles in the SAME beat as
+// the rest of that edit's fallout instead of its own separately-timed debounce.
 function refreshRuleTrace(winId, fieldId, nodeId, el) {
     _tracedNodes.set(nodeId, { winId, fieldId });   // remember it so an image swap / fresh batch can repaint it
     // prefer the live node body the caller hands us: on the FIRST build the node isn't in
@@ -1180,7 +1218,7 @@ function refreshRuleTrace(winId, fieldId, nodeId, el) {
     const host = el || nodeEls.get(nodeId);
     if (!host || !host.querySelectorAll(".frule-trace").length) return;
     paintRuleTrace(winId, fieldId, host);
-    fetchWindowTrace(winId);
+    scheduleWindowRead(winId, { trace: true });
 }
 
 // Coalesce reads: at most ONE OCR request per window is ever in flight (shared singleFlight
@@ -1198,12 +1236,17 @@ function refreshPreview(winId, live = false) {
     const host = prevHost(winId);
     if (!host) return Promise.resolve();
     host.dataset.ran = "1";   // marks it for live re-reads
-    return singleFlight(`prev:${winId}`, () => doPreview(winId, live));
+    return singleFlight(`prev:${winId}`, (ctx) => doPreview(winId, live, ctx));
 }
 
-async function doPreview(winId, live) {
+async function doPreview(winId, live, { superseded } = {}) {
     const host = prevHost(winId);
     if (!host) return;
+    // spin the preview node's OWN header too (not just its read-button, setReadBusy below) — and
+    // every readout node, since they show whatever THIS read feeds them (storeReadoutPreview).
+    const roIds = (model.window(winId)?.readouts || []).map((v) => `ro:${winId}:${v.id}`);
+    setNodeBusy(`prev:${winId}`, true);
+    roIds.forEach((id) => setNodeBusy(id, true));
     setReadBusy(winId, true);
     if (!live) host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, "reading…"));
     const done = timed(`OCR preview ${winId}`);
@@ -1212,15 +1255,21 @@ async function doPreview(winId, live) {
         // On boot, serve the unchanged stashed image from the server OCR cache (no engine touch);
         // a live read or a post-boot edit always re-OCRs fresh.
         const res = await api.preview(previewProfileFor(winId), model.profile.name, cap, boot.phase && !live);
+        done(`· ${res.device || "?"} · ${(res.cells || []).length} cells`, "ok", res.ms);
+        // a newer request is already queued behind us — its result supersedes ours; skip the paint
+        // and let the trailing rerun (singleflight.js) write the fresh one instead of this stale one.
+        if (superseded?.()) return;
         host.replaceChildren(previewTable(res.cells));
         setGridFromPreview(winId, res);   // same OCR pass drives the dashed grid
         storeReadoutPreview(winId, res);   // feed the readout nodes' value (+conf) off this same read
-        done(`· ${res.device || "?"} · ${(res.cells || []).length} cells`, "ok", res.ms);
     } catch (e) {
         done(String(e.message || e), "err");
+        if (superseded?.()) return;
         host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, String(e.message || e)));
     } finally {
         setReadBusy(winId, false);
+        setNodeBusy(`prev:${winId}`, false);
+        roIds.forEach((id) => setNodeBusy(id, false));
     }
 }
 
@@ -1375,10 +1424,10 @@ async function prefillDetectText(winId, detectId) {
 // per window, with a single trailing re-run using the latest inputs. Without this, live mode would
 // enqueue a detect every round and they'd stack on the OCR queue until each takes tens of seconds.
 function refreshDetect(winId, live = false) {
-    return singleFlight(`det:${winId}`, () => doDetect(winId, live));
+    return singleFlight(`det:${winId}`, (ctx) => doDetect(winId, live, ctx));
 }
 
-async function doDetect(winId, live) {
+async function doDetect(winId, live, { superseded } = {}) {
     // spinner on every node whose value this detect refreshes
     const ids = [nodeIdOf(winId), ...model.detects(winId).map((a) => `det:${winId}:${a.id}`)];
     if (model.scrollbar(winId)) ids.push(`sb:${winId}:scrollbar`);
@@ -1387,6 +1436,10 @@ async function doDetect(winId, live) {
         try {
             const cap = live ? null : await curCapOf(winId);   // the page on screen (live grabs fresh)
             const res = await api.detect(previewProfileFor(winId), model.profile.name, cap, boot.phase && !live);
+            done(`· ${res.device || "?"}`, "ok", res.ms);
+            // a newer request is already queued behind us — its result supersedes ours; skip the
+            // paint and let the trailing rerun (singleflight.js) apply the fresh one instead.
+            if (superseded?.()) return;
             const dstatus = {};   // mirror onto the window canvas: colour/tint each detect box by its verdict
             for (const [aid, info] of Object.entries(res.detect || {})) { setDetectStatus(`det:${winId}:${aid}`, info); dstatus[aid] = info; }
             for (const [sid, info] of Object.entries(res.states || {})) setDetectStatus(`st:${winId}:${sid}`, info);
@@ -1408,7 +1461,6 @@ async function doDetect(winId, live) {
                 sbSpan.textContent = sb == null ? "position: —"
                     : `position: ${Math.round(sb.pos * 100)}% · ${sb.px}px · ${Math.round(sb.conf * 100)}%`;
             }
-            done(`· ${res.device || "?"}`, "ok", res.ms);
         } catch (e) { done(String(e.message || e), "err"); }
     });
 }
@@ -1560,46 +1612,69 @@ async function refreshCollisions() {
         if (collisionAgain) { collisionAgain = false; refreshCollisions(); }
     }
 }
-// Scoped re-OCR: an edit to ONE window (its items/boxes/detectors) should only re-read THAT
-// window, not every open one. Callers pass the window id; a null id means "all" (a global edit).
-// ids accumulate across the 700ms debounce so edits spanning windows don't drop each other.
-let detectT = null;
-const _detectPending = new Set();   // winIds queued; _detectAll overrides to all open windows
-let _detectAll = false;
-function refreshOpenDetect(winId = null) {
-    if (winId) _detectPending.add(winId); else _detectAll = true;
-    clearTimeout(detectT);
-    detectT = setTimeout(() => {
-        const all = _detectAll; _detectAll = false;
-        for (const id of imageCanvases.keys()) {
-            if (!all && !_detectPending.has(id)) continue;
-            if (model.window(id)?.enabled !== false) refreshDetect(id);   // skip disabled windows
-        }
-        _detectPending.clear();
-        refreshCollisions();   // cross-window verdict tracks the same edits (coalesced)
-    }, 700);
+// ---- ONE coalesced read scheduler: preview + detect (+ rule-trace, + item cutout reads) all
+// settle on a SINGLE shared clock, instead of the old three/four independently-timed debounces
+// (detect 700ms / preview 700ms / trace 350ms / item 500ms) that fired at staggered moments for
+// ONE edit — several separate spinner flashes + OCR passes per settle, and the reason a burst of
+// quick edits (or a held WASD move/resize) never really "debounced" together. Window-level ids
+// accumulate across the debounce window so edits spanning windows don't drop each other; a null
+// winId means "every open window" (a global edit, e.g. a preprocess/global setting change). Item
+// reads (scheduleItemRead, above) are a SEPARATE pending set that rides the SAME clock without
+// implying a window-wide preview/detect of their own (e.g. merely opening an item's cutout view).
+const READ_DEBOUNCE_MS = 700;
+let _readTimer = null;
+const _readWins = new Set();      // winIds queued for preview+detect this settle
+const _readTrace = new Set();     // subset of _readWins that ALSO needs a rule-trace refresh
+const _readReadouts = new Set();  // subset of _readWins that ALSO needs a readout-values refetch
+const _readItems = new Map();     // "winId:itemId" -> {winId,itemId} queued for a cutout re-read
+
+let _readAll = false;
+
+function armReadTimer() {
+    clearTimeout(_readTimer);
+    _readTimer = setTimeout(fireWindowRead, READ_DEBOUNCE_MS);
 }
 
-let previewT = null;
-const _previewPending = new Set();
-let _previewAll = false;
-function refreshOpenPreviews(winId = null) {
-    if (winId) _previewPending.add(winId); else _previewAll = true;
-    clearTimeout(previewT);
-    previewT = setTimeout(() => {
-        const all = _previewAll; _previewAll = false;
-        for (const w of model.profile.windows || []) {
-            if (w.enabled === false) continue;   // a disabled window reads nothing — don't re-run it
-            if (!all && !_previewPending.has(w.id)) continue;   // scoped: only the edited window(s)
-            const host = prevHost(w.id);
-            // Read on ANY update — the preview should always reflect the current setup, not wait
-            // for a first manual "read". Reads the window's OWN bound image (live=false), not a
-            // fresh game grab, so it doesn't need the game running (a live grab 404s when it isn't).
-            if (host) refreshPreview(w.id, false);              // refreshes the preview table + grid
-            else if (imageCanvases.has(w.id)) refreshGridPreview(w.id);   // image open, no preview node
-        }
-        _previewPending.clear();
-    }, 700);
+// Window-level: preview + detect, scoped to `winId` (or every open window when null). Pass
+// `trace: true` to also refresh the rule-trace for that window, or `readouts: true` to also
+// refetch its readout values (refreshReadoutValues — the live-mode-off, satellite-independent
+// path), once this settle fires. Replaces the old separate refreshOpenPreviews/refreshOpenDetect
+// debounces + fetchWindowTrace's own + wireReadout's immediate, un-coalesced refetch().
+function scheduleWindowRead(winId = null, { trace = false, readouts = false } = {}) {
+    if (winId) { _readWins.add(winId); if (trace) _readTrace.add(winId); if (readouts) _readReadouts.add(winId); }
+    else _readAll = true;
+    armReadTimer();
+}
+
+function fireWindowRead() {
+    _readTimer = null;
+    const all = _readAll; _readAll = false;
+    const traceWins = [..._readTrace]; _readTrace.clear();
+    const roWins = [..._readReadouts]; _readReadouts.clear();
+    const items = [..._readItems.values()]; _readItems.clear();
+    // preview: every window with an open preview satellite (or a bare image canvas), scoped
+    // unless this is a global settle — mirrors the old refreshOpenPreviews exactly.
+    for (const w of model.profile.windows || []) {
+        if (w.enabled === false) continue;   // a disabled window reads nothing — don't re-run it
+        if (!all && !_readWins.has(w.id)) continue;   // scoped: only the edited window(s)
+        const host = prevHost(w.id);
+        // Read on ANY update — the preview should always reflect the current setup, not wait
+        // for a first manual "read". Reads the window's OWN bound image (live=false), not a
+        // fresh game grab, so it doesn't need the game running (a live grab 404s when it isn't).
+        if (host) refreshPreview(w.id, false);              // refreshes the preview table + grid
+        else if (imageCanvases.has(w.id)) refreshGridPreview(w.id);   // image open, no preview node
+    }
+    // detect: every window with an OPEN image canvas (doDetect needs pixels) — mirrors the old
+    // refreshOpenDetect exactly.
+    for (const id of imageCanvases.keys()) {
+        if (!all && !_readWins.has(id)) continue;
+        if (model.window(id)?.enabled !== false) refreshDetect(id);   // skip disabled windows
+    }
+    _readWins.clear();
+    for (const id of traceWins) fetchWindowTrace(id);
+    for (const id of roWins) refreshReadoutValues(id);
+    for (const { winId, itemId } of items) runItemRead(winId, itemId);
+    refreshCollisions();   // cross-window verdict tracks the same edits (coalesced)
 }
 
 
@@ -1898,11 +1973,10 @@ function setGridFromPreview(winId, res) {
 export {
     KINDS, ITEM_KINDS, TELL_KINDS, updateImageLabel, closeImage, openImage, createItemFromGeom,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
-    itemReadTimers, scheduleItemRead, runItemRead, refreshItemReadout,
+    scheduleItemRead, runItemRead, refreshItemReadout,
     prevHost, previewProfileFor, refreshRuleTrace, setReadBusy, refreshPreview,
     commitPreviewNode, tellChip, subLabel, previewCell, previewTable, prefillDetectText,
-    refreshDetect, setDetectStatus, detectT, _detectPending,
-    _detectAll, refreshOpenDetect, previewT, _previewPending, _previewAll, refreshOpenPreviews,
+    refreshDetect, setDetectStatus, scheduleWindowRead,
     loadImage, refreshImageBoxes, itemLocatorBox, staticGridOrigins, buildGridGuides,
     staticFieldPreview, refreshGridPreview, cellKept, setGridFromPreview, selectRegionNode,
     RECT_TYPES, toggleRectEditor, rectEditCanvasSync,

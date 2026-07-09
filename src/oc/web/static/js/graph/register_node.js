@@ -17,6 +17,7 @@ import { sinceShort } from "../datefmt.js";
 import { VTable } from "../vtable.js";
 import { h, frag, srcRow, srcChip, srcInputs } from "../dom.js";
 import { liveCollecting } from "./panels/livewin.js";
+import { setNodeBusy } from "./main.js";
 
 const COLS = ["key", "value", "conf", "seen"];
 const _vts = new Map();   // registerId -> VTable (one per node body host)
@@ -74,6 +75,7 @@ export function refreshRegister(id) {
     const host = nodeEls.get(`register:${id}`)?.querySelector(".data-host");
     if (!host) return;
     const wired = model.registerSources(id).filter((s) => s.kind === "readout").map((s) => s.id);
+    setNodeBusy(`register:${id}`, true);
     api.registerDetail(model.profile.name, id)
         .then((r) => {
             const byKey = new Map((r.records || []).map((e) => [e.key, e]));
@@ -91,7 +93,8 @@ export function refreshRegister(id) {
             }));
             vtFor(id, host).setData(COLS, rows);
         })
-        .catch(() => { /* transient fetch error -> leave the last-rendered rows */ });
+        .catch(() => { /* transient fetch error -> leave the last-rendered rows */ })
+        .finally(() => setNodeBusy(`register:${id}`, false));
 }
 
 // A fresh /api/preview readout batch landed (non-live source) — repaint every register currently
