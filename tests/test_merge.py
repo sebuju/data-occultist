@@ -54,6 +54,27 @@ def test_merge_preserves_atlas():
     assert [c.label for c in m.atlas] == ["H"]
 
 
+def test_merge_preserves_registers():
+    # a register is a game-level def (mirrors a readout's held map into a dataset) -- a
+    # single-window save carries none, so it must survive untouched (was silently dropped
+    # to [] before registers were added to the merge, wiping any persisted register).
+    existing = GameProfile(
+        name="g", windows=[],
+        registers=[{"id": "loadout_register", "sources": ["readout:slot_1_name"], "persist": "loadout"}],
+    )
+    incoming = GameProfile(name="g", windows=[_WIN])
+    m = merge_profiles(existing, incoming)
+    assert [r.id for r in m.registers] == ["loadout_register"]
+    assert m.registers[0].persist == "loadout"
+
+
+def test_merge_upserts_registers_by_id():
+    existing = GameProfile(name="g", windows=[], registers=[{"id": "a", "sources": []}])
+    incoming = GameProfile(name="g", windows=[], registers=[{"id": "b", "sources": []}])
+    m = merge_profiles(existing, incoming)
+    assert {r.id for r in m.registers} == {"a", "b"}
+
+
 def test_legacy_glyphs_key_migrates_into_atlas():
     # older profiles keyed the atlas as `glyphs: [{char,image,enabled}]`; loading one must
     # fold it into the unified `atlas` list as kind=glyph, no ``glyphs`` attribute surviving.

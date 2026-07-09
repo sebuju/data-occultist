@@ -220,6 +220,27 @@ def _migrate_readout_ids(raw: dict) -> dict:
     return raw
 
 
+def _migrate_join_exclude(raw: dict) -> dict:
+    """``JoinSource.exclude: bool`` became ``mode: str`` (``join|exclude|mark|broadcast``) so a
+    second and third "source combines specially" behavior could join the first instead of
+    piling up parallel booleans. Fold the old flag in: ``exclude: true`` -> ``mode: "exclude"``,
+    dropped otherwise (the model default ``mode: "join"`` already matches ``exclude: false``).
+    Idempotent — a source with no ``exclude`` key, or one already carrying ``mode``, is
+    untouched."""
+    if not isinstance(raw, dict):
+        return raw
+    for sub in raw.get("subsets") or []:
+        if not isinstance(sub, dict):
+            continue
+        for src in sub.get("sources") or []:
+            if not isinstance(src, dict):
+                continue
+            was_excluded = src.pop("exclude", None)
+            if was_excluded and "mode" not in src:
+                src["mode"] = "exclude"
+    return raw
+
+
 def _split_shared_readout_fields(raw: dict) -> dict:
     """A front-end id-minting bug (fixed in ``model.js``) let a fresh readout's linked field id
     collide with an already-in-use one, so the client silently reused the existing ``FieldDef``
@@ -418,7 +439,7 @@ def load_profile(profiles_dir: Path | str, name: str) -> GameProfile:
     raw = yaml.safe_load(_read_text_retry(path))
     if isinstance(raw, dict):
         raw = _migrate_glyph_node_id(_migrate_dictionary_ids(_split_shared_readout_fields(
-            _migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw))))))
+            _migrate_join_exclude(_migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw)))))))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
     if sig is not None:

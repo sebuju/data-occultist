@@ -59,6 +59,9 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
     actions = {x.id: x for x in existing.actions}
     for x in incoming.actions:
         actions[x.id] = x
+    registers = {x.id: x for x in existing.registers}
+    for x in incoming.registers:
+        registers[x.id] = x
 
     # Layout is also game-level UI data a single-window save doesn't carry — keep the
     # existing layout unless the incoming edit actually brought one (has nodes).
@@ -84,6 +87,7 @@ def merge_profiles(existing: GameProfile, incoming: GameProfile) -> GameProfile:
         toasts=list(toasts.values()),
         sounds=list(sounds.values()),
         actions=list(actions.values()),
+        registers=list(registers.values()),
         atlas=atlas,
         layout=layout,
     )

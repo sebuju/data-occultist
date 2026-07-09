@@ -1249,11 +1249,39 @@ class JoinSource(BaseModel):
     # When NO source is required the join is a full outer (every key kept, gaps filled); marking
     # sources required narrows to keys present in all of them (the old ``inner`` = all required).
     required: bool = False
-    # Anti-join: DROP any key this source contains instead of contributing its columns — e.g.
-    # exclude a dataset of already-equipped/already-priced names from an inventory view. An
-    # excluded source never appears in the output row (no columns, no standalone rows) and is
-    # independent of ``required`` (which only gates presence, never removes a key already kept).
-    exclude: bool = False
+    # How this source combines into the join, beyond a plain key-matched merge:
+    #   join      - the default: matches on ``join_field`` and merges its columns in (subject
+    #               to ``required``).
+    #   exclude   - anti-join: DROP any key this source contains instead of contributing its
+    #               columns (e.g. drop already-equipped/already-priced names from an inventory
+    #               view). Never appears in the output row (no columns, no standalone rows) and
+    #               is independent of ``required``.
+    #   mark      - semi-join annotate: for each output row whose key matches, merge this
+    #               source's columns in (earlier-still-wins on collisions) WITHOUT multiplying
+    #               rows — a key matching several of this source's rows still contributes only
+    #               the first. Use to flag/annotate ("does this row's key appear in that set")
+    #               without exploding one row into several.
+    #   broadcast - this source's row(s) merge into EVERY output row (no key match at all) —
+    #               e.g. a single scalar reading applied to every row of a view. Multiple rows
+    #               collapse into one merged dict first (first-wins), then fill only missing/
+    #               empty cells of each output row so real join columns are never overwritten.
+    mode: str = "join"
+
+
+class PivotSpec(BaseModel):
+    """Pivot flat ``{name, value}`` rows (e.g. a register's readout mirror) into WIDE rows,
+    grouped by a shared id-PREFIX. Each row's ``name_field`` is matched against ``attributes``
+    (longest suffix wins) to split it into ``(prefix, attribute)``; rows sharing a prefix merge
+    into one output row ``{key_column: prefix, <attribute>: value, ...}``. A row whose name
+    matches no taught suffix is dropped (it belongs to no group). ``attributes`` is authored
+    data (taught in the UI), never hardcoded — e.g. a warframe loadout register writes
+    ``slot_1_name``/``slot_1_drain``/``slot_1_school``; with ``attributes: [_name, _drain,
+    _school]`` these fold into one row ``{slot: slot_1, name: ..., drain: ..., school: ...}``."""
+
+    name_field: str = "name"    # column holding the flat row's id (e.g. "slot_1_school")
+    value_field: str = "value"  # column holding the flat row's value
+    key_column: str = "slot"    # output column name for the shared prefix
+    attributes: list[str] = Field(default_factory=list)  # taught suffixes, longest-match wins
 
 
 class SubsetDef(BaseModel):
@@ -1276,6 +1304,9 @@ class SubsetDef(BaseModel):
     # join/filter/derive/sort/limit) — so the view shows just the latest pass, not the
     # accumulated history.
     latest_batch: bool = False
+    # Reshape the joined rows from flat name/value pairs into wide rows BEFORE filter/derive —
+    # see :class:`PivotSpec`. ``None`` (default) = no reshape.
+    pivot: PivotSpec | None = None
     limit: int = 0                  # 0 = no limit
     config_collapsed: bool = False  # UI: the view's config block is folded away (persists per game)
 
