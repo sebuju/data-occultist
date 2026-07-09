@@ -152,8 +152,10 @@ class RegionReader:
         (a fragment joins the current row while its centre is within that row's
         vertical extent), top-to-bottom, then left-to-right within each row. Sorting
         by x alone -- or by y-then-x without clustering -- scrambles a multi-word or
-        wrapped read ("Empowered Cascadia" -> "Cascadia Empowered", "augur reach" ->
-        "r reach augur") whenever two fragments' boxes differ by even a pixel in y."""
+        wrapped read ("Empowered Cascadia" -> "Cascadia Empowered") whenever two
+        fragments' boxes differ by even a pixel in y. Ordering alone can't fix a
+        DUPLICATE fragment ("augur reach" over-segmented into "augur"+"r"+"reach")
+        -- that's ``_dedup_fragments``, which runs first in ``_order_join``."""
         if not lines:
             return []
         by_y = sorted(lines, key=lambda ln: ln.box.y + ln.box.h / 2)
@@ -165,15 +167,91 @@ class RegionReader:
                 rows.append([ln])
         return [ln for row in rows for ln in sorted(row, key=lambda ln: ln.box.x)]
 
+    # OCR duplicate-fragment suppression: drop a fragment whose box is this much CONTAINED
+    # within another fragment's box (the recogniser detected the same glyphs twice -- e.g. a
+    # capital letter split off as its own tiny line, on top of the full word's box). NOT a low
+    # IoU threshold: two neighbouring WORDS' boxes routinely clip each other's corners by
+    # ~15% (measured on real "Augur Reach" captures) and must both survive -- only
+    # near-total containment is a duplicate detection, not adjacent text.
+    _FRAG_CONTAIN = 0.6
+
+    @staticmethod
+    def _dedup_fragments(lines: list[OcrLine]) -> list[OcrLine]:
+        """Drop OCR fragments that are near-fully contained inside another fragment's box --
+        the same glyphs detected twice. This is the recurring "augur reach" -> "augur r
+        reach" bug: the recogniser over-segments the field into an extra tiny fragment (e.g.
+        the capital ``R`` of ``Reach``) that also appears inside ``Reach``'s own box; joining
+        every fragment with no dedup keeps both. Of a contained pair, keeps the larger box
+        (the genuine word), so result doesn't depend on scan order."""
+        if len(lines) < 2:
+            return lines
+        dropped: set[int] = set()
+        for i, a in enumerate(lines):
+            if i in dropped:
+                continue
+            for j in range(i + 1, len(lines)):
+                if j in dropped:
+                    continue
+                b = lines[j]
+                ix = max(0, min(a.box.right, b.box.right) - max(a.box.x, b.box.x))
+                iy = max(0, min(a.box.bottom, b.box.bottom) - max(a.box.y, b.box.y))
+                inter = ix * iy
+                if not inter:
+                    continue
+                a_area, b_area = a.box.w * a.box.h, b.box.w * b.box.h
+                smaller = i if a_area <= b_area else j
+                s_area = min(a_area, b_area)
+                if s_area and inter / s_area >= RegionReader._FRAG_CONTAIN:
+                    dropped.add(smaller)
+        return [ln for k, ln in enumerate(lines) if k not in dropped]
+
+    @staticmethod
+    def _drop_stutter_words(text: str) -> str:
+        """Drop a lone single-letter word that's a STUTTERED repeat of the touching letter of
+        an adjacent word -- a recognizer artifact confirmed on a real capture: two fragments
+        with clean, NON-overlapping boxes ("Augur", "Reach") joined correctly, but the
+        recognizer's own text for the second box came back "r Reach" -- it duplicated
+        "Reach"'s leading glyph as its own token, inside ONE box's recognised string. There is
+        no duplicate fragment/box for ``_dedup_fragments`` to catch here; this runs on the
+        assembled text instead. Only drops a 1-letter word immediately touching a word that
+        starts or ends with that same letter (case-insensitive) -- an unrelated short word
+        survives untouched."""
+        words = text.split(" ")
+        out: list[str] = []
+        i = 0
+        while i < len(words):
+            w = words[i]
+            if len(w) == 1 and w.isalpha():
+                nxt = words[i + 1] if i + 1 < len(words) else ""
+                prv = out[-1] if out else ""
+                if (nxt and nxt[0].lower() == w.lower()) or (prv and prv[-1].lower() == w.lower()):
+                    i += 1
+                    continue   # stutter of the neighbouring word's boundary letter -- drop it
+            out.append(w)
+            i += 1
+        return " ".join(out)
+
+    @staticmethod
+    def _order_join(lines: list[OcrLine]) -> tuple[str, float]:
+        """Fragments -> final text: drop duplicate-detected fragments, put the survivors in
+        reading order, join with spaces, then drop any stuttered boundary-letter word. THE
+        join point every multi-fragment read goes through -- ``_gather`` and ``_detect_reads``
+        both call this instead of each doing their own order+join, so a fix here covers every
+        read path instead of regressing on whichever one wasn't patched last time. Confidence
+        is the mean over the SURVIVING fragments only -- a dropped phantom's low confidence
+        must not drag down a genuine read."""
+        deduped = RegionReader._dedup_fragments(lines)
+        ordered = RegionReader._reading_order(deduped)
+        text = RegionReader._drop_stutter_words(" ".join(ln.text for ln in ordered).strip())
+        conf = sum(ln.confidence for ln in deduped) / len(deduped) if deduped else 0.0
+        return text, conf
+
     @staticmethod
     def _gather(lines: list[OcrLine], box: PixelBox) -> tuple[str, float]:
         hits = [ln for ln in lines if _center_in(ln, box)]
         if not hits:
             return "", 0.0
-        ordered = RegionReader._reading_order(hits)
-        text = " ".join(ln.text for ln in ordered).strip()
-        conf = sum(ln.confidence for ln in hits) / len(hits)
-        return text, conf
+        return RegionReader._order_join(hits)
 
     def _box_crop(self, frame: Frame, box: PixelBox, preprocess: Preprocess | None):
         """Prepared recognition input for a single field box: crop, preprocess, and
@@ -231,11 +309,9 @@ class RegionReader:
             lines = self._ocr.read_image(crop)
             if not lines:
                 continue
-            ordered = self._reading_order(lines)
-            text = " ".join(ln.text for ln in ordered).strip()
+            text, conf = self._order_join(lines)
             if not text:
                 continue
-            conf = sum(ln.confidence for ln in lines) / len(lines)
             out[key] = (text, conf)
         return out
 

@@ -22,6 +22,7 @@ from ..learn.dictionary import build_dictionaries
 from ..learn.resolver import FieldResolver
 from ..locate import WindowLocator
 from ..profile.models import GameProfile, WindowDef
+from ..ocr.serialize import ocr_job
 from ..store import DatasetStore, KeyMap, store_for
 from ..store.flow_events import publish_flow
 from . import detsig, settle
@@ -339,73 +340,80 @@ class Collector:
         if not ocr_due:
             return TickResult(TickStatus.throttled)
 
-        _tc = time.perf_counter()
-        match = self._classify(frame)
-        t_classify = (time.perf_counter() - _tc) * 1000.0
-        if match is None:
-            return TickResult(TickStatus.unrecognised)
+        # Every OCR call for this tick (classify's text detectors, readouts, grid read) runs
+        # under ONE lock -- concurrent OCR jobs (this tick racing a web-route preview/detect
+        # call) thrash the GPU and corrupt EACH OTHER's output (see oc.ocr.serialize.ocr_job),
+        # which is exactly how a clean "Augur Reach" read intermittently came out "Augur r
+        # Reach": the live collector never took this lock, so it could run mid-inference
+        # alongside a /api/preview call on the same shared OCR session.
+        with ocr_job(eng.ocr):
+            _tc = time.perf_counter()
+            match = self._classify(frame)
+            t_classify = (time.perf_counter() - _tc) * 1000.0
+            if match is None:
+                return TickResult(TickStatus.unrecognised)
 
-        window_id, state_id = match
-        window = self._profile.window(window_id)
-        if window is None:
-            return TickResult(TickStatus.unrecognised, window_id=window_id)
+            window_id, state_id = match
+            window = self._profile.window(window_id)
+            if window is None:
+                return TickResult(TickStatus.unrecognised, window_id=window_id)
 
-        # Live readouts (health/bars/counters): read EVERY OCR-due tick the window declares
-        # them, BEFORE the motion/state gates below — they're ephemeral HUD values, not the
-        # dataset, so a blurred/animating frame or a state that's invalid-for-save must not
-        # stop them surfacing (or feeding on_readout triggers). read_readouts plausibility-
-        # gates each box, so a garbage mid-animation reading is dropped, never shown.
-        readouts_now: dict[str, object] = {}
-        readout_confs_now: dict[str, float] = {}
-        readouts_all_now: dict[str, object] = {}
-        readout_confs_all_now: dict[str, float] = {}
-        if window.readouts:
-            vfields = {f.id: f for f in self._profile.fields_for(window)}
-            detailed = self._reader.read_readouts_detailed(frame, window, vfields)
-            readouts_now = {k: value for k, (value, _c) in detailed.items()}
-            readout_confs_now = {k: conf for k, (_v, conf) in detailed.items()}
-            self._readouts.update(readouts_now)
-            # Full map: every ENABLED readout, empty/low-confidence defaulted to "" instead of
-            # omitted -- so a blank slot pushes an empty value (register/.ro-live) rather than
-            # nothing, and a slot that goes empty overwrites its stale prior value with "".
-            readouts_all_now = {v.id: readouts_now.get(v.id, "") for v in window.readouts if v.enabled}
-            readout_confs_all_now = {v.id: readout_confs_now.get(v.id) for v in window.readouts if v.enabled}
+            # Live readouts (health/bars/counters): read EVERY OCR-due tick the window declares
+            # them, BEFORE the motion/state gates below — they're ephemeral HUD values, not the
+            # dataset, so a blurred/animating frame or a state that's invalid-for-save must not
+            # stop them surfacing (or feeding on_readout triggers). read_readouts plausibility-
+            # gates each box, so a garbage mid-animation reading is dropped, never shown.
+            readouts_now: dict[str, object] = {}
+            readout_confs_now: dict[str, float] = {}
+            readouts_all_now: dict[str, object] = {}
+            readout_confs_all_now: dict[str, float] = {}
+            if window.readouts:
+                vfields = {f.id: f for f in self._profile.fields_for(window)}
+                detailed = self._reader.read_readouts_detailed(frame, window, vfields)
+                readouts_now = {k: value for k, (value, _c) in detailed.items()}
+                readout_confs_now = {k: conf for k, (_v, conf) in detailed.items()}
+                self._readouts.update(readouts_now)
+                # Full map: every ENABLED readout, empty/low-confidence defaulted to "" instead of
+                # omitted -- so a blank slot pushes an empty value (register/.ro-live) rather than
+                # nothing, and a slot that goes empty overwrites its stale prior value with "".
+                readouts_all_now = {v.id: readouts_now.get(v.id, "") for v in window.readouts if v.enabled}
+                readout_confs_all_now = {v.id: readout_confs_now.get(v.id) for v in window.readouts if v.enabled}
 
-        # Moving frame: readouts were taken above; skip the grid OCR (blurred) and return them.
-        if moving:
-            return TickResult(TickStatus.moving, window_id=window_id, state_id=state_id,
-                              readouts=readouts_now, readout_confs=readout_confs_now,
-                              readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now)
-        if not self._state_allows_save(window, state_id):
-            return TickResult(TickStatus.state_invalid, window_id=window_id, state_id=state_id,
-                              readouts=readouts_now, readout_confs=readout_confs_now,
-                              readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now)
+            # Moving frame: readouts were taken above; skip the grid OCR (blurred) and return them.
+            if moving:
+                return TickResult(TickStatus.moving, window_id=window_id, state_id=state_id,
+                                  readouts=readouts_now, readout_confs=readout_confs_now,
+                                  readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now)
+            if not self._state_allows_save(window, state_id):
+                return TickResult(TickStatus.state_invalid, window_id=window_id, state_id=state_id,
+                                  readouts=readouts_now, readout_confs=readout_confs_now,
+                                  readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now)
 
-        # Per-stage timing: capture + settle + classify were measured above (windowless
-        # until now); emit them under this window now that it's recognised + save-worthy.
-        stats_store.record_timing(self._profile.name, f"win:{window_id}", "cp", t_capture)
-        stats_store.record_timing(self._profile.name, f"win:{window_id}", "st", t_settle)
-        stats_store.record_timing(self._profile.name, f"win:{window_id}", "cl", t_classify)
+            # Per-stage timing: capture + settle + classify were measured above (windowless
+            # until now); emit them under this window now that it's recognised + save-worthy.
+            stats_store.record_timing(self._profile.name, f"win:{window_id}", "cp", t_capture)
+            stats_store.record_timing(self._profile.name, f"win:{window_id}", "st", t_settle)
+            stats_store.record_timing(self._profile.name, f"win:{window_id}", "cl", t_classify)
 
-        # Skip OCR when the grid region is pixel-identical to the last tick.
-        _tg = time.perf_counter()
-        sig = self._reader.region_signature(frame, window)
-        stats_store.record_timing(self._profile.name, f"win:{window_id}", "sg",
-                                  (time.perf_counter() - _tg) * 1000.0)
-        cached = self._frame_cache.get(window_id)
-        cache_hit = sig is not None and cached is not None and cached[0] == sig
-        if cache_hit:
-            records, sentinel_ypos = cached[1], cached[2]
-        else:
-            fields = {f.id: f for f in self._profile.fields_for(window)}
-            # Time OCR read specifically (only the frames where it actually ran — a
-            # cache-hit frame does no OCR, so recording it would understate the real cost).
-            _oc = time.perf_counter()
-            records, sentinel_ypos = self._reader.read(frame, window, fields)
-            oc_ms = (time.perf_counter() - _oc) * 1000.0
-            stats_store.record_timing(self._profile.name, f"win:{window_id}", "oc", oc_ms, n=len(records))
-            if sig is not None:
-                self._frame_cache[window_id] = (sig, records, sentinel_ypos)
+            # Skip OCR when the grid region is pixel-identical to the last tick.
+            _tg = time.perf_counter()
+            sig = self._reader.region_signature(frame, window)
+            stats_store.record_timing(self._profile.name, f"win:{window_id}", "sg",
+                                      (time.perf_counter() - _tg) * 1000.0)
+            cached = self._frame_cache.get(window_id)
+            cache_hit = sig is not None and cached is not None and cached[0] == sig
+            if cache_hit:
+                records, sentinel_ypos = cached[1], cached[2]
+            else:
+                fields = {f.id: f for f in self._profile.fields_for(window)}
+                # Time OCR read specifically (only the frames where it actually ran — a
+                # cache-hit frame does no OCR, so recording it would understate the real cost).
+                _oc = time.perf_counter()
+                records, sentinel_ypos = self._reader.read(frame, window, fields)
+                oc_ms = (time.perf_counter() - _oc) * 1000.0
+                stats_store.record_timing(self._profile.name, f"win:{window_id}", "oc", oc_ms, n=len(records))
+                if sig is not None:
+                    self._frame_cache[window_id] = (sig, records, sentinel_ypos)
 
         kept = self._above_floor(records)               # occlusion / garbage gate
         # Per-read debug detail for the live log — only on a REAL OCR frame (a cache hit

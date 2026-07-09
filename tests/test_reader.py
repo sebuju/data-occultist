@@ -79,6 +79,90 @@ def test_readout_multiword_read_stays_in_reading_order():
     assert out["slot_5"] == "augur reach"
 
 
+def test_readout_stuttered_boundary_letter_is_dropped():
+    # THE confirmed live bug (caught via debug logging on a real capture, 09/07/26):
+    # two CLEAN, non-overlapping fragment boxes -- "Augur" and, from the recogniser
+    # itself, the literal text "r Reach" for the second box. No duplicate box exists
+    # here for _dedup_fragments to catch; the recogniser stuttered "Reach"'s own
+    # leading letter into its own token INSIDE that one fragment's text. Real boxes:
+    # Augur (92,12,134,62), "r Reach" (195,11,146,59) -- 21% x-overlap, well under the
+    # dedup threshold (both boxes are genuine, only the second's TEXT is corrupt).
+    ocr = StubOcr([
+        OcrLine("Augur", PixelBox(92, 12, 134, 62), 0.9999),
+        OcrLine("r Reach", PixelBox(195, 11, 146, 59), 0.9979),
+    ])
+    window = WindowDef(
+        id="w",
+        fields=[FieldDef(id="rof_8")],
+        readouts=[ReadoutDef(id="slot_5", box=Box(x=0.0, y=0.0, w=1.0, h=1.0), field="rof_8")],
+    )
+    fields = {f.id: f for f in window.fields}
+    frame = Frame(image=np.zeros((100, 400, 3), np.uint8), client=PixelBox(0, 0, 400, 100))
+    out = RegionReader(ocr).read_readouts(frame, window, fields)
+    assert out["slot_5"] == "Augur Reach"
+
+
+def test_readout_unrelated_single_letter_word_survives():
+    # A genuine single-letter word must NOT be dropped just because it's short -- only
+    # a 1-letter word touching an adjacent word's MATCHING boundary letter is a stutter.
+    # Here "V" neighbours "Gauss", which starts with a different letter, so it survives.
+    ocr = StubOcr([
+        OcrLine("V", PixelBox(10, 10, 20, 20), 0.95),
+        OcrLine("Gauss", PixelBox(35, 10, 90, 20), 0.95),
+    ])
+    window = WindowDef(
+        id="w",
+        fields=[FieldDef(id="rof_8")],
+        readouts=[ReadoutDef(id="slot_5", box=Box(x=0.0, y=0.0, w=1.0, h=1.0), field="rof_8")],
+    )
+    fields = {f.id: f for f in window.fields}
+    frame = Frame(image=np.zeros((100, 200, 3), np.uint8), client=PixelBox(0, 0, 200, 100))
+    out = RegionReader(ocr).read_readouts(frame, window, fields)
+    assert out["slot_5"] == "V Gauss"
+
+
+def test_readout_duplicate_fragment_is_deduped():
+    # Defensive layer for a RELATED but distinct failure mode -- a genuine duplicate
+    # detection box (the same glyph detected twice as separate fragments), which
+    # reading-order alone can only reorder, never remove. Not the confirmed live bug
+    # (that turned out to be the stutter case above), but a real class of OCR
+    # over-segmentation the join must not re-introduce either.
+    ocr = StubOcr([
+        OcrLine("augur", PixelBox(40, 45, 70, 20), 0.90),
+        OcrLine("reach", PixelBox(120, 38, 100, 20), 0.90),
+        OcrLine("r", PixelBox(125, 38, 15, 20), 0.55),   # fully inside "reach"'s box
+    ])
+    window = WindowDef(
+        id="w",
+        fields=[FieldDef(id="rof_8")],
+        readouts=[ReadoutDef(id="slot_5", box=Box(x=0.0, y=0.0, w=1.0, h=0.1), field="rof_8")],
+    )
+    fields = {f.id: f for f in window.fields}
+    frame = Frame(image=np.zeros((100, 300, 3), np.uint8), client=PixelBox(0, 0, 300, 100))
+    out = RegionReader(ocr).read_readouts(frame, window, fields)
+    assert out["slot_5"] == "augur reach"
+
+
+def test_readout_adjacent_words_are_not_deduped():
+    # Two REAL neighbouring words' boxes routinely clip each other's corners (~13% of
+    # the smaller box's area, measured on an actual "Augur"+"Reach" detection pair) --
+    # that overlap must NOT trip the duplicate-fragment dedup, or two genuinely
+    # different words would collapse into one.
+    ocr = StubOcr([
+        OcrLine("Augur", PixelBox(6, 9, 139, 72), 0.9998),
+        OcrLine("Reach", PixelBox(127, 9, 136, 64), 0.9999),
+    ])
+    window = WindowDef(
+        id="w",
+        fields=[FieldDef(id="rof_8")],
+        readouts=[ReadoutDef(id="slot_5", box=Box(x=0.0, y=0.0, w=1.0, h=1.0), field="rof_8")],
+    )
+    fields = {f.id: f for f in window.fields}
+    frame = Frame(image=np.zeros((100, 300, 3), np.uint8), client=PixelBox(0, 0, 300, 100))
+    out = RegionReader(ocr).read_readouts(frame, window, fields)
+    assert out["slot_5"] == "Augur Reach"
+
+
 def test_real_low_confidence_read_still_sinks_record():
     # an uncertain read that did NOT substitute (a real number) must still gate
     ocr = StubOcr([
