@@ -215,11 +215,17 @@ def _join(pairs: list[tuple[JoinSource, list[dict]]]) -> list[dict]:
     placeholder so the present sources' rows still surface, and a row with no join value stays
     standalone). Marking sources required narrows the output to keys present in EVERY required
     source (all required == the old ``inner``); standalones are dropped when any source is
-    required. Earlier sources win column collisions (their non-empty value is kept)."""
+    required. Earlier sources win column collisions (their non-empty value is kept).
+
+    A source marked ``exclude`` is an ANTI-join: it contributes no columns at all — every key
+    it contains is simply dropped from the output (e.g. "owned mods minus already-equipped
+    names"). It is independent of ``required`` and never affects keyless standalone rows (they
+    have nothing to match an excluded key against)."""
     from itertools import product
 
     strip = lambda rec: {k: v for k, v in rec.items() if k not in _HIDDEN}   # noqa: E731
     # A single source isn't joined — pass its rows through 1:1 (stripping bookkeeping cols).
+    # (``exclude`` is meaningless with nothing else to join against, so it's a no-op here.)
     if len(pairs) == 1:
         return [strip(rec) for rec in pairs[0][1]]
 
@@ -231,11 +237,26 @@ def _join(pairs: list[tuple[JoinSource, list[dict]]]) -> list[dict]:
                          strip_punct=n.strip_punct, collapse_ws=n.collapse_ws,
                          strip_words=tuple(n.strip_words))
 
+    # Anti-join sources contribute no columns — pull them out into a plain key blocklist and
+    # join only the rest.
+    excluded_keys: set[str] = set()
+    join_pairs: list[tuple[JoinSource, list[dict]]] = []
+    for src, recs in pairs:
+        if src.exclude:
+            for rec in recs:
+                k = kof(strip(rec), src)
+                if k:
+                    excluded_keys.add(k)
+        else:
+            join_pairs.append((src, recs))
+    if not join_pairs:                                  # every source was an exclude source
+        return []
+
     per_source: list[dict[str, list[dict]]] = []   # source idx -> {key -> [rows]}
     standalones: list[dict] = []                    # rows with no join value (outer only)
     key_order: list[str] = []
     seen: set[str] = set()
-    for src, recs in pairs:
+    for src, recs in join_pairs:
         groups: dict[str, list[dict]] = {}
         for rec in recs:
             row = strip(rec)
@@ -249,10 +270,12 @@ def _join(pairs: list[tuple[JoinSource, list[dict]]]) -> list[dict]:
                 key_order.append(k)
         per_source.append(groups)
 
-    required = [bool(src.required) for src, _ in pairs]
+    required = [bool(src.required) for src, _ in join_pairs]
     strict = any(required)
     out: list[dict] = []
     for k in key_order:
+        if k in excluded_keys:
+            continue
         # drop the key if a REQUIRED source lacks it (all-required == old inner; mixed narrows)
         if any(req and k not in gs for req, gs in zip(required, per_source)):
             continue

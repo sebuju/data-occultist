@@ -249,6 +249,61 @@ def test_all_aggregate_emits_every_observation(tmp_path):
     assert len(rows_at(s, "all")) == 3 and len(rows_at(s, "latest")) == 2
 
 
+def test_exclude_source_drops_matching_keys():
+    # anti-join: a source marked exclude contributes NO columns -- it's purely a key blocklist
+    # (owned mods minus already-equipped names is the motivating case).
+    owned = [{"name": "Vitality", "count": 1, "present": True},
+             {"name": "Serration", "count": 1, "present": True}]
+    equipped = [{"name": "Vitality", "present": True}]
+    sub = SubsetDef(id="v", sources=[_src("owned"), JoinSource(dataset="equipped", join_field="name", exclude=True)])
+    rows = compute_view([("owned", owned), ("equipped", equipped)], sub)["rows"]
+    assert {r["name"] for r in rows} == {"Serration"}       # Vitality dropped, equipped's own cols never appear
+
+
+def test_exclude_independent_of_required():
+    # required only gates presence in the OUTPUT set; exclude removes a key outright regardless.
+    owned = [{"name": "X", "present": True}, {"name": "Y", "present": True}]
+    blocked = [{"name": "X", "present": True}]
+    sub = SubsetDef(id="v", sources=[
+        _src("owned", required=True),
+        JoinSource(dataset="blocked", join_field="name", required=True, exclude=True),
+    ])
+    rows = compute_view([("owned", owned), ("blocked", blocked)], sub)["rows"]
+    assert {r["name"] for r in rows} == {"Y"}
+
+
+def test_exclude_never_drops_keyless_standalone_rows():
+    # a row with no join value (join_field "") stays standalone and can't be matched by exclude.
+    owned = [{"name": "", "extra": "junk", "present": True}, {"name": "X", "present": True}]
+    blocked = [{"name": "X", "present": True}]
+    sub = SubsetDef(id="v", sources=[
+        _src("owned"),
+        JoinSource(dataset="blocked", join_field="name", exclude=True),
+    ])
+    rows = compute_view([("owned", owned), ("blocked", blocked)], sub)["rows"]
+    assert {r.get("extra") for r in rows} == {"junk"}       # the keyless row survives; "X" was excluded
+
+
+def test_all_sources_excluded_yields_nothing():
+    # two sources so the single-source pass-through shortcut doesn't apply
+    a = [{"name": "X", "present": True}]
+    b = [{"name": "Y", "present": True}]
+    sub = SubsetDef(id="v", sources=[
+        JoinSource(dataset="a", join_field="name", exclude=True),
+        JoinSource(dataset="b", join_field="name", exclude=True),
+    ])
+    assert compute_view([("a", a), ("b", b)], sub)["rows"] == []
+
+
+def test_exclude_round_trips_through_profile(tmp_path):
+    p = GameProfile(name="g", subsets=[SubsetDef(id="v", sources=[
+        _src("owned"), JoinSource(dataset="blocked", join_field="name", exclude=True)])])
+    save_profile(tmp_path, p)
+    s = load_profile(tmp_path, "g").subset_def("v")
+    assert s.sources[1].exclude is True
+    assert s.sources[0].exclude is False                     # default stays off
+
+
 def test_subset_round_trips_through_profile(tmp_path):
     p = GameProfile(name="g", subsets=[SubsetDef(
         id="arc", sources=[_src("equip")],
