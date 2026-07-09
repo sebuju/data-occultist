@@ -493,7 +493,7 @@ windows:
     min_cover_x: 0.75
     min_cover_y: 0.75
     terminator: false
-  static_grid: true
+  static_grid: false
   scroll:
     enabled: true
     scrollbar_orientation: vertical
@@ -503,7 +503,7 @@ windows:
     col_stride: 0.0
     calib_samples: []
     autoscroll: true
-    scroll_clicks: 2
+    scroll_clicks: 6
   readouts: []
   preprocess:
     mode: none
@@ -1971,6 +1971,20 @@ datasets:
   dedup: true
   batch_mode: run
   sync_mode: accumulate
+- id: mod_catalog
+  aggregate: latest
+  key_field: ''
+  key_fields: []
+  dedup: true
+  batch_mode: run
+  sync_mode: accumulate
+- id: loadout
+  aggregate: latest
+  key_field: ''
+  key_fields: []
+  dedup: true
+  batch_mode: run
+  sync_mode: accumulate
 subsets:
 - id: live_prices_joined
   sources:
@@ -1983,6 +1997,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    exclude: false
   - dataset: prices_live
     join_field: name
     join_norm:
@@ -1992,6 +2007,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    exclude: false
   filters:
   - field: price_median
     op: nonempty
@@ -2026,6 +2042,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    exclude: false
   filters:
   - field: name
     op: nonempty
@@ -2051,6 +2068,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    exclude: false
   - dataset: relic_prices
     join_field: name
     join_norm:
@@ -2060,6 +2078,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    exclude: false
   filters: []
   derived:
   - name: price
@@ -2101,6 +2120,7 @@ subsets:
       - relic
     aggregate: all
     required: true
+    exclude: false
   - dataset: relic_contents
     join_field: name
     join_norm:
@@ -2111,6 +2131,7 @@ subsets:
       - relic
     aggregate: all
     required: true
+    exclude: false
   filters: []
   derived: []
   hidden_columns:
@@ -2135,6 +2156,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    exclude: false
   - dataset: prices_live
     join_field: name
     join_norm:
@@ -2144,6 +2166,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    exclude: false
   filters: []
   derived: []
   hidden_columns:
@@ -2174,6 +2197,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    exclude: false
   - dataset: relic_contents
     join_field: name
     join_norm:
@@ -2183,6 +2207,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    exclude: false
   filters: []
   derived: []
   hidden_columns:
@@ -2207,6 +2232,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    exclude: false
   - dataset: prices_live
     join_field: name
     join_norm:
@@ -2216,6 +2242,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    exclude: false
   filters: []
   derived: []
   hidden_columns:
@@ -2247,6 +2274,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    exclude: false
   - dataset: prices_live
     join_field: name
     join_norm:
@@ -2256,6 +2284,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    exclude: false
   filters:
   - field: name
     op: contains
@@ -2265,6 +2294,114 @@ subsets:
     value: Blueprint
   derived: []
   hidden_columns: []
+  sort: []
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  config_collapsed: false
+- id: installable_mods
+  sources:
+  - dataset: mods
+    join_field: mod_name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
+    exclude: false
+  - dataset: mod_catalog
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
+    exclude: false
+  filters:
+  - field: type
+    op: eq
+    value: Warframe Mod
+  derived: []
+  hidden_columns:
+  - key
+  - _seq
+  - _pos
+  - rarity
+  - mod_count
+  - mod_drain
+  - _item
+  - mod_name
+  sort: []
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  config_collapsed: false
+- id: loadout_equipped
+  sources:
+  - dataset: loadout
+    join_field: ''
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    exclude: false
+  filters:
+  - field: name
+    op: regex
+    value: _name$
+  - field: value
+    op: nonempty
+    value: ''
+  derived: []
+  hidden_columns: []
+  sort: []
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  config_collapsed: true
+- id: mod_suggestions
+  sources:
+  - dataset: installable_mods
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
+    exclude: false
+  - dataset: loadout_equipped
+    join_field: value
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    exclude: true
+  filters: []
+  derived: []
+  hidden_columns:
+  - key
+  - _seq
+  - _pos
+  - rarity
+  - mod_drain
+  - _item
+  - mod_count
+  - mod_name
   sort: []
   sort_by: ''
   sort_desc: false
@@ -2502,6 +2639,64 @@ producers:
         depth: 5
       type: number
       required: false
+- id: mod_catalog_producer
+  type: http
+  mode: ''
+  dataset: mod_catalog
+  throttle: 0.4
+  enabled: true
+  sources: []
+  source_field: name
+  http:
+    request:
+      method: GET
+      url: https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/Mods.json
+      headers:
+        User-Agent: oc/0.1
+        Accept: application/json
+      query: {}
+      timeout: 60.0
+    key_transform: none
+    key_encode: false
+    root: ''
+    explode:
+    - ''
+    fields:
+    - out_field: name
+      path: name
+      template: ''
+      type: text
+      required: true
+    - out_field: polarity
+      path: polarity
+      template: ''
+      type: text
+      required: false
+    - out_field: type
+      path: type
+      template: ''
+      type: text
+      required: false
+    - out_field: compat
+      path: compatName
+      template: ''
+      type: text
+      required: false
+    - out_field: rarity
+      path: rarity
+      template: ''
+      type: text
+      required: false
+    - out_field: base_drain
+      path: baseDrain
+      template: ''
+      type: number
+      required: false
+  key:
+    fields:
+    - name
+    sep: '|'
+    case_sensitive: false
 file_sources:
 - id: log_ee
   format: log_lines
@@ -2931,7 +3126,7 @@ actions:
   dest: ''
   enabled: true
 registers:
-- id: register
+- id: loadout_register
   sources:
   - readout:slot_arcane_1
   - readout:slot_4_name
@@ -2969,6 +3164,7 @@ registers:
   - readout:slot_exilus_school
   title: ''
   enabled: true
+  persist: loadout
 dictionaries:
 - id: wiki
   enabled: true
@@ -3084,6 +3280,22 @@ layout:
       collapsed: false
       custW: false
       custH: false
+    ds:mod_catalog:
+      x: 5020.0
+      y: 3480.0
+      w: 360.0
+      h: 160.0
+      collapsed: false
+      custW: false
+      custH: false
+    producer:mod_catalog_producer:
+      x: 5420.0
+      y: 3480.0
+      w: 360.0
+      h: 720.0
+      collapsed: false
+      custW: false
+      custH: false
     win:mod_window:
       x: -1460.0
       y: 2780.0
@@ -3183,7 +3395,11 @@ layout:
     fld:mod_window:mod:mod_drain:
       x: -2220.0
       y: 2780.0
+      w: 420.0
+      h: 300.0
       collapsed: false
+      custW: true
+      custH: true
     fld:mod_window:mod:mod_count:
       x: -2560.0
       y: 2780.0
@@ -3617,32 +3833,32 @@ layout:
       y: 1900.0
       collapsed: false
     win:arsenal_warframe:
-      x: 4700.0
-      y: 1500.0
+      x: 4740.0
+      y: 280.0
       w: 780.0
       h: 1104.0
       collapsed: false
       custW: true
       custH: false
     item:arsenal_warframe:mod:
-      x: 5140.0
-      y: 2580.0
+      x: 5220.0
+      y: 1380.0
       collapsed: false
     fld:arsenal_warframe:mod:name:
-      x: 5800.0
-      y: 2580.0
+      x: 5880.0
+      y: 1380.0
       collapsed: false
     fld:arsenal_warframe:mod:drain:
-      x: 5560.0
-      y: 2580.0
+      x: 5640.0
+      y: 1380.0
       collapsed: false
     fld:arsenal_warframe:mod:rank:
-      x: 5560.0
-      y: 2980.0
+      x: 5640.0
+      y: 1780.0
       collapsed: false
     det:arsenal_warframe:detect_7:
-      x: 5520.0
-      y: 1500.0
+      x: 4480.0
+      y: 300.0
       collapsed: false
     trigger:ab_trigger:
       x: -3560.0
@@ -3693,14 +3909,6 @@ layout:
       y: -640.0
       w: 320.0
       h: 340.0
-      collapsed: false
-      custW: true
-      custH: true
-    register:register:
-      x: 7780.0
-      y: 2380.0
-      w: 740.0
-      h: 880.0
       collapsed: false
       custW: true
       custH: true
@@ -4025,10 +4233,74 @@ layout:
       custW: true
       custH: true
     prev:arsenal_warframe:
-      x: 4240.0
-      y: 2580.0
+      x: 4320.0
+      y: 1380.0
       w: 780.0
       h: 340.0
+      collapsed: false
+      custW: true
+      custH: true
+    sub:installable_mods:
+      x: 4960.0
+      y: 4340.0
+      collapsed: false
+    ds:loadout:
+      x: 5860.0
+      y: 3480.0
+      collapsed: false
+    sub:loadout_equipped:
+      x: 5860.0
+      y: 3700.0
+      collapsed: false
+    sub:mod_suggestions:
+      x: 5420.0
+      y: 4340.0
+      collapsed: false
+    vt:sub:loadout_equipped:
+      x: 6280.0
+      y: 4380.0
+      w: 620.0
+      h: 300.0
+      collapsed: false
+      custW: true
+      custH: true
+    vt:ds:mod_catalog:
+      x: 4180.0
+      y: 3480.0
+      w: 800.0
+      h: 600.0
+      collapsed: false
+      custW: true
+      custH: true
+    vt:sub:mod_suggestions:
+      x: 5420.0
+      y: 5040.0
+      w: 1340.0
+      h: 980.0
+      collapsed: false
+      custW: true
+      custH: true
+    vt:ds:loadout:
+      x: 6280.0
+      y: 3480.0
+      w: 620.0
+      h: 860.0
+      collapsed: false
+      custW: true
+      custH: true
+    register:loadout_register:
+      x: 7820.0
+      y: 2480.0
+      w: 740.0
+      h: 880.0
+      collapsed: false
+      custW: true
+      custH: true
+    vt:sub:installable_mods:
+      x: 3960.0
+      y: 4340.0
+      w: 940.0
+      h: 640.0
       collapsed: false
       custW: true
       custH: true
@@ -4095,6 +4367,11 @@ layout:
       - mod_name
       - mod_count
       - mod_drain
+      sorts:
+      - col: mod_drain
+        dir: -1
+      widths:
+        mod_name: 231
     view:relic_rewards_live:
       order:
       - name
@@ -4294,12 +4571,41 @@ layout:
         price_min: 70
         price_median: 90
         volume: 53
-    register:register:
+    ds:mod_catalog:
+      widths:
+        compat: 124
+      sorts:
+      - col: base_drain
+        dir: -1
+    view:mod_suggestions:
+      widths:
+        type: 318
+        mod_name: 159
+        name: 198
+        polarity: 189
+        compat: 265
+        base_drain: 199
+      sorts:
+      - col: mod_drain
+        dir: -1
+    register:loadout_register:
       widths: {}
       order: []
       sorts:
       - col: key
         dir: 1
+    ds:loadout:
+      widths: {}
+      order: []
+      sorts: []
+    view:installable_mods:
+      sorts:
+      - col: base_drain
+        dir: 1
+    pc:mods:
+      sorts:
+      - col: mod_drain
+        dir: -1
   open_images:
   - atlas
   - live_game_window
@@ -4789,26 +5095,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: cyan
-  - id: group_45
-    title: group_45
-    members:
-    - win:arsenal_warframe
-    - det:arsenal_warframe:detect_7
-    - item:arsenal_warframe:mod
-    - fld:arsenal_warframe:mod:name
-    - fld:arsenal_warframe:mod:drain
-    - fld:arsenal_warframe:mod:rank
-    - prev:arsenal_warframe
-    outline:
-      color: '#262c37'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#10141c'
-    titleBg: ''
-    titleColor: ''
-    titleAlign: left
-    titlePos: tl
   float_windows: {}
   super_groups:
   - id: sgroup_2
@@ -4905,6 +5191,11 @@ layout:
   - hist:owned_refresh
   - vt:ds:dataset
   - prev:arsenal_warframe
+  - vt:sub:loadout_equipped
+  - vt:ds:mod_catalog
+  - vt:sub:mod_suggestions
+  - vt:ds:loadout
+  - vt:sub:installable_mods
   sub_groups:
   - id: subgroup_5
     parent: group_22
