@@ -1424,11 +1424,6 @@ windows:
       then: fold
     - when: always
       then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
     min_confidence: 0.6
     isolate: false
     glyph_check: false
@@ -1439,11 +1434,6 @@ windows:
       then: fold
     - when: always
       then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
     min_confidence: 0.6
     isolate: false
     glyph_check: false
@@ -1596,7 +1586,7 @@ windows:
   - id: slot_5_name
     box:
       x: 0.3144064355449944
-      y: 0.47685185185185214
+      y: 0.4763888888888892
       w: 0.11256450460818707
       h: 0.03564814814814816
     field: rof_8
@@ -1604,7 +1594,7 @@ windows:
   - id: slot_6_name
     box:
       x: 0.4409511302346964
-      y: 0.4777777777777778
+      y: 0.4768518518518519
       w: 0.11349994370465394
       h: 0.03518518518518519
     field: rof_10
@@ -1739,17 +1729,17 @@ windows:
     enabled: true
   - id: mod_drain_max
     box:
-      x: 0.25208515598113573
+      x: 0.2523865674901388
       y: 0.10954778436053962
-      w: 0.015101687131906794
+      w: 0.014320437131906791
       h: 0.01910707526054277
     field: rof_4_split2
     enabled: true
   - id: mod_drain_remaining
     box:
-      x: 0.2295802122278481
-      y: 0.10991976880771737
-      w: 0.01732823968078289
+      x: 0.2334864622278483
+      y: 0.10984680183745632
+      w: 0.013421989680782889
       h: 0.018413729333551808
     field: rof_6_split2
     enabled: true
@@ -1972,7 +1962,7 @@ datasets:
   batch_mode: run
   sync_mode: accumulate
 - id: mod_catalog
-  aggregate: latest
+  aggregate: max
   key_field: ''
   key_fields: []
   dedup: true
@@ -1997,7 +1987,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
-    exclude: false
+    mode: join
   - dataset: prices_live
     join_field: name
     join_norm:
@@ -2007,7 +1997,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
-    exclude: false
+    mode: join
   filters:
   - field: price_median
     op: nonempty
@@ -2042,7 +2032,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   filters:
   - field: name
     op: nonempty
@@ -2068,7 +2058,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   - dataset: relic_prices
     join_field: name
     join_norm:
@@ -2078,7 +2068,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
-    exclude: false
+    mode: join
   filters: []
   derived:
   - name: price
@@ -2120,7 +2110,7 @@ subsets:
       - relic
     aggregate: all
     required: true
-    exclude: false
+    mode: join
   - dataset: relic_contents
     join_field: name
     join_norm:
@@ -2131,7 +2121,7 @@ subsets:
       - relic
     aggregate: all
     required: true
-    exclude: false
+    mode: join
   filters: []
   derived: []
   hidden_columns:
@@ -2156,7 +2146,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   - dataset: prices_live
     join_field: name
     join_norm:
@@ -2166,7 +2156,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
-    exclude: false
+    mode: join
   filters: []
   derived: []
   hidden_columns:
@@ -2197,7 +2187,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   - dataset: relic_contents
     join_field: name
     join_norm:
@@ -2207,7 +2197,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   filters: []
   derived: []
   hidden_columns:
@@ -2232,7 +2222,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   - dataset: prices_live
     join_field: name
     join_norm:
@@ -2242,7 +2232,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   filters: []
   derived: []
   hidden_columns:
@@ -2274,7 +2264,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   - dataset: prices_live
     join_field: name
     join_norm:
@@ -2284,7 +2274,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   filters:
   - field: name
     op: contains
@@ -2311,7 +2301,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   - dataset: mod_catalog
     join_field: name
     join_norm:
@@ -2321,12 +2311,14 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   filters:
   - field: type
     op: eq
     value: Warframe Mod
-  derived: []
+  derived:
+  - name: max_drain
+    template: ={base_drain}+{fusion_limit}*{base_drain}/(({base_drain})**2)**0.5
   hidden_columns:
   - key
   - _seq
@@ -2353,7 +2345,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
-    exclude: false
+    mode: join
   filters:
   - field: name
     op: regex
@@ -2380,7 +2372,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
-    exclude: false
+    mode: join
   - dataset: loadout_equipped
     join_field: value
     join_norm:
@@ -2390,7 +2382,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
-    exclude: true
+    mode: exclude
   filters: []
   derived: []
   hidden_columns:
@@ -2408,12 +2400,303 @@ subsets:
   latest_batch: false
   limit: 0
   config_collapsed: false
-- id: subset
-  sources: []
+- id: loadout_wide
+  sources:
+  - dataset: loadout
+    join_field: ''
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    mode: join
   filters: []
   derived: []
   hidden_columns: []
   sort: []
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  pivot:
+    name_field: name
+    value_field: value
+    key_column: slot
+    attributes:
+    - _name
+    - _drain
+    - _school
+  limit: 0
+  config_collapsed: false
+- id: empty_slots
+  sources:
+  - dataset: loadout_wide
+    join_field: ''
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    mode: join
+  filters:
+  - field: name
+    op: empty
+    value: ''
+  derived: []
+  hidden_columns: []
+  sort: []
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  config_collapsed: false
+- id: drain_remaining
+  sources:
+  - dataset: loadout
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    mode: join
+  filters:
+  - field: name
+    op: eq
+    value: mod_drain_remaining
+  derived:
+  - name: drain_remaining
+    template: '{value}'
+  hidden_columns:
+  - name
+  - value
+  sort: []
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  config_collapsed: false
+- id: empty_general_slots
+  sources:
+  - dataset: loadout_wide
+    join_field: ''
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    mode: join
+  filters:
+  - field: name
+    op: empty
+    value: ''
+  - field: slot
+    op: ne
+    value: slot_aura
+  derived: []
+  hidden_columns: []
+  sort: []
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  config_collapsed: false
+- id: empty_aura_slot
+  sources:
+  - dataset: loadout_wide
+    join_field: ''
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    mode: join
+  filters:
+  - field: name
+    op: empty
+    value: ''
+  - field: slot
+    op: eq
+    value: slot_aura
+  derived:
+  - name: compat
+    template: AURA
+  hidden_columns: []
+  sort: []
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  config_collapsed: false
+- id: mod_suggestions_general
+  sources:
+  - dataset: mod_suggestions
+    join_field: polarity
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
+    mode: join
+  - dataset: empty_general_slots
+    join_field: school
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    mode: mark
+  - dataset: drain_remaining
+    join_field: ''
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    mode: broadcast
+  filters:
+  - field: compat
+    op: eq
+    value: WARFRAME
+  derived:
+  - name: polarity_match
+    template: '{school}'
+  - name: drain_headroom
+    template: ={drain_remaining}-{max_drain}
+  hidden_columns:
+  - key
+  - _seq
+  - _pos
+  - rarity
+  - mod_drain
+  - _item
+  - mod_count
+  - mod_name
+  - slot
+  - compat
+  - type
+  sort:
+  - field: polarity_match
+    desc: true
+  - field: drain_headroom
+    desc: true
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  config_collapsed: false
+- id: mod_suggestions_aura
+  sources:
+  - dataset: mod_suggestions
+    join_field: compat
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
+    mode: join
+  - dataset: empty_aura_slot
+    join_field: compat
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
+    mode: join
+  - dataset: drain_remaining
+    join_field: ''
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    mode: broadcast
+  filters: []
+  derived:
+  - name: polarity_match
+    template: '{school}'
+  - name: drain_headroom
+    template: ={drain_remaining}-{max_drain}
+  hidden_columns:
+  - key
+  - _seq
+  - _pos
+  - rarity
+  - mod_drain
+  - _item
+  - mod_count
+  - mod_name
+  - slot
+  sort:
+  - field: polarity_match
+    desc: true
+  - field: drain_headroom
+    desc: true
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  config_collapsed: false
+- id: mod_suggestions_ranked
+  sources:
+  - dataset: mod_suggestions_general
+    join_field: ''
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    mode: join
+  - dataset: mod_suggestions_aura
+    join_field: ''
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    mode: join
+  filters: []
+  derived: []
+  hidden_columns:
+  - key
+  - _seq
+  - _pos
+  - rarity
+  - mod_drain
+  - _item
+  - mod_count
+  - mod_name
+  - slot
+  sort:
+  - field: polarity_match
+    desc: true
+  - field: drain_headroom
+    desc: true
   sort_by: ''
   sort_desc: false
   latest_batch: false
@@ -2689,6 +2972,11 @@ producers:
       required: false
     - out_field: base_drain
       path: baseDrain
+      template: ''
+      type: number
+      required: false
+    - out_field: fusion_limit
+      path: fusionLimit
       template: ''
       type: number
       required: false
@@ -3234,7 +3522,7 @@ layout:
       custH: true
     ds:master:
       x: -940.0
-      y: -1400.0
+      y: -1380.0
       collapsed: false
     ds:prices_live:
       x: 900.0
@@ -3274,23 +3562,23 @@ layout:
       collapsed: false
     ds:mods:
       x: -940.0
-      y: -960.0
+      y: -940.0
       w: 360.0
       h: 160.0
       collapsed: false
       custW: false
       custH: false
     ds:mod_catalog:
-      x: 5020.0
-      y: 3480.0
+      x: 4960.0
+      y: 4220.0
       w: 360.0
       h: 160.0
       collapsed: false
       custW: false
       custH: false
     producer:mod_catalog_producer:
-      x: 5420.0
-      y: 3480.0
+      x: 4560.0
+      y: 4220.0
       w: 360.0
       h: 720.0
       collapsed: false
@@ -3753,16 +4041,16 @@ layout:
       y: -1460.0
       collapsed: false
     vt:ds:relic_contents:
-      x: -1620.0
+      x: -1680.0
       y: -2320.0
-      w: 640.0
-      h: 340.0
+      w: 680.0
+      h: 360.0
       collapsed: false
       custW: true
       custH: true
     vt:ds:mods:
       x: -1680.0
-      y: -960.0
+      y: -940.0
       w: 680.0
       h: 360.0
       collapsed: false
@@ -3770,7 +4058,7 @@ layout:
       custH: false
     vt:ds:master:
       x: -1680.0
-      y: -1400.0
+      y: -1380.0
       w: 680.0
       h: 360.0
       collapsed: false
@@ -3799,10 +4087,10 @@ layout:
     toast:toast_2:
       x: 3380.0
       y: -1840.0
-      w: 520.0
-      h: 1240.0
+      w: 940.0
+      h: 1420.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
     sub:relic_rewards_with_price:
       x: 2460.0
@@ -3833,32 +4121,32 @@ layout:
       y: 1900.0
       collapsed: false
     win:arsenal_warframe:
-      x: 4740.0
-      y: 280.0
-      w: 780.0
-      h: 1104.0
+      x: 6640.0
+      y: 2480.0
+      w: 1060.0
+      h: 1078.0
       collapsed: false
       custW: true
       custH: false
     item:arsenal_warframe:mod:
-      x: 5220.0
-      y: 1380.0
+      x: 4440.0
+      y: 2960.0
       collapsed: false
     fld:arsenal_warframe:mod:name:
-      x: 5880.0
-      y: 1380.0
+      x: 5100.0
+      y: 2960.0
       collapsed: false
     fld:arsenal_warframe:mod:drain:
-      x: 5640.0
-      y: 1380.0
+      x: 4860.0
+      y: 2960.0
       collapsed: false
     fld:arsenal_warframe:mod:rank:
-      x: 5640.0
-      y: 1780.0
+      x: 4860.0
+      y: 3360.0
       collapsed: false
     det:arsenal_warframe:detect_7:
-      x: 4480.0
-      y: 300.0
+      x: 6300.0
+      y: 2480.0
       collapsed: false
     trigger:ab_trigger:
       x: -3560.0
@@ -3961,13 +4249,21 @@ layout:
       custW: true
       custH: true
     ro:arsenal_warframe:mod_drain_remaining:
-      x: 6460.0
-      y: 2680.0
+      x: 8980.0
+      y: 2420.0
+      w: 280.0
+      h: 300.0
       collapsed: false
+      custW: true
+      custH: true
     ro:arsenal_warframe:mod_drain_max:
-      x: 6720.0
-      y: 2680.0
+      x: 9300.0
+      y: 2420.0
+      w: 280.0
+      h: 300.0
       collapsed: false
+      custW: true
+      custH: true
     atlas:
       x: -1900.0
       y: -4020.0
@@ -4216,94 +4512,150 @@ layout:
       collapsed: false
       custW: true
       custH: true
-    sub:subset:
-      x: 8820.0
-      y: 2560.0
-      collapsed: false
     ds:dataset:
-      x: 7580.0
-      y: 3540.0
+      x: 5820.0
+      y: 3620.0
       collapsed: false
     vt:ds:dataset:
-      x: 7240.0
-      y: 3760.0
+      x: 5080.0
+      y: 3620.0
       w: 700.0
       h: 400.0
       collapsed: false
       custW: true
       custH: true
     prev:arsenal_warframe:
-      x: 4320.0
-      y: 1380.0
-      w: 780.0
+      x: 6640.0
+      y: 3660.0
+      w: 1060.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     sub:installable_mods:
-      x: 4960.0
-      y: 4340.0
+      x: 6300.0
+      y: 4220.0
+      w: 360.0
+      h: 920.0
       collapsed: false
+      custW: false
+      custH: true
     ds:loadout:
-      x: 5860.0
-      y: 3480.0
+      x: 8320.0
+      y: 4220.0
       collapsed: false
     sub:loadout_equipped:
-      x: 5860.0
-      y: 3700.0
+      x: 8960.0
+      y: 4420.0
+      w: 360.0
+      h: 313.0
       collapsed: false
+      custW: true
+      custH: false
     sub:mod_suggestions:
-      x: 5420.0
-      y: 4340.0
+      x: 6720.0
+      y: 4220.0
+      w: 360.0
+      h: 920.0
       collapsed: false
+      custW: false
+      custH: true
     vt:sub:loadout_equipped:
-      x: 6280.0
-      y: 4380.0
+      x: 9380.0
+      y: 4420.0
       w: 620.0
-      h: 300.0
+      h: 360.0
       collapsed: false
       custW: true
       custH: true
     vt:ds:mod_catalog:
-      x: 4180.0
-      y: 3480.0
+      x: 4960.0
+      y: 4440.0
       w: 800.0
       h: 600.0
       collapsed: false
       custW: true
       custH: true
-    vt:sub:mod_suggestions:
-      x: 5420.0
-      y: 5040.0
-      w: 1340.0
-      h: 980.0
-      collapsed: false
-      custW: true
-      custH: true
     vt:ds:loadout:
-      x: 6280.0
-      y: 3480.0
-      w: 620.0
+      x: 8320.0
+      y: 4620.0
+      w: 460.0
       h: 860.0
       collapsed: false
       custW: true
       custH: true
+    sub:loadout_wide:
+      x: 8960.0
+      y: 4780.0
+      w: 360.0
+      h: 423.0
+      collapsed: false
+      custW: true
+      custH: false
+    sub:empty_slots:
+      x: 8960.0
+      y: 5240.0
+      w: 360.0
+      h: 242.0
+      collapsed: false
+      custW: true
+      custH: false
+    sub:drain_remaining:
+      x: 7140.0
+      y: 4540.0
+      collapsed: false
+    sub:mod_suggestions_ranked:
+      x: 7160.0
+      y: 5680.0
+      collapsed: false
+    vt:sub:mod_suggestions_ranked:
+      x: 7580.0
+      y: 5680.0
+      w: 1100.0
+      h: 1580.0
+      collapsed: false
+      custW: true
+      custH: true
+    vt:sub:empty_slots:
+      x: 9380.0
+      y: 4820.0
+      w: 620.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: false
     register:loadout_register:
       x: 7820.0
-      y: 2480.0
+      y: 2700.0
       w: 740.0
-      h: 880.0
+      h: 1080.0
       collapsed: false
       custW: true
       custH: true
-    vt:sub:installable_mods:
-      x: 3960.0
-      y: 4340.0
-      w: 940.0
-      h: 640.0
+    sub:empty_general_slots:
+      x: 7140.0
+      y: 4220.0
+      collapsed: false
+    sub:empty_aura_slot:
+      x: 7560.0
+      y: 4220.0
+      w: 360.0
+      h: 260.0
+      collapsed: false
+      custW: false
+      custH: true
+    sub:mod_suggestions_general:
+      x: 6300.0
+      y: 5680.0
+      w: 360.0
+      h: 872.0
       collapsed: false
       custW: true
       custH: true
+    sub:mod_suggestions_aura:
+      x: 6720.0
+      y: 5680.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -4606,6 +4958,13 @@ layout:
       sorts:
       - col: mod_drain
         dir: -1
+    view:mod_suggestions_general:
+      widths:
+        type: 158
+        name: 211
+    view:mod_suggestions_ranked:
+      widths:
+        name: 184
   open_images:
   - atlas
   - live_game_window
@@ -5045,7 +5404,7 @@ layout:
     titlePos: tl
     schemeId: cyan
   - id: group_41
-    title: readouts
+    title: drain totals
     members:
     - ro:arsenal_warframe:mod_drain_max
     - ro:arsenal_warframe:mod_drain_remaining
@@ -5095,6 +5454,96 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: cyan
+  - id: group_45
+    title: group_45
+    members:
+    - item:arsenal_warframe:mod
+    - fld:arsenal_warframe:mod:name
+    - fld:arsenal_warframe:mod:drain
+    - fld:arsenal_warframe:mod:rank
+    - ds:dataset
+    - vt:ds:dataset
+    outline:
+      color: '#262c37'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#10141c'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+    titlePos: tl
+  - id: group_46
+    title: group_46
+    members:
+    - ds:loadout
+    - vt:ds:loadout
+    - sub:loadout_equipped
+    - vt:sub:loadout_equipped
+    - sub:loadout_wide
+    - sub:empty_slots
+    - vt:sub:empty_slots
+    outline:
+      color: '#262c37'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#10141c'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+    titlePos: tl
+  - id: group_47
+    title: group_47
+    members:
+    - ds:mod_catalog
+    - vt:ds:mod_catalog
+    - producer:mod_catalog_producer
+    outline:
+      color: '#262c37'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#10141c'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+    titlePos: tl
+  - id: group_48
+    title: subsets
+    members:
+    - sub:installable_mods
+    - sub:mod_suggestions
+    - sub:drain_remaining
+    - sub:empty_general_slots
+    - sub:empty_aura_slot
+    outline:
+      color: '#262c37'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#10141c'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+    titlePos: tl
+  - id: group_49
+    title: subsets
+    members:
+    - sub:mod_suggestions_general
+    - sub:mod_suggestions_aura
+    - sub:mod_suggestions_ranked
+    - vt:sub:mod_suggestions_ranked
+    outline:
+      color: '#262c37'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#10141c'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+    titlePos: tl
   float_windows: {}
   super_groups:
   - id: sgroup_2
@@ -5193,9 +5642,9 @@ layout:
   - prev:arsenal_warframe
   - vt:sub:loadout_equipped
   - vt:ds:mod_catalog
-  - vt:sub:mod_suggestions
   - vt:ds:loadout
-  - vt:sub:installable_mods
+  - vt:sub:mod_suggestions_ranked
+  - vt:sub:empty_slots
   sub_groups:
   - id: subgroup_5
     parent: group_22

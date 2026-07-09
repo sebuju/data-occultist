@@ -48,6 +48,11 @@ def _ocr_cache_for(game, image_id, config, prefer_cache):
     ocr = get_engine().ocr
     key = cache_key(image_id, config, getattr(ocr, "ocr_sig", type(ocr).__name__))
     hit = cache.get(key) if prefer_cache else None
+    if hit is not None:
+        # A hit returns early in the caller (no put(), no save() below) — self-heal the
+        # sidecar here in case it was deleted externally while this process kept serving
+        # the in-memory entry (save() is a cheap no-op unless dirty or the file is gone).
+        cache.save()
     return cache, key, hit
 
 
