@@ -37,6 +37,8 @@ export function panTo(id) {
 // Read the computed value (tracks the CSS var; no hard-coded px). Used by fit/pan-zoom-to only —
 // the manual wheel is unrestricted.
 const MAX_FONT_PX = 16;
+// Manual zoom-OUT floor: near-infinite, just clear of 0 (no div-by-zero in nodemap/pan math).
+export const MIN_ZOOM = 0.001;
 let _maxZoom = null;
 export function maxZoom() {
     if (_maxZoom == null) _maxZoom = MAX_FONT_PX / (parseFloat(getComputedStyle(document.body).fontSize) || 14);
@@ -190,7 +192,7 @@ export function onWheel(ev) {
     const rect = $("graph").getBoundingClientRect();
     const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
     const old = view.zoom;
-    const z = Math.max(0.15, old * (ev.deltaY < 0 ? 1.1 : 1 / 1.1));   // manual wheel: no font ceiling
+    const z = Math.max(MIN_ZOOM, old * (ev.deltaY < 0 ? 1.1 : 1 / 1.1));   // manual wheel: no font ceiling
     // keep the world point under the cursor fixed
     view.panX = mx - (mx - view.panX) * (z / old);
     view.panY = my - (my - view.panY) * (z / old);

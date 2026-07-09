@@ -48,7 +48,7 @@ const VERIFY = {
 };
 
 const HANDLE_PX = 5;     // half-size of a resize handle, screen pixels
-const MIN_FRAC = 0.004;  // minimum box size in fractions
+export const MIN_FRAC = 0.004;  // minimum box size in fractions -- also the floor a typed rect-edit input clamps to (imaging.js)
 const LABEL_BASE_PX = 12; // label size on screen at zoom z=1 (scales ∝ z, so it shrinks when zoomed out)
 const LABEL_MAX_PX = 16;  // cap so a label never gets giant when zoomed in
 

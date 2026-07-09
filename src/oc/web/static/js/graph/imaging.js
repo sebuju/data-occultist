@@ -1,10 +1,10 @@
 // Window image / region drawing, item cutouts, OCR read pipeline (preview + detect + grid).
 // Extracted from main.js verbatim.
 import * as api from "../api.js";
-import { h, frag, TRASH, subhead } from "../dom.js";
+import { h, frag, TRASH, subhead, kv, btn } from "../dom.js";
 import { openCaptureModal } from "./panels/precap.js";
 import { timed } from "../log.js";
-import { Overlay } from "../overlay.js";
+import { Overlay, MIN_FRAC } from "../overlay.js";
 import { persist } from "./persist.js";
 import * as groups from "./groups.js";
 import { singleFlight, pendingCount } from "../singleflight.js";
@@ -145,6 +145,131 @@ function persistWinBox(winId, box) {
     clearGrid(winId);   // layout changed → detected grid is stale
 }
 
+// ---- rect-edit panel: typed x/y/w/h for a leaf node's box (region/readout/detect/scrollbar/
+// itemfield/itemtell), synced with the SAME canvas + writers the mouse/WASD already use ----
+// One descriptor per open editor instead of six near-identical branches (rule 7): `get()` reads
+// the live box straight off the model (so it never goes stale across re-renders), `write()`
+// commits through the existing single writer for that node's surface and re-fires the existing
+// OCR-read trigger. `canvasKey` matches the overlay registry key (registerOverlay) so the editor
+// can select/sync against the box's canvas even though that canvas lives on a DIFFERENT node
+// (window or item) than the one carrying the rect-edit button.
+const RECT_TYPES = new Set(["region", "readout", "detect", "scrollbar", "itemfield", "itemtell"]);
+
+function rectDescriptor(n) {
+    const winId = n.win.id;
+    if (n.type === "itemfield" || n.type === "itemtell") {
+        const itemId = n.item.id, boxId = n.ref.id, isField = n.type === "itemfield";
+        return {
+            winId, itemId, boxId, canvasKey: `item:${winId}:${itemId}`, locked: false,
+            get: () => (isField ? model.itemField(winId, itemId, boxId) : model.itemTell(winId, itemId, boxId))?.box,
+            write: (box) => {
+                if (isField) model.setItemFieldBox(winId, itemId, boxId, box);
+                else model.setItemTellBox(winId, itemId, boxId, box);
+                itemChanged(winId, itemId);   // re-reads the cutout + window preview, persists (main.js)
+            },
+        };
+    }
+    const role = n.type;   // region/readout/detect/scrollbar canvas roles match the node type 1:1
+    const boxId = n.type === "scrollbar" ? "scrollbar" : n.ref.id;
+    return {
+        winId, boxId, canvasKey: `win:${winId}`,
+        locked: n.type === "scrollbar" && model.scrollbarLocked(winId),
+        get: () => (n.type === "detect" ? n.ref.search : n.type === "scrollbar" ? model.scrollbar(winId) : n.ref.box),
+        write: (box) => {
+            persistWinBox(winId, { id: boxId, role, ...box });
+            refreshImageBoxes(winId); drawEdges(); autosave(winId);
+        },
+    };
+}
+
+// Clamp a typed draft the same way the canvas itself clamps a drag (overlay.js's _clampBox / the
+// WASD nudge, main.js) — keeps a typed box inside [0,1] and above MIN_FRAC, so Apply can never
+// write a box the mouse/keyboard paths would have rejected.
+function clampRect(draft) {
+    const w = Math.min(Math.max(+draft.w || 0, MIN_FRAC), 1);
+    const h = Math.min(Math.max(+draft.h || 0, MIN_FRAC), 1);
+    const x = Math.min(Math.max(+draft.x || 0, 0), 1 - w);
+    const y = Math.min(Math.max(+draft.y || 0, 0), 1 - h);
+    return { x, y, w, h };
+}
+
+let activeRectEdit = null;   // { nodeId, nodeEl, desc, draft, panel, outside } — one editor open at a time
+
+function rectEditRow(label, k, draft, locked) {
+    const inp = h("input", { type: "number", class: "redit", dataset: { k }, step: "0.001",
+        min: (k === "x" || k === "y") ? "0" : String(MIN_FRAC), max: "1",
+        value: (+draft[k]).toFixed(4), disabled: locked,
+        oninput: (e) => { draft[k] = +e.target.value; } });
+    return kv(label, inp);
+}
+
+// Toggled by the node header's .gn-rectbtn (main.js). Opening a SECOND node's editor first
+// applies (closes) whichever one was already open — "close = apply" (per spec), so a stray open
+// editor never lingers or silently discards a typed edit.
+function toggleRectEditor(nodeEl, n) {
+    if (activeRectEdit) {
+        const wasSameNode = activeRectEdit.nodeId === n.id;
+        closeRectEditor(true);
+        if (wasSameNode) return;   // plain toggle-off
+    }
+    const desc = rectDescriptor(n);
+    const box = desc.get();
+    if (!box) return;   // nothing to edit yet (e.g. a scrollbar box never drawn)
+    const draft = { ...box };
+    const body = nodeEl.querySelector(".gn-body");
+    if (!body) return;
+    const panel = h("div", { class: "gn-rectedit", title: desc.locked ? "locked — remove the scrollbar's calibration cutouts to move it" : null },
+        h("div", { class: "gn-grid" },
+            rectEditRow("x", "x", draft, desc.locked), rectEditRow("y", "y", draft, desc.locked),
+            rectEditRow("width", "w", draft, desc.locked), rectEditRow("height", "h", draft, desc.locked)),
+        h("div", { class: "gn-rectedit-foot" },
+            btn("apply", { disabled: desc.locked, onClick: () => closeRectEditor(true) }),
+            btn("cancel", { cls: "btn-icon", onClick: () => closeRectEditor(false) })));
+    body.appendChild(panel);
+    nodeEl.querySelector(".gn-rectbtn")?.classList.add("on");
+    // Outside click = apply-close. The box being edited draws on a DIFFERENT node's canvas, so
+    // dragging it there must not count as "outside" — only close when the click lands outside
+    // both this node AND the bound overlay's canvas host.
+    const outside = (ev) => {
+        if (nodeEl.contains(ev.target)) return;
+        const hostEntry = desc.itemId
+            ? itemCanvases.get(`${desc.winId}:${desc.itemId}`)
+            : imageCanvases.get(desc.winId);
+        if (hostEntry?.host.contains(ev.target)) return;
+        closeRectEditor(true);
+    };
+    document.addEventListener("pointerdown", outside, true);
+    activeRectEdit = { nodeId: n.id, nodeEl, desc, draft, panel, outside };
+    overlaySelected(desc.canvasKey, desc.boxId);   // the box becomes the canvas's active selection (targets WASD too)
+}
+
+function closeRectEditor(apply) {
+    const st = activeRectEdit;
+    if (!st) return;
+    document.removeEventListener("pointerdown", st.outside, true);
+    if (apply && !st.desc.locked) st.desc.write(clampRect(st.draft));
+    st.panel.remove();
+    st.nodeEl.querySelector(".gn-rectbtn")?.classList.remove("on");
+    activeRectEdit = null;
+}
+
+// Mirrors a canvas-driven box change (mouse drag or WASD — both already persisted the model
+// through their own writer) into an OPEN rect-edit panel's inputs. `overlayKey` is the registry
+// key ("win:<id>" or "item:<winId>:<itemId>") of the overlay that just changed; a no-op unless
+// that's the overlay the open editor is bound to. Re-reads desc.get() rather than taking the box
+// as an argument — one path for both window-fraction and item-relative-fraction boxes.
+function rectEditCanvasSync(overlayKey) {
+    const st = activeRectEdit;
+    if (!st || st.desc.canvasKey !== overlayKey) return;
+    const box = st.desc.get();
+    if (!box) return;
+    Object.assign(st.draft, box);
+    for (const k of ["x", "y", "w", "h"]) {
+        const inp = st.panel.querySelector(`.redit[data-k="${k}"]`);
+        if (inp && document.activeElement !== inp) inp.value = (+box[k]).toFixed(4);
+    }
+}
+
 // The image surface lives INSIDE the window node's `.win-img` host — one per window node,
 // built once and always present. Draw tools sit above the canvas; the page nav, image
 // selector, recapture and "preview all" sit BELOW it. There is no clear/close button.
@@ -205,7 +330,7 @@ async function openImage(winId, nodeEl = null) {
         // mouse move/resize AND keyboard (WASD/shift+WASD) write through the SAME persistWinBox, so
         // every role a box can have is honoured identically by both (rule 7 — the two writers used to
         // diverge and readout/item boxes silently wrote as regions under WASD).
-        onChange: (box) => { persistWinBox(winId, box); refreshImageBoxes(winId); drawEdges(); autosave(winId); },
+        onChange: (box) => { persistWinBox(winId, box); refreshImageBoxes(winId); drawEdges(); autosave(winId); rectEditCanvasSync(`win:${winId}`); },
         onSelect: (id) => overlaySelected(`win:${winId}`, id),
         canCreate,   // no crosshair / no new box until a draw tool is armed
     });
@@ -726,6 +851,7 @@ function openItemImage(winId, itemId) {
         if (b.role === "bbox" || model.itemTell(winId, itemId, b.id)?.kind === "template")
             refreshItemTemplateRefs(winId, itemId);
         if (b.role === "bbox") syncCellSize(winId, itemId);   // reflect new cell size in the inputs
+        rectEditCanvasSync(`item:${winId}:${itemId}`);
     };
 
     const overlay = new Overlay(canvas, {
@@ -1779,4 +1905,5 @@ export {
     _detectAll, refreshOpenDetect, previewT, _previewPending, _previewAll, refreshOpenPreviews,
     loadImage, refreshImageBoxes, itemLocatorBox, staticGridOrigins, buildGridGuides,
     staticFieldPreview, refreshGridPreview, cellKept, setGridFromPreview, selectRegionNode,
+    RECT_TYPES, toggleRectEditor, rectEditCanvasSync,
 };

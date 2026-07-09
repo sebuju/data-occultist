@@ -516,6 +516,21 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
        under center a data-less host shrank to min-content (~12px) and the table vanished. */
     display: flex; flex-direction: column; align-items: stretch; flex: 1 1 auto; min-height: 0;
 }
+/* Rect-edit panel (imaging.js toggleRectEditor): typed x/y/w/h for a leaf node's box, opened
+   from the header's .gn-rectbtn. It overlays the BODY only (never the header, so the toggle
+   button always stays clickable with no z-index games) and covers the existing .gn-grid without
+   removing it — the node's height never changes on open/close. `.gn-body` needs the `relative`
+   anchor; it has none otherwise. */
+.gn-body { position: relative; }
+.gn-rectedit {
+    position: absolute; inset: 0; z-index: 1;
+    background: var(--panel);
+    border-radius: 6px; padding: 2px 0;
+    display: flex; flex-direction: column; gap: 8px; justify-content: center;
+}
+.gn-rectedit-foot { display: flex; gap: 6px; justify-content: flex-end; }
+/* .gn-rectbtn's active tint comes free from .gn-cog.on (flow.css) -- it carries both classes */
+
 /* Full-width BLOCKS (non-k/v content: images, lists, tables, textareas, status stacks,
    multi-control rows) span both columns — the chosen design ("blocks span 1/-1"). Blocks are
    spanned by class here so builders emit them straight into the grid without a wrapper; ad-hoc

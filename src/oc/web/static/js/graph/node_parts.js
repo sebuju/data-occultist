@@ -50,6 +50,18 @@ export function satToggleBtn(satId, kind) {
     }, (_SAT_ICON[kind] || SAT_GRID)());
 }
 
+// Rect-edit toggle: reveals typed x/y/w/h inputs for this node's OCR box, overlaid on the body
+// (imaging.js's toggleRectEditor owns the open/apply/cancel transaction). A dashed corner-frame
+// glyph, distinct from the satellite eye/grid/history icons above. `.on` (toggled by imaging.js
+// while the panel is open) tints it like a satellite toggle's active state.
+const RECT_ICON = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
+    svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round",
+        d: "M1.5 5V1.5H5M11 1.5h3.5V5M14.5 11v3.5H11M5 14.5H1.5V11" }),
+    svg("rect", { x: "4.5", y: "4.5", width: "7", height: "7", fill: "none", stroke: "currentColor", "stroke-width": "1.1" }));
+export function rectEditBtn() {
+    return h("button", { class: "gn-rectbtn gn-cog", title: "edit box position/size", "aria-label": "edit box position/size" }, RECT_ICON());
+}
+
 // A slide toggle: now a NATIVE checkbox (base.css renders every checkbox as a slide switch,
 // node-tinted via graph.css --nt) — one toggle primitive, no bespoke SVG switch (rule 7). `cls` =
 // caller class for positioning/wiring; optional `label` (wraps checkbox + text in a <label>);
@@ -987,7 +999,7 @@ export function clockTime(ts) { const m = /T(\d{2}:\d{2}:\d{2})/.exec(String(ts 
 // on the next edit. The one place every column/field dropdown gets this behaviour. Returns an ARRAY.
 export function _optList(opts, sel) {
     const all = sel && !opts.includes(sel) ? [...opts, sel] : opts;
-    return all.map((c) => h("option", { selected: c === sel }, c === sel ? `<${c}>` : c));
+    return all.map((c) => h("option", { value: c, selected: c === sel }, c === sel ? `<${c}>` : c));
 }
 
 export function _colOpts(cols, sel) {

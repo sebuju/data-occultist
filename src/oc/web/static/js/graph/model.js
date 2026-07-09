@@ -75,6 +75,8 @@ export class GraphModel {
         // a subset joins many sources, each carrying its own join config (JoinSource)
         for (const s of this.profile.subsets) {
             s.sources = s.sources || [];
+            for (const src of s.sources) src.mode = src.mode || "join";   // join|exclude|mark|broadcast
+            s.pivot = s.pivot || null;   // reshape flat name/value rows into wide rows (PivotSpec)
             s.sort = s.sort || [];
             // fold a legacy single-column sort into the multi-column list
             if (!s.sort.length && s.sort_by) { s.sort = [{ field: s.sort_by, desc: !!s.sort_desc }]; s.sort_by = ""; }
@@ -1306,9 +1308,9 @@ export class GraphModel {
     subsetInputs(s) { return (s && s.sources || []).map((src) => src.dataset).filter(Boolean); }
     // the JoinSource entry for one input id (its per-source join_field/norm/aggregate/required)
     subsetSource(id, ds) { const s = this.subsetDef(id); return s ? (s.sources || []).find((src) => src.dataset === ds) || null : null; }
-    // a fresh JoinSource with sane defaults (joins on `name`, latest, optional/outer)
+    // a fresh JoinSource with sane defaults (joins on `name`, latest, optional/outer, plain join)
     _newSource(ds) {
-        return { dataset: ds, join_field: "name", aggregate: "latest", required: false, exclude: false,
+        return { dataset: ds, join_field: "name", aggregate: "latest", required: false, mode: "join",
             join_norm: { case_insensitive: true, strip_punct: false, collapse_ws: true, strip_words: [] } };
     }
     // `ds` (optional) seeds the subset's first input + name. Omitted (e.g. minted from the
@@ -1319,7 +1321,8 @@ export class GraphModel {
         while (this.subsetDef(id)) id = ds ? `${ds}_view${++n}` : `subset_${++n}`;
         (this.profile.subsets = this.profile.subsets || []).push({
             id, sources: ds ? [this._newSource(ds)] : [],
-            filters: [], derived: [], hidden_columns: [], enrich: [], sort: [], sort_by: "", sort_desc: false, latest_batch: false, limit: 0,
+            filters: [], derived: [], hidden_columns: [], enrich: [], sort: [], sort_by: "", sort_desc: false,
+            latest_batch: false, pivot: null, limit: 0,
         });
         return id;
     }
@@ -1372,8 +1375,10 @@ export class GraphModel {
     setSourceJoinField(id, ds, field) { const src = this.subsetSource(id, ds); if (src) src.join_field = field || ""; }
     // required = key must be present in this source (inner-style); optional = outer gap-fill
     setSourceRequired(id, ds, on) { const src = this.subsetSource(id, ds); if (src) src.required = !!on; }
-    // exclude = anti-join: this source contributes no columns, just drops matching keys from output
-    setSourceExclude(id, ds, on) { const src = this.subsetSource(id, ds); if (src) src.exclude = !!on; }
+    // how this source combines beyond a plain key-matched join — see JoinSource in models.py:
+    //   join (default) | exclude (anti-join, drops matching keys) | mark (semi-join, annotates
+    //   without multiplying rows) | broadcast (merges onto every output row, unkeyed)
+    setSourceMode(id, ds, mode) { const src = this.subsetSource(id, ds); if (src) src.mode = mode || "join"; }
     // join_norm: how THIS source's join value is canonicalised before matching (bridges near-match keys)
     sourceJoinNorm(id, ds) {
         const n = (this.subsetSource(id, ds) || {}).join_norm || {};
@@ -1391,6 +1396,30 @@ export class GraphModel {
     setSourceAggregate(id, ds, agg) { const src = this.subsetSource(id, ds); if (src) src.aggregate = agg || "latest"; }
     // only pull rows from each source's most recent collection batch (applied first)
     setSubsetLatestBatch(id, on) { const s = this.subsetDef(id); if (s) s.latest_batch = !!on; }
+    // ---- pivot: reshape joined flat name/value rows into wide rows by shared id-prefix -----
+    // (PivotSpec in models.py) — applied right after the join, before filter/derive/sort.
+    pivotEnabled(id) { return !!(this.subsetDef(id) || {}).pivot; }
+    subsetPivot(id) {
+        const p = (this.subsetDef(id) || {}).pivot;
+        return p || { name_field: "name", value_field: "value", key_column: "slot", attributes: [] };
+    }
+    setSubsetPivotEnabled(id, on) {
+        const s = this.subsetDef(id);
+        if (!s) return;
+        s.pivot = on ? this.subsetPivot(id) : null;
+    }
+    setSubsetPivotField(id, field, value) {
+        const s = this.subsetDef(id);
+        if (!s || !s.pivot) return;
+        s.pivot[field] = value || "";
+    }
+    // parse the free-typed suffix box (space/comma separated) into a deduped list, mirroring
+    // setSourceStripWords — the taught vocabulary lives in profile data, never hardcoded
+    setSubsetPivotAttributes(id, str) {
+        const s = this.subsetDef(id);
+        if (!s || !s.pivot) return;
+        s.pivot.attributes = [...new Set(String(str || "").split(/[\s,]+/).filter(Boolean))];
+    }
     // cap the number of result rows (0 = no limit)
     setSubsetLimit(id, n) { const s = this.subsetDef(id); if (s) s.limit = Math.max(0, Math.floor(+n || 0)); }
     // swap one of a subset's source inputs for another (the row-select edit), preserving order +

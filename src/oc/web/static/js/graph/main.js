@@ -40,11 +40,11 @@ import {
 import { initFlow } from "./flow.js";
 import {
     cancelPan, panTo, panZoomTo, panZoomToRect, zoomToNode, viewportCenterWorld,
-    applyView, resizeCanvas, onWheel, startPan, consumePanSuppress,
+    applyView, resizeCanvas, onWheel, startPan, consumePanSuppress, MIN_ZOOM,
 } from "./camera.js";
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
 import { imageTextInspector } from "./toast_node.js";
-import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved } from "./node_parts.js";
+import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved, rectEditBtn } from "./node_parts.js";
 import { renderTriggerHistory } from "./history_node.js";
 import { refreshRegister } from "./register_node.js";
 import * as dsevents from "./dsevents.js";
@@ -84,6 +84,7 @@ import {
     _detectPending,
     _detectAll, refreshOpenDetect, _previewPending, _previewAll, refreshOpenPreviews,
     refreshImageBoxes, refreshGridPreview, selectRegionNode, refreshRuleTrace, refreshReadoutValues,
+    RECT_TYPES, toggleRectEditor, rectEditCanvasSync,
 } from "./imaging.js";
 import {
     liveWin, liveWinState, buildLiveWindow, renderLiveWindow, syncLiveFromServer, applyLiveInterval, syncWpDots,
@@ -276,7 +277,7 @@ function collectLocal() {
 function applyLocal(local) {
     if (local?.view && Number.isFinite(local.view.zoom)) {
         Object.assign(view, local.view);
-        view.zoom = Math.max(0.15, view.zoom);   // restored manual zoom: lower bound only, no font cap
+        view.zoom = Math.max(MIN_ZOOM, view.zoom);   // restored manual zoom: lower bound only, no font cap
         applyView();
     }
 }
@@ -1010,6 +1011,13 @@ const AGG_LABEL = { all: "all (no collapse)" };
 
 const SUB_OPS = ["contains", "icontains", "eq", "ne", "nonempty", "empty", "gt", "lt", "gte", "lte", "regex"];
 
+// how a source combines beyond a plain key-matched join (matches JoinSource.mode in models.py)
+const SOURCE_MODES = ["join", "exclude", "mark", "broadcast"];
+const SOURCE_MODE_LABEL = {
+    join: "join (key-match)", exclude: "exclude (anti-join)",
+    mark: "mark (semi-join, annotate)", broadcast: "broadcast (merge onto every row)",
+};
+
 
 
 // Last live column set a subset's join actually returned (set by refreshSubsetNode). The static
@@ -1112,29 +1120,39 @@ function sourceCfgNode(s, ds, joined) {
             h("select", { class: "sv-sagg", dataset: { ds } }, aggOpts));
     }
     if (joined) {
-        const joinOpts = [h("option", { value: "", selected: !jf }, "(no join)"),
-            ...[...new Set([jf, ...cols])].filter(Boolean).map((c) => h("option", { value: c, selected: c === jf }, c === jf ? `<${c}>` : c))];
-        rows.push(labCell("join on", "this source's column used as the join key; (no join) stacks its rows"),
-            h("select", { class: "sv-sjoin", dataset: { ds } }, joinOpts));
-        if (jf) {
-            rows.push(labCell("required", "key must exist in this source (inner-style); off = optional outer fill"),
-                h("input", { type: "checkbox", class: "sv-sreq", dataset: { ds }, checked: !!src.required }));
-            rows.push(labCell("exclude", "anti-join — this source contributes no columns, just drops any key it contains from the output"),
-                h("input", { type: "checkbox", class: "sv-sexcl", dataset: { ds }, checked: !!src.exclude }));
-            const jn = model.sourceJoinNorm(s.id, ds);
-            const ckRow = (lbl, title, cls, on) => frag(labCell(lbl, title),
-                h("input", { type: "checkbox", class: cls, dataset: { ds }, checked: !!on }));
-            rows.push(
-                ckRow("ignore case", "fold case before matching", "sn-ci", jn.case_insensitive),
-                ckRow("strip punc", "strip punctuation (collapse to spaces)", "sn-punct", jn.strip_punct),
-                ckRow("collapse ws", "runs of whitespace -> one space, trimmed", "sn-ws", jn.collapse_ws),
-                labCell("drop words", "whole words removed from this side; space- or comma-separated"),
-                h("input", { type: "text", class: "sn-words", dataset: { ds }, value: (jn.strip_words || []).join(" "), placeholder: "(none)" }));
-            // live worked example: a REAL sample join value from this source, transformed by the knobs
-            // above. Filled async (fillNormSamples) since the sample is fetched; updates in place as the
-            // knobs change. Shows a "no data" note when the source has no value to preview.
-            rows.push(labCell("example", "how these settings canonicalise a real join value from this source", false, "eg-lab"),
-                h("span", { class: "sv-norm-eg", dataset: { ds, jf } }, h("span", { class: "muted" }, "loading…")));
+        const mode = src.mode || "join";
+        const modeOpts = SOURCE_MODES.map((m) => h("option", { value: m, selected: m === mode },
+            m === mode ? `<${SOURCE_MODE_LABEL[m]}>` : SOURCE_MODE_LABEL[m]));
+        rows.push(labCell("mode", "how this source combines into the join — see the option list"),
+            h("select", { class: "sv-smode", dataset: { ds } }, modeOpts));
+        // broadcast merges onto every row unkeyed -- no join key to configure at all.
+        if (mode !== "broadcast") {
+            const joinOpts = [h("option", { value: "", selected: !jf }, "(no join)"),
+                ...[...new Set([jf, ...cols])].filter(Boolean).map((c) => h("option", { value: c, selected: c === jf }, c === jf ? `<${c}>` : c))];
+            rows.push(labCell("join on", "this source's column used as the join key; (no join) stacks its rows"),
+                h("select", { class: "sv-sjoin", dataset: { ds } }, joinOpts));
+            if (jf) {
+                // required only gates a plain join's output presence -- meaningless for exclude/mark,
+                // which never affect whether a key survives on their own.
+                if (mode === "join") {
+                    rows.push(labCell("required", "key must exist in this source (inner-style); off = optional outer fill"),
+                        h("input", { type: "checkbox", class: "sv-sreq", dataset: { ds }, checked: !!src.required }));
+                }
+                const jn = model.sourceJoinNorm(s.id, ds);
+                const ckRow = (lbl, title, cls, on) => frag(labCell(lbl, title),
+                    h("input", { type: "checkbox", class: cls, dataset: { ds }, checked: !!on }));
+                rows.push(
+                    ckRow("ignore case", "fold case before matching", "sn-ci", jn.case_insensitive),
+                    ckRow("strip punc", "strip punctuation (collapse to spaces)", "sn-punct", jn.strip_punct),
+                    ckRow("collapse ws", "runs of whitespace -> one space, trimmed", "sn-ws", jn.collapse_ws),
+                    labCell("drop words", "whole words removed from this side; space- or comma-separated"),
+                    h("input", { type: "text", class: "sn-words", dataset: { ds }, value: (jn.strip_words || []).join(" "), placeholder: "(none)" }));
+                // live worked example: a REAL sample join value from this source, transformed by the knobs
+                // above. Filled async (fillNormSamples) since the sample is fetched; updates in place as the
+                // knobs change. Shows a "no data" note when the source has no value to preview.
+                rows.push(labCell("example", "how these settings canonicalise a real join value from this source", false, "eg-lab"),
+                    h("span", { class: "sv-norm-eg", dataset: { ds, jf } }, h("span", { class: "muted" }, "loading…")));
+            }
         }
     }
     return frag(...rows);
@@ -1189,6 +1207,32 @@ function cycleNormEg(el, sid) {
     renderNormEg(el, sid);
 }
 
+// Reshape flat name/value rows (e.g. a register's readout mirror) into wide rows by shared
+// id-prefix, applied right after the join, before filter/derive/sort (PivotSpec in models.py).
+// The suffix VOCABULARY (`attributes`) is authored here as a free-typed box, never hardcoded —
+// mirrors the existing "drop words" convention (setSourceStripWords) for the same reason.
+function pivotCfgNode(s) {
+    const on = model.pivotEnabled(s.id);
+    const rows = [
+        labCell("pivot", "reshape flat name/value rows into wide rows by shared id-prefix (e.g. a register's readout mirror)"),
+        h("input", { type: "checkbox", class: "sv-pivot-on", checked: on }),
+    ];
+    if (on) {
+        const p = model.subsetPivot(s.id);
+        rows.push(
+            h("span", { class: "gspan sv-src-h", title: "pivot settings" }, "pivot"),
+            labCell("name field", "column holding each flat row's id (e.g. \"slot_1_school\")"),
+            h("input", { type: "text", class: "sv-pivot-namefield", value: p.name_field || "name", placeholder: "name" }),
+            labCell("value field", "column holding each flat row's value"),
+            h("input", { type: "text", class: "sv-pivot-valuefield", value: p.value_field || "value", placeholder: "value" }),
+            labCell("key column", "output column name for the shared prefix"),
+            h("input", { type: "text", class: "sv-pivot-keycol", value: p.key_column || "slot", placeholder: "slot" }),
+            labCell("attributes", "taught id SUFFIXES, longest match wins; space- or comma-separated (e.g. _name _drain _school); a row matching none is dropped"),
+            h("input", { type: "text", class: "sv-pivot-attrs", value: (p.attributes || []).join(" "), placeholder: "_name _drain _school" }));
+    }
+    return frag(...rows);
+}
+
 function subConfigNode(s) {
     const cols = viewColumns(s);
     const inputs = model.subsetInputs(s);
@@ -1236,6 +1280,7 @@ function subConfigNode(s) {
         h("input", { type: "number", class: "sv-limit", min: "0", step: "1", value: s.limit || 0, placeholder: "0" }),
         labCell("latest batch", "only pull rows from each source's most recent collection batch (applied before everything else)"),
         h("input", { type: "checkbox", class: "sv-latest", checked: !!s.latest_batch }),
+        pivotCfgNode(s),
         addLbl("filters", "all must pass", "sub-addf", "add filter"),
         h("div", { class: "sub-rows" }, filters),
         addLbl("columns", "{col} text · {=expr} math · |round:N decimals · mix freely", "sub-addd", "add column"),
@@ -1410,7 +1455,8 @@ function wireSubset(div, s) {
     // the other knobs just re-canonicalise/recompute the view.
     div.querySelectorAll(".sv-sjoin").forEach((el) => el.addEventListener("change", (e) => { model.setSourceJoinField(s.id, el.dataset.ds, e.target.value.trim()); restructure(); }));
     div.querySelectorAll(".sv-sreq").forEach((el) => el.addEventListener("change", (e) => { model.setSourceRequired(s.id, el.dataset.ds, e.target.checked); recompute(); }));
-    div.querySelectorAll(".sv-sexcl").forEach((el) => el.addEventListener("change", (e) => { model.setSourceExclude(s.id, el.dataset.ds, e.target.checked); recompute(); }));
+    // switching mode toggles which rows show (required/join-on/norm), so rebuild the node
+    div.querySelectorAll(".sv-smode").forEach((el) => el.addEventListener("change", (e) => { model.setSourceMode(s.id, el.dataset.ds, e.target.value); restructure(); }));
     div.querySelectorAll(".sv-sagg").forEach((el) => el.addEventListener("change", (e) => { model.setSourceAggregate(s.id, el.dataset.ds, e.target.value); recompute(); }));
     // norm knobs re-render the worked example IN PLACE (realtime) — no node rebuild, no refetch (the
     // sample is cached on the eg element) — then recompute() refreshes the actual joined view.
@@ -1428,6 +1474,14 @@ function wireSubset(div, s) {
     div.querySelectorAll(".sv-norm-eg").forEach((el) => el.addEventListener("click", () => cycleNormEg(el, s.id)));
     div.querySelector(".sv-latest")?.addEventListener("change", (e) => { model.setSubsetLatestBatch(s.id, e.target.checked); recompute(); });
     div.querySelector(".sv-limit")?.addEventListener("change", (e) => { model.setSubsetLimit(s.id, e.target.value); e.target.value = s.limit || 0; recompute(); });
+
+    // pivot: toggling it changes which rows show (the name/value/key/attributes inputs), so
+    // rebuild the node; editing its fields just recomputes the view.
+    div.querySelector(".sv-pivot-on")?.addEventListener("change", (e) => { model.setSubsetPivotEnabled(s.id, e.target.checked); restructure(); });
+    div.querySelector(".sv-pivot-namefield")?.addEventListener("change", (e) => { model.setSubsetPivotField(s.id, "name_field", e.target.value.trim()); recompute(); });
+    div.querySelector(".sv-pivot-valuefield")?.addEventListener("change", (e) => { model.setSubsetPivotField(s.id, "value_field", e.target.value.trim()); recompute(); });
+    div.querySelector(".sv-pivot-keycol")?.addEventListener("change", (e) => { model.setSubsetPivotField(s.id, "key_column", e.target.value.trim()); recompute(); });
+    div.querySelector(".sv-pivot-attrs")?.addEventListener("change", (e) => { model.setSubsetPivotAttributes(s.id, e.target.value); recompute(); });
 
     // filters
     div.querySelectorAll(".sf-del").forEach((b) => b.addEventListener("click", () => { model.removeFilter(s.id, +b.dataset.i); restructure(); }));
@@ -2660,6 +2714,7 @@ function fillNode(div, n, wire = true) {
                         svg("line", { x1: "8", y1: "12", x2: "16", y2: "12" }),
                         svg("line", { class: "cv", x1: "12", y1: "8", x2: "12", y2: "16" })))),
             parts.title, parts.head, toggle,
+            RECT_TYPES.has(n.type) ? rectEditBtn() : null,
             h("span", { class: "gn-type", "aria-hidden": "true" }, typeLabel),
             h("span", { class: "gn-pretty-dirty", title: "held by a pretty override — not saved to yaml" }, "pretty")),
         // body is ONE two-column grid (`.gn-grid`) — every builder emits flat wrapped-label +
@@ -2703,6 +2758,12 @@ function fillNode(div, n, wire = true) {
         // instead of waiting for the next picture change / edit (it used to sit on the placeholder)
         if (on && btn.dataset.sat.startsWith("prev:")) refreshOpenPreviews(btn.dataset.sat.slice(5));
     }));
+    // rect-edit toggle: reveals typed x/y/w/h for this node's box (imaging.js owns the open/
+    // apply/cancel transaction — one editor open at a time, synced with the canvas it draws on).
+    div.querySelector(".gn-rectbtn")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleRectEditor(div, n);
+    });
     if (busy.get(n.id)) div.classList.add("busy");   // preserve spinner across rebuilds
     if (!wire) return;   // measurement probe: skip side-effecting wiring (openImage, out-port drag)
     wireNode(div, n);
@@ -4971,6 +5032,7 @@ document.addEventListener("keydown", (ev) => {
     rec.refresh();
     ov.render();        // reflect the nudge on the overlay immediately
     drawEdges(); autosave(rec.winId);   // nudging a box re-OCRs ONLY its window
+    rectEditCanvasSync(activeOverlayKey);   // mirror the nudge into an open rect-edit panel, if any
     ev.preventDefault();
 });
 
