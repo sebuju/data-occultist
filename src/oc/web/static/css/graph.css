@@ -526,7 +526,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     .sb-cuts, .sb-cut-acts, .sb-calib, .sb-lock, .pp-color, .game-priority, .game-gate,
     .wd-verdict, .wd-collide, .prev-host, .pp-cols, .pp-result,
     .frule, .frule-list, .frule-empty, .tn-blocks, .tn-imgs, .tn-tokbox, .il-tools,
-    .wi-row, .wp-row, .wd-row, .ti-sum, .ti-row, .if-sum, .key-row, .sub-cfg, .pr-fields,
+    .wi-row, .wp-row, .wd-row, .ti-sum, .ti-row, .if-sum, .key-row, .pr-fields,
     .enr-sum, .enr-meter, .src-matches, .src-fields, .sv-inputs, .pr-srcs, .frule-btns
   ) { grid-column: 1 / -1; }
 /* TRANSITIONAL SCAFFOLD: legacy .flab / .lab-grid rows not yet decomposed span the whole

@@ -499,7 +499,6 @@ class ScrollDef(BaseModel):
     scrollbar_orientation: str = "vertical"  # "vertical" | "horizontal"
     rows: int = 1                      # visible rows per screen
     cols: int = 1                      # visible columns per screen
-    cell: Box | None = None            # first cell's box; grid tiles from here
     row_stride: float = 0.0            # fractional y-gap between row origins
     col_stride: float = 0.0            # fractional x-gap between col origins
     # Dynamic row-lattice clamp (0..1): bound the pitch DERIVED from the live findings to

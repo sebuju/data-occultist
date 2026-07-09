@@ -116,7 +116,6 @@ a.node.win:hover { border-color: var(--accent); }
 .gnode.dataset .gn-foot button { flex: 0 0 auto; }
 /* subset config editors */
 .sub-of { margin-left: 6px; font-size: var(--fs-sm); }
-.sub-cfg { margin-top: 4px; width: 100%; box-sizing: border-box; }   /* bounded -> rows wrap, don't overflow */
 .gn-cog { margin-left: auto; flex: 0 0 auto; width: 22px; height: 22px; min-height: 0; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
     background: transparent; border: 0; color: var(--muted); line-height: 0; cursor: pointer; }
@@ -129,8 +128,6 @@ a.node.win:hover { border-color: var(--accent); }
 .gn-h button { opacity: 0; transition: opacity .12s; }
 .gn-h:hover button { opacity: 1; }   /* header controls appear on header hover only, not whole-node hover */
 .gn-h .collapse { opacity: 1; }   /* collapse caret stays visible at rest — it's a primary toggle, not a hover-only action */
-.sub-sec { margin-top: 6px; }
-.sub-cfg > .sub-sec:first-child { margin-top: 0; }
 .sub-lbl { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; justify-content: space-between; }
 /* filters/columns/sort/visible ride the node's ONE lab-grid: the label (with its + button) is a
    col-1 cell, its rows/toggles fill col 2 — aligned with sources/limit/latest above them. */

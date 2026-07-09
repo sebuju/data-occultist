@@ -1119,6 +1119,8 @@ function sourceCfgNode(s, ds, joined) {
         if (jf) {
             rows.push(labCell("required", "key must exist in this source (inner-style); off = optional outer fill"),
                 h("input", { type: "checkbox", class: "sv-sreq", dataset: { ds }, checked: !!src.required }));
+            rows.push(labCell("exclude", "anti-join — this source contributes no columns, just drops any key it contains from the output"),
+                h("input", { type: "checkbox", class: "sv-sexcl", dataset: { ds }, checked: !!src.exclude }));
             const jn = model.sourceJoinNorm(s.id, ds);
             const ckRow = (lbl, title, cls, on) => frag(labCell(lbl, title),
                 h("input", { type: "checkbox", class: cls, dataset: { ds }, checked: !!on }));
@@ -1250,7 +1252,7 @@ function subsetParts(s) {
     return {
         title: h("input", { class: "gi gi-id subrename", value: s.id, title: "subset name" }),
         head: satToggleBtn(`vt:sub:${s.id}`, "vttable"),
-        body: h("div", { class: "sub-cfg" }, subConfigNode(s)),
+        body: subConfigNode(s),
         ports: h("span", { class: "port out", title: "drag to another subset to feed it this subset's rows" }),
     };
 }
@@ -1408,6 +1410,7 @@ function wireSubset(div, s) {
     // the other knobs just re-canonicalise/recompute the view.
     div.querySelectorAll(".sv-sjoin").forEach((el) => el.addEventListener("change", (e) => { model.setSourceJoinField(s.id, el.dataset.ds, e.target.value.trim()); restructure(); }));
     div.querySelectorAll(".sv-sreq").forEach((el) => el.addEventListener("change", (e) => { model.setSourceRequired(s.id, el.dataset.ds, e.target.checked); recompute(); }));
+    div.querySelectorAll(".sv-sexcl").forEach((el) => el.addEventListener("change", (e) => { model.setSourceExclude(s.id, el.dataset.ds, e.target.checked); recompute(); }));
     div.querySelectorAll(".sv-sagg").forEach((el) => el.addEventListener("change", (e) => { model.setSourceAggregate(s.id, el.dataset.ds, e.target.value); recompute(); }));
     // norm knobs re-render the worked example IN PLACE (realtime) — no node rebuild, no refetch (the
     // sample is cached on the eg element) — then recompute() refreshes the actual joined view.

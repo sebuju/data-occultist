@@ -1308,7 +1308,7 @@ export class GraphModel {
     subsetSource(id, ds) { const s = this.subsetDef(id); return s ? (s.sources || []).find((src) => src.dataset === ds) || null : null; }
     // a fresh JoinSource with sane defaults (joins on `name`, latest, optional/outer)
     _newSource(ds) {
-        return { dataset: ds, join_field: "name", aggregate: "latest", required: false,
+        return { dataset: ds, join_field: "name", aggregate: "latest", required: false, exclude: false,
             join_norm: { case_insensitive: true, strip_punct: false, collapse_ws: true, strip_words: [] } };
     }
     // `ds` (optional) seeds the subset's first input + name. Omitted (e.g. minted from the
@@ -1372,6 +1372,8 @@ export class GraphModel {
     setSourceJoinField(id, ds, field) { const src = this.subsetSource(id, ds); if (src) src.join_field = field || ""; }
     // required = key must be present in this source (inner-style); optional = outer gap-fill
     setSourceRequired(id, ds, on) { const src = this.subsetSource(id, ds); if (src) src.required = !!on; }
+    // exclude = anti-join: this source contributes no columns, just drops matching keys from output
+    setSourceExclude(id, ds, on) { const src = this.subsetSource(id, ds); if (src) src.exclude = !!on; }
     // join_norm: how THIS source's join value is canonicalised before matching (bridges near-match keys)
     sourceJoinNorm(id, ds) {
         const n = (this.subsetSource(id, ds) || {}).join_norm || {};
