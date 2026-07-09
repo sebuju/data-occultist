@@ -1127,16 +1127,19 @@ class ActionDef(BaseModel):
 
 class RegisterDef(BaseModel):
     """A *register node*: an in-memory keyed map that HOLDS the latest live value of the
-    readouts wired into it — fast O(1) lookup, **never persisted** and with no batching /
-    one-to-many features (the lightweight counterpart to a :class:`DatasetDef`).
+    readouts wired into it — fast O(1) lookup, no batching / one-to-many features (the
+    lightweight counterpart to a :class:`DatasetDef`). By default the map is NEVER persisted;
+    setting ``persist`` also mirrors it into a dataset (see below) so it becomes joinable.
 
     ``sources`` are prefixed readout refs ("readout:<id>"), one per connected readout node —
     the same token shape :class:`ToastDef` uses. Each collector tick, every source readout's
     current value overwrites its entry in the map (key = readout id), keeping first/last-seen.
     The map lives only in the running :class:`oc.collect.live.LiveSession` (server memory):
     it survives page reloads and collector start/stop, but is dropped when the session/server
-    ends or the node's *clear* button is hit. Only this definition (id + wired sources) is
-    saved to the profile YAML; the held values are never written to disk.
+    ends or the node's *clear* button is hit. Only this definition (id + wired sources +
+    ``persist``) is saved to the profile YAML; the held values themselves are never written to
+    disk UNLESS ``persist`` names a dataset — a register alone can't be joined/excluded by a
+    subset (subsets only read datasets), so that's the one way a register's state reaches one.
     """
 
     id: str
@@ -1145,6 +1148,13 @@ class RegisterDef(BaseModel):
     sources: list[str] = Field(default_factory=list)
     title: str = ""                         # optional display label (unused by the collector)
     enabled: bool = True
+    # "" (default) -> the held map stays in-memory only, as documented above. A dataset id ->
+    # every held entry is ALSO flushed to that dataset (one row per readout: ``{name, value}``,
+    # ``name`` = the readout id) whenever a value changes, so state that only ever existed as a
+    # live readout (e.g. loadout slot contents) becomes queryable by a subset like any other
+    # dataset. The flush is a generic, game-agnostic mirror of the held map — no readout/slot
+    # semantics live in Python; only the wired sources (profile data) determine what's written.
+    persist: str = ""
 
 
 class SourceMatch(BaseModel):
@@ -1240,6 +1250,11 @@ class JoinSource(BaseModel):
     # When NO source is required the join is a full outer (every key kept, gaps filled); marking
     # sources required narrows to keys present in all of them (the old ``inner`` = all required).
     required: bool = False
+    # Anti-join: DROP any key this source contains instead of contributing its columns — e.g.
+    # exclude a dataset of already-equipped/already-priced names from an inventory view. An
+    # excluded source never appears in the output row (no columns, no standalone rows) and is
+    # independent of ``required`` (which only gates presence, never removes a key already kept).
+    exclude: bool = False
 
 
 class SubsetDef(BaseModel):

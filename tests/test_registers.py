@@ -95,6 +95,89 @@ def test_feed_holds_empty_value():
     assert rows["health"]["value"] == ""
 
 
+def test_persist_flushes_only_when_a_value_changes(monkeypatch, tmp_path):
+    # RegisterDef.persist mirrors the held map into a dataset -- but only when a VALUE actually
+    # changed (conf/last_seen alone don't count), else every tick would write.
+    from types import SimpleNamespace
+
+    calls = []
+
+    class _FakeStore:
+        def record_many(self, rows):
+            calls.append(rows)
+
+    made = []
+    monkeypatch.setattr("oc.collect.live.store_for", lambda *a, **k: (made.append(1), _FakeStore())[1])
+
+    profile = GameProfile(name="g", registers=[
+        RegisterDef(id="hp", sources=["readout:health"], persist="loadout"),
+    ])
+    engine = SimpleNamespace(settings=SimpleNamespace(data_dir=tmp_path))
+    s = LiveSession(engine, profile)
+
+    s._feed_registers({"health": 100}, {"health": 0.9})
+    assert calls == [[{"name": "health", "value": 100}]]
+
+    s._feed_registers({"health": 100}, {"health": 0.95})   # same value, only conf differs -> no flush
+    assert len(calls) == 1
+
+    s._feed_registers({"health": 90}, {"health": 0.95})    # value changed -> flush again
+    assert calls[1] == [{"name": "health", "value": 90}]
+    assert len(made) == 1                                  # store opened once, cached across flushes
+
+
+def test_no_persist_never_opens_a_store(monkeypatch):
+    called = []
+    monkeypatch.setattr("oc.collect.live.store_for", lambda *a, **k: called.append(1))
+    s = _session()   # default profile's registers carry no `persist`
+    s._feed_registers({"health": 1, "shield": 2}, {})
+    assert called == []
+
+
+def test_feed_registers_public_matches_internal_tick_path():
+    # feed_registers (public, thread-safe) must behave exactly like the internal tick path for
+    # a caller OUTSIDE the collector loop (a one-shot /api/preview OCR read) -- same overwrite/
+    # dirty-flush semantics, just entered from a different door.
+    s = _session()
+    s.feed_registers({"health": 100, "shield": 50}, {"health": 0.9, "shield": 0.8})
+    rows = {r["key"]: r for r in s.register_records("hp")}
+    assert rows["health"]["value"] == 100 and rows["shield"]["value"] == 50
+
+
+def test_feed_registers_accumulates_into_readouts_all():
+    # mirrors _on_tick's own reasoning: a register wired to a readout from a window that isn't
+    # the one just (preview-)read must still hold that readout's LAST known value, not wait for
+    # that window to be read again -- feed_registers folds into the same accumulated map.
+    s = _session()
+    s.feed_registers({"health": 1}, {"health": 0.5})     # window A's readout
+    s.feed_registers({"shield": 2}, {"shield": 0.5})     # window B's readout, health absent this call
+    rows = {r["key"]: r for r in s.register_records("hp")}
+    assert rows["health"]["value"] == 1                   # still held from the earlier call
+    assert rows["shield"]["value"] == 2
+
+
+def test_feed_registers_flushes_persist_like_live_tick(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    calls = []
+
+    class _FakeStore:
+        def record_many(self, rows):
+            calls.append(rows)
+
+    monkeypatch.setattr("oc.collect.live.store_for", lambda *a, **k: _FakeStore())
+    profile = GameProfile(name="g", registers=[
+        RegisterDef(id="hp", sources=["readout:health"], persist="loadout"),
+    ])
+    engine = SimpleNamespace(settings=SimpleNamespace(data_dir=tmp_path))
+    s = LiveSession(engine, profile)
+
+    s.feed_registers({"health": 100}, {"health": 0.9})
+    assert calls == [[{"name": "health", "value": 100}]]
+    s.feed_registers({"health": 100}, {"health": 0.95})   # same value -> no extra flush
+    assert len(calls) == 1
+
+
 def test_on_tick_routes_gated_vs_full_readout_maps():
     # `_on_tick` must feed the register from `readouts_all` (empty-inclusive) while keeping
     # `_readouts`/`_readout_confs` (status()'s gated map for toasts/triggers) fed only from the

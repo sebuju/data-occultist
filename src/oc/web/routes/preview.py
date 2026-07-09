@@ -31,6 +31,7 @@ from .. import captures_store
 from ..deps import get_engine, get_locator, get_ocr_cache, get_settings
 from ..ocr_cache import cache_key
 from ..video_source import get_video_source
+from .live import session_for
 
 router = APIRouter(prefix="/api", tags=["preview"])
 
@@ -48,6 +49,19 @@ def _ocr_cache_for(game, image_id, config, prefer_cache):
     key = cache_key(image_id, config, getattr(ocr, "ocr_sig", type(ocr).__name__))
     hit = cache.get(key) if prefer_cache else None
     return cache, key, hit
+
+
+def _feed_live_registers(game, payload):
+    """Feed one ``/preview`` read's readouts into `game`'s live session, cache hit or not, so a
+    register (and any ``persist`` flush) updates from a one-shot OCR read too — otherwise a
+    register could visibly show a value in the teaching UI that never reaches its ``persist``
+    dataset just because live collection isn't running. See LiveSession.feed_registers."""
+    readouts_all = payload.get("readouts_all")
+    if not game or not readouts_all:
+        return
+    sess = session_for(game, create=True)
+    if sess is not None:
+        sess.feed_registers(readouts_all, payload.get("readout_confs_all") or {})
 
 
 def _frame_for(engine, profile, game, capture):
@@ -311,6 +325,7 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
            "accept": get_settings().tuning.accept_confidence}
     cache, key, hit = _ocr_cache_for(game, capture, cfg, prefer_cache)
     if hit is not None:
+        _feed_live_registers(game, hit)
         return {**hit, "cached": True}
     engine = get_engine()
     frame, window, result = _read_window(engine, profile, game, capture)
@@ -339,6 +354,7 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
     if cache is not None:
         cache.put(key, out)
         cache.save()
+    _feed_live_registers(game, out)
     return out
 
 

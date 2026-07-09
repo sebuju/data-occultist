@@ -21,6 +21,7 @@ import time
 from ..engine import Engine
 from ..ocr.device_switch import enter_device, exit_device
 from ..profile.models import GameProfile
+from ..store import store_for
 from .collector import Collector, TickStatus
 
 # How many recent debug entries the live session keeps for the panel's debug log. Bounded so a
@@ -59,6 +60,9 @@ class LiveSession:
         # in server memory only (never persisted). Fed from readouts each tick; deliberately NOT
         # reset by start() — a register accumulates across runs and is wiped only by clear_register.
         self._registers: dict[str, dict[str, dict]] = {}
+        # DatasetStore per persisted register (RegisterDef.persist), opened lazily on first
+        # flush and kept open for the session's life — see ``_flush_register``.
+        self._persist_stores: dict[str, object] = {}
         self._t0 = 0.0
         self._error: str | None = None
         # Debug log ring: recent OCR-heavy ticks (raw reads, corrections, what was written to
@@ -224,28 +228,69 @@ class LiveSession:
             return rid if kind == "readout" else None
         return src or None
 
+    def feed_registers(self, readouts: dict, confs: dict) -> None:
+        """Public, thread-safe twin of :meth:`_feed_registers` for a caller OUTSIDE the
+        collector tick loop — namely the ``/api/preview`` teaching-UI read, so a register (and
+        any ``persist`` flush) updates from a one-shot OCR read too, not just a running live
+        collector. Folds into the SAME accumulated ``readouts_all`` map ``_on_tick`` maintains
+        (mirrors its "feed from the full map, not just this call's delta" reasoning) so what a
+        register visibly holds — live-fed or preview-fed — is exactly what gets persisted;
+        the two sources were diverging before this existed (a register could show a preview
+        value with nothing ever reaching its ``persist`` dataset)."""
+        with self._lock:
+            self._readouts_all.update(readouts or {})
+            self._readout_confs_all.update(confs or {})
+            self._feed_registers(self._readouts_all, self._readout_confs_all)
+
     def _feed_registers(self, readouts: dict, confs: dict) -> None:
         """Overwrite each register's held entries from the accumulated live-readout map (caller
         holds the lock) -- so a newly-wired source picks up its value immediately from whatever
         window last reported it, not only when its own window is next read. Key = readout id;
         value/conf/last_seen overwrite, first_seen is kept. A source never seen this session is
-        simply skipped (nothing to show yet)."""
+        simply skipped (nothing to show yet). A register with ``persist`` set flushes its held
+        map to that dataset when any entry's VALUE actually changed this tick (conf/last_seen
+        alone don't count — else every tick would write, even an unchanged screen)."""
         now = time.time()
         for reg in getattr(self._profile, "registers", []) or []:
             if not getattr(reg, "enabled", True):
                 continue
+            dirty = False
             for src in reg.sources or []:
                 rid = self._readout_ref(src)
                 if rid is None or rid not in readouts:
                     continue
                 m = self._registers.setdefault(reg.id, {})
                 prev = m.get(rid)
+                val = readouts[rid]
+                if prev is None or prev["value"] != val:
+                    dirty = True
                 m[rid] = {
-                    "value": readouts[rid],
+                    "value": val,
                     "conf": confs.get(rid),
                     "first_seen": prev["first_seen"] if prev else now,
                     "last_seen": now,
                 }
+            if dirty and getattr(reg, "persist", ""):
+                self._flush_register(reg)
+
+    def _flush_register(self, reg) -> None:
+        """Mirror one register's held map into its ``persist`` dataset — one row per wired
+        readout (``{name: <readout id>, value: <held value>}``), so state that only ever
+        existed as a live readout (e.g. loadout slot contents) becomes queryable like any other
+        dataset. Best-effort: a write hiccup must never disturb collection."""
+        try:
+            dataset = reg.persist
+            store = self._persist_stores.get(dataset)
+            if store is None:
+                store = store_for(self._engine.settings.data_dir, self._profile.name,
+                                  dataset, profile=self._profile)
+                self._persist_stores[dataset] = store
+            rows = [{"name": rid, "value": e["value"]}
+                    for rid, e in self._registers.get(reg.id, {}).items()]
+            if rows:
+                store.record_many(rows)
+        except Exception:  # pragma: no cover - defensive, mirrors _save_frame
+            pass
 
     def register_records(self, reg_id: str) -> list[dict]:
         """Current held map for one register as table rows (newest last_seen first)."""

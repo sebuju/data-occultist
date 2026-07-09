@@ -69,6 +69,18 @@ def _session(game: str, create: bool = False) -> LiveSession:
     return s
 
 
+def session_for(game: str, create: bool = False) -> LiveSession | None:
+    """Public accessor for `game`'s one long-lived :class:`LiveSession` — the SAME instance
+    the live-collection endpoints use, so a caller feeding it from OUTSIDE the collector tick
+    loop (the ``/api/preview`` route, so a register's ``persist`` also works off a one-shot OCR
+    read) shares state with a running collector instead of diverging. ``None`` instead of a
+    404 when ``create`` is False and no session exists yet — a lookup, not a hard dependency."""
+    try:
+        return _session(game, create=create)
+    except HTTPException:
+        return None
+
+
 def _refresh_profile(game: str, s: LiveSession) -> None:
     """Push the on-disk profile into the long-lived session before a run (no-op mid-run)."""
     settings = get_settings()
