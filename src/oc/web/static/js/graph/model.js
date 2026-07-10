@@ -1347,9 +1347,10 @@ export class GraphModel {
     subsetInputs(s) { return (s && s.sources || []).map((src) => src.dataset).filter(Boolean); }
     // the JoinSource entry for one input id (its per-source join_field/norm/aggregate/required)
     subsetSource(id, ds) { const s = this.subsetDef(id); return s ? (s.sources || []).find((src) => src.dataset === ds) || null : null; }
-    // a fresh JoinSource with sane defaults (joins on `name`, latest, optional/outer, plain join)
+    // a fresh JoinSource with sane defaults (joins on `name`, INHERITS the dataset's own
+    // many->one policy, optional/outer, plain join)
     _newSource(ds) {
-        return { dataset: ds, join_field: "name", aggregate: "latest", required: false, mode: "join",
+        return { dataset: ds, join_field: "name", aggregate: "", required: false, mode: "join",
             join_norm: { case_insensitive: true, strip_punct: false, collapse_ws: true, strip_words: [] } };
     }
     // `ds` (optional) seeds the subset's first input + name. Omitted (e.g. minted from the
