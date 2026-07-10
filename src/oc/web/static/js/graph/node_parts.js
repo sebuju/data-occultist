@@ -924,20 +924,19 @@ export function nodeParts(n) {
     const sm = model.datasetSyncMode(ds);
     const syncOpts = [["accumulate", "accumulate"], ["mirror", "mirror (sync removals)"]]
         .map(([v, l]) => h("option", { value: v, selected: sm === v }, sm === v ? `<${l}>` : l));
-    // sources row (FIRST, like toast/action/register): the windows/producers/file-sources
-    // currently feeding this dataset — removable pills + an add-select. Add here, or drag a
-    // node's out-port onto this dataset (same wiring, both paths call the same model setters).
-    const sourcesRow = h("div", { class: "lab-grid" },
-        srcRow("sources", "windows, producers, or file sources feeding this dataset",
-            sourcesInput({
-                chips: model.datasetSources(ds).map((s) => ({ value: s.ref, node: model.refNode(s.ref) })),
-                free: model.datasetFreeSources(ds).map((s) => s.ref),
-                addinCls: "sv-addin ds-addsrc", rmCls: "sv-rmin ds-rmsrc" })));
     return {
         title: h("input", { class: "gi gi-id dsrename", value: ds, title: "dataset name" }),
         head: satToggleBtn(`vt:ds:${ds}`, "vttable"),
-        body: frag(
-            sourcesRow,
+        // ONE lab-grid for the whole body (sources row FIRST, like toast/action/register, then
+        // key/aggregate/batch/sync) — matches producer/action/toast/register/subset bodies. A
+        // separate lab-grid around just the sources row would size its label column
+        // independently of the kv() rows below, so "sources" wouldn't line up with them.
+        body: h("div", { class: "lab-grid" },
+            srcRow("sources", "windows, producers, or file sources feeding this dataset",
+                sourcesInput({
+                    chips: model.datasetSources(ds).map((s) => ({ value: s.ref, node: model.refNode(s.ref) })),
+                    free: model.datasetFreeSources(ds).map((s) => s.ref),
+                    addinCls: "sv-addin ds-addsrc", rmCls: "sv-rmin ds-rmsrc" })),
             kv("1 → many", h("select", { class: "dskey", title: "the key the dataset collapses many reads on (or none)" }, keyOpts)),
             // The key says WHICH reads are the same row; this says HOW those reads fold to one
             // value. Moot with dedup off (every read is already its own record).
