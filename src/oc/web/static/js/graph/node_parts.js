@@ -4,12 +4,15 @@
 // no innerHTML). Extracted from main.js. (Subset builders stay in main -- they tangle with the
 // live vtable column set -- so nodeParts imports subsetParts back.)
 //
-// Return shape of nodeParts() and every *Parts builder: { title, head?, body, ports?, pulse? }
-//   title -> a Node (the header's id input / label)
-//   head  -> a Node or null (default null)
-//   body  -> a Node or DocumentFragment
-//   ports -> a Node/frag or null (default null)
-//   pulse -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
+// Return shape of nodeParts() and every *Parts builder: { title, head?, headfix?, body, ports?, pulse? }
+//   title   -> a Node (the header's id input / label)
+//   head    -> a Node or null (default null) -- HOVER-ONLY controls (satellite/enable/rect-edit
+//              toggles); main.js sinks these into the header's one .gn-hctl reveal container.
+//   headfix -> a Node or null (default null) -- ALWAYS-VISIBLE header content (e.g. the vttable
+//              data node's data/batches tablist); stays in normal header flow, never hidden.
+//   body    -> a Node or DocumentFragment
+//   ports   -> a Node/frag or null (default null)
+//   pulse   -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
 import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, srcRow, btn, iconBtn, trashBtn } from "../dom.js";
 import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
@@ -848,8 +851,9 @@ export function nodeParts(n) {
         }
         return {
             title: h("span", { class: "gi-id" }, `${r.ds} data`),
-            // data | batches selector + the "show removed" toggle ride the node HEADER (gn-h), above the table
-            head: frag(
+            // data | batches selector + the "show removed" toggle ride the node HEADER (gn-h), above the
+            // table -- always visible (not a hover-reveal control), so it's `headfix` not `head`.
+            headfix: frag(
                 h("div", { class: "ds-tabs", role: "tablist" },
                     h("button", { class: "ds-tab on", dataset: { tab: "data" }, role: "tab" }, "data ", h("span", { class: "ds-tab-n data-n" })),
                     h("button", { class: "ds-tab", dataset: { tab: "batches" }, role: "tab", title: "this dataset's collection/save runs" }, "batches ", h("span", { class: "ds-tab-n bat-n" }))),

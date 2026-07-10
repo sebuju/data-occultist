@@ -2990,8 +2990,14 @@ function fillNode(div, n, wire = true) {
                         svg("rect", { x: "3.5", y: "3.5", width: "17", height: "17", rx: "5.5" }),
                         svg("line", { x1: "8", y1: "12", x2: "16", y2: "12" }),
                         svg("line", { class: "cv", x1: "12", y1: "8", x2: "12", y2: "16" })))),
-            parts.title, parts.head, toggle,
-            RECT_TYPES.has(n.type) ? rectEditBtn() : null,
+            parts.title, parts.headfix,
+            // hover-only controls (satellite toggles, enable, rect-edit) all sink into ONE
+            // reveal container (`.gn-hctl`, graph.css) instead of each carrying its own
+            // opacity rule -- count/mix varies per node type, so the container (not per-button
+            // placement) is what governs "hidden takes no space, shown shifts nothing" (rule 7).
+            h("span", { class: "gn-hctl" },
+                parts.head, toggle,
+                RECT_TYPES.has(n.type) ? rectEditBtn() : null),
             h("span", { class: "gn-type", "aria-hidden": "true" }, typeLabel),
             h("span", { class: "gn-pretty-dirty", title: "held by a pretty override — not saved to yaml" }, "pretty"),
             // tiny loader — lives IN the header (not a full-node overlay), shown by .gnode.busy.

@@ -38,9 +38,8 @@
 .gnode.collapsed { height: auto !important; min-height: 0 !important; resize: none !important; }
 /* header loader stays visible even collapsed (header IS the whole node then) — a collapsed
    node that refreshes now shows it, instead of the old full-node overlay being hidden. */
-.gn-h .collapse { background: transparent; color: var(--muted); padding: 0; min-height: 0; flex: 0 0 auto;
+.gn-h .collapse { background: transparent; padding: 0; min-height: 0; flex: 0 0 auto;
     width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; }
-.gn-h .collapse:hover { color: var(--text); }
 .gn-h .collapse svg { width: 16px; height: 16px; display: block; }
 /* collapse + type icon share ONE fixed slot: the type icon shows at rest, the collapse
    button replaces it while the slot is hovered. Both are absolute inside the 22px box, so the
@@ -447,7 +446,7 @@
 .glab input { margin-top: 2px; }
 .modal-body h4 { margin: 0; color: var(--muted); font-weight: 500; font-size: var(--fs-base); text-transform: uppercase; letter-spacing: 0.05em;
     border-bottom: 1px solid var(--muted);  }
-.gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; gap: 8px;
+.gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; 
     flex: 0 0 auto;   /* in flex-column host nodes, the header must NOT shrink when content overflows */
     margin: -6px -8px 6px; padding: 5px 8px; overflow: hidden; position: relative; z-index: 2;
     /* header carries a faint accent wash of the type token over the card — the second half of
@@ -460,22 +459,31 @@
    Divider colour hidden, all four corners rounded. */
 .gnode.collapsed .gn-h { margin: -6px -8px; border-bottom-color: transparent; border-radius: 8px; }
 .gnode .gn-h.pulse { animation: pulse 1.2s ease-out; }
-/* node-type tag in the header, always shown (delete/detach moved to the selection toolbar, so
-   nothing hover-reveals over it anymore). In normal flow now. pointer-events:none + lower z so
-   the enable toggle stays clickable. */
+/* node-type tag in the header, shown at rest and swapped for `.gn-hctl` (below) on hover — it
+   stays in NORMAL FLOW throughout (only its opacity changes), so its box keeps reserving the
+   right-edge space whether the tag or the hover controls are the one actually visible there.
+   pointer-events:none + lower z so it never blocks the (absolutely-positioned) controls above it. */
 .gn-h .gn-type {
     font-size: var(--fs-xs); font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
-    color: var(--ntint); background: transparent; padding-left: 8px;
+    color: var(--ntint); background: transparent; 
     pointer-events: none; opacity: .92; transition: opacity .12s ease; z-index: 0; }
-.gn-h .gn-enable { position: relative; z-index: 1; opacity: 0; transition: opacity .12s ease; width: 26px !important; }
-/* surface the header enable switch only on header hover (or keyboard focus) — opacity so revealing
-   it never reshuffles the header row */
-.gn-h:hover .gn-enable, .gn-h .gn-enable:focus-visible { opacity: 1; }
+.gn-h:hover .gn-type, .gn-h:focus-within .gn-type { opacity: 0; }
 /* vttable/atlas headers have no flex:1 title to push the type tag over, so pin it to the right edge */
 .gnode.vttable .gn-h .gn-type, .gnode.atlas .gn-h .gn-type { margin-left: auto; }
+/* ---- hover-reveal control cluster: every header control that should show only on hover (enable
+   toggle, satellite toggles, rect-edit) sinks into this ONE container (main.js) instead of each
+   carrying its own opacity rule. Mirrors `.gn-disc` above: position:absolute means the container
+   contributes ZERO width to the header's flex flow at rest (title fills the full row — nothing
+   reserves a hole for it), and it overlays the `.gn-type` slot on hover so revealing it never
+   shifts a sibling either. New controls just render into it (main.js) — no per-button CSS. */
+.gn-hctl { position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    display: flex; align-items: center; gap: 8px;
+    opacity: 0; pointer-events: none; transition: opacity .12s ease; z-index: 3; }
+.gn-h:hover .gn-hctl, .gn-hctl:focus-within { opacity: 1; pointer-events: auto; }
+.gn-hctl .gn-enable { width: 26px !important; }
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap; }
 .gnode input.gi { width: 100%; }
-.gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; border: unset; background: transparent; margin-left: -35px; padding-left: 35px;
+.gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; border: unset; background: transparent; margin-left: -35px; padding-left: 43px;
     cursor: inherit; color: var(--nt); }   /* click-to-arm: it's a drag handle until the 2nd click focuses it, so don't show the text I-beam until editing */
 .gnode input.gi-id:focus { cursor: text; }
 input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
