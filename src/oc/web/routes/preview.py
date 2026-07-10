@@ -370,13 +370,37 @@ def rule_trace(profile: GameProfile, game: str | None = Query(None),
     each field off the CURRENT canvas, run its rules over that value, and return the
     per-rule ``in -> out`` trace + final value per field. The field nodes all pull from
     this single batch (coalesced client-side) so the trace fleet costs one OCR pass, not
-    one per node. Returns ``{fields: {field_id: {trace, value, dropped, raw}}}``."""
+    one per node. Returns ``{fields: {field_id: {trace, value, dropped, raw}}}``.
+
+    The OCR half (the representative raw+confidence per field) is cached exactly like
+    ``/preview`` -- keyed on everything that shapes OCR EXCEPT each field's ``rules``
+    pipeline, which is pure post-OCR value logic (see ``FieldDef``'s docstring) and costs
+    microseconds. So a stashed image serves from cache (no engine touch, cache hit on
+    every boot) while the rules always run fresh over the cached raw -- a rule edit
+    updates the trace instantly with zero OCR, and a box/grid/image change busts the key
+    and re-reads."""
     if not profile.windows:
         raise HTTPException(status_code=400, detail="profile has no window")
+    window = profile.windows[0]
+    # ``window.model_dump`` would embed window.fields wholesale (rules included) --
+    # exclude it and hash the RESOLVED per-window field list (fields_for: window.fields,
+    # falling back to the game-level profile.fields) with each field's ``rules`` stripped
+    # instead, so a rule-only edit (on either a window-specific or game-level field def)
+    # can never move the key.
+    cfg = {"window": window.model_dump(mode="json", exclude={"fields"}),
+           "fields": [{**f.model_dump(mode="json"), "rules": None} for f in profile.fields_for(window)],
+           "accept": get_settings().tuning.accept_confidence}
+    cache, key, hit = _ocr_cache_for(game, capture, cfg, prefer_cache=True)
     engine = get_engine()
     frame, window, fields, reader = _window_reader(engine, profile, game, capture)
-    with ocr_job(engine.ocr):
-        raws = reader.representative_raws(frame, window, fields)
+    if hit is not None:
+        raws = hit
+    else:
+        with ocr_job(engine.ocr):
+            raws = reader.representative_raws(frame, window, fields)
+        if cache is not None:
+            cache.put(key, raws)
+            cache.save()
     out = {}
     for fid, field in fields.items():
         raw, conf = raws.get(fid, ("", 0.0))
