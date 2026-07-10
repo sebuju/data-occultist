@@ -378,8 +378,19 @@ def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
     ``fetch_dataset(dataset_id, aggregate) -> list[dict]`` returns the raw stored records for
     one plain dataset, aggregated per the consuming SOURCE's ``aggregate``. A subset input is
     computed recursively (each of ITS sources carries its own aggregate) so its derived columns
-    are available upstream; a cycle resolves to no rows."""
+    are available upstream; a cycle resolves to no rows.
+
+    A source with a BLANK ``aggregate`` INHERITS the source dataset's own policy
+    (:meth:`GameProfile.aggregate_for`) — so a dataset that sets e.g. ``max`` to collapse a
+    duplicate observation isn't silently overridden back to ``latest`` by its consumers. Resolved
+    HERE, the one place the dependency walk lives, so every caller agrees."""
     cache: dict = {}
+
+    def src_agg(src) -> str:
+        """This source's effective many->one policy: its own, else the dataset's own (blank
+        inherits). ``aggregate_for`` yields ``latest`` for a subset/unknown input, which is moot
+        there anyway (a subset already serves one row per key)."""
+        return src.aggregate or profile.aggregate_for(src.dataset)
 
     def input_rows(input_id: str, stack: frozenset, aggregate: str) -> list[dict]:
         ck = (input_id, aggregate)
@@ -391,7 +402,7 @@ def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
         elif input_id in stack:                           # cycle -> stop
             rows = []
         else:
-            inputs = [(src.dataset, input_rows(src.dataset, stack | {input_id}, src.aggregate or "latest"))
+            inputs = [(src.dataset, input_rows(src.dataset, stack | {input_id}, src_agg(src)))
                       for src in sub.sources]
             rows = compute_view(inputs, sub)["rows"]
         cache[ck] = rows
@@ -400,7 +411,7 @@ def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
     sub = profile.subset_def(subset_id)
     if sub is None:
         return {"columns": [], "rows": []}
-    inputs = [(src.dataset, input_rows(src.dataset, frozenset({subset_id}), src.aggregate or "latest"))
+    inputs = [(src.dataset, input_rows(src.dataset, frozenset({subset_id}), src_agg(src)))
               for src in sub.sources]
     return compute_view(inputs, sub)
 

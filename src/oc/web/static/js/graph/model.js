@@ -1430,9 +1430,12 @@ export class GraphModel {
         const words = [...new Set(String(str || "").split(/[\s,]+/).filter(Boolean))];
         this.setSourceJoinNorm(id, ds, { strip_words: words });
     }
-    // how THIS source's MANY observations collapse to one value when the subset reads it
-    sourceAggregate(id, ds) { const src = this.subsetSource(id, ds); return (src && src.aggregate) || "latest"; }
-    setSourceAggregate(id, ds, agg) { const src = this.subsetSource(id, ds); if (src) src.aggregate = agg || "latest"; }
+    // how THIS source's MANY observations collapse to one value when the subset reads it.
+    // "" = inherit the source dataset's own policy (must round-trip, so never coerce it away).
+    sourceAggregate(id, ds) { const src = this.subsetSource(id, ds); return (src && src.aggregate) || ""; }
+    setSourceAggregate(id, ds, agg) { const src = this.subsetSource(id, ds); if (src) src.aggregate = agg || ""; }
+    // what a blank (inherit) source aggregate actually resolves to — the dataset's own policy
+    sourceAggregateEffective(id, ds) { return this.sourceAggregate(id, ds) || this.datasetAggregate(ds); }
     // only pull rows from each source's most recent collection batch (applied first)
     setSubsetLatestBatch(id, on) { const s = this.subsetDef(id); if (s) s.latest_batch = !!on; }
     // ---- pivot: reshape joined flat name/value rows into wide rows by shared id-prefix -----

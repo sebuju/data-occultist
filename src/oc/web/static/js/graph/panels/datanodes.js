@@ -41,7 +41,11 @@ function vtableFor(key, host) {
     return vt;
 }
 
-const VT_META = ["present", "first_seen", "last_seen", "key", "_count"];   // not shown as columns
+// Not shown as columns. `_count` (how many observations fold into this record) STAYS visible:
+// hiding it made a collapsed record look identical to a single read, so an aggregate silently
+// picking one of several observations was invisible. It's the tell that a row is a fold — click
+// the row to drill into the observations behind it.
+const VT_META = ["present", "first_seen", "last_seen", "key"];
 
 // Fold any open inline-detail row in VTables hosted by a node OTHER than `keepId`. Called when
 // focus moves so an expanded row doesn't linger on a node you've unfocused.

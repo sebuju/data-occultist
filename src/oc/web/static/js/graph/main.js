@@ -45,7 +45,7 @@ import {
 } from "./camera.js";
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
 import { imageTextInspector } from "./toast_node.js";
-import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved, rectEditBtn } from "./node_parts.js";
+import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved, rectEditBtn, aggregateSelect } from "./node_parts.js";
 import { renderTriggerHistory } from "./history_node.js";
 import { refreshRegister } from "./register_node.js";
 import * as dsevents from "./dsevents.js";
@@ -1008,10 +1008,8 @@ function windowItemsReordered(winId) {
 }
 
 
-// how a key's many observations collapse to one displayed value (matches the backend)
-const AGGREGATES = ["latest", "first", "sum", "mean", "max", "min", "all"];
-// friendly labels for the "many →" options (value stays the policy string)
-const AGG_LABEL = { all: "all (no collapse)" };
+// the aggregate <select> itself lives in node_parts.js — ONE primitive shared with the dataset
+// node's own "many → one" policy (rule 7). Here it's rendered with "" = inherit that policy.
 
 
 // ---- subset node: join one or more datasets, then filter/derive/sort ----------
@@ -1122,9 +1120,11 @@ function sourceCfgNode(s, ds, joined) {
     // "many ->" is the read/collapse policy, NOT a join input — render it FIRST, above the join config,
     // so it doesn't read as a join knob.
     if (showAgg) {
-        const aggOpts = AGGREGATES.map((a) => h("option", { value: a, selected: a === model.sourceAggregate(s.id, ds) }, a === model.sourceAggregate(s.id, ds) ? `<${AGG_LABEL[a] || a}>` : (AGG_LABEL[a] || a)));
-        rows.push(labCell("many →", "how this source's many observations collapse to one value"),
-            h("select", { class: "sv-sagg", dataset: { ds } }, aggOpts));
+        rows.push(labCell("many →", "how this source's many observations collapse to one value; inherit = the dataset's own policy"),
+            aggregateSelect(model.sourceAggregate(s.id, ds), {
+                cls: "sv-sagg", ds, all: true,
+                inherit: model.sourceAggregateEffective(s.id, ds),   // names what "" resolves to
+                title: "how THIS source's many observations collapse when the view reads them" }));
     }
     if (joined) {
         const mode = src.mode || "join";
@@ -3729,6 +3729,13 @@ function wireNode(div, n) {
             else if (v === "") model.setDatasetKeyMode(n.ref, "auto");
             else model.setDatasetKeyField(n.ref, v);
             rebuildNode(n.id);   // show/hide the concat editor for the new mode
+            await rekeyDataset();
+        });
+        // The dataset's OWN many→one policy. Changing it re-materialises `current` under the new
+        // aggregate, and every view that INHERITS it now reads a different value — so flush and
+        // re-read this node and its consumers, exactly like a key change.
+        div.querySelector(".dsagg")?.addEventListener("change", async (e) => {
+            model.setDatasetAggregate(n.ref, e.target.value);
             await rekeyDataset();
         });
         // Concat-key editor: field checkboxes + the four canonicalisation knobs (present only in concat mode).

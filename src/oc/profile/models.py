@@ -1248,10 +1248,13 @@ class JoinSource(BaseModel):
     join_field: str = "name"
     # how THIS source's join value is canonicalised before matching (bridges near-match keys)
     join_norm: JoinNorm = Field(default_factory=JoinNorm)
-    # How THIS source's MANY observations per key collapse to one value when the view reads it —
-    # the view's call, not the dataset's. ``latest|first|sum|mean|max|min``, or ``all`` to NOT
-    # collapse (emit every observation as its own row). Moot for a subset input (it computes its own).
-    aggregate: str = "latest"
+    # How THIS source's MANY observations per key collapse to one value when the view reads it.
+    # ``latest|first|sum|mean|max|min``, or ``all`` to NOT collapse (emit every observation as its
+    # own row). ``""`` (the DEFAULT) means INHERIT the source dataset's own ``aggregate`` — a
+    # dataset that sets ``max`` to defeat a duplicate must not have that policy silently overridden
+    # by every consumer. Set an explicit value only to deliberately read it differently from how the
+    # dataset collapses itself. Moot for a subset input (it computes its own).
+    aggregate: str = ""
     # Required => the join key MUST be present in this source for an output row (inner-style).
     # When NO source is required the join is a full outer (every key kept, gaps filled); marking
     # sources required narrows to keys present in all of them (the old ``inner`` = all required).

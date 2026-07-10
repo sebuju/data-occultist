@@ -2,9 +2,9 @@
 
 from oc.profile.loader import _migrate_join_exclude, load_profile, save_profile
 from oc.profile.models import (
-    DerivedColumn, FilterRule, GameProfile, JoinNorm, JoinSource, SubsetDef,
+    DatasetDef, DerivedColumn, FilterRule, GameProfile, JoinNorm, JoinSource, SubsetDef,
 )
-from oc.enrich.subset import compute_subset, compute_view
+from oc.enrich.subset import compute_subset, compute_view, compute_view_rows
 from oc.store.textnorm import norm_text
 
 
@@ -412,3 +412,44 @@ def test_subset_round_trips_through_profile(tmp_path):
     assert len(back.subsets) == 1
     s = back.subset_def("arc")
     assert s.sources[0].dataset == "equip" and s.derived[0].template == "{name} [{rank}]"
+
+
+# ---- join source aggregate: blank INHERITS the source dataset's own policy ----------
+# Regression: a dataset setting `max` (e.g. to collapse a duplicate observation to the
+# higher value) must not be silently overridden back to `latest` by its consumers.
+
+
+def _agg_seen(profile, subset_id):
+    """The aggregate each plain-dataset source is actually fetched with."""
+    seen: dict[str, str] = {}
+
+    def fetch(ds, agg):
+        seen[ds] = agg
+        return []
+
+    compute_view_rows(profile, subset_id, fetch)
+    return seen
+
+
+def test_blank_source_aggregate_inherits_dataset_policy():
+    p = GameProfile(
+        name="g",
+        datasets=[DatasetDef(id="cat", aggregate="max"), DatasetDef(id="inv")],
+        subsets=[SubsetDef(id="v", sources=[_src("cat", aggregate=""), _src("inv", aggregate="")])],
+    )
+    seen = _agg_seen(p, "v")
+    assert seen["cat"] == "max"        # inherited the dataset's own policy
+    assert seen["inv"] == "latest"     # no dataset policy set -> the "latest" default
+
+
+def test_explicit_source_aggregate_overrides_dataset_policy():
+    p = GameProfile(
+        name="g",
+        datasets=[DatasetDef(id="cat", aggregate="max")],
+        subsets=[SubsetDef(id="v", sources=[_src("cat", aggregate="latest")])],
+    )
+    assert _agg_seen(p, "v")["cat"] == "latest"   # deliberate override still honoured
+
+
+def test_join_source_aggregate_defaults_to_inherit():
+    assert JoinSource(dataset="d").aggregate == ""

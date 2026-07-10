@@ -581,6 +581,25 @@ export function itemLists(it, w) {
         keySection(it, w));
 }
 
+// How a key's MANY observations collapse to ONE value (mirrors `aggregate_records` in
+// store/dataset_store.py). `latest`/`first` take that observation wholesale; the numeric folds
+// apply per field, so they can synthesise a row no single observation ever was.
+export const AGGREGATES = ["latest", "first", "sum", "mean", "max", "min"];
+
+// ONE aggregate <select>, two callers (rule 7):
+//   • a DATASET's own policy      — `inherit` null (it IS the source of truth), `all` off.
+//   • a SUBSET SOURCE's read policy — `inherit` = the dataset's effective policy, so the ""
+//     option can name what it resolves to; `all` on (a view may opt out of collapsing).
+// `inherit` doubles as the flag (non-null ⇒ offer "") and as the label text.
+export function aggregateSelect(cur, { cls, ds = null, inherit = null, all = false, title = "" } = {}) {
+    const label = (a) => (a === "" ? `inherit (${inherit})` : a === "all" ? "all (no collapse)" : a);
+    const vals = [...(inherit !== null ? [""] : []), ...AGGREGATES, ...(all ? ["all"] : [])];
+    const attrs = { class: cls, title };
+    if (ds !== null) attrs.dataset = { ds };
+    return h("select", attrs,
+        vals.map((a) => h("option", { value: a, selected: a === cur }, a === cur ? `<${label(a)}>` : label(a))));
+}
+
 // The item's record key (dedup identity): which fields identify a record, in what
 // order, joined how. Live preview = the key the LAST cutout read would store under,
 // recomputed instantly on every config edit (client mirror of the server's KeySpec);
@@ -920,6 +939,10 @@ export function nodeParts(n) {
         body: frag(
             sourcesRow,
             kv("1 → many", h("select", { class: "dskey", title: "the key the dataset collapses many reads on (or none)" }, keyOpts)),
+            // The key says WHICH reads are the same row; this says HOW those reads fold to one
+            // value. Moot with dedup off (every read is already its own record).
+            mode === "nodedup" ? null : kv("many → one",
+                aggregateSelect(model.datasetAggregate(ds), { cls: "dsagg",
                     title: "how this dataset's many observations under one key collapse to the value it serves. latest/first keep one observation whole; sum/mean/max/min fold PER FIELD, so they can show a row no single observation ever was — drill a row to see the observations behind it." })),
             kv("batch", h("select", { class: "dsbatch", title: "how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like a timed offer / pop-up)" }, batchOpts)),
             kv("sync", h("select", { class: "dssync", title: "accumulate: only add/update. mirror: keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)." }, syncOpts)),
