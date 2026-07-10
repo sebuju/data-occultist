@@ -14,6 +14,7 @@ import { render, collectLayout, hydrateNodeLayout, reconcileOpenImages, reapplyN
 import { refreshImageBoxes, refreshDetect, refreshItemBoxes } from "./imaging.js";
 import { reapplyPersistedVTables } from "../vtable.js";
 import { createHistory } from "../history_core.js";
+import * as rectTxn from "./rect_txn.js";
 import { diffLabel } from "../history_label.js";
 
 // fold live node layout into the profile first, so the snapshot captures the CURRENT positions
@@ -42,7 +43,13 @@ export const hist = createHistory({ snapshot, restore, label: diffLabel });
 // the graph is built; boot.phase only clears after bootSettle, so nothing boot-side records.
 const pushHistory = () => { if (!boot.phase) hist.push(); };
 const resetHistory = () => hist.reset("loaded");
-function undo() { if (hist.canUndo()) { const p = hist.undo(); setStatus("undo"); return p; } }
+// An uncommitted rect edit IS the most recent change, but it never entered history (nothing is
+// recorded until the batch commits). So Ctrl+Z drops it first — same effect as Escape — and only
+// the next press walks the recorded stack.
+function undo() {
+    if (rectTxn.dirty()) { rectTxn.revert(); setStatus("discarded rect edit"); return; }
+    if (hist.canUndo()) { const p = hist.undo(); setStatus("undo"); return p; }
+}
 function redo() { if (hist.canRedo()) { const p = hist.redo(); setStatus("redo"); return p; } }
 
 export { pushHistory, resetHistory, undo, redo };

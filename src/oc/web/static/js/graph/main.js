@@ -84,8 +84,9 @@ import {
     commitPreviewNode,
     scheduleWindowRead,
     refreshImageBoxes, refreshGridPreview, selectRegionNode, refreshRuleTrace, refreshReadoutValues,
-    RECT_TYPES, toggleRectEditor, rectEditCanvasSync,
+    RECT_TYPES, toggleRectEditor, rectEditCanvasSync, editBox,
 } from "./imaging.js";
+import * as rectTxn from "./rect_txn.js";
 import {
     liveWin, liveWinState, buildLiveWindow, renderLiveWindow, syncLiveFromServer, applyLiveInterval, syncWpDots,
     liveCollecting,
@@ -1940,10 +1941,34 @@ function wireToastImage(sec, x, n) {
     const rafPaint = () => { if (_raf) return; _raf = requestAnimationFrame(() => { _raf = 0; paintSel(); }); };
     // defer the expensive save + server re-render until edits settle, so holding WASD or dragging
     // fires ONE render+save at the end, not one per step (the overlay updates live via paintSel).
-    let _commit = 0;
-    const commitEdit = (now = false) => {
-        clearTimeout(_commit);
-        if (now) { autosave(null); refreshPreview(); } else _commit = setTimeout(() => { autosave(null); refreshPreview(); }, 300);
+    // Moving/resizing/nudging an element is a rect edit, so it rides the SAME transaction every box
+    // overlay uses (rect_txn.js): the drag only paints, and Enter / the ✓ button / a click outside
+    // the node runs the expensive save + server re-render ONCE for the whole batch; Escape puts every
+    // touched element back. Unlike a canvas box this editor WRITES the model live (resolveLocal reads
+    // it back to place the overlay without a round-trip), so the clean state is a snapshot, not the
+    // model — `txnSnap` holds each element's geometry as it was before this batch touched it.
+    const TXN_KEY = `toast:${x.id}:${idx}`;
+    const txnSnap = new Map();   // element index -> {x, y, width, height} before the batch
+    const toastSpec = () => ({
+        host: q(".tn-img-pv"),
+        isOutside: (t) => !sec.closest(".gnode")?.contains(t),
+        commit: () => { txnSnap.clear(); autosave(null); refreshPreview(); },
+        restore: () => {
+            for (const [i, g] of txnSnap) for (const k of ["x", "y", "width", "height"]) setText(i, k, g[k]);
+            txnSnap.clear();
+            syncGeomInputs(); rafPaint();
+        },
+    });
+    // Call BEFORE the first setText of a gesture: opens/extends the batch and snapshots the element's
+    // pre-edit geometry exactly once.
+    const beginEdit = (i) => {
+        rectTxn.begin(TXN_KEY, toastSpec);
+        const t = texts()[i];
+        if (t && !txnSnap.has(i)) txnSnap.set(i, { x: t.x, y: t.y, width: t.width, height: t.height });
+    };
+    const touchEdit = (i) => {
+        const t = texts()[i];
+        if (t) rectTxn.touch(i, { role: "toast", x: t.x || 0, y: t.y || 0, w: t.width || 0, h: t.height || 0 });
     };
 
     // one draggable/resizable overlay box for element b.i
@@ -1969,11 +1994,12 @@ function wireToastImage(sec, x, n) {
             beginDrag(ev, { threshold: 3, cursor: "grabbing",
                 onStart: () => { dragged = true; },
                 onMove: (e) => {
+                    beginEdit(b.i);
                     setText(b.i, "x", ox + toUnit((e.clientX - ev.clientX) / sx, nw()));
                     setText(b.i, "y", oy + toUnit((e.clientY - ev.clientY) / sy, nh()));
                     rafPaint();                              // local overlay only — no server render
                 },
-                onSettle: () => { syncGeomInputs(); commitEdit(true); } });
+                onSettle: () => { syncGeomInputs(); touchEdit(b.i); } });
         });
         // RESIZE: 8 edge/corner handles, each a beginDrag adjusting width/height (+ x/y for top/left).
         for (const [k, hx, hy] of _TN_HANDLES) {
@@ -1987,6 +2013,7 @@ function wireToastImage(sec, x, n) {
                 const o = { x: t.x, y: t.y, w: seedW, h: seedH };
                 beginDrag(ev, { threshold: 0, cursor: getComputedStyle(g).cursor,
                     onMove: (e) => {
+                        beginEdit(b.i);
                         const ux = toUnit((e.clientX - ev.clientX) / sx, nw()), uy = toUnit((e.clientY - ev.clientY) / sy, nh());
                         const mn = unitMin();
                         let nx = o.x, ny = o.y, nwd = o.w, nhd = o.h;
@@ -2000,7 +2027,7 @@ function wireToastImage(sec, x, n) {
                         if (hy && !t.match_h) { setText(b.i, "y", ny); setText(b.i, "height", nhd); }
                         rafPaint();                          // local overlay only — no server render
                     },
-                    onSettle: () => { syncGeomInputs(); commitEdit(true); } });
+                    onSettle: () => { syncGeomInputs(); touchEdit(b.i); } });
             });
             d.appendChild(g);
         }
@@ -2110,6 +2137,7 @@ function wireToastImage(sec, x, n) {
     // Changing the anchor (to / corner / target) must keep the element visually PUT: back-solve a new
     // x/y offset so the resolved box top-left stays where it is now, then apply the anchor change.
     const reanchor = (i, key, val) => {
+        rectTxn.commitIfDirty();   // back-solving x/y off the CURRENT box: land any pending nudge first
         const t = texts()[i]; const b = boxByI(i);
         if (!t || !b) { model.setToastImageAnchor(x.id, idx, i, key, val); autosave(null); refreshPreview(); return; }
         const a = { to: "", corner: "tl", target: "tl", ...(t.anchor || {}), [key]: val };
@@ -2125,15 +2153,14 @@ function wireToastImage(sec, x, n) {
     // WASD nudges the selected element; Shift+WASD resizes it (A/D width, W/S height) — the SAME
     // convention every other box in the editor uses (shared NUDGE map), no per-editor modifier.
     // Scoped to the focused preview so it never fights the page or other images. Held keys only paint
-    // the local overlay; the (expensive) save + server re-render defers to keyup — one render per
-    // gesture, never once per key-repeat (the debounce alone leaks a refresh mid-hold on the OS's
-    // initial key-repeat delay).
-    let wasdDirty = false;
+    // the local overlay; the (expensive) save + server re-render waits for the rect transaction to
+    // commit (Enter / ✓ / clicking outside the node), so a held key is one render, never one per repeat.
     q(".tn-img-pv")?.addEventListener("keydown", (e) => {
         if (sel == null) return;
         const dir = NUDGE[e.key.toLowerCase()]; if (!dir) return;
         e.preventDefault(); e.stopPropagation();   // don't let the graph's WASD also move the node
         const t = texts()[sel]; if (!t) return;
+        beginEdit(sel);
         const [ux, uy] = dir;
         if (e.shiftKey) {                           // resize — matches every box overlay's Shift+WASD
             // a matched axis is locked to its match target — don't write a dead width/height on it.
@@ -2143,11 +2170,8 @@ function wireToastImage(sec, x, n) {
             if (ux) setText(sel, "x", (t.x || 0) + ux);
             if (uy) setText(sel, "y", (t.y || 0) + uy);
         }
-        syncGeomInputs(); rafPaint(); wasdDirty = true;   // local overlay now; commit on keyup/blur
+        syncGeomInputs(); rafPaint(); touchEdit(sel);   // local overlay now; the batch commits on Enter/✓/click-out
     });
-    const wasdCommit = () => { if (!wasdDirty) return; wasdDirty = false; commitEdit(true); };
-    q(".tn-img-pv")?.addEventListener("keyup", (e) => { if ("wasd".includes(e.key.toLowerCase())) wasdCommit(); });
-    q(".tn-img-pv")?.addEventListener("blur", wasdCommit);   // release/refocus mid-hold still saves
     // wire the mini-inspector's controls (exactly one set exists in `sec`); rebound after each
     // selection replaces the inspector node.
     const wireInspector = () => {
@@ -2155,7 +2179,12 @@ function wireToastImage(sec, x, n) {
         // inspector DOM is reconciled in place on a selection change (syncInspector), so a control's
         // own data-i goes stale — writing x/y/w/h/etc. to the previously selected element. Every other
         // handler below already keys off `sel`; these must too.
+        // The four GEOMETRY fields are just another way to move the box, so they join the same rect
+        // transaction the drag/nudge opens (paint now, one save + one server render at commit) instead
+        // of re-rendering per keystroke. Everything else (content, size, z) still applies immediately.
+        const GEOM = new Set(["x", "y", "width", "height"]);
         const line = (cls, key) => sec.querySelectorAll(cls).forEach((el) => el.addEventListener("input", () => {
+            if (GEOM.has(key)) { beginEdit(sel); setText(sel, key, el.value); rafPaint(); touchEdit(sel); return; }
             setText(sel, key, el.value); autosave(null); refreshPreview();
         }));
         line(".tn-il-content", "content"); line(".tn-il-x", "x"); line(".tn-il-y", "y");
@@ -5116,11 +5145,17 @@ document.addEventListener("keydown", (ev) => {
         b.x = Math.min(Math.max(0, b.x + dir[0] * sx), 1 - b.w);
         b.y = Math.min(Math.max(0, b.y + dir[1] * sy), 1 - b.h);
     }
-    rec.persist(b);
-    rec.refresh();
     ov.render();        // reflect the nudge on the overlay immediately
-    drawEdges(); autosave(rec.winId);   // nudging a box re-OCRs ONLY its window
-    rectEditCanvasSync(activeOverlayKey);   // mirror the nudge into an open rect-edit panel, if any
+    // A nudge only PAINTS: it joins this surface's rect batch and settles on Enter / ✓ / clicking
+    // out (rect_txn.js). Holding W for a second is then one model write, one save, one re-OCR and
+    // one undo step — not thirty. The atlas surface has no batch (nothing to re-read), so it keeps
+    // writing straight through.
+    if (rec.kind === "window" || rec.kind === "item") editBox(activeOverlayKey, b);
+    else {
+        rec.persist(b); rec.refresh();
+        drawEdges(); autosave(rec.winId);
+        rectEditCanvasSync(activeOverlayKey);
+    }
     ev.preventDefault();
 });
 

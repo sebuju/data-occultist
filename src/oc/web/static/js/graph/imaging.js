@@ -1,7 +1,7 @@
 // Window image / region drawing, item cutouts, OCR read pipeline (preview + detect + grid).
 // Extracted from main.js verbatim.
 import * as api from "../api.js";
-import { h, frag, TRASH, subhead, kv, btn } from "../dom.js";
+import { h, frag, TRASH, subhead, kv } from "../dom.js";
 import { openCaptureModal } from "./panels/precap.js";
 import { timed } from "../log.js";
 import { Overlay, MIN_FRAC } from "../overlay.js";
@@ -9,10 +9,11 @@ import { persist } from "./persist.js";
 import * as groups from "./groups.js";
 import { singleFlight, pendingCount } from "../singleflight.js";
 import {
-    setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases,
+    setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases, overlays,
     gridPreviews, gridReads, gridCellBoxes, gridGuards, gridOccluded, gridDetections, itemReads, clearGrid, view, boot,
     readoutPreview,
 } from "./state.js";
+import * as rectTxn from "./rect_txn.js";
 import { drawEdges } from "./routing.js";
 import { renderLiveWindow, liveDetCount, liveRecog } from "./panels/livewin.js";
 import {
@@ -107,14 +108,17 @@ function updatePageNav(winId, list) {
 }
 
 // Flip the canvas to another bound page (bounded) and re-read that image. Page is UI-only
-// (not persisted) — "page does not need to persist".
+// (not persisted) — "page does not need to persist". The read is DEFERRED onto the shared
+// settle clock: the image swaps on the click, and paging through several pages costs ONE
+// OCR pass (at the end), not one per page — the old immediate read made every click wait
+// on the previous page's OCR (which locks the node while it runs).
 async function stepWinPage(winId, d) {
     const list = await capListOf(winId);
     if (list.length <= 1) return;
     const p = Math.min(list.length - 1, Math.max(0, winPageOf(winId) + d));
     if (p === winPageOf(winId)) return;
     winPage.set(winId, p);
-    loadImage(winId, false);   // reloads the now-visible page + re-previews/-detects it
+    loadImage(winId, false, { deferRead: true });   // shows the page now, reads once it settles
 }
 
 function closeImage(winId) {
@@ -145,6 +149,48 @@ function persistWinBox(winId, box) {
     clearGrid(winId);   // layout changed → detected grid is stale
 }
 
+// The drawing surface behind an overlay-registry key (`win:<id>` / `item:<w>:<i>` / `atlas`) — the
+// entry that owns its host element + canvas. One lookup so the rect transaction doesn't re-derive
+// which map a key lives in.
+function surfaceOf(key) {
+    if (key.startsWith("item:")) return itemCanvases.get(key.slice(5));
+    return imageCanvases.get(key === "atlas" ? "atlas" : key.slice(4));
+}
+
+// The rect transaction's view of a box surface (rect_txn.js). Commit writes every dirty box through
+// the registry's single writer, then runs the surface's aftermath ONCE — the same epilogue a single
+// mouse/WASD edit used to run, hoisted out of the loop, so N moved boxes cost one refresh + one
+// autosave (and therefore one read settle, one history entry). Revert just rebuilds the boxes from
+// the model, which was never written.
+function boxSpec(key) {
+    const rec = overlays.get(key);
+    return {
+        host: surfaceOf(key)?.host.querySelector(".canvas-wrap"),
+        // "you left" = a press outside the node carrying the canvas AND outside the node whose typed
+        // rect panel drives this same surface (the box is edited from there, on a different node).
+        isOutside: (t) => {
+            if (nodeEls.get(key)?.contains(t)) return false;
+            const panel = activeRectEdit?.desc.canvasKey === key ? activeRectEdit.nodeEl : null;
+            return !panel?.contains(t);
+        },
+        commit: (boxes) => {
+            for (const b of boxes.values()) rec.persist(b);
+            rec.refresh(); drawEdges(); autosave(rec.winId); rectEditCanvasSync(key);
+        },
+        // the model was never written, so the clean geometry is simply what a rebuild yields
+        restore: () => { rec.refresh(); rec.overlay.render(); rectEditCanvasSync(key); },
+    };
+}
+
+// THE entry point every box mover calls instead of persisting: mouse (overlay onChange, below),
+// keyboard (the shared WASD nudge in main.js) and the typed rect panel. Opens/extends the batch on
+// that surface; nothing is written until it commits.
+export function editBox(key, box) {
+    rectTxn.begin(key, () => boxSpec(key));
+    rectTxn.touch(box.id, box);
+    rectEditCanvasSync(key);   // a typed panel bound to this box tracks the drag/nudge live
+}
+
 // ---- rect-edit panel: typed x/y/w/h for a leaf node's box (region/readout/detect/scrollbar/
 // itemfield/itemtell), synced with the SAME canvas + writers the mouse/WASD already use ----
 // One descriptor per open editor instead of six near-identical branches (rule 7): `get()` reads
@@ -152,16 +198,24 @@ function persistWinBox(winId, box) {
 // commits through the existing single writer for that node's surface and re-fires the existing
 // OCR-read trigger. `canvasKey` matches the overlay registry key (registerOverlay) so the editor
 // can select/sync against the box's canvas even though that canvas lives on a DIFFERENT node
-// (window or item) than the one carrying the rect-edit button.
+// (window or item) than the one carrying the rect-edit button. `toCanvas`/`fromCanvas` map the
+// model's coordinate space to the canvas's: identity for window boxes (both window fractions),
+// item-relative → cutout fractions for an item's fields/tells.
 const RECT_TYPES = new Set(["region", "readout", "detect", "scrollbar", "itemfield", "itemtell"]);
+
+const _ident = (b) => ({ ...b });
 
 function rectDescriptor(n) {
     const winId = n.win.id;
     if (n.type === "itemfield" || n.type === "itemtell") {
         const itemId = n.item.id, boxId = n.ref.id, isField = n.type === "itemfield";
+        const ent = () => itemCanvases.get(`${winId}:${itemId}`);
         return {
             winId, itemId, boxId, canvasKey: `item:${winId}:${itemId}`, locked: false,
+            role: isField ? "field" : "tell",   // persistItem dispatches bbox / field / (anything else = tell)
             get: () => (isField ? model.itemField(winId, itemId, boxId) : model.itemTell(winId, itemId, boxId))?.box,
+            toCanvas: (b) => { const e = ent(); return e ? e.win2cut(e.rel2win(b)) : _ident(b); },
+            fromCanvas: (b) => { const e = ent(); return e ? e.win2rel(e.cut2win(b)) : _ident(b); },
             write: (box) => {
                 if (isField) model.setItemFieldBox(winId, itemId, boxId, box);
                 else model.setItemTellBox(winId, itemId, boxId, box);
@@ -172,9 +226,10 @@ function rectDescriptor(n) {
     const role = n.type;   // region/readout/detect/scrollbar canvas roles match the node type 1:1
     const boxId = n.type === "scrollbar" ? "scrollbar" : n.ref.id;
     return {
-        winId, boxId, canvasKey: `win:${winId}`,
+        winId, boxId, role, canvasKey: `win:${winId}`,
         locked: n.type === "scrollbar" && model.scrollbarLocked(winId),
         get: () => (n.type === "detect" ? n.ref.search : n.type === "scrollbar" ? model.scrollbar(winId) : n.ref.box),
+        toCanvas: _ident, fromCanvas: _ident,   // window fractions on both sides
         write: (box) => {
             persistWinBox(winId, { id: boxId, role, ...box });
             refreshImageBoxes(winId); drawEdges(); autosave(winId);
@@ -195,21 +250,50 @@ function clampRect(draft) {
 
 let activeRectEdit = null;   // { nodeId, nodeEl, desc, draft, panel, outside } — one editor open at a time
 
+// A typed digit is just another way to move the box: it previews on the canvas and joins whatever
+// rect batch that surface already has open (so a drag then a typed tweak commit together). The
+// panel itself never writes the model — Enter / ✓ / clicking out does, through rect_txn.
+// With the box's canvas CLOSED there is nothing to preview on, so the panel becomes its own
+// transaction surface (`panel:<node>`) and commits through the descriptor's writer.
+function rectEditPush() {
+    const st = activeRectEdit;
+    if (!st || st.desc.locked) return;
+    const cb = { id: st.desc.boxId, role: st.desc.role, ...st.desc.toCanvas(clampRect(st.draft)) };
+    const ov = overlays.get(st.desc.canvasKey)?.overlay;
+    if (!ov) {
+        rectTxn.begin(`panel:${st.nodeId}`, () => panelSpec(st));
+        rectTxn.touch(cb.id, cb);
+        return;
+    }
+    const live = ov.boxes.find((b) => b.id === cb.id);
+    if (live) { live.x = cb.x; live.y = cb.y; live.w = cb.w; live.h = cb.h; ov.render(); }
+    editBox(st.desc.canvasKey, cb);
+}
+
+function panelSpec(st) {
+    return {
+        host: st.panel,
+        isOutside: (t) => !st.nodeEl.contains(t),
+        commit: (boxes) => { const b = boxes.get(st.desc.boxId); if (b) st.desc.write(st.desc.fromCanvas(b)); },
+        restore: () => { Object.assign(st.draft, st.desc.get()); rectEditSyncInputs(st, true); },
+    };
+}
+
 function rectEditRow(label, k, draft, locked) {
     const inp = h("input", { type: "number", class: "redit", dataset: { k }, step: "0.001",
         min: (k === "x" || k === "y") ? "0" : String(MIN_FRAC), max: "1",
         value: (+draft[k]).toFixed(4), disabled: locked,
-        oninput: (e) => { draft[k] = +e.target.value; } });
+        oninput: (e) => { draft[k] = +e.target.value; rectEditPush(); } });
     return kv(label, inp);
 }
 
-// Toggled by the node header's .gn-rectbtn (main.js). Opening a SECOND node's editor first
-// applies (closes) whichever one was already open — "close = apply" (per spec), so a stray open
-// editor never lingers or silently discards a typed edit.
+// Toggled by the node header's .gn-rectbtn (main.js). Opening a SECOND node's editor closes the
+// first — closing is NOT a commit any more: an uncommitted edit lives on in its rect batch (with
+// the ✓/✕ bar on the canvas it draws on) until Enter / Escape / a click outside resolves it.
 function toggleRectEditor(nodeEl, n) {
     if (activeRectEdit) {
         const wasSameNode = activeRectEdit.nodeId === n.id;
-        closeRectEditor(true);
+        closeRectEditor();
         if (wasSameNode) return;   // plain toggle-off
     }
     const desc = rectDescriptor(n);
@@ -221,13 +305,10 @@ function toggleRectEditor(nodeEl, n) {
     const panel = h("div", { class: "gn-rectedit", title: desc.locked ? "locked — remove the scrollbar's calibration cutouts to move it" : null },
         h("div", { class: "gn-grid" },
             rectEditRow("x", "x", draft, desc.locked), rectEditRow("y", "y", draft, desc.locked),
-            rectEditRow("width", "w", draft, desc.locked), rectEditRow("height", "h", draft, desc.locked)),
-        h("div", { class: "gn-rectedit-foot" },
-            btn("apply", { disabled: desc.locked, onClick: () => closeRectEditor(true) }),
-            btn("cancel", { cls: "btn-icon", onClick: () => closeRectEditor(false) })));
+            rectEditRow("width", "w", draft, desc.locked), rectEditRow("height", "h", draft, desc.locked)));
     body.appendChild(panel);
     nodeEl.querySelector(".gn-rectbtn")?.classList.add("on");
-    // Outside click = apply-close. The box being edited draws on a DIFFERENT node's canvas, so
+    // Outside click closes the panel. The box being edited draws on a DIFFERENT node's canvas, so
     // dragging it there must not count as "outside" — only close when the click lands outside
     // both this node AND the bound overlay's canvas host.
     const outside = (ev) => {
@@ -236,37 +317,46 @@ function toggleRectEditor(nodeEl, n) {
             ? itemCanvases.get(`${desc.winId}:${desc.itemId}`)
             : imageCanvases.get(desc.winId);
         if (hostEntry?.host.contains(ev.target)) return;
-        closeRectEditor(true);
+        closeRectEditor();
     };
     document.addEventListener("pointerdown", outside, true);
     activeRectEdit = { nodeId: n.id, nodeEl, desc, draft, panel, outside };
     overlaySelected(desc.canvasKey, desc.boxId);   // the box becomes the canvas's active selection (targets WASD too)
 }
 
-function closeRectEditor(apply) {
+function closeRectEditor() {
     const st = activeRectEdit;
     if (!st) return;
     document.removeEventListener("pointerdown", st.outside, true);
-    if (apply && !st.desc.locked) st.desc.write(clampRect(st.draft));
+    // A panel-hosted batch dies with its host (the ✓/✕ bar lives INSIDE the panel), so land it here.
+    // A canvas-hosted batch outlives the panel — its bar is on the canvas, still resolvable.
+    if (rectTxn.dirty(`panel:${st.nodeId}`)) rectTxn.commitIfDirty();
     st.panel.remove();
     st.nodeEl.querySelector(".gn-rectbtn")?.classList.remove("on");
     activeRectEdit = null;
 }
 
-// Mirrors a canvas-driven box change (mouse drag or WASD — both already persisted the model
-// through their own writer) into an OPEN rect-edit panel's inputs. `overlayKey` is the registry
-// key ("win:<id>" or "item:<winId>:<itemId>") of the overlay that just changed; a no-op unless
-// that's the overlay the open editor is bound to. Re-reads desc.get() rather than taking the box
-// as an argument — one path for both window-fraction and item-relative-fraction boxes.
+// Mirrors a canvas-driven box change (mouse drag, WASD, or a batch commit) into an OPEN rect-edit
+// panel's inputs. `overlayKey` is the registry key ("win:<id>" or "item:<winId>:<itemId>") of the
+// overlay that just changed; a no-op unless that's the overlay the open editor is bound to. Prefers
+// the box's UNCOMMITTED draft over the model — while a rect batch is open the model still holds the
+// clean value, and the inputs must show what's on screen.
 function rectEditCanvasSync(overlayKey) {
     const st = activeRectEdit;
     if (!st || st.desc.canvasKey !== overlayKey) return;
-    const box = st.desc.get();
+    const draft = rectTxn.pendingFor(overlayKey)?.get(st.desc.boxId);
+    const box = draft ? st.desc.fromCanvas(draft) : st.desc.get();
     if (!box) return;
     Object.assign(st.draft, box);
+    rectEditSyncInputs(st, false);
+}
+
+// Push `st.draft` into the four number inputs. `force` overwrites even the focused one (a revert
+// must reset the field you were typing in); otherwise the input under the cursor is left alone.
+function rectEditSyncInputs(st, force) {
     for (const k of ["x", "y", "w", "h"]) {
         const inp = st.panel.querySelector(`.redit[data-k="${k}"]`);
-        if (inp && document.activeElement !== inp) inp.value = (+box[k]).toFixed(4);
+        if (inp && (force || document.activeElement !== inp)) inp.value = (+st.draft[k]).toFixed(4);
     }
 }
 
@@ -309,6 +399,7 @@ async function openImage(winId, nodeEl = null) {
         onCreate: async (geom) => {
             const k = kindOf();
             if (!k) return;   // no draw tool armed → drawing is a no-op (canCreate also blocks it upstream)
+            rectTxn.commitIfDirty();   // a new box persists+autosaves immediately; land any pending edit first
             if (k === "item") { await createItemFromGeom(winId, geom); return; }   // freeze + spawn item node
             let newDetect = null, newNode = null;   // the node this draw spawned → inherit the window's group
             if (k === "detect") { newDetect = model.addDetect(winId, geom); newNode = `det:${winId}:${newDetect}`; }
@@ -327,10 +418,11 @@ async function openImage(winId, nodeEl = null) {
             if (newDetect) prefillDetectText(winId, newDetect);
             drawEdges();   // edge to the window drawn immediately
         },
-        // mouse move/resize AND keyboard (WASD/shift+WASD) write through the SAME persistWinBox, so
-        // every role a box can have is honoured identically by both (rule 7 — the two writers used to
-        // diverge and readout/item boxes silently wrote as regions under WASD).
-        onChange: (box) => { persistWinBox(winId, box); refreshImageBoxes(winId); drawEdges(); autosave(winId); rectEditCanvasSync(`win:${winId}`); },
+        // mouse move/resize AND keyboard (WASD/shift+WASD) both open the SAME rect transaction, which
+        // commits through persistWinBox — so every role a box can have is honoured identically by both
+        // (rule 7 — the two writers used to diverge and readout/item boxes silently wrote as regions
+        // under WASD). Nothing is persisted or re-read until the batch commits.
+        onChange: (box) => editBox(`win:${winId}`, box),
         onSelect: (id) => overlaySelected(`win:${winId}`, id),
         canCreate,   // no crosshair / no new box until a draw tool is armed
     });
@@ -873,6 +965,7 @@ function openItemImage(winId, itemId) {
             const w = cut2win(geom);
             const k = kindOf();
             if (!k) return;                            // no draw tool picked → drawing is a no-op
+            rectTxn.commitIfDirty();   // a new box persists+autosaves immediately; land any pending edit first
             if (k === "field") {
                 // drawing a field SPAWNS its own node, grouped with the item. Position + render FIRST
                 // (addToGroup needs the node to have a rect), then attach to the item's group.
@@ -904,15 +997,9 @@ function openItemImage(winId, itemId) {
             clearGrid(winId); scheduleItemRead(winId, itemId); autosave(winId);
             panZoomTo(`tell:${winId}:${itemId}:${tid}`);
         },
-        // mouse and WASD share ONE writer (persistItem, rule 7); each then runs the shared repaint
-        // (afterItemBoxWrite) plus its OWN autosave/sync exactly once — mouse here (self-contained,
-        // like the window overlay's onChange), WASD via the shared handler in main.js.
-        onChange: (box) => {
-            persistItem(box);
-            afterItemBoxWrite();
-            autosave(winId);
-            rectEditCanvasSync(`item:${winId}:${itemId}`);
-        },
+        // mouse and WASD open the SAME rect transaction (rule 7), which commits through persistItem +
+        // afterItemBoxWrite + autosave exactly once for the whole batch — no cutout re-read per drag.
+        onChange: (box) => editBox(`item:${winId}:${itemId}`, box),
         onSelect: (id) => overlaySelected(`item:${winId}:${itemId}`, id),
     });
     itemCanvases.set(`${winId}:${itemId}`, { host, canvas, overlay, cut2win, win2cut, win2rel, rel2win });
@@ -980,7 +1067,9 @@ function refreshItemBoxes(winId, itemId) {
         }
         boxes.push(box);
     }
-    ent.overlay.setBoxes(boxes);
+    // an uncommitted rect edit outranks the model: this list was just rebuilt from the CLEAN model,
+    // so a read landing mid-edit would otherwise snap every dirty box back (rect_txn.js)
+    ent.overlay.setBoxes(rectTxn.applyPending(`item:${winId}:${itemId}`, boxes));
     // the extracted field values, drawn over their boxes tinted by confidence (same as the
     // window preview). The read returns boxes already in cutout fractions.
     const reads = rd ? Object.values(rd.fields).filter((f) => f.box)
@@ -1678,11 +1767,58 @@ function fireWindowRead() {
 }
 
 
-async function loadImage(winId, recapture) {
+// Blank one detect/scrollbar node's `.detect-status` back to its "not run" look — the inverse
+// of setDetectStatus's two consumers (rich detect node / plain scrollbar line).
+function blankDetectStatus(nodeId) {
+    const box = nodeEls.get(nodeId)?.querySelector(".detect-status");
+    if (!box) return;
+    const verdict = box.querySelector(".ds-verdict");
+    if (!verdict) { box.textContent = "position: —"; box.className = "detect-status muted"; return; }
+    box.className = "detect-status muted";
+    verdict.textContent = "◯ —";
+    verdict.className = "ds-verdict";
+    for (const sel of [".ds-before", ".ds-after", ".ds-chars"]) {
+        const row = box.querySelector(sel);
+        if (row) row.hidden = true;
+    }
+}
+
+// Un-paint EVERYTHING the last read produced for a window — its bound image is about to change,
+// so every read-derived surface is stale the moment the swap starts (the read that refills them
+// lands hundreds of ms later, debounced). One place, called from loadImage, so no call site can
+// swap an image and leave the previous one's data on screen.
+function clearWindowReads(winId) {
+    clearGrid(winId);              // grid boxes, per-cell reads, cell outlines, guards, occluded, raw detections
+    refreshImageBoxes(winId);      // repaint the overlay with the AUTHORED boxes only
+    imageCanvases.get(winId)?.overlay.setDetectStatus({});   // drop the per-box detect tint
+    _lastTrace.delete(winId);      // the stashed rule-trace batch read the OLD image
+    repaintTracedNodes(winId);     // → every field node's `.frule-trace` slot blanks
+    prevHost(winId)?.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, "reading…"));
+    setWindowDetectStatus(winId, {});   // window node's per-detector ticks + overall verdict
+    for (const a of model.detects(winId)) blankDetectStatus(`det:${winId}:${a.id}`);
+    if (model.scrollbar(winId)) blankDetectStatus(`sb:${winId}:scrollbar`);
+    // readout nodes fall back to the preview read when live mode is off — drop THIS window's ids
+    // (mirrors storeReadoutPreview's drop branch) so they show "—" until the new read lands.
+    for (const v of model.window(winId)?.readouts || []) {
+        delete readoutPreview.vals[v.id]; delete readoutPreview.confs[v.id];
+        delete readoutPreview.all[v.id]; delete readoutPreview.allConfs[v.id];
+    }
+    window.dispatchEvent(new CustomEvent("readout-preview"));
+}
+
+// `deferRead`: settle the post-load read on the shared clock (scheduleWindowRead) instead of
+// firing it from onload. Only the page-step uses it — boot/open and recapture must read
+// immediately, since bootSettle (main.js) waits on `ocrBusyCount()` going quiet for 600ms and
+// would drop the veil (and clear boot.phase, losing the server OCR cache) before a 700ms-deferred
+// read ever started.
+async function loadImage(winId, recapture, { deferRead = false } = {}) {
     const entry = imageCanvases.get(winId);
     if (!entry) return;
     const game = model.profile.name;
     let url = null;
+    // the image on screen is about to change → nothing read off the old one may survive the swap
+    if (winId !== "atlas") clearWindowReads(winId);
+    const want = winPageOf(winId);   // the page this call is loading; a faster click supersedes it
     const done = timed(`${recapture ? "recapture" : "load image"} ${winId}`);
     setNodeBusy(nodeIdOf(winId), true);   // capturing/fetching the image
     try {
@@ -1700,9 +1836,12 @@ async function loadImage(winId, recapture) {
             if (cap) url = api.captureUrl(game, cap);
         }
     } catch (e) { done(String(e.message || e), "err"); setStatus(String(e.message || e)); setNodeBusy(nodeIdOf(winId), false); return; }
+    // a later page-step already superseded this load — its own call owns the canvas now
+    const stale = () => !recapture && winPageOf(winId) !== want;
     if (!url) {   // this page has no bound image — show a blank canvas (no live grab) + the empty nav
         done();
         setNodeBusy(nodeIdOf(winId), false);
+        if (stale()) return;
         entry.overlay.setImage(null);
         refreshImageBoxes(winId);
         updateImageLabel(winId);
@@ -1713,6 +1852,7 @@ async function loadImage(winId, recapture) {
     img.onload = () => {
         done();
         setNodeBusy(nodeIdOf(winId), false);
+        if (stale()) return;
         // keep the canvas area at the image aspect ratio so resizing always fits
         entry.canvas.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
         entry.overlay.setImage(img);
@@ -1722,12 +1862,12 @@ async function loadImage(winId, recapture) {
         // the image changed (recapture / picked a capture / first open) → READ it: full preview
         // when the node exists, else just the grid overlay. The cutout atlas is image-only (no
         // grid/preview) — only its cheap detectors need re-evaluating.
-        if (winId !== "atlas") {
-            if (prevHost(winId)) refreshPreview(winId, false);
-            else refreshGridPreview(winId);
-            retraceWindow(winId);   // the image changed → the field nodes' rule traces are stale, re-read them
-        }
-        if (winId !== "atlas") refreshDetect(winId);   // atlas node has no detectors to evaluate
+        if (winId === "atlas") return;
+        if (deferRead) { scheduleWindowRead(winId, { trace: true, readouts: true }); return; }
+        if (prevHost(winId)) refreshPreview(winId, false);
+        else refreshGridPreview(winId);
+        retraceWindow(winId);   // the image changed → the field nodes' rule traces are stale, re-read them
+        refreshDetect(winId);
     };
     img.onerror = () => setNodeBusy(nodeIdOf(winId), false);
     img.src = url;
@@ -1758,7 +1898,9 @@ function refreshImageBoxes(winId) {
         glyphPending.forEach((p, i) =>
             boxes.push({ id: `${GLYPH_PROP_PREFIX}${i}`, role: "glyphprop", label: p.char || "?", ...p.box }));
     }
-    entry.overlay.setBoxes(boxes);
+    // an uncommitted rect edit outranks the model (see refreshItemBoxes) — the atlas surface never
+    // opens a batch, so its key simply never matches.
+    entry.overlay.setBoxes(rectTxn.applyPending(`win:${winId}`, boxes));
     entry.overlay.setGridGuides(buildGridGuides(winId));   // columns + locator scan strips
     // prefer the live-detected grid (rows found in the actual capture); fall back to
     // the live-detected grid (where items were actually located this capture)

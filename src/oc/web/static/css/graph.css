@@ -529,8 +529,14 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     border-radius: 6px; padding: 2px 0;
     display: flex; flex-direction: column; gap: 8px; justify-content: center;
 }
-.gn-rectedit-foot { display: flex; gap: 6px; justify-content: flex-end; }
 /* .gn-rectbtn's active tint comes free from .gn-cog.on (flow.css) -- it carries both classes */
+
+/* The rect transaction's floating commit/cancel pair (rect_txn.js): mounted into whichever surface
+   holds the uncommitted boxes -- a .canvas-wrap, or the .gn-rectedit panel when that box's canvas
+   is closed -- and removed the moment nothing is pending, so it is invisible in steady state.
+   The count rides the tick when more than one box is dirty. */
+.rect-txn { position: absolute; top: 6px; right: 6px; z-index: 3; display: flex; gap: 4px; }
+.rect-txn-n { font-size: var(--fs-sm); margin-left: 2px; }
 
 /* Full-width BLOCKS (non-k/v content: images, lists, tables, textareas, status stacks,
    multi-control rows) span both columns — the chosen design ("blocks span 1/-1"). Blocks are
@@ -929,6 +935,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .imgtools .spacer { flex: 1; }
 .imgtools .tool-div { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
 .win-img .canvas-wrap, .glyph-img .canvas-wrap, .item-img .canvas-wrap { width: 100%; overflow: hidden;
+    position: relative;   /* anchor for the rect transaction's floating commit/cancel bar */
     border-radius: 4px; margin-top: 4px; }  /* fills the node; node grips resize it. aspect-ratio set per image in JS */
 /* canvas fills the wrap EXACTLY (height:100%, not buffer-intrinsic) so the wrap's
    aspect-ratio box never leaves a dark gap around the image; the buffer ratio already
