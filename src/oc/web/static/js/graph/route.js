@@ -286,6 +286,13 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
 // so a vertex = base + its V-offset + its H-offset and orthogonality is preserved). Port stubs are
 // segments too => connectors leaving one face fan out along it. Each lane band is shifted to stay
 // within the free alley bounded by neighbouring nodes, so no lane spills across a node edge.
+//
+// Each corridor used to pick its own lane order independently (sorted by each wire's far endpoint) —
+// fine for one corridor alone, but where a BUNDLE turns together from one corridor into another, the
+// two corridors' independently-chosen orders can disagree, and the bundle crosses itself right at the
+// bend even though it nests cleanly along each straight run. `orderCorridors` below fixes this:
+// corridors sharing a bend are reordered together (crossing-minimising adjacent swaps, seeded by the
+// old per-corridor sort) so a bundle keeps ONE consistent nesting order through its turns.
 // endpoint reference centre for a line end: a node centre, or a gate's fixed point (gate ends have no
 // backing node, so byId.get() would be undefined). Used by nudge/fan wherever they'd read a node centre.
 const endCenter = (ln, which, byId) => { const g = which === "from" ? ln.fromGate : ln.toGate; return g ? g.pt : center(byId.get(which === "from" ? ln.from : ln.to)); };
@@ -306,10 +313,15 @@ function nudge(lines, byId, rects, outPorts, bands) {
     // which A* avoids); a band to one side clamps that side, keeping the lane out of the band.
     const walls = bands && bands.length ? rects.concat(bands) : rects;
     for (const ln of lines) { ln._V = ln.pts.map((p) => p.slice()); ln._dx = new Array(ln._V.length).fill(0); ln._dy = new Array(ln._V.length).fill(0); }
-    const segs = [];
-    for (const ln of lines) { const V = ln._V; for (let i = 0; i + 1 < V.length; i++) { const a = V[i], b = V[i + 1];
-        if (Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) > 0.5) segs.push({ ln, axis: "V", coord: a[0], lo: Math.min(a[1], b[1]), hi: Math.max(a[1], b[1]), i0: i, i1: i + 1 });
-        else if (Math.abs(a[1] - b[1]) < 0.5 && Math.abs(a[0] - b[0]) > 0.5) segs.push({ ln, axis: "H", coord: a[1], lo: Math.min(a[0], b[0]), hi: Math.max(a[0], b[0]), i0: i, i1: i + 1 });
+    const segs = [], lineSegs = new Map();   // lineSegs: ln -> its segs in path order (no gaps — every
+                                              // consecutive vertex pair is exactly one H or V segment,
+                                              // orthogonal invariant) — walked below to find where a wire
+                                              // BENDS from one bundled corridor straight into another.
+    for (const ln of lines) { const V = ln._V, arr = []; lineSegs.set(ln, arr);
+        for (let i = 0; i + 1 < V.length; i++) { const a = V[i], b = V[i + 1]; let s = null;
+            if (Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) > 0.5) s = { ln, axis: "V", coord: a[0], lo: Math.min(a[1], b[1]), hi: Math.max(a[1], b[1]), i0: i, i1: i + 1 };
+            else if (Math.abs(a[1] - b[1]) < 0.5 && Math.abs(a[0] - b[0]) > 0.5) s = { ln, axis: "H", coord: a[1], lo: Math.min(a[0], b[0]), hi: Math.max(a[0], b[0]), i0: i, i1: i + 1 };
+            if (s) { segs.push(s); arr.push(s); }
     } }
     const buckets = new Map();
     for (const s of segs) { const k = s.axis + ":" + Math.round(s.coord); if (!buckets.has(k)) buckets.set(k, []); buckets.get(k).push(s); }
@@ -330,15 +342,116 @@ function nudge(lines, byId, rects, outPorts, bands) {
         if (cur) out.push(cur);
         return out;
     };
+
+    // ---- corridors: one per real shared run, seeded in the old through()-sorted order --------------
+    const corridors = [];
     for (const bucket of buckets.values()) {
-      if (bucket.length < 2) continue;
-      for (const arr of clustersOf(bucket)) {
-        if (arr.length < 2) continue;
-        arr.sort((a, b) => through(a) - through(b) || a.lo - b.lo);
+        if (bucket.length < 2) continue;
+        for (const arr of clustersOf(bucket)) {
+            if (arr.length < 2) continue;
+            arr.sort((a, b) => through(a) - through(b) || a.lo - b.lo);
+            const corridor = { id: corridors.length, axis: arr[0].axis, coord: arr[0].coord, segs: arr };
+            for (const s of arr) s.corridor = corridor;
+            corridors.push(corridor);
+        }
+    }
+
+    // ---- bends: every point a wire crosses from one BUNDLED corridor straight into another ---------
+    // (two adjacent segments of the same wire that both landed in a corridor — a lone/unbundled side
+    // has no order to keep consistent, so it's skipped). Grouped by the PAIR of corridors it bends
+    // between: two wires only risk crossing each other at a bend where they share BOTH corridors.
+    const pairGroups = new Map();
+    for (const [, arr] of lineSegs) for (let k = 0; k + 1 < arr.length; k++) {
+        const a = arr[k], b = arr[k + 1];
+        if (!a.corridor || !b.corridor) continue;
+        const key = a.corridor.id < b.corridor.id ? a.corridor.id + "," + b.corridor.id : b.corridor.id + "," + a.corridor.id;
+        (pairGroups.get(key) || pairGroups.set(key, []).get(key)).push({ a, b });
+    }
+    for (const [key, group] of pairGroups) {
+        const [ia, ib] = key.split(",").map(Number);
+        (corridors[ia].touching || (corridors[ia].touching = [])).push(group);
+        (corridors[ib].touching || (corridors[ib].touching = [])).push(group);
+    }
+    // live lane offset of a segment, read from its corridor's CURRENT order — reflects the latest
+    // trial swap below, no separate bookkeeping needed.
+    const laneOffset = (s) => { const c = s.corridor, T = c.segs.length; return (c.segs.indexOf(s) - (T - 1) / 2) * C.laneGap; };
+    // the point a wire's bend sits at, from its two (V,H) corridor coords + their live lane offsets.
+    const cornerOf = (bl) => {
+        const v = bl.a.axis === "V" ? bl.a : bl.b, h = bl.a.axis === "H" ? bl.a : bl.b;
+        return [v.corridor.coord + laneOffset(v), h.corridor.coord + laneOffset(h)];
+    };
+    // one endpoint of a segment's OTHER (non-corner) end, read straight from the pre-offset base
+    // points — approximate (ignores any offset it might separately pick up as some earlier/later
+    // bend's OWN corner), but only ever matters far from the corner under test, so it never flips
+    // the local verdict. `isA` says whether this seg is the bend's entering half (corner = its i1,
+    // so the far end is i0) or its exiting half (corner = its i0, far end i1).
+    const farOf = (seg, isA, axisIdx) => seg.ln._V[isA ? seg.i0 : seg.i1][axisIdx];
+    // does wire bl1's bend cross wire bl2's? Both pieces are axis-aligned (one V, one H per wire), so
+    // "crosses" reduces to an exact interval test — does wire A's vertical run pass through wire B's
+    // corner Y, AND wire B's horizontal run pass through wire A's corner X (or the symmetric case).
+    // The CORNER end of each run is exact (from cornerOf, live offsets); the far end is the base-point
+    // approximation above — mixing a base bound with a live corner on the SAME run would be wrong
+    // (the live offset can push the corner past where the base far-bound sits, right where it matters
+    // most), so each run's span is built from its own two consistent ends.
+    const bendCrosses = (bl1, bl2) => {
+        const c1 = cornerOf(bl1), c2 = cornerOf(bl2);
+        const v1 = bl1.a.axis === "V" ? bl1.a : bl1.b, h1 = bl1.a.axis === "H" ? bl1.a : bl1.b;
+        const v2 = bl2.a.axis === "V" ? bl2.a : bl2.b, h2 = bl2.a.axis === "H" ? bl2.a : bl2.b;
+        const fy1 = farOf(v1, v1 === bl1.a, 1), fx1 = farOf(h1, h1 === bl1.a, 0);
+        const fy2 = farOf(v2, v2 === bl2.a, 1), fx2 = farOf(h2, h2 === bl2.a, 0);
+        const y1lo = Math.min(fy1, c1[1]), y1hi = Math.max(fy1, c1[1]), x1lo = Math.min(fx1, c1[0]), x1hi = Math.max(fx1, c1[0]);
+        const y2lo = Math.min(fy2, c2[1]), y2hi = Math.max(fy2, c2[1]), x2lo = Math.min(fx2, c2[0]), x2hi = Math.max(fx2, c2[0]);
+        const cross1 = y1lo <= c2[1] && c2[1] <= y1hi && x2lo <= c1[0] && c1[0] <= x2hi;
+        const cross2 = y2lo <= c1[1] && c1[1] <= y2hi && x1lo <= c2[0] && c2[0] <= x1hi;
+        return cross1 || cross2;
+    };
+    const groupCrossings = (group) => { let n = 0; for (let i = 0; i < group.length; i++) for (let j = i + 1; j < group.length; j++) if (bendCrosses(group[i], group[j])) n++; return n; };
+    const corridorCrossings = (c) => { let n = 0; for (const g of (c.touching || [])) n += groupCrossings(g); return n; };
+
+    // ---- reorder: adjacent-transposition, accept only strict crossing reductions -------------------
+    // Seeded by the through()-sort, so an already-clean bundle makes zero swaps and looks identical to
+    // before; only a bundle whose corridors disagree on order gets reshuffled, and only until it stops
+    // improving — monotonic, so this can only remove crossings, never introduce a worse-looking bundle.
+    const active = corridors.filter((c) => c.touching && c.touching.length);
+    // adjacent-transposition needs up to N passes to fully untangle a width-N bundle (worst case,
+    // reverse order) — a flat cap starves wide bundles before they finish reordering. Scale to the
+    // widest active corridor; cheap even when oversized, since a sweep with no accepted swap exits
+    // the loop immediately (line below).
+    let widest = 6; for (const c of active) if (c.segs.length > widest) widest = c.segs.length;
+    const MAX_SWEEPS = widest;
+    for (let sweep = 0; sweep < MAX_SWEEPS; sweep++) {
+        let changed = false;
+        for (const c of active) for (let i = 0; i + 1 < c.segs.length; i++) {
+            const before = corridorCrossings(c);
+            const t = c.segs[i]; c.segs[i] = c.segs[i + 1]; c.segs[i + 1] = t;
+            if (corridorCrossings(c) < before) changed = true;
+            else { const t2 = c.segs[i]; c.segs[i] = c.segs[i + 1]; c.segs[i + 1] = t2; }   // no gain: revert
+        }
+        if (!changed) break;
+    }
+
+    for (const corridor of corridors) {
+        const arr = corridor.segs;
         const trackEnd = [];
-        for (const s of arr) { let tr = 0; while (tr < trackEnd.length && trackEnd[tr] > s.lo + 1) tr++; if (tr === trackEnd.length) trackEnd.push(-Infinity); s.tr = tr; trackEnd[tr] = s.hi; }
+        if (corridor.touching && corridor.touching.length) {
+            // order-preserving packing: a segment gets the smallest track that's both free (no active
+            // occupant) AND above every currently-active segment it overlaps. Plain greedy first-fit can
+            // still re-pack a later, "outer" segment onto an earlier, freed track — invisible on its
+            // own (the freed segment is gone by then) but it silently reinverts the order the sweep
+            // above just settled, against whichever OTHER still-active segment now sits above it.
+            for (const s of arr) {
+                let minTr = 0;
+                for (let t = 0; t < trackEnd.length; t++) if (trackEnd[t] > s.lo + 1) minTr = t + 1;
+                let tr = minTr; while (tr < trackEnd.length && trackEnd[tr] > s.lo + 1) tr++;
+                if (tr === trackEnd.length) trackEnd.push(s.hi); else trackEnd[tr] = s.hi;
+                s.tr = tr;
+            }
+        } else {
+            // no downstream bend to protect — plain greedy keeps this bundle at its most compact width.
+            for (const s of arr) { let tr = 0; while (tr < trackEnd.length && trackEnd[tr] > s.lo + 1) tr++; if (tr === trackEnd.length) trackEnd.push(-Infinity); s.tr = tr; trackEnd[tr] = s.hi; }
+        }
         const T = trackEnd.length; if (T < 2) continue;
-        const g = C.laneGap, axis = arr[0].axis, coord = arr[0].coord;
+        const g = C.laneGap, axis = corridor.axis, coord = corridor.coord;
         const minOff = (0 - (T - 1) / 2) * g, maxOff = ((T - 1) - (T - 1) / 2) * g;
         let lo = Infinity, hi = -Infinity; for (const s of arr) { lo = Math.min(lo, s.lo); hi = Math.max(hi, s.hi); }
         let lb = -Infinity, rb = Infinity;
@@ -367,7 +480,6 @@ function nudge(lines, byId, rects, outPorts, bands) {
             const off = (s.tr - (T - 1) / 2) * g + shift;
             if (axis === "V") { s.ln._dx[s.i0] += off; s.ln._dx[s.i1] += off; } else { s.ln._dy[s.i0] += off; s.ln._dy[s.i1] += off; }
         }
-      }
     }
     for (const ln of lines) {
         const pts = ln._V.map((p, i) => [p[0] + ln._dx[i], p[1] + ln._dy[i]]);
@@ -425,7 +537,16 @@ function evictSegments(pts, walls, isTether, ln, byId) {
             const e0 = vert ? r.x : r.y, e1 = vert ? (r.x + r.w) : (r.y + r.h);
             const o0 = vert ? r.y : r.x, o1 = vert ? (r.y + r.h) : (r.x + r.w);
             if (hi <= o0 + 0.5 || lo >= o1 - 0.5) continue;          // segment span misses the wall
-            if (coord <= e0 + 0.5 || coord >= e1 - 0.5) continue;    // segment already outside the wall
+            if (coord <= e0 + 0.5 || coord >= e1 - 0.5) {            // already outside (or flush with) the wall
+                // GRAZING: an interior run sitting within MARG of an edge it runs alongside would render
+                // flush against it — push it out to a full MARG clear. Port/gate stubs (isEnd) keep their
+                // existing exemptions untouched; only a non-endpoint run gets nudged here.
+                if (!isEnd) {
+                    if (coord > e0 - MARG && coord <= e0 + 0.5) { const t = e0 - MARG; if (vert) { a[0] = t; b[0] = t; } else { a[1] = t; b[1] = t; } }
+                    else if (coord < e1 + MARG && coord >= e1 - 0.5) { const t = e1 + MARG; if (vert) { a[0] = t; b[0] = t; } else { a[1] = t; b[1] = t; } }
+                }
+                continue;
+            }
             if (isTether && isEnd) {
                 if (!endNode) continue;   // no backing node face to clamp against (gate/free end) — leave it
                 // nearer edge of the crossed node (minimal move off a graze), CORNER_CLEAR past it

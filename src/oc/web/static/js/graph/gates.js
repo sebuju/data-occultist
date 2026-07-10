@@ -15,18 +15,90 @@
 
 const PORT_MIN = 12;      // hard floor between adjacent fanned gates on one face (no overlap)
 const FACE_MARGIN = 12;   // keep the fan this far inside the face corners
+const SPACE_CAP = 300;    // px clearance treated as "wide open" — caps one distant node from swamping
+                          // the score against a face that's merely mostly-clear
+const K_SPACE = 60;       // max px-equivalent bonus faceToward gives a fully-open face (space score
+                          // normalized 0..1) — direction still dominates; this only breaks a near-tie
+                          // or steers off a strongly-blocked side
+const K_OPEN = 0.75;      // blend weight of the fan centre toward the emptiest span (0 = pure pierce-
+                          // mean, 1 = pure open-gap) — the open gap dominates: a member row's own
+                          // pierce-mean reliably points AT that row, so a weak blend barely escapes it.
+const NEAR_PROBE = 150;   // px reach from the face (EITHER direction) within which a node counts as
+                          // crowding this gap-search — a member row parked right at the boundary
+                          // squeezes the gate exactly like a nearby exterior node would. Bounds BOTH
+                          // sides: unbounded outward reach let one distant, unrelated node (anything
+                          // whose Y merely overlapped the span, however far away in X) swallow the
+                          // whole usable span and collapse the search to the span edge — the opposite
+                          // of "emptiest". Beyond this depth on either side, routing has room to dodge
+                          // on its own; only near-face congestion should relocate the gate.
 
 const rectCenter = (r) => [r.x + r.w / 2, r.y + r.h / 2];
 
+// clearance beyond `box`'s face `f`, out to the nearest node rect that both (a) overlaps the face's
+// perpendicular span and (b) sits outward of the face — how much open canvas a gate on this face has
+// before it runs into something. No qualifying node -> SPACE_CAP (wide open).
+function faceSpace(box, f, nodeRects) {
+    let best = SPACE_CAP;
+    if (!nodeRects) return best;
+    const horiz = f === "L" || f === "R";
+    const lo = horiz ? box.y : box.x, hi = horiz ? box.y + box.h : box.x + box.w;
+    for (const r of nodeRects.values()) {
+        const rLo = horiz ? r.y : r.x, rHi = horiz ? r.y + r.h : r.x + r.w;
+        if (rHi <= lo || rLo >= hi) continue;   // no overlap with the face's perpendicular span
+        let d;
+        if (f === "L") { if (r.x + r.w > box.x) continue; d = box.x - (r.x + r.w); }
+        else if (f === "R") { if (r.x < box.x + box.w) continue; d = r.x - (box.x + box.w); }
+        else if (f === "T") { if (r.y + r.h > box.y) continue; d = box.y - (r.y + r.h); }
+        else { if (r.y < box.y + box.h) continue; d = r.y - (box.y + box.h); }
+        if (d < best) best = d;
+    }
+    return best;
+}
+// widest free gap along `box`'s face `f` within [lo,hi] (the usable fan span) — returns that gap's
+// centre COORD along the face axis. A gap is bounded by any node within NEAR_PROBE of the face on
+// EITHER side: an exterior node close enough to squeeze the wire leaving the face, or a member row
+// parked close enough to the face on the inside to squeeze the gate the same way. Nodes farther than
+// NEAR_PROBE (either direction) don't count — they're not this gap's problem. No qualifying nodes ->
+// the span's own centre (nothing to dodge).
+function emptiestCoord(box, f, nodeRects, lo, hi) {
+    if (!nodeRects) return (lo + hi) / 2;
+    const horiz = f === "L" || f === "R";
+    const blocks = [];
+    for (const r of nodeRects.values()) {
+        const b0 = horiz ? r.y : r.x, b1 = horiz ? r.y + r.h : r.x + r.w;
+        if (b1 <= lo || b0 >= hi) continue;   // no overlap with the usable span
+        let near;
+        if (f === "L") near = (r.x + r.w <= box.x && box.x - (r.x + r.w) <= NEAR_PROBE) || (r.x >= box.x && r.x - box.x <= NEAR_PROBE);
+        else if (f === "R") near = (r.x >= box.x + box.w && r.x - (box.x + box.w) <= NEAR_PROBE) || (r.x + r.w <= box.x + box.w && (box.x + box.w) - (r.x + r.w) <= NEAR_PROBE);
+        else if (f === "T") near = (r.y + r.h <= box.y && box.y - (r.y + r.h) <= NEAR_PROBE) || (r.y >= box.y && r.y - box.y <= NEAR_PROBE);
+        else near = (r.y >= box.y + box.h && r.y - (box.y + box.h) <= NEAR_PROBE) || (r.y + r.h <= box.y + box.h && (box.y + box.h) - (r.y + r.h) <= NEAR_PROBE);
+        if (!near) continue;
+        blocks.push([Math.max(lo, b0), Math.min(hi, b1)]);
+    }
+    if (!blocks.length) return (lo + hi) / 2;
+    blocks.sort((a, b) => a[0] - b[0]);
+    let cursor = lo, bestGap = -1, bestMid = (lo + hi) / 2;
+    for (const [b0, b1] of blocks) {
+        if (b0 - cursor > bestGap) { bestGap = b0 - cursor; bestMid = (cursor + b0) / 2; }
+        cursor = Math.max(cursor, b1);
+    }
+    if (hi - cursor > bestGap) { bestGap = hi - cursor; bestMid = (cursor + hi) / 2; }
+    return bestMid;
+}
+
 // which face of `box` points toward `pt` — the face whose outward normal best aligns with the direction
-// to `pt`. All four faces (incl. TOP) are eligible even when the box has a title band: a top gate is
-// permitted, and route.js's headCross SOFT penalty still steers wires around the heading when a clear
-// side is available, so top is used only when the geometry genuinely favors it.
-function faceToward(box, pt, band) {
+// to `pt`, nudged toward whichever face has open canvas beyond it (faceSpace). All four faces (incl.
+// TOP) are eligible even when the box has a title band: a top gate is permitted, and route.js's
+// headCross SOFT penalty still steers wires around the heading when a clear side is available, so top
+// is used only when the geometry genuinely favors it.
+function faceToward(box, pt, band, nodeRects) {
     const c = rectCenter(box), dx = pt[0] - c[0], dy = pt[1] - c[1];
     const score = { L: -dx, R: dx, T: -dy, B: dy };
     let best = "R", bv = -Infinity;
-    for (const f of ["L", "R", "T", "B"]) if (score[f] > bv) { bv = score[f]; best = f; }
+    for (const f of ["L", "R", "T", "B"]) {
+        const s = score[f] + K_SPACE * (faceSpace(box, f, nodeRects) / SPACE_CAP);
+        if (s > bv) { bv = s; best = f; }
+    }
     return best;
 }
 // Move every single-exit face's end onto the busiest OTHER occupied face. Counts are recomputed live, so
@@ -123,7 +195,7 @@ export function classifyAndGate({ nodeRects, groupBox, groupOf, edges, laneGap =
         const box = groupBox.get(gid), band = box.bandH || 0;
         // face per end, with hysteresis: keep last frame's face unless it's no longer on the right side
         for (const en of ends) {
-            let f = faceToward(box, en.outside, band);
+            let f = faceToward(box, en.outside, band, nodeRects);
             if (prevFace) { const pf = prevFace.get(en.cr.key + "|" + gid); if (pf && pf !== f && faceStillOk(box, en.outside, pf)) f = pf; }
             en.face = f;
         }
@@ -149,6 +221,10 @@ export function classifyAndGate({ nodeRects, groupBox, groupOf, edges, laneGap =
             let cFree = 0;
             for (const en of arr) cFree += pierceCoord(box, f, en.inside, en.outside);
             cFree = Math.max(lo, Math.min(hi, cFree / n));
+            // pull the fan off a dense clump toward the emptiest part of this face's span — a blend, so
+            // it still favours where the wires actually point rather than jumping straight to the gap.
+            const openC = emptiestCoord(box, f, nodeRects, lo, hi);
+            cFree = Math.max(lo, Math.min(hi, cFree + K_OPEN * (openC - cFree)));
             const spread = Math.min(hi - lo, Math.max((n - 1) * laneGap, (n - 1) * PORT_MIN));
             const center = Math.max(lo + spread / 2, Math.min(hi - spread / 2, cFree));
             for (let i = 0; i < n; i++) {
