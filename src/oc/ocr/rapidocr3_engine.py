@@ -263,6 +263,14 @@ class Rapid3OcrEngine(OcrEngine):
                     from rapidocr import RapidOCR
 
                     params = to_params(self._options, gpu=self._gpu)
+                    # rapidocr's own "RapidOCR" logger spams INFO model-load lines and
+                    # a benign "text detection result is empty" WARNING on any
+                    # blank/occluded frame (e.g. the boot warmup). We already swallow
+                    # empty dets in-code, so gate it to ERROR. Must go through the
+                    # Global.log_level param, not a bare logging.setLevel() call —
+                    # RapidOCR.__init__ (main.py) unconditionally resets the logger's
+                    # level from this config value on every construction.
+                    params["Global.log_level"] = "error"
                     if params.get("EngineConfig.onnxruntime.use_dml"):
                         # DirectML path (non-NVIDIA GPU, e.g. an idle iGPU off the game's
                         # card). Without this, rapidocr hands ORT a raw DictConfig for the
