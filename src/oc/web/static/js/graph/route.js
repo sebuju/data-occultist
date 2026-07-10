@@ -307,6 +307,9 @@ function pinGate(pts, pt, last) {
 const MARG = 1;   // px of clearance baked onto every nudge alley wall (node + band) so lanes never sit flush
 const CORNER_CLEAR = 15;   // px a band/node eviction pushes a vertex PAST the edge: > the corner radius (14)
                            // so the rounded bend at the evicted vertex can never arc back across the edge
+const WIDE_GAP_MULT = 3;   // cap on how far a widened (grid-stepped) lane gap can grow past C.laneGap
+                           // when an alley has spare room — keeps a loose group readably spaced without
+                           // flinging tracks across a wide-open gutter
 function nudge(lines, byId, rects, outPorts, bands) {
     // alley walls = node rects PLUS title bands: a lane shift must not push a wire across a heading
     // it was routed around. A band straddling the segment's coord gives no bound (already inside it,
@@ -345,10 +348,12 @@ function nudge(lines, byId, rects, outPorts, bands) {
 
     // ---- corridors: one per real shared run, seeded in the old through()-sorted order --------------
     const corridors = [];
+    // A cluster of exactly ONE segment still becomes its own (single-track) corridor: a lone wire
+    // crossing a gap gets the same alley-centering pass as a bundle (below), instead of being left
+    // wherever A* happened to hug a border — see the centering step for why this needed T=1 too.
     for (const bucket of buckets.values()) {
-        if (bucket.length < 2) continue;
         for (const arr of clustersOf(bucket)) {
-            if (arr.length < 2) continue;
+            if (!arr.length) continue;
             arr.sort((a, b) => through(a) - through(b) || a.lo - b.lo);
             const corridor = { id: corridors.length, axis: arr[0].axis, coord: arr[0].coord, segs: arr };
             for (const s of arr) s.corridor = corridor;
@@ -430,6 +435,10 @@ function nudge(lines, byId, rects, outPorts, bands) {
         if (!changed) break;
     }
 
+    // per-track spacing: pack at the minimum laneGap, but widen (grid-stepped, capped) to use spare
+    // alley room instead of always cramming tracks to the tightest possible width.
+    const gridGap = (n, room) => { if (n < 2) return C.laneGap; const steps = Math.floor(room / (n - 1) / C.laneGap); return Math.min(C.laneGap * Math.max(1, steps), C.laneGap * WIDE_GAP_MULT); };
+    const soloQueue = [];   // lone (T=1) walled-both-sides segments, resolved after the main loop (see below)
     for (const corridor of corridors) {
         const arr = corridor.segs;
         const trackEnd = [];
@@ -450,9 +459,8 @@ function nudge(lines, byId, rects, outPorts, bands) {
             // no downstream bend to protect — plain greedy keeps this bundle at its most compact width.
             for (const s of arr) { let tr = 0; while (tr < trackEnd.length && trackEnd[tr] > s.lo + 1) tr++; if (tr === trackEnd.length) trackEnd.push(-Infinity); s.tr = tr; trackEnd[tr] = s.hi; }
         }
-        const T = trackEnd.length; if (T < 2) continue;
-        const g = C.laneGap, axis = corridor.axis, coord = corridor.coord;
-        const minOff = (0 - (T - 1) / 2) * g, maxOff = ((T - 1) - (T - 1) / 2) * g;
+        const T = trackEnd.length;
+        const axis = corridor.axis, coord = corridor.coord;
         let lo = Infinity, hi = -Infinity; for (const s of arr) { lo = Math.min(lo, s.lo); hi = Math.max(hi, s.hi); }
         let lb = -Infinity, rb = Infinity;
         for (const nd of walls) {
@@ -467,18 +475,62 @@ function nudge(lines, byId, rects, outPorts, bands) {
             else if (coord - near0 <= near1 - coord) rb = Math.min(rb, near0);
             else lb = Math.max(lb, near1);
         }
-        const clear = 5, aLo = lb + clear, aHi = rb - clear, minC = coord + minOff, maxC = coord + maxOff;
+        const clear = 5, aLo = lb + clear, aHi = rb - clear;
+        const bounded = Number.isFinite(lb) && Number.isFinite(rb) && aHi > aLo;
+        // A lone (T=1) segment walled on both sides is NOT resolved here — a DIFFERENT lone segment
+        // elsewhere (a different corridor entirely, since it never shared this one's raw coordinate)
+        // can independently centre into this exact same alley, and nothing here would know to keep
+        // them apart: both would land on the identical coordinate and render on top of each other.
+        // Defer it to the cross-corridor merge pass below, which groups by alley + span-overlap first.
+        if (T === 1 && bounded) { soloQueue.push({ seg: arr[0], axis, lo, hi, aLo, aHi, coord }); continue; }
+        const g = bounded ? gridGap(T, aHi - aLo) : C.laneGap;
+        const minOff = (0 - (T - 1) / 2) * g, maxOff = ((T - 1) - (T - 1) / 2) * g;
+        const minC = coord + minOff, maxC = coord + maxOff;
         let shift = 0;
-        // Only clamp into the alley when it has real room. If walls leave aHi <= aLo (no alley — e.g.
-        // a wall straddles both sides) the clamp math goes haywire and would fling the bundle far off,
+        // Only move into the alley when it has real room. If walls leave aHi <= aLo (no alley — e.g.
+        // a wall straddles both sides) the math goes haywire and would fling the bundle far off,
         // ACROSS unrelated nodes. There, keep A*'s coord (shift 0) — A* already routed it obstacle-free.
         if (aHi > aLo) {
-            if (maxC > aHi) shift = aHi - maxC;
-            if (minC + shift < aLo) { const room = aHi - aLo, need = maxC - minC; shift = need <= room ? aLo - minC : (aLo + aHi) / 2 - (minC + maxC) / 2; }
+            if (bounded) {
+                // walled on BOTH sides — a real gutter/gap. Centre the bundle in it rather than just
+                // clamping overflow, so a bundle that already "fits" stops sitting wherever A* happened
+                // to hug one border and instead runs down the middle of the gap.
+                shift = (aLo + aHi) / 2 - (minC + maxC) / 2;
+            } else {
+                // one-sided (or open) — nothing to centre against, only pull back if spilling out.
+                if (maxC > aHi) shift = aHi - maxC;
+                if (minC + shift < aLo) { const room = aHi - aLo, need = maxC - minC; shift = need <= room ? aLo - minC : (aLo + aHi) / 2 - (minC + maxC) / 2; }
+            }
         }
         for (const s of arr) {
             const off = (s.tr - (T - 1) / 2) * g + shift;
             if (axis === "V") { s.ln._dx[s.i0] += off; s.ln._dx[s.i1] += off; } else { s.ln._dy[s.i0] += off; s.ln._dy[s.i1] += off; }
+        }
+    }
+    // ---- lone-wire centring: merge by shared alley, not by raw coordinate ---------------------------
+    // Two lone wires crossing the SAME gap almost never share a raw A* coordinate (each hugged
+    // whichever border its own gate happened to bend near), so they never became one corridor above —
+    // yet both independently centre into the identical alley midpoint, landing on the exact same
+    // coordinate (invisible, unfollowable overlap). Group by the alley itself (not the raw coord),
+    // cluster by span overlap, and pack the group onto distinct grid-spaced tracks around its centre.
+    {
+        const byAlley = new Map();
+        for (const q of soloQueue) { const k = q.axis + ":" + Math.round(q.aLo) + ":" + Math.round(q.aHi); (byAlley.get(k) || byAlley.set(k, []).get(k)).push(q); }
+        for (const list of byAlley.values()) {
+            const byLo = list.slice().sort((a, b) => a.lo - b.lo);
+            let cur = [], curHi = -Infinity;
+            const flush = () => {
+                if (!cur.length) return;
+                const n = cur.length, aLo = cur[0].aLo, aHi = cur[0].aHi, centre = (aLo + aHi) / 2;
+                const g = gridGap(n, aHi - aLo);
+                for (let i = 0; i < n; i++) {
+                    const q = cur[i], off = (i - (n - 1) / 2) * g + (centre - q.coord);
+                    if (q.axis === "V") { q.seg.ln._dx[q.seg.i0] += off; q.seg.ln._dx[q.seg.i1] += off; } else { q.seg.ln._dy[q.seg.i0] += off; q.seg.ln._dy[q.seg.i1] += off; }
+                }
+                cur = []; curHi = -Infinity;
+            };
+            for (const q of byLo) { if (cur.length && q.lo > curHi + C.laneGap) flush(); cur.push(q); curHi = Math.max(curHi, q.hi); }
+            flush();
         }
     }
     for (const ln of lines) {
