@@ -10,7 +10,7 @@
 //   body  -> a Node or DocumentFragment
 //   ports -> a Node/frag or null (default null)
 //   pulse -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
-import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, srcRow, srcChip, srcInputs, btn, iconBtn, trashBtn } from "../dom.js";
+import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, srcRow, btn, iconBtn, trashBtn } from "../dom.js";
 import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
@@ -910,17 +910,17 @@ export function nodeParts(n) {
     // node's out-port onto this dataset (same wiring, both paths call the same model setters).
     const sourcesRow = h("div", { class: "lab-grid" },
         srcRow("sources", "windows, producers, or file sources feeding this dataset",
-            srcInputs(
-                model.datasetSources(ds).map((s) => srcChip(s.ref, "dssrc", "ds-rmsrc")),
-                "ds-addsrc",
-                [h("option", { value: "" }, "+ source"),
-                    model.datasetFreeSources(ds).map((s) => h("option", { value: s.ref }, s.ref))])));
+            sourcesInput({
+                chips: model.datasetSources(ds).map((s) => ({ value: s.ref, node: model.refNode(s.ref) })),
+                free: model.datasetFreeSources(ds).map((s) => s.ref),
+                addinCls: "sv-addin ds-addsrc", rmCls: "sv-rmin ds-rmsrc" })));
     return {
         title: h("input", { class: "gi gi-id dsrename", value: ds, title: "dataset name" }),
         head: satToggleBtn(`vt:ds:${ds}`, "vttable"),
         body: frag(
             sourcesRow,
             kv("1 → many", h("select", { class: "dskey", title: "the key the dataset collapses many reads on (or none)" }, keyOpts)),
+                    title: "how this dataset's many observations under one key collapse to the value it serves. latest/first keep one observation whole; sum/mean/max/min fold PER FIELD, so they can show a row no single observation ever was — drill a row to see the observations behind it." })),
             kv("batch", h("select", { class: "dsbatch", title: "how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like a timed offer / pop-up)" }, batchOpts)),
             kv("sync", h("select", { class: "dssync", title: "accumulate: only add/update. mirror: keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)." }, syncOpts)),
             concatEditor && gspan(concatEditor)),
@@ -955,7 +955,8 @@ function dictFeedsEditor(dict) {
     // per-source column blocks spanning below.
     return h("div", { class: "dict-feeds lab-grid" },
         srcRow("source", "datasets whose column values become terms",
-            sourcesInput({ ids: feeds.map((fd) => fd.dataset), free, rmTitle: "stop feeding from this dataset" })),
+            sourcesInput({ chips: feeds.map((fd) => ({ value: fd.dataset, node: model.refNode(fd.dataset) })), free,
+                rmTitle: "stop feeding from this dataset" })),
         ...cols);
 }
 

@@ -200,32 +200,11 @@ export function iconBtn(icon, { cls = "", title, onClick, disabled = false, data
 export const trashBtn = ({ cls = "", title = "remove", dataset, onClick, disabled = false } = {}) =>
     iconBtn(TRASH(), { cls, title, dataset, onClick, disabled, danger: true });
 
-// A removable source pill + the pills-plus-"add" row that holds them — the ONE primitive every
-// wired-source list builds on (trigger fires/watch, subset join sources, toast token feeders), so
-// they all look and wire the same (rule 7). `srcChip(val, attrKey, rmCls)`: a pill showing `val`
-// with a trash button carrying it back as `data-<attrKey>` and the wiring hook `rmCls` (e.g.
-// tg-rmtarget / tn-rmsrc). `srcInputs(chips, addCls, addOpts)`: those pills + a "+ …" add-select
-// (class `addCls`) whose `addOpts` are the <option> nodes. `label` overrides the pill's visible
-// text (else `val`) — used when the ref carries a prefix the pill shouldn't show verbatim.
-export const srcChip = (val, attrKey, rmCls, label = null) =>
-    h("span", { class: "sv-input" }, label == null ? val : label,
-        h("button", { class: `sv-rmin danger ${rmCls}`, dataset: { [attrKey]: val }, title: "remove" }, TRASH()));
-
-export const srcInputs = (chips, addCls, addOpts) => {
-    // the add-select shows only a "+" glyph (node-coloured, borderless via .sv-add); the caller's
-    // placeholder option text (e.g. "+ watch source") becomes the select's hover title so the
-    // context isn't lost. addOpts[0] is that placeholder option.
-    const sel = h("select", { class: `sv-addin ${addCls}` }, addOpts);
-    const ph = sel.firstElementChild;
-    if (ph) { sel.title = ph.textContent.replace(/^\+\s*/, "add "); ph.textContent = "+"; }
-    return h("div", { class: "sv-inputs" }, chips,
-        h("span", { class: "sv-input sv-add" }, sel));
-};
-
 // A wired-sources row: the pinned label (col 1) + a `.sv-inputs` pill list (col 2), as two grid
-// children. THE way to add a source-pill list to a node body (rule 7) — every srcInputs/sourcesInput
-// site builds on it. The label carries `.sv-lab` so graph.css aligns it to the first pill line
-// (defined once here, not detected per-site via a :has() selector). `inputs` is the built .sv-inputs.
+// children. THE way to add a source-pill list to a node body (rule 7) — every sourcesInput
+// (graph/sources_input.js) site builds on it. The label carries `.sv-lab` so graph.css aligns it
+// to the first pill line (defined once here, not detected per-site via a :has() selector).
+// `inputs` is the built `.sv-inputs` (sourcesInput's return value).
 export const srcRow = (label, title, inputs) => frag(labCell(label, title, true, "sv-lab"), inputs);
 
 // Monochrome inline icons as node factories (fill = currentColor, sized to 1em) -- used
@@ -238,4 +217,6 @@ export const PAUSE = _ic("M6 5h4v14H6zM14 5h4v14h-4z");
 export const STAR = _ic("M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z");
 export const COPY = _ic("M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z");
 export const PLUS = _ic("M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z");
+export const CHECK = _ic("M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z");
+export const XMARK = _ic("M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z");
 export const PASTE = _ic("M19 2h-4.18C14.4.84 13.3 0 12 0S9.6.84 9.18 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z");

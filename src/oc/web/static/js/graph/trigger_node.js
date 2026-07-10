@@ -8,7 +8,8 @@
 // out-port to a producer / file source / toast / sound / action, or picked from the "fires" row.
 // The dataset ACTION (clear/clone/move) is now its own node (action_node.js), fired via `targets`.
 // Rendering only — wiring is in main.js.
-import { h, frag, labCell, srcRow, srcChip, srcInputs } from "../dom.js";
+import { h, frag, labCell, srcRow } from "../dom.js";
+import { sourcesInput } from "./sources_input.js";
 
 const KINDS = [["interval", "interval"], ["true_interval", "true interval"], ["on_change", "on change"],
     ["on_any_change", "on any change"],
@@ -33,13 +34,11 @@ export function triggerParts(t, model) {
                     ...(model.profile.toasts || []).map((x) => x.id),
                     ...(model.profile.sounds || []).map((x) => x.id),
                     ...(model.profile.actions || []).map((x) => x.id)];
-    const popts = tgtIds.filter((p) => !haveT.has(p)).map((p) => h("option", p));
     const targets = srcRow("fires", "producers (sweep), file sources (read), toasts (notify), sounds (play), or actions (dataset op) this trigger fires",
-        srcInputs(
-            (t.targets || []).map((p) => srcChip(p, "p", "tg-rmtarget")),
-            "tg-addfire",
-            [h("option", { value: "" }, "+ fire target"), popts],
-        ));
+        sourcesInput({
+            chips: (t.targets || []).map((p) => ({ value: p, node: model.refNode(p) })),
+            free: tgtIds.filter((p) => !haveT.has(p)),
+            addLabel: "+ fire target", addinCls: "sv-addin tg-addfire", rmCls: "sv-rmin tg-rmtarget" }));
 
     const interval = timed
         ? frag(labCell("every", "seconds between fires"),
@@ -52,16 +51,14 @@ export function triggerParts(t, model) {
         const have = new Set(t.watch || []);
         // watch datasets OR subsets (a subset fires when any of its source datasets gains rows)
         const sources = [...model.datasets(), ...(model.profile.subsets || []).map((s) => s.id)];
-        const opts = sources.filter((d) => !have.has(d)).map((d) => h("option", d));
         const hint = kind === "on_any_change"
             ? "datasets or subsets; fires on every write, even if a watched subset's visible output is unchanged"
             : "datasets or subsets; the trigger fires when one gains rows";
         watch = srcRow("watch", hint,
-            srcInputs(
-                (t.watch || []).map((w) => srcChip(w, "ds", "tg-rmwatch")),
-                "tg-addwatch",
-                [h("option", { value: "" }, "+ watch source"), opts],
-            ));
+            sourcesInput({
+                chips: (t.watch || []).map((w) => ({ value: w, node: model.refNode(w) })),
+                free: sources.filter((d) => !have.has(d)),
+                addLabel: "+ watch source", addinCls: "sv-addin tg-addwatch", rmCls: "sv-rmin tg-rmwatch" }));
     }
 
     // on_readout: watch one or more live readouts and fire when the condition is met. Chips
@@ -69,14 +66,12 @@ export function triggerParts(t, model) {
     let varwatch = null;
     if (kind === "on_readout") {
         const have = new Set(t.readout_watch || []);
-        const opts = model.readouts().filter((v) => !have.has(v.id)).map((v) => h("option", { value: v.id }, v.id));
         varwatch = frag(
             srcRow("watch", "live readouts; the trigger fires when the condition holds",
-                srcInputs(
-                    (t.readout_watch || []).map((vid) => srcChip(vid, "v", "tg-rmvarwatch")),
-                    "tg-addvarwatch",
-                    [h("option", { value: "" }, "+ watch readout"), opts],
-                )),
+                sourcesInput({
+                    chips: (t.readout_watch || []).map((vid) => ({ value: vid, node: model.refNode(vid) })),
+                    free: model.readouts().filter((v) => !have.has(v.id)).map((v) => v.id),
+                    addLabel: "+ watch readout", addinCls: "sv-addin tg-addvarwatch", rmCls: "sv-rmin tg-rmvarwatch" })),
             labCell("when", "how the readout's value is compared to the threshold"),
             h("select", { class: "tg-varop" }, VAR_OPS.map(([v, l]) => h("option", { value: v, selected: v === (t.readout_op || "gte") }, v === (t.readout_op || "gte") ? `<${l}>` : l))),
             labCell("value", "the threshold the readout is compared against"),

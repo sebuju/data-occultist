@@ -15,7 +15,8 @@ import * as api from "../api.js";
 import { model, nodeEls, readoutPreview } from "./state.js";
 import { sinceShort } from "../datefmt.js";
 import { VTable } from "../vtable.js";
-import { h, frag, srcRow, srcChip, srcInputs } from "../dom.js";
+import { h, frag, srcRow } from "../dom.js";
+import { sourcesInput } from "./sources_input.js";
 import { liveCollecting } from "./panels/livewin.js";
 import { setNodeBusy } from "./main.js";
 
@@ -53,11 +54,11 @@ export function registerParts(x, model) {
             // this wrapper the chips/add-select drop to their own row under the label.
             h("div", { class: "lab-grid" },
                 srcRow("source", "readout nodes whose latest value this register holds",
-                    srcInputs(
-                        // chip label shows the bare readout id; the ref it carries keeps the prefix
-                        model.registerSources(x.id).map((s) => srcChip(s.ref, "regsrc", "reg-rmsrc", s.id)),
-                        "reg-addsrc",
-                        [h("option", { value: "" }, "+ readout"), free.map((id) => h("option", { value: `readout:${id}` }, id))]))),
+                    sourcesInput({
+                        // chip label shows the bare readout id; value/node resolve off the full ref
+                        chips: model.registerSources(x.id).map((s) => ({ value: s.ref, label: s.id, node: model.refNode(s.ref) })),
+                        free: free.map((id) => ({ value: `readout:${id}`, label: id })),
+                        addLabel: "+ readout", rmCls: "sv-rmin reg-rmsrc", addinCls: "sv-addin reg-addsrc" }))),
             h("div", { class: "nodehost scrollhost data-host" },
                 h("p", { class: "muted", style: "padding:8px" }, "no data yet"))),
         foot: h("button", { class: "regclear danger" }, "clear data"),

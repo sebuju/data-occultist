@@ -476,6 +476,39 @@ export class GraphModel {
         return ns;
     }
 
+    // One id/ref -> graph node id resolver, shared by the edge builder below AND every wired-
+    // source chip list (sourcesInput's click-to-focus). Handles both prefixed refs
+    // ("window:<id>"/"readout:<id>"/..., as toastSources/registerSources/datasetSources parse
+    // them) and bare ids (subset join sources, producer sources, dictionary feeds, action
+    // datasets, trigger targets/watch — all un-prefixed dataset/subset/producer/file-source/
+    // toast/sound/action/readout ids). Returns null if ref resolves to no node (stale/dangling id).
+    refNode(ref) {
+        if (!ref) return null;
+        const i = ref.indexOf(":");
+        const prefix = i < 0 ? "" : ref.slice(0, i);
+        const bare = i < 0 ? ref : ref.slice(i + 1);
+        switch (prefix) {
+            case "window": return `win:${bare}`;
+            case "filesource": return `src:${bare}`;
+            case "producer": return `producer:${bare}`;
+            case "register": return `register:${bare}`;
+            case "dataset": return `ds:${bare}`;
+            case "subset": return `sub:${bare}`;
+            case "readout": { const site = this.readoutSite(bare); return site ? `ro:${site.win}:${bare}` : null; }
+        }
+        // bare id: try every kind a wired-source chip can point at, same precedence the edge
+        // builder used inline before this was extracted.
+        if (this.subsetDef(ref)) return `sub:${ref}`;
+        if (this.datasets().includes(ref)) return `ds:${ref}`;
+        if (this.producerNode(ref)) return `producer:${ref}`;
+        if (this.fileSource(ref)) return `src:${ref}`;
+        if (this.toastNode(ref)) return `toast:${ref}`;
+        if (this.soundNode(ref)) return `sound:${ref}`;
+        if (this.actionNode(ref)) return `action:${ref}`;
+        const site = this.readoutSite(ref);
+        return site ? `ro:${site.win}:${ref}` : null;
+    }
+
     edges() {
         const es = [];
         es.push({ from: "game", to: "atlas", kind: "own" });   // cutout-atlas node hangs off the game node
@@ -501,9 +534,9 @@ export class GraphModel {
         }
         for (const s of this.profile.subsets || [])
             for (const inp of this.subsetInputs(s)) {
-                // an input can be a dataset OR another subset — pick the right source node
-                const from = this.subsetDef(inp) ? `sub:${inp}` : `ds:${inp}`;
-                es.push({ from, to: `sub:${s.id}`, kind: "data" });
+                // an input can be a dataset OR another subset — refNode picks the right source node
+                const from = this.refNode(inp);
+                if (from) es.push({ from, to: `sub:${s.id}`, kind: "data" });
             }
         // a producer WRITES into its output dataset (producer -> dataset, only once wired), and READS
         // its item list from any wired source dataset/subset (source -> producer); empty = whole catalogue.
@@ -511,8 +544,8 @@ export class GraphModel {
             if (pn.dataset) es.push({ from: `producer:${pn.id}`, to: `ds:${pn.dataset}`, kind: "data" });
             for (const src of pn.sources || []) {
                 if (src === pn.dataset) continue;   // never wire a node to its own output
-                const from = this.subsetDef(src) ? `sub:${src}` : `ds:${src}`;
-                es.push({ from, to: `producer:${pn.id}`, kind: "data" });
+                const from = this.refNode(src);
+                if (from) es.push({ from, to: `producer:${pn.id}`, kind: "data" });
             }
             if (this.satelliteOn(`prod:${pn.id}`)) es.push({ from: `producer:${pn.id}`, to: `prod:${pn.id}`, kind: "img" });
         }
@@ -525,22 +558,19 @@ export class GraphModel {
         for (const t of this.profile.triggers || []) {
             // a target is a price node (sweep) or a file source (read) — wire to whichever owns the id
             for (const pid of t.targets || []) {
-                if (this.producerNode(pid)) es.push({ from: `trigger:${t.id}`, to: `producer:${pid}`, kind: "trigger" });
-                else if (this.fileSource(pid)) es.push({ from: `trigger:${t.id}`, to: `src:${pid}`, kind: "trigger" });
-                else if (this.toastNode(pid)) es.push({ from: `trigger:${t.id}`, to: `toast:${pid}`, kind: "trigger" });
-                else if (this.soundNode(pid)) es.push({ from: `trigger:${t.id}`, to: `sound:${pid}`, kind: "trigger" });
-                else if (this.actionNode(pid)) es.push({ from: `trigger:${t.id}`, to: `action:${pid}`, kind: "trigger" });
+                const to = this.refNode(pid);
+                if (to) es.push({ from: `trigger:${t.id}`, to, kind: "trigger" });
             }
             if (t.kind === "on_change" || t.kind === "on_any_change")
                 for (const w of t.watch || []) {
-                    const to = this.subsetDef(w) ? `sub:${w}` : `ds:${w}`;
-                    es.push({ from: `trigger:${t.id}`, to, kind: "watch" });
+                    const to = this.refNode(w);
+                    if (to) es.push({ from: `trigger:${t.id}`, to, kind: "watch" });
                 }
             // an on_readout trigger WATCHES live readouts — dashed line to each watched var node
             if (t.kind === "on_readout")
                 for (const vid of t.readout_watch || []) {
-                    const site = this.readoutSite(vid);
-                    if (site) es.push({ from: `trigger:${t.id}`, to: `ro:${site.win}:${vid}`, kind: "watch" });
+                    const to = this.refNode(vid);
+                    if (to) es.push({ from: `trigger:${t.id}`, to, kind: "watch" });
                 }
             // history satellite: dotted "img" edge trigger -> its recent-fires grid (opt-in)
             if (this.satelliteOn(`hist:${t.id}`)) es.push({ from: `trigger:${t.id}`, to: `hist:${t.id}`, kind: "img" });
@@ -554,8 +584,7 @@ export class GraphModel {
         // a toast READS its wired sources' live values as {{tokens}} (readout/dataset/subset -> toast)
         for (const x of this.profile.toasts || [])
             for (const s of this.toastSources(x.id)) {
-                const from = s.kind === "readout" ? (this.readoutSite(s.id) && `ro:${this.readoutSite(s.id).win}:${s.id}`)
-                    : s.kind === "subset" ? `sub:${s.id}` : `ds:${s.id}`;
+                const from = this.refNode(s.ref);
                 if (from) es.push({ from, to: `toast:${x.id}`, kind: "data" });
             }
         // a register HOLDS its wired readouts' live values (readout -> register), and — when
@@ -564,8 +593,8 @@ export class GraphModel {
         for (const x of this.profile.registers || []) {
             for (const s of this.registerSources(x.id)) {
                 if (s.kind !== "readout") continue;
-                const site = this.readoutSite(s.id);
-                if (site) es.push({ from: `ro:${site.win}:${s.id}`, to: `register:${x.id}`, kind: "data" });
+                const from = this.refNode(s.ref);
+                if (from) es.push({ from, to: `register:${x.id}`, kind: "data" });
             }
             if (x.persist) es.push({ from: `register:${x.id}`, to: `ds:${x.persist}`, kind: "data" });
         }

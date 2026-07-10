@@ -7,6 +7,7 @@ import * as hub from "../hub.js";
 import { h, frag, svg, TRASH, labCell, srcRow, observeResize, kv, subhead, gspan, trashBtn } from "../dom.js";
 import { listBlock } from "./list_block.js";
 import { sourcesInput } from "./sources_input.js";
+import { makeArmed } from "./armbtn.js";
 import { nodeIcon, iconFor } from "./node_icons.js";
 import { openModal } from "../modal.js";
 import { since } from "../datefmt.js";
@@ -1277,7 +1278,8 @@ function subConfigNode(s) {
     // sort/visible — every label in col 1, its control(s) in col 2.
     return h("div", { class: "lab-grid" },
         srcRow("sources", "datasets or subsets; each joins on its own field",
-            sourcesInput({ ids: inputs, free, addLabel: "+ join source", rmTitle: "remove input" })),
+            sourcesInput({ chips: inputs.map((ds) => ({ value: ds, node: model.refNode(ds) })), free,
+                addLabel: "+ join source", rmTitle: "remove input" })),
         ...srcCfgs,
         // close the per-source section so the view-level rows below (limit, latest batch) don't
         // read as part of the last source's block
@@ -1448,6 +1450,25 @@ function refreshDatasetConsumers(ds) {
         if (nodeEls.has(`sub:${s.id}`) && model.subsetReaches(s.id, ds)) refreshSubsetNode(s.id);
 }
 
+// Two-stage armed removal for a sources-input chip's trash (CLAUDE.md rule 2 — no confirm()).
+// ONE helper every wired-source list's remove wiring calls (rule 7) — the pill turns `.armed`
+// (yellow) on the first click within `container`, and `onFire(value)` (the actual model mutation
+// + rebuild/edges/autosave the caller needs) runs only on a second click within the arm window.
+// `selector` scopes to one chip list (default the generic "sv-rmin" trash class; a node with more
+// than one sources-input list — e.g. a trigger's targets/watch/readout-watch — gives each its own
+// class so their removals don't cross-fire).
+function wireArmedRemove(container, selector, onFire) {
+    container.querySelectorAll(selector).forEach((b) => {
+        const pill = b.closest(".sv-input");
+        const armed = makeArmed({
+            onArm: () => pill.classList.add("armed"),
+            onTimeout: () => pill.classList.remove("armed"),
+            onFire: () => onFire(b.dataset.val),
+        });
+        b.addEventListener("click", (e) => { e.stopPropagation(); armed.trigger(); });
+    });
+}
+
 function wireSubset(div, s) {
     // subset edits are subset-only — they never change any window's image/regions/detect, so
     // autosave(null): persist + refresh THIS view, never re-OCR the open windows.
@@ -1476,9 +1497,9 @@ function wireSubset(div, s) {
     div.querySelector(".sv-addin")?.addEventListener("change", (e) => {
         if (model.addSubsetInput(s.id, e.target.value)) { render(); restructure(); }
     });
-    div.querySelectorAll(".sv-rmin").forEach((b) => b.addEventListener("click", () => {
-        model.removeSubsetInput(s.id, b.dataset.ds); render(); restructure();
-    }));
+    wireArmedRemove(div, ".sv-rmin", (val) => {
+        model.removeSubsetInput(s.id, val); render(); restructure();
+    });
     // PER-SOURCE join config — each control carries its source id in dataset.ds. Setting/clearing a
     // source's join field toggles its required + match rows, so rebuild the node (restructure);
     // the other knobs just re-canonicalise/recompute the view.
@@ -1641,9 +1662,7 @@ function wireProducer(div, n) {
         if (e.target.value && model.addProducerSource(id, e.target.value)) rebuild();
     });
     // unwire an item source — rebuild the node so the chip goes too, and redraw the edge
-    div.querySelectorAll(".pr-rmsrc").forEach((b) => b.addEventListener("click", () => {
-        model.removeProducerSource(id, b.dataset.ds); rebuild();
-    }));
+    wireArmedRemove(div, ".pr-rmsrc", (val) => { model.removeProducerSource(id, val); rebuild(); });
 }
 
 // ---- producer preview satellite: resolved inputs + output schema + live test-fetch ----
@@ -1716,12 +1735,12 @@ function wireTrigger(div, n) {
     div.querySelector(".tg-addwatch")?.addEventListener("change", (e) => { if (model.addTriggerWatch(t.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
     // on_readout: watched readouts (chips + edges) + the threshold condition
     div.querySelector(".tg-addvarwatch")?.addEventListener("change", (e) => { if (model.addTriggerReadoutWatch(t.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
-    div.querySelectorAll(".tg-rmvarwatch").forEach((b) => b.addEventListener("click", () => { model.removeTriggerReadoutWatch(t.id, b.dataset.v); rebuildNode(n.id); drawEdges(); autosave(null); }));
+    wireArmedRemove(div, ".tg-rmvarwatch", (val) => { model.removeTriggerReadoutWatch(t.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
     div.querySelector(".tg-varop")?.addEventListener("change", (e) => { model.setTriggerReadoutOp(t.id, e.target.value); autosave(null); });
     div.querySelector(".tg-varval")?.addEventListener("change", (e) => { model.setTriggerReadoutValue(t.id, e.target.value); autosave(null); });
     div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
-    div.querySelectorAll(".tg-rmwatch").forEach((b) => b.addEventListener("click", () => { model.removeTriggerWatch(t.id, b.dataset.ds); rebuildNode(n.id); drawEdges(); autosave(null); }));
-    div.querySelectorAll(".tg-rmtarget").forEach((b) => b.addEventListener("click", () => { model.removeTriggerTarget(t.id, b.dataset.p); rebuildNode(n.id); drawEdges(); autosave(null); }));
+    wireArmedRemove(div, ".tg-rmwatch", (val) => { model.removeTriggerWatch(t.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
+    wireArmedRemove(div, ".tg-rmtarget", (val) => { model.removeTriggerTarget(t.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
     // throttle: minimum ms between fires (empty = none). Rebuild so the input re-normalises (null -> placeholder).
     div.querySelector(".tg-throttle")?.addEventListener("change", (e) => { model.setTriggerThrottle(t.id, e.target.value); rebuildNode(n.id); autosave(null); });
     div.querySelector(".tg-fire")?.addEventListener("click", async () => {
@@ -1769,7 +1788,7 @@ function wireToast(div, n) {
     // dragging a node's out-port here. Rebuild refreshes the pills + the {{token}} chips; drawEdges
     // adds/drops the source's data edge.
     $(".tn-addsrc")?.addEventListener("change", (e) => { if (model.addToastSource(x.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
-    div.querySelectorAll(".tn-rmsrc").forEach((b) => b.addEventListener("click", () => { model.removeToastSource(x.id, b.dataset.ref); rebuildNode(n.id); drawEdges(); autosave(null); }));
+    wireArmedRemove(div, ".tn-rmsrc", (val) => { model.removeToastSource(x.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
     // token chips: click to COPY the source's {{token}} to the clipboard, ready to paste into any
     // text block or image text line (the palette sits below the images, away from the fields).
     div.querySelectorAll(".tn-rotoken").forEach((b) => b.addEventListener("click", async () => {
@@ -2347,7 +2366,7 @@ function wireAction(div, n) {
     // action kind: rebuild so the dest select shows/hides for clone/move; edges follow (dest edge)
     $(".ac-action")?.addEventListener("change", (e) => { model.setActionKind(x.id, e.target.value); rebuildNode(n.id); drawEdges(); autosave(null); });
     $(".ac-addds")?.addEventListener("change", (e) => { if (model.addActionDataset(x.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
-    div.querySelectorAll(".ac-rmds").forEach((b) => b.addEventListener("click", () => { model.removeActionDataset(x.id, b.dataset.ds); rebuildNode(n.id); drawEdges(); autosave(null); }));
+    wireArmedRemove(div, ".ac-rmds", (val) => { model.removeActionDataset(x.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
     $(".ac-dest")?.addEventListener("change", (e) => { model.setActionDest(x.id, e.target.value); drawEdges(); autosave(null); });
     // manual fire: run the action NOW on its target dataset(s) via the same funnel a trigger uses.
     // Transient feedback by swapping the button label (no progress line on the node).
@@ -2374,7 +2393,7 @@ function wireRegister(div, n) {
     // readout source chips: add via the "+ readout" select, remove via each chip's trash. Rebuild so
     // the chips + edges follow; the readout out-port drag hits the SAME model.addRegisterSource path.
     $(".reg-addsrc")?.addEventListener("change", (e) => { if (model.addRegisterSource(x.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
-    div.querySelectorAll(".reg-rmsrc").forEach((b) => b.addEventListener("click", () => { model.removeRegisterSource(x.id, b.dataset.regsrc); rebuildNode(n.id); drawEdges(); autosave(null); }));
+    wireArmedRemove(div, ".reg-rmsrc", (val) => { model.removeRegisterSource(x.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
     // clear the held map server-side (armed two-click, no blocking dialog). Values live only in the
     // running session, so this just empties that map; the table repopulates as readouts are read.
     const clearBtn = $(".regclear");
@@ -2796,6 +2815,15 @@ function fillNode(div, n, wire = true) {
     div.querySelector(".gn-rectbtn")?.addEventListener("click", (e) => {
         e.stopPropagation();
         toggleRectEditor(div, n);
+    });
+    // wired-source chip pills (sv-input, sources_input.js): click the pill BODY (not its trash)
+    // to pan+zoom the canvas to the source node it represents — one generic handler for every
+    // node's sources-input lists (rule 7), since the behaviour never varies by list. The
+    // mousedown stopPropagation keeps this click from also selecting the HOST node (a pill lives
+    // in `.gn-body`, which the drag/select handler below would otherwise treat as node content).
+    div.querySelectorAll(".sv-input[data-node]").forEach((pill) => {
+        pill.addEventListener("mousedown", (e) => { if (!e.target.closest(".sv-rmin")) e.stopPropagation(); });
+        pill.addEventListener("click", (e) => { if (!e.target.closest(".sv-rmin")) panZoomTo(pill.dataset.node); });
     });
     if (busy.get(n.id)) {   // preserve spinner + keyboard lock across rebuilds (fillNode just built a fresh .gn-body)
         div.classList.add("busy");
@@ -3299,7 +3327,11 @@ function render() {
     // discovering one at runtime), the sibling nodes that list every id in a <select> — trigger
     // watch/dataset-action, producer source picker, subset join-source — are built ONCE and go
     // stale (this reconcile reuses bodies, never rebuilds them). Rebuild them on a set change.
-    const dsKey = [...model.datasets(), " ", ...(model.profile.subsets || []).map((s) => s.id)].join("");
+    // Also fold in each subset's OWN source-id list: a source add/remove (e.g. via undo/redo)
+    // changes what that subset's sources list shows without changing the id SET, so key on it
+    // too or the gate below never reopens for that edit and the sources list goes stale.
+    const dsKey = [...model.datasets(), " ",
+        ...(model.profile.subsets || []).map((s) => `${s.id}<${model.subsetInputs(s).join(",")}`)].join("");
     if (dsKey !== _lastDsSetKey) { _lastDsSetKey = dsKey; rebuildDatasetConsumers(); }
     // A toast's token chips list the FIELDS/COLUMNS of its wired sources — those change without the
     // dataset/subset id SET changing (add a field to a window, a derived column to a subset), so the
@@ -3637,10 +3669,10 @@ function wireNode(div, n) {
         div.querySelector(".sv-addin")?.addEventListener("change", (e) => {
             if (model.addDictFeed(n.ref.id, e.target.value)) { render(); rebuildNode(n.id); autosave(null); refetchFedTerms(); }
         });
-        div.querySelectorAll(".sv-rmin").forEach((el) => el.addEventListener("click", () => {
-            model.removeDictFeed(n.ref.id, el.dataset.ds);
+        wireArmedRemove(div, ".sv-rmin", (val) => {
+            model.removeDictFeed(n.ref.id, val);
             render(); rebuildNode(n.id); autosave(null); refetchFedTerms();
-        }));
+        });
     } else if (n.type === "window") {
         wireWindowControls(div, n);   // out-port wiring is handled generically in wireOutPort
         openImage(n.ref.id, div);     // pass div: this runs during buildNode, before nodeEls has the node
@@ -3654,10 +3686,10 @@ function wireNode(div, n) {
         div.querySelector(".ds-addsrc")?.addEventListener("change", (e) => {
             if (model.addDatasetSource(n.ref, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); }
         });
-        div.querySelectorAll(".ds-rmsrc").forEach((b) => b.addEventListener("click", () => {
-            model.removeDatasetSource(n.ref, b.dataset.dssrc);
+        wireArmedRemove(div, ".ds-rmsrc", (val) => {
+            model.removeDatasetSource(n.ref, val);
             rebuildNode(n.id); drawEdges(); autosave(null);
-        }));
+        });
         div.querySelector(".dsrename")?.addEventListener("change", async (e) => {
             const oldId = n.ref, newId = (e.target.value || "").trim();
             if (!model.renameDataset(oldId, newId)) { e.target.value = oldId; return; }

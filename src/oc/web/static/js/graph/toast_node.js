@@ -5,7 +5,8 @@
 // alignment + max-lines; the server renders them as a toast's stacked AdaptiveText lines. Every
 // field maps to the ToastSpec the toasted-backed notifier renders. Rendering only — wiring is in
 // main.js (wireToast). Config persists in the profile YAML like any other node.
-import { h, svg, frag, labCell, srcRow, srcChip, srcInputs, kv, subhead, gspan, trashBtn, PLUS, COPY } from "../dom.js";
+import { h, svg, frag, labCell, srcRow, kv, subhead, gspan, trashBtn, PLUS, COPY } from "../dom.js";
+import { sourcesInput } from "./sources_input.js";
 import { slideToggle } from "./node_parts.js";
 import { iconFor } from "./node_icons.js";
 import { nineGrid, fontSelect, biuGroup, borderEditor, anchorRow, colorPair } from "./textctl.js";
@@ -202,10 +203,9 @@ export function toastParts(x, model) {
         ...(model.profile.subsets || []).map((s) => `subset:${s.id}`),
     ].filter((r) => !wiredRefs.has(r)) : [];
     const sourcesRow = srcRow("sources", "wired data feeders — a readout, dataset, or subset whose live value the text below can interpolate as a {{token}}. Add here, or drag a node's out-port onto this toast.",
-        srcInputs(
-            wired.map((s) => srcChip(s.ref, "ref", "tn-rmsrc")),
-            "tn-addsrc",
-            [h("option", { value: "" }, "+ source"), avail.map((r) => h("option", { value: r }, r))]));
+        sourcesInput({
+            chips: wired.map((s) => ({ value: s.ref, node: model && model.refNode(s.ref) })),
+            free: avail, addinCls: "sv-addin tn-addsrc", rmCls: "sv-rmin tn-rmsrc" }));
     // the rich-text body: an ordered, styled block list + an "add block" button
     const blocks = (x.texts || []);
     const blocksSection = h("div", { class: "tn-blocks" },

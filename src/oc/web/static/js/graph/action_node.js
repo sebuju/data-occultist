@@ -4,7 +4,8 @@
 // dataset_ops.fire_dataset_target funnel does the work (same as an automatic collector fire).
 // Drag this node's out-port onto a dataset to add it as a target. Rendering only — wiring is in
 // main.js (wireAction). Config persists in the profile YAML.
-import { h, frag, labCell, srcRow, srcChip, srcInputs } from "../dom.js";
+import { h, frag, labCell, srcRow } from "../dom.js";
+import { sourcesInput } from "./sources_input.js";
 
 // dataset ops this node can perform. "" = no-op. clone/move copy into `dest` (batches = keep batch
 // grouping; resolved = collapse to one). move also clears the source.
@@ -25,10 +26,9 @@ export function actionParts(x, model) {
                 h("select", { class: "ac-action" },
                     ACTIONS.map(([v, l]) => h("option", { value: v, selected: v === cur }, v === cur ? `<${l}>` : l))),
                 srcRow("nodes", "nodes this action operates on when fired",
-                    srcInputs(
-                        (x.datasets || []).map((d) => srcChip(d, "ds", "ac-rmds")),
-                        "ac-addds",
-                        [h("option", { value: "" }, "+ dataset"), dsFree.map((d) => h("option", d))])),
+                    sourcesInput({
+                        chips: (x.datasets || []).map((d) => ({ value: d, node: model.refNode(d) })),
+                        free: dsFree, addLabel: "+ dataset", addinCls: "sv-addin ac-addds", rmCls: "sv-rmin ac-rmds" })),
                 needsDest && labCell("into", "destination dataset for clone/move"),
                 needsDest && h("select", { class: "ac-dest" },
                     h("option", { value: "" }, "- dataset -"),
