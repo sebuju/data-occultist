@@ -1497,6 +1497,12 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+  - id: rof_68
+    type: symbol
+    rules: []
+    min_confidence: 0.7
+    isolate: false
+    glyph_check: false
   data_area:
     x: 0.044274970740152624
     y: 0.6241895892853566
@@ -1689,8 +1695,8 @@ windows:
     enabled: true
   - id: slot_5_drain
     box:
-      x: 0.40627778040360396
-      y: 0.4527588429403534
+      x: 0.40620724113086387
+      y: 0.45300994947045964
       w: 0.011225269157603135
       h: 0.01776775979580736
     field: rof_12_split1
@@ -1721,10 +1727,10 @@ windows:
     enabled: true
   - id: slot_exilus_drain
     box:
-      x: 0.6637074937582099
-      y: 0.2051868912487834
+      x: 0.662298464070515
+      y: 0.20275595472384092
       w: 0.010074592389955719
-      h: 0.014125396803752986
+      h: 0.017944380505023082
     field: rof_2_split2
     enabled: true
   - id: mod_drain_max
@@ -1809,7 +1815,7 @@ windows:
     enabled: true
   - id: slot_aura_school
     box:
-      x: 0.5461054869612527
+      x: 0.5461760262339928
       y: 0.20424180031030253
       w: 0.008325285891001899
       h: 0.014824761884080051
@@ -1817,11 +1823,19 @@ windows:
     enabled: true
   - id: slot_exilus_school
     box:
-      x: 0.673882140022306
-      y: 0.20513153089487607
-      w: 0.00871250849058347
-      h: 0.014479999979799096
+      x: 0.6727779097274094
+      y: 0.20239500844287922
+      w: 0.00975417515725014
+      h: 0.018183703683502805
     field: rof_66
+    enabled: true
+  - id: slot_5_po
+    box:
+      x: 0.4131102447304484
+      y: 0.45264590836903495
+      w: 0.00890940520228543
+      h: 0.01830050047969195
+    field: rof_68
     enabled: true
   preprocess:
     mode: none
@@ -1962,7 +1976,7 @@ datasets:
   batch_mode: run
   sync_mode: accumulate
 - id: mod_catalog
-  aggregate: max
+  aggregate: latest
   key_field: ''
   key_fields: []
   dedup: true
@@ -2309,7 +2323,7 @@ subsets:
       strip_punct: false
       collapse_ws: true
       strip_words: []
-    aggregate: latest
+    aggregate: ''
     required: true
     mode: join
   filters:
@@ -2680,18 +2694,23 @@ subsets:
     aggregate: latest
     required: false
     mode: join
-  filters: []
+  filters:
+  - field: drain_headroom
+    op: gte
+    value: '0'
   derived: []
   hidden_columns:
   - key
   - _seq
   - _pos
   - rarity
-  - mod_drain
   - _item
   - mod_count
   - mod_name
   - slot
+  - type
+  - compat
+  - value
   sort:
   - field: polarity_match
     desc: true
@@ -2735,6 +2754,7 @@ producers:
       - _set
     root: data
     explode: []
+    row_filter: []
     fields:
     - out_field: price_min
       path: ''
@@ -2813,6 +2833,7 @@ producers:
     explode:
     - relics
     - rewards
+    row_filter: []
     fields:
     - out_field: name
       path: ''
@@ -2867,6 +2888,7 @@ producers:
       - _set
     root: data
     explode: []
+    row_filter: []
     fields:
     - out_field: price_min
       path: ''
@@ -2944,7 +2966,13 @@ producers:
     root: ''
     explode:
     - ''
+    row_filter: []
     fields:
+    - out_field: unique_name
+      path: uniqueName
+      template: ''
+      type: text
+      required: true
     - out_field: name
       path: name
       template: ''
@@ -2982,7 +3010,7 @@ producers:
       required: false
   key:
     fields:
-    - name
+    - unique_name
     sep: '|'
     case_sensitive: false
 file_sources:
@@ -3060,7 +3088,6 @@ triggers:
   readout_value: 0.0
   targets:
   - wf_market_live
-  - owned_refresh_sound
   enabled: true
 - id: trigger_on_new_relic
   kind: on_change
@@ -3395,10 +3422,6 @@ toasts:
   sources:
   - subset:relic_rewards_with_price
 sounds:
-- id: owned_refresh_sound
-  file: ding.wav
-  volume: 1.0
-  enabled: true
 - id: relic_sound
   file: two-tone.wav
   volume: 0.45
@@ -3569,21 +3592,21 @@ layout:
       custW: false
       custH: false
     ds:mod_catalog:
-      x: 4960.0
+      x: 4680.0
       y: 4220.0
-      w: 360.0
-      h: 160.0
+      w: 440.0
+      h: 200.0
       collapsed: false
-      custW: false
+      custW: true
       custH: false
     producer:mod_catalog_producer:
-      x: 4560.0
+      x: 3960.0
       y: 4220.0
-      w: 360.0
-      h: 720.0
+      w: 680.0
+      h: 940.0
       collapsed: false
-      custW: false
-      custH: false
+      custW: true
+      custH: true
     win:mod_window:
       x: -1460.0
       y: 2780.0
@@ -3704,10 +3727,6 @@ layout:
       collapsed: false
       custW: true
       custH: false
-    sound:owned_refresh_sound:
-      x: 500.0
-      y: -3380.0
-      collapsed: false
     win:relic_select:
       x: -660.0
       y: 2760.0
@@ -4121,7 +4140,7 @@ layout:
       y: 1900.0
       collapsed: false
     win:arsenal_warframe:
-      x: 6640.0
+      x: 6620.0
       y: 2480.0
       w: 1060.0
       h: 1078.0
@@ -4569,10 +4588,10 @@ layout:
       custW: true
       custH: true
     vt:ds:mod_catalog:
-      x: 4960.0
+      x: 4680.0
       y: 4440.0
-      w: 800.0
-      h: 600.0
+      w: 1280.0
+      h: 740.0
       collapsed: false
       custW: true
       custH: true
@@ -4605,12 +4624,12 @@ layout:
       y: 4540.0
       collapsed: false
     sub:mod_suggestions_ranked:
-      x: 7160.0
-      y: 5680.0
+      x: 7100.0
+      y: 5660.0
       collapsed: false
     vt:sub:mod_suggestions_ranked:
-      x: 7580.0
-      y: 5680.0
+      x: 7500.0
+      y: 5660.0
       w: 1100.0
       h: 1580.0
       collapsed: false
@@ -4646,15 +4665,19 @@ layout:
       custH: true
     sub:mod_suggestions_general:
       x: 6300.0
-      y: 5680.0
+      y: 5660.0
       w: 360.0
       h: 872.0
       collapsed: false
       custW: true
       custH: true
     sub:mod_suggestions_aura:
-      x: 6720.0
-      y: 5680.0
+      x: 6700.0
+      y: 5660.0
+      collapsed: false
+    ro:arsenal_warframe:slot_5_po:
+      x: 6900.0
+      y: 1460.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -4925,9 +4948,17 @@ layout:
         volume: 53
     ds:mod_catalog:
       widths:
-        compat: 124
+        compat: 134
+        name: 206
+        type: 180
+        unique_name: 103
+        _batch: 36
+        _pos: 36
+        rarity: 68
+        base_drain: 36
+        fusion_limit: 36
       sorts:
-      - col: base_drain
+      - col: compat
         dir: -1
     view:mod_suggestions:
       widths:
@@ -4964,7 +4995,11 @@ layout:
         name: 211
     view:mod_suggestions_ranked:
       widths:
-        name: 184
+        name: 204
+      order: []
+      sorts:
+      - col: drain_headroom
+        dir: 1
   open_images:
   - atlas
   - live_game_window
@@ -5088,7 +5123,6 @@ layout:
     - sub:live_prices_joined
     - producer:wf_market_live
     - trigger:owned_refresh
-    - sound:owned_refresh_sound
     - vt:sub:live_prices_joined
     - sub:master_prime_parts
     - hist:owned_refresh
@@ -5161,7 +5195,6 @@ layout:
     title: 'file: ee.log'
     members:
     - ds:ee_log
-    - vt:ds:dataset_2
     - src:log_ee
     - vt:src:log_ee
     - vt:ds:ee_log
@@ -5392,6 +5425,7 @@ layout:
     - ro:arsenal_warframe:slot_6_drain
     - ro:arsenal_warframe:slot_6_school
     - ro:arsenal_warframe:slot_5_school
+    - ro:arsenal_warframe:slot_5_po
     outline:
       color: '#5ad7e6'
       style: none
