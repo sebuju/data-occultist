@@ -635,7 +635,8 @@ export class GraphModel {
     // the user teaches it all in the UI.
     _blankHttp() {
         return { request: { method: "GET", url: "", headers: {}, query: {}, timeout: 30 },
-                 key_transform: "slugify", key_encode: true, catalogue: null, root: "", explode: [], fields: [] };
+                 key_transform: "slugify", key_encode: true, catalogue: null, root: "", explode: [],
+                 row_filter: [], fields: [] };
     }
     _blankCatalogue() {
         return { url: "", items_path: "data", name_path: "", key_path: "", fuzzy: 0.9, ttl_days: 7, suffix_hints: [] };
@@ -696,11 +697,20 @@ export class GraphModel {
         s.fields[i].array = on ? { filter: [], pluck: "", agg: "min", depth: 5 } : null;
     }
     setHttpFieldArray(id, i, patch) { const s = this._http(id); if (s && s.fields[i] && s.fields[i].array) Object.assign(s.fields[i].array, patch); }
-    addHttpFilter(id, i) { const s = this._http(id); if (s && s.fields[i] && s.fields[i].array) s.fields[i].array.filter.push({ path: "", op: "eq", value: "" }); }
-    removeHttpFilter(id, i, fi) { const s = this._http(id); if (s && s.fields[i] && s.fields[i].array) s.fields[i].array.filter.splice(fi, 1); }
+    // The HttpFilter list an edit targets: a field's ARRAY reduction (`i` = field index), or the
+    // producer's ROW filter (`i == null`). One resolver so both filter editors share the mutators
+    // (and the in/nin value coercion) instead of forking a near-copy per list.
+    _filterList(id, i) {
+        const s = this._http(id);
+        if (!s) return null;
+        if (i == null) return (s.row_filter ||= []);
+        return (s.fields[i] && s.fields[i].array) ? s.fields[i].array.filter : null;
+    }
+    addHttpFilter(id, i = null) { const l = this._filterList(id, i); if (l) l.push({ path: "", op: "eq", value: "" }); }
+    removeHttpFilter(id, i, fi) { const l = this._filterList(id, i); if (l) l.splice(fi, 1); }
     setHttpFilter(id, i, fi, patch) {
-        const s = this._http(id); if (!s || !s.fields[i] || !s.fields[i].array) return;
-        const flt = s.fields[i].array.filter[fi]; if (!flt) return;
+        const flt = (this._filterList(id, i) || [])[fi];
+        if (!flt) return;
         Object.assign(flt, patch);
         // in/nin take a list; split a comma string so the spec matches how the server evaluates it.
         if ((flt.op === "in" || flt.op === "nin") && typeof flt.value === "string") {

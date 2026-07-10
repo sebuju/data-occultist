@@ -176,3 +176,67 @@ def test_map_rows_per_item_mode_single_row():
     assert map_rows({"a": 5}, spec) == [{"v": 5}]
     assert map_rows({"a": None}, HttpSpec(fields=[
         HttpField(out_field="v", path="a", required=True)])) == []
+
+
+# ---- row_filter: drop a source element BEFORE it is mapped -------------------
+# Guards the alternative (ingest duplicate names, then let a dataset `aggregate: max` pick
+# between them) — that picks a record by magnitude, not identity.
+
+
+def _mods_spec(row_filter=()):
+    return HttpSpec(explode=[""], row_filter=list(row_filter),
+                    fields=[HttpField(out_field="name", path="name"),
+                            HttpField(out_field="fl", path="fusionLimit", type="number")])
+
+
+_MODS = [
+    {"name": "Fast Deflection", "fusionLimit": 5, "uniqueName": "/Mods/Warframe/ShieldMod"},
+    {"name": "Fast Deflection", "fusionLimit": 3, "uniqueName": "/Mods/Warframe/Beginner/ShieldModBeginner"},
+    {"name": "Vitality", "fusionLimit": 10, "uniqueName": "/Mods/Warframe/HealthMod"},
+]
+
+
+def test_row_filter_drops_elements_before_mapping():
+    rows = map_rows(_MODS, _mods_spec([HttpFilter(path="uniqueName", op="ncontains", value="/Beginner/")]))
+    assert rows == [{"name": "Fast Deflection", "fl": 5}, {"name": "Vitality", "fl": 10}]
+
+
+def test_row_filter_can_test_a_field_no_column_emits():
+    # `uniqueName` is never an out_field, yet the predicate still reads it off the raw element
+    assert all("uniqueName" not in r for r in map_rows(_MODS, _mods_spec()))
+    rows = map_rows(_MODS, _mods_spec([HttpFilter(path="uniqueName", op="contains", value="/Beginner/")]))
+    assert rows == [{"name": "Fast Deflection", "fl": 3}]
+
+
+def test_row_filter_predicates_are_anded():
+    flt = [HttpFilter(path="uniqueName", op="ncontains", value="/Beginner/"),
+           HttpFilter(path="name", op="ne", value="Vitality")]
+    assert map_rows(_MODS, _mods_spec(flt)) == [{"name": "Fast Deflection", "fl": 5}]
+
+
+def test_row_filter_empty_keeps_every_row():
+    assert len(map_rows(_MODS, _mods_spec())) == 3
+
+
+def test_row_filter_applies_in_per_item_mode():
+    spec = HttpSpec(row_filter=[HttpFilter(path="status", op="eq", value="ok")],
+                    fields=[HttpField(out_field="v", path="a", type="number")])
+    assert map_rows({"a": 5, "status": "ok"}, spec) == [{"v": 5}]
+    assert map_rows({"a": 5, "status": "dead"}, spec) == []
+
+
+def test_ncontains_is_the_negation_of_contains():
+    from oc.enrich.http_producer import _op
+    assert _op("/Mods/Beginner/X", "contains", "/Beginner/") is True
+    assert _op("/Mods/Beginner/X", "ncontains", "/Beginner/") is False
+    assert _op("/Mods/X", "ncontains", "/Beginner/") is True
+    # a MISSING field cannot contain the value, and vacuously does not contain it — `ncontains`
+    # must keep such a row, else the filter meant to keep it silently drops it
+    assert _op(None, "contains", "/Beginner/") is False
+    assert _op(None, "ncontains", "/Beginner/") is True
+
+
+def test_row_filter_keeps_rows_missing_the_tested_field():
+    mods = [*_MODS, {"name": "Odd Mod", "fusionLimit": 1}]        # no uniqueName at all
+    rows = map_rows(mods, _mods_spec([HttpFilter(path="uniqueName", op="ncontains", value="/Beginner/")]))
+    assert {"name": "Odd Mod", "fl": 1} in rows

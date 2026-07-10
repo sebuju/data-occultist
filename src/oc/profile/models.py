@@ -777,11 +777,13 @@ class SortRule(BaseModel):
 
 
 class HttpFilter(BaseModel):
-    """One predicate on an array element, ANDed with the others. ``path`` is a dotted
-    lookup within the element (e.g. ``"type"`` or ``"user.status"``)."""
+    """One predicate on a JSON element, ANDed with the others. ``path`` is a dotted lookup
+    within the element (e.g. ``"type"`` or ``"user.status"``). Used BOTH to select elements of
+    an array being reduced (:class:`HttpArraySpec`) and to keep/drop whole source rows
+    (:attr:`HttpSpec.row_filter`) — one predicate primitive, two callers."""
 
     path: str
-    op: str = "eq"                  # eq | ne | in | nin | gt | ge | lt | le | contains
+    op: str = "eq"                  # eq | ne | in | nin | gt | ge | lt | le | contains | ncontains
     value: object = None            # scalar, or a list for in/nin
 
 
@@ -854,6 +856,11 @@ class HttpSpec(BaseModel):
     # fields merge in, so a leaf can reference any level). e.g. ``[relics, rewards]`` on the
     # WFCD relic table -> one row per (relic, reward). Empty -> per-item mode (fetch per source).
     explode: list[str] = Field(default_factory=list)
+    # Keep only SOURCE elements clearing every predicate (ANDed), evaluated BEFORE mapping — junk
+    # in the feed never becomes a record. Tested against the raw element, so it may key off a field
+    # the producer never emits as a column. The alternative (ingest everything, then paper over the
+    # key collisions with a dataset ``aggregate``) picks a record by magnitude rather than identity.
+    row_filter: list[HttpFilter] = Field(default_factory=list)
     fields: list[HttpField] = Field(default_factory=list)
 
 

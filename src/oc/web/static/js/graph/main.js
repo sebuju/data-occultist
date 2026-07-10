@@ -1620,10 +1620,13 @@ function wireProducer(div, n) {
     div.querySelectorAll(".pr-fa-pluck").forEach((el) => el.addEventListener("change", () => { model.setHttpFieldArray(id, fieldI(el), { pluck: el.value }); save(); }));
     div.querySelectorAll(".pr-fa-agg").forEach((el) => el.addEventListener("change", () => { model.setHttpFieldArray(id, fieldI(el), { agg: el.value }); save(); }));
     div.querySelectorAll(".pr-fa-depth").forEach((el) => el.addEventListener("change", () => { model.setHttpFieldArray(id, fieldI(el), { depth: parseInt(el.value, 10) || 1 }); save(); }));
-    div.querySelectorAll(".pr-ff-add").forEach((b) => b.addEventListener("click", () => { model.addHttpFilter(id, +b.dataset.i); rebuild(); }));
-    div.querySelectorAll(".pr-ff-del").forEach((b) => b.addEventListener("click", () => { model.removeHttpFilter(id, +b.dataset.i, +b.dataset.fi); rebuild(); }));
+    // a filter row/button with NO data-i belongs to the producer's row_filter (null), not a field's
+    // array reduction — the one place the shared filterList() primitive's two callers diverge.
+    const fltI = (el) => (el.dataset.i === undefined ? null : +el.dataset.i);
+    div.querySelectorAll(".pr-ff-add").forEach((b) => b.addEventListener("click", () => { model.addHttpFilter(id, fltI(b)); rebuild(); }));
+    div.querySelectorAll(".pr-ff-del").forEach((b) => b.addEventListener("click", () => { model.removeHttpFilter(id, fltI(b), +b.dataset.fi); rebuild(); }));
     div.querySelectorAll(".pr-ffilt").forEach((row) => {
-        const i = +row.dataset.i, fi = +row.dataset.fi;
+        const i = fltI(row), fi = +row.dataset.fi;
         const opSel = row.querySelector(".pr-ff-op"), valIn = row.querySelector(".pr-ff-val");
         row.querySelector(".pr-ff-path")?.addEventListener("change", (e) => { model.setHttpFilter(id, i, fi, { path: e.target.value }); save(); });
         // op and value co-normalize (in/nin take a list), so commit both together

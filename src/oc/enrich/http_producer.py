@@ -61,11 +61,15 @@ def _op(actual: object, op: str, value: object) -> bool:
         return isinstance(value, (list, tuple, set)) and actual in value
     if op == "nin":
         return isinstance(value, (list, tuple, set)) and actual not in value
-    if op == "contains":
+    if op in ("contains", "ncontains"):
         try:
-            return value in actual  # type: ignore[operator]
+            hit = value in actual  # type: ignore[operator]
         except TypeError:
-            return False
+            # Nothing to search (missing field / non-container): it cannot CONTAIN the value, and
+            # it vacuously does NOT contain it. `ncontains` must stay a true negation, else a row
+            # simply lacking the field is dropped by the very filter meant to keep it.
+            return op == "ncontains"
+        return hit if op == "contains" else not hit
     a, b = _num(actual), _num(value)
     if a is None or b is None:
         return False
@@ -170,10 +174,18 @@ def _explode(rooted: object, paths: list[str]):
 
 def map_rows(rooted: object, spec) -> list[dict]:
     """Map a rooted response to the producer's output rows. With ``spec.explode`` set, one row
-    per leaf of the nested-array walk (list mode); otherwise the single per-item row (or none)."""
+    per leaf of the nested-array walk (list mode); otherwise the single per-item row (or none).
+
+    ``spec.row_filter`` (ANDed :class:`HttpFilter` predicates, same primitive the per-field array
+    reduction uses) drops a SOURCE element before it is mapped — so junk in the feed never becomes
+    a record. Tested against the raw element, so it can key off a field the producer never emits
+    as a column (e.g. drop the tier variants of a mod by their ``uniqueName``)."""
+    keep = getattr(spec, "row_filter", None) or []
     if spec.explode:
-        return [r for r in (map_response(m, spec.fields) for m in _explode(rooted, spec.explode))
-                if r is not None]
+        elems = (m for m in _explode(rooted, spec.explode) if _passes(m, keep))
+        return [r for r in (map_response(m, spec.fields) for m in elems) if r is not None]
+    if not _passes(rooted, keep):
+        return []
     row = map_response(rooted, spec.fields)
     return [row] if row is not None else []
 

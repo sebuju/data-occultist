@@ -8,6 +8,7 @@ import * as api from "../api.js";
 import { isOnline } from "../conn.js";
 import { h, frag, TRASH, labCell, srcRow, kv, subhead, gspan, trashBtn } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
+import { model } from "./state.js";
 import * as hub from "../hub.js";
 import { log } from "../log.js";
 
@@ -16,7 +17,7 @@ import { log } from "../log.js";
 const PRODUCER_TYPES = ["http"];
 
 const AGG_OPS = ["min", "max", "sum", "count", "median", "median_low", "first"];
-const FILTER_OPS = ["eq", "ne", "in", "nin", "gt", "ge", "lt", "le", "contains"];
+const FILTER_OPS = ["eq", "ne", "in", "nin", "gt", "ge", "lt", "le", "contains", "ncontains"];
 
 // Elapsed between two ISO instants (end defaults to now) as "m:ss" / "h:mm:ss".
 const elapsed = (start, end) => {
@@ -82,6 +83,22 @@ const listBlock = (cls, items, placeholder, addLabel, itemTitle) => {
 // The response->columns mapping: one row per output column. A column's value is a `path` (optionally
 // reducing an array: filter -> pluck -> aggregate) OR a `{path}` template composed from several
 // fields. Indices (data-i field, data-fi filter) drive the wiring.
+// ONE editable list of HttpFilter predicates (path / op / value) + its "+ filter" button.
+// Two callers, one primitive (rule 7): a field's ARRAY reduction passes its field index `i`
+// (rows carry data-i + data-fi); the producer's ROW filter passes none (rows carry data-fi
+// only, and the handlers read a missing data-i as "the row_filter list"). Never paste this
+// block for a third filter list — pass the index instead.
+const filterList = (filters, i = null) => {
+    const at = (fi) => (i == null ? { fi } : { i, fi });
+    return frag(
+        ...(filters || []).map((flt, fi) => h("div", { class: "pr-row pr-ffilt", dataset: at(fi) },
+            h("input", { class: "pr-ff-path", value: flt.path || "", placeholder: "field", title: "path within each element to test" }),
+            sel("pr-ff-op", FILTER_OPS, flt.op || "eq", "comparison (in/nin take a comma list)"),
+            h("input", { class: "pr-ff-val", value: Array.isArray(flt.value) ? flt.value.join(", ") : (flt.value ?? ""), placeholder: "value", title: "value to compare against" }),
+            trashBtn({ cls: "sv-rmin pr-ff-del", dataset: at(fi), title: "remove filter" }))),
+        h("button", { class: "pr-ff-add", dataset: i == null ? {} : { i } }, "+ filter"));
+};
+
 const fieldsBlock = (fields) => {
     const fieldRow = (f, i) => {
         const arr = f.array;
@@ -100,12 +117,7 @@ const fieldsBlock = (fields) => {
                 h("input", { class: "pr-fa-pluck", value: arr.pluck || "", placeholder: "pluck path", title: "dotted path within each kept element to the value" }),
                 sel("pr-fa-agg", AGG_OPS, arr.agg || "min", "how the plucked values fold to one"),
                 h("input", { class: "pr-fa-depth", type: "number", value: arr.depth ?? 5, title: "depth (median_low): median of the lowest N" }),
-                ...(arr.filter || []).map((flt, fi) => h("div", { class: "pr-row pr-ffilt", dataset: { i, fi } },
-                    h("input", { class: "pr-ff-path", value: flt.path || "", placeholder: "field", title: "path within each element to test" }),
-                    sel("pr-ff-op", FILTER_OPS, flt.op || "eq", "comparison (in/nin take a comma list)"),
-                    h("input", { class: "pr-ff-val", value: Array.isArray(flt.value) ? flt.value.join(", ") : (flt.value ?? ""), placeholder: "value", title: "value to compare against" }),
-                    trashBtn({ cls: "sv-rmin pr-ff-del", dataset: { i, fi }, title: "remove filter" }))),
-                h("button", { class: "pr-ff-add", dataset: { i } }, "+ filter"),
+                filterList(arr.filter, i),
             ) : null);
     };
     return h("div", { class: "pr-fields" }, ...fields.map(fieldRow), h("button", { class: "pr-f-add" }, "+ column"));
@@ -124,8 +136,8 @@ export function producerParts(pn, cols = [], free = []) {
     const hasSrc = (pn.sources || []).length;
     // item sources use the SHARED sources-input widget (rule 7 — same as subset joins / dict feeds).
     const srcs = srcRow("sources", "datasets/subsets whose item names to fetch",
-        sourcesInput({ ids: pn.sources || [], free, rmCls: "sv-rmin pr-rmsrc", addinCls: "sv-addin pr-addsrc",
-            rmTitle: "stop fetching this source" }));
+        sourcesInput({ chips: (pn.sources || []).map((ds) => ({ value: ds, node: model.refNode(ds) })), free,
+            rmCls: "sv-rmin pr-rmsrc", addinCls: "sv-addin pr-addsrc", rmTitle: "stop fetching this source" }));
     // which source column names the item (only meaningful when sourcing from datasets/subsets).
     const nf = pn.source_field || "name";
     const nfOpts = [...new Set([nf, ...cols])].map((c) => h("option", { selected: c === nf }, c === nf ? `<${c}>` : c));
@@ -166,6 +178,9 @@ export function producerParts(pn, cols = [], free = []) {
             h("input", { class: "pr-root", value: spec.root || "", placeholder: "e.g. data", title: "dotted path into the response applied before mapping" }),
             labCell("explode", "LIST MODE: nested array paths to expand into one row each (blank = fetch per source item)", true),
             listBlock("pr-exp", spec.explode || [], "array path (e.g. relics)", "+ level", "a nested array path, relative to the prior level"),
+            // runs BEFORE the column mapping — so it can test a raw field this producer never emits
+            labCell("keep rows", "drop a source row before it is mapped unless it clears EVERY predicate (tests the raw element, so it may use a field no column emits)", true),
+            filterList(spec.row_filter || []),
             labCell("fields", "response → dataset columns", true), fieldsBlock(spec.fields || []),
             labCell("status", "live sweep progress ('idle' when not running)"),
             h("div", { class: "enr-prog livestats" }),
