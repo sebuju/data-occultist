@@ -2696,7 +2696,7 @@ subsets:
     mode: join
   filters:
   - field: drain_headroom
-    op: gte
+    op: lt
     value: '0'
   derived: []
   hidden_columns:
@@ -2711,6 +2711,10 @@ subsets:
   - type
   - compat
   - value
+  - name
+  - unique_name
+  - base_drain
+  - fusion_limit
   sort:
   - field: polarity_match
     desc: true
@@ -4997,9 +5001,7 @@ layout:
       widths:
         name: 204
       order: []
-      sorts:
-      - col: drain_headroom
-        dir: 1
+      sorts: []
   open_images:
   - atlas
   - live_game_window
