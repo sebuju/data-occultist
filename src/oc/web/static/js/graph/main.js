@@ -222,7 +222,13 @@ function collectLayout() {
         if (!nodeEls.has(id)) continue;   // orphan coord (deleted/renamed node) — don't re-persist it
         const n = { x: p.x, y: p.y };
         const sz = nodeSizes.get(id);
-        if (sz) { n.w = sz.w; n.h = sz.h; if (sz.custW !== undefined) n.custW = sz.custW; if (sz.custH !== undefined) n.custH = sz.custH; }
+        if (sz) {
+            n.w = sz.w; n.h = sz.h;
+            if (sz.custW !== undefined) n.custW = sz.custW;
+            if (sz.custH !== undefined) n.custH = sz.custH;
+            if (sz.softW !== undefined) n.softW = sz.softW;
+            if (sz.softH !== undefined) n.softH = sz.softH;
+        }
         if (collapsed.has(id)) n.collapsed = true;
         nodes[id] = n;
     }
@@ -249,7 +255,7 @@ function hydrateNodeLayout() {
         if (Number.isFinite(n.x) && Number.isFinite(n.y)) pos.set(id, { x: n.x, y: n.y });
         // >0, not just finite: a legacy 0,0 (from the old zero-box settle bug) means "no saved
         // size" — storing it would block the real size from ever applying (0 is falsy downstream).
-        if (n.w > 0 && n.h > 0) nodeSizes.set(id, { w: n.w, h: n.h, custW: n.custW, custH: n.custH });
+        if (n.w > 0 && n.h > 0) nodeSizes.set(id, { w: n.w, h: n.h, custW: n.custW, custH: n.custH, softW: n.softW, softH: n.softH });
         if (n.collapsed) collapsed.add(id);
     }
     pendingOpenImages = [...(L.open_images || [])];
@@ -3086,6 +3092,19 @@ function applySavedSize(el, s) {
 }
 // drop all inline grid sizing (back to the natural box: CSS width + content height)
 function clearGridSize(el) { el.style.width = ""; el.style.height = ""; el.style.minWidth = ""; el.style.minHeight = ""; }
+// A trigger's history satellite (`hist:<id>`) shows session-only data (trigger_history.py's ring
+// is wiped on restart) — its height is otherwise content-driven (custH:false), so a just-reloaded,
+// still-empty panel collapses to the .hist-host CSS floor (120px) even though it was resized taller
+// last session. Dataset/subset vt-table satellites persist their rows, so their content-driven
+// height is trustworthy and must NOT get this floor.
+const isTransientSatellite = (id) => id.startsWith("hist:");
+// Stamp a min-height floor from the LAST saved height on a transient satellite whose height was
+// never explicitly customized (custH:false) — applySavedSize leaves that axis unstamped (by
+// design, for content-driven nodes), so without this the node shows its true saved size only until
+// content empties it out. custH:true nodes are already handled by applySavedSize; left alone here.
+function applySatelliteHeightFloor(el, id, s) {
+    if (s?.h && s.custH === false && isTransientSatellite(id)) el.style.minHeight = `${s.h}px`;
+}
 // The box size that fits the node's content with NO scroll in EITHER axis. offsetWidth/Height alone
 // isn't enough: the body clips wide content into a HORIZONTAL scroll (the node's CSS width is fixed,
 // so content wider than it overflows rather than widening the box). Add back whatever the body can't
@@ -3216,7 +3235,7 @@ function makeNodeResizable(div, id, { widthOnly = false } = {}) {
     // dim into a hard-shrink one, which scrolled a reset node after a render/reload (the repeat bug).
     if (s && !collapsed.has(id)) {
         if (widthOnly) { if (s.w && s.custW !== false) div.style.width = `${s.w}px`; }
-        else applySavedSize(div, s);
+        else { applySavedSize(div, s); applySatelliteHeightFloor(div, id, s); }
     }
     snapResize(div, nodeResizeOpts(div, id, { widthOnly }));
 }
@@ -3232,7 +3251,7 @@ function reapplyNodeSizes() {
         const s = nodeSizes.get(id);
         if (s && !collapsed.has(id)) {
             if (WIDTH_ONLY_NODES.has(nodeTypeOf(id))) { if (s.w && s.custW !== false) el.style.width = `${s.w}px`; }
-            else applySavedSize(el, s);
+            else { applySavedSize(el, s); applySatelliteHeightFloor(el, id, s); }
         }
         markNodeSized(el, id);
     }
