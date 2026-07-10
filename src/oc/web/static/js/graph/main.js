@@ -45,7 +45,7 @@ import {
 } from "./camera.js";
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
 import { imageTextInspector } from "./toast_node.js";
-import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, satToggleBtn, slideToggle, vtShowRemoved, rectEditBtn, aggregateSelect } from "./node_parts.js";
+import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, _optGroups, satToggleBtn, slideToggle, vtShowRemoved, rectEditBtn, aggregateSelect } from "./node_parts.js";
 import { renderTriggerHistory } from "./history_node.js";
 import { refreshRegister } from "./register_node.js";
 import * as dsevents from "./dsevents.js";
@@ -82,11 +82,12 @@ import {
     scheduleItemRead, refreshItemReadout,
     ocrBusyCount,
     commitPreviewNode,
-    scheduleWindowRead,
+    scheduleWindowRead, flushWindowRead,
     refreshImageBoxes, refreshGridPreview, selectRegionNode, refreshRuleTrace, refreshReadoutValues,
     RECT_TYPES, toggleRectEditor, rectEditCanvasSync, editBox,
 } from "./imaging.js";
-import * as rectTxn from "./rect_txn.js";
+import * as rectTxn from "./edit_txn.js";
+import * as nodeTxn from "./node_txn.js";
 import {
     liveWin, liveWinState, buildLiveWindow, renderLiveWindow, syncLiveFromServer, applyLiveInterval, syncWpDots,
     liveCollecting,
@@ -211,6 +212,101 @@ function autosave(changed = null) {
     if (win) scheduleWindowRead(win);  // edit lies in this window's subgraph -> re-read just it
     pushHistory();                     // record this change for undo/redo
 }
+
+// ---- deferred node-config edits (node_txn.js) -------------------------------
+// autosave() above is what makes a node lock itself mid-edit: it schedules the window read, whose
+// setNodeBusy sets `inert` on the body and force-blurs the focused input. So a config edit paints
+// live but stashes its autosave, running it once on ✓ / Enter / a click outside the card. Escape
+// puts the snapshot back.
+//
+// THE rule for which handlers join a transaction (apply it mechanically):
+//   autosave(<window id>) -> the edit re-runs OCR for that window, so it LOCKS the node -> defer.
+//   autosave(null)        -> persist only, nothing re-reads, nothing locks -> stay immediate, and
+//                            commit any pending edit first so the two never interleave.
+// Renames / node add+delete also stay immediate: they call render() and change node identity,
+// which a snapshot can't put back.
+
+// A commit is the end of the edit burst, so don't make the user sit through the debounces that
+// exist only to coalesce one: light the node's loader in THIS frame, push the profile save and the
+// queued OCR read out immediately, and drop the loader when that work settles.
+//
+// The loader can't be left to the downstream fetches: they only spin a node they happen to touch,
+// and a window with no open image canvas runs no detect at all — so a commit could produce no
+// visible acknowledgement whatsoever. Spinning the committing node covers every path.
+nodeTxn.setCommitHook((nodeId, runAftermath) => {
+    setNodeBusy(nodeId, true);
+    try { runAftermath(); }              // queues the save + the window read
+    finally {
+        Promise.all([flushWindowRead(), persist.flush()])
+            .catch(() => {})             // errors surface through their own paths; never strand the spinner
+            .finally(() => setNodeBusy(nodeId, false));
+    }
+});
+
+// Which live objects a node's edits mutate, and how to resync its DOM after a revert. A
+// region/itemfield/readout spans TWO objects: its own `ref` plus the window-level FieldDef
+// (model.fieldOf) that carries the rule pipeline. Note a FieldDef may be shared by several
+// regions — reverting reverts it for all of them, exactly as the forward edit already changed it
+// for all of them.
+function nodeTxnSpec(n) {
+    const rebuild = () => rebuildNode(n.id);
+    switch (n.type) {
+        case "detect": case "scrollbar": case "itemtell": case "item": case "subset":
+            return { targets: () => [n.ref], rebuild };
+        case "region": case "itemfield": case "readout":
+            return { targets: () => [n.ref, n.field], rebuild };
+        case "window": {
+            const w = n.ref;
+            return {
+                // NOT the whole window: cloning it would replace its items/regions arrays and
+                // dangle every child node's `ref` into them. Only the subtrees edited here.
+                targets: () => [model.preprocess(w.id), { obj: w, keys: ["static_grid"] }],
+                // mirror the .winstatic cascade: item nodes show their locate radios only for a
+                // non-static grid, so they must re-bind when static_grid goes back.
+                rebuild: () => {
+                    rebuildNode(`win:${w.id}`);
+                    for (const it of model.window(w.id)?.items || []) rebuildNode(`item:${w.id}:${it.id}`);
+                    refreshImageBoxes(w.id);
+                },
+            };
+        }
+        default:
+            return null;   // node type with no deferrable config (game, dataset, trigger, …)
+    }
+}
+
+// Wrap one config handler: snapshot (first edit only), mutate live, stash the aftermath.
+// `tag` collapses repeats — N keystrokes under "read" leave ONE save + ONE OCR pass queued.
+// A node type with no spec just runs straight through, unchanged.
+export function nodeEdit(nodeId, tag, mutate, aftermath) {
+    if (!nodeTxn.armed(nodeId)) {      // already armed => skip the model.nodes() scan (this runs per keystroke)
+        const n = model.nodes().find((x) => x.id === nodeId);
+        const spec = n && nodeTxnSpec(n);
+        if (!spec) { mutate(); aftermath(); return; }   // node type with nothing deferrable
+        nodeTxn.arm(nodeId, () => spec);   // must precede the mutation — it clones the clean state
+    }
+    mutate();
+    nodeTxn.defer(nodeId, tag, aftermath);
+}
+
+// Bind a value control so its edit registers on every keystroke (`input`), not only when the field
+// blurs (`change`). A text/number input fires `change` on BLUR, so a change-only binding armed the
+// transaction too late: the ✓/✕ bar appeared only once you left the input, and clicking outside ran
+// the commit (on pointerdown) a beat BEFORE the blur delivered the edit.
+//
+// The handler is called for both events and must be idempotent. It receives `live` = true for the
+// per-keystroke pass, where it MUST NOT rebuild the node body — replacing the DOM mid-keystroke
+// destroys the caret. Reshaping work waits for the `change` pass.
+const onValueEdit = (el, fn) => {
+    el.addEventListener("input", (e) => fn(e, true));
+    el.addEventListener("change", (e) => fn(e, false));
+};
+
+// The `edit` callback wireFieldRules expects, bound to one node's transaction. `rebuild` reshapes
+// the row's controls immediately (a new operand, an added/removed row) — mid-transaction, so it
+// neither saves nor ends the edit; `reattach` in rebuildNode keeps the ✓/✕ bar alive across it.
+const rulesEdit = (nodeId, aftermath) => (mutate, { rebuild = false } = {}) =>
+    nodeEdit(nodeId, "read", () => { mutate(); if (rebuild) rebuildNode(nodeId); }, aftermath);
 
 // Live node-layout state (positions/sizes/collapse/open-images) ↔ the profile. persist
 // calls collectLayout() before every profile PUT, and loadGame calls hydrateLayout()
@@ -504,16 +600,21 @@ function syncCellSize(winId, itemId) {
 // another field's rules with a deep clone of it (survives across nodes for this session).
 let ruleClipboard = [];
 
-function wireFieldRules(div, fd, { rebuild, commit, retrace }) {
+// `edit(mutate, { rebuild })` is the ONE way a rule row changes the model: the caller wraps it in
+// its node's transaction (nodeEdit), which must clone the clean state BEFORE `mutate` runs — so
+// every handler here hands its mutation over rather than performing it and reporting after.
+// `rebuild: true` means the row's controls change shape (new operands, a row added/removed), so
+// the node body is rebuilt — mid-transaction, without saving, and without ending the transaction.
+function wireFieldRules(div, fd, { edit, retrace }) {
     fd.rules = fd.rules || [];
     const doTrace = () => retrace?.(div);   // hand the live node body over (see refreshRuleTrace)
     const rule = (e) => fd.rules[+e.target.dataset.ri];
-    const edit = (e, k) => { rule(e)[k] = e.target.value; commit(); doTrace(); };
-    const editNum = (e, k) => { rule(e)[k] = +e.target.value; commit(); doTrace(); };
+    const editVal = (e, k) => { edit(() => { rule(e)[k] = e.target.value; }); doTrace(); };
+    const editNum = (e, k) => { edit(() => { rule(e)[k] = +e.target.value; }); doTrace(); };
+    const restructure = (mutate) => edit(mutate, { rebuild: true });
 
     div.querySelector(".ruleadd")?.addEventListener("click", () => {
-        fd.rules.push({ when: "always", then: "set", value: "" });
-        rebuild();
+        restructure(() => fd.rules.push({ when: "always", then: "set", value: "" }));
     });
     div.querySelector(".rulecopy")?.addEventListener("click", () => {
         ruleClipboard = structuredClone(fd.rules);   // stash a deep copy
@@ -526,29 +627,28 @@ function wireFieldRules(div, fd, { rebuild, commit, retrace }) {
         pasteBtn.disabled = !ruleClipboard.length;   // nothing copied yet -> nothing to paste
         pasteBtn.addEventListener("click", () => {
             if (!ruleClipboard.length) return;
-            fd.rules = structuredClone(ruleClipboard);   // paste REPLACES all current rules
-            rebuild();
+            restructure(() => { fd.rules = structuredClone(ruleClipboard); });   // paste REPLACES all current rules
         });
     }
     div.querySelectorAll(".rulemv").forEach((b) => b.addEventListener("click", (e) => {
         const i = +e.currentTarget.dataset.ri, j = i + +e.currentTarget.dataset.d;
         if (j < 0 || j >= fd.rules.length) return;
-        const [r] = fd.rules.splice(i, 1); fd.rules.splice(j, 0, r); rebuild();   // reorder = pipeline order
+        restructure(() => { const [r] = fd.rules.splice(i, 1); fd.rules.splice(j, 0, r); });   // reorder = pipeline order
     }));
     // when / then change the row's operands -> rebuild; the rest are plain in-place edits
-    div.querySelectorAll(".rule-when").forEach((s) => s.addEventListener("change", (e) => { rule(e).when = e.target.value; rebuild(); }));
-    div.querySelectorAll(".rule-then").forEach((s) => s.addEventListener("change", (e) => { rule(e).then = e.target.value; rebuild(); }));
-    div.querySelectorAll(".rule-dmode").forEach((s) => s.addEventListener("change", (e) => { rule(e).dict_mode = e.target.value; rebuild(); }));
-    div.querySelectorAll(".rule-strategy").forEach((s) => s.addEventListener("change", (e) => { rule(e).strategy = e.target.value; rebuild(); }));   // toggles the sep input
-    div.querySelectorAll(".rule-arg").forEach((inp) => inp.addEventListener("input", (e) => edit(e, "arg")));
-    div.querySelectorAll(".rule-val").forEach((inp) => inp.addEventListener("input", (e) => edit(e, "value")));
-    div.querySelectorAll(".rule-sep").forEach((inp) => inp.addEventListener("input", (e) => edit(e, "sep")));
-    div.querySelectorAll(".rule-udict").forEach((s) => s.addEventListener("change", (e) => edit(e, "dict_id")));
+    div.querySelectorAll(".rule-when").forEach((s) => s.addEventListener("change", (e) => restructure(() => { rule(e).when = e.target.value; })));
+    div.querySelectorAll(".rule-then").forEach((s) => s.addEventListener("change", (e) => restructure(() => { rule(e).then = e.target.value; })));
+    div.querySelectorAll(".rule-dmode").forEach((s) => s.addEventListener("change", (e) => restructure(() => { rule(e).dict_mode = e.target.value; })));
+    div.querySelectorAll(".rule-strategy").forEach((s) => s.addEventListener("change", (e) => restructure(() => { rule(e).strategy = e.target.value; })));   // toggles the sep input
+    div.querySelectorAll(".rule-arg").forEach((inp) => inp.addEventListener("input", (e) => editVal(e, "arg")));
+    div.querySelectorAll(".rule-val").forEach((inp) => inp.addEventListener("input", (e) => editVal(e, "value")));
+    div.querySelectorAll(".rule-sep").forEach((inp) => inp.addEventListener("input", (e) => editVal(e, "sep")));
+    div.querySelectorAll(".rule-udict").forEach((s) => s.addEventListener("change", (e) => editVal(e, "dict_id")));
     div.querySelectorAll(".rule-fuzzy").forEach((inp) => inp.addEventListener("change", (e) => editNum(e, "fuzzy")));
     // delete is an armed two-click (rule 2): first click turns it yellow, a click anywhere else
     // or Escape resets it, a second click removes the rule.
     div.querySelectorAll(".rule-del").forEach((b) => armConfirm(b, () => {
-        fd.rules.splice(+b.dataset.ri, 1); rebuild();
+        restructure(() => fd.rules.splice(+b.dataset.ri, 1));
     }, { silent: true, resetOnOutside: true }));
     doTrace();   // paint the trace for the freshly-built rows (uses the live body, not a nodeEls lookup)
 }
@@ -566,17 +666,27 @@ function wireFieldRules(div, fd, { rebuild, commit, retrace }) {
 //   reread:  the edit changed what/where OCR reads (geometry, tells, fields). FALSE for
 //            edits that touch neither pixels nor boxes (id rename, record-key identity) —
 //            skip the costly cutout re-read + window preview re-OCR for those.
-function itemChanged(winId, itemId, { rebuild = false, render: doRender = false, reread = true } = {}) {
+function itemChanged(winId, itemId, opts = {}) {
+    itemPaint(winId, itemId, opts);
+    itemRead(winId, itemId, opts.reread ?? true)();
+}
+
+// The two halves, split so a deferred edit can run the cheap one now and the expensive one on
+// commit. `itemPaint` only touches the DOM/overlay; `itemRead` returns the thunk that invalidates
+// the grid, re-reads the cutout and persists — the part whose setNodeBusy would blur the input.
+function itemPaint(winId, itemId, { rebuild = false, render: doRender = false } = {}) {
     if (doRender) render();
     else if (rebuild) rebuildNode(`item:${winId}:${itemId}`);
     refreshItemBoxes(winId, itemId);   // item cutout boxes
     refreshImageBoxes(winId);          // window image boxes + grid guides
+}
+const itemRead = (winId, itemId, reread = true) => () => {
     if (reread) {
         clearGrid(winId);                // detected window grid is now stale
         scheduleItemRead(winId, itemId); // re-read the cutout -> readout + box tints
     }
     autosave(reread ? winId : null);           // persist; re-run this window's preview/detect only when reread
-}
+};
 
 // Wire an item node's id + tells/fields lists (rebuildNode re-binds these,
 // preserving the live cutout canvas). Every edit funnels through itemChanged().
@@ -587,8 +697,10 @@ function wireItemControls(div, n) {
         if (!it || !it.box) return;
         const k = e.target.dataset.k, v = +e.target.value;
         if (!(v > 0)) { e.target.value = +(+it.box[k]).toFixed(4); return; }   // reject 0/blank
-        setItemCellKeepingChildren(winId, itemId, { ...it.box, [k]: v });   // resize, keep fields put
-        itemChanged(winId, itemId);
+        nodeEdit(n.id, "read", () => {
+            setItemCellKeepingChildren(winId, itemId, { ...it.box, [k]: v });   // resize, keep fields put
+            itemPaint(winId, itemId);
+        }, itemRead(winId, itemId));
     }));
     div.querySelector(".csize-match")?.addEventListener("click", () => {
         const it = model.item(winId, itemId);
@@ -682,7 +794,14 @@ function groupOrphanChildren(type) {
 //   rebuild:     the field node DOM (type/tell/locate toggled which controls show)
 //   rebuildItem: the item node DOM (tell flag / conf changed -> its mirror + key)
 //   render:      full graph render (id rename, dict link, node add/remove)
-function fieldChanged(winId, itemId, fid, { rebuild = false, rebuildItem = false, render: doRender = false } = {}) {
+function fieldChanged(winId, itemId, fid, opts = {}) {
+    fieldPaint(winId, itemId, fid, opts);
+    itemRead(winId, itemId)();
+}
+
+// The cheap half (see itemPaint). The expensive half is `itemRead(winId, itemId)` — identical to
+// the item node's, since a field edit re-reads the same cutout.
+function fieldPaint(winId, itemId, fid, { rebuild = false, rebuildItem = false, render: doRender = false } = {}) {
     if (doRender) render();
     else {
         if (rebuild) rebuildNode(`fld:${winId}:${itemId}:${fid}`);
@@ -690,15 +809,16 @@ function fieldChanged(winId, itemId, fid, { rebuild = false, rebuildItem = false
     }
     refreshItemBoxes(winId, itemId);
     refreshImageBoxes(winId);
-    clearGrid(winId);
-    scheduleItemRead(winId, itemId);
-    autosave(winId);
 }
 
 // Wire one item-field node: the per-field config that used to live inline in the item node.
 function wireItemField(div, n) {
     const winId = n.win.id, itemId = n.item.id, fid = n.ref.id;
+    // one deferred field edit: paint now, re-read the cutout + persist once on commit
+    const fieldEdit = (mutate, opts = {}) =>
+        nodeEdit(n.id, "read", () => { mutate(); fieldPaint(winId, itemId, fid, opts); }, itemRead(winId, itemId));
     div.querySelector(".gi-id").addEventListener("change", (e) => {
+        nodeTxn.commitIfDirty();   // rename render()s + changes node identity — land any pending edit first
         renameNode(e.target, fid,
             () => model.renameItemField(winId, itemId, fid, e.target.value.trim()),
             () => movePos(`fld:${winId}:${itemId}:${fid}`, `fld:${winId}:${itemId}:${n.ref.id}`),
@@ -706,46 +826,43 @@ function wireItemField(div, n) {
     });
     // Only the capture/confidence knobs live on the field body now; all value processing is
     // authored in the rule pipeline (wired below). `type` rebuilds so the rule menus re-filter.
-    div.querySelectorAll(".ffset").forEach((inp) => inp.addEventListener("change", (e) => {
+    div.querySelectorAll(".ffset").forEach((inp) => onValueEdit(inp, (e, live) => {
         const f = model.itemField(winId, itemId, fid);
         const fd = f && (n.win.fields || []).find((x) => x.id === f.field);
         if (!fd) return;
         const k = e.target.dataset.k;
-        let rebuild = false;
-        if (k === "type") { fd.type = e.target.value; rebuild = true; }       // re-filters the rule menus
-        else if (k === "minconf") fd.min_confidence = +e.target.value || 0;
-        else if (k === "isolate") fd.isolate = e.target.checked;
-        else if (k === "glyph_check") fd.glyph_check = e.target.checked;
-        fieldChanged(winId, itemId, fid, { rebuild });
+        const rebuild = k === "type" && !live;                                 // re-filters the rule menus
+        fieldEdit(() => {
+            if (k === "type") fd.type = e.target.value;
+            else if (k === "minconf") fd.min_confidence = +e.target.value || 0;
+            else if (k === "isolate") fd.isolate = e.target.checked;
+            else if (k === "glyph_check") fd.glyph_check = e.target.checked;
+        }, { rebuild });
     }));
     if (n.field) wireFieldRules(div, n.field, {
-        rebuild: () => fieldChanged(winId, itemId, fid, { rebuild: true }),
-        commit: () => fieldChanged(winId, itemId, fid),
+        // `rebuild` is handled by rulesEdit (it rebuilds THIS node); the boxes/grid resync and the
+        // cutout re-read split across paint-now / read-on-commit.
+        edit: rulesEdit(n.id, itemRead(winId, itemId)),
         retrace: (el) => refreshRuleTrace(winId, n.field.id, n.id, el),
     });
     div.querySelector(".itell")?.addEventListener("change", (e) => {
-        model.setItemFieldTell(winId, itemId, fid, e.target.checked);
-        fieldChanged(winId, itemId, fid, { rebuild: true, rebuildItem: true });   // show/hide tell-conf + item mirror
+        fieldEdit(() => model.setItemFieldTell(winId, itemId, fid, e.target.checked),
+            { rebuild: true, rebuildItem: true });   // show/hide tell-conf + item mirror
     });
     div.querySelector(".itellconf")?.addEventListener("change", (e) => {
-        model.setItemFieldTellConf(winId, itemId, fid, +e.target.value || 0);
-        fieldChanged(winId, itemId, fid, { rebuildItem: true });
+        fieldEdit(() => model.setItemFieldTellConf(winId, itemId, fid, +e.target.value || 0), { rebuildItem: true });
     });
     div.querySelector(".itelltext")?.addEventListener("change", (e) => {
-        model.setItemFieldTellAllowText(winId, itemId, fid, e.target.checked);
-        fieldChanged(winId, itemId, fid);
+        fieldEdit(() => model.setItemFieldTellAllowText(winId, itemId, fid, e.target.checked));
     });
     div.querySelector(".iloc")?.addEventListener("change", (e) => {
-        model.setItemFieldLocate(winId, itemId, fid, e.target.checked);
-        fieldChanged(winId, itemId, fid, { rebuild: true });   // show/hide the align dropdown
+        fieldEdit(() => model.setItemFieldLocate(winId, itemId, fid, e.target.checked), { rebuild: true });   // show/hide the align dropdown
     });
     div.querySelector(".itellalign")?.addEventListener("change", (e) => {
-        model.setItemFieldAlign(winId, itemId, fid, e.target.value);
-        fieldChanged(winId, itemId, fid);
+        fieldEdit(() => model.setItemFieldAlign(winId, itemId, fid, e.target.value));
     });
     div.querySelector(".itellalignx")?.addEventListener("change", (e) => {
-        model.setItemFieldAlignX(winId, itemId, fid, e.target.value);
-        fieldChanged(winId, itemId, fid);   // x-anchor changes where columns land -> re-read
+        fieldEdit(() => model.setItemFieldAlignX(winId, itemId, fid, e.target.value));   // x-anchor changes where columns land -> re-read
     });
 }
 
@@ -755,19 +872,24 @@ function wireItemField(div, n) {
 //   rebuild: the tell node DOM (a control toggled which others show)
 //   render:  full graph render (id rename, locate toggle -> sibling tell nodes, node add/remove)
 //   reread:  the edit changed what/where OCR reads. FALSE for id-only renames.
-function tellChanged(winId, itemId, tid, { rebuild = false, render: doRender = false, reread = true } = {}) {
+function tellChanged(winId, itemId, tid, opts = {}) {
+    tellPaint(winId, itemId, tid, opts);
+    itemRead(winId, itemId, opts.reread ?? true)();
+}
+
+// cheap half (see itemPaint); the expensive half is the shared itemRead(winId, itemId)
+function tellPaint(winId, itemId, tid, { rebuild = false, render: doRender = false } = {}) {
     if (doRender) render();
     else if (rebuild) rebuildNode(`tell:${winId}:${itemId}:${tid}`);
     refreshItemBoxes(winId, itemId);
     refreshImageBoxes(winId);
-    if (reread) { clearGrid(winId); scheduleItemRead(winId, itemId); }
-    autosave(reread ? winId : null);
 }
 
 // Wire one tell node: the per-tell controls that used to live inline in the item node.
 function wireItemTell(div, n) {
     const winId = n.win.id, itemId = n.item.id, tid = n.ref.id;
     div.querySelector(".gi-id").addEventListener("change", (e) => {
+        nodeTxn.commitIfDirty();   // rename render()s + changes node identity — land any pending edit first
         renameNode(e.target, tid,
             () => model.renameItemTell(winId, itemId, tid, e.target.value.trim()),
             () => movePos(`tell:${winId}:${itemId}:${tid}`, `tell:${winId}:${itemId}:${n.ref.id}`),
@@ -775,12 +897,16 @@ function wireItemTell(div, n) {
     });
     // the tell's KIND: swaps which kind-specific controls show (rebuild this node) and what the
     // merged table shows (rebuild the item node). A re-read reflects the new check.
+    // one deferred tell edit: paint now, re-read the cutout + persist once on commit
+    const tellEdit = (mutate, opts = {}) =>
+        nodeEdit(n.id, "read", () => { mutate(); tellPaint(winId, itemId, tid, opts); }, itemRead(winId, itemId));
     div.querySelector(".tkind")?.addEventListener("change", (e) => {
-        model.setItemTellProp(winId, itemId, tid, "kind", e.target.value);
-        rebuildNode(`item:${winId}:${itemId}`);   // merged table shows the kind
-        tellChanged(winId, itemId, tid, { rebuild: true });
+        tellEdit(() => {
+            model.setItemTellProp(winId, itemId, tid, "kind", e.target.value);
+            rebuildNode(`item:${winId}:${itemId}`);   // merged table shows the kind
+        }, { rebuild: true });
     });
-    div.querySelectorAll(".tset").forEach((inp) => inp.addEventListener("change", (e) => {
+    div.querySelectorAll(".tset").forEach((inp) => onValueEdit(inp, (e, live) => {
         const k = e.target.dataset.k;
         let prop = k, v;
         if (k === "threshold") v = +e.target.value || 0;
@@ -790,12 +916,13 @@ function wireItemTell(div, n) {
         else if (k === "case") { prop = "case_sensitive"; v = e.target.checked; }
         else if (k === "field") v = e.target.value || null;   // blank "—" => no field => check ANY column
         else v = e.target.value;
-        model.setItemTellProp(winId, itemId, tid, prop, v);
-        // margin grows the search crop — redraw this template tell's reference preview to show it
-        if (k === "margin" && n.ref.kind === "template") drawTellTemplateRef(div, n);
         // text empty<->set adds/removes the match knobs; mode change shows/hides "read ⊆ text"
         // (ignored by full/exact) -> rebuild this node's body in both cases
-        tellChanged(winId, itemId, tid, (k === "text" || k === "match") ? { rebuild: true } : {});
+        tellEdit(() => {
+            model.setItemTellProp(winId, itemId, tid, prop, v);
+            // margin grows the search crop — redraw this template tell's reference preview to show it
+            if (k === "margin" && n.ref.kind === "template") drawTellTemplateRef(div, n);
+        }, (!live && (k === "text" || k === "match")) ? { rebuild: true } : {});
     }));
     // sync hex text <-> color swatch on color/border tells
     const _colorSpan = div.querySelector(".aset-color");
@@ -808,7 +935,9 @@ function wireItemTell(div, n) {
         }
     }
     div.querySelector(".tloc")?.addEventListener("change", (e) => {
-        // locate is single-choice across the item's tells — clear the others, set this one
+        // locate is single-choice across the item's tells — clear the others, set this one. It
+        // render()s (sibling tell nodes change), so it stays immediate; land any pending edit first.
+        nodeTxn.commitIfDirty();
         for (const t of n.item.tells || []) model.setItemTellProp(winId, itemId, t.id, "locate", false);
         model.setItemTellProp(winId, itemId, tid, "locate", e.target.checked);
         tellChanged(winId, itemId, tid, { render: true });   // align dropdown + sibling tell nodes
@@ -911,7 +1040,10 @@ function wireWindowControls(div, n) {
         autosave(null);
         if (wasOpen) await openImage(newId);    // restore the image against the moved binding
     });
+    // this window's OCR-firing edits (preprocess + static grid) defer as one transaction
+    const winEdit = (mutate) => nodeEdit(n.id, "read", mutate, () => autosave(n.ref.id));
     div.querySelector(".winlive")?.addEventListener("change", (e) => {
+        nodeTxn.commitIfDirty();   // autosave(null) knob: nothing re-reads, so it never joined the txn — land one first
         model.setWindowLive(n.ref.id, e.target.checked);
         model._syncWindowPriority();   // add/drop this window from the game node's priority list
         rebuildNode("game");           // reflect the add/drop in the priority list now
@@ -919,14 +1051,17 @@ function wireWindowControls(div, n) {
         renderLiveWindow();       // reflect in the live panel's window list
     });
     div.querySelector(".winstatic")?.addEventListener("change", (e) => {
-        model.setWindowStaticGrid(n.ref.id, e.target.checked);
-        [...imageCanvases.keys()].includes(n.ref.id) && clearGrid(n.ref.id);   // grid<->locator
-        // static toggles whether OCR locate applies — re-bind item nodes so their locate
-        // radios enable/disable to match (rebuildNode keeps each item's live cutout canvas)
-        for (const it of model.window(n.ref.id)?.items || []) rebuildNode(`item:${n.ref.id}:${it.id}`);
-        refreshImageBoxes(n.ref.id); autosave(n.ref.id);   // redraw guides; re-detect this window only
+        winEdit(() => {
+            model.setWindowStaticGrid(n.ref.id, e.target.checked);
+            [...imageCanvases.keys()].includes(n.ref.id) && clearGrid(n.ref.id);   // grid<->locator
+            // static toggles whether OCR locate applies — re-bind item nodes so their locate
+            // radios enable/disable to match (rebuildNode keeps each item's live cutout canvas)
+            for (const it of model.window(n.ref.id)?.items || []) rebuildNode(`item:${n.ref.id}:${it.id}`);
+            refreshImageBoxes(n.ref.id);   // redraw guides; re-detect this window only, on commit
+        });
     });
     div.querySelectorAll(".winscroll").forEach((inp) => inp.addEventListener("change", (e) => {
+        nodeTxn.commitIfDirty();   // precapture-only knob (autosave(null)) — stays immediate
         const k = e.target.dataset.k;
         if (k === "autoscroll") {
             model.setScrollAutoscroll(n.ref.id, e.target.checked);
@@ -937,27 +1072,30 @@ function wireWindowControls(div, n) {
     // Text appearance (window-level OCR preprocess). Every knob changes what OCR SEES, so
     // autosave(winId) re-reads THIS window (unlike the precapture-only scroll knobs above).
     div.querySelector(".ppmode")?.addEventListener("change", (e) => {
-        model.setPreprocessMode(n.ref.id, e.target.value);
-        rebuildNode(`win:${n.ref.id}`);   // show/hide the colour controls for `color` mode
-        autosave(n.ref.id);
+        winEdit(() => {
+            model.setPreprocessMode(n.ref.id, e.target.value);
+            rebuildNode(`win:${n.ref.id}`);   // show/hide the colour controls for `color` mode
+        });
     });
     div.querySelector(".pptol")?.addEventListener("input", (e) => {
-        model.setPreprocessTolerance(n.ref.id, +e.target.value); autosave(n.ref.id);
+        winEdit(() => model.setPreprocessTolerance(n.ref.id, +e.target.value));
     });
     div.querySelector(".ppscale")?.addEventListener("change", (e) => {
-        model.setPreprocessScale(n.ref.id, +e.target.value || 1); autosave(n.ref.id);
+        winEdit(() => model.setPreprocessScale(n.ref.id, +e.target.value || 1));
     });
     div.querySelector(".pp-pick")?.addEventListener("click", () => armPreprocessPick(n.ref.id));
     div.querySelector(".pp-add")?.addEventListener("click", () => {
         const el = div.querySelector(".pp-hex"); const v = el.value.trim();
-        if (/^#?[0-9a-fA-F]{6}$/.test(v)) {
+        if (/^#?[0-9a-fA-F]{6}$/.test(v)) winEdit(() => {
             model.addPreprocessColor(n.ref.id, v.startsWith("#") ? v : `#${v}`);
-            rebuildNode(`win:${n.ref.id}`); autosave(n.ref.id);
-        }
+            rebuildNode(`win:${n.ref.id}`);
+        });
     });
     div.querySelectorAll(".pp-cx").forEach((b) => b.addEventListener("click", () => {
-        model.removePreprocessColor(n.ref.id, +b.dataset.i);
-        rebuildNode(`win:${n.ref.id}`); autosave(n.ref.id);
+        winEdit(() => {
+            model.removePreprocessColor(n.ref.id, +b.dataset.i);
+            rebuildNode(`win:${n.ref.id}`);
+        });
     }));
     // reorder the item-template priority list: ▲/▼ swap a template up/down, re-numbering
     // priorities to match the new order (top = highest, bottom = 0 base). Base may change -> reread.
@@ -1062,14 +1200,49 @@ function viewDisplayColumns(s) {
     return out;
 }
 
+// Which source each of a subset's columns comes from — the ONE partition both the column dropdowns
+// (optgroups) and the visible/hide row (subheadings) render from (rule 7). A column is claimed by
+// the FIRST source offering it (a join key lives in several); everything no source declares (this
+// subset's derived columns, live enrich/meta columns the static schema can't know) lands in a
+// trailing group named after the subset itself. Returns null when there's nothing to separate —
+// one source is no join, and a lone group is just noise. Order within a group follows `cols`.
+function viewColumnGroups(s, cols) {
+    const inputs = model.subsetInputs(s);
+    if (inputs.length < 2) return null;
+    const owner = new Map();
+    for (const ds of inputs) for (const c of model.inputColumns(ds)) if (!owner.has(c)) owner.set(c, ds);
+    const groups = inputs.map((ds) => ({ label: ds, cols: [] }));
+    const byLabel = new Map(groups.map((g) => [g.label, g]));
+    const own = { label: s.id, cols: [] };
+    for (const c of cols) (byLabel.get(owner.get(c)) || own).cols.push(c);
+    return [...groups, own].filter((g) => g.cols.length);
+}
+
+// `_`-prefixed columns (_seq, _count, …) are store meta, not data — sink them below the real
+// columns of whatever list they're in. Array.sort is stable, so everything else keeps its order.
+const metaLast = (cols) => cols.slice().sort((a, b) => (a.startsWith("_") ? 1 : 0) - (b.startsWith("_") ? 1 : 0));
+
+// A subset's column dropdown: grouped by source once it joins, flat when it has one input.
+function subColOpts(s, cols, sel) {
+    const groups = viewColumnGroups(s, cols);
+    return groups
+        ? _optGroups(groups.map((g) => ({ label: g.label, cols: metaLast(g.cols) })), sel)
+        : _colOpts(metaLast(cols), sel);
+}
+
 function hideToggleNodes(s) {
     const hidden = new Set(s.hidden_columns || []);
     const cols = viewDisplayColumns(s);
     if (!cols.length) return h("span", { class: "muted sub-empty" }, "no columns yet");
-    return cols.map((c) => h("button", {
+    const btn = (c) => h("button", {
         class: `sv-hide${hidden.has(c) ? " off" : ""}`, dataset: { col: c },
         title: `${hidden.has(c) ? "show" : "hide"} column`,
-    }, c));
+    }, c);
+    // joined -> the toggles carry a subheading per source, so it's clear which dataset a column
+    // came from (they'd otherwise read as one undifferentiated pile). Unjoined -> plain row.
+    const groups = viewColumnGroups(s, cols);
+    if (!groups) return cols.map(btn);
+    return groups.flatMap((g) => [h("span", { class: "sv-hide-h" }, g.label), ...g.cols.map(btn)]);
 }
 
 // Repaint + re-wire a subset's visible/hide toggle row in place (no node rebuild).
@@ -1085,12 +1258,12 @@ function renderHideToggles(el, s) {
 // vtable then updates its columns in place and refreshSubsetNode repaints the toggles.
 function wireHideToggles(host, s) {
     host.querySelectorAll(".sv-hide").forEach((b) => b.addEventListener("click", () => {
-        model.toggleHiddenColumn(s.id, b.dataset.col);
-        const nowHidden = (s.hidden_columns || []).includes(b.dataset.col);
-        b.classList.toggle("off", nowHidden);                       // instant feedback, no node rebuild
-        b.title = nowHidden ? "show column" : "hide column";
-        autosave(null);   // hiding a view column changes nothing any window OCRs
-        refreshSubsetNode(s.id);
+        nodeEdit(`sub:${s.id}`, "recompute", () => {
+            model.toggleHiddenColumn(s.id, b.dataset.col);
+            const nowHidden = (s.hidden_columns || []).includes(b.dataset.col);
+            b.classList.toggle("off", nowHidden);                   // instant feedback, no node rebuild
+            b.title = nowHidden ? "show column" : "hide column";
+        }, () => { autosave(null); refreshSubsetNode(s.id); });     // hiding a view column changes nothing any window OCRs
     }));
 }
 
@@ -1262,7 +1435,7 @@ function subConfigNode(s) {
     // off .sf-*/.sd-*/.ss-* + data-i as before.
     const filters = listBlock({ items: s.filters, rowClass: "sub-row", del: { cls: "sf-del", title: "remove filter" },
         render: (f, i) => [
-            h("select", { class: "sf-field", dataset: { i } }, _colOpts(cols, f.field)),
+            h("select", { class: "sf-field", dataset: { i } }, subColOpts(s, cols, f.field)),
             h("select", { class: "sf-op", dataset: { i } }, SUB_OPS.map((o) => h("option", { selected: o === f.op }, o === f.op ? `<${o}>` : o))),
             h("input", { class: "sf-val", dataset: { i }, value: f.value || "", placeholder: "value" })] });
     const derived = listBlock({ items: s.derived, rowClass: "sub-row", del: { cls: "sd-del", title: "remove column" },
@@ -1273,7 +1446,7 @@ function subConfigNode(s) {
     // multi-column sort: primary row first, each a column + direction; applied before limit
     const sortRows = listBlock({ items: s.sort, rowClass: "sub-row", del: { cls: "ss-del", title: "remove sort" },
         render: (so, i) => [
-            h("select", { class: "ss-field", dataset: { i } }, _colOpts(cols, so.field)),
+            h("select", { class: "ss-field", dataset: { i } }, subColOpts(s, cols, so.field)),
             h("select", { class: "ss-dir", dataset: { i } },
                 h("option", { value: "asc", selected: !so.desc }, !so.desc ? "<asc>" : "asc"),
                 h("option", { value: "desc", selected: !!so.desc }, !!so.desc ? "<desc>" : "desc"))] });
@@ -1328,7 +1501,7 @@ function repaintSubsetCols(el, s) {
     el._colsig = sig;
     for (const sel of el.querySelectorAll(".ss-field, .sf-field")) {
         const v = sel.value;
-        sel.replaceChildren(..._colOpts(cols, v));
+        sel.replaceChildren(...subColOpts(s, cols, v));
         sel.value = v;
     }
 }
@@ -1338,7 +1511,7 @@ function repaintSubsetCols(el, s) {
 // the FINAL data instead of stalling on a stale mid-sweep snapshot.
 // `pre` (an already-computed view, e.g. from the one-shot boot batch) renders without a network
 // round-trip; omit it for the live path and it fetches its own.
-function refreshSubsetNode(id, pre = null) { singleFlight(`sub:${id}`, (ctx) => _refreshSubsetNode(id, pre, ctx)); }
+function refreshSubsetNode(id, pre = null) { return singleFlight(`sub:${id}`, (ctx) => _refreshSubsetNode(id, pre, ctx)); }
 async function _refreshSubsetNode(id, pre, { superseded } = {}) {
     const el = nodeEls.get(`sub:${id}`);                              // config node (hide toggles live here)
     const vtId = `vt:sub:${id}`;
@@ -1411,12 +1584,15 @@ async function flushNodeRefresh() {
         if (!dss.length && !subs.length) return;
         let details = null;
         try { details = await api.flowDetails(model.profile.name, dss, subs); } catch { /* batch failed -> per-node fetch */ }
-        for (const d of dss) { const pre = details?.datasets?.[d] || null; refreshDataNode(d, pre); loadBatchesNode(d, pre); }
-        for (const s of subs) refreshSubsetNode(s, details?.subsets?.[s] || null);
+        const jobs = [];
+        for (const d of dss) { const pre = details?.datasets?.[d] || null; jobs.push(refreshDataNode(d, pre), loadBatchesNode(d, pre)); }
+        for (const s of subs) jobs.push(refreshSubsetNode(s, details?.subsets?.[s] || null));
+        // AWAIT the repaints, not just the batch fetch: kicking them off and dropping the spinner
+        // immediately (as this used to) un-busied the node while its table still held the old rows —
+        // the spinner lifted a beat BEFORE the update landed. Never throws (allSettled).
+        await Promise.allSettled(jobs);
     } finally {
-        // drop the queue-time header spinner now the batch fetch settled and the per-node
-        // refreshes above have been kicked off — each carries its own satellite spinner
-        // (setNodeBusy on vt:ds:/vt:sub:) for the rest of its own repaint work.
+        // every queued node has now refetched AND repainted — drop the queue-time header spinner.
         for (const d of queuedDs) if (nodeEls.has(`ds:${d}`)) setNodeBusy(`ds:${d}`, false);
         for (const s of queuedSub) if (nodeEls.has(`sub:${s}`)) setNodeBusy(`sub:${s}`, false);
     }
@@ -1479,10 +1655,17 @@ function wireArmedRemove(container, selector, onFire) {
 function wireSubset(div, s) {
     // subset edits are subset-only — they never change any window's image/regions/detect, so
     // autosave(null): persist + refresh THIS view, never re-OCR the open windows.
-    const recompute = () => { autosave(null); refreshSubsetNode(s.id); };
-    const restructure = () => { autosave(null); rebuildNode(`sub:${s.id}`); };   // rebuild this node's config
+    // ...but they DO refetch the joined view and rebuild this body, so a burst of filter edits used
+    // to fire one /subset per change and swap the DOM under the caret. Both defer to the
+    // transaction: `mutate` paints now, the save+refetch runs once on ✓ / Enter / a click outside.
+    const subEdit = (mutate, { rebuild = false } = {}) =>
+        nodeEdit(`sub:${s.id}`, "recompute", () => { mutate(); if (rebuild) rebuildNode(`sub:${s.id}`); },
+            () => { autosave(null); refreshSubsetNode(s.id); });
+    const recompute = (mutate) => subEdit(mutate);
+    const restructure = (mutate) => subEdit(mutate, { rebuild: true });   // rebuild this node's config
     div.querySelector(".subrename")?.addEventListener("change", (e) => {
         const oldId = s.id;
+        nodeTxn.commitIfDirty();   // rename render()s + changes node identity — land any pending edit first
         renameNode(e.target, oldId,
             () => model.renameSubset(oldId, e.target.value),
             () => movePos(`sub:${oldId}`, `sub:${s.id}`),
@@ -1495,66 +1678,74 @@ function wireSubset(div, s) {
                 refreshSubsetNode(s.id);
             });
     });
-    div.querySelector(".sub-addf")?.addEventListener("click", () => { model.addFilter(s.id); restructure(); });
-    div.querySelector(".sub-addd")?.addEventListener("click", () => { model.addDerived(s.id); restructure(); });
-    div.querySelector(".sub-adds")?.addEventListener("click", () => { model.addSort(s.id); restructure(); });
+    div.querySelector(".sub-addf")?.addEventListener("click", () => restructure(() => model.addFilter(s.id)));
+    div.querySelector(".sub-addd")?.addEventListener("click", () => restructure(() => model.addDerived(s.id)));
+    div.querySelector(".sub-adds")?.addEventListener("click", () => restructure(() => model.addSort(s.id)));
 
     // join inputs — adding/removing/swapping a source changes the wiring AND this config's own
-    // source rows + join-on column list, so render() (edges) THEN restructure() (rebuild node)
+    // source rows + join-on column list. They render() (edges change), so they stay immediate;
+    // land any pending edit first.
     div.querySelector(".sv-addin")?.addEventListener("change", (e) => {
-        if (model.addSubsetInput(s.id, e.target.value)) { render(); restructure(); }
+        nodeTxn.commitIfDirty();
+        if (model.addSubsetInput(s.id, e.target.value)) { render(); autosave(null); rebuildNode(`sub:${s.id}`); }
     });
     wireArmedRemove(div, ".sv-rmin", (val) => {
-        model.removeSubsetInput(s.id, val); render(); restructure();
+        nodeTxn.commitIfDirty();
+        model.removeSubsetInput(s.id, val); render(); autosave(null); rebuildNode(`sub:${s.id}`);
     });
     // PER-SOURCE join config — each control carries its source id in dataset.ds. Setting/clearing a
     // source's join field toggles its required + match rows, so rebuild the node (restructure);
     // the other knobs just re-canonicalise/recompute the view.
-    div.querySelectorAll(".sv-sjoin").forEach((el) => el.addEventListener("change", (e) => { model.setSourceJoinField(s.id, el.dataset.ds, e.target.value.trim()); restructure(); }));
-    div.querySelectorAll(".sv-sreq").forEach((el) => el.addEventListener("change", (e) => { model.setSourceRequired(s.id, el.dataset.ds, e.target.checked); recompute(); }));
+    div.querySelectorAll(".sv-sjoin").forEach((el) => el.addEventListener("change", (e) => restructure(() => model.setSourceJoinField(s.id, el.dataset.ds, e.target.value.trim()))));
+    div.querySelectorAll(".sv-sreq").forEach((el) => el.addEventListener("change", (e) => recompute(() => model.setSourceRequired(s.id, el.dataset.ds, e.target.checked))));
     // switching mode toggles which rows show (required/join-on/norm), so rebuild the node
-    div.querySelectorAll(".sv-smode").forEach((el) => el.addEventListener("change", (e) => { model.setSourceMode(s.id, el.dataset.ds, e.target.value); restructure(); }));
-    div.querySelectorAll(".sv-sagg").forEach((el) => el.addEventListener("change", (e) => { model.setSourceAggregate(s.id, el.dataset.ds, e.target.value); recompute(); }));
+    div.querySelectorAll(".sv-smode").forEach((el) => el.addEventListener("change", (e) => restructure(() => model.setSourceMode(s.id, el.dataset.ds, e.target.value))));
+    div.querySelectorAll(".sv-sagg").forEach((el) => el.addEventListener("change", (e) => recompute(() => model.setSourceAggregate(s.id, el.dataset.ds, e.target.value))));
     // norm knobs re-render the worked example IN PLACE (realtime) — no node rebuild, no refetch (the
     // sample is cached on the eg element) — then recompute() refreshes the actual joined view.
     const egFor = (ds) => div.querySelector(`.sv-norm-eg[data-ds="${CSS.escape(ds)}"]`);
     const previewNorm = (ds) => { const eg = egFor(ds); if (eg) renderNormEg(eg, s.id); };
-    div.querySelectorAll(".sn-ci").forEach((el) => el.addEventListener("change", (e) => { model.setSourceJoinNorm(s.id, el.dataset.ds, { case_insensitive: e.target.checked }); previewNorm(el.dataset.ds); recompute(); }));
-    div.querySelectorAll(".sn-punct").forEach((el) => el.addEventListener("change", (e) => { model.setSourceJoinNorm(s.id, el.dataset.ds, { strip_punct: e.target.checked }); previewNorm(el.dataset.ds); recompute(); }));
-    div.querySelectorAll(".sn-ws").forEach((el) => el.addEventListener("change", (e) => { model.setSourceJoinNorm(s.id, el.dataset.ds, { collapse_ws: e.target.checked }); previewNorm(el.dataset.ds); recompute(); }));
-    // drop-words: preview live on every keystroke (input); commit the view recompute on blur (change)
+    const normEdit = (el, patch) => recompute(() => { model.setSourceJoinNorm(s.id, el.dataset.ds, patch); previewNorm(el.dataset.ds); });
+    div.querySelectorAll(".sn-ci").forEach((el) => el.addEventListener("change", (e) => normEdit(el, { case_insensitive: e.target.checked })));
+    div.querySelectorAll(".sn-punct").forEach((el) => el.addEventListener("change", (e) => normEdit(el, { strip_punct: e.target.checked })));
+    div.querySelectorAll(".sn-ws").forEach((el) => el.addEventListener("change", (e) => normEdit(el, { collapse_ws: e.target.checked })));
+    // drop-words: preview live on every keystroke. It's one deferred edit like any other — the
+    // worked example repaints per key, the view refetch waits for commit. (A separate `change`
+    // listener would snapshot AFTER these keystrokes had already mutated the model, so Escape
+    // could never put the original words back.)
     div.querySelectorAll(".sn-words").forEach((el) => {
-        el.addEventListener("input", () => { model.setSourceStripWords(s.id, el.dataset.ds, el.value); previewNorm(el.dataset.ds); });
-        el.addEventListener("change", () => { model.setSourceStripWords(s.id, el.dataset.ds, el.value); recompute(); });
+        el.addEventListener("input", () => recompute(() => {
+            model.setSourceStripWords(s.id, el.dataset.ds, el.value); previewNorm(el.dataset.ds);
+        }));
     });
     fillNormSamples(div, s);   // sample each source's real join value, then render its example
     div.querySelectorAll(".sv-norm-eg").forEach((el) => el.addEventListener("click", () => cycleNormEg(el, s.id)));
-    div.querySelector(".sv-latest")?.addEventListener("change", (e) => { model.setSubsetLatestBatch(s.id, e.target.checked); recompute(); });
-    div.querySelector(".sv-limit")?.addEventListener("change", (e) => { model.setSubsetLimit(s.id, e.target.value); e.target.value = s.limit || 0; recompute(); });
+    div.querySelector(".sv-latest")?.addEventListener("change", (e) => recompute(() => model.setSubsetLatestBatch(s.id, e.target.checked)));
+    div.querySelector(".sv-limit")?.addEventListener("change", (e) => recompute(() => { model.setSubsetLimit(s.id, e.target.value); e.target.value = s.limit || 0; }));
 
     // pivot: toggling it changes which rows show (the name/value/key/attributes inputs), so
     // rebuild the node; editing its fields just recomputes the view.
-    div.querySelector(".sv-pivot-on")?.addEventListener("change", (e) => { model.setSubsetPivotEnabled(s.id, e.target.checked); restructure(); });
-    div.querySelector(".sv-pivot-namefield")?.addEventListener("change", (e) => { model.setSubsetPivotField(s.id, "name_field", e.target.value.trim()); recompute(); });
-    div.querySelector(".sv-pivot-valuefield")?.addEventListener("change", (e) => { model.setSubsetPivotField(s.id, "value_field", e.target.value.trim()); recompute(); });
-    div.querySelector(".sv-pivot-keycol")?.addEventListener("change", (e) => { model.setSubsetPivotField(s.id, "key_column", e.target.value.trim()); recompute(); });
-    div.querySelector(".sv-pivot-attrs")?.addEventListener("change", (e) => { model.setSubsetPivotAttributes(s.id, e.target.value); recompute(); });
+    div.querySelector(".sv-pivot-on")?.addEventListener("change", (e) => restructure(() => model.setSubsetPivotEnabled(s.id, e.target.checked)));
+    div.querySelector(".sv-pivot-namefield")?.addEventListener("change", (e) => recompute(() => model.setSubsetPivotField(s.id, "name_field", e.target.value.trim())));
+    div.querySelector(".sv-pivot-valuefield")?.addEventListener("change", (e) => recompute(() => model.setSubsetPivotField(s.id, "value_field", e.target.value.trim())));
+    div.querySelector(".sv-pivot-keycol")?.addEventListener("change", (e) => recompute(() => model.setSubsetPivotField(s.id, "key_column", e.target.value.trim())));
+    div.querySelector(".sv-pivot-attrs")?.addEventListener("change", (e) => recompute(() => model.setSubsetPivotAttributes(s.id, e.target.value)));
 
     // filters
-    div.querySelectorAll(".sf-del").forEach((b) => b.addEventListener("click", () => { model.removeFilter(s.id, +b.dataset.i); restructure(); }));
-    div.querySelectorAll(".sf-field").forEach((el) => el.addEventListener("change", (e) => { s.filters[+el.dataset.i].field = e.target.value; recompute(); }));
-    div.querySelectorAll(".sf-op").forEach((el) => el.addEventListener("change", (e) => { s.filters[+el.dataset.i].op = e.target.value; recompute(); }));
-    div.querySelectorAll(".sf-val").forEach((el) => el.addEventListener("change", (e) => { s.filters[+el.dataset.i].value = e.target.value; recompute(); }));
+    div.querySelectorAll(".sf-del").forEach((b) => b.addEventListener("click", () => restructure(() => model.removeFilter(s.id, +b.dataset.i))));
+    div.querySelectorAll(".sf-field").forEach((el) => el.addEventListener("change", (e) => recompute(() => { s.filters[+el.dataset.i].field = e.target.value; })));
+    div.querySelectorAll(".sf-op").forEach((el) => el.addEventListener("change", (e) => recompute(() => { s.filters[+el.dataset.i].op = e.target.value; })));
+    div.querySelectorAll(".sf-val").forEach((el) => onValueEdit(el, (e) => recompute(() => { s.filters[+el.dataset.i].value = e.target.value; })));
 
     // derived columns — editing a name changes the available column set, so restructure
-    div.querySelectorAll(".sd-del").forEach((b) => b.addEventListener("click", () => { model.removeDerived(s.id, +b.dataset.i); restructure(); }));
-    div.querySelectorAll(".sd-name").forEach((el) => el.addEventListener("change", (e) => { s.derived[+el.dataset.i].name = e.target.value.trim(); restructure(); }));
-    div.querySelectorAll(".sd-tpl").forEach((el) => el.addEventListener("change", (e) => { s.derived[+el.dataset.i].template = e.target.value; recompute(); }));
+    div.querySelectorAll(".sd-del").forEach((b) => b.addEventListener("click", () => restructure(() => model.removeDerived(s.id, +b.dataset.i))));
+    div.querySelectorAll(".sd-name").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.derived[+el.dataset.i].name = e.target.value.trim(); })));
+    div.querySelectorAll(".sd-tpl").forEach((el) => onValueEdit(el, (e) => recompute(() => { s.derived[+el.dataset.i].template = e.target.value; })));
 
     // sort — removing a row restructures (indices shift); field/dir just recompute
-    div.querySelectorAll(".ss-del").forEach((b) => b.addEventListener("click", () => { model.removeSort(s.id, +b.dataset.i); restructure(); }));
-    div.querySelectorAll(".ss-field").forEach((el) => el.addEventListener("change", (e) => { s.sort[+el.dataset.i].field = e.target.value; recompute(); }));
-    div.querySelectorAll(".ss-dir").forEach((el) => el.addEventListener("change", (e) => { s.sort[+el.dataset.i].desc = e.target.value === "desc"; recompute(); }));
+    div.querySelectorAll(".ss-del").forEach((b) => b.addEventListener("click", () => restructure(() => model.removeSort(s.id, +b.dataset.i))));
+    div.querySelectorAll(".ss-field").forEach((el) => el.addEventListener("change", (e) => recompute(() => { s.sort[+el.dataset.i].field = e.target.value; })));
+    div.querySelectorAll(".ss-dir").forEach((el) => el.addEventListener("change", (e) => recompute(() => { s.sort[+el.dataset.i].desc = e.target.value === "desc"; })));
 
     // hide/show result columns — toggling changes the column set, so restructure
     wireHideToggles(div, s);
@@ -1948,7 +2139,7 @@ function wireToastImage(sec, x, n) {
     // defer the expensive save + server re-render until edits settle, so holding WASD or dragging
     // fires ONE render+save at the end, not one per step (the overlay updates live via paintSel).
     // Moving/resizing/nudging an element is a rect edit, so it rides the SAME transaction every box
-    // overlay uses (rect_txn.js): the drag only paints, and Enter / the ✓ button / a click outside
+    // overlay uses (edit_txn.js): the drag only paints, and Enter / the ✓ button / a click outside
     // the node runs the expensive save + server re-render ONCE for the whole batch; Escape puts every
     // touched element back. Unlike a canvas box this editor WRITES the model live (resolveLocal reads
     // it back to place the overlay without a round-trip), so the clean state is a snapshot, not the
@@ -3291,9 +3482,13 @@ function rebuildNode(id) {
     if (live) {   // keep the live canvas: rebuild + re-wire only the controls section
         const host = el.querySelector(live.sel);
         if (host) { host.replaceChildren(live.build(n)); live.wire(el, n); }
-        return;
+        return;   // the ✓/✕ bar sits on the card, outside the swapped section — it survives
     }
     fillNode(el, n);
+    // fillNode did `div.replaceChildren(...)`, throwing away a pending edit's ✓/✕ bar. Put it
+    // back: a structural edit (adding a rule row, switching a rule's `when`) rebuilds the body
+    // mid-transaction and must not look like the transaction ended.
+    nodeTxn.reattach(id);
     // fillNode rewrote the node's DOM, wiping the resize grips — re-add them with the SAME opts as
     // creation (snapResize), grip-side onSettle included. snapResize's ResizeObserver only glues edges
     // on reflow; it does NOT settle/reroute (no mouseup/finish), so the grip loop's onSettle is the
@@ -3879,6 +4074,7 @@ function wireNode(div, n) {
         const fld = n.field;
         div.querySelector(".gi-id").addEventListener("change", (e) => {
             const oldId = n.ref.id;
+            nodeTxn.commitIfDirty();   // rename render()s + changes node identity — land any pending edit first
             renameNode(e.target, oldId,
                 () => model.renameRegion(n.win.id, oldId, e.target.value.trim()),
                 () => movePos(`reg:${n.win.id}:${oldId}`, `reg:${n.win.id}:${n.ref.id}`),
@@ -3886,18 +4082,18 @@ function wireNode(div, n) {
         });
         // Only the capture/confidence knobs live on the field body now; all value processing is
         // authored in the rule pipeline (wired below). `type` rebuilds so the rule menus re-filter.
-        div.querySelectorAll(".fset").forEach((inp) => inp.addEventListener("change", (e) => {
+        div.querySelectorAll(".fset").forEach((inp) => onValueEdit(inp, (e, live) => {
             if (!fld) return;
             const k = e.target.dataset.k;
-            if (k === "type") { fld.type = e.target.value; rebuildNode(n.id); }  // re-filters the rule menus
-            else if (k === "isolate") fld.isolate = e.target.checked;
-            else if (k === "glyph_check") fld.glyph_check = e.target.checked;
-            else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
-            autosave(n.win?.id);   // plain value edits: no DOM rebuild; re-OCR only this window
+            nodeEdit(n.id, "read", () => {
+                if (k === "type") { fld.type = e.target.value; if (!live) rebuildNode(n.id); }  // re-filters the rule menus
+                else if (k === "isolate") fld.isolate = e.target.checked;
+                else if (k === "glyph_check") fld.glyph_check = e.target.checked;
+                else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
+            }, () => autosave(n.win?.id));   // re-OCR only this window, once on commit
         }));
         if (fld) wireFieldRules(div, fld, {
-            rebuild: () => { rebuildNode(n.id); autosave(n.win?.id); },
-            commit: () => autosave(n.win?.id),
+            edit: rulesEdit(n.id, () => autosave(n.win?.id)),
             retrace: (el) => refreshRuleTrace(n.win.id, fld.id, n.id, el),
         });
     } else if (n.type === "detect") {
@@ -3905,31 +4101,34 @@ function wireNode(div, n) {
         const isGate = owner === "game";
         const ownerNode = nodeIdOf(owner);
         // persist a detector edit: window detectors re-OCR their window; gate detectors just
-        // save + re-run the cheap gate (autosave(null) doesn't re-read a window).
+        // save + re-run the cheap gate (autosave(null) doesn't re-read a window). BOTH branches
+        // end in a detect pass that spins this very node, so both defer to the transaction.
         const saveDet = () => { if (isGate) { autosave(null); refreshDetect("game"); } else autosave(owner); };
         div.querySelector(".gi-id").addEventListener("change", (e) => {
             const oldId = n.ref.id;
+            nodeTxn.commitIfDirty();   // a rename render()s + changes node identity — land any pending knob edit first
             renameNode(e.target, oldId,
                 () => model.renameDetect(owner, oldId, e.target.value.trim()),
                 () => movePos(`det:${owner}:${oldId}`, `det:${owner}:${n.ref.id}`),
                 () => { render(); rebuildNode(ownerNode); saveDet(); refreshImageBoxes(owner); });
         });
-        div.querySelectorAll(".aset").forEach((inp) => inp.addEventListener("change", (e) => {
+        div.querySelectorAll(".aset").forEach((inp) => onValueEdit(inp, (e, live) => {
             const k = e.target.dataset.k;
-            if (k === "kind") { setDetectKind(n.ref, e.target.value); rebuildNode(n.id); refreshImageBoxes(owner); saveDet(); return; }
-            if (k === "text") n.ref.text = e.target.value;
-            else if (k === "color") { n.ref.color = e.target.value.trim(); rebuildNode(n.id); }
-            else if (k === "colorpick") { n.ref.color = e.target.value; rebuildNode(n.id); }
-            else if (k === "tol") n.ref.tolerance = Math.max(0, Math.trunc(+e.target.value) || 0);
-            else if (k === "width") n.ref.width = Math.max(0, +e.target.value || 0);
-            else if (k === "thr") n.ref.threshold = +e.target.value;
-            else if (k === "match") n.ref.match = e.target.value;
-            else if (k === "minchars") n.ref.min_chars = Math.max(0, Math.trunc(+e.target.value) || 0);
-            else if (k === "strip") n.ref.strip = e.target.value;
-            else if (k === "case") n.ref.case_sensitive = e.target.checked;
-            // mode change shows/hides "read ⊆ text" (ignored by full/exact) -> rebuild the body
-            if (k === "match") rebuildNode(n.id);
-            saveDet();   // a detector knob re-runs detect for ONLY this owner
+            nodeEdit(n.id, "read", () => {
+                if (k === "kind") { setDetectKind(n.ref, e.target.value); if (!live) rebuildNode(n.id); refreshImageBoxes(owner); return; }
+                if (k === "text") n.ref.text = e.target.value;
+                else if (k === "color") { n.ref.color = e.target.value.trim(); if (!live) rebuildNode(n.id); }
+                else if (k === "colorpick") { n.ref.color = e.target.value; if (!live) rebuildNode(n.id); }
+                else if (k === "tol") n.ref.tolerance = Math.max(0, Math.trunc(+e.target.value) || 0);
+                else if (k === "width") n.ref.width = Math.max(0, +e.target.value || 0);
+                else if (k === "thr") n.ref.threshold = +e.target.value;
+                else if (k === "match") n.ref.match = e.target.value;
+                else if (k === "minchars") n.ref.min_chars = Math.max(0, Math.trunc(+e.target.value) || 0);
+                else if (k === "strip") n.ref.strip = e.target.value;
+                else if (k === "case") n.ref.case_sensitive = e.target.checked;
+                // mode change shows/hides "read ⊆ text" (ignored by full/exact) -> rebuild the body
+                if (k === "match" && !live) rebuildNode(n.id);
+            }, saveDet);   // a detector knob re-runs detect for ONLY this owner — once, on commit
         }));
     } else if (n.type === "scrollbar") {
         wireScrollbar(div, n);
@@ -3964,19 +4163,18 @@ function wireReadout(div, n) {
     });
     // inline read-config, edited straight on the FieldDef (like a region). Only the
     // capture/confidence knobs live here; value processing is the rule pipeline (wired below).
-    div.querySelectorAll(".roset").forEach((inp) => inp.addEventListener("change", (e) => {
+    div.querySelectorAll(".roset").forEach((inp) => onValueEdit(inp, (e, live) => {
         if (!fld) return;
         const k = e.target.dataset.k;
-        if (k === "type") { fld.type = e.target.value; rebuildNode(n.id); }  // re-filters the rule menus
-        else if (k === "isolate") fld.isolate = e.target.checked;
-        else if (k === "glyph_check") fld.glyph_check = e.target.checked;
-        else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
-        autosave(winId);
-        scheduleRefetch();   // read config changed -> re-read the value off the current image
+        nodeEdit(n.id, "read", () => {
+            if (k === "type") { fld.type = e.target.value; if (!live) rebuildNode(n.id); }  // re-filters the rule menus
+            else if (k === "isolate") fld.isolate = e.target.checked;
+            else if (k === "glyph_check") fld.glyph_check = e.target.checked;
+            else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
+        }, () => { autosave(winId); scheduleRefetch(); });   // read config changed -> re-read the value off the current image
     }));
     if (fld) wireFieldRules(div, fld, {
-        rebuild: () => { rebuildNode(n.id); autosave(winId); },
-        commit: () => { autosave(winId); scheduleRefetch(); },
+        edit: rulesEdit(n.id, () => { autosave(winId); scheduleRefetch(); }),
         retrace: (el) => refreshRuleTrace(winId, fld.id, n.id, el),
     });
     refetch();   // initial value off the current image (no-op while the collector is running)
@@ -4333,6 +4531,7 @@ async function loadGame(name) {
     }
     const { profile, local, migrated } = opened;
     done();
+    nodeTxn.abandon();   // a pending edit belongs to the OUTGOING profile's objects — drop it, don't carry it across
     model.load(profile);
     seedSubsetSig();        // baseline subset defs so an unrelated save recomputes NO subset (only new/edited ones diff)
     nodeEls.clear();
@@ -4388,6 +4587,7 @@ $("gameSelect").addEventListener("change", async (e) => {
 function createGame(name) {
     name = (name || "").trim();
     if (!name) { setStatus("enter a name"); return false; }
+    nodeTxn.abandon();   // a pending edit belongs to the OUTGOING profile's objects
     model.load({ name, process_names: [], window_title_hint: null, fields: [], windows: [] });
     pos.clear(); nodeEls.clear(); $("gnodes").replaceChildren();
     render(); autosave(null);
@@ -5166,7 +5366,7 @@ document.addEventListener("keydown", (ev) => {
     }
     ov.render();        // reflect the nudge on the overlay immediately
     // A nudge only PAINTS: it joins this surface's rect batch and settles on Enter / ✓ / clicking
-    // out (rect_txn.js). Holding W for a second is then one model write, one save, one re-OCR and
+    // out (edit_txn.js). Holding W for a second is then one model write, one save, one re-OCR and
     // one undo step — not thirty. The atlas surface has no batch (nothing to re-read), so it keeps
     // writing straight through.
     if (rec.kind === "window" || rec.kind === "item") editBox(activeOverlayKey, b);

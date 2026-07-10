@@ -14,7 +14,8 @@ import { render, collectLayout, hydrateNodeLayout, reconcileOpenImages, reapplyN
 import { refreshImageBoxes, refreshDetect, refreshItemBoxes } from "./imaging.js";
 import { reapplyPersistedVTables } from "../vtable.js";
 import { createHistory } from "../history_core.js";
-import * as rectTxn from "./rect_txn.js";
+import * as rectTxn from "./edit_txn.js";
+import * as nodeTxn from "./node_txn.js";
 import { diffLabel } from "../history_label.js";
 
 // fold live node layout into the profile first, so the snapshot captures the CURRENT positions
@@ -22,6 +23,9 @@ import { diffLabel } from "../history_label.js";
 const snapshot = () => { collectLayout(); return JSON.stringify(model.profile); };
 
 async function restore(snap) {
+    // model.load swaps out every config object — an armed edit transaction would be left holding
+    // (and comparing against) orphans. Drop it before the swap, never after.
+    nodeTxn.abandon();
     model.load(JSON.parse(snap));          // profile incl. its layout
     hydrateNodeLayout();                   // push restored positions/sizes/collapse/groups/satellites live
     render();                              // place nodes at the restored spots (nodes now in the DOM)
@@ -43,11 +47,11 @@ export const hist = createHistory({ snapshot, restore, label: diffLabel });
 // the graph is built; boot.phase only clears after bootSettle, so nothing boot-side records.
 const pushHistory = () => { if (!boot.phase) hist.push(); };
 const resetHistory = () => hist.reset("loaded");
-// An uncommitted rect edit IS the most recent change, but it never entered history (nothing is
-// recorded until the batch commits). So Ctrl+Z drops it first — same effect as Escape — and only
-// the next press walks the recorded stack.
+// An uncommitted edit (a dragged box, a typed node config) IS the most recent change, but it never
+// entered history (nothing is recorded until the batch commits). So Ctrl+Z drops it first — same
+// effect as Escape — and only the next press walks the recorded stack.
 function undo() {
-    if (rectTxn.dirty()) { rectTxn.revert(); setStatus("discarded rect edit"); return; }
+    if (rectTxn.dirty()) { rectTxn.revert(); setStatus("discarded edit"); return; }
     if (hist.canUndo()) { const p = hist.undo(); setStatus("undo"); return p; }
 }
 function redo() { if (hist.canRedo()) { const p = hist.redo(); setStatus("redo"); return p; } }

@@ -13,11 +13,12 @@ import {
     gridPreviews, gridReads, gridCellBoxes, gridGuards, gridOccluded, gridDetections, itemReads, clearGrid, view, boot,
     readoutPreview,
 } from "./state.js";
-import * as rectTxn from "./rect_txn.js";
+import * as rectTxn from "./edit_txn.js";
+import * as nodeTxn from "./node_txn.js";
 import { drawEdges } from "./routing.js";
 import { renderLiveWindow, liveDetCount, liveRecog } from "./panels/livewin.js";
 import {
-    render, autosave, rebuildNode, rebuildReadoutConsumers, setNodeBusy, withBusy,
+    render, autosave, nodeEdit, rebuildNode, rebuildReadoutConsumers, setNodeBusy, withBusy,
     registerOverlay, unregisterOverlay, overlaySelected, selectedNodeId, setSelectedNodeId,
     placeNewNode, refreshLive, syncCellSize, itemChanged,
     addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom, showSatellite,
@@ -157,7 +158,7 @@ function surfaceOf(key) {
     return imageCanvases.get(key === "atlas" ? "atlas" : key.slice(4));
 }
 
-// The rect transaction's view of a box surface (rect_txn.js). Commit writes every dirty box through
+// The rect transaction's view of a box surface (edit_txn.js). Commit writes every dirty box through
 // the registry's single writer, then runs the surface's aftermath ONCE — the same epilogue a single
 // mouse/WASD edit used to run, hoisted out of the loop, so N moved boxes cost one refresh + one
 // autosave (and therefore one read settle, one history entry). Revert just rebuilds the boxes from
@@ -187,7 +188,10 @@ function boxSpec(key) {
 // that surface; nothing is written until it commits.
 export function editBox(key, box) {
     rectTxn.begin(key, () => boxSpec(key));
-    rectTxn.touch(box.id, box);
+    // hand in an explicit geometry copy: the batch stores whatever it's given, and the model
+    // writers (persistWinBox / persistItem) dispatch on `role` and read only x/y/w/h — a live
+    // overlay box carries extra paint state that must not reach them.
+    rectTxn.touch(box.id, { role: box.role, x: box.x, y: box.y, w: box.w, h: box.h });
     rectEditCanvasSync(key);   // a typed panel bound to this box tracks the drag/nudge live
 }
 
@@ -252,7 +256,7 @@ let activeRectEdit = null;   // { nodeId, nodeEl, desc, draft, panel, outside } 
 
 // A typed digit is just another way to move the box: it previews on the canvas and joins whatever
 // rect batch that surface already has open (so a drag then a typed tweak commit together). The
-// panel itself never writes the model — Enter / ✓ / clicking out does, through rect_txn.
+// panel itself never writes the model — Enter / ✓ / clicking out does, through edit_txn.
 // With the box's canvas CLOSED there is nothing to preview on, so the panel becomes its own
 // transaction surface (`panel:<node>`) and commits through the descriptor's writer.
 function rectEditPush() {
@@ -448,6 +452,13 @@ async function openImage(winId, nodeEl = null) {
 // sink (see applyPickedColor).
 let _pickTarget = null;   // {winId, detId} armed by a detect node's eyedropper button
 
+// You arm the eyedropper on a node but complete the sample by clicking the window's image canvas —
+// a DIFFERENT node. Without this guard that pointerdown reads as "you left the card" and silently
+// commits the node's pending config edit out from under the pick (node_txn.js). Scoped to the
+// canvas click that actually FEEDS the pick: an armed-but-unused eyedropper must not swallow every
+// other outside-click and strand the edit uncommittable.
+nodeTxn.addOutsideGuard((t) => !!_pickTarget && !!t?.closest?.(".canvas-wrap"));
+
 export function armColorPick(winId, detId) {
     _pickTarget = { winId, detId };
     const ov = imageCanvases.get(winId)?.overlay;
@@ -464,20 +475,25 @@ export function armPreprocessPick(winId) {
     else setStatus("open the image first");
 }
 
+// A picked colour is just another edit to the node that armed the eyedropper, so it JOINS that
+// node's pending transaction rather than saving on its own: the sample paints immediately, the
+// re-read waits for ✓/Enter, and Escape drops the colour along with the rest of the edit.
 function applyPickedColor(winId, hex) {
     const t = _pickTarget; _pickTarget = null;
     if (!t || t.winId !== winId) return;
     if (t.pp) {                                   // eyedropper armed for window preprocess
-        model.addPreprocessColor(winId, hex);
-        rebuildNode(`win:${winId}`);              // refresh the colour chips
-        autosave(winId);                          // preprocess changes OCR input -> re-read this window
+        nodeEdit(`win:${winId}`, "read",
+            () => { model.addPreprocessColor(winId, hex); rebuildNode(`win:${winId}`); },   // refresh the colour chips
+            () => autosave(winId));               // preprocess changes OCR input -> re-read this window
         return;
     }
     const d = model.detect(winId, t.detId);
     if (!d) return;
-    d.color = hex;
-    rebuildNode(`det:${winId}:${t.detId}`);   // refresh swatch + hex input
-    refreshImageBoxes(winId); autosave(null); refreshDetect(winId);
+    nodeEdit(`det:${winId}:${t.detId}`, "read", () => {
+        d.color = hex;
+        rebuildNode(`det:${winId}:${t.detId}`);   // refresh swatch + hex input
+        refreshImageBoxes(winId);
+    }, () => { autosave(null); refreshDetect(winId); });
 }
 
 // ---- cutout atlas node -----------------------------------------------------
@@ -1068,7 +1084,7 @@ function refreshItemBoxes(winId, itemId) {
         boxes.push(box);
     }
     // an uncommitted rect edit outranks the model: this list was just rebuilt from the CLEAN model,
-    // so a read landing mid-edit would otherwise snap every dirty box back (rect_txn.js)
+    // so a read landing mid-edit would otherwise snap every dirty box back (edit_txn.js)
     ent.overlay.setBoxes(rectTxn.applyPending(`item:${winId}:${itemId}`, boxes));
     // the extracted field values, drawn over their boxes tinted by confidence (same as the
     // window preview). The read returns boxes already in cutout fractions.
@@ -1183,7 +1199,7 @@ function previewProfileFor(winId) {
 const _lastTrace = new Map();    // winId -> last successful batch {fields}
 
 function fetchWindowTrace(winId) {
-    singleFlight(`trace:${winId}`, (ctx) => doWindowTrace(winId, ctx));
+    return singleFlight(`trace:${winId}`, (ctx) => doWindowTrace(winId, ctx));
 }
 
 async function doWindowTrace(winId, { superseded } = {}) {
@@ -1307,7 +1323,11 @@ function refreshRuleTrace(winId, fieldId, nodeId, el) {
     const host = el || nodeEls.get(nodeId);
     if (!host || !host.querySelectorAll(".frule-trace").length) return;
     paintRuleTrace(winId, fieldId, host);
-    scheduleWindowRead(winId, { trace: true });
+    // While this node is being edited, ask for the TRACE ONLY: the preview+detect pass would
+    // setNodeBusy this very node and blur the input being typed in (edit_txn.js). Gate on ARMED,
+    // not dirty — a value momentarily typed back to its original is still mid-edit, and the caret
+    // must survive it.
+    scheduleWindowRead(winId, { trace: true, preview: !nodeTxn.armed(nodeId) });
 }
 
 // Coalesce reads: at most ONE OCR request per window is ever in flight (shared singleFlight
@@ -1729,13 +1749,34 @@ function armReadTimer() {
 // refetch its readout values (refreshReadoutValues — the live-mode-off, satellite-independent
 // path), once this settle fires. Replaces the old separate refreshOpenPreviews/refreshOpenDetect
 // debounces + fetchWindowTrace's own + wireReadout's immediate, un-coalesced refetch().
-function scheduleWindowRead(winId = null, { trace = false, readouts = false } = {}) {
-    if (winId) { _readWins.add(winId); if (trace) _readTrace.add(winId); if (readouts) _readReadouts.add(winId); }
-    else _readAll = true;
+// `preview: false` queues the trace/readout refresh WITHOUT the window's preview+detect pass. That
+// pass is what calls setNodeBusy -> `inert` -> blurs the input being typed in, so a node with an
+// uncommitted config edit asks for its rule trace alone: you see rule output update as you type,
+// and nothing locks. The full pass runs once, on commit, via the deferred autosave.
+function scheduleWindowRead(winId = null, { trace = false, readouts = false, preview = true } = {}) {
+    if (winId) {
+        if (preview) _readWins.add(winId);
+        if (trace) _readTrace.add(winId);
+        if (readouts) _readReadouts.add(winId);
+    } else _readAll = true;
     armReadTimer();
 }
 
+// Fire the queued reads NOW instead of waiting out the settle clock. The debounce exists to
+// coalesce a burst of edits; an explicit commit (✓ / Enter / click outside) already marks the end
+// of the burst, so waiting another 700ms just reads as lag. Returns a promise of the work it
+// started, so a commit can hold its node's loader up for exactly as long as the work runs.
+export function flushWindowRead() {
+    const queued = _readAll || _readWins.size || _readTrace.size || _readReadouts.size || _readItems.size;
+    if (!queued) return Promise.resolve();
+    clearTimeout(_readTimer);
+    return fireWindowRead();   // sets _readTimer = null and drains every pending set
+}
+
+// Returns a promise settling when everything it kicked off has finished. The settle-clock caller
+// ignores it; `flushWindowRead` awaits it.
 function fireWindowRead() {
+    const work = [];
     _readTimer = null;
     const all = _readAll; _readAll = false;
     const traceWins = [..._readTrace]; _readTrace.clear();
@@ -1750,20 +1791,21 @@ function fireWindowRead() {
         // Read on ANY update — the preview should always reflect the current setup, not wait
         // for a first manual "read". Reads the window's OWN bound image (live=false), not a
         // fresh game grab, so it doesn't need the game running (a live grab 404s when it isn't).
-        if (host) refreshPreview(w.id, false);              // refreshes the preview table + grid
+        if (host) work.push(refreshPreview(w.id, false));   // refreshes the preview table + grid
         else if (imageCanvases.has(w.id)) refreshGridPreview(w.id);   // image open, no preview node
     }
     // detect: every window with an OPEN image canvas (doDetect needs pixels) — mirrors the old
     // refreshOpenDetect exactly.
     for (const id of imageCanvases.keys()) {
         if (!all && !_readWins.has(id)) continue;
-        if (model.window(id)?.enabled !== false) refreshDetect(id);   // skip disabled windows
+        if (model.window(id)?.enabled !== false) work.push(refreshDetect(id));   // skip disabled windows
     }
     _readWins.clear();
-    for (const id of traceWins) fetchWindowTrace(id);
-    for (const id of roWins) refreshReadoutValues(id);
-    for (const { winId, itemId } of items) runItemRead(winId, itemId);
+    for (const id of traceWins) work.push(fetchWindowTrace(id));
+    for (const id of roWins) work.push(refreshReadoutValues(id));
+    for (const { winId, itemId } of items) work.push(runItemRead(winId, itemId));
     refreshCollisions();   // cross-window verdict tracks the same edits (coalesced)
+    return Promise.all(work);
 }
 
 

@@ -89,7 +89,9 @@ async function _datasetPayload(ds, pre) {
     return r.json();
 }
 
-function refreshDataNode(ds, pre = null) { singleFlight(_dnKey(ds), (ctx) => _refreshDataNode(ds, pre, ctx)); }
+// Returns the singleFlight promise — callers that show a "refreshing" state (queueNodeRefresh's
+// header spinner) must await the PAINT, not just the fetch that fed it.
+function refreshDataNode(ds, pre = null) { return singleFlight(_dnKey(ds), (ctx) => _refreshDataNode(ds, pre, ctx)); }
 async function _refreshDataNode(ds, pre, { superseded } = {}) {
     const host = dataHost(ds);
     if (!host) return;

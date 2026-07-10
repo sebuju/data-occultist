@@ -21,21 +21,31 @@
 // instead, closing the "stale response paints, then gets overwritten a beat later" flash every
 // singleFlight consumer otherwise has. Callers that ignore the arg behave exactly as before.
 //
-// Returns the PROMISE of the run it started: the non-busy (first) caller gets the real run's
-// promise, so it can `await` its own work finishing — the busy branch resolves immediately
-// (mirrors calling this while a bespoke "Busy/Again" copy is mid-flight: that always returned
-// right away too, without waiting for the trailing rerun).
+// Returns a PROMISE that settles when THIS caller's work is done: the non-busy (first) caller gets
+// the real run's promise; a caller that arrived mid-flight gets a promise resolved once its trailing
+// rerun finishes. That matters for anything that shows a "loading" state while it waits — resolving
+// the busy branch immediately (as this used to) lifted the spinner while the caller's own refresh
+// hadn't even started, so the node stopped looking busy a beat before its content updated.
 
 const _inflight = new Map();   // key -> Promise of the currently running fn
-const _again = new Map();      // key -> the LATEST fn requested while busy (run once when the current ends)
+const _again = new Map();      // key -> { fn, waiters } — the LATEST request made while busy (run once when the current ends)
 
 export function singleFlight(key, fn) {
-    if (_inflight.has(key)) { _again.set(key, fn); return Promise.resolve(); }   // busy -> remember the latest request
+    if (_inflight.has(key)) {                                    // busy -> remember the latest request…
+        const q = _again.get(key) || { fn: null, waiters: [] };
+        q.fn = fn; _again.set(key, q);
+        return new Promise((resolve) => q.waiters.push(resolve));   // …and settle this caller when it has run
+    }
     const superseded = () => _again.has(key);
     const p = Promise.resolve().then(() => fn({ superseded })).catch(() => {}).finally(() => {
         _inflight.delete(key);
-        const next = _again.get(key);
-        if (next) { _again.delete(key); singleFlight(key, next); }   // a call arrived mid-flight -> run it now
+        const q = _again.get(key);
+        if (!q) return;
+        _again.delete(key);
+        // a call arrived mid-flight -> run it now, then release everyone who waited on it. The
+        // `.then` is deliberately NOT returned: `p` (this run's caller) must not be held open by
+        // a rerun it never asked for.
+        singleFlight(key, q.fn).then(() => q.waiters.forEach((r) => r()));
     });
     _inflight.set(key, p);
     return p;

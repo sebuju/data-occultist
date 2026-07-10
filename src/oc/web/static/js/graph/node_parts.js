@@ -1028,3 +1028,17 @@ export function _optList(opts, sel) {
 export function _colOpts(cols, sel) {
     return [h("option", { value: "", selected: !sel }, "—"), ..._optList(cols, sel)];
 }
+
+// _colOpts with the options SPLIT INTO <optgroup>s: `groups` is [{ label, cols }] (a joining subset
+// labels one group per source, plus a trailing group of its own columns). Same "—" empty option and
+// the same pin-the-saved-value behaviour as the flat list — a value no group offers is pinned as a
+// bare option above the groups rather than snapping to "—". Returns an ARRAY.
+export function _optGroups(groups, sel) {
+    const known = sel && groups.some((g) => g.cols.includes(sel));
+    return [h("option", { value: "", selected: !sel }, "—"),
+        sel && !known && h("option", { value: sel, selected: true }, `<${sel}>`),
+        // pass `sel` only to the group that HAS it — _optList pins an unknown value into whatever
+        // list it's given, which here would clone the pinned option into every group.
+        ...groups.map((g) => h("optgroup", { label: g.label },
+            _optList(g.cols, g.cols.includes(sel) ? sel : null)))].filter(Boolean);
+}

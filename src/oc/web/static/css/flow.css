@@ -151,6 +151,10 @@ a.node.win:hover { border-color: var(--accent); }
 /* "visible" label centres on the FIRST toggle row (buttons are taller than the label's text line) */
 .lab-grid > .lab.vis-lab { align-self: start; }
 .sv-hides { display: flex; flex-wrap: wrap; gap: 4px; margin-left: 4px; }
+/* a joining subset groups its visible-toggles per source: the source's name breaks the flex row
+   (full-basis) and captions the toggles under it. No dashed rule — the margin does the separating. */
+.sv-hides > .sv-hide-h { flex: 0 0 100%; border-top: 0; padding-top: 0; margin-top: 8px; }
+.sv-hides > .sv-hide-h:first-child { margin-top: 0; }
 /* visible toggles carry the node colour (--nt) like the source pills — tinted fill + outline */
 .sv-hide { font-size: var(--fs-sm); padding: 2px 8px; min-height: unset; border-radius: 10px;
     background: color-mix(in oklab, var(--nt, var(--accent)) 14%, transparent);
