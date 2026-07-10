@@ -29,13 +29,11 @@ export function confMeter({ cls, k = null, value = 0, fid = null, title = "", st
 
     const clamp = (v) => Math.max(0, Math.min(1, v));
     function paint(v) {
-        const units = Math.round(v * SEGS * 2);   // half-units lit (each 0.05, matching the default step)
+        const bars = Math.round(v * SEGS);
         segEls.forEach((s, i) => {
-            const full = units >= (i + 1) * 2;
-            const half = !full && units === i * 2 + 1;
+            const full = i < bars;
             s.classList.toggle("on", full);
-            s.classList.toggle("half", half);
-            s.classList.toggle("off", !full && !half);
+            s.classList.toggle("off", !full);
         });
         pct.textContent = v.toFixed(2);
     }
