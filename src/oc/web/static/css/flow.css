@@ -344,7 +344,11 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 .enr-sum strong { color: var(--text); font-variant-numeric: tabular-nums; }
 /* the producer node's backend/source/price-by rows now build on `.lab-grid` (graph.css). */
 .gnode.producer .gn-foot { flex-wrap: nowrap; align-items: center; flex: none; }
-.gnode.producer .enr-refresh { flex: 1 1 auto; }   /* stretch the refresh button to the node's full width */
+/* stretch the button to the node's full width; lay out its label span + in-button meter as one
+   centered row (the meter is hidden until a sweep is fetching, so idle shows just the label). */
+.gnode.producer .enr-refresh { flex: 1 1 auto; display: inline-flex; align-items: center;
+    justify-content: center; gap: 8px; }
+.gnode.producer .enr-refresh .enr-meter { flex: 0 0 auto; }
 /* the cancel button's busy spinner is the canonical `button.reading::after` (controls.css). */
 .enr-prog { font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     min-width: 0; }   /* a labelled 'status' row in the lab-grid, ABOVE the button */

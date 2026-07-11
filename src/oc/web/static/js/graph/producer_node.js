@@ -183,15 +183,17 @@ export function producerParts(pn, cols = [], free = []) {
             filterList(spec.row_filter || []),
             labCell("fields", "response → dataset columns", true), fieldsBlock(spec.fields || []),
             labCell("status", "live sweep progress ('idle' when not running)"),
-            h("div", { class: "enr-prog livestats" }),
-            // segmented progress meter (done/total) — built ONCE here; reflectStatus() only
-            // toggles each seg's on/off class + the pct text (reconcile in place, no rebuild).
-            // Hidden until a sweep is running (nothing to meter at idle).
-            h("div", { class: "enr-meter meter gspan", hidden: true },
-                h("div", { class: "segs" }, ...Array.from({ length: 12 }, () => h("span", { class: "seg off" }))),
-                h("span", { class: "pct" }))));
-    // the fetch button doubles as cancel while running
-    return { title, body, foot: h("button", { class: "enr-refresh" }, "↻ fetch"), ports: port };
+            h("div", { class: "enr-prog livestats" })));
+    // The fetch button doubles as cancel while running. The segmented meter lives INSIDE the button
+    // and only shows while a sweep is fetching (built ONCE; reflectStatus() toggles each seg + the
+    // label span in place, never rebuilt). The button is sized by the node, so showing/hiding the
+    // meter never resizes the node and never triggers a wire reroute.
+    const fetchBtn = h("button", { class: "enr-refresh" },
+        h("span", { class: "enr-lbl" }, "↻ fetch"),
+        h("div", { class: "enr-meter meter", hidden: true },
+            h("div", { class: "segs" }, ...Array.from({ length: 12 }, () => h("span", { class: "seg off" }))),
+            h("span", { class: "pct" })));
+    return { title, body, foot: fetchBtn, ports: port };
 }
 
 // Wire the producer panel: load status, drive the refresh/sweep.
@@ -215,47 +217,53 @@ export function wireProducerNode(div, game, dataset, mode = "", type = "http",
     }
 
     const btn = $(".enr-refresh");
-    const startLabel = "↻ fetch";
+    const lbl = $(".enr-lbl");   // the button's text span (shown at idle; hidden while the meter runs)
 
-    // ONE button, like every other node: idle = start; while running it carries `.reading`
-    // (CSS appends the spinner) and a second click cancels. No separate cancel button.
-    // Fill the segmented meter to done/total (0..1); hide it when there's nothing to meter.
+    // ONE button, like every other node: idle = start; while running it carries `data-running`
+    // and a second click cancels. The in-button meter is the only running cue — no spinner/label.
+    // Paint the in-button meter to done/total (0..1); `null` = indeterminate (empty bar, "…" pct).
+    // Visibility is NOT handled here — showMeter() swaps the label span for the meter while running.
     // Toggles existing seg nodes' classes — never rebuilds the scaffold (reconcile in place).
     function setMeter(frac) {
         const m = $(".enr-meter");
         if (!m) return;
-        if (frac == null) { m.hidden = true; return; }
-        m.hidden = false;
-        const segs = m.querySelectorAll(".seg");
-        const lit = Math.round(Math.max(0, Math.min(1, frac)) * segs.length);
-        segs.forEach((s, i) => { const on = i < lit; s.classList.toggle("on", on); s.classList.toggle("off", !on); });
-        m.querySelector(".pct").textContent = `${Math.round(frac * 100)}%`;
+        const known = frac != null;
+        const lit = known ? Math.round(Math.max(0, Math.min(1, frac)) * 12) : 0;
+        m.querySelectorAll(".seg").forEach((s, i) => {
+            const on = i < lit; s.classList.toggle("on", on); s.classList.toggle("off", !on);
+        });
+        m.querySelector(".pct").textContent = known ? `${Math.round(frac * 100)}%` : "…";
+    }
+
+    // While a sweep runs the button shows ONLY the meter + pct (no "↻ fetch" label); idle/done/blocked
+    // show the label and hide the meter. The button is fixed-size, so this swap never reroutes wires.
+    function showMeter(on) {
+        const m = $(".enr-meter");
+        if (m) m.hidden = !on;
+        lbl.hidden = on;
     }
 
     function reflectStatus(st) {
         const prog = $(".enr-prog");
         if (st.blocked) {                             // another producer in this game is sweeping
-            btn.classList.remove("reading"); btn.disabled = false; btn.textContent = startLabel;
-            prog.textContent = "another producer is busy — try again when it finishes";
-            setMeter(null);
+            btn.dataset.running = ""; btn.disabled = false;
+            prog.textContent = "busy elsewhere";
+            showMeter(false);
             return;
         }
         const running = !!st.running;
         const cancelling = running && !!st.cancel;        // cancel requested, sweep still draining
-        btn.classList.toggle("reading", running);         // spinner ON the fetch button while it runs
+        btn.dataset.running = running ? "1" : "";         // gates the click handler (2nd click cancels)
         btn.disabled = cancelling;                        // mid-cancel: ignore further clicks
-        btn.textContent = running ? (cancelling ? "cancelling…" : "cancel") : startLabel;
+        showMeter(running);                               // running -> meter+pct only; else -> label
         if (running) {
-            const el = elapsed(st.started);
-            prog.textContent = `${st.done}/${st.total || "…"} · ${st.fetched} ok · ${el} · ${st.last || ""}`.trim();
-            setMeter(st.total ? st.done / st.total : null);   // no total yet -> no bar (spinner covers it)
+            prog.textContent = `${st.done}/${st.total || "…"} · ${st.fetched} ok`;
+            setMeter(st.total ? st.done / st.total : null);   // no total yet -> indeterminate ("…")
             if (!div._enrPoll) poll();
         } else if (st.finished) {
-            prog.textContent = `done: ${st.fetched}/${st.total} (${st.failed} failed) in ${elapsed(st.started, st.finished)}`;
-            setMeter(null);
+            prog.textContent = `done · ${st.fetched}/${st.total} · ${elapsed(st.started, st.finished)}`;
         } else {
             prog.textContent = "idle";
-            setMeter(null);
         }
     }
 
@@ -272,16 +280,17 @@ export function wireProducerNode(div, game, dataset, mode = "", type = "http",
     }
 
     btn.addEventListener("click", async () => {
-        if (btn.classList.contains("reading")) {          // running -> second click cancels
-            btn.disabled = true; btn.textContent = "cancelling…";   // instant feedback (don't wait for the poll)
+        if (btn.dataset.running) {                        // running -> second click cancels
+            btn.disabled = true;                          // instant feedback (don't wait for the poll)
             api.prices.cancel(game, dataset).catch((e) => log(`cancel failed: ${e.message || e}`, "err"));
             if (!div._enrPoll) poll();
             onChange?.();
             return;
         }
-        btn.classList.add("reading"); btn.textContent = "cancel";   // instant feedback before the poll confirms
+        btn.dataset.running = "1";                         // instant feedback before the poll confirms
+        showMeter(true); setMeter(null);                   // swap label -> indeterminate meter right away
         try { await api.prices.refresh(game, dataset, mode, type); poll(); onChange?.(); }
-        catch (e) { btn.classList.remove("reading"); btn.textContent = startLabel; $(".enr-prog").textContent = String(e.message || e); }
+        catch (e) { btn.dataset.running = ""; showMeter(false); $(".enr-prog").textContent = String(e.message || e); }
     });
 
     // Catch a sweep started by ANOTHER actor (a trigger's "fire now", the collector loop, another
