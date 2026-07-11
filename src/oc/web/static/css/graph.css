@@ -660,7 +660,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .lab-grid > .sv-src-h { margin-top: 8px; }
 /* closes the per-source section: a rule below the last source block so view-level rows (limit,
    latest batch) read as separate, not part of that source */
-.lab-grid > .sv-sec-end { border-top: 1px solid var(--muted); margin-top: 8px; margin-bottom: 8px; }
+.lab-grid > .sv-sec-end { border-top: 1px dashed var(--line); margin-top: 8px; margin-bottom: 8px; }
 /* input + its unit suffix share ONE grid cell (else the "s" wraps to the next grid row) */
 .tg-secs { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .tg-secs input { width: 100%; }

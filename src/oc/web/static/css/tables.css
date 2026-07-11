@@ -183,7 +183,7 @@
 /* per-source header in a view row's drill-down (one block per joined input) */
 .vt-src-h { font-size: var(--fs-sm); color: var(--muted); margin: 6px 0 3px; font-weight: 600; }
 .vt-src-h:first-child { margin-top: 0; }
-.vt-row.vt-open { background: var(--neutral); }
+.vt-row.vt-open { background: var(--float-line); filter: brightness(1.25); }
 
 /* custom scrollbars (both axes, one VtScrollbar class) — match the app's native look
    (thumb = --line, hover --muted). Native bars are hidden; these drive scrollTop/scrollLeft. */
