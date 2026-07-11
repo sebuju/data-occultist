@@ -9,6 +9,7 @@
 import * as groups from "./groups.js";
 import { routeGraph, polylinePath } from "./route.js";
 import { hierRoute } from "./hierRoute.js";
+import { deCollide } from "./decollide.js";
 import { $, setStatus, model, nodeEls, pos, nw, nh, selected } from "./state.js";
 import { selectedNodeId, wire, startWire, CAN_DISABLE } from "./main.js";
 
@@ -524,6 +525,9 @@ const ROUTE = {
     hier: true,         // hierarchical routing: each group routed as its own sub-problem, its boundary
                         // lines funnelled through fanned per-face GATES (hierRoute.js). Toggle off in the
                         // console (window.__route.hier=false; __reroute()) to fall back to one global pass.
+    decollide: true,    // GLOBAL cross-pass de-collision (decollide.js): hier's isolated passes can each
+                        // route a wire onto the same world coord (nudge only separates within a pass), so
+                        // a final pass fans coincident runs apart. Toggle off: window.__route.decollide=false; __reroute()
     corners: "curve",   // "curve" | "square" — internal toggle (window.__route.corners)
     cell: 10,           // grid resolution (world px) — fine enough to squeeze a line between two others
     clearWanted: 5,     // cells of breathing room a line prefers around nodes
@@ -638,6 +642,14 @@ function runRouting() {
             const gof = (id) => { const r = groups.groupOf(id); return r ? r.id : null; };
             const out = hierRoute(nodes, groupBox, gof, edges, { prevSides, outPorts, titleBands, config, laneGap: ROUTE.cell, prevFace: gateFaces, passCache: hierPassCache });
             res = out.routes; gateFaces = out.faces; hierPassCache = out.passCache;
+            // hier's isolated passes are mutually blind, so two can route a wire onto the identical world
+            // coord (nudge only de-overlaps within a pass). Fan those coincident runs apart against every
+            // obstacle (nodes + group boxes) + title band so a shift never crosses one. (single-pass
+            // routeGraph below needs no such pass — it nudges the whole graph together.)
+            if (ROUTE.decollide) {
+                const walls = obstacleRects().concat(titleBands.map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 })));
+                res = deCollide(res, walls, { laneGap: ROUTE.cell });
+            }
         } else {
             res = routeGraph(nodes, grps, edges, { prevSides, outPorts, titleBands, config });
         }
