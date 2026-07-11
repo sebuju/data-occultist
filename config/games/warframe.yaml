@@ -2451,11 +2451,14 @@ subsets:
       strip_words: []
     aggregate: ''
     required: true
-    mode: join
+    mode: mark
   filters:
   - field: type
     op: eq
     value: Warframe Mod
+  - field: unique_name
+    op: regex
+    value: (?i)^(?!.*(?:beginner|intermediate|expert)$)
   derived:
   - name: max_drain
     template: ={base_drain}+{fusion_limit}*{base_drain}/(({base_drain})**2)**0.5
@@ -2524,7 +2527,9 @@ subsets:
     required: false
     mode: exclude
   filters: []
-  derived: []
+  derived:
+  - name: xk
+    template: '1'
   hidden_columns:
   - key
   - _seq
@@ -2534,6 +2539,7 @@ subsets:
   - _item
   - mod_count
   - mod_name
+  - xk
   sort: []
   sort_by: ''
   sort_desc: false
@@ -2567,6 +2573,7 @@ subsets:
     - _name
     - _drain
     - _school
+    - _po
   limit: 0
   config_collapsed: false
 - id: empty_slots
@@ -2640,7 +2647,9 @@ subsets:
   - field: slot
     op: ne
     value: slot_aura
-  derived: []
+  derived:
+  - name: xk
+    template: '1'
   hidden_columns: []
   sort: []
   sort_by: ''
@@ -2670,6 +2679,8 @@ subsets:
   derived:
   - name: compat
     template: AURA
+  - name: xk
+    template: '1'
   hidden_columns: []
   sort: []
   sort_by: ''
@@ -2680,7 +2691,7 @@ subsets:
 - id: mod_suggestions_general
   sources:
   - dataset: mod_suggestions
-    join_field: polarity
+    join_field: xk
     join_norm:
       case_insensitive: true
       strip_punct: false
@@ -2690,15 +2701,15 @@ subsets:
     required: true
     mode: join
   - dataset: empty_general_slots
-    join_field: school
+    join_field: xk
     join_norm:
       case_insensitive: true
       strip_punct: false
       collapse_ws: true
       strip_words: []
     aggregate: latest
-    required: false
-    mode: mark
+    required: true
+    mode: join
   - dataset: drain_remaining
     join_field: ''
     join_norm:
@@ -2714,10 +2725,17 @@ subsets:
     op: eq
     value: WARFRAME
   derived:
+  - name: match_flag
+    template: '{polarity == po}'
+  - name: polarized
+    template: '{po?}'
+  - name: effective_drain
+    template: ={max_drain} + {match_flag}*(({max_drain}+{max_drain}%2)/2 - {max_drain})
+      + ({polarized}-{match_flag})*(({max_drain}*5+(4-({max_drain}*5)%4)%4)/4 - {max_drain})
   - name: polarity_match
-    template: '{school}'
+    template: '{match_flag}'
   - name: drain_headroom
-    template: ={drain_remaining}-{max_drain}
+    template: ={drain_remaining}-{effective_drain}
   hidden_columns:
   - key
   - _seq
@@ -2727,10 +2745,20 @@ subsets:
   - _item
   - mod_count
   - mod_name
-  - slot
   - compat
   - type
+  - xk
+  - drain
+  - school
+  - base_drain
+  - fusion_limit
+  - unique_name
+  - value
+  - match_flag
+  - polarized
   sort:
+  - field: slot
+    desc: false
   - field: polarity_match
     desc: true
   - field: drain_headroom
@@ -2743,7 +2771,7 @@ subsets:
 - id: mod_suggestions_aura
   sources:
   - dataset: mod_suggestions
-    join_field: compat
+    join_field: xk
     join_norm:
       case_insensitive: true
       strip_punct: false
@@ -2753,7 +2781,7 @@ subsets:
     required: true
     mode: join
   - dataset: empty_aura_slot
-    join_field: compat
+    join_field: xk
     join_norm:
       case_insensitive: true
       strip_punct: false
@@ -2772,12 +2800,19 @@ subsets:
     aggregate: latest
     required: false
     mode: broadcast
-  filters: []
+  filters:
+  - field: compat
+    op: eq
+    value: AURA
   derived:
+  - name: match_flag
+    template: '{polarity == po}'
+  - name: effective_drain
+    template: ={max_drain}*(1+{match_flag})
   - name: polarity_match
-    template: '{school}'
+    template: '{match_flag}'
   - name: drain_headroom
-    template: ={drain_remaining}-{max_drain}
+    template: ={drain_remaining}-{effective_drain}
   hidden_columns:
   - key
   - _seq
@@ -2787,8 +2822,19 @@ subsets:
   - _item
   - mod_count
   - mod_name
-  - slot
+  - type
+  - compat
+  - xk
+  - drain
+  - school
+  - base_drain
+  - fusion_limit
+  - unique_name
+  - value
+  - match_flag
   sort:
+  - field: slot
+    desc: false
   - field: polarity_match
     desc: true
   - field: drain_headroom
@@ -2822,7 +2868,7 @@ subsets:
     mode: join
   filters:
   - field: drain_headroom
-    op: lt
+    op: gte
     value: '0'
   derived: []
   hidden_columns:
@@ -2830,22 +2876,30 @@ subsets:
   - _seq
   - _pos
   - rarity
+  - mod_drain
   - _item
   - mod_count
   - mod_name
-  - slot
   - type
   - compat
   - value
-  - name
   - unique_name
   - base_drain
   - fusion_limit
+  - xk
+  - drain
+  - school
+  - match_flag
+  - polarized
+  - drain_remaining
+  - po
   sort:
+  - field: slot
+    desc: false
   - field: polarity_match
     desc: true
   - field: drain_headroom
-    desc: true
+    desc: false
   sort_by: ''
   sort_desc: false
   latest_batch: false
@@ -3261,7 +3315,11 @@ toasts:
 - id: toast_2
   title: ''
   message: ''
-  texts: []
+  texts:
+  - content: Pricing update
+    style: ''
+    align: ''
+    max_lines: 0
   images:
   - placement: hero
     width: 360
@@ -3276,7 +3334,7 @@ toasts:
       x: 3
       y: 5
       size: 18
-      color: '#5fd68f'
+      color: '#dedede'
       align: ml
       width: 42
       height: 25
@@ -3396,7 +3454,7 @@ toasts:
       x: 0
       y: 0
       size: 16
-      color: '#5fd68f'
+      color: '#dedede'
       align: mr
       width: 14
       height: 12
@@ -3520,7 +3578,7 @@ toasts:
       align: mr
       width: 100
       height: 35
-      bg_color: '#1d3234'
+      bg_color: '#1f1f1f'
       wrap: false
       overflow: false
       disable_if_empty: false
@@ -3542,7 +3600,7 @@ toasts:
         corner: tl
         target: tl
       z_index: 0
-  app_name: data-occultist
+  app_name: warframe.market
   duration: short
   icon: ''
   show_icon: false
@@ -3707,10 +3765,11 @@ layout:
       x: 900.0
       y: -3760.0
       w: 360.0
-      h: 1320.0
+      h: 1340.0
       collapsed: false
       custW: false
-      custH: true
+      custH: false
+      softH: true
     sub:relic_rewards_limit:
       x: 2460.0
       y: -1840.0
@@ -4339,6 +4398,7 @@ layout:
       collapsed: false
       custW: true
       custH: false
+      softW: false
     action:action:
       x: -2600.0
       y: -2680.0
@@ -5245,7 +5305,13 @@ layout:
         name: 211
     view:mod_suggestions_ranked:
       widths:
-        name: 204
+        name: 349
+        polarity: 55
+        max_drain: 67
+        slot: 48
+        effective_drain: 107
+        polarity_match: 101
+        drain_headroom: 103
       order: []
       sorts: []
   open_images:
@@ -6039,8 +6105,8 @@ layout:
   - prev:arsenal_warframe
   - vt:sub:loadout_equipped
   - vt:ds:mod_catalog
-  - vt:sub:mod_suggestions_ranked
   - vt:sub:empty_slots
+  - vt:sub:mod_suggestions_ranked
   sub_groups:
   - id: subgroup_5
     parent: group_22

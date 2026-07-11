@@ -34,6 +34,12 @@ from .pivot import apply_pivot
 
 _PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 _INLINE_MATH = re.compile(r"\{=([^{}]+)\}")   # an inline arithmetic block within a text template
+# per-row predicate blocks yielding "1"/"0" (feed a later `=` column as a numeric flag):
+#   {a == b} / {a != b}  compare two operands (column name, or a "quoted"/'literal')
+#   {col?}               1 when the column is non-empty, else 0
+# disjoint from _INLINE_MATH (its `{=...}` starts with `=`, excluded from the lhs class).
+_PREDICATE = re.compile(r"\{\s*([^{}=!?]+?)\s*(==|!=)\s*([^{}]+?)\s*\}")
+_NONEMPTY = re.compile(r"\{\s*([^{}=!?]+?)\?\s*\}")
 
 
 def _num(v) -> float | None:
@@ -151,18 +157,43 @@ def _eval_math(expr: str, row: dict):
     return int(val) if isinstance(val, float) and val.is_integer() else round(val, 2)
 
 
+def _operand(token: str, row: dict) -> str:
+    """Resolve one predicate operand to a comparable string: a ``"quoted"``/``'literal'`` yields
+    its inner text; anything else is a column name looked up in the row. Both sides are
+    normalised (lowercased, whitespace-collapsed) so a match is case/spacing-insensitive, in the
+    same spirit as a join's default :class:`JoinNorm`."""
+    token = token.strip()
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+        raw = token[1:-1]
+    else:
+        raw = "" if row.get(token) is None else str(row.get(token))
+    return norm_text(raw, lower=True, strip_punct=False, collapse_ws=True, strip_words=())
+
+
+def _apply_predicates(template: str, row: dict) -> str:
+    """Substitute predicate blocks (``{a==b}``, ``{a!=b}``, ``{col?}``) with ``"1"``/``"0"`` so a
+    text template can produce a numeric flag a later ``=`` column consumes."""
+    def cmp(m):
+        eq = _operand(m.group(1), row) == _operand(m.group(3), row)
+        return "1" if (eq if m.group(2) == "==" else not eq) else "0"
+    template = _PREDICATE.sub(cmp, template)
+    return _NONEMPTY.sub(lambda m: "1" if str(row.get(m.group(1).strip()) or "").strip() else "0", template)
+
+
 def _derive_cell(template: str, row: dict):
     """One derived value:
     - a template beginning with ``=`` (and with no inline block) is ONE arithmetic
       expression (empty if any operand is missing/non-numeric);
-    - otherwise it's text: inline ``{=expr}`` blocks evaluate to their number (empty on a
+    - otherwise it's text: predicate blocks (``{a==b}``/``{a!=b}``/``{col?}``) resolve to
+      ``1``/``0`` first, inline ``{=expr}`` blocks evaluate to their number (empty on a
       missing/non-numeric operand), plain ``{column}`` placeholders substitute values, and
-      everything else is kept literally — so static strings and math freely mix.
+      everything else is kept literally — so static strings, flags, and math freely mix.
     Either math form may end with ``|round:N`` to fix its decimals (see :func:`_eval_math`)."""
     if template.startswith("=") and "{=" not in template:
         val = _eval_math(template[1:], row)
         return "" if val is None else val
-    text = _INLINE_MATH.sub(lambda m: "" if (v := _eval_math(m.group(1), row)) is None else str(v), template)
+    text = _apply_predicates(template, row)
+    text = _INLINE_MATH.sub(lambda m: "" if (v := _eval_math(m.group(1), row)) is None else str(v), text)
     return render_template(text, row)
 
 

@@ -118,6 +118,48 @@ def test_view_feeding_view_chains_derived_columns():
     assert row["value"] == 30 and row["label"] == "60 pl"   # upstream derived feeds downstream
 
 
+def test_predicate_flag_blocks():
+    recs = [{"a": "Vazarin", "b": "vazarin", "c": "madurai", "e": "", "present": True}]
+    sub = SubsetDef(id="p", sources=[_src("d")], derived=[
+        DerivedColumn(name="eq", template="{a == b}"),        # case-insensitive equal -> 1
+        DerivedColumn(name="eq_no", template="{a == c}"),     # not equal -> 0
+        DerivedColumn(name="ne", template="{a != c}"),        # not-equal op -> 1
+        DerivedColumn(name="lit", template='{a == "vazarin"}'),  # quoted literal rhs -> 1
+        DerivedColumn(name="has", template="{b?}"),           # non-empty -> 1
+        DerivedColumn(name="has_no", template="{e?}"),        # empty -> 0
+    ])
+    row = compute_subset(recs, sub)["rows"][0]
+    assert (row["eq"], row["eq_no"], row["ne"]) == ("1", "0", "1")
+    assert (row["lit"], row["has"], row["has_no"]) == ("1", "1", "0")
+
+
+def test_predicate_flag_feeds_effective_drain_math():
+    # a predicate flag computed first is consumed by a later `=` math column, exactly as the
+    # polarity-aware mod-suggestion subsets do (match -> ceil(x/2), wrong -> ceil(x*1.25),
+    # neutral -> base; aura match -> x2, incl. a negative base).
+    gen = "={max_drain} + {match_flag}*(({max_drain}+{max_drain}%2)/2 - {max_drain}) + " \
+          "({polarized}-{match_flag})*(({max_drain}*5+(4-({max_drain}*5)%4)%4)/4 - {max_drain})"
+    derived = [
+        DerivedColumn(name="match_flag", template="{polarity == po}"),
+        DerivedColumn(name="polarized", template="{po?}"),
+        DerivedColumn(name="effective_drain", template=gen),
+        DerivedColumn(name="aura_drain", template="={max_drain}*(1+{match_flag})"),
+    ]
+    sub = SubsetDef(id="s", sources=[_src("d")], derived=derived)
+
+    def eff(polarity, po, max_drain):
+        recs = [{"polarity": polarity, "po": po, "max_drain": max_drain, "present": True}]
+        return compute_subset(recs, sub)["rows"][0]
+
+    assert eff("naramon", "naramon", 9)["effective_drain"] == 5    # match -> ceil(9/2)
+    assert eff("naramon", "naramon", 8)["effective_drain"] == 4    # match -> ceil(8/2)
+    assert eff("naramon", "madurai", 9)["effective_drain"] == 12   # wrong -> ceil(9*1.25)
+    assert eff("naramon", "madurai", 8)["effective_drain"] == 10   # wrong -> ceil(8*1.25)
+    assert eff("naramon", "", 9)["effective_drain"] == 9           # neutral slot -> base
+    assert eff("madurai", "madurai", -7)["aura_drain"] == -14      # aura match -> x2 capacity
+    assert eff("madurai", "vazarin", -7)["aura_drain"] == -7       # aura non-match -> base
+
+
 def test_latest_batch_keeps_only_newest_batch_rows():
     # rows carry the store's `_batch`; latest_batch trims to the highest before anything else
     recs = [{"name": "Old", "_batch": 1, "present": True},
