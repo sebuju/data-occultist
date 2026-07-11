@@ -16,6 +16,7 @@
 
 import * as api from "../api.js";
 import { log } from "../log.js";
+import { boot, afterBoot } from "./state.js";
 
 let M = null;                 // the GraphModel
 let collectLayout = null;     // () => write live node state into model.profile.layout
@@ -49,7 +50,9 @@ async function flushProfile() {
     pendingContent = false;
     const restore = scrubHook ? scrubHook(M.profile) : null;   // pretty values out of the YAML
     try {
-        await api.saveProfile(M.profile, false);   // full replace — the graph is complete
+        // A pure layout save (no content change) tells the server to skip the feed
+        // re-pull + structural-snapshot diff — those only matter when content changed.
+        await api.saveProfile(M.profile, false, !wasContent);
         if (wasContent) onContentSaved?.();
     } catch (e) {
         if (onContentSaved) onContentSaved(String(e.message || e));   // surface the error
@@ -58,8 +61,21 @@ async function flushProfile() {
     }
 }
 
+// While a game is booting, every reopened image fires a layout save. Coalesce them all
+// into ONE post-boot flush instead of racing the 400ms debounce against the OCR-warmup
+// GIL storm — see afterBoot's doc comment (state.js). bootArmed guards against a double
+// flush when persist.flush() (game-switch) drains the arm before flushBoot() gets to it.
+let bootArmed = false;
+
 function scheduleProfile(isContent) {
     if (isContent) pendingContent = true;
+    if (boot.phase) {
+        if (!bootArmed) {
+            bootArmed = true;
+            afterBoot(() => { if (!bootArmed) return; bootArmed = false; flushProfile(); });
+        }
+        return;
+    }
     clearTimeout(tProfile);
     tProfile = setTimeout(flushProfile, DEBOUNCE);
 }
@@ -82,6 +98,7 @@ export const persist = {
 
     // Force any pending saves out immediately (e.g. before switching games).
     async flush() {
+        if (bootArmed) { bootArmed = false; await flushProfile(); }
         if (tProfile) { clearTimeout(tProfile); await flushProfile(); }
         if (tLocal) { clearTimeout(tLocal); await flushLocal(); }
     },

@@ -53,10 +53,15 @@ def _preserve_producer_http(existing, incoming) -> None:
 
 
 @router.put("/{name}")
-def put_profile(name: str, profile: GameProfile, merge: bool = True):
+def put_profile(name: str, profile: GameProfile, merge: bool = True, layout: bool = False):
     """Save a profile. With ``merge`` (default), upsert the incoming window(s) and
     field(s) into the existing profile so other windows are preserved — this is how
-    a game accumulates multiple windows authored one at a time."""
+    a game accumulates multiple windows authored one at a time.
+
+    ``layout`` marks a pure layout save (node positions/open-images, no content change —
+    the graph editor's ``persist.layout()``): it skips the dictionary-feed re-pull (feeds
+    only change on content edits) and tells :func:`save_profile` to skip its structural-
+    snapshot diff, since a layout-only save is never structural."""
     if profile.name != name:
         raise HTTPException(status_code=400, detail="Body name must match URL name")
     settings = get_settings()
@@ -69,14 +74,15 @@ def put_profile(name: str, profile: GameProfile, merge: bool = True):
         if merge and existing is not None:
             profile = merge_profiles(existing, profile)
         _preserve_producer_http(existing, profile)   # never let a stale save strip an http node's spec
-        # Re-pull fed dictionaries so a feed-config change (columns/wiring) refreshes terms now —
-        # save_profile then externalises the derived (deduped) list to each dictionary's term file.
-        try:
-            from ...learn.dict_feed import apply_feeds
-            apply_feeds(settings.data_dir, name, profile)
-        except Exception:  # noqa: BLE001 - best-effort; never block a save
-            pass
-        path = save_profile(settings.profiles_dir, profile)
+        if not layout:
+            # Re-pull fed dictionaries so a feed-config change (columns/wiring) refreshes terms now —
+            # save_profile then externalises the derived (deduped) list to each dictionary's term file.
+            try:
+                from ...learn.dict_feed import apply_feeds
+                apply_feeds(settings.data_dir, name, profile)
+            except Exception:  # noqa: BLE001 - best-effort; never block a save
+                pass
+        path = save_profile(settings.profiles_dir, profile, layout_only=layout)
     return {"saved": str(path), "windows": [w.id for w in profile.windows]}
 
 

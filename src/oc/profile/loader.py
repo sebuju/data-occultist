@@ -484,15 +484,22 @@ def _structural(text: str) -> str:
     return yaml.safe_dump(_strip_nonstructural(raw), sort_keys=False, allow_unicode=True)
 
 
-def save_profile(profiles_dir: Path | str, profile: GameProfile) -> Path:
+def save_profile(profiles_dir: Path | str, profile: GameProfile, layout_only: bool = False) -> Path:
+    """``layout_only`` marks a pure layout save (node positions/open-images — the graph
+    editor's ``persist.layout()``, never a content edit). Such a save can never change
+    dictionary terms or structure, so it skips two GIL-heavy full-profile YAML round-trips:
+    the per-dictionary ``write_dictionary`` disk write and the ``_structural`` snapshot
+    diff (which itself re-parses and re-dumps the whole profile twice). This is what keeps
+    a boot-time reopened-image save from stalling concurrent requests behind it."""
     path = profile_path(profiles_dir, profile.name)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Externalise dictionary terms first (deduped), so the YAML carries only references.
-    for d in profile.dictionaries:
-        if not d.source:
-            d.source = _default_source(d)
-        write_dictionary(profiles_dir, d.source, d.terms)
+    if not layout_only:
+        # Externalise dictionary terms first (deduped), so the YAML carries only references.
+        for d in profile.dictionaries:
+            if not d.source:
+                d.source = _default_source(d)
+            write_dictionary(profiles_dir, d.source, d.terms)
 
     text = _profile_yaml(profile)
 
@@ -500,8 +507,10 @@ def save_profile(profiles_dir: Path | str, profile: GameProfile) -> Path:
         old = path.read_text(encoding="utf-8")
         if old == text:
             return path  # true no-op: nothing changed, don't churn a backup
-        # Snapshot the prior version only when something structural changed.
-        if _structural(old) != _structural(text):
+        # Snapshot the prior version only when something structural changed. A layout-only
+        # save is non-structural by definition, so skip the diff (and its two extra
+        # safe_load+safe_dump passes) entirely — never worth a backup.
+        if not layout_only and _structural(old) != _structural(text):
             _snapshot(profiles_dir, profile.name, old)
 
     _atomic_write_text(path, text)

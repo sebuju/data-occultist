@@ -156,8 +156,10 @@ export async function getProfile(name) {
 
 // merge=true upserts windows (teach page, single window); merge=false replaces the
 // whole profile (graph editor, which holds the complete picture) so deletes persist.
-export async function saveProfile(profile, merge = true) {
-    const r = await tfetch(`/api/profiles/${encodeURIComponent(profile.name)}?merge=${merge}`, {
+// layout=true marks a pure layout save (positions/open-images, no content change) so the
+// server skips the feed re-pull + structural-snapshot diff those saves never need.
+export async function saveProfile(profile, merge = true, layout = false) {
+    const r = await tfetch(`/api/profiles/${encodeURIComponent(profile.name)}?merge=${merge}&layout=${layout}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(profile),
