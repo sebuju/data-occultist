@@ -118,10 +118,27 @@ def find_candidates(filename_glob: str, roots=None, *, limit: int = _MAX_HITS) -
     return hits
 
 
+_resolved_cache: dict[tuple[str, tuple[str, ...]], str] = {}
+
+
 def resolve_path(source) -> str | None:
     """The concrete file a source reads: its explicit ``path`` if set, else the newest
-    auto-find hit for ``filename`` (+ the source's extra ``roots``). ``None`` if neither finds one."""
+    auto-find hit for ``filename`` (+ the source's extra ``roots``). ``None`` if neither finds one.
+
+    The auto-find walk is expensive (``find_candidates`` scans every generic OS root + every
+    Steam library, up to 4 levels deep) and a preview/read fires it on every call — cache the
+    last resolved hit per ``(filename, roots)`` so a repeat call is one ``os.path.exists``
+    instead of a fresh walk. A moved/deleted file just falls through to a re-walk."""
     if getattr(source, "path", ""):
         return expand(source.path)
-    cands = find_candidates(getattr(source, "filename", ""), getattr(source, "roots", None))
-    return cands[0]["path"] if cands else None
+    filename = getattr(source, "filename", "")
+    roots = tuple(getattr(source, "roots", None) or ())
+    key = (filename, roots)
+    cached = _resolved_cache.get(key)
+    if cached and os.path.exists(cached):
+        return cached
+    cands = find_candidates(filename, list(roots))
+    hit = cands[0]["path"] if cands else None
+    if hit:
+        _resolved_cache[key] = hit
+    return hit

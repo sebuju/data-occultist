@@ -92,6 +92,16 @@ def _warm() -> None:
             ocr.read_lines([np.zeros((16, 48, 3), dtype=np.uint8)])
     except Exception:  # noqa: BLE001
         pass
+    try:
+        # Toast preview's first render pays PIL's cold import + a disk hit for the default font
+        # face (~1.4s) — pay that here so the first real /api/toasts/*/preview isn't cold.
+        # _font is lru_cache'd, so the warmed faces stay resident.
+        from ..notify.toast_image import _font
+
+        _font(16)
+        _font(16, bold=True)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _install_shutdown_signals() -> None:
