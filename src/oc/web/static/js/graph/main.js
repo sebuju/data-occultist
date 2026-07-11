@@ -2981,8 +2981,12 @@ function fillNode(div, n, wire = true) {
     const typeLabel = n.type === "itemfield" ? "field"
         : n.type === "itemtell" ? "tell"   // kind now lives in the node's own dropdown, not the tag
         : n.type;
+    // whether .gn-hctl actually has anything in it (same three sources built below) — types with
+    // none (game, toast, sound, register, atlas, preview, vttable) get an empty cluster, so the
+    // type label must stay put on hover instead of fading into nothing (graph.css .gn-has-ctl).
+    const hasHoverCtl = !!(parts.head || toggle || RECT_TYPES.has(n.type));
     div.replaceChildren(
-        h("div", { class: `gn-h ${parts.pulse || ""}` },
+        h("div", { class: `gn-h ${hasHoverCtl ? "gn-has-ctl " : ""}${parts.pulse || ""}` },
             h("span", { class: "gn-disc", title: "collapse/expand" },
                 nodeIcon(n),
                 h("button", { class: "collapse", "aria-label": "collapse/expand" },

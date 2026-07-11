@@ -462,12 +462,15 @@
 /* node-type tag in the header, shown at rest and swapped for `.gn-hctl` (below) on hover — it
    stays in NORMAL FLOW throughout (only its opacity changes), so its box keeps reserving the
    right-edge space whether the tag or the hover controls are the one actually visible there.
-   pointer-events:none + lower z so it never blocks the (absolutely-positioned) controls above it. */
+   pointer-events:none + lower z so it never blocks the (absolutely-positioned) controls above it.
+   The fade-on-hover only applies when the header actually has hover controls to reveal (.gn-has-ctl,
+   set in main.js) — node types with an empty .gn-hctl (game, toast, sound, register, atlas, preview,
+   vttable) have nothing to swap to, so their label stays put instead of hovering into a blank header. */
 .gn-h .gn-type {
     font-size: var(--fs-xs); font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
-    color: var(--ntint); background: transparent; 
+    color: var(--ntint); background: transparent;
     pointer-events: none; opacity: .92; transition: opacity .12s ease; z-index: 0; }
-.gn-h:hover .gn-type, .gn-h:focus-within .gn-type { opacity: 0; }
+.gn-h.gn-has-ctl:hover .gn-type, .gn-h.gn-has-ctl:focus-within .gn-type { opacity: 0; }
 /* vttable/atlas headers have no flex:1 title to push the type tag over, so pin it to the right edge */
 .gnode.vttable .gn-h .gn-type, .gnode.atlas .gn-h .gn-type { margin-left: auto; }
 /* ---- hover-reveal control cluster: every header control that should show only on hover (enable
