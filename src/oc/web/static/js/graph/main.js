@@ -32,7 +32,7 @@ initTitlebar();   // custom window chrome — no-op outside the desktop window
 import {
     $, setStatus, model, pos, nodeEls, collapsed, view, selected, nodeSizes, openImages,
     imageCanvases, itemCanvases, busy, overlays,
-    prevPresent, prevLastTs, dsTab, clearGrid, nw, nh, boot,
+    prevPresent, prevLastTs, dsTab, clearGrid, nw, nh, boot, afterBoot, flushBoot,
 } from "./state.js";
 import {
     drawEdges, requestEdges, flushEdges, nodeRect, freezeRouting,
@@ -2547,7 +2547,7 @@ function wireToastImage(sec, x, n) {
     // bg type flips which controls show (color2/angle) -> rebuild the node body, then repreview
     q(".tn-img-bgtype")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "bg_type", e.target.value); rebuildNode(n.id); autosave(null); });
     wireInspector();
-    refreshPreview();   // initial paint (also runs after a rebuild re-wires the section)
+    afterBoot(refreshPreview);   // initial paint (also runs after a rebuild re-wires the section)
 }
 
 // ---- sound node: play an audio file (in the browser) when fired ------------
@@ -2638,7 +2638,7 @@ function wireRegister(div, n) {
     });
     // show the persisted map immediately on (re)build — a page load with a running/prior session
     // has data even before the next heartbeat tick.
-    queueMicrotask(() => refreshRegister(x.id));
+    afterBoot(() => refreshRegister(x.id));
 }
 
 // ---- file-source node: parse a game log/config file into its dataset --------
@@ -4035,7 +4035,7 @@ function wireNode(div, n) {
         if (r.kind === "producer") {
             wireProducerPreview(div, r);
         } else if (r.kind === "source" || r.kind === "sourcedismissed") {
-            queueMicrotask(() => refreshSourcePreview(r.id));   // parse the source's rules into BOTH satellites
+            afterBoot(() => refreshSourcePreview(r.id));   // parse the source's rules into BOTH satellites
         } else if (r.kind === "subset") {
             const pre = _bootDetails?.subsets?.[r.id] || null;
             queueMicrotask(() => refreshSubsetNode(r.id, pre));
@@ -4588,6 +4588,7 @@ $("gameSelect").addEventListener("change", async (e) => {
     await loadGame(e.target.value);
     await bootSettle();   // let the reopened images' cached reads drain, then re-OCR fresh on edits
     boot.phase = false;
+    flushBoot();   // fire the summary/register/preview fetches deferred during boot
 });
 // Mint a blank game profile. Called from the settings modal's "new game" section.
 function createGame(name) {
@@ -5711,6 +5712,7 @@ async function killStrayOcrThenBoot() {
         log("first read…");
         if (dbg.settle) await bootSettle();
         boot.phase = false;   // boot OCR drained -> later reads/edits re-OCR fresh (cache write-through)
+        flushBoot();   // fire the summary/register/preview fetches deferred during boot
     } catch (e) {
         if (!conn.isOnline()) { veil.drop(); return; }   // dropped mid-boot -> offline overlay handles it
         log(String(e.message || e), "err");   // boot hiccup: show the page anyway

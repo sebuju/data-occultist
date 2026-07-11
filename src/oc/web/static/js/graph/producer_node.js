@@ -8,7 +8,7 @@ import * as api from "../api.js";
 import { isOnline } from "../conn.js";
 import { h, frag, TRASH, labCell, srcRow, kv, subhead, gspan, trashBtn } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
-import { model } from "./state.js";
+import { model, afterBoot } from "./state.js";
 import * as hub from "../hub.js";
 import { log } from "../log.js";
 
@@ -295,5 +295,5 @@ export function wireProducerNode(div, game, dataset, mode = "", type = "http",
         if (sw && sw.running) reflectStatus(sw);               // kicks poll()
     });
 
-    queueMicrotask(loadSummary);
+    afterBoot(loadSummary);
 }

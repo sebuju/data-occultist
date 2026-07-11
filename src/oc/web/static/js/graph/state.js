@@ -32,6 +32,20 @@ export const busy = new Map();           // node id -> active-work count (drives
 // holder object (not a `let`) so every module reads the live value off the shared reference.
 export const boot = { phase: false };
 
+// Defer a boot-time-only fetch (node status/preview) until AFTER the OCR warmup thread
+// (app.py _warm) has finished hammering the GIL — firing it eagerly during boot just measures
+// warmup contention, not the endpoint's own (near-instant) cost. Runs immediately once boot has
+// already settled, so callers can use this unconditionally without an if/else. flushBoot() must
+// run once boot.phase clears (main.js, both the initial-load and game-switch paths).
+const _bootQ = [];
+export function afterBoot(fn) {
+    if (!boot.phase) { fn(); return; }
+    _bootQ.push(fn);
+}
+export function flushBoot() {
+    for (const fn of _bootQ.splice(0)) { try { fn(); } catch { /* best-effort */ } }
+}
+
 // Central registry of EVERY drawing overlay, so selection, deselection, and box hotkeys
 // are handled in ONE place — any new overlay just registers here and gets cross-deselect
 // + WASD for free. rec = { overlay, kind, winId, itemId?, persist(box), refresh() }.
