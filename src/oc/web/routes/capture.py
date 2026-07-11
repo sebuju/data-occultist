@@ -7,7 +7,6 @@ window-fraction coords stored in the profile.
 
 from __future__ import annotations
 
-import cv2
 from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 
@@ -141,6 +140,8 @@ def item_cutout(
     """Freeze an item cell: crop the bound capture to the fraction box, save a PNG.
 
     The cutout never changes once saved — it's the item template's reference image."""
+    import cv2   # local: keeps cv2 out of the router's import chain for cv2-free endpoints
+
     settings = get_settings()
     path = captures_store.path_for(settings.captures_dir, game, capture)
     if path is None:
@@ -177,6 +178,8 @@ def atlas_cutout(
     save a PNG under ``captures/<game>/atlas/``. The crop is the reference image for one entry
     in the game's cutout atlas (see GameProfile.atlas); which pool (glyph/symbol) it belongs to
     is tagged client-side onto the ``CutoutDef`` — the store itself doesn't care."""
+    import cv2   # local: keeps cv2 out of the router's import chain for cv2-free endpoints
+
     settings = get_settings()
     path = captures_store.path_for(settings.captures_dir, game, capture)
     if path is None:
@@ -215,6 +218,8 @@ def glyph_auto(
     user can nudge/resize + relabel, and the crops are frozen only on confirm.
 
     Returns 422 when OCR finds no text in the box."""
+    import cv2   # local: keeps cv2 out of the router's import chain for cv2-free endpoints
+
     from ...collect.atlas_match import segment_boxes
     from ...ocr.serialize import ocr_job
 
