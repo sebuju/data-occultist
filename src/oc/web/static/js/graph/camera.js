@@ -154,12 +154,21 @@ export function consumePanSuppress() { const v = suppressNextMenu; suppressNextM
 export function startPan(ev, { forceSuppress = false } = {}) {
     const s = { x: ev.clientX, y: ev.clientY, px: view.panX, py: view.panY };
     let moved = false;
+    // Coalesce to ONE view write per display frame: a high-polling mouse delivers several
+    // mousemoves per frame (1000Hz mouse on 144Hz = ~7), and writing the transform + minimap
+    // indicator per EVENT multiplies the per-frame style work for zero visual gain — the screen
+    // only shows the last one anyway. Events just record the latest cursor; rAF applies it.
+    let mvRaf = null;
+    const apply = () => { view.panX = s.px + (s.cx - s.x); view.panY = s.py + (s.cy - s.y); applyView(); };
     const mv = (e) => {
         if (!moved && Math.hypot(e.clientX - s.x, e.clientY - s.y) < 4) return;  // ignore micro-jitter
         if (!moved) { moved = true; $("graph").classList.add("panning"); }
-        view.panX = s.px + (e.clientX - s.x); view.panY = s.py + (e.clientY - s.y); applyView();
+        s.cx = e.clientX; s.cy = e.clientY;
+        if (!mvRaf) mvRaf = requestAnimationFrame(() => { mvRaf = null; apply(); });
     };
     const up = () => {
+        // flush the pending frame so release lands exactly where the cursor was
+        if (mvRaf) { cancelAnimationFrame(mvRaf); mvRaf = null; apply(); }
         document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
         $("graph").classList.remove("panning");
         // a real drag eats the context menu; so does a plain click that just disarmed a draw
@@ -182,6 +191,7 @@ export function scrollableUnder(target) {
     return false;
 }
 
+let zoomRaf = null;   // one paint-side update per frame across a wheel-tick burst (see below)
 export function onWheel(ev) {
     // Ctrl/Cmd+wheel belongs to the browser (page zoom) — don't hijack it or preventDefault.
     if (ev.ctrlKey || ev.metaKey) return;
@@ -197,5 +207,9 @@ export function onWheel(ev) {
     view.panX = mx - (mx - view.panX) * (z / old);
     view.panY = my - (my - view.panY) * (z / old);
     view.zoom = z;
-    applyView(); updateOverlayZoom(); persist.local();
+    // Zoom math runs per event (pure numbers, must accumulate multiplicatively), but the style
+    // work — transform write, minimap indicator, every overlay's setWorldZoom — paints once per
+    // frame, so a burst of wheel ticks costs one update, not one per tick. persist is debounced.
+    if (!zoomRaf) zoomRaf = requestAnimationFrame(() => { zoomRaf = null; applyView(); updateOverlayZoom(); });
+    persist.local();
 }
