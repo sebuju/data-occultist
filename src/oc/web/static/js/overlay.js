@@ -67,7 +67,14 @@ const HANDLES = [
 export class Overlay {
     constructor(canvas, { onCreate, onSelect, onChange, onZoom, onPick, canCreate, minFrac } = {}) {
         this.canvas = canvas;
-        this.ctx = canvas.getContext("2d");
+        // Software (CPU-backed) 2D context, NOT the default GPU-accelerated one. An accelerated
+        // canvas becomes its OWN compositor layer ("is accelerated canvas"); with one per window/
+        // region/item node, every node overlapping a canvas gets pulled into compositing too
+        // (reason "overlap"), and as they slide past each other on pan/zoom the layer set churns —
+        // that's the intermittent giant "Update Layer Tree" (Layerize) spike that made panning
+        // heavy for no visible reason. willReadFrequently:true keeps it software (no seed layer, no
+        // overlap cascade) and is the right hint anyway — the eyedropper (onPick) reads pixels back.
+        this.ctx = canvas.getContext("2d", { willReadFrequently: true });
         this.img = null;
         this.boxes = [];
         this.activeId = null;

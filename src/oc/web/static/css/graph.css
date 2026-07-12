@@ -26,6 +26,13 @@
    (graph/guides.js). Above everything inside the world; rides the #gworld transform. non-scaling
    stroke keeps the lines a crisp 1px at any zoom. */
 #gguides { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 7; overflow: visible; }
+/* These three overlays span the WHOLE world and sit above every node, so whenever a node
+   canvas (a compositor seed) sits under them they get overlap-promoted to a WORLD-SIZED
+   composited layer — which Chrome re-layerizes every pan frame ("Update Layer Tree" cost).
+   They're empty most of the time (nothing selected/routed-over, no live flow, no active
+   drag guides), so drop the empty ones out of rendering entirely: an un-rendered layer can't
+   be promoted. Repopulating adds a child -> :empty stops matching -> it shows again. */
+#gedges-top:empty, #gflow:empty, #gguides:empty { display: none; }
 .align-guide { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: .55; vector-effect: non-scaling-stroke; }
 /* while a node is dragged OR resized it snaps to the 20px grid in discrete steps; ease the stepped
    properties so it glides to each grid cell instead of teleporting (felt like the interaction was

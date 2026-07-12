@@ -50,27 +50,24 @@ button.reading::after { content: ""; display: inline-block; width: 9px; height: 
     border-radius: 50%; animation: spin 0.7s linear infinite; }
 /* first-load screen loader (boot veil): a bubbling cauldron (same mark as the favicon).
    30dvh — owns the full-screen loading view but stays modest. Pure CSS animation. */
-.cauldron-loader { height: 30dvh; max-width: 90vw; aspect-ratio: 1; overflow: visible; }
+.cauldron-loader { height: 30dvh; max-width: 90vw; aspect-ratio: 1; overflow: visible;
+    /* GPU-composited "simmer": ONE transform-only pulse on the whole mark. Runs on the compositor
+       thread, so it stays smooth even while boot hammers the main thread — the old SVG-internal
+       shape animations (rim boil + rising bubbles) repainted the whole SVG every frame on the MAIN
+       thread and stuttered exactly during boot. will-change pins it to its own layer. Only the boot
+       loader animates; the pretty corner mark stays static (no forever-running idle-CPU animation). */
+    animation: cl-simmer 1.8s ease-in-out infinite; will-change: transform; }
+@keyframes cl-simmer { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.045) translateY(-1.5%); } }
 /* cl-* visual rules are UNSCOPED so they style the cauldron sprite wherever it's <use>d
    (boot veil + pretty view-mode corner mark), not only inside .cauldron-loader. */
 .cl-pot  { fill: #0a3d62; }
-.cl-rim  { fill: #38ada9; animation: cl-boil 1.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.cl-rim  { fill: #38ada9; }
 .cl-legs { stroke: #0a3d62; stroke-width: 3; stroke-linecap: round; fill: none; }
-.cl-bubble {
-    fill: #f7d794;
-    transform-box: fill-box; transform-origin: center;
-    animation: cl-rise 2.2s ease-in infinite;
-    animation-delay: var(--d, 0s);
-}
-/* bubbles surface at the rim, swell, rise out of the pot, and pop */
-@keyframes cl-rise {
-    0%   { transform: translateY(3px) scale(.4);  opacity: 0; }
-    18%  { opacity: 1; }
-    78%  { opacity: .9; }
-    100% { transform: translateY(-26px) scale(1.15); opacity: 0; }
-}
-/* liquid surface gently breathes so the pot reads as "boiling" even between bubbles */
-@keyframes cl-boil { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(1.06); } }
+/* The rising bubbles + rim boil were SVG-internal transform animations: they repaint the whole
+   SVG on the MAIN thread every frame, which stutters during the busy boot. Dropped — the pot now
+   simmers via one compositor transform on the whole mark (see .cauldron-loader). Bubbles hidden
+   rather than left frozen; the shape stays as a static garnish only where it isn't animated. */
+.cl-bubbles { display: none; }
 button.primary, button.active { background: var(--accent); color: var(--on-accent); }
 button.danger { background: var(--danger); color: var(--on-danger); }
 /* the one delete/remove glyph (dom.js TRASH). Sized to the button's font, inherits its

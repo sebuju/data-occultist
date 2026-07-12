@@ -991,7 +991,7 @@ function drawTellTemplateRef(div, n) {
         const scale = Math.max(1, Math.ceil(220 / sw));
         const BW = sw * scale, BH = sh * scale;
         cv.width = BW; cv.height = BH;
-        const ctx = cv.getContext("2d");
+        const ctx = cv.getContext("2d", { willReadFrequently: true });   // software canvas: no accelerated-canvas compositor layer (see overlay.js)
         ctx.imageSmoothingEnabled = false;                          // nearest-neighbour: keep the crop pixelated
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, BW, BH);
         // outline the actual box inside the margin-grown crop (skip when margin is 0 — box == crop)
@@ -2645,7 +2645,7 @@ function wireForge(div, id) {
     const $ = (sel) => div.querySelector(sel);
     const canvas = $(".sf-plot-c");
     if (!canvas) return;
-    const gx = canvas.getContext("2d");
+    const gx = canvas.getContext("2d", { willReadFrequently: true });   // software canvas: no accelerated-canvas compositor layer (see overlay.js)
     const NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
     const pToNote = (p) => { const s = Math.round(p * 36); return NOTES[s % 12] + (3 + Math.floor(s / 12)); };
     const spec = () => model.soundNode(id)?.synth;
