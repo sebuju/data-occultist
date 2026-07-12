@@ -4542,10 +4542,10 @@ sounds:
     points:
     - t: 0.0
       p: 0.6
-    - t: 0.1
-      p: 0.85
+    - t: 0.4569748937190246
+      p: 0.4474750560090782
     - t: 1.0
-      p: 0.05
+      p: 0.21286203498200518
     length_ms: 180
     attack: 4
     decay: 55
@@ -4678,8 +4678,8 @@ layout:
       custW: true
       custH: true
     ds:master:
-      x: -940.0
-      y: -1380.0
+      x: -1200.0
+      y: -2380.0
       collapsed: false
     ds:prices_live:
       x: 900.0
@@ -4719,8 +4719,8 @@ layout:
       y: 1260.0
       collapsed: false
     ds:mods:
-      x: -940.0
-      y: -940.0
+      x: -660.0
+      y: -2380.0
       w: 360.0
       h: 160.0
       collapsed: false
@@ -4902,33 +4902,17 @@ layout:
       collapsed: false
       custW: false
       custH: false
-    prev:relic_select:
-      x: -660.0
-      y: 3620.0
-      w: 520.0
-      h: 320.0
-      collapsed: false
-      custW: true
-      custH: false
-    vt:sub:live_prices_joined:
-      x: 1740.0
-      y: -4000.0
-      w: 600.0
-      h: 1460.0
-      collapsed: false
-      custW: true
-      custH: true
     producer:producer:
-      x: -940.0
-      y: -2120.0
+      x: -1620.0
+      y: -2380.0
       w: 360.0
       h: 720.0
       collapsed: false
       custW: false
       custH: false
     ds:relic_contents:
-      x: -940.0
-      y: -2320.0
+      x: -1620.0
+      y: -1640.0
       w: 360.0
       h: 160.0
       collapsed: false
@@ -4938,26 +4922,20 @@ layout:
       x: 460.0
       y: -1840.0
       w: 360.0
-      h: 700.0
+      h: 840.0
       collapsed: false
       custW: false
       custH: true
+      softH: true
     sub:relics_with_content_view:
       x: 880.0
       y: -1840.0
       w: 360.0
-      h: 700.0
+      h: 840.0
       collapsed: false
       custW: false
-      custH: false
-    vt:sub:relics_with_content_view:
-      x: 460.0
-      y: -1000.0
-      w: 780.0
-      h: 400.0
-      collapsed: false
-      custW: true
       custH: true
+      softH: true
     win:relic_refinement:
       x: -680.0
       y: 320.0
@@ -5034,14 +5012,6 @@ layout:
       collapsed: false
       custW: true
       custH: false
-    prev:relic_refinement:
-      x: -680.0
-      y: 1220.0
-      w: 520.0
-      h: 320.0
-      collapsed: false
-      custW: true
-      custH: false
     item:relic_refinement:not_owned:
       x: 460.0
       y: 320.0
@@ -5062,26 +5032,20 @@ layout:
       x: 1300.0
       y: -1840.0
       w: 360.0
-      h: 700.0
+      h: 840.0
       collapsed: false
       custW: false
       custH: true
+      softH: true
     sub:contents_with_price:
       x: 1720.0
       y: -1840.0
       w: 360.0
-      h: 700.0
+      h: 840.0
       collapsed: false
       custW: false
-      custH: false
-    vt:sub:contents_with_price:
-      x: 1300.0
-      y: -1000.0
-      w: 760.0
-      h: 400.0
-      collapsed: false
-      custW: true
       custH: true
+      softH: true
     det:relic_refinement:detect_1:
       x: -120.0
       y: 640.0
@@ -5092,16 +5056,8 @@ layout:
       custH: false
     ds:relics_select:
       x: -660.0
-      y: 4020.0
+      y: 3640.0
       collapsed: false
-    vt:ds:relics_offered:
-      x: 2300.0
-      y: 1260.0
-      w: 560.0
-      h: 480.0
-      collapsed: false
-      custW: true
-      custH: true
     sub:master_prime_parts:
       x: 1340.0
       y: -3240.0
@@ -5114,30 +5070,6 @@ layout:
       x: -3440.0
       y: -4020.0
       collapsed: false
-    vt:ds:ee_log:
-      x: -3040.0
-      y: -4020.0
-      w: 840.0
-      h: 460.0
-      collapsed: false
-      custW: true
-      custH: true
-    vt:ds:relics_refinement:
-      x: -260.0
-      y: 2080.0
-      w: 500.0
-      h: 440.0
-      collapsed: false
-      custW: true
-      custH: true
-    vt:ds:relics_select:
-      x: -240.0
-      y: 4020.0
-      w: 460.0
-      h: 500.0
-      collapsed: false
-      custW: true
-      custH: true
     src:log_ee:
       x: -3440.0
       y: -3780.0
@@ -5146,14 +5078,6 @@ layout:
       collapsed: false
       custW: true
       custH: false
-    vt:src:log_ee:
-      x: -3040.0
-      y: -3540.0
-      w: 840.0
-      h: 480.0
-      collapsed: false
-      custW: true
-      custH: true
     producer:wf_market_relic:
       x: 2780.0
       y: -3800.0
@@ -5166,22 +5090,6 @@ layout:
       x: 2780.0
       y: -4000.0
       collapsed: false
-    vt:ds:relic_prices:
-      x: 3180.0
-      y: -4000.0
-      w: 720.0
-      h: 1560.0
-      collapsed: false
-      custW: true
-      custH: true
-    prev:relic_rewards:
-      x: 2460.0
-      y: 800.0
-      w: 500.0
-      h: 320.0
-      collapsed: false
-      custW: true
-      custH: false
     trigger:trigger_on_new_relic:
       x: 2460.0
       y: -3800.0
@@ -5194,30 +5102,6 @@ layout:
       x: 2860.0
       y: -1460.0
       collapsed: false
-    vt:ds:relic_contents:
-      x: -1680.0
-      y: -2320.0
-      w: 680.0
-      h: 360.0
-      collapsed: false
-      custW: true
-      custH: true
-    vt:ds:mods:
-      x: -1680.0
-      y: -940.0
-      w: 680.0
-      h: 360.0
-      collapsed: false
-      custW: true
-      custH: false
-    vt:ds:master:
-      x: -1680.0
-      y: -1380.0
-      w: 680.0
-      h: 360.0
-      collapsed: false
-      custW: true
-      custH: false
     fld:relic_refinement:relic_item:count:
       x: 940.0
       y: 780.0
@@ -5265,11 +5149,11 @@ layout:
     sound:bob:
       x: -4440.0
       y: -2900.0
-      w: 320.0
+      w: 400.0
       h: 500.0
       collapsed: false
       custW: true
-      custH: true
+      custH: false
       softW: true
       softH: true
     win:mission_rewards:
@@ -5309,41 +5193,16 @@ layout:
       y: 2540.0
       collapsed: false
     trigger:ab_trigger:
-      x: -4040.0
+      x: -3980.0
       y: -2900.0
       w: 280.0
       h: 320.0
       collapsed: false
       custW: false
       custH: true
-    hist:ab_trigger:
-      x: -3620.0
-      y: -2900.0
-      w: 420.0
-      h: 320.0
-      collapsed: false
-      custW: false
-      custH: true
-    hist:trigger_on_new_relic:
-      x: 2460.0
-      y: -3580.0
-      w: 280.0
-      h: 360.0
-      collapsed: false
-      custW: true
-      custH: false
-    hist:owned_refresh:
-      x: 500.0
-      y: -3760.0
-      w: 360.0
-      h: 360.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: false
     action:action:
-      x: -2600.0
-      y: -2680.0
+      x: -3600.0
+      y: -2900.0
       collapsed: false
     ro:arsenal_warframe:slot_arcane_1:
       x: 9520.0
@@ -5777,22 +5636,6 @@ layout:
       x: 7760.0
       y: 3440.0
       collapsed: false
-    vt:ds:dataset:
-      x: 7020.0
-      y: 3440.0
-      w: 700.0
-      h: 400.0
-      collapsed: false
-      custW: true
-      custH: true
-    prev:arsenal_warframe:
-      x: 8340.0
-      y: 2880.0
-      w: 1060.0
-      h: 340.0
-      collapsed: false
-      custW: true
-      custH: true
     sub:installable_mods:
       x: 8240.0
       y: 4300.0
@@ -5888,7 +5731,7 @@ layout:
       x: 11300.0
       y: 4300.0
       w: 360.0
-      h: 722.0
+      h: 728.0
       collapsed: false
       custW: false
       custH: true
@@ -5960,14 +5803,6 @@ layout:
       collapsed: false
       custW: false
       custH: true
-    vt:ds:mod_catalog:
-      x: 6180.0
-      y: 4520.0
-      w: 1280.0
-      h: 740.0
-      collapsed: false
-      custW: true
-      custH: true
     sub:loadout_wide:
       x: 9700.0
       y: 4900.0
@@ -5992,28 +5827,11 @@ layout:
       x: 9080.0
       y: 5760.0
       collapsed: false
-    vt:sub:mod_suggestions_ranked:
-      x: 8300.0
-      y: 7000.0
-      w: 1160.0
-      h: 1580.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-    vt:sub:empty_slots:
-      x: 10120.0
-      y: 5440.0
-      w: 620.0
-      h: 360.0
-      collapsed: false
-      custW: true
-      custH: false
     register:loadout_register:
-      x: 8320.0
+      x: 8340.0
       y: -500.0
-      w: 1040.0
-      h: 780.0
+      w: 1000.0
+      h: 860.0
       collapsed: false
       custW: true
       custH: true
@@ -6083,31 +5901,11 @@ layout:
       x: 7200.0
       y: 5740.0
       collapsed: false
-    vt:sub:unowned_suggestions_ranked:
-      x: 6360.0
-      y: 6900.0
-      w: 1200.0
-      h: 1600.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
     ro:arsenal_warframe:warframe_name:
       x: 10040.0
       y: 3060.0
       w: 600.0
       h: 380.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
-    vt:ds:loadout:
-      x: 10120.0
-      y: 4300.0
-      w: 620.0
-      h: 1100.0
       collapsed: false
       custW: true
       custH: true
@@ -6548,8 +6346,6 @@ layout:
     - det:relic_rewards:detect_h
     - fld:relic_rewards:item_1:name
     - ds:relics_offered
-    - vt:ds:relics_offered
-    - prev:relic_rewards
     outline:
       color: '#2c313c'
       style: none
@@ -6628,9 +6424,7 @@ layout:
     - sub:live_prices_joined
     - producer:wf_market_live
     - trigger:owned_refresh
-    - vt:sub:live_prices_joined
     - sub:master_prime_parts
-    - hist:owned_refresh
     outline:
       color: '#e69a5a'
       style: none
@@ -6672,7 +6466,6 @@ layout:
     title: 'window: relic select'
     members:
     - win:relic_select
-    - prev:relic_select
     - det:relic_select:detect_h
     - sb:relic_select:scrollbar
     - item:relic_select:relic_item
@@ -6684,7 +6477,6 @@ layout:
     - vt:ds:dataset_4
     - vt:sub:dataset_view
     - vt:ds:relics
-    - vt:ds:relics_select
     outline:
       color: '#2c313c'
       style: none
@@ -6701,8 +6493,6 @@ layout:
     members:
     - ds:ee_log
     - src:log_ee
-    - vt:src:log_ee
-    - vt:ds:ee_log
     outline:
       color: '#e6685a'
       style: none
@@ -6719,7 +6509,6 @@ layout:
     title: 'window: relic refinement'
     members:
     - win:relic_refinement
-    - prev:relic_refinement
     - sb:relic_refinement:scrollbar
     - item:relic_refinement:relic_item
     - item:relic_refinement:not_owned
@@ -6731,7 +6520,6 @@ layout:
     - vt:sub:relics_refinement_view_view
     - det:relic_refinement:detect_1
     - fld:relic_refinement:relic_item:count
-    - vt:ds:relics_refinement
     outline:
       color: '#2c313c'
       style: none
@@ -6747,10 +6535,8 @@ layout:
     title: 'price: relic'
     members:
     - ds:relic_prices
-    - vt:ds:relic_prices
     - producer:wf_market_relic
     - trigger:trigger_on_new_relic
-    - hist:trigger_on_new_relic
     outline:
       color: '#e69a5a'
       style: none
@@ -6769,9 +6555,6 @@ layout:
     - ds:mods
     - ds:relic_contents
     - producer:producer
-    - vt:ds:relic_contents
-    - vt:ds:mods
-    - vt:ds:master
     outline:
       color: '#3a4150'
       style: none
@@ -6795,7 +6578,6 @@ layout:
     - ro:live_game_window:ability_3_cd
     - ro:live_game_window:ability_4_cd
     - sound:bob
-    - hist:ab_trigger
     - action:action
     outline:
       color: '#3a4150'
@@ -6833,10 +6615,8 @@ layout:
     members:
     - sub:relics_refinement_with_contents
     - sub:contents_with_price
-    - vt:sub:contents_with_price
     - sub:relics_with_content
     - sub:relics_with_content_view
-    - vt:sub:relics_with_content_view
     outline:
       color: '#c98ae6'
       style: none
@@ -6870,16 +6650,16 @@ layout:
     - ro:arsenal_warframe:slot_1_school
     - ro:arsenal_warframe:slot_1_po
     outline:
-      color: '#5ad7e6'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#15272d'
-    titleBg: '#5ad7e6'
-    titleColor: '#08121d'
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    schemeId: cyan
+    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   - id: group_51
     title: 'slot: 2'
     members:
@@ -6888,16 +6668,16 @@ layout:
     - ro:arsenal_warframe:slot_2_school
     - ro:arsenal_warframe:slot_2_po
     outline:
-      color: '#5ad7e6'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#15272d'
-    titleBg: '#5ad7e6'
-    titleColor: '#08121d'
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    schemeId: cyan
+    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   - id: group_37
     title: 'slot: 3'
     members:
@@ -6906,16 +6686,16 @@ layout:
     - ro:arsenal_warframe:slot_3_school
     - ro:arsenal_warframe:slot_3_po
     outline:
-      color: '#5ad7e6'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#15272d'
-    titleBg: '#5ad7e6'
-    titleColor: '#08121d'
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    schemeId: cyan
+    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   - id: group_52
     title: 'slot: 4'
     members:
@@ -6924,16 +6704,16 @@ layout:
     - ro:arsenal_warframe:slot_4_school
     - ro:arsenal_warframe:slot_4_po
     outline:
-      color: '#5ad7e6'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#15272d'
-    titleBg: '#5ad7e6'
-    titleColor: '#08121d'
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    schemeId: cyan
+    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   - id: group_38
     title: 'slot: 7'
     members:
@@ -6942,16 +6722,16 @@ layout:
     - ro:arsenal_warframe:slot_7_school
     - ro:arsenal_warframe:slot_7_po
     outline:
-      color: '#5aa9e6'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#15212d'
-    titleBg: '#5aa9e6'
-    titleColor: '#08121d'
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    schemeId: blue
+    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   - id: group_53
     title: 'slot: 8'
     members:
@@ -6960,16 +6740,16 @@ layout:
     - ro:arsenal_warframe:slot_8_school
     - ro:arsenal_warframe:slot_8_po
     outline:
-      color: '#5aa9e6'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#15212d'
-    titleBg: '#5aa9e6'
-    titleColor: '#08121d'
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    schemeId: blue
+    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   - id: group_39
     title: 'slot: 5'
     members:
@@ -6978,16 +6758,16 @@ layout:
     - ro:arsenal_warframe:slot_5_school
     - ro:arsenal_warframe:slot_5_po
     outline:
-      color: '#5ad7e6'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#15272d'
-    titleBg: '#5ad7e6'
-    titleColor: '#08121d'
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    schemeId: cyan
+    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   - id: group_41
     title: warframe
     members:
@@ -7012,16 +6792,16 @@ layout:
     - ro:arsenal_warframe:slot_aura_school
     - ro:arsenal_warframe:slot_aura_po
     outline:
-      color: '#5aa9e6'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#15212d'
-    titleBg: '#5aa9e6'
-    titleColor: '#08121d'
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    schemeId: blue
+    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   - id: group_54
     title: 'slot: exilus'
     members:
@@ -7030,32 +6810,32 @@ layout:
     - ro:arsenal_warframe:slot_exilus_school
     - ro:arsenal_warframe:slot_exilus_po
     outline:
-      color: '#5aa9e6'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#15212d'
-    titleBg: '#5aa9e6'
-    titleColor: '#08121d'
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    schemeId: blue
+    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   - id: group_44
     title: 'slot: arcanes'
     members:
     - ro:arsenal_warframe:slot_arcane_1
     - ro:arsenal_warframe:slot_arcane_2
     outline:
-      color: '#5ad7e6'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#15272d'
-    titleBg: '#5ad7e6'
-    titleColor: '#08121d'
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    schemeId: cyan
+    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   - id: group_45
     title: group_45
     members:
@@ -7064,7 +6844,6 @@ layout:
     - fld:arsenal_warframe:mod:drain
     - fld:arsenal_warframe:mod:rank
     - ds:dataset
-    - vt:ds:dataset
     outline:
       color: '#262c37'
       style: none
@@ -7082,8 +6861,6 @@ layout:
     - sub:loadout_equipped
     - sub:loadout_wide
     - sub:empty_slots
-    - vt:sub:empty_slots
-    - vt:ds:loadout
     outline:
       color: '#262c37'
       style: none
@@ -7098,7 +6875,6 @@ layout:
     title: group_47
     members:
     - ds:mod_catalog
-    - vt:ds:mod_catalog
     - producer:mod_catalog_producer
     outline:
       color: '#262c37'
@@ -7133,7 +6909,6 @@ layout:
     - sub:mod_suggestions_general
     - sub:mod_suggestions_aura
     - sub:mod_suggestions_ranked
-    - vt:sub:mod_suggestions_ranked
     - sub:mod_suggestions
     outline:
       color: '#262c37'
@@ -7153,16 +6928,16 @@ layout:
     - ro:arsenal_warframe:slot_6_school
     - ro:arsenal_warframe:slot_6_po
     outline:
-      color: '#5ad7e6'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#15272d'
-    titleBg: '#5ad7e6'
-    titleColor: '#08121d'
+    bg: '#292322'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
     titleAlign: left
     titlePos: tl
-    schemeId: cyan
+    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   - id: group_55
     title: subsets
     members:
@@ -7171,7 +6946,6 @@ layout:
     - sub:unowned_suggestions_general
     - sub:unowned_suggestions_aura
     - sub:unowned_suggestions_ranked
-    - vt:sub:unowned_suggestions_ranked
     outline:
       color: '#262c37'
       style: none
@@ -7322,36 +7096,11 @@ layout:
     bg: '#0d1017'
     titleColor: ''
   satellites:
-  - prev:relic_select
-  - vt:sub:live_prices_joined
   - vt:sub:statistic_prices_joined
-  - vt:sub:relics_with_content_view
-  - prev:relic_refinement
-  - vt:ds:relics_offered
   - vt:ds:ee_log_
-  - vt:ds:relics_select
   - vtd:src:source
-  - vt:ds:ee_log
-  - vt:src:log_ee
-  - vt:ds:relic_prices
-  - prev:relic_rewards
-  - vt:ds:relic_contents
-  - vt:ds:mods
-  - vt:sub:contents_with_price
-  - vt:ds:master
-  - vt:ds:relics_refinement
   - vt:sub:relic_rewards_with_price
   - hist:trigger
-  - hist:ab_trigger
-  - hist:trigger_on_new_relic
-  - hist:owned_refresh
-  - vt:ds:dataset
-  - prev:arsenal_warframe
-  - vt:ds:mod_catalog
-  - vt:sub:empty_slots
-  - vt:sub:mod_suggestions_ranked
-  - vt:sub:unowned_suggestions_ranked
-  - vt:ds:loadout
   - vt:sub:overframe_suggestions
   sub_groups:
   - id: subgroup_5
@@ -7387,30 +7136,11 @@ layout:
     titleColor: '#e69a5a'
     titleAlign: left
     schemeId: orange
-  - id: subgroup_7
-    parent: group_22
-    title: ''
-    members:
-    - win:relic_select
-    - prev:relic_select
-    - det:relic_select:detect_h
-    - sb:relic_select:scrollbar
-    outline:
-      color: '#5aa9e6'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#15202c'
-    titleBg: ''
-    titleColor: '#5aa9e6'
-    titleAlign: left
-    schemeId: blue
   - id: subgroup_10
     parent: group_25
     title: ''
     members:
     - win:relic_refinement
-    - prev:relic_refinement
     - det:relic_refinement:detect_h
     - sb:relic_refinement:scrollbar
     - det:relic_refinement:detect_1
@@ -7430,23 +7160,6 @@ layout:
     members:
     - ds:relics_refinement
     - vt:sub:relics_refinement_view_view
-    - vt:ds:relics_refinement
-    outline:
-      color: '#7ddc7d'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#19261f'
-    titleBg: ''
-    titleColor: '#7ddc7d'
-    titleAlign: left
-    schemeId: green
-  - id: subgroup_15
-    parent: group_22
-    title: ''
-    members:
-    - ds:relics_select
-    - vt:ds:relics_select
     outline:
       color: '#7ddc7d'
       style: none
@@ -7516,11 +7229,11 @@ layout:
     - fld:equipment_window:arcane:arcane_level
     - fld:equipment_window:arcane:count
     outline:
-      color: '#e69a5a'
+      color: '#ff7300'
       style: none
       width: 2
       offset: 0
-    bg: '#261e1b'
+    bg: '#291910'
     titleBg: ''
     titleColor: '#e69a5a'
     titleAlign: left
@@ -7542,55 +7255,6 @@ layout:
     titleColor: '#e69a5a'
     titleAlign: left
     schemeId: orange
-  - id: subgroup_24
-    parent: group_27
-    title: ''
-    members:
-    - ds:relic_contents
-    - vt:ds:relic_contents
-    - producer:producer
-    outline:
-      color: '#7ddc7d'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#19261f'
-    titleBg: ''
-    titleColor: '#7ddc7d'
-    titleAlign: left
-    schemeId: green
-  - id: subgroup_25
-    parent: group_27
-    title: master
-    members:
-    - ds:master
-    - vt:ds:master
-    outline:
-      color: '#7ddc7d'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#19261f'
-    titleBg: ''
-    titleColor: '#7ddc7d'
-    titleAlign: left
-    schemeId: green
-  - id: subgroup_26
-    parent: group_27
-    title: mods
-    members:
-    - ds:mods
-    - vt:ds:mods
-    outline:
-      color: '#7ddc7d'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#19261f'
-    titleBg: ''
-    titleColor: '#7ddc7d'
-    titleAlign: left
-    schemeId: green
   - id: subgroup_27
     parent: group_28
     title: ''
@@ -7629,7 +7293,6 @@ layout:
     members:
     - trigger:ab_trigger
     - sound:bob
-    - hist:ab_trigger
     outline:
       color: '#2b323f'
       style: none
@@ -7672,28 +7335,11 @@ layout:
     titleColor: '#e69a5a'
     titleAlign: left
     schemeId: orange
-  - id: subgroup_32
-    parent: group_11
-    title: ''
-    members:
-    - ds:relics_offered
-    - vt:ds:relics_offered
-    outline:
-      color: '#7ddc7d'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#19261f'
-    titleBg: ''
-    titleColor: '#7ddc7d'
-    titleAlign: left
-    schemeId: green
   - id: subgroup_33
     parent: group_11
     title: ''
     members:
     - win:relic_rewards
-    - prev:relic_rewards
     - det:relic_rewards:detect_h
     outline:
       color: '#5aa9e6'
@@ -7740,6 +7386,24 @@ layout:
     titleColor: '#5aa9e6'
     titleAlign: left
     schemeId: blue
+  - id: subgroup_38
+    parent: group_22
+    title: ''
+    members:
+    - win:relic_select
+    - det:relic_select:detect_h
+    - sb:relic_select:scrollbar
+    - ds:relics_select
+    outline:
+      color: '#5aa9e6'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#15202c'
+    titleBg: ''
+    titleColor: '#5aa9e6'
+    titleAlign: left
+    schemeId: blue
   schemes:
   - id: s_f7c53c61-d630-4b1b-9fc4-17c3356055d9
     name: custom 1
@@ -7765,7 +7429,7 @@ layout:
     name: custom 3
     bg: '#292322'
     style: none
-    outline: '#e69a5a'
+    outline: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     width: 2
@@ -7788,6 +7452,16 @@ layout:
     outline: '#7ddc7d'
     titleBg: '#7ddc7d'
     titleColor: '#08121d'
+    width: 2
+    offset: 0
+    shadow: null
+  - id: s_e3a0ee58-7f74-41c5-b25d-fa65cffe68a2
+    name: custom 6
+    bg: '#271729'
+    style: none
+    outline: '#e65ac2'
+    titleBg: '#e65ac2'
+    titleColor: '#1a081a'
     width: 2
     offset: 0
     shadow: null
