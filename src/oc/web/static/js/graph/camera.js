@@ -153,22 +153,39 @@ export function consumePanSuppress() { const v = suppressNextMenu; suppressNextM
 
 export function startPan(ev, { forceSuppress = false } = {}) {
     const s = { x: ev.clientX, y: ev.clientY, px: view.panX, py: view.panY };
+    s.cx = ev.clientX; s.cy = ev.clientY;   // latest cursor (init to the drag start)
     let moved = false;
-    // Coalesce to ONE view write per display frame: a high-polling mouse delivers several
-    // mousemoves per frame (1000Hz mouse on 144Hz = ~7), and writing the transform + minimap
-    // indicator per EVENT multiplies the per-frame style work for zero visual gain — the screen
-    // only shows the last one anyway. Events just record the latest cursor; rAF applies it.
-    let mvRaf = null;
+    // Coalesce to ONE view write per frame AND pace the applies to a steady divisor of the
+    // refresh. A high-polling mouse delivers several mousemoves per frame; more importantly, a
+    // GPU that can't hold full refresh on a heavy scene drops frames UNEVENLY (the felt jank),
+    // so applying every `stride`th frame yields a CONSTANT frame time instead. Measure the
+    // refresh over the first few frames of the drag, then lock stride = round(refreshHz / 72):
+    // 144Hz -> every 2nd frame (72Hz), 60Hz -> every frame (untouched), 240Hz -> every 3rd.
+    // Events only record the latest cursor; the loop applies it.
+    let raf = null, stride = 1, sinceApply = 0;
+    let prevTs = 0, gapSum = 0, gaps = 0, lastAx = null, lastAy = null;
     const apply = () => { view.panX = s.px + (s.cx - s.x); view.panY = s.py + (s.cy - s.y); applyView(); };
+    const frame = (ts) => {
+        if (gaps < 5 && prevTs) {   // measure refresh -> divisor, once, over the first few gaps
+            gapSum += ts - prevTs;
+            if (++gaps === 5) stride = Math.min(4, Math.max(1, Math.round(1000 / ((gapSum / 5) * 72))));
+        }
+        prevTs = ts;
+        if (++sinceApply >= stride) {   // apply the latest cursor on a stride boundary
+            sinceApply = 0;
+            if (s.cx !== lastAx || s.cy !== lastAy) { lastAx = s.cx; lastAy = s.cy; apply(); }  // skip redundant rewrite (idle drag = zero DOM)
+        }
+        raf = requestAnimationFrame(frame);   // continuous while dragging
+    };
     const mv = (e) => {
         if (!moved && Math.hypot(e.clientX - s.x, e.clientY - s.y) < 4) return;  // ignore micro-jitter
-        if (!moved) { moved = true; $("graph").classList.add("panning"); }
+        if (!moved) { moved = true; $("graph").classList.add("panning"); raf = requestAnimationFrame(frame); }
         s.cx = e.clientX; s.cy = e.clientY;
-        if (!mvRaf) mvRaf = requestAnimationFrame(() => { mvRaf = null; apply(); });
     };
     const up = () => {
-        // flush the pending frame so release lands exactly where the cursor was
-        if (mvRaf) { cancelAnimationFrame(mvRaf); mvRaf = null; apply(); }
+        // stop the loop and flush the exact release position so it lands under the cursor
+        if (raf) { cancelAnimationFrame(raf); raf = null; }
+        if (moved) apply();
         document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
         $("graph").classList.remove("panning");
         // a real drag eats the context menu; so does a plain click that just disarmed a draw
