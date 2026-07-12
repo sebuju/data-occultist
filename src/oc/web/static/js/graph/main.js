@@ -111,6 +111,7 @@ let _bootDetails = null;
 export let live = {};             // dataset -> {present,total,last_op,last_ts} (read by datanodes/refreshLive)
 export let wire = null;           // active drag-wire {winId, x1,y1} (read by routing.drawEdges)
 export let selectedNodeId = null; // node whose line(s) are highlighted (read by routing.selClsFor)
+let sizeClip = null;              // size clipboard {w,h} for the toolbar copy/paste-size buttons
 // Setter so modules that only IMPORT this binding (imaging.js) can update it — an imported
 // `let` is read-only in the importer, so a direct assignment there throws.
 export function setSelectedNodeId(v) { selectedNodeId = v; }
@@ -3774,6 +3775,12 @@ function syncMultiSelect() {
         del.hidden = groupMode || !ids.some((id) => isRemovable(nodeTypeOf(id)));
         if (del.dataset.armed === "1") { del.dataset.armed = "0"; const dl = del.querySelector(".sel-lbl"); if (dl) setSelLbl(dl, del.dataset.label ?? dl.textContent); }   // label is legitimately "" now (icon-only) -> ?? not ||
     }
+    // size copy shows for a single selected node; paste shows only once a size is copied and there's
+    // a resizable target. (Both hidden in group-mode — those buttons act on the node selection.) Set
+    // BEFORE collapseSeparators so their group's separators fold from the fresh state, not last tick's.
+    const cpy = $("selCopySizeBtn"), pst = $("selPasteSizeBtn");
+    if (cpy) cpy.hidden = groupMode || nsel !== 1;
+    if (pst) pst.hidden = groupMode || !sizeClip || !ids.some(isSizeTarget);
     if (bar) collapseSeparators(bar);   // hide any `.sel-sep` that now borders nothing (unremovable node, group-mode, etc.)
     drawEdges();   // selection changed -> repaint so selected nodes' lines pick up the `sel` colour
 }
@@ -4939,6 +4946,43 @@ function carryClones(ids) {
     document.addEventListener("keydown", drop, true);
 }
 $("selCloneBtn").addEventListener("click", cloneSelection);
+
+// ---- size copy / paste (selection toolbar) --------------------------------
+// A session clipboard holding one node's rendered box. Copy grabs the single selected node's
+// size; paste stamps it onto every resizable node in the (possibly multi-) selection at once,
+// through the SAME nodeSizes funnel a grip resize / __nodeHistory.resizeNode uses. `sizeClip`
+// ({w,h} in unscaled local px, or null until a size is copied) is declared up top with the other
+// selection scalars so syncMultiSelect can read it without a TDZ hazard.
+// a node can take a pasted size when it's a real, non-collapsed card (collapsed = header-only).
+function isSizeTarget(id) { return nodeEls.has(id) && !collapsed.has(id); }
+function copySize() {
+    const id = selectionIds()[0];   // copy is offered only for a single selected node
+    const el = id && nodeEls.get(id);
+    if (!el) return;
+    sizeClip = { w: el.offsetWidth, h: el.offsetHeight };
+    setStatus(`size copied — ${Math.round(sizeClip.w)} x ${Math.round(sizeClip.h)}`);
+    syncMultiSelect();   // reveal the paste button now a size exists
+}
+function pasteSize() {
+    if (!sizeClip) return;
+    const w = snapUp(sizeClip.w), h = snapUp(sizeClip.h);   // quantize to the grid like a grip settle
+    const targets = selectionIds().filter(isSizeTarget);
+    if (!targets.length) return;
+    for (const id of targets) {
+        // widthOnly nodes (item/window/game/atlas) wrap a fixed-aspect canvas — stamp width only.
+        const s = WIDTH_ONLY_NODES.has(nodeTypeOf(id))
+            ? { w, custW: true, custH: false, softW: false, softH: false }
+            : { w, h, custW: true, custH: true, softW: false, softH: false };
+        nodeSizes.set(id, s);
+        const el = nodeEls.get(id);
+        if (el) { applySavedSize(el, s); markNodeSized(el, id); }
+    }
+    flushEdges(); groups.renderGroups(); persist.layout();   // re-route + record undo + save
+    setStatus(`pasted size to ${targets.length} node${targets.length === 1 ? "" : "s"}`);
+}
+$("selCopySizeBtn").addEventListener("click", copySize);
+$("selPasteSizeBtn").addEventListener("click", pasteSize);
+
 // entity id -> node id (mirror of the `<type>:<id>` derivation in model.nodes()).
 function nodeIdOfType(type, id) { return type === "dataset" ? `ds:${id}` : type === "filesource" ? `src:${id}` : type === "subset" ? `sub:${id}` : type === "window" ? `win:${id}` : type === "dictionary" ? `dict:${id}` : `${type}:${id}`; }
 
