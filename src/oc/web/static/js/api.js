@@ -76,7 +76,12 @@ function _guardedFetch(native, input, init = {}) {
     const p = native(input, { ...init, signal }).then((r) => {
         conn.reportReachable();   // got a response (even an error status) -> backend is up
         _breakerOk(path);
-        _emitReq({ phase: "done", method, path, ms: Math.round(performance.now() - t0), ok: true, status: r.status });
+        // Server-Timing (app.py's diagnostic middleware) tells us how long the HANDLER took,
+        // so the boot log can show real server time next to the client-measured (jank-inflated) ms.
+        const srvHdr = r.headers.get("Server-Timing");
+        const srv = srvHdr ? Number(/dur=([\d.]+)/.exec(srvHdr)?.[1]) : undefined;
+        _emitReq({ phase: "done", method, path, ms: Math.round(performance.now() - t0),
+                   srv: Number.isFinite(srv) ? srv : undefined, ok: true, status: r.status });
         return r;
     }).catch((e) => {
         const userAborted = init.signal && init.signal.aborted;   // panel closed / navigation, not connectivity

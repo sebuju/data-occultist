@@ -303,6 +303,20 @@ def create_app() -> FastAPI:
             return PlainTextResponse("forbidden: localhost only", status_code=403)
         return await call_next(request)
 
+    # Diagnostic: how long the SERVER actually spent on this request, so a slow-looking
+    # client-measured fetch (boot log, devtools) can be checked against real handler time
+    # instead of guessed at. The boot log's ms is pure client performance.now() around
+    # fetch() — it also bills any main-thread jank on either side — so this is the only
+    # ground truth available; see api.js's _guardedFetch for the client side of this.
+    import time as _time
+
+    @app.middleware("http")
+    async def _server_timing(request: Request, call_next):  # noqa: ANN202
+        t0 = _time.perf_counter()
+        response = await call_next(request)
+        response.headers["Server-Timing"] = f"app;dur={(_time.perf_counter() - t0) * 1000:.1f}"
+        return response
+
     # Surface the FULL traceback of any unhandled error to the client (this is a local
     # teaching tool) AND to the server log, so a 500 isn't an opaque "Internal Server
     # Error" — the browser console prints the real stack.

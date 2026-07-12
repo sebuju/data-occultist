@@ -5686,7 +5686,7 @@ async function killStrayOcrThenBoot() {
     if (dbg.bootlog) api.onApiRequest((ev) => {
         if (booted) return;
         if (ev.phase === "start") log(`→ ${ev.method} ${ev.path}`);
-        else log(`${ev.ok ? "✓" : "✗"} ${ev.method} ${ev.path} · ${ev.ms}ms${ev.ok ? "" : " " + (ev.reason || "failed")}`, ev.ok ? undefined : "err");
+        else log(`${ev.ok ? "✓" : "✗"} ${ev.method} ${ev.path} · ${ev.ms}ms${ev.srv != null ? ` (srv ${ev.srv}ms)` : ""}${ev.ok ? "" : " " + (ev.reason || "failed")}`, ev.ok ? undefined : "err");
     });
     // a tripped circuit breaker (an endpoint that kept timing out) surfaces here so the user learns
     // why a panel went quiet — it auto-recovers when the endpoint responds again.
