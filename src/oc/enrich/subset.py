@@ -397,7 +397,23 @@ def compute_subset(records: list[dict], sub: SubsetDef) -> dict:
     return compute_view([(ds, records)], sub)
 
 
-def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
+def subset_source_datasets(profile, subset_id: str, _stack: frozenset = frozenset()) -> set[str]:
+    """The transitive PLAIN-dataset ids a subset ultimately reads (the leaves of its source
+    tree). A subset input recurses into its own sources; a plain dataset is its own leaf; a
+    cycle stops. Used to build a rev signature that gates a cached view result — any write to
+    one of these datasets bumps its ``rev`` and so invalidates the cache."""
+    sub = profile.subset_def(subset_id)
+    if sub is None:                      # a plain dataset — itself a leaf
+        return {subset_id}
+    if subset_id in _stack:              # cycle -> stop
+        return set()
+    out: set[str] = set()
+    for src in sub.sources:
+        out |= subset_source_datasets(profile, src.dataset, _stack | {subset_id})
+    return out
+
+
+def compute_view_rows(profile, subset_id: str, fetch_dataset, *, cache: dict | None = None) -> dict:
     """Compute a subset's full ``{columns, rows}`` view, recursing through subset inputs.
 
     The ONE place the subset dependency walk lives — the web flow, the price runner, and the
@@ -405,6 +421,11 @@ def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
     memo, ``compute_view`` glue) never drifts between them. The only thing that genuinely
     differs per caller — how a PLAIN dataset's rows are fetched (web store vs. ``store_for``,
     with/without a ``present`` filter) — is injected:
+
+    ``cache`` (optional) is the per-``(input, aggregate)`` memo. Pass a shared dict across a
+    BATCH of top-level subsets (the web boot fetches every subset at once) so a heavy upstream
+    view — e.g. a 23k-row join feeding several ``*_suggestions`` siblings — is computed ONCE for
+    the whole batch, not once per consumer. Omit it (``None``) for a one-off compute.
 
     ``fetch_dataset(dataset_id, aggregate) -> list[dict]`` returns the raw stored records for
     one plain dataset, aggregated per the consuming SOURCE's ``aggregate``. A subset input is
@@ -415,7 +436,8 @@ def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
     (:meth:`GameProfile.aggregate_for`) — so a dataset that sets e.g. ``max`` to collapse a
     duplicate observation isn't silently overridden back to ``latest`` by its consumers. Resolved
     HERE, the one place the dependency walk lives, so every caller agrees."""
-    cache: dict = {}
+    if cache is None:
+        cache = {}
 
     def src_agg(src) -> str:
         """This source's effective many->one policy: its own, else the dataset's own (blank
@@ -444,7 +466,12 @@ def compute_view_rows(profile, subset_id: str, fetch_dataset) -> dict:
         return {"columns": [], "rows": []}
     inputs = [(src.dataset, input_rows(src.dataset, frozenset({subset_id}), src_agg(src)))
               for src in sub.sources]
-    return compute_view(inputs, sub)
+    result = compute_view(inputs, sub)
+    # Seed the top-level rows so a sibling/downstream subset sharing this `cache` (batch mode)
+    # reuses them instead of recomputing. A subset input resolves at aggregate `latest`
+    # (`aggregate_for` yields `latest` for a subset, and it already serves one row per key).
+    cache[(subset_id, "latest")] = result["rows"]
+    return result
 
 
 def _sort_key(v):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -12,6 +14,14 @@ from ...store.dataset_store import DatasetStore
 from ..deps import get_settings
 
 router = APIRouter(prefix="/api/flow", tags=["flow"])
+
+# Process-level view cache: (game, subset_id) -> (revs_key, result). A subset's computed
+# {columns, rows} is reused across requests while its transitive source datasets are unchanged
+# (revs_key matches). Any write bumps a source's rev -> the key mismatches -> recompute. One
+# entry per subset (a mismatch REPLACES it), so memory stays bounded to one snapshot each.
+# rev lives in the shared SQLite, so a collector process writing the DB invalidates us too.
+_VIEW_CACHE: dict[tuple[str, str], tuple[tuple, dict]] = {}
+_VIEW_LOCK = threading.Lock()
 
 
 @router.get("/{game}")
@@ -191,19 +201,47 @@ def _subset(game: str, subset: str):
     return profile, sub
 
 
-def _flow_fetch(game: str):
-    """A ``fetch_dataset(dataset_id, aggregate)`` for :func:`compute_view_rows` — a plain
-    dataset's records aggregated by the CONSUMING subset's ``aggregate`` policy.
+def _view_ctx(data_dir, game: str, profile):
+    """One ``(store, fetch)`` pair for a view computation, shared by the single-subset and batch
+    endpoints so the store memo and the fetch policy never diverge (and so the memo `store()`
+    that `fetch` opens is the SAME one `_cached_view` reads `rev` from).
 
-    records() off the fingerprinted state cache — NO forced ledger parse. The cache's src
-    (history size+mtime) invalidates on any append, so _load reparses whenever the ledger
-    moved; when it hasn't, the cache is provably current and a subset can't lag it. Parsing
-    the full ledger here (ensure_loaded) cost ~870ms on a 44MB/101k-event dataset for no
-    gain — the heal it provided only ever fired on an already-poisoned cache.
+    ``store(ds, aggregate)`` opens each dataset once (memoised). ``fetch(ds, agg)`` returns its
+    records aggregated per the CONSUMING source's policy — off the fingerprinted state cache, NO
+    forced ledger parse (the cache self-invalidates on any append). ``agg == "all"`` is the
+    no-collapse opt-out: open at ``latest`` (so the materialisation doesn't churn) and return
+    every observation via :func:`rows_at`."""
+    memo: dict[tuple[str, str | None], DatasetStore] = {}
+    def store(ds: str, aggregate: str | None = None) -> DatasetStore:
+        k = (ds, aggregate)
+        if k not in memo:
+            memo[k] = store_for(data_dir, game, ds, profile=profile, aggregate=aggregate)
+        return memo[k]
+    def fetch(d, agg):
+        return rows_at(store(d, "latest" if agg == "all" else agg), agg, present_only=True)
+    return store, fetch
 
-    ``agg == "all"`` is the no-collapse opt-out: open at ``latest`` (so the materialisation
-    doesn't churn) and return every observation via :func:`rows_at`."""
-    return lambda ds, agg: rows_at(_store(game, ds, "latest" if agg == "all" else agg), agg, present_only=True)
+
+def _cached_view(game: str, profile, sid: str, store, fetch, batch_cache: dict | None = None) -> dict:
+    """A subset's ``{columns, rows}``, served from :data:`_VIEW_CACHE` while its transitive source
+    datasets are unchanged. The rev signature (one indexed PK read per source dataset, via the
+    shared ``store`` memo) gates the cache; a mismatch recomputes (timed under the stats "rc"
+    bucket) and replaces the entry. ``batch_cache`` is the per-request shared view memo passed to
+    :func:`compute_view_rows` so sibling subsets don't re-derive a common heavy upstream."""
+    from ...enrich.subset import compute_view_rows, subset_source_datasets
+    from ...store import stats_store
+    rk = tuple(sorted((d, store(d).rev) for d in subset_source_datasets(profile, sid)))
+    with _VIEW_LOCK:
+        hit = _VIEW_CACHE.get((game, sid))
+        if hit is not None and hit[0] == rk:
+            return hit[1]
+    result: dict = {"columns": [], "rows": []}
+    with stats_store.time_block(game, f"sub:{sid}", "rc",
+                                n_fn=lambda: len(result.get("rows", []))):
+        result = compute_view_rows(profile, sid, fetch, cache=batch_cache)
+    with _VIEW_LOCK:
+        _VIEW_CACHE[(game, sid)] = (rk, result)
+    return result
 
 
 @router.get("/{game}/subset/{subset}")
@@ -212,14 +250,9 @@ def subset_view(game: str, subset: str):
     then filter + derive + sort. View inputs are computed first (dependency order), so an
     upstream view's derived columns feed downstream. Recomputed from current records, so it
     tracks updates. Input cycles resolve to empty rather than looping."""
-    from ...enrich.subset import compute_view_rows
-    from ...store import stats_store
     profile, sub = _subset(game, subset)
-    # Time the whole top-level recompute (nested inputs included) — this is the cost that
-    # grows as the source datasets grow. Nested views aren't timed separately (no double-count).
-    with stats_store.time_block(game, f"sub:{subset}", "rc",
-                                n_fn=lambda: len(result.get("rows", []))):
-        result = compute_view_rows(profile, subset, _flow_fetch(game))
+    store, fetch = _view_ctx(get_settings().data_dir, game, profile)
+    result = _cached_view(game, profile, subset, store, fetch)
     return {"subset": subset, "datasets": sub.inputs(), **result}
 
 
@@ -233,20 +266,17 @@ def flow_details(game: str, req: _DetailsReq):
     """One round-trip for the graph boot: every requested dataset's detail + subset's view at
     once. A single ``store`` memo is shared across the whole batch, so a dataset that feeds its
     own node AND several views opens/parses once instead of once per consumer (the per-node
-    fan-out — and the same source fetched once per view — collapses to one request)."""
-    from ...enrich.subset import compute_view_rows
-    from ...store import stats_store
+    fan-out — and the same source fetched once per view — collapses to one request).
+
+    One ``batch_cache`` is shared across every subset too, so a heavy upstream view feeding
+    several siblings (e.g. the ``*_suggestions`` views) is computed once for the whole batch;
+    unchanged subsets short-circuit off :data:`_VIEW_CACHE` entirely (rev-gated)."""
     settings = get_settings()
     if game not in list_profiles(settings.profiles_dir):
         raise HTTPException(status_code=404, detail=f"No profile {game!r}")
     profile = load_live_profile(settings.profiles_dir, game)
 
-    memo: dict[tuple[str, str | None], DatasetStore] = {}
-    def store(ds: str, aggregate: str | None = None) -> DatasetStore:
-        k = (ds, aggregate)
-        if k not in memo:
-            memo[k] = store_for(settings.data_dir, game, ds, profile=profile, aggregate=aggregate)
-        return memo[k]
+    store, fetch = _view_ctx(settings.data_dir, game, profile)
 
     datasets: dict[str, dict] = {}
     for ds in dict.fromkeys(req.datasets):   # dedupe, keep order
@@ -255,19 +285,14 @@ def flow_details(game: str, req: _DetailsReq):
         except Exception:
             continue   # a bad / disk-only id must not sink the rest of the batch
 
-    # subset rows aggregate by the CONSUMING view's policy (mirrors _flow_fetch) — share the memo
-    def fetch(d, agg):
-        return rows_at(store(d, "latest" if agg == "all" else agg), agg, present_only=True)
+    batch_cache: dict = {}
     subsets: dict[str, dict] = {}
     for sid in dict.fromkeys(req.subsets):
         sub = profile.subset_def(sid)
         if sub is None:
             continue
-        result: dict = {"rows": []}
         try:
-            with stats_store.time_block(game, f"sub:{sid}", "rc",
-                                        n_fn=lambda: len(result.get("rows", []))):
-                result = compute_view_rows(profile, sid, fetch)
+            result = _cached_view(game, profile, sid, store, fetch, batch_cache)
             subsets[sid] = {"subset": sid, "datasets": sub.inputs(), **result}
         except Exception:
             continue

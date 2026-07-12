@@ -978,6 +978,14 @@ class DatasetStore:
     # ---- queries -----------------------------------------------------------
 
     @property
+    def rev(self) -> int:
+        """The dataset's mutation counter — bumps on every write. Cheap PK lookup; used to
+        gate cached view results (a rev change = a source changed = recompute). 0 when the
+        dataset row doesn't exist yet (an unwritten dataset can't have stale consumers)."""
+        row = self._conn.execute("SELECT rev FROM datasets WHERE dataset=?", (self._dataset,)).fetchone()
+        return row["rev"] if row else 0
+
+    @property
     def present_count(self) -> int:
         return sum(1 for r in self._current_records() if r.get("present", True))
 
