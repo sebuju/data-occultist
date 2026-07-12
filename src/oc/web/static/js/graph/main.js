@@ -2676,10 +2676,10 @@ function wireForge(div, id) {
         const lf = Math.max(6, H * 0.075);
         // a pill-backed label centred at (cx,cy), clamped to stay fully inside the canvas so the
         // first/last point's note isn't clipped by the edges. `fh` = its font height (sizes the pill).
-        const drawLabel = (text, cx, cy, fg, fh) => {
+        const drawLabel = (text, cx, cy, fg, fh, minTop = 0) => {
             const w = gx.measureText(text).width, padX = fh * 0.4, h = fh * 1.5, rad = fh * 0.35;
             const x = Math.min(W - padX - w / 2, Math.max(padX + w / 2, cx));
-            const y = Math.min(H - h / 2, Math.max(h / 2, cy));
+            const y = Math.min(H - h / 2, Math.max(minTop + h / 2, cy));
             gx.textAlign = "center"; gx.textBaseline = "middle";
             gx.fillStyle = "rgba(10,14,21,.82)";
             gx.beginPath(); gx.roundRect(x - w / 2 - padX, y - h / 2, w + 2 * padX, h, rad); gx.fill();
@@ -2698,10 +2698,14 @@ function wireForge(div, id) {
             const a = pts[i], b = pts[i + 1];
             drawLabel(`${Math.round((b.t - a.t) * s.length_ms)}ms`, (a.t + b.t) / 2 * W, H - lf, muted, lf * 0.92);
         }
-        // note labels above each dot (flipped below near the top edge)
+        // note labels above each dot (flipped below near the top edge). Reserve the top HUD band (the
+        // DOM total-duration + help overlay) so a high-pitch point's pill doesn't draw over it —
+        // measure the HUD's real bottom edge in canvas device-px (exact; draw() is interaction-driven).
+        const hud = div.querySelector(".sf-hud"), pr = canvas.getBoundingClientRect();
+        const topInset = hud ? Math.max(0, (hud.getBoundingClientRect().bottom - pr.top) * dpr) : 0;
         gx.font = `${Math.round(lf)}px ui-monospace, monospace`;
         pts.forEach((pt) => { const px = pt.t * W, py = (1 - pt.p) * H;
-            drawLabel(pToNote(pt.p), px, py + (py > lf * 2 ? -lf * 1.05 : lf * 1.05), col, lf);
+            drawLabel(pToNote(pt.p), px, py + (py > lf * 2 ? -lf * 1.05 : lf * 1.05), col, lf, topInset);
         });
         const len = div.querySelector(".sf-len");
         if (len) len.textContent = `${s.length_ms} ms`;

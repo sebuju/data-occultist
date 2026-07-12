@@ -28,12 +28,15 @@ const WAVES = ["square", "sine", "sawtooth", "triangle"];
 const waveBtn = (w, on) => h("button", { class: "sf-wbtn" + (on ? " on" : ""), dataset: { wave: w }, title: w, type: "button" },
     svg("svg", { viewBox: "0 0 40 20" }, WAVE_GLYPH[w]()));
 
-const KNOBS = [   // [key, label, min, max]
-    ["length_ms", "len", 40, 1200], ["attack", "atk", 0, 100], ["decay", "dec", 0, 100],
-    ["vibrato", "vib", 0, 100], ["crush", "crush", 0, 100],
+const KNOBS = [   // [key, label, min, max, tip]
+    ["length_ms", "len", 40, 1200, "total cue length in ms — the whole envelope plays over this span"],
+    ["attack", "atk", 0, 100, "attack — how fast the volume ramps up at the note start"],
+    ["decay", "dec", 0, 100, "decay — how quickly the volume falls after the peak (fraction of length)"],
+    ["vibrato", "vib", 0, 100, "vibrato — pitch-wobble depth and speed (0 = off)"],
+    ["crush", "crush", 0, 100, "bit-crush — quantises the waveform for a gritty lo-fi timbre (0 = clean)"],
 ];
-const knob = (key, label, min, max, val) =>
-    h("div", { class: "sf-knob" },
+const knob = (key, label, min, max, val, tip) =>
+    h("div", { class: "sf-knob", title: tip },
         h("input", { type: "range", class: "sf-k", dataset: { k: key }, min, max, value: val }),
         h("span", { class: "kl" }, label),
         h("span", { class: "sf-kv", dataset: { kv: key } }, String(val)));
@@ -56,7 +59,7 @@ function forgeBody(syn) {
             h("canvas", { class: "sf-plot-c" })),
         gspan("sf-waves", ...WAVES.map((w) => waveBtn(w, w === (syn.wave || "square")))),
         subhead("shape"),
-        gspan("sf-knobs", ...KNOBS.map(([k, l, mn, mx]) => knob(k, l, mn, mx, syn[k] ?? 0))),
+        gspan("sf-knobs", ...KNOBS.map(([k, l, mn, mx, tip]) => knob(k, l, mn, mx, syn[k] ?? 0, tip))),
         subhead("starting cue"),
         gspan("sf-cues", ...PRESETS.map((n) => presetChip(n))),
     );

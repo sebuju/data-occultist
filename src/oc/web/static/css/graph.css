@@ -1424,7 +1424,10 @@ button.gp-scheme[data-sid^="s_"]::before {
 /* ---- sound node: the inline synth "forge" (generator mode). Everything is FLUID — sizes in
    %/em/aspect-ratio, no fixed px — so it scales with the resizable node. Colours ride the node's
    own --nt tint (sound = mauve) like every other node primitive. ---- */
-.gnode.sound.has-rules { width: 300px; }   /* resting width when the forge is open (borrow the rule-node preset) */
+/* width floor so the forge is never crushed below the width where its content fits — without it the
+   .sf-waves row hits its min-content floor and the body scrolls; a size RESET (soft-min >= naturalBox)
+   then lands scrollbar-free. Same pattern as .gnode.filesource/.detect. */
+.gnode.sound.has-rules { width: 300px; min-width: 300px; }   /* resting width when the forge is open (borrow the rule-node preset) */
 .sf-plot { position: relative; width: 100%; aspect-ratio: 12 / 5; margin-top: .4em;
     border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
     background: linear-gradient(0deg, #0a0e15, #0c1119); }
@@ -1438,7 +1441,7 @@ button.gp-scheme[data-sid^="s_"]::before {
     opacity: 0; transition: opacity .12s ease; }
 .sf-plot:hover .sf-tip { opacity: 1; }
 .sf-waves { display: flex; gap: .4em; margin-top: .5em; }
-.sf-wbtn { flex: 1; aspect-ratio: 2 / 1; max-height: 2.2em; display: grid; place-items: center;
+.sf-wbtn { flex: 1; min-width: 0; aspect-ratio: 2 / 1; max-height: 2.2em; display: grid; place-items: center;
     background: transparent; border: 1px solid var(--line); border-radius: 5px; color: var(--dim); cursor: pointer; }
 .sf-wbtn svg { width: 70%; height: 60%; }
 .sf-wbtn svg * { fill: none; stroke: currentColor; stroke-width: 2; }
