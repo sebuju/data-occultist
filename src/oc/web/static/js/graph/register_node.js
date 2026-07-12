@@ -205,9 +205,9 @@ export function registerParts(x) {
             // hidden side-channel setting.
             h("span", { class: "port out", title: "drag to a dataset to also mirror the held map there" })),
         // body IS the memory bank: slots for the held map + wired sources, the trailing "+" adds one.
-        // `zoom-through` lets a wheel over the bank zoom the graph rather than scroll the list
-        // (camera.js scrollableUnder); the scrollbar still drags.
-        body: h("div", { class: "nodehost data-host zoom-through" }),
+        // .nodehost overflow:auto — a wheel scrolls when the list overflows, else zooms the graph
+        // (camera.js scrollableUnder).
+        body: h("div", { class: "nodehost data-host" }),
         foot: h("button", { class: "regclear danger" }, "clear data"),
     };
 }

@@ -175,9 +175,6 @@ export function startPan(ev, { forceSuppress = false } = {}) {
 // the canvas; the wheel belongs to that element (native scroll), not to the canvas zoom.
 export function scrollableUnder(target) {
     for (let n = target; n && n.id !== "graph" && !n.classList?.contains("graphcanvas"); n = n.parentElement) {
-        // opt-out: a wheel over this element zooms the graph rather than scrolling it (the register
-        // memory bank) — the scrollbar still drags. Skip its scroll checks, keep walking ancestors.
-        if (n.classList?.contains("zoom-through")) continue;
         if (n.classList?.contains("scrollhost")) return true;
         const oy = getComputedStyle(n).overflowY;
         if ((oy === "auto" || oy === "scroll") && n.scrollHeight > n.clientHeight + 1) return true;

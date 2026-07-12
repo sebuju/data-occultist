@@ -3633,6 +3633,10 @@ function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
 // Clears only that axis's inline sizing so the other axis keeps the user's size, then merges the new
 // dim into the recorded nodeSizes so a later render()/reload restores it deterministically.
 function resetNodeAxis(div, id, axis, widthOnly) {
+    // A register's body is a square-slot memory bank — resetting it means "make the grid as square
+    // as possible", not "fit the content column". Both dots (and the shift-both) resize BOTH axes to
+    // the square box; the per-axis branch below never runs for it.
+    if (nodeTypeOf(id) === "register") { resetRegisterSquare(div, id); return; }
     if (axis === "w") { div.style.width = ""; div.style.minWidth = ""; }
     else { div.style.height = ""; div.style.minHeight = ""; }
     const nb = naturalBox(div);   // size to CONTENT (incl. overflow), not the clipped box
@@ -3648,6 +3652,32 @@ function resetNodeAxis(div, id, axis, widthOnly) {
         s.h = h; s.softH = true; s.custH = false;   // soft min (grow to grid) -> restore re-applies as min, never hard
     }
     nodeSizes.set(id, s);
+    markNodeSized(div, id);
+    drawEdges(); groups.renderGroups(); persist.layout();
+}
+
+// Reset a register node to the size where its square-slot bank tiles as close to a SQUARE as its
+// slot count allows: cols = ceil(sqrt(N)) so the grid is a touch wider than tall and any leftover
+// (N not a perfect rectangle) falls to the bottom row as empty space (never a ragged right edge).
+// The membank's layout() then reflows to exactly `cols` columns for this box. Cell size = the slots'
+// current rendered size, so a reset re-tiles them without rescaling. Sets BOTH axes hard so it
+// persists across render/reload (register width is otherwise CSS-fixed at 220px).
+function resetRegisterSquare(div, id) {
+    const host = div.querySelector(".data-host");
+    const grid = host?.querySelector(".membank");
+    const N = grid ? grid.children.length : 0;
+    if (!host || !N) { div.style.width = ""; div.style.height = ""; div.style.minWidth = ""; div.style.minHeight = ""; return; }
+    const gap = 4;
+    const cell = grid.children[0].offsetWidth || 4.6 * 16;   // slots are square (aspect-ratio 1/1)
+    const cols = Math.max(1, Math.ceil(Math.sqrt(N)));
+    const rows = Math.ceil(N / cols);
+    const chromeW = div.offsetWidth - host.clientWidth;      // header/ports/footer + paddings + border
+    const chromeH = div.offsetHeight - host.clientHeight;
+    const w = snapUp(cols * cell + (cols - 1) * gap + chromeW);
+    const h = snapUp(rows * cell + (rows - 1) * gap + chromeH);
+    div.style.minWidth = ""; div.style.minHeight = "";
+    div.style.width = `${w}px`; div.style.height = `${h}px`;
+    nodeSizes.set(id, { w, h, softW: false, softH: false, custW: true, custH: true });
     markNodeSized(div, id);
     drawEdges(); groups.renderGroups(); persist.layout();
 }
