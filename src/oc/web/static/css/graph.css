@@ -22,6 +22,11 @@
 /* flow-blob layer: dots animating along edges on live activity (graph/flow.js). Above
    everything inside the world, never takes pointer events; rides the #gworld transform. */
 #gflow { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 6; overflow: visible; }
+/* alignment-guide layer: dashed lines drawn to neighbours a selected/dragged node lines up with
+   (graph/guides.js). Above everything inside the world; rides the #gworld transform. non-scaling
+   stroke keeps the lines a crisp 1px at any zoom. */
+#gguides { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 7; overflow: visible; }
+.align-guide { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: .55; vector-effect: non-scaling-stroke; }
 /* while a node is dragged OR resized it snaps to the 20px grid in discrete steps; ease the stepped
    properties so it glides to each grid cell instead of teleporting (felt like the interaction was
    running badly / stuttering). MOVE changes only left/top; RESIZE changes width/height (plus the soft

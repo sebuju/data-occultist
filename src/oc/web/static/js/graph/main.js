@@ -39,6 +39,7 @@ import {
     setDraggingNodes,
 } from "./routing.js";
 import { initFlow } from "./flow.js";
+import { showGuides, flashGuides, clearGuides } from "./guides.js";
 import {
     cancelPan, panTo, panZoomTo, panZoomToRect, zoomToNode, viewportCenterWorld,
     applyView, resizeCanvas, onWheel, startPan, consumePanSuppress, MIN_ZOOM,
@@ -4355,6 +4356,7 @@ function moveNodes(id, extra, ev) {
             for (const g of starts) { g.gp.x = snap(g.sx + dx); g.gp.y = snap(g.sy + dy); positionNode(g.gid); }
             requestEdges();   // one edge redraw per frame, coalescing this move with others
             groups.renderGroups();   // group boxes hug their members live
+            showGuides(moved);   // live alignment guides to whatever the moving cluster lines up with
         },
         onSettle: () => {
             for (const mid of moved) nodeEls.get(mid)?.classList.remove("snapping");
@@ -4362,6 +4364,7 @@ function moveNodes(id, extra, ev) {
             flushEdges();   // paint the final positions now, dropping any pending coalesced frame
             groups.absorb([id, ...extra.filter((x) => x !== id)]);   // dropped inside a group box -> join it
             resizeCanvas(); groups.renderGroups(); persist.layout(); renderNodeViews();
+            flashGuides(moved);   // keep the resting alignment shown briefly, then fade
         },
     });
 }
@@ -4554,6 +4557,7 @@ async function loadGame(name) {
     for (const winId of [...imageCanvases.keys()]) closeImage(winId);
     batchesState.clear();   // batches render inline per node; drop stale selection state
     selected.clear();       // drop any multi-selection from the previous game
+    clearGuides();          // wipe alignment guides drawn against the outgoing game's nodes
     hydrateLayout();        // restore node positions/sizes/collapse/open-images from the profile
     applyLocal(local);      // restore canvas zoom/pan + minimap from the per-device sidecar
     // Prefetch every node's data in ONE request before building the nodes, so each node renders
@@ -5334,6 +5338,7 @@ document.addEventListener("keydown", (ev) => {
                     flushEdges();
                     groups.renderGroups();
                     persist.layout();
+                    flashGuides(selIds);   // show what the resized node(s) now line up with, then fade
                 }
                 ev.preventDefault();
             }
@@ -5350,6 +5355,7 @@ document.addEventListener("keydown", (ev) => {
                     positionNode(id);
                 }
                 drawEdges(); groups.renderGroups(); persist.layout();
+                flashGuides(selIds);   // show what the moved node(s) now line up with, then fade
                 ev.preventDefault();
             }
         }
