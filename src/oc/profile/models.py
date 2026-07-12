@@ -475,12 +475,13 @@ class StateDef(BaseModel):
 class ScrollSample(BaseModel):
     """One scroll-calibration reference: a scrollbar crop at a known scroll position.
 
-    ``img`` is the cutout as a data URL (PNG); ``rows`` is how many rows the viewport top has
-    moved down from the top of the list at this scroll; ``pos`` is the thumb position (0..1)
+    ``file`` is the cutout PNG's bare filename under ``captures/<game>/scroll/`` (display-only
+    — the thumb read happens once at capture time); ``rows`` is how many rows the viewport top
+    has moved down from the top of the list at this scroll; ``pos`` is the thumb position (0..1)
     read from the crop by ``scroll_detail`` (filled server-side); ``conf`` its confidence.
     """
 
-    img: str = ""
+    file: str = ""
     rows: int = 0
     pos: float | None = None
     conf: float | None = None
@@ -823,6 +824,10 @@ class HttpRequest(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     query: dict[str, str] = Field(default_factory=dict)
     timeout: float = 30.0
+    # When set, the response is an HTML page, not bare JSON: the id of a
+    # ``<script id="...">...</script>`` tag whose contents ARE the JSON to map (e.g. a
+    # Next.js ``__NEXT_DATA__`` hydration blob) — for sites with no JSON API of their own.
+    html_extract: str = ""
 
 
 class CatalogueSpec(BaseModel):
@@ -851,10 +856,13 @@ class HttpSpec(BaseModel):
     key_encode: bool = True         # percent-encode the substituted {key}
     catalogue: CatalogueSpec | None = None   # required when key_transform == "catalogue"
     root: str = ""                 # path applied to the response before every field path
-    # When non-empty, LIST mode: fetch the URL once (no sources) and expand these nested array
-    # paths — each relative to the prior level's element — into one row per leaf (ancestor
-    # fields merge in, so a leaf can reference any level). e.g. ``[relics, rewards]`` on the
-    # WFCD relic table -> one row per (relic, reward). Empty -> per-item mode (fetch per source).
+    # When non-empty, expand these nested array paths — each relative to the prior level's
+    # element — into one row per leaf (ancestor fields merge in, so a leaf can reference any
+    # level). e.g. ``[relics, rewards]`` on the WFCD relic table -> one row per (relic, reward).
+    # With no ``sources`` wired, the URL is fetched ONCE (list mode). With ``sources`` wired,
+    # the URL is fetched PER source item and EACH response is expanded (a builds-list-per-frame
+    # feed: one fetch per frame, many build rows) — every row is tagged with the source item
+    # under ``source_field``. Empty -> per-item mode (fetch per source, one row each).
     explode: list[str] = Field(default_factory=list)
     # Keep only SOURCE elements clearing every predicate (ANDed), evaluated BEFORE mapping — junk
     # in the feed never becomes a record. Tested against the raw element, so it may key off a field
@@ -883,7 +891,14 @@ class ProducerDef(BaseModel):
     # inventory dataset in to price just owned gear). Wired in the graph UI as input edges.
     sources: list[str] = Field(default_factory=list)
     # Which source column names the item (fed to the URL template / catalogue resolver).
+    # When ``source_array`` is set, this is instead a field WITHIN each element of that
+    # nested array (e.g. ``mod`` inside each ``slots[]`` entry), not a top-level column.
     source_field: str = "name"
+    # When set, sources are read from a NESTED array column (e.g. a build row's ``slots``
+    # list) rather than one scalar per row: every element of every row's ``source_array``
+    # list contributes its ``source_field`` value, deduped across the whole source (a
+    # build's mod loadout -> the distinct mod ids used across every fetched build).
+    source_array: str = ""
     # The generic HTTP fetch+map spec (for ``type: http``). Authored in the UI.
     http: HttpSpec | None = None
     # How this producer's output rows are keyed/deduped in the dataset — its own
