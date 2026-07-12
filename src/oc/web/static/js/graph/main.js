@@ -4592,7 +4592,11 @@ function focusNode(id) {
 // focus). Snapping from an observer was the old jump-on-unfocus bug — a ResizeObserver can't tell a
 // user grip-drag from an incidental reflow, so it must never write size or settle.
 function snapResize(el, opts = {}) {
-    observeResize(el, () => { requestEdges(); groups.renderGroups(); }, { gate: true });   // reflow (image load / content) -> edges follow AND boxes re-hug the node's new size; never snaps
+    // reflow (image load / content) -> edges follow AND boxes re-hug the node's new size; never snaps.
+    // Skipped during boot: every window's image load + content mount fires this on all N nodes behind
+    // the veil, and renderGroups reads each member's rect -> N * (30 forced layouts) of pure thrash for
+    // a screen nobody sees. finishBoot() runs the ONE real edge+group pass when the veil drops.
+    observeResize(el, () => { if (boot.phase) return; requestEdges(); groups.renderGroups(); }, { gate: true });
     addResizeGrips(el, opts);   // custom grips on BOTH bottom corners; they own snap-on-release
 }
 
@@ -4823,6 +4827,7 @@ async function refreshGames(select) {
 async function loadGame(name, { discard = false } = {}) {
     if (!name) return;
     boot.phase = true;   // reopened images read the server OCR cache (no engine touch) until the load settles
+    document.body.classList.add("booting");   // freeze all CSS motion but the veil spinner while it covers the screen (overlays.css)
     // `discard` is the conflict modal's "load server" path: the model still holds an
     // unsaved edit that just lost a 409. persist.flush() would resubmit it and hit the
     // SAME conflict again (infinite loop) — drop it instead, unflushed, and let the
@@ -4923,12 +4928,22 @@ async function loadGame(name, { discard = false } = {}) {
     setStatus(`loaded ${name}`);
 }
 
+// Boot is over: run the ONE deferred layout pass and fire the held-back fetches. Both boot-end
+// sites (initial page load + game switch) call this so they never drift (rule 7). Edge routing AND
+// group boxes are skipped all through boot (behind the veil) — this is where they get their single
+// real pass, so the graph is correct the instant the veil drops.
+function finishBoot() {
+    boot.phase = false;
+    document.body.classList.remove("booting");   // veil is about to drop -> let CSS motion run again
+    drawEdges();            // routing was frozen throughout boot (routing.js) -> the one real pass now
+    groups.renderGroups();  // group boxes were skipped throughout boot -> hug members once now
+    flushBoot();            // fire the summary/register/preview fetches deferred during boot
+}
+
 $("gameSelect").addEventListener("change", async (e) => {
     await loadGame(e.target.value);
     await bootSettle();   // let the reopened images' cached reads drain, then re-OCR fresh on edits
-    boot.phase = false;
-    drawEdges();   // routing was skipped throughout boot (routing.js) -> run the one real pass now
-    flushBoot();   // fire the summary/register/preview fetches deferred during boot
+    finishBoot();
 });
 // Mint a blank game profile. Called from the settings modal's "new game" section.
 function createGame(name) {
@@ -5992,6 +6007,7 @@ if (dbg.on) log(`debug launch: kill=${dbg.kill} settle=${dbg.settle} veil=${dbg.
 // ---- boot veil: full-page spinner until the initial load has settled ----------
 const veil = {
     drop() {
+        document.body.classList.remove("booting");   // screen is interactive now -> CSS motion on (covers error/offline paths that skip finishBoot)
         const v = document.getElementById("bootveil");
         if (!v) return;
         v.classList.add("fade");
@@ -6090,9 +6106,7 @@ async function killStrayOcrThenBoot() {
         hub.start();
         log("first read…");
         if (dbg.settle) await bootSettle();
-        boot.phase = false;   // boot OCR drained -> later reads/edits re-OCR fresh (cache write-through)
-        drawEdges();   // routing was skipped throughout boot (routing.js) -> run the one real pass now
-        flushBoot();   // fire the summary/register/preview fetches deferred during boot
+        finishBoot();   // boot OCR drained -> re-OCR fresh on later reads + run the one edge/group pass
     } catch (e) {
         if (!conn.isOnline()) { veil.drop(); return; }   // dropped mid-boot -> offline overlay handles it
         log(String(e.message || e), "err");   // boot hiccup: show the page anyway

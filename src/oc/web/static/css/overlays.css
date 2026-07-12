@@ -120,6 +120,20 @@
     text-indent: 8px;
     text-transform: uppercase; color: #38ada9; text-shadow: 0 0 12px rgba(247,215,148,.25); }
 
+/* Boot freeze: while the veil covers the screen (main.js sets body.booting for boot.phase),
+   kill every CSS transition/animation on the app underneath -- they fire on frames nobody sees
+   and only churn paint/compositing during the load. The veil's own subtree is exempt via
+   :not(#bootveil *) so the cauldron spinner keeps turning (it's the ONE thing meant to move).
+   Zero duration lands each animation on its END state, so nothing is stuck mid-frame when the
+   veil drops (finishBoot removes the class BEFORE veil.drop, so motion is live again by reveal). */
+body.booting *:not(#bootveil):not(#bootveil *),
+body.booting *:not(#bootveil):not(#bootveil *)::before,
+body.booting *:not(#bootveil):not(#bootveil *)::after {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    transition: none !important;
+}
+
 /* full-screen block when a background OCR worker refuses to die on startup */
 .startup-halt { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center;
     justify-content: center; background: #0a0e13e0; }
