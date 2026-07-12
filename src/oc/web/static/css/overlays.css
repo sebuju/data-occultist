@@ -155,11 +155,14 @@ label { display: block; margin: 6px 0; color: var(--muted); }
 /* stale-tab save conflict modal (graph/conflictmodal.js) — side-by-side YAML line diff.
    server on the left, this tab's pending copy on the right; row colour marks the type
    the SAME row carries on both cells so the two sides stay visually paired. */
-.conf-diff-head { display: flex; justify-content: space-between; gap: 16px;
+/* fill the modal body as a flex column: head + footer pinned, only the diff scrolls,
+   so the action buttons are never clipped by the body's overflow. */
+.conf-diff-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.conf-diff-head { flex: none; display: flex; justify-content: space-between; gap: 16px;
     padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); }
 .conf-diff-col-label { color: var(--muted); }
-.conf-diff { display: grid; grid-template-columns: 1fr 1fr; overflow: auto;
-    max-height: calc(92vh - 140px); font: var(--fs-sm)/1.5 var(--font-mono); }
+.conf-diff { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr;
+    align-content: start; overflow: auto; font: var(--fs-sm)/1.5 var(--font-mono); }
 .conf-diff-row { display: contents; }
 .cd-cell { padding: 0 10px; white-space: pre-wrap; word-break: break-word;
     border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 60%); }
@@ -167,6 +170,9 @@ label { display: block; margin: 6px 0; color: var(--muted); }
 .cd-remove .cd-left { background: color-mix(in srgb, var(--danger), transparent 85%); }
 .cd-add .cd-right { background: color-mix(in srgb, var(--ok), transparent 85%); }
 .cd-change .cd-left, .cd-change .cd-right { background: color-mix(in srgb, var(--warn), transparent 85%); }
-.conf-diff-more { padding: 8px 14px; color: var(--muted); font-size: var(--fs-xs); text-align: center; }
-.conf-diff-actions { display: flex; justify-content: flex-end; gap: 10px;
+/* fold marker for a run of unchanged lines — spans both diff columns */
+.conf-diff-fold { grid-column: 1 / -1; padding: 3px 14px; text-align: center;
+    color: var(--muted); font-size: var(--fs-xs); background: var(--panel);
+    border-bottom: 1px solid var(--line); }
+.conf-diff-actions { flex: none; display: flex; justify-content: flex-end; gap: 10px;
     padding: 10px 14px; border-top: 1px solid var(--line); }
