@@ -11,7 +11,7 @@ import { routeGraph, polylinePath } from "./route.js";
 import { hierRoute } from "./hierRoute.js";
 import { deCollide } from "./decollide.js";
 import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot } from "./state.js";
-import { selectedNodeId, wire, startWire, CAN_DISABLE } from "./main.js";
+import { selectedNodeId, wire, startWire, CAN_DISABLE, nodeTypeOf } from "./main.js";
 
 // Port exit directions (L/R/T/B) -> unit vector, used to stub a line out of a port the
 // right way before it turns. Lines are ALWAYS orthogonal — no bezier fallback exists.
@@ -85,7 +85,7 @@ function selClsFor(aId, bId) {
 // A data edge always leaves its source node's `.port.out` handle. Every source that draws
 // one — window, producer, dataset, view (subset), file source — anchors its data line at the port
 // dot and gets the animated flow. (Keep this prefix set in sync with `outPortSpec`.)
-const PORT_OUT_SRC = ["win:", "producer:", "ds:", "sub:", "src:", "ro:"];
+const PORT_OUT_SRC = ["win:", "producer:", "ds:", "sub:", "src:", "ro:", "register:"];
 // parent->child structural tethers (a node bonded to its companion/children): preview/vttable (img),
 // region+field boxes (field), item crops (item), tell boxes (tell). They attach at face CENTRES, not
 // corners; their middle segments are still evicted off bands/nodes, only the centred endpoints are spared.
@@ -160,7 +160,12 @@ function buildLinks() {
         // draw on the top layer so the end glyph sits OVER the node instead of being hidden behind
         // its card (edges z1 < nodes z2 < top z5).
         const over = true;
-        links.push({ key, aId, bId, top, over, port, portKind, cls: `gedge ${kind}${flow ? " flow" : ""}${tgt}${own}${selClsFor(aId, bId)}`, ra, rb });
+        // Every line takes the colour of the node it LEAVES (source), overriding the per-kind
+        // stroke in graph.css. Resolved to that type's --nt token; an unknown/satellite source
+        // (no --nt-<type>) falls back to --line via the CSS var fallback. Applied inline in
+        // drawEdges (inline style beats the stylesheet); end-glyphs follow via `context-stroke`.
+        const srcType = nodeTypeOf(aId);
+        links.push({ key, aId, bId, top, over, port, portKind, cls: `gedge ${kind}${flow ? " flow" : ""}${tgt}${own}${selClsFor(aId, bId)}`, srcType, ra, rb });
     };
     for (const e of model.edges())
         add(`${e.from} ${e.to}`, e.from, e.to, !!selClsFor(e.from, e.to), e.kind, nodeRect(e.from), nodeRect(e.to));
@@ -454,6 +459,9 @@ function drawEdges() {
         el.setAttribute("class", l.cls
             + (disSet.has(l.aId) || disSet.has(l.bId) ? " dis-edge" : "")
             + (l._stale ? " stale-edge" : ""));   // dragged off its node -> grey + fade until it re-routes
+        // Recolour to the source node's hue; guarded so a steady-state redraw mutates nothing (rule 1).
+        const sc = l.srcType ? `var(--nt-${l.srcType}, var(--line))` : "";
+        if (el._stroke !== sc) { el.style.stroke = sc; el._stroke = sc; }
         const c = routeCache.get(l.key);
         if (c && c.pts.length >= 2) {                           // have a routed path for this line
             if (tweenRoutes && el._routed && geoChanged(el, c.pts)) startMorph(el, c.pts);

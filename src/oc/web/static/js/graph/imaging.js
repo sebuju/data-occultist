@@ -8,6 +8,7 @@ import { Overlay, MIN_FRAC } from "../overlay.js";
 import { persist } from "./persist.js";
 import * as groups from "./groups.js";
 import { singleFlight, pendingCount } from "../singleflight.js";
+import { confClass } from "./conf.js";
 import {
     setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases, overlays,
     gridPreviews, gridReads, gridCellBoxes, gridGuards, gridOccluded, gridDetections, itemReads, clearGrid, view, boot,
@@ -1153,7 +1154,7 @@ function refreshItemReadout(winId, itemId) {
     node.querySelectorAll(".mr-val[data-fid]").forEach((el) => {
         const v = fvals[el.dataset.fid];
         if (!v) { el.textContent = "—"; el.className = "mr-val muted"; return; }
-        const cls = v.substituted ? "conf-sub" : v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
+        const cls = confClass(v.confidence, v.substituted);
         el.textContent = String(v.value ?? "∅");
         el.className = `mr-val ${cls}`;
     });
@@ -1453,7 +1454,7 @@ function previewCell(v) {
     if (v.substituted) {
         return h("td", { class: "conf-sub", title: `${v.raw || "(empty)"} → ${subLabel(v.substituted)}` }, String(v.value ?? "∅"));
     }
-    const cls = v.confidence >= 0.8 ? "conf-ok" : v.confidence >= 0.5 ? "conf-warn" : "conf-bad";
+    const cls = confClass(v.confidence);
     return h("td", { class: cls, title: v.raw || "" }, String(v.value ?? "∅"));
 }
 
