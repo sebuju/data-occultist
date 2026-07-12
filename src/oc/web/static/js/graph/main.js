@@ -212,10 +212,9 @@ $("logWorkers").addEventListener("click", (ev) => {
 // reads) — a genuine all-windows refresh calls it with no id.
 function autosave(changed = null) {
     if (!model.profile.name) return;
-    persist.content();                 // debounced profile save; onContentSaved fires on success
+    persist.content();                 // debounced profile save; ALSO records the undo snapshot
     const win = model.windowOf(changed);
     if (win) scheduleWindowRead(win);  // edit lies in this window's subgraph -> re-read just it
-    pushHistory();                     // record this change for undo/redo
 }
 
 // ---- deferred node-config edits (node_txn.js) -------------------------------
@@ -582,7 +581,7 @@ function startGroupResize(gid, ev) {
     };
     const onUp = () => {
         document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
-        hideSizeHud(); flushEdges(); persist.layout(); pushHistory();   // final clean re-path on settle
+        hideSizeHud(); flushEdges(); persist.layout();   // final clean re-path on settle (persist.layout records the undo snapshot)
     };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);

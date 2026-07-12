@@ -98,10 +98,14 @@ async function flushLocal() {
 
 export const persist = {
     // A configuration edit: debounced profile save; fires onContentSaved on success.
-    content() { scheduleProfile(true); },
+    // Records an undo snapshot HERE — not in the callers — so every content edit is undoable
+    // no matter which node's handler saved it. This is the single choke point; a wire* handler
+    // just mutates + saves, it never has to remember to also push history (see layout()).
+    content() { recordHistory && recordHistory(); scheduleProfile(true); },
     // A pure layout move (drag/resize/collapse/open-image): saved, but no UI side effects.
-    // Records an undo snapshot (guarded internally: a no-op during an in-flight restore, and
-    // identical snapshots dedup, so a boot-time re-save never spawns a phantom entry).
+    // Records an undo snapshot the same way content() does (guarded internally: a no-op during an
+    // in-flight restore, and identical snapshots dedup, so a boot-time re-save never spawns a
+    // phantom entry — and a content+layout save on the same tick collapses to one entry).
     layout() { recordHistory && recordHistory(); scheduleProfile(false); },
     // Viewport/minimap change: debounced sidecar save.
     local() { clearTimeout(tLocal); tLocal = setTimeout(flushLocal, DEBOUNCE); },
