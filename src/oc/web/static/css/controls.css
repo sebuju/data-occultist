@@ -63,11 +63,28 @@ button.reading::after { content: ""; display: inline-block; width: 9px; height: 
 .cl-pot  { fill: #0a3d62; }
 .cl-rim  { fill: #38ada9; }
 .cl-legs { stroke: #0a3d62; stroke-width: 3; stroke-linecap: round; fill: none; }
-/* The rising bubbles + rim boil were SVG-internal transform animations: they repaint the whole
-   SVG on the MAIN thread every frame, which stutters during the busy boot. Dropped — the pot now
-   simmers via one compositor transform on the whole mark (see .cauldron-loader). Bubbles hidden
-   rather than left frozen; the shape stays as a static garnish only where it isn't animated. */
-.cl-bubbles { display: none; }
+/* Rising bubbles: SVG-internal transform animation (main-thread repaint). Once dropped because it
+   stuttered during the BUSY boot — but boot is idle now (per-node reflow skipped + every other CSS
+   animation frozen behind the veil), so the pot can bubble again on top of the composited simmer.
+   Kept OFF the pretty view-mode corner mark (no forever idle-CPU animation): play-state reads an
+   inherited custom prop that ONLY .cauldron-loader turns on. The prop inherits across the <use>
+   shadow boundary, so each cloned bubble picks up its host's choice; default (pretty corner) = paused
+   at frame 0 (opacity:0), i.e. a static garnish. */
+.cl-bubble {
+    fill: #f7d794;                                     /* amber, matches the boot-title glow */
+    opacity: 0;
+    transform-box: fill-box; transform-origin: center;
+    animation: cl-rise 2.6s ease-in-out infinite;
+    animation-delay: var(--d, 0s);                     /* per-circle stagger (set inline in index.html) */
+    animation-play-state: var(--cl-bubbles, paused);   /* off unless the host opts in */
+}
+.cauldron-loader { --cl-bubbles: running; }            /* the ONE place bubbles simmer */
+@keyframes cl-rise {
+    0%   { opacity: 0;   transform: translateY(3px)  scale(.5); }
+    25%  { opacity: .85; }
+    75%  { opacity: .5;  }
+    100% { opacity: 0;   transform: translateY(-15px) scale(1.05); }
+}
 button.primary, button.active { background: var(--accent); color: var(--on-accent); }
 button.danger { background: var(--danger); color: var(--on-danger); }
 /* the one delete/remove glyph (dom.js TRASH). Sized to the button's font, inherits its
