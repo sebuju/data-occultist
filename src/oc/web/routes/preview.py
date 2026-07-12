@@ -153,15 +153,18 @@ def detect(profile: GameProfile, game: str | None = Query(None), capture: str | 
 
 
 class _ScrollPosBody(BaseModel):
+    game: str = ""        # which profile's captures/<game>/scroll/ to save the cutout under
     image: str            # PNG data URL (or bare base64) of a scrollbar cutout
     orientation: str = "vertical"
 
 
 @router.post("/scroll/pos")
 def scroll_pos(body: _ScrollPosBody):
-    """Read the thumb position (0..1 over the reachable track) from a scrollbar cutout. The
-    teaching UI posts crops captured at known scroll offsets; each cutout's ``pos`` plus its
-    rows-from-top is one calibration sample (see the scrollbar node's cutout tool)."""
+    """Read the thumb position (0..1 over the reachable track) from a scrollbar cutout, and
+    save the cutout to disk. The teaching UI posts crops captured at known scroll offsets; each
+    cutout's ``pos`` plus its rows-from-top is one calibration sample (see the scrollbar node's
+    cutout tool) — the base64 is sent once here and never stored inline in the profile, only
+    the returned filename is (``ScrollSample.file``)."""
     import base64
 
     import numpy as np
@@ -176,9 +179,13 @@ def scroll_pos(body: _ScrollPosBody):
     if img is None or img.size == 0:
         raise HTTPException(400, "could not decode image")
     d = scroll_detail(img, body.orientation)
+    name = None
+    if body.game:
+        name = captures_store.save_scroll_cutout(get_settings().captures_dir, body.game, raw)
     if d is None:
-        return {"pos": None, "conf": 0.0}
-    return {"pos": d["pos"], "conf": d["conf"], "thumb_px": d["thumb_px"], "thumb_len": d["thumb_len"]}
+        return {"pos": None, "conf": 0.0, "name": name}
+    return {"pos": d["pos"], "conf": d["conf"], "thumb_px": d["thumb_px"], "thumb_len": d["thumb_len"],
+            "name": name}
 
 
 def _window_match(matcher, win, frame):

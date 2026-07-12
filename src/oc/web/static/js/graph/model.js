@@ -1810,7 +1810,7 @@ export class GraphModel {
     setScrollClicks(winId, n) { const w = this.window(winId); if (!w) return; w.scroll = w.scroll || { rows: 1, cols: 1 }; w.scroll.scroll_clicks = n; }
     // ---- scroll calibration (cutout samples; no live learning) --------------
     _scrollOf(winId) { const w = this.window(winId); if (!w) return null; w.scroll = w.scroll || { rows: 1, cols: 1 }; return w.scroll; }
-    addScrollSample(winId, sample) {  // { img, rows, pos, conf }
+    addScrollSample(winId, sample) {  // { file, rows, pos, conf, px }
         const sc = this._scrollOf(winId); if (!sc) return;
         (sc.calib_samples = sc.calib_samples || []).push(sample);
     }

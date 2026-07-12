@@ -4231,10 +4231,13 @@ async function captureScrollCutout(n) {
     off.getContext("2d").drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh);
     const img = off.toDataURL("image/png");
     const orientation = model.window(winId)?.scroll?.scrollbar_orientation || "vertical";
-    let pos = null, conf = null, px = null;
-    try { const r = await api.scrollPos(img, orientation); pos = r.pos; conf = r.conf; px = r.thumb_px; }
-    catch (e) { setStatus(`thumb read failed: ${e.message || e}`, "warn"); }
-    model.addScrollSample(winId, { img, rows: 0, pos, conf, px });
+    let pos = null, conf = null, px = null, file = null;
+    try {
+        const r = await api.scrollPos(model.profile.name, img, orientation);
+        pos = r.pos; conf = r.conf; px = r.thumb_px; file = r.name;
+    } catch (e) { setStatus(`thumb read failed: ${e.message || e}`, "warn"); }
+    if (!file) { setStatus("cutout save failed — not added", "err"); return; }
+    model.addScrollSample(winId, { file, rows: 0, pos, conf, px });
     model.learnScrollGain(winId);             // re-fit with the new cutout
     rebuildNode(`sb:${winId}:scrollbar`);
     autosave(null);

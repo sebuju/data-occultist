@@ -148,6 +148,28 @@ def atlas_loader(captures_dir: Path | str, game: str):
     return load
 
 
+# ---- scroll-calibration cutouts (scrollbar crop at a known scroll position) ------
+
+def save_scroll_cutout(captures_dir: Path | str, game: str, data: bytes, clock=None) -> str:
+    """Save a scroll-calibration cutout PNG under ``captures/<game>/scroll/`` and return its
+    name. These back ``ScrollSample.file`` — display-only after the thumb ``pos`` is read at
+    capture time, so unlike atlas cutouts they need no loader (nothing decodes them at read
+    time)."""
+    stamp = (clock or (lambda: datetime.now(timezone.utc)))().strftime("%Y%m%d-%H%M%S-%f")
+    name = f"scroll-{stamp}.png"
+    path = Path(captures_dir) / _safe(game) / "scroll" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return name
+
+
+def scroll_path(captures_dir: Path | str, game: str, name: str) -> Path | None:
+    if "/" in name or "\\" in name or ".." in name:
+        return None
+    p = Path(captures_dir) / _safe(game) / "scroll" / name
+    return p if p.exists() else None
+
+
 # ---- per-window stash bindings (which stash a window opens with) ----------
 
 def _bindings_path(captures_dir: Path | str, game: str) -> Path:

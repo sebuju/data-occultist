@@ -17,6 +17,7 @@ import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, srcRow, btn
 import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
+import * as api from "../api.js";
 import { ITEM_KINDS, TELL_KINDS } from "./imaging.js";
 import { producerParts } from "./producer_node.js";
 import { sourceParts } from "./source_node.js";
@@ -220,12 +221,13 @@ export function preprocessControls(w) {
 // live. Handlers (capture/remove/reorder/learn) live in main.js wireScrollbar.
 function scrollbarParts(n) {
     const sc = n.ref;                                  // the window's scroll object
+    const game = model.profile.name;
     const o = sc.scrollbar_orientation || "vertical";
     const samples = sc.calib_samples || [];
     const gain = sc.calib_gain;
     const usable = samples.filter((s) => s.pos != null).length;
     const cut = (s, i) => h("div", { class: "sb-cut", draggable: "true", dataset: { i } },
-        h("img", { class: "sb-cut-img", src: s.img || "", alt: "" }),
+        h("img", { class: "sb-cut-img", src: s.file ? api.scrollCutoutUrl(game, s.file) : "", alt: "" }),
         h("div", { class: "sb-cut-body" },
             h("div", { class: "sb-cut-top" },
                 kv("rows from top", h("input", { type: "number", class: "sbcut", dataset: { k: "rows", i }, value: s.rows ?? 0, min: "0" })),

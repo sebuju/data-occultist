@@ -207,6 +207,15 @@ def get_atlas_cutout(game: str, name: str):
     return FileResponse(str(path), media_type="image/png")
 
 
+@router.get("/scroll/cutout/{game}/{name}")
+def get_scroll_cutout(game: str, name: str):
+    """Serve a scroll-calibration cutout PNG (``ScrollSample.file``)."""
+    path = captures_store.scroll_path(get_settings().captures_dir, game, name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="cutout not found")
+    return FileResponse(str(path), media_type="image/png")
+
+
 @router.post("/glyph/auto")
 def glyph_auto(
     game: str = Query(...), capture: str = Query(...),

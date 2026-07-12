@@ -353,14 +353,19 @@ export async function glyphAuto(game, capture, box) {
     return r.json();
 }
 // Read the scrollbar thumb position (0..1) from a cutout PNG data URL — one scroll-calibration
-// sample. Returns { pos, conf, thumb_px, thumb_len } (pos null if no thumb found).
-export async function scrollPos(image, orientation = "vertical") {
+// sample — and save the cutout server-side. Returns { pos, conf, thumb_px, thumb_len, name }
+// (pos null if no thumb found; name null if game wasn't given). The data URL is sent once and
+// never stored inline in the profile — only the returned `name` is (ScrollSample.file).
+export async function scrollPos(game, image, orientation = "vertical") {
     const r = await tfetch("/api/scroll/pos", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image, orientation }),
+        body: JSON.stringify({ game, image, orientation }),
     });
     if (!r.ok) throw new Error(`scroll pos: ${r.status} ${await r.text()}`);
     return r.json();
+}
+export function scrollCutoutUrl(game, name) {
+    return `/api/scroll/cutout/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
 
 // POST a rendered node-canvas PNG (Blob) -> stashed under .trash/ on the server.
