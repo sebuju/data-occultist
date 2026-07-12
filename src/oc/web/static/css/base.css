@@ -54,7 +54,7 @@
        a type's colour lives in exactly one place. `.gnode.<type> { --nt: … }` (graph.css)
        reads these; nothing hard-codes a hue per node beyond this map. */
     --nt-game: #e0c15f;        /* amber  */
-    --nt-window: #9db3df;     
+    --nt-window: #34a6ad;     
     --nt-region: #e2895f;      /* coral  */
     --nt-detect: #e0c15f;      /* amber  */
     --nt-scrollbar: #8a93a3;   /* grey   */
