@@ -550,6 +550,45 @@ if (typeof window !== "undefined") {
     // every node's world rect — lets a test assert no edge passes through a non-endpoint node.
     window.__routes = () => { const o = {}; for (const [k, c] of routeCache) o[k] = { pts: c.pts, d1: c.d1, d2: c.d2 }; return o; };
     window.__nodeRects = () => { const o = {}; for (const id of nodeEls.keys()) { const r = nodeRect(id); if (r) o[id] = r; } return o; };
+    // __overlaps(): scan the ACTUALLY RENDERED edge paths (DOM, not routeCache — routeCache is empty
+    // while routing is frozen/boot, but the <path>s still show the current geometry) and report the
+    // two ways a line reads as "drawn on top of" something:
+    //   coincident  — two DIFFERENT edges whose H (or V) segments share a coord (within `tol` px) and
+    //                 overlap along their run (> `minOv` px). This is "two paths stacked on each other".
+    //   throughNode — an edge segment that runs through the INTERIOR of a node that isn't its endpoint.
+    // Endpoints are resolved geometrically (nearest node rect) since the DOM <path> carries no id.
+    // Console: `window.__overlaps()` — returns {coincident:[...], throughNode:[...]}.
+    window.__overlaps = (tol = 2, minOv = 12) => {
+        const parse = (d) => { const m = (d || "").match(/-?\d+(\.\d+)?/g) || [], p = []; for (let i = 0; i + 1 < m.length; i += 2) p.push([+m[i], +m[i + 1]]); return p; };
+        const rects = []; for (const id of nodeEls.keys()) { const r = nodeRect(id); if (r) rects.push({ id, ...r }); }
+        const nearest = (pt) => { let best = null, bd = Infinity; for (const r of rects) { const cx = Math.max(r.x, Math.min(pt[0], r.x + r.w)), cy = Math.max(r.y, Math.min(pt[1], r.y + r.h)); const dd = Math.hypot(pt[0] - cx, pt[1] - cy); if (dd < bd) { bd = dd; best = r.id; } } return best; };
+        const paths = [...document.querySelectorAll("path.gedge")];
+        const segs = [];                                  // {ei, axis, coord, lo, hi, ends:[fromId,toId]}
+        paths.forEach((pa, ei) => {
+            const P = parse(pa.getAttribute("d")); if (P.length < 2) return;
+            const ends = [nearest(P[0]), nearest(P[P.length - 1])];
+            for (let i = 0; i + 1 < P.length; i++) { const a = P[i], b = P[i + 1];
+                if (Math.abs(a[1] - b[1]) < 0.6 && Math.abs(a[0] - b[0]) > 1) segs.push({ ei, ends, axis: "H", coord: a[1], lo: Math.min(a[0], b[0]), hi: Math.max(a[0], b[0]) });
+                else if (Math.abs(a[0] - b[0]) < 0.6 && Math.abs(a[1] - b[1]) > 1) segs.push({ ei, ends, axis: "V", coord: a[0], lo: Math.min(a[1], b[1]), hi: Math.max(a[1], b[1]) });
+            }
+        });
+        const coincident = [];
+        for (let i = 0; i < segs.length; i++) for (let j = i + 1; j < segs.length; j++) {
+            const s = segs[i], t = segs[j];
+            if (s.ei === t.ei || s.axis !== t.axis || Math.abs(s.coord - t.coord) > tol) continue;
+            const ov = Math.min(s.hi, t.hi) - Math.max(s.lo, t.lo); if (ov <= minOv) continue;
+            coincident.push({ axis: s.axis, coord: Math.round(s.coord), overlapPx: Math.round(ov), a: s.ends.join("→"), b: t.ends.join("→") });
+        }
+        const throughNode = [];
+        for (const s of segs) for (const r of rects) {
+            if (s.ends.includes(r.id)) continue;          // its own endpoint — not a violation
+            const pad = 8, x0 = r.x + pad, x1 = r.x + r.w - pad, y0 = r.y + pad, y1 = r.y + r.h - pad;
+            const hit = s.axis === "H" ? (s.coord > y0 && s.coord < y1 && s.hi > x0 && s.lo < x1)
+                                       : (s.coord > x0 && s.coord < x1 && s.hi > y0 && s.lo < y1);
+            if (hit) throughNode.push({ edge: s.ends.join("→"), through: r.id, axis: s.axis, coord: Math.round(s.coord) });
+        }
+        return { coincident, throughNode };
+    };
 }
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -561,13 +600,14 @@ let routeRaf = null;            // pending requestAnimationFrame handle (one in 
 
 // Everything physical is an obstacle: nodes AND panels. Lines weave around all of
 // them, not just the two rects they connect.
-function obstacleRects() {
+function obstacleRects({ boxes = true } = {}) {
     const out = [];
     for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) out.push(r); }
     for (const t of groups.titleRects()) out.push(t);   // lines prefer not to cross a group title
     // group boxes: in hier mode a box IS a hard obstacle + drives every gate, so a box move/resize
-    // (even without a routed node's own rect changing) must invalidate the route cache.
-    for (const b of groups.groupBoxes()) if (b.box) out.push(b.box);
+    // (even without a routed node's own rect changing) must invalidate the route cache. deCollide
+    // passes {boxes:false} — it takes the boxes as CONTAINERS (clamp, not freeze) instead.
+    if (boxes) for (const b of groups.groupBoxes()) if (b.box) out.push(b.box);
     return out;
 }
 
@@ -656,8 +696,14 @@ function runRouting() {
             // obstacle (nodes + group boxes) + title band so a shift never crosses one. (single-pass
             // routeGraph below needs no such pass — it nudges the whole graph together.)
             if (ROUTE.decollide) {
-                const walls = obstacleRects().concat(titleBands.map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 })));
-                res = deCollide(res, walls, { laneGap: ROUTE.cell });
+                // Group boxes are CONTAINERS, not walls: a run inside its own box may still slide into
+                // a parallel lane so long as it stays INSIDE the box. Freezing it (what a straddling
+                // wall does) is what left sibling skip-edges stacked on one coord over a node row. Pass
+                // boxes apart from the hard walls (nodes + title bands) a lane shift can't cross.
+                const containers = groups.groupBoxes().filter((b) => b.box).map((b) => b.box);
+                const walls = obstacleRects({ boxes: false })
+                    .concat(titleBands.map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 })));
+                res = deCollide(res, walls, { laneGap: ROUTE.cell, containers });
             }
         } else {
             res = routeGraph(nodes, grps, edges, { prevSides, outPorts, titleBands, config });

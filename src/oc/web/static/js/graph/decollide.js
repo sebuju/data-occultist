@@ -18,7 +18,6 @@
 import { simplify } from "./route.js";
 
 const CLEAR = 5;           // px kept clear of each alley wall (matches nudge's `clear`)
-const MAX_STEPS = 8;       // how many laneGap steps out to search for a clear track before giving up
 
 // The free alley around a run's coord: nearest wall edge each side. A wall STRADDLING the coord (the run
 // sits inside it) makes the run unmovable — we must not push it out of the box/node it lives in.
@@ -37,16 +36,35 @@ function alleyOf(axis, coord, lo, hi, walls) {
 
 const spanOverlap = (a, b) => Math.min(a.hi, b.hi) - Math.max(a.lo, b.lo) > 5;
 
+// Group-box CONTAINERS (not obstacles): a box the run lives INSIDE only clamps how far it may
+// travel (it must stay in the box), never freezes it — unlike a straddling wall. A box entirely to
+// one side clamps that side like a wall (don't cross into a neighbouring group). Returns interior
+// bounds only; never "straddled", so an inner-pass run stays free to shift into a clear lane.
+function containerBounds(axis, coord, lo, hi, boxes) {
+    let lb = -Infinity, rb = Infinity;
+    for (const w of boxes) {
+        const ov = axis === "V" ? (w.y < hi && w.y + w.h > lo) : (w.x < hi && w.x + w.w > lo);
+        if (!ov) continue;
+        const e0 = axis === "V" ? w.x : w.y, e1 = axis === "V" ? w.x + w.w : w.y + w.h;
+        if (e1 <= coord + 0.5) lb = Math.max(lb, e1);           // box entirely on the low side
+        else if (e0 >= coord - 0.5) rb = Math.min(rb, e0);      // box entirely on the high side
+        else { lb = Math.max(lb, e0); rb = Math.min(rb, e1); }  // run is INSIDE this box — keep it in
+    }
+    return { lb, rb };
+}
+
 // deCollide(routes, walls, config) -> new Map(key -> {pts,p1,d1,p2,d2})
 //   routes : the Map hierRoute returns (values may be CACHED sub-pass objects, shared by reference)
-//   walls  : [{x,y,w,h}] every node rect + group box + title band a shift must not cross
-//   config : { laneGap }
+//   walls  : [{x,y,w,h}] every node rect + title band a shift must not cross
+//   config : { laneGap, containers } — containers are group boxes: a run INSIDE one may still shift
+//            into a parallel lane (clamped to stay in the box), where a straddling wall would freeze
+//            it. Passing boxes as walls (the old behaviour) left sibling skip-edges stacked on one coord.
 // Returns a fresh Map; untouched routes keep their original object, touched ones get a CLONE (never
 // mutate in place — hierRoute hands back cached sub-pass results by reference, poisoning the pass cache).
 export function deCollide(routes, walls, config = {}) {
     const laneGap = config.laneGap || 12;
-    const GAP = laneGap * 0.9;   // two same-axis runs closer than this (with overlapping span) read as collided
     walls = walls || [];
+    const containers = config.containers || [];   // group boxes: clamp travel, never freeze (see containerBounds)
 
     // ---- decompose every route into axis-aligned segments (read-only over the originals) ----
     // `cur` is the run's live coord (updated as we displace); `movable` gates whether it may move at all.
@@ -66,44 +84,53 @@ export function deCollide(routes, walls, config = {}) {
             if (!s) continue;
             const al = endpoint ? null : alleyOf(s.axis, s.coord, s.lo, s.hi, walls);
             s.movable = !endpoint && !(al && al.straddled);
-            s.lb = al ? al.lb : -Infinity; s.rb = al ? al.rb : Infinity;
+            let lb = al ? al.lb : -Infinity, rb = al ? al.rb : Infinity;
+            // group boxes only tighten the alley (stay inside the box) — an enclosing box no longer
+            // freezes the run, so sibling skip-edges arching over a node row can still fan into lanes.
+            if (!endpoint && containers.length) {
+                const cb = containerBounds(s.axis, s.coord, s.lo, s.hi, containers);
+                lb = Math.max(lb, cb.lb); rb = Math.min(rb, cb.rb);
+            }
+            s.lb = lb; s.rb = rb;
             segs.push(s);
         }
     }
 
-    // ---- occupancy: same-axis segments sharing this run's span, for a global "is coord c clear?" test ----
     const byAxis = { V: [], H: [] };
     for (const s of segs) byAxis[s.axis].push(s);
-    // does `seg` currently collide with any OTHER-wire run? (same axis, overlapping span, within GAP)
-    const collides = (seg) => {
-        for (const s2 of byAxis[seg.axis]) {
-            if (s2 === seg || s2.key === seg.key) continue;
-            if (spanOverlap(seg, s2) && Math.abs(seg.cur - s2.cur) < GAP) return true;
-        }
-        return false;
-    };
-    // is coord `c` clear for `seg` — no other-wire run within laneGap of it over the shared span?
-    const clearAt = (seg, c) => {
-        for (const s2 of byAxis[seg.axis]) {
-            if (s2 === seg || s2.key === seg.key) continue;
-            if (spanOverlap(seg, s2) && Math.abs(c - s2.cur) < laneGap) return false;
-        }
-        return true;
-    };
+    // the same-axis OTHER-wire runs that share this run's span — its neighbours on the corridor.
+    const neighboursOf = (seg) => byAxis[seg.axis].filter((s2) => s2.key !== seg.key && spanOverlap(seg, s2));
+    // min gap from coord `c` to any neighbour (Infinity when the corridor is otherwise empty).
+    const minGap = (c, list) => { let d = Infinity; for (const s2 of list) d = Math.min(d, Math.abs(c - s2.cur)); return d; };
 
-    // ---- resolve: nudge each colliding movable run to the NEAREST globally-clear track in its alley ----
-    for (const seg of segs) {
-        if (!seg.movable || !collides(seg)) continue;
-        const loB = Number.isFinite(seg.lb) ? seg.lb + CLEAR : -Infinity;
-        const hiB = Number.isFinite(seg.rb) ? seg.rb - CLEAR : Infinity;
-        for (let k = 1; k <= MAX_STEPS; k++) {
-            let placed = false;
-            for (const c of [seg.coord + k * laneGap, seg.coord - k * laneGap]) {
-                if (c < loB || c > hiB) continue;
-                if (clearAt(seg, c)) { seg.cur = c; placed = true; break; }   // moving `seg` alone updates only its own occupancy
+    // ---- resolve: fan each colliding movable run off its neighbours, packing tighter when the alley
+    // is cramped. The old fixed-laneGap search GAVE UP when the alley was tighter than (n-1)*laneGap
+    // (the many-skip-edges-over-one-row case) and left runs stacked. This packs to fit instead.
+    // Relaxation (Lloyd): each run that sits within a laneGap of a neighbour slides to the MIDPOINT of
+    // the gap between its two bracketing runs (or the alley walls when a side is open). Iterated, a
+    // crowded corridor spreads to EVEN spacing — which is a full laneGap when the alley is roomy and
+    // packs proportionally tighter (never below what fits) when it isn't, the many-skip-edges case.
+    // Two runs on the identical coord are split by a stable key tie-break so they don't move as one.
+    // Occupancy-safe by construction: a run is bounded by its neighbours + its own alley, so it can
+    // never cross onto another wire (the flaw that sank the earlier global re-centre — see header).
+    for (let pass = 0; pass < 24; pass++) {
+        let moved = false;
+        for (const seg of segs) {
+            if (!seg.movable) continue;
+            const list = neighboursOf(seg);
+            if (!list.length || minGap(seg.cur, list) >= laneGap - 0.5) continue;   // clear enough — leave it
+            const loB = Number.isFinite(seg.lb) ? seg.lb + CLEAR : -1e9;
+            const hiB = Number.isFinite(seg.rb) ? seg.rb - CLEAR : 1e9;
+            let below = loB, above = hiB;                     // nearest neighbour bracketing `seg` each side
+            for (const s2 of list) {
+                const lower = s2.cur < seg.cur - 0.01 || (Math.abs(s2.cur - seg.cur) <= 0.01 && s2.key < seg.key);
+                if (lower) below = Math.max(below, s2.cur); else above = Math.min(above, s2.cur);
             }
-            if (placed) break;
+            let target = (below + above) / 2;
+            if (target < loB) target = loB; else if (target > hiB) target = hiB;
+            if (Math.abs(target - seg.cur) > 0.4) { seg.cur = target; moved = true; }
         }
+        if (!moved) break;
     }
 
     // ---- apply: clone each displaced wire's pts once, shift its vertices, re-simplify ----
