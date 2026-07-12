@@ -121,12 +121,25 @@ export function viewportCenterWorld() {
     return { x: (u.left + u.w / 2 - view.panX) / view.zoom, y: (u.top + u.h / 2 - view.panY) / view.zoom };
 }
 
-let _lastBorderZoom = null;
+let _lastZoom = null;
 export function applyView() {
-    $("gworld").style.transform = `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`;
-    // group outline width is zoom-scaled; rewrite it ONLY when zoom actually changed (not on pure
-    // pan) so a pan-drag mutates zero group DOM in steady state.
-    if (view.zoom !== _lastBorderZoom) { _lastBorderZoom = view.zoom; scaleGroupBorders(view.zoom); }
+    // The camera transform is SPLIT (see #gpan/#gworld in graph.css): pan = translate on #gpan
+    // (every frame), zoom = scale on #gworld (only when it changes). Neither element is
+    // composited — every will-change variant broke rendering (device-scale raster = wrong-looking
+    // lines at low zoom, tile shimmer, a 30s renderer freeze zooming out); pan repaints by design.
+    // The translate is snapped to whole DEVICE pixels so the repaint lands on the same pixel
+    // grid every frame (fractional offsets re-antialias 1px strokes differently each frame).
+    // Only the WRITE is rounded; view.panX/panY stay float so pan math never accumulates rounding.
+    const dpr = window.devicePixelRatio || 1;
+    const tx = Math.round(view.panX * dpr) / dpr, ty = Math.round(view.panY * dpr) / dpr;
+    $("gpan").style.transform = `translate(${tx}px, ${ty}px)`;
+    // zoom-dependent writes happen ONLY when zoom actually changed — a pure pan must not touch
+    // #gworld's style (the sound-forge zoom watcher observes it) or any group DOM.
+    if (view.zoom !== _lastZoom) {
+        _lastZoom = view.zoom;
+        $("gworld").style.transform = `scale(${view.zoom})`;
+        scaleGroupBorders(view.zoom);   // group outline width is zoom-scaled
+    }
     nmUpdateViewport();   // keep the node-map's viewport indicator in sync with pan/zoom
 }
 

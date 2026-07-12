@@ -115,6 +115,10 @@
 
     <main class="graphwrap">
         <div id="graph" class="graphcanvas">
+            <!-- #gpan carries the PAN (translate); #gworld carries the ZOOM (scale). Split so a
+                 pure pan never touches #gworld's style (its observers stay quiet). Both paint
+                 normally — composited/will-change variants all broke rendering (graph.css). -->
+            <div id="gpan">
             <div id="gworld">
                 <div id="sgroups"></div>
                 <div id="ggroups"></div>
@@ -238,6 +242,7 @@
                 </svg>
                 <div id="gnodes"></div>
                 <svg id="gedges-top"></svg>
+            </div>
             </div>
             <div id="marquee" class="marquee" hidden></div>
         </div>

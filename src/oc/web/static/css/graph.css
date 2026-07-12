@@ -5,6 +5,15 @@
 /* node graph */
 .graphwrap { flex: 1; min-height: 0; overflow: hidden; position: relative; }
 .graphcanvas { position: absolute; inset: 0; overflow: hidden; user-select: none; }
+/* Camera transform is SPLIT across two elements (camera.js applyView): #gpan carries the pan
+   (translate, written every pan frame), #gworld carries the zoom (scale, written only when zoom
+   changes — observers watching #gworld's style stay quiet during a pure pan).
+   NEITHER may be composited (no will-change/translateZ). Every promotion variant was tried for
+   pan perf and every one broke rendering — Chrome rasters composited will-change layers at
+   device scale ignoring the CSS scale, so at low zoom lines/labels draw visibly different,
+   tiles shimmer/drop after zoom changes, and zooming out froze the renderer for 30s+.
+   Pan cost is paint-per-frame by design; keep it cheap, don't re-promote. */
+#gpan { position: absolute; top: 0; left: 0; }
 #gworld { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
 /* skip hit-testing the whole graph subtree during a pan drag — pointer events aren't
    needed mid-pan and testing every node/edge each move was a big cost */

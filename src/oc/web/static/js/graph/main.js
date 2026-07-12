@@ -2773,14 +2773,17 @@ function wireForge(div, id) {
     observeResize(canvas, draw);
     // Graph ZOOM scales the node via a CSS transform on #gworld — that does NOT fire ResizeObserver,
     // so the backing store would stay at 1× and blur when zoomed in. Watch the world transform and
-    // refit, but only when the canvas's RENDERED size actually changed (zoom), not on pan.
+    // refit only when the SCALE part changed. Zoom vs pan is decided from the style string itself —
+    // never read geometry here: a getBoundingClientRect right after the transform write forces a
+    // sync layout of the whole document on every pan frame (traced as the pan jank).
     const gworld = document.getElementById("gworld");
     if (gworld) {
-        let raf = 0;
+        let raf = 0, lastScale = "";
         const mo = new MutationObserver(() => {
             if (!canvas.isConnected) { mo.disconnect(); return; }   // node removed → self-clean
-            const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
-            if (Math.round(r.width * dpr) === canvas.width || raf) return;   // pan (no size change) → skip
+            const sc = (/scale\(([^)]*)\)/.exec(gworld.style.transform) || [, "1"])[1];
+            if (sc === lastScale || raf) return;   // pan (scale unchanged) → zero layout work
+            lastScale = sc;
             raf = requestAnimationFrame(() => { raf = 0; draw(); });
         });
         mo.observe(gworld, { attributes: true, attributeFilter: ["style"] });
