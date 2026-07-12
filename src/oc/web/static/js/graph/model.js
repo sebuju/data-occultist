@@ -1121,8 +1121,18 @@ export class GraphModel {
         this._repointTargets(oldId, newId);   // a sound id can be a trigger target — carry its wire
         return true;
     }
-    setSoundFile(id, v) { const x = this.soundNode(id); if (x) x.file = v || ""; }
+    setSoundFile(id, v) { const x = this.soundNode(id); if (x) { x.file = v || ""; if (x.file) x.synth = null; } }
     setSoundVolume(id, v) { const x = this.soundNode(id); const n = parseFloat(v); if (x && !Number.isNaN(n)) x.volume = Math.max(0, Math.min(1, n)); }
+    // ---- generated cues: a synth spec set INSTEAD of a file (the node's inline "forge") ----
+    // a fresh cue: a short rising blip you then reshape. Points are 0..1 (t across the length, p pitch).
+    static defaultSynth() {
+        return { wave: "square", points: [{ t: 0, p: 0.5 }, { t: 0.15, p: 0.9 }, { t: 1, p: 0.72 }],
+            length_ms: 220, attack: 4, decay: 55, vibrato: 0, crush: 18 };
+    }
+    // flip a sound node into generator mode: seed a default spec if it has none, drop any file
+    enableSoundSynth(id) { const x = this.soundNode(id); if (!x) return; if (!x.synth) x.synth = GraphModel.defaultSynth(); x.file = ""; return x.synth; }
+    setSoundSynth(id, spec) { const x = this.soundNode(id); if (x) { x.synth = spec; x.file = ""; } }
+    clearSoundSynth(id) { const x = this.soundNode(id); if (x) x.synth = null; }
 
     // ---- file sources: parse a game log/config file into a dataset -----------
     fileSource(id) { return (this.profile.file_sources || []).find((s) => s.id === id) || null; }
