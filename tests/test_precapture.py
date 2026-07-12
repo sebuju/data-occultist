@@ -163,6 +163,7 @@ def test_recording_skips_identical_frames(tmp_path):
         return Frame(image=seq.pop(0), client=PixelBox(0, 0, 70, 50))
     s._engine.capture.grab_window = grab
     s._locator = SimpleNamespace(locate=lambda profile: object())
+    s._autoscroll.clear()   # isolate settle-path dedup — auto-scroll defaults ON, don't inject nudges
     s._record_loop(max_frames=100, interval=0)
     assert len(s._frames) == 3
 
@@ -225,6 +226,7 @@ def test_recording_skips_cursor_only_moves(tmp_path):
         return Frame(image=seq.pop(0), client=PixelBox(0, 0, 640, 480))
     s._engine.capture.grab_window = grab
     s._locator = SimpleNamespace(locate=lambda profile: object())
+    s._autoscroll.clear()   # isolate settle-path dedup — auto-scroll defaults ON, don't inject nudges
     s._record_loop(max_frames=100, interval=0)
     assert len(s._frames) == 2   # cur1 + scrolled; cursor-only moves dropped
 

@@ -234,7 +234,16 @@ function buildPrecap() {
         // reflect it without waiting out the cadence
         if (["record", "recstop", "process", "pause", "resume", "cancel"].includes(a)) hub.kick();
     });
-    // auto-scroll is configured per window now (window node's scroll section), not here.
+    // live auto-scroll knob (shown while recording): the record loop re-reads the flag + step
+    // every grab, and status re-reflects them each poll (so a server-side give-up unchecks it
+    // here). Per-window ScrollDef.autoscroll still seeds the default at record start.
+    pcNode.addEventListener("change", (ev) => {
+        if (!ev.target.closest(".pc-autoscroll-live, .pc-clicks-live")) return;
+        const game = model.profile.name; if (!game) return;
+        const on = !!pcNode.querySelector(".pc-autoscroll-live")?.checked;
+        const clicks = +pcNode.querySelector(".pc-clicks-live")?.value || 1;
+        _pcRun(() => api.precapture.setAutoscroll(game, on, clicks, pcSig));
+    });
 }
 
 // (Re-)parent pcNode into `adapter.host`. The node moves intact, so the session list + its
@@ -673,7 +682,15 @@ function renderPrecap(node, st) {
         const save = (anyRun || (!staged && !justSaved)) ? null
             : h("button", { dataset: { act: "save" }, class: justSaved ? "pc-saved" : null, disabled: !(staged && !precapStopping && !justSaved) },
                 justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`);
-        ctlNodes = [proc, cancel, save];
+        // live auto-scroll knob — shown while a recording is live (or auto-paused at the list
+        // end). Reflects the worker's current flag from status; the change handler in buildPrecap
+        // pushes toggles to the server. Its focused clicks input is what the `editing` guard below
+        // protects from the poll.
+        const asKnob = recLive ? h("label", { class: "flab pc-as-lab", title: "toggle auto-scroll live; reaching the list end pauses the recording" },
+            "auto-scroll ", h("input", { type: "checkbox", class: "pc-autoscroll-live", checked: !!st.autoscroll })) : null;
+        const clkKnob = recLive ? h("label", { class: "flab", title: "wheel notches sent per scroll" },
+            "clicks ", h("input", { type: "number", class: "pc-clicks-live", value: st.scroll_clicks || 1, min: "1" })) : null;
+        ctlNodes = [proc, cancel, save, asKnob, clkKnob];
     }
     const ctlEl = right.querySelector(".pc-ctl");
     // don't clobber a live INPUT the user is editing (the clicks field) on a poll tick;

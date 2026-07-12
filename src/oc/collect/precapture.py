@@ -220,6 +220,7 @@ class PrecaptureSession:
         self._stop = threading.Event()
         self._pause = threading.Event()
         self._autoscroll = threading.Event()   # live-toggled; drives the record loop's scroll
+        self._autoscroll.set()                 # default ON — scroll unless a classified window opts out
         self._scroll_clicks = _AUTOSCROLL_CLICKS   # wheel notches per nudge (live-adjustable)
         # when set, a recording that ENDS ON ITS OWN (auto-scroll list-end or max_frames)
         # immediately launches processing — record -> process with no manual stop/process click
@@ -557,12 +558,15 @@ class PrecaptureSession:
         """Classify the window shown in ``frame`` and return its ``(autoscroll, clicks)``.
         The ON-SCREEN window decides — so recording can start on any screen and auto-scroll
         engages once the user reaches a window configured for it (and disengages when they
-        leave). Best-effort: no match / no scroll config -> auto-scroll off."""
+        leave). Best-effort: auto-scroll defaults ON, and a *classified* window that opts out
+        (no autoscroll / scroll disabled) is the only thing that turns it off."""
         return self._scroll_cfg_for_window(self._window_for_frame(frame))
 
     @staticmethod
     def _scroll_cfg_for_window(wd) -> tuple[bool, int]:
-        sc = wd.scroll if wd else None
+        if wd is None:                       # unknown window (classify miss) -> default ON
+            return True, _AUTOSCROLL_CLICKS
+        sc = wd.scroll
         if sc and sc.enabled and sc.autoscroll:
             return True, max(1, int(sc.scroll_clicks or 1))
         return False, _AUTOSCROLL_CLICKS
@@ -572,7 +576,7 @@ class PrecaptureSession:
         The record loop re-reads this live every settled frame, so it's only the initial
         status value — recording started off the equipment screen will still pick auto-scroll
         up once the user navigates there."""
-        on, clicks = False, _AUTOSCROLL_CLICKS
+        on, clicks = True, _AUTOSCROLL_CLICKS   # default ON — a locate/classify miss keeps it on
         try:
             win = self._locator.locate(self._profile)
             if win is not None:
