@@ -12,13 +12,28 @@ def test_feed_live_registers_calls_session_feed(monkeypatch):
     calls = []
 
     class _FakeSession:
-        def feed_registers(self, readouts, confs):
-            calls.append((readouts, confs))
+        def feed_registers(self, readouts, confs, registers=None):
+            calls.append((readouts, confs, registers))
 
     monkeypatch.setattr(preview_routes, "session_for", lambda game, create=False: _FakeSession())
     preview_routes._feed_live_registers(
         "warframe", {"readouts_all": {"health": 1}, "readout_confs_all": {"health": 0.9}})
-    assert calls == [({"health": 1}, {"health": 0.9})]
+    assert calls == [({"health": 1}, {"health": 0.9}, None)]
+
+
+def test_feed_live_registers_threads_fresh_registers(monkeypatch):
+    # The fresh request profile's register wiring must be passed through so a just-added source
+    # persists immediately (not dropped against the session's stale snapshot).
+    calls = []
+
+    class _FakeSession:
+        def feed_registers(self, readouts, confs, registers=None):
+            calls.append(registers)
+
+    monkeypatch.setattr(preview_routes, "session_for", lambda game, create=False: _FakeSession())
+    regs = ["fresh-register-defs"]
+    preview_routes._feed_live_registers("warframe", {"readouts_all": {"health": 1}}, regs)
+    assert calls == [regs]
 
 
 def test_feed_live_registers_creates_session_lazily(monkeypatch):

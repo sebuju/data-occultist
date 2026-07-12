@@ -228,7 +228,7 @@ class LiveSession:
             return rid if kind == "readout" else None
         return src or None
 
-    def feed_registers(self, readouts: dict, confs: dict) -> None:
+    def feed_registers(self, readouts: dict, confs: dict, registers=None) -> None:
         """Public, thread-safe twin of :meth:`_feed_registers` for a caller OUTSIDE the
         collector tick loop — namely the ``/api/preview`` teaching-UI read, so a register (and
         any ``persist`` flush) updates from a one-shot OCR read too, not just a running live
@@ -236,13 +236,19 @@ class LiveSession:
         (mirrors its "feed from the full map, not just this call's delta" reasoning) so what a
         register visibly holds — live-fed or preview-fed — is exactly what gets persisted;
         the two sources were diverging before this existed (a register could show a preview
-        value with nothing ever reaching its ``persist`` dataset)."""
+        value with nothing ever reaching its ``persist`` dataset).
+
+        ``registers`` lets the caller pass the register wiring from a FRESHLY-loaded profile
+        (the preview request already parsed one) instead of this session's possibly-stale
+        ``self._profile`` — so a newly-wired register source (e.g. a just-added readout) reaches
+        its ``persist`` dataset without waiting for a live restart. ``None`` -> use the session's
+        own profile (the collector-loop caller, whose reads are already from that profile)."""
         with self._lock:
             self._readouts_all.update(readouts or {})
             self._readout_confs_all.update(confs or {})
-            self._feed_registers(self._readouts_all, self._readout_confs_all)
+            self._feed_registers(self._readouts_all, self._readout_confs_all, registers)
 
-    def _feed_registers(self, readouts: dict, confs: dict) -> None:
+    def _feed_registers(self, readouts: dict, confs: dict, registers=None) -> None:
         """Overwrite each register's held entries from the accumulated live-readout map (caller
         holds the lock) -- so a newly-wired source picks up its value immediately from whatever
         window last reported it, not only when its own window is next read. Key = readout id;
@@ -251,7 +257,8 @@ class LiveSession:
         map to that dataset when any entry's VALUE actually changed this tick (conf/last_seen
         alone don't count — else every tick would write, even an unchanged screen)."""
         now = time.time()
-        for reg in getattr(self._profile, "registers", []) or []:
+        regs = registers if registers is not None else (getattr(self._profile, "registers", []) or [])
+        for reg in regs:
             if not getattr(reg, "enabled", True):
                 continue
             dirty = False

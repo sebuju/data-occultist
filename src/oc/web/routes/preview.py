@@ -56,17 +56,23 @@ def _ocr_cache_for(game, image_id, config, prefer_cache):
     return cache, key, hit
 
 
-def _feed_live_registers(game, payload):
+def _feed_live_registers(game, payload, registers=None):
     """Feed one ``/preview`` read's readouts into `game`'s live session, cache hit or not, so a
     register (and any ``persist`` flush) updates from a one-shot OCR read too — otherwise a
     register could visibly show a value in the teaching UI that never reaches its ``persist``
-    dataset just because live collection isn't running. See LiveSession.feed_registers."""
+    dataset just because live collection isn't running. See LiveSession.feed_registers.
+
+    ``registers`` is the register wiring from the FRESH request profile — passed through so a
+    just-added/just-rewired register source persists immediately, instead of being dropped
+    against the long-lived session's stale ``self._profile`` (which is only refreshed on a live
+    start). Without this, wiring a new readout into a ``persist`` register never reached the
+    dataset until the live collector was restarted."""
     readouts_all = payload.get("readouts_all")
     if not game or not readouts_all:
         return
     sess = session_for(game, create=True)
     if sess is not None:
-        sess.feed_registers(readouts_all, payload.get("readout_confs_all") or {})
+        sess.feed_registers(readouts_all, payload.get("readout_confs_all") or {}, registers)
 
 
 def _frame_for(engine, profile, game, capture):
@@ -337,7 +343,7 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
            "accept": get_settings().tuning.accept_confidence}
     cache, key, hit = _ocr_cache_for(game, capture, cfg, prefer_cache)
     if hit is not None:
-        _feed_live_registers(game, hit)
+        _feed_live_registers(game, hit, profile.registers)
         return {**hit, "cached": True}
     engine = get_engine()
     frame, window, result = _read_window(engine, profile, game, capture)
@@ -366,7 +372,7 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
     if cache is not None:
         cache.put(key, out)
         cache.save()
-    _feed_live_registers(game, out)
+    _feed_live_registers(game, out, profile.registers)
     return out
 
 

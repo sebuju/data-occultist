@@ -156,6 +156,25 @@ def test_feed_registers_accumulates_into_readouts_all():
     assert rows["shield"]["value"] == 2
 
 
+def test_feed_registers_honors_fresh_wiring_over_stale_profile():
+    # A long-lived session snapshots its profile at start; wiring a NEW readout into a register
+    # afterwards must still reach the held map when the (preview) caller passes the FRESH
+    # register wiring -- otherwise a just-added source is dropped against the stale snapshot
+    # until the live collector is restarted. (Regression: warframe_name never reached loadout.)
+    stale = GameProfile(name="g", registers=[RegisterDef(id="hp", sources=["readout:health"])])
+    fresh = [RegisterDef(id="hp", sources=["readout:health", "readout:warframe_name"])]
+    s = _session(stale)
+
+    # stale wiring (registers=None) drops the newly-wired readout
+    s.feed_registers({"health": 1, "warframe_name": "nova"}, {})
+    assert {r["key"] for r in s.register_records("hp")} == {"health"}
+
+    # fresh wiring passed through picks it up
+    s.feed_registers({"health": 1, "warframe_name": "nova"}, {}, registers=fresh)
+    rows = {r["key"]: r for r in s.register_records("hp")}
+    assert rows["warframe_name"]["value"] == "nova"
+
+
 def test_feed_registers_flushes_persist_like_live_tick(monkeypatch, tmp_path):
     from types import SimpleNamespace
 
