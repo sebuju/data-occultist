@@ -21,6 +21,7 @@ import { playSound } from "./sound.js";
 import { setTableStore } from "./table.js";
 import { setVTableStore, reapplyPersistedVTables, vtableById, liveVTables } from "../vtable.js";
 import { initPersist, persist, setScrubHook } from "./persist.js";
+import { openConflictModal } from "./conflictmodal.js";
 import * as prettyOverrides from "../pretty/overrides.js";
 import { buildBackups } from "./backups.js";
 import * as groups from "./groups.js";
@@ -416,6 +417,18 @@ initPersist({
         if (err) { setStatus(err); return; }
         setStatus("saved ✓");
         refreshChangedSubsetNodes();   // backend now knows new/edited subsets -> fill ONLY those (no more 404)
+    },
+    // A save lost the race against a structural change made elsewhere (another tab, an
+    // external edit) — show the conflict modal instead of silently clobbering it.
+    onConflict: (payload, wasContent) => {
+        const name = model.profile.name;
+        openConflictModal(name, payload, {
+            onOverwrite: () => persist.overwrite(wasContent),
+            // Discard this tab's pending edit and reload the server's copy. loadGame's
+            // `discard` flag skips persist.flush() (which would just resubmit the stale
+            // edit and re-trigger this same conflict) in favour of dropping it outright.
+            onLoadServer: () => loadGame(name, { discard: true }),
+        });
     },
 });
 
@@ -4523,10 +4536,16 @@ async function refreshGames(select) {
 // reconnect gaps only, NOT the mechanism. (An earlier version polled /api/flow every hub beat;
 // that ran even at idle and, with the old full-state read, was the page's heaviest request.)
 
-async function loadGame(name) {
+async function loadGame(name, { discard = false } = {}) {
     if (!name) return;
     boot.phase = true;   // reopened images read the server OCR cache (no engine touch) until the load settles
-    await persist.flush();   // commit any pending save before switching games
+    // `discard` is the conflict modal's "load server" path: the model still holds an
+    // unsaved edit that just lost a 409. persist.flush() would resubmit it and hit the
+    // SAME conflict again (infinite loop) — drop it instead, unflushed, and let the
+    // normal load below (model.load below replaces the profile wholesale) adopt the
+    // server's copy.
+    if (discard) persist.discardPending();
+    else await persist.flush();   // commit any pending save before switching games
     const done = timed(`load game ${name}`);
     let opened;
     try {
