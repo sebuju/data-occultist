@@ -22,6 +22,7 @@ splits that keep the profile YAML small, safe, and versioned:
 from __future__ import annotations
 
 import copy
+import hashlib
 import itertools
 import json
 import os
@@ -43,6 +44,13 @@ from .models import DEFAULT_DETECT_THRESHOLD, GameProfile
 # machinery + thinning policy were hoisted into the shared snapshot module (oc.backup).
 retention_keep = backup.retention_keep
 _STAMP_FMT = backup.STAMP_FMT
+
+# libyaml's C loader/dumper when available (8x faster than the pure-python SafeLoader on a
+# profile this size), falling back to the pure-python Safe* classes on a build without it.
+# One shared pair so every load/dump in this module (and pretty.py) goes through the fast
+# path uniformly, instead of scattering ``Loader=``/``Dumper=`` kwargs per call site.
+_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+_DUMPER = getattr(yaml, "CSafeDumper", yaml.SafeDumper)
 
 
 def profile_path(profiles_dir: Path | str, name: str) -> Path:
@@ -436,7 +444,7 @@ def load_profile(profiles_dir: Path | str, name: str) -> GameProfile:
             hit = _profile_cache.get(key)
         if hit is not None and hit[0] == sig:
             return hit[1].model_copy(deep=True)   # pristine cached -> own copy (callers mutate)
-    raw = yaml.safe_load(_read_text_retry(path))
+    raw = yaml.load(_read_text_retry(path), Loader=_LOADER)
     if isinstance(raw, dict):
         raw = _migrate_glyph_node_id(_migrate_dictionary_ids(_split_shared_readout_fields(
             _migrate_join_exclude(_migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw)))))))
@@ -454,7 +462,7 @@ def _profile_yaml(profile: GameProfile) -> str:
     data = profile.model_dump(mode="json", exclude_none=True)
     for d in data.get("dictionaries") or []:
         d.pop("terms", None)
-    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+    return yaml.dump(data, Dumper=_DUMPER, sort_keys=False, allow_unicode=True)
 
 
 # Keys whose churn is NOT structural: a save that touches only these makes no backup.
@@ -480,8 +488,37 @@ def _structural(text: str) -> str:
     """``text`` re-dumped with all non-structural fields removed, so two profiles that
     differ ONLY in node layout / box geometry / UI view-state compare equal — such saves
     persist to disk but skip a snapshot."""
-    raw = yaml.safe_load(text) or {}
-    return yaml.safe_dump(_strip_nonstructural(raw), sort_keys=False, allow_unicode=True)
+    raw = yaml.load(text, Loader=_LOADER) or {}
+    return yaml.dump(_strip_nonstructural(raw), Dumper=_DUMPER, sort_keys=False, allow_unicode=True)
+
+
+def structural_yaml(profile: GameProfile) -> str:
+    """Public wrapper: the structural YAML for an in-memory (not-yet-saved) profile —
+    used to diff an incoming save against ``profile_signature``'s on-disk ``structural``
+    without writing anything."""
+    return _structural(_profile_yaml(profile))
+
+
+def profile_signature(profiles_dir: Path | str, name: str) -> dict | None:
+    """The on-disk profile's structural fingerprint, for optimistic-concurrency saves
+    (a stale-tab guard). ``None`` if the profile doesn't exist yet (first-ever save).
+
+    ``token`` hashes the STRUCTURAL text (``_structural``, same normalizer as the backup
+    snapshot diff) so two tabs that only differ in layout/geometry/view-state never
+    conflict — only a real content change does. ``structural`` is returned too so a
+    conflict response can show it as one side of the diff without a second read+parse."""
+    path = profile_path(profiles_dir, name)
+    try:
+        st = path.stat()
+        text = _read_text_retry(path)   # same sharing-violation retry load_profile relies on — GET
+    except OSError:                     # races a concurrent save unlocked, unlike the PUT-side call
+        return None
+    structural = _structural(text)
+    return {
+        "token": hashlib.sha1(structural.encode("utf-8")).hexdigest(),
+        "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+        "structural": structural,
+    }
 
 
 def save_profile(profiles_dir: Path | str, profile: GameProfile, layout_only: bool = False) -> Path:
@@ -566,7 +603,7 @@ def backup_meta(path: Path) -> dict:
         iso = datetime.strptime(stamp, "%Y%m%d-%H%M%S-%f").replace(tzinfo=timezone.utc).isoformat()
     except ValueError:
         iso = stamp
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_LOADER) or {}
     layout = raw.get("layout") or {}
     counts = {
         "nodes": len((layout.get("nodes") or {})),
@@ -584,7 +621,7 @@ def read_backup(profiles_dir: Path | str, name: str, stamp: str) -> GameProfile:
     """Parse a backup snapshot into a profile (terms resolved from the current
     dictionary files, same as a live load)."""
     path = backup_path(profiles_dir, name, stamp)
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_LOADER)
     if isinstance(raw, dict):
         raw = _migrate_glyph_node_id(_migrate_dictionary_ids(_split_shared_readout_fields(
             _migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw))))))

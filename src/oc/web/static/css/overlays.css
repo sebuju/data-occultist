@@ -151,3 +151,22 @@
 
 /* precapture styling moved to floatwin.css (it's a floating panel now, not a modal) */
 label { display: block; margin: 6px 0; color: var(--muted); }
+
+/* stale-tab save conflict modal (graph/conflictmodal.js) — side-by-side YAML line diff.
+   server on the left, this tab's pending copy on the right; row colour marks the type
+   the SAME row carries on both cells so the two sides stay visually paired. */
+.conf-diff-head { display: flex; justify-content: space-between; gap: 16px;
+    padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); }
+.conf-diff-col-label { color: var(--muted); }
+.conf-diff { display: grid; grid-template-columns: 1fr 1fr; overflow: auto;
+    max-height: calc(92vh - 140px); font: var(--fs-sm)/1.5 var(--font-mono); }
+.conf-diff-row { display: contents; }
+.cd-cell { padding: 0 10px; white-space: pre-wrap; word-break: break-word;
+    border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 60%); }
+.cd-left { border-right: 1px solid var(--line); }
+.cd-remove .cd-left { background: color-mix(in srgb, var(--danger), transparent 85%); }
+.cd-add .cd-right { background: color-mix(in srgb, var(--ok), transparent 85%); }
+.cd-change .cd-left, .cd-change .cd-right { background: color-mix(in srgb, var(--warn), transparent 85%); }
+.conf-diff-more { padding: 8px 14px; color: var(--muted); font-size: var(--fs-xs); text-align: center; }
+.conf-diff-actions { display: flex; justify-content: flex-end; gap: 10px;
+    padding: 10px 14px; border-top: 1px solid var(--line); }

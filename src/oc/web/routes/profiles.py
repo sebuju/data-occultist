@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException
+from fastapi.responses import JSONResponse
 
 from ...profile import (
     GameProfile,
@@ -12,11 +13,13 @@ from ...profile import (
     list_profiles,
     load_graph_local,
     load_profile,
+    profile_signature,
     profile_write_lock,
     read_backup,
     restore_backup,
     save_graph_local,
     save_profile,
+    structural_yaml,
 )
 from ...profile.merge import merge_profiles
 from ..deps import get_settings
@@ -34,7 +37,15 @@ def get_profile(name: str):
     settings = get_settings()
     if name not in list_profiles(settings.profiles_dir):
         raise HTTPException(status_code=404, detail=f"No profile {name!r}")
-    return load_profile(settings.profiles_dir, name).model_dump(mode="json", exclude_none=True)
+    body = load_profile(settings.profiles_dir, name).model_dump(mode="json", exclude_none=True)
+    # Tag the response with a structural fingerprint (stale-tab save guard): the client
+    # remembers this ETag and sends it back as If-Match on save, so a save that would
+    # clobber a change made elsewhere since this GET gets rejected (409) instead of
+    # silently overwriting it. Hashing the STRUCTURAL text (not the raw bytes) means a
+    # pure layout/geometry save from another tab never trips a false conflict.
+    sig = profile_signature(settings.profiles_dir, name)
+    headers = {"ETag": f'"{sig["token"]}"', "X-Profile-Modified": sig["modified"]} if sig else {}
+    return JSONResponse(body, headers=headers)
 
 
 def _preserve_producer_http(existing, incoming) -> None:
@@ -53,7 +64,13 @@ def _preserve_producer_http(existing, incoming) -> None:
 
 
 @router.put("/{name}")
-def put_profile(name: str, profile: GameProfile, merge: bool = True, layout: bool = False):
+def put_profile(
+    name: str,
+    profile: GameProfile,
+    merge: bool = True,
+    layout: bool = False,
+    if_match: str | None = Header(None, alias="If-Match"),
+):
     """Save a profile. With ``merge`` (default), upsert the incoming window(s) and
     field(s) into the existing profile so other windows are preserved — this is how
     a game accumulates multiple windows authored one at a time.
@@ -61,7 +78,14 @@ def put_profile(name: str, profile: GameProfile, merge: bool = True, layout: boo
     ``layout`` marks a pure layout save (node positions/open-images, no content change —
     the graph editor's ``persist.layout()``): it skips the dictionary-feed re-pull (feeds
     only change on content edits) and tells :func:`save_profile` to skip its structural-
-    snapshot diff, since a layout-only save is never structural."""
+    snapshot diff, since a layout-only save is never structural.
+
+    ``If-Match`` is the stale-tab save guard (paired with the ETag on GET): if present
+    and it no longer matches the on-disk structural token — someone else saved a
+    structural change since this tab loaded — the save is REJECTED with 409 instead of
+    silently clobbering it, and the response carries both YAMLs + timestamps so the
+    client can render a side-by-side conflict modal. No ``If-Match`` (a first-ever save,
+    or the modal's own "overwrite" action) always writes unconditionally."""
     if profile.name != name:
         raise HTTPException(status_code=400, detail="Body name must match URL name")
     settings = get_settings()
@@ -70,6 +94,19 @@ def put_profile(name: str, profile: GameProfile, merge: bool = True, layout: boo
     # whatever the other one added (lost update) — same failure class the OCR cache already
     # locks against. A cross-process lock on the profile file serializes the whole cycle.
     with profile_write_lock(settings.profiles_dir, name):
+        if if_match is not None:
+            cur = profile_signature(settings.profiles_dir, name)
+            # ETag values are sent quoted (RFC 7232) so strict HTTP clients (e.g. .NET's
+            # HttpClient, which otherwise silently drops an unquoted response ETag) parse
+            # it — strip the quotes back off before comparing to our plain hex token.
+            if cur is not None and cur["token"] != if_match.strip('"'):
+                return JSONResponse(status_code=409, content={
+                    "conflict": True,
+                    "server_yaml": cur["structural"],
+                    "incoming_yaml": structural_yaml(profile),
+                    "server_modified": cur["modified"],
+                    "server_version": cur["token"],
+                })
         existing = load_profile(settings.profiles_dir, name) if name in list_profiles(settings.profiles_dir) else None
         if merge and existing is not None:
             profile = merge_profiles(existing, profile)
@@ -83,7 +120,9 @@ def put_profile(name: str, profile: GameProfile, merge: bool = True, layout: boo
             except Exception:  # noqa: BLE001 - best-effort; never block a save
                 pass
         path = save_profile(settings.profiles_dir, profile, layout_only=layout)
-    return {"saved": str(path), "windows": [w.id for w in profile.windows]}
+        new_sig = profile_signature(settings.profiles_dir, name)
+    headers = {"ETag": f'"{new_sig["token"]}"'} if new_sig else {}
+    return JSONResponse({"saved": str(path), "windows": [w.id for w in profile.windows]}, headers=headers)
 
 
 # ---- per-device graph-local state (viewport/minimap, gitignored sidecar) ---------

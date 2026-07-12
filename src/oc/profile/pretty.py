@@ -22,7 +22,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from .loader import _atomic_write_text
+from .loader import _atomic_write_text, _DUMPER, _LOADER
 
 
 def pretty_path(profiles_dir: Path | str, name: str) -> Path:
@@ -54,7 +54,7 @@ def load_pretty(profiles_dir: Path | str, name: str) -> dict:
     if not path.exists():
         return _default_doc()
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_LOADER)
     except (OSError, yaml.YAMLError):
         return _default_doc()
     if not isinstance(raw, dict):
@@ -72,5 +72,5 @@ def save_pretty(profiles_dir: Path | str, name: str, doc: dict) -> Path:
     validated = PrettyDoc.model_validate(doc or {})
     data = validated.model_dump(mode="json")
     path = pretty_path(profiles_dir, name)
-    _atomic_write_text(path, yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+    _atomic_write_text(path, yaml.dump(data, Dumper=_DUMPER, sort_keys=False, allow_unicode=True))
     return path

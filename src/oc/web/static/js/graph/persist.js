@@ -23,6 +23,7 @@ let collectLayout = null;     // () => write live node state into model.profile.
 let collectLocal = null;      // () => ({ view, minimap }) for the sidecar
 let onContentSaved = null;    // () => UI refresh after a real content save
 let recordHistory = null;     // () => push an undo/redo snapshot (layout edits are undoable too)
+let onConflict = null;        // (payload, wasContent) => show the stale-tab conflict modal
 
 let tProfile = null, tLocal = null;
 let pendingContent = false;
@@ -40,6 +41,7 @@ export function initPersist(opts) {
     collectLocal = opts.collectLocal;
     onContentSaved = opts.onContentSaved;
     recordHistory = opts.recordHistory;
+    onConflict = opts.onConflict;
 }
 
 async function flushProfile() {
@@ -55,6 +57,14 @@ async function flushProfile() {
         await api.saveProfile(M.profile, false, !wasContent);
         if (wasContent) onContentSaved?.();
     } catch (e) {
+        if (e instanceof api.ProfileConflict) {
+            // Someone else saved a structural change since this tab loaded. Don't fall
+            // through to the generic error surface — the edit stays live+unsaved in the
+            // model, and the conflict modal decides: overwrite the server, or discard
+            // this edit and load the server copy.
+            onConflict?.(e.payload, wasContent);
+            return;
+        }
         if (onContentSaved) onContentSaved(String(e.message || e));   // surface the error
     } finally {
         if (restore) restore();        // put the live override values back into the model
@@ -101,6 +111,24 @@ export const persist = {
         if (bootArmed) { bootArmed = false; await flushProfile(); }
         if (tProfile) { clearTimeout(tProfile); await flushProfile(); }
         if (tLocal) { clearTimeout(tLocal); await flushLocal(); }
+    },
+
+    // The conflict modal's "overwrite server" action: force the save through regardless
+    // of what's on disk (skips If-Match).
+    async overwrite(wasContent) {
+        collectLayout();
+        await api.saveProfile(M.profile, false, !wasContent, { force: true });
+        if (wasContent) onContentSaved?.();
+    },
+
+    // The conflict modal's "discard mine, load server" action: drop any queued save
+    // WITHOUT flushing it — flushing here would just resubmit the stale edit and
+    // immediately re-trigger the same 409. The caller then reloads the profile fresh.
+    discardPending() {
+        clearTimeout(tProfile); clearTimeout(tLocal);
+        tProfile = null; tLocal = null;
+        pendingContent = false;
+        bootArmed = false;
     },
 
     // Load a game's profile + viewport sidecar, migrating any legacy localStorage once.

@@ -148,9 +148,26 @@ export async function listProfiles() {
     return r.json();
 }
 
+// Stale-tab save guard: tracks the structural ETag + local "opened at" time per profile
+// name, set from GET/successful-PUT responses. saveProfile sends the remembered token
+// back as If-Match so a save that would clobber a change made elsewhere (another tab, an
+// external edit) since this tab last loaded/saved gets rejected (409) instead of silently
+// overwriting it — see ProfileConflict below and graph/conflictmodal.js.
+const _ver = new Map();   // name -> { token, openedAt }
+export function profileVersion(name) { return _ver.get(name) || null; }
+
+export class ProfileConflict extends Error {
+    constructor(payload) {
+        super("profile changed on server");
+        this.payload = payload;   // { conflict, server_yaml, incoming_yaml, server_modified, server_version }
+    }
+}
+
 export async function getProfile(name) {
     const r = await tfetch(`/api/profiles/${encodeURIComponent(name)}`);
     if (!r.ok) throw new Error(`load ${name}: ${r.status}`);
+    const token = r.headers.get("ETag");
+    if (token) _ver.set(name, { token, openedAt: new Date().toISOString() });
     return r.json();
 }
 
@@ -158,14 +175,22 @@ export async function getProfile(name) {
 // whole profile (graph editor, which holds the complete picture) so deletes persist.
 // layout=true marks a pure layout save (positions/open-images, no content change) so the
 // server skips the feed re-pull + structural-snapshot diff those saves never need.
-export async function saveProfile(profile, merge = true, layout = false) {
+// `force` skips the If-Match guard entirely (the conflict modal's "overwrite server").
+export async function saveProfile(profile, merge = true, layout = false, { force = false } = {}) {
+    const known = _ver.get(profile.name);
+    const headers = { "Content-Type": "application/json" };
+    if (!force && known) headers["If-Match"] = known.token;
     const r = await tfetch(`/api/profiles/${encodeURIComponent(profile.name)}?merge=${merge}&layout=${layout}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(profile),
     });
+    if (r.status === 409) throw new ProfileConflict(await r.json());
     if (!r.ok) throw new Error(`save: ${r.status} ${await r.text()}`);
-    return r.json();
+    const body = await r.json();
+    const newToken = r.headers.get("ETag");
+    if (newToken) _ver.set(profile.name, { token: newToken, openedAt: known?.openedAt || new Date().toISOString() });
+    return body;
 }
 
 // Per-device graph viewport (zoom/pan + minimap), a gitignored sidecar — NOT part of

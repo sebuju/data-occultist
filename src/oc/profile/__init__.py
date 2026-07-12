@@ -17,12 +17,14 @@ from .loader import (
     list_profiles,
     load_graph_local,
     load_profile,
+    profile_signature,
     profile_write_lock,
     read_backup,
     read_dictionary,
     restore_backup,
     save_graph_local,
     save_profile,
+    structural_yaml,
 )
 
 __all__ = [
@@ -42,10 +44,12 @@ __all__ = [
     "list_profiles",
     "load_graph_local",
     "load_profile",
+    "profile_signature",
     "profile_write_lock",
     "read_backup",
     "read_dictionary",
     "restore_backup",
     "save_graph_local",
     "save_profile",
+    "structural_yaml",
 ]
