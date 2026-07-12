@@ -3,7 +3,7 @@
 import * as api from "../api.js";
 import { h, frag, TRASH, subhead, kv } from "../dom.js";
 import { openCaptureModal } from "./panels/precap.js";
-import { timed } from "../log.js";
+import { timed, log } from "../log.js";
 import { Overlay, MIN_FRAC } from "../overlay.js";
 import { persist } from "./persist.js";
 import * as groups from "./groups.js";
@@ -372,6 +372,9 @@ function rectEditSyncInputs(st, force) {
 // would miss it and the node would render with an empty .win-img (no canvas, no capture buttons).
 // Other callers (load-time pendingOpenImages, precapture) omit it and resolve via nodeEls.
 async function openImage(winId, nodeEl = null) {
+    // TEMP diagnostic: pin down exactly when/how openImage is invoked during boot (ms-resolution,
+    // since the log bar's own timestamp is 1s granularity) — remove once the boot freeze is found.
+    log(`[diag] openImage(${winId}) boot=${boot.phase} nodeEl=${!!nodeEl} t=${performance.now().toFixed(1)}`, "dim");
     const node = nodeEl || nodeEls.get(`win:${winId}`);
     const host = node && node.querySelector(".win-img");
     if (!host) return;

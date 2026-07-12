@@ -46,6 +46,16 @@ export function flushBoot() {
     for (const fn of _bootQ.splice(0)) { try { fn(); } catch { /* best-effort */ } }
 }
 
+// Yield two animation frames — long enough for the browser to actually paint before the
+// next chunk of synchronous work runs (a single rAF can still land before layout/paint
+// settles, same reason main.js's node-size probe double-rafs). Used to spread a burst of
+// synchronous per-item work (e.g. boot's per-window canvas builds) across frames instead
+// of running it all in one tick, so the tab stays responsive and queued fetch
+// continuations get a chance to run between items.
+export function nextFrame() {
+    return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+}
+
 // Central registry of EVERY drawing overlay, so selection, deselection, and box hotkeys
 // are handled in ONE place — any new overlay just registers here and gets cross-deselect
 // + WASD for free. rec = { overlay, kind, winId, itemId?, persist(box), refresh() }.

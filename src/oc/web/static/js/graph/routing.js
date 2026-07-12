@@ -10,7 +10,7 @@ import * as groups from "./groups.js";
 import { routeGraph, polylinePath } from "./route.js";
 import { hierRoute } from "./hierRoute.js";
 import { deCollide } from "./decollide.js";
-import { $, setStatus, model, nodeEls, pos, nw, nh, selected } from "./state.js";
+import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot } from "./state.js";
 import { selectedNodeId, wire, startWire, CAN_DISABLE } from "./main.js";
 
 // Port exit directions (L/R/T/B) -> unit vector, used to stub a line out of a port the
@@ -579,6 +579,7 @@ function scheduleRouting() {
     if (draggingNodes) return;           // no re-routing mid-drag — lines stay frozen (stale ones greyed);
                                          // the single clean route runs on settle
     if (routingFrozen) return;           // OCR in progress -> don't re-route (lines would wiggle)
+    if (boot.phase) return;              // boot storm -> skip the A*/deCollide rAF hog; one clean pass runs on settle
     if (drawSig === routeHash) return;   // routes already current (drawSig set in drawEdges)
     if (routeRaf) return;                // one recompute already queued for the next frame
     routeRaf = requestAnimationFrame(runRouting);

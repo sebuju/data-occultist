@@ -33,7 +33,7 @@ initTitlebar();   // custom window chrome — no-op outside the desktop window
 import {
     $, setStatus, model, pos, nodeEls, collapsed, view, selected, nodeSizes, openImages,
     imageCanvases, itemCanvases, busy, overlays,
-    prevPresent, prevLastTs, dsTab, clearGrid, nw, nh, boot, afterBoot, flushBoot,
+    prevPresent, prevLastTs, dsTab, clearGrid, nw, nh, boot, afterBoot, flushBoot, nextFrame,
 } from "./state.js";
 import {
     drawEdges, requestEdges, flushEdges, nodeRect, freezeRouting,
@@ -3910,7 +3910,9 @@ function wireNode(div, n) {
         wireGamePriority(div);   // window-priority list ▲/▼ + name jumps
         // node creation moved to the floating "create" toolbox (see buildToolbox)
     } else if (n.type === "atlas") {
-        openAtlasImage(div);   // mount the cutout-atlas image surface + taught glyph/symbol list
+        // Same boot-freeze cause as the "window" branch above (separate function, same eager-open
+        // pattern) — skip during boot, loadGame's staggered open-images loop opens it instead.
+        if (!boot.phase) openAtlasImage(div);   // mount the cutout-atlas image surface + taught glyph/symbol list
     } else if (n.type === "dictionary") {
         // the title doubles as both name and id (renamed in place)
         div.querySelector(".dictname")?.addEventListener("change", (e) => {
@@ -3951,7 +3953,15 @@ function wireNode(div, n) {
         });
     } else if (n.type === "window") {
         wireWindowControls(div, n);   // out-port wiring is handled generically in wireOutPort
-        openImage(n.ref.id, div);     // pass div: this runs during buildNode, before nodeEls has the node
+        // Every window's image auto-opens on build (pass div: this runs during buildNode, before
+        // nodeEls has the node). During BOOT this used to fire for all ~9 windows back-to-back
+        // inside render()'s one synchronous pass — the actual freeze that made the concurrent
+        // overrides/bindings fetches (continuations queued behind it) look catastrophically slow;
+        // staggering loadGame's separate pendingOpenImages loop alone did nothing because THIS was
+        // the call that actually ran first. loadGame's boot fan-out (staggered via nextFrame) now
+        // owns opening every window's image during boot — skip the eager call here so it isn't
+        // done twice (openImage is idempotent, but skipping avoids the redundant no-op path).
+        if (!boot.phase) openImage(n.ref.id, div);
     } else if (n.type === "preview") {
         // auto-reads on image change + any window edit; the one button commits the read to the dataset
         div.querySelector(".prevcommit")?.addEventListener("click", (e) => commitPreviewNode(n.ref.id, e.currentTarget));
@@ -4182,10 +4192,14 @@ function wireReadout(div, n) {
     const winId = n.win.id, vid = n.ref.id;
     const fld = n.field;
     // With live mode OFF the collector isn't feeding values, so read this readout's value off the
-    // current image. `refetch` = immediate (node just opened — show a value right away, matches
-    // scheduleItemRead's img.onload pattern). `scheduleRefetch` = an EDIT changed the read config —
-    // queue it on the shared window-read clock (scheduleWindowRead) instead of firing its own
-    // separate un-debounced fetch, so it settles in the SAME beat as the rest of that edit's fallout.
+    // current image. `refetch` = immediate (node just OPENED — show a value right away, matches
+    // scheduleItemRead's img.onload pattern). Only fired below when no edit txn is armed on this
+    // node: fillNode re-runs this wiring on every rebuildNode (a type change, a rule add/remove),
+    // and an unconditional refetch() there would OCR the box WHILE the edit is still uncommitted —
+    // worse, /api/preview also feeds live registers, so a persist-set register would silently write
+    // the dataset mid-edit. `scheduleRefetch` = an EDIT changed the read config — queue it on the
+    // shared window-read clock (scheduleWindowRead) instead of firing its own separate un-debounced
+    // fetch, so it settles in the SAME beat as the rest of that edit's fallout, once committed.
     const refetch = () => { if (!liveCollecting()) refreshReadoutValues(winId); };
     const scheduleRefetch = () => { if (!liveCollecting()) scheduleWindowRead(winId, { readouts: true }); };
     div.querySelector(".gi-id")?.addEventListener("change", (e) => {
@@ -4210,7 +4224,10 @@ function wireReadout(div, n) {
         edit: rulesEdit(n.id, () => { autosave(winId); scheduleRefetch(); }),
         retrace: (el) => refreshRuleTrace(winId, fld.id, n.id, el),
     });
-    refetch();   // initial value off the current image (no-op while the collector is running)
+    // initial value off the current image — but ONLY on a genuine node-open, not a mid-edit
+    // rebuild. While a config txn is armed the read is deferred to commit (scheduleRefetch
+    // aftermath); firing here would OCR uncommitted. Mirrors the armed-gate in refreshRuleTrace.
+    if (!nodeTxn.armed(n.id)) refetch();
 }
 
 // Scrollbar node: orientation + visible-rows, the cutout list (rows-from-top, remove,
@@ -4597,8 +4614,11 @@ async function loadGame(name, { discard = false } = {}) {
         try { _bootDetails = await api.flowDetails(name, model.datasets(), (model.profile.subsets || []).map((s) => s.id), ac.signal); }
         finally { clearTimeout(to); }
     } catch { _bootDetails = null; }
-    render();
-    await prettyOverrides.initOverrides(name);   // layer this game's transient pretty overrides onto the model
+    log(`[diag] render start t=${performance.now().toFixed(1)} boot=${boot.phase}`, "dim");
+    { const d = timed("render"); render(); d(); }   // diagnostic: which boot phase actually eats the wall-time
+    log(`[diag] render end / overrides start t=${performance.now().toFixed(1)}`, "dim");
+    { const d = timed("apply overrides"); await prettyOverrides.initOverrides(name); d(); }   // layer this game's transient pretty overrides onto the model
+    log(`[diag] overrides end t=${performance.now().toFixed(1)}`, "dim");
     refreshDirtyUI();
     if (prettyActive && _pretty) _pretty.setPrettyGame(name);
     // reopen saved images (canvas lives in node); awaited so boot can tell when the
@@ -4606,7 +4626,27 @@ async function loadGame(name, { discard = false } = {}) {
     // grouping orphans: grouping a NEW orphan child persists the layout, and collectLayout
     // writes open_images from the live `openImages` set — if the canvases aren't open yet that
     // set is empty and we'd save open_images:[], stranding every window's canvas on next load.
-    await Promise.all(pendingOpenImages.map((winId) => (model.window(winId) ? openImage(winId) : null)));
+    {
+        // Stagger the per-window canvas/overlay builds (each openImage's SYNCHRONOUS prefix)
+        // across frames instead of firing all of them in one synchronous burst — that burst
+        // was the main-thread freeze that made the concurrent overrides/bindings fetches look
+        // slow (their continuations queued behind it). openImage is still CALLED immediately
+        // each iteration (so its image load starts right away, concurrent with the others) —
+        // only the wait between calls is deferred to the next paint.
+        // Every window's image opens on boot (buildNode used to do this unconditionally per
+        // window — see its `if (!boot.phase) openImage(...)` guard); iterate ALL windows here,
+        // not just `pendingOpenImages` (that list is the undo/redo restore channel — see
+        // reconcileOpenImages — and can legitimately lag a window added since the last save).
+        const d = timed("open images");
+        const opens = [openAtlasImage()];   // separate function/branch (fillNode's "atlas" case), same gate+stagger
+        await nextFrame();
+        for (const w of model.profile.windows) {
+            opens.push(openImage(w.id));
+            await nextFrame();
+        }
+        await Promise.all(opens);
+        d();
+    }
     pendingOpenImages = [];
     _bootDetails = null;   // node build (+ its queued refreshes) consumed it; live refreshes fetch fresh
     groupOrphanChildren("itemfield");   // pull each item's field nodes into the item's group (idempotent)
@@ -4627,6 +4667,7 @@ $("gameSelect").addEventListener("change", async (e) => {
     await loadGame(e.target.value);
     await bootSettle();   // let the reopened images' cached reads drain, then re-OCR fresh on edits
     boot.phase = false;
+    drawEdges();   // routing was skipped throughout boot (routing.js) -> run the one real pass now
     flushBoot();   // fire the summary/register/preview fetches deferred during boot
 });
 // Mint a blank game profile. Called from the settings modal's "new game" section.
@@ -5790,6 +5831,7 @@ async function killStrayOcrThenBoot() {
         log("first read…");
         if (dbg.settle) await bootSettle();
         boot.phase = false;   // boot OCR drained -> later reads/edits re-OCR fresh (cache write-through)
+        drawEdges();   // routing was skipped throughout boot (routing.js) -> run the one real pass now
         flushBoot();   // fire the summary/register/preview fetches deferred during boot
     } catch (e) {
         if (!conn.isOnline()) { veil.drop(); return; }   // dropped mid-boot -> offline overlay handles it
