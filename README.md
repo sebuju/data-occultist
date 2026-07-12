@@ -183,8 +183,8 @@ with windows, regions, detectors, datasets, and subsets branching off it.
   - a **locator** tell/field that finds row positions, so one template reads
     every row regardless of scroll.
 
-![A window node being taught: templates, detectors, and the recaptured inventory
-grid with the live grid preview tiling every row.](docs/img/teach-window.png)
+![A window node with its templates, detectors, and the recaptured inventory
+grid with the live grid preview tiling every row.](docs/img/window-node.png)
 
 ### 4. Tune fields
 
@@ -217,9 +217,6 @@ confidence.](docs/img/preview.png)
   stabilise. Inspect results under `data/warframe/` (see
   [Where data lives](#where-data-lives)) or switch to the **pretty** view for the
   dashboard.
-
-![The pretty view: an authored dashboard with live-collection controls,
-scheduled tasks, and a priced precapture table.](docs/img/pretty.png)
 
 > **Tip — precapture for fast lists.** Live OCR can't keep up with fast scrolling.
 > The UI's *precapture* mode records frames as fast as the capture backend allows
