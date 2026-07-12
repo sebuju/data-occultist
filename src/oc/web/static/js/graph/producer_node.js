@@ -123,27 +123,34 @@ const fieldsBlock = (fields) => {
     return h("div", { class: "pr-fields" }, ...fields.map(fieldRow), h("button", { class: "pr-f-add" }, "+ column"));
 };
 
-// Node title + body for a producer: the full http fetch+map editor. Two shapes share it —
-// per-item (sources + key transform) and list mode (`explode` set: one fetch, many rows). The
-// per-item-only rows (key transform, sources, name-by) hide in list mode where they don't apply.
+// Node title + body for a producer: the full http fetch+map editor. Three shapes share it —
+// per-item (one row per fetch), list mode (`explode` set, no sources: one fetch, many rows), and
+// per-item-explode (`explode` set AND sources wired: one fetch PER source item, each expanded into
+// many rows — e.g. a builds-list-per-frame feed). The per-item-only rows (key transform, sources,
+// name-by, array field) hide ONLY in true list mode, where there's no source item to name/key.
 export function producerParts(pn, cols = [], free = []) {
     const title = h("input", { class: "gi gi-id prrename", value: pn.id, title: "rename producer node" });
     const port = h("span", { class: "port out", title: "drag to a dataset to write its rows there" });
 
     const spec = pn.http || {};
     const req = spec.request || {};
-    const isList = (spec.explode || []).length > 0;     // list mode: one fetch expanded into rows
     const hasSrc = (pn.sources || []).length;
+    const isExplode = (spec.explode || []).length > 0;   // response expands into many rows
+    const isList = isExplode && !hasSrc;                 // TRUE list mode: one fetch, no sources
     // item sources use the SHARED sources-input widget (rule 7 — same as subset joins / dict feeds).
     const srcs = srcRow("sources", "datasets/subsets whose item names to fetch",
         sourcesInput({ chips: (pn.sources || []).map((ds) => ({ value: ds, node: model.refNode(ds) })), free,
             rmCls: "sv-rmin pr-rmsrc", addinCls: "sv-addin pr-addsrc", rmTitle: "stop fetching this source" }));
     // which source column names the item (only meaningful when sourcing from datasets/subsets).
+    // When `source_array` is set, `source_field` instead names a field WITHIN each element of
+    // that nested array column (e.g. `mod` inside each build row's `slots` list).
     const nf = pn.source_field || "name";
     const nfOpts = [...new Set([nf, ...cols])].map((c) => h("option", { selected: c === nf }, c === nf ? `<${c}>` : c));
     const keyFld = hasSrc
-        ? frag(labCell("name by", "which source column names the item (fed to the URL / catalogue)"),
-            h("select", { class: "enr-keyfld-sel" }, nfOpts))
+        ? frag(labCell("name by", "which source column names the item (fed to the URL / catalogue) — or, with 'array field' set, a field WITHIN each element of that nested array"),
+            h("select", { class: "enr-keyfld-sel" }, nfOpts),
+            labCell("array field", "optional: a NESTED array column to read source items from instead — every element's 'name by' field, deduped across every row (e.g. a build's 'slots' -> the distinct mod ids used)"),
+            h("input", { class: "pr-srcarray", value: pn.source_array || "", placeholder: "blank = source_field is a top-level column" }))
         : null;
     // per-item-only knobs (how {key} is built, which sources feed it) — irrelevant in list mode.
     const perItem = isList ? [] : [
@@ -173,14 +180,19 @@ export function producerParts(pn, cols = [], free = []) {
             labCell("query", "query params appended to the URL", true), mapBlock("query", req.query),
             labCell("timeout", "per-request timeout (seconds)"),
             h("input", { class: "pr-timeout", type: "number", value: req.timeout ?? 30, title: "per-request timeout (seconds)" }),
+            labCell("html extract", "optional: the response is an HTML page, not bare JSON — id of a <script id=\"…\">…</script> tag whose CONTENTS are the JSON to map (e.g. Next.js's __NEXT_DATA__). Blank = parse the response body as JSON directly."),
+            h("input", { class: "pr-htmlextract", value: req.html_extract || "", placeholder: "blank = plain JSON response" }),
             ...perItem,
             labCell("root", "path applied to the response before every column path (and before explode)"),
             h("input", { class: "pr-root", value: spec.root || "", placeholder: "e.g. data", title: "dotted path into the response applied before mapping" }),
-            labCell("explode", "LIST MODE: nested array paths to expand into one row each (blank = fetch per source item)", true),
+            labCell("explode", "nested array paths to expand the response into one row each — with no sources wired, one fetch total (list mode); with sources wired, one fetch PER source item (blank = a single row per fetch, no expansion)", true),
             listBlock("pr-exp", spec.explode || [], "array path (e.g. relics)", "+ level", "a nested array path, relative to the prior level"),
             // runs BEFORE the column mapping — so it can test a raw field this producer never emits
             labCell("keep rows", "drop a source row before it is mapped unless it clears EVERY predicate (tests the raw element, so it may use a field no column emits)", true),
-            filterList(spec.row_filter || []),
+            // wrap in ONE .pr-rows cell (like headers/query/explode) — filterList returns a bare
+            // frag, so dropping it straight into the lab-grid leaks 2 loose cells per filter and
+            // shifts every row below off the 2-col grid. The array-filter caller already nests it.
+            h("div", { class: "pr-rows" }, filterList(spec.row_filter || [])),
             labCell("fields", "response → dataset columns", true), fieldsBlock(spec.fields || []),
             labCell("status", "live sweep progress ('idle' when not running)"),
             h("div", { class: "enr-prog livestats" })));

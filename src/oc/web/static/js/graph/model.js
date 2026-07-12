@@ -700,6 +700,9 @@ export class GraphModel {
     setHttpMethod(id, m) { const s = this._http(id); if (s) s.request.method = m || "GET"; }
     setHttpUrl(id, u) { const s = this._http(id); if (s) s.request.url = u || ""; }
     setHttpTimeout(id, t) { const s = this._http(id); if (s) s.request.timeout = Math.max(0, parseFloat(t) || 0); }
+    // id of a <script id="…"> tag to pull JSON out of, for sites with no JSON API of their own
+    // (e.g. a Next.js __NEXT_DATA__ hydration blob). Blank = parse the response body as JSON.
+    setHttpHtmlExtract(id, v) { const s = this._http(id); if (s) s.request.html_extract = v || ""; }
     // headers/query are maps; the panel rebuilds the whole {k:v} from its rows on each edit.
     setProducerMap(id, kind, obj) { const s = this._http(id); if (s && (kind === "headers" || kind === "query")) s.request[kind] = obj || {}; }
     setHttpKeyTransform(id, m) {
@@ -770,6 +773,9 @@ export class GraphModel {
     }
     // which source column names the item (fed to the URL template / catalogue resolver). Default "name".
     setProducerSourceField(id, f) { const pn = this.producerNode(id); if (pn) pn.source_field = f || "name"; }
+    // optional: a NESTED array column to source items from instead of a top-level scalar — every
+    // element's `source_field` value, deduped across every row. Blank = source_field is a plain column.
+    setProducerSourceArray(id, v) { const pn = this.producerNode(id); if (pn) pn.source_array = v || ""; }
     // columns available across a producer's source datasets/subsets (for the name-field picker)
     producerSourceColumns(pn) {
         const out = [];

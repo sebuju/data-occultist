@@ -1,11 +1,16 @@
 """Generic HTTP producer — fetch JSON from a taught URL and map JSON paths to dataset
-columns. Two shapes, chosen by the spec:
+columns. Three shapes, chosen by the spec:
 
 * **per item** (default) — fetch the URL once per source item (``{name}``/``{key}``
   substituted) and map the response to ONE row (warframe.market pricing works this way).
-* **list / explode** (``HttpSpec.explode`` set) — fetch the URL ONCE (no sources) and
-  expand nested arrays into MANY rows, one per leaf (the WFCD relic table works this
-  way: ``explode: [relics, rewards]`` -> one row per (relic, reward)).
+* **list / explode, no sources** (``HttpSpec.explode`` set, ``sources`` empty) — fetch the
+  URL ONCE and expand nested arrays into MANY rows, one per leaf (the WFCD relic table
+  works this way: ``explode: [relics, rewards]`` -> one row per (relic, reward)).
+* **per item / explode** (``HttpSpec.explode`` set, ``sources`` wired) — fetch the URL once
+  PER source item and expand EACH response into many rows (a builds-list-per-frame feed:
+  one fetch per frame, one row per build). Every row is tagged with the source item under
+  the node's ``source_field`` (e.g. ``item_id``), same convention as the per-item row's
+  injected identity column.
 
 This is the one network backend: warframe.market pricing AND the relic reward table are
 just ``http`` nodes in a profile (URL, headers, and response mapping authored in the
@@ -290,9 +295,13 @@ def _build_corrector():
 
 
 def gather_source_names(data_dir, game: str, profile, sources: list[str],
-                        name_field: str = "name") -> list[str]:
+                        name_field: str = "name", array_field: str = "") -> list[str]:
     """Unique item names across a node's ``sources`` (datasets/views), first-seen order.
-    A bare dataset -> its PRESENT rows; a view -> its computed rows (filters apply)."""
+    A bare dataset -> its PRESENT rows; a view -> its computed rows (filters apply).
+
+    ``array_field``, when set, reads a NESTED array column instead of a scalar: every
+    element of every row's ``array_field`` list contributes its ``name_field`` value (a
+    build row's ``slots`` -> the distinct mod ids used across every element, e.g.)."""
     from .subset import compute_view_rows
 
     def fetch(ds, _agg):     # a plain dataset's PRESENT records only (sold/removed items excluded)
@@ -303,9 +312,11 @@ def gather_source_names(data_dir, game: str, profile, sources: list[str],
         sub = profile.subset_def(s) if profile else None
         rows = compute_view_rows(profile, s, fetch)["rows"] if sub else fetch(s, None)
         for r in rows:
-            nm = r.get(name_field)
-            if nm and str(nm) not in seen:
-                seen[str(nm)] = None
+            elems = r.get(array_field) if array_field else [r]
+            for e in (elems or []):
+                nm = e.get(name_field) if isinstance(e, dict) else None
+                if nm and str(nm) not in seen:
+                    seen[str(nm)] = None
     return list(seen.keys())
 
 
@@ -347,16 +358,20 @@ def request_parts(spec, key: str, name: str):
 def resolved_inputs(data_dir, game: str, profile, node, limit: int = 50) -> dict:
     """Preview: the item names this node's sources feed and how each resolves to a ``{key}``
     (so the user sees what it will request before running). Capped at ``limit``; ``total`` is
-    the true count. ``columns`` is the schema this node emits (``name`` + each ``out_field``)."""
+    the true count. ``columns`` is the schema this node emits (the injected identity column +
+    each ``out_field``)."""
     spec = getattr(node, "http", None)
+    key_field = getattr(node, "source_field", "name") or "name"
     outs = [f.out_field for f in (spec.fields if spec else []) if f.out_field]
-    cols = outs if "name" in outs else ["name", *outs]   # list mode maps its own ``name`` column
+    cols = outs if key_field in outs else [key_field, *outs]
+    has_sources = bool(getattr(node, "sources", []) or [])
     if spec is None:
         return {"inputs": [], "total": 0, "columns": cols}
-    if spec.explode:            # list mode: no per-item sources — the one fetch yields every row
+    if spec.explode and not has_sources:   # list mode: no per-item sources — one fetch, many rows
         return {"inputs": [], "total": 0, "columns": cols}
     names = gather_source_names(data_dir, game, profile, list(getattr(node, "sources", []) or []),
-                                name_field=getattr(node, "source_field", "name"))
+                                name_field=getattr(node, "source_field", "name"),
+                                array_field=getattr(node, "source_array", ""))
     total = len(names)
     shown = names[:limit] if (limit and limit > 0) else names
     resolve = build_resolver(spec, data_dir, game, getattr(node, "id", "producer"))
@@ -372,11 +387,13 @@ def probe_item(data_dir, game: str, profile, node, item: str | None = None,
     spec = getattr(node, "http", None)
     if spec is None or not getattr(spec, "request", None) or not spec.request.url:
         return {"error": "this node has no http request configured yet"}
-    if spec.explode:            # list mode: fetch the one URL, show the sample + expanded rows
+    has_sources = bool(getattr(node, "sources", []) or [])
+    if spec.explode and not has_sources:   # list mode: fetch the one URL, show sample + expanded rows
         url, headers, query = request_parts(spec, "", "")
         try:
             raw = http_get_json(url, headers=headers, timeout=spec.request.timeout,
-                                method=spec.request.method or "GET", query=query)
+                                method=spec.request.method or "GET", query=query,
+                                html_extract=spec.request.html_extract)
         except Exception as e:  # noqa: BLE001 - report any fetch/parse failure to the user
             return {"name": "(list)", "key": None, "url": url, "error": str(e)}
         rooted = json_path(raw, spec.root)
@@ -385,7 +402,8 @@ def probe_item(data_dir, game: str, profile, node, item: str | None = None,
                 "mapped": map_rows(rooted, spec)[:sample_cap]}
     if not item:
         names = gather_source_names(data_dir, game, profile, list(getattr(node, "sources", []) or []),
-                                    name_field=getattr(node, "source_field", "name"))
+                                    name_field=getattr(node, "source_field", "name"),
+                                    array_field=getattr(node, "source_array", ""))
         item = names[0] if names else None
     if not item:
         return {"error": "no item to probe — wire a source (or pass one)"}
@@ -396,11 +414,15 @@ def probe_item(data_dir, game: str, profile, node, item: str | None = None,
     url, headers, query = request_parts(spec, key, str(item))
     try:
         raw = http_get_json(url, headers=headers, timeout=spec.request.timeout,
-                            method=spec.request.method or "GET", query=query)
+                            method=spec.request.method or "GET", query=query,
+                            html_extract=spec.request.html_extract)
     except Exception as e:  # noqa: BLE001 - report any fetch/parse failure to the user
         return {"name": item, "key": key, "url": url, "error": str(e)}
     rooted = json_path(raw, spec.root)
     sample = rooted[:sample_cap] if isinstance(rooted, list) else rooted
+    if spec.explode:            # per-item explode: show every row this one item's fetch expands to
+        return {"name": item, "key": key, "url": url, "sample": sample,
+                "mapped": map_rows(rooted, spec)[:sample_cap]}
     return {"name": item, "key": key, "url": url, "sample": sample,
             "mapped": map_response(rooted, spec.fields)}
 
@@ -420,13 +442,14 @@ class HttpProducer(ProducerSource):
         spec = getattr(node, "http", None)
         if spec is None or not getattr(spec, "request", None) or not spec.request.url:
             return {"total": 0, "fetched": 0, "failed": 0}
-        if spec.explode:                                   # list mode: one fetch, many rows
-            return self._run_list(ctx, spec)
+        if spec.explode and not getattr(node, "sources", []):
+            return self._run_list(ctx, spec)     # list mode: one fetch (no sources), many rows
 
         # Item names: explicit ctx.items (e.g. on_change changed keys) > the node's sources.
         names = [str(n) for n in ctx.items] if ctx.items else gather_source_names(
             ctx.data_dir, ctx.game, ctx.profile, list(getattr(node, "sources", []) or []),
-            name_field=getattr(node, "source_field", "name"))
+            name_field=getattr(node, "source_field", "name"),
+            array_field=getattr(node, "source_array", ""))
 
         # Resolve each name to its fetch key, deduped by key (one fetch covers duplicates).
         resolve = build_resolver(spec, ctx.data_dir, ctx.game, getattr(node, "id", "producer"))
@@ -442,18 +465,29 @@ class HttpProducer(ProducerSource):
         def fetch_one(k: str) -> object:
             url, headers, query = request_parts(spec, k, key_to_name[k])
             return http_get_json(url, headers=headers, timeout=spec.request.timeout,
-                                 method=spec.request.method or "GET", query=query)
+                                 method=spec.request.method or "GET", query=query,
+                                 html_extract=spec.request.html_extract)
 
         store = store_for(ctx.data_dir, ctx.game, ctx.dataset, profile=ctx.profile,
                           key=ctx.key or KeySpec(fields=("name",)))
         store.begin_batch()
 
+        # The source item's identity is injected under source_field (default "name") —
+        # the same convention as every per-item producer's output row. In explode mode this
+        # tags every row a fetch expands into (e.g. a build row keeps its frame's item_id).
+        key_field = getattr(node, "source_field", "name") or "name"
+
         def write_one(k: str, name: str, data: object) -> None:
             rooted = json_path(data, spec.root)
+            if spec.explode:
+                rows = [{key_field: name, **row} for row in map_rows(rooted, spec)]
+                if rows:
+                    store.record_many(rows)     # one txn per item's rows, not per row
+                return
             row = map_response(rooted, spec.fields)
             if row is None:
                 return
-            store.record_seen({"name": name, **row})
+            store.record_seen({key_field: name, **row})
 
         return run_sweep(items, fetch_one, write_one, dataset_store=store,
                          throttle=float(getattr(node, "throttle", 0.4) or 0.0),
@@ -467,7 +501,8 @@ class HttpProducer(ProducerSource):
         url, headers, query = request_parts(spec, "", "")
         try:
             data = http_get_json(url, headers=headers, timeout=spec.request.timeout,
-                                 method=spec.request.method or "GET", query=query)
+                                 method=spec.request.method or "GET", query=query,
+                                 html_extract=spec.request.html_extract)
         except Exception as e:  # noqa: BLE001 - a fetch/parse failure leaves the prior rows intact
             return {"total": 0, "fetched": 0, "failed": 1, "error": str(e)}
         if stop():                                         # cancelled before we wrote anything

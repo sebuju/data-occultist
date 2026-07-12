@@ -1797,6 +1797,7 @@ function wireProducer(div, n) {
     div.querySelector(".pr-method")?.addEventListener("change", (e) => { model.setHttpMethod(id, e.target.value); save(); });
     div.querySelector(".pr-url")?.addEventListener("change", (e) => { model.setHttpUrl(id, e.target.value); save(); });
     div.querySelector(".pr-timeout")?.addEventListener("change", (e) => { model.setHttpTimeout(id, e.target.value); save(); });
+    div.querySelector(".pr-htmlextract")?.addEventListener("change", (e) => { model.setHttpHtmlExtract(id, e.target.value); save(); });
     // headers/query maps: recompute the whole {k:v} from the rows, then rebuild so a fresh add-row appears
     div.querySelectorAll(".pr-map-k, .pr-map-v").forEach((el) => el.addEventListener("change", () => {
         const kind = el.closest(".pr-map-row").dataset.kind;
@@ -1855,6 +1856,7 @@ function wireProducer(div, n) {
 
     // which source column names the item (next sweep uses it — no rebuild)
     div.querySelector(".enr-keyfld-sel")?.addEventListener("change", (e) => { model.setProducerSourceField(id, e.target.value); save(); });
+    div.querySelector(".pr-srcarray")?.addEventListener("change", (e) => { model.setProducerSourceArray(id, e.target.value); save(); });
     // add an item source via the chip add-select (same input the subset uses)
     div.querySelector(".pr-addsrc")?.addEventListener("change", (e) => {
         if (e.target.value && model.addProducerSource(id, e.target.value)) rebuild();

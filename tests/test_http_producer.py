@@ -170,6 +170,84 @@ def test_probe_item_list_mode_shows_rows(tmp_path, monkeypatch):
     assert {"name": "Axi A1", "item": "Braton Prime", "rarity": "Common"} in out["mapped"]
 
 
+def _builds_spec():
+    return HttpSpec(
+        request=HttpRequest(url="https://x/builds/?item_id={key}", timeout=30),
+        key_transform="none", key_encode=False, root="results", explode=[""],
+        fields=[HttpField(out_field="build_id", path="id", required=True),
+                HttpField(out_field="title", path="title")])
+
+
+def test_http_producer_per_item_explode_tags_rows_with_source(tmp_path, monkeypatch):
+    # Per-item-explode: fetch the builds list ONCE PER frame, expand each response into
+    # many build rows, each tagged with its frame's item_id (source_field).
+    builds = {
+        "7083": {"results": [{"id": 1, "title": "Broken Void"}, {"id": 2, "title": "Budget Xaku"}]},
+        "6507": {"results": [{"id": 3, "title": "Pagemaster Tank"}]},
+    }
+
+    def fake_get(url, **kw):
+        item_id = url.rsplit("=", 1)[-1]
+        return builds[item_id]
+    monkeypatch.setattr(http_producer, "http_get_json", fake_get)
+
+    node = ProducerDef(id="builds", dataset="overframe_builds", type="http", sources=["frames"],
+                       source_field="item_id", http=_builds_spec())
+    key = KeySpec(fields=("build_id",))
+    ctx = ProducerCtx(data_dir=str(tmp_path), game="g", node=node, dataset="overframe_builds",
+                      key=key, profile=None, items=["7083", "6507"], workers=1)
+    res = HttpProducer().run(ctx)
+    assert res == {"total": 2, "fetched": 2, "failed": 0}   # 2 fetches (one per frame)
+
+    out = DatasetStore(tmp_path, "g", "overframe_builds", key=key)
+    rows = {r["build_id"]: r for r in out.records()}
+    assert len(rows) == 3                                    # 2 + 1 rows, tagged with their frame
+    assert rows[1]["title"] == "Broken Void" and rows[1]["item_id"] == "7083"
+    assert rows[2]["item_id"] == "7083"
+    assert rows[3]["title"] == "Pagemaster Tank" and rows[3]["item_id"] == "6507"
+
+
+def test_probe_item_per_item_explode_shows_rows_for_one_item(tmp_path, monkeypatch):
+    monkeypatch.setattr(http_producer, "http_get_json", lambda url, **kw:
+                        {"results": [{"id": 1, "title": "Broken Void"}, {"id": 2, "title": "Budget Xaku"}]})
+    node = ProducerDef(id="builds", dataset="overframe_builds", type="http", sources=["frames"],
+                       source_field="item_id", http=_builds_spec())
+    out = probe_item(str(tmp_path), "g", None, node, item="7083")
+    assert out["name"] == "7083"
+    assert out["mapped"] == [{"build_id": 1, "title": "Broken Void"},
+                             {"build_id": 2, "title": "Budget Xaku"}]
+
+
+def test_gather_source_names_flattens_nested_array_field(tmp_path):
+    from oc.enrich.http_producer import gather_source_names
+
+    key = KeySpec(fields=("build_id",))
+    builds = store_for(str(tmp_path), "g", "overframe_builds", key=key)
+    builds.begin_batch()
+    builds.record_seen({"build_id": 1, "slots": [{"mod": 802}, {"mod": 831}]})
+    builds.record_seen({"build_id": 2, "slots": [{"mod": 831}, {"mod": 792}]})
+    builds.save()
+
+    node = ProducerDef(id="builds", dataset="overframe_builds", type="http",
+                       key={"fields": ["build_id"]})
+    profile = GameProfile(name="g", datasets=[{"id": "overframe_builds"}], producers=[node])
+    names = gather_source_names(str(tmp_path), "g", profile, ["overframe_builds"],
+                                name_field="mod", array_field="slots")
+    assert sorted(names) == ["792", "802", "831"]   # deduped across both rows' slots
+
+
+def test_gather_source_names_no_array_field_is_unchanged(tmp_path):
+    from oc.enrich.http_producer import gather_source_names
+
+    inv = store_for(tmp_path, "g", "master", key=KeySpec(fields=("name",)))
+    inv.begin_batch()
+    inv.record_seen({"name": "Soma Prime"})
+    inv.save()
+
+    names = gather_source_names(str(tmp_path), "g", None, ["master"], name_field="name")
+    assert names == ["Soma Prime"]
+
+
 def test_http_producer_cancel_flushes_partial(tmp_path, monkeypatch):
     monkeypatch.setattr(http_producer, "http_get_json", lambda url, **kw: _orders(10))
 
