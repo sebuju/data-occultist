@@ -178,6 +178,22 @@ def test_sound_node_defaults_and_roundtrips():
     assert not hasattr(reloaded.triggers[0], "sound")
 
 
+def test_generated_synth_cue_roundtrips():
+    # a GENERATED cue: instead of a file, the sound node carries a synth spec (wave + pitch-over-
+    # time points + shape knobs). File stays "". Survives dump/reload with its points intact.
+    from oc.profile.models import SynthDef, SynthPoint
+    syn = SynthDef(points=[SynthPoint(t=0.0, p=0.5), SynthPoint(t=1.0, p=0.9)],
+                   length_ms=300, crush=20)
+    p = GameProfile(name="g", sounds=[SoundDef(id="pickup", synth=syn, volume=0.7)])
+    reloaded = GameProfile.model_validate(p.model_dump())
+    s = reloaded.sounds[0]
+    assert s.file == "" and s.synth is not None
+    assert s.synth.wave == "square" and s.synth.length_ms == 300 and s.synth.crush == 20
+    assert [(pt.t, pt.p) for pt in s.synth.points] == [(0.0, 0.5), (1.0, 0.9)]
+    # a plain file node still has no synth
+    assert SoundDef(id="f", file="ping.wav").synth is None
+
+
 def _join_profile():
     # a trigger watching a SUBSET that inner-joins inventory + prices on name. `updated` is a
     # volatile timestamp the view HIDES — rewritten every price refresh but not user-visible.

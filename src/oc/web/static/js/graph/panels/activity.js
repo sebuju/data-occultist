@@ -15,7 +15,7 @@ import { renderTriggerHistory } from "../history_node.js";
 import { refreshRegister } from "../register_node.js";
 import { liveCollecting } from "./livewin.js";
 import { panZoomTo } from "../camera.js";
-import { playSound } from "../sound.js";
+import { playCue } from "../sound.js";
 import { svg } from "../../dom.js";
 
 // ---- activity panel (live sweeps + precapture) ----------------------------
@@ -258,7 +258,7 @@ function detectFires(data) {
         const tr = model.trigger(t.id);
         for (const pid of tr?.targets || []) {
             const sn = model.soundNode(pid);
-            if (sn) playSound(sn.file, sn.volume ?? 1);
+            if (sn) playCue(sn);
         }
     }
 }

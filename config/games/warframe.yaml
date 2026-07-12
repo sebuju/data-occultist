@@ -4536,7 +4536,21 @@ sounds:
   volume: 0.45
   enabled: true
 - id: bob
-  file: bob.wav
+  file: ''
+  synth:
+    wave: triangle
+    points:
+    - t: 0.0
+      p: 0.6
+    - t: 0.1
+      p: 0.85
+    - t: 1.0
+      p: 0.05
+    length_ms: 180
+    attack: 4
+    decay: 55
+    vibrato: 0
+    crush: 18
   volume: 0.5
   enabled: true
 actions:
@@ -5249,9 +5263,15 @@ layout:
       custW: true
       custH: true
     sound:bob:
-      x: -3820.0
-      y: -2800.0
+      x: -4440.0
+      y: -2900.0
+      w: 320.0
+      h: 500.0
       collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
     win:mission_rewards:
       x: 1900.0
       y: 1900.0
@@ -5289,16 +5309,16 @@ layout:
       y: 2540.0
       collapsed: false
     trigger:ab_trigger:
-      x: -3560.0
-      y: -2800.0
+      x: -4040.0
+      y: -2900.0
       w: 280.0
       h: 320.0
       collapsed: false
       custW: false
       custH: true
     hist:ab_trigger:
-      x: -3200.0
-      y: -2800.0
+      x: -3620.0
+      y: -2900.0
       w: 420.0
       h: 320.0
       collapsed: false
@@ -5868,7 +5888,7 @@ layout:
       x: 11300.0
       y: 4300.0
       w: 360.0
-      h: 720.0
+      h: 722.0
       collapsed: false
       custW: false
       custH: true
@@ -5992,8 +6012,8 @@ layout:
     register:loadout_register:
       x: 8320.0
       y: -500.0
-      w: 1060.0
-      h: 1260.0
+      w: 1040.0
+      h: 780.0
       collapsed: false
       custW: true
       custH: true
@@ -6776,6 +6796,7 @@ layout:
     - ro:live_game_window:ability_4_cd
     - sound:bob
     - hist:ab_trigger
+    - action:action
     outline:
       color: '#3a4150'
       style: none

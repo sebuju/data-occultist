@@ -1111,19 +1111,47 @@ class ToastDef(BaseModel):
         return data
 
 
-class SoundDef(BaseModel):
-    """A *sound node*: plays an audio file **in the browser** when fired. A trigger names its
-    ``id`` in ``targets`` (like a toast/producer), so any trigger condition can play a sound —
-    or the node's own test button auditions it. Purely a client-side effect: the web UI's
-    fire-detector plays it, so it never touches the collector loop or the server-side scheduler
-    (which simply skips a sound id among a trigger's targets).
+class SynthPoint(BaseModel):
+    """One node on a synth cue's pitch-over-time envelope. Both are 0..1 fractions
+    (resolution-independent, like every box): ``t`` = position along the cue's length,
+    ``p`` = pitch (0 = lowest, 1 = highest — the forge maps it to a note)."""
 
-    ``file`` is a filename in the web ``static/sounds/`` folder (served at ``/sounds/<file>``);
-    ``volume`` is 0..1 playback gain.
+    t: float = Field(ge=0.0, le=1.0)
+    p: float = Field(ge=0.0, le=1.0)
+
+
+class SynthDef(BaseModel):
+    """A *generated* sound cue: instead of a file, the sound node synthesises the cue in the
+    browser (Web Audio) from this tiny param set. Authored in the node's inline "forge". The
+    pitch sweeps through ``points`` over ``length_ms``; ``wave`` picks the oscillator; the rest
+    shape the amp envelope, vibrato, and bit-crush. Rendered once to a buffer and cached — never
+    re-synthesised per play. ``volume`` is NOT here: it stays on :class:`SoundDef` as a
+    playback-time gain so changing it doesn't invalidate the cached render."""
+
+    wave: str = "square"                    # square | sine | sawtooth | triangle
+    points: list[SynthPoint] = []           # pitch-over-time envelope (empty = silent)
+    length_ms: int = Field(default=220, ge=10, le=5000)
+    attack: int = Field(default=4, ge=0, le=100)     # amp-envelope shape (forge knobs, 0..100)
+    decay: int = Field(default=55, ge=0, le=100)
+    vibrato: int = Field(default=0, ge=0, le=100)
+    crush: int = Field(default=0, ge=0, le=100)
+
+
+class SoundDef(BaseModel):
+    """A *sound node*: plays a cue **in the browser** when fired. A trigger names its ``id`` in
+    ``targets`` (like a toast/producer), so any trigger condition can play a sound — or the
+    node's own test button auditions it. Purely a client-side effect: the web UI's fire-detector
+    plays it, so it never touches the collector loop or the server-side scheduler (which simply
+    skips a sound id among a trigger's targets).
+
+    The cue is EITHER a file or a generated synth: ``file`` is a filename in the web
+    ``static/sounds/`` folder (served at ``/sounds/<file>``), OR ``synth`` holds a generated
+    cue (and ``file`` stays ``""``). ``volume`` is 0..1 playback gain for both.
     """
 
     id: str
     file: str = ""                          # sound filename in the web sounds/ folder ("" = silent)
+    synth: SynthDef | None = None           # a generated cue (set INSTEAD of file) — see SynthDef
     volume: float = 1.0                     # playback volume (0..1)
     enabled: bool = True
 

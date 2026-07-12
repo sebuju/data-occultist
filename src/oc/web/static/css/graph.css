@@ -1016,6 +1016,62 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .mr-kind { flex: 0 0 auto; font-size: var(--fs-xs); }   /* the field type / tell kind, dimmed */
 .mr-badge { flex: 0 0 auto; font-size: var(--fs-xs); padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); }
 .mr-val, .mr-mark { flex: 0 0 auto; min-width: 0; overflow-wrap: anywhere; text-align: right; }
+
+/* register "memory bank": a fluid grid of square value-slots (one per held key). Column count
+   follows the node width via auto-fill + a rem floor — no fixed px, so it reflows as the node is
+   resized (narrow = 2 across, wide = 4-5). Confidence rides --cc (tile tint + a bottom bar whose
+   width = --mag); dead slots (null / empty) go neutral + hatched and never take a live colour. */
+.membank { display: grid; grid-template-columns: repeat(auto-fit, minmax(4.6rem, 1fr));
+    gap: 4px; }   /* auto-fit: full rows stretch edge-to-edge, slack falls to the end/bottom */
+.mb-cell {
+    --cc: var(--dim);
+    position: relative; aspect-ratio: 1 / 1; min-width: 0; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 4px 5px 5px; border: 1px solid var(--line); border-radius: 5px;
+    background: var(--card-2);   /* tier class paints the confidence colour (below) */
+    font-family: var(--font-mono); cursor: pointer;   /* click pans to the readout node */
+    border-color: color-mix(in oklab, var(--cc) 65%, var(--card-2));
+}
+.mb-cell:hover { border-color: color-mix(in oklab, var(--cc) 100%, var(--card-2)); }   /* inset: no bleed into the grid gaps */
+.mb-k { font-size: 9px; letter-spacing: .03em; text-transform: uppercase; color: var(--muted);
+    overflow-wrap: anywhere; }   /* wrap the full key rather than clip it */
+.mb-v { font-size: var(--fs-sm); font-weight: 600; line-height: 1.15; color: var(--text);
+    align-self: anchor-center; overflow: hidden; word-break: break-word; font-variant-numeric: tabular-nums;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-align: center; }
+.mb-meta { display: flex; align-items: center; justify-content: space-between; gap: 4px;
+    visibility: hidden; }   /* seen + conf only on hover (visibility keeps the slot -> no reflow) */
+.mb-cell:hover .mb-meta { visibility: visible; }
+.mb-seen { font-size: 9px; color: var(--dim); }
+.mb-seen.mb-preview { color: var(--nt); opacity: .8; }
+.mb-conf { font-size: 9px; color: var(--cc); font-variant-numeric: tabular-nums; }
+/* confidence = the cell background, in the three app tiers (>=.8 / >=.5 / low). --cc keeps the
+   matching hue for the corner score + accents. */
+.mb-cell.ok   { --cc: var(--ok);     background: color-mix(in oklab, var(--ok) 15%, var(--card-2)); }
+.mb-cell.warn { --cc: var(--warn);   background: color-mix(in oklab, var(--warn) 20%, var(--card-2)); }
+.mb-cell.bad  { --cc: var(--danger); background: color-mix(in oklab, var(--danger) 20%, var(--card-2)); }
+.mb-cell.void { --cc: var(--dim); border-style: dashed;
+    background: repeating-linear-gradient(-45deg, #ffffff05 0 6px, #0000 6px 12px), var(--card-2); }
+.mb-cell.void .mb-v { align-self: center; margin: auto 0; font-size: 16px; font-weight: 400;
+    color: var(--dim); letter-spacing: .05em; }
+.mb-cell.void .mb-conf { color: var(--dim); }
+/* per-slot remove: bare hover-only trash glyph, same size/look as the source-chip trash (default
+   1em .ic-trash; hidden-until-hover is the shared node rule `.gnode *:not(:hover) > .btn-trash`).
+   Absolutely placed so it never shifts the slot. Armed two-click (rule 2, no confirm dialog). */
+.mb-rmsrc { position: absolute; top: 4px; right: 2px; padding: 0; border: 0; box-shadow: none;
+    min-height: 0; z-index: 2; }
+.mb-cell.armed { box-shadow: inset 0 0 0 1px var(--danger); }
+.mb-cell.armed .mb-rmsrc { visibility: visible; color: var(--danger); }
+/* trailing "+" slot: adds a readout source. A native select is overlaid invisibly so a click opens
+   the picker; hidden when nothing is left to add. */
+.mb-add { position: relative; display: flex; align-items: center; justify-content: center;
+    aspect-ratio: 1 / 1; border: 1px dashed var(--line); border-radius: 5px; color: var(--muted);
+    cursor: pointer; }
+.mb-add:hover { border-color: var(--nt); color: var(--nt);
+    background: color-mix(in oklab, var(--nt) 8%, transparent); }
+.mb-add.mb-add-empty { display: none; }
+.mb-plus { font-size: 20px; line-height: 1; font-family: var(--font-mono); pointer-events: none; }
+.mb-addsel { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer;
+    border: 0; padding: 0; -webkit-appearance: none; appearance: none; }
 .item-lists { margin-top: 6px; }
 .item-lists .il-h { margin-top: 16px; margin-bottom: 4px; }   /* look = shared .gnode subheading rule */
 .ti-row, .key-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
@@ -1357,4 +1413,49 @@ button.gp-scheme[data-sid^="s_"]::before {
 .src-ptab th { background: var(--node-head); position: sticky; top: 0; }
 /* raw source-line column: context, not an extracted field — muted + monospace, a touch roomier */
 .src-ptab .src-pline { color: var(--muted); font-family: var(--mono, monospace); max-width: 360px; }
+
+/* ---- sound node: the inline synth "forge" (generator mode). Everything is FLUID — sizes in
+   %/em/aspect-ratio, no fixed px — so it scales with the resizable node. Colours ride the node's
+   own --nt tint (sound = mauve) like every other node primitive. ---- */
+.gnode.sound.has-rules { width: 300px; }   /* resting width when the forge is open (borrow the rule-node preset) */
+.sf-plot { position: relative; width: 100%; aspect-ratio: 12 / 5; margin-top: .4em;
+    border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+    background: linear-gradient(0deg, #0a0e15, #0c1119); }
+.sf-plot-c { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.sf-hud { position: absolute; top: .3em; left: .6em; right: .6em; display: flex; justify-content: space-between;
+    align-items: baseline;   /* total duration + help tip share one baseline */
+    font-family: var(--mono, monospace); font-size: .78em; color: var(--nt); opacity: .9; pointer-events: none; }
+/* the help tip is guidance, not data — sits on the hud row (baseline-aligned with the total
+   duration), only surfaced on hover so it doesn't clutter the plot */
+.sf-tip { text-align: right; font-size: .74em; color: var(--dim);
+    opacity: 0; transition: opacity .12s ease; }
+.sf-plot:hover .sf-tip { opacity: 1; }
+.sf-waves { display: flex; gap: .4em; margin-top: .5em; }
+.sf-wbtn { flex: 1; aspect-ratio: 2 / 1; max-height: 2.2em; display: grid; place-items: center;
+    background: transparent; border: 1px solid var(--line); border-radius: 5px; color: var(--dim); cursor: pointer; }
+.sf-wbtn svg { width: 70%; height: 60%; }
+.sf-wbtn svg * { fill: none; stroke: currentColor; stroke-width: 2; }
+.sf-wbtn.on { border-color: var(--nt); color: var(--nt); background: color-mix(in oklab, var(--nt) 10%, transparent); }
+.sf-knobs { display: grid; grid-template-columns: repeat(5, 1fr); gap: .55em; margin-top: .2em; }
+.sf-knob { display: flex; flex-direction: column; align-items: center; gap: .15em; min-width: 0; }
+/* cursor: the node-wide `input { cursor: text }` rule wrongly claims range sliders — force pointer */
+.sf-knob input[type="range"] { width: 100%; min-width: 0; accent-color: var(--nt); cursor: pointer; }
+.sf-knob .kl { font-family: var(--mono, monospace); font-size: .7em; text-transform: uppercase; color: var(--muted); }
+.sf-knob .sf-kv { font-family: var(--mono, monospace); font-size: .7em; color: var(--nt); font-variant-numeric: tabular-nums; }
+.sf-cues { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip.sf-cue {     
+    cursor: pointer;
+    border: unset;
+    border-radius: unset;
+    display: block;
+    background: unset;
+    padding: 0;
+    min-height: unset; 
+
+    &:hover {
+      filter: drop-shadow(2px 4px 6px color-mix(in srgb, var(--nt) 50%, transparent));
+    }
+}
+.sf-cue::before { content: "["; }
+.sf-cue::after { content: "]"; }
 

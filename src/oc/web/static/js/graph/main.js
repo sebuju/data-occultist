@@ -17,7 +17,9 @@ mirrorConsole();   // surface uncaught errors + console.error/warn in the log ba
 import { wireProducerNode } from "./producer_node.js";
 import { GRID, snap, snapUp, showSizeHud, hideSizeHud, addResizeGrips, beginDrag } from "./dragresize.js";
 import { floatWins } from "./floatwin.js";
-import { playSound } from "./sound.js";
+import { playSound, playCue } from "./sound.js";
+import { playSynth } from "./synth.js";
+import { GENERATOR } from "./sound_node.js";
 import { setTableStore } from "./table.js";
 import { setVTableStore, reapplyPersistedVTables, vtableById, liveVTables } from "../vtable.js";
 import { initPersist, persist, setScrubHook } from "./persist.js";
@@ -436,7 +438,7 @@ initPersist({
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
 const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", hist: "vttable", reg: "region", register: "register", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
-function nodeTypeOf(id) { return id === "game" ? "game" : id === "atlas" ? "atlas" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
+export function nodeTypeOf(id) { return id === "game" ? "game" : id === "atlas" ? "atlas" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
     world: () => $("ggroups"),
     superWorld: () => $("sgroups"),
@@ -2572,6 +2574,7 @@ function wireToastImage(sec, x, n) {
 function wireSound(div, n) {
     const x = n.ref;
     const $ = (sel) => div.querySelector(sel);
+    stopForgePreview(x.id);   // a rebuild replaces the DOM — drop any stale preview + its doc listener
     $(".sndrename")?.addEventListener("change", (e) => {
         const oldId = x.id;
         renameNode(e.target, oldId,
@@ -2579,19 +2582,231 @@ function wireSound(div, n) {
             () => movePos(`sound:${oldId}`, `sound:${x.id}`),
             () => { render(); autosave(null); });
     });
-    $(".sn-file")?.addEventListener("change", (e) => { model.setSoundFile(x.id, e.target.value); autosave(null); });
+    $(".sn-file")?.addEventListener("change", (e) => {
+        // the "[generator]" sentinel flips the node into synth mode (seeds a default cue) and grows
+        // the inline forge; any other value is a plain file. Rebuild so the forge appears/disappears.
+        if (e.target.value === GENERATOR) model.enableSoundSynth(x.id);
+        else model.setSoundFile(x.id, e.target.value);
+        rebuildNode(`sound:${x.id}`);
+        autosave(null);
+    });
     // volume is a segmented meter now (confMeter) — it dispatches `change` on drag; the bar shows
     // its own level, so there's no separate % label to sync. autosave coalesces the writes.
     $(".sn-volume")?.addEventListener("change", (e) => {
         model.setSoundVolume(x.id, e.target.value);
         autosave(null);
     });
-    // ▶ audition the sound now at the current volume (also unlocks browser autoplay for later auto-fires)
-    $(".sn-test")?.addEventListener("click", () => {
+    // ▶ audition. File mode: one-shot. Synth mode: toggle a LOOPING preview so you can tweak while
+    // it repeats (a real fire is always one-shot — playCue in activity.js). Also unlocks autoplay.
+    $(".sn-test")?.addEventListener("click", (e) => {
         const s = model.soundNode(x.id);
-        if (!s?.file) return;
-        playSound(s.file, s.volume ?? 1);
+        if (!s) return;
+        if (!s.synth) { playCue(s); return; }
+        toggleForgePreview(div, x.id, e.currentTarget);
     });
+    if (x.synth) wireForge(div, x.id);
+}
+
+// ---- the inline synth "forge" (generator mode) --------------------------------
+// One live loop-preview source per open forge (keyed by node id) so PLAY toggles and edits restart
+// it. Not persisted — purely a tweak aid.
+const forgePreview = new Map();   // soundId -> { ctl, btn, off }
+function stopForgePreview(id) {
+    const p = forgePreview.get(id);
+    if (!p) return;
+    p.ctl?.stop(); p.off?.();
+    p.btn && (p.btn.classList.remove("on"), p.btn.lastChild.textContent = "play");
+    forgePreview.delete(id);
+}
+async function toggleForgePreview(div, id, btn) {
+    if (forgePreview.get(id)) { stopForgePreview(id); return; }
+    const s = model.soundNode(id);
+    if (!s?.synth) return;
+    const ctl = await playSynth(s.synth, s.volume ?? 1, { loop: true });
+    // stop the preview when focus leaves the node — a pointerdown anywhere outside this node's card
+    // (another node, empty canvas, a panel). Capture phase so a graph handler that stops propagation
+    // can't swallow it. Clicks INSIDE the node (knobs, plot, presets, the button itself) are ignored
+    // here and manage the loop themselves.
+    const onDown = (e) => { if (!div.contains(e.target)) stopForgePreview(id); };
+    document.addEventListener("pointerdown", onDown, true);
+    forgePreview.set(id, { ctl, btn, off: () => document.removeEventListener("pointerdown", onDown, true) });
+    btn.classList.add("on"); btn.lastChild.textContent = "stop";
+}
+// restart the loop with the current spec so edits are audible immediately (no-op if not previewing)
+async function refreshForgePreview(id) {
+    const p = forgePreview.get(id);
+    if (!p) return;
+    const s = model.soundNode(id);
+    p.ctl?.stop();
+    p.ctl = s?.synth ? await playSynth(s.synth, s.volume ?? 1, { loop: true }) : null;
+}
+
+function wireForge(div, id) {
+    const $ = (sel) => div.querySelector(sel);
+    const canvas = $(".sf-plot-c");
+    if (!canvas) return;
+    const gx = canvas.getContext("2d");
+    const NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    const pToNote = (p) => { const s = Math.round(p * 36); return NOTES[s % 12] + (3 + Math.floor(s / 12)); };
+    const spec = () => model.soundNode(id)?.synth;
+    const commit = () => autosave(null);
+    let drag = -1;
+
+    const nt = () => getComputedStyle(canvas).getPropertyValue("--nt").trim() || "#c98cf0";
+    function draw() {
+        const s = spec(); if (!s) return;
+        const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.max(1, Math.round(r.width * dpr)); canvas.height = Math.max(1, Math.round(r.height * dpr));
+        const W = canvas.width, H = canvas.height, pts = s.points || [];
+        gx.clearRect(0, 0, W, H);
+        gx.lineWidth = 1; gx.strokeStyle = "rgba(201,140,240,.14)";
+        for (let i = 0; i <= 12; i++) { const gxx = i / 12 * W; gx.beginPath(); gx.moveTo(gxx, 0); gx.lineTo(gxx, H); gx.stroke(); }
+        for (let j = 0; j <= 6; j++) { const gy = j / 6 * H; gx.beginPath(); gx.moveTo(0, gy); gx.lineTo(W, gy); gx.stroke(); }
+        const col = nt();
+        // dashed vertical at each point marks a transition; the segment durations sit along the bottom
+        gx.setLineDash([4 * dpr, 4 * dpr]); gx.lineWidth = 1; gx.strokeStyle = "rgba(201,140,240,.35)";
+        pts.forEach((pt) => { const x = pt.t * W; gx.beginPath(); gx.moveTo(x, 0); gx.lineTo(x, H); gx.stroke(); });
+        gx.setLineDash([]);
+        const line = (w, c, blur) => { gx.lineWidth = w; gx.strokeStyle = c; gx.shadowColor = c; gx.shadowBlur = blur;
+            gx.beginPath(); pts.forEach((pt, i) => { const px = pt.t * W, py = (1 - pt.p) * H; i ? gx.lineTo(px, py) : gx.moveTo(px, py); }); gx.stroke(); };
+        line(5, "rgba(201,140,240,.18)", 0); line(2.4, col, 10); gx.shadowBlur = 0;
+        const muted = getComputedStyle(canvas).getPropertyValue("--muted").trim() || "#8b93a3";
+        // Label size is a FRACTION of the plot height, not a fixed px — so labels scale WITH the node
+        // as the graph zooms (a fixed-px label stayed the same on-screen size and looked oversized
+        // when the node shrank on zoom-out). Everything below is derived from `lf`.
+        const lf = Math.max(6, H * 0.075);
+        // a pill-backed label centred at (cx,cy), clamped to stay fully inside the canvas so the
+        // first/last point's note isn't clipped by the edges. `fh` = its font height (sizes the pill).
+        const drawLabel = (text, cx, cy, fg, fh) => {
+            const w = gx.measureText(text).width, padX = fh * 0.4, h = fh * 1.5, rad = fh * 0.35;
+            const x = Math.min(W - padX - w / 2, Math.max(padX + w / 2, cx));
+            const y = Math.min(H - h / 2, Math.max(h / 2, cy));
+            gx.textAlign = "center"; gx.textBaseline = "middle";
+            gx.fillStyle = "rgba(10,14,21,.82)";
+            gx.beginPath(); gx.roundRect(x - w / 2 - padX, y - h / 2, w + 2 * padX, h, rad); gx.fill();
+            gx.fillStyle = fg; gx.fillText(text, x, y);
+        };
+        // points first, then labels ON TOP (with backgrounds). Dot radius also rides `lf` so it scales.
+        pts.forEach((pt) => { const px = pt.t * W, py = (1 - pt.p) * H;
+            gx.fillStyle = "#0c1119"; gx.strokeStyle = col; gx.lineWidth = Math.max(1, lf * 0.14);
+            gx.beginPath(); gx.arc(px, py, lf * 0.55, 0, 7); gx.fill(); gx.stroke();
+            gx.fillStyle = col; gx.beginPath(); gx.arc(px, py, lf * 0.2, 0, 7); gx.fill();
+        });
+        // segment durations (ms) pinned along the BOTTOM, centred under each segment between its two
+        // transition lines — recomputed every draw, so they track the shape/length live.
+        gx.font = `${Math.round(lf * 0.92)}px ui-monospace, monospace`;
+        for (let i = 0; i < pts.length - 1; i++) {
+            const a = pts[i], b = pts[i + 1];
+            drawLabel(`${Math.round((b.t - a.t) * s.length_ms)}ms`, (a.t + b.t) / 2 * W, H - lf, muted, lf * 0.92);
+        }
+        // note labels above each dot (flipped below near the top edge)
+        gx.font = `${Math.round(lf)}px ui-monospace, monospace`;
+        pts.forEach((pt) => { const px = pt.t * W, py = (1 - pt.p) * H;
+            drawLabel(pToNote(pt.p), px, py + (py > lf * 2 ? -lf * 1.05 : lf * 1.05), col, lf);
+        });
+        const len = div.querySelector(".sf-len");
+        if (len) len.textContent = `${s.length_ms} ms`;
+    }
+    const pos = (e) => { const r = canvas.getBoundingClientRect();
+        return { t: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), p: Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height)) }; };
+    const nearest = (q) => { const pts = spec()?.points || []; let bi = -1, bd = 1;
+        pts.forEach((pt, i) => { const d = Math.hypot(pt.t - q.t, pt.p - q.p); if (d < bd) { bd = d; bi = i; } }); return bd < 0.07 ? bi : -1; };
+    canvas.addEventListener("pointerdown", (e) => {
+        if (e.button === 2) return;
+        const s = spec(); if (!s) return;
+        const q = pos(e), hit = nearest(q);
+        if (hit >= 0) drag = hit;
+        else { s.points.push(q); s.points.sort((a, b) => a.t - b.t); drag = s.points.indexOf(q); }
+        canvas.setPointerCapture(e.pointerId); draw();
+    });
+    canvas.addEventListener("pointermove", (e) => {
+        if (drag < 0) return; const s = spec(); if (!s) return;
+        const q = pos(e), pt = s.points[drag];
+        pt.p = q.p; if (drag > 0 && drag < s.points.length - 1) pt.t = q.t;
+        s.points.sort((a, b) => a.t - b.t); drag = s.points.indexOf(pt); draw();
+    });
+    canvas.addEventListener("pointerup", () => { if (drag < 0) return; drag = -1; commit(); refreshForgePreview(id); });
+    canvas.addEventListener("contextmenu", (e) => {
+        e.preventDefault(); const s = spec(); if (!s) return;
+        const hit = nearest(pos(e));
+        if (hit >= 0 && s.points.length > 2) { s.points.splice(hit, 1); draw(); commit(); refreshForgePreview(id); }
+    });
+    // waveform toggles
+    div.querySelector(".sf-waves")?.addEventListener("click", (e) => {
+        const b = e.target.closest(".sf-wbtn"); if (!b) return; const s = spec(); if (!s) return;
+        div.querySelectorAll(".sf-wbtn").forEach((w) => w.classList.toggle("on", w === b));
+        s.wave = b.dataset.wave; commit(); refreshForgePreview(id);
+    });
+    // knobs: live label update on input, persist + restart loop on change (release)
+    div.querySelectorAll(".sf-k").forEach((el) => {
+        const kv = div.querySelector(`.sf-kv[data-kv="${el.dataset.k}"]`);
+        el.addEventListener("input", () => { const s = spec(); if (!s) return; s[el.dataset.k] = +el.value; if (kv) kv.textContent = el.value; if (el.dataset.k === "length_ms") draw(); });
+        el.addEventListener("change", () => { commit(); refreshForgePreview(id); });
+    });
+    // sync every control + the canvas from the current spec (used when a preset/roll REPLACES it —
+    // done in place, not via rebuildNode, so a running preview switches to the new cue seamlessly).
+    const applySpec = () => {
+        const s = spec(); if (!s) return;
+        div.querySelectorAll(".sf-wbtn").forEach((w) => w.classList.toggle("on", w.dataset.wave === s.wave));
+        div.querySelectorAll(".sf-k").forEach((el) => {
+            el.value = s[el.dataset.k];
+            const kv = div.querySelector(`.sf-kv[data-kv="${el.dataset.k}"]`);
+            if (kv) kv.textContent = String(s[el.dataset.k]);
+        });
+        draw();
+    };
+    // load the new cue, then PLAY IT: restart the loop if previewing, else one-shot audition. Never
+    // keep playing the previous cue.
+    const loadCue = (mk) => {
+        model.setSoundSynth(id, mk); applySpec(); commit();
+        if (forgePreview.get(id)) refreshForgePreview(id); else playCue(model.soundNode(id));
+    };
+    div.querySelector(".sf-cues")?.addEventListener("click", (e) => {
+        const b = e.target.closest(".sf-cue"); if (b) loadCue(forgePreset(b.dataset.cue));
+    });
+    div.querySelector(".sn-roll")?.addEventListener("click", () => loadCue(rollSynth(spec())));
+    // re-fit + redraw the canvas whenever the node (and thus the plot) resizes — points are 0..1 so
+    // nothing to recompute, just keep the backing store crisp (dom.js observeResize, rule 7).
+    observeResize(canvas, draw);
+    // Graph ZOOM scales the node via a CSS transform on #gworld — that does NOT fire ResizeObserver,
+    // so the backing store would stay at 1× and blur when zoomed in. Watch the world transform and
+    // refit, but only when the canvas's RENDERED size actually changed (zoom), not on pan.
+    const gworld = document.getElementById("gworld");
+    if (gworld) {
+        let raf = 0;
+        const mo = new MutationObserver(() => {
+            if (!canvas.isConnected) { mo.disconnect(); return; }   // node removed → self-clean
+            const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+            if (Math.round(r.width * dpr) === canvas.width || raf) return;   // pan (no size change) → skip
+            raf = requestAnimationFrame(() => { raf = 0; draw(); });
+        });
+        mo.observe(gworld, { attributes: true, attributeFilter: ["style"] });
+    }
+    draw();
+}
+
+// preset starting cues (mirror of the forge mockup): a named shape you then tweak.
+const FORGE_PRESETS = {
+    pickup: { wave: "square", points: [[0, .5], [.15, .9], [1, .72]], length_ms: 220 },
+    alert: { wave: "sawtooth", points: [[0, .7], [.5, .2], [1, .7]], length_ms: 600 },
+    levelup: { wave: "square", points: [[0, .35], [.33, .55], [.66, .75], [1, .95]], length_ms: 520 },
+    deny: { wave: "sawtooth", points: [[0, .4], [1, .12]], length_ms: 360 },
+    coin: { wave: "square", points: [[0, .7], [.2, .7], [.25, .95], [1, .95]], length_ms: 300 },
+    hit: { wave: "triangle", points: [[0, .6], [.1, .85], [1, .05]], length_ms: 180 },
+};
+function forgePreset(name) {
+    const c = FORGE_PRESETS[name] || FORGE_PRESETS.pickup;
+    return { wave: c.wave, points: c.points.map(([t, p]) => ({ t, p })), length_ms: c.length_ms, attack: 4, decay: 55, vibrato: 0, crush: 18 };
+}
+// a deterministic-ish shuffle off the current spec (no Math.random dependency for a stable feel):
+function rollSynth(prev) {
+    const len = (prev?.length_ms ?? 220);
+    const n = 3 + (((len / 50) | 0) % 3);
+    const rnd = (i) => (Math.sin((i + 1) * len * 0.013 + n) * .5 + .5);
+    const points = [];
+    for (let i = 0; i < n; i++) points.push({ t: i / (n - 1), p: 0.12 + rnd(i) * 0.8 });
+    const waves = ["square", "sine", "sawtooth", "triangle"];
+    return { wave: waves[(len + n) % 4], points, length_ms: len, attack: 4, decay: 55, vibrato: 0, crush: 18 };
 }
 
 // ---- action node: clear / clone / move a dataset's data when fired ----------
@@ -2633,10 +2848,19 @@ function wireRegister(div, n) {
             () => movePos(`register:${oldId}`, `register:${x.id}`),
             () => { render(); autosave(null); });
     });
-    // readout source chips: add via the "+ readout" select, remove via each chip's trash. Rebuild so
-    // the chips + edges follow; the readout out-port drag hits the SAME model.addRegisterSource path.
-    $(".reg-addsrc")?.addEventListener("change", (e) => { if (model.addRegisterSource(x.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
-    wireArmedRemove(div, ".reg-rmsrc", (val) => { model.removeRegisterSource(x.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
+    // sources live IN the memory bank now: each held-value slot is a wired readout (trash to remove,
+    // click to pan to its node) and the trailing "+" slot adds one. The bank (register_node.js)
+    // dispatches those as bubbling intents on the `.data-host`; we own the model mutation + edge
+    // redraw + autosave, then repaint the bank (a newly wired readout appears as a pending slot at
+    // once, same path the out-port drag uses). Scoped to `.data-host` (rebuilt on every render) so the
+    // listeners never double up across rebuilds.
+    const bankHost = $(".data-host");
+    bankHost?.addEventListener("reg-add-source", (e) => {
+        if (model.addRegisterSource(e.detail.id, e.detail.ref)) { refreshRegister(e.detail.id); drawEdges(); autosave(null); }
+    });
+    bankHost?.addEventListener("reg-remove-source", (e) => {
+        model.removeRegisterSource(e.detail.id, e.detail.ref); refreshRegister(e.detail.id); drawEdges(); autosave(null);
+    });
     // clear the held map server-side (armed two-click, no blocking dialog). Values live only in the
     // running session, so this just empties that map; the table repopulates as readouts are read.
     const clearBtn = $(".regclear");
@@ -2653,8 +2877,10 @@ function wireRegister(div, n) {
             setStatus(`cleared ${x.id}`);
         } catch (e) { setStatus(String(e.message || e)); }
     });
-    // show the persisted map immediately on (re)build — a page load with a running/prior session
-    // has data even before the next heartbeat tick.
+    // show the persisted map + wired-source slots immediately on (re)build — a rebuild after boot
+    // (e.g. an out-port drag that added a source) lands here with the node mounted, so paint now;
+    // afterBoot covers the initial page load where the node isn't mounted yet when this first runs.
+    refreshRegister(x.id);
     afterBoot(() => refreshRegister(x.id));
 }
 
@@ -2983,7 +3209,8 @@ function fillNode(div, n, wire = true) {
     const enabled = !(canToggle && n.ref && n.ref.enabled === false);
     // field nodes carrying fallback rules get a wider natural width (the rule row packs three
     // selects + a value + trash on one line) so a size RESET lands wide enough, not crushed.
-    const hasRules = (n.type === "itemfield" || n.type === "region") && (n.field?.rules?.length || 0) > 0;
+    const hasRules = ((n.type === "itemfield" || n.type === "region") && (n.field?.rules?.length || 0) > 0)
+        || (n.type === "sound" && !!n.ref?.synth);   // a sound node's open forge wants the wider width too
     const prettyDirty = prettyOverrides.isNodeDirty(n.id);
     div.className = `gnode ${n.type}${isCollapsed ? " collapsed" : ""}${enabled ? "" : " node-disabled"}${hasRules ? " has-rules" : ""}${prettyDirty ? " pretty-dirty" : ""}`;
     if (n.type === "dataset") div.dataset.ds = n.ref;   // out-port drop target id (tabs moved to the vt-table satellite)
