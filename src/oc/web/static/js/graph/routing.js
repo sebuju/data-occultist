@@ -7,11 +7,13 @@
 // re-route once on settle. Reads selectedNodeId/wire and calls startWire from main.js (live
 // bindings, runtime-safe circular import).
 import * as groups from "./groups.js";
-import { routeGraph, polylinePath } from "./route.js";
+import { routeGraph } from "./route.js";
 import { hierRoute } from "./hierRoute.js";
 import { deCollide } from "./decollide.js";
 import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot } from "./state.js";
 import { selectedNodeId, wire, startWire, CAN_DISABLE, nodeTypeOf } from "./main.js";
+import { setEdges, requestRedraw } from "./edgecanvas.js";
+import { typeColor, grayscale, cssVar } from "./colors.js";
 
 // Port exit directions (L/R/T/B) -> unit vector, used to stub a line out of a port the
 // right way before it turns. Lines are ALWAYS orthogonal — no bezier fallback exists.
@@ -47,10 +49,6 @@ function resamplePoly(pts, n) {
     }
     return out;
 }
-// Straight polyline through the (already dense) morph points. We do NOT round these per-vertex: the
-// lerped intermediate shape bends BETWEEN the resampled points, so polylinePath rounding each one
-// piles curve on curve and the line visibly wobbles. The crisp arcs return on the final routed frame.
-const straightD = (pts) => "M " + pts.map((p) => `${Math.round(p[0] * 10) / 10} ${Math.round(p[1] * 10) / 10}`).join(" L ");
 
 // Closest-facing sides of two rects (shortest centre axis): the port point and
 // outward direction (L/R/T/B) on each. The geometric default — used for the live drag
@@ -335,50 +333,15 @@ function placePortDots(links) {
     }
 }
 
-// Persistent <path> per link (NOT rebuilt each draw) — lets a line keep its identity
-// so it can follow the cursor live, then morph into its routed shape on settle.
-const edgeEls = new Map();   // link key -> <path>
-let wireEl = null;
+const MORPH_MS = 150, MORPH_N = 32;
 let tweenRoutes = false;     // set by runRouting so the NEXT draw morphs the lines that changed
 
-function edgeEl(key, layer) {
-    let el = edgeEls.get(key);
-    if (!el) { el = document.createElementNS(SVGNS, "path"); edgeEls.set(key, el); }
-    if (el.parentNode !== layer) layer.appendChild(el);
-    return el;
-}
-function cancelMorph(el) { if (el && el._raf) { cancelAnimationFrame(el._raf); el._raf = null; } }
-function setRouted(el, pts) {
-    cancelMorph(el);
-    el._geo = pts; el._routed = true;
-    el.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
-}
-function setBezier(el, l) {   // name kept (one caller); draws an ORTHOGONAL elbow, never a curve
-    cancelMorph(el);
-    const pts = dirElbowPts(l.p1[0], l.p1[1], l.d1, l.p2[0], l.p2[1], l.d2);
-    el._geo = pts;
-    el._routed = false;
-    el.setAttribute("d", polylinePath(pts, ROUTE.corners, ROUTE.radius));
-}
-const MORPH_MS = 150, MORPH_N = 32;
-function startMorph(el, toPts) {
-    const from = resamplePoly(el._geo && el._geo.length ? el._geo : toPts, MORPH_N);
-    const to = resamplePoly(toPts, MORPH_N);
-    cancelMorph(el);
-    const t0 = performance.now();
-    const tick = (now) => {
-        let t = (now - t0) / MORPH_MS; if (t < 0) t = 0; if (t > 1) t = 1;
-        const e = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;   // easeInOutQuad
-        el.setAttribute("d", straightD(from.map((p, i) => [p[0] + (to[i][0] - p[0]) * e, p[1] + (to[i][1] - p[1]) * e])));
-        if (t < 1) el._raf = requestAnimationFrame(tick);
-        else { el._raf = null; setRouted(el, toPts); }   // land on the crisp rounded route
-    };
-    el._raf = requestAnimationFrame(tick);
-}
-function geoChanged(el, pts) {
-    if (!el._routed || !el._geo || el._geo.length !== pts.length) return true;
+// Has the routed geometry for a record moved enough to repaint/morph? (compares against its last
+// adopted shape, stored on the display record as `_geo`/`_routed`.)
+function geoChanged(rec, pts) {
+    if (!rec._routed || !rec._geo || rec._geo.length !== pts.length) return true;
     for (let i = 0; i < pts.length; i++)
-        if (Math.abs(el._geo[i][0] - pts[i][0]) > 0.5 || Math.abs(el._geo[i][1] - pts[i][1]) > 0.5) return true;
+        if (Math.abs(rec._geo[i][0] - pts[i][0]) > 0.5 || Math.abs(rec._geo[i][1] - pts[i][1]) > 0.5) return true;
     return false;
 }
 
@@ -423,13 +386,10 @@ function lineCrossesDragged(pts, aId, bId) {
     return false;
 }
 function drawEdges() {
-    const svg = $("gedges"), top = $("gedges-top");
     const links = buildLinks();
-    // a selection dims every UNselected line (grayscale + near-transparent) so the selected
-    // node's own lines read at a glance; flag lives on the svg (no :has) — CSS keys off it.
+    // a selection dims every UNselected line (grayscale + near-transparent) so the selected node's
+    // own lines read at a glance; the canvas renderer bakes the dim into each line's stroke/alpha.
     const anySel = selectedNodeId != null || selected.size > 0;
-    svg.classList.toggle("sel-active", anySel);
-    top.classList.toggle("sel-active", anySel);
     drawSig = ROUTE.enabled ? linksSig(links) : "";   // change-gate: from the geometric facing ports
     // adopt the routed result's chosen faces/ports so the port dots + freshness check line up with
     // the painted path (the router, not the facing default, owns a routed line's endpoints).
@@ -448,32 +408,12 @@ function drawEdges() {
                 || !onRect(c.pts[0], l.ra) || !onRect(c.pts[c.pts.length - 1], l.rb)
                 || lineCrossesDragged(c.pts, l.aId, l.bId);
     }
-    const used = new Set();
     // node ids that are turned off — any line touching one is greyed (carries no live data)
     const disSet = new Set();
     for (const n of model.nodes()) if (CAN_DISABLE.has(n.type) && n.ref && n.ref.enabled === false) disSet.add(n.id);
-    for (const l of links) {
-        used.add(l.key);
-        const el = edgeEl(l.key, (l.top || l.over) ? top : svg);
-        l._el = el;
-        el.setAttribute("class", l.cls
-            + (disSet.has(l.aId) || disSet.has(l.bId) ? " dis-edge" : "")
-            + (l._stale ? " stale-edge" : ""));   // dragged off its node -> grey + fade until it re-routes
-        // Recolour to the source node's hue; guarded so a steady-state redraw mutates nothing (rule 1).
-        const sc = l.srcType ? `var(--nt-${l.srcType}, var(--line))` : "";
-        if (el._stroke !== sc) { el.style.stroke = sc; el._stroke = sc; }
-        const c = routeCache.get(l.key);
-        if (c && c.pts.length >= 2) {                           // have a routed path for this line
-            if (tweenRoutes && el._routed && geoChanged(el, c.pts)) startMorph(el, c.pts);
-            else if (!el._raf && geoChanged(el, c.pts)) setRouted(el, c.pts);   // only redraw if it changed; leave morphs alone
-        } else if (!el.getAttribute("d")) {
-            // BRAND-NEW line only (no path yet): give it an initial orthogonal elbow so it isn't
-            // invisible until the router runs. A line that already has a path keeps it — we never
-            // repaint a provisional stage over a routed line, so nothing flashes; the A* below
-            // updates it straight to the next FINISHED route.
-            setBezier(el, l);
-        }
-    }
+
+    paintCanvas(links, disSet, anySel);
+
     // Place the port dots AFTER painting, and pin each dot to the PAINTED path's start, not the
     // freshly recomputed fan point: a path that kept an older shape (routing frozen during OCR, no
     // routed result yet) is never repainted above, so a dot placed at the new fan coord would sit a
@@ -486,20 +426,132 @@ function drawEdges() {
     if (!draggingNodes) {
         for (const l of links) {
             const c = routeCache.get(l.key);
-            if (!(c && c.pts && c.pts.length >= 2) && l._el._geo && l._el._geo.length) l.p1 = l._el._geo[0];
+            const geo = l._rec && l._rec._geo;   // painted path start (canvas display record)
+            if (!(c && c.pts && c.pts.length >= 2) && geo && geo.length) l.p1 = geo[0];
         }
         placePortDots(links);   // move each out-port grab handle onto where its line starts
     }
-    for (const [k, el] of edgeEls) if (!used.has(k)) { cancelMorph(el); el.remove(); edgeEls.delete(k); }
-    if (wire) {
-        if (!wireEl) wireEl = document.createElementNS(SVGNS, "path");
-        if (wireEl.parentNode !== svg) svg.appendChild(wireEl);
-        wireEl.setAttribute("class", "gedge wire");
-        const dx = Math.max(30, (wire.x2 - wire.x1) / 2);
-        wireEl.setAttribute("d", `M ${wire.x1} ${wire.y1} C ${wire.x1 + dx} ${wire.y1}, ${wire.x2 - dx} ${wire.y2}, ${wire.x2} ${wire.y2}`);
-    } else if (wireEl) { wireEl.remove(); wireEl = null; }
     tweenRoutes = false;
     scheduleRouting();   // pathfind to the 90° route; lines only ever paint a FINISHED route
+}
+
+// ---- canvas edge renderer -------------------------------------------------------------------
+// One persistent display record per link (mirrors the <path> identity so a reroute MORPHS the
+// same record), fed to edgecanvas.setEdges(). Style (colour/dash/caps/dim) is resolved here once
+// per drawEdges; geometry rides the same morph logic as SVG but writes rec.pts, not a `d` string.
+const canvasRecs = new Map();   // link key -> display record {pts,straight,stroke,alpha,width,lineCap,dash,capStart,capEnd,selColor, _geo,_routed,_raf}
+let wireRec = null;             // live drag wire, drawn as a sampled cubic (not in canvasRecs)
+
+// A cubic bezier sampled to a polyline so the canvas can draw the live drag wire straight-through.
+function sampleCubic(p0, p1, p2, p3, n) {
+    const out = [];
+    for (let i = 0; i <= n; i++) {
+        const t = i / n, u = 1 - t;
+        out.push([u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0],
+                  u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]]);
+    }
+    return out;
+}
+
+// Source-node hue fallback: the inline stroke wins in the SVG cascade, so a line with a known
+// source type is that type's colour. Only a source WITHOUT a --nt token falls back to the per-kind
+// stroke from graph.css (rare) — mapped here so those lines still match.
+function kindColor(cs) {
+    if (cs.has("data")) return cssVar("--data");
+    if (cs.has("trigger")) return cssVar("--trigger-line");
+    if (cs.has("watch")) return cssVar("--watch-line");
+    if (cs.has("ownwin")) return cssVar("--nt-window");
+    if (cs.has("owndict")) return cssVar("--nt-dictionary");
+    if (cs.has("field")) return cssVar("--nt-region");
+    if (cs.has("detect")) return cssVar("--nt-detect");
+    if (cs.has("scrollbar")) return cssVar("--nt-scrollbar");
+    if (cs.has("state")) return cssVar("--warn");
+    if (cs.has("item")) return cssVar("--nt-item");
+    if (cs.has("tell")) return cssVar("--nt-itemtell");
+    if (cs.has("attach")) return cssVar("--accent");
+    if (cs.has("img")) return cssVar("--muted");
+    return cssVar("--line");
+}
+
+// Resolve a link's paint style (colour/dash/caps + the three dim states) into its record. Mirrors
+// the graph.css cascade: caps by declaration order (later wins), dim alpha by specificity
+// (stale !important > sel !important > sel-inactive .1 > dis .4).
+function applyEdgeStyle(rec, l, dis, anySel, selCol) {
+    const cs = new Set(l.cls.split(" "));
+    const sel = cs.has("sel"), stale = !!l._stale;
+    const isFlow = cs.has("flow"), isWatch = cs.has("watch"), isWire = cs.has("wire");
+    const color = l.srcType ? typeColor(l.srcType) : kindColor(cs);
+    const gray = dis || stale || (anySel && !sel);
+    rec.stroke = gray ? grayscale(color) : color;
+    rec.alpha = stale ? 0.3 : sel ? 1 : (anySel && !sel) ? 0.1 : dis ? 0.4 : 1;
+    rec.width = 1.8;
+    rec.dash = cs.has("img") ? [2, 4] : isWatch ? [1, 5] : isWire ? [4, 4] : [];
+    rec.lineCap = isWatch ? "round" : "butt";
+    rec.selColor = selCol;
+    let capEnd = "squarecap";
+    if (cs.has("toview")) capEnd = "flowarrow";
+    if (isFlow) capEnd = "flowarrow";
+    if (cs.has("trigger")) capEnd = "hexcap";
+    if (isWatch) capEnd = "watchcap";
+    let capStart = "squarecap";
+    if (isFlow || isWatch) capStart = sel ? "portcap-sel" : "portcap";
+    if (isWire) { capStart = null; capEnd = null; }
+    rec.capStart = capStart; rec.capEnd = capEnd;
+}
+
+function cancelMorphC(rec) { if (rec && rec._raf) { cancelAnimationFrame(rec._raf); rec._raf = null; } }
+function setRoutedC(rec, pts) { cancelMorphC(rec); rec._geo = pts; rec._routed = true; rec.pts = pts; rec.straight = false; }
+function setElbowC(rec, l) {
+    cancelMorphC(rec);
+    const pts = dirElbowPts(l.p1[0], l.p1[1], l.d1, l.p2[0], l.p2[1], l.d2);
+    rec._geo = pts; rec._routed = false; rec.pts = pts; rec.straight = false;
+}
+// Morph the record's geometry into the new routed shape (the canvas twin of startMorph): lerp
+// resampled points each frame, redraw, land on the crisp rounded route.
+function startMorphC(rec, toPts) {
+    const from = resamplePoly(rec._geo && rec._geo.length ? rec._geo : toPts, MORPH_N);
+    const to = resamplePoly(toPts, MORPH_N);
+    cancelMorphC(rec);
+    const t0 = performance.now();
+    const tick = (now) => {
+        let t = (now - t0) / MORPH_MS; if (t < 0) t = 0; if (t > 1) t = 1;
+        const e = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;   // easeInOutQuad
+        rec.pts = from.map((p, i) => [p[0] + (to[i][0] - p[0]) * e, p[1] + (to[i][1] - p[1]) * e]);
+        rec.straight = true;   // straight through the (dense) morph points — rounding wobbles, matches straightD
+        requestRedraw();
+        if (t < 1) rec._raf = requestAnimationFrame(tick);
+        else { rec._raf = null; setRoutedC(rec, toPts); requestRedraw(); }
+    };
+    rec._raf = requestAnimationFrame(tick);
+}
+
+function paintCanvas(links, disSet, anySel) {
+    const used = new Set();
+    const selCol = cssVar("--sel");
+    for (const l of links) {
+        used.add(l.key);
+        let rec = canvasRecs.get(l.key);
+        if (!rec) { rec = { key: l.key }; canvasRecs.set(l.key, rec); }
+        l._rec = rec;
+        applyEdgeStyle(rec, l, disSet.has(l.aId) || disSet.has(l.bId), anySel, selCol);
+        const c = routeCache.get(l.key);
+        if (c && c.pts.length >= 2) {
+            if (tweenRoutes && rec._routed && geoChanged(rec, c.pts)) startMorphC(rec, c.pts);
+            else if (!rec._raf && geoChanged(rec, c.pts)) setRoutedC(rec, c.pts);
+        } else if (!rec.pts) {
+            setElbowC(rec, l);   // brand-new line: provisional elbow until the router runs
+        }
+    }
+    for (const [k, rec] of canvasRecs) if (!used.has(k)) { cancelMorphC(rec); canvasRecs.delete(k); }
+    const list = [...canvasRecs.values()];
+    if (wire) {
+        const dx = Math.max(30, (wire.x2 - wire.x1) / 2);
+        wireRec = wireRec || { key: "__wire__", straight: true, width: 1.8, lineCap: "butt", dash: [4, 4], capStart: null, capEnd: null };
+        wireRec.stroke = cssVar("--accent"); wireRec.alpha = 1; wireRec.selColor = selCol;
+        wireRec.pts = sampleCubic([wire.x1, wire.y1], [wire.x1 + dx, wire.y1], [wire.x2 - dx, wire.y2], [wire.x2, wire.y2], 24);
+        list.push(wireRec);
+    } else wireRec = null;
+    setEdges(list, { radius: ROUTE.radius });
 }
 
 // Coalesce edge redraws under a drag: each requestEdges() queues at most ONE redraw per
@@ -550,28 +602,27 @@ if (typeof window !== "undefined") {
     // every node's world rect — lets a test assert no edge passes through a non-endpoint node.
     window.__routes = () => { const o = {}; for (const [k, c] of routeCache) o[k] = { pts: c.pts, d1: c.d1, d2: c.d2 }; return o; };
     window.__nodeRects = () => { const o = {}; for (const id of nodeEls.keys()) { const r = nodeRect(id); if (r) o[id] = r; } return o; };
-    // __overlaps(): scan the ACTUALLY RENDERED edge paths (DOM, not routeCache — routeCache is empty
-    // while routing is frozen/boot, but the <path>s still show the current geometry) and report the
-    // two ways a line reads as "drawn on top of" something:
+    // __overlaps(): scan the RENDERED edge geometry (the canvas display records — their `pts` are the
+    // clean orthogonal polyline, no bezier control points to strip, and their key carries the real
+    // endpoint ids) and report the two ways a line reads as "drawn on top of" something:
     //   coincident  — two DIFFERENT edges whose H (or V) segments share a coord (within `tol` px) and
-    //                 overlap along their run (> `minOv` px). This is "two paths stacked on each other".
+    //                 overlap along their run (> `minOv` px). This is "two lines stacked on each other".
     //   throughNode — an edge segment that runs through the INTERIOR of a node that isn't its endpoint.
-    // Endpoints are resolved geometrically (nearest node rect) since the DOM <path> carries no id.
     // Console: `window.__overlaps()` — returns {coincident:[...], throughNode:[...]}.
     window.__overlaps = (tol = 2, minOv = 12) => {
-        const parse = (d) => { const m = (d || "").match(/-?\d+(\.\d+)?/g) || [], p = []; for (let i = 0; i + 1 < m.length; i += 2) p.push([+m[i], +m[i + 1]]); return p; };
         const rects = []; for (const id of nodeEls.keys()) { const r = nodeRect(id); if (r) rects.push({ id, ...r }); }
-        const nearest = (pt) => { let best = null, bd = Infinity; for (const r of rects) { const cx = Math.max(r.x, Math.min(pt[0], r.x + r.w)), cy = Math.max(r.y, Math.min(pt[1], r.y + r.h)); const dd = Math.hypot(pt[0] - cx, pt[1] - cy); if (dd < bd) { bd = dd; best = r.id; } } return best; };
-        const paths = [...document.querySelectorAll("path.gedge")];
         const segs = [];                                  // {ei, axis, coord, lo, hi, ends:[fromId,toId]}
-        paths.forEach((pa, ei) => {
-            const P = parse(pa.getAttribute("d")); if (P.length < 2) return;
-            const ends = [nearest(P[0]), nearest(P[P.length - 1])];
+        let ei = 0;
+        for (const [key, rec] of canvasRecs) {
+            const P = rec.pts; ei++;
+            if (!P || P.length < 2) continue;
+            const sp = key.indexOf(" ");
+            const ends = [key.slice(0, sp), key.slice(sp + 1)];
             for (let i = 0; i + 1 < P.length; i++) { const a = P[i], b = P[i + 1];
                 if (Math.abs(a[1] - b[1]) < 0.6 && Math.abs(a[0] - b[0]) > 1) segs.push({ ei, ends, axis: "H", coord: a[1], lo: Math.min(a[0], b[0]), hi: Math.max(a[0], b[0]) });
                 else if (Math.abs(a[0] - b[0]) < 0.6 && Math.abs(a[1] - b[1]) > 1) segs.push({ ei, ends, axis: "V", coord: a[0], lo: Math.min(a[1], b[1]), hi: Math.max(a[1], b[1]) });
             }
-        });
+        }
         const coincident = [];
         for (let i = 0; i < segs.length; i++) for (let j = i + 1; j < segs.length; j++) {
             const s = segs[i], t = segs[j];
@@ -591,7 +642,6 @@ if (typeof window !== "undefined") {
     };
 }
 
-const SVGNS = "http://www.w3.org/2000/svg";
 let routeCache = new Map();     // link key -> { pts:[[x,y]…], sig } (sig = its own deps)
 let routeHash = "";             // global layout signature of the last pass (cheap change gate)
 let gateFaces = new Map();      // "key|gid" -> gate face last frame (hierRoute hysteresis, anti-flicker)

@@ -27,6 +27,8 @@
 
 import { beginDrag } from "./dragresize.js";   // shared drag-loop primitive
 import { h, svg, TRASH } from "../dom.js";
+import { setGroups } from "./edgecanvas.js";
+import { resolveColor } from "./colors.js";
 
 // ---- constants ------------------------------------------------------------
 const PAD = 40;          // group: uniform gap between members and the outline (two GRID steps)
@@ -519,9 +521,29 @@ function placeTitle(tel, align) { tel.style.justifyContent = align === "center" 
 // ---- rendering ------------------------------------------------------------
 // ONE render pass per tier: reconcile the layer's children by id, size + style each box the same
 // way, then let the tier add its own bits (group title band, sub legend, super watermark).
-export function renderGroups() { renderTier(GROUP); renderTier(SUPER); renderTier(SUB); }
-function renderSuperGroups() { renderTier(SUPER); }
-function renderSubGroups() { renderTier(SUB); }
+export function renderGroups() { renderTier(GROUP); renderTier(SUPER); renderTier(SUB); pushCanvasGroups(); }
+function renderSuperGroups() { renderTier(SUPER); pushCanvasGroups(); }
+function renderSubGroups() { renderTier(SUB); pushCanvasGroups(); }
+
+// Feed the under-canvas the resolved box fill+border for every tier. Draw order = paint order:
+// super (bottom) < group < sub (top), matching the #sgroups/#ggroups/#subgroups DOM z-order.
+// resolveColor turns the color-mix expressions into concrete rgb so the canvas matches the DOM.
+function pushCanvasGroups() {
+    const recs = [];
+    for (const b of superGroupBoxes()) {
+        const c = superBoxColors(b);
+        recs.push({ ...b.box, tier: "super", outline: resolveColor(c.outline), fill: resolveColor(b.bg) });
+    }
+    for (const b of groupBoxes()) {
+        const c = groupBoxColors(b);
+        recs.push({ ...b.box, tier: "group", outline: resolveColor(c.outline), fill: resolveColor(c.fill), dashed: true });
+    }
+    for (const b of subGroupBoxes()) {
+        const c = subBoxColors(b);
+        recs.push({ ...b.box, tier: "sub", outline: resolveColor(c.ring), fill: resolveColor(c.themed ? c.wash : b.bg) });
+    }
+    setGroups(recs);
+}
 
 function renderTier(tier) {
     const layer = tier.layer();
@@ -548,19 +570,12 @@ function renderTier(tier) {
 }
 
 // Group outline width scales with zoom, bounded to [1px, 3px]: 3px when zoomed far out (a thin line
-// would get lost), tapering to 1px up close for the thin blueprint look. Literal border-width — never
-// outside 1..3. Recomputed on every zoom (applyView -> scaleGroupBorders) and on group render
-// (groupAfterSize) so a freshly-drawn box matches the current zoom immediately.
-function groupBorderCss(zoom) {
+// would get lost), tapering to 1px up close for the thin blueprint look. Returns the width in world
+// px as a NUMBER; the canvas group renderer (edgecanvas drawGroups) strokes it directly on every
+// redraw, so the width tracks zoom without any DOM border to rewrite.
+export function groupBorderCss(zoom) {
     const z = zoom || 1;
-    const w = Math.max(1, Math.min(3, 3 - (z - 0.3) * (2 / 0.7)));   // z<=0.3 -> 3px, z>=1.0 -> 1px
-    return `${w.toFixed(2)}px`;
-}
-export function scaleGroupBorders(zoom) {
-    const layer = ctx?.world?.();
-    if (!layer) return;
-    const cw = groupBorderCss(zoom);
-    for (const el of layer.children) if (el.classList.contains("ggroup")) el.style.borderWidth = cw;
+    return Math.max(1, Math.min(3, 3 - (z - 0.3) * (2 / 0.7)));   // z<=0.3 -> 3px, z>=1.0 -> 1px
 }
 
 // GROUP render extras: a title band CHILD (clipped flush by the box) + selection highlight.
@@ -570,23 +585,45 @@ function groupBeforeSize(rec, el) {
     tel.querySelector(".ggt-label").textContent = rec.title;
     return (rec._titleH = tel.offsetHeight || TITLE_H);
 }
-function groupAfterSize(rec, el) {
-    // Option A: the scheme's outline colour IS the group's identity hue. A "themed" group (any scheme
-    // whose outline differs from the neutral default) tints the corner label + a faint box wash + the
-    // dashed outline; a default group falls back to neutral --dim / --line. This overrides the solid
-    // fill + outline the shared render pass set from rec.bg / rec.outline (that flat band look is gone).
+// The box FILL + BORDER colour expressions per tier — the identity hue ("themed" = any scheme
+// whose outline differs from the neutral default). Shared by the DOM afterSize styling and the
+// canvas group renderer (pushCanvasGroups) so the two look identical and never drift (rule 7).
+function groupBoxColors(rec) {
     const tint = rec.outline?.color || DEF_OUTLINE;
     const themed = tint.toLowerCase() !== DEF_OUTLINE.toLowerCase();
+    return { themed,
+        outline: themed ? `color-mix(in oklab, ${tint} 50%, var(--line))` : "var(--line)",
+        fill: themed ? `color-mix(in oklab, ${tint} 5%, transparent)` : "transparent",
+        label: themed ? `color-mix(in oklab, ${tint} 72%, var(--muted))` : "" };
+}
+function subBoxColors(rec) {
+    const tint = rec.outline?.color || SUB_DEF_OUTLINE;
+    const themed = tint.toLowerCase() !== SUB_DEF_OUTLINE.toLowerCase();
+    return { themed,
+        ring: themed ? `color-mix(in oklab, ${tint} 20%, transparent)` : "var(--line)",
+        shade: themed ? `color-mix(in oklab, ${tint} 16%, transparent)` : "color-mix(in oklab, var(--line) 60%, transparent)",
+        wash: themed ? `color-mix(in oklab, ${tint} 6%, transparent)` : "",
+        label: themed ? `color-mix(in oklab, ${tint} 60%, var(--dim))` : "" };
+}
+function superBoxColors(rec) {
+    const tint = rec.outline?.color || SUPER_DEF_OUTLINE;
+    const themed = tint.toLowerCase() !== SUPER_DEF_OUTLINE.toLowerCase();
+    return { outline: themed ? `color-mix(in oklab, ${tint} 35%, var(--line-soft))` : "var(--line-soft)" };
+}
+
+function groupAfterSize(rec, el) {
+    // Option A: the scheme's outline colour IS the group's identity hue — a themed group tints the
+    // corner label + a faint box wash + the dashed outline; a default one falls back to --dim / --line.
+    const c = groupBoxColors(rec);
     const tel = el.querySelector(".ggroup-title");
     if (tel) {
         tel.style.background = "";
-        tel.style.color = themed ? `color-mix(in oklab, ${tint} 72%, var(--muted))` : "";   // "" -> CSS --dim
+        tel.style.color = c.label;   // "" -> CSS --dim
         placeTitle(tel, rec.titleAlign);
     }
-    el.style.background = themed ? `color-mix(in oklab, ${tint} 5%, transparent)` : "transparent";
-    el.style.borderStyle = "dashed";
-    el.style.borderWidth = groupBorderCss(ctx?.zoom?.() ?? 1);   // zoom-scaled: ~3px far, ~1px near
-    el.style.borderColor = themed ? `color-mix(in oklab, ${tint} 50%, var(--line))` : "var(--line)";
+    // Canvas renderer draws the box fill + dashed border itself (under-canvas); blank the DOM box so
+    // it doesn't double-render. The title band + selection highlight stay DOM.
+    el.style.background = "transparent"; el.style.borderWidth = "0";
     el.classList.toggle("gsel", selectedGroups.has(rec.id));   // ctrl-click selection highlight
 }
 
@@ -602,25 +639,18 @@ function subBeforeSize(rec, el) {
     return (rec._titleH = tel ? (tel.offsetHeight || 0) : 0);
 }
 function subAfterSize(rec, el) {
-    // dimmer, denser echo of the group Option-A look: dashed soft-tinted rim + faint wash + a mint/
+    // dimmer, denser echo of the group Option-A look: soft-tinted inset well + faint wash + a mint/
     // scheme-tinted micro-label. "Themed" = any scheme whose outline differs from the neutral sub default.
-    const tint = rec.outline?.color || SUB_DEF_OUTLINE;
-    const themed = tint.toLowerCase() !== SUB_DEF_OUTLINE.toLowerCase();
+    const c = subBoxColors(rec);
     const tel = el.querySelector(".subgroup-title");
     if (tel) {
         tel.style.background = "";
-        tel.style.color = themed ? `color-mix(in oklab, ${tint} 60%, var(--dim))` : "";   // "" -> CSS --dim
+        tel.style.color = c.label;   // "" -> CSS --dim
         placeTitle(tel, rec.titleAlign);
     }
-    // "Sunken": NO drawn rim — an inset tinted ring + inner shade make the subset look recessed, like
-    // the nodes sit in a well. Reads as a bounded zone with zero hard line (never stacks a dashed box
-    // inside the dashed group), and works even untitled (the common case). Themed subs tint the well +
-    // a faint scheme wash; an unthemed one keeps the opaque SUB_DEF_BG the render pass set + a neutral well.
-    const ring  = themed ? `color-mix(in oklab, ${tint} 20%, transparent)` : "var(--line)";
-    const shade = themed ? `color-mix(in oklab, ${tint} 16%, transparent)` : "color-mix(in oklab, var(--line) 60%, transparent)";
-    if (themed) el.style.background = `color-mix(in oklab, ${tint} 6%, transparent)`;
-    el.style.borderWidth = "0";
-    el.style.boxShadow = `inset 0 0 0 1px ${ring}, inset 0 3px 12px ${shade}`;
+    // "Sunken": an inset tinted ring + inner shade make the subset look recessed. The canvas draws the
+    // well itself (under-canvas); blank the DOM box, keep the corner label.
+    el.style.background = "transparent"; el.style.borderWidth = "0"; el.style.boxShadow = "none";
 }
 
 // SUPER render extras: the huge watermark label (colour only; text set here).
@@ -629,11 +659,8 @@ function superAfterSize(rec, el) {
     if (lab) { lab.textContent = STYLE_SUBSUPER ? rec.title : ""; lab.style.color = rec.titleColor || ""; }
     // P-A: solid, faint rim (the huge dim watermark is the label; the box just recedes as a backdrop).
     // Force it here because the shared render pass leaves the default super outline style "none" (no rim).
-    const tint = rec.outline?.color || SUPER_DEF_OUTLINE;
-    const themed = tint.toLowerCase() !== SUPER_DEF_OUTLINE.toLowerCase();
-    el.style.borderStyle = "solid";
-    el.style.borderWidth = "1px";
-    el.style.borderColor = themed ? `color-mix(in oklab, ${tint} 35%, var(--line-soft))` : "var(--line-soft)";
+    // Canvas strokes the rim + fill itself (under-canvas); blank the DOM box, keep the label.
+    el.style.borderWidth = "0"; el.style.background = "transparent";
 }
 
 // ---- DOM scaffolds (one per tier) -----------------------------------------

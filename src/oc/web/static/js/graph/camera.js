@@ -6,7 +6,7 @@ import { $, view, pos, nodeEls, overlays } from "./state.js";
 import { floatWins } from "./floatwin.js";
 import { persist } from "./persist.js";
 import { nmUpdateViewport } from "./panels/nodemap.js";
-import { scaleGroupBorders } from "./groups.js";
+import { redrawNow } from "./edgecanvas.js";
 
 let panAnim = null;
 export function cancelPan() { if (panAnim) { cancelAnimationFrame(panAnim); panAnim = null; } }
@@ -138,8 +138,14 @@ export function applyView() {
     if (view.zoom !== _lastZoom) {
         _lastZoom = view.zoom;
         $("gworld").style.transform = `scale(${view.zoom})`;
-        scaleGroupBorders(view.zoom);   // group outline width is zoom-scaled
+        // group outline width is zoom-scaled; the canvas group renderer applies it in drawGroups
+        // (via groupBorderCss) on the redrawNow() below, so no DOM border to rewrite here.
     }
+    // Canvas renderer (flagged) sits OUTSIDE the transformed world, so it repaints itself against
+    // the new pan/zoom on every apply. SYNCHRONOUS so the lines land in the same frame as the #gpan
+    // transform above (a deferred rAF paint trails the DOM nodes by a frame while panning fast).
+    // A no-op when the canvas isn't mounted.
+    redrawNow();
     nmUpdateViewport();   // keep the node-map's viewport indicator in sync with pan/zoom
 }
 
@@ -151,7 +157,8 @@ export function resizeCanvas() {
     }
     const w = maxX + 280, h = maxY + 200;
     for (const id of ["gworld", "gnodes"]) { const el = $(id); el.style.width = `${w}px`; el.style.height = `${h}px`; }
-    for (const id of ["gedges", "gedges-top"]) { const svg = $(id); svg.setAttribute("width", w); svg.setAttribute("height", h); }
+    // edges + group boxes are drawn on the viewport-fixed canvases (edgecanvas.js), sized to the
+    // viewport via their own ResizeObserver — nothing world-sized to grow here.
 }
 
 export function updateOverlayZoom() {

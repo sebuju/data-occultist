@@ -42,6 +42,7 @@ import {
     setDraggingNodes,
 } from "./routing.js";
 import { initFlow } from "./flow.js";
+import { mountCanvasLayers } from "./edgecanvas.js";
 import { showGuides, flashGuides, clearGuides } from "./guides.js";
 import {
     cancelPan, panTo, panZoomTo, panZoomToRect, zoomToNode, viewportCenterWorld,
@@ -4927,6 +4928,7 @@ async function loadGame(name, { discard = false } = {}) {
     openLogStream(name);   // mirror server activity (trigger watches/fires, API fetches) into the log bar
     dsevents.setGame(name);   // (re)point the shared dataset-change bus (drives node refresh + flow blobs)
     initFlow(name);   // (re)point the flow-blob stream at this game (clears any prior blobs)
+    mountCanvasLayers();   // mount the edge/group canvas renderer once (idempotent)
     hub.kick();   // new game -> beat the hub so every panel re-reflects its state now
     setStatus(`loaded ${name}`);
 }
