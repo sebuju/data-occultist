@@ -15,19 +15,23 @@
    Pan cost is paint-per-frame by design; keep it cheap, don't re-promote. */
 #gpan { position: absolute; top: 0; left: 0; }
 #gworld { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+/* ?edgecanvas renderer: two viewport-FIXED canvases sandwiching #gpan (they apply pan/zoom in
+   their own draw math, never a CSS transform, so they don't re-layerize on pan). The under-canvas
+   renders group box fill/border BEHIND the world; the over-canvas renders wires + end-caps ABOVE
+   the node cards (matching the SVG z-order: groups z0 < nodes z2 < edges z5). Below #marquee (z50). */
+.gcanvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#gcanvas-under { z-index: 0; }
+#gcanvas-over { z-index: 4; }
 /* skip hit-testing the whole graph subtree during a pan drag — pointer events aren't
    needed mid-pan and testing every node/edge each move was a big cost */
 .graphcanvas.panning #gworld { pointer-events: none; }
-/* stacking inside #gworld: group boxes + their title bands (0) < edges (1) < nodes (2) <
-   selected-edges (5). Edges/nodes deliberately sit ABOVE the group box so a wire never
-   disappears under a group outline; the title band (a child of the box) is below nodes too,
-   so a node is never obscured by a title. */
-#gedges { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; overflow: visible; }
+/* stacking inside #gworld: group box title bands (0) < nodes (2). The wires + group box
+   fill/border are NOT here — they render on the viewport-fixed #gcanvas-under/#gcanvas-over
+   (above). Only the node cards + group title bands remain DOM inside the world. */
 /* The nodes layer is sized to the full canvas (see resizeCanvas), so it must NOT capture
    pointer events itself — otherwise it would swallow presses meant for the title band that
    sits below it (band z0, this z2). Only the node CARDS take events (.gnode below). */
 #gnodes { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; }
-#gedges-top { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 5; overflow: visible; }
 /* flow-blob layer: dots animating along edges on live activity (graph/flow.js). Above
    everything inside the world, never takes pointer events; rides the #gworld transform. */
 #gflow { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 6; overflow: visible; }
@@ -35,13 +39,11 @@
    (graph/guides.js). Above everything inside the world; rides the #gworld transform. non-scaling
    stroke keeps the lines a crisp 1px at any zoom. */
 #gguides { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 7; overflow: visible; }
-/* These three overlays span the WHOLE world and sit above every node, so whenever a node
-   canvas (a compositor seed) sits under them they get overlap-promoted to a WORLD-SIZED
-   composited layer — which Chrome re-layerizes every pan frame ("Update Layer Tree" cost).
-   They're empty most of the time (nothing selected/routed-over, no live flow, no active
-   drag guides), so drop the empty ones out of rendering entirely: an un-rendered layer can't
-   be promoted. Repopulating adds a child -> :empty stops matching -> it shows again. */
-#gedges-top:empty, #gflow:empty, #gguides:empty { display: none; }
+/* These overlays span the WHOLE world and sit above every node, so whenever a node canvas (a
+   compositor seed) sits under them they get overlap-promoted to a WORLD-SIZED composited layer —
+   which Chrome re-layerizes every pan frame ("Update Layer Tree" cost). They're empty most of the
+   time (no live flow, no active drag guides), so drop the empty ones out of rendering entirely. */
+#gflow:empty, #gguides:empty { display: none; }
 .align-guide { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: .55; vector-effect: non-scaling-stroke; }
 /* while a node is dragged OR resized it snaps to the 20px grid in discrete steps; ease the stepped
    properties so it glides to each grid cell instead of teleporting (felt like the interaction was
@@ -809,73 +811,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    nodes aren't dotted with empty ports; it's still grabbable once shown. */
 .gnode .port.port-idle { opacity: 0; pointer-events: none; transition: opacity .1s; }
 .gnode:hover .port.port-idle { opacity: 1; pointer-events: auto; }
-/* every line caps BOTH ends with the small square by default; the more-specific edge rules
-   below (.gedge.flow/.toview/.trigger/.watch) override only marker-end with their own glyph,
-   so a line keeps the square wherever it has no arrow/chevron/diamond. Lines that LEAVE an
-   out-port (.flow/.watch) start with the PORT DOT itself (#portcap): the dot is the line's own
-   marker-start, so it sits exactly on the start and paints over it — nothing shows beneath it.
-   (The DOM .port element is only the invisible grab handle riding the same point.) */
-.gedge { fill: none; stroke: var(--line); stroke-width: 1.8; marker-start: url(#squarecap); marker-end: url(#squarecap); transition: filter 100ms linear; }
-.gedge.flow, .gedge.watch { marker-start: url(#portcap); }
-.gedge.flow.sel, .gedge.watch.sel { marker-start: url(#portcap-sel); }   /* selected -> grown dot + --sel ring */
-.squarecap-head { fill: context-stroke; }   /* square takes the line's colour (or accent when selected) */
-.portcap-head { fill: context-stroke; }     /* port dot takes the line's colour (data orange / trigger / watch) */
-.portcap-ring { stroke: var(--sel); stroke-width: 0.75; }
-.gedge.data { stroke: var(--data); opacity: 1; }   /* data flow: solid bright orange */
-.gedge.toview { marker-end: url(#flowarrow); }                     /* dataset -> view: solid + arrow */
-/* producer → dataset (a node pushing data OUT): emphasised + an arrowhead so the flow
-   direction reads at a glance. No animation (constant repaint is too costly). */
-.gedge.flow { stroke-width: 1.8; opacity: 1; marker-end: url(#flowarrow); }
-.flowarrow-head { fill: context-stroke; }   /* arrow takes the line's colour (orange, or accent when selected) */
-/* node-identity edges read the SAME per-type token as the node they leave, so a card's border
-   colour and its outgoing wire always match (change the hue once in base.css --nt-<type>). */
-.gedge.ownwin { stroke: var(--nt-window); }      /* game→window */
-.gedge.owndict { stroke: var(--nt-dictionary); } /* game→dictionary */
-.gedge.field { stroke: var(--nt-region); }
-.gedge.detect { stroke: var(--nt-detect); }
-.gedge.scrollbar { stroke: var(--nt-scrollbar); }
-.gedge.state { stroke: var(--warn); }
-.gedge.item { stroke: var(--nt-item); }
-.gedge.tell { stroke: var(--nt-itemtell); }   /* item -> its tell nodes (pass/fail checks) */
-.gedge.attach { stroke: var(--accent); }
-.gedge.img { stroke: var(--muted); stroke-dasharray: 2 4; }
-/* trigger -> the price node it fires: cyan, solid, ending in a filled hexagon (not the flow arrow).
-   marker-end overrides .gedge.flow's #flowarrow (same specificity, declared later wins). */
-.gedge.trigger { stroke: var(--trigger-line); marker-end: url(#hexcap); }
-.hexcap-head { fill: context-stroke; }   /* fires line: filled hexagon, takes the line's colour (cyan, or accent when selected) */
-.triggergo-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }   /* » = go/activate, takes the line's colour */
-.triggerbar-head { stroke: context-stroke; stroke-width: 2; }   /* reusable bar end-cap (takes the line's colour); not on the trigger line now */
-/* watched dataset/view -> on_change trigger: own teal, fine dotted, ending in a diamond —
-   distinct from data (solid orange), trigger (solid cyan+bar) and state (amber). */
-.gedge.watch { stroke: var(--watch-line); stroke-dasharray: 1 5; stroke-linecap: round; marker-end: url(#watchcap); }
-.watchcap-head { fill: context-stroke; }   /* diamond takes the line's colour (teal, or accent when selected) */
-/* ---- reusable end-glyph palette (see #defs in index.html). Filled glyphs take the line's
-   colour via fill:context-stroke; stroked glyphs via stroke:context-stroke. No edge kind uses
-   these yet — set `marker-end: url(#name)` on a `.gedge.<kind>` to wire one. ---- */
-.dotcap-head { fill: context-stroke; }
-.ringcap-head { fill: none; stroke: context-stroke; stroke-width: 1.6; }
-.chevroncap-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.teecap-head { fill: none; stroke: context-stroke; stroke-width: 2; stroke-linecap: round; }
-.crowfoot-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; }
-.triopen-head { fill: none; stroke: context-stroke; stroke-width: 1.4; stroke-linejoin: round; }
-.squareopen-head { fill: none; stroke: context-stroke; stroke-width: 1.4; }
-.diamondopen-head { fill: none; stroke: context-stroke; stroke-width: 1.4; stroke-linejoin: round; }
-.pluscap-head { fill: none; stroke: context-stroke; stroke-width: 2; stroke-linecap: round; }
-.xcap-head { fill: none; stroke: context-stroke; stroke-width: 2; stroke-linecap: round; }
-.dblbar-head { fill: none; stroke: context-stroke; stroke-width: 1.8; stroke-linecap: round; }
-.barbcap-head { fill: none; stroke: context-stroke; stroke-width: 1.8; stroke-linecap: round; }
-.stealthcap-head { fill: context-stroke; }
-.circlebar-head { fill: none; stroke: context-stroke; stroke-width: 1.6; stroke-linecap: round; }
-.gedge.wire { stroke: var(--accent); stroke-dasharray: 4 4; marker-start: none; marker-end: none; }   /* live drag line: no caps */
-/* a selection greys + fades EVERY line except the selected one(s), so the focus reads from the
-   contrast alone — the selected line needs no extra highlight, it's just the one left un-dimmed. */
-.sel-active .gedge:not(.sel) { filter: grayscale(1) opacity(0.1); }
-.gedge.sel { opacity: 1 !important; }
-/* a line touching a disabled node is greyed (it carries no live data); a stale-edge is a line whose
-   node has been dragged off its routed endpoint — greyed + faded the same way until it re-routes */
-.gedge.dis-edge, .gedge.stale-edge { filter: grayscale(1); }
-.gedge.dis-edge { opacity: 0.4; }
-.gedge.stale-edge { opacity: 0.3 !important; transition: opacity 80ms linear; }   /* beat .sel's opacity:1 */
+/* Edges (wires + end-caps) and group-box fill/border are drawn on the viewport canvases
+   (js/graph/edgecanvas.js), NOT as SVG paths/markers. Per-kind stroke colour = the source node's
+   --nt-<type> hue; dash patterns, dim/select states, and the end-cap glyphs are all resolved in
+   js/graph/routing.js + edgemarks.js from the same base.css tokens. No .gedge / marker CSS lives
+   here anymore. */
 
 /* window node: fixed default width, resized by WIDTH (its grips) like the item node —
    the embedded image canvas fills the node and its height follows the image aspect.
