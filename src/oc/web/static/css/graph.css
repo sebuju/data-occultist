@@ -212,7 +212,7 @@
 }
 
 .gnode *:not(:hover, .gn-foot, .sv-input) > :is(button.danger, .btn-trash) {
-   visibility: hidden;
+   opacity: 0.25;
 }
 /* .gnode *:not(.gn-foot) > :is(button.danger, .btn-trash) {
    position: absolute;
@@ -731,11 +731,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    fills the box with a dark on-accent tick. Overrides base.css's global slide-toggle sizing. */
 .gnode input[type="checkbox"]:not(.gn-enable) {
     width: 15px; height: 15px; border-radius: 4px; box-sizing: border-box;
-    background-color: var(--bg); border: 1px solid var(--nt);
+    background-color: color-mix(in srgb, var(--nt) 12%, transparent); border: unset;
     background-image: none; background-repeat: no-repeat;
     background-position: center; background-size: 11px 11px;
     transition: background-color .15s ease, border-color .15s ease;
     margin-left: 4px;
+    padding: 0;
 }
 .gnode input[type="checkbox"]:not(.gn-enable):hover:not(:disabled) { border-color: var(--nt, var(--accent)); }
 .gnode input[type="checkbox"]:not(.gn-enable):checked {
