@@ -634,7 +634,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    never shifts the row (they overlay the when-select's left edge; hovering a button still counts
    as hovering .frule-n since they're descendants) */
 .frule-head .frule-n .rulemv { position: absolute; right: 3px; opacity: 0; pointer-events: none;
-    padding: 0; width: 11px; height: 8px; min-height: 0; line-height: 8px; font-size: 7px;
+    padding: 0; width: 11px; height: 11px; min-height: 0; line-height: 8px; font-size: 7px;
     transition: opacity .08s; }
 .frule-head .frule-n .rulemv[data-d="-1"] { bottom: 11px; }
 .frule-head .frule-n .rulemv[data-d="1"] { top: 10px; }
@@ -804,7 +804,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     position: absolute; width: 8px; height: 8px; border-radius: 50%;
     background: var(--accent); top: 50%; transform: translateY(-50%); cursor: crosshair; z-index: 2;
 }
-.gnode .port.out { right: -4px; background: var(--data); }   /* match the data-line orange */
+.gnode .port.out { right: -4px; background: var(--nt, var(--data)); }   /* match the node-tinted data line (--nt), orange fallback */
 .gnode .port.in { left: -4px; background: var(--line); }
 .gnode .port.pwatch { left: -4px; right: auto; background: var(--watch-line); }   /* trigger watch out-port (left face) */
 /* an idle out-port (drag handle with no line) only appears while its node is hovered, so resting
@@ -1094,7 +1094,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 
 /* selected node: ringed + lit in its OWN type hue (blueprint reserves the accent glow for the
    selection, so the resting board stays flat). Falls back to white-ish when a card has no --nt. */
-.gnode.selected { border-color: var(--nt); box-shadow: 0 0 0 1px var(--nt), 0 10px 30px #000000a6; z-index: 20; }
+.gnode.selected { border-color: var(--nt); box-shadow: 0 0 0 1px var(--nt), 0 10px 30px #000000; z-index: 20; }
 .gnode.multisel { border-color: var(--sel); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sel) 60%, transparent); }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
@@ -1287,8 +1287,9 @@ button.gp-scheme[data-sid^="s_"]::before {
 .sgr-r { top: 0; bottom: 0; right: 0; width: 10px; }
 /* S-A: a small caps label pinned INSIDE the box's top-left corner — a smaller, dimmer sibling of the
    group label (inherits .ggroup-title's inline-flex / uppercase / mono; just shrinks the type). */
-.subgroup-title { top: 0; bottom: auto; right: auto; width: auto; height: auto;
-    padding: 5px 9px; background: none; border-radius: 0;
+/* the label straddles the top OUTLINE (centered on the line), interrupting it like a fieldset legend. */
+.subgroup-title { top: 0; bottom: auto; left: 9px; right: auto; width: auto; height: auto;
+    transform: translateY(-50%); padding: 0 5px; background: var(--bg); border-radius: 0;
     font-size: 10px; line-height: 1; letter-spacing: 0.2em; }
 /* the cog sits OUTSIDE the box, just above its top-right corner (the interior is full of nodes that
    sit on a higher layer and would occlude it). Revealed on hover like the group + super cogs. */

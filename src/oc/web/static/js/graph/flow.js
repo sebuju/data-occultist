@@ -12,6 +12,8 @@
 
 import { edgeGeometry } from "./routing.js";
 import { model } from "./state.js";
+import { nodeTypeOf } from "./main.js";
+import { typeColor } from "./colors.js";
 import * as dsevents from "./dsevents.js";
 
 const CAP = 40;            // max blobs spawned per event (overflow is represented, not drawn)
@@ -106,11 +108,13 @@ function spawn(kind, src, dst, n) {
     const count = Math.min(n, CAP);
     const len = polyLength(pts);
     const dur = Math.max(250, (len / SPEED) * 1000);   // ms; floor so very short edges still read
+    // data blob rides the node-tinted data line (stroke = typeColor of the source node); match it.
+    // trigger/watch keep their fixed CSS colour ("" -> falls back to .flow-blob.<kind>).
+    const fill = kind === "data" ? typeColor(nodeTypeOf(src)) : "";
     for (let i = 0; i < count; i++) {
-        blobs.push({
-            el: takeBlob(kind), kind, src, dst,
-            delay: i * STAGGER_MS, t: 0, dur, started: false,
-        });
+        const el = takeBlob(kind);
+        el.style.fill = fill; el.style.color = fill;   // color drives the drop-shadow glow (currentColor)
+        blobs.push({ el, kind, src, dst, delay: i * STAGGER_MS, t: 0, dur, started: false });
     }
     start();
 }

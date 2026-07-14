@@ -289,7 +289,7 @@ const SUB = {
     get: () => subGroups, set: (v) => { subGroups = v; }, nextId: () => `subgroup_${++subseq}`,
     layer: () => ctx.subWorld && ctx.subWorld(),
     sel: ".subgroup", idAttr: "subid",
-    nodeTier: true, sizable: false, titleTop: true,   // S-A: label sits INSIDE top-left, box reserves it
+    nodeTier: true, sizable: false, titleTop: false,   // uniform half-grid pad all sides; title straddles the top line (CSS), reserves no band
     padL: SUB_PAD, padR: SUB_PAD, padT: SUB_PAD, padB: SUB_PAD,
     memberValid: (id) => !!ctx.nodeRect(id),
     memberRect: (id) => ctx.nodeRect(id),
@@ -778,7 +778,7 @@ export function groupBoxes() {
         .filter((x) => x.box);
 }
 export function subGroupBoxes() {
-    return subGroups.map((sg) => ({ id: sg.id, title: sg.title, outline: { ...sg.outline }, bg: sg.bg, bandH: sg._titleH || 0, box: boxOf(SUB, sg) }))
+    return subGroups.map((sg) => ({ id: sg.id, title: sg.title, outline: { ...sg.outline }, bg: sg.bg, bandH: 0, box: boxOf(SUB, sg) }))
         .filter((x) => x.box);
 }
 export function superGroupBoxes() {
