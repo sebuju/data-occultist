@@ -4538,20 +4538,20 @@ sounds:
 - id: bob
   file: ''
   synth:
-    wave: triangle
+    wave: sine
     points:
     - t: 0.0
-      p: 0.6
-    - t: 0.4569748937190246
-      p: 0.4474750560090782
+      p: 0.569
+    - t: 0.5
+      p: 0.294
     - t: 1.0
-      p: 0.21286203498200518
-    length_ms: 180
-    attack: 4
-    decay: 55
+      p: 0.562
+    length_ms: 358
+    attack: 1
+    decay: 43
     vibrato: 0
-    crush: 18
-  volume: 0.5
+    crush: 0
+  volume: 0.7
   enabled: true
 actions:
 - id: action
@@ -4662,8 +4662,8 @@ atlas:
 layout:
   nodes:
     game:
-      x: -2580.0
-      y: -4320.0
+      x: -60.0
+      y: -3960.0
       w: 520.0
       h: 263.0
       collapsed: false
@@ -4672,36 +4672,36 @@ layout:
       softW: true
       softH: false
     dict:wiki:
-      x: -1720.0
-      y: -4020.0
+      x: 800.0
+      y: -3660.0
       w: 280.0
       h: 160.0
       collapsed: false
       custW: true
       custH: true
     ds:master:
-      x: -1780.0
-      y: -3000.0
+      x: 740.0
+      y: -2640.0
       collapsed: false
     ds:prices_live:
-      x: -1240.0
-      y: -2660.0
+      x: 1280.0
+      y: -2300.0
       w: 360.0
       h: 144.0
       collapsed: false
       custW: false
       custH: false
     sub:live_prices_joined:
-      x: -800.0
-      y: -4320.0
+      x: 1720.0
+      y: -3960.0
       w: 360.0
       h: 720.0
       collapsed: false
       custW: false
       custH: false
     producer:wf_market_live:
-      x: -1240.0
-      y: -4080.0
+      x: 1280.0
+      y: -3720.0
       w: 360.0
       h: 1340.0
       collapsed: false
@@ -4722,16 +4722,16 @@ layout:
       y: -5640.0
       collapsed: false
     ds:mods:
-      x: -1780.0
-      y: -2760.0
+      x: 740.0
+      y: -2400.0
       w: 360.0
       h: 160.0
       collapsed: false
       custW: false
       custH: false
     ds:mod_catalog:
-      x: -2180.0
-      y: -1960.0
+      x: 340.0
+      y: -1600.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -4740,8 +4740,8 @@ layout:
       softW: true
       softH: true
     producer:mod_catalog_producer:
-      x: -2180.0
-      y: -3000.0
+      x: 340.0
+      y: -2640.0
       w: 360.0
       h: 1000.0
       collapsed: false
@@ -4862,8 +4862,8 @@ layout:
       y: 2640.0
       collapsed: false
     trigger:owned_refresh:
-      x: -1240.0
-      y: -4320.0
+      x: 1280.0
+      y: -3960.0
       w: 360.0
       h: 363.0
       collapsed: false
@@ -4925,8 +4925,8 @@ layout:
       custH: false
       softW: true
     producer:producer:
-      x: -2580.0
-      y: -3000.0
+      x: -60.0
+      y: -2640.0
       w: 360.0
       h: 1000.0
       collapsed: false
@@ -4934,8 +4934,8 @@ layout:
       custH: true
       softH: true
     ds:relic_contents:
-      x: -2580.0
-      y: -1960.0
+      x: -60.0
+      y: -1600.0
       w: 360.0
       h: 160.0
       collapsed: false
@@ -5105,20 +5105,20 @@ layout:
       y: -4240.0
       collapsed: false
     sub:master_prime_parts:
-      x: -800.0
-      y: -3460.0
+      x: 1720.0
+      y: -3100.0
       w: 360.0
       h: 700.0
       collapsed: false
       custW: false
       custH: false
     ds:ee_log:
-      x: -3100.0
-      y: -4320.0
+      x: -580.0
+      y: -3960.0
       collapsed: false
     src:log_ee:
-      x: -3100.0
-      y: -4080.0
+      x: -580.0
+      y: -3720.0
       w: 360.0
       h: 740.0
       collapsed: false
@@ -5165,8 +5165,8 @@ layout:
       custH: true
       softH: true
     dict:relics:
-      x: -1720.0
-      y: -3620.0
+      x: 800.0
+      y: -3260.0
       collapsed: false
     trigger:on_new_relic_fetched:
       x: 4240.0
@@ -5210,11 +5210,11 @@ layout:
     sound:bob:
       x: 7200.0
       y: -3340.0
-      w: 400.0
-      h: 500.0
+      w: 440.0
+      h: 520.0
       collapsed: false
       custW: true
-      custH: false
+      custH: true
       softW: true
       softH: true
     win:mission_rewards:
@@ -5281,7 +5281,7 @@ layout:
       custH: false
       softW: false
     trigger:ab_trigger:
-      x: 7660.0
+      x: 7680.0
       y: -3340.0
       w: 280.0
       h: 320.0
@@ -5357,12 +5357,13 @@ layout:
     ro:live_game_window:ability_4_cd:
       x: 7980.0
       y: -2720.0
-      w: 220.0
-      h: 340.0
+      w: 280.0
+      h: 380.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
       softW: true
+      softH: true
     ro:arsenal_warframe:mod_drain_remaining:
       x: -20.0
       y: -240.0
@@ -5380,8 +5381,8 @@ layout:
       custW: true
       custH: true
     atlas:
-      x: -2580.0
-      y: -4020.0
+      x: -60.0
+      y: -3660.0
       w: 700.0
       h: 759.0
       collapsed: false
@@ -6665,7 +6666,7 @@ layout:
     titlePos: tl
     schemeId: stone
   - id: group_28
-    title: ''
+    title: group_28
     members:
     - win:live_game_window
     - det:live_game_window:hud
@@ -7398,7 +7399,7 @@ layout:
     titleAlign: left
   - id: subgroup_29
     parent: group_28
-    title: ''
+    title: test
     members:
     - trigger:ab_trigger
     - sound:bob
