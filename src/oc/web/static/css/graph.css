@@ -794,15 +794,13 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .mini { font-size: 11px; }
 .dsconcat { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .dict-feeds { margin-top: 8px; }   /* a lab-grid — sources row laid out like subset/producer */
-.dsk-fields, .dsk-norm, .df-cols { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.dsk-fields, .dsk-norm { display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .dsk-norm { border-top: 1px solid var(--muted); padding-top: 6px; }
 .chk { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; margin: 0; }
 .chk input[type="checkbox"] { margin: 0; }
 .chk-words { flex: 1 1 100%; }
 .chk-words input { flex: 1 1 auto; min-width: 0; }
 .dsk-words { width: 100%; }
-.dict-feed { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; border-top: 1px solid var(--muted); }
-.df-src { display: flex; align-items: center; gap: 4px; }
 /* per-window "live" checkbox in the window footer — doesn't stretch like the buttons */
 .win-live { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; cursor: pointer; }
 .win-live input { margin: 0; }

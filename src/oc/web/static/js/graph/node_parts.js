@@ -968,24 +968,22 @@ function dictFeedsEditor(dict) {
     const feeds = model.dictFeeds(dict.id);
     const free = model.dictFeedable(dict.id);   // datasets not already feeding it
     if (!feeds.length && !free.length) return null;
-    // per-source column pickers: each wired dataset lists its columns as checkboxes (full-width
-    // blocks below the sources row)
-    const cols = feeds.map((fd) => {
+    // flat column list across every wired dataset: one kv row per column — label "dataset:column"
+    // in col 1, checkbox in col 2 — same lab-grid every other node's fields use (rule 7).
+    const rows = feeds.flatMap((fd) => {
         const shown = [...new Set([...model.datasetFields(fd.dataset), ...(fd.columns || [])])];
-        return h("div", { class: "gspan dict-feed", dataset: { ds: fd.dataset } },
-            h("div", { class: "df-src mini muted" }, h("code", fd.dataset), " columns"),
-            shown.length
-                ? h("div", { class: "df-cols" }, shown.map((c) => h("label", { class: "chk" },
-                    h("input", { type: "checkbox", class: "dfcol", dataset: { ds: fd.dataset, col: c }, checked: (fd.columns || []).includes(c) }), c)))
-                : h("div", { class: "mini muted" }, "no columns — dataset has no data yet"));
+        return shown.length
+            ? shown.map((c) => kv(`${fd.dataset}:${c}`,
+                h("input", { type: "checkbox", class: "dfcol", dataset: { ds: fd.dataset, col: c }, checked: (fd.columns || []).includes(c) })))
+            : [gspan("mini muted", `${fd.dataset} — no columns yet`)];
     });
     // laid out like the subset/producer "sources" row: a labelled sources-input widget, its
-    // per-source column blocks spanning below.
+    // flat column list below.
     return h("div", { class: "dict-feeds lab-grid" },
         srcRow("source", "datasets whose column values become terms",
             sourcesInput({ chips: feeds.map((fd) => ({ value: fd.dataset, node: model.refNode(fd.dataset) })), free,
                 rmTitle: "stop feeding from this dataset" })),
-        ...cols);
+        ...rows);
 }
 
 // The concat-key editor: which fields combine into the identity, plus the same canonicalisation
