@@ -186,7 +186,6 @@
 .gnode input:not([size], .gi-id):not(.lab + input):not(.tg-interval):not(.tg-throttle),
 .gnode select:not([size]):not(.lab + select) {
    border-color: var(--line);
-   width: auto;
 }
 
 /* ============================================================================

@@ -579,8 +579,8 @@ function wireSubset(div, s) {
 
     // filters
     div.querySelectorAll(".sf-del").forEach((b) => b.addEventListener("click", () => restructure(() => model.removeFilter(s.id, +b.dataset.i))));
-    div.querySelectorAll(".sf-field").forEach((el) => el.addEventListener("change", (e) => recompute(() => { s.filters[+el.dataset.i].field = e.target.value; })));
-    div.querySelectorAll(".sf-op").forEach((el) => el.addEventListener("change", (e) => recompute(() => { s.filters[+el.dataset.i].op = e.target.value; })));
+    div.querySelectorAll(".sf-field").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.filters[+el.dataset.i].field = e.target.value; })));
+    div.querySelectorAll(".sf-op").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.filters[+el.dataset.i].op = e.target.value; })));
     div.querySelectorAll(".sf-val").forEach((el) => onValueEdit(el, (e) => recompute(() => { s.filters[+el.dataset.i].value = e.target.value; })));
 
     // derived columns — editing a name changes the available column set, so restructure
@@ -588,10 +588,11 @@ function wireSubset(div, s) {
     div.querySelectorAll(".sd-name").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.derived[+el.dataset.i].name = e.target.value.trim(); })));
     div.querySelectorAll(".sd-tpl").forEach((el) => onValueEdit(el, (e) => recompute(() => { s.derived[+el.dataset.i].template = e.target.value; })));
 
-    // sort — removing a row restructures (indices shift); field/dir just recompute
+    // sort — every mutation restructures (removal shifts indices; field/dir rebuild so the
+    // picked option re-renders wrapped in < > like every other select)
     div.querySelectorAll(".ss-del").forEach((b) => b.addEventListener("click", () => restructure(() => model.removeSort(s.id, +b.dataset.i))));
-    div.querySelectorAll(".ss-field").forEach((el) => el.addEventListener("change", (e) => recompute(() => { s.sort[+el.dataset.i].field = e.target.value; })));
-    div.querySelectorAll(".ss-dir").forEach((el) => el.addEventListener("change", (e) => recompute(() => { s.sort[+el.dataset.i].desc = e.target.value === "desc"; })));
+    div.querySelectorAll(".ss-field").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.sort[+el.dataset.i].field = e.target.value; })));
+    div.querySelectorAll(".ss-dir").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.sort[+el.dataset.i].desc = e.target.value === "desc"; })));
 
     // hide/show result columns — toggling changes the column set, so restructure
     wireHideToggles(div, s);

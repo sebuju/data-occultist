@@ -171,7 +171,8 @@ a.node.win:hover { border-color: var(--accent); }
    (graph.css) instead of a per-row `.sub-row .flab` — labels line up in col 1, inputs fill col 2. */
 .sub-row button.danger, .sub-row .btn-trash { flex: 0 0 auto; padding: 0; }
 .sub-row > span.muted { align-self: center; }
-.sub-row > select:is(.ss-dir, .sf-op) { width: fit-content; }
+.gnode .sub-rows > .sub-row > select.ss-dir { width: 50px; text-align: center; }
+.gnode .sub-rows > .sub-row > select.ss-op { width: 70px; text-align: center; }
 .sv-inputs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; align-items: center; }
 .sv-input { position: relative; display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; box-sizing: border-box;
     min-height: 22px;   /* pin chip + add-select to one height so the select's UA min never makes them differ */
