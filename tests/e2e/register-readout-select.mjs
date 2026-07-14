@@ -41,7 +41,7 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
     ok(!!regId, `register node created (id=${regId})`);
 
     // Sanity: the add-select should exist and NOT yet contain a readout we haven't made yet.
-    const selSel = `#gnodes [data-id="register:${regId}"] select.reg-addsrc`;
+    const selSel = `#gnodes [data-id="register:${regId}"] select.mb-addsel`;
     await page.waitForSelector(selSel, { timeout: 5000 });
     const optsBefore = await page.$$eval(`${selSel} option`, (os) => os.map((o) => o.value));
     console.log(`   register's add-select options before: ${JSON.stringify(optsBefore)}`);
