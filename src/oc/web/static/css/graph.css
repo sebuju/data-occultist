@@ -45,6 +45,12 @@
    time (no live flow, no active drag guides), so drop the empty ones out of rendering entirely. */
 #gflow:empty, #gguides:empty { display: none; }
 .align-guide { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: .55; vector-effect: non-scaling-stroke; }
+/* keyboard node-nav: the big directional arrow drawn while an arrow key is held (navarrow.js).
+   Viewport-fixed layer above the world; pointer-events off so it never eats input. */
+#navArrowLayer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 900; overflow: visible;
+    filter: drop-shadow(0 0 6px color-mix(in oklab, var(--accent) 65%, transparent)); }
+.nav-arrow-shaft { stroke: var(--accent); stroke-width: 14px; stroke-linecap: round; opacity: .9; }
+.nav-arrow-head { fill: var(--accent); opacity: .95; }
 /* while a node is dragged OR resized it snaps to the 20px grid in discrete steps; ease the stepped
    properties so it glides to each grid cell instead of teleporting (felt like the interaction was
    running badly / stuttering). MOVE changes only left/top; RESIZE changes width/height (plus the soft
@@ -427,8 +433,8 @@
     /* blueprint card: flat vertical wash (panel -> card-2), border TINTED by the type token
        (--nt) so every card reads its type from the frame, not from a bespoke per-type rule */
     background: linear-gradient(180deg, var(--panel), var(--card-2));
-    border: 1px solid color-mix(in oklab, var(--nt) 34%, var(--line));
     border-radius: 8px; padding: 6px 8px; font-size: var(--fs-base);
+    box-shadow: 0px 0px 0px 1px color-mix(in oklab, var(--nt) 34%, var(--line));
     cursor: grab;                 /* whole card drags; the exceptions below override */
     user-select: none;            /* don't select text while dragging */
     /* each node is its OWN stacking context (z-index on a positioned box makes one). Without this,
@@ -475,7 +481,7 @@
     /* header carries a faint accent wash of the type token over the card — the second half of
        "flat body, accent header" (the body stays neutral; only the header + border are tinted) */
     background: linear-gradient(180deg, color-mix(in oklab, var(--nt) 12%, transparent), transparent);
-    border-bottom: 1px solid var(--line-soft); border-radius: 8px 8px 0 0; }
+    border-bottom: 1px solid var(--line-soft); border-radius: 7px 7px 0 0; }
 /* collapsed: header IS the whole node. Keep the same top/side margins + border-bottom WIDTH
    as expanded (so toggling never changes its height), but pull the bottom margin to -7 too
    (matching the top) so the header covers the node's bottom padding — no empty strip below.

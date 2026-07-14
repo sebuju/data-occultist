@@ -10,6 +10,7 @@ import { sourcesInput } from "./sources_input.js";
 import { makeArmed } from "./armbtn.js";
 import { nodeIcon, iconFor } from "./node_icons.js";
 import { openModal, setModalOpenHook } from "../modal.js";
+import { registerKey, onOutside, onGlobal, SCOPE } from "../inputbus.js";
 import { since } from "../datefmt.js";
 import { log, timed, setLogOpen, mirrorConsole } from "../log.js";
 
@@ -47,7 +48,10 @@ import { showGuides, flashGuides, clearGuides } from "./guides.js";
 import {
     cancelPan, panTo, panZoomTo, panZoomToRect, zoomToNode, viewportCenterWorld,
     applyView, resizeCanvas, onWheel, startPan, consumePanSuppress, MIN_ZOOM,
+    zoomStep, fitAllZoom,
 } from "./camera.js";
+import { centreMost, nearestInDir } from "./keynav.js";
+import { drawLive, lockLive, clearNavArrow } from "./navarrow.js";
 import { movePos, moveWindowPos, moveItemPos, renameNode, forgetNodeState } from "./node_lifecycle.js";
 import { imageTextInspector } from "./toast_node.js";
 import { nodeParts, windowControls, gamePriority, itemLists, _colOpts, _optGroups, satToggleBtn, slideToggle, vtShowRemoved, rectEditBtn, aggregateSelect } from "./node_parts.js";
@@ -2324,14 +2328,17 @@ function wireToastImage(sec, x, n) {
     // remember the last press so the focus-leave handler below can tell a genuine "left the editor"
     // blur from one that merely lands on a non-focusable gap INSIDE the inspector (keep editing) or is
     // a right-click (never deselects). This document-capture mousedown runs BEFORE the focusout it fires.
-    let downInInsp = false, downRight = false;
+    let downInInsp = false, downRight = false, offDeselect = null;
     const outsideDeselect = (ev) => {
-        if (!document.contains(sec)) { document.removeEventListener("mousedown", outsideDeselect, true); return; }
+        if (!document.contains(sec)) { offDeselect?.(); offDeselect = null; return; }
         downRight = ev.button !== 0;
         downInInsp = !downRight && sec.contains(ev.target) && !!ev.target.closest?.(".tn-il-insp");
         if (ev.button === 0 && sel != null && !sec.contains(ev.target)) selectLine(null);
     };
-    document.addEventListener("mousedown", outsideDeselect, true);
+    // A global observer (not a pure outside-dismiss): it must see clicks INSIDE the section too, to
+    // record downInInsp/downRight for the focusout handler below. Routed through onGlobal for the
+    // central teardown handle + audit; self-removes once `sec` leaves the document on a rebuild.
+    offDeselect = onGlobal(document, "mousedown", outsideDeselect, true, "toast:outsideDeselect");
     // The box overlay + guides reveal on `.tn-img:focus-within` (graph.css) — so the MOMENT focus
     // leaves this section they visually disappear. The inspector is driven by `sel`, which a click on
     // a non-focusable gap OUTSIDE the inspector (blurs the preview, doesn't reach outsideDeselect) never
@@ -2634,9 +2641,8 @@ async function toggleForgePreview(div, id, btn) {
     // (another node, empty canvas, a panel). Capture phase so a graph handler that stops propagation
     // can't swallow it. Clicks INSIDE the node (knobs, plot, presets, the button itself) are ignored
     // here and manage the loop themselves.
-    const onDown = (e) => { if (!div.contains(e.target)) stopForgePreview(id); };
-    document.addEventListener("pointerdown", onDown, true);
-    forgePreview.set(id, { ctl, btn, off: () => document.removeEventListener("pointerdown", onDown, true) });
+    const off = onOutside(div, () => stopForgePreview(id));
+    forgePreview.set(id, { ctl, btn, off });
     btn.classList.add("on"); btn.lastChild.textContent = "stop";
     forgeAnim.get(id)?.();   // start the playhead sweep now that a loop is running
 }
@@ -5205,12 +5211,9 @@ function armConfirm(btn, run, { silent = false, resetOnOutside = false } = {}) {
     const arm = () => {
         btn.dataset.armed = "1"; btn.dataset.label = get(); set("confirm");
         if (!resetOnOutside) { timer = setTimeout(disarm, 2500); return; }
-        // capture phase so we disarm before the outside target handles its own click
-        const onDown = (e) => { if (e.target !== btn && !btn.contains(e.target)) disarm(); };
-        const onKey = (e) => { if (e.key === "Escape") disarm(); };
-        document.addEventListener("pointerdown", onDown, true);
-        document.addEventListener("keydown", onKey, true);
-        offGlobal = () => { document.removeEventListener("pointerdown", onDown, true); document.removeEventListener("keydown", onKey, true); };
+        // disarm on an outside press OR Escape — the one shared outside-dismiss primitive (capture,
+        // so we disarm before the outside target handles its own click).
+        offGlobal = onOutside(btn, disarm, { escape: true, escapePriority: 70 });
     };
     btn.addEventListener("click", () => {
         if (btn.dataset.armed !== "1") { arm(); return; }
@@ -5305,11 +5308,12 @@ function carryClones(ids) {
         for (const o of offs) { const p = pos.get(o.id); if (!p) continue; p.x = snap(w.x + o.dx); p.y = snap(w.y + o.dy); positionNode(o.id); }
         requestEdges(); groups.renderGroups();
     };
+    let offKey = null;
     const drop = (e) => {
         e.preventDefault(); e.stopPropagation();
         document.removeEventListener("mousemove", move);
         document.removeEventListener("mousedown", drop, true);
-        document.removeEventListener("keydown", drop, true);
+        offKey?.(); offKey = null;
         document.body.style.cursor = "";
         btn?.classList.remove("cloning");
         for (const id of ids) nodeEls.get(id)?.classList.remove("snapping");
@@ -5320,7 +5324,12 @@ function carryClones(ids) {
     };
     document.addEventListener("mousemove", move);
     document.addEventListener("mousedown", drop, true);   // capture: beat node/canvas handlers
-    document.addEventListener("keydown", drop, true);
+    // Any key also drops the carried clones — on the central bus at priority 500 (above the graph
+    // shortcuts' 20) and CONSUMING, so the terminating key can't also fire WASD/undo/etc.
+    offKey = registerKey({
+        combo: "*", scope: SCOPE.GRAPH, priority: 500, allowInField: true,
+        run: (e) => { drop(e); return true; }, stop: true,
+    });
 }
 $("selCloneBtn").addEventListener("click", cloneSelection);
 
@@ -5686,7 +5695,9 @@ $("graph").addEventListener("wheel", onWheel, { passive: false });
 // any user action cancels an in-flight smooth pan-to-new-node
 $("graph").addEventListener("pointerdown", cancelPan, true);
 $("graph").addEventListener("wheel", cancelPan, { capture: true, passive: true });
-window.addEventListener("keydown", cancelPan, true);
+// Any key cancels an in-flight smooth pan-to-node — top priority + non-consuming so it runs before
+// every other shortcut, exactly as the old window-capture keydown did (now on the central bus).
+registerKey({ combo: "*", scope: SCOPE.ANY, priority: 1000, allowInField: true, run: (ev) => { cancelPan(ev); return false; } });
 
 // Briefly arm the grid-glide transition for a DISCRETE (keyboard) step. A grip drag holds
 // `.snapping` across the whole drag (down..up); a WASD step has no down/up, so add the class and
@@ -5700,16 +5711,176 @@ function glideStep(el) {
     _snapTimers.set(el, setTimeout(() => el.classList.remove("snapping"), 140));
 }
 
-// WASD moves the selected rectangle; Shift+WASD resizes it (A/D width, W/S height).
-// Ignored while typing in a field. NUDGE (the shared dir map) is declared at module scope.
+// ---- keyboard node-navigation (arrows pan, Enter selects, Tab traps inside a node) ----------
+// Arrow keys walk the graph WITHOUT selecting: plain arrows step node-to-node, Shift+arrows step
+// between top-level GROUPS (never sub/super groups). While one or more arrows are HELD a big arrow
+// is drawn from the current anchor to the candidate target (the neighbour in the held direction);
+// two arrows aim diagonally. The camera pans there once EVERY arrow is released. Pressing arrows
+// again mid-pan does NOT stop it — it redirects to the next hop and STACKS another arrow (the prior
+// hop's arrow stays, screen-fixed, as a breadcrumb) until the whole run settles and all clear.
+// `navAnchor` is the nav cursor (node OR group id), distinct from the actual selection.
+let navAnchor = null, navAnchorMode = false;   // cursor id + which mode it belongs to (false=node, true=group)
+let navGroupMode = false;                       // the current chain's mode (fixed on its first held arrow)
+let _lastEsc = 0;                 // performance.now() of the previous Escape (double-tap = fit-all)
+const heldArrows = new Set();     // arrow keys currently down
+let navTarget = null;             // the id the held arrows point at (panned to on release)
+const ARROW = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+
+// {id, centre} of every navigable item for the mode, and the world rect of one — node bodies for
+// node-mode, top-level group boxes (groups.groupBoxes() excludes sub/super) for group-mode.
+function navCentres(groupMode) {
+    const out = [];
+    if (groupMode) {
+        for (const g of groups.groupBoxes()) out.push({ id: g.id, x: g.box.x + g.box.w / 2, y: g.box.y + g.box.h / 2 });
+    } else {
+        for (const [id, p] of pos) {
+            const el = nodeEls.get(id);
+            if (el) out.push({ id, x: p.x + el.offsetWidth / 2, y: p.y + el.offsetHeight / 2 });
+        }
+    }
+    return out;
+}
+function nodeCentres() { return navCentres(false); }
+function navRectOf(id, groupMode) {
+    if (groupMode) { const g = groups.groupBoxes().find((b) => b.id === id); return g ? g.box : null; }
+    const p = pos.get(id), el = nodeEls.get(id);
+    return p && el ? { x: p.x, y: p.y, w: el.offsetWidth, h: el.offsetHeight } : null;
+}
+// The summed direction of the currently held arrows.
+function heldDir() {
+    let dx = 0, dy = 0;
+    for (const k of heldArrows) { const v = ARROW[k]; dx += v[0]; dy += v[1]; }
+    return [dx, dy];
+}
+
+// Recompute the candidate target for the held direction and (re)draw the LIVE preview arrow to it
+// (leaving any locked breadcrumb arrows in place).
+function updateNavPreview() {
+    const [dx, dy] = heldDir();
+    const gm = navGroupMode;
+    const centres = navCentres(gm);
+    if ((!dx && !dy) || !centres.length) { navTarget = null; drawLive(null); return; }
+    // reuse the anchor only if it still exists in THIS mode's set; else seed from the centre-most item
+    let anchorId = (navAnchor && navAnchorMode === gm && centres.some((c) => c.id === navAnchor)) ? navAnchor : null;
+    if (!anchorId) { const c = viewportCenterWorld(); anchorId = centreMost(centres, c.x, c.y); }
+    const from = centres.find((c) => c.id === anchorId);
+    const next = from && nearestInDir(centres, from, dx, dy);
+    navTarget = next || null;
+    const to = next && centres.find((c) => c.id === next);
+    if (from && to) drawLive({ x: from.x, y: from.y }, { x: to.x, y: to.y }, navColor(from.id, gm), navColor(to.id, gm));
+    else drawLive(null);
+}
+
+// The colour to tint a nav arrow's end at a given item: a node's own tint (--nt, resolved), a
+// group's outline/fill colour, or the accent as a fallback.
+function navColor(id, groupMode) {
+    if (groupMode) {
+        const g = groups.allGroups().find((x) => x.id === id);   // raw record: outline/bg are colour strings
+        return (g && (typeof g.outline === "string" && g.outline || g.bg)) || cssVarColor("--accent");
+    }
+    const el = nodeEls.get(id);
+    const c = el && getComputedStyle(el).getPropertyValue("--nt").trim();
+    return c || cssVarColor("--accent");
+}
+function cssVarColor(name) { return getComputedStyle(document.body).getPropertyValue(name).trim() || "#4da3ff"; }
+
+// All arrows released: pan to the candidate (no selection). The live arrow LOCKS in place (so a
+// mid-pan re-press stacks a new one over it); each locked arrow then dies on its OWN timer.
+function commitNav() {
+    const target = navTarget, gm = navGroupMode; navTarget = null;
+    const rect = target && navRectOf(target, gm);
+    if (rect) {
+        navAnchor = target; navAnchorMode = gm;
+        lockLive();                                            // this hop's arrow -> its own death timer
+        panZoomToRect(rect, { fit: false });                   // redirects a pan already in flight (no stop)
+    } else drawLive(null);
+}
+
+// Tab is trapped INSIDE the selected node: while a node is focus-selected (and no box overlay owns
+// the keys), Tab / Shift+Tab cycle only its own focusable controls, wrapping at the ends, instead
+// of walking out into the rest of the page. Own listener (capture) because the main keydown handler
+// bails on focused inputs — Tab must keep working while a field inside the node has focus.
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+function nodeFocusables(el) {
+    return [...el.querySelectorAll(FOCUSABLE)].filter((c) => c.offsetParent !== null && !c.closest("[inert]"));
+}
+// allowInField: Tab must keep cycling even while a field INSIDE the node has focus (the whole point of
+// the trap), so it opts out of the registry's input-field bail. Consuming via return (preventDefault
+// blocks native tabbing); GRAPH scope replaces the prettyActive bail.
+registerKey({
+    match: (ev) => ev.key === "Tab", scope: SCOPE.GRAPH, priority: 65, allowInField: true,
+    when: () => !overlays.get(activeOverlayKey) && !!(selectedNodeId && nodeEls.get(selectedNodeId)),
+    run: (ev) => {
+        const el = nodeEls.get(selectedNodeId);
+        const items = nodeFocusables(el);
+        if (!items.length) { ev.preventDefault(); return true; }  // trap even with nothing to land on
+        let i = items.indexOf(document.activeElement);
+        if (i === -1) i = ev.shiftKey ? 0 : -1;              // focus outside the node -> enter at an end
+        const next = (i + (ev.shiftKey ? -1 : 1) + items.length) % items.length;
+        items[next].focus();
+        ev.preventDefault(); return true;
+    },
+});
+
+// Releasing arrows drives the node-nav pan. Commit on the FIRST release using the direction held up
+// to that instant, then drop every remaining held key: a diagonal is two keys, and the user can't
+// release both on the exact same tick — waiting for the last release would re-preview the lone
+// still-held key and snap to its orthogonal neighbour instead of the diagonal target. Dropping the
+// leftover keys also stops their auto-repeat from restarting a stray move (keydown guards on repeat).
+document.addEventListener("keyup", (ev) => {
+    if (!heldArrows.has(ev.key)) return;
+    heldArrows.clear();
+    commitNav();
+});
+window.addEventListener("blur", () => { if (heldArrows.size) { heldArrows.clear(); navTarget = null; clearNavArrow(); } });
+
+// The graph view's global shortcut handler — Escape (3-stage), PageUp/Down zoom, Enter/Arrow node-nav,
+// undo/redo, Delete, Shift+R, WASD move / Shift+WASD resize (node OR the live box overlay). Registered
+// as ONE GRAPH-scope entry on the central input bus (inputbus.js) rather than its own document keydown:
+// the three shared guards move OUT — scope=GRAPH replaces the `prettyActive` bail, the registry's
+// input-field bail replaces the INPUT/SELECT/TEXTAREA check (now a superset: also contenteditable),
+// and a focused `.tn-img-pv` preview (which owns WASD for its own element) yields via `when`. The branch
+// logic below is otherwise unchanged. NUDGE (the shared dir map) is declared at module scope.
 const MINB = 0.004;
-document.addEventListener("keydown", (ev) => {
-    if (prettyActive) return;   // pretty view owns the keyboard (incl. its OWN undo/redo) while up
-    if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
-    // a focused toast-image preview owns WASD for nudging its element — don't also move the node
-    if (document.activeElement?.closest?.(".tn-img-pv")) return;
-    // Escape disarms any drawing tool (a tool-input's own Escape is handled above — INPUT bails first).
-    if (ev.key === "Escape") { if (clearTools()) { ev.preventDefault(); return; } }
+registerKey({
+    scope: SCOPE.GRAPH, priority: 20,
+    when: () => !document.activeElement?.closest?.(".tn-img-pv"),
+    run: (ev) => {
+    // Escape: disarm a drawing tool first (a tool-input's own Escape is handled above — INPUT bails
+    // first); else a single Esc clears the selection, and a double Esc (within 400ms) frames every
+    // node (fit-all). navAnchor resets on fit-all so arrow-nav restarts from the centre.
+    if (ev.key === "Escape") {
+        if (clearTools()) { ev.preventDefault(); return; }
+        const now = performance.now();
+        if (now - _lastEsc < 400) { _lastEsc = 0; navAnchor = null; fitAllZoom(); ev.preventDefault(); return; }
+        _lastEsc = now;
+        if (selected.size || selectedNodeId || overlays.get(activeOverlayKey)) { deselectAll(); ev.preventDefault(); return; }
+        return;
+    }
+    const plain = !ev.ctrlKey && !ev.metaKey && !ev.altKey;   // leave modified combos to the browser
+    // PageUp/PageDown step the discrete zoom ladder around the viewport centre — active whenever
+    // not typing (the INPUT bail above already guards that), regardless of selection.
+    if (plain && (ev.key === "PageUp" || ev.key === "PageDown")) {
+        zoomStep(ev.key === "PageUp" ? 1 : -1);
+        ev.preventDefault(); return;
+    }
+    // Arrow keys + Enter navigate the node cloud, but ONLY when nothing is selected — a selected
+    // node hands the keyboard to WASD-nudge + Tab. Arrows pan to the neighbouring node WITHOUT
+    // selecting; Enter selects whichever node is centre-most to the camera.
+    const navIdle = plain && !overlays.get(activeOverlayKey) && !selected.size && !selectedNodeId;
+    if (navIdle && ev.key === "Enter") {
+        const c = viewportCenterWorld();
+        const anchor = centreMost(nodeCentres(), c.x, c.y);
+        if (anchor) { navAnchor = anchor; navAnchorMode = false; focusNode(anchor); panZoomTo(anchor, { fit: true }); }
+        ev.preventDefault(); return;
+    }
+    if (navIdle && ARROW[ev.key]) {
+        if (!ev.repeat && !heldArrows.has(ev.key)) {
+            if (heldArrows.size === 0) navGroupMode = ev.shiftKey;   // Shift held at chain start -> group nav
+            heldArrows.add(ev.key); updateNavPreview();
+        }
+        ev.preventDefault(); return;
+    }
     if (ev.ctrlKey || ev.metaKey) {
         const k = ev.key.toLowerCase();
         if (k === "z" && !ev.shiftKey) { ev.preventDefault(); undo(); return; }
@@ -5838,6 +6009,7 @@ document.addEventListener("keydown", (ev) => {
         rectEditCanvasSync(activeOverlayKey);
     }
     ev.preventDefault();
+    },
 });
 
 

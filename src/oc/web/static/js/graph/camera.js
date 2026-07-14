@@ -7,6 +7,7 @@ import { floatWins } from "./floatwin.js";
 import { persist } from "./persist.js";
 import { nmUpdateViewport } from "./panels/nodemap.js";
 import { redrawNow } from "./edgecanvas.js";
+import { renderNavArrows, navArrowsActive } from "./navarrow.js";
 
 let panAnim = null;
 export function cancelPan() { if (panAnim) { cancelAnimationFrame(panAnim); panAnim = null; } }
@@ -83,13 +84,10 @@ export function usableViewport() {
 // framing would zoom OUT (jarring on a double-click) — skip the whole move instead.
 // Returns true if the camera actually moved (a target far enough from the current view to
 // animate); false when the rect is already framed, so callers can fall back to another action.
-export function panZoomToRect(box, { fit = true, onlyIn = false } = {}) {
-    if (!box || !box.w || !box.h) return false;
-    const u = usableViewport();   // centre in the area clear of floating panels
-    const tz = fit ? fitZoom(box.w, box.h, { width: u.w, height: u.h }) : view.zoom;
-    if (onlyIn && tz < view.zoom - 1e-3) return false;   // already closer than fit → don't zoom out
-    const tx = (u.left + u.w / 2) - (box.x + box.w / 2) * tz;
-    const ty = (u.top + u.h / 2) - (box.y + box.h / 2) * tz;
+// The ONE camera animation (easeInOutQuad, 380ms): smoothly drive pan+zoom to (tx,ty,tz). Every
+// animated move — rect framing, fit-all, node centring — routes through here rather than copying
+// the loop (rule 7). Returns false (no-op) when already at the target. Persists on settle.
+function animateView(tx, ty, tz) {
     const sx = view.panX, sy = view.panY, sz = view.zoom, t0 = performance.now(), dur = 380;
     if (Math.abs(tx - sx) < 0.5 && Math.abs(ty - sy) < 0.5 && Math.abs(tz - sz) < 1e-3) return false;  // already framed
     cancelPan();
@@ -103,6 +101,70 @@ export function panZoomToRect(box, { fit = true, onlyIn = false } = {}) {
     };
     panAnim = requestAnimationFrame(step);
     return true;
+}
+
+export function panZoomToRect(box, { fit = true, onlyIn = false } = {}) {
+    if (!box || !box.w || !box.h) return false;
+    const u = usableViewport();   // centre in the area clear of floating panels
+    const tz = fit ? fitZoom(box.w, box.h, { width: u.w, height: u.h }) : view.zoom;
+    if (onlyIn && tz < view.zoom - 1e-3) return false;   // already closer than fit → don't zoom out
+    const tx = (u.left + u.w / 2) - (box.x + box.w / 2) * tz;
+    const ty = (u.top + u.h / 2) - (box.y + box.h / 2) * tz;
+    return animateView(tx, ty, tz);
+}
+
+// ---- discrete zoom ladder + fit-all ---------------------------------------
+
+// The zoom rungs: wheel ticks and PageUp/PageDown step through THESE discrete levels (not a
+// continuous factor) so every zoom lands on a known, repeatable scale.
+export const ZOOM_LEVELS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 15];
+
+// Step one rung along the ladder (dir>0 = in, dir<0 = out), keeping the world point at (cx,cy)
+// graph-local px fixed — the cursor for a wheel tick, the viewport centre for a key. Snaps
+// instantly (no animation). Steps are NOT queued: within one frame the LATEST request overwrites
+// any earlier one and exactly one rung is applied on the next rAF, so a fast flick (or a reversed
+// direction mid-frame) never stacks multiple rungs — the most recent intent wins.
+let zoomPending = null;   // {dir, cx, cy} of the latest step awaiting the next frame
+export function zoomStep(dir, cx = null, cy = null) {
+    zoomPending = { dir, cx, cy };
+    if (zoomRaf) return;   // a frame is already scheduled; it will read the latest zoomPending
+    zoomRaf = requestAnimationFrame(() => {
+        zoomRaf = null;
+        const p = zoomPending; zoomPending = null;
+        if (!p) return;
+        const old = view.zoom, eps = old * 1e-3;
+        let z;
+        if (p.dir > 0) z = ZOOM_LEVELS.find((l) => l > old + eps) ?? ZOOM_LEVELS[ZOOM_LEVELS.length - 1];
+        else { const below = ZOOM_LEVELS.filter((l) => l < old - eps); z = below.length ? below[below.length - 1] : ZOOM_LEVELS[0]; }
+        if (z === old) return;
+        let { cx: px, cy: py } = p;
+        if (px == null) { const r = $("graph").getBoundingClientRect(); px = r.width / 2; py = r.height / 2; }
+        view.panX = px - (px - view.panX) * (z / old);   // keep the point under (px,py) fixed
+        view.panY = py - (py - view.panY) * (z / old);
+        view.zoom = z;
+        applyView(); updateOverlayZoom();
+        persist.local();
+    });
+}
+
+// Double-Esc: frame EVERY node — centre on the node cloud's bounding box at a zoom that fits it
+// all in the clear viewport (clamped to the ladder's range). Animated, unlike the discrete step.
+export function fitAllZoom() {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [id, p] of pos) {
+        const el = nodeEls.get(id); if (!el) continue;
+        x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
+        x1 = Math.max(x1, p.x + el.offsetWidth); y1 = Math.max(y1, p.y + el.offsetHeight);
+    }
+    if (!Number.isFinite(x0)) return false;   // no positioned nodes
+    const box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    const u = usableViewport();
+    const MARGIN = 0.92;   // a little breathing room around the cloud
+    let tz = Math.min((u.w * MARGIN) / box.w, (u.h * MARGIN) / box.h);
+    tz = Math.max(0.25, Math.min(ZOOM_LEVELS[ZOOM_LEVELS.length - 1], tz));   // never zoom out past 0.25 on fit-all
+    const tx = (u.left + u.w / 2) - (box.x + box.w / 2) * tz;
+    const ty = (u.top + u.h / 2) - (box.y + box.h / 2) * tz;
+    return animateView(tx, ty, tz);
 }
 
 // Smoothly pan AND zoom to centre a node (the node-map jump). Returns whether the camera moved.
@@ -147,6 +209,7 @@ export function applyView() {
     // A no-op when the canvas isn't mounted.
     redrawNow();
     nmUpdateViewport();   // keep the node-map's viewport indicator in sync with pan/zoom
+    if (navArrowsActive()) renderNavArrows();   // keep nav arrows glued to their nodes as the view moves
 }
 
 export function resizeCanvas() {
@@ -238,15 +301,8 @@ export function onWheel(ev) {
     ev.preventDefault();
     const rect = $("graph").getBoundingClientRect();
     const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
-    const old = view.zoom;
-    const z = Math.max(MIN_ZOOM, old * (ev.deltaY < 0 ? 1.1 : 1 / 1.1));   // manual wheel: no font ceiling
-    // keep the world point under the cursor fixed
-    view.panX = mx - (mx - view.panX) * (z / old);
-    view.panY = my - (my - view.panY) * (z / old);
-    view.zoom = z;
-    // Zoom math runs per event (pure numbers, must accumulate multiplicatively), but the style
-    // work — transform write, minimap indicator, every overlay's setWorldZoom — paints once per
-    // frame, so a burst of wheel ticks costs one update, not one per tick. persist is debounced.
-    if (!zoomRaf) zoomRaf = requestAnimationFrame(() => { zoomRaf = null; applyView(); updateOverlayZoom(); });
-    persist.local();
+    // One wheel tick = one rung along the discrete zoom ladder, kept fixed under the cursor.
+    // zoomStep coalesces the style work to one paint per frame (zoomRaf), so a burst of ticks
+    // costs one update, not one per tick; persist is debounced inside it.
+    zoomStep(ev.deltaY < 0 ? 1 : -1, mx, my);
 }
