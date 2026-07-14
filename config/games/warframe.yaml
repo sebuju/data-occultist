@@ -5285,7 +5285,7 @@ layout:
       y: -3340.0
       w: 280.0
       h: 320.0
-      collapsed: false
+      collapsed: true
       custW: false
       custH: true
     action:action:
