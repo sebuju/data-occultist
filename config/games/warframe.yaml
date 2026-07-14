@@ -4538,7 +4538,7 @@ sounds:
 - id: bob
   file: ''
   synth:
-    wave: sine
+    wave: sawtooth
     points:
     - t: 0.0
       p: 0.569
@@ -4546,11 +4546,11 @@ sounds:
       p: 0.294
     - t: 1.0
       p: 0.562
-    length_ms: 358
-    attack: 1
-    decay: 43
+    length_ms: 902
+    attack: 46
+    decay: 59
     vibrato: 0
-    crush: 0
+    crush: 3
   volume: 0.7
   enabled: true
 actions:
