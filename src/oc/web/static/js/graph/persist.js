@@ -44,8 +44,28 @@ export function initPersist(opts) {
     onConflict = opts.onConflict;
 }
 
-async function flushProfile() {
+// Two profile PUTs must NEVER be in flight at once. saveProfile sends the last-known ETag
+// as If-Match and only learns the server's NEW ETag from the response — so a save that
+// starts before the previous one returns still carries the STALE token and 409s (the
+// server already bumped it). A burst of quick edits (e.g. sound-node point/knob/preset
+// changes, each a content save) triggered exactly this whenever a save outran the 400ms
+// debounce. Serialize: while a save runs, later flushes fold into ONE follow-up pass, and
+// every caller (timer, commit hook, persist.flush) awaits the whole thing draining.
+let saving = null;   // Promise of the in-flight save loop, or null when idle
+let queued = false;  // a flush arrived during the in-flight save -> run one more pass
+function flushProfile() {
     tProfile = null;
+    if (!M?.profile?.name) return Promise.resolve();
+    queued = true;                   // guarantees this caller's edit gets a pass before `saving` resolves
+    if (saving) return saving;
+    saving = (async () => {
+        try { while (queued) { queued = false; await doFlushProfile(); } }
+        finally { saving = null; }
+    })();
+    return saving;
+}
+
+async function doFlushProfile() {
     if (!M?.profile?.name) return;
     collectLayout();                 // fold live node layout into the profile first
     const wasContent = pendingContent;
