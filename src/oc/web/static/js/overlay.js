@@ -117,9 +117,19 @@ export class Overlay {
 
     // Tear down the resize observer. Called by closeImage/closeItemImage before dropping the
     // Overlay instance — an Overlay is created per open, so a leaked observer would accumulate.
-    destroy() { this._roDispose && this._roDispose(); this._roDispose = null; }
+    destroy() { clearTimeout(this._zoomRenderT); this._roDispose && this._roDispose(); this._roDispose = null; }
 
-    setWorldZoom(z) { this.worldZoom = z || 1; this.render(); }
+    setWorldZoom(z) {
+        this.worldZoom = z || 1;
+        // Re-rastering the full-res image on every graph-zoom STEP is the zoom hitch: N open overlays
+        // × a multi-megapixel clearRect+drawImage per frame (the transform itself is free — devtools
+        // scaling #gworld is instant). The canvas lives under #gworld's scale, so it scales visually
+        // for free during the zoom; only re-raster to a crisp backing once zoom SETTLES. Debounced so
+        // a burst of steps costs ONE render, not one per step. Box/label edits still render inline via
+        // the other setters — only the graph-zoom re-raster waits.
+        clearTimeout(this._zoomRenderT);
+        this._zoomRenderT = setTimeout(() => { this._zoomRenderT = null; this.render(); }, 120);
+    }
     setGridPreview(cells) { this.gridCells = cells || []; this.render(); }
     setCellBoxes(cells) { this.cellBoxes = cells || []; this.render(); }
     setGuardCells(cells) { this.guardCells = cells || []; this.render(); }
