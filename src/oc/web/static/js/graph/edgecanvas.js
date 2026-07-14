@@ -162,8 +162,17 @@ function drawEdges(ctx) {
 function drawGroups(ctx) {
     const bw = groupBorderCss(view.zoom);   // group dashed border width (world px), zoom-scaled 1..3
     for (const g of groups) {
-        if (g.fill) { ctx.fillStyle = g.fill; ctx.fillRect(g.x, g.y, g.w, g.h); }
-        if (!g.outline) continue;
+        if (g.fill) {
+            ctx.fillStyle = g.fill;
+            if (g.tier === "sub") {   // rounded fill, no border (borderless "chip" look)
+                ctx.beginPath();
+                ctx.roundRect(g.x, g.y, g.w, g.h, 8);   // 8 world-px radius, scales with zoom like the box
+                ctx.fill();
+            } else {
+                ctx.fillRect(g.x, g.y, g.w, g.h);
+            }
+        }
+        if (!g.outline || g.tier === "sub") continue;   // sub: fill only, never stroked
         ctx.strokeStyle = g.outline;
         if (g.tier === "group") {
             ctx.lineWidth = bw;
@@ -173,9 +182,6 @@ function drawGroups(ctx) {
         } else if (g.tier === "super") {
             ctx.lineWidth = 1;   // solid 1px world rim (matches the un-zoom-scaled .sgroup border)
             ctx.strokeRect(g.x, g.y, g.w, g.h);
-        } else {   // sub: inset "well" — an inner 1px ring approximating the CSS inset box-shadow
-            ctx.lineWidth = 1;
-            ctx.strokeRect(g.x + 0.5, g.y + 0.5, g.w - 1, g.h - 1);
         }
     }
 }

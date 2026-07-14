@@ -1187,6 +1187,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gp-shadow input[type="number"] { flex: 1 1 0; min-width: 0; width: 100%; padding-left: 4px; padding-right: 2px; }
 .gp-shadow input[type="color"] { flex: 0 0 auto; }
 .ggroup-pop .flab { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
+.ggroup-pop .flab:not(:first-child) { margin-top: 4px; }
 /* fixed-width leader so every row's control starts at the same x (labels + inputs line up) */
 .ggroup-pop .gp-lab { flex: 0 0 auto; width: 72px; }
 .ggroup-pop input[type="text"], .ggroup-pop .gp-title, .ggroup-pop select { flex: 1; min-width: 0; }
@@ -1199,7 +1200,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-md);
     color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
 .ggroup-pop .gp-clear:hover { color: var(--danger); border-color: var(--danger); }
-.ggroup-pop .gp-btns { display: flex; gap: 6px; margin-top: 4px; }
+.ggroup-pop .gp-btns { display: flex; gap: 6px; margin-top: 12px; }
 .ggroup-pop .gp-btns button { flex: 1; min-width: 0; }
 /* premade scheme swatches: each is a chip ringed in the scheme outline, split into an upper "title"
    half (titleBg + "Aa" in titleColor) and a lower "fill" half (bg) — previews every colour it sets */
@@ -1245,9 +1246,12 @@ button.gp-scheme[data-sid^="s_"]::before {
 .gp-scheme-add:disabled { opacity: 0.4; cursor: default; }
 .gp-scheme-add:disabled:hover { outline: none; }
 .gp-scheme-copy.armed { outline: 2px solid var(--accent); outline-offset: 1px; color: var(--accent); }
-/* scheme label aligns to the FIRST row of swatches (they wrap) */
+/* scheme label sits centred (both axes) on the FIRST row of swatches (they wrap); the 26px height
+   matches one .gp-scheme so "scheme" reads vertically centred against that first row, not the block */
 .gp-scheme-row { align-items: flex-start; }
-.gp-lab-top { padding-top: 4px; }
+.gp-lab-top { display: flex; align-items: center; justify-content: center; height: 26px; padding-top: 0; }
+/* full-width flex break: forces user-saved schemes onto a new row below the premades, + a small gap */
+.gp-scheme-break { flex-basis: 100%; height: 3px; }
 /* section subheading inside the popover (LAYOUT / STYLE) */
 .gp-sub { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
     margin-top: 8px; padding-bottom: 2px; border-bottom: 1px solid var(--line); font-weight: 700; }

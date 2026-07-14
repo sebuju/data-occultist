@@ -214,13 +214,15 @@ function restyleSwatch(pop, id) {
 }
 function renderSchemeGrid(grid, t, tier, syncPickers, commit, markFn, hasTitleBg, hasAlign) {
     const rebuild = () => { renderSchemeGrid(grid, t, tier, syncPickers, commit, markFn, hasTitleBg, hasAlign); markFn(); ctx.persist(); };
-    const kids = SCHEMES.map((s) => {
+    const mk = (s) => {
         const b = schemeSwatch(s, s.id === t.schemeId);
         b.addEventListener("click", () => { applySchemeTo(t, s, tier); syncPickers(); commit(); });
         const rm = b.querySelector(".gp-sw-rm");
         if (rm) rm.addEventListener("click", (e) => { e.stopPropagation(); removeScheme(s.id); renderGroups(); rebuild(); });
         return b;
-    });
+    };
+    const premades = SCHEMES.slice(0, BUILTIN_SCHEMES.length).map(mk);   // built-ins
+    const customs = SCHEMES.slice(BUILTIN_SCHEMES.length).map(mk);       // user-saved (id `s_…`)
     const add = h("button", { class: "gp-scheme gp-scheme-add", title: "add the current style as a new scheme" }, PLUS_IC());
     add.addEventListener("click", () => {
         const s = currentToScheme(t, tier, `custom ${SCHEMES.length - BUILTIN_SCHEMES.length + 1}`);
@@ -236,7 +238,10 @@ function renderSchemeGrid(grid, t, tier, syncPickers, commit, markFn, hasTitleBg
         copyArm = { tier, dst: t, hasTitleBg, hasAlign, sync: syncPickers, commit, btn: copy };
         copy.classList.add("armed");
     });
-    grid.replaceChildren(...kids, add, copy);
+    // premades on their own row(s); a full-width break drops customs (+ the +/clone controls) to a
+    // fresh row with a small gap so saved schemes read apart from the built-ins
+    const brk = h("div", { class: "gp-scheme-break" });
+    grid.replaceChildren(...premades, brk, ...customs, add, copy);
 }
 function markSchemeSel(pop, t) {
     pop.querySelectorAll(".gp-scheme[data-sid]").forEach((b) => {
@@ -866,7 +871,7 @@ function clearX(title, onClear) {
 // universally live. hasFill/hasTitleColor/hasShadow re-expose the few a given tier still honours.
 function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband, opaqueBg, defaults, sizable,
         tier = "group", render = renderGroups, hasTitleBg = true, hasAlign = true, titleTextLabel = "title text",
-        hasFill = false, hasTitleColor = false, hasShadow = true }) {
+        hasFill = false, hasTitleColor = false, hasShadow = true, hasOutline = true }) {
     if (openPopover?.id === id) { closePopover(); return; }
     closePopover();
     const t = target;
@@ -904,9 +909,9 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
             clearX("clear title text color", () => { t.titleColor = ""; syncAndCommit(); })) : null,
         // outline COLOUR tints the tier's rim/label; OFFSET grows/shrinks the box. Style + width are
         // driven by the restyle now, so they're no longer editable here.
-        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "outline"),
+        hasOutline ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "outline"),
             h("input", { type: "number", class: "gp-ooffset", step: "1", value: t.outline.offset ?? 0, title: "outline offset (px, +out/-in)" }),
-            h("input", { type: "color", class: "gp-ocolor", value: hex6(t.outline.color), title: "outline color" })),
+            h("input", { type: "color", class: "gp-ocolor", value: hex6(t.outline.color), title: "outline color" })) : null,
         hasShadow ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "shadow"),
             h("div", { class: "gp-shadow" },
                 h("input", { type: "number", class: "gp-shx", step: "1", value: t.shadow?.x ?? 0, title: "shadow offset-x (px)" }),
@@ -957,8 +962,10 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
         commit();
     };
     pop.querySelector(".gp-title").addEventListener("input", (e) => { t.title = e.target.value; commit(); });
-    pop.querySelector(".gp-ooffset").addEventListener("input", (e) => { t.outline.offset = Math.round(+e.target.value || 0); editCommit(); });
-    pop.querySelector(".gp-ocolor").addEventListener("input", (e) => { t.outline.color = e.target.value; editCommit(); });
+    if (hasOutline) {
+        pop.querySelector(".gp-ooffset").addEventListener("input", (e) => { t.outline.offset = Math.round(+e.target.value || 0); editCommit(); });
+        pop.querySelector(".gp-ocolor").addEventListener("input", (e) => { t.outline.color = e.target.value; editCommit(); });
+    }
     if (hasShadow) {
         const setShadow = (k, v) => { t.shadow = cloneShadow(t.shadow) || { x: 0, y: 0, blur: 0, spread: 0, color: "#000000" }; t.shadow[k] = v; editCommit(); };
         pop.querySelector(".gp-shx").addEventListener("input", (e) => setShadow("x", Math.round(+e.target.value || 0)));
@@ -1037,7 +1044,9 @@ function toggleSubPopover(sid, ev) {
     if (tryCopyFrom(sg, "subgroup")) { ev.preventDefault(); return; }
     openOptionsPopover(`subgroup:${sid}`, sg, ev, {
         ownerSel: ".subgroup-cog", disbandLabel: "disband", opaqueBg: true, tier: "subgroup",
-        hasShadow: false,   // sub "sunken" look forces its own inset ring — user shadow would be clobbered
+        hasShadow: false,    // sub "sunken" look forces its own inset ring — user shadow would be clobbered
+        hasOutline: false,   // sub outline is driven by its scheme; a manual rim can't be honoured
+        hasFill: true,       // ...so the background fill is the one colour the user sets directly
         defaults: { outline: { color: SUB_DEF_OUTLINE, style: "none", width: 1 }, bg: SUB_DEF_BG, titleBg: "", titleColor: "", titleAlign: "left" },
         onDisband: () => disbandIn(SUB, sid),
     });
