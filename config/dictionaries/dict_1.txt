@@ -1,20 +1,20 @@
-Axi A10
 Akbronco Prime Blueprint
 Uncommon
+Axi A10
 Aksomati Prime Link
 Forma Blueprint
 Paris Prime Grip
 Stradavar Prime Receiver
 Wukong Prime Chassis Blueprint
-Axi A11
 Atlas Prime Neuroptics Blueprint
+Axi A11
 Burston Prime Receiver
 Fang Prime Blueprint
 Pangolin Prime Blade
 Wukong Prime Systems Blueprint
 Zhuge Prime String
-Axi A12
 Akbolto Prime Receiver
+Axi A12
 Banshee Prime Blueprint
 Helios Prime Systems
 Kogake Prime Boot
@@ -33,8 +33,8 @@ Baza Prime Receiver
 Ivara Prime Systems Blueprint
 Oberon Prime Systems Blueprint
 Sybaris Prime Stock
-Axi A16
 Afuris Prime Receiver
+Axi A16
 Braton Prime Blueprint
 Fang Prime Handle
 Harrow Prime Neuroptics Blueprint
@@ -44,8 +44,8 @@ Axi A17
 Braton Prime Barrel
 Shade Prime Blueprint
 Wisp Prime Systems Blueprint
-Axi A18
 Acceltra Prime Stock
+Axi A18
 Akbronco Prime Link
 Cobra & Crane Prime Hilt
 Hildryn Prime Chassis Blueprint
@@ -55,34 +55,34 @@ Bronco Prime Receiver
 Epitaph Prime Blueprint
 Larkspur Prime Receiver
 Xaku Prime Systems Blueprint
-Axi A1
 Akstiletto Prime Barrel
+Axi A1
 Braton Prime Stock
 Dual Kamas Prime Handle
 Fragor Prime Head
 Nikana Prime Blueprint
 Trinity Prime Systems Blueprint
-Axi A20
 Alternox Prime Blueprint
+Axi A20
 Cedo Prime Stock
 Daikyu Prime String
 Kompressa Prime Receiver
 Lavos Prime Neuroptics Blueprint
 Velox Prime Receiver
-Axi A21
 Alternox Prime Stock
+Axi A21
 Cedo Prime Barrel
 Styanax Prime Blueprint
 Vadarya Prime Stock
 Voruna Prime Chassis Blueprint
-Axi A22
 2X Forma Blueprint
+Axi A22
 Afentis Prime Blueprint
 Burston Prime Blueprint
 Dual Zoren Prime Handle
 Venato Prime Handle
-Axi A2
 Aklex Prime Blueprint
+Axi A2
 Aklex Prime Link
 Lex Prime Barrel
 Lex Prime Blueprint
@@ -94,8 +94,8 @@ Hydroid Prime Neuroptics Blueprint
 Axi A4
 Ballistica Prime String
 Zephyr Prime Neuroptics Blueprint
-Axi A5
 Akvasto Prime Blueprint
+Axi A5
 Akvasto Prime Link
 Vasto Prime Barrel
 Vasto Prime Blueprint
@@ -117,8 +117,8 @@ Pyrana Prime Barrel
 Axi A9
 Gram Prime Blade
 Rubico Prime Stock
-Axi B1
 Ash Prime Chassis Blueprint
+Axi B1
 Banshee Prime Systems Blueprint
 Cernos Prime Blueprint
 Euphona Prime Blueprint
@@ -126,23 +126,23 @@ Fang Prime Blade
 Kavasa Prime Buckle
 Axi B2
 Sybaris Prime Blueprint
-Axi B3
 Atlas Prime Chassis Blueprint
+Axi B3
 Baza Prime Stock
 Stradavar Prime Stock
 Zhuge Prime Receiver
-Axi B4
 Akjagara Prime Blueprint
+Axi B4
 Aksomati Prime Blueprint
 Baza Prime Blueprint
 Ivara Prime Blueprint
-Axi B5
 Baruuk Prime Neuroptics Blueprint
+Axi B5
 Knell Prime Blueprint
 Nagantaka Prime Receiver
 Volnus Prime Head
-Axi B6
 Afuris Prime Blueprint
+Axi B6
 Garuda Prime Chassis Blueprint
 Shade Prime Systems
 Axi B7
@@ -181,15 +181,15 @@ Axi C6
 Karyst Prime Blueprint
 Pandero Prime Barrel
 Pangolin Prime Handle
-Axi C7
 Bronco Prime Blueprint
+Axi C7
 Magnus Prime Blueprint
 Tenora Prime Stock
 Axi C8
 Corinth Prime Stock
 Gara Prime Systems Blueprint
-Axi C9
 Braton Prime Receiver
+Axi C9
 Cobra & Crane Prime Guard
 Phantasma Prime Stock
 Revenant Prime Chassis Blueprint
@@ -204,8 +204,8 @@ Axi D3
 Destreza Prime Blueprint
 Dual Kamas Prime Blade
 Limbo Prime Systems Blueprint
-Axi D4
 Boar Prime Barrel
+Axi D4
 Dakra Prime Blade
 Frost Prime Neuroptics Blueprint
 Latron Prime Barrel
@@ -226,8 +226,8 @@ Sicarus Prime Blueprint
 Axi E2
 Bronco Prime Barrel
 Euphona Prime Receiver
-Axi F1
 Atlas Prime Systems Blueprint
+Axi F1
 Vauban Prime Blueprint
 Axi F2
 Fulmin Prime Receiver
@@ -236,11 +236,11 @@ Velox Prime Blueprint
 Wisp Prime Neuroptics Blueprint
 Axi F3
 Lavos Prime Blueprint
-Axi G10
 Corvas Prime Receiver
+Axi G10
 Garuda Prime Systems Blueprint
-Axi G11
 Afuris Prime Link
+Axi G11
 Grendel Prime Systems Blueprint
 Shade Prime Cerebrum
 Axi G12
@@ -261,13 +261,13 @@ Galatine Prime Blueprint
 Kavasa Prime Kubrow Collar Blueprint
 Nekros Prime Chassis Blueprint
 Saryn Prime Systems Blueprint
-Axi G2
 Akbolto Prime Blueprint
+Axi G2
 Gram Prime Handle
 Redeemer Prime Blueprint
 Wukong Prime Neuroptics Blueprint
-Axi G3
 Burston Prime Barrel
+Axi G3
 Kronen Prime Handle
 Ninkondi Prime Blueprint
 Axi G4
@@ -277,8 +277,8 @@ Zephyr Prime Blueprint
 Axi G6
 Gara Prime Blueprint
 Nezha Prime Blueprint
-Axi G7
 Astilla Prime Blueprint
+Axi G7
 Axi G8
 Corvas Prime Stock
 Dual Keres Prime Blade
@@ -312,12 +312,12 @@ Zylok Prime Barrel
 Axi I1
 Dethcube Prime Systems
 Inaros Prime Neuroptics Blueprint
-Axi I2
 Baza Prime Barrel
+Axi I2
 Strun Prime Receiver
 Tenora Prime Blueprint
-Axi I3
 Ash Prime Blueprint
+Axi I3
 Axi K10
 Knell Prime Barrel
 Strun Prime Stock
@@ -335,16 +335,16 @@ Galatine Prime Handle
 Kronen Prime Blade
 Axi K3
 Axi K4
-Axi K5
 Ballistica Prime Lower Limb
+Axi K5
 Equinox Prime Blueprint
 Hydroid Prime Blueprint
 Axi K6
 Harrow Prime Blueprint
 Inaros Prime Chassis Blueprint
 Octavia Prime Neuroptics Blueprint
-Axi K7
 Corvas Prime Blueprint
+Axi K7
 Axi K8
 Khora Prime Neuroptics Blueprint
 Octavia Prime Chassis Blueprint
@@ -359,12 +359,12 @@ Axi L2
 Limbo Prime Neuroptics Blueprint
 Nami Skyla Prime Blueprint
 Tiberon Prime Blueprint
-Axi L3
 Akjagara Prime Receiver
+Axi L3
 Limbo Prime Chassis Blueprint
 Zephyr Prime Chassis Blueprint
-Axi L4
 Bo Prime Ornament
+Axi L4
 Odonata Prime Blueprint
 Volt Prime Systems Blueprint
 Axi L5
@@ -381,16 +381,16 @@ Axi M3
 Ballistica Prime Upper Limb
 Mesa Prime Neuroptics Blueprint
 Axi M4
-Axi M5
 Akmagnus Prime Blueprint
+Axi M5
 Akmagnus Prime Link
 Magnus Prime Receiver
-Axi M6
 Acceltra Prime Blueprint
+Axi M6
 Cedo Prime Receiver
 Masseter Prime Blade
-Axi N10
 Afuris Prime Barrel
+Axi N10
 Harrow Prime Chassis Blueprint
 Nidus Prime Neuroptics Blueprint
 Phantasma Prime Blueprint
@@ -406,8 +406,8 @@ Strun Prime Barrel
 Axi N13
 Nautilus Prime Cerebrum
 Protea Prime Blueprint
-Axi N1
 Akstiletto Prime Link
+Axi N1
 Odonata Prime Wings Blueprint
 Axi N2
 Ash Prime Neuroptics Blueprint
@@ -417,8 +417,8 @@ Axi N3
 Dual Kamas Prime Blueprint
 Nekros Prime Blueprint
 Volt Prime Blueprint
-Axi N4
 Cernos Prime Upper Limb
+Axi N4
 Galatine Prime Blade
 Axi N5
 Nami Skyla Prime Blade
@@ -441,11 +441,11 @@ Axi O4
 Axi O5
 Nezha Prime Systems Blueprint
 Octavia Prime Blueprint
-Axi O6
 Acceltra Prime Receiver
+Axi O6
 Okina Prime Blueprint
-Axi P10
 Athodai Prime Receiver
+Axi P10
 Caliban Prime Chassis Blueprint
 Perigale Prime Barrel
 Axi P1
@@ -454,8 +454,8 @@ Pyrana Prime Blueprint
 Axi P2
 Axi P3
 Zhuge Prime Grip
-Axi P4
 Corinth Prime Receiver
+Axi P4
 Pangolin Prime Blueprint
 Axi P5
 Pandero Prime Receiver
@@ -471,18 +471,18 @@ Gauss Prime Neuroptics Blueprint
 Gunsen Prime Blueprint
 Protea Prime Systems Blueprint
 Trumna Prime Blueprint
-Axi R1
 Ankyros Prime Blade
+Axi R1
 Boar Prime Receiver
 Boltor Prime Stock
 Dakra Prime Blueprint
 Mag Prime Systems Blueprint
 Rhino Prime Blueprint
-Axi R2
 Chroma Prime Chassis Blueprint
+Axi R2
 Redeemer Prime Handle
-Axi R3
 Akjagara Prime Link
+Axi R3
 Axi R4
 Ember Prime Systems Blueprint
 Glaive Prime Disc
@@ -563,13 +563,13 @@ Tekko Prime Blade
 Axi T7
 Axi T8
 Tenora Prime Receiver
-Axi T9
 Equinox Prime Neuroptics Blueprint
+Axi T9
 Axi V10
 Valkyr Prime Systems Blueprint
 Venka Prime Gauntlet
-Axi V11
 Astilla Prime Stock
+Axi V11
 Titania Prime Blueprint
 Volnus Prime Handle
 Axi V12
@@ -610,8 +610,8 @@ Fulmin Prime Barrel
 Hildryn Prime Neuroptics Blueprint
 Axi Y1
 Yareli Prime Systems Blueprint
-Axi Y2
 Akarius Prime Link
+Axi Y2
 Kompressa Prime Blueprint
 Yareli Prime Neuroptics Blueprint
 Axi Y3
@@ -621,22 +621,22 @@ Axi Z1
 Zakti Prime Blueprint
 Axi Z2
 Zylok Prime Blueprint
-Lith A10
 Akarius Prime Receiver
+Lith A10
 Yareli Prime Chassis Blueprint
-Lith A11
 Acceltra Prime Barrel
+Lith A11
 Grendel Prime Chassis Blueprint
 Lith A12
-Lith A1
 Akstiletto Prime Blueprint
+Lith A1
 Vectis Prime Blueprint
 Lith A2
-Lith A3
 Akbolto Prime Barrel
+Lith A3
 Akjagara Prime Barrel
-Lith A4
 Astilla Prime Barrel
+Lith A4
 Lith A5
 Lith A6
 Lith A7
@@ -646,13 +646,13 @@ Lith A9
 Lith B10
 Phantasma Prime Receiver
 Lith B11
-Lith B1
 Ankyros Prime Blueprint
+Lith B1
 Boar Prime Stock
 Boltor Prime Receiver
 Rhino Prime Neuroptics Blueprint
-Lith B2
 Ballistica Prime Blueprint
+Lith B2
 Tigris Prime Stock
 Lith B3
 Lith B4
@@ -661,8 +661,8 @@ Nyx Prime Blueprint
 Scindo Prime Blueprint
 Lith B5
 Lith B6
-Lith B7
 Aksomati Prime Barrel
+Lith B7
 Tipedo Prime Blueprint
 Lith B8
 Lith B9
@@ -673,8 +673,8 @@ Lith C13
 Caliban Prime Neuroptics Blueprint
 Dual Zoren Prime Blueprint
 Gauss Prime Chassis Blueprint
-Lith C14
 Cedo Prime Blueprint
+Lith C14
 Kestrel Prime Blade
 Perigale Prime Receiver
 Lith C1
@@ -696,11 +696,11 @@ Mesa Prime Blueprint
 Lith C7
 Lith C8
 Lith C9
-Lith D1
 Atlas Prime Blueprint
+Lith D1
 Dethcube Prime Blueprint
-Lith D2
 Dethcube Prime Cerebrum
+Lith D2
 Lith D3
 Ivara Prime Neuroptics Blueprint
 Lith D4
@@ -710,8 +710,8 @@ Mesa Prime Systems Blueprint
 Redeemer Prime Blade
 Lith D6
 Nagantaka Prime Stock
-Lith D7
 Daikyu Prime Grip
+Lith D7
 Lith E1
 Boltor Prime Barrel
 Rhino Prime Chassis Blueprint
@@ -733,8 +733,8 @@ Lith G1
 Frost Prime Chassis Blueprint
 Glaive Prime Blueprint
 Reaper Prime Handle
-Lith G2
 Bo Prime Blueprint
+Lith G2
 Frost Prime Systems Blueprint
 Latron Prime Stock
 Loki Prime Chassis Blueprint
@@ -812,14 +812,14 @@ Lith N12
 Lith N13
 Ninkondi Prime Handle
 Lith N14
-Lith N15
 Baruuk Prime Chassis Blueprint
+Lith N15
 Lith N16
 Trumna Prime Stock
 Lith N17
 Nautilus Prime Blueprint
-Lith N18
 Alternox Prime Barrel
+Lith N18
 Quassus Prime Blueprint
 Lith N19
 Lith N1
@@ -839,8 +839,8 @@ Lith O2
 Lith O3
 Lith O4
 Lith P1
-Lith P2
 Ballistica Prime Receiver
+Lith P2
 Lith P3
 Panthera Prime Barrel
 Lith P4
@@ -853,8 +853,8 @@ Lith P9
 Lith Q1
 Quassus Prime Blade
 Lith Q2
-Lith Q3
 Afentis Prime Handle
+Lith Q3
 Gyre Prime Blueprint
 Lith R1
 Lith R2
@@ -936,8 +936,8 @@ Okina Prime Handle
 Meso A10
 Meso A11
 Akarius Prime Blueprint
-Meso A12
 Afentis Prime Blade
+Meso A12
 Perigale Prime Blueprint
 Sarofang Prime Handle
 Voruna Prime Neuroptics Blueprint
@@ -955,8 +955,8 @@ Meso B10
 Ember Prime Chassis Blueprint
 Meso B1
 Mag Prime Chassis Blueprint
-Meso B2
 Banshee Prime Chassis Blueprint
+Meso B2
 Meso B3
 Meso B4
 Meso B5
@@ -1003,8 +1003,8 @@ Frost Prime Blueprint
 Sicarus Prime Barrel
 Meso F3
 Ember Prime Neuroptics Blueprint
-Meso F4
 Boar Prime Blueprint
+Meso F4
 Meso F5
 Meso G10
 Meso G1
@@ -1039,10 +1039,10 @@ Meso L1
 Meso L2
 Meso L3
 Meso L4
-Meso L5
 Athodai Prime Blueprint
-Meso M1
+Meso L5
 Ankyros Prime Gauntlet
+Meso M1
 Meso M2
 Meso M3
 Meso M4
@@ -1160,8 +1160,8 @@ Neo A12
 Neo A13
 Neo A14
 Neo A15
-Neo A16
 Athodai Prime Barrel
+Neo A16
 Neo A1
 Neo A2
 Neo A3
@@ -1187,8 +1187,8 @@ Neo C4
 Neo C5
 Neo C6
 Neo C7
-Neo C8
 Afentis Prime Barrel
+Neo C8
 Neo C9
 Neo D10
 Neo D1
@@ -1346,9 +1346,9 @@ Neo Z6
 Neo Z7
 Neo Z8
 Neo Z9
-Requiem ETERNA
 Fass
 Rare
+Requiem ETERNA
 Jahu
 Khra
 Lohk
@@ -1356,8 +1356,8 @@ Netra
 Ris
 Vome
 Xata
-Requiem III
 1200X Kuva
+Requiem III
 Ayatan Amber Star
 Exilus Weapon Adapter Blueprint
 Riven Sliver

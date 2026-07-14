@@ -4614,18 +4614,16 @@ dictionaries:
 - id: wiki
   enabled: true
   source: wiki.txt
-  feeds:
-  - dataset: master
-    columns: []
+  feeds: []
 - id: relics
   enabled: true
   source: dict_1.txt
   feeds:
   - dataset: relic_contents
     columns:
-    - name
     - item
     - rarity
+    - name
 atlas:
 - label: G
   image: glyph-20260702-101221-085106.png
@@ -4687,18 +4685,20 @@ layout:
       x: 1280.0
       y: -2300.0
       w: 360.0
-      h: 144.0
+      h: 200.0
       collapsed: false
       custW: false
-      custH: false
+      custH: true
+      softH: true
     sub:live_prices_joined:
       x: 1720.0
       y: -3960.0
       w: 360.0
-      h: 720.0
+      h: 920.0
       collapsed: false
       custW: false
-      custH: false
+      custH: true
+      softH: true
     producer:wf_market_live:
       x: 1280.0
       y: -3720.0
@@ -5102,16 +5102,17 @@ layout:
       custH: false
     ds:relics_select:
       x: 2900.0
-      y: -4240.0
+      y: -4220.0
       collapsed: false
     sub:master_prime_parts:
       x: 1720.0
-      y: -3100.0
+      y: -3000.0
       w: 360.0
-      h: 700.0
+      h: 900.0
       collapsed: false
       custW: false
-      custH: false
+      custH: true
+      softH: true
     ds:ee_log:
       x: -580.0
       y: -3960.0
@@ -5162,7 +5163,7 @@ layout:
       h: 320.0
       collapsed: false
       custW: false
-      custH: true
+      custH: false
       softH: true
     dict:relics:
       x: 800.0
@@ -5181,10 +5182,10 @@ layout:
     toast:toast_2:
       x: 4720.0
       y: -8260.0
-      w: 940.0
-      h: 1480.0
+      w: 700.0
+      h: 1504.0
       collapsed: false
-      custW: false
+      custW: true
       custH: false
       softW: true
       softH: true
