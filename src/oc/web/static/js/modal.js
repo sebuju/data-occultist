@@ -1,4 +1,5 @@
 import { h } from "./dom.js";
+import { registerKey, SCOPE } from "./inputbus.js";
 
 // Tiny modal manager: stackable overlays with a title bar, close button,
 // backdrop-click and Esc to dismiss. Returns a handle with close().
@@ -28,7 +29,13 @@ function dismissTop() {
     if (top) top.dismiss();
 }
 
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") dismissTop(); });
+// Escape dismisses the top modal — active only while a modal is stacked, and allowed to fire from
+// inside a modal input (allowInField). Non-consuming, matching the old bubble listener: any handler
+// behind it (e.g. the graph Escape) still runs, harmlessly, under an open modal.
+registerKey({
+    match: (e) => e.key === "Escape", scope: SCOPE.ANY, priority: 100, allowInField: true,
+    when: () => stack.length > 0, run: () => { dismissTop(); return false; },
+});
 
 export function openModal({ title = "", size = "medium", node = null, onClose = null, canClose = null } = {}) {
     const backdrop = document.createElement("div");

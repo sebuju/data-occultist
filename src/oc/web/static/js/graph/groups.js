@@ -27,6 +27,7 @@
 
 import { beginDrag } from "./dragresize.js";   // shared drag-loop primitive
 import { h, svg, TRASH } from "../dom.js";
+import { onOutside } from "../inputbus.js";
 import { setGroups } from "./edgecanvas.js";
 import { resolveColor } from "./colors.js";
 
@@ -827,11 +828,11 @@ export function clearGroupSelection() { if (selectedGroups.size) { selectedGroup
 // ---- options popover (shared by all three tiers — rule 7) ------------------
 // `target` is the record (mutated live). One builder for all tiers — the options differ only in
 // which rows show, the disband label, the render fn, and how the fill stores.
+let _popDismiss = null;   // tears down the shared outside-press dismiss
 function closePopover() {
     disarmCopy();
-    if (openPopover) { openPopover.el.remove(); openPopover = null; document.removeEventListener("mousedown", onOutside, true); }
+    if (openPopover) { openPopover.el.remove(); openPopover = null; _popDismiss?.(); _popDismiss = null; }
 }
-function onOutside(e) { if (openPopover && !e.target.closest(".ggroup-pop") && !e.target.closest(openPopover.ownerSel)) closePopover(); }
 
 // While "copy style" is armed, clicking another SAME-TIER record copies its styling into the open one.
 function disarmCopy() { if (copyArm) { copyArm.btn?.classList.remove("armed"); copyArm = null; } }
@@ -999,7 +1000,14 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
         sync(); commit();
     });
     pop.querySelector(".gp-disband").addEventListener("click", () => onDisband());
-    setTimeout(() => document.addEventListener("mousedown", onOutside, true), 0);
+    // Close on a press outside the popover — but NOT on any same-tier title/trigger (ownerSel), so a
+    // click that re-toggles stays "inside". `also` returns every ownerSel element: x.contains(target)
+    // for one of them == target.closest(ownerSel), preserving the old two-clause guard. Deferred so
+    // the opening click can't self-close.
+    _popDismiss = onOutside(openPopover.el, closePopover, {
+        event: "mousedown", defer: true,
+        also: () => [...document.querySelectorAll(openPopover.ownerSel)],
+    });
 }
 
 function togglePopover(gid, ev) {

@@ -32,8 +32,10 @@
 //   commit(drafts) write every draft, then run the surface's aftermath ONCE
 //   restore()    put the surface back to the clean state
 import { h, iconBtn, CHECK, XMARK } from "../dom.js";
+import { registerKey, onGlobal, SCOPE } from "../inputbus.js";
 
 let batch = null;   // { key, spec, boxes: Map<draftId, draft>, bar }
+let _off = null;    // [disposeKeydownEntry, disposePointerdown] while a batch is open
 
 // A draft is a plain copy of whatever the surface handed in (never a live overlay box reference —
 // the overlay rebuilds its box objects from the model on every refresh, so a reference would
@@ -70,9 +72,19 @@ export function begin(key, makeSpec) {
     if (batch && batch.key === key) return;
     commitIfDirty();
     batch = { key, spec: makeSpec(), boxes: new Map(), bar: null };
-    document.addEventListener("keydown", onKey, true);       // capture: beat the graph's own Escape/undo handlers
-    document.addEventListener("pointerdown", onDown, true);
+    // Enter/Escape commit/revert the batch — priority above the graph's own Escape/undo, allowed from
+    // inside a field, and CONSUMING (stop) so those keys mean exactly one thing while an edit pends.
+    // Gated on a dirty batch; an armed-but-empty batch lets the keys fall through to their usual roles.
+    _off = [
+        registerKey({
+            match: (ev) => ev.key === "Enter" || ev.key === "Escape",   // any modifiers, as the original
+            scope: SCOPE.ANY, priority: 90, allowInField: true,
+            when: () => batch?.boxes.size > 0, run: onKey, stop: true,
+        }),
+        onGlobal(document, "pointerdown", onDown, true, "edit_txn:outside-commit"),
+    ];
 }
+function _teardown() { _off?.forEach((f) => f()); _off = null; }
 
 // Record a draft as part of the open batch and reveal the ✓/✕ bar.
 export function touch(id, payload) {
@@ -101,8 +113,7 @@ export function revertIfDirty() { if (batch) resolve(false); }
 // dead value; restoring them would resurrect one. Drop the batch and let the reloaded model stand.
 export function abandon() {
     if (!batch) return;
-    document.removeEventListener("keydown", onKey, true);
-    document.removeEventListener("pointerdown", onDown, true);
+    _teardown();
     batch.bar?.remove();
     batch = null;
 }
@@ -124,24 +135,23 @@ function resolve(apply) {
     // Tear the batch down BEFORE running the spec: commit()/restore() both rebuild the surface's
     // boxes from the model, and applyPending must no longer re-stamp the drafts over them.
     batch = null;
-    document.removeEventListener("keydown", onKey, true);
-    document.removeEventListener("pointerdown", onDown, true);
+    _teardown();
     b.bar?.remove();
     if (apply) b.spec.commit(b.boxes); else b.spec.restore();
 }
 
+// Registered as a keydown entry (combo Enter/Escape, when: batch dirty, stop: true) — the dispatcher
+// has already filtered the key + the dirty gate, and applies stopPropagation on consume. This just
+// commits/reverts. Returns true to consume so the graph's own Escape/undo never also runs.
 function onKey(ev) {
-    if (ev.key !== "Enter" && ev.key !== "Escape") return;
-    if (!batch?.boxes.size) return;   // batch open but nothing touched yet -> those keys still mean what they usually mean
-    // stop the graph's own handlers (Escape disarms draw tools, Enter may submit an input) — while
-    // an edit is pending those keys mean exactly one thing.
-    ev.preventDefault(); ev.stopPropagation();
     // Blur FIRST, while the batch is still open. A focused <input> fires its `change` on blur, and
     // something is going to blur it either way (the commit's loader sets `inert`, which force-blurs
     // per spec). Let that `change` land in THIS batch: resolve first and it would instead open a
     // fresh one, popping the ✓/✕ bar straight back up on the node you just committed.
+    ev.preventDefault();
     document.activeElement?.blur?.();
     resolve(ev.key === "Enter");
+    return true;
 }
 
 // A pointerdown outside the surface commits — but NOT synchronously. A focused <input> only fires

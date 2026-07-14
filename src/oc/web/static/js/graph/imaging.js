@@ -2,6 +2,7 @@
 // Extracted from main.js verbatim.
 import * as api from "../api.js";
 import { h, frag, TRASH, subhead, kv } from "../dom.js";
+import { onOutside } from "../inputbus.js";
 import { openCaptureModal } from "./panels/precap.js";
 import { timed, log } from "../log.js";
 import { Overlay, MIN_FRAC } from "../overlay.js";
@@ -316,23 +317,21 @@ function toggleRectEditor(nodeEl, n) {
     // Outside click closes the panel. The box being edited draws on a DIFFERENT node's canvas, so
     // dragging it there must not count as "outside" — only close when the click lands outside
     // both this node AND the bound overlay's canvas host.
-    const outside = (ev) => {
-        if (nodeEl.contains(ev.target)) return;
-        const hostEntry = desc.itemId
+    // Close on an outside press, counting the bound overlay's canvas host as "inside" so dragging the
+    // box on the OTHER node's canvas doesn't close the panel (shared outside-dismiss primitive).
+    const dismiss = onOutside(nodeEl, closeRectEditor, {
+        also: () => (desc.itemId
             ? itemCanvases.get(`${desc.winId}:${desc.itemId}`)
-            : imageCanvases.get(desc.winId);
-        if (hostEntry?.host.contains(ev.target)) return;
-        closeRectEditor();
-    };
-    document.addEventListener("pointerdown", outside, true);
-    activeRectEdit = { nodeId: n.id, nodeEl, desc, draft, panel, outside };
+            : imageCanvases.get(desc.winId))?.host,
+    });
+    activeRectEdit = { nodeId: n.id, nodeEl, desc, draft, panel, dismiss };
     overlaySelected(desc.canvasKey, desc.boxId);   // the box becomes the canvas's active selection (targets WASD too)
 }
 
 function closeRectEditor() {
     const st = activeRectEdit;
     if (!st) return;
-    document.removeEventListener("pointerdown", st.outside, true);
+    st.dismiss?.();
     // A panel-hosted batch dies with its host (the ✓/✕ bar lives INSIDE the panel), so land it here.
     // A canvas-hosted batch outlives the panel — its bar is on the canvas, still resolvable.
     if (rectTxn.dirty(`panel:${st.nodeId}`)) rectTxn.commitIfDirty();

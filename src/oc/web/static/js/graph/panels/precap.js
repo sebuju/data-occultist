@@ -4,6 +4,7 @@ import * as api from "../../api.js";
 import * as hub from "../../hub.js";
 import { h, frag, TRASH, WARN, PAUSE } from "../../dom.js";
 import { openModal } from "../../modal.js";
+import { registerKey, SCOPE } from "../../inputbus.js";
 import { makeReorderable, arrayMove } from "../../pretty/reorder.js";
 import { fmtDateTimeSec } from "../../datefmt.js";
 import { log } from "../../log.js";
@@ -450,13 +451,20 @@ function openFramesLightbox(game, sid, total, startIdx) {
         next.onclick = (e) => { e.stopPropagation(); stepFramesLightbox(1); };
         // click the dark backdrop (not the image itself) closes
         el.addEventListener("click", (e) => { if (e.target === el || e.target === stage) closeFramesLightbox(); });
-        document.addEventListener("keydown", (e) => {
-            if (pcLightbox.el.hidden) return;
-            const k = e.key.toLowerCase();
-            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeFramesLightbox(); }
-            else if (e.key === "ArrowLeft" || k === "a") { e.preventDefault(); e.stopPropagation(); stepFramesLightbox(-1); }
-            else if (e.key === "ArrowRight" || k === "d") { e.preventDefault(); e.stopPropagation(); stepFramesLightbox(1); }
-        }, true);
+        // Frames-lightbox nav on the central bus: priority 120 (above the graph shortcuts + modal, so
+        // A/D page frames instead of nudging a node) and CONSUMING (stop), active only while the
+        // lightbox is visible. Registered once with the lightbox element (created lazily here).
+        registerKey({
+            scope: SCOPE.ANY, priority: 120, stop: true,
+            when: () => pcLightbox && !pcLightbox.el.hidden,
+            run: (e) => {
+                const k = e.key.toLowerCase();
+                if (e.key === "Escape") { e.preventDefault(); closeFramesLightbox(); return true; }
+                if (e.key === "ArrowLeft" || k === "a") { e.preventDefault(); stepFramesLightbox(-1); return true; }
+                if (e.key === "ArrowRight" || k === "d") { e.preventDefault(); stepFramesLightbox(1); return true; }
+                return false;
+            },
+        });
     }
     Object.assign(pcLightbox, { game, sid, total, ts: fmtSessionStamp(sid) });
     setFramesLightboxIndex(Math.max(0, Math.min(startIdx, total - 1)));

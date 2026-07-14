@@ -4,16 +4,15 @@
 // do NOT fork a second copy — one shared primitive.
 
 import { h } from "./dom.js";
+import { onOutside } from "./inputbus.js";
 
 let _menu = null;
+let _dismiss = null;   // tears down the shared outside-press + Escape dismiss
 function closeContextMenu() {
     if (!_menu) return;
     _menu.remove(); _menu = null;
-    document.removeEventListener("mousedown", _onOutside, true);
-    document.removeEventListener("keydown", _onKey, true);
+    _dismiss?.(); _dismiss = null;
 }
-function _onOutside(e) { if (_menu && !_menu.contains(e.target)) closeContextMenu(); }
-function _onKey(e) { if (e.key === "Escape") closeContextMenu(); }
 
 // items: [{ icon?, title, tint?, onClick }]. clientX/clientY are viewport coords of the click;
 // the menu opens there and an item's onClick fires after the menu closes. `tint` (a CSS colour,
@@ -39,7 +38,8 @@ function openContextMenu(clientX, clientY, items) {
     const r = menu.getBoundingClientRect();   // keep fully on-screen
     if (r.right > window.innerWidth) menu.style.left = `${window.innerWidth - r.width - 6}px`;
     if (r.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - r.height - 6}px`;
-    // defer the dismiss listeners a tick so the opening click doesn't instantly close it
-    setTimeout(() => { document.addEventListener("mousedown", _onOutside, true); document.addEventListener("keydown", _onKey, true); }, 0);
+    // dismiss on a press outside the menu OR Escape, deferred a tick so the opening click doesn't
+    // instantly close it (the one shared outside-dismiss primitive — rule 7).
+    _dismiss = onOutside(menu, closeContextMenu, { event: "mousedown", defer: true, escape: true });
 }
 export { openContextMenu, closeContextMenu };

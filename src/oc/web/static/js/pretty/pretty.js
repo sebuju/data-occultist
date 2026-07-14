@@ -20,6 +20,7 @@ import { buildElements } from "./panels/elements.js";
 import { buildPrettyTools } from "./topbar.js";
 import { el } from "./widgets/util.js";
 import { openContextMenu } from "../ctxmenu.js";
+import { registerKey, SCOPE } from "../inputbus.js";
 import * as papi from "./api.js";
 import { model } from "../graph/state.js";
 import { createHistory } from "../history_core.js";
@@ -139,26 +140,34 @@ export async function mountPretty(container, toolsHost, g) {
             deselect();
         });
         // WASD nudges the selected widget (edit mode, not while typing). Shift = 1px, else grid step.
-        document.addEventListener("keydown", (ev) => {
-            if (!mounted || mode !== "edit" || !document.body.classList.contains("pretty-mode") || !selection.size) return;
-            if (ev.target && ev.target.closest && ev.target.closest("input, select, textarea, [contenteditable=true]")) return;
-            const map = { w: [0, -1], a: [-1, 0], s: [0, 1], d: [1, 0] };
-            const m = map[ev.key.toLowerCase()];
-            if (!m) return;
-            ev.preventDefault();
-            const step = ev.shiftKey ? 1 : GRID;
-            nudge(m[0] * step, m[1] * step);
+        // PRETTY-scope on the central bus (inputbus.js): scope replaces the pretty-mode-class check,
+        // the registry's field bail replaces the inline input/contenteditable check.
+        registerKey({
+            scope: SCOPE.PRETTY, priority: 30,
+            match: (ev) => ["w", "a", "s", "d"].includes(ev.key.toLowerCase()),
+            when: () => mounted && mode === "edit" && selection.size > 0,
+            run: (ev) => {
+                const map = { w: [0, -1], a: [-1, 0], s: [0, 1], d: [1, 0] };
+                const m = map[ev.key.toLowerCase()];
+                if (!m) return false;
+                ev.preventDefault();
+                const step = ev.shiftKey ? 1 : GRID;
+                nudge(m[0] * step, m[1] * step);
+                return true;
+            },
         });
-        // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) drive Pretty's OWN history (the node view's document
-        // keybind is gated off while pretty-mode is up, so the two never collide). Works in edit
-        // and view mode; ignored while typing in a field.
-        document.addEventListener("keydown", (ev) => {
-            if (!mounted || !document.body.classList.contains("pretty-mode")) return;
-            if (ev.target && ev.target.closest && ev.target.closest("input, select, textarea, [contenteditable=true]")) return;
-            if (!(ev.ctrlKey || ev.metaKey)) return;
-            const k = ev.key.toLowerCase();
-            if (k === "z" && !ev.shiftKey) { ev.preventDefault(); history.undo(); }
-            else if (k === "y" || (k === "z" && ev.shiftKey)) { ev.preventDefault(); history.redo(); }
+        // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) drive Pretty's OWN history. The node view's shortcut is
+        // GRAPH-scope and this one PRETTY-scope, so scope (not the old class check) keeps them from
+        // colliding. Works in edit and view mode; the registry's field bail skips it while typing.
+        registerKey({
+            combo: ["Mod+Z", "Mod+Y", "Shift+Mod+Z"], scope: SCOPE.PRETTY, priority: 40,
+            when: () => mounted,
+            run: (ev) => {
+                const k = ev.key.toLowerCase();
+                if (k === "z" && !ev.shiftKey) { ev.preventDefault(); history.undo(); return true; }
+                if (k === "y" || (k === "z" && ev.shiftKey)) { ev.preventDefault(); history.redo(); return true; }
+                return false;
+            },
         });
         // Drag a rectangle on empty canvas -> rubber-band multi-select (shift adds to the current
         // selection). A click that doesn't move clears the selection.
