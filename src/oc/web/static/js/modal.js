@@ -18,6 +18,11 @@ import { h } from "./dom.js";
 
 const stack = [];
 
+// Fired whenever ANY modal opens — lets the app tear down things a modal shouldn't sit over
+// (e.g. the sound node's looping forge preview). Registered by main.js; null = no-op.
+let onOpenHook = null;
+export function setModalOpenHook(fn) { onOpenHook = fn; }
+
 function dismissTop() {
     const top = stack[stack.length - 1];
     if (top) top.dismiss();
@@ -68,5 +73,6 @@ export function openModal({ title = "", size = "medium", node = null, onClose = 
     backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) handle.dismiss(); });
     closeBtn.addEventListener("click", () => handle.dismiss());
     stack.push(handle);
+    onOpenHook?.();   // a modal is up — kill anything that shouldn't keep running behind it
     return handle;
 }

@@ -71,10 +71,12 @@ async function renderCue(s) {
     return buf;
 }
 
-// Play a generated cue. Returns { stop() }. `loop` repeats it (forge preview); one-shot otherwise.
-// Best-effort: no points / no Web Audio / blocked autoplay just no-ops.
+// Play a generated cue. Returns a controller { stop(), ctx, startedAt, duration } — the timing
+// fields let a caller (the forge playhead) map ctx.currentTime onto the loop for a sweep line.
+// `loop` repeats it (forge preview); one-shot otherwise. Best-effort: no points / no Web Audio /
+// blocked autoplay just no-ops (a null-timing controller so callers guard cleanly).
 export async function playSynth(spec, volume = 1, { loop = false } = {}) {
-    const noop = { stop() {} };
+    const noop = { stop() {}, ctx: null, startedAt: null, duration: 0 };
     if (!spec || !(spec.points || []).length) return noop;
     try {
         const buf = await renderCue(spec);
@@ -84,6 +86,12 @@ export async function playSynth(spec, volume = 1, { loop = false } = {}) {
         if (loop) { src.loop = true; src.loopStart = 0; src.loopEnd = buf.duration; }
         src.connect(g).connect(c.destination);
         src.start();
-        return { stop() { try { src.stop(); } catch { /* already stopped */ } } };
+        // setVolume adjusts the live gain WITHOUT restarting — a looping preview's volume tracks the
+        // node's meter in real time (the buffer bakes in no volume, so this is the only gain stage).
+        return {
+            stop() { try { src.stop(); } catch { /* already stopped */ } },
+            setVolume(v) { try { g.gain.value = Math.max(0, Math.min(1, v)); } catch { /* dead node */ } },
+            ctx: c, startedAt: c.currentTime, duration: buf.duration,
+        };
     } catch { return noop; }
 }

@@ -9,7 +9,7 @@ import { listBlock } from "./list_block.js";
 import { sourcesInput } from "./sources_input.js";
 import { makeArmed } from "./armbtn.js";
 import { nodeIcon, iconFor } from "./node_icons.js";
-import { openModal } from "../modal.js";
+import { openModal, setModalOpenHook } from "../modal.js";
 import { since } from "../datefmt.js";
 import { log, timed, setLogOpen, mirrorConsole } from "../log.js";
 
@@ -2594,6 +2594,8 @@ function wireSound(div, n) {
     // its own level, so there's no separate % label to sync. autosave coalesces the writes.
     $(".sn-volume")?.addEventListener("change", (e) => {
         model.setSoundVolume(x.id, e.target.value);
+        // if a forge loop is previewing, track the new volume live (no restart, no sweep reset)
+        forgePreview.get(x.id)?.ctl?.setVolume(model.soundNode(x.id)?.volume ?? 1);
         autosave(null);
     });
     // ▶ audition. File mode: one-shot. Synth mode: toggle a LOOPING preview so you can tweak while
@@ -2611,6 +2613,7 @@ function wireSound(div, n) {
 // One live loop-preview source per open forge (keyed by node id) so PLAY toggles and edits restart
 // it. Not persisted — purely a tweak aid.
 const forgePreview = new Map();   // soundId -> { ctl, btn, off }
+const forgeAnim = new Map();      // soundId -> () => kick the plot's playhead-sweep rAF (set by wireForge)
 function stopForgePreview(id) {
     const p = forgePreview.get(id);
     if (!p) return;
@@ -2618,6 +2621,10 @@ function stopForgePreview(id) {
     p.btn && (p.btn.classList.remove("on"), p.btn.lastChild.textContent = "play");
     forgePreview.delete(id);
 }
+// Stop every open forge's loop preview at once — a preview must not keep sounding behind a modal
+// or after switching between the node graph and pretty view (wired to setModalOpenHook + setPrettyView).
+function stopAllForgePreview() { for (const id of [...forgePreview.keys()]) stopForgePreview(id); }
+setModalOpenHook(stopAllForgePreview);   // any modal spawning stops open forge previews
 async function toggleForgePreview(div, id, btn) {
     if (forgePreview.get(id)) { stopForgePreview(id); return; }
     const s = model.soundNode(id);
@@ -2631,6 +2638,7 @@ async function toggleForgePreview(div, id, btn) {
     document.addEventListener("pointerdown", onDown, true);
     forgePreview.set(id, { ctl, btn, off: () => document.removeEventListener("pointerdown", onDown, true) });
     btn.classList.add("on"); btn.lastChild.textContent = "stop";
+    forgeAnim.get(id)?.();   // start the playhead sweep now that a loop is running
 }
 // restart the loop with the current spec so edits are audible immediately (no-op if not previewing)
 async function refreshForgePreview(id) {
@@ -2639,6 +2647,7 @@ async function refreshForgePreview(id) {
     const s = model.soundNode(id);
     p.ctl?.stop();
     p.ctl = s?.synth ? await playSynth(s.synth, s.volume ?? 1, { loop: true }) : null;
+    forgeAnim.get(id)?.();   // new source => new start time; ensure the sweep loop is running
 }
 
 function wireForge(div, id) {
@@ -2709,8 +2718,45 @@ function wireForge(div, id) {
             drawLabel(pToNote(pt.p), px, py + (py > lf * 2 ? -lf * 1.05 : lf * 1.05), col, lf, topInset);
         });
         const len = div.querySelector(".sf-len");
-        if (len) len.textContent = `${s.length_ms} ms`;
+        // guard the write: draw() runs every frame while the sweep animates, and a poll/tick redraw
+        // must make zero DOM mutations in steady state (only writes when the length actually changed).
+        if (len && len.textContent !== `${s.length_ms} ms`) len.textContent = `${s.length_ms} ms`;
+        // playhead sweep: while a loop preview runs, draw a vertical line at the current playback
+        // position so you can SEE which part of the cue is sounding. Map ctx time onto the cue length
+        // (0..1); the buffer carries ~60ms of tail silence past length_ms, so clamp/hide past the end.
+        const ctl = forgePreview.get(id)?.ctl;
+        if (ctl?.ctx && ctl.startedAt != null && s.length_ms > 0) {
+            const period = s.length_ms / 1000;
+            const ph = ((ctl.ctx.currentTime - ctl.startedAt) % ctl.duration) / period;
+            if (ph >= 0 && ph <= 1) {
+                const px = ph * W;
+                gx.save(); gx.setLineDash([]);
+                gx.lineWidth = 2 * dpr; gx.strokeStyle = col; gx.shadowColor = col; gx.shadowBlur = 8 * dpr;
+                gx.beginPath(); gx.moveTo(px, 0); gx.lineTo(px, H); gx.stroke();
+                gx.restore();
+            }
+        }
     }
+    // playhead-sweep animation: a self-terminating rAF that redraws the plot each frame WHILE a loop
+    // preview runs (draw() paints the moving line), then stops rescheduling once the preview ends —
+    // the final frame clears the line. Kicked by the preview lifecycle (toggle/refresh) via forgeAnim.
+    let raf2 = 0;
+    const playhead = () => {
+        raf2 = 0;
+        if (!canvas.isConnected) { forgeAnim.delete(id); return; }
+        draw();
+        if (forgePreview.get(id)) raf2 = requestAnimationFrame(playhead);
+    };
+    forgeAnim.set(id, () => { if (!raf2 && canvas.isConnected) raf2 = requestAnimationFrame(playhead); });
+    // restart the loop preview live while dragging a point/knob, throttled so a fast drag doesn't
+    // machine-gun the audio source — you hear the shape change as you move (no-op if not previewing).
+    let lastLive = 0;
+    const liveRefresh = () => {
+        if (!forgePreview.get(id)) return;
+        const now = performance.now();
+        if (now - lastLive < 110) return;
+        lastLive = now; refreshForgePreview(id);
+    };
     const pos = (e) => { const r = canvas.getBoundingClientRect();
         return { t: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), p: Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height)) }; };
     const nearest = (q) => { const pts = spec()?.points || []; let bi = -1, bd = 1;
@@ -2727,7 +2773,7 @@ function wireForge(div, id) {
         if (drag < 0) return; const s = spec(); if (!s) return;
         const q = pos(e), pt = s.points[drag];
         pt.p = q.p; if (drag > 0 && drag < s.points.length - 1) pt.t = q.t;
-        s.points.sort((a, b) => a.t - b.t); drag = s.points.indexOf(pt); draw();
+        s.points.sort((a, b) => a.t - b.t); drag = s.points.indexOf(pt); draw(); liveRefresh();
     });
     canvas.addEventListener("pointerup", () => { if (drag < 0) return; drag = -1; commit(); refreshForgePreview(id); });
     canvas.addEventListener("contextmenu", (e) => {
@@ -2744,7 +2790,7 @@ function wireForge(div, id) {
     // knobs: live label update on input, persist + restart loop on change (release)
     div.querySelectorAll(".sf-k").forEach((el) => {
         const kv = div.querySelector(`.sf-kv[data-kv="${el.dataset.k}"]`);
-        el.addEventListener("input", () => { const s = spec(); if (!s) return; s[el.dataset.k] = +el.value; if (kv) kv.textContent = el.value; if (el.dataset.k === "length_ms") draw(); });
+        el.addEventListener("input", () => { const s = spec(); if (!s) return; s[el.dataset.k] = +el.value; if (kv) kv.textContent = el.value; if (el.dataset.k === "length_ms") draw(); liveRefresh(); });
         el.addEventListener("change", () => { commit(); refreshForgePreview(id); });
     });
     // sync every control + the canvas from the current spec (used when a preset/roll REPLACES it —
@@ -2768,7 +2814,7 @@ function wireForge(div, id) {
     div.querySelector(".sf-cues")?.addEventListener("click", (e) => {
         const b = e.target.closest(".sf-cue"); if (b) loadCue(forgePreset(b.dataset.cue));
     });
-    div.querySelector(".sn-roll")?.addEventListener("click", () => loadCue(rollSynth(spec())));
+    div.querySelector(".sn-roll")?.addEventListener("click", () => loadCue(rollSynth()));
     // re-fit + redraw the canvas whenever the node (and thus the plot) resizes — points are 0..1 so
     // nothing to recompute, just keep the backing store crisp (dom.js observeResize, rule 7).
     observeResize(canvas, draw);
@@ -2781,7 +2827,7 @@ function wireForge(div, id) {
     if (gworld) {
         let raf = 0, lastScale = "";
         const mo = new MutationObserver(() => {
-            if (!canvas.isConnected) { mo.disconnect(); return; }   // node removed → self-clean
+            if (!canvas.isConnected) { mo.disconnect(); cancelAnimationFrame(raf2); forgeAnim.delete(id); return; }   // node removed → self-clean
             const sc = (/scale\(([^)]*)\)/.exec(gworld.style.transform) || [, "1"])[1];
             if (sc === lastScale || raf) return;   // pan (scale unchanged) → zero layout work
             lastScale = sc;
@@ -2805,15 +2851,24 @@ function forgePreset(name) {
     const c = FORGE_PRESETS[name] || FORGE_PRESETS.pickup;
     return { wave: c.wave, points: c.points.map(([t, p]) => ({ t, p })), length_ms: c.length_ms, attack: 4, decay: 55, vibrato: 0, crush: 18 };
 }
-// a deterministic-ish shuffle off the current spec (no Math.random dependency for a stable feel):
-function rollSynth(prev) {
-    const len = (prev?.length_ms ?? 220);
-    const n = 3 + (((len / 50) | 0) % 3);
-    const rnd = (i) => (Math.sin((i + 1) * len * 0.013 + n) * .5 + .5);
+// Roll a genuinely fresh random cue — every click gives something new (an earlier version derived
+// everything from length_ms alone, so rolling twice produced the identical cue). Randomizes wave,
+// length, the pitch-over-time points, and the shape knobs across sane musical ranges.
+const _rr = (a, b) => a + Math.random() * (b - a);
+function rollSynth() {
+    const n = 3 + ((Math.random() * 4) | 0);   // 3..6 points, endpoints pinned at t=0 and t=1
     const points = [];
-    for (let i = 0; i < n; i++) points.push({ t: i / (n - 1), p: 0.12 + rnd(i) * 0.8 });
+    for (let i = 0; i < n; i++) points.push({ t: i / (n - 1), p: +(0.1 + Math.random() * 0.85).toFixed(3) });
     const waves = ["square", "sine", "sawtooth", "triangle"];
-    return { wave: waves[(len + n) % 4], points, length_ms: len, attack: 4, decay: 55, vibrato: 0, crush: 18 };
+    return {
+        wave: waves[(Math.random() * waves.length) | 0],
+        points,
+        length_ms: Math.round(_rr(120, 700)),
+        attack: Math.round(_rr(0, 20)),
+        decay: Math.round(_rr(30, 80)),
+        vibrato: Math.random() < 0.4 ? Math.round(_rr(5, 60)) : 0,   // vibrato/crush only sometimes
+        crush: Math.random() < 0.5 ? Math.round(_rr(5, 40)) : 0,
+    };
 }
 
 // ---- action node: clear / clone / move a dataset's data when fired ----------
@@ -5096,6 +5151,7 @@ function setNodePanelsHidden(hidden) {
 
 async function setPrettyView(on) {
     if (on === prettyActive) return;
+    stopAllForgePreview();   // don't leave a forge loop sounding across a node<->pretty switch
     prettyActive = on;
     document.body.classList.toggle("pretty-mode", on);
     $("vtNode")?.classList.toggle("active", !on);
