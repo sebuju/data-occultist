@@ -20,7 +20,7 @@ import { clearTools } from "./drawtool.js";
 import { undo, redo } from "./history.js";
 import { persist } from "./persist.js";
 import { nodeIdOf, editBox, rectEditCanvasSync } from "./imaging.js";
-import { WIDTH_ONLY_NODES, resetNodeAxis, nudgeAxisToGrid, markNodeSized } from "./node_resize.js";
+import { WIDTH_ONLY_NODES, resetNodeAxis, nudgeAxisToGrid, markNodeSized, quantizeWidthOnlyHeight } from "./node_resize.js";
 import {
     activeOverlayKey, selectedNodeId, nodeTypeOf, NUDGE,
     deselectAll, focusNode, selectionIds, deleteSelection, positionNode, autosave,
@@ -270,9 +270,15 @@ registerKey({
                 if (!el || collapsed.has(id)) return false;
                 const prev = nodeSizes.get(id) || {};
                 if (WIDTH_ONLY_NODES.has(nodeTypeOf(id))) {
-                    // item/window wrap a fixed-aspect canvas -> HARD width only, height aspect-driven.
-                    if (dir[0]) { el.style.minWidth = ""; el.style.width = `${Math.max(GRID, snap(el.offsetWidth + dir[0] * GRID))}px`; }
-                    nodeSizes.set(id, { w: el.offsetWidth, h: el.offsetHeight, softW: false, softH: false, custW: !!dir[0] || !!prev.custW, custH: false });
+                    // item/window wrap a fixed-aspect canvas -> HARD width only, height aspect-driven,
+                    // so there's no height axis for W/S to drive — they used to just no-op (dead keys).
+                    // Route them onto width by FUNCTION instead: W (shrink-height, dir=[0,-1]) acts
+                    // like A (shrink-width), S (grow-height, dir=[0,1]) acts like D (grow-width) — dir[0]
+                    // and dir[1] are never both nonzero for one key, and their signs already agree
+                    // (-1=shrink, +1=grow) with A/D, so `dir[0] || dir[1]` is the width delta for all 4 keys.
+                    const wd = dir[0] || dir[1];
+                    if (wd) { el.style.minWidth = ""; el.style.width = `${Math.max(GRID, snap(el.offsetWidth + wd * GRID))}px`; quantizeWidthOnlyHeight(el, id); }
+                    nodeSizes.set(id, { w: el.offsetWidth, h: el.offsetHeight, softW: false, softH: false, custW: !!wd || !!prev.custW, custH: false });
                 } else {
                     // re-apply through the SAME soft-grow/hard-shrink primitive the drag uses — a raw
                     // style.width set is blocked by a prior grow's min-width and silently no-ops.

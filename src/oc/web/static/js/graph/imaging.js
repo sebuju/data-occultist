@@ -18,6 +18,7 @@ import {
 import * as rectTxn from "./edit_txn.js";
 import * as nodeTxn from "./node_txn.js";
 import { drawEdges } from "./routing.js";
+import { quantizeWidthOnlyHeight } from "./node_resize.js";
 import { renderLiveWindow, liveDetCount, liveRecog } from "./panels/livewin.js";
 import {
     render, autosave, nodeEdit, rebuildNode, rebuildReadoutConsumers, setNodeBusy, withBusy,
@@ -939,8 +940,10 @@ function openItemImage(winId, itemId) {
     // doesn't snap from the blank 300x150 canvas default to the image ratio once the cutout
     // loads / the first read returns. img.onload below still sets the exact value.
     const winImg = imageCanvases.get(winId)?.overlay?.img;
-    if (winImg?.naturalWidth && cb.w && cb.h)
+    if (winImg?.naturalWidth && cb.w && cb.h) {
         canvas.parentElement.style.aspectRatio = `${cb.w * winImg.naturalWidth} / ${cb.h * winImg.naturalHeight}`;
+        quantizeWidthOnlyHeight(node, `item:${winId}:${itemId}`);   // aspect just changed -> re-floor the box to the grid
+    }
     const cut2win = (b) => ({ x: cb.x + b.x * cb.w, y: cb.y + b.y * cb.h, w: b.w * cb.w, h: b.h * cb.h });
     const win2cut = (b) => ({ x: (b.x - cb.x) / cb.w, y: (b.y - cb.y) / cb.h, w: b.w / cb.w, h: b.h / cb.h });
     const ibox = () => model.item(winId, itemId).box;
@@ -1032,6 +1035,7 @@ function openItemImage(winId, itemId) {
     const img = new Image();
     img.onload = () => {
         canvas.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+        quantizeWidthOnlyHeight(node, `item:${winId}:${itemId}`);   // aspect just changed -> re-floor the box to the grid
         overlay.setImage(img); refreshItemBoxes(winId, itemId); drawEdges();
         scheduleItemRead(winId, itemId);   // show what current settings extract, right away
     };
@@ -1904,6 +1908,7 @@ async function loadImage(winId, recapture, { deferRead = false } = {}) {
         if (stale()) return;
         // keep the canvas area at the image aspect ratio so resizing always fits
         entry.canvas.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+        quantizeWidthOnlyHeight(nodeEls.get(nodeIdOf(winId)), nodeIdOf(winId));   // aspect just changed -> re-floor the box to the grid
         entry.overlay.setImage(img);
         refreshImageBoxes(winId);
         // boot opens every window in a burst — this per-image drawEdges only forces a layout

@@ -14,9 +14,27 @@ import { showGuides, flashGuides } from "./guides.js";
 
 // Host node types that resize at the NODE level (their body fills them) — one consistent
 // behaviour. Used by the initial build AND by rebuildNode to re-attach grips.
-// Every node is freely resizable (width + height) EXCEPT item/window/game/atlas, which resize
-// width-only (their height follows a fixed-aspect canvas or is otherwise not user-sized).
-export const WIDTH_ONLY_NODES = new Set(["item", "window", "game", "atlas"]);
+// Every node is freely resizable (width + height) EXCEPT item/window/atlas, which resize
+// width-only (their height follows a fixed-aspect canvas). `game`'s body is plain text/list
+// content with no canvas — it resizes both axes like any other content node.
+export const WIDTH_ONLY_NODES = new Set(["item", "window", "atlas"]);
+
+// Width-only nodes wrap a fixed-aspect canvas: their box height is canvas-aspect-driven
+// (bodyWidth / imageAspect + chrome) and lands off the 20px grid, floating the bottom edge out
+// of alignment with every other node. The canvas aspect is locked to the image's true pixels
+// (never pad it — that distorts the image), so instead floor the BOX up to the next grid line
+// with a min-height: extra space falls below the content, the canvas keeps its aspect. Clear-
+// then-measure exposes the natural (unfloored) box; only raise (target > nat), never shrink, so
+// this is idempotent — once floored, offsetHeight is already a grid multiple and snapUp(nat) ===
+// nat, so a later pass writes nothing (no observer feedback loop).
+export function quantizeWidthOnlyHeight(el, id) {
+    if (!el) return;
+    if (collapsed.has(id)) { el.style.minHeight = ""; return; }   // header-only CSS owns collapsed height
+    el.style.minHeight = "";                                      // expose the natural (aspect-driven) box
+    const nat = el.offsetHeight;
+    const target = snapUp(nat);
+    if (target > nat) el.style.minHeight = `${target}px`;
+}
 
 // Size a freely-resizable node to a grid target (w×h) WITHOUT a hard width/height where it can be
 // avoided. GROW (target ≥ natural box): a soft `min-width`/`min-height` opens the box out to the
@@ -145,8 +163,12 @@ export function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
                 const wTarget = snapUp(div.offsetWidth);   // quantize to the grid once, on release
                 div.style.width = ""; div.style.minWidth = "";
                 const natW = div.offsetWidth;
-                if (Math.abs(wTarget - natW) < 1) nodeSizes.delete(id);   // back at natural -> unstamped
-                else { div.style.width = `${wTarget}px`; nodeSizes.set(id, { w: wTarget, h: div.offsetHeight, softW: false, softH: false, custW: true, custH: false }); }
+                if (Math.abs(wTarget - natW) < 1) { nodeSizes.delete(id); quantizeWidthOnlyHeight(div, id); }   // back at natural -> unstamped
+                else {
+                    div.style.width = `${wTarget}px`;
+                    quantizeWidthOnlyHeight(div, id);   // width just settled -> floor the aspect-driven height to the grid
+                    nodeSizes.set(id, { w: wTarget, h: div.offsetHeight, softW: false, softH: false, custW: true, custH: false });
+                }
             } else {
                 const { w, h } = settleGridSize(div, snapUp(div.offsetWidth), snapUp(div.offsetHeight));
                 if (w.cust || h.cust) nodeSizes.set(id, { w: w.size, h: h.size, softW: w.soft, softH: h.soft, custW: w.cust, custH: h.cust });
@@ -186,7 +208,7 @@ export function resetNodeAxis(div, id, axis, widthOnly) {
     if (axis === "w") {
         const w = snapUp(nb.w);
         div.style.minWidth = `${w}px`;
-        if (widthOnly) div.style.width = `${w}px`;   // item/window keep a hard inline width
+        if (widthOnly) { div.style.width = `${w}px`; quantizeWidthOnlyHeight(div, id); }   // item/window keep a hard inline width; floor height to the grid
         s.w = w; s.softW = true; s.custW = false;   // back at natural -> nothing left to reset (hide the dot)
     } else {
         const h = snapUp(nb.h);
@@ -285,6 +307,11 @@ export function snapResize(el, opts = {}) {
     // Skipped during boot: every window's image load + content mount fires this on all N nodes behind
     // the veil, and renderGroups reads each member's rect -> N * (30 forced layouts) of pure thrash for
     // a screen nobody sees. finishBoot() runs the ONE real edge+group pass when the veil drops.
+    // NEVER quantize/write a size from in here: writing min-height in response to a resize the write
+    // itself just caused is a self-triggering ResizeObserver loop (clear -> shrinks the box -> observer
+    // fires -> set -> grows the box back -> observer fires -> ad infinitum). Width-only nodes get their
+    // height floored to the grid only from deliberate, one-shot call sites (grip onSettle, axis reset,
+    // WASD nudge, and the img.onload aspect stamp in imaging.js) — never from this passive observer.
     observeResize(el, () => { if (boot.phase) return; requestEdges(); groups.renderGroups(); }, { gate: true });
     addResizeGrips(el, opts);   // custom grips on BOTH bottom corners; they own snap-on-release
 }

@@ -276,7 +276,7 @@ function pasteSize() {
     const targets = selectionIds().filter(isSizeTarget);
     if (!targets.length) return;
     for (const id of targets) {
-        // widthOnly nodes (item/window/game/atlas) wrap a fixed-aspect canvas — stamp width only.
+        // widthOnly nodes (item/window/atlas) wrap a fixed-aspect canvas — stamp width only.
         const s = WIDTH_ONLY_NODES.has(nodeTypeOf(id))
             ? { w, custW: true, custH: false, softW: false, softH: false }
             : { w, h, custW: true, custH: true, softW: false, softH: false };
