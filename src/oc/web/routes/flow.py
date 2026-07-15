@@ -11,7 +11,7 @@ from ...profile import list_profiles
 from ...runtime import load_live_profile
 from ...store import inspect, rows_at, store_for
 from ...store.dataset_store import DatasetStore
-from ..deps import get_settings
+from ..deps import get_settings, get_view_cache
 
 router = APIRouter(prefix="/api/flow", tags=["flow"])
 
@@ -222,12 +222,18 @@ def _view_ctx(data_dir, game: str, profile):
     return store, fetch
 
 
-def _cached_view(game: str, profile, sid: str, store, fetch, batch_cache: dict | None = None) -> dict:
+def _cached_view(game: str, profile, sid: str, store, fetch, vcache,
+                  batch_cache: dict | None = None) -> dict:
     """A subset's ``{columns, rows}``, served from :data:`_VIEW_CACHE` while its transitive source
     datasets are unchanged. The rev signature (one indexed PK read per source dataset, via the
     shared ``store`` memo) gates the cache; a mismatch recomputes (timed under the stats "rc"
     bucket) and replaces the entry. ``batch_cache`` is the per-request shared view memo passed to
-    :func:`compute_view_rows` so sibling subsets don't re-derive a common heavy upstream."""
+    :func:`compute_view_rows` so sibling subsets don't re-derive a common heavy upstream.
+
+    Falls back to the on-disk :class:`~oc.web.view_cache.ViewCache` (``vcache``) when the
+    in-memory cache misses — the process just started (empty ``_VIEW_CACHE``) but a PRIOR process
+    already computed this subset at the same revs, so the sidecar saves the recompute. A disk hit
+    is adopted into ``_VIEW_CACHE`` too, so the rest of this process's requests skip the sidecar."""
     from ...enrich.subset import compute_view_rows, subset_source_datasets
     from ...store import stats_store
     rk = tuple(sorted((d, store(d).rev) for d in subset_source_datasets(profile, sid)))
@@ -235,12 +241,20 @@ def _cached_view(game: str, profile, sid: str, store, fetch, batch_cache: dict |
         hit = _VIEW_CACHE.get((game, sid))
         if hit is not None and hit[0] == rk:
             return hit[1]
+    rk_list = [list(pair) for pair in rk]
+    disk = vcache.get(sid)
+    if disk is not None and disk.get("rk") == rk_list:
+        result = disk["result"]
+        with _VIEW_LOCK:
+            _VIEW_CACHE[(game, sid)] = (rk, result)
+        return result
     result: dict = {"columns": [], "rows": []}
     with stats_store.time_block(game, f"sub:{sid}", "rc",
                                 n_fn=lambda: len(result.get("rows", []))):
         result = compute_view_rows(profile, sid, fetch, cache=batch_cache)
     with _VIEW_LOCK:
         _VIEW_CACHE[(game, sid)] = (rk, result)
+    vcache.put(sid, rk_list, result)
     return result
 
 
@@ -252,7 +266,9 @@ def subset_view(game: str, subset: str):
     tracks updates. Input cycles resolve to empty rather than looping."""
     profile, sub = _subset(game, subset)
     store, fetch = _view_ctx(get_settings().data_dir, game, profile)
-    result = _cached_view(game, profile, subset, store, fetch)
+    vcache = get_view_cache(game)
+    result = _cached_view(game, profile, subset, store, fetch, vcache)
+    vcache.save()   # no-op when nothing new was computed (dirty check)
     return {"subset": subset, "datasets": sub.inputs(), **result}
 
 
@@ -277,6 +293,7 @@ def flow_details(game: str, req: _DetailsReq):
     profile = load_live_profile(settings.profiles_dir, game)
 
     store, fetch = _view_ctx(settings.data_dir, game, profile)
+    vcache = get_view_cache(game)
 
     datasets: dict[str, dict] = {}
     for ds in dict.fromkeys(req.datasets):   # dedupe, keep order
@@ -292,8 +309,9 @@ def flow_details(game: str, req: _DetailsReq):
         if sub is None:
             continue
         try:
-            result = _cached_view(game, profile, sid, store, fetch, batch_cache)
+            result = _cached_view(game, profile, sid, store, fetch, vcache, batch_cache)
             subsets[sid] = {"subset": sid, "datasets": sub.inputs(), **result}
         except Exception:
             continue
+    vcache.save()   # one write for the whole batch, not one per subset
     return {"datasets": datasets, "subsets": subsets}
