@@ -190,13 +190,6 @@
 .gnode select:not([size]) {   /* :not([size]) lifts specificity to match the de-input rule so this padding wins */
     appearance: none; -webkit-appearance: none; padding: 0 4px 0 4px; text-overflow: ellipsis; color: var(--nt);
 }
-/* a select that ISN'T the control right after a .lab (rule-pipeline / inline selects) drops the
-   chevron, sits on tight padding, and carries a resting muted border so it reads as an editable
-   field on its own — the k/v label that would otherwise mark it isn't there */
-.gnode input:not([size], .gi-id):not(.lab + input):not(.tg-interval):not(.tg-throttle),
-.gnode select:not([size]):not(.lab + select) {
-   border-color: var(--line);
-}
 
 /* ============================================================================
    THE node button system (rule 7): three looks by CLASS, no `:has()`.
@@ -227,7 +220,7 @@
    position: absolute;
 } */
 .gnode button.danger, .gnode .btn-trash {
-    background: transparent; color: var(--danger); min-height: unset; 
+    background: transparent; color: var(--danger); min-height: unset; padding: 2px;
 }
 .gnode button.danger:hover:not(:disabled), .gnode .btn-trash:hover:not(:disabled) {
     /* background: var(--danger); color: var(--on-danger); filter: none; */
@@ -690,7 +683,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* toast: app label + input row sits well clear of the images list above it */
 .tn-app-grid { margin-top: 16px; }
 .lab-grid > .lab { white-space: nowrap; }
-.lab-grid > .lab-top { align-self: start; padding-top: 4px; }
 /* full-width controls EXCEPT checkboxes — a checkbox keeps its base 28px toggle-switch size
    (base.css) and sits at the start of the control column instead of stretching. */
 .lab-grid > select, .lab-grid > input:not([type="checkbox"]), .lab-grid > textarea, .lab-grid > .tg-secs { width: 100%; min-width: 0; }

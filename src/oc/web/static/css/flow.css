@@ -129,20 +129,20 @@ a.node.win:hover { border-color: var(--accent); }
 .gn-h .ds-tabs { opacity: 0; transition: opacity .12s; }   /* data/batches tablist: also hover-only, but stays in flow (left side, no shift risk) */
 .gn-h:hover .ds-tabs { opacity: 1; }
 .gn-h:hover .ds-tabs { opacity: 1; }
-.sub-lbl { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; justify-content: space-between; }
+.lab-add { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; justify-content: space-between; }
 /* filters/columns/sort/visible ride the node's ONE lab-grid: the label (with its + button) is a
    col-1 cell, its rows/toggles fill col 2 — aligned with sources/limit/latest above them. */
-.lab-grid > .sub-lbl { margin-bottom: 0; align-self: start; }
+.lab-grid > .lab-add { margin-bottom: 0; align-self: start; }
 .lab-grid > .sub-rows, .lab-grid > .sv-hides { min-width: 0; align-self: start; }
 .sub-rows > .sub-row:first-child { margin-top: 0; }
 .sub-empty { font-size: var(--fs-sm); padding: 1px 2px; }
 /* + buttons sit inline after the section label — bare "+" glyph tinted the node colour (--nt),
    no button chrome (border/background), sized to the label height. */
-.sub-addf, .sub-addd, .sub-adds {
+.lab-add-btn {
     background: transparent; border: 0; padding: 0; min-height: unset;
     width: 16px; height: 16px; line-height: 1; font-size: 16px;
     color: var(--nt, var(--accent)); cursor: pointer; opacity: .7; }
-.sub-addf:hover, .sub-addd:hover, .sub-adds:hover { opacity: 1; }
+.lab-add-btn:hover { opacity: 1; }
 /* per-source join worked example: raw value -> normalised, reflecting the knobs above it */
 .sv-norm-eg { font-size: var(--fs-sm); color: var(--muted); margin-left: 4px; word-break: break-word; align-self: start; }
 .sv-norm-eg .eg-arrow { color: var(--nt, var(--accent)); }
@@ -362,11 +362,13 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 .pr-rows, .pr-fields { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .pr-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .pr-row > input, .pr-row > select { min-width: 0; }
-.pr-field { display: flex; flex-direction: column; gap: 3px; }
+.pr-field { display: flex; flex-direction: column; gap: 3px; border-left: 2px solid var(--nt); padding-left: 4px; }
 .pr-arr { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 2px 6px; padding-left: 8px;
     border-left: 2px solid var(--line); }   /* the array reduce (pluck/agg/filters) nests under its column */
-.pr-chk { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; flex: 0 0 auto; }
-.pr-f-add, .pr-ff-add { align-self: start; }
+.pr-chk { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; flex: 0 0 auto; margin: 0; }
+.gnode .pr-chk input.pr-f-req { margin: 0; margin-left: 0px; }
+.pr-arr .pr-ff-add { align-self: start; }   /* array-reduction's inline "+ filter" stays compact, not full-width */
+.pr-f-type { width: auto; }
 
 /* producer preview satellite (resolved inputs + output schema + live test-fetch) */
 .pp-cols { font-size: var(--fs-sm); white-space: normal; }

@@ -150,6 +150,13 @@ export const TRASH = () =>
 export const labCell = (label, title = "", top = false, cls = "") =>
     h("span", { class: "lab" + (top ? " lab-top" : "") + (cls ? " " + cls : ""), title: title || null }, label);
 
+// A section label with a bare "+" add-button nested after the text (chrome-less, node-tinted).
+// Shared by subset filters/columns/sort and the producer explode/keep-rows/fields sections.
+// `addCls` is the caller's wiring hook; `lab-add-btn` carries the shared styling.
+export const labAdd = (text, title, addCls, addTitle, top = false) =>
+    h("span", { class: "lab lab-add" + (top ? " lab-top" : ""), title: title || null },
+        text, h("button", { class: addCls + " lab-add-btn", title: addTitle }, "+"));
+
 // A k/v field row for the body grid: the wrapped label (col 1) + the control (col 2), emitted
 // as two DIRECT grid children (never a wrapping row element — that would break the shared
 // column). This is THE way to add a labelled control to a node body. `title` tooltips the label;

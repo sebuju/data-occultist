@@ -6,7 +6,7 @@
 // + controls; joining/deriving is a view's job.
 import * as api from "../api.js";
 import { isOnline } from "../conn.js";
-import { h, frag, TRASH, labCell, srcRow, kv, subhead, gspan, trashBtn } from "../dom.js";
+import { h, frag, TRASH, labCell, labAdd, srcRow, kv, subhead, gspan, trashBtn } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
 import { model, afterBoot } from "./state.js";
 import * as hub from "../hub.js";
@@ -71,13 +71,14 @@ const catalogueRows = (c) => [
     h("input", { class: "pr-cat-ttl", type: "number", value: c.ttl_days ?? 7 }),
 ];
 
-// A {k:v}-style list of single text values (ordered) with delete + trailing add-row. Used for the
-// `explode` array-path list (list mode). `kind` hooks the wiring; the whole list rebuilds per edit.
-const listBlock = (cls, items, placeholder, addLabel, itemTitle) => {
+// A {k:v}-style list of single text values (ordered) with delete. Used for the `explode`
+// array-path list (list mode); the add-button lives in the section label (labAdd, `${cls}-add`).
+// The whole list rebuilds per edit.
+const listBlock = (cls, items, placeholder, itemTitle) => {
     const row = (v, i) => h("div", { class: `pr-row ${cls}-row`, dataset: { i } },
         h("input", { class: `${cls}-v`, value: v, placeholder, title: itemTitle }),
         trashBtn({ cls: `sv-rmin ${cls}-del`, dataset: { i }, title: "remove" }));
-    return h("div", { class: "pr-rows" }, ...(items || []).map(row), h("button", { class: `${cls}-add` }, addLabel));
+    return h("div", { class: "pr-rows" }, ...(items || []).map(row));
 };
 
 // The response->columns mapping: one row per output column. A column's value is a `path` (optionally
@@ -88,7 +89,9 @@ const listBlock = (cls, items, placeholder, addLabel, itemTitle) => {
 // (rows carry data-i + data-fi); the producer's ROW filter passes none (rows carry data-fi
 // only, and the handlers read a missing data-i as "the row_filter list"). Never paste this
 // block for a third filter list — pass the index instead.
-const filterList = (filters, i = null) => {
+// `withAdd`: the per-field array-reduction caller keeps its inline "+ filter" button; the
+// producer's row-filter section passes false — its add-button lives in the section label (labAdd).
+const filterList = (filters, i = null, withAdd = true) => {
     const at = (fi) => (i == null ? { fi } : { i, fi });
     return frag(
         ...(filters || []).map((flt, fi) => h("div", { class: "pr-row pr-ffilt", dataset: at(fi) },
@@ -96,7 +99,7 @@ const filterList = (filters, i = null) => {
             sel("pr-ff-op", FILTER_OPS, flt.op || "eq", "comparison (in/nin take a comma list)"),
             h("input", { class: "pr-ff-val", value: Array.isArray(flt.value) ? flt.value.join(", ") : (flt.value ?? ""), placeholder: "value", title: "value to compare against" }),
             trashBtn({ cls: "sv-rmin pr-ff-del", dataset: at(fi), title: "remove filter" }))),
-        h("button", { class: "pr-ff-add", dataset: i == null ? {} : { i } }, "+ filter"));
+        withAdd ? h("button", { class: "pr-ff-add", dataset: i == null ? {} : { i } }, "+ filter") : null);
 };
 
 const fieldsBlock = (fields) => {
@@ -106,10 +109,11 @@ const fieldsBlock = (fields) => {
             h("div", { class: "pr-row" },
                 h("input", { class: "pr-f-out", value: f.out_field || "", placeholder: "column", title: "output dataset column name" }),
                 h("input", { class: "pr-f-path", value: f.path || "", placeholder: "json path", title: "dotted/[i] path to the value ('' = response root)" }),
+                trashBtn({ cls: "sv-rmin pr-f-del", dataset: { i }, title: "remove column" })),
+            h("div", { class: "pr-row" },
                 sel("pr-f-type", ["text", "number"], f.type || "text", "text keeps the raw value; number coerces (drops non-numeric)"),
                 chk("pr-f-req", f.required, "required"),
-                chk("pr-f-arr", !!arr, "array"),
-                trashBtn({ cls: "sv-rmin pr-f-del", dataset: { i }, title: "remove column" })),
+                chk("pr-f-arr", !!arr, "array")),
             h("div", { class: "pr-row" },
                 h("input", { class: "pr-f-tmpl", value: f.template || "", placeholder: "template (optional): {path} {path}",
                     title: "compose the column from several fields, e.g. '{tier} {relicName}' -> 'Axi A1'. Overrides path/array." })),
@@ -120,7 +124,7 @@ const fieldsBlock = (fields) => {
                 filterList(arr.filter, i),
             ) : null);
     };
-    return h("div", { class: "pr-fields" }, ...fields.map(fieldRow), h("button", { class: "pr-f-add" }, "+ column"));
+    return h("div", { class: "pr-fields" }, ...fields.map(fieldRow));
 };
 
 // Node title + body for a producer: the full http fetch+map editor. Three shapes share it —
@@ -185,15 +189,15 @@ export function producerParts(pn, cols = [], free = []) {
             ...perItem,
             labCell("root", "path applied to the response before every column path (and before explode)"),
             h("input", { class: "pr-root", value: spec.root || "", placeholder: "e.g. data", title: "dotted path into the response applied before mapping" }),
-            labCell("explode", "nested array paths to expand the response into one row each — with no sources wired, one fetch total (list mode); with sources wired, one fetch PER source item (blank = a single row per fetch, no expansion)", true),
-            listBlock("pr-exp", spec.explode || [], "array path (e.g. relics)", "+ level", "a nested array path, relative to the prior level"),
+            labAdd("explode", "nested array paths to expand the response into one row each — with no sources wired, one fetch total (list mode); with sources wired, one fetch PER source item (blank = a single row per fetch, no expansion)", "pr-exp-add", "add level", true),
+            listBlock("pr-exp", spec.explode || [], "array path (e.g. relics)", "a nested array path, relative to the prior level"),
             // runs BEFORE the column mapping — so it can test a raw field this producer never emits
-            labCell("keep rows", "drop a source row before it is mapped unless it clears EVERY predicate (tests the raw element, so it may use a field no column emits)", true),
+            labAdd("keep rows", "drop a source row before it is mapped unless it clears EVERY predicate (tests the raw element, so it may use a field no column emits)", "pr-ff-add", "add filter", true),
             // wrap in ONE .pr-rows cell (like headers/query/explode) — filterList returns a bare
             // frag, so dropping it straight into the lab-grid leaks 2 loose cells per filter and
-            // shifts every row below off the 2-col grid. The array-filter caller already nests it.
-            h("div", { class: "pr-rows" }, filterList(spec.row_filter || [])),
-            labCell("fields", "response → dataset columns", true), fieldsBlock(spec.fields || []),
+            // shifts every row below off the 2-col grid. The section add-button lives in the label.
+            h("div", { class: "pr-rows" }, filterList(spec.row_filter || [], null, false)),
+            labAdd("fields", "response → dataset columns", "pr-f-add", "add column", true), fieldsBlock(spec.fields || []),
             labCell("status", "live sweep progress ('idle' when not running)"),
             h("div", { class: "enr-prog livestats" })));
     // The fetch button doubles as cancel while running. The segmented meter lives INSIDE the button

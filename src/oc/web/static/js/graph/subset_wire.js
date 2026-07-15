@@ -8,7 +8,7 @@
 import * as api from "../api.js";
 import * as nodeTxn from "./node_txn.js";
 import { model, nodeEls } from "./state.js";
-import { h, frag, labCell, srcRow } from "../dom.js";
+import { h, frag, labCell, labAdd, srcRow } from "../dom.js";
 import { renameNode, movePos } from "./node_lifecycle.js";
 import { persist } from "./persist.js";
 import { listBlock } from "./list_block.js";
@@ -312,8 +312,7 @@ function subConfigNode(s) {
                 h("option", { value: "desc", selected: !!so.desc }, !!so.desc ? "<desc>" : "desc"))] });
     // label + its inline "+" add button — a col-1 cell for the ONE node grid (matches labCell),
     // so filters/columns/sort/visible line up in the same label column as sources/limit/latest.
-    const addLbl = (text, title, addCls, addTitle) =>
-        h("span", { class: "lab sub-lbl", title }, text, h("button", { class: addCls, title: addTitle }, "+"));
+    const addLbl = (text, title, addCls, addTitle) => labAdd(text, title, addCls, addTitle);
     // ONE grid for the whole config: sources, per-source join, limit/latest, then filters/columns/
     // sort/visible — every label in col 1, its control(s) in col 2.
     return h("div", { class: "lab-grid" },
