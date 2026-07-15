@@ -172,7 +172,8 @@ function drawGroups(ctx) {
                 ctx.fillRect(g.x, g.y, g.w, g.h);
             }
         }
-        if (!g.outline || g.tier === "sub") continue;   // sub: fill only, never stroked
+        // sub + super: fill only, never stroked (super rim intentionally dropped)
+        if (!g.outline || g.tier === "sub" || g.tier === "super") continue;
         ctx.strokeStyle = g.outline;
         if (g.tier === "group") {
             if (g.selected) {
@@ -186,9 +187,6 @@ function drawGroups(ctx) {
                 ctx.strokeRect(g.x, g.y, g.w, g.h);
                 ctx.setLineDash([]);
             }
-        } else if (g.tier === "super") {
-            ctx.lineWidth = 1;   // solid 1px world rim (matches the un-zoom-scaled .sgroup border)
-            ctx.strokeRect(g.x, g.y, g.w, g.h);
         }
     }
 }

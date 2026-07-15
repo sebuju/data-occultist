@@ -6765,11 +6765,11 @@ layout:
     - ro:arsenal_warframe:slot_1_school
     - ro:arsenal_warframe:slot_1_po
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -6783,11 +6783,11 @@ layout:
     - ro:arsenal_warframe:slot_2_school
     - ro:arsenal_warframe:slot_2_po
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -6801,11 +6801,11 @@ layout:
     - ro:arsenal_warframe:slot_3_school
     - ro:arsenal_warframe:slot_3_po
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -6819,11 +6819,11 @@ layout:
     - ro:arsenal_warframe:slot_4_school
     - ro:arsenal_warframe:slot_4_po
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -6837,11 +6837,11 @@ layout:
     - ro:arsenal_warframe:slot_7_school
     - ro:arsenal_warframe:slot_7_po
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -6855,11 +6855,11 @@ layout:
     - ro:arsenal_warframe:slot_8_school
     - ro:arsenal_warframe:slot_8_po
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -6873,11 +6873,11 @@ layout:
     - ro:arsenal_warframe:slot_5_school
     - ro:arsenal_warframe:slot_5_po
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -6890,11 +6890,11 @@ layout:
     - ro:arsenal_warframe:mod_drain_remaining
     - ro:arsenal_warframe:warframe_name
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -6908,11 +6908,11 @@ layout:
     - ro:arsenal_warframe:slot_aura_school
     - ro:arsenal_warframe:slot_aura_po
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -6926,11 +6926,11 @@ layout:
     - ro:arsenal_warframe:slot_exilus_school
     - ro:arsenal_warframe:slot_exilus_po
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -6942,11 +6942,11 @@ layout:
     - ro:arsenal_warframe:slot_arcane_1
     - ro:arsenal_warframe:slot_arcane_2
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -7014,11 +7014,11 @@ layout:
     - ro:arsenal_warframe:slot_6_school
     - ro:arsenal_warframe:slot_6_po
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#ff2600'
+    bg: '#ff7300'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     titleAlign: left
@@ -7331,15 +7331,15 @@ layout:
     - item:mod_window:drop_item
     - tell:mod_window:drop_item:tell_3
     outline:
-      color: '#e69a5a'
+      color: '#54571e'
       style: none
       width: 2
       offset: 0
-    bg: '#261e1b'
+    bg: '#141613'
     titleBg: ''
-    titleColor: '#e69a5a'
+    titleColor: '#ff1100'
     titleAlign: left
-    schemeId: orange
+    schemeId: s_e3a0ee58-7f74-41c5-b25d-fa65cffe68a2
   - id: subgroup_17
     parent: group_16
     title: ''
@@ -7349,15 +7349,15 @@ layout:
     - fld:mod_window:mod:mod_drain
     - fld:mod_window:mod:mod_count
     outline:
-      color: '#e69a5a'
+      color: '#54571e'
       style: none
       width: 2
       offset: 0
-    bg: '#261e1b'
+    bg: '#141613'
     titleBg: ''
-    titleColor: '#e69a5a'
+    titleColor: '#ff1100'
     titleAlign: left
-    schemeId: orange
+    schemeId: s_e3a0ee58-7f74-41c5-b25d-fa65cffe68a2
   - id: subgroup_18
     parent: group_16
     title: ''
@@ -7365,15 +7365,15 @@ layout:
     - win:mod_window
     - det:mod_window:detect_h
     outline:
-      color: '#5aa9e6'
+      color: '#54571e'
       style: none
       width: 2
       offset: 0
-    bg: '#15202c'
+    bg: '#141613'
     titleBg: ''
-    titleColor: '#5aa9e6'
+    titleColor: '#ff1100'
     titleAlign: left
-    schemeId: blue
+    schemeId: s_e3a0ee58-7f74-41c5-b25d-fa65cffe68a2
   - id: subgroup_19
     parent: group_19
     title: ''
@@ -7383,11 +7383,11 @@ layout:
     - fld:equipment_window:arcane:arcane_level
     - fld:equipment_window:arcane:count
     outline:
-      color: '#ff7300'
+      color: '#04dc91'
       style: none
       width: 2
       offset: 0
-    bg: '#291910'
+    bg: '#0a2621'
     titleBg: ''
     titleColor: '#e69a5a'
     titleAlign: left
@@ -7559,63 +7559,23 @@ layout:
     titleAlign: left
     schemeId: blue
   schemes:
-  - id: s_f7c53c61-d630-4b1b-9fc4-17c3356055d9
-    name: custom 1
-    bg: '#2b2535'
-    style: solid
-    outline: '#c98ae6'
-    titleBg: '#650193'
-    titleColor: '#650193'
-    width: 2
-    offset: 0
-    shadow: null
-  - id: s_7670d014-4d67-41ea-a530-ba7ab81e1ed0
-    name: custom 2
-    bg: '#26222f'
-    style: none
-    outline: '#c98ae6'
-    titleBg: '#c98ae6'
-    titleColor: '#ffffff'
-    width: 2
-    offset: 0
-    shadow: null
   - id: s_73972008-70b7-4159-add1-51fb9c3fd516
-    name: custom 3
-    bg: '#ff2600'
+    name: loadout_groups
+    bg: '#ff7300'
     style: none
-    outline: '#ff7300'
+    outline: '#04dc91'
     titleBg: '#e69a5a'
     titleColor: '#1a0e08'
     width: 2
     offset: 0
     shadow: null
-  - id: s_797712ca-34e3-40d3-9793-170f3e976752
-    name: custom 4
-    bg: '#16171a'
-    style: solid
-    outline: '#2c313c'
-    titleBg: '#2c313c'
-    titleColor: '#2c313c'
-    width: 2
-    offset: 1
-    shadow: null
-  - id: s_3b7dff0e-8918-486e-b059-78a14dc03a0a
-    name: custom 5
-    bg: '#1a2820'
-    style: none
-    outline: '#7ddc7d'
-    titleBg: '#7ddc7d'
-    titleColor: '#08121d'
-    width: 2
-    offset: 0
-    shadow: null
   - id: s_e3a0ee58-7f74-41c5-b25d-fa65cffe68a2
-    name: custom 6
-    bg: '#271729'
+    name: window_sg
+    bg: '#290d10'
     style: none
-    outline: '#e65ac2'
-    titleBg: '#e65ac2'
-    titleColor: '#1a081a'
+    outline: '#54571e'
+    titleBg: '#ff1100'
+    titleColor: '#ff1100'
     width: 2
     offset: 0
     shadow: null

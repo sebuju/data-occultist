@@ -1207,27 +1207,12 @@ html.desktop .seltoolbar { top: 76px; }   /* clear the 30px desktop titlebar + 4
 /* outline width + offset: small fixed number inputs leading the outline row (before style + colour) */
 /* pin width via flex-basis (NOT just `width`): the base `input{width:100%}` in controls.css loads
    after this, and on a flex item a 100% width can still stretch it — a fixed grow:0 shrink:0 basis can't */
-.gp-owidth, .gp-ooffset { flex: 0 0 40px; width: 40px; max-width: 40px; min-width: 0; padding: 2px 3px; }
-/* inline "bg:" / "text:" mini-labels before the title colour pickers */
-.gp-mini { flex: 0 0 auto; font-size: var(--fs-xs); color: var(--muted); }
-/* box-shadow row: x, y, blur, spread number inputs + a colour, packed tight on one line */
-.gp-shadow { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; }
-.gp-shadow input[type="number"] { flex: 1 1 0; min-width: 0; width: 100%; padding-left: 4px; padding-right: 2px; }
-.gp-shadow input[type="color"] { flex: 0 0 auto; }
 .ggroup-pop .flab { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
 .ggroup-pop .flab:not(:first-child) { margin-top: 4px; }
 /* fixed-width leader so every row's control starts at the same x (labels + inputs line up) */
 .ggroup-pop .gp-lab { flex: 0 0 auto; width: 72px; }
 .ggroup-pop input[type="text"], .ggroup-pop .gp-title, .ggroup-pop select { flex: 1; min-width: 0; }
-.ggroup-pop input[type="range"] { flex: 1; min-width: 0; }
 .ggroup-pop input[type="color"] { flex: 0 0 auto; width: 28px; height: 22px; padding: 0; border: none; background: none; }
-/* small "×" after a colour picker: clears that field to "" (CSS default / no colour) */
-/* match the colour picker's height exactly: stretch to the row (the picker is the tallest control),
-   so the × never sits short of the swatch regardless of the picker's rendered height */
-.ggroup-pop .gp-clear { flex: 0 0 auto; width: 18px; align-self: stretch; height: auto; min-height: 0; min-width: 0; padding: 0; line-height: 1;
-    display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-md);
-    color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
-.ggroup-pop .gp-clear:hover { color: var(--danger); border-color: var(--danger); }
 .ggroup-pop .gp-btns { display: flex; gap: 6px; margin-top: 12px; }
 .ggroup-pop .gp-btns button { flex: 1; min-width: 0; }
 /* premade scheme swatches: each is a chip ringed in the scheme outline, split into an upper "title"
@@ -1246,8 +1231,7 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
 .gp-scheme.sel:hover .gp-sw-rm { display: flex; }
 .gp-sw-rm:hover { color: #ff6b5a; }
 .gp-sw-rm .ic-trash { width: 11px; height: 11px; display: block; }
-.gp-sw-top { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 9px; line-height: 1; font-weight: 600; }
-.gp-sw-bot { flex: 1; }
+.gp-sw-lab { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; font-weight: 600; }
 /* "+" save-current-as-scheme + "copy" arm: both are grid swatches with a single centred glyph (no
    two-half split). line-height:1 + flex centring keeps the glyph optically centred in the chip. */
 /* grid place-items centres the glyph in BOTH axes regardless of the column-flex `.gp-scheme` sets;
@@ -1279,7 +1263,7 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
    .st-head, card border/radius/background like .st-card. */
 #graph-theme .fw-body { display: flex; flex-direction: column; gap: 4px; }
 #graph-theme .panel-fs summary { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); cursor: pointer; }
-.gp-mgr-list { display: flex; flex-direction: column; gap: 4px; }
+.gp-mgr-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .gp-mgr-empty { font-size: var(--fs-sm); color: var(--dim); padding: 4px 2px; }
 /* one color-var (or shared-color) row: label, then the synced color+text pair, then an
    optional clear — same color-picker sizing as the group popover's fields (rule 7: one look) */
@@ -1291,19 +1275,22 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
 .gp-mgr-c { flex: 0 0 auto; width: 28px; height: 22px; padding: 0; border: none; background: none; }
 .cf-clear, .gp-mgr-crow .cf-clear { flex: 0 0 auto; width: 18px; height: 22px; padding: 0; line-height: 1;
     display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-md);
-    color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+    color: var(--muted); background: none; border: unset; cursor: pointer; }
 .cf-clear:hover { color: var(--danger); border-color: var(--danger); }
 /* a custom scheme's row: swatch + name on ONE row, then its 4 colors + "used by" + remove */
 .gp-mgr-row { display: flex; flex-direction: column; gap: 4px; padding: 7px 9px;
-    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; position: relative; }
 .gp-mgr-head { display: flex; align-items: center; gap: 6px; }
 .gp-mgr-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); }
 .gp-mgr-colors { display: flex; flex-direction: column; gap: 2px; }
 /* the whole point of this list: show every group wearing the scheme, never truncate it */
 .gp-mgr-used { font-size: var(--fs-xs); color: var(--dim); white-space: normal; word-break: break-word; }
+/* each wearer name is a clickable ref that frames its group/sub/super in the graph */
+.gp-mgr-used-ref { cursor: pointer; }
+.gp-mgr-used-ref:hover { color: var(--muted); }
 /* .btn-trash's hollow-danger red (graph.css "node button system") is scoped to `.gnode` only —
    this panel isn't a node, so restate the same look here explicitly. */
-.gp-mgr-rm { align-self: flex-end; background: transparent; color: var(--danger); min-height: unset; }
+.gp-mgr-rm { align-self: flex-end; background: transparent; color: var(--danger); min-height: unset; position: absolute; top: 12px; right: 12px; padding: 4px; }
 .gp-mgr-rm:hover:not(:disabled) { color: #fff; filter: none; }
 /* armed (click again to confirm) — same red-fill as every other icon-only remove button (rule 7) */
 .gp-mgr-rm.armed { background: var(--danger); color: var(--on-danger); border-color: var(--danger); }

@@ -306,6 +306,8 @@ groups.initGroups({
     reroute: () => requestEdges(),   // a group's gate flag flipped (no node moved) -> route cache needs a nudge
     // double-click a group → frame its bounding box (reuses groupBoxes() geometry)
     zoomToGroup: (gid) => { const gb = groups.groupBoxes().find((b) => b.id === gid); if (gb) panZoomToRect(gb.box, { onlyIn: true }); },
+    // frame an arbitrary world rect (theme panel "used by" click → jump to that group/sub/super)
+    focusRect: (box, opts) => panZoomToRect(box, opts),
     // drag the group's resize grip → resize the group's container box (sets explicit w/h)
     startGroupResize,
 });

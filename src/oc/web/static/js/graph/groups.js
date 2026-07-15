@@ -94,8 +94,6 @@ function shadowCss(sh) {
 function hex6(c) { const m = /^#([0-9a-f]{6})/i.exec(c || ""); return m ? `#${m[1]}` : "#5aa9e6"; }
 // opacity % for the slider: an 8-digit colour carries it in its alpha byte; a 6-digit (opaque)
 // colour — every scheme/default is opaque now — is full opacity (100).
-function alphaPct(c) { const m = /^#[0-9a-f]{6}([0-9a-f]{2})$/i.exec(c || ""); return m ? Math.round((parseInt(m[1], 16) / 255) * 100) : 100; }
-function withAlpha(hex, pct) { const a = Math.round((pct / 100) * 255).toString(16).padStart(2, "0"); return `${hex6(hex)}${a}`; }
 // Blend `hex` at `pct` opacity over the global canvas bg (#15171c) into an OPAQUE #rrggbb —
 // the same look as an alpha fill, but without alpha (so overlapping fills don't compound).
 const GLOBAL_BG = [0x0b, 0x0d, 0x12];   // = base.css --bg (blueprint near-black board)
@@ -200,28 +198,24 @@ function removeScheme(id) {
     for (const list of [groups, subGroups, superGroups]) for (const r of list) if (r.schemeId === id) r.schemeId = null;
 }
 const swBorder = (s) => (s.outline === "#2c313c" ? "#4a515f" : s.outline);
-const swRingCss = (s) => (s.style === "none" ? `border-color:var(--line)` : `border-color:${swBorder(s)};border-style:${s.style}`);
-const swTopCss = (s) => `background:${s.titleBg || "#1d2027"};color:${s.titleColor || "#d7dbe2"}`;
-const swBotCss = (s) => `background:${s.bg}`;
+// The swatch is the scheme's ONE colour: tinted rim + faint fill + label-tinted "Aa" — the same
+// derivation the real boxes use, so the preview matches what applying it does.
+const swFillCss = (s) => `border-color:${swBorder(s)};background:color-mix(in oklab, ${s.outline} 14%, var(--panel));color:color-mix(in oklab, ${s.outline} 70%, var(--muted))`;
 const PLUS_IC = () => svg("svg", { class: "gp-ic", viewBox: "0 0 24 24", "aria-hidden": "true" },
     svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "2.6", "stroke-linecap": "round", d: "M12 6v12M6 12h12" }));
 const COPY_IC = () => svg("svg", { class: "gp-ic", viewBox: "0 0 24 24", "aria-hidden": "true" },
     svg("rect", { x: "9", y: "9", width: "11", height: "11", rx: "2", fill: "none", stroke: "currentColor", "stroke-width": "2" }),
     svg("path", { d: "M5 15V5a2 2 0 0 1 2-2h8", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round" }));
 function schemeSwatch(s, sel) {
-    return h("button", { class: `gp-scheme${sel ? " sel" : ""}`, dataset: { sid: s.id }, title: s.name, style: swRingCss(s) },
-        h("span", { class: "gp-sw-top", style: swTopCss(s) }, "Aa"),
-        h("span", { class: "gp-sw-bot", style: swBotCss(s) }),
+    return h("button", { class: `gp-scheme${sel ? " sel" : ""}`, dataset: { sid: s.id }, title: s.name, style: swFillCss(s) },
+        h("span", { class: "gp-sw-lab" }, "Aa"),
         isBuiltinScheme(s) ? null : h("span", { class: "gp-sw-rm", title: "remove scheme" }, TRASH()));
 }
 function restyleSwatch(pop, id) {
     const b = pop.querySelector(`.gp-scheme[data-sid="${id}"]`);
     const s = schemeById(id);
     if (!b || !s) return;
-    b.setAttribute("style", swRingCss(s)); b.title = s.name;
-    const top = b.querySelector(".gp-sw-top"), bot = b.querySelector(".gp-sw-bot");
-    if (top) top.setAttribute("style", swTopCss(s));
-    if (bot) bot.setAttribute("style", swBotCss(s));
+    b.setAttribute("style", swFillCss(s)); b.title = s.name;
 }
 function renderSchemeGrid(grid, t, tier, syncPickers, commit, markFn, hasTitleBg, hasAlign) {
     const rebuild = () => { renderSchemeGrid(grid, t, tier, syncPickers, commit, markFn, hasTitleBg, hasAlign); markFn(); ctx.persist(); };
@@ -264,12 +258,32 @@ function markSchemeSel(pop, t) {
 // ---- scheme manager (theme panel: every CUSTOM scheme + which groups wear it) -------------
 // Built-ins are app-shipped and immutable, so they're not listed here -- only SCHEMES past
 // BUILTIN_SCHEMES.length (the same slice collectSchemes() persists) are "custom".
-function usedByNames(id) {
+// Every group/sub/super wearing scheme `id`, as {id, tier, name} so the theme panel can render
+// each as a clickable ref that frames it (tier picks the right geometry reader).
+function usedByRefs(id) {
     const out = [];
-    for (const g of groups) if (g.schemeId === id) out.push(g.title || g.id);
-    for (const sg of subGroups) if (sg.schemeId === id) out.push(sg.title || sg.id);
-    for (const sg of superGroups) if (sg.schemeId === id) out.push(sg.title || sg.id);
+    for (const g of groups) if (g.schemeId === id) out.push({ id: g.id, tier: "group", name: g.title || g.id });
+    for (const sg of subGroups) if (sg.schemeId === id) out.push({ id: sg.id, tier: "sub", name: sg.title || sg.id });
+    for (const sg of superGroups) if (sg.schemeId === id) out.push({ id: sg.id, tier: "super", name: sg.title || sg.id });
     return out;
+}
+// World box of a used-by ref, via the tier's geometry reader (same {id,...,box} shape all three).
+function refBox({ id, tier }) {
+    const boxes = tier === "sub" ? subGroupBoxes() : tier === "super" ? superGroupBoxes() : groupBoxes();
+    return boxes.find((b) => b.id === id)?.box || null;
+}
+// The "used by" line: a lead label + one clickable ref per wearer that pans/zooms the camera to it.
+function usedByRow(refs) {
+    const row = h("div", { class: "gp-mgr-used", title: refs.map((r) => r.name).join(", ") });
+    if (!refs.length) { row.append("unused"); return row; }
+    row.append(`used by ${refs.length}: `);
+    refs.forEach((r, i) => {
+        if (i) row.append(", ");
+        const a = h("span", { class: "gp-mgr-used-ref", title: `go to ${r.name}` }, r.name);
+        a.addEventListener("click", () => { const box = refBox(r); if (box) ctx.focusRect?.(box); });
+        row.append(a);
+    });
+    return row;
 }
 // One row: swatch + rename on the SAME line, the scheme's 4 colors + "used by" below, remove
 // last. A color edit repaints every group wearing the scheme IMMEDIATELY (rule: apply on every
@@ -278,10 +292,12 @@ function usedByNames(id) {
 // own notification. Remove is a red trashBtn (rule 7: the one remove-button look, see toast_node.js)
 // that ARMS on first click (CLAUDE.md rule 2: no blocking confirm()) and fires on a second.
 function buildSchemeRow(s, host, onChange) {
-    const applyEdit = () => { repaintLinked(s, null); renderGroups(); ctx.persist(); };
-    const commit = () => { onChange?.(); notifySchemesChanged(); };
+    // applyEdit = live repaint only (runs per rAF frame while a colour drags); persist happens on
+    // commit, else ctx.persist()'s recordHistory would push an undo snapshot every frame (lag + spam).
+    const applyEdit = () => { repaintLinked(s, null); renderGroups(); };
+    const commit = () => { ctx.persist(); onChange?.(); notifySchemesChanged(); };
     const nameInput = h("input", { type: "text", class: "gp-mgr-name", value: s.name, title: "scheme name" });
-    nameInput.addEventListener("change", () => { s.name = nameInput.value.trim() || s.name; ctx.persist(); commit(); });
+    nameInput.addEventListener("change", () => { s.name = nameInput.value.trim() || s.name; commit(); });
     const colorRow = (label, key, clearable = false) => {
         const shown = clearable ? (s[key] || "") : hex6(s[key]);
         const cf = colorField({
@@ -292,14 +308,14 @@ function buildSchemeRow(s, host, onChange) {
         });
         return h("div", { class: "gp-mgr-crow" }, h("span", { class: "gp-mgr-clab" }, label), cf.row);
     };
-    const used = usedByNames(s.id);
+    const used = usedByRefs(s.id);
     const rm = trashBtn({ cls: "gp-mgr-rm", title: "remove scheme" });
     const rmArmed = makeArmed({
         onArm: () => { rm.classList.add("armed"); rm.title = "click again to confirm"; },
         onTimeout: () => { rm.classList.remove("armed"); rm.title = "remove scheme"; },
         onFire: () => {
             rm.classList.remove("armed");
-            removeScheme(s.id); renderGroups(); ctx.persist(); commit();
+            removeScheme(s.id); renderGroups(); commit();   // commit persists
             renderSchemeManager(host, onChange);
         },
     });
@@ -307,11 +323,8 @@ function buildSchemeRow(s, host, onChange) {
     return h("div", { class: "gp-mgr-row" },
         h("div", { class: "gp-mgr-head" }, schemeSwatch(s, false), nameInput),
         h("div", { class: "gp-mgr-colors" },
-            colorRow("outline", "outline"),
-            colorRow("fill", "bg"),
-            colorRow("title bg", "titleBg", true),
-            colorRow("title text", "titleColor", true)),
-        h("div", { class: "gp-mgr-used", title: used.join(", ") }, used.length ? `used by ${used.length}: ${used.join(", ")}` : "unused"),
+            colorRow("color", "outline")),   // the scheme's ONE identity hue: tints outline + fill + label
+        usedByRow(used),
         rm);
 }
 // Full body for the theme panel's "schemes" section. Rebuilds wholesale on every call (same
@@ -643,7 +656,7 @@ function pushCanvasGroups() {
     const recs = [];
     for (const b of superGroupBoxes()) {
         const c = superBoxColors(b);
-        recs.push({ ...b.box, tier: "super", outline: resolveColor(c.outline), fill: resolveColor(b.bg) });
+        recs.push({ ...b.box, tier: "super", outline: resolveColor(c.outline), fill: resolveColor(c.fill) });
     }
     for (const b of groupBoxes()) {
         const sel = selectedGroups.has(b.id);
@@ -656,7 +669,8 @@ function pushCanvasGroups() {
     }
     for (const b of subGroupBoxes()) {
         const c = subBoxColors(b);
-        recs.push({ ...b.box, tier: "sub", outline: resolveColor(c.ring), fill: resolveColor(c.themed ? c.wash : b.bg) });
+        // fill derives from the one colour: a faint wash of it when themed, else the neutral default.
+        recs.push({ ...b.box, tier: "sub", outline: resolveColor(c.ring), fill: resolveColor(c.themed ? c.wash : SUB_DEF_BG) });
     }
     setGroups(recs);
 }
@@ -724,7 +738,10 @@ function subBoxColors(rec) {
 function superBoxColors(rec) {
     const tint = rec.outline?.color || SUPER_DEF_OUTLINE;
     const themed = tint.toLowerCase() !== SUPER_DEF_OUTLINE.toLowerCase();
-    return { outline: themed ? `color-mix(in oklab, ${tint} 35%, var(--line-soft))` : "var(--line-soft)" };
+    return { themed,
+        outline: themed ? `color-mix(in oklab, ${tint} 35%, var(--line-soft))` : "var(--line-soft)",
+        fill: themed ? `color-mix(in oklab, ${tint} 5%, transparent)` : SUPER_DEF_BG,
+        label: themed ? `color-mix(in oklab, ${tint} 55%, var(--dim))` : "" };
 }
 
 function groupAfterSize(rec, el) {
@@ -771,7 +788,7 @@ function subAfterSize(rec, el) {
 // SUPER render extras: the huge watermark label (colour only; text set here).
 function superAfterSize(rec, el) {
     const lab = el.querySelector(".sgroup-label");
-    if (lab) { lab.textContent = STYLE_SUBSUPER ? rec.title : ""; lab.style.color = rec.titleColor || ""; }
+    if (lab) { lab.textContent = STYLE_SUBSUPER ? rec.title : ""; lab.style.color = superBoxColors(rec).label; }
     // P-A: solid, faint rim (the huge dim watermark is the label; the box just recedes as a backdrop).
     // Force it here because the shared render pass leaves the default super outline style "none" (no rim).
     // Canvas strokes the rim + fill itself (under-canvas); blank the DOM box, keep the label.
@@ -979,21 +996,11 @@ function tryCopyFrom(src, tier) {
     disarmCopy(); sync(); commit();
     return true;
 }
-// A small "×" that clears a colour input to "" (fall back to CSS default / no colour). Shared by
-// every clearable colour field (rule 7) — a new one is a CALL, not another inline handler.
-function clearX(title, onClear) {
-    const b = h("button", { class: "gp-clear", title, "aria-label": title }, "×");
-    b.addEventListener("click", (e) => { e.preventDefault(); onClear(); });
-    return b;
-}
-
-// Per-tier flags gate which rows show. The restyle (groupAfterSize / subAfterSize / superAfterSize)
-// now HARDCODES rim style+width, and per-tier fill/shadow/title-colour, so those controls are pruned
-// where they'd be no-ops: only OUTLINE COLOUR + OFFSET, title text, align, size, scheme + disband are
-// universally live. hasFill/hasTitleColor/hasShadow re-expose the few a given tier still honours.
-function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband, opaqueBg, defaults, sizable,
-        tier = "group", render = renderGroups, hasTitleBg = true, hasAlign = true, titleTextLabel = "title text",
-        hasFill = false, hasTitleColor = false, hasShadow = true, hasOutline = true, hasGating = false }) {
+// Every tier shows ONE colour input; its whole look (rim, fill, label) derives from it. Per-tier flags
+// gate only the layout extras (hasAlign/sizable/hasGating). There are no fill/title/shadow/offset
+// controls — those are all derived or dropped.
+function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband, defaults, sizable,
+        tier = "group", render = renderGroups, hasTitleBg = true, hasAlign = true, hasGating = false }) {
     if (openPopover?.id === id) { closePopover(); return; }
     closePopover();
     const t = target;
@@ -1006,14 +1013,14 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
     pop.append(...[
         h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "title"),
             h("input", { class: "gp-title", value: t.title })),
+        hasGating ? h("label", { class: "flab", title: "route boundary lines through this group's enter/exit points" },
+            h("span", { class: "gp-lab" }, "gates"),
+            h("input", { type: "checkbox", class: "gp-gate", checked: t.gate !== false })) : null,
         (hasAlign || sizable) ? sub("layout") : null,
         hasAlign ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "align"),
             h("select", { class: "gp-pos" },
                 ["left", "center", "right"].map((v) =>
                     h("option", { value: v, selected: t.titleAlign === v }, v)))) : null,
-        hasGating ? h("label", { class: "flab", title: "route boundary lines through this group's enter/exit points" },
-            h("span", { class: "gp-lab" }, "gates"),
-            h("input", { type: "checkbox", class: "gp-gate", checked: t.gate !== false })) : null,
         sizable ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "width"),
             h("div", { class: "gp-size" },
                 h("input", { type: "number", class: "gp-w", min: "1", step: "1", placeholder: autoPh("w"),
@@ -1026,29 +1033,9 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
                 h("button", { class: "gp-auto", dataset: { axis: "h" }, title: "auto height" }, "auto"))) : null,
         sub("style"),
         h("div", { class: "flab gp-scheme-row" }, h("span", { class: "gp-lab gp-lab-top" }, "scheme"), schemeGrid),
-        // title bg + title text colours share one row, each behind a "bg:" / "text:" mini-label +
-        // a "×" clear (super has no title bg, so it shows only the text colour)
-        hasTitleColor ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "title"),
-            h("span", { class: "gp-mini" }, "text:"),
-            h("input", { type: "color", class: "gp-tcolor", value: hex6(t.titleColor || "#d7dbe2"), title: "title text color" }),
-            clearX("clear title text color", () => { t.titleColor = ""; syncAndCommit(); })) : null,
-        // outline COLOUR tints the tier's rim/label; OFFSET grows/shrinks the box. Style + width are
-        // driven by the restyle now, so they're no longer editable here.
-        hasOutline ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "outline"),
-            h("input", { type: "number", class: "gp-ooffset", step: "1", value: t.outline.offset ?? 0, title: "outline offset (px, +out/-in)" }),
-            h("input", { type: "color", class: "gp-ocolor", value: hex6(t.outline.color), title: "outline color" })) : null,
-        hasShadow ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "shadow"),
-            h("div", { class: "gp-shadow" },
-                h("input", { type: "number", class: "gp-shx", step: "1", value: t.shadow?.x ?? 0, title: "shadow offset-x (px)" }),
-                h("input", { type: "number", class: "gp-shy", step: "1", value: t.shadow?.y ?? 0, title: "shadow offset-y (px)" }),
-                h("input", { type: "number", class: "gp-shblur", min: "0", step: "1", value: t.shadow?.blur ?? 0, title: "shadow blur (px)" }),
-                h("input", { type: "number", class: "gp-shspread", step: "1", value: t.shadow?.spread ?? 0, title: "shadow spread (px)" }),
-                h("input", { type: "color", class: "gp-shcolor", value: hex6(t.shadow?.color || "#000000"), title: "shadow color" })),
-            clearX("clear shadow (none)", () => { t.shadow = null; syncAndCommit(); })) : null,
-        hasFill ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "background"),
-            h("input", { type: "range", class: "gp-bga", min: "0", max: "100", value: alphaPct(t.bg), title: "fill opacity" }),
-            h("input", { type: "color", class: "gp-bg", value: hex6(t.bg), title: "fill color" }),
-            clearX("clear fill (no background)", () => { t.bg = ""; syncAndCommit(); })) : null,
+        // The ONE colour: the tier's whole look (rim, fill, label) derives from this single hue.
+        h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "color"),
+            h("input", { type: "color", class: "gp-ocolor", value: hex6(t.outline.color), title: "color" })),
         h("div", { class: "gp-btns" },
             h("button", { class: "gp-reset" }, "reset"),
             h("button", { class: "gp-disband danger" }, disbandLabel)),
@@ -1060,22 +1047,19 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
     pop.style.top = `${Math.max(M, Math.min(ev.clientY + 8, window.innerHeight - r.height - M))}px`;
     openPopover = { id, el: pop, ownerSel };
 
-    const mkBg = (hex, pct) => (opaqueBg ? blendOnBg(hex, pct) : withAlpha(hex, pct));
     const sync = () => {
         const set = (sel, v) => { const el = pop.querySelector(sel); if (el) el.value = v; };
-        set(".gp-bg", hex6(t.bg || "#1d2027")); set(".gp-bga", alphaPct(t.bg));
-        set(".gp-ooffset", t.outline.offset ?? 0); set(".gp-ocolor", hex6(t.outline.color));
-        set(".gp-tcolor", hex6(t.titleColor || "#d7dbe2"));
-        set(".gp-shx", t.shadow?.x ?? 0); set(".gp-shy", t.shadow?.y ?? 0); set(".gp-shblur", t.shadow?.blur ?? 0);
-        set(".gp-shspread", t.shadow?.spread ?? 0); set(".gp-shcolor", hex6(t.shadow?.color || "#000000"));
+        set(".gp-ocolor", hex6(t.outline.color));
         if (hasAlign) set(".gp-pos", t.titleAlign);
         if (sizable) { set(".gp-w", t.w > 0 ? Math.round(t.w) : ""); set(".gp-h", t.h > 0 ? Math.round(t.h) : ""); }
     };
-    const commit = () => { render(); ctx.persist(); mark(); };
+    const paint = () => { render(); mark(); };                    // visual only (no save)
+    const commit = () => { paint(); ctx.persist(); };             // visual + persist (records history)
     function mark() { markSchemeSel(pop, t); }
     // a clear-"×" resets a field to "" then resyncs the pickers + commits (like a scheme apply)
     function syncAndCommit() { sync(); commit(); }
-    const editCommit = () => {
+    // fold the record's current look back into its linked CUSTOM scheme (visual side, no save)
+    const editScheme = () => {
         const sch = schemeById(t.schemeId);
         if (sch && !isBuiltinScheme(sch)) {
             Object.assign(sch, currentToScheme(t, tier, sch.name));
@@ -1085,27 +1069,19 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
         } else if (sch) {
             t.schemeId = null;   // edited away from a built-in -> no longer wears it
         }
-        commit();
     };
+    const editCommit = () => { editScheme(); commit(); };
     pop.querySelector(".gp-title").addEventListener("input", (e) => { t.title = e.target.value; commit(); });
-    if (hasOutline) {
-        pop.querySelector(".gp-ooffset").addEventListener("input", (e) => { t.outline.offset = Math.round(+e.target.value || 0); editCommit(); });
-        pop.querySelector(".gp-ocolor").addEventListener("input", (e) => { t.outline.color = e.target.value; editCommit(); });
+    // The one colour drives the whole look. A picker drag emits input events faster than a repaint runs,
+    // so coalesce to ONE live paint per animation frame (latest wins). persist ONCE on `change` (picker
+    // close), never per frame — else ctx.persist()'s recordHistory would push an undo snapshot every frame.
+    {
+        const ocol = pop.querySelector(".gp-ocolor");
+        let raf = 0, val = null;
+        const live = () => { raf = 0; t.outline.color = val; editScheme(); paint(); };
+        ocol.addEventListener("input", (e) => { val = e.target.value; if (!raf) raf = requestAnimationFrame(live); });
+        ocol.addEventListener("change", () => { if (raf) { cancelAnimationFrame(raf); live(); } ctx.persist(); });
     }
-    if (hasShadow) {
-        const setShadow = (k, v) => { t.shadow = cloneShadow(t.shadow) || { x: 0, y: 0, blur: 0, spread: 0, color: "#000000" }; t.shadow[k] = v; editCommit(); };
-        pop.querySelector(".gp-shx").addEventListener("input", (e) => setShadow("x", Math.round(+e.target.value || 0)));
-        pop.querySelector(".gp-shy").addEventListener("input", (e) => setShadow("y", Math.round(+e.target.value || 0)));
-        pop.querySelector(".gp-shblur").addEventListener("input", (e) => setShadow("blur", Math.max(0, Math.round(+e.target.value || 0))));
-        pop.querySelector(".gp-shspread").addEventListener("input", (e) => setShadow("spread", Math.round(+e.target.value || 0)));
-        pop.querySelector(".gp-shcolor").addEventListener("input", (e) => setShadow("color", e.target.value));
-    }
-    if (hasFill) {
-        const applyBg = () => { t.bg = mkBg(pop.querySelector(".gp-bg").value, +pop.querySelector(".gp-bga").value); editCommit(); };
-        pop.querySelector(".gp-bg").addEventListener("input", applyBg);
-        pop.querySelector(".gp-bga").addEventListener("input", applyBg);
-    }
-    if (hasTitleColor) pop.querySelector(".gp-tcolor").addEventListener("input", (e) => { t.titleColor = e.target.value; editCommit(); });
     if (hasAlign) pop.querySelector(".gp-pos").addEventListener("change", (e) => { t.titleAlign = e.target.value; commit(); });
     if (hasGating) pop.querySelector(".gp-gate").addEventListener("change", (e) => { t.gate = e.target.checked; commit(); ctx.reroute?.(); });
     if (sizable) {
@@ -1148,7 +1124,7 @@ function togglePopover(gid, ev) {
     const g = byId(gid);
     if (!g) return;
     openOptionsPopover(`group:${gid}`, g, ev, {
-        ownerSel: ".ggroup-title", disbandLabel: "disband", opaqueBg: false, sizable: true, tier: "group", hasGating: true,
+        ownerSel: ".ggroup-title", disbandLabel: "disband", sizable: true, tier: "group", hasGating: true,
         defaults: { outline: { color: DEF_OUTLINE, style: "none", width: 2 }, bg: DEF_BG, titleBg: "", titleColor: "", titleAlign: "left" },
         onDisband: () => disbandIn(GROUP, gid),
     });
@@ -1158,9 +1134,8 @@ function toggleSuperPopover(sid, ev) {
     if (!sg) return;
     if (tryCopyFrom(sg, "super")) { ev.preventDefault(); return; }
     openOptionsPopover(`super:${sid}`, sg, ev, {
-        ownerSel: ".sgroup-cog", disbandLabel: "disband", opaqueBg: false, sizable: false, tier: "super",
-        hasTitleBg: false, hasAlign: false, titleTextLabel: "label", render: renderSuperGroups,
-        hasFill: true, hasTitleColor: true,   // P-A: fill (backdrop) + watermark colour still drive the look
+        ownerSel: ".sgroup-cog", disbandLabel: "disband", sizable: false, tier: "super",
+        hasTitleBg: false, hasAlign: false, render: renderSuperGroups,
         defaults: { outline: { color: SUPER_DEF_OUTLINE, style: "none", width: 2 }, bg: SUPER_DEF_BG, titleColor: "" },
         onDisband: () => disbandIn(SUPER, sid),
     });
@@ -1170,10 +1145,7 @@ function toggleSubPopover(sid, ev) {
     if (!sg) return;
     if (tryCopyFrom(sg, "subgroup")) { ev.preventDefault(); return; }
     openOptionsPopover(`subgroup:${sid}`, sg, ev, {
-        ownerSel: ".subgroup-cog", disbandLabel: "disband", opaqueBg: true, tier: "subgroup",
-        hasShadow: false,    // sub "sunken" look forces its own inset ring — user shadow would be clobbered
-        hasOutline: false,   // sub outline is driven by its scheme; a manual rim can't be honoured
-        hasFill: true,       // ...so the background fill is the one colour the user sets directly
+        ownerSel: ".subgroup-cog", disbandLabel: "disband", tier: "subgroup",
         defaults: { outline: { color: SUB_DEF_OUTLINE, style: "none", width: 1 }, bg: SUB_DEF_BG, titleBg: "", titleColor: "", titleAlign: "left" },
         onDisband: () => disbandIn(SUB, sid),
     });

@@ -29,12 +29,13 @@ function renderSharedSection() {
     const rows = [...coll].map(([val, names]) => {
         const cf = colorField({
             value: val, colorClass: "gp-mgr-c", textClass: "gp-mgr-t",
+            // onChange = live paint only (fires per rAF frame while dragging); persist ONCE on commit,
+            // else persist.layout()'s recordHistory would push an undo snapshot every frame (lag + spam).
             onChange: (v) => {
                 theme.applySharedColor(names, v);
-                persist.layout();
                 for (const n of names) _varFields.get(n)?.set(v);
             },
-            onCommit: () => renderSharedSection(),
+            onCommit: () => { persist.layout(); renderSharedSection(); },
         });
         return h("div", { class: "gp-mgr-crow" },
             h("span", { class: "gp-mgr-clab", title: names.join(", ") },
@@ -47,8 +48,9 @@ function renderSharedSection() {
 function varRow(name) {
     const cf = colorField({
         value: theme.effective(name), title: name, clearTitle: "reset to default",
-        onChange: (v) => { theme.applyVar(name, v); persist.layout(); },
-        onCommit: () => renderSharedSection(),
+        // live paint on drag; persist once on commit (avoids a history snapshot per frame — see above)
+        onChange: (v) => { theme.applyVar(name, v); },
+        onCommit: () => { persist.layout(); renderSharedSection(); },
         onClear: () => theme.applyVar(name, ""),
     });
     _varFields.set(name, cf);
@@ -97,10 +99,10 @@ export function buildTheme() {
     groups.renderSchemeManager(schemesHost, () => {});
 
     tw.body.replaceChildren(
-        fieldset("shared colors", sharedHost, "theme-shared"),
+        fieldset("shared colors", sharedHost, "theme-shared", { open: false }),
         ...theme.THEME_GROUPS.map((g) =>
-            fieldset(g.label, h("div", { class: "gp-mgr-list" }, ...g.vars.map(varRow)), `theme-${g.key}`)),
-        fieldset("schemes", schemesHost, "theme-schemes"),
+            fieldset(g.label, h("div", { class: "gp-mgr-list" }, ...g.vars.map(varRow)), `theme-${g.key}`, { open: false })),
+        fieldset("schemes", schemesHost, "theme-schemes", { open: false }),
         resetAllBtn(),
     );
     return tw;
