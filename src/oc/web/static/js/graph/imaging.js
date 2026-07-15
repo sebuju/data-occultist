@@ -1686,13 +1686,14 @@ function setWindowCollideStatus(winId) {
     const span = el.querySelector(".wd-collide");
     if (!span) return;
     const entry = collisionByWin.get(winId);
+    if (!entry) return;   // whole-profile check hasn't reported yet; keep the "loading..." placeholder
     // only rebuild the badge when the verdict actually changes (poll/detect repaints a lot)
-    const sig = entry ? `${entry.verdict}|${entry.winner || ""}|${(entry.collides_with || []).join(",")}` : "";
+    const sig = `${entry.verdict}|${entry.winner || ""}|${(entry.collides_with || []).join(",")}`;
     if (span.dataset.sig === sig) return;
     span.dataset.sig = sig;
-    // nothing to add: no collision data yet, no bound image, or the window doesn't match
-    // its OWN page (the .wd-verdict line already reports that self-miss).
-    if (!entry || entry.verdict === "no_image" || entry.verdict === "self_no_match") {
+    // no bound image, or the window doesn't match its OWN page (the .wd-verdict line already
+    // reports that self-miss) — a known, definitive result of "nothing to add".
+    if (entry.verdict === "no_image" || entry.verdict === "self_no_match") {
         span.replaceChildren(); span.className = "wd-collide"; span.title = ""; return;
     }
     const { label, cls, tip, winner } = verdictBadge(entry);   // shared verdict vocabulary

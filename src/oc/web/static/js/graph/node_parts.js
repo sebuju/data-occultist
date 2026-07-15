@@ -262,7 +262,8 @@ const optSel = (val, opts, cls, props = {}) =>
 // (`.wd-status`, `.wd-verdict`, `.wd-collide`) are filled live by setWindowDetectStatus
 // (reconciled in place, never rebuilt per tick) and hold blank until the first detect pass
 // returns. `.wd-collide` is the cross-window verdict (does this window WIN classify, or does a
-// sibling also match / steal the tie-break) — sourced from the whole-profile collision check.
+// sibling also match / steal the tie-break) — sourced from the whole-profile collision check,
+// which is slower (OCR-heavy), so it starts on a "loading…" placeholder rather than blank.
 // The detectors section of a window node (`opts`: heading, matchLabel, defaultMode, collide).
 // The owner object just needs `.detect` + `.detect_mode`.
 export function windowDetects(w, opts = {}) {
@@ -292,7 +293,7 @@ export function windowDetects(w, opts = {}) {
         rows,
         h("div", { class: "wd-verdict muted", title: opts.verdictTitle || "whether the current capture would be recognised as this window with the settings above" }),
         opts.collide === false ? null
-            : h("div", { class: "wd-collide", title: "cross-window: detection picks ONE winner across all windows — does this window actually win, or does a sibling also match / steal it" }));
+            : h("div", { class: "wd-collide muted", title: "cross-window: detection picks ONE winner across all windows — does this window actually win, or does a sibling also match / steal it" }, "loading…"));
 }
 
 // The ▲/▼ move pair shared by every reorderable list — priority rows AND rule rows (rule 7:
