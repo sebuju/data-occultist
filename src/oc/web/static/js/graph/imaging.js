@@ -1709,7 +1709,7 @@ function setWindowCollideStatus(winId) {
 // flight, a single queued re-run. Repaints every open window node's collide badge.
 let collisionBusy = false;
 let collisionAgain = false;
-async function refreshCollisions() {
+export async function refreshCollisions() {
     if (!model.profile.name) return;
     if (collisionBusy) { collisionAgain = true; return; }
     collisionBusy = true;
@@ -1807,7 +1807,10 @@ function fireWindowRead() {
     for (const id of traceWins) work.push(fetchWindowTrace(id));
     for (const id of roWins) work.push(refreshReadoutValues(id));
     for (const { winId, itemId } of items) work.push(runItemRead(winId, itemId));
-    refreshCollisions();   // cross-window verdict tracks the same edits (coalesced)
+    // cross-window verdict tracks the same edits (coalesced) — skip during boot: it's an
+    // O(windows^2) OCR cross-check with no server cache, not needed for first paint (only
+    // feeds the .wd-collide badge). afterBoot in finishBoot() fires the one real post-boot pass.
+    if (!boot.phase) refreshCollisions();
     return Promise.all(work);
 }
 
@@ -1902,7 +1905,10 @@ async function loadImage(winId, recapture, { deferRead = false } = {}) {
         entry.canvas.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
         entry.overlay.setImage(img);
         refreshImageBoxes(winId);
-        drawEdges();
+        // boot opens every window in a burst — this per-image drawEdges only forces a layout
+        // read (buildLinks -> nodeRect -> nw/offsetWidth); finishBoot already does the one real
+        // pass once every window is open (game_lifecycle.js).
+        if (!boot.phase) drawEdges();
         updateImageLabel(winId);     // button shows the (possibly new) filename
         // the image changed (recapture / picked a capture / first open) → READ it: full preview
         // when the node exists, else just the grid overlay. The cutout atlas is image-only (no
@@ -1911,7 +1917,11 @@ async function loadImage(winId, recapture, { deferRead = false } = {}) {
         if (deferRead) { scheduleWindowRead(winId, { trace: true, readouts: true }); return; }
         if (prevHost(winId)) refreshPreview(winId, false);
         else refreshGridPreview(winId);
-        retraceWindow(winId);   // the image changed → the field nodes' rule traces are stale, re-read them
+        // the image changed → the field nodes' rule traces are stale, re-read them — but not
+        // during boot: N windows opening in a burst means N serialized rule_trace POSTs starved
+        // behind the OCR item/read pool (feeds only the .frule-trace step overlay, not first
+        // paint). finishBoot fires one coalesced trace pass per open window instead.
+        if (!boot.phase) retraceWindow(winId);
         refreshDetect(winId);
     };
     img.onerror = () => setNodeBusy(nodeIdOf(winId), false);

@@ -15,7 +15,7 @@
 // node, and the trailing "+" slot adds one. Those mutations are intents (bubbling CustomEvents)
 // the node's wiring (wireRegister in main.js) turns into model changes; rendering is here.
 import * as api from "../api.js";
-import { model, nodeEls, readoutPreview } from "./state.js";
+import { boot, model, nodeEls, readoutPreview } from "./state.js";
 import { sinceShort } from "../datefmt.js";
 import { confTier } from "./conf.js";
 import { makeArmed } from "./armbtn.js";
@@ -250,4 +250,10 @@ export function refreshRegister(id) {
 
 // A fresh /api/preview readout batch landed (non-live source) — repaint every register currently
 // rendered (refreshRegister no-ops for ids not in the DOM, mirrors renderReadoutValues in livewin.js).
-window.addEventListener("readout-preview", () => { for (const id of model.registers()) refreshRegister(id); });
+// Skipped during boot: every window's image load fires this event, so N windows means N redundant
+// refetches of every register (all returning the same game-global held map). Boot content is
+// already covered by the build-time fetch + the afterBoot one (io_wire.js wireRegister).
+window.addEventListener("readout-preview", () => {
+    if (boot.phase) return;
+    for (const id of model.registers()) refreshRegister(id);
+});

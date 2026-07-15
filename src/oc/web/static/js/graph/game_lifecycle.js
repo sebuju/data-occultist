@@ -7,6 +7,8 @@ import * as conn from "../conn.js";
 import * as hub from "../hub.js";
 import * as dsevents from "./dsevents.js";
 import * as groups from "./groups.js";
+import * as theme from "./theme.js";
+import { refreshTheme } from "./panels/theme.js";
 import * as prettyOverrides from "../pretty/overrides.js";
 import { h } from "../dom.js";
 import { log, timed } from "../log.js";
@@ -26,7 +28,7 @@ import { openLogStream } from "../logstream.js";
 import { initFlow } from "./flow.js";
 import { mountCanvasLayers } from "./edgecanvas.js";
 import * as nodeTxn from "./node_txn.js";
-import { closeImage, openImage, openAtlasImage } from "./imaging.js";
+import { closeImage, openImage, openAtlasImage, refreshCollisions, scheduleWindowRead } from "./imaging.js";
 import { groupOrphanChildren } from "./item_wire.js";
 import { seedSubsetSig, refreshChangedSubsetNodes } from "./subset_wire.js";
 import { batchesState } from "./panels/datanodes.js";
@@ -73,6 +75,8 @@ export function collectLayout() {
     L.super_groups = groups.collectSuper();   // groups-of-groups travel with the profile too
     L.sub_groups = groups.collectSub();        // groups-within-a-group travel with the profile too
     L.schemes = groups.collectSchemes();       // user-added colour schemes travel with the profile too
+    const th = theme.collect();
+    if (th) L.theme = th; else delete L.theme; // css-var overrides travel with the profile too (theme panel)
     // floating panels are NOT persisted (session-only) — drop any stale saved state so it's
     // cleaned from the profile on the next write.
     delete L.float_windows;
@@ -97,6 +101,8 @@ export function hydrateNodeLayout() {
     groups.hydrate(L.groups);
     groups.hydrateSuper(L.super_groups);   // after groups (super groups reference group ids)
     groups.hydrateSub(L.sub_groups);       // after groups (sub groups reference a parent group + its nodes)
+    theme.hydrate(L.theme);                // css-var overrides (after schemes, before the theme panel next shows)
+    refreshTheme();                        // resync the theme panel's controls if it's already built
 }
 function hydrateLayout() {
     hydrateNodeLayout();
@@ -306,6 +312,20 @@ export function finishBoot() {
     drawEdges();            // routing was frozen throughout boot (routing.js) -> the one real pass now
     groups.renderGroups();  // group boxes were skipped throughout boot -> hug members once now
     flushBoot();            // fire the summary/register/preview fetches deferred during boot
+    refreshCollisions();    // the one real cross-window check, skipped per-image during boot (imaging.js)
+    // every open overlay's ResizeObserver re-fit was skipped per-image during boot (overlay.js) ->
+    // fit each once now, off the veil's critical path. Batched read-then-write (measureFit/applyFit,
+    // not fit()): looping fit()'s interleaved read+write per overlay forces up to N layouts
+    // (read dirties nothing, but the WRITE after each read dirties layout for the NEXT read) —
+    // reading every overlay's width first, then writing every scale, costs one forced layout total.
+    const measured = [];
+    for (const c of imageCanvases.values()) measured.push([c.overlay, c.overlay?.measureFit?.()]);
+    for (const [overlay, avail] of measured) overlay?.applyFit?.(avail);
+    // every window's rule_trace was skipped per-image during boot (imaging.js) -> one coalesced
+    // pass per open window now, when the OCR item/read pool is free instead of starved.
+    for (const winId of imageCanvases.keys()) {
+        if (winId !== "atlas") scheduleWindowRead(winId, { trace: true, preview: false });
+    }
 }
 
 // Mint a blank game profile. Called from the settings modal's "new game" section.

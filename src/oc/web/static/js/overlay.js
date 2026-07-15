@@ -7,6 +7,7 @@
 // drawing stays pixel-accurate at any zoom.
 
 import { observeResize } from "./dom.js";
+import { boot } from "./graph/state.js";
 
 // Fallback hues for roles that DON'T map to a graph node type (data_area/search/state are
 // window-internal boxes, not their own node). Node-backed roles resolve their colour from the
@@ -112,7 +113,11 @@ export class Overlay {
         // after the image loaded). Avoids the image rendering as a sliver. { gate:true } keeps
         // fit()'s width:100% write (a no-op size-wise) from re-triggering. A NEW Overlay is built on
         // every image open, so this MUST be disposed on close (see destroy()) or it leaks unbounded.
-        this._roDispose = observeResize(canvas.parentElement, () => { if (this.img && this.autoFit) this.fit(); }, { gate: true });
+        // Skipped during boot: every window's image opening in a burst reflows its siblings,
+        // re-triggering this RO for already-fitted overlays (each fit() forces a layout read via
+        // clientWidth) — setImage() already fits directly on load, so these are redundant.
+        // finishBoot fits every open overlay once after the veil drops (game_lifecycle.js).
+        this._roDispose = observeResize(canvas.parentElement, () => { if (this.img && this.autoFit && !boot.phase) this.fit(); }, { gate: true });
     }
 
     // Tear down the resize observer. Called by closeImage/closeItemImage before dropping the
@@ -171,24 +176,32 @@ export class Overlay {
     }
     setScale(scale) { this.autoFit = false; this.scale = Math.min(20, Math.max(0.05, scale)); this._applyScale(); }
     zoom(factor) { this.setScale(this.scale * factor); }
-    fit() {
-        if (!this.img) return;
-        // NO naturalWidth fallback: when the wrap has no width yet (clientWidth 0, e.g. the
-        // node isn't laid out at setImage time) falling back to the image's own width scales
-        // to ~1:1 — a giant canvas that only corrects when a later reflow (OCR readout filling
-        // in) fires the ResizeObserver, so it visibly jumps. Bail instead; the observer retries
-        // fit() the moment the wrap gets real width, sizing it right the FIRST time.
+    // fit() = measureFit() (read) + applyFit() (write), split so a caller fitting MANY overlays in
+    // one pass (finishBoot, game_lifecycle.js) can batch every read before any write — reading N
+    // overlays' clientWidth back to back costs ONE forced layout (nothing dirtied it in between),
+    // where N interleaved read+write fit() calls would force up to N (classic layout thrash).
+    // NO naturalWidth fallback: when the wrap has no width yet (clientWidth 0, e.g. the node isn't
+    // laid out at setImage time) falling back to the image's own width scales to ~1:1 — a giant
+    // canvas that only corrects when a later reflow (OCR readout filling in) fires the
+    // ResizeObserver, so it visibly jumps. Bail (return null) instead; the observer retries fit()
+    // the moment the wrap gets real width, sizing it right the FIRST time.
+    measureFit() {
+        if (!this.img) return null;
         // fill the wrap's FULL content width — no slack. The wrap has overflow:hidden and the
         // canvas is its only flow child, so an exact fit can't trigger a scrollbar; any leftover
         // slack just shows the wrap (dark) on the right/bottom edge.
         const avail = this.canvas.parentElement?.clientWidth || 0;
-        if (avail <= 1) return;     // layout not ready; ResizeObserver will retry
+        return avail > 1 ? avail : null;   // <=1: layout not ready; ResizeObserver will retry
+    }
+    applyFit(avail) {
+        if (avail == null || !this.img) return;
         // set autoFit BEFORE applying, so _applyScale fills via width:100% (not a rounded px) —
         // going through setScale would clear autoFit first and bake in a px width with sub-px slack.
         this.scale = Math.min(20, Math.max(0.05, avail / this.img.naturalWidth));
         this.autoFit = true;        // keep auto-fitting on later resizes; fill the wrap exactly
         this._applyScale();
     }
+    fit() { this.applyFit(this.measureFit()); }
 
     // ---- geometry helpers ---------------------------------------------------
 
