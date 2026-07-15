@@ -17,8 +17,10 @@ import { testWin, testState, buildTesting } from "./panels/testing.js";
 import { statsWin, statsState, buildStats } from "./panels/stats.js";
 import { dbWin, dbState, buildDBStruct } from "./panels/dbstruct.js";
 import { tb, tbState, buildToolbox } from "./panels/toolbox.js";
+import { themeState, buildTheme } from "./panels/theme.js";
 import { pc, pcState, buildPrecap } from "./panels/precap.js";
 import { liveWin, liveWinState, buildLiveWindow } from "./panels/livewin.js";
+import { onOutside } from "../inputbus.js";
 import { render, autosave } from "./main.js";
 
 export function initPanels() {
@@ -109,6 +111,10 @@ export function initPanels() {
     $("createBtn")?.classList.toggle("active", tbState.visible);
     $("createBtn")?.addEventListener("click", () => tb.setVisible(!tbState.visible, true));
 
+    const themeWin = buildTheme();
+    $("themeBtn")?.classList.toggle("active", themeState.visible);
+    $("themeBtn")?.addEventListener("click", () => themeWin.setVisible(!themeState.visible, true));
+
     buildPrecap();
     buildLiveWindow();
     $("liveBtn").classList.toggle("active", liveWinState.visible);
@@ -122,7 +128,7 @@ export function initPanels() {
     // of toggling it. Capture phase so it can pre-empt the normal toggle handler above. If the
     // panel is already open we reset in place and suppress the toggle (which would hide it); if
     // it's closed/not-built we let the toggle open it, then reset on the next tick.
-    const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", nodemapBtn: "nodemap", nodelistBtn: "nodelist", activityBtn: "activity", testingBtn: "testing", statsBtn: "stats", dbstructBtn: "dbstruct", historyBtn: "history" };
+    const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", themeBtn: "graph-theme", nodemapBtn: "nodemap", nodelistBtn: "nodelist", activityBtn: "activity", testingBtn: "testing", statsBtn: "stats", dbstructBtn: "dbstruct", historyBtn: "history" };
     for (const [btnId, panelId] of Object.entries(_PANEL_TOGGLES)) {
         $(btnId)?.addEventListener("click", (ev) => {
             if (!ev.shiftKey) return;
@@ -130,5 +136,20 @@ export function initPanels() {
             if (p && p.state.visible) { ev.stopImmediatePropagation(); p.resetBox(); }
             else setTimeout(() => floatWins().get(panelId)?.resetBox(), 0);
         }, true);
+    }
+
+    // Narrow-window (<=600px) tools dropdown: the ☰ button toggles .open on .topbar-tools (CSS
+    // turns that into a fixed dropdown under the bar). Close on outside click and after any tool
+    // inside fires, so picking a tool doesn't leave the menu hanging open.
+    const toolsBtn = $("toolsMenuBtn");
+    const toolsBox = document.querySelector(".topbar-tools");
+    if (toolsBtn && toolsBox) {
+        const closeTools = () => toolsBox.classList.remove("open");
+        toolsBtn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            toolsBox.classList.toggle("open");
+        });
+        toolsBox.addEventListener("click", (ev) => { if (ev.target.closest("button")) closeTools(); });
+        onOutside(toolsBox, closeTools, { also: () => toolsBtn });
     }
 }

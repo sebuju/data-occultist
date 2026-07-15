@@ -5,6 +5,7 @@
 
 import { STYLE_FIELDS, FONT_CHOICES, BORDER_SIDES } from "./style.js";
 import { el } from "./widgets/util.js";
+import { colorField } from "../graph/colorfield.js";
 
 const ALIGNS = ["left", "center", "right", "justify"];
 
@@ -79,13 +80,12 @@ export function styleEditor(host, style, onChange, opts = {}) {
             // a transparent effective value (e.g. an unset fill computes to rgba(0,0,0,0)) is NO colour,
             // not black — show it empty so the field reads as "no fill" and never serialises black.
             const shown = isTransparent(cur) ? "" : cur;
-            const c = el("input"); c.type = "color"; c.value = toHex(shown) || "#000000";
-            const t = el("input", "pw-se-text"); t.type = "text"; t.placeholder = "—"; t.value = shown || "";
-            c.addEventListener("input", () => { t.value = c.value; setv(f.key, c.value); });
-            t.addEventListener("change", () => setv(f.key, t.value.trim()));
-            const clr = el("button", "pw-se-clear", "×"); clr.title = "clear";
-            clr.addEventListener("click", () => { t.value = ""; setv(f.key, ""); });
-            row.append(c, t, clr);
+            const cf = colorField({
+                value: shown, title: f.label, textClass: "pw-se-text", clearClass: "pw-se-clear",
+                clearTitle: "reset to default",
+                onChange: (v) => setv(f.key, v), onClear: () => setv(f.key, ""),
+            });
+            row.append(cf.row);
         } else if (f.kind === "font") {
             const s = el("select");
             for (const fam of FONT_CHOICES) { const o = el("option", null, fam || "(default)"); o.value = fam; s.appendChild(o); }

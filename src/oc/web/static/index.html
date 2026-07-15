@@ -76,6 +76,9 @@
             <button id="prettyRevertBtn" class="modebtn" title="revert pretty overrides to the authored yaml (click again to confirm)">revert pretty</button>
             <button id="prettySaveBtn" class="modebtn" title="save pretty overrides into the yaml (click again to confirm)">save pretty</button>
         </div>
+        <!-- narrow-window (<600px) toggle: collapses .topbar-tools into a dropdown. Hidden by CSS
+             above the breakpoint; wired in panels_init.js. -->
+        <button id="toolsMenuBtn" class="modebtn tools-menu-btn" title="tools" aria-label="tools">☰</button>
         <!-- floating-window toggles. testing + stats sit leftmost (separated from the rest by a
          rule); a spacer pushes the rest right. -->
         <div class="topbar-tools">
@@ -87,6 +90,7 @@
             <button id="liveBtn" class="modebtn" title="live panel: toggle live view + per-window detection (no saving)">live</button>
             <button id="precapBtn" class="modebtn" title="precapture: record frames fast, OCR them in a batch, then save">precapture</button>
             <button id="createBtn" class="modebtn" title="toolbox: window collision check and other tools (right-click the canvas to add nodes)">toolbox</button>
+            <button id="themeBtn" class="modebtn" title="theme: recolour the node view (css vars) + manage group colour schemes">theme</button>
             <button id="nodemapBtn" class="modebtn" title="node map: overview + jump to any node">map</button>
             <button id="nodelistBtn" class="modebtn" title="node list: edge-tree outline + jump to any node">nodes</button>
             <button id="activityBtn" class="modebtn" title="tasks: live price sweeps + precapture progress">tasks</button>

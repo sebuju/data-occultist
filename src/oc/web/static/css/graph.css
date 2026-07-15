@@ -45,6 +45,16 @@
    time (no live flow, no active drag guides), so drop the empty ones out of rendering entirely. */
 #gflow:empty, #gguides:empty { display: none; }
 .align-guide { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: .55; vector-effect: non-scaling-stroke; }
+/* distance guides: a muted line (distinct from the dashed accent align-guide) per overlapping
+   neighbour lane, each with a px-label pill (bg rect + centred text), drawn while moving/resizing
+   (guides.js drawSpacing). Text font-size is NOT set here — guides.js sets it inline per-frame
+   (counter-scaled to #gworld zoom so the label reads a constant screen size); a stylesheet
+   font-size would win over that (SVG presentation attributes lose to CSS) and defeat the
+   counter-scale. rect/text geometry (x/y/width/height) is also computed in JS from an estimated
+   glyph width — no getBBox, so a live drag/resize redraw never forces a layout. */
+.spacing-guide { stroke: var(--muted); stroke-width: 1; opacity: .7; vector-effect: non-scaling-stroke; }
+.spacing-label rect { fill: var(--bg); stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: .92; }
+.spacing-label text { fill: var(--muted); font-family: var(--font-mono); text-anchor: middle; dominant-baseline: middle; }
 /* keyboard node-nav: the big directional arrow drawn while an arrow key is held (navarrow.js).
    Viewport-fixed layer above the world; pointer-events off so it never eats input. */
 #navArrowLayer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 900; overflow: visible;
@@ -263,10 +273,16 @@
     border-color: color-mix(in oklab, var(--nt) 70%, var(--line));
     background: var(--bg); outline: none;
 }
+/* duration is a plain-text-styled dropdown, not a boxed control */
+.gnode.toast select.tn-duration:not([size]):not([multiple]),
+.gnode.toast select.tn-duration:not([size]):not([multiple]):hover,
+.gnode.toast select.tn-duration:not([size]):not([multiple]):focus {
+    border-color: transparent; background: none;
+}
 /* the "add" / clone buttons carry the node colour so they read as this node's actions */
 .tn-bk-add, .tn-img-add {
     align-self: start; font: inherit; font-size: 12px; line-height: 1; cursor: pointer; padding: 3px 9px;
-    border: 1px solid var(--nt); color: var(--nt); border-radius: 4px;
+    border: none; color: var(--nt); border-radius: 4px;
     background: color-mix(in srgb, var(--nt) 12%, transparent); }
 .tn-bk-add:hover, .tn-img-add:hover {
     background: color-mix(in srgb, var(--nt) 22%, transparent); }
@@ -387,7 +403,7 @@
 .tn-img-angle { width: 3.5em; }
 .tn-img-bg input[type="color"] { width: 26px; height: 20px; padding: 0; border: none; cursor: pointer; background: none; flex: 0 0 26px; }
 .tn-img-texts { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-.tn-il-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tn-il-bar { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
 /* node-coloured actions (see .tn-img-addtext/.tn-img-clone): centre their SVG icon and sit at the
    bar's right edge — first button carries margin-left:auto to push the button group past the picker. */
 .tn-il-bar button { align-self: center; display: inline-flex; align-items: center; color: var(--nt); background: none; border: none; box-shadow: none; padding: 0; }
@@ -665,6 +681,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    .lab is its control. .lab-top pins a label to the top of a control that wraps to many lines. */
 .lab-grid { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 8px;
     margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
+/* toast: app label + input row sits well clear of the images list above it */
+.tn-app-grid { margin-top: 16px; }
 .lab-grid > .lab { white-space: nowrap; }
 .lab-grid > .lab-top { align-self: start; padding-top: 4px; }
 /* full-width controls EXCEPT checkboxes — a checkbox keeps its base 28px toggle-switch size
@@ -1102,11 +1120,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gnode.multisel { border-color: var(--sel); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sel) 60%, transparent); }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
-.seltoolbar { position: fixed; left: 50%; top: 53px; transform: translateX(-50%);
+.seltoolbar { position: fixed; left: 50%; top: 46px; transform: translateX(-50%);
     z-index: 200; display: flex; align-items: center; gap: 10px; padding: 6px 10px;
     background: var(--panel); border: 0; border-radius: 8px;
     /* stronger shadow + a faint inset ring so the pill pops off the canvas */
     box-shadow: 0 10px 30px #000000aa, 0 2px 6px #00000066, inset 0 0 0 1px #ffffff12; }
+html.desktop .seltoolbar { top: 76px; }   /* clear the 30px desktop titlebar + 42px topbar + gap */
 /* slide-in: replayed by syncMultiSelect on the hidden->shown edge only (class toggled there) */
 .seltoolbar.slidein { animation: selSlideIn .18s cubic-bezier(.2, .7, .3, 1); }
 @keyframes selSlideIn { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
@@ -1176,6 +1195,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* the popover lives on <body>, NOT inside .gnode, so it misses the global border-box rule — without
    this the fixed-width number/colour inputs add padding+border on top of their width (widths drift) */
 .ggroup-pop input, .ggroup-pop select, .ggroup-pop button { box-sizing: border-box; }
+.ggroup-pop input, .ggroup-pop select { min-height: 28px; }
 /* outline width + offset: small fixed number inputs leading the outline row (before style + colour) */
 /* pin width via flex-basis (NOT just `width`): the base `input{width:100%}` in controls.css loads
    after this, and on a flex item a 100% width can still stretch it — a fixed grow:0 shrink:0 basis can't */
@@ -1211,23 +1231,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     cursor: pointer; flex: 0 0 auto; overflow: hidden; display: flex; flex-direction: column;
     align-items: stretch; gap: 0; background: var(--bg); }
 .gp-scheme:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
-/* the scheme the group is linked to: a small dot pinned top-right inside the swatch (built-in AND
-   user-added schemes show it the same way) */
-.gp-scheme.sel::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
-    border-radius: 50%; background: var(--sel); box-shadow: 0 0 0 1.5px var(--panel); pointer-events: none; }
-/* user-made schemes (id `s_…`; built-ins use their name) carry a small top-left corner triangle so
-   they read apart from the built-in swatches at a glance */
-button.gp-scheme[data-sid^="s_"]::before {
-    position: absolute;
-    content: " ";
-    left: 0px;
-    top: 0px;
-    width: 6px;
-    height: 6px;
-    background: #ffffff;
-    clip-path: polygon(0 0, 0% 100%, 100% 0);
-}
-/* a user-added scheme: hovering the SELECTED swatch swaps that dot for a trashcan that removes it */
+button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
 .gp-sw-rm { position: absolute; top: 0; right: 0; width: 15px; height: 15px; display: none;
     align-items: center; justify-content: center; color: #e0503f; background: var(--panel);
     border-bottom-left-radius: 4px; cursor: pointer; z-index: 2; }
@@ -1248,8 +1252,8 @@ button.gp-scheme[data-sid^="s_"]::before {
 .gp-scheme-copy.armed { outline: 2px solid var(--accent); outline-offset: 1px; color: var(--accent); }
 /* scheme label sits centred (both axes) on the FIRST row of swatches (they wrap); the 26px height
    matches one .gp-scheme so "scheme" reads vertically centred against that first row, not the block */
-.gp-scheme-row { align-items: flex-start; }
-.gp-lab-top { display: flex; align-items: center; justify-content: center; height: 26px; padding-top: 0; }
+.gp-scheme-row { margin-bottom: 2px; }
+.gp-lab-top { display: flex; align-items: center; justify-content: flex-start; place-self: baseline; height: 26px; padding-top: 0; }
 /* full-width flex break: forces user-saved schemes onto a new row below the premades, + a small gap */
 .gp-scheme-break { flex-basis: 100%; height: 3px; }
 /* section subheading inside the popover (LAYOUT / STYLE) */
@@ -1260,6 +1264,42 @@ button.gp-scheme[data-sid^="s_"]::before {
 .gp-size { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; }
 .gp-size input[type="number"] { flex: 1; min-width: 0; width: 100%; }
 .gp-size .gp-auto { flex: 0 0 auto; padding: 2px 7px; font-size: var(--fs-sm); cursor: pointer; }
+
+/* ---- theme panel (node view): css-var color overrides + the custom scheme manager ----
+   paddings/margins copied from the stats panel (floatwin.css): no .fw-body override (bare
+   6px default, same as #stats), .gp-mgr-list gap 4px like .st-list, card padding 7px 9px like
+   .st-head, card border/radius/background like .st-card. */
+#graph-theme .fw-body { display: flex; flex-direction: column; gap: 4px; }
+#graph-theme .panel-fs summary { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); cursor: pointer; }
+.gp-mgr-list { display: flex; flex-direction: column; gap: 4px; }
+.gp-mgr-empty { font-size: var(--fs-sm); color: var(--dim); padding: 4px 2px; }
+/* one color-var (or shared-color) row: label, then the synced color+text pair, then an
+   optional clear — same color-picker sizing as the group popover's fields (rule 7: one look) */
+.gp-mgr-crow { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); margin: 0; }
+.gp-mgr-clab { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.gp-mgr-crow input[type="color"], .cf-color { flex: 0 0 auto; width: 28px; height: 22px; padding: 0; border: none; background: none; }
+.gp-mgr-crow input[type="text"], .cf-text { flex: 0 0 84px; min-width: 0; }
+.gp-mgr-t { flex: 0 0 84px; min-width: 0; }
+.gp-mgr-c { flex: 0 0 auto; width: 28px; height: 22px; padding: 0; border: none; background: none; }
+.cf-clear, .gp-mgr-crow .cf-clear { flex: 0 0 auto; width: 18px; height: 22px; padding: 0; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-md);
+    color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+.cf-clear:hover { color: var(--danger); border-color: var(--danger); }
+/* a custom scheme's row: swatch + name on ONE row, then its 4 colors + "used by" + remove */
+.gp-mgr-row { display: flex; flex-direction: column; gap: 4px; padding: 7px 9px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+.gp-mgr-head { display: flex; align-items: center; gap: 6px; }
+.gp-mgr-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); }
+.gp-mgr-colors { display: flex; flex-direction: column; gap: 2px; }
+/* the whole point of this list: show every group wearing the scheme, never truncate it */
+.gp-mgr-used { font-size: var(--fs-xs); color: var(--dim); white-space: normal; word-break: break-word; }
+/* .btn-trash's hollow-danger red (graph.css "node button system") is scoped to `.gnode` only —
+   this panel isn't a node, so restate the same look here explicitly. */
+.gp-mgr-rm { align-self: flex-end; background: transparent; color: var(--danger); min-height: unset; }
+.gp-mgr-rm:hover:not(:disabled) { color: #fff; filter: none; }
+/* armed (click again to confirm) — same red-fill as every other icon-only remove button (rule 7) */
+.gp-mgr-rm.armed { background: var(--danger); color: var(--on-danger); border-color: var(--danger); }
+.theme-reset { margin-top: 4px; }
 
 /* ---- super-group layer (a group OF groups; sits behind the group layer) ---- */
 #sgroups { position: absolute; top: 0; left: 0; z-index: 0; }
@@ -1278,7 +1318,7 @@ button.gp-scheme[data-sid^="s_"]::before {
 .sgroup:hover .sgroup-cog { opacity: 0.55; }
 .sgroup-cog:hover { opacity: 1 !important; }
 /* ctrl-selected group (armed for super-grouping) */
-.ggroup.gsel { outline: 2px dashed var(--accent); outline-offset: 2px; }
+/* ctrl-selected group highlight = its own canvas border goes solid accent (edgecanvas.js drawGroups) */
 
 /* ---- sub-group layer (a group WITHIN a group; painted over the group fill, behind nodes) ---- */
 #subgroups { position: absolute; top: 0; left: 0; z-index: 0; }
