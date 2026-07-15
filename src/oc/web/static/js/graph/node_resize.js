@@ -4,12 +4,13 @@
 // `positionNode` and `nodeTypeOf` stay in main and are imported back.
 import { pos, nodeEls, nodeSizes, collapsed, view, boot } from "./state.js";
 import { observeResize } from "../dom.js";
-import { GRID, snap, snapUp, addResizeGrips, showSizeHud, hideSizeHud } from "./dragresize.js";
+import { snap, snapUp, addResizeGrips, showSizeHud, hideSizeHud } from "./dragresize.js";
 import { drawEdges, requestEdges, flushEdges, setDraggingNodes } from "./routing.js";
 import * as groups from "./groups.js";
 import { persist } from "./persist.js";
 import { cancelPan } from "./camera.js";
 import { positionNode, nodeTypeOf } from "./main.js";
+import { showGuides, flashGuides } from "./guides.js";
 
 // Host node types that resize at the NODE level (their body fills them) — one consistent
 // behaviour. Used by the initial build AND by rebuildNode to re-attach grips.
@@ -132,7 +133,7 @@ export function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
         },
         // Fires only from the grip loop (a live user drag). Keep the soft grid mins cleared so a
         // prior grow's min-width/height can't block a shrink, and freeze routing like a node drag.
-        onResize: () => { div.style.minWidth = ""; div.style.minHeight = ""; setDraggingNodes(true, [id]); requestEdges(); groups.renderGroups(); },
+        onResize: () => { div.style.minWidth = ""; div.style.minHeight = ""; setDraggingNodes(true, [id]); requestEdges(); groups.renderGroups(); showGuides([id]); },
         // Settle to the grid, but only KEEP a size on an axis that ends up different from its natural
         // (grid-fit) box — an axis dragged back to natural is left unstamped and un-customized, so it
         // shows no reset dot; a node natural on BOTH axes drops its entry entirely (as if never sized).
@@ -152,6 +153,7 @@ export function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
                 else nodeSizes.delete(id);   // natural on both axes -> as if never sized
             }
             markNodeSized(div, id); setDraggingNodes(false); flushEdges(); groups.renderGroups(); persist.layout();
+            flashGuides([id]);   // keep the resting alignment/spacing shown briefly, then fade
         },
         // reset dots (one per axis): drop the user's size on THAT axis, then snap the node's NATURAL
         // size UP to the grid using a soft min set DIRECTLY (not via the settle path). snapUp always
@@ -291,8 +293,9 @@ export function snapResize(el, opts = {}) {
 // Dragging the bottom-right grip resizes the group box itself, NOT its members: it writes an
 // explicit g.w / g.h (grid-stepped) that groupBox() honours instead of auto-hugging the members.
 // The box's top-left stays pinned to the members, so the grip grows the box down + right from
-// there. Both axes can later be cleared back to "auto" independently from the settings panel.
-const GROUP_MIN = GRID * 4;   // floor so a group box can't collapse to nothing while dragging
+// there. Both axes can later be cleared back to "auto" via Shift+R / stepped via Shift+WASD
+// (shortcuts.js) or the settings panel — GROUP_MIN + the explicit-size fields are owned by
+// groups.js (one size concept, several input paths — rule 7).
 export function startGroupResize(gid, ev) {
     ev.preventDefault(); ev.stopPropagation();
     const g = groups.allGroups().find((x) => x.id === gid);
@@ -304,8 +307,8 @@ export function startGroupResize(gid, ev) {
     let lw = w0, lh = h0;
     const onMove = (e) => {
         const dx = (e.clientX - start.x) / z, dy = (e.clientY - start.y) / z;   // drag the bottom-right outward
-        lw = Math.max(GROUP_MIN, snap(w0 + dx));
-        lh = Math.max(GROUP_MIN, snap(h0 + dy));
+        lw = Math.max(groups.GROUP_MIN, snap(w0 + dx));
+        lh = Math.max(groups.GROUP_MIN, snap(h0 + dy));
         g.w = lw; g.h = lh;
         groups.renderGroups();
         requestEdges();   // box changed -> gates + the group's hard obstacle moved: re-path (coalesced 1/frame)
