@@ -63,6 +63,26 @@ def test_bare_condition_source_is_repointed():
     assert doc["pages"][0]["widgets"][0]["conditions"]["rules"][0]["source"] == "dataset:inv.name"
 
 
+def test_widget_binding_id_is_repointed():
+    # a widget's structured `binding: {src, id}` is NOT a token string, but a dataset/subset
+    # rename must still repoint it (else the widget orphans -> empty render + a 404 row fetch)
+    doc = {"pages": [{"widgets": [
+        {"binding": {"src": "subset", "id": "old"}, "config": {"text": "{{subset:old.name[0]}}"}},
+    ]}]}
+    n = repoint_pretty(doc, [{"kind": "subset", "old": "old", "new": "new"}])
+    assert n == 2   # the binding id + the token in text
+    w = doc["pages"][0]["widgets"][0]
+    assert w["binding"]["id"] == "new"
+    assert w["config"]["text"] == "{{subset:new.name[0]}}"
+
+
+def test_binding_src_must_match_kind():
+    # a subset rename must NOT touch a dataset binding that happens to share the id
+    doc = {"pages": [{"widgets": [{"binding": {"src": "dataset", "id": "shared"}}]}]}
+    assert repoint_pretty(doc, [{"kind": "subset", "old": "shared", "new": "x"}]) == 0
+    assert doc["pages"][0]["widgets"][0]["binding"]["id"] == "shared"
+
+
 def test_prose_is_not_touched():
     doc = _doc("Master parts list for windows and datasets")
     assert repoint_pretty(doc, [{"kind": "dataset", "old": "master", "new": "inv"}]) == 0

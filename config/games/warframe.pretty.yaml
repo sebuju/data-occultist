@@ -57,7 +57,7 @@ pages:
       paging: false
     binding:
       src: subset
-      id: relic_rewards_price_from_stored
+      id: relic_rewards_with_price
     anchor:
       to: hd_main
       corner: tc
@@ -594,7 +594,7 @@ pages:
       sortDesc: true
     binding:
       src: subset
-      id: relic_rewards_price_from_stored
+      id: relic_rewards_with_price
     anchor:
       to: w1
       corner: tl

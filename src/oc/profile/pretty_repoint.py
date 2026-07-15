@@ -60,11 +60,29 @@ def _compile(rewrites) -> list:
     return pairs
 
 
+def _bind_map(rewrites) -> dict:
+    """``{(src, old): new}`` for dataset/subset renames — a widget ``binding``'s ``src`` value
+    ("dataset"/"subset") equals the rename ``kind``, so a binding to the OLD id repoints too."""
+    m: dict = {}
+    for r in rewrites or []:
+        if not isinstance(r, dict):
+            continue
+        kind, old, new = r.get("kind"), r.get("old"), r.get("new")
+        if kind in ("dataset", "subset") and old and new and old != new:
+            m[(kind, str(old))] = str(new)
+    return m
+
+
 def repoint_pretty(doc, rewrites) -> int:
     """Apply a list of ``{kind, old, new, win?}`` rewrites to every string in ``doc`` (mutated
-    in place). Returns the total number of substitutions made (0 ⇒ nothing to save)."""
+    in place). Returns the total number of substitutions made (0 ⇒ nothing to save).
+
+    Covers two ref shapes: ``{{token}}`` strings (regex ``pairs``) AND a widget's structured
+    ``binding: {src, id}`` — the latter is NOT a token string, so a dataset/subset rename would
+    otherwise orphan every widget bound to it (empty render + a 404 on the row fetch)."""
     pairs = _compile(rewrites)
-    if not pairs:
+    binds = _bind_map(rewrites)
+    if not pairs and not binds:
         return 0
     count = 0
 
@@ -76,6 +94,7 @@ def repoint_pretty(doc, rewrites) -> int:
         return s
 
     def walk(o) -> None:
+        nonlocal count
         if isinstance(o, list):
             for i, v in enumerate(o):
                 if isinstance(v, str):
@@ -83,6 +102,11 @@ def repoint_pretty(doc, rewrites) -> int:
                 else:
                     walk(v)
         elif isinstance(o, dict):
+            # widget binding: {src: dataset|subset, id: <renamed>} — repoint the bare id
+            new = binds.get((o.get("src"), o.get("id")))
+            if new is not None:
+                o["id"] = new
+                count += 1
             for k, v in o.items():
                 if isinstance(v, str):
                     o[k] = fix(v)

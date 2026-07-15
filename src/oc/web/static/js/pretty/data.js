@@ -15,6 +15,7 @@ import { pathGet } from "./path.js";
 import * as dsevents from "../graph/dsevents.js";
 import { singleFlight } from "../singleflight.js";
 import * as hub from "../hub.js";
+import { log } from "../log.js";
 
 let game = null;
 let timer = null;
@@ -144,6 +145,10 @@ export function publish(widgetId, value) {
 // slow subset compute during a live sweep) must not be dropped — else the bound widget stalls on
 // stale data until the next fallback tick. The latest request runs once the current one ends.
 function fetchKey(key) { singleFlight(`pd:${key}`, () => _fetchKey(key)); }
+// Keys whose source 404'd (a renamed/removed dataset or subset a binding still points at).
+// Logged ONCE per dead key so the poll doesn't spam the logbar; cleared on a later success so a
+// recreated ref warns again if it later disappears.
+const _dead = new Set();
 async function _fetchKey(key) {
     if (!game || !isOnline()) return;        // don't hammer a paused/unreachable backend
     try {
@@ -152,12 +157,21 @@ async function _fetchKey(key) {
         else if (key.startsWith("dataset:")) value = (await papi.datasetRows(game, key.slice(8))).records || [];
         else if (key.startsWith("subset:")) value = (await papi.subsetRows(game, key.slice(7))).rows || [];
         else return;
+        _dead.delete(key);   // fetched fine — clear any stale dead-ref warning
         const sig = JSON.stringify(value);
         if (_sig.get(key) === sig) { _cache.set(key, value); return; }   // unchanged -> no notify
         _sig.set(key, sig);
         _cache.set(key, value);
         notify(key);
-    } catch { /* transient fetch error — keep last cache, retry next tick */ }
+    } catch (e) {
+        // A 404 means the bound dataset/subset no longer exists (renamed/removed) — surface it in
+        // the logbar once. Other errors are transient (network/paused) — stay silent and retry.
+        if (String(e?.message).startsWith("404 ") && !_dead.has(key)) {
+            _dead.add(key);
+            const [kind, id] = key.split(/:(.*)/s);
+            log(`${kind} "${id}" no longer exists — a widget still points at it`, "warn");
+        }
+    }
 }
 
 // Force an immediate refetch of one key (e.g. right after a write) — bound widgets update at
