@@ -597,7 +597,7 @@ const ROUTE = {
 // (e.g. after flipping __route.corners to "square").
 if (typeof window !== "undefined") {
     window.__route = ROUTE;
-    window.__reroute = () => { routeCache = new Map(); routeHash = ""; hierPassCache = new Map(); drawEdges(); };   // force a full recompute
+    window.__reroute = () => { routeCache = new Map(); routeHash = ""; hierPassCache = new Map(); ensureRouteWorker()?.postMessage({ reset: true }); drawEdges(); };   // force a full recompute
     // read-only e2e introspection (playwright): the routed geometry keyed by `${from} ${to}`, plus
     // every node's world rect — lets a test assert no edge passes through a non-endpoint node.
     window.__routes = () => { const o = {}; for (const [k, c] of routeCache) o[k] = { pts: c.pts, d1: c.d1, d2: c.d2 }; return o; };
@@ -648,6 +648,27 @@ let gateFaces = new Map();      // "key|gid" -> gate face last frame (hierRoute 
 let hierPassCache = new Map();  // "outer"/"inner:<gid>" -> {sig,res}: memoised sub-pass routes (per-pass cache)
 let routeRaf = null;            // pending requestAnimationFrame handle (one in flight at a time)
 
+// The A* pass (route.js/hierRoute.js/decollide.js) is pure DOM-free compute, so it runs in its own
+// module worker — kept off the main thread so a big relayout (boot settle, fit-all, drag-release on
+// a large graph) doesn't hitch panning/input. gateFaces/hierPassCache above are the worker's own
+// cross-frame caches when the worker path is live; the SAME variables are reused as main-thread
+// state on the no-Worker fallback below (only one path runs at a time, never both).
+let routeWorker = null;
+let routeReqId = 0;      // last request id posted; a stale response (reqId mismatch) is discarded
+let routeInflight = false;
+function ensureRouteWorker() {
+    if (routeWorker || typeof Worker === "undefined") return routeWorker;
+    routeWorker = new Worker(new URL("./route.worker.js", import.meta.url), { type: "module" });
+    routeWorker.onmessage = (e) => onRouteResult(e.data || {});
+    return routeWorker;
+}
+function onRouteResult({ reqId, routes, error }) {
+    if (reqId !== routeReqId) return;   // superseded by a newer request — drop it
+    routeInflight = false;
+    if (error) { setStatus(`route failed: ${error}`); return; }   // surface instead of silently using elbows
+    applyRoutes(routes);
+}
+
 // Everything physical is an obstacle: nodes AND panels. Lines weave around all of
 // them, not just the two rects they connect.
 function obstacleRects({ boxes = true } = {}) {
@@ -673,16 +694,46 @@ function linksSig(links) {
     return s;
 }
 
+// Suspend routing across a multi-step restore (undo/redo) so intermediate layout states — restored
+// positions with still-stale sizes, then a second pass once sizes are re-stamped — don't each fire
+// their own A* pass. The caller resumes and calls flushEdges() once, after every step has landed,
+// for exactly one route at the FINAL (correct) geometry. No timer (unlike freezeRouting) — the
+// caller owns the exact window via try/finally.
+let routeSuspended = false;
+export function suspendRouting() { routeSuspended = true; }
+export function resumeRouting() { routeSuspended = false; }
+
 function scheduleRouting() {
     if (!ROUTE.enabled) return;
+    if (routeSuspended) return;          // caller (e.g. history restore) is mid multi-step layout swap;
+                                         // it will flushEdges() once, itself, when done
     if (draggingNodes) return;           // no re-routing mid-drag — lines stay frozen (stale ones greyed);
                                          // the single clean route runs on settle
     if (routingFrozen) return;           // OCR in progress -> don't re-route (lines would wiggle)
     if (boot.phase) return;              // boot storm -> skip the A*/deCollide rAF hog; one clean pass runs on settle
     if (drawSig === routeHash) return;   // routes already current (drawSig set in drawEdges)
     if (routeRaf) return;                // one recompute already queued for the next frame
+    if (routeInflight) return;           // a worker pass is already in flight; its result will re-check drawSig
     routeRaf = requestAnimationFrame(runRouting);
 }
+
+// Adopt a routed result (from the worker OR the inline fallback) into the cache and repaint.
+// Re-derives the current link list rather than trusting whatever was live when the request was
+// posted: a link that vanished mid-flight is dropped here, a brand-new one just keeps its
+// provisional elbow (paintCanvas) until the NEXT pass routes it — exactly as a same-frame result
+// behaved before this was made async.
+function applyRoutes(res) {
+    const links = buildLinks();
+    const fresh = new Map();
+    for (const l of links) { const r = res.get(l.key); if (r && r.pts && r.pts.length >= 2) fresh.set(l.key, r); }
+    routeCache = fresh;                 // also drops keys for links that vanished
+    routeHash = pendingSig;
+    tweenRoutes = true;   // a fresh route landed -> the next drawEdges animates each changed line into its
+                          // new shape (interpolated morph) instead of snapping — feels far less janky
+    drawEdges();
+}
+
+let pendingSig = "";   // signature of the in-flight (or just-completed inline) routing pass
 
 function runRouting() {
     routeRaf = null;                     // this frame's pass is running; let drawEdges queue the next one
@@ -690,93 +741,101 @@ function runRouting() {
     const sig = linksSig(links);
     if (sig === routeHash) return;       // nothing moved since the last pass
     try {
-        // The whole graph is routed in one pass (the engine needs every line together for face-
-        // selection + nudging). Obstacles = every node; soft obstacles = groups. Carry each line's
-        // last-frame faces in as hysteresis so a tiny move can't flip a route's whole shape.
-        const nodes = [];
-        for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) nodes.push({ id: n.id, x: r.x, y: r.y, w: r.w, h: r.h }); }
-        // pass the REAL rendered box + title-band height (groupBox uses PAD=40 + titleH, NOT the
-        // router's member-bounds guess) so the heading soft/hard rect lands exactly on the banner.
-        const boxOf = new Map(groups.groupBoxes().map((b) => [b.id, b]));
-        const grps = groups.allGroups().map((g) => { const b = boxOf.get(g.id); return { members: [...g.members], box: b ? b.box : null, bandH: b ? b.bandH : 0 }; });
-        // a DATA out-line leaves no pinned face: A* picks whichever of the 4 faces routes cleanest
-        // (the port dot follows the chosen face). Watch/trigger control lines KEEP their semantic pin
-        // (watch=L; fires=the side facing its targets) so the line leaves the port it belongs to; two
-        // that share a face just fan apart. `port` still flags every port line so the router fans +
-        // centres its endpoint on whatever face it lands on.
-        const dataOut = (l) => l.portKind === "out" && PORT_OUT_SRC.some((p) => l.aId.startsWith(p));
-        const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, port: l.port, pinSrc: (l.port && !dataOut(l)) ? sideForPort(l) : null, tether: TETHER_KINDS.some((k) => l.cls.split(" ").includes(k)),
-            // watch ends in a diamond sunk slightly into the watched node; trigger ends in a hollow ring
-            // pulled back by its radius (3px) so the ring centres ON the fired node's edge. The data-flow
-            // arrow needs NO inset: its marker is centred (refX=5) so it already straddles the edge, and
-            // insetting would only push the line stub visibly inside the card (flow lines draw on top).
-            insetEnd: l.portKind === "watch" ? 3 : (/\btrigger\b/.test(l.cls) ? 3 : 0) }));
-        // every data source parks its out-port on the negotiated shared face (`outSide`); the router
-        // keeps arriving lines off that dot when it's idle (`reserveMid`). A trigger's fires-port parks
-        // on the side facing its targets (default R when it fires nothing).
-        const outPorts = new Map();
-        for (const n of nodes) {
-            if (PORT_OUT_SRC.some((p) => n.id.startsWith(p))) outPorts.set(n.id, outSide);       // negotiated shared face
-            else if (n.id.startsWith("trigger:")) outPorts.set(n.id, triggerSides.get(n.id)?.fires || "R");   // faces its targets
-        }
-        const prevSides = new Map();
-        for (const [k, c] of routeCache) if (c.d1) prevSides.set(k, { d1: c.d1, d2: c.d2 });
-        // subgroup + super-group TITLE bands as extra avoid rects: subgroup band sits at the TOP of
-        // its box (height bandH), super-group label band at the BOTTOM (SUPER_LABEL_BAND tall).
-        const titleBands = [];
-        for (const b of groups.subGroupBoxes()) if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.w, y1: b.box.y + b.bandH });
-        // an ungated group is dropped from the hard-box hierarchy below (its members route as free
-        // nodes, straight through its footprint) but its TITLE still reads as a heading — feed the band
-        // in here the same way a subgroup's is, so lines still dodge it even though the box no longer does.
-        for (const b of groups.groupBoxes()) if (b.gate === false && b.box && b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.w, y1: b.box.y + b.bandH });
-        // super-group: avoid only the watermark TEXT, not the whole bottom band — most of the band
-        // is empty canvas the lines should be free to cross.
-        for (const b of groups.superGroupBoxes()) {
-            const r = b.labelRect;
-            if (r) titleBands.push({ x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h });
-            else if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
-        }
-        const config = { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell };
-        let res;
-        if (ROUTE.hier) {
-            // hierarchical: collapse each group to a hard box and funnel its crossing lines through gates.
-            // groupOf() returns the group RECORD; hierRoute/gates key off the group id. An ungated group
-            // is left OUT of this map entirely: boxless to hierRoute/classifyAndGate means its members
-            // route as free outer nodes and no gate is generated — fully transparent to the router (its
-            // title band alone is still fed in above).
-            const groupBox = new Map();
-            for (const b of groups.groupBoxes()) if (b.box && b.gate !== false) groupBox.set(b.id, { x: b.box.x, y: b.box.y, w: b.box.w, h: b.box.h, bandH: b.bandH || 0 });
-            const gof = (id) => { const r = groups.groupOf(id); return r ? r.id : null; };
-            const out = hierRoute(nodes, groupBox, gof, edges, { prevSides, outPorts, titleBands, config, laneGap: ROUTE.cell, prevFace: gateFaces, passCache: hierPassCache });
-            res = out.routes; gateFaces = out.faces; hierPassCache = out.passCache;
-            // hier's isolated passes are mutually blind, so two can route a wire onto the identical world
-            // coord (nudge only de-overlaps within a pass). Fan those coincident runs apart against every
-            // obstacle (nodes + group boxes) + title band so a shift never crosses one. (single-pass
-            // routeGraph below needs no such pass — it nudges the whole graph together.)
-            if (ROUTE.decollide) {
-                // Group boxes are CONTAINERS, not walls: a run inside its own box may still slide into
-                // a parallel lane so long as it stays INSIDE the box. Freezing it (what a straddling
-                // wall does) is what left sibling skip-edges stacked on one coord over a node row. Pass
-                // boxes apart from the hard walls (nodes + title bands) a lane shift can't cross.
-                const containers = groups.groupBoxes().filter((b) => b.box && b.gate !== false).map((b) => b.box);
-                const walls = obstacleRects({ boxes: false })
-                    .concat(titleBands.map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 })));
-                res = deCollide(res, walls, { laneGap: ROUTE.cell, containers });
-            }
-        } else {
-            res = routeGraph(nodes, grps, edges, { prevSides, outPorts, titleBands, config });
-        }
-        const fresh = new Map();
-        for (const l of links) { const r = res.get(l.key); if (r && r.pts && r.pts.length >= 2) fresh.set(l.key, r); }
-        routeCache = fresh;                 // also drops keys for links that vanished
-        routeHash = sig;
-    } catch (err) {
-        setStatus(`route failed: ${err.message}`);   // surface instead of silently using elbows
+    // The whole graph is routed in one pass (the engine needs every line together for face-
+    // selection + nudging). Obstacles = every node; soft obstacles = groups. Carry each line's
+    // last-frame faces in as hysteresis so a tiny move can't flip a route's whole shape.
+    const nodes = [];
+    for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) nodes.push({ id: n.id, x: r.x, y: r.y, w: r.w, h: r.h }); }
+    // pass the REAL rendered box + title-band height (groupBox uses PAD=40 + titleH, NOT the
+    // router's member-bounds guess) so the heading soft/hard rect lands exactly on the banner.
+    const boxOf = new Map(groups.groupBoxes().map((b) => [b.id, b]));
+    const grps = groups.allGroups().map((g) => { const b = boxOf.get(g.id); return { members: [...g.members], box: b ? b.box : null, bandH: b ? b.bandH : 0 }; });
+    // a DATA out-line leaves no pinned face: A* picks whichever of the 4 faces routes cleanest
+    // (the port dot follows the chosen face). Watch/trigger control lines KEEP their semantic pin
+    // (watch=L; fires=the side facing its targets) so the line leaves the port it belongs to; two
+    // that share a face just fan apart. `port` still flags every port line so the router fans +
+    // centres its endpoint on whatever face it lands on.
+    const dataOut = (l) => l.portKind === "out" && PORT_OUT_SRC.some((p) => l.aId.startsWith(p));
+    const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, port: l.port, pinSrc: (l.port && !dataOut(l)) ? sideForPort(l) : null, tether: TETHER_KINDS.some((k) => l.cls.split(" ").includes(k)),
+        // watch ends in a diamond sunk slightly into the watched node; trigger ends in a hollow ring
+        // pulled back by its radius (3px) so the ring centres ON the fired node's edge. The data-flow
+        // arrow needs NO inset: its marker is centred (refX=5) so it already straddles the edge, and
+        // insetting would only push the line stub visibly inside the card (flow lines draw on top).
+        insetEnd: l.portKind === "watch" ? 3 : (/\btrigger\b/.test(l.cls) ? 3 : 0) }));
+    // every data source parks its out-port on the negotiated shared face (`outSide`); the router
+    // keeps arriving lines off that dot when it's idle (`reserveMid`). A trigger's fires-port parks
+    // on the side facing its targets (default R when it fires nothing).
+    const outPorts = new Map();
+    for (const n of nodes) {
+        if (PORT_OUT_SRC.some((p) => n.id.startsWith(p))) outPorts.set(n.id, outSide);       // negotiated shared face
+        else if (n.id.startsWith("trigger:")) outPorts.set(n.id, triggerSides.get(n.id)?.fires || "R");   // faces its targets
+    }
+    const prevSides = new Map();
+    for (const [k, c] of routeCache) if (c.d1) prevSides.set(k, { d1: c.d1, d2: c.d2 });
+    // subgroup + super-group TITLE bands as extra avoid rects: subgroup band sits at the TOP of
+    // its box (height bandH), super-group label band at the BOTTOM (SUPER_LABEL_BAND tall).
+    const titleBands = [];
+    for (const b of groups.subGroupBoxes()) if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.w, y1: b.box.y + b.bandH });
+    // an ungated group is dropped from the hard-box hierarchy below (its members route as free
+    // nodes, straight through its footprint) but its TITLE still reads as a heading — feed the band
+    // in here the same way a subgroup's is, so lines still dodge it even though the box no longer does.
+    for (const b of groups.groupBoxes()) if (b.gate === false && b.box && b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.w, y1: b.box.y + b.bandH });
+    // super-group: avoid only the watermark TEXT, not the whole bottom band — most of the band
+    // is empty canvas the lines should be free to cross.
+    for (const b of groups.superGroupBoxes()) {
+        const r = b.labelRect;
+        if (r) titleBands.push({ x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h });
+        else if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
+    }
+    const config = { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell };
+    // hierarchical: collapse each group to a hard box and funnel its crossing lines through gates.
+    // groupOf() returns the group RECORD; hierRoute/gates key off the group id. An ungated group
+    // is left OUT of this map entirely: boxless to hierRoute/classifyAndGate means its members
+    // route as free outer nodes and no gate is generated — fully transparent to the router (its
+    // title band alone is still fed in above).
+    const groupBox = new Map();
+    for (const b of groups.groupBoxes()) if (b.box && b.gate !== false) groupBox.set(b.id, { x: b.box.x, y: b.box.y, w: b.box.w, h: b.box.h, bandH: b.bandH || 0 });
+    // hier's isolated passes are mutually blind, so two can route a wire onto the identical world
+    // coord (nudge only de-overlaps within a pass). Fan those coincident runs apart against every
+    // obstacle (nodes + group boxes) + title band so a shift never crosses one. (single-pass
+    // routeGraph needs no such pass — it nudges the whole graph together.)
+    // Group boxes are CONTAINERS, not walls: a run inside its own box may still slide into
+    // a parallel lane so long as it stays INSIDE the box. Freezing it (what a straddling
+    // wall does) is what left sibling skip-edges stacked on one coord over a node row. Pass
+    // boxes apart from the hard walls (nodes + title bands) a lane shift can't cross.
+    const containers = groups.groupBoxes().filter((b) => b.box && b.gate !== false).map((b) => b.box);
+    const walls = obstacleRects({ boxes: false })
+        .concat(titleBands.map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 })));
+    pendingSig = sig;
+
+    const worker = ensureRouteWorker();
+    if (worker) {
+        const nodeGroup = new Map();
+        for (const n of nodes) { const r = groups.groupOf(n.id); if (r) nodeGroup.set(n.id, r.id); }
+        routeInflight = true;
+        worker.postMessage({
+            reqId: ++routeReqId, hier: ROUTE.hier, decollide: ROUTE.decollide,
+            nodes, grps, groupBox, nodeGroup, edges, outPorts, prevSides, titleBands, config,
+            laneGap: ROUTE.cell, containers, walls,
+        });
         return;
     }
-    tweenRoutes = true;   // a fresh route landed -> the next drawEdges animates each changed line into its
-                          // new shape (interpolated morph) instead of snapping — feels far less janky
-    drawEdges();
+    // No Worker (e.g. a non-browser test runner) — run the compute inline, synchronously, same as
+    // before this change. gateFaces/hierPassCache are reused as main-thread state on this path only.
+    let res;
+    if (ROUTE.hier) {
+        const gof = (id) => { const r = groups.groupOf(id); return r ? r.id : null; };
+        const out = hierRoute(nodes, groupBox, gof, edges, { prevSides, outPorts, titleBands, config, laneGap: ROUTE.cell, prevFace: gateFaces, passCache: hierPassCache });
+        res = out.routes; gateFaces = out.faces; hierPassCache = out.passCache;
+        if (ROUTE.decollide) res = deCollide(res, walls, { laneGap: ROUTE.cell, containers });
+    } else {
+        res = routeGraph(nodes, grps, edges, { prevSides, outPorts, titleBands, config });
+    }
+    applyRoutes(res);
+    } catch (err) {
+        routeInflight = false;
+        setStatus(`route failed: ${err.message}`);   // surface instead of silently using elbows
+    }
 }
 
 // Freeze edge re-routing while OCR runs. The image/cutout canvases redraw every read and
