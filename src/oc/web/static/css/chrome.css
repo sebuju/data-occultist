@@ -33,7 +33,18 @@
 .titlebar .tb-btn:hover { background: var(--line); color: var(--text); }
 .titlebar .tb-close:hover { background: var(--danger); color: var(--on-danger); }
 
+/* Fixed 42px bar OVER the graph (not in flow) — its content mutating (game select filling,
+   gpu/kill labels un-hiding, dirtybar toggling) must NOT relayout .graphwrap (flex sibling) and
+   the whole graph subtree with it. z above floating panels (40/50), below ctxmenu/modal (1000).
+   Height is fixed so floatwin's _topGap is a constant, never a measured .offsetHeight. */
 .topbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 42px;
+    box-sizing: border-box;
+    z-index: 100;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -41,6 +52,8 @@
     background: var(--panel);
     border-bottom: 1px solid var(--line);
 }
+/* desktop pywebview: clear the 30px in-flow titlebar (titlebar.js adds html.desktop) */
+html.desktop .topbar { top: 30px; }
 
 /* Frameless desktop-window resize grips (built by desktop_resize.js, desktop-only — a
    browser never creates them). Thin transparent strips on each edge + small corner squares
@@ -67,6 +80,25 @@
     margin: 0 6px;
 }
 .status { color: var(--muted); min-width: 12ch; }
+
+/* narrow-window tools dropdown: the ☰ button only shows below the breakpoint; above it the tools
+   sit inline (button hidden). At <=600px .topbar-tools becomes a fixed dropdown under the bar,
+   revealed by toggling .open (panels_init.js). */
+.tools-menu-btn { display: none; }
+@media (max-width: 600px) {
+    .tools-menu-btn { display: inline-flex; margin-left: auto; }
+    .topbar-tools {
+        position: fixed; top: 42px; right: 8px; z-index: 101;
+        margin-left: 0;
+        flex-direction: column; align-items: stretch; gap: 6px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+        padding: 6px; box-shadow: 0 8px 24px var(--shadow);
+        display: none;
+    }
+    html.desktop .topbar-tools { top: 72px; }
+    .topbar-tools.open { display: flex; }
+    .topbar-tools .spacer { display: none; }   /* the vertical divider is meaningless stacked */
+}
 
 /* capture picker: a dropdown with Live (stashes) / Precaptures (frames by session) tabs */
 .cap-picker { position: relative; }
@@ -146,7 +178,6 @@ legend { color: var(--muted); padding: 0 6px; }
 }
 .panel-fs > summary {
     cursor: pointer;
-    padding: 8px 10px;
     color: var(--text);
     font-weight: 500;
     list-style: none;
@@ -155,7 +186,7 @@ legend { color: var(--muted); padding: 0 6px; }
 .panel-fs > summary::-webkit-details-marker { display: none; }
 .panel-fs > summary::before { content: "▸ "; color: var(--muted); }
 .panel-fs[open] > summary::before { content: "▾ "; }
-.fs-body { padding: 10px; }
+.fs-body { padding: 0px 10px; }
 
 .games {
     max-width: 920px;

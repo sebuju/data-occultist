@@ -18,20 +18,24 @@ const GAP = 8;    // padding between abutting panels — ALSO the screen-edge + 
 const RESET_W = 300;   // every panel resets to this width (uniform), whatever its default
 
 // ---- usable-area reserves: the SINGLE source of every layout margin -------------------------
-// One truth for "where a floating panel may live": the topbar up top, the log bar below (its full
-// height when expanded, head strip when collapsed, nothing when slid off-screen in pretty view), a
-// GAP to the screen edges. clamp / snap / findFreeSlot / fitHeight / applySize ALL derive from
-// these — no place re-spells "innerHeight - topbar - logbar" — and they're published as CSS vars
-// so CSS-sized panels (max-height) reserve EXACTLY what the JS does.
-const _topGap = () => (document.querySelector(".topbar")?.offsetHeight || 48) + GAP;
-const _botGap = () => {
-    const lb = document.querySelector(".logbar");
-    if (!lb || document.body.classList.contains("pretty-view")) return GAP;
-    const h = lb.classList.contains("open")
-        ? lb.offsetHeight                                       // expanded: clear the full bar
-        : (lb.querySelector(".log-head")?.offsetHeight || 0);   // collapsed: just the head strip
-    return h + GAP;
-};
+// One truth for "where a floating panel may live": the topbar up top, the collapsed log strip
+// below (nothing when slid off-screen in pretty view), a GAP to the screen edges. clamp / snap /
+// findFreeSlot / fitHeight / applySize ALL derive from these — no place re-spells
+// "innerHeight - topbar - logbar" — and they're published as CSS vars so CSS-sized panels
+// (max-height) reserve EXACTLY what the JS does.
+// The topbar + collapsed logbar are FIXED-height chrome (chrome.css .topbar 42px, overlays.css
+// collapsed logbar 25px) drawn OVER the graph/panels, not in flow — so their heights never need
+// measuring: _topGap/_botGap are pure constants, zero .offsetHeight reads, zero forced layout on
+// any of the dozens of callers (snap/clamp/place, and snapEdgeVal on every drag mousemove). An
+// OPEN logbar overlays the panels (z 1100 > panel z), so the bottom reserve doesn't grow when it
+// opens — _botGap stays the collapsed strip. pretty-view slides both bars off-screen -> just GAP.
+const TOPBAR_H = 42;   // MUST match chrome.css .topbar height
+const LOG_H = 25;      // MUST match overlays.css collapsed .log-head height
+// desktop pywebview stacks a 30px in-flow titlebar above the fixed topbar (chrome.css html.desktop);
+// classList.contains is a cheap live read (no geometry -> no forced layout).
+const _desktopTop = () => (document.documentElement.classList.contains("desktop") ? 30 : 0);
+const _topGap = () => _desktopTop() + TOPBAR_H + GAP;
+const _botGap = () => document.body.classList.contains("pretty-view") ? GAP : LOG_H + GAP;
 // The usable rectangle edges (px), derived once from the reserves above.
 const _usableTop = () => _topGap();
 const _usableBottom = () => window.innerHeight - _botGap();
@@ -41,12 +45,18 @@ const _usableW = () => Math.max(180, _usableRight() - _usableLeft());
 const _usableH = () => Math.max(90, _usableBottom() - _usableTop());
 
 // Mirror the reserves onto <html> as CSS vars so CSS-capped panels reserve the SAME margins the JS
-// clamp does (the open-log case included). Written synchronously wherever the area changes.
+// clamp does. Inputs are constants now (fixed chrome heights), so this effectively writes once at
+// seed + on window resize / pretty-view toggle — but keep the unchanged-value guard so any extra
+// call is a cheap no-op (no DOM write, no style recalc).
+let _lastTop = null, _lastBot = null, _lastGap = null;
 function _publishMargins() {
+    const top = _usableTop(), bot = _botGap(), gap = GAP;
+    if (top === _lastTop && bot === _lastBot && gap === _lastGap) return;
+    _lastTop = top; _lastBot = bot; _lastGap = gap;
     const s = document.documentElement.style;
-    s.setProperty("--fw-top", `${_usableTop()}px`);
-    s.setProperty("--fw-bot", `${_botGap()}px`);
-    s.setProperty("--fw-gap", `${GAP}px`);
+    s.setProperty("--fw-top", `${top}px`);
+    s.setProperty("--fw-bot", `${bot}px`);
+    s.setProperty("--fw-gap", `${gap}px`);
 }
 
 // ---- one layout watcher ---------------------------------------------------------------------
@@ -82,19 +92,17 @@ function _scheduleReflow() {
         _publishMargins();
         _reflowPanels(dw);               // user-paced -> run now (no coalescing needed)
     });
-    // Observe the bars that resize the usable area without a window resize. RO catches size changes;
-    // a class MutationObserver (fires on a microtask, even backgrounded) catches the log's open/
-    // collapse + boot->normal transitions where the pixel size doesn't change but the reserve does.
-    // The topbar only needs the RO (its height changes when tools swap; its class toggles constantly).
-    const watch = (sel, watchClass) => {
-        const el = document.querySelector(sel);
-        if (!el) return;
-        observeResize(el, () => _scheduleReflow());
-        if (watchClass && typeof MutationObserver !== "undefined")
-            new MutationObserver(() => _scheduleReflow()).observe(el, { attributes: true, attributeFilter: ["class"] });
-    };
-    watch(".logbar", true);
-    watch(".topbar", false);
+    // The topbar/collapsed-logbar heights are constant now, so the ONLY non-window-resize event
+    // that changes the usable area is entering/leaving pretty-view (body.pretty-view toggles the
+    // bottom reserve between GAP and the log strip — _botGap). One class MutationObserver on <body>
+    // covers it; the old per-bar ResizeObserver + logbar-class observers are gone (heights fixed).
+    if (typeof MutationObserver !== "undefined") {
+        let prettyWas = document.body.classList.contains("pretty-view");
+        new MutationObserver(() => {
+            const pretty = document.body.classList.contains("pretty-view");
+            if (pretty !== prettyWas) { prettyWas = pretty; _scheduleReflow(); }
+        }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    }
 })();
 
 // Rects of the OTHER visible panels (the things to snap against).

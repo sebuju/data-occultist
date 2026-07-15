@@ -82,7 +82,10 @@
 .logbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1100;
     background: var(--log-bg); border-top: 1px solid var(--line);
     font: var(--fs-sm)/1.55 var(--font-mono); color: var(--log-fg); }
-.log-head { display: flex; align-items: center; gap: 8px; padding: 3px 10px; cursor: pointer; user-select: none; }
+/* fixed 25px collapsed strip so floatwin's _botGap is a constant, never a measured height. When
+   OPEN the log-body grows UPWARD at z-index 1100 (above panels' 40/50), i.e. it draws OVER the
+   panels rather than displacing them — so the reserve stays 25px whether open or closed. */
+.log-head { display: flex; align-items: center; gap: 8px; height: 25px; box-sizing: border-box; padding: 0 10px; cursor: pointer; user-select: none; }
 .log-prompt { color: var(--accent); font-weight: 600; }
 .log-latest { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .log-toggle { color: var(--muted); transition: transform 0.15s; }
