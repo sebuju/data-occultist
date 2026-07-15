@@ -84,6 +84,25 @@ def test_clear_wipes_map():
     assert s.register_records("hp") == []
 
 
+def test_rename_carries_held_map_to_new_id():
+    # a register rename changes the client-side profile id, but the held map lives ONLY in
+    # LiveSession memory keyed by the OLD id -- without a rekey the renamed node reads empty
+    # until the next tick repopulates it from readouts (the bug this guards).
+    s = _session()
+    s._feed_registers({"health": 487, "shield": 120}, {"health": 0.9, "shield": 0.8})
+    s.rename_register("hp", "vitals")
+    assert s.register_records("hp") == []
+    rows = {r["key"]: r for r in s.register_records("vitals")}
+    assert rows["health"]["value"] == 487
+    assert rows["shield"]["value"] == 120
+
+
+def test_rename_missing_register_is_a_no_op():
+    s = _session()
+    s.rename_register("nope", "also_nope")   # no held map for "nope" -- must not raise
+    assert s.register_records("also_nope") == []
+
+
 def test_feed_holds_empty_value():
     # a readout that read empty (or dropped below confidence) must still push an entry, not be
     # skipped -- the full map hands "" for it (see TickResult.readouts_all), and the register

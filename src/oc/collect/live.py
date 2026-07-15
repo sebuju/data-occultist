@@ -314,6 +314,14 @@ class LiveSession:
         with self._lock:
             self._registers.pop(reg_id, None)
 
+    def rename_register(self, old_id: str, new_id: str) -> None:
+        """Carry a register's held map to its new id (client renamed the node). Without this the
+        map stays keyed under the stale id and the renamed node reads empty until the next
+        collector tick repopulates it from readouts."""
+        with self._lock:
+            if old_id in self._registers:
+                self._registers[new_id] = self._registers.pop(old_id)
+
     # ---- status ------------------------------------------------------------
 
     def debug(self, after: int = 0) -> dict:

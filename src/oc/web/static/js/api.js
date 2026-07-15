@@ -506,6 +506,15 @@ export async function clearRegister(game, id) {
     if (!r.ok) throw new Error(`clear register: ${r.status} ${await r.text()}`);
     return r.json();
 }
+// Carry the held map to the register's new id after a rename — else it reads empty under the
+// new id until the next collector tick repopulates it from readouts.
+export async function renameRegister(game, oldId, newId) {
+    const r = await tfetch(`/api/live/${encodeURIComponent(game)}/register/${encodeURIComponent(oldId)}/rename`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ new_id: newId }),
+    });
+    if (!r.ok) throw new Error(`rename register: ${r.status} ${await r.text()}`);
+    return r.json();
+}
 
 // Wipe a dataset's stored records + ledger.
 export async function clearDataset(game, dataset) {

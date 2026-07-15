@@ -7,7 +7,7 @@
 // and are imported back.
 import * as api from "../api.js";
 import * as hub from "../hub.js";
-import { model, nodeEls, setStatus, afterBoot } from "./state.js";
+import { model, nodeEls, setStatus } from "./state.js";
 import { h, frag } from "../dom.js";
 import { renameNode, movePos } from "./node_lifecycle.js";
 import { drawEdges } from "./routing.js";
@@ -262,7 +262,15 @@ function wireRegister(div, n) {
         renameNode(e.target, oldId,
             () => model.renameRegister(oldId, (e.target.value || "").trim()),
             () => movePos(`register:${oldId}`, `register:${x.id}`),
-            () => { render(); autosave(null); });
+            () => {
+                render(); autosave(null);
+                // the held map lives server-side keyed by the OLD id (LiveSession._registers) — carry
+                // it to the new id, then repaint; without this the renamed node reads empty until the
+                // next collector tick happens to repopulate it from readouts.
+                api.renameRegister(model.profile.name, oldId, x.id)
+                    .catch(() => {})
+                    .finally(() => refreshRegister(x.id));
+            });
     });
     // sources live IN the memory bank now: each held-value slot is a wired readout (trash to remove,
     // click to pan to its node) and the trailing "+" slot adds one. The bank (register_node.js)
@@ -293,11 +301,12 @@ function wireRegister(div, n) {
             setStatus(`cleared ${x.id}`);
         } catch (e) { setStatus(String(e.message || e)); }
     });
-    // show the persisted map + wired-source slots immediately on (re)build — a rebuild after boot
-    // (e.g. an out-port drag that added a source) lands here with the node mounted, so paint now;
-    // afterBoot covers the initial page load where the node isn't mounted yet when this first runs.
-    refreshRegister(x.id);
-    afterBoot(() => refreshRegister(x.id));
+    // show the persisted map + wired-source slots. wireRegister runs INSIDE buildNode, before the
+    // node is mounted (added to nodeEls/layer), so refreshRegister would no-op if called here
+    // directly. queueMicrotask defers past the synchronous render()/buildNode chain -> the node is
+    // mounted by the time this fires, on initial boot, a post-boot rebuild, AND undo/redo restore
+    // (afterBoot alone missed the restore case: it runs synchronously once boot.phase is false).
+    queueMicrotask(() => refreshRegister(x.id));
 }
 
 // ---- file-source node: parse a game log/config file into its dataset --------

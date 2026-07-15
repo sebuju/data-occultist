@@ -8,6 +8,7 @@ full collection pipeline in a background thread, writing to the same datasets th
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ...collect.live import LiveSession
 from ...profile import list_profiles
@@ -167,6 +168,20 @@ def clear_register(game: str, register_id: str):
     if s is not None:
         s.clear_register(register_id)
     return {"records": []}
+
+
+class _RegisterRename(BaseModel):
+    new_id: str
+
+
+@router.post("/{game}/register/{register_id}/rename")
+def rename_register(game: str, register_id: str, body: _RegisterRename):
+    """Carry a register's held map across a rename of its id. No-op when no live session runs
+    (the map lives only in the running session's memory; graceful like status)."""
+    s = _sessions.get(game)
+    if s is not None:
+        s.rename_register(register_id, body.new_id)
+    return {"ok": True}
 
 
 @router.get("/{game}/debug")
