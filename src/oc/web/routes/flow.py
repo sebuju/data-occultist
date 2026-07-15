@@ -7,6 +7,8 @@ import threading
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ...enrich.rowquery import distinct as row_distinct
+from ...enrich.rowquery import window as row_window
 from ...profile import list_profiles
 from ...runtime import load_live_profile
 from ...store import inspect, rows_at, store_for
@@ -22,6 +24,36 @@ router = APIRouter(prefix="/api/flow", tags=["flow"])
 # rev lives in the shared SQLite, so a collector process writing the DB invalidates us too.
 _VIEW_CACHE: dict[tuple[str, str], tuple[tuple, dict]] = {}
 _VIEW_LOCK = threading.Lock()
+
+# Rev-gated cache of a dataset's full row set + server column list, so the paginated `/page` and
+# `/distinct` endpoints (hit per keystroke while searching) don't re-`json.loads` + re-sort the whole
+# `current` table on every request. Keyed (game, dataset) -> (store.rev, rows, columns); a write bumps
+# the rev -> the entry is stale and recomputed. Mirrors _VIEW_CACHE (one snapshot per dataset).
+_DS_ROWS_CACHE: dict[tuple[str, str], tuple[int, list, list]] = {}
+_DS_ROWS_LOCK = threading.Lock()
+
+# Rows shipped per node in the boot batch — enough to fill a tall node + scroll buffer before the
+# first windowed `/page` fetch. The node then streams further windows on scroll/search/sort.
+BOOT_WINDOW = 80
+
+
+def _dataset_rows(game: str, dataset: str) -> tuple[list, list]:
+    """A dataset's full records (present + removed, the same set ``_detail`` shows so the client's
+    show-removed toggle still works) plus its server-authoritative column list, rev-cached. Returns
+    ``(rows, columns)``."""
+    store = _store(game, dataset)
+    store.ensure_loaded()
+    rev = store.rev
+    key = (game, dataset)
+    with _DS_ROWS_LOCK:
+        hit = _DS_ROWS_CACHE.get(key)
+        if hit is not None and hit[0] == rev:
+            return hit[1], hit[2]
+    rows = store.records(0)                    # present + removed, sorted present-first then by key
+    columns = store.summary()["columns"]       # sampled server-side; stable across pages (no plumbing)
+    with _DS_ROWS_LOCK:
+        _DS_ROWS_CACHE[key] = (rev, rows, columns)
+    return rows, columns
 
 
 @router.get("/{game}")
@@ -82,6 +114,41 @@ def _detail(store: DatasetStore, dataset: str, limit: int = 0) -> dict:
 @router.get("/{game}/dataset/{dataset}")
 def dataset_detail(game: str, dataset: str, limit: int = 0):
     return _detail(_store(game, dataset), dataset, limit)
+
+
+@router.get("/{game}/dataset/{dataset}/page")
+def dataset_page(game: str, dataset: str, q: str = "", sort: str = "", desc: bool = False,
+                 offset: int = 0, limit: int = 0, removed: bool = False):
+    """One window of a dataset for the server-backed node table: filter (``q`` — the same
+    AND/OR/NOT/glob grammar the client used to run), sort (``sort``/``desc``), slice
+    (``offset``/``limit``). ``total`` is the full match count (pre-slice) so the client scrollbar
+    spans the true size; ``columns`` is server-authoritative + stable across pages. ``removed``
+    includes soft-deleted rows (the node's show-removed toggle); ``has_removed`` tells the client
+    whether to offer that toggle at all."""
+    allrows, columns = _dataset_rows(game, dataset)
+    has_removed = any(r.get("present") is False for r in allrows)
+    rows = allrows if removed else [r for r in allrows if r.get("present") is not False]
+    w = row_window(rows, columns, q=q, sort=sort, desc=desc, offset=offset, limit=limit)
+    return {"rows": w["rows"], "total": w["total"], "columns": columns, "has_removed": has_removed}
+
+
+@router.get("/{game}/dataset/{dataset}/batches")
+def dataset_batches(game: str, dataset: str):
+    """The ledger (batches + recent history) WITHOUT the record dump — so a dataset node can keep
+    its batches tab + batch-count badge live without refetching every row (the records now stream
+    through ``/page``)."""
+    store = _store(game, dataset)
+    store.ensure_loaded()
+    return {"dataset": dataset, "batches": store.batches(80), "history": store.history(50)}
+
+
+@router.get("/{game}/dataset/{dataset}/distinct")
+def dataset_distinct(game: str, dataset: str, field: str, limit: int = 0):
+    """Distinct non-empty values of one column (present rows) — feeds the join-sample cycler that
+    used to scan the whole (client-held) row set."""
+    allrows, _cols = _dataset_rows(game, dataset)
+    present = [r for r in allrows if r.get("present") is not False]
+    return {"values": row_distinct(present, field, limit)}
 
 
 @router.get("/{game}/dataset/{dataset}/observations")
@@ -258,18 +325,43 @@ def _cached_view(game: str, profile, sid: str, store, fetch, vcache,
     return result
 
 
+def _subset_view(game: str, subset: str):
+    """``(sub, {columns, rows})`` for a view, off the rev-gated cache. Shared by the full-view,
+    paginated, and distinct endpoints so the compute/cache path never diverges."""
+    profile, sub = _subset(game, subset)   # 404s an unknown game / subset
+    store, fetch = _view_ctx(get_settings().data_dir, game, profile)
+    vcache = get_view_cache(game)
+    result = _cached_view(game, profile, subset, store, fetch, vcache)
+    vcache.save()   # no-op when nothing new was computed (dirty check)
+    return sub, result
+
+
 @router.get("/{game}/subset/{subset}")
 def subset_view(game: str, subset: str):
     """Compute a view: outer-join its sources (datasets OR other views) on the shared key,
     then filter + derive + sort. View inputs are computed first (dependency order), so an
     upstream view's derived columns feed downstream. Recomputed from current records, so it
     tracks updates. Input cycles resolve to empty rather than looping."""
-    profile, sub = _subset(game, subset)
-    store, fetch = _view_ctx(get_settings().data_dir, game, profile)
-    vcache = get_view_cache(game)
-    result = _cached_view(game, profile, subset, store, fetch, vcache)
-    vcache.save()   # no-op when nothing new was computed (dirty check)
+    sub, result = _subset_view(game, subset)
     return {"subset": subset, "datasets": sub.inputs(), **result}
+
+
+@router.get("/{game}/subset/{subset}/page")
+def subset_page(game: str, subset: str, q: str = "", sort: str = "", desc: bool = False,
+                offset: int = 0, limit: int = 0):
+    """One window of a view — the ad-hoc query/sort/slice sits ON TOP of the view's own configured
+    filters/sort/limit (which already ran in :func:`_cached_view`). ``total`` is the full match
+    count; ``columns`` is the view's server column list."""
+    _sub, result = _subset_view(game, subset)
+    columns = result["columns"]
+    w = row_window(result["rows"], columns, q=q, sort=sort, desc=desc, offset=offset, limit=limit)
+    return {"rows": w["rows"], "total": w["total"], "columns": columns}
+
+
+@router.get("/{game}/subset/{subset}/distinct")
+def subset_distinct(game: str, subset: str, field: str, limit: int = 0):
+    _sub, result = _subset_view(game, subset)
+    return {"values": row_distinct(result["rows"], field, limit)}
 
 
 class _DetailsReq(BaseModel):
@@ -298,7 +390,17 @@ def flow_details(game: str, req: _DetailsReq):
     datasets: dict[str, dict] = {}
     for ds in dict.fromkeys(req.datasets):   # dedupe, keep order
         try:
-            datasets[ds] = _detail(store(ds), ds)
+            st = store(ds)
+            st.ensure_loaded()
+            allrows = st.records(0)                      # present + removed (the show-removed toggle needs both)
+            columns = st.summary()["columns"]
+            with _DS_ROWS_LOCK:                          # warm the /page cache off the boot read
+                _DS_ROWS_CACHE[(game, ds)] = (st.rev, allrows, columns)
+            present = [r for r in allrows if r.get("present") is not False]
+            w = row_window(present, columns, offset=0, limit=BOOT_WINDOW)
+            datasets[ds] = {"dataset": ds, "columns": columns, "total": w["total"], "rows": w["rows"],
+                            "has_removed": any(r.get("present") is False for r in allrows),
+                            "batches": st.batches(80), "history": st.history(50)}
         except Exception:
             continue   # a bad / disk-only id must not sink the rest of the batch
 
@@ -310,8 +412,40 @@ def flow_details(game: str, req: _DetailsReq):
             continue
         try:
             result = _cached_view(game, profile, sid, store, fetch, vcache, batch_cache)
-            subsets[sid] = {"subset": sid, "datasets": sub.inputs(), **result}
+            columns = result["columns"]
+            w = row_window(result["rows"], columns, offset=0, limit=BOOT_WINDOW)
+            subsets[sid] = {"subset": sid, "datasets": sub.inputs(), "columns": columns,
+                            "total": w["total"], "rows": w["rows"]}
         except Exception:
             continue
     vcache.save()   # one write for the whole batch, not one per subset
     return {"datasets": datasets, "subsets": subsets}
+
+
+class _ResolveReq(BaseModel):
+    tokens: list[str] = []
+
+
+@router.post("/{game}/resolve")
+def flow_resolve(game: str, req: _ResolveReq):
+    """Resolve pretty ``{{token}}`` scalars server-side — the SAME aggregate/slice/join engine the
+    toast renderer uses (:mod:`oc.collect.templating`), so the pretty layer no longer ships whole
+    dataset/subset row tables to the browser just to fold them into a count/sum/last-row/join.
+
+    One :class:`TokenContext` backs the whole batch, so a dataset/subset named by several tokens is
+    read (and a view computed) once, not once per token — the same shared-read discipline as
+    :func:`flow_details`. Returns the RAW resolved value per token (number/string/null); the client
+    keeps applying its own number formatting (``|round:N`` etc.), so nothing about display changes."""
+    from ...collect.templating import TokenContext, resolve_token
+    settings = get_settings()
+    if game not in list_profiles(settings.profiles_dir):
+        raise HTTPException(status_code=404, detail=f"No profile {game!r}")
+    profile = load_live_profile(settings.profiles_dir, game)
+    ctx = TokenContext(data_dir=settings.data_dir, profile=profile, game=game)
+    values: dict[str, object] = {}
+    for tok in dict.fromkeys(req.tokens):   # dedupe, keep order
+        try:
+            values[tok] = resolve_token(ctx, tok)
+        except Exception:   # noqa: BLE001 - a bad token must not sink the batch; it just empties
+            values[tok] = None
+    return {"values": values}

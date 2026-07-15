@@ -94,9 +94,15 @@ export function initPanels() {
             tableSort: (id) => { const v = vtableById(id); if (!v) return null; return { col: v.sortCol != null ? v.columns[v.sortCol] : null, dir: v.sortDir }; },
             // first VISIBLE row's value for a column — proves the ROWS actually reordered, not just the arrow
             tableFirstRow: (id, colName) => { const v = vtableById(id); if (!v || !v.filtered.length) return null; return v.filtered[0].values[colName] ?? null; },
+            // await a server-mode table's in-flight window (sort/undo/redo refetch) before asserting
+            tableIdle: (id) => { const v = vtableById(id); return v ? v.windowIdle() : Promise.resolve(); },
             setTableSort: (id, colName, dir) => {
                 const v = vtableById(id); if (!v) return; const i = v.columns.indexOf(colName); if (i < 0) return;
-                v.sortCol = i; v.sortDir = dir; v._sortView(); v._renderHead(); v._render(); v._saveSort();   // real sort-commit path (persists -> records)
+                v.sortCol = i; v.sortDir = dir; v._renderHead(); v._saveSort();   // real sort-commit path (persists -> records)
+                // array mode re-sorts in memory; server mode refetches window 0 — return the promise so
+                // the e2e awaits the reorder before reading the first row.
+                if (v.server) return v._reloadWindow();
+                v._sortView(); v._render();
             },
             setTableWidth: (id, col, px) => {
                 const L = (model.profile.layout = model.profile.layout || {});

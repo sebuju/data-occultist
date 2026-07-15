@@ -10,12 +10,11 @@ import { nodeEls, setStatus, model } from "../state.js";
 import { refreshLive, refreshDatasetConsumers, setNodeBusy } from "../main.js";
 import { clockTime, vtShowRemoved } from "../node_parts.js";
 
-// Drop removed (present===false) rows unless this dataset's "show removed" toggle is on.
-const visibleRecs = (ds, recs) => (vtShowRemoved.get(ds) ? recs : recs.filter((r) => r.present !== false));
-// Show the "show removed" header toggle only when the dataset actually has removed rows.
-function syncShowRemovedToggle(ds, recs) {
+// Show the "show removed" header toggle only when the dataset actually has removed rows (the server
+// reports `has_removed`; the removed rows themselves are filtered server-side per the toggle).
+function syncShowRemovedToggle(ds, hasRemoved) {
     const tog = nodeEls.get(`vt:ds:${ds}`)?.querySelector(".vt-showrm");
-    if (tog) tog.hidden = !recs.some((r) => r.present === false);
+    if (tog) tog.hidden = !hasRemoved;
 }
 
 // ---- dataset records (rendered inline in the dataset node body) ----
@@ -81,12 +80,33 @@ function setTabCount(ds, sel, n) {
 // after (the LATEST request wins) — never dropped, so the final write of a live sweep lands.
 const _dnKey = (ds) => `dn:${ds}`;
 
-// `pre` (an already-fetched dataset detail, e.g. from the one-shot boot batch) renders without a
-// network round-trip; omit it for the live path and it fetches its own.
-async function _datasetPayload(ds, pre) {
-    if (pre) return pre;
-    const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
-    return r.json();
+// The window-fetch closure for a dataset's records table. Reads the show-removed toggle live, so a
+// toggle flip + refreshWindow() re-queries with/without soft-deleted rows. Server does q/sort/slice.
+function _dataFetch(ds) {
+    const game = model.profile.name;
+    return (o) => api.datasetPage(game, ds, { ...o, removed: !!vtShowRemoved.get(ds) });
+}
+// Paint the dataset records table as a server-backed VTable: seed it on first mount (from the boot
+// window `pre`, or a fetched first window), else just refetch its current window. Returns the vt.
+async function _paintDataTable(ds, host, pre, superseded) {
+    const vt = vtableFor(`ds:${ds}`, host);
+    const fetchWindow = _dataFetch(ds);
+    if (vt.server) {                                   // already server-backed -> refetch the window in place
+        await vt.refreshWindow();
+        if (!superseded?.()) setTabCount(ds, ".data-n", vt.serverTotal);
+        return vt;
+    }
+    const seed = pre
+        ? { columns: pre.columns || [], rows: pre.rows || [], total: pre.total || 0 }
+        : await fetchWindow({ offset: 0, limit: 120 });
+    if (superseded?.()) return vt;
+    syncShowRemovedToggle(ds, pre ? pre.has_removed : seed.has_removed);
+    vt.setServerSource(seed, fetchWindow, {
+        rowClass: (row) => (row.present === false ? "gone" : ""),
+        expander: (row) => expandObservations(ds, row),   // drill into a record's observations inline
+    });
+    setTabCount(ds, ".data-n", seed.total);
+    return vt;
 }
 
 // Returns the singleFlight promise — callers that show a "refreshing" state (queueNodeRefresh's
@@ -97,22 +117,13 @@ async function _refreshDataNode(ds, pre, { superseded } = {}) {
     if (!host) return;
     setNodeBusy(`vt:ds:${ds}`, true);   // spin the records-grid satellite while it recomputes
     try {
-        const payload = await _datasetPayload(ds, pre);
         // a newer request is already queued behind us — its result supersedes ours; skip the
         // paint and let the trailing rerun (singleflight.js) write the fresh one instead.
         if (superseded?.()) return;
-        const raw = payload.records || [];
-        syncShowRemovedToggle(ds, raw);
-        const recs = visibleRecs(ds, raw);
-        const batchN = (payload.batches || []).filter((b) => !b.reverted).length;   // applied batches (matches the bat-n badge)
-        const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
-        const vt = vtableFor(`ds:${ds}`, host);
-        vt.setData(cols, recs, {
-            rowClass: (row) => (row.present ? "" : "gone"),
-            expander: (row) => expandObservations(ds, row),   // drill into its observations inline
-        });
-        vt.setBatchCount(batchN);                   // line + batch tally in the table's search bar
-        setTabCount(ds, ".data-n", recs.length);   // item count on the data tab
+        const vt = await _paintDataTable(ds, host, pre, superseded);
+        // the boot window carries the ledger; use it for the search-bar batch tally (live refreshes
+        // update it through loadBatchesNode instead — the records path no longer ships batches).
+        if (pre && pre.batches) vt.setBatchCount(pre.batches.filter((b) => !b.reverted).length);
     } catch (e) {
         if (superseded?.()) return;
         vtables.delete(`ds:${ds}`); host.replaceChildren(mutedP(String(e), true));
@@ -221,7 +232,9 @@ async function loadBatchesNode(ds, pre = null) {
     if (!els) return;
     setNodeBusy(`vt:ds:${ds}`, true);   // same host id as the records grid — refcounted, so an overlapping data refresh is unaffected
     try {
-        const batches = (await _datasetPayload(ds, pre)).batches || [];
+        // pre (boot window) carries the ledger; live loads hit the lightweight batches endpoint
+        // (no record dump — records now stream through /page).
+        const batches = (pre ? pre.batches : (await api.datasetBatches(model.profile.name, ds)).batches) || [];
         renderBatchesList(ds, batches);
         setTabCount(ds, ".bat-n", batches.filter((b) => !b.reverted).length);   // applied batch count (reverted/unapplied excluded)
     } catch (e) { els.list.replaceChildren(h("li", { class: "muted" }, String(e))); }
@@ -396,26 +409,14 @@ async function _refreshDatasetNode(ds, { superseded } = {}) {
     if (!host && !els) return;
     setNodeBusy(`vt:ds:${ds}`, true);   // spin the records-grid satellite while it recomputes
     try {
-        const r = await fetch(`/api/flow/${encodeURIComponent(model.profile.name)}/dataset/${encodeURIComponent(ds)}`, { cache: "no-store" });
-        const j = await r.json();
-        // a newer request is already queued behind us — its result supersedes ours; skip the
-        // paint and let the trailing rerun (singleflight.js) write the fresh one instead.
         if (superseded?.()) return;
-        const batches = j.batches || [];
-        const batchN = batches.filter((b) => !b.reverted).length;   // applied batches
-        if (host) {
-            const raw = j.records || [];
-            syncShowRemovedToggle(ds, raw);
-            const recs = visibleRecs(ds, raw);
-            const cols = [...new Set(recs.flatMap((rec) => Object.keys(rec)))].filter((c) => !VT_META.includes(c));
-            const vt = vtableFor(`ds:${ds}`, host);
-            vt.setData(cols, recs, { rowClass: (row) => (row.present ? "" : "gone"), expander: (row) => expandObservations(ds, row) });
-            vt.setBatchCount(batchN);                   // keep the table's search-bar batch tally live too
-            setTabCount(ds, ".data-n", recs.length);
-        }
-        if (els) {
-            renderBatchesList(ds, batches);
-            setTabCount(ds, ".bat-n", batchN);
+        if (host) await _paintDataTable(ds, host, null, superseded);   // records via /page (live -> refetch window)
+        if (els || host) {
+            const batches = (await api.datasetBatches(model.profile.name, ds)).batches || [];
+            if (superseded?.()) return;
+            const batchN = batches.filter((b) => !b.reverted).length;   // applied batches
+            if (els) { renderBatchesList(ds, batches); setTabCount(ds, ".bat-n", batchN); }
+            if (host) vtableFor(`ds:${ds}`, host).setBatchCount(batchN);   // keep the records table's tally live too
         }
     } catch (e) { if (host && !superseded?.()) { vtables.delete(`ds:${ds}`); host.replaceChildren(mutedP(String(e), true)); } }
     finally { setNodeBusy(`vt:ds:${ds}`, false); }

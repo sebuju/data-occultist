@@ -119,18 +119,24 @@ const eq = (a, b, msg) => ok(JSON.stringify(a) === JSON.stringify(b), `${msg}  (
         // then DESC (guaranteed different first row for >1 distinct values), then undo back to ASC.
         const cols = await page.evaluate((a) => window.__nodeHistory.tableCols(a.id), tbl);
         const sortCol = cols.find((c) => c !== "_seq") || cols[0];
-        const first = () => page.evaluate((a) => window.__nodeHistory.tableFirstRow(a.id, a.col), { id: tbl.id, col: sortCol });
+        // settle any in-flight server-mode window fetch (a no-op for array-mode tables), then read
+        // the first row — so the reorder is observed after the fetch, not before.
+        const idle = () => page.evaluate((a) => window.__nodeHistory.tableIdle(a.id), tbl);
+        const first = async () => { await idle(); return page.evaluate((a) => window.__nodeHistory.tableFirstRow(a.id, a.col), { id: tbl.id, col: sortCol }); };
         await page.evaluate((a) => window.__nodeHistory.setTableSort(a.id, a.col, 1), { id: tbl.id, col: sortCol });
         const firstAsc = await first();
         await page.evaluate((a) => window.__nodeHistory.setTableSort(a.id, a.col, -1), { id: tbl.id, col: sortCol });
         const firstDesc = await first();
         ok(firstAsc !== firstDesc, "asc vs desc actually REORDERED the rows (not just the arrow)");
         await nh("undo");   // back to the ASC entry
+        await idle();       // server-mode undo refetches under the restored sort
         eq(await page.evaluate((a) => window.__nodeHistory.tableSort(a.id).dir, tbl), 1, "undo restores the previous sort direction");
         eq(await first(), firstAsc, "undo actually RE-SORTED the rows back to the ascending order");
         await nh("redo");
+        await idle();
         eq(await first(), firstDesc, "redo re-sorts the rows to descending");
         await nh("undo");
+        await idle();
     }
 
     // ---- NODE history PANEL (DOM + click-to-travel) -----------------------------------

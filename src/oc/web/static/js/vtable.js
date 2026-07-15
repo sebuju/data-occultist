@@ -98,6 +98,19 @@ export class VTable {
         this.expandEl = null;    // the inline detail element, or null
         this.expandH = 0;        // measured detail height (px), folded into the layout
         this._batchCount = null;  // optional batch tally shown in the bar meta (null = not applicable)
+        // ---- server-backed mode (large dataset/subset node tables) ----
+        // In server mode `this.filtered` holds only the loaded WINDOW; search/sort/scroll fetch from
+        // the server. `null` = array mode (small tables: batch/history/precap) — unchanged.
+        this.server = null;      // async ({q,sort,desc,offset,limit}) -> {rows,total,columns}, or null
+        this.serverTotal = 0;    // total rows for the current query (server-reported); drives scroll height
+        this.windowBase = 0;     // absolute index of filtered[0] within the full result
+        this._q = "";            // current query string (server mode)
+        this._winReq = 0;        // window-request sequence, to drop stale async responses
+        this._pendingOff = null; // offset of the in-flight window fetch (dedup), or null
+        this._rowKey = null;     // stable row identity (server mode) for the expander across refetches
+        this.expandedKey = null; // expanded row's stable key (server mode)
+        this.expandAbsIdx = -1;  // expanded row's absolute index (server mode; survives scroll-out)
+        this._qTimer = null;     // search-input debounce timer (server mode)
         this._raf = null;
         this._build();
         _live.add(this);   // register for restore-time re-apply (pruned by isConnected later)
@@ -112,7 +125,8 @@ export class VTable {
         this.columns = this._applyOrder(this.columns);   // restored column order
         this._applySort();                                // restored sort col/dir (from the store)
         this._renderHead();                               // header cells + arrow + widths
-        this._filter();                                   // REBUILD + re-SORT the rows (not just _render — matches setData)
+        if (this.server) this._reloadWindow();            // server mode: refetch under the restored sort
+        else this._filter();                              // REBUILD + re-SORT the rows (not just _render — matches setData)
     }
 
     // ---- DOM scaffold (built once) ----
@@ -185,7 +199,7 @@ export class VTable {
             const row = e.target.closest(".vt-row");
             if (!row || row._idx == null) return;
             if (this.expander) this._toggleExpand(row._idx);
-            else if (this.onRowClick) this.onRowClick(this.filtered[row._idx]?.values);
+            else if (this.onRowClick) this.onRowClick(this._recAt(row._idx)?.values);
         });
         this.search.addEventListener("input", () => this._onSearch());
         this.clearBtn.addEventListener("click", () => { this.search.value = ""; this._onSearch(); this.search.focus(); });
@@ -200,10 +214,110 @@ export class VTable {
         this._roDispose = observeResize(this.scroll, () => this._applyHeight(), { gate: true });
     }
 
-    destroy() { this._roDispose(); if (this._raf) cancelAnimationFrame(this._raf); this.el.remove(); }
+    destroy() { this._roDispose(); if (this._raf) cancelAnimationFrame(this._raf); if (this._qTimer) clearTimeout(this._qTimer); this.el.remove(); }
+
+    // Map raw row objects to the internal `{values, text}` shape. `text` is the lowercased search
+    // haystack — the same join the server builds in rowquery.row_haystack, so a query matches
+    // identically whichever side runs it.
+    _mapRows(rows) {
+        return (rows || []).map((row) => ({
+            values: row,
+            text: this.columns.map((c) => this._cell(row, c)).join("  ").toLowerCase(),
+        }));
+    }
+
+    // ---- server-backed mode ----
+    // Rows live on the server. `seed` = the first window `{columns, rows, total}` (from the boot
+    // batch, so the first paint needs no fetch); `fetchWindow({q,sort,desc,offset,limit})` returns
+    // further windows. Search/sort/scroll all go through the server; the browser only holds the
+    // loaded window. Small tables keep using setData (array mode) — this doesn't touch them.
+    setServerSource(seed, fetchWindow, opts = {}) {
+        this.server = fetchWindow;
+        this.rowClass = opts.rowClass || null;
+        this.onRowClick = opts.onRowClick || null;
+        this.expander = opts.expander || null;
+        this._cell = opts.cell || ((row, c) => { const v = row[c]; return v == null ? "" : String(v); });
+        this._rowKey = opts.rowKey || ((v) => (v && (v.key != null ? v.key : v._seq)));   // stable expander id
+        this._collapse();
+        this.rows = [];                                  // never the full set in server mode
+        this._q = this.search.value || "";
+        this._serverCols = ((seed && seed.columns) || []).slice();
+        this.columns = this._applyOrder(this._serverCols.slice());
+        this.windowBase = 0;
+        this.serverTotal = (seed && seed.total) || 0;
+        this.filtered = this._mapRows((seed && seed.rows) || []);
+        this._computeNumCols();
+        this._applySort();
+        this._renderHead();
+        this._applyHeight();     // -> _render
+        this._renderMeta();
+        this._updateCount();
+    }
+
+    // How many rows to pull per window: a chunk comfortably larger than the viewport so ordinary
+    // scrolling stays within the loaded window between fetches.
+    _windowSpan() { return Math.ceil((this.scroll.clientHeight || 0) / ROW_H) + BUFFER * 6; }
+
+    // Fetch the window at [offset, offset+limit) for the current query/sort and swap it in. A
+    // sequence guard drops stale responses (fast scroll / typing); an identical in-flight offset is
+    // deduped so _render can call this freely.
+    _loadWindow(offset, limit) {
+        if (!this.server) return Promise.resolve();
+        offset = Math.max(0, offset);
+        if (this._pendingOff === offset) return this._winPromise || Promise.resolve();
+        const seq = ++this._winReq;
+        this._pendingOff = offset;
+        const sort = this.sortCol != null ? this.columns[this.sortCol] : "";
+        const p = Promise.resolve(this.server({ q: this._q, sort, desc: this.sortDir === -1, offset, limit }))
+            .then((res) => {
+                if (seq !== this._winReq) return;        // superseded by a newer request
+                this._pendingOff = null;
+                this.serverTotal = res && res.total != null ? res.total : 0;
+                this.windowBase = offset;
+                this.filtered = this._mapRows((res && res.rows) || []);
+                this._renderMeta();
+                this._updateCount();
+                this._render();
+            })
+            .catch(() => { if (seq === this._winReq) this._pendingOff = null; });
+        this._winPromise = p;   // last in-flight window (e2e/tests await this to settle)
+        return p;
+    }
+    // The current in-flight window fetch (or a resolved promise) — lets an e2e await a server-mode
+    // table settling after a sort / undo / redo before asserting on the reordered rows.
+    windowIdle() { return this._winPromise || Promise.resolve(); }
+
+    // Ensure the absolute range [start, end) is inside the loaded window; fetch a fresh chunk if not.
+    _ensureWindow(start, end) {
+        if (!this.server) return;
+        const have0 = this.windowBase, have1 = this.windowBase + this.filtered.length;
+        if (start >= have0 && end <= have1) return;      // already loaded
+        const span = Math.max(end - start, this._windowSpan());
+        this._loadWindow(Math.max(0, start - BUFFER), span);
+    }
+
+    // Reload from offset 0 (a new query or sort is a fresh result set). Jumps to the top. Returns the
+    // fetch promise so a caller (e.g. an e2e sort-commit) can await the reorder.
+    _reloadWindow() {
+        this.scroll.scrollTop = 0;
+        this.windowBase = 0;
+        return this._loadWindow(0, this._windowSpan());
+    }
+
+    // Public: refetch the CURRENT window (same query/sort/offset) — the hook a data-change (SSE)
+    // calls so an open node table tracks writes without the caller re-seeding it.
+    refreshWindow() {
+        if (!this.server) return Promise.resolve();
+        this._pendingOff = null;   // let the same offset re-fetch (the data, not the window, changed)
+        return this._loadWindow(this.windowBase, Math.max(this.filtered.length, this._windowSpan()));
+    }
+
+    // The record at an ABSOLUTE row index — direct in array mode, window-relative in server mode.
+    _recAt(i) { return this.server ? this.filtered[i - this.windowBase] : this.filtered[i]; }
 
     // ---- data ----
     setData(columns, rows, opts = {}) {
+        this.server = null;   // array mode: the whole row set lives here, search/sort/scroll client-side
         this._serverCols = (columns || []).slice();   // original order, for reset
         this.columns = this._applyOrder(columns || []);
         this.rowClass = opts.rowClass || null;
@@ -226,22 +340,37 @@ export class VTable {
     // Caller-supplied batch tally for the bar meta (null = table has no batches -> show lines only).
     setBatchCount(n) { this._batchCount = (n == null ? null : n); this._renderMeta(); }
 
-    // Always-on right-side tally: total lines, plus batches when applicable.
+    // Always-on right-side tally: total lines, plus batches when applicable. In server mode the
+    // line total is the server's count (the whole set isn't in `this.rows`).
     _renderMeta() {
         if (!this.meta) return;
-        const lines = this.rows.length;
+        const lines = this.server ? this.serverTotal : this.rows.length;
         const parts = [`${lines} row${lines === 1 ? "" : "s"}`];
         if (this._batchCount != null) parts.push(`${this._batchCount} batch${this._batchCount === 1 ? "" : "es"}`);
         this.meta.textContent = parts.join("  ·  ");
+    }
+
+    // The search-result count in the bar (hidden when nothing's searched). Array mode shows
+    // `shown / total`; server mode shows the server's match count for the current query.
+    _updateCount() {
+        if (this.server) {
+            this.count.hidden = !this._q;
+            this.count.textContent = this._q ? `${this.serverTotal} match${this.serverTotal === 1 ? "" : "es"}` : "";
+        } else {
+            const total = this.rows.length, shown = this.filtered.length;
+            this.count.hidden = !this.pred;
+            this.count.textContent = this.pred ? `${shown} / ${total}` : "";
+        }
     }
 
     // A column reads as numeric when it has ≥1 value and every non-empty cell parses as a plain number
     // (see _numRe). Numeric columns right-align + mute, header and body alike — the blueprint table look.
     _computeNumCols() {
         this._numCols = new Set();
+        const src = this.server ? this.filtered : this.rows;   // server mode: judge from the loaded window
         for (const col of this.columns) {
             let any = false, allNum = true;
-            for (const rec of this.rows) {
+            for (const rec of src) {
                 const v = this._cell(rec.values, col).trim();
                 if (!v) continue;
                 any = true;
@@ -332,7 +461,7 @@ export class VTable {
         this.columns = (this._serverCols || this.columns).slice();
         if (this.id) _store.save(this.id, { ...(_store.load(this.id)), widths: {}, order: [], sorts: [] });
         this._renderHead();
-        this._filter();
+        if (this.server) this._reloadWindow(); else this._filter();
         this.onReorder && this.onReorder(this.columns.slice());   // host (e.g. hide-toggle row) follows
     }
 
@@ -372,7 +501,7 @@ export class VTable {
         // fit the data only — header text is allowed to clip/ellipsis
         let max = 0;
         ctx.font = fontOf(bodyCell || th || this.head);
-        for (const rec of this.rows) {
+        for (const rec of (this.server ? this.filtered : this.rows)) {
             const w = ctx.measureText(this._cell(rec.values, name)).width;
             if (w > max) max = w;
         }
@@ -475,10 +604,13 @@ export class VTable {
     // identity so it survives re-sort/re-filter; the panel folds into the virtualized layout
     // (rows below it shift down by its height).
     async _toggleExpand(idx) {
-        const rec = this.filtered[idx];
+        const rec = this._recAt(idx);
         if (!rec) return;
-        if (this.expandedRow === rec) { this._collapse(); this._render(); return; }
+        const key = this.server ? this._rowKey(rec.values) : null;   // server mode tracks by stable key
+        const isOpen = this.server ? (this.expandedKey != null && this.expandedKey === key) : (this.expandedRow === rec);
+        if (isOpen) { this._collapse(); this._render(); return; }
         this._collapse();
+        if (this.server) { this.expandedKey = key; this.expandAbsIdx = idx; }
         this.expandedRow = rec;
         this.expandEl = document.createElement("div");
         this.expandEl.className = "vt-detail";
@@ -491,7 +623,8 @@ export class VTable {
             let node;
             try { node = await this.expander(rec.values); }
             catch (e) { node = document.createElement("div"); node.className = "vt-detail-inner"; node.textContent = String(e?.message || e); }
-            if (this.expandedRow !== rec || !this.expandEl) return;   // collapsed/changed while awaiting
+            const stale = this.server ? (this.expandedKey !== key) : (this.expandedRow !== rec);
+            if (stale || !this.expandEl) return;   // collapsed/changed while awaiting
             this.expandEl.replaceChildren(node);
             this._measureExpand();
             this._render();
@@ -503,9 +636,11 @@ export class VTable {
     _collapse() {
         if (this.expandEl) this.expandEl.remove();
         this.expandEl = null; this.expandedRow = null; this.expandH = 0;
+        this.expandedKey = null; this.expandAbsIdx = -1;
     }
 
-    // click a header: asc -> desc -> unsorted
+    // click a header: asc -> desc -> unsorted. Server mode refetches from the top; array mode re-sorts
+    // the in-memory rows.
     _onHeader(i) {
         if (this.sortCol === i) {
             if (this.sortDir === 1) this.sortDir = -1;
@@ -513,10 +648,11 @@ export class VTable {
         } else { this.sortCol = i; this.sortDir = 1; }
         this._saveSort();
         this._renderHead();
-        this._filter();
+        if (this.server) this._reloadWindow();
+        else this._filter();
     }
     _sortView() {
-        if (this.sortCol == null) return;
+        if (this.server || this.sortCol == null) return;   // server owns the sort in server mode
         const col = this.columns[this.sortCol], dir = this.sortDir, cell = this._cell;
         this.filtered = this.filtered.slice().sort((a, b) =>
             dir * cmpCell(String(cell(a.values, col)), String(cell(b.values, col))));
@@ -526,6 +662,12 @@ export class VTable {
     _onSearch() {
         const q = this.search.value;
         this.clearBtn.hidden = !q;
+        if (this.server) {
+            this._q = q;
+            clearTimeout(this._qTimer);   // debounce keystrokes into one server round-trip
+            this._qTimer = setTimeout(() => this._reloadWindow(), 200);
+            return;
+        }
         this.pred = compileQuery(q);
         this.scroll.scrollTop = 0;   // a new query is a new result set — jump to the top
         this._filter();
@@ -534,10 +676,7 @@ export class VTable {
         this.filtered = this.pred ? this.rows.filter((r) => { try { return this.pred(r.text); } catch { return true; } }) : this.rows;
         this._sortView();
         if (this.expandedRow && !this.filtered.includes(this.expandedRow)) this._collapse();   // opened row filtered out
-        const total = this.rows.length, shown = this.filtered.length;
-        // count is a search result — only meaningful while filtering; hide it when nothing's searched
-        this.count.hidden = !this.pred;
-        this.count.textContent = this.pred ? `${shown} / ${total}` : "";
+        this._updateCount();   // count is a search result — only shown while filtering
         this._applyHeight();
     }
 
@@ -561,9 +700,13 @@ export class VTable {
 
     // ---- the virtualization core ----
     _render() {
-        const total = this.filtered.length;
-        // an open detail panel adds `extra` px directly below its row; everything under it shifts down
-        const eIdx = this.expandedRow ? this.filtered.indexOf(this.expandedRow) : -1;
+        // server mode: the scroll range spans the whole result (serverTotal), not the loaded window.
+        const total = this.server ? this.serverTotal : this.filtered.length;
+        // an open detail panel adds `extra` px directly below its row; everything under it shifts down.
+        // server mode tracks the expanded row by absolute index (it survives scrolling out of window).
+        const eIdx = this.server
+            ? (this.expandedKey != null ? this.expandAbsIdx : -1)
+            : (this.expandedRow ? this.filtered.indexOf(this.expandedRow) : -1);
         const extra = eIdx >= 0 ? this.expandH : 0;
         const detailTop = eIdx >= 0 ? (eIdx + 1) * ROW_H : 0;
         const yOf = (idx) => idx * ROW_H + (eIdx >= 0 && idx > eIdx ? extra : 0);
@@ -578,6 +721,7 @@ export class VTable {
         let start = Math.floor(top / ROW_H) - (BUFFER >> 1);
         start = Math.max(0, Math.min(start, Math.max(0, total - visible)));   // never render past the end
         const end = Math.min(total, start + visible);
+        if (this.server) this._ensureWindow(start, end);   // pull the visible range if it isn't loaded
         // park the detail panel under its row (or hide it when its row is off the current view)
         if (this.expandEl) {
             const on = eIdx >= 0;
@@ -607,7 +751,15 @@ export class VTable {
             const row = this.pool[i];
             const idx = start + i;
             if (idx >= end) { row.style.display = "none"; continue; }
-            const rec = this.filtered[idx];
+            const rec = this._recAt(idx);
+            if (!rec) {   // server window not loaded yet -> blank placeholder while the fetch is in flight
+                row._idx = idx;
+                row.style.display = "";
+                row.style.transform = `translateY(${yOf(idx)}px)`;
+                row.className = "vt-row vt-loading" + ((idx & 1) ? " odd" : "");
+                for (let c = 0; c < this.cellCount; c++) { row._cells[c].textContent = ""; row._cells[c].title = ""; }
+                continue;
+            }
             row._idx = idx;
             row.style.display = "";
             row.style.transform = `translateY(${yOf(idx)}px)`;

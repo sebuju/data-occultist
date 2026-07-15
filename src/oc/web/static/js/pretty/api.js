@@ -26,6 +26,10 @@ export const commitOverrides = (game) => fetch(`/api/pretty/${enc(game)}/overrid
 export const flowStatus = (game) => fetch(`/api/flow/${enc(game)}`).then(j);
 export const datasetRows = (game, dataset) => fetch(`/api/flow/${enc(game)}/dataset/${enc(dataset)}`).then(j);
 export const subsetRows = (game, subset) => fetch(`/api/flow/${enc(game)}/subset/${enc(subset)}`).then(j);
+// Resolve pretty {{token}} scalars server-side (count/sum/slice/join) so a label never fetches the
+// whole row table just to fold it. One POST carries every token needed this tick (batched in data.js).
+export const resolveTokens = (game, tokens) =>
+    fetch(`/api/flow/${enc(game)}/resolve`, POST_JSON({ tokens })).then(j);
 
 // ---- data entry (manual record into a dataset) ------------------------------------
 export const recordRow = (game, dataset, values) =>

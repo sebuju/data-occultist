@@ -36,15 +36,17 @@ export function sourceTokenList(model, widgets = []) {
     return out;
 }
 
-// Strip a trailing python-style `[...]` row slice off a token segment (so the subscribe key /
-// id is the bare collection, not "id[0:5]").
-const stripSlice = (s) => String(s).replace(/\[[^\]]*\]\s*$/, "").trim();
+// The data-layer key a dataset/subset SCALAR token resolves under. Its value is computed
+// server-side (templating.py) and cached here, so a label/condition never fetches the whole row
+// table just to fold it. Format directives (|round:N) are stripped so the subscribe side
+// (subKeyForToken) and the read side (resolveToken) key on the same string regardless of which the
+// caller passed. Table/chart bindings still take full rows via dataKeyForBinding — not this.
+const tokenKey = (inner) => `token:${splitFormat(String(inner || "").trim())[0]}`;
 
 // The subscribe key a token/binding depends on (what the data layer notifies on).
 export function subKeyForToken(inner) {
     const src = String(inner || "").split("|")[0].trim();
-    if (src.startsWith("dataset:")) return `dataset:${stripSlice(src.slice(8).split(".")[0])}`;
-    if (src.startsWith("subset:")) return `subset:${stripSlice(src.slice(7).split(".")[0])}`;
+    if (src.startsWith("dataset:") || src.startsWith("subset:")) return tokenKey(inner);
     if (src.startsWith("node:")) return `node:${src.slice(5).trim()}`;
     if (src.startsWith("widget:")) return `widget:${src.slice(7).trim()}`;
     if (src === "page") return "page";
@@ -58,73 +60,11 @@ export function dataKeyForBinding(b) {
     return b.src === "subset" ? `subset:${b.id}` : `dataset:${b.id}`;
 }
 
-// Pull a trailing python-style `[...]` slice off a dataset/subset body. Returns the remaining
-// body (id[.field]) and the parsed slice (null when absent / empty).
-function splitSlice(body) {
-    const m = /^(.*)\[([^\]]*)\]\s*$/.exec(String(body));
-    if (!m) return { rest: body, slice: null };
-    return { rest: m[1], slice: parseSlice(m[2]) };
-}
-// Parse a slice spec: "n" -> single index; "a:b" / "a:b:c" -> range (any part may be blank).
-function parseSlice(spec) {
-    spec = String(spec).trim();
-    if (spec === "") return null;
-    const toInt = (s) => { s = String(s).trim(); if (s === "") return null; const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; };
-    if (!spec.includes(":")) { const i = toInt(spec); return i == null ? null : { index: i }; }
-    const p = spec.split(":");
-    return { start: toInt(p[0]), stop: toInt(p[1]), step: p.length > 2 ? toInt(p[2]) : null };
-}
-// Apply a parsed slice to `rows` with python semantics (negative indices, step, blanks).
-function applySlice(rows, sl) {
-    if (!sl) return rows;
-    const n = rows.length;
-    if (sl.index != null) { const i = sl.index < 0 ? n + sl.index : sl.index; return (i >= 0 && i < n) ? [rows[i]] : []; }
-    let step = sl.step == null ? 1 : sl.step; if (step === 0) step = 1;
-    const out = [];
-    if (step > 0) {
-        const lo = sl.start == null ? 0 : (sl.start < 0 ? Math.max(n + sl.start, 0) : Math.min(sl.start, n));
-        const hi = sl.stop == null ? n : (sl.stop < 0 ? Math.max(n + sl.stop, 0) : Math.min(sl.stop, n));
-        for (let i = lo; i < hi; i += step) out.push(rows[i]);
-    } else {
-        const lo = sl.start == null ? n - 1 : (sl.start < 0 ? n + sl.start : Math.min(sl.start, n - 1));
-        const hi = sl.stop == null ? -1 : (sl.stop < 0 ? n + sl.stop : sl.stop);
-        for (let i = lo; i > hi; i += step) out.push(rows[i]);
-    }
-    return out;
-}
-
-function aggregate(rows, field, agg) {
-    const vals = rows.map((r) => r[field]).filter((v) => v !== undefined && v !== null && v !== "");
-    const nums = vals.map(Number).filter((n) => Number.isFinite(n));
-    switch (agg) {
-        case "count": return rows.length;
-        case "sum": return nums.reduce((a, b) => a + b, 0);
-        case "mean": return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : "";
-        case "min": return nums.length ? Math.min(...nums) : "";
-        case "max": return nums.length ? Math.max(...nums) : "";
-        case "first": return vals.length ? vals[0] : "";
-        case "latest": default: return vals.length ? vals[vals.length - 1] : "";
-    }
-}
-
-// Join a slice of rows into a delimited string: `field` picks the column (else each row's first
-// visible field), empties dropped, joined by `delim` (default ", ").
-function joinRows(rows, field, delim) {
-    const valOf = (r) => {
-        if (field) return r[field];
-        const k = Object.keys(r).find((x) => !x.startsWith("_"));   // first visible column
-        return k ? r[k] : "";
-    };
-    return rows.map(valOf).filter((v) => v !== undefined && v !== null && v !== "").join(delim);
-}
-
-// Resolve one {{token}} inner string to a scalar (for dynamic text / conditions).
+// Resolve one {{token}} inner string to a scalar (for dynamic text / conditions). dataset:/subset:
+// scalars are resolved server-side (templating.py) and read from the data-layer cache; the other
+// sources are client-local (node inputs, the reactive widget scope, live status/activity, page).
 export function resolveToken(ctx, inner) {
-    const parts = String(inner || "").split("|");
-    const src = parts[0].trim();
-    // everything after the first "|" is the aggregate (delimiters may contain "|", so re-join)
-    const aggRaw = parts.slice(1).join("|").trim();
-    const agg = aggRaw || "latest";
+    const src = String(inner || "").split("|")[0].trim();
     if (src.startsWith("node:")) return pathGet(ctx.model.profile, src.slice(5).trim());
     if (src.startsWith("widget:")) return ctx.data.read(`widget:${src.slice(7).trim()}`);
     if (src === "page") return ctx.data.read("page") || "";   // the page id currently shown/edited
@@ -152,18 +92,12 @@ export function resolveToken(ctx, inner) {
         }
     }
     if (src.startsWith("dataset:") || src.startsWith("subset:")) {
-        const isSub = src.startsWith("subset:");
-        const { rest, slice } = splitSlice(src.slice(isSub ? 7 : 8));
-        const [id, field] = rest.split(".");
-        let rows = ctx.data.read(`${isSub ? "subset" : "dataset"}:${id.trim()}`) || [];
-        if (slice) rows = applySlice(rows, slice);      // pythonesque row slice, e.g. dataset:id[0:5]
-        if (agg === "join" || agg.startsWith("join:")) {   // join sliced rows into a delimited string
-            const c = agg.indexOf(":");
-            const delim = c >= 0 ? agg.slice(c + 1).replace(/^["']|["']$/g, "") : ", ";
-            return joinRows(rows, field && field.trim(), delim);
-        }
-        if (!field) return rows.length;                 // bare collection -> row count
-        return aggregate(rows, field.trim(), agg);
+        // Resolved server-side (templating.py: count/sum/mean/min/max/first/latest, python slices
+        // incl. negative index, join) and cached under the token key — the browser no longer folds
+        // whole row tables for a scalar. `undefined`/`null` (not yet resolved, or an empty
+        // aggregate) -> "" to match the old client-side behaviour; the widget re-renders on notify
+        // once the first resolve lands.
+        return ctx.data.read(tokenKey(inner)) ?? "";
     }
     return "";
 }

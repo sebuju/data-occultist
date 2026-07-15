@@ -711,6 +711,47 @@ export async function flowDetails(game, datasets, subsets, signal) {
     return r.json();
 }
 
+// ---- server-backed node tables (windowed search/sort/scroll) ----
+// One window of a dataset/subset: filter (q, the AND/OR/NOT/glob grammar) + sort + slice, server-side.
+// Returns { rows, total, columns } (+ has_removed for datasets). `total` is the full match count so
+// the client scrollbar spans the whole result while only the window is held in memory.
+const _pageQS = (o = {}) => {
+    const p = new URLSearchParams();
+    if (o.q) p.set("q", o.q);
+    if (o.sort) p.set("sort", o.sort);
+    if (o.desc) p.set("desc", "true");
+    if (o.offset) p.set("offset", String(o.offset));
+    if (o.limit) p.set("limit", String(o.limit));
+    if (o.removed) p.set("removed", "true");
+    const s = p.toString();
+    return s ? `?${s}` : "";
+};
+export async function datasetPage(game, dataset, o = {}) {
+    const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/page${_pageQS(o)}`);
+    if (!r.ok) throw new Error(`page: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+export async function subsetPage(game, subset, o = {}) {
+    const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/subset/${encodeURIComponent(subset)}/page${_pageQS(o)}`);
+    if (!r.ok) throw new Error(`page: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+// The ledger (batches + history) WITHOUT the record dump — for a dataset node's batches tab.
+export async function datasetBatches(game, dataset) {
+    const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/batches`);
+    if (!r.ok) throw new Error(`batches: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+// Distinct non-empty values of one column (for the join-sample cycler).
+export async function datasetDistinct(game, dataset, field, limit = 0) {
+    const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/distinct?field=${encodeURIComponent(field)}${limit ? `&limit=${limit}` : ""}`);
+    return r.ok ? (await r.json()).values || [] : [];
+}
+export async function subsetDistinct(game, subset, field, limit = 0) {
+    const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/subset/${encodeURIComponent(subset)}/distinct?field=${encodeURIComponent(field)}${limit ? `&limit=${limit}` : ""}`);
+    return r.ok ? (await r.json()).values || [] : [];
+}
+
 // Per-window stash bindings: which capture a window opens with. The whole map is fetched
 // then indexed per window by many callers (image open, preview, detect, …), so on a graph
 // load several windows would each refetch the identical map. Cache the in-flight promise

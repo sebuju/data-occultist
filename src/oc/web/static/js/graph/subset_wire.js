@@ -229,22 +229,18 @@ function renderNormEg(el, sid) {
 // a subset) into `el._samples` so clicking the example cycles through them (cycleNormEg); the first is
 // shown. Failures / empty sources resolve to the "no data" state, never an error.
 async function fillNormSamples(div, s) {
-    const game = encodeURIComponent(model.profile.name);
+    const game = model.profile.name;
     await Promise.all([...div.querySelectorAll(".sv-norm-eg")].map(async (el) => {
         const ds = el.dataset.ds, jf = el.dataset.jf;
-        const seen = new Set(), list = [];
         try {
+            // distinct join-column values, computed server-side (no full row scan in the browser now
+            // that sources no longer ship every row) — already deduped + blank-stripped.
             const isView = !!model.subsetDef(ds);
-            // boot batch already carries every source's rows — sample from it (no extra fetch); the
-            // live path (post-boot edits) has no prefetch and fetches the one source it needs.
-            const cached = isView ? _bootDetails?.subsets?.[ds] : _bootDetails?.datasets?.[ds];
-            const data = cached || await (await fetch(`/api/flow/${game}/${isView ? "subset" : "dataset"}/${encodeURIComponent(ds)}`)).json();
-            const recs = isView ? (data.rows || []) : (data.records || []);
-            for (const r of recs) { const v = r[jf]; if (v != null && String(v).trim() !== "" && !seen.has(String(v))) { seen.add(String(v)); list.push(String(v)); } }
-        } catch { /* leave empty -> "no data" */ }
-        el._samples = list;
+            const list = isView ? await api.subsetDistinct(game, ds, jf) : await api.datasetDistinct(game, ds, jf);
+            el._samples = (list || []).map(String);
+        } catch { el._samples = []; }   // leave empty -> "no data"
         el._sampleIdx = 0;
-        el._sample = list.length ? list[0] : null;
+        el._sample = el._samples.length ? el._samples[0] : null;
         renderNormEg(el, s.id);
     }));
 }
@@ -385,21 +381,38 @@ async function _refreshSubsetNode(id, pre, { superseded } = {}) {
     const vtShown = !!host;
     if (vtShown) setNodeBusy(vtId, true);
     try {
-        const r = pre || await api.getSubset(model.profile.name, id);
-        // a newer request is already queued behind us — its result supersedes ours; skip the
-        // paint and let the trailing rerun (singleflight.js) write the fresh one instead.
-        if (superseded?.()) return;
         const s = model.subsetDef(id);
+        const fetchWindow = (o) => api.subsetPage(model.profile.name, id, o);
+        let cols;
         if (host) {
             const vt = vtableFor(`view:${id}`, host);
             // dragging a column in the table re-orders the visible/hide buttons to match, live
             vt.onReorder = () => renderHideToggles(nodeEls.get(`sub:${id}`), s);
-            // click a row to drill into the source rows that joined to produce it (one per input)
-            vt.setData(r.columns || [], r.rows || [], { expander: (row) => expandSubsetRow(id, row) });
+            if (vt.server) {                                  // already server-backed -> refetch window in place
+                await vt.refreshWindow();
+                cols = vt.columns;
+            } else {
+                const seed = pre
+                    ? { columns: pre.columns || [], rows: pre.rows || [], total: pre.total || 0 }
+                    : await fetchWindow({ offset: 0, limit: 120 });
+                if (superseded?.()) return;
+                // click a row to drill into the source rows that joined to produce it (one per input).
+                // view rows have no dedup key, so identify a row by its content for the expander.
+                vt.setServerSource(seed, fetchWindow, {
+                    expander: (row) => expandSubsetRow(id, row),
+                    rowKey: (v) => (v.key != null ? v.key : JSON.stringify(v)),
+                });
+                cols = seed.columns;
+            }
+        } else {
+            // grid not shown, but the hide toggles still need the live column list — fetch a 1-row window
+            const meta = pre || await fetchWindow({ offset: 0, limit: 1 });
+            cols = meta.columns || [];
         }
+        if (superseded?.()) return;
         // the live join may expose columns the static schema can't know (orders/enrich fields) —
         // cache them and re-render the visible/hide toggles so every actual column is listed.
-        subsetLiveCols.set(id, r.columns || []);
+        subsetLiveCols.set(id, cols || []);
         if (s && el) { renderHideToggles(el, s); repaintSubsetCols(el, s); }
     } catch (e) {
         if (superseded?.()) return;

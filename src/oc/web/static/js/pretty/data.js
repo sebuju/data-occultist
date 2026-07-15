@@ -86,8 +86,25 @@ function flushChanged() {
         if (key.startsWith("subset:")) {
             const id = key.slice(7);
             if (changed.some((ds) => id === ds || model.subsetReaches(id, ds))) fetchKey(key);
+            continue;
+        }
+        if (key.startsWith("token:")) {   // a server-resolved scalar -> gate on its underlying source
+            const dep = _tokenDep(key.slice(6));
+            if (!dep) { fetchKey(key); continue; }
+            if (dep.kind === "dataset") { if (changed.includes(dep.id)) fetchKey(key); continue; }
+            if (changed.some((ds) => dep.id === ds || model.subsetReaches(dep.id, ds))) fetchKey(key);
         }
     }
+}
+// The dataset/subset a `token:<inner>` scalar depends on — so a change to that source (and only
+// that source) refetches the token. Mirrors binding.js subKeyForToken's strip-slice/split, but
+// returns the bare source id (subKeyForToken itself now maps these tokens to `token:` keys).
+function _tokenDep(inner) {
+    const src = String(inner || "").split("|")[0].trim();
+    const bareId = (s) => s.replace(/\[[^\]]*\]\s*$/, "").split(".")[0].trim();
+    if (src.startsWith("dataset:")) return { kind: "dataset", id: bareId(src.slice(8)) };
+    if (src.startsWith("subset:")) return { kind: "subset", id: bareId(src.slice(7)) };
+    return null;
 }
 // ---- needs / subscriptions ---------------------------------------------------------
 
@@ -144,7 +161,47 @@ export function publish(widgetId, value) {
 // Single-flight per key WITH a trailing re-run: a refetch requested while one is in flight (a
 // slow subset compute during a live sweep) must not be dropped — else the bound widget stalls on
 // stale data until the next fallback tick. The latest request runs once the current one ends.
-function fetchKey(key) { singleFlight(`pd:${key}`, () => _fetchKey(key)); }
+function fetchKey(key) {
+    if (key.startsWith("token:")) { queueToken(key); return; }   // batched (many labels -> one POST)
+    singleFlight(`pd:${key}`, () => _fetchKey(key));
+}
+
+// `token:<inner>` scalars resolve server-side (count/sum/slice/join via templating.py) so a bound
+// label never pulls the whole row table. Every token needing a fetch this tick is coalesced into a
+// SINGLE resolve POST — a page with many labels must not fire one request per token (the bare
+// `dataset:` key used to serve every field-token off one row-fetch; batching preserves that).
+const _tokenPending = new Set();   // token: keys awaiting the next batched resolve
+let _tokenBusy = false;            // a flush is in flight
+let _tokenScheduled = false;       // a microtask flush is already queued
+function scheduleTokens() {
+    if (_tokenScheduled || _tokenBusy) return;
+    _tokenScheduled = true;
+    queueMicrotask(() => { _tokenScheduled = false; flushTokens(); });
+}
+function queueToken(key) { _tokenPending.add(key); scheduleTokens(); }
+async function flushTokens() {
+    if (_tokenBusy || !_tokenPending.size) return;
+    if (!game || !isOnline()) return;   // paused/unreachable -> stay queued; a later tick reschedules
+    _tokenBusy = true;
+    const batch = [..._tokenPending]; _tokenPending.clear();
+    try {
+        const values = (await papi.resolveTokens(game, batch.map((k) => k.slice(6)))).values || {};
+        for (const key of batch) {
+            const inner = key.slice(6);
+            if (!(inner in values)) continue;                 // token absent -> leave last value
+            const value = values[inner];
+            const sig = JSON.stringify(value ?? null);
+            if (_sig.get(key) === sig) { _cache.set(key, value); continue; }   // unchanged -> no notify
+            _sig.set(key, sig);
+            _cache.set(key, value);
+            notify(key);
+        }
+    } catch { /* transient -> batch dropped; keys stay in _need, recovered on the next tick */ }
+    finally {
+        _tokenBusy = false;
+        if (_tokenPending.size) scheduleTokens();   // trailing re-run for anything queued mid-flight
+    }
+}
 // Keys whose source 404'd (a renamed/removed dataset or subset a binding still points at).
 // Logged ONCE per dead key so the poll doesn't spam the logbar; cleared on a later success so a
 // recreated ref warns again if it later disappears.

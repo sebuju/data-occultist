@@ -50,21 +50,24 @@ def env(tmp_path, monkeypatch):
     return TestClient(create_app(), client=("127.0.0.1", 50000))
 
 
-def test_details_matches_single_dataset_calls(env):
+def test_details_ships_dataset_windows(env):
     client = env
+    # boot batch now ships a WINDOW (+ total + columns + the ledger for the batches tab), not every row.
     batch = client.post(f"/api/flow/{GAME}/details",
                         json={"datasets": ["loot", "prices"], "subsets": []}).json()
-    for ds in ("loot", "prices"):
-        single = client.get(f"/api/flow/{GAME}/dataset/{ds}").json()
-        assert batch["datasets"][ds] == single   # identical payload -> client renders the same
+    d = batch["datasets"]["loot"]
+    assert d["total"] == 2 and "name" in d["columns"]
+    assert {r["name"] for r in d["rows"]} == {"Forma", "Kuva"}   # small dataset -> whole first window
+    assert "batches" in d and "has_removed" in d                 # ledger rides along; toggle hint present
 
 
-def test_details_matches_single_subset_call(env):
+def test_details_ships_subset_windows(env):
     client = env
     batch = client.post(f"/api/flow/{GAME}/details",
                         json={"datasets": [], "subsets": ["joined"]}).json()
-    single = client.get(f"/api/flow/{GAME}/subset/joined").json()
-    assert batch["subsets"]["joined"] == single
+    s = batch["subsets"]["joined"]
+    assert s["subset"] == "joined" and s["total"] == 2
+    assert "columns" in s and len(s["rows"]) <= 2
 
 
 def test_details_skips_unknown_ids(env):
@@ -73,10 +76,10 @@ def test_details_skips_unknown_ids(env):
                     json={"datasets": ["loot", "ghost"], "subsets": ["nope"]})
     assert r.status_code == 200
     body = r.json()
-    # an unknown DATASET yields an empty detail (same as a single GET — phantom prevention),
-    # never an error; an unknown SUBSET (no def to compute) is dropped entirely.
-    assert body["datasets"]["loot"]["records"]            # real data
-    assert body["datasets"]["ghost"]["records"] == []     # empty, but present + consistent
+    # an unknown DATASET yields an empty window (phantom prevention), never an error; an unknown
+    # SUBSET (no def to compute) is dropped entirely.
+    assert body["datasets"]["loot"]["rows"]               # real data
+    assert body["datasets"]["ghost"]["rows"] == []        # empty, but present + consistent
     assert body["subsets"] == {}
 
 
@@ -84,3 +87,122 @@ def test_details_404_for_unknown_game(env):
     client = env
     r = client.post("/api/flow/nope/details", json={"datasets": [], "subsets": []})
     assert r.status_code == 404
+
+
+# ---- POST /{game}/resolve : pretty {{token}} scalars resolved server-side --------------------
+# The pretty layer folds these server-side (templating.py) instead of fetching whole row tables to
+# the browser, so a bound label/condition ships a scalar, not the dataset. These lock that the
+# endpoint returns the same values templating.resolve_token produces.
+
+def test_resolve_aggregates_and_counts(env):
+    client = env
+    tokens = ["dataset:loot", "dataset:prices.plat|sum", "subset:joined|count",
+              "subset:joined.plat|sum"]
+    values = client.post(f"/api/flow/{GAME}/resolve", json={"tokens": tokens}).json()["values"]
+    assert values["dataset:loot"] == 2                # bare collection -> row count (Forma, Kuva)
+    assert values["dataset:prices.plat|sum"] == 5     # one plat=5 row
+    assert values["subset:joined|count"] == 2         # outer join on name -> Forma, Kuva
+    assert values["subset:joined.plat|sum"] == 5      # only Forma carries a price
+
+
+def test_resolve_slice_and_join(env):
+    client = env
+    # slice trails the token body (grammar: dataset:id.field[slice]); [0] vs [-1] must pick the two
+    # different ends, proving the python row-slice runs server-side.
+    tokens = ["dataset:loot.name[0]", "dataset:loot.name[-1]", 'dataset:loot.name|join:", "']
+    values = client.post(f"/api/flow/{GAME}/resolve", json={"tokens": tokens}).json()["values"]
+    first, last = values["dataset:loot.name[0]"], values["dataset:loot.name[-1]"]
+    assert {first, last} == {"Forma", "Kuva"} and first != last
+    assert set(values['dataset:loot.name|join:", "'].split(", ")) == {"Forma", "Kuva"}
+
+
+def test_resolve_matches_templating_directly(env):
+    """The route is a thin wrapper over templating.resolve_token — same context, same values."""
+    from oc.collect.templating import TokenContext, resolve_token
+    from oc.web.routes.flow import get_settings
+
+    client = env
+    settings = get_settings()
+    from oc.runtime import load_live_profile
+    profile = load_live_profile(settings.profiles_dir, GAME)
+    ctx = TokenContext(data_dir=settings.data_dir, profile=profile, game=GAME)
+
+    tokens = ["dataset:prices.plat|sum", "subset:joined|count", "dataset:loot[0].name"]
+    values = client.post(f"/api/flow/{GAME}/resolve", json={"tokens": tokens}).json()["values"]
+    for t in tokens:
+        assert values[t] == resolve_token(ctx, t)
+
+
+def test_resolve_bad_token_is_null_not_error(env):
+    client = env
+    r = client.post(f"/api/flow/{GAME}/resolve",
+                    json={"tokens": ["dataset:ghost.x|max", "garbage"]})
+    assert r.status_code == 200
+    values = r.json()["values"]
+    assert values["dataset:ghost.x|max"] is None   # missing dataset -> empty aggregate -> null
+    assert values["garbage"] is None               # unknown token shape -> null, never a crash
+
+
+def test_resolve_404_for_unknown_game(env):
+    client = env
+    r = client.post("/api/flow/nope/resolve", json={"tokens": ["dataset:loot"]})
+    assert r.status_code == 404
+
+
+# ---- GET /{game}/dataset|subset/{id}/page : server-backed windowed node tables -----------------
+# VTable no longer holds every row: it fetches windows (filter q + sort + offset/limit) and the
+# server reports the true total so the scrollbar spans the full result. These lock the window shape.
+
+def test_dataset_page_window_and_total(env):
+    client = env
+    # loot has Forma, Kuva. Sort by name, page size 1.
+    p0 = client.get(f"/api/flow/{GAME}/dataset/loot/page",
+                    params={"sort": "name", "offset": 0, "limit": 1}).json()
+    assert [r["name"] for r in p0["rows"]] == ["Forma"]
+    assert p0["total"] == 2                       # true total, not the page size
+    assert "name" in p0["columns"]                # server-authoritative columns
+    p1 = client.get(f"/api/flow/{GAME}/dataset/loot/page",
+                    params={"sort": "name", "offset": 1, "limit": 1}).json()
+    assert [r["name"] for r in p1["rows"]] == ["Kuva"]
+    assert p1["total"] == 2
+    assert p1["columns"] == p0["columns"]         # columns stable across pages
+
+
+def test_dataset_page_query_filters(env):
+    client = env
+    p = client.get(f"/api/flow/{GAME}/dataset/loot/page", params={"q": "forma"}).json()
+    assert [r["name"] for r in p["rows"]] == ["Forma"]
+    assert p["total"] == 1
+    none = client.get(f"/api/flow/{GAME}/dataset/loot/page", params={"q": "zzz"}).json()
+    assert none["rows"] == [] and none["total"] == 0
+
+
+def test_dataset_page_sort_desc(env):
+    client = env
+    p = client.get(f"/api/flow/{GAME}/dataset/loot/page",
+                   params={"sort": "name", "desc": "true"}).json()
+    assert [r["name"] for r in p["rows"]] == ["Kuva", "Forma"]
+
+
+def test_subset_page_window(env):
+    client = env
+    p = client.get(f"/api/flow/{GAME}/subset/joined/page",
+                   params={"sort": "name", "limit": 1}).json()
+    assert p["total"] == 2                         # outer join -> Forma, Kuva
+    assert len(p["rows"]) == 1
+    assert "name" in p["columns"]
+
+
+def test_dataset_distinct(env):
+    client = env
+    d = client.get(f"/api/flow/{GAME}/dataset/loot/distinct", params={"field": "name"}).json()
+    assert set(d["values"]) == {"Forma", "Kuva"}
+    lim = client.get(f"/api/flow/{GAME}/dataset/loot/distinct",
+                     params={"field": "name", "limit": 1}).json()
+    assert len(lim["values"]) == 1
+
+
+def test_subset_page_404_for_unknown(env):
+    client = env
+    assert client.get(f"/api/flow/{GAME}/subset/nope/page").status_code == 404
+    assert client.get("/api/flow/nope/subset/joined/page").status_code == 404
