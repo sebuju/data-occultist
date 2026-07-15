@@ -131,7 +131,14 @@ function imageEditor(im, idx, sel) {
                 grad ? h("label", { class: "tn-img-angle-l" }, "∠", h("input", { class: "tn-img-angle", type: "number", value: im.angle ?? 90, title: "gradient angle (deg)" })) : null)),
         // preview + box overlay + guide layer share one positioned wrapper so a box's px coords line
         // up over the img. tabindex makes it focusable so WASD nudge/resize is scoped to this image.
-        h("div", { class: "tn-img-pv", tabindex: "0" },
+        // Reserve the preview's height on the CONTAINER (a plain div, always laid out) from the spec
+        // aspect AT BUILD. The <img> itself is `display:none` until it has a src (graph.css), so a rebuild
+        // leaves the slot at height:0 until the debounced server frame lands ~250ms+ later — that late box
+        // growth fired a ResizeObserver -> a SECOND edge re-route on every undo/redo. width:100% + this
+        // aspect-ratio makes the div hold the exact final height with no image present; the loaded frame
+        // (same aspect) then fills it with zero box change. Matches refreshPreview's aspectRatio value.
+        h("div", { class: (im.width && im.height) ? "tn-img-pv reserved" : "tn-img-pv", tabindex: "0",
+            style: (im.width && im.height) ? { aspectRatio: `${im.width} / ${im.height}` } : null },
             h("img", { class: "tn-img-preview", dataset: { i: idx }, alt: "image preview" }),
             h("div", { class: "tn-img-boxes" }),
             svg("svg", { class: "tn-guides" })),

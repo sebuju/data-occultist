@@ -302,6 +302,12 @@
     background: linear-gradient(180deg, #2b2b2b, #202020); }
 .tn-img-preview { display: block; max-width: 100%; width: 100%; object-fit: contain; height: auto; }
 .tn-img-preview:not([src]) { display: none; }
+/* When the wrapper reserves height via an inline aspect-ratio (set at build from the image spec so the
+   box never collapses then jumps back when the debounced server frame loads ~250ms+ after a rebuild —
+   that late growth fired a spurious edge re-route on every undo/redo), the img must NOT drive layout
+   height: its loaded natural frame can round 1px past the reserved box. Pull it out of flow to fill the
+   slot; the wrapper's aspect-ratio is then the SOLE height authority, so a loaded frame changes nothing. */
+.tn-img-pv.reserved .tn-img-preview { position: absolute; inset: 0; width: 100%; height: 100%; }
 /* overlay sits exactly over the img (JS sizes it to the displayed img); only the boxes catch clicks */
 /* the box + guide overlays reveal only while the toast image is focused (click/tab into it), so the
    preview reads clean otherwise. Focus-within covers the preview wrapper AND the inspector inputs. */
