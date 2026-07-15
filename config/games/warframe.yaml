@@ -4660,7 +4660,7 @@ atlas:
 layout:
   nodes:
     game:
-      x: -60.0
+      x: -1780.0
       y: -3960.0
       w: 520.0
       h: 263.0
@@ -4670,7 +4670,7 @@ layout:
       softW: true
       softH: false
     dict:wiki:
-      x: 800.0
+      x: -920.0
       y: -3660.0
       w: 280.0
       h: 160.0
@@ -4678,7 +4678,7 @@ layout:
       custW: true
       custH: true
     ds:master:
-      x: 740.0
+      x: -460.0
       y: -2640.0
       collapsed: false
     ds:prices_live:
@@ -4722,7 +4722,7 @@ layout:
       y: -5640.0
       collapsed: false
     ds:mods:
-      x: 740.0
+      x: -460.0
       y: -2400.0
       w: 360.0
       h: 160.0
@@ -4730,7 +4730,7 @@ layout:
       custW: false
       custH: false
     ds:mod_catalog:
-      x: 340.0
+      x: -860.0
       y: -1600.0
       w: 360.0
       h: 200.0
@@ -4740,7 +4740,7 @@ layout:
       softW: true
       softH: true
     producer:mod_catalog_producer:
-      x: 340.0
+      x: -860.0
       y: -2640.0
       w: 360.0
       h: 1000.0
@@ -4750,116 +4750,116 @@ layout:
       softW: true
       softH: true
     win:mod_window:
-      x: -2920.0
-      y: 1800.0
+      x: -2700.0
+      y: 1900.0
       collapsed: false
     item:mod_window:mod:
-      x: -4440.0
-      y: 1800.0
+      x: -4220.0
+      y: 1900.0
       collapsed: false
     win:equipment_window:
-      x: -2900.0
-      y: -660.0
+      x: -2680.0
+      y: -560.0
       w: 500.0
       h: 1227.0
       collapsed: false
       custW: true
       custH: false
     sb:equipment_window:scrollbar:
-      x: -3180.0
-      y: -40.0
+      x: -2960.0
+      y: 60.0
       w: 240.0
       h: 260.0
       collapsed: false
       custW: true
       custH: true
     item:equipment_window:arcane:
-      x: -4440.0
-      y: 340.0
+      x: -4220.0
+      y: 440.0
       w: 540.0
       h: 1066.0
       collapsed: false
       custW: true
       custH: false
     item:equipment_window:normal:
-      x: -4440.0
-      y: -660.0
+      x: -4220.0
+      y: -560.0
       w: 540.0
       h: 957.0
       collapsed: false
       custW: true
       custH: false
     det:equipment_window:detect_1:
-      x: -3180.0
-      y: -360.0
+      x: -2960.0
+      y: -260.0
       w: 240.0
       h: 260.0
       collapsed: false
       custW: true
       custH: false
     item:mod_window:drop_item:
-      x: -4440.0
-      y: 2640.0
+      x: -4220.0
+      y: 2740.0
       w: 380.0
       h: 815.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:normal:name:
-      x: -3860.0
-      y: -320.0
+      x: -3640.0
+      y: -220.0
       w: 320.0
       h: 420.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:normal:count:
-      x: -3860.0
-      y: -660.0
+      x: -3640.0
+      y: -560.0
       collapsed: false
     fld:equipment_window:arcane:name:
-      x: -3860.0
-      y: 1060.0
+      x: -3640.0
+      y: 1160.0
       w: 320.0
       h: 360.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:arcane:arcane_level:
-      x: -3860.0
-      y: 340.0
+      x: -3640.0
+      y: 440.0
       w: 320.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     fld:equipment_window:arcane:count:
-      x: -3860.0
-      y: 700.0
+      x: -3640.0
+      y: 800.0
       w: 320.0
       h: 340.0
       collapsed: false
       custW: false
       custH: false
     fld:mod_window:mod:mod_name:
-      x: -4020.0
-      y: 2240.0
+      x: -3800.0
+      y: 2340.0
       collapsed: false
     fld:mod_window:mod:mod_drain:
-      x: -3680.0
-      y: 1800.0
+      x: -3460.0
+      y: 1900.0
       w: 420.0
       h: 300.0
       collapsed: false
       custW: true
       custH: true
     fld:mod_window:mod:mod_count:
-      x: -4020.0
-      y: 1800.0
+      x: -3800.0
+      y: 1900.0
       collapsed: false
     tell:mod_window:drop_item:tell_3:
-      x: -4040.0
-      y: 2640.0
+      x: -3820.0
+      y: 2740.0
       collapsed: false
     trigger:owned_refresh:
       x: 1280.0
@@ -4925,7 +4925,7 @@ layout:
       custH: false
       softW: true
     producer:producer:
-      x: -60.0
+      x: -1260.0
       y: -2640.0
       w: 360.0
       h: 1000.0
@@ -4934,7 +4934,7 @@ layout:
       custH: true
       softH: true
     ds:relic_contents:
-      x: -60.0
+      x: -1260.0
       y: -1600.0
       w: 360.0
       h: 160.0
@@ -5027,16 +5027,16 @@ layout:
       custW: true
       custH: true
     det:mod_window:detect_h:
-      x: -3180.0
-      y: 1800.0
+      x: -2960.0
+      y: 1900.0
       w: 240.0
       h: 260.0
       collapsed: false
       custW: false
       custH: false
     det:equipment_window:detect_h:
-      x: -3180.0
-      y: -660.0
+      x: -2960.0
+      y: -560.0
       w: 240.0
       h: 278.0
       collapsed: false
@@ -5114,12 +5114,12 @@ layout:
       custH: true
       softH: true
     ds:ee_log:
-      x: -580.0
-      y: -3960.0
+      x: -1760.0
+      y: -2640.0
       collapsed: false
     src:log_ee:
-      x: -580.0
-      y: -3720.0
+      x: -1760.0
+      y: -2400.0
       w: 360.0
       h: 740.0
       collapsed: false
@@ -5166,7 +5166,7 @@ layout:
       custH: false
       softH: true
     dict:relics:
-      x: 800.0
+      x: -920.0
       y: -3260.0
       collapsed: false
     trigger:on_new_relic_fetched:
@@ -5233,8 +5233,8 @@ layout:
       y: -2080.0
       collapsed: false
     win:arsenal_warframe:
-      x: -200.0
-      y: 2320.0
+      x: -180.0
+      y: 300.0
       w: 1100.0
       h: 1121.0
       collapsed: false
@@ -5243,12 +5243,12 @@ layout:
       softW: false
       softH: false
     item:arsenal_warframe:mod:
-      x: -200.0
-      y: 3740.0
+      x: -180.0
+      y: 1460.0
       collapsed: false
     fld:arsenal_warframe:mod:name:
-      x: 660.0
-      y: 3740.0
+      x: 680.0
+      y: 1460.0
       w: 240.0
       h: 321.0
       collapsed: false
@@ -5256,8 +5256,8 @@ layout:
       custH: false
       softW: true
     fld:arsenal_warframe:mod:drain:
-      x: 400.0
-      y: 3740.0
+      x: 420.0
+      y: 1460.0
       w: 240.0
       h: 321.0
       collapsed: false
@@ -5265,8 +5265,8 @@ layout:
       custH: false
       softW: true
     fld:arsenal_warframe:mod:rank:
-      x: 400.0
-      y: 4200.0
+      x: 420.0
+      y: 1920.0
       w: 240.0
       h: 260.0
       collapsed: false
@@ -5275,8 +5275,8 @@ layout:
       softW: true
       softH: true
     det:arsenal_warframe:detect_7:
-      x: 660.0
-      y: 4200.0
+      x: 680.0
+      y: 1920.0
       w: 240.0
       h: 222.0
       collapsed: false
@@ -5296,21 +5296,23 @@ layout:
       y: -3340.0
       collapsed: false
     ro:arsenal_warframe:slot_arcane_1:
-      x: -200.0
+      x: 1320.0
       y: -560.0
       w: 320.0
-      h: 340.0
+      h: 420.0
       collapsed: false
       custW: true
       custH: true
+      softH: true
     ro:arsenal_warframe:slot_arcane_2:
-      x: -200.0
-      y: -180.0
+      x: 1320.0
+      y: -100.0
       w: 320.0
-      h: 340.0
+      h: 420.0
       collapsed: false
       custW: true
       custH: true
+      softH: true
     win:live_game_window:
       x: 7200.0
       y: -2280.0
@@ -5368,23 +5370,23 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:mod_drain_remaining:
-      x: 1300.0
-      y: -140.0
+      x: 1900.0
+      y: 20.0
       w: 280.0
       h: 300.0
       collapsed: false
       custW: true
       custH: true
     ro:arsenal_warframe:mod_drain_max:
-      x: 1620.0
-      y: -140.0
+      x: 2220.0
+      y: 20.0
       w: 280.0
       h: 300.0
       collapsed: false
       custW: true
       custH: true
     atlas:
-      x: -60.0
+      x: -1780.0
       y: -3660.0
       w: 700.0
       h: 759.0
@@ -5394,72 +5396,72 @@ layout:
       softW: false
       softH: false
     ro:arsenal_warframe:slot_5_name:
-      x: -1800.0
-      y: 3280.0
+      x: -1780.0
+      y: 2300.0
       w: 500.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:arsenal_warframe:slot_6_name:
-      x: -1100.0
-      y: 3280.0
+      x: -1080.0
+      y: 2300.0
       w: 500.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:arsenal_warframe:slot_7_name:
-      x: 1300.0
-      y: 3280.0
+      x: 1320.0
+      y: 2300.0
       w: 500.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:arsenal_warframe:slot_8_name:
-      x: 1960.0
-      y: 3280.0
+      x: 1980.0
+      y: 2300.0
       w: 500.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:arsenal_warframe:slot_4_name:
-      x: 1960.0
-      y: 1760.0
+      x: 1980.0
+      y: 1140.0
       w: 500.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:arsenal_warframe:slot_3_name:
-      x: 1300.0
-      y: 1760.0
+      x: 1320.0
+      y: 1140.0
       w: 500.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:arsenal_warframe:slot_2_name:
-      x: -1100.0
-      y: 1760.0
+      x: -1080.0
+      y: 1140.0
       w: 500.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:arsenal_warframe:slot_1_name:
-      x: -1780.0
-      y: 1760.0
+      x: -1760.0
+      y: 1140.0
       w: 480.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     ro:arsenal_warframe:slot_aura_name:
-      x: -1800.0
-      y: 220.0
+      x: -1780.0
+      y: -40.0
       w: 500.0
       h: 360.0
       collapsed: false
@@ -5467,8 +5469,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_exilus_name:
-      x: -1100.0
-      y: 220.0
+      x: -1080.0
+      y: -40.0
       w: 500.0
       h: 360.0
       collapsed: false
@@ -5476,7 +5478,7 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_aura_drain:
-      x: -1800.0
+      x: -1780.0
       y: -560.0
       w: 240.0
       h: 220.0
@@ -5485,8 +5487,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_aura_school:
-      x: -1800.0
-      y: -320.0
+      x: -1500.0
+      y: -560.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5494,8 +5496,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_aura_po:
-      x: -1800.0
-      y: -80.0
+      x: -1780.0
+      y: -300.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5504,7 +5506,7 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_exilus_drain:
-      x: -1100.0
+      x: -1080.0
       y: -560.0
       w: 240.0
       h: 220.0
@@ -5513,8 +5515,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_exilus_school:
-      x: -1100.0
-      y: -320.0
+      x: -800.0
+      y: -560.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5522,8 +5524,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_exilus_po:
-      x: -1100.0
-      y: -80.0
+      x: -1080.0
+      y: -300.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5532,8 +5534,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_1_drain:
-      x: -1800.0
-      y: 980.0
+      x: -1780.0
+      y: 620.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5541,8 +5543,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_1_school:
-      x: -1800.0
-      y: 1220.0
+      x: -1500.0
+      y: 620.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5550,8 +5552,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_1_po:
-      x: -1800.0
-      y: 1460.0
+      x: -1780.0
+      y: 880.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5560,8 +5562,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_2_drain:
-      x: -1100.0
-      y: 980.0
+      x: -1080.0
+      y: 620.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5569,8 +5571,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_2_po:
-      x: -1100.0
-      y: 1460.0
+      x: -1080.0
+      y: 880.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5579,8 +5581,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_3_drain:
-      x: 1300.0
-      y: 980.0
+      x: 1320.0
+      y: 620.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5588,8 +5590,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_3_po:
-      x: 1300.0
-      y: 1460.0
+      x: 1320.0
+      y: 880.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5598,8 +5600,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_4_drain:
-      x: 1960.0
-      y: 980.0
+      x: 1980.0
+      y: 620.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5607,8 +5609,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_4_po:
-      x: 1960.0
-      y: 1460.0
+      x: 1980.0
+      y: 880.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5617,8 +5619,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_8_drain:
-      x: 1960.0
-      y: 2500.0
+      x: 1980.0
+      y: 1780.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5626,8 +5628,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_8_po:
-      x: 1960.0
-      y: 2980.0
+      x: 1980.0
+      y: 2040.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5636,8 +5638,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_7_drain:
-      x: 1300.0
-      y: 2500.0
+      x: 1320.0
+      y: 1780.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5645,8 +5647,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_7_po:
-      x: 1300.0
-      y: 2980.0
+      x: 1320.0
+      y: 2040.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5655,8 +5657,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_6_drain:
-      x: -1100.0
-      y: 2500.0
+      x: -1080.0
+      y: 1780.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5664,8 +5666,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_5_drain:
-      x: -1800.0
-      y: 2500.0
+      x: -1780.0
+      y: 1780.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5673,8 +5675,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_2_school:
-      x: -1100.0
-      y: 1220.0
+      x: -800.0
+      y: 620.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5683,8 +5685,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_3_school:
-      x: 1300.0
-      y: 1220.0
+      x: 1600.0
+      y: 620.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5692,8 +5694,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_4_school:
-      x: 1960.0
-      y: 1220.0
+      x: 2260.0
+      y: 620.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5701,8 +5703,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_8_school:
-      x: 1960.0
-      y: 2740.0
+      x: 2260.0
+      y: 1780.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5710,8 +5712,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_7_school:
-      x: 1300.0
-      y: 2740.0
+      x: 1600.0
+      y: 1780.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5719,8 +5721,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_6_school:
-      x: -1100.0
-      y: 2740.0
+      x: -800.0
+      y: 1780.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5728,8 +5730,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_5_school:
-      x: -1800.0
-      y: 2740.0
+      x: -1500.0
+      y: 1780.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5737,8 +5739,8 @@ layout:
       custH: true
       softH: true
     ds:dataset:
-      x: -200.0
-      y: 4520.0
+      x: -180.0
+      y: 2220.0
       collapsed: false
     sub:installable_mods:
       x: 5260.0
@@ -5940,8 +5942,8 @@ layout:
       y: 540.0
       collapsed: false
     register:loadout_register:
-      x: -200.0
-      y: 980.0
+      x: -180.0
+      y: -560.0
       w: 1100.0
       h: 860.0
       collapsed: false
@@ -5979,8 +5981,8 @@ layout:
       y: 540.0
       collapsed: false
     ro:arsenal_warframe:slot_5_po:
-      x: -1800.0
-      y: 2980.0
+      x: -1780.0
+      y: 2040.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -5989,8 +5991,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_6_po:
-      x: -1100.0
-      y: 2980.0
+      x: -1080.0
+      y: 2040.0
       w: 240.0
       h: 220.0
       collapsed: false
@@ -6019,20 +6021,10 @@ layout:
       y: 540.0
       collapsed: false
     ro:arsenal_warframe:warframe_name:
-      x: 1300.0
+      x: 1900.0
       y: -560.0
       w: 600.0
       h: 380.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
-    vt:ds:relics_refinement:
-      x: 2900.0
-      y: -2280.0
-      w: 560.0
-      h: 440.0
       collapsed: false
       custW: true
       custH: true
@@ -6145,10 +6137,6 @@ layout:
         _batch: 70
         name: 239
     view:relic_rewards_stored:
-      sorts:
-      - col: price
-        dir: -1
-    view:relic_rewards_price_from_stored:
       sorts:
       - col: price
         dir: -1
@@ -6646,7 +6634,6 @@ layout:
     - vt:sub:relics_refinement_view_view
     - det:relic_refinement:detect_1
     - fld:relic_refinement:relic_item:count
-    - vt:ds:relics_refinement
     outline:
       color: '#2c313c'
       style: none
@@ -6949,25 +6936,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
-  - id: group_45
-    title: mod list, arsenal
-    members:
-    - item:arsenal_warframe:mod
-    - fld:arsenal_warframe:mod:name
-    - fld:arsenal_warframe:mod:drain
-    - fld:arsenal_warframe:mod:rank
-    - ds:dataset
-    - det:arsenal_warframe:detect_7
-    outline:
-      color: '#262c37'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#10141c'
-    titleBg: ''
-    titleColor: ''
-    titleAlign: left
-    titlePos: tl
   - id: group_46
     title: loadout, dataset
     members:
@@ -7120,6 +7088,28 @@ layout:
     titleColor: ''
     titleAlign: left
     titlePos: tl
+  - id: group_67
+    title: group_67
+    members:
+    - win:arsenal_warframe
+    - register:loadout_register
+    - det:arsenal_warframe:detect_7
+    - item:arsenal_warframe:mod
+    - fld:arsenal_warframe:mod:name
+    - fld:arsenal_warframe:mod:drain
+    - fld:arsenal_warframe:mod:rank
+    - ds:dataset
+    outline:
+      color: '#262c37'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#10141c'
+    titleBg: ''
+    titleColor: ''
+    titleAlign: left
+    titlePos: tl
+    gate: false
   float_windows: {}
   super_groups:
   - id: sgroup_2
@@ -7164,7 +7154,7 @@ layout:
     - group_36
     - group_51
     - group_41
-    - group_45
+    - group_67
     outline:
       color: '#7ddc7d'
       style: none
@@ -7250,7 +7240,6 @@ layout:
   - vt:sub:relic_rewards_with_price
   - hist:trigger
   - vt:sub:overframe_suggestions
-  - vt:ds:relics_refinement
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -7294,7 +7283,6 @@ layout:
     - sb:relic_refinement:scrollbar
     - det:relic_refinement:detect_1
     - ds:relics_refinement
-    - vt:ds:relics_refinement
     outline:
       color: '#2c313c'
       style: none
