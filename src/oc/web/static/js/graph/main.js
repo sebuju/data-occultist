@@ -480,7 +480,12 @@ const _LIVE_SECTIONS = {
 };
 
 // Rebuild ONE node's DOM in place (used when its own layout changes, e.g. type).
-function rebuildNode(id) {
+// `fit` grows a pinned node whose rebuilt body overflows its height — right for a live edit that
+// reveals an input, but WRONG during an undo/redo restore: there reapplyNodeSizes() is the size
+// authority (it re-stamps every node from the restored snapshot), and letting fitNodeHeight grow a
+// node here instead mutates nodeSizes to a value the snapshot never had — drift that survives the
+// restore and later fires a phantom history entry. rebuildAllNodeBodies passes fit:false for that.
+function rebuildNode(id, { fit = true } = {}) {
     const el = nodeEls.get(id);
     const n = model.nodes().find((x) => x.id === id);
     if (!el || !n) return;
@@ -502,7 +507,7 @@ function rebuildNode(id) {
     // node's resize with no reroute after release (draggingNodes stuck true, lines frozen).
     // (window + item already returned above; every remaining node type is freely resizable.)
     addResizeGrips(el, { ...nodeResizeOpts(el, n.id), snap: true });
-    fitNodeHeight(el, n.id);   // a revealed input (e.g. dict -> fuzzy) may overflow the pinned height — grow to fit
+    if (fit) fitNodeHeight(el, n.id);   // a revealed input (e.g. dict -> fuzzy) may overflow the pinned height — grow to fit
 }
 
 // Toast nodes (their readout token chips), on_readout trigger nodes (their watch-var dropdown),
@@ -596,6 +601,30 @@ function render() {
     for (const d of model.datasets()) rebuildNode(`ds:${d}`);
 }
 let _lastDsSetKey = null;
+
+// history.restore() (undo/redo) swaps the ENTIRE model, then calls render() — but render() is a
+// reconcile that deliberately KEEPS existing node DOM (so a live keystroke's caret survives a
+// re-render). After a wholesale swap there is no caret to protect and every config input may have
+// changed, so the reused DOM is stale. render()'s tail only force-rebuilds datasets+toasts and
+// gates producers/subsets/triggers behind the dataset-id-set key — blind to a node's OWN config —
+// so undoing a producer/trigger/register/... config edit left the body showing pre-undo values.
+// Rebuild EVERY node body once, generically (rule 7): one loop covers all config node types for
+// good, instead of adding a per-type rebuild line here each time another node hits this.
+// Node types rebuildAllNodeBodies must NOT rebuild on a restore: vttable satellites are live data
+// grids that self-refresh via their own microtask/heartbeat (rebuilding one tears down its VTable
+// and re-measures its column widths, drifting layout.tables off the snapshot -> a phantom history
+// entry); preview/atlas wrap a live image canvas fillNode would destroy. Everything else is a config
+// body that must repaint from the restored model. (window/item/game are config too but rebuild only
+// their controls section via _LIVE_SECTIONS, so they keep their canvas — safe to include.)
+const _SKIP_RESTORE_REBUILD = new Set(["vttable", "preview", "atlas"]);
+export function rebuildAllNodeBodies() {
+    // fit:false — reapplyNodeSizes() re-stamps sizes from the restored snapshot right after; letting
+    // fitNodeHeight grow a node here would drift nodeSizes off the snapshot and fire a phantom entry.
+    for (const n of model.nodes()) {
+        if (_SKIP_RESTORE_REBUILD.has(n.type)) continue;
+        rebuildNode(n.id, { fit: false });
+    }
+}
 
 // Rebuild every node whose body lists the dataset/subset id set in a dropdown — the delete/add/
 // rename-safe twin of rebuildReadoutConsumers (rule 7). rebuildNode no-ops for an absent node.

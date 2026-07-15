@@ -10,7 +10,7 @@
 
 import { model, setStatus, imageCanvases, itemCanvases, boot } from "./state.js";
 import { persist } from "./persist.js";
-import { render, collectLayout, hydrateNodeLayout, reconcileOpenImages, reapplyNodeSizes } from "./main.js";
+import { render, rebuildAllNodeBodies, collectLayout, hydrateNodeLayout, reconcileOpenImages, reapplyNodeSizes } from "./main.js";
 import { refreshImageBoxes, refreshDetect, refreshItemBoxes } from "./imaging.js";
 import { flushEdges, suspendRouting, resumeRouting } from "./routing.js";
 import { reapplyPersistedVTables } from "../vtable.js";
@@ -38,6 +38,7 @@ async function restore(snap) {
         model.load(JSON.parse(snap));          // profile incl. its layout
         hydrateNodeLayout();                   // push restored positions/sizes/collapse/groups/satellites live
         render();                              // place nodes at the restored spots (nodes now in the DOM)
+        rebuildAllNodeBodies();                // full model swap -> render() reuses stale DOM; repaint every config body (all node types)
         reapplyNodeSizes();                    // re-stamp restored node w/h (render only re-applies position)
         reapplyPersistedVTables();             // snap open tables' column widths/order/sort to the restored state
         await reconcileOpenImages();           // open/close window image canvases to match the snapshot
