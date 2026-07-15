@@ -25,11 +25,13 @@
 //
 // Geometry recomputes from live member rects every render, so a box always hugs its members.
 
-import { beginDrag } from "./dragresize.js";   // shared drag-loop primitive
-import { h, svg, TRASH } from "../dom.js";
+import { beginDrag, GRID, snap } from "./dragresize.js";   // shared drag-loop primitive
+import { h, svg, TRASH, trashBtn } from "../dom.js";
 import { onOutside } from "../inputbus.js";
 import { setGroups } from "./edgecanvas.js";
 import { resolveColor } from "./colors.js";
+import { colorField } from "./colorfield.js";
+import { makeArmed } from "./armbtn.js";
 
 // ---- constants ------------------------------------------------------------
 const PAD = 40;          // group: uniform gap between members and the outline (two GRID steps)
@@ -71,6 +73,15 @@ let selectedGroups = new Set();   // groups ctrl-clicked for super-grouping
 let copyArm = null;      // { tier, dst, hasTitleBg, hasAlign, sync, commit, btn } while "copy style" armed
 
 export function initGroups(c) { ctx = c; }
+
+// ---- scheme change notifier (theme panel <-> group cog popover two-way sync) --------------
+// Fired whenever a CUSTOM scheme is added, removed, or edited (from either the group popover's
+// scheme grid OR the theme panel's scheme manager) so the other, if open, refreshes its view.
+// Never fired on every color-drag tick (that would rebuild a panel out from under an active
+// edit) -- only on commit (blur / picker-close) or a structural add/remove.
+const _schemeListeners = new Set();
+export function onSchemesChanged(cb) { _schemeListeners.add(cb); return () => _schemeListeners.delete(cb); }
+function notifySchemesChanged() { for (const cb of _schemeListeners) cb(); }
 
 // ---- colour + shadow helpers (store as #rrggbb + 2-hex alpha so <input type=color> round-trips) ----
 function cloneShadow(sh) { return sh ? { x: sh.x || 0, y: sh.y || 0, blur: sh.blur || 0, spread: sh.spread || 0, color: sh.color || "#000000" } : null; }
@@ -218,7 +229,7 @@ function renderSchemeGrid(grid, t, tier, syncPickers, commit, markFn, hasTitleBg
         const b = schemeSwatch(s, s.id === t.schemeId);
         b.addEventListener("click", () => { applySchemeTo(t, s, tier); syncPickers(); commit(); });
         const rm = b.querySelector(".gp-sw-rm");
-        if (rm) rm.addEventListener("click", (e) => { e.stopPropagation(); removeScheme(s.id); renderGroups(); rebuild(); });
+        if (rm) rm.addEventListener("click", (e) => { e.stopPropagation(); removeScheme(s.id); renderGroups(); ctx.persist(); notifySchemesChanged(); rebuild(); });
         return b;
     };
     const premades = SCHEMES.slice(0, BUILTIN_SCHEMES.length).map(mk);   // built-ins
@@ -228,6 +239,7 @@ function renderSchemeGrid(grid, t, tier, syncPickers, commit, markFn, hasTitleBg
         const s = currentToScheme(t, tier, `custom ${SCHEMES.length - BUILTIN_SCHEMES.length + 1}`);
         s.id = newSchemeId();
         SCHEMES.push(s); t.schemeId = s.id;
+        ctx.persist(); notifySchemesChanged();
         rebuild();
     });
     const copy = h("button", { class: "gp-scheme gp-scheme-copy", title: "arm, then click another group of this kind to copy its style" }, COPY_IC());
@@ -247,6 +259,71 @@ function markSchemeSel(pop, t) {
     pop.querySelectorAll(".gp-scheme[data-sid]").forEach((b) => {
         b.classList.toggle("sel", t.schemeId != null && b.dataset.sid === t.schemeId);
     });
+}
+
+// ---- scheme manager (theme panel: every CUSTOM scheme + which groups wear it) -------------
+// Built-ins are app-shipped and immutable, so they're not listed here -- only SCHEMES past
+// BUILTIN_SCHEMES.length (the same slice collectSchemes() persists) are "custom".
+function usedByNames(id) {
+    const out = [];
+    for (const g of groups) if (g.schemeId === id) out.push(g.title || g.id);
+    for (const sg of subGroups) if (sg.schemeId === id) out.push(sg.title || sg.id);
+    for (const sg of superGroups) if (sg.schemeId === id) out.push(sg.title || sg.id);
+    return out;
+}
+// One row: swatch + rename on the SAME line, the scheme's 4 colors + "used by" below, remove
+// last. A color edit repaints every group wearing the scheme IMMEDIATELY (rule: apply on every
+// valid change); onCommit (blur / picker-close, not every drag tick) is what fires the
+// cross-panel notifier, so an active drag here never gets rebuilt out from under itself by its
+// own notification. Remove is a red trashBtn (rule 7: the one remove-button look, see toast_node.js)
+// that ARMS on first click (CLAUDE.md rule 2: no blocking confirm()) and fires on a second.
+function buildSchemeRow(s, host, onChange) {
+    const applyEdit = () => { repaintLinked(s, null); renderGroups(); ctx.persist(); };
+    const commit = () => { onChange?.(); notifySchemesChanged(); };
+    const nameInput = h("input", { type: "text", class: "gp-mgr-name", value: s.name, title: "scheme name" });
+    nameInput.addEventListener("change", () => { s.name = nameInput.value.trim() || s.name; ctx.persist(); commit(); });
+    const colorRow = (label, key, clearable = false) => {
+        const shown = clearable ? (s[key] || "") : hex6(s[key]);
+        const cf = colorField({
+            value: shown, colorClass: "gp-mgr-c", textClass: "gp-mgr-t",
+            onChange: (v) => { s[key] = v; applyEdit(); },
+            onCommit: commit,
+            onClear: clearable ? () => { s[key] = ""; applyEdit(); } : undefined,
+        });
+        return h("div", { class: "gp-mgr-crow" }, h("span", { class: "gp-mgr-clab" }, label), cf.row);
+    };
+    const used = usedByNames(s.id);
+    const rm = trashBtn({ cls: "gp-mgr-rm", title: "remove scheme" });
+    const rmArmed = makeArmed({
+        onArm: () => { rm.classList.add("armed"); rm.title = "click again to confirm"; },
+        onTimeout: () => { rm.classList.remove("armed"); rm.title = "remove scheme"; },
+        onFire: () => {
+            rm.classList.remove("armed");
+            removeScheme(s.id); renderGroups(); ctx.persist(); commit();
+            renderSchemeManager(host, onChange);
+        },
+    });
+    rm.addEventListener("click", (e) => { e.stopPropagation(); rmArmed.trigger(); });
+    return h("div", { class: "gp-mgr-row" },
+        h("div", { class: "gp-mgr-head" }, schemeSwatch(s, false), nameInput),
+        h("div", { class: "gp-mgr-colors" },
+            colorRow("outline", "outline"),
+            colorRow("fill", "bg"),
+            colorRow("title bg", "titleBg", true),
+            colorRow("title text", "titleColor", true)),
+        h("div", { class: "gp-mgr-used", title: used.join(", ") }, used.length ? `used by ${used.length}: ${used.join(", ")}` : "unused"),
+        rm);
+}
+// Full body for the theme panel's "schemes" section. Rebuilds wholesale on every call (same
+// convention as renderSchemeGrid's own `rebuild`) -- cheap (a handful of custom schemes), and
+// only called on a structural notify (add/remove/commit), never on a live drag tick.
+export function renderSchemeManager(host, onChange) {
+    const customs = SCHEMES.slice(BUILTIN_SCHEMES.length);
+    if (!customs.length) {
+        host.replaceChildren(h("div", { class: "gp-mgr-empty" }, 'no custom schemes yet — add one from a group\'s scheme grid ("+")'));
+        return;
+    }
+    host.replaceChildren(...customs.map((s) => buildSchemeRow(s, host, onChange)));
 }
 
 // ---- tier descriptors -----------------------------------------------------
@@ -440,6 +517,34 @@ export const allGroups = () => groups;
 export const allSubGroups = () => subGroups;
 export const allSuperGroups = () => superGroups;
 
+// ---- keyboard group-box resize (Shift+WASD) + reset (Shift+R) -------------------------------
+// Only the GROUP tier is sizable (SUB/SUPER always auto-hug their members — see the `sizable`
+// flags above), so these only ever touch GROUP records. Shares the SAME explicit g.w/g.h fields
+// and grid-step math the resize GRIP drag uses (startGroupResize, node_resize.js) — one size
+// concept, two input paths (rule 7).
+export const GROUP_MIN = GRID * 4;   // floor so a group box can't collapse to nothing
+// Grid-step the group's box by (dw, dh) — one axis is always 0 (a single WASD key). Seeds from
+// the CURRENT rendered box (auto-hugged or already explicit) so the first step off "auto" grows
+// from where the box visibly sits, matching the grip drag's own w0 seed. Returns false if the
+// group/box doesn't exist (nothing to step).
+export function stepGroupSize(gid, dw, dh) {
+    const g = byId(gid);
+    if (!g) return false;
+    const gb = groupBoxes().find((b) => b.id === gid);
+    if (!gb) return false;
+    if (dw) g.w = Math.max(GROUP_MIN, snap((g.w > 0 ? g.w : gb.box.w) + dw));
+    if (dh) g.h = Math.max(GROUP_MIN, snap((g.h > 0 ? g.h : gb.box.h) + dh));
+    return true;
+}
+// Clear an explicit group size back to auto-hug (boxOf falls back to autoW/autoH once rec.w/h
+// aren't > 0). Returns false when the group already has no explicit size (nothing changed).
+export function resetGroupSize(gid) {
+    const g = byId(gid);
+    if (!g || !(g.w > 0 || g.h > 0)) return false;
+    g.w = 0; g.h = 0;
+    return true;
+}
+
 // Re-seat every bonded follower onto its leader's record (used after a satellite is toggled on).
 export function reflowFollowers() {
     if (reconcileFollowers(GROUP)) { reconcileFollowers(SUB); pruneEmpty(GROUP); renderGroups(); ctx.persist(); ctx.afterChange?.(); }
@@ -541,8 +646,13 @@ function pushCanvasGroups() {
         recs.push({ ...b.box, tier: "super", outline: resolveColor(c.outline), fill: resolveColor(b.bg) });
     }
     for (const b of groupBoxes()) {
+        const sel = selectedGroups.has(b.id);
         const c = groupBoxColors(b);
-        recs.push({ ...b.box, tier: "group", outline: resolveColor(c.outline), fill: resolveColor(c.fill), dashed: true });
+        // ctrl-selected: the group's OWN border becomes a solid highlight in the SAME colour as a
+        // multi-selected node's border (--sel, graph SELECTION only) — never a second outline on
+        // top of it (that's what the old .gsel dashed CSS outline used to look like).
+        recs.push({ ...b.box, tier: "group", outline: resolveColor(sel ? "var(--sel)" : c.outline),
+            fill: resolveColor(c.fill), dashed: true, selected: sel });
     }
     for (const b of subGroupBoxes()) {
         const c = subBoxColors(b);
@@ -627,10 +737,9 @@ function groupAfterSize(rec, el) {
         tel.style.color = c.label;   // "" -> CSS --dim
         placeTitle(tel, rec.titleAlign);
     }
-    // Canvas renderer draws the box fill + dashed border itself (under-canvas); blank the DOM box so
-    // it doesn't double-render. The title band + selection highlight stay DOM.
+    // Canvas renderer draws the box fill + border (solid accent when ctrl-selected, else dashed)
+    // itself (under-canvas); blank the DOM box so it doesn't double-render. Title band stays DOM.
     el.style.background = "transparent"; el.style.borderWidth = "0";
-    el.classList.toggle("gsel", selectedGroups.has(rec.id));   // ctrl-click selection highlight
 }
 
 // SUB render extras (S-A): a small caps label pinned INSIDE the box's top-left corner — a smaller,
@@ -682,10 +791,15 @@ function buildBoxEl(g) {
     el.appendChild(grip);
     return el;
 }
+// Explains the ctrl-click selection channel (ctrl_select.js): a fresh ctrl+title starts group-mode
+// (selects the group); once a group is selected, ctrl+title on ANY group toggles it; once a NODE
+// selection is active instead, ctrl+title toggles this group's member nodes rather than the group.
+const CTRL_SELECT_HINT = "Ctrl+click: select this group. With a group selected, Ctrl+click toggles any group. With nodes selected, Ctrl+click toggles this group's nodes.";
 function buildTitleEl(g) {
     const tel = document.createElement("div");
     tel.className = "ggroup-title";
     tel.dataset.gid = g.id;
+    tel.title = CTRL_SELECT_HINT;
     const cog = h("button", { class: "ggt-cog", title: "group settings", "aria-label": "group settings" }, COG(13));
     tel.append(h("span", { class: "ggt-label" }), cog);
     // press the title: a real drag moves the whole group; settings live behind the cog
@@ -700,8 +814,15 @@ function onTitlePress(gid, ev) {
     const g = byId(gid);
     if (!g) return;
     if (tryCopyFrom(g, "group")) { ev.preventDefault(); return; }   // copy-style armed
-    if (ev.ctrlKey || ev.metaKey) { ev.preventDefault(); toggleGroupSelected(gid); return; }   // ctrl selects for super-grouping
-    const stop = beginDrag(ev, { threshold: DRAG_THRESH, onStart: () => { stop(); ctx.moveMembers(g.members, ev); } });
+    if (ev.ctrlKey || ev.metaKey) return;   // ctrl-select is owned centrally by ctrl_select.js (capture phase, runs first)
+    // dragging one title of a MULTI ctrl-selection (>=2 groups) moves every selected group's
+    // members together, not just this one — same "drag any selected item, the whole set follows"
+    // rule the node multi-select drag already gives (node_layout.js startMove).
+    const selIds = selectedGroups.has(gid) ? selectedGroupIds() : [gid];
+    const members = selIds.length > 1
+        ? [...new Set(selIds.flatMap((id) => byId(id)?.members || []))]
+        : g.members;
+    const stop = beginDrag(ev, { threshold: DRAG_THRESH, onStart: () => { stop(); ctx.moveMembers(members, ev); } });
 }
 
 function buildSuperEl(sg) {
@@ -829,6 +950,7 @@ export function toggleGroupSelected(gid) {
 }
 export function selectedGroupIds() { return [...selectedGroups].filter((id) => byId(id)); }
 export function clearGroupSelection() { if (selectedGroups.size) { selectedGroups.clear(); renderGroups(); ctx.afterChange?.(); } }
+export function groupMembers(gid) { const g = byId(gid); return g ? [...g.members] : []; }
 
 // ---- options popover (shared by all three tiers — rule 7) ------------------
 // `target` is the record (mutated live). One builder for all tiers — the options differ only in
@@ -956,6 +1078,7 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
             Object.assign(sch, currentToScheme(t, tier, sch.name));
             repaintLinked(sch, t);
             restyleSwatch(pop, sch.id);
+            notifySchemesChanged();
         } else if (sch) {
             t.schemeId = null;   // edited away from a built-in -> no longer wears it
         }

@@ -79,6 +79,7 @@ import {
     showSatellite, startMove, moveNodes, dragFromHandle,
 } from "./node_layout.js";
 import { wireCanvasInput } from "./canvas_input.js";
+import { wireCtrlSelect } from "./ctrl_select.js";
 import {
     selectionIds, setMultiSelect, clearMultiSelect, syncMultiSelect, deleteSelection,
     wireSelectionToolbar,
@@ -697,16 +698,9 @@ function wireNode(div, n) {
             return;   // only left-drag moves; right-drag pans the canvas
         }
         // ctrl/cmd-click ANYWHERE on the node (header, frame, OR body content) toggles it in/out
-        // of the multi-selection and NEVER drags — handled first so body fields don't swallow it.
-        if (ev.ctrlKey || ev.metaKey) {
-            ev.preventDefault();
-            // seed the multi-select set with the currently single-focused node so a ctrl-click
-            // on a 2nd node ADDS to the selection instead of dropping the 1st.
-            if (!selected.size && selectedNodeId && nodeEls.has(selectedNodeId)) selected.add(selectedNodeId);
-            if (selected.has(n.id)) selected.delete(n.id); else selected.add(n.id);
-            syncMultiSelect();
-            return;
-        }
+        // of the multi-selection and NEVER drags — owned centrally by ctrl_select.js (capture
+        // phase, ahead of every stopPropagation()ing child), so it never even reaches here.
+        if (ev.ctrlKey || ev.metaKey) return;
         // the collapse caret and the title input double as drag HANDLES: a real drag moves
         // the node, a plain click still toggles / edits (threshold-gated below).
         const handle = ev.target.closest(".collapse, input.gi-id");
@@ -1226,6 +1220,7 @@ setScrubHook(prettyOverrides.scrubForSave);
 model.setRenameHook((r) => { api.repointPretty(model.profile.name, [r]); });
 
 wireSettingsButton();
+wireCtrlSelect();
 wireCanvasInput();
 wireSelectionToolbar();
 

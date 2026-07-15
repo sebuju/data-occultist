@@ -175,10 +175,17 @@ function drawGroups(ctx) {
         if (!g.outline || g.tier === "sub") continue;   // sub: fill only, never stroked
         ctx.strokeStyle = g.outline;
         if (g.tier === "group") {
-            ctx.lineWidth = bw;
-            ctx.setLineDash([bw * 2, bw * 2]);   // CSS dashed ~= dash/gap = border width (per box, world units)
-            ctx.strokeRect(g.x, g.y, g.w, g.h);
-            ctx.setLineDash([]);
+            if (g.selected) {
+                // ctrl-selected: the group's OWN border becomes a solid, thicker accent highlight —
+                // never a second outline on top of it.
+                ctx.lineWidth = bw * 2;
+                ctx.strokeRect(g.x, g.y, g.w, g.h);
+            } else {
+                ctx.lineWidth = bw;
+                ctx.setLineDash([bw * 2, bw * 2]);   // CSS dashed ~= dash/gap = border width (per box, world units)
+                ctx.strokeRect(g.x, g.y, g.w, g.h);
+                ctx.setLineDash([]);
+            }
         } else if (g.tier === "super") {
             ctx.lineWidth = 1;   // solid 1px world rim (matches the un-zoom-scaled .sgroup border)
             ctx.strokeRect(g.x, g.y, g.w, g.h);

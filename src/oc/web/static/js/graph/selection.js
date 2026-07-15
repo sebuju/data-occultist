@@ -34,6 +34,25 @@ export function setMultiSelect(ids) {
     syncMultiSelect();
 }
 export function clearMultiSelect() { if (selected.size) { selected.clear(); syncMultiSelect(); } }
+
+// ---- ctrl-click toggles (owned by ctrl_select.js's central resolver) ------------------------
+// Toggle ONE node in/out of the multi-selection. Seeds the set with the currently single-focused
+// node first, so a ctrl-click on a 2nd node ADDS to the selection instead of dropping the 1st.
+export function ctrlToggleNode(id) {
+    if (!selected.size && selectedNodeId && nodeEls.has(selectedNodeId)) selected.add(selectedNodeId);
+    if (selected.has(id)) selected.delete(id); else selected.add(id);
+    syncMultiSelect();
+}
+// Toggle a WHOLE group's member nodes in/out of the multi-selection as one unit (ctrl-click on a
+// group title while in node-mode — see ctrl_select.js). All-in -> remove all; else -> add all.
+export function ctrlToggleGroupMembers(gid) {
+    const members = groups.groupMembers(gid).filter((id) => nodeEls.has(id));
+    if (!members.length) return;
+    if (!selected.size && selectedNodeId && nodeEls.has(selectedNodeId)) selected.add(selectedNodeId);
+    const allIn = members.every((id) => selected.has(id));
+    for (const id of members) { if (allIn) selected.delete(id); else selected.add(id); }
+    syncMultiSelect();
+}
 // ---- selection toolbar: ONE shared predictor for all three grouping tiers (rule 7) -----------
 // Every tier button (group / subgroup / super) derives its label, icon and tooltip from tierState()
 // — a PURE function of the member SET, so the button never changes meaning with selection ORDER

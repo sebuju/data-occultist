@@ -19,6 +19,9 @@ import { deselectAll, setMultiSelect, selectionIds } from "./main.js";
 // Rubber-band selection: drag a rectangle on empty canvas to select every node it
 // touches. Highlights live; commits on release. A press with no drag clears selection.
 function startMarquee(ev) {
+    // group-mode (>=1 group ctrl-selected) locks ctrl-click to the group channel (ctrl_select.js)
+    // — a ctrl-marquee here must not sneak nodes into the node selection while that's active.
+    if ((ev.ctrlKey || ev.metaKey) && groups.selectedGroupIds().length) return;
     // ctrl/cmd-marquee is ADDITIVE: it toggles every caught node against the EXISTING selection
     // (nodes already selected get removed, fresh ones added) instead of replacing it.
     const additive = ev.ctrlKey || ev.metaKey;

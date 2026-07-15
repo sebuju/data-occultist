@@ -221,10 +221,20 @@ registerKey({
         if (!selectionIds().length) return;
         deleteSelection(); ev.preventDefault(); return;
     }
-    // Shift+R: reset any manual resize on every selected node (same as pressing its reset dots —
-    // snaps each axis back to its natural content box). Only touches nodes that carry a saved size.
+    // Shift+R: reset the manual size of the selection — wherever Shift+WASD can resize something,
+    // Shift+R resets it back to its natural/auto box. Group-mode resets every ctrl-selected group's
+    // explicit w/h back to auto-hugging its members (groups.js resetGroupSize, mirrors stepGroupSize
+    // below); otherwise it resets every selected node's saved size (same as pressing its reset dots).
     if (ev.shiftKey && ev.key.toLowerCase() === "r" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
         if (overlays.get(activeOverlayKey)) return;   // a live box overlay owns the keys
+        const gids = groups.selectedGroupIds();
+        if (gids.length) {
+            let any = false;
+            for (const gid of gids) if (groups.resetGroupSize(gid)) any = true;
+            if (any) { groups.renderGroups(); flushEdges(); persist.layout(); }
+            ev.preventDefault();
+            return;
+        }
         const selIds = selectionIds().filter((id) => nodeSizes.has(id) && !collapsed.has(id) && nodeEls.has(id));
         for (const id of selIds) {
             const div = nodeEls.get(id);
@@ -242,7 +252,16 @@ registerKey({
     // handle drives, so it persists + redraws edges identically.
     const rec = overlays.get(activeOverlayKey);
     if (!rec) {
-        if (ev.shiftKey) {
+        if (ev.shiftKey && groups.selectedGroupIds().length) {
+            // Shift+WASD RESIZES every ctrl-selected group's box one grid step (A/D width, W/S
+            // height) — same explicit w/h + GROUP_MIN floor the resize GRIP drag writes
+            // (groups.js stepGroupSize / node_resize.js startGroupResize).
+            const gids = groups.selectedGroupIds();
+            let any = false;
+            for (const gid of gids) if (groups.stepGroupSize(gid, dir[0] * GRID, dir[1] * GRID)) any = true;
+            if (any) { groups.renderGroups(); flushEdges(); persist.layout(); }
+            ev.preventDefault();
+        } else if (ev.shiftKey) {
             // Shift+WASD RESIZES every selected node one grid step (A/D width, W/S height) — same
             // grip the drag handle drives, so each persists + redraws edges identically. Collapsed
             // nodes (header-only) are skipped; widthOnly nodes (item/window) take width only.
@@ -283,8 +302,13 @@ registerKey({
         } else {
             // WASD MOVES the whole selection one grid step (every selected node, not just the focus),
             // mirroring how a multi-select drag moves the set. selectionIds() = the multi-select set
-            // if any, else the single focused node.
-            const selIds = selectionIds().filter((id) => pos.has(id));
+            // if any, else the single focused node. When one or more GROUPS are ctrl-selected instead
+            // (group-mode — ctrl_select.js), move every member node of every selected group together,
+            // same set a multi-group title drag moves (groups.js onTitlePress).
+            const gids = groups.selectedGroupIds();
+            const selIds = gids.length
+                ? [...new Set(gids.flatMap((id) => groups.groupMembers(id)))].filter((id) => pos.has(id))
+                : selectionIds().filter((id) => pos.has(id));
             if (selIds.length) {
                 for (const id of selIds) {
                     const p = pos.get(id);
