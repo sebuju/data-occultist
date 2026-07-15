@@ -113,13 +113,7 @@ function imageEditor(im, idx, sel) {
     return h("div", { class: "tn-img", dataset: { i: idx } },
         // floating remove — top-right, reveals on hover of this image (shared trashBtn look)
         trashBtn({ cls: "tn-img-del", title: "remove this image" }),
-        // preview + box overlay + guide layer share one positioned wrapper so a box's px coords line
-        // up over the img. tabindex makes it focusable so WASD nudge/resize is scoped to this image.
-        h("div", { class: "tn-img-pv", tabindex: "0" },
-            h("img", { class: "tn-img-preview", dataset: { i: idx }, alt: "image preview" }),
-            h("div", { class: "tn-img-boxes" }),
-            svg("svg", { class: "tn-guides" })),
-        // image settings (labelled) below the preview — placement/units/size/background + delete
+        // image settings (labelled) above the preview — placement/units/size/background + delete
         h("div", { class: "lab-grid" },
             labCell("placement", "where this image sits — none temporarily disables it"),
             h("select", { class: "tn-img-place" }, IMG_PLACE.map(opt(im.placement || "inline"))),
@@ -135,6 +129,12 @@ function imageEditor(im, idx, sel) {
                 trans ? null : colorPair("tn-img-c1", im.color1 || "#0a3d62", "colour 1"),
                 grad ? colorPair("tn-img-c2", im.color2 || "#061826", "colour 2") : null,
                 grad ? h("label", { class: "tn-img-angle-l" }, "∠", h("input", { class: "tn-img-angle", type: "number", value: im.angle ?? 90, title: "gradient angle (deg)" })) : null)),
+        // preview + box overlay + guide layer share one positioned wrapper so a box's px coords line
+        // up over the img. tabindex makes it focusable so WASD nudge/resize is scoped to this image.
+        h("div", { class: "tn-img-pv", tabindex: "0" },
+            h("img", { class: "tn-img-preview", dataset: { i: idx }, alt: "image preview" }),
+            h("div", { class: "tn-img-boxes" }),
+            svg("svg", { class: "tn-guides" })),
         h("div", { class: "tn-img-texts" },
             // element picker (dropdown) + add / clone buttons; the inspector below edits the selected
             // element. Clicking a box on the preview selects too — the dropdown just mirrors/jumps.
@@ -218,7 +218,7 @@ export function toastParts(x, model) {
         groups.map((g) => frag(
             groups.length > 1 ? subhead(g.head, null, `tokens from ${g.head}`) : null,
             h("div", { class: "tn-rotokens" },
-                g.chips.map((c) => h("button", { class: "tn-rotoken", type: "button", dataset: { token: c.token }, title: c.title }, c.label))))),
+                g.chips.map((c) => h("button", { class: "tn-rotoken", type: "button", dataset: { token: c.token }, title: c.title }, `{{${c.label}}}`))))),
         h("div", { class: "tn-tokhint muted" },
             "refine: ", h("code", {}, "[i]"), " / ", h("code", {}, "[a:b]"), " slice · ",
             h("code", {}, "|sum"), " mean min max count first latest · ",
@@ -237,7 +237,7 @@ export function toastParts(x, model) {
             h("div", { class: "tn-imgs" },
                 model ? model.toastImages(x.id).map((im, idx) => imageEditor(im, idx, model.toastImageSel(x.id, idx))) : null,
                 h("button", { class: "tn-img-add" }, "+ image")),
-            h("div", { class: "lab-grid" },
+            h("div", { class: "lab-grid tn-app-grid" },
                 labCell("app", "the notification's source label (its AppUserModelID)"),
                 h("input", { class: "tn-app", value: x.app_name || "", placeholder: titleDefault }),
                 labCell("duration", "how long the toast lingers before auto-dismissing"),
