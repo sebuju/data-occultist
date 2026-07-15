@@ -9,6 +9,7 @@
 
     /* surfaces — blueprint: near-black canvas, flat gradient cards, cool thin lines */
     --bg: #0b0d12;            /* app background */
+    --grid-dot: rgba(255,255,255,.06);  /* snap-grid polka dot on the canvas (camera.js sizes/positions it) */
     --panel: #14171e;         /* nodes, panels, top bar (card top) */
     --card-2: #0f1218;        /* card gradient bottom — flat vertical wash on nodes/panels */
     --line: #262c37;          /* borders, neutral button fill */

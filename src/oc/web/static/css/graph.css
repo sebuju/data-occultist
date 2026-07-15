@@ -4,7 +4,15 @@
 
 /* node graph */
 .graphwrap { flex: 1; min-height: 0; overflow: hidden; position: relative; }
-.graphcanvas { position: absolute; inset: 0; overflow: hidden; user-select: none; }
+/* Snap-grid polka dots: one radial-gradient tile marking each snap point. camera.js applyView sizes
+   the tile (adaptive: coarsens to a power-of-two multiple of the 20px grid so dots stay sparse when
+   zoomed out) and positions it to the pan, so dots stay glued to the grid. Painted on this
+   viewport-fixed container so it sits backmost — behind #gpan, group fills, nodes.
+   DISABLED: uncomment background-image + background-repeat below to switch the dots back on. The
+   camera.js sizing/positioning stays wired up, so it just works when the paint is restored. */
+.graphcanvas { position: absolute; inset: 0; overflow: hidden; user-select: none;
+    /* background-image: radial-gradient(circle, var(--grid-dot) 1px, transparent 1.5px); */
+    /* background-repeat: repeat; */ }
 /* Camera transform is SPLIT across two elements (camera.js applyView): #gpan carries the pan
    (translate, written every pan frame), #gworld carries the zoom (scale, written only when zoom
    changes — observers watching #gworld's style stay quiet during a pure pan).

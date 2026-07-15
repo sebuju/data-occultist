@@ -8,6 +8,13 @@ import { persist } from "./persist.js";
 import { nmUpdateViewport } from "./panels/nodemap.js";
 import { redrawNow } from "./edgecanvas.js";
 import { renderNavArrows, navArrowsActive } from "./navarrow.js";
+import { GRID } from "./dragresize.js";
+
+// Minimum on-screen gap between snap-grid dots. When zoom would pack them tighter than this, the
+// spacing coarsens to a larger multiple of the world grid (sparse dots when zoomed out).
+const DOT_MIN_PX = 22;
+// Current on-screen dot spacing (px), recomputed on zoom change; the per-frame pan write reads it.
+let _dotCell = GRID;
 
 let panAnim = null;
 export function cancelPan() { if (panAnim) { cancelAnimationFrame(panAnim); panAnim = null; } }
@@ -200,9 +207,24 @@ export function applyView() {
     if (view.zoom !== _lastZoom) {
         _lastZoom = view.zoom;
         $("gworld").style.transform = `scale(${view.zoom})`;
+        // Snap-grid polka dots (fixed-size dot from the CSS radial-gradient; JS only sizes/places
+        // the tile). ADAPTIVE SPACING: coarsen the dot spacing to a power-of-two multiple of the
+        // 20px world grid so the on-screen gap never drops below DOT_MIN_PX — zoomed out gives a
+        // SPARSE grid, zoomed in marks every snap point. A multiple keeps every dot on a real snap
+        // coordinate (all anchored at world 0), just skipping intermediate ones when far out.
+        let m = 1;
+        while (GRID * m * view.zoom < DOT_MIN_PX) m *= 2;
+        _dotCell = GRID * m * view.zoom;
+        $("graph").style.backgroundSize = `${_dotCell}px ${_dotCell}px`;
         // group outline width is zoom-scaled; the canvas group renderer applies it in drawGroups
         // (via groupBorderCss) on the redrawNow() below, so no DOM border to rewrite here.
     }
+    // Dot tile tracks the pan every frame (same device-rounded tx/ty as #gpan so dots land on the
+    // node pixel grid). The radial dot is CENTERED in its tile, so shift the origin back by half a
+    // cell to land the dot center on the world grid point (tx + k*_dotCell), where snapped node
+    // corners draw. Runs after the zoom block so it uses the current _dotCell. CSS wraps mod size.
+    const half = _dotCell / 2;
+    $("graph").style.backgroundPosition = `${tx - half}px ${ty - half}px`;
     // Canvas renderer (flagged) sits OUTSIDE the transformed world, so it repaints itself against
     // the new pan/zoom on every apply. SYNCHRONOUS so the lines land in the same frame as the #gpan
     // transform above (a deferred rAF paint trails the DOM nodes by a frame while panning fast).
