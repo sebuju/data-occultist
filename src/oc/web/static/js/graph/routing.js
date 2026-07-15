@@ -669,6 +669,7 @@ function linksSig(links) {
     let s = `${ROUTE.cell}:${ROUTE.clearWanted}:`;
     for (const l of links) s += `${l.key}@${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2};`;
     for (const o of obstacleRects()) s += `${o.x},${o.y},${o.w},${o.h}|`;
+    for (const b of groups.groupBoxes()) s += b.gate === false ? "u" : "g";   // gate toggle -> re-path
     return s;
 }
 
@@ -724,6 +725,10 @@ function runRouting() {
         // its box (height bandH), super-group label band at the BOTTOM (SUPER_LABEL_BAND tall).
         const titleBands = [];
         for (const b of groups.subGroupBoxes()) if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.w, y1: b.box.y + b.bandH });
+        // an ungated group is dropped from the hard-box hierarchy below (its members route as free
+        // nodes, straight through its footprint) but its TITLE still reads as a heading — feed the band
+        // in here the same way a subgroup's is, so lines still dodge it even though the box no longer does.
+        for (const b of groups.groupBoxes()) if (b.gate === false && b.box && b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.w, y1: b.box.y + b.bandH });
         // super-group: avoid only the watermark TEXT, not the whole bottom band — most of the band
         // is empty canvas the lines should be free to cross.
         for (const b of groups.superGroupBoxes()) {
@@ -735,9 +740,12 @@ function runRouting() {
         let res;
         if (ROUTE.hier) {
             // hierarchical: collapse each group to a hard box and funnel its crossing lines through gates.
-            // groupOf() returns the group RECORD; hierRoute/gates key off the group id.
+            // groupOf() returns the group RECORD; hierRoute/gates key off the group id. An ungated group
+            // is left OUT of this map entirely: boxless to hierRoute/classifyAndGate means its members
+            // route as free outer nodes and no gate is generated — fully transparent to the router (its
+            // title band alone is still fed in above).
             const groupBox = new Map();
-            for (const b of groups.groupBoxes()) if (b.box) groupBox.set(b.id, { x: b.box.x, y: b.box.y, w: b.box.w, h: b.box.h, bandH: b.bandH || 0 });
+            for (const b of groups.groupBoxes()) if (b.box && b.gate !== false) groupBox.set(b.id, { x: b.box.x, y: b.box.y, w: b.box.w, h: b.box.h, bandH: b.bandH || 0 });
             const gof = (id) => { const r = groups.groupOf(id); return r ? r.id : null; };
             const out = hierRoute(nodes, groupBox, gof, edges, { prevSides, outPorts, titleBands, config, laneGap: ROUTE.cell, prevFace: gateFaces, passCache: hierPassCache });
             res = out.routes; gateFaces = out.faces; hierPassCache = out.passCache;
@@ -750,7 +758,7 @@ function runRouting() {
                 // a parallel lane so long as it stays INSIDE the box. Freezing it (what a straddling
                 // wall does) is what left sibling skip-edges stacked on one coord over a node row. Pass
                 // boxes apart from the hard walls (nodes + title bands) a lane shift can't cross.
-                const containers = groups.groupBoxes().filter((b) => b.box).map((b) => b.box);
+                const containers = groups.groupBoxes().filter((b) => b.box && b.gate !== false).map((b) => b.box);
                 const walls = obstacleRects({ boxes: false })
                     .concat(titleBands.map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 })));
                 res = deCollide(res, walls, { laneGap: ROUTE.cell, containers });

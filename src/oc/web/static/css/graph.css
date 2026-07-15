@@ -744,19 +744,21 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     background-image: radial-gradient(circle at center, var(--nt, var(--accent)) 0 5px, transparent 5.5px);
 }
 /* BODY checkboxes (every node checkbox except the enable switch) are a compact square checkmark,
-   not a slide toggle — the blueprint look: --line outline, and when on the node's type colour (--nt)
-   fills the box with a dark on-accent tick. Overrides base.css's global slide-toggle sizing. */
-.gnode input[type="checkbox"]:not(.gn-enable) {
+   not a slide toggle — the blueprint look: --line outline, and when on the node's type colour (--nt,
+   falls back to --accent outside a .gnode, e.g. the group popover) fills the box with a dark on-accent
+   tick. Overrides base.css's global slide-toggle sizing. Shared by .gnode body checkboxes AND the group
+   options popover (.ggroup-pop) — same treatment, not a second copy. */
+.gnode input[type="checkbox"]:not(.gn-enable), .ggroup-pop input[type="checkbox"] {
     width: 15px; height: 15px; border-radius: 4px; box-sizing: border-box;
-    background-color: color-mix(in srgb, var(--nt) 12%, transparent); border: unset;
+    background-color: color-mix(in srgb, var(--nt, var(--accent)) 12%, transparent); border: unset;
     background-image: none; background-repeat: no-repeat;
     background-position: center; background-size: 11px 11px;
     transition: background-color .15s ease, border-color .15s ease;
     margin-left: 4px;
     padding: 0;
 }
-.gnode input[type="checkbox"]:not(.gn-enable):hover:not(:disabled) { border-color: var(--nt, var(--accent)); }
-.gnode input[type="checkbox"]:not(.gn-enable):checked {
+.gnode input[type="checkbox"]:not(.gn-enable):hover:not(:disabled), .ggroup-pop input[type="checkbox"]:hover:not(:disabled) { border-color: var(--nt, var(--accent)); }
+.gnode input[type="checkbox"]:not(.gn-enable):checked, .ggroup-pop input[type="checkbox"]:checked {
     background-color: var(--nt, var(--accent)); border-color: var(--nt, var(--accent));
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%2308121d' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.4l3 3 6-7'/%3E%3C/svg%3E");
 }
@@ -1108,8 +1110,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .wd-verdict:empty { display: none; }
 /* cross-window verdict (does this window WIN classify, or does a sibling steal it) sits
    under the self-match line; lighter weight so the self-match stays the primary read. */
-.wd-collide { margin-top: 2px; padding-right: 12px; font-size: var(--fs-sm); font-weight: 500; }
-.wd-collide:empty { display: none; }
+.wd-collide { margin-top: 2px; padding-right: 12px; font-size: var(--fs-sm); font-weight: 600; line-height: 1.4; min-height: 1.4em; }
 .key-prev:empty { display: none; }
 .key-sec { margin: 6px 0; }
 .prev-count { padding: 4px 8px; font-size: var(--fs-sm); }
@@ -1196,6 +1197,7 @@ html.desktop .seltoolbar { top: 76px; }   /* clear the 30px desktop titlebar + 4
    this the fixed-width number/colour inputs add padding+border on top of their width (widths drift) */
 .ggroup-pop input, .ggroup-pop select, .ggroup-pop button { box-sizing: border-box; }
 .ggroup-pop input, .ggroup-pop select { min-height: 28px; }
+.ggroup-pop input[type="checkbox"] { min-height: 0; }   /* not a 28px-tall text field — fixed 15px checkmark box */
 /* outline width + offset: small fixed number inputs leading the outline row (before style + colour) */
 /* pin width via flex-basis (NOT just `width`): the base `input{width:100%}` in controls.css loads
    after this, and on a flex item a 100% width can still stretch it — a fixed grow:0 shrink:0 basis can't */

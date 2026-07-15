@@ -21,7 +21,7 @@
 //   • moveMembers(ids, ev) -> begin a multi-node drag (reuses main's move logic)
 //   • world/superWorld/subWorld() -> the three DOM layers
 //   • bonds()        -> {leader, follower} pairs (a preview follows its window in/out of a group)
-//   • startGroupResize(gid, ev), persist(), afterChange()
+//   • startGroupResize(gid, ev), persist(), afterChange(), reroute() (route cache nudge, no node moved)
 //
 // Geometry recomputes from live member rects every render, so a box always hugs its members.
 
@@ -340,7 +340,7 @@ const GROUP = {
     makeRecord: (id, ids) => ({
         id, title: defaultTitle(ids) || id, members: ids,
         outline: { color: DEF_OUTLINE, style: "none", width: 2, offset: 0 }, bg: DEF_BG, titleAlign: "left",
-        titleBg: "", titleColor: "", w: null, h: null, shadow: null, schemeId: null,
+        titleBg: "", titleColor: "", w: null, h: null, shadow: null, schemeId: null, gate: true,
     }),
     buildEl: (rec) => buildBoxEl(rec),
     beforeSize: (rec, el) => groupBeforeSize(rec, el),
@@ -901,7 +901,7 @@ function onSubPress(sid, ev) {
 // ---- external geometry readers (node map, router, canvas hit-tests) -------
 export function groupBoxes() {
     return groups
-        .map((g) => ({ id: g.id, title: g.title, outline: { ...g.outline }, bg: g.bg, titleAlign: g.titleAlign, bandH: g._titleH || TITLE_H, box: boxOf(GROUP, g) }))
+        .map((g) => ({ id: g.id, title: g.title, outline: { ...g.outline }, bg: g.bg, titleAlign: g.titleAlign, bandH: g._titleH || TITLE_H, gate: g.gate !== false, box: boxOf(GROUP, g) }))
         .filter((x) => x.box);
 }
 export function subGroupBoxes() {
@@ -993,7 +993,7 @@ function clearX(title, onClear) {
 // universally live. hasFill/hasTitleColor/hasShadow re-expose the few a given tier still honours.
 function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband, opaqueBg, defaults, sizable,
         tier = "group", render = renderGroups, hasTitleBg = true, hasAlign = true, titleTextLabel = "title text",
-        hasFill = false, hasTitleColor = false, hasShadow = true, hasOutline = true }) {
+        hasFill = false, hasTitleColor = false, hasShadow = true, hasOutline = true, hasGating = false }) {
     if (openPopover?.id === id) { closePopover(); return; }
     closePopover();
     const t = target;
@@ -1011,6 +1011,9 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
             h("select", { class: "gp-pos" },
                 ["left", "center", "right"].map((v) =>
                     h("option", { value: v, selected: t.titleAlign === v }, v)))) : null,
+        hasGating ? h("label", { class: "flab", title: "route boundary lines through this group's enter/exit points" },
+            h("span", { class: "gp-lab" }, "gates"),
+            h("input", { type: "checkbox", class: "gp-gate", checked: t.gate !== false })) : null,
         sizable ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "width"),
             h("div", { class: "gp-size" },
                 h("input", { type: "number", class: "gp-w", min: "1", step: "1", placeholder: autoPh("w"),
@@ -1104,6 +1107,7 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
     }
     if (hasTitleColor) pop.querySelector(".gp-tcolor").addEventListener("input", (e) => { t.titleColor = e.target.value; editCommit(); });
     if (hasAlign) pop.querySelector(".gp-pos").addEventListener("change", (e) => { t.titleAlign = e.target.value; commit(); });
+    if (hasGating) pop.querySelector(".gp-gate").addEventListener("change", (e) => { t.gate = e.target.checked; commit(); ctx.reroute?.(); });
     if (sizable) {
         const wireSize = (inpSel, axis) => {
             const inp = pop.querySelector(inpSel);
@@ -1144,7 +1148,7 @@ function togglePopover(gid, ev) {
     const g = byId(gid);
     if (!g) return;
     openOptionsPopover(`group:${gid}`, g, ev, {
-        ownerSel: ".ggroup-title", disbandLabel: "disband", opaqueBg: false, sizable: true, tier: "group",
+        ownerSel: ".ggroup-title", disbandLabel: "disband", opaqueBg: false, sizable: true, tier: "group", hasGating: true,
         defaults: { outline: { color: DEF_OUTLINE, style: "none", width: 2 }, bg: DEF_BG, titleBg: "", titleColor: "", titleAlign: "left" },
         onDisband: () => disbandIn(GROUP, gid),
     });
@@ -1187,6 +1191,7 @@ export function collect() {
         if (g.h > 0) o.h = g.h;
         if (g.shadow) o.shadow = cloneShadow(g.shadow);
         if (g.schemeId) o.schemeId = g.schemeId;
+        if (g.gate === false) o.gate = false;
         return o;
     });
 }
@@ -1231,6 +1236,7 @@ export function hydrate(arr) {
         h: g.h > 0 ? g.h : null,
         shadow: cloneShadow(g.shadow),
         schemeId: g.schemeId || null,
+        gate: g.gate !== false,
     })).filter((g) => g.members.length);
     for (const g of groups) reapplyScheme(g, "group");   // scheme = source of truth (retunes propagate)
     seq = groups.reduce((m, g) => { const n = /^group_(\d+)$/.exec(g.id); return n ? Math.max(m, +n[1]) : m; }, 0);

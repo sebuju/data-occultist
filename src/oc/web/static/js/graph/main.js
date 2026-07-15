@@ -36,9 +36,9 @@ initTitlebar();   // custom window chrome — no-op outside the desktop window
 import {
     $, setStatus, model, pos, nodeEls, collapsed, view, selected, nodeSizes, openImages,
     imageCanvases, itemCanvases, busy, overlays,
-    prevPresent, prevLastTs, dsTab, clearGrid, nw, nh, boot, afterBoot,
+    prevPresent, prevLastTs, dsTab, clearGrid, nw, nh, boot,
 } from "./state.js";
-import { drawEdges, nodeRect, freezeRouting } from "./routing.js";
+import { drawEdges, nodeRect, freezeRouting, requestEdges } from "./routing.js";
 import {
     panTo, panZoomTo, panZoomToRect, zoomToNode, viewportCenterWorld,
     applyView, resizeCanvas,
@@ -303,6 +303,7 @@ groups.initGroups({
     moveMembers: (ids, ev) => { const lead = ids.find((id) => pos.get(id)); if (lead) moveNodes(lead, ids.filter((x) => x !== lead), ev); },
     persist: () => persist.layout(),
     afterChange: () => { syncMultiSelect(); },
+    reroute: () => requestEdges(),   // a group's gate flag flipped (no node moved) -> route cache needs a nudge
     // double-click a group → frame its bounding box (reuses groupBoxes() geometry)
     zoomToGroup: (gid) => { const gb = groups.groupBoxes().find((b) => b.id === gid); if (gb) panZoomToRect(gb.box, { onlyIn: true }); },
     // drag the group's resize grip → resize the group's container box (sets explicit w/h)
@@ -919,7 +920,11 @@ function wireNode(div, n) {
         if (r.kind === "producer") {
             wireProducerPreview(div, r);
         } else if (r.kind === "source" || r.kind === "sourcedismissed") {
-            afterBoot(() => refreshSourcePreview(r.id));   // parse the source's rules into BOTH satellites
+            // queueMicrotask (not afterBoot): must run after this node is mounted, which is true on
+            // initial boot AND undo/redo restore (afterBoot alone fires synchronously, pre-mount, once
+            // boot.phase is false -> the mount-guarded fill no-ops after a restore). Same fix as the
+            // register node (io_wire.js wireRegister); mirrors the dataset/subset vttable microtasks below.
+            queueMicrotask(() => refreshSourcePreview(r.id));   // parse the source's rules into BOTH satellites
         } else if (r.kind === "subset") {
             const pre = _bootDetails?.subsets?.[r.id] || null;
             queueMicrotask(() => refreshSubsetNode(r.id, pre));
