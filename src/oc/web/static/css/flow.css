@@ -97,16 +97,17 @@ a.node.win:hover { border-color: var(--accent); }
 .gnode.vttable { width: 420px; height: 360px; min-width: 280px; }
 .gnode.vttable[data-tab="data"] .bat-host { display: none; }
 .gnode.vttable[data-tab="batches"] .data-host { display: none; }
+.gnode.vttable .gi-id { margin-left: 8px; }
+.gnode.vttable .gn-h:hover .gn-type { visibility: hidden;}
 /* vt-table satellite (dataset): [data | history] tabs sit ABOVE the table and pick which host shows */
-.ds-tabs { display: flex; gap: 4px; margin-bottom: 6px; flex: 0 0 auto; }
+.ds-tabs { display: flex; gap: 4px; margin: 0; flex: 0 0 auto; position: absolute; right: 8px; }
 .ds-tab { flex: 1 1 0; padding: 2px 0; font-size: var(--fs-sm); background: var(--bg);
-    border: 1px solid var(--line); border-radius: 6px; color: var(--muted); cursor: pointer; }
+    border: 1px solid var(--line); border-radius: 4px; min-height: 21px; color: var(--muted); cursor: pointer; }
 .ds-tab:hover { color: var(--text); }
 .ds-tab.on { background: var(--accent-bg); border-color: var(--accent); color: var(--text); }
 .ds-tab-n { margin-left: 2px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .ds-tab-n:empty { display: none; }
 /* in the node header (gn-h): compact, blueprint-styled inline tabs — not the full-width body tabs */
-.gn-h .ds-tabs { margin-bottom: 0; flex: 0 0 auto; }
 .gn-h .ds-tab { flex: 0 0 auto; padding: 1px 8px; font-size: 9.5px; letter-spacing: 0.09em;
     text-transform: uppercase; border-radius: 5px; }
 .gnode.collapsed .gn-h .ds-tabs { display: none; }   /* body hidden -> the selector has nothing to switch */
@@ -126,6 +127,7 @@ a.node.win:hover { border-color: var(--accent); }
    reveal container (graph.css) so hidden costs zero header width and showing shifts nothing.
    (delete/detach moved to the selection toolbar; collapse lives in `.gn-disc`, always visible.) */
 .gn-h .ds-tabs { opacity: 0; transition: opacity .12s; }   /* data/batches tablist: also hover-only, but stays in flow (left side, no shift risk) */
+.gn-h:hover .ds-tabs { opacity: 1; }
 .gn-h:hover .ds-tabs { opacity: 1; }
 .sub-lbl { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; justify-content: space-between; }
 /* filters/columns/sort/visible ride the node's ONE lab-grid: the label (with its + button) is a
