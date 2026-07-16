@@ -368,6 +368,9 @@
 .live-dbg-wrote.wrote { color: var(--ok); font-weight: 600; }
 /* a read: field chips wrap; each shows fid + optional raw->value */
 .live-dbg-read { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 0 12px; font-size: var(--fs-xs); }
+/* readout reads (live HUD scalars) sit apart from record reads: accented rail + tinted ids */
+.live-dbg-read.readout { border-left: 2px solid var(--accent); padding-left: 8px; margin-left: 10px; }
+.live-dbg-read.readout .live-dbg-fid { color: var(--accent); }
 .live-dbg-fld { display: inline-flex; align-items: baseline; gap: 3px; white-space: nowrap; }
 .live-dbg-fld.cor { color: var(--warn); }        /* a corrected field stands out */
 .live-dbg-fid { color: var(--muted); }

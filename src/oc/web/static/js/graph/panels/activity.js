@@ -12,6 +12,8 @@ import { since, countdown } from "../../datefmt.js";
 import { liveAgo, liveUntil, stopAgo } from "../../ago.js";
 import { autosave } from "../main.js";
 import { renderTriggerHistory } from "../history_node.js";
+import { renderReadoutHistory } from "../readout_history_node.js";
+import { renderProducerHistory } from "../producer_history_node.js";
 import { refreshRegister } from "../register_node.js";
 import { liveCollecting } from "./livewin.js";
 import { panZoomTo } from "../camera.js";
@@ -269,6 +271,18 @@ function detectFires(data) {
 // value it compares against; every other kind shows plain idle / firing now.
 function updateTriggerNodes(data) {
     detectFires(data);
+    // readout read-history satellites ride the same beat (live.readout_history, keyed "<win>:<ro>");
+    // paint each OPEN one (no-op / no host when hidden). VTable reconciles in place (rule 1).
+    const roHist = data.live?.readout_history || {};
+    for (const key in roHist) {
+        const sep = key.indexOf(":");
+        if (sep < 0) continue;
+        renderReadoutHistory(key.slice(0, sep), key.slice(sep + 1), roHist[key]);
+    }
+    // producer fetch-history satellites ride the same beat (producer_history, keyed by producer id);
+    // paint each OPEN one (no-op / no host when hidden). VTable reconciles in place (rule 1).
+    const prHist = data.producer_history || {};
+    for (const pid in prHist) renderProducerHistory(pid, prHist[pid]);
     for (const t of (data.triggers || [])) {
         // the heartbeat carries each trigger's history now (trigger_sched.py), so this just
         // paints it into an OPEN satellite — no-op / no network when it's hidden.

@@ -97,7 +97,11 @@ a.node.win:hover { border-color: var(--accent); }
 .gnode.vttable { width: 420px; height: 360px; min-width: 280px; }
 .gnode.vttable[data-tab="data"] .bat-host { display: none; }
 .gnode.vttable[data-tab="batches"] .data-host { display: none; }
-.gnode.vttable .gi-id { margin-left: 8px; }
+/* the satellite title is a plain <span>, not the editable <input> that graph.css gives flex:1 --
+   so match it here: the title fills the row and pushes the type tag to the right edge (the same
+   right-push every normal node gets from its input title, rule 7), instead of the tag relying on a
+   margin-left:auto that the dataset "removed" toggle can fight or overflow can collapse. */
+.gnode:is(.vttable, .preview) .gi-id { flex: 1; min-width: 0; margin-left: 8px; }
 .gnode.vttable .gn-h:hover .gn-type { visibility: hidden;}
 /* vt-table satellite (dataset): [data | history] tabs sit ABOVE the table and pick which host shows */
 .ds-tabs { display: flex; gap: 4px; margin: 0; flex: 0 0 auto; position: absolute; right: 8px; }
@@ -362,7 +366,7 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 .pr-rows, .pr-fields { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .pr-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .pr-row > input, .pr-row > select { min-width: 0; }
-.pr-field { display: flex; flex-direction: column; gap: 3px; border-left: 2px solid var(--nt); padding-left: 4px; }
+.pr-field { display: flex; flex-direction: column; gap: 3px; }
 .pr-arr { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 2px 6px; padding-left: 8px;
     border-left: 2px solid var(--line); }   /* the array reduce (pluck/agg/filters) nests under its column */
 .pr-chk { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; flex: 0 0 auto; margin: 0; }

@@ -43,8 +43,8 @@ const SAT_DISMISS = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height
 const SAT_HIST = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
     svg("circle", { cx: "8", cy: "8", r: "5.5", fill: "none", stroke: "currentColor", "stroke-width": "1.3" }),
     svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round", d: "M8 5v3l2 1.5" }));
-const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table", producer: "preview (inputs + test fetch)", history: "fire history" };
-const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS, history: SAT_HIST };
+const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table", producer: "preview (inputs + test fetch)", history: "fire history", readouthistory: "read history", producerhistory: "fetch history" };
+const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS, history: SAT_HIST, readouthistory: SAT_HIST, producerhistory: SAT_HIST };
 export function satToggleBtn(satId, kind) {
     const on = model.satelliteOn(satId);
     const title = `${on ? "hide" : "show"} ${_SAT_LABEL[kind] || "data table"}`;
@@ -411,8 +411,12 @@ export function ruleRows(fd, cls, fid) {
                 h("select", { class: "rule-then rule-op", dataset: d, title: "action when it matches (drop stops here; others rewrite the value and continue)" },
                     opts(RULE_THEN, then, 2)),
                 ...ruleThenOperands(r, then, d),
-                trashBtn({ cls: "rule-del", dataset: d, title: "remove this rule" })),
-            h("div", { class: "frule-trace muted", dataset: d }));
+                trashBtn({ cls: "rule-del", dataset: d, title: "remove this rule" })));
+        // DISABLED: the inline `.frule-trace` slot is superseded by the readout-history satellite
+        // vttable (per-rule columns). Not rendering the slot makes refreshRuleTrace short-circuit
+        // (its `.frule-trace` guard finds none), so no /api/rule_trace fetch or paint happens. The
+        // API/resolver/wiring are left intact; re-add the slot below to restore inline traces:
+        //   h("div", { class: "frule-trace muted", dataset: d })
     });
 }
 
@@ -420,9 +424,12 @@ export function ruleRows(fd, cls, fid) {
 // not three copies). All value processing is authored in the rule PIPELINE below; only the
 // capture/confidence knobs (type + isolate + glyph-check + conf) sit up top. `cls` is the
 // wiring's change-class ("fset" | "ffset" | "roset"); `fid` (item fields) tags each control.
-export function fieldConfigBody(fd, cls, fid, afterConf = null) {
+export function fieldConfigBody(fd, cls, fid, afterConf = null, stability = false) {
     const da = fid ? { fid } : {};
     const isText = (fd.type || "text") === "text";
+    const stabNum = (k, val, title) => h("input", {
+        type: "number", min: "0", class: `gi stab-n ${cls}`, dataset: { k, ...da },
+        value: String(val ?? 0), title });
     return frag(
         kv("type", h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, fd.type === v ? `<${t}>` : t)))),
         kv("isolate", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate }),
@@ -431,6 +438,11 @@ export function fieldConfigBody(fd, cls, fid, afterConf = null) {
             { title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the atlas node." }),
         kv("conf", confMeter({ cls, k: "minconf", value: fd.min_confidence ?? 0, fid }),
             { title: "minimum OCR confidence this field must reach — a weaker genuine read drops the whole record (0 = use the global floor). Drag the bar to set it." }),
+        stability && kv("consensus", h("span", { class: "stab-consensus" },
+            stabNum("stab_min", fd.stability_min, "N — minimum expected-quality reads required within the window"),
+            h("span", { class: "stab-of" }, "of"),
+            stabNum("stab_reads", fd.stability_reads, "M — window size, how many recent reads to consider (0 = filter off)")),
+            { title: "misfire filter (live only): surface this readout only when at least N of the last M reads were the expected type/quality — a number field wants a number, text wants non-empty — else HOLD the last value. Kills the OCR garbage a busy action screen produces without lagging a legit fast-changing number. Second box 0 = off." }),
         afterConf,   // optional extra row right below conf (readout node slots its live value here)
         subhead("rules", h("div", { class: "frule-btns" },
             h("button", { class: "rulecopy", dataset: { ...da }, disabled: !(fd.rules || []).length, title: "copy this pipeline" }, COPY()),
@@ -527,10 +539,12 @@ export function readoutParts(n) {
     const body = fieldConfigBody(fd, "roset", fd.id,   // the box's read config, like a region node
         // the value sits directly below the conf meter, labelled "value". Shows `value (conf)`:
         // live from the collector when collecting, else what the current image reads (from preview).
-        kv("value", h("div", { class: "ro-live muted", dataset: { ro: v.id } }, "—")));
+        kv("value", h("div", { class: "ro-live muted", dataset: { ro: v.id, win: n.win.id } }, "—")),
+        true);   // readouts get the live-only consensus (misfire) gate; grid/item fields don't
     return {
         title: h("input", { class: "gi gi-id", dataset: { k: "roid" }, value: v.id,
             title: "readout id — what a trigger watches and a toast tokens as {{readout:id}}" }),
+        head: satToggleBtn(`rohist:${n.win.id}:${v.id}`, "readouthistory"),
         body,
         // drag this readout's out-port onto a toast to feed it the live value as {{readout:id}}
         ports: h("span", { class: "port out", title: "drag to a toast to feed it this readout's live value" }),
@@ -822,6 +836,22 @@ export function nodeParts(n) {
                 body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
             };
         }
+        if (r.kind === "readouthistory") {
+            // a readout's recent reads (non-persisted): raw -> per-rule trace -> value, one row per
+            // read. Filled by renderReadoutHistory (readout_history_node.js) into the .hist-host.
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} reads`),
+                body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+            };
+        }
+        if (r.kind === "producerhistory") {
+            // a producer's recent sweeps (non-persisted): one row per completed fetch (when/dataset/
+            // fetched/failed/total/rows). Filled by renderProducerHistory (producer_history_node.js).
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} fetches`),
+                body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+            };
+        }
         if (r.kind === "producer") {
             // an http producer's preview: what it WILL fetch (resolved names -> keys), the columns
             // it emits, and a live one-item test-fetch (raw response vs mapped row). Filled by
@@ -872,7 +902,8 @@ export function nodeParts(n) {
     }
     if (n.type === "subset") return subsetParts(n.ref);
     if (n.type === "producer") return { ...producerParts(n.ref, model.producerSourceColumns(n.ref), model.producerJoinable(n.ref)),
-        head: n.ref.type === "http" ? satToggleBtn(`prod:${n.ref.id}`, "producer") : null };
+        head: frag(n.ref.type === "http" ? satToggleBtn(`prod:${n.ref.id}`, "producer") : null,
+            satToggleBtn(`prodhist:${n.ref.id}`, "producerhistory")) };
     if (n.type === "filesource") return { ...sourceParts(n.ref),
         head: frag(satToggleBtn(`vt:src:${n.ref.id}`, "vttable"),
             satToggleBtn(`vtd:src:${n.ref.id}`, "dismissed")) };

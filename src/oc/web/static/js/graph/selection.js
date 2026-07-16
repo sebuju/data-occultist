@@ -195,6 +195,8 @@ const CLONE = {
     action: (n) => model.cloneAction(n.ref.id),
     filesource: (n) => model.cloneFileSource(n.ref.id),
     dictionary: (n) => model.cloneDictionary(n.ref.id),
+    toast: (n) => model.cloneToast(n.ref.id),
+    sound: (n) => model.cloneSound(n.ref.id),
 };
 const CLONEABLE = new Set(Object.keys(CLONE));
 function cloneSelection() {

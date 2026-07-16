@@ -12,6 +12,7 @@ import { prevHost, refreshDetect, refreshPreview } from "../imaging.js";
 import { refreshLive } from "../main.js";
 import { panZoomTo } from "../camera.js";
 import { h, svg } from "../../dom.js";
+import { confTier } from "../conf.js";
 import { bgSetTimeout, bgClearTimeout } from "../../bgtimer.js";
 import { fmtTimeSec } from "../../datefmt.js";
 
@@ -289,23 +290,30 @@ function buildDebugRow(e) {
         h("span", { class: "live-dbg-time" }, fmtTimeSec(e.t * 1000)),
         h("span", { class: "live-dbg-phase" }, phase),
         h("span", { class: "live-dbg-wrote" + (e.new ? " wrote" : "") }, wrote || `${e.kept ?? 0}/${e.read ?? 0} read`));
-    const reads = (e.reads || []).map((rd) => {
-        const cor = new Set(rd.corrected || []);
-        const parts = Object.entries(rd.values).map(([fid, val]) => {
-            const raw = rd.raw?.[fid];
-            const shownVal = val === null || val === undefined ? "∅" : String(val);
-            const corrected = cor.has(fid);
-            // raw -> value only when they differ (or the field was corrected); else just the value
-            const changed = corrected || (raw != null && String(raw) !== shownVal);
-            return h("span", { class: "live-dbg-fld" + (corrected ? " cor" : "") },
-                h("span", { class: "live-dbg-fid" }, fid + ":"),
-                changed && raw != null ? h("span", { class: "live-dbg-raw" }, String(raw)) : null,
-                changed && raw != null ? h("span", { class: "live-dbg-arrow" }, "→") : null,
-                h("span", { class: "live-dbg-val" }, shownVal));
-        });
-        return h("div", { class: "live-dbg-read" }, ...parts);
+    const reads = (e.reads || []).map((rd) => buildReadRow(rd));
+    // Readouts (live HUD scalars) read on a separate path — shown here too, tagged so they read
+    // apart from record reads. Only the ones that CHANGED this tick are carried (see live.py).
+    const roReads = (e.readout_reads || []).map((rd) => buildReadRow(rd, " readout"));
+    return h("div", { class: "live-dbg-row" }, head, ...reads, ...roReads);
+}
+
+// One read line: each field's raw OCR text -> resolved value, flagging corrected fields. Shared by
+// record reads and readout reads (readouts pass a `readout` class so they render distinctly).
+function buildReadRow(rd, extraClass = "") {
+    const cor = new Set(rd.corrected || []);
+    const parts = Object.entries(rd.values).map(([fid, val]) => {
+        const raw = rd.raw?.[fid];
+        const shownVal = val === null || val === undefined ? "∅" : String(val);
+        const corrected = cor.has(fid);
+        // raw -> value only when they differ (or the field was corrected); else just the value
+        const changed = corrected || (raw != null && String(raw) !== shownVal);
+        return h("span", { class: "live-dbg-fld" + (corrected ? " cor" : "") },
+            h("span", { class: "live-dbg-fid" }, fid + ":"),
+            changed && raw != null ? h("span", { class: "live-dbg-raw" }, String(raw)) : null,
+            changed && raw != null ? h("span", { class: "live-dbg-arrow" }, "→") : null,
+            h("span", { class: "live-dbg-val" }, shownVal));
     });
-    return h("div", { class: "live-dbg-row" }, head, ...reads);
+    return h("div", { class: "live-dbg-read" + extraClass }, ...parts);
 }
 
 // Apply a frame-limiter change made in the settings modal: restart a running server collector so
@@ -371,30 +379,65 @@ function renderLiveWindow() {
     fitLivePanelHeight();
 }
 
-// Fill each readout node's `.ro-live` span with `value (conf)`. Source is single: the live
+// The FieldDef a readout borrows its read config from (carries the consensus knobs
+// stability_reads/min), looked up by window + readout id off the profile model.
+function readoutField(winId, roId) {
+    const w = model.profile.windows?.find((x) => x.id === winId);
+    const v = w?.readouts?.find((r) => r.id === roId);
+    return (w && v) ? model.readoutField(w, v) : null;
+}
+
+// Fill each readout node's `.ro-live` span with `value CONF% STATUS`. Source is single: the live
 // collector's FULL values+confidence while it's running, else what the current image last read
-// via /api/preview (readoutPreview.all) so the value shows even with live mode OFF. Mirrors the
-// register: an evaluated-but-empty/low-confidence readout shows blank (not "—"), same as a
-// register row. "—" only when the readout hasn't been evaluated at all yet. Reconciled in place
-// (touch textContent/class only on change) so a steady value mutates the DOM zero times per
+// via /api/preview (readoutPreview.all) so the value shows even with live mode OFF. Confidence is
+// shown as a whole percent. STATUS is a ✓ when the read is okay (high confidence); when a readout's
+// CONSENSUS gate is in use (stability_reads > 0) it instead shows the live agreement — "⏸ held"
+// while the gate is suppressing (the value shown is the last held one) or "✓ good/window" while it
+// passes, so you can watch the gate work and tune N-of-M. Mirrors the register: an evaluated-but-
+// empty/low-confidence readout shows blank (not "—"). "—" only when never evaluated. Reconciled in
+// place (touch textContent/class only on change) so a steady value mutates the DOM zero times per
 // heartbeat (CLAUDE.md rule 1).
 function renderReadoutValues() {
-    // Per readout, prefer the running collector's FULL value (+conf); else fall back to what the
-    // current image last read via /api/preview (readoutPreview.all). So a readout shows a value
-    // with live mode OFF, and one the live pass hasn't produced yet still shows its preview.
     const running = !!(liveColStatus && liveColStatus.running);
     const lv = running ? (liveColStatus.readouts_all || {}) : {};
     const lc = running ? (liveColStatus.readout_confs_all || {}) : {};
+    const rh = running ? (liveColStatus.readout_history || {}) : {};
     const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
     for (const el of document.querySelectorAll(".ro-live")) {
-        const id = el.dataset.ro;
+        const id = el.dataset.ro, win = el.dataset.win;
         let val, conf, found = true;
         if (has(lv, id)) { val = lv[id]; conf = lc[id]; }
         else if (has(readoutPreview.all, id)) { val = readoutPreview.all[id]; conf = readoutPreview.allConfs[id]; }
         else found = false;
-        const txt = !found ? "—" : (val === "" ? "" : (conf == null ? String(val) : `${val} (${(+conf).toFixed(2)})`));
+        let txt, tint = null;   // "ok"=green, "reject"=red, "hold"=yellow-green (value fine, gate blocking)
+        if (!found) txt = "—";
+        else if (val === "") txt = "";
+        else {
+            const pct = conf == null ? "" : ` ${Math.round(+conf * 100)}%`;
+            // consensus status when the gate is in use; else a plain ✓ for a high-confidence read.
+            const fd = readoutField(win, id);
+            const m = fd?.stability_reads || 0;
+            const hist = m > 0 ? (rh[`${win}:${id}`] || null) : null;
+            let status = "";
+            if (hist && hist.length) {
+                const good = hist.slice(0, m).reduce((a, e) => a + (e.ok ? 1 : 0), 0);
+                const cur = hist[0], held = !!cur.held;
+                status = held ? " ⏸ held" : ` ✓ ${good}/${m}`;
+                // held + this read was itself fine = value ok but consensus still blocking (yellow-
+                // green); held + a bad read = reject (red); not held = accepted (green).
+                tint = held ? (cur.ok ? "hold" : "reject") : "ok";
+            } else if (conf != null) {
+                const tier = confTier(+conf);
+                if (tier === "ok") { status = " ✓"; tint = "ok"; }
+                else if (tier === "bad") tint = "reject";
+            }
+            txt = `${val}${pct}${status}`;
+        }
         if (el.textContent !== txt) el.textContent = txt;
         if (el.classList.contains("muted") === found) el.classList.toggle("muted", !found);
+        el.classList.toggle("ro-accept", tint === "ok");      // green (var --ok)
+        el.classList.toggle("ro-reject", tint === "reject");  // red   (var --danger)
+        el.classList.toggle("ro-hold", tint === "hold");      // yellow-green: value fine, gate blocking
     }
 }
 // A fresh /api/preview readout batch landed (non-live source) — repaint the readout values.

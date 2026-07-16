@@ -274,6 +274,18 @@ export class VTable {
                 this._pendingOff = null;
                 this.serverTotal = res && res.total != null ? res.total : 0;
                 this.windowBase = offset;
+                // The server column set can change without a fresh setServerSource (a subset edit
+                // hides/derives/pivots columns; a dataset gains a field). Adopt it so the header
+                // tracks the data. Guarded on a real difference -> zero DOM churn on steady refresh
+                // ticks (rule 1); _applyOrder/_renderHead keep the user's saved order+widths by name.
+                const cols = res && res.columns;
+                if (cols && cols.join(" ") !== (this._serverCols || []).join(" ")) {
+                    this._serverCols = cols.slice();
+                    this.columns = this._applyOrder(cols.slice());
+                    this._computeNumCols();              // right-align follows the new column set
+                    this._applySort();                   // keep the sort on its column across the set change
+                    this._renderHead();
+                }
                 this.filtered = this._mapRows((res && res.rows) || []);
                 this._renderMeta();
                 this._updateCount();

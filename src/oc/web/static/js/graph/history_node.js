@@ -14,21 +14,9 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
-import { VTable } from "../vtable.js";
+import { satVT } from "./sat_vtable.js";
 
-const COLS = ["when", "why", "fires", "throttled"];
-const _vts = new Map();   // triggerId -> VTable (one per open history satellite)
-
-// One VTable per history host; recreated if the host element was rebuilt by a node re-render.
-function vtFor(id, host) {
-    let vt = _vts.get(id);
-    if (vt && vt.host === host) return vt;
-    if (vt) vt.destroy();
-    host.replaceChildren();
-    vt = new VTable(host, `hist:${id}`);
-    _vts.set(id, vt);
-    return vt;
-}
+const COLS = ["when", "node", "value", "why", "fires", "throttled"];
 
 // Render a trigger's history into its (open) satellite. No-op when the satellite is hidden (no
 // host in the DOM) — a closed history costs nothing. `history` defaults to the last heartbeat
@@ -43,11 +31,13 @@ export function renderTriggerHistory(triggerId, history) {
     }
     const rows = history.map((e) => ({
         when: fmtDateTimeMs(e.ts),
+        node: e.node || "-",
+        value: e.value === null || e.value === undefined ? "" : String(e.value),
         why: e.why || "",
         fires: (e.targets || []).join(", ") || "-",
         throttled: e.throttled ? "yes" : "",
     }));
-    vtFor(triggerId, host).setData(COLS, rows, {
+    satVT(`hist:${triggerId}`, host).setData(COLS, rows, {
         rowClass: (row) => (row.throttled ? "hist-throttled" : ""),
     });
 }

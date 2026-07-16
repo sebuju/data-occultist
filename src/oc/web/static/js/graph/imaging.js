@@ -32,6 +32,7 @@ import { wireTools, toolKind } from "./drawtool.js";
 import { keyPrevNode } from "./node_parts.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 import { verdictBadge } from "./collisions.js";
+import { registerWorker, unregisterWorker } from "./workers.js";
 
 // ---- window image / region drawing (in-graph) -----------------------------
 
@@ -399,6 +400,7 @@ async function openImage(winId, nodeEl = null) {
             h("button", { class: "imgbtn", title: "choose which stashed images this window uses" },
                 h("span", { class: "imgbtn-lbl" }, "images")),
             h("button", { class: "imgcap", title: "capture the live window as a new image for this window" }, "capture"),
+            h("button", { class: "imgtest", title: "run ALL this window's images through the collect pipeline one at a time (feeds readouts/registers + writes records), like live — click again to stop" }, "test"),
             h("button", { class: "imgall", title: "preview data read from ALL of this window's images" }, "preview all")),
         imgLayers());
     const canvas = host.querySelector("canvas");
@@ -443,6 +445,11 @@ async function openImage(winId, nodeEl = null) {
     host.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal(winId));   // pick image(s)
     host.querySelector(".imgcap").addEventListener("click", () => loadImage(winId, true));   // recapture re-reads
     host.querySelector(".imgall").addEventListener("click", (e) => previewAll(winId, e.currentTarget));
+    host.querySelector(".imgtest").addEventListener("click", (e) => testRun(winId, e.currentTarget));
+    if (testRuns.has(winId)) {   // a rebuild mid-run: reflect the running state on the fresh button
+        const tb = host.querySelector(".imgtest");
+        if (tb) { tb.classList.add("reading"); tb.textContent = "stop"; }
+    }
     host.querySelectorAll(".imgpg").forEach((b) => b.addEventListener("click", () => stepWinPage(winId, +b.dataset.d)));
     host.querySelectorAll(".imglayer").forEach((c) => c.addEventListener("change", (e) =>
         overlay.setVisible({ [e.target.dataset.k]: e.target.checked })));   // toggle a draw layer on the canvas
@@ -1441,6 +1448,46 @@ async function previewAll(winId, btn) {
     }
 }
 
+// Per-window test run: fire ALL the window's bound images through the collect pipeline one at a
+// time, like live/precapture — each image feeds readouts/registers (/api/preview) then writes its
+// records + animates the data-flow blob (/api/preview/commit). Sequential: the `await` per image
+// IS the "wait for this OCR before feeding the next" guarantee (OCR is serialised server-side too).
+// The button is a STOP toggle — it stays clickable while running (spinner via `.reading`, never
+// `disabled`); a second click flips the run token's `stop`, and the loop bails between images (the
+// in-flight one finishes first). Also shows in the log bar as a killable worker.
+const testRuns = new Map();   // winId -> { stop } run token; presence = a run is in progress
+
+async function testRun(winId, btn) {
+    const active = testRuns.get(winId);
+    if (active) { active.stop = true; return; }   // second click -> stop
+    const list = await capListOf(winId);
+    if (!list.length) { setStatus("no images bound to this window"); return; }
+    const token = { stop: false };
+    testRuns.set(winId, token);
+    if (btn) { btn.classList.add("reading"); btn.textContent = "stop"; }   // stays clickable (no `disabled`)
+    registerWorker(`wintest:${winId}`, `test ${winId}`, () => { token.stop = true; });
+    const done = timed(`OCR test-run ${winId}`);
+    const game = model.profile.name, profile = previewProfileFor(winId);
+    let n = 0;
+    try {
+        for (const cap of list) {
+            if (token.stop) break;
+            await api.preview(profile, game, cap);          // feed readouts + registers (like live)
+            if (token.stop) break;
+            await api.previewCommit(profile, game, cap);    // write records + flow blob (like a collect tick)
+            n++;
+        }
+        done(`· ${n}/${list.length} image${list.length === 1 ? "" : "s"}${token.stop ? " (stopped)" : ""}`, "ok");
+    } catch (e) {
+        done(String(e.message || e), "err");
+        setStatus(String(e.message || e));
+    } finally {
+        testRuns.delete(winId);
+        unregisterWorker(`wintest:${winId}`);
+        if (btn) { btn.classList.remove("reading"); btn.textContent = "test"; }
+    }
+}
+
 function tellChip(t) {
     // one tell's outcome: "id score/threshold" tinted by pass/fail
     return h("span", { class: `tell-chip ${t.pass ? "tc-ok" : "tc-bad"}`, title: t.detail || null },
@@ -1906,9 +1953,19 @@ async function loadImage(winId, recapture, { deferRead = false } = {}) {
         done();
         setNodeBusy(nodeIdOf(winId), false);
         if (stale()) return;
-        // keep the canvas area at the image aspect ratio so resizing always fits
-        entry.canvas.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
-        quantizeWidthOnlyHeight(nodeEls.get(nodeIdOf(winId)), nodeIdOf(winId));   // aspect just changed -> re-floor the box to the grid
+        // keep the canvas area at the image aspect ratio so resizing always fits. Re-floor the
+        // node box to the grid ONLY when the aspect actually CHANGED: two captures of the same
+        // window share an aspect, so swapping/recapturing them must not nudge the node's height.
+        // The re-floor clears then re-measures the box, and sub-pixel measurement noise (overlay/
+        // chrome reflow) between same-shaped images can flip snapUp across a grid line -> a full
+        // 20px jump for no real shape change. Skipping it when the aspect string is unchanged kills
+        // that jitter; a genuinely different-shaped image still re-fits (kept below).
+        const ar = `${img.naturalWidth} / ${img.naturalHeight}`;
+        if (entry.aspect !== ar) {
+            entry.aspect = ar;
+            entry.canvas.parentElement.style.aspectRatio = ar;
+            quantizeWidthOnlyHeight(nodeEls.get(nodeIdOf(winId)), nodeIdOf(winId));   // aspect changed -> re-floor the box to the grid
+        }
         entry.overlay.setImage(img);
         refreshImageBoxes(winId);
         // boot opens every window in a burst — this per-image drawEdges only forces a layout

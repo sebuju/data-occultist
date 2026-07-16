@@ -18,7 +18,8 @@ import * as dsevents from "./dsevents.js";
 
 const CAP = 40;            // max blobs spawned per event (overflow is represented, not drawn)
 const STAGGER_MS = 80;     // gap between blobs of one event, so they read as a train not a clump
-const SPEED = 320;         // world units / second along the edge (duration = length / SPEED)
+const SPEED = 320;         // world units / second along the edge (base duration = length / SPEED)
+const TARGET_MS = 2000;    // target blob crossing time; sets speed = len*1000/TARGET_MS, clamped to [SPEED, 5*SPEED]
 const SVGNS = "http://www.w3.org/2000/svg";
 
 let game = null;
@@ -107,10 +108,13 @@ function spawn(kind, src, dst, n) {
     if (!pts) return;                       // edge not drawn/routed yet — skip silently
     const count = Math.min(n, CAP);
     const len = polyLength(pts);
-    const dur = Math.max(250, (len / SPEED) * 1000);   // ms; floor so very short edges still read
+    const want = (len * 1000) / TARGET_MS;                      // speed (u/s) that would cross this edge in TARGET_MS
+    const speed = Math.min(5 * SPEED, Math.max(SPEED, want));   // clamp speed into [SPEED, 5*SPEED]
+    const dur = Math.max(250, (len / speed) * 1000);           // ms; floor so very short edges still read
     // data blob rides the node-tinted data line (stroke = typeColor of the source node); match it.
     // trigger/watch keep their fixed CSS colour ("" -> falls back to .flow-blob.<kind>).
     const fill = kind === "data" ? typeColor(nodeTypeOf(src)) : "";
+
     for (let i = 0; i < count; i++) {
         const el = takeBlob(kind);
         el.style.fill = fill; el.style.color = fill;   // color drives the drop-shadow glow (currentColor)

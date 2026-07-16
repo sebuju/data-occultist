@@ -22,8 +22,10 @@ function remapNodeState(mapId) {
         if (id.startsWith("vtd:")) { const np = mapId(id.slice(4)); return np ? `vtd:${np}` : null; }
         if (id.startsWith("vt:")) { const np = mapId(id.slice(3)); return np ? `vt:${np}` : null; }
         if (id.startsWith("prev:")) { const np = mapId(`win:${id.slice(5)}`); return np && np.startsWith("win:") ? `prev:${np.slice(4)}` : null; }
+        if (id.startsWith("prodhist:")) { const np = mapId(`producer:${id.slice(9)}`); return np && np.startsWith("producer:") ? `prodhist:${np.slice(9)}` : null; }
         if (id.startsWith("prod:")) { const np = mapId(`producer:${id.slice(5)}`); return np && np.startsWith("producer:") ? `prod:${np.slice(9)}` : null; }
         if (id.startsWith("hist:")) { const np = mapId(`trigger:${id.slice(5)}`); return np && np.startsWith("trigger:") ? `hist:${np.slice(8)}` : null; }
+        if (id.startsWith("rohist:")) { const np = mapId(`ro:${id.slice(7)}`); return np && np.startsWith("ro:") ? `rohist:${np.slice(3)}` : null; }
         return null;
     };
     const mapAny = (id) => mapId(id) || mapSat(id);
@@ -72,8 +74,9 @@ export function forgetNodeState(id) {
     const sats = (p[0] === "ds" || p[0] === "sub") ? [`vt:${id}`]
         : p[0] === "src" ? [`vt:${id}`, `vtd:${id}`]
         : p[0] === "win" ? [`prev:${p[1]}`]
-        : p[0] === "producer" ? [`prod:${p[1]}`]
-        : p[0] === "trigger" ? [`hist:${p[1]}`] : [];
+        : p[0] === "producer" ? [`prod:${p[1]}`, `prodhist:${p[1]}`]
+        : p[0] === "trigger" ? [`hist:${p[1]}`]
+        : p[0] === "ro" ? [`rohist:${p[1]}:${p[2]}`] : [];
     for (const sat of sats) { model.shownSatellites.delete(sat); pos.delete(sat); nodeSizes.delete(sat); collapsed.delete(sat); }
     groups.forgetNodes(new Set([id, ...sats]));
 }

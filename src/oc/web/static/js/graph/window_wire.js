@@ -11,6 +11,7 @@ import {
     refreshReadoutValues, refreshRuleTrace, scheduleWindowRead,
 } from "./imaging.js";
 import { moveWindowPos, movePos, renameNode } from "./node_lifecycle.js";
+import { renderReadoutHistory } from "./readout_history_node.js";
 import { panZoomTo } from "./camera.js";
 import { renderLiveWindow, syncWpDots, liveCollecting } from "./panels/livewin.js";
 import {
@@ -201,6 +202,8 @@ export function wireReadout(div, n) {
             else if (k === "isolate") fld.isolate = e.target.checked;
             else if (k === "glyph_check") fld.glyph_check = e.target.checked;
             else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
+            else if (k === "stab_reads") fld.stability_reads = Math.max(0, Math.trunc(+e.target.value) || 0);
+            else if (k === "stab_min") fld.stability_min = Math.max(0, Math.trunc(+e.target.value) || 0);
         }, () => { autosave(winId); scheduleRefetch(); });   // read config changed -> re-read the value off the current image
     }));
     if (fld) wireFieldRules(div, fld, {
@@ -211,6 +214,9 @@ export function wireReadout(div, n) {
     // rebuild. While a config txn is armed the read is deferred to commit (scheduleRefetch
     // aftermath); firing here would OCR uncommitted. Mirrors the armed-gate in refreshRuleTrace.
     if (!nodeTxn.armed(n.id)) refetch();
+    // paint the read-history satellite from the last heartbeat snapshot (no-op when it's hidden),
+    // so a just-opened satellite shows immediately instead of waiting for the next beat.
+    renderReadoutHistory(winId, vid);
 }
 
 // Scrollbar node: orientation + visible-rows, the cutout list (rows-from-top, remove,

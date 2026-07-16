@@ -118,6 +118,9 @@
 .gnode.itemfield  { --nt: var(--nt-itemfield); }
 .gnode.itemtell   { --nt: var(--nt-itemtell); }
 .gnode.readout    { --nt: var(--nt-readout); }
+/* every satellite records-grid (dataset/subset/producer/source/trigger- & readout-history) is a
+   `vttable` node — one shared line colour (steel) so satellites read as tables, not their parent. */
+.gnode.vttable    { --nt: var(--nt-history); }
 .gnode.dataset    { --nt: var(--nt-dataset); }
 .gnode.subset     { --nt: var(--nt-subset); }
 .gnode.producer   { --nt: var(--nt-producer); }
@@ -262,24 +265,10 @@
    `--line` border rule (`.gnode select:not([size]):not(.lab + select)`) so this tint actually
    wins — the same specificity-lever idiom `:not([size])` uses above. Hover/focus are re-supplied
    here (else this rest rule would outrank the generic ones). Value text stays --text for legibility. */
-.gnode.toast select:not([size]):not([multiple]) {
-    border-color: color-mix(in oklab, var(--nt) 45%, var(--line));
+.gnode.toast .tn-il-insp:not(.tn-il-off) :is(textarea, input, select) {
     background: color-mix(in oklab, var(--nt) 8%, transparent);
 }
-.gnode.toast select:not([size]):not([multiple]):hover {
-    border-color: color-mix(in oklab, var(--nt) 60%, var(--line));
-    background: color-mix(in oklab, var(--nt) 14%, transparent);
-}
-.gnode.toast select:not([size]):not([multiple]):focus {
-    border-color: color-mix(in oklab, var(--nt) 70%, var(--line));
-    background: var(--bg); outline: none;
-}
-/* duration is a plain-text-styled dropdown, not a boxed control */
-.gnode.toast select.tn-duration:not([size]):not([multiple]),
-.gnode.toast select.tn-duration:not([size]):not([multiple]):hover,
-.gnode.toast select.tn-duration:not([size]):not([multiple]):focus {
-    border-color: transparent; background: none;
-}
+
 /* the "add" / clone buttons carry the node colour so they read as this node's actions */
 .tn-bk-add, .tn-img-add {
     align-self: start; font: inherit; font-size: 12px; line-height: 1; cursor: pointer; padding: 3px 9px;
@@ -290,7 +279,7 @@
 /* generated images: a list of editors, each with a placement dropdown, live preview, bg/size/text */
 .tn-imgs { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; min-width: 0; }
 .tn-img { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 0px 6px;
-    border-left: 10px solid color-mix(in srgb, var(--nt) 15%, transparent); min-width: 0; }
+    background: color-mix(in srgb, var(--nt) 5%, transparent); min-width: 0; }
 .tn-img-place, .tn-img-unit { font: inherit; font-size: 11px; }
 .tn-img-del { position: absolute; top: 4px; right: 4px; z-index: 2; }
 /* preview + clickable box overlay share one positioned wrapper so the boxes line up over the img */
@@ -310,12 +299,14 @@
    slot; the wrapper's aspect-ratio is then the SOLE height authority, so a loaded frame changes nothing. */
 .tn-img-pv.reserved .tn-img-preview { position: absolute; inset: 0; width: 100%; height: 100%; }
 /* overlay sits exactly over the img (JS sizes it to the displayed img); only the boxes catch clicks */
-/* the box + guide overlays reveal only while the toast image is focused (click/tab into it), so the
-   preview reads clean otherwise. Focus-within covers the preview wrapper AND the inspector inputs. */
+/* the box + guide overlays reveal while the toast image is ACTIVE — an explicit `.tn-active` class
+   (toast_wire.js) set on any mousedown inside the section and cleared on a click outside it. Driven
+   by an explicit class, NOT :focus-within, so editing the inspector or clicking a non-focusable gap
+   in it never hides the overlay or drops the selection. The preview reads clean when inactive. */
 .tn-img-boxes { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .1s; }
-.tn-img:focus-within .tn-img-boxes, .tn-img:focus-within .tn-guides { opacity: 1; }
-/* boxes stay clickable even while faded, so the first click both selects the element and focuses
-   the preview (which reveals the overlay) — no dead first click. */
+.tn-img.tn-active .tn-img-boxes, .tn-img.tn-active .tn-guides { opacity: 1; }
+/* boxes stay clickable even while faded, so the first click both selects the element and activates
+   the section (which reveals the overlay) — no dead first click. */
 .tn-box { position: absolute; box-sizing: border-box; cursor: pointer; border-radius: 2px;
     pointer-events: auto; border: 1px dashed color-mix(in srgb, #6cf 70%, transparent);
     background: color-mix(in srgb, #6cf 8%, transparent); }
@@ -413,12 +404,12 @@
 .tn-il-bar { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
 /* node-coloured actions (see .tn-img-addtext/.tn-img-clone): centre their SVG icon and sit at the
    bar's right edge — first button carries margin-left:auto to push the button group past the picker. */
-.tn-il-bar button { align-self: center; display: inline-flex; align-items: center; color: var(--nt); background: none; border: none; box-shadow: none; padding: 0; }
+.tn-img .tn-il-bar button { align-self: center; display: inline-flex; align-items: center; color: var(--nt); background: none; border: none; box-shadow: none; padding: 0; }
 .tn-il-bar > button:first-of-type { margin-left: auto; }
 /* mini-inspector: a 2-col grid (label | controls); the label column auto-sizes to the widest label
    so every row starts with an aligned, equal-width label. */
 .tn-il-insp { display: grid; grid-template-columns: max-content 1fr; gap: 5px 8px; align-items: start;
-    padding: 6px; border-radius: 4px; font-size: 10px; background: color-mix(in srgb, var(--nt) 7%, transparent); }
+    padding: 6px; border-radius: 9px; font-size: 10px; border: 1px solid color-mix(in srgb, var(--nt) 50%, transparent); margin-bottom: 7px; }
 .tn-il-span { grid-column: 1 / -1; }
 .tn-il-insp-h { display: flex; align-items: center; gap: 8px; min-height: 20px; }   /* stable height */
 .tn-il-insp-h .muted { text-transform: lowercase; }
@@ -522,8 +513,10 @@
     color: var(--ntint); background: transparent;
     pointer-events: none; opacity: .92; transition: opacity .12s ease; z-index: 0; }
 .gn-h.gn-has-ctl:hover .gn-type, .gn-h.gn-has-ctl:focus-within .gn-type { opacity: 0; }
-/* vttable/atlas headers have no flex:1 title to push the type tag over, so pin it to the right edge */
-.gnode.vttable .gn-h .gn-type, .gnode.atlas .gn-h .gn-type { margin-left: auto; }
+/* vttable/atlas/scrollbar headers have no flex:1 title input to push the type tag over (their title
+   is a plain text node), so pin it to the right edge instead of letting it sit next to the title */
+.gnode.vttable .gn-h .gn-type, .gnode.atlas .gn-h .gn-type, .gnode.scrollbar .gn-h .gn-type,
+.gnode.preview .gn-h .gn-type { margin-left: auto; }
 /* ---- hover-reveal control cluster: every header control that should show only on hover (enable
    toggle, satellite toggles, rect-edit) sinks into this ONE container (main.js) instead of each
    carrying its own opacity rule. Mirrors `.gn-disc` above: position:absolute means the container
@@ -682,6 +675,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .frule-invalid { opacity: .45; }
 .frule-empty { margin-top: 6px; font-size: var(--fs-sm); }
 .flab select, .flab input[type="number"], .flab input[type="text"] { width: 100%; min-width: 0; }
+/* consensus (readout misfire gate): two narrow "N of M" boxes, not the full-width .gi input */
+.stab-consensus { display: flex; align-items: center; gap: 5px; }
+.stab-consensus input.stab-n { width: 3em; flex: 0 0 3em; min-width: 0; text-align: center; border-bottom: 1px solid var(--nt); border-radius: 0px; }
+.stab-consensus .stab-of { font-size: var(--fs-sm); opacity: .7; }
 /* shared labelled grid (triggers, price node, view config): every label cell sizes to its own
    text in col 1 and the control fills col 2 — short labels (kind/source/join on/limit) no longer
    eat half the row like a 1fr/1fr .flab does. Built from dom.js `labCell`; the cell AFTER each
@@ -726,6 +723,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    column with real inputs but aren't inputs, so they miss the input's horizontal padding and
    their text sits 4px left of the values above/below. Match it so the column lines up. */
 .gnode :is(.tg-prog, .tg-last, .enr-prog, .ro-live) { padding-inline: 4px; }
+/* readout live value: green when the read was accepted, red when the consensus gate suppressed it
+   (or the read was low-confidence). Overrides the .muted grey while a value is present. */
+.ro-live.ro-accept { color: var(--ok); }
+.ro-live.ro-reject { color: var(--danger); }
+/* value read fine but the consensus gate is still blocking it: green with a yellow tint */
+.ro-live.ro-hold { color: color-mix(in srgb, var(--ok), var(--warn) 45%); }
 
 /* history satellite: a standard VTable records grid of recent fires. The .hist-host is a
    nodehost/scrollhost like every other vt-table satellite (so it fills + resizes the node); the
@@ -872,6 +875,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gn-hspin { display: none; flex: 0 0 auto; width: 13px; height: 13px; border-radius: 50%;
     pointer-events: none; border: 2px solid #ffffff26; border-top-color: var(--accent); }
 .gnode.busy .gn-hspin { display: block; animation: spin 0.7s linear infinite; }
+/* while busy the spinner claims the right-edge slot; hide the type tag so it doesn't get shoved
+   left (13px + gap) the instant the spinner appears and snap back when it clears. */
+.gnode.busy .gn-h .gn-type { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* lock while busy: block + subtly dim the BODY only. Grips/reset-dots/header-drag live on the
    node FRAME (not .gn-body) and WASD move/resize is a document-level keydown on pos/nodeSizes
@@ -1016,12 +1022,13 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     padding: 4px 5px 5px; border: 1px solid var(--line); border-radius: 5px;
     background: var(--card-2);   /* tier class paints the confidence colour (below) */
     font-family: var(--font-mono); cursor: pointer;   /* click pans to the readout node */
-    border-color: color-mix(in oklab, var(--cc) 65%, var(--card-2));
+    border-color: color-mix(in oklab, var(--cc) 40%, var(--card-2));
+    background: color-mix(in oklab, var(--cc) 15%, var(--card-2));
 }
 .mb-cell:hover { border-color: color-mix(in oklab, var(--cc) 100%, var(--card-2)); }   /* inset: no bleed into the grid gaps */
 .mb-k { font-size: 9px; letter-spacing: .03em; text-transform: uppercase; color: var(--muted);
     overflow-wrap: anywhere; }   /* wrap the full key rather than clip it */
-.mb-v { font-size: var(--fs-sm); font-weight: 600; line-height: 1.15; color: var(--text);
+.mb-v { font-size: var(--fs-sm); font-weight: 600; line-height: 1.15; color: var(--nt);
     align-self: anchor-center; overflow: hidden; word-break: break-word; font-variant-numeric: tabular-nums;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-align: center; }
 .mb-meta { display: flex; align-items: center; justify-content: space-between; gap: 4px;
@@ -1032,9 +1039,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .mb-conf { font-size: 9px; color: var(--cc); font-variant-numeric: tabular-nums; }
 /* confidence = the cell background, in the three app tiers (>=.8 / >=.5 / low). --cc keeps the
    matching hue for the corner score + accents. */
-.mb-cell.ok   { --cc: var(--ok);     background: color-mix(in oklab, var(--ok) 15%, var(--card-2)); }
-.mb-cell.warn { --cc: var(--warn);   background: color-mix(in oklab, var(--warn) 20%, var(--card-2)); }
-.mb-cell.bad  { --cc: var(--danger); background: color-mix(in oklab, var(--danger) 20%, var(--card-2)); }
+.mb-cell.ok   { --cc: var(--nt); }
+.mb-cell.warn { --cc: var(--warn); }
+.mb-cell.bad  { --cc: var(--danger); }
 .mb-cell.void { --cc: var(--dim); border-style: dashed;
     background: repeating-linear-gradient(-45deg, #ffffff05 0 6px, #0000 6px 12px), var(--card-2); }
 .mb-cell.void .mb-v { align-self: center; margin: auto 0; font-size: 16px; font-weight: 400;
@@ -1043,9 +1050,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* per-slot remove: bare hover-only trash glyph, same size/look as the source-chip trash (default
    1em .ic-trash; hidden-until-hover is the shared node rule `.gnode *:not(:hover) > .btn-trash`).
    Absolutely placed so it never shifts the slot. Armed two-click (rule 2, no confirm dialog). */
-.mb-rmsrc { position: absolute; top: 4px; right: 2px; padding: 0; border: 0; box-shadow: none;
+.mb-cell:not(:hover) > .mb-rmsrc:not(.armed) { visibility: hidden;}
+.mb-rmsrc { position: absolute; top: 2px; right: 2px; padding: 0; border: 0; box-shadow: none;
     min-height: 0; z-index: 2; }
-.mb-cell.armed { box-shadow: inset 0 0 0 1px var(--danger); }
+.mb-cell.armed { --cc: var(--danger); }
 .mb-cell.armed .mb-rmsrc { visibility: visible; color: var(--danger); }
 /* trailing "+" slot: adds a readout source. A native select is overlaid invisibly so a click opens
    the picker; hidden when nothing is left to add. */

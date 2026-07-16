@@ -98,7 +98,7 @@ export function buildSources(ctx) {
 
     // Slicing help line, appended under the datasets / subsets bodies.
     const SLICE_HELP = () => el("div", "pw-src-help",
-        "slice rows in a label: {{dataset:id.field[0:5]|join}} — python slice; |join joins with \", \" (|join:\" / \" to change the delimiter)");
+        "slice rows in a label: {{dataset:id.field[0:5]|join}} — python slice; |join joins with \", \" (|join:\" / \" to change the delimiter); {{token ?? -}} falls back to \"-\" when empty");
 
     function render() {
         const filter = search.value.trim().toLowerCase();

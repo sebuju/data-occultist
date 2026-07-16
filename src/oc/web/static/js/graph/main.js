@@ -46,6 +46,8 @@ import {
 import { movePos, renameNode } from "./node_lifecycle.js";
 import { nodeParts, windowControls, gamePriority, itemLists, slideToggle, vtShowRemoved, rectEditBtn } from "./node_parts.js";
 import * as dsevents from "./dsevents.js";
+import { renderReadoutHistory } from "./readout_history_node.js";
+import { renderProducerHistory } from "./producer_history_node.js";
 import { clearTools } from "./drawtool.js";
 import { singleFlight } from "../singleflight.js";
 import { nmSyncSelection, renderNodeViews } from "./panels/nodemap.js";
@@ -288,7 +290,7 @@ initGameLifecycle();   // table-store + persist funnel (incl. save-conflict moda
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", hist: "vttable", reg: "region", register: "register", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", prodhist: "vttable", hist: "vttable", rohist: "vttable", reg: "region", register: "register", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
 export function nodeTypeOf(id) { return id === "game" ? "game" : id === "atlas" ? "atlas" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 groups.initGroups({
     world: () => $("ggroups"),
@@ -352,6 +354,13 @@ function fillNode(div, n, wire = true) {
         || (n.type === "sound" && !!n.ref?.synth);   // a sound node's open forge wants the wider width too
     const prettyDirty = prettyOverrides.isNodeDirty(n.id);
     div.className = `gnode ${n.type}${isCollapsed ? " collapsed" : ""}${enabled ? "" : " node-disabled"}${hasRules ? " has-rules" : ""}${prettyDirty ? " pretty-dirty" : ""}`;
+    // A satellite (vttable/preview) inherits its PARENT node's hue: override --nt inline with the
+    // parent type's token so a dataset table reads mint, a readout-history grid reads yellow, etc.
+    // (default .gnode.vttable is steel). Cleared on a non-satellite since fillNode reuses the div.
+    const satPar = model.satelliteParent(n.id);
+    const parType = satPar && nodeTypeOf(satPar);
+    if (parType) div.style.setProperty("--nt", `var(--nt-${parType})`);
+    else div.style.removeProperty("--nt");
     if (n.type === "dataset") div.dataset.ds = n.ref;   // out-port drop target id (tabs moved to the vt-table satellite)
     const parts = nodeParts(n);
     // the enable toggle (gn-enable checkbox) — only on toggleable node types; null otherwise. Its
@@ -508,6 +517,22 @@ function rebuildNode(id, { fit = true } = {}) {
     // (window + item already returned above; every remaining node type is freely resizable.)
     addResizeGrips(el, { ...nodeResizeOpts(el, n.id), snap: true });
     if (fit) fitNodeHeight(el, n.id);   // a revealed input (e.g. dict -> fuzzy) may overflow the pinned height — grow to fit
+}
+
+// Rebuild ONE node's body in place AND redraw its edges against FRESHLY-measured geometry — the
+// single funnel every in-body source-add/remove handler uses (rule 7). rebuildNode swaps the body
+// (a chip added/removed changes the node's size) but never re-reads the node's rect; drawEdges then
+// anchors via nodeRect -> nw/nh (state.js), which fall back to a 220x80 default box when the size
+// isn't re-read yet — so a just-grown node's edge starts at the default-box edge, INSIDE the real
+// node ("center"), until a nudge re-measures it. Force the re-measure here: markNodeSized re-stamps
+// the size classes and `void offsetWidth` flushes layout so the following drawEdges reads the true
+// border-box. Plain (content-height) nodes settle synchronously; pass `raf:true` for a node whose
+// body sizes a frame later (a register's async membank ResizeObserver).
+export function rebuildNodeEdges(id, { raf = false } = {}) {
+    rebuildNode(id);
+    const el = nodeEls.get(id);
+    if (el) { markNodeSized(el, id); void el.offsetWidth; }   // sync layout flush -> true size on next read
+    if (raf) requestAnimationFrame(drawEdges); else drawEdges();
 }
 
 // Toast nodes (their readout token chips), on_readout trigger nodes (their watch-var dropdown),
@@ -705,17 +730,15 @@ function deselectAll() {
 
 // ---- per-node interaction -------------------------------------------------
 
-// The node-title id input (`input.gi-id`) is "click-to-arm": a first click only
-// selects the node (focus is blocked); a SECOND click on the same already-armed
-// input focuses it for editing. Any mousedown elsewhere disarms + blurs, so an id
-// is never edited by accident while panning/selecting. One global capture listener
-// drives the disarm (fires before the node's own bubble-phase mousedown).
-let armedGiId = null;
-function disarmGiId() {
-    if (armedGiId) { armedGiId.blur(); armedGiId = null; }
-}
+// The node-title id input (`input.gi-id`) requires a genuine DOUBLE-CLICK to edit: a
+// single click (or two slow clicks) only selects the node — native focus is blocked —
+// so an id is never edited by accident while panning/selecting. A dblclick focuses it
+// (see the node's dblclick handler). One global capture listener blurs the editing
+// input on any mousedown elsewhere (the canvas pan handler preventDefaults its own
+// mousedown, which would otherwise trap focus in the field).
 document.addEventListener("mousedown", (ev) => {
-    if (armedGiId && ev.target !== armedGiId) disarmGiId();
+    const ed = document.activeElement;
+    if (ed && ed.matches?.("input.gi-id") && ev.target !== ed) ed.blur();
 }, true);
 
 function wireNode(div, n) {
@@ -750,18 +773,11 @@ function wireNode(div, n) {
         // grabbing one INSIDE keeps the set so the drag moves the whole selection.
         if (!selected.has(n.id)) clearMultiSelect();
         focusNode(n.id);   // select on click / drag start (every node is focusable)
-        // id input is click-to-arm: block native focus on the FIRST click (just arm + select);
-        // a second (left) click on the same armed input falls through to native focus → editing.
-        if (handle && handle.matches?.("input.gi-id")) {
-            if (handle !== armedGiId) {
-                ev.preventDefault();   // first click: suppress focus/caret, just arm
-                armedGiId = handle;
-            } else {
-                // second click: native focus lands after this handler — preselect the whole id so
-                // typing replaces it. Guard on activeElement so a drag (which blurs) doesn't reselect.
-                const el = handle;
-                setTimeout(() => { if (document.activeElement === el) el.select(); }, 0);
-            }
+        // id input needs a genuine double-click to edit: block native focus on a single
+        // mousedown (only select + arm the drag handle). The dblclick handler focuses it.
+        // Don't block once it's already focused, so clicks inside place the caret while editing.
+        if (handle && handle.matches?.("input.gi-id") && document.activeElement !== handle) {
+            ev.preventDefault();   // suppress focus/caret; select-only
         }
         if (handle) dragFromHandle(n.id, ev, div, handle);   // drag past threshold, else click
         else startMove(n.id, ev);
@@ -769,10 +785,11 @@ function wireNode(div, n) {
 
     // double-click anywhere non-interactive on the node: fit + centre it
     div.addEventListener("dblclick", (ev) => {
-        // a fast arm+edit on the id input registers as a native dblclick — it must EDIT, not
-        // pan/zoom. Do nothing here so the second click's native focus (+ preselect) stands.
-        // Pan/zoom-to-node is still available by double-clicking the node body/header padding.
-        if (ev.target.closest("input.gi-id")) return;
+        // double-click is the edit gesture for the id input: focus + preselect so typing
+        // replaces it (single mousedown blocks native focus). NOT pan/zoom-to-node — that
+        // stays available by double-clicking the node body/header padding.
+        const idInput = ev.target.closest("input.gi-id");
+        if (idInput) { idInput.focus(); idInput.select(); return; }
         if (ev.target.closest("input,select,button,textarea,a,.port,.collapse,.sv-norm-eg")) return;
         ev.preventDefault();
         zoomToNode(n.id);
@@ -849,11 +866,11 @@ function wireNode(div, n) {
         // call the SAME model setters the drag-a-window/producer/file-source-onto-this-dataset
         // wiring already uses, so the two ways of wiring stay in sync (rebuild re-queues edges).
         div.querySelector(".ds-addsrc")?.addEventListener("change", (e) => {
-            if (model.addDatasetSource(n.ref, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); }
+            if (model.addDatasetSource(n.ref, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); }
         });
         wireArmedRemove(div, ".ds-rmsrc", (val) => {
             model.removeDatasetSource(n.ref, val);
-            rebuildNode(n.id); drawEdges(); autosave(null);
+            rebuildNodeEdges(n.id); autosave(null);
         });
         div.querySelector(".dsrename")?.addEventListener("change", async (e) => {
             const oldId = n.ref, newId = (e.target.value || "").trim();
@@ -959,6 +976,18 @@ function wireNode(div, n) {
         } else if (r.kind === "subset") {
             const pre = _bootDetails?.subsets?.[r.id] || null;
             queueMicrotask(() => refreshSubsetNode(r.id, pre));
+        } else if (r.kind === "triggerhistory") {
+            // filled by the trigger's wire (renderTriggerHistory) + the heartbeat (triggers ride
+            // EVERY beat, so an idle/empty one still renders an empty grid — no fetch here).
+        } else if (r.kind === "readouthistory") {
+            // readout_history rides the beat ONLY while live-collecting, so an idle satellite would
+            // otherwise stay on its "loading…" placeholder forever. Paint it on mount so it shows an
+            // empty grid (or the last snapshot) immediately, live or not.
+            queueMicrotask(() => renderReadoutHistory(r.win, r.id));
+        } else if (r.kind === "producerhistory") {
+            // producer_history rides the activity beat; paint on mount so a just-opened satellite
+            // shows its last snapshot (or an empty grid) immediately, not a stale "loading…".
+            queueMicrotask(() => renderProducerHistory(r.id));
         } else {
             const rmTog = div.querySelector(".vt-showrm");   // "show removed" header toggle (checkbox)
             rmTog?.addEventListener("change", (e) => {

@@ -158,11 +158,15 @@ function buildLinks() {
         // draw on the top layer so the end glyph sits OVER the node instead of being hidden behind
         // its card (edges z1 < nodes z2 < top z5).
         const over = true;
-        // Every line takes the colour of the node it LEAVES (source), overriding the per-kind
-        // stroke in graph.css. Resolved to that type's --nt token; an unknown/satellite source
-        // (no --nt-<type>) falls back to --line via the CSS var fallback. Applied inline in
-        // drawEdges (inline style beats the stylesheet); end-glyphs follow via `context-stroke`.
-        const srcType = nodeTypeOf(aId);
+        // Every line takes a NODE colour, overriding the per-kind stroke in graph.css. A STRUCTURAL
+        // ownership line (a window's readout/detect/region/item, an item's field/tell/scrollbar)
+        // takes the CHILD's colour — so a readout's line to its window is the readout's yellow, a
+        // detect line is amber, etc. Every other line (data/trigger/watch/img/own) keeps the colour
+        // of the node it LEAVES (source). Resolved to that type's --nt token; an unknown/satellite
+        // node (no --nt-<type>) falls back to --line. Applied inline in drawEdges (inline style
+        // beats the stylesheet); end-glyphs follow via `context-stroke`.
+        const STRUCT_CHILD = new Set(["field", "detect", "item", "tell", "scrollbar"]);
+        const srcType = nodeTypeOf(STRUCT_CHILD.has(kind) ? bId : aId);
         links.push({ key, aId, bId, top, over, port, portKind, cls: `gedge ${kind}${flow ? " flow" : ""}${tgt}${own}${selClsFor(aId, bId)}`, srcType, ra, rb });
     };
     for (const e of model.edges())
