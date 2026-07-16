@@ -17,6 +17,7 @@ the readout until clean reads return. Opt-in per readout via ``FieldDef.stabilit
 from __future__ import annotations
 
 from ..profile.models import FieldDef, FieldType
+from . import readout_history
 from .fields import _first_number, _to_number
 
 
@@ -48,3 +49,42 @@ def consensus_pass(ok_flags: list[bool], window: int, min_good: int) -> bool:
     k = max(1, min(min_good, window))
     good = sum(1 for ok in ok_flags[:window] if ok)
     return good >= k
+
+
+def gate_readouts(game: str, window_id: str, ro_field: dict, ro_trace: list,
+                  readouts_now: dict, readout_confs_now: dict, ts: str) -> set[str]:
+    """One tick's readout consensus + history pass, shared by the live collector and the
+    teach-UI test feed (rule 7 — the loop used to live inline in ``Collector.tick`` only).
+
+    For each read in ``ro_trace`` (``{id, value, raw, dropped, conf, trace}``, from
+    ``RegionReader.read_readouts_detailed``'s ``trace_sink``): score expected QUALITY
+    (:func:`expected_ok`), and for a readout with the gate enabled
+    (``FieldDef.stability_reads > 0``) run the K-of-M window (:func:`consensus_pass`) over its
+    recent history ring. Records EVERY evaluated read (passed or held) to the ring
+    (:func:`readout_history.record`). Suppressed ids are POPPED from ``readouts_now`` /
+    ``readout_confs_now`` in place (so the register/.ro-live/trigger maps hold their last value)
+    and returned as a set. ``ro_field`` maps readout id -> its resolved ``FieldDef`` (or None).
+
+    Because the ring is module-global and persists across calls, feeding images one at a time
+    through this builds the same temporal stream a live collector sees."""
+    suppressed: set[str] = set()
+    for rec in ro_trace:
+        rid = rec["id"]
+        fdef = ro_field.get(rid)
+        floor = (getattr(fdef, "min_confidence", 0.0) or 0.0) if fdef else 0.0
+        ok = expected_ok(fdef, rec["value"], rec["dropped"], rec["conf"], floor)
+        win = (getattr(fdef, "stability_reads", 0) or 0) if fdef else 0
+        held = False
+        if win > 0 and rid in readouts_now:
+            prior = readout_history.recent(game, window_id, rid)
+            flags = [ok] + [bool(e.get("ok", True)) for e in prior]
+            if not consensus_pass(flags, win, getattr(fdef, "stability_min", 0) or 0):
+                suppressed.add(rid)
+                held = True
+        readout_history.record(game, window_id, rid, ts=ts, raw=rec["raw"],
+                               value=rec["value"], dropped=rec["dropped"], trace=rec["trace"],
+                               conf=rec["conf"], ok=ok, held=held)
+    for rid in suppressed:
+        readouts_now.pop(rid, None)
+        readout_confs_now.pop(rid, None)
+    return suppressed

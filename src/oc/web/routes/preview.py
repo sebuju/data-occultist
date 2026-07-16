@@ -75,6 +75,33 @@ def _feed_live_registers(game, payload, registers=None):
         sess.feed_registers(readouts_all, payload.get("readout_confs_all") or {}, registers)
 
 
+def _feed_readouts_live(engine, profile, game, capture, registers=None):
+    """Full live-like readout fold for a deliberate ``test`` feed (``/api/preview?feed=1``): read
+    THIS image's readouts WITH their rule trace and hand them to the game's live session, so the
+    consensus/history gate, register feed, readout->register/toast data blob, and ``on_readout``
+    watch triggers all fire exactly as they would live (see ``LiveSession.feed_readouts``). Feeding
+    a window's stashed images one at a time thus reproduces live readout behaviour.
+
+    A plain one-shot canvas preview (``feed`` off) never calls this — it stays register-only via
+    :func:`_feed_live_registers`, so a mere refresh can't pollute the readout history ring, move
+    the consensus state, or fire a watch line."""
+    if not game:
+        return
+    sess = session_for(game, create=True)
+    if sess is None or not profile.windows:
+        return
+    frame, window, fields, reader = _window_reader(engine, profile, game, capture)
+    if not window.readouts:
+        return
+    ro_trace: list[dict] = []
+    with ocr_job(engine.ocr):   # one job: the readout read runs without interleaving another
+        detailed = reader.read_readouts_detailed(frame, window, fields, trace_sink=ro_trace)
+    # readout id -> its resolved FieldDef (mirrors Collector.tick's ro_field), for the gate's
+    # expected-type / confidence-floor / stability params.
+    ro_field = {v.id: fields.get(v.field) for v in window.readouts if v.enabled}
+    sess.feed_readouts(detailed, ro_trace, ro_field, window, window.id, registers)
+
+
 def _frame_for(engine, profile, game, capture):
     # Testing harness: when a video is loaded AND enabled, the live-grab path
     # (capture=None) reads the current decoded video frame instead of the window,
@@ -330,9 +357,14 @@ def _cell_values(cell):
 
 @router.post("/preview")
 def preview(profile: GameProfile, game: str | None = Query(None), capture: str | None = Query(None),
-            prefer_cache: bool = Query(False)):
+            prefer_cache: bool = Query(False), feed: bool = Query(False)):
     """OCR the current regions. If ``game``+``capture`` are given, read that stashed
-    image (the one shown in the image node); otherwise capture the live window."""
+    image (the one shown in the image node); otherwise capture the live window.
+
+    ``feed`` (the ``test`` button) makes this read behave like a live tick for READOUTS:
+    beyond feeding registers it runs the consensus/history gate, emits the readout->register
+    data blob, and fires ``on_readout`` watch lines (see :func:`_feed_readouts_live`). Off (a
+    plain canvas preview/refresh) it stays register-only so a refresh can't pollute that state."""
     if not profile.windows:
         raise HTTPException(status_code=400, detail="profile has no window")
     window = profile.windows[0]
@@ -343,7 +375,11 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
            "accept": get_settings().tuning.accept_confidence}
     cache, key, hit = _ocr_cache_for(game, capture, cfg, prefer_cache)
     if hit is not None:
-        _feed_live_registers(game, hit, profile.registers)
+        # cache serves the grid read; a feed still re-reads readouts (cheap) for the live fold.
+        if feed:
+            _feed_readouts_live(get_engine(), profile, game, capture, profile.registers)
+        else:
+            _feed_live_registers(game, hit, profile.registers)
         return {**hit, "cached": True}
     engine = get_engine()
     frame, window, result = _read_window(engine, profile, game, capture)
@@ -372,7 +408,11 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
     if cache is not None:
         cache.put(key, out)
         cache.save()
-    _feed_live_registers(game, out, profile.registers)
+    # feed_readouts already feeds registers, so a feed skips the register-only path (no double).
+    if feed:
+        _feed_readouts_live(engine, profile, game, capture, profile.registers)
+    else:
+        _feed_live_registers(game, out, profile.registers)
     return out
 
 

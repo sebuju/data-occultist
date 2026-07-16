@@ -26,8 +26,8 @@ from ..profile.models import GameProfile, WindowDef
 from ..ocr.serialize import ocr_job
 from ..store import DatasetStore, KeyMap, store_for
 from ..store.flow_events import publish_flow
-from . import detsig, readout_history, settle
-from .readout_stability import consensus_pass, expected_ok
+from . import detsig, settle
+from .readout_stability import gate_readouts
 from .items import item_templates
 from .atlas_match import build_atlas
 from .commit import commit_records
@@ -400,27 +400,10 @@ class Collector:
                 # screen. A suppressed readout is dropped from BOTH the gated map (no trigger fire)
                 # and the full map (register/.ro-live HOLD their last value rather than ingest the
                 # garbage). Records EVERY evaluated read (passed or dropped) to the history ring.
+                # Shared with the teach-UI test feed (preview.py) via gate_readouts.
                 ts = datetime.now().isoformat(timespec="milliseconds")
-                suppressed: set[str] = set()
-                for rec in ro_trace:
-                    rid = rec["id"]
-                    fdef = ro_field.get(rid)
-                    floor = (getattr(fdef, "min_confidence", 0.0) or 0.0) if fdef else 0.0
-                    ok = expected_ok(fdef, rec["value"], rec["dropped"], rec["conf"], floor)
-                    win = (getattr(fdef, "stability_reads", 0) or 0) if fdef else 0
-                    held = False
-                    if win > 0 and rid in readouts_now:
-                        prior = readout_history.recent(self._profile.name, window_id, rid)
-                        flags = [ok] + [bool(e.get("ok", True)) for e in prior]
-                        if not consensus_pass(flags, win, getattr(fdef, "stability_min", 0) or 0):
-                            suppressed.add(rid)
-                            held = True
-                    readout_history.record(self._profile.name, window_id, rid, ts=ts,
-                                           raw=rec["raw"], value=rec["value"], dropped=rec["dropped"],
-                                           trace=rec["trace"], conf=rec["conf"], ok=ok, held=held)
-                for rid in suppressed:
-                    readouts_now.pop(rid, None)
-                    readout_confs_now.pop(rid, None)
+                suppressed = gate_readouts(self._profile.name, window_id, ro_field, ro_trace,
+                                           readouts_now, readout_confs_now, ts)
                 self._readouts.update(readouts_now)
                 # Full map: every ENABLED readout, empty/low-confidence defaulted to "" instead of
                 # omitted -- so a blank slot pushes an empty value (register/.ro-live) rather than
@@ -673,7 +656,8 @@ class Collector:
     _HEAVY_SKIPPED = {TickStatus.idle, TickStatus.throttled, TickStatus.moving,
                       TickStatus.no_window, TickStatus.not_foreground}
 
-    def run(self, interval: float | None = None, on_tick=None, should_stop=None) -> None:
+    def run(self, interval: float | None = None, on_tick=None, should_stop=None,
+            triggers=None) -> None:
         """Loop ticks until interrupted. ``on_tick(TickResult)`` is called each pass.
 
         Two-rate: the loop wakes every ``tuning.gate_interval`` (fast) but runs the
@@ -693,7 +677,10 @@ class Collector:
         if interval is None:
             interval = self._tuning.collect_interval
         gate_interval = self._tuning.gate_interval
-        triggers = self._build_triggers()
+        # A caller (LiveSession) may pass a shared TriggerRunner so its edge state is the SAME
+        # one the teach-UI test feed drives (rule 7); the CLI passes none and we build our own.
+        if triggers is None:
+            triggers = self._build_triggers()
         last_ocr = float("-inf")   # perf_counter of the last OCR-heavy tick (monotonic)
         try:
             while not (should_stop and should_stop()):

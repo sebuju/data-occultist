@@ -46,6 +46,18 @@ def recent(game: str, window_id: str, readout_id: str) -> list[dict]:
     return list(_history.get((game, window_id, readout_id), ()))
 
 
+def snapshot(game: str) -> dict:
+    """``{"<window>:<readout>": [recent reads]}`` for every readout of ``game`` with reads this
+    session. Module-level twin of the (now removed) per-session builder, so the activity heartbeat
+    can surface readout history WITHOUT a running live collector — the ring is fed by both live
+    collection and the teach-UI test feed (mirrors :func:`producer_history.snapshot`)."""
+    out: dict[str, list] = {}
+    for (g, win, rid), dq in _history.items():
+        if g == game and dq:
+            out[f"{win}:{rid}"] = list(dq)
+    return out
+
+
 def clear(game: str, window_id: str | None = None) -> None:
     """Drop history for one window's readouts, or (``window_id=None``) every readout of ``game``."""
     for key in [k for k in _history if k[0] == game and (window_id is None or k[1] == window_id)]:

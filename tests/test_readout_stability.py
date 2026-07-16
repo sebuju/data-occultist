@@ -1,6 +1,7 @@
 """Pure-logic tests for the readout consensus (misfire) gate — no capture/GPU."""
 
-from oc.collect.readout_stability import consensus_pass, expected_ok
+from oc.collect import readout_history
+from oc.collect.readout_stability import consensus_pass, expected_ok, gate_readouts
 from oc.profile.models import FieldDef, FieldType
 
 
@@ -77,3 +78,58 @@ def test_k_at_least_one():
     # min_good 0 with an active window still requires at least one good read
     assert consensus_pass([False, False], window=2, min_good=0) is False
     assert consensus_pass([True, False], window=2, min_good=0) is True
+
+
+# ---- gate_readouts: the shared tick pass (history ring + suppression) --------
+
+def _trace(rid, value, *, raw="x", dropped=False, conf=0.9):
+    return {"id": rid, "value": value, "raw": raw, "dropped": dropped, "trace": [], "conf": conf}
+
+
+def test_gate_records_history_and_surfaces_good_read():
+    readout_history.clear("g", "w")
+    # stability_min=1 -> a single good read already meets the window, so it surfaces immediately.
+    fld = _num_field(stability_reads=3, stability_min=1)
+    ro_field = {"hp": fld}
+    now, confs = {"hp": 42}, {"hp": 0.9}
+    gate_readouts("g", "w", ro_field, [_trace("hp", 42)], now, confs, ts="t0")
+    hist = readout_history.recent("g", "w", "hp")
+    assert len(hist) == 1 and hist[0]["value"] == 42 and hist[0]["ok"] is True
+    assert now == {"hp": 42}   # a good read survives
+
+
+def test_gate_holds_until_min_reads_accrue():
+    readout_history.clear("g", "w")
+    # K=2 over M=3: the FIRST good read can't reach 2-of-3 yet, so it's held; the SECOND surfaces.
+    fld = _num_field(stability_reads=3, stability_min=2)
+    ro_field = {"hp": fld}
+    now, confs = {"hp": 42}, {"hp": 0.9}
+    assert gate_readouts("g", "w", ro_field, [_trace("hp", 42)], now, confs, ts="t0") == {"hp"}
+    assert now == {}   # first read held (only 1-of-3 good)
+    now, confs = {"hp": 43}, {"hp": 0.9}
+    assert gate_readouts("g", "w", ro_field, [_trace("hp", 43)], now, confs, ts="t1") == set()
+    assert now == {"hp": 43}   # second good read reaches 2-of-3 -> surfaces
+
+
+def test_gate_suppresses_on_k_of_m_miss():
+    readout_history.clear("g", "w")
+    fld = _num_field(stability_reads=3, stability_min=2)
+    ro_field = {"hp": fld}
+    # two prior garbage reads leave the ring at 0-of-2 good; a third garbage read this tick
+    # can't reach 2-of-3 -> suppressed (popped from the surfaced maps, still recorded held).
+    for i in range(2):
+        now, confs = {}, {}   # garbage reads never surface, so readouts_now is empty for them
+        gate_readouts("g", "w", ro_field, [_trace("hp", "junk", dropped=True)], now, confs, ts=f"g{i}")
+    now, confs = {"hp": 7}, {"hp": 0.9}
+    suppressed = gate_readouts("g", "w", ro_field, [_trace("hp", 7)], now, confs, ts="t")
+    assert suppressed == {"hp"}
+    assert now == {} and confs == {}   # held: popped from the surfaced maps
+    assert readout_history.recent("g", "w", "hp")[0]["held"] is True
+
+
+def test_gate_off_never_suppresses():
+    readout_history.clear("g", "w")
+    ro_field = {"hp": _num_field()}   # stability_reads defaults 0 -> gate off
+    now, confs = {"hp": 1}, {"hp": 0.9}
+    assert gate_readouts("g", "w", ro_field, [_trace("hp", 1)], now, confs, ts="t") == set()
+    assert now == {"hp": 1}

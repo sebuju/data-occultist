@@ -7,9 +7,9 @@
 // then the final VALUE — the same rule trace the readout NODE shows (paintRuleTrace), split into
 // columns. Rule columns are derived from the reads' own traces, so they track the field's pipeline.
 //
-// Data rides the live heartbeat: each beat carries `live.readout_history["<win>:<ro>"]` (live.py
-// status snapshot). Painted on satellite open (wireReadout) and each beat (activity.js) — a closed
-// satellite (no host in the DOM) costs nothing.
+// Data rides the activity heartbeat TOP-LEVEL: each beat carries `readout_history["<win>:<ro>"]`
+// (build_activity, fed by live collection AND the teach-UI test feed). Painted on satellite open
+// (wireReadout) and each beat (activity.js) — a closed satellite (no host in the DOM) costs nothing.
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
@@ -54,9 +54,9 @@ export function renderReadoutHistory(win, vid, history) {
     const host = nodeEls.get(`rohist:${win}:${vid}`)?.querySelector(".hist-host");
     if (!host) return;
     if (history === undefined)
-        history = hub.latest()?.live?.readout_history?.[`${win}:${vid}`] || [];
+        history = hub.latest()?.readout_history?.[`${win}:${vid}`] || [];
     const ruleCols = ruleColumns(history);
-    const COLS = ["when", "raw", ...ruleCols.map((r) => r.col), "value", "consensus"];
+    const COLS = ["when", "raw", ...ruleCols.map((r) => r.col), "value", "confidence", "consensus"];
     const rows = history.map((e) => {
         // consensus = the misfire gate's verdict on this read: "held" = suppressed (value read but
         // not surfaced, readout held its last value), "ok" = accepted, "noise" = expected-quality
@@ -67,6 +67,7 @@ export function renderReadoutHistory(win, vid, history) {
             when: fmtDateTimeMs(e.ts),
             raw: e.raw == null ? "" : String(e.raw),
             value: val,
+            confidence: e.conf == null ? "" : `${Math.round(e.conf * 100)}%`,
             consensus: e.held ? "held" : (e.ok ? "ok" : "noise"),
             _dropped: !!e.dropped,
             _held: !!e.held,
