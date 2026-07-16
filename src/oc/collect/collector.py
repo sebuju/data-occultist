@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from statistics import median
 
@@ -25,7 +26,8 @@ from ..profile.models import GameProfile, WindowDef
 from ..ocr.serialize import ocr_job
 from ..store import DatasetStore, KeyMap, store_for
 from ..store.flow_events import publish_flow
-from . import detsig, settle
+from . import detsig, readout_history, settle
+from .readout_stability import consensus_pass, expected_ok
 from .items import item_templates
 from .atlas_match import build_atlas
 from .commit import commit_records
@@ -67,6 +69,18 @@ def _debug_reads(records) -> list[dict]:
     return out
 
 
+def _readout_debug_read(rid, value, conf, raw, sub) -> dict:
+    """One readout's OCR detail for the live debug log, shaped like a ``_debug_reads`` entry so
+    the OCR log renders it identically (raw→value, corrected flag). ``raw`` is omitted when the
+    readout carries no OCR text (pip/symbol)."""
+    return {
+        "values": {rid: value},
+        "raw": {rid: raw} if raw is not None else {},
+        "corrected": [rid] if sub is not None else [],
+        "conf": round(conf, 3),
+    }
+
+
 def _detect_search_fracs(profile: GameProfile) -> list:
     """Every window/state detector's search region (as fractions). The window+state a
     frame classifies to depends ONLY on these regions, so hashing them lets the live
@@ -106,6 +120,7 @@ class TickResult:
     dataset: str | None = None              # the dataset records were written to
     changed: list[dict] = field(default_factory=list)  # values added/updated this tick (for triggers)
     reads: list[dict] = field(default_factory=list)     # per-kept-record OCR detail (live debug log only)
+    readout_reads: list[dict] = field(default_factory=list)  # per-readout OCR detail (live debug log only)
     readouts: dict = field(default_factory=dict)       # live ephemeral readout values read this tick (never stored)
     readout_confs: dict = field(default_factory=dict)  # {readout_id: confidence} for the values above (UI display only)
     # Every ENABLED readout of the classified window, keyed by id, with an empty/low-confidence
@@ -367,27 +382,66 @@ class Collector:
             readout_confs_now: dict[str, float] = {}
             readouts_all_now: dict[str, object] = {}
             readout_confs_all_now: dict[str, float] = {}
+            readout_reads: list[dict] = []
             if window.readouts:
                 vfields = {f.id: f for f in self._profile.fields_for(window)}
-                detailed = self._reader.read_readouts_detailed(frame, window, vfields)
-                readouts_now = {k: value for k, (value, _c) in detailed.items()}
-                readout_confs_now = {k: conf for k, (_v, conf) in detailed.items()}
+                ro_field = {v.id: vfields.get(v.field) for v in window.readouts if v.enabled}
+                ro_trace: list[dict] = []
+                detailed = self._reader.read_readouts_detailed(frame, window, vfields, trace_sink=ro_trace)
+                readouts_now = {k: value for k, (value, *_r) in detailed.items()}
+                readout_confs_now = {k: conf for k, (_v, conf, *_r) in detailed.items()}
+                # One synthetic debug read per readout (same shape as _debug_reads) so the OCR
+                # log renders readouts with the identical raw->value display as record fields.
+                readout_reads = [_readout_debug_read(rid, value, conf, raw, sub)
+                                 for rid, (value, conf, raw, sub) in detailed.items()]
+                # Temporal consensus gate ([[readout_stability]]): score each read for expected
+                # QUALITY and, for a readout with the gate enabled, suppress this tick when too few
+                # of its recent reads were that-quality -- the misfire filter for the noisy action
+                # screen. A suppressed readout is dropped from BOTH the gated map (no trigger fire)
+                # and the full map (register/.ro-live HOLD their last value rather than ingest the
+                # garbage). Records EVERY evaluated read (passed or dropped) to the history ring.
+                ts = datetime.now().isoformat(timespec="milliseconds")
+                suppressed: set[str] = set()
+                for rec in ro_trace:
+                    rid = rec["id"]
+                    fdef = ro_field.get(rid)
+                    floor = (getattr(fdef, "min_confidence", 0.0) or 0.0) if fdef else 0.0
+                    ok = expected_ok(fdef, rec["value"], rec["dropped"], rec["conf"], floor)
+                    win = (getattr(fdef, "stability_reads", 0) or 0) if fdef else 0
+                    held = False
+                    if win > 0 and rid in readouts_now:
+                        prior = readout_history.recent(self._profile.name, window_id, rid)
+                        flags = [ok] + [bool(e.get("ok", True)) for e in prior]
+                        if not consensus_pass(flags, win, getattr(fdef, "stability_min", 0) or 0):
+                            suppressed.add(rid)
+                            held = True
+                    readout_history.record(self._profile.name, window_id, rid, ts=ts,
+                                           raw=rec["raw"], value=rec["value"], dropped=rec["dropped"],
+                                           trace=rec["trace"], conf=rec["conf"], ok=ok, held=held)
+                for rid in suppressed:
+                    readouts_now.pop(rid, None)
+                    readout_confs_now.pop(rid, None)
                 self._readouts.update(readouts_now)
                 # Full map: every ENABLED readout, empty/low-confidence defaulted to "" instead of
                 # omitted -- so a blank slot pushes an empty value (register/.ro-live) rather than
                 # nothing, and a slot that goes empty overwrites its stale prior value with "".
-                readouts_all_now = {v.id: readouts_now.get(v.id, "") for v in window.readouts if v.enabled}
-                readout_confs_all_now = {v.id: readout_confs_now.get(v.id) for v in window.readouts if v.enabled}
+                # A consensus-SUPPRESSED readout is excluded entirely so its last held value stands.
+                readouts_all_now = {v.id: readouts_now.get(v.id, "") for v in window.readouts
+                                    if v.enabled and v.id not in suppressed}
+                readout_confs_all_now = {v.id: readout_confs_now.get(v.id) for v in window.readouts
+                                         if v.enabled and v.id not in suppressed}
 
             # Moving frame: readouts were taken above; skip the grid OCR (blurred) and return them.
             if moving:
                 return TickResult(TickStatus.moving, window_id=window_id, state_id=state_id,
                                   readouts=readouts_now, readout_confs=readout_confs_now,
-                                  readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now)
+                                  readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now,
+                                  readout_reads=readout_reads)
             if not self._state_allows_save(window, state_id):
                 return TickResult(TickStatus.state_invalid, window_id=window_id, state_id=state_id,
                                   readouts=readouts_now, readout_confs=readout_confs_now,
-                                  readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now)
+                                  readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now,
+                                  readout_reads=readout_reads)
 
             # Per-stage timing: capture + settle + classify were measured above (windowless
             # until now); emit them under this window now that it's recognised + save-worthy.
@@ -596,6 +650,7 @@ class Collector:
             dataset=dataset,
             changed=changed,
             reads=reads,
+            readout_reads=readout_reads,
             readouts=readouts_now,
             readout_confs=readout_confs_now,
             readouts_all=readouts_all_now,

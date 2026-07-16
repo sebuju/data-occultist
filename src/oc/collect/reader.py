@@ -709,21 +709,30 @@ class RegionReader:
         """Read the window's live, non-persisted readouts (health, a buff counter) ->
         ``{readout_id: value}`` — the scalar map triggers/toasts consume. Thin wrapper over
         :meth:`read_readouts_detailed` (drops the confidence)."""
-        return {k: value for k, (value, _conf) in
+        return {k: value for k, (value, *_rest) in
                 self.read_readouts_detailed(frame, window, fields).items()}
 
     def read_readouts_detailed(self, frame: Frame, window: WindowDef,
-                               fields: dict[str, FieldDef]) -> dict[str, tuple[object, float]]:
-        """Read the window's readouts -> ``{readout_id: (value, confidence)}``. Each reads its
-        box through the linked field, exactly like a region.
+                               fields: dict[str, FieldDef],
+                               *, trace_sink: list | None = None) -> dict[str, tuple[object, float, object, object]]:
+        """Read the window's readouts -> ``{readout_id: (value, confidence, raw, substituted)}``.
+        Each reads its box through the linked field, exactly like a region.
 
         A read that fails its field's plausibility gate (min confidence / out of range) or
         yields nothing is OMITTED — a trigger must never fire on a garbage/occluded reading.
         The confidence is the raw OCR confidence of the read (1.0 for a deterministic pip/bar
-        value). Nothing here is stored; the collector surfaces the values and hands them to
-        triggers, and the UI shows ``value (conf)`` on each readout node.
-        """
-        out: dict[str, tuple[object, float]] = {}
+        value). ``raw`` is the pre-rules OCR text (``None`` for pip/symbol readouts that carry no
+        OCR text) and ``substituted`` is the dictionary substitution a resolve applied (else
+        ``None``) — both feed the OCR log's raw→value display. Nothing here is stored; the
+        collector surfaces the values and hands them to triggers, and the UI shows
+        ``value (conf)`` on each readout node.
+
+        ``trace_sink`` (optional): when a list is passed, one debug record is appended for EVERY
+        enabled readout — passed OR dropped — as ``{id, raw, value, dropped, trace, conf}``, where
+        ``trace`` is the per-rule step list from :func:`run_rules` (the same trace the readout node
+        shows). Feeds the readout-history satellite ([[readout_history]]); off the hot path unless
+        requested."""
+        out: dict[str, tuple[object, float, object, object]] = {}
         cw, ch = frame.client.w, frame.client.h
         boxes = {v.id: v.box.to_fraction().to_pixels(cw, ch) for v in window.readouts if v.enabled}
         # Text readouts all cross-check together in ONE wider pass (see _readout_text_reads)
@@ -738,12 +747,19 @@ class RegionReader:
             box = boxes[v.id]
             fdef = fields.get(v.field)
             if self._is_pip(fdef):
-                out[v.id] = (self._pip_value(frame, box, fdef), 1.0)
+                pv = self._pip_value(frame, box, fdef)
+                out[v.id] = (pv, 1.0, None, None)
+                if trace_sink is not None:
+                    trace_sink.append({"id": v.id, "raw": None, "value": pv,
+                                       "dropped": False, "trace": [], "conf": 1.0})
                 continue
             if self._is_symbol(fdef):
                 label, conf = self._symbol_value(frame, box)
                 if label:   # unclassified -> omit (a trigger must never fire on garbage)
-                    out[v.id] = (label, conf)
+                    out[v.id] = (label, conf, None, None)
+                if trace_sink is not None:
+                    trace_sink.append({"id": v.id, "raw": None, "value": label or None,
+                                       "dropped": not label, "trace": [], "conf": conf})
                 continue
             text, conf = text_reads.get(v.id) or ("", 0.0)
             substituted, dropped = None, False
@@ -755,6 +771,14 @@ class RegionReader:
                 value, substituted, dropped = res.value, res.substituted, res.dropped
             else:
                 value = text or None
+            if trace_sink is not None:
+                # trace mirrors the readout node's own rule-trace panel (run_rules, not the
+                # resolver) so the satellite's per-rule columns match what the node shows.
+                rr = run_rules(fdef, text, trace=True) if fdef else None
+                trace_sink.append({"id": v.id, "raw": text,
+                                   "value": rr.value if rr else (text or None),
+                                   "dropped": bool(rr.dropped) if rr else False,
+                                   "trace": (rr.trace or []) if rr else [], "conf": conf})
             if value is None or dropped:   # nothing read, or a drop rule rejected it
                 continue
             # a genuine read must clear the field's confidence floor
@@ -762,7 +786,7 @@ class RegionReader:
                 mc = getattr(fdef, "min_confidence", 0.0) or 0.0
                 if mc and conf < mc:
                     continue
-            out[v.id] = (value, conf)
+            out[v.id] = (value, conf, text, substituted)
         return out
 
     def representative_raws(self, frame: Frame, window: WindowDef,
