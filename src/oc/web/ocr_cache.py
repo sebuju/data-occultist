@@ -13,10 +13,12 @@ inputs (the window def + fields) and the engine's own fingerprint. Any box /
 region / detector / engine change moves the hash → cache miss → fresh read. Live
 grabs (no stashed image) are never cached — their pixels vary frame to frame.
 
-``sig`` is :func:`~oc.web.ocr_code_sig.ocr_code_sig` — a hash of the OCR source
-files' mtimes. Editing OCR code doesn't move any per-key hash, so it's checked
-once at load: a mismatch wipes every entry (the code changed, not just the
-config) and logs a one-line notice to the game's activity feed.
+``sig`` is :func:`~oc.web.ocr_code_sig.ocr_code_sig` — a content hash of the
+read-affecting OCR source files. Editing OCR code doesn't move any per-key hash,
+so it's checked once at load: a mismatch wipes every entry (the code changed, not
+just the config) and logs a one-line notice to the game's activity feed. Because
+it hashes bytes, not mtimes, a checkout / reinstall that leaves the code identical
+does not bust it.
 """
 
 from __future__ import annotations

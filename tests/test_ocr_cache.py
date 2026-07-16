@@ -156,3 +156,41 @@ def test_old_flat_format_busts_on_upgrade(tmp_path, monkeypatch):
     monkeypatch.setattr(ocr_cache_mod, "ocr_code_sig", lambda: "sig-a")
     c = OcrCache(p)
     assert c.get("k") is None
+
+
+# --- ocr_code_sig: content-hash + read-affecting scope -----------------------------
+
+def test_sig_scope_includes_read_path_excludes_orchestration():
+    """The signature must cover the files that change a stashed-image read and skip the
+    live-collection / persistence / trigger orchestration under collect/."""
+    from oc.web.ocr_code_sig import _sig_files
+
+    names = {f.name for f in _sig_files()}
+    # read-affecting collect/ files + a representative from each whole-scanned dir
+    for want in ("reader.py", "fields.py", "tells.py", "pips.py", "matchcore.py",
+                 "matcher.py", "resolver.py", "rapidocr3_engine.py"):
+        assert want in names, f"{want} should feed the sig"
+    # orchestration under collect/ must NOT bust the OCR cache
+    for skip in ("live.py", "collector.py", "readout_stability.py", "register_history.py",
+                 "triggers.py", "templating.py"):
+        assert skip not in names, f"{skip} should be denylisted"
+
+
+def test_sig_is_content_based_not_mtime(tmp_path, monkeypatch):
+    """Rewriting a file's mtime without changing bytes must NOT move the sig; changing the
+    bytes must. Point the scanner at a scratch tree so we never touch real source."""
+    import os
+
+    from oc.web import ocr_code_sig as sig_mod
+
+    root = tmp_path / "oc"
+    (root / "ocr").mkdir(parents=True)
+    f = root / "ocr" / "x.py"
+    f.write_text("a = 1\n", encoding="utf-8")
+    monkeypatch.setattr(sig_mod, "_OC_ROOT", root)
+
+    base = sig_mod.ocr_code_sig()
+    os.utime(f, (10_000, 10_000))                        # move mtime, same bytes
+    assert sig_mod.ocr_code_sig() == base                # content-based -> unchanged
+    f.write_text("a = 2\n", encoding="utf-8")            # real edit
+    assert sig_mod.ocr_code_sig() != base
