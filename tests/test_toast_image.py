@@ -58,6 +58,32 @@ def test_disable_if_empty_keeps_gap_when_content_present():
     assert boxes[1]["y"] == 28 and boxes[2]["y"] == 48
 
 
+def test_disable_if_anchor_disabled_cascades_down_the_chain():
+    # A resolves empty (off). B is anchored to A and set to disable_if_anchor_disabled -> B goes off
+    # and collapses onto A's origin; C is anchored to B (no flag needed) and so collapses too. The
+    # whole chain folds to (0, 0) instead of stacking below the (would-be) boxes.
+    img = _img(width=300, height=200, texts=[
+        ToastImageTextDef(content="", disable_if_empty=True, x=0, y=0, width=100, height=20),
+        ToastImageTextDef(content="B", disable_if_anchor_disabled=True, x=0, y=8, width=100, height=20,
+                          anchor=ToastAnchor(to="0", corner="tl", target="bl")),
+        ToastImageTextDef(content="C", x=0, y=0, width=100, height=20,
+                          anchor=ToastAnchor(to="1", corner="tl", target="bl")),
+    ])
+    _, boxes = render_png_boxes(img, ctx=None)
+    assert boxes[2]["x"] == 0 and boxes[2]["y"] == 0
+
+
+def test_disable_if_anchor_disabled_keeps_when_anchor_present():
+    # same flag on B, but A has content (not off) -> B stays put, sitting below A as normal.
+    img = _img(width=300, height=200, texts=[
+        ToastImageTextDef(content="A", x=0, y=0, width=100, height=20),
+        ToastImageTextDef(content="B", disable_if_anchor_disabled=True, x=0, y=8, width=100, height=20,
+                          anchor=ToastAnchor(to="0", corner="tl", target="bl")),
+    ])
+    _, boxes = render_png_boxes(img, ctx=None)
+    assert boxes[1]["x"] == 0 and boxes[1]["y"] == 28
+
+
 def test_anchor_cycle_falls_back_to_image():
     # a self/mutual cycle must not hang; the element just anchors to the image
     img = _img(width=200, height=100, texts=[

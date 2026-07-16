@@ -305,12 +305,37 @@ def render_png_boxes(spec, ctx=None, *, keep_missing: bool = False, focus=None):
     # independent: `wrap` controls line-breaking only (on = word-wrap onto more lines, off = one line);
     # `overflow` controls whether text may spill past the box (on = allowed to overflow, off = clipped
     # to the box and ended with … , i.e. overflow: hidden + text-overflow: ellipsis).
+    # 1c-pre) decide which elements are OFF (drawn as nothing, collapsed to zero size/offset). Two
+    # causes, both collapsing the same way so a chain anchored to a hidden element shifts up to fill
+    # the gap instead of leaving a hole:
+    #  - disable_if_empty: the resolved content is blank (a missing/blank {{token}}).
+    #  - disable_if_anchor_disabled: the element this one is anchored to is itself off — cascades along
+    #    the anchor chain (cycle-guarded); no effect when anchored to the image canvas.
+    def _empty_off(i):
+        t = metas[i]["t"]
+        return bool(getattr(t, "disable_if_empty", False)) and not str(metas[i]["content"]).strip()
+
+    _off_cache: dict[int, bool] = {}
+
+    def _is_off(i, stack=()):
+        if i in _off_cache:
+            return _off_cache[i]
+        if i in stack:
+            return False                       # anchor cycle -> unresolvable, treat as not-off
+        res = _empty_off(i)
+        if not res and bool(getattr(metas[i]["t"], "disable_if_anchor_disabled", False)):
+            a = getattr(metas[i]["t"], "anchor", None)
+            to = ((getattr(a, "to", "") or "").strip()) if a else ""
+            if to.lstrip("-").isdigit():
+                j = int(to)
+                if 0 <= j < len(metas) and j != i:
+                    res = _is_off(j, stack + (i,))
+        _off_cache[i] = res
+        return res
+
     for i, m in enumerate(metas):
         t = m["t"]
-        # disable_if_empty: the resolved content is blank (a missing/blank {{token}}) -> drop the
-        # element AND collapse it: zero size and zero offset, so a chain of elements anchored to it
-        # shifts up to fill the gap instead of leaving a hole (see resolve + paint, both skip it).
-        if bool(getattr(t, "disable_if_empty", False)) and not str(m["content"]).strip():
+        if _is_off(i):
             m["off"] = True
             m["content"] = ""
             m["wpx"] = m["hpx"] = m["sw"] = m["sh"] = 0
