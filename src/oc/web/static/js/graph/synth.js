@@ -75,6 +75,15 @@ async function renderCue(s) {
 // fields let a caller (the forge playhead) map ctx.currentTime onto the loop for a sweep line.
 // `loop` repeats it (forge preview); one-shot otherwise. Best-effort: no points / no Web Audio /
 // blocked autoplay just no-ops (a null-timing controller so callers guard cleanly).
+// Meter position (0..1) -> linear gain. Perceived loudness is ~logarithmic, so mapping a linear
+// meter straight onto linear gain crams all the useful control into the top of the bar. Send it
+// through a 40 dB exponential curve instead — pos 0 = silent, 0.5 ≈ -20 dB, 1 = unity — so dragging
+// the bar gives even loudness control across its whole range. The one funnel for every play site.
+export function volGain(pos) {
+    const p = Math.max(0, Math.min(1, pos));
+    return p <= 0 ? 0 : Math.pow(10, 2 * (p - 1));
+}
+
 export async function playSynth(spec, volume = 1, { loop = false } = {}) {
     const noop = { stop() {}, ctx: null, startedAt: null, duration: 0 };
     if (!spec || !(spec.points || []).length) return noop;
@@ -82,7 +91,7 @@ export async function playSynth(spec, volume = 1, { loop = false } = {}) {
         const buf = await renderCue(spec);
         const c = ctx();
         const src = c.createBufferSource(), g = c.createGain();
-        src.buffer = buf; g.gain.value = Math.max(0, Math.min(1, volume));
+        src.buffer = buf; g.gain.value = volGain(volume);
         if (loop) { src.loop = true; src.loopStart = 0; src.loopEnd = buf.duration; }
         src.connect(g).connect(c.destination);
         src.start();
@@ -90,7 +99,7 @@ export async function playSynth(spec, volume = 1, { loop = false } = {}) {
         // node's meter in real time (the buffer bakes in no volume, so this is the only gain stage).
         return {
             stop() { try { src.stop(); } catch { /* already stopped */ } },
-            setVolume(v) { try { g.gain.value = Math.max(0, Math.min(1, v)); } catch { /* dead node */ } },
+            setVolume(v) { try { g.gain.value = volGain(v); } catch { /* dead node */ } },
             ctx: c, startedAt: c.currentTime, duration: buf.duration,
         };
     } catch { return noop; }

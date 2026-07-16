@@ -1,4 +1,4 @@
-import { playSynth } from "./synth.js";
+import { playSynth, volGain } from "./synth.js";
 
 // Play a trigger sound in the browser. The file lives in the web sounds/ folder
 // (served at /sounds/<name>); `file` is just its name, "" = no sound. Best-effort:
@@ -7,7 +7,7 @@ export function playSound(file, volume = 1) {
     if (!file) return;
     try {
         const a = new Audio(`/sounds/${encodeURIComponent(file)}`);
-        a.volume = Math.max(0, Math.min(1, volume));
+        a.volume = volGain(volume);
         a.play().catch(() => {});
     } catch { /* no Audio / bad name — silent */ }
 }
