@@ -37,6 +37,12 @@ def _first_number(text: str) -> str | None:
     return m.group(0) if m else None
 
 
+def _alnum(text: str) -> str:
+    """Keep letters, digits and whitespace, drop every other symbol, then collapse
+    whitespace runs to a single space and strip the ends ("Lith G1 (rad)" -> "Lith G1 rad")."""
+    return " ".join(re.sub(r"[^0-9A-Za-z\s]", " ", text).split())
+
+
 def _split(text: str, sep: str) -> tuple[str, str]:
     """Split on the first occurrence of ``sep``, case-insensitively (OCR casing is
     unreliable, so a word separator like "Rank" must still match "RANK"). The
@@ -54,15 +60,20 @@ def _apply_extract(strategy: Extract, sep: str, text: str) -> str:
     strategy finds nothing (e.g. no number present), so the pipeline value stays a string."""
     if strategy is Extract.whole:
         return text
+    if strategy is Extract.text:
+        return text.strip()
     if strategy is Extract.number:
         return _first_number(text) or ""
-    if strategy in (Extract.number_before, Extract.text_before):
-        left, _ = _split(text, sep)
-        return (_first_number(left) or "") if strategy is Extract.number_before else left
-    if strategy in (Extract.number_after, Extract.text_after):
-        _, right = _split(text, sep)
-        return (_first_number(right) or "") if strategy is Extract.number_after else right
-    return text
+    if strategy is Extract.alphanum:
+        return _alnum(text)
+    # the *_before / *_after family: split, then pull number / alphanum / whole-text from one side
+    left, right = _split(text, sep)
+    side = left if strategy.value.endswith("_before") else right
+    if strategy in (Extract.number_before, Extract.number_after):
+        return _first_number(side) or ""
+    if strategy in (Extract.alphanum_before, Extract.alphanum_after):
+        return _alnum(side)
+    return side
 
 
 def _to_number(num: str | None) -> float | int | None:

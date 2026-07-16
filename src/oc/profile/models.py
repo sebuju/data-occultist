@@ -67,8 +67,12 @@ class Extract(str, Enum):
     number = "number"                # the first number anywhere
     number_before = "number_before"  # the first number left of the separator
     number_after = "number_after"    # the first number right of the separator
+    text = "text"                    # all the text, stripped
     text_before = "text_before"      # the text left of the separator
     text_after = "text_after"        # the text right of the separator
+    alphanum = "alphanum"                  # letters+digits only, symbols dropped, whitespace collapsed
+    alphanum_before = "alphanum_before"    # alphanum left of the separator
+    alphanum_after = "alphanum_after"      # alphanum right of the separator
 
 
 class DictMode(str, Enum):

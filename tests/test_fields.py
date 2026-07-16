@@ -56,6 +56,23 @@ def test_extract_word_separator_is_case_insensitive():
     assert coerce(g, "5 OF 30") == 30
 
 
+def test_extract_text_strips_whole():
+    f = _f([rule(then=RuleThen.extract, strategy=Extract.text)])
+    assert coerce(f, "  Serration (maxed) ") == "Serration (maxed)"
+
+
+def test_extract_alphanum_drops_symbols_collapses_ws():
+    f = _f([rule(then=RuleThen.extract, strategy=Extract.alphanum)])
+    assert coerce(f, "Lith  G1  (rad)") == "Lith G1 rad"
+
+
+def test_extract_alphanum_before_and_after_separator():
+    f = _f([rule(then=RuleThen.extract, strategy=Extract.alphanum_before, sep="/")])
+    assert coerce(f, "Lith G1 / rad") == "Lith G1"
+    g = _f([rule(then=RuleThen.extract, strategy=Extract.alphanum_after, sep="/")])
+    assert coerce(g, "7 / 30 (max)") == "30 max"
+
+
 # ---- set / drop -------------------------------------------------------------
 
 def test_set_on_empty():
