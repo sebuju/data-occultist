@@ -122,6 +122,18 @@ function wireToastImage(sec, x, n) {
     const toUnit = (px, dim) => Math.round((im() || {}).unit === "pct" ? px / dim * 100 : px);
     const unitMin = () => ((im() || {}).unit === "pct" ? 1 : 4);
     const setText = (i, k, v) => model.setToastImageText(x.id, idx, i, k, v);
+    // Box + guide overlays reveal via an explicit `.tn-active` class (graph.css), NOT :focus-within —
+    // so editing the inspector (or clicking a non-focusable gap in it) never hides them or drops the
+    // selection. The section is active while worked in, inactive when a click lands outside it.
+    const setActive = (on) => sec.classList.toggle("tn-active", on);
+    // Flush a pending change-bound inspector edit (colour hex, etc.) to the CURRENTLY selected element
+    // BEFORE the selection changes. A box mousedown preventDefaults to keep the drag alive, which
+    // swallows the blur that would fire the field's `change` — silently dropping the edit (or, if the
+    // blur landed later, writing it to the newly-selected element). An explicit blur commits it now.
+    const commitFocusedField = () => {
+        const a = document.activeElement;
+        if (a && sec.contains(a) && (a.tagName === "INPUT" || a.tagName === "SELECT" || a.tagName === "TEXTAREA")) a.blur();
+    };
 
     // ---- anchor guides: an SVG overlay drawing the selected element's anchor leg (target point ->
     // the element's own corner), so anchoring reads like pretty's cue layer. Redrawn on select/drag.
@@ -348,44 +360,31 @@ function wireToastImage(sec, x, n) {
     // select element `j`: persist the (transient) selection, re-point the inspector + highlights in
     // place (no preview refetch — the image is unchanged, only which element is active).
     const selectLine = (j) => {
+        commitFocusedField();   // apply any pending edit to the current element before switching away
         model.setToastImageSel(x.id, idx, j); sel = j;
         sec.querySelectorAll(".tn-img-boxes .tn-box").forEach((b) => b.classList.toggle("sel", j != null && +b.dataset.i === j));
         const pk = sec.querySelector(".tn-il-pick"); if (pk) pk.value = j == null ? "" : String(j);
         if (syncInspector) syncInspector(j);   // reconcile the existing inspector, don't rebuild it
         drawGuides(j);
     };
-    // click on the empty preview (not on a box) deselects the element — but clicking the inspector
-    // never deselects (those clicks don't reach the preview), so editing the element still works.
+    // click on the empty preview (not on a box) deselects the element. Inspector clicks never reach
+    // here, so editing an element never deselects it. Left-button only (right-click never deselects).
     q(".tn-img-preview")?.addEventListener("mousedown", (ev) => { if (ev.button === 0) selectLine(null); });
-    // click ANYWHERE outside this image's editor (another node, the canvas, another image) also
-    // deselects it — so the selection isn't stuck when you move on. Clicks inside this section
-    // (preview/boxes/inspector/pick) are handled by their own wiring above, never here. The listener
-    // self-removes once this section is torn down by a rebuild (its `sec` leaves the document).
-    // remember the last press so the focus-leave handler below can tell a genuine "left the editor"
-    // blur from one that merely lands on a non-focusable gap INSIDE the inspector (keep editing) or is
-    // a right-click (never deselects). This document-capture mousedown runs BEFORE the focusout it fires.
-    let downInInsp = false, downRight = false, offDeselect = null;
-    const outsideDeselect = (ev) => {
-        if (!document.contains(sec)) { offDeselect?.(); offDeselect = null; return; }
-        downRight = ev.button !== 0;
-        downInInsp = !downRight && sec.contains(ev.target) && !!ev.target.closest?.(".tn-il-insp");
-        if (ev.button === 0 && sel != null && !sec.contains(ev.target)) selectLine(null);
-    };
-    // A global observer (not a pure outside-dismiss): it must see clicks INSIDE the section too, to
-    // record downInInsp/downRight for the focusout handler below. Routed through onGlobal for the
-    // central teardown handle + audit; self-removes once `sec` leaves the document on a rebuild.
-    offDeselect = onGlobal(document, "mousedown", outsideDeselect, true, "toast:outsideDeselect");
-    // The box overlay + guides reveal on `.tn-img:focus-within` (graph.css) — so the MOMENT focus
-    // leaves this section they visually disappear. The inspector is driven by `sel`, which a click on
-    // a non-focusable gap OUTSIDE the inspector (blurs the preview, doesn't reach outsideDeselect) never
-    // clears — box looks deselected while the inspector stays populated. Tie the two to ONE boundary:
-    // focus leaving the section IS a real deselect — but a gap-click still inside the inspector (mid
-    // edit) and any right-click must NOT trip it (relatedTarget is null for a non-focusable gap either
-    // way, so the recorded click target — not where focus landed — is what disambiguates).
-    sec.addEventListener("focusout", (ev) => {
-        if (downRight || downInInsp) return;
-        if (sel != null && !sec.contains(ev.relatedTarget)) selectLine(null);
-    });
+    // Overlay visibility (boxes + guides) rides an explicit `.tn-active` class, NOT :focus-within —
+    // this is the whole point of the rewrite. The section is ACTIVE while the user works inside it and
+    // goes inactive when a mousedown lands genuinely OUTSIDE it (another node, the canvas). A click
+    // INSIDE (even a non-focusable inspector gap, or a right-click) keeps it active and the selection
+    // untouched — that's what fixes the "editing deselects" bug. Leaving the section DESELECTS so the
+    // box overlay and the picker stay in lockstep: no lingering "element N" in the picker once its rect
+    // is gone. Selection otherwise changes only on explicit acts — a box, the empty preview, the picker.
+    // One document-capture mousedown drives both; it self-removes once `sec` leaves the DOM on a rebuild.
+    let offActive = null;
+    offActive = onGlobal(document, "mousedown", (ev) => {
+        if (!document.contains(sec)) { offActive?.(); offActive = null; return; }
+        const inside = sec.contains(ev.target);
+        setActive(inside);
+        if (!inside && sel != null) selectLine(null);   // overlay hidden -> nothing selected -> picker resets to (none)
+    }, true, "toast:activeTrack");
     // keep the inspector's x/y/w/h number inputs in step with a model change from mouse/keyboard.
     const syncGeomInputs = () => {
         const t = texts()[sel]; if (!t) return;
@@ -459,6 +458,7 @@ function wireToastImage(sec, x, n) {
         sec.querySelectorAll(".tn-il-wrap").forEach((el) => el.addEventListener("change", () => { setText(sel, "wrap", el.checked); autosave(null); refreshPreview(); }));
         sec.querySelectorAll(".tn-il-over").forEach((el) => el.addEventListener("change", () => { setText(sel, "overflow", el.checked); autosave(null); refreshPreview(); }));
         sec.querySelectorAll(".tn-il-cond").forEach((el) => el.addEventListener("change", () => { setText(sel, "disable_if_empty", el.checked); autosave(null); refreshPreview(); }));
+        sec.querySelectorAll(".tn-il-condanchor").forEach((el) => el.addEventListener("change", () => { setText(sel, "disable_if_anchor_disabled", el.checked); autosave(null); refreshPreview(); }));
         // match this element's width / height to a sibling's resolved size ("" = own size), scaled by
         // the adjacent percent input (100 = full, 50 = half).
         // paintSel() gives the box overlay its new matched size instantly; the server re-render (text
@@ -549,6 +549,7 @@ function wireToastImage(sec, x, n) {
             const wr = insp.querySelector(".tn-il-wrap"); if (wr) wr.checked = e.wrap !== false;
             const ov = insp.querySelector(".tn-il-over"); if (ov) ov.checked = !!e.overflow;
             const cd = insp.querySelector(".tn-il-cond"); if (cd) cd.checked = !!e.disable_if_empty;
+            const cda = insp.querySelector(".tn-il-condanchor"); if (cda) cda.checked = !!e.disable_if_anchor_disabled;
             // rebuild each match select's sibling <option>s (self excluded), then set the current value
             const matchOpts = (cls, cur) => {
                 const s = insp.querySelector(cls); if (!s) return;
@@ -609,6 +610,7 @@ function wireToastImage(sec, x, n) {
     // bg type flips which controls show (color2/angle) -> rebuild the node body, then repreview
     q(".tn-img-bgtype")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "bg_type", e.target.value); rebuildNode(n.id); autosave(null); });
     wireInspector();
+    if (sel != null) setActive(true);   // a rebuild that kept a selection (add/clone element) shows its overlay
     afterBoot(refreshPreview);   // initial paint (also runs after a rebuild re-wires the section)
 }
 export { wireToast };

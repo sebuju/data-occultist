@@ -252,9 +252,6 @@ function wireForge(div, id) {
         model.setSoundSynth(id, mk); applySpec(); commit();
         if (forgePreview.get(id)) refreshForgePreview(id); else playCue(model.soundNode(id));
     };
-    div.querySelector(".sf-cues")?.addEventListener("click", (e) => {
-        const b = e.target.closest(".sf-cue"); if (b) loadCue(forgePreset(b.dataset.cue));
-    });
     div.querySelector(".sn-roll")?.addEventListener("click", () => loadCue(rollSynth()));
     // re-fit + redraw the canvas whenever the node (and thus the plot) resizes — points are 0..1 so
     // nothing to recompute, just keep the backing store crisp (dom.js observeResize, rule 7).
@@ -279,19 +276,6 @@ function wireForge(div, id) {
     draw();
 }
 
-// preset starting cues (mirror of the forge mockup): a named shape you then tweak.
-const FORGE_PRESETS = {
-    pickup: { wave: "square", points: [[0, .5], [.15, .9], [1, .72]], length_ms: 220 },
-    alert: { wave: "sawtooth", points: [[0, .7], [.5, .2], [1, .7]], length_ms: 600 },
-    levelup: { wave: "square", points: [[0, .35], [.33, .55], [.66, .75], [1, .95]], length_ms: 520 },
-    deny: { wave: "sawtooth", points: [[0, .4], [1, .12]], length_ms: 360 },
-    coin: { wave: "square", points: [[0, .7], [.2, .7], [.25, .95], [1, .95]], length_ms: 300 },
-    hit: { wave: "triangle", points: [[0, .6], [.1, .85], [1, .05]], length_ms: 180 },
-};
-function forgePreset(name) {
-    const c = FORGE_PRESETS[name] || FORGE_PRESETS.pickup;
-    return { wave: c.wave, points: c.points.map(([t, p]) => ({ t, p })), length_ms: c.length_ms, attack: 4, decay: 55, vibrato: 0, crush: 18 };
-}
 // Roll a genuinely fresh random cue — every click gives something new (an earlier version derived
 // everything from length_ms alone, so rolling twice produced the identical cue). Randomizes wave,
 // length, the pitch-over-time points, and the shape knobs across sane musical ranges.

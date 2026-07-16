@@ -20,9 +20,8 @@ import { sinceShort } from "../datefmt.js";
 import { confTier } from "./conf.js";
 import { makeArmed } from "./armbtn.js";
 import { panZoomTo } from "./camera.js";
-import { h, frag, trashBtn, observeResize } from "../dom.js";
+import { h, frag, kv, trashBtn, observeResize } from "../dom.js";
 import { liveCollecting } from "./panels/livewin.js";
-import { setNodeBusy } from "./main.js";
 
 // One bank state per live `.data-host` element (grid + a keyed Map of reused cell records + the
 // trailing "+" cell), so the poll-driven refreshRegister reconciles in place — zero DOM churn in
@@ -204,10 +203,16 @@ export function registerParts(x) {
             // shows up as a real wire + a chip in the dataset's own "sources" list, not a
             // hidden side-channel setting.
             h("span", { class: "port out", title: "drag to a dataset to also mirror the held map there" })),
-        // body IS the memory bank: slots for the held map + wired sources, the trailing "+" adds one.
-        // .nodehost overflow:auto — a wheel scrolls when the list overflows, else zooms the graph
-        // (camera.js scrollableUnder).
-        body: h("div", { class: "nodehost data-host" }),
+        // "recent values" = ring depth per key (RegisterDef.capacity): how many recent values each
+        // key holds. Pulls/persist/membank always show the LATEST (ring tail); N>1 just retains
+        // history. Below it, the body IS the memory bank: slots for the held map + wired sources,
+        // the trailing "+" adds one. .nodehost overflow:auto — a wheel scrolls when the list
+        // overflows, else zooms the graph (camera.js scrollableUnder).
+        body: frag(
+            h("div", { class: "lab-grid" },
+                kv("recent values", h("input", { class: "gi reg-cap", type: "number", min: "1", step: "1",
+                    value: x.capacity ?? 1, title: "how many recent values to hold per key" }))),
+            h("div", { class: "nodehost data-host" })),
         foot: h("button", { class: "regclear danger" }, "clear data"),
     };
 }
@@ -222,7 +227,6 @@ export function refreshRegister(id) {
     const host = nodeEls.get(`register:${id}`)?.querySelector(".data-host");
     if (!host) return;
     const wired = model.registerSources(id).filter((s) => s.kind === "readout").map((s) => s.id);
-    setNodeBusy(`register:${id}`, true);
     api.registerDetail(model.profile.name, id)
         .then((r) => {
             const byKey = new Map((r.records || []).map((e) => [e.key, e]));
@@ -244,8 +248,7 @@ export function refreshRegister(id) {
             }));
             renderBank(id, host, rows);
         })
-        .catch(() => { /* transient fetch error -> leave the last-rendered slots */ })
-        .finally(() => setNodeBusy(`register:${id}`, false));
+        .catch(() => { /* transient fetch error -> leave the last-rendered slots */ });
 }
 
 // A fresh /api/preview readout batch landed (non-live source) — repaint every register currently

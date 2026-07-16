@@ -127,7 +127,9 @@ function wireHideToggles(host, s) {
             const nowHidden = (s.hidden_columns || []).includes(b.dataset.col);
             b.classList.toggle("off", nowHidden);                   // instant feedback, no node rebuild
             b.title = nowHidden ? "show column" : "hide column";
-        }, () => { autosave(null); refreshSubsetNode(s.id); });     // hiding a view column changes nothing any window OCRs
+        // flush the debounced save FIRST: the server recomputes the view from the ON-DISK profile,
+        // so a refetch before the new def persists returns the pre-edit view (like the rename race).
+        }, () => { autosave(null); persist.flush().then(() => refreshSubsetNode(s.id)); });
     }));
 }
 
@@ -518,7 +520,9 @@ function wireSubset(div, s) {
     // transaction: `mutate` paints now, the save+refetch runs once on ✓ / Enter / a click outside.
     const subEdit = (mutate, { rebuild = false } = {}) =>
         nodeEdit(`sub:${s.id}`, "recompute", () => { mutate(); if (rebuild) rebuildNode(`sub:${s.id}`); },
-            () => { autosave(null); refreshSubsetNode(s.id); });
+            // flush the debounced save FIRST so the refetch sees the just-edited def on disk, not
+            // the pre-edit view (the server recomputes from the persisted profile — cf. rename below).
+            () => { autosave(null); persist.flush().then(() => refreshSubsetNode(s.id)); });
     const recompute = (mutate) => subEdit(mutate);
     const restructure = (mutate) => subEdit(mutate, { rebuild: true });   // rebuild this node's config
     div.querySelector(".subrename")?.addEventListener("change", (e) => {

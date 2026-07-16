@@ -41,11 +41,6 @@ const knob = (key, label, min, max, val, tip) =>
         h("span", { class: "kl" }, label),
         h("span", { class: "sf-kv", dataset: { kv: key } }, String(val)));
 
-// preset starting cues — a plain text chip you click to load & tweak. No colour dot: a coloured
-// dot read like a node port/wire, which it isn't.
-const PRESETS = ["pickup", "alert", "levelup", "deny", "coin", "hit"];
-const presetChip = (name) => h("button", { class: "chip sf-cue", dataset: { cue: name }, type: "button" }, name);
-
 // the inline forge body (shown when the node is in generator mode). All controls carry data-*
 // hooks; wireForge (main.js) reads/writes x.synth and drives the canvas.
 function forgeBody(syn) {
@@ -60,8 +55,6 @@ function forgeBody(syn) {
         gspan("sf-waves", ...WAVES.map((w) => waveBtn(w, w === (syn.wave || "square")))),
         subhead("shape"),
         gspan("sf-knobs", ...KNOBS.map(([k, l, mn, mx, tip]) => knob(k, l, mn, mx, syn[k] ?? 0, tip))),
-        subhead("starting cue"),
-        gspan("sf-cues", ...PRESETS.map((n) => presetChip(n))),
     );
 }
 

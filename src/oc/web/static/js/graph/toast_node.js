@@ -90,7 +90,9 @@ export function imageTextInspector(t, j, texts = [], unit = "px") {
         // siblings shift up to fill it (see toast_image render — zero size + zero offset when disabled).
         row("cond",
             h("label", { class: "tn-il-chk", title: "when this element's text resolves empty (a missing/blank {{token}}), drop it AND collapse the gap: it draws nothing and takes no space, so elements anchored to it shift up to fill the hole" },
-                h("input", { class: "tn-il-cond", dataset: { i: ji }, type: "checkbox", checked: !!e.disable_if_empty }), "disable if empty")),
+                h("input", { class: "tn-il-cond", dataset: { i: ji }, type: "checkbox", checked: !!e.disable_if_empty }), "disable if empty"),
+            h("label", { class: "tn-il-chk", title: "when the element this one is anchored to is itself disabled/hidden, drop this element too and collapse it the same way — cascades along the anchor chain. No effect when anchored to the image canvas." },
+                h("input", { class: "tn-il-condanchor", dataset: { i: ji }, type: "checkbox", checked: !!e.disable_if_anchor_disabled }), "disable if anchor disabled")),
         row("align", nineGrid({ left: "tl", center: "tc", right: "tr" }[e.align] || e.align, "tn-il-align", "text placement within the box")),
         // stacking order — higher z draws on top of a lower one where boxes overlap (ties keep list order)
         row("layer", num("tn-il-z", e.z_index ?? 0, { title: "stacking order — higher draws on top where elements overlap" })),
@@ -230,7 +232,8 @@ export function toastParts(x, model) {
             "refine: ", h("code", {}, "[i]"), " / ", h("code", {}, "[a:b]"), " slice · ",
             h("code", {}, "|sum"), " mean min max count first latest · ",
             h("code", {}, "|join"), " / ", h("code", {}, "|join:\", \""), " · ",
-            h("code", {}, "|round:N"), " decimals (0 = none)")) : null;
+            h("code", {}, "|round:N"), " decimals (0 = none) · ",
+            h("code", {}, "?? -"), " fallback when empty")) : null;
     return {
         title: h("input", { class: "gi gi-id toastrename", value: x.id, title: "rename toast" }),
         body: frag(

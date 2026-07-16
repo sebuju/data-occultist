@@ -23,6 +23,8 @@ decimals: ``={price_median}/{count}|round:0`` yields an integer, ``|round:1`` on
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import operator
 import re
 from functools import lru_cache
@@ -411,6 +413,30 @@ def subset_source_datasets(profile, subset_id: str, _stack: frozenset = frozense
     for src in sub.sources:
         out |= subset_source_datasets(profile, src.dataset, _stack | {subset_id})
     return out
+
+
+def subset_source_views(profile, subset_id: str, _stack: frozenset = frozenset()) -> set[str]:
+    """The subset id itself plus every transitive UPSTREAM subset (view) feeding it. A plain
+    dataset is not a view -> excluded; a cycle stops. Companion to :func:`subset_source_datasets`:
+    that one gates a cached view on its source DATA (dataset revs), this one gates it on the source
+    DEFINITIONS — an upstream view's def change alters this view's output just as a data write does.
+    """
+    sub = profile.subset_def(subset_id)
+    if sub is None or subset_id in _stack:   # a plain dataset (not a view), or a cycle -> stop
+        return set()
+    out = {subset_id}
+    for src in sub.sources:
+        out |= subset_source_views(profile, src.dataset, _stack | {subset_id})
+    return out
+
+
+def subset_def_fingerprint(sub) -> str:
+    """A stable hash of a subset's DEFINITION — everything that changes its computed view
+    (sources, filters, derived, sort, hidden_columns, pivot, limit, latest_batch), excluding
+    pure-UI state (``config_collapsed``). Folded into the view cache key so a settings edit
+    invalidates the cached result even when no source data changed."""
+    payload = json.dumps(sub.model_dump(mode="json", exclude={"config_collapsed"}), sort_keys=True)
+    return hashlib.sha1(payload.encode()).hexdigest()
 
 
 def compute_view_rows(profile, subset_id: str, fetch_dataset, *, cache: dict | None = None) -> dict:
