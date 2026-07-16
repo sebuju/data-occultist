@@ -192,6 +192,17 @@ class FieldDef(BaseModel):
     # taught glyph out-scores the OCR's own. Fixes systematic single-glyph confusions the
     # dictionary cannot (e.g. "Q3" vs "G3"). Runs BEFORE the rule pipeline; a capture-time toggle.
     glyph_check: bool = False
+    # LIVE-READOUT temporal consensus gate (opt-in, default off) — kills the misfire bursts a
+    # fast/animating action screen produces. Each OCR-due tick the read is scored for QUALITY
+    # (not value): does it match the field's expected type (number/pips/diamonds -> numeric;
+    # text/symbol -> non-empty) and clear the confidence floor. The current read is surfaced
+    # only when at least ``stability_min`` of the last ``stability_reads`` reads (this one
+    # included) were that-quality; otherwise the readout goes quiet (held) until the stream
+    # recovers. Keys on TYPE not equality, so a legitimately fast-changing number (always
+    # numeric) never lags. Applies ONLY on the live readout path; the dataset/record path has
+    # its own temporal Confirmer (stability.py) and ignores these. 0 window = gate disabled.
+    stability_reads: int = 0    # consensus window M (0 disables)
+    stability_min: int = 0      # min expected-quality reads within the window to accept (clamped 1..M)
 
 
 class RegionDef(BaseModel):
@@ -887,6 +898,13 @@ class ProducerDef(BaseModel):
     dataset: str = "prices"         # output dataset the records are written to
     throttle: float = 0.4           # seconds between requests during a sweep
     enabled: bool = True
+    # What to do when a fire arrives while this producer's sweep is still running (one sweep runs
+    # at a time per game — the shared rate limit + price store are serialised):
+    #   drop   — ignore the new fire (default; older behaviour).
+    #   latest — remember only the NEWEST pending batch; run it once the current sweep finishes
+    #            (coalesce — the display always catches up to the last state, no pile-up).
+    #   queue  — FIFO: run every pending batch in order after the current one.
+    queue_mode: str = "drop"
     # Which items to fetch: the names found in these source datasets/views (e.g. wire an
     # inventory dataset in to price just owned gear). Wired in the graph UI as input edges.
     sources: list[str] = Field(default_factory=list)
@@ -929,6 +947,12 @@ class TriggerDef(BaseModel):
     * ``on_live_stop``   — fire when the server live-collection session stops.
     * ``on_readout``    — fire when a watched live readout (``readout_watch``) meets ``readout_op``
       ``readout_value`` — edge-triggered (fires once on entering the condition). See ReadoutDef.
+    * ``on_ready``       — fire once when a watched PRODUCER's sweep FINISHES. ``watch`` holds the
+      producer id(s); the trigger fires from the sweep's reap (its output is already written), so it
+      is deterministic — the fire is CAUSED by completion and can never precede the data. Fires even
+      when the sweep wrote nothing (the fetch still finished, e.g. all rewards unpriceable). No
+      timers, no polling. Use for "notify when the fetch/pricing has finished" — the producer does
+      the work and knows when it's done; a stateless subset never is.
     * ``manual``         — never auto-fires; just declares the wiring (the sweep button drives it).
 
     A trigger's ``targets`` are producer ids (sweep/refresh), file-source ids (read), toast/sound
@@ -938,7 +962,7 @@ class TriggerDef(BaseModel):
 
     id: str
     # interval | true_interval | on_change | on_any_change | on_app_start | on_capture |
-    # on_live_start | on_live_stop | on_readout | manual
+    # on_live_start | on_live_stop | on_readout | on_ready | manual
     kind: str = "interval"
     interval_s: float = 300.0               # for kind="interval"/"true_interval": seconds between fires
     watch: list[str] = Field(default_factory=list)    # for kind="on_change"/"on_any_change": datasets to watch
@@ -953,7 +977,24 @@ class TriggerDef(BaseModel):
     # minimum time (milliseconds) between actual fires — a global rate limit across ALL kinds.
     # None = no throttle. A fire suppressed inside the window is recorded in the trigger's
     # (non-persisted) history as "throttled". Manual "fire now" bypasses it (explicit user action).
+    # LEADING-edge: fires on the FIRST event, suppresses the rest inside the window.
     throttle_ms: float | None = None
+    # TRAILING-edge debounce (the mirror of throttle_ms): after a justified auto-fire, wait this
+    # many milliseconds for the watched output to go quiet; each further justified fire inside the
+    # window re-arms it, so a burst (a price sweep dripping rows, several sequential sweeps as OCR
+    # settles) coalesces into ONE fire carrying the FINAL state. None/0 = fire immediately (today's
+    # behaviour). Manual "fire now" bypasses it. Complements throttle_ms — throttle caps rate from
+    # the leading edge; settle waits for the trailing edge.
+    settle_ms: float | None = None
+    # hard cap (milliseconds) from the first armed fire of a settle window: if churn never quiets
+    # (a fetch that's slow or never finishes), fire anyway once this elapses. None = no cap (fire
+    # only on quiet). Meaningless without settle_ms. For kind="on_ready" this is the max-wait
+    # fallback deadline (fire a partial once the view has been incomplete this long).
+    settle_max_ms: float | None = None
+    # legacy/unused: an earlier on_ready design watched a subset and gated on this column. on_ready
+    # now watches a PRODUCER and fires on its sweep completion, so this is ignored. Kept so old
+    # profiles that set it still load.
+    ready_field: str = ""
 
 
 class ToastTextDef(BaseModel):
@@ -1009,6 +1050,10 @@ class ToastImageTextDef(BaseModel):
     # the gap it left: it renders nothing and occupies zero size, so any element anchored to it (a
     # chain) shifts up to fill the space instead of leaving a hole.
     disable_if_empty: bool = False
+    # when the element this one is ANCHORED to is itself disabled (off), drop this element too and
+    # collapse it the same way — cascades along the anchor chain, so a hidden anchor takes every
+    # dependant with it. No effect when anchored to the image canvas (which is never disabled).
+    disable_if_anchor_disabled: bool = False
     # optional dimension matching: copy another element's resolved width/height. "" = own size, "image"
     # = the image canvas size, else a sibling element index (as a string), mirroring `anchor.to`. A set
     # match WINS over the element's
@@ -1163,15 +1208,40 @@ class ActionDef(BaseModel):
     funnel does the work, both from the collector dispatch and the web fire-now route.
 
     ``action`` ∈ "" (none) | clear | clone_batches | clone_resolved | move_batches | move_resolved.
-    clone/move copy each of ``datasets`` into ``dest`` (batches = preserve batch grouping; resolved
-    = collapse current records into one new batch). move also clears the source.
+
+    ``sources`` are prefixed refs — ``"dataset:<id>"`` or ``"register:<id>"`` (the ToastDef.sources
+    shape) — so one action can act on datasets AND registers. For a DATASET source: clear wipes it;
+    clone/move copy it into ``dest`` (batches = preserve batch grouping; resolved = collapse current
+    records into one new batch; move also clears the source). For a REGISTER source: clear wipes the
+    targeted keys; clone/move write the targeted keys' LATEST held values into ``dest`` as
+    ``{name:<readout id>, value:<latest>}`` rows (move then clears those keys) — a register has no
+    batch grouping, so clone_batches / clone_resolved behave identically for it.
+
+    ``slots`` narrows a register source to a subset of its wired-readout keys — ``{register id ->
+    [readout key, ...]}``. An absent / empty list means ALL of that register's keys.
     """
 
     id: str
     action: str = ""                        # "" | clear | clone_batches | clone_resolved | move_batches | move_resolved
-    datasets: list[str] = Field(default_factory=list)  # datasets this action operates on
+    # prefixed refs "dataset:<id>" / "register:<id>" — the datasets AND registers this action acts on
+    sources: list[str] = Field(default_factory=list)
+    # register id -> targeted readout keys (absent/empty = all of that register's keys)
+    slots: dict[str, list[str]] = Field(default_factory=dict)
     dest: str = ""                          # destination dataset for clone/move actions
     enabled: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_sources(cls, data):
+        """Fold the legacy dataset-only ``datasets: [<id>, ...]`` list into the prefixed
+        ``sources: ["dataset:<id>", ...]`` shape. Runs only when ``sources`` isn't already present,
+        so a new-style profile passes straight through (no shipped migration — see field-rule
+        pipeline precedent)."""
+        if isinstance(data, dict) and "sources" not in data and "datasets" in data:
+            data["sources"] = [f"dataset:{d}" for d in (data.get("datasets") or [])]
+        if isinstance(data, dict):
+            data.pop("datasets", None)
+        return data
 
 
 class RegisterDef(BaseModel):
@@ -1197,6 +1267,10 @@ class RegisterDef(BaseModel):
     sources: list[str] = Field(default_factory=list)
     title: str = ""                         # optional display label (unused by the collector)
     enabled: bool = True
+    # How many most-recent values to hold per key (a rolling ring of depth N). Pulls, the persist
+    # flush, and the membank always expose the LATEST (ring tail); the extra depth is retained
+    # history. Lowering N truncates to the newest N on the next tick; raising it lets the ring regrow.
+    capacity: int = Field(default=1, ge=1)
     # "" (default) -> the held map stays in-memory only, as documented above. A dataset id ->
     # every held entry is ALSO flushed to that dataset (one row per readout: ``{name, value}``,
     # ``name`` = the readout id) whenever a value changes, so state that only ever existed as a

@@ -9,18 +9,24 @@ fields:
   min_confidence: 0.0
   isolate: false
   glyph_check: false
+  stability_reads: 0
+  stability_min: 0
 - id: count
   type: number
   rules: []
   min_confidence: 0.0
   isolate: false
   glyph_check: false
+  stability_reads: 0
+  stability_min: 0
 - id: rank
   type: number
   rules: []
   min_confidence: 0.0
   isolate: false
   glyph_check: false
+  stability_reads: 0
+  stability_min: 0
 windows:
 - id: live_game_window
   fields:
@@ -30,10 +36,12 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_3
     type: number
     rules:
-    - when: empty
+    - when: no_digit
       then: drop
     - when: always
       then: extract
@@ -41,53 +49,67 @@ windows:
       sep: /
     - when: always
       then: floor
-    min_confidence: 0.5
+    min_confidence: 0.8
     isolate: false
     glyph_check: false
+    stability_reads: 3
+    stability_min: 2
   - id: rof_5
     type: number
     rules:
-    - when: empty
+    - when: no_digit
       then: drop
     - when: always
       then: extract
       strategy: number
       sep: /
-    min_confidence: 0.5
+    - when: always
+      then: floor
+    min_confidence: 0.8
     isolate: false
     glyph_check: false
+    stability_reads: 3
+    stability_min: 2
   - id: rof_7
     type: number
     rules:
-    - when: empty
+    - when: no_digit
       then: drop
     - when: always
       then: extract
       strategy: number
       sep: /
-    min_confidence: 0.5
+    - when: always
+      then: floor
+    min_confidence: 0.8
     isolate: false
     glyph_check: false
+    stability_reads: 3
+    stability_min: 2
   - id: rof_9
     type: number
     rules:
-    - when: empty
+    - when: no_digit
       then: drop
     - when: always
       then: extract
       strategy: number
       sep: /
-    min_confidence: 0.5
+    - when: always
+      then: floor
+    min_confidence: 0.8
     isolate: false
     glyph_check: false
+    stability_reads: 3
+    stability_min: 2
   detect:
   - id: hud
     enabled: true
     search:
-      x: 0.964852064270707
-      y: 0.10077752581973241
-      w: 0.004244140625
-      h: 0.010230382202114545
+      x: 0.965
+      y: 0.10138888888888888
+      w: 0.004
+      h: 0.01
     color: '#e0ebde'
     tolerance: 32
     width: 0.0
@@ -167,6 +189,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: count
     type: number
     rules:
@@ -179,12 +203,16 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: arcane_level
     type: diamonds
     rules: []
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   data_area:
     x: 0.031884303692792056
     y: 0.17565452653306793
@@ -395,6 +423,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: mod_drain
     type: number
     rules:
@@ -405,6 +435,8 @@ windows:
     min_confidence: 0.5
     isolate: true
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: mod_count
     type: number
     rules:
@@ -424,6 +456,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   data_area:
     x: 0.04033210220688822
     y: 0.4859775443166545
@@ -600,6 +634,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   data_area:
     x: 0.2472434730244972
     y: 0.19635388680544943
@@ -695,6 +731,8 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: count
     type: number
     rules:
@@ -714,6 +752,8 @@ windows:
     min_confidence: 0.4
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   data_area:
     x: 0.04068236562341155
     y: 0.1729023165854181
@@ -882,6 +922,8 @@ windows:
     min_confidence: 0.75
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: count
     type: number
     rules:
@@ -894,6 +936,8 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   data_area:
     x: 0.0449550474139316
     y: 0.17880592428756362
@@ -1125,18 +1169,24 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: drain
     type: number
     rules: []
     min_confidence: 0.7
     isolate: true
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rank
     type: pips
     rules: []
     min_confidence: 0.6
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_9
     type: text
     rules:
@@ -1152,6 +1202,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_2
     type: text
     rules:
@@ -1167,6 +1219,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_4
     type: text
     rules:
@@ -1182,6 +1236,8 @@ windows:
     min_confidence: 0.6
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_6
     type: text
     rules:
@@ -1197,6 +1253,8 @@ windows:
     min_confidence: 0.6
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_8
     type: text
     rules:
@@ -1212,6 +1270,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_10
     type: text
     rules:
@@ -1227,6 +1287,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_12
     type: text
     rules:
@@ -1242,6 +1304,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_14
     type: text
     rules:
@@ -1257,6 +1321,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_16
     type: text
     rules:
@@ -1272,6 +1338,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_18
     type: text
     rules:
@@ -1287,6 +1355,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_20
     type: text
     rules:
@@ -1302,6 +1372,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_22
     type: text
     rules:
@@ -1317,6 +1389,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_2_split1
     type: number
     rules:
@@ -1327,6 +1401,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_4_split1
     type: number
     rules:
@@ -1337,6 +1413,8 @@ windows:
     min_confidence: 0.65
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_6_split1
     type: number
     rules:
@@ -1347,6 +1425,8 @@ windows:
     min_confidence: 0.6
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_8_split1
     type: number
     rules:
@@ -1357,6 +1437,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_10_split1
     type: number
     rules:
@@ -1367,6 +1449,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_12_split1
     type: number
     rules:
@@ -1377,6 +1461,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_14_split1
     type: number
     rules:
@@ -1387,6 +1473,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_16_split1
     type: number
     rules:
@@ -1397,6 +1485,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_18_split1
     type: number
     rules:
@@ -1407,6 +1497,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_2_split2
     type: number
     rules:
@@ -1417,6 +1509,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_4_split2
     type: text
     rules:
@@ -1427,6 +1521,8 @@ windows:
     min_confidence: 0.6
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_6_split2
     type: text
     rules:
@@ -1437,126 +1533,168 @@ windows:
     min_confidence: 0.6
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_48
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_50
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_52
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_54
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_56
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_58
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_60
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_62
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_64
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_66
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_68
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_70
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_72
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_74
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_76
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_78
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_80
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_82
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_84
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_86
     type: symbol
     rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   - id: rof_88
     type: text
     rules:
@@ -1573,6 +1711,8 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    stability_reads: 0
+    stability_min: 0
   data_area:
     x: 0.044274970740152624
     y: 0.6241895892853566
@@ -2414,13 +2554,10 @@ subsets:
   filters: []
   derived:
   - name: price
-    template: '{price_min|round:0} p'
-  - name: combined
-    template: '{name} {price_min|round:0}p'
+    template: '{price_min|round:0}'
   hidden_columns:
   - total
   - volume
-  - updated
   - slug
   - _seq
   - count
@@ -2432,12 +2569,49 @@ subsets:
   - key
   - _pos
   - price_min
+  - updated
+  - combined
   sort:
   - field: price_min
     desc: true
   sort_by: ''
   sort_desc: false
   latest_batch: false
+  limit: 0
+  config_collapsed: true
+- id: relic_priced_batch
+  sources:
+  - dataset: relic_prices
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
+    mode: join
+  filters: []
+  derived:
+  - name: price
+    template: '{price_min|round:0}'
+  hidden_columns:
+  - price_min
+  - price_median
+  - volume
+  - key
+  - _seq
+  - _pos
+  - _batch
+  - _count
+  - first_seen
+  - last_seen
+  sort:
+  - field: price_min
+    desc: true
+  sort_by: ''
+  sort_desc: false
+  latest_batch: true
   limit: 0
   config_collapsed: true
 - id: relics_with_content
@@ -3448,6 +3622,7 @@ producers:
   dataset: prices_live
   throttle: 0.4
   enabled: true
+  queue_mode: drop
   sources:
   - master
   source_field: name
@@ -3538,6 +3713,7 @@ producers:
   dataset: relic_contents
   throttle: 0.4
   enabled: true
+  queue_mode: drop
   sources: []
   source_field: name
   source_array: ''
@@ -3586,6 +3762,7 @@ producers:
   dataset: relic_prices
   throttle: 0.4
   enabled: true
+  queue_mode: queue
   sources:
   - relic_rewards_limit
   source_field: name
@@ -3676,6 +3853,7 @@ producers:
   dataset: mod_catalog
   throttle: 0.4
   enabled: true
+  queue_mode: drop
   sources: []
   source_field: name
   source_array: ''
@@ -3748,6 +3926,7 @@ producers:
   dataset: overframe_frames
   throttle: 0.4
   enabled: true
+  queue_mode: drop
   sources: []
   source_field: name
   source_array: ''
@@ -3787,6 +3966,7 @@ producers:
   dataset: overframe_frame_index
   throttle: 0.4
   enabled: true
+  queue_mode: drop
   sources:
   - overframe_frames
   source_field: item_id
@@ -3829,6 +4009,7 @@ producers:
   dataset: overframe_builds
   throttle: 0.4
   enabled: true
+  queue_mode: drop
   sources:
   - current_frame
   source_field: item_id
@@ -3906,6 +4087,7 @@ producers:
   dataset: overframe_build_detail
   throttle: 0.4
   enabled: true
+  queue_mode: drop
   sources:
   - overframe_builds
   source_field: build_id
@@ -4017,6 +4199,7 @@ producers:
   dataset: overframe_mods
   throttle: 0.4
   enabled: true
+  queue_mode: drop
   sources:
   - overframe_build_detail
   source_field: mod
@@ -4059,6 +4242,7 @@ producers:
   dataset: overframe_build_mods
   throttle: 0.4
   enabled: true
+  queue_mode: drop
   sources:
   - overframe_builds
   source_field: build_id
@@ -4195,6 +4379,7 @@ triggers:
   targets:
   - wf_market_live
   enabled: true
+  ready_field: ''
 - id: trigger_on_new_relic
   kind: on_change
   interval_s: 300.0
@@ -4206,6 +4391,8 @@ triggers:
   targets:
   - wf_market_relic
   enabled: true
+  settle_max_ms: 8000.0
+  ready_field: ''
 - id: ab_trigger
   kind: on_readout
   interval_s: 300.0
@@ -4221,11 +4408,12 @@ triggers:
   - bob
   enabled: true
   throttle_ms: 1000.0
+  ready_field: ''
 - id: on_new_relic_fetched
-  kind: on_change
+  kind: on_ready
   interval_s: 300.0
   watch:
-  - relic_rewards_with_price
+  - wf_market_relic
   readout_watch: []
   readout_op: gte
   readout_value: 0.0
@@ -4233,17 +4421,18 @@ triggers:
   - relic_sound
   - toast_2
   enabled: true
+  ready_field: ''
 toasts:
 - id: toast_2
   title: ''
   message: ''
   texts:
-  - content: Pricing update
+  - content: Relic prices fetched
     style: ''
     align: ''
     max_lines: 0
   images:
-  - placement: hero
+  - placement: inline
     width: 360
     height: 180
     bg_type: transparent
@@ -4252,7 +4441,7 @@ toasts:
     angle: 90
     unit: pct
     texts:
-    - content: '{{subset:relic_rewards_with_price.name[0]}}'
+    - content: '{{subset:relic_priced_batch.name[0]}}'
       x: 3
       y: 5
       size: 18
@@ -4262,8 +4451,9 @@ toasts:
       height: 25
       bg_color: ''
       wrap: true
-      overflow: true
-      disable_if_empty: false
+      overflow: false
+      disable_if_empty: true
+      disable_if_anchor_disabled: false
       match_w: image
       match_h: ''
       match_w_pct: 78
@@ -4282,18 +4472,19 @@ toasts:
         corner: tl
         target: tl
       z_index: 1
-    - content: '{{subset:relic_rewards_with_price.name[1]}}'
+    - content: '{{subset:relic_priced_batch.name[1]}}'
       x: 0
       y: 18
       size: 16
-      color: '#5fd68f'
+      color: '#ff9d4d'
       align: ml
       width: 81
       height: 13
       bg_color: ''
       wrap: false
       overflow: false
-      disable_if_empty: false
+      disable_if_empty: true
+      disable_if_anchor_disabled: true
       match_w: '0'
       match_h: ''
       match_w_pct: 100
@@ -4312,18 +4503,19 @@ toasts:
         corner: tl
         target: bl
       z_index: 0
-    - content: '{{subset:relic_rewards_with_price.name[2]}}'
+    - content: '{{subset:relic_priced_batch.name[2]}}'
       x: 0
       y: 0
       size: 15
-      color: '#5fd68f'
+      color: '#ff9d4d'
       align: ml
       width: 81
       height: 0
       bg_color: ''
       wrap: false
       overflow: false
-      disable_if_empty: false
+      disable_if_empty: true
+      disable_if_anchor_disabled: true
       match_w: '0'
       match_h: '1'
       match_w_pct: 100
@@ -4342,18 +4534,19 @@ toasts:
         corner: tl
         target: bl
       z_index: 0
-    - content: '{{subset:relic_rewards_with_price.name[3]}}'
+    - content: '{{subset:relic_priced_batch.name[3]}}'
       x: 0
       y: 0
       size: 15
-      color: '#5fd68f'
+      color: '#ff9d4d'
       align: ml
       width: 81
       height: 0
       bg_color: ''
       wrap: false
       overflow: false
-      disable_if_empty: false
+      disable_if_empty: true
+      disable_if_anchor_disabled: true
       match_w: '0'
       match_h: '1'
       match_w_pct: 100
@@ -4372,7 +4565,7 @@ toasts:
         corner: tl
         target: bl
       z_index: 0
-    - content: '{{subset:relic_rewards_with_price.price[0]}}'
+    - content: '{{subset:relic_priced_batch.price[0] ?? -}} p'
       x: 0
       y: 0
       size: 16
@@ -4383,7 +4576,8 @@ toasts:
       bg_color: ''
       wrap: false
       overflow: false
-      disable_if_empty: false
+      disable_if_empty: true
+      disable_if_anchor_disabled: true
       match_w: image
       match_h: '0'
       match_w_pct: 16
@@ -4402,11 +4596,11 @@ toasts:
         corner: tl
         target: tr
       z_index: 1
-    - content: '{{subset:relic_rewards_with_price.price[1]}}'
+    - content: '{{subset:relic_priced_batch.price[1] ?? -}} p'
       x: 0
       y: 0
       size: 15
-      color: '#5fd68f'
+      color: '#ff9d4d'
       align: mr
       width: 14
       height: 0
@@ -4414,6 +4608,7 @@ toasts:
       wrap: false
       overflow: false
       disable_if_empty: false
+      disable_if_anchor_disabled: true
       match_w: '4'
       match_h: '1'
       match_w_pct: 100
@@ -4432,11 +4627,11 @@ toasts:
         corner: tl
         target: tr
       z_index: 0
-    - content: '{{subset:relic_rewards_with_price.price[2]}}'
+    - content: '{{subset:relic_priced_batch.price[2] ?? -}} p'
       x: 0
       y: 0
       size: 15
-      color: '#5fd68f'
+      color: '#ff9d4d'
       align: mr
       width: 14
       height: 0
@@ -4444,6 +4639,7 @@ toasts:
       wrap: false
       overflow: false
       disable_if_empty: false
+      disable_if_anchor_disabled: true
       match_w: '4'
       match_h: '1'
       match_w_pct: 100
@@ -4462,11 +4658,11 @@ toasts:
         corner: tl
         target: tr
       z_index: 0
-    - content: '{{subset:relic_rewards_with_price.price[3]}}'
+    - content: '{{subset:relic_priced_batch.price[3] ?? -}} p'
       x: 0
       y: 0
       size: 15
-      color: '#5fd68f'
+      color: '#ff9d4d'
       align: mr
       width: 14
       height: 0
@@ -4474,6 +4670,7 @@ toasts:
       wrap: false
       overflow: false
       disable_if_empty: false
+      disable_if_anchor_disabled: true
       match_w: '4'
       match_h: '1'
       match_w_pct: 100
@@ -4504,6 +4701,7 @@ toasts:
       wrap: false
       overflow: false
       disable_if_empty: false
+      disable_if_anchor_disabled: false
       match_w: ''
       match_h: ''
       match_w_pct: 100
@@ -4534,30 +4732,35 @@ toasts:
 sounds:
 - id: relic_sound
   file: two-tone.wav
-  volume: 0.45
+  volume: 0.05
   enabled: true
 - id: bob
   file: ''
   synth:
-    wave: sawtooth
+    wave: sine
     points:
     - t: 0.0
-      p: 0.569
+      p: 0.803
+    - t: 0.25
+      p: 0.436
     - t: 0.5
-      p: 0.294
+      p: 0.394
+    - t: 0.75
+      p: 0.688
     - t: 1.0
-      p: 0.562
-    length_ms: 902
-    attack: 46
-    decay: 59
+      p: 0.452
+    length_ms: 533
+    attack: 4
+    decay: 55
     vibrato: 0
-    crush: 3
+    crush: 11
   volume: 0.7
   enabled: true
 actions:
 - id: action
   action: ''
-  datasets: []
+  sources: []
+  slots: {}
   dest: ''
   enabled: true
 registers:
@@ -4610,7 +4813,18 @@ registers:
   - readout:warframe_name
   title: ''
   enabled: true
+  capacity: 1
   persist: loadout
+- id: register
+  sources:
+  - readout:ability_1_cd
+  - readout:ability_2_cd
+  - readout:ability_3_cd
+  - readout:ability_4_cd
+  title: ''
+  enabled: true
+  capacity: 1
+  persist: ''
 dictionaries:
 - id: wiki
   enabled: true
@@ -4698,7 +4912,7 @@ layout:
       custH: true
       softH: true
     sub:live_prices_joined:
-      x: 1600.0
+      x: 1580.0
       y: -1980.0
       w: 360.0
       h: 920.0
@@ -4716,10 +4930,10 @@ layout:
       custH: false
       softH: true
     sub:relic_rewards_limit:
-      x: 3820.0
-      y: -8260.0
+      x: 2880.0
+      y: -8780.0
       w: 360.0
-      h: 240.0
+      h: 260.0
       collapsed: false
       custW: true
       custH: true
@@ -5004,11 +5218,11 @@ layout:
       y: -6520.0
       collapsed: false
     item:relic_rewards:item_1:
-      x: 4140.0
+      x: 4320.0
       y: -6520.0
       collapsed: false
     fld:relic_rewards:item_1:name:
-      x: 3780.0
+      x: 3960.0
       y: -6520.0
       collapsed: false
     det:relic_rewards:detect_h:
@@ -5114,7 +5328,7 @@ layout:
       y: -4220.0
       collapsed: false
     sub:master_prime_parts:
-      x: 2040.0
+      x: 2000.0
       y: -1980.0
       w: 360.0
       h: 900.0
@@ -5135,30 +5349,32 @@ layout:
       custW: true
       custH: false
     producer:wf_market_relic:
-      x: 2900.0
-      y: -8260.0
+      x: 3280.0
+      y: -8780.0
       w: 360.0
       h: 1360.0
       collapsed: false
       custW: false
       custH: true
+      softH: true
     ds:relic_prices:
-      x: 3300.0
-      y: -8260.0
+      x: 3280.0
+      y: -7380.0
       collapsed: false
     trigger:trigger_on_new_relic:
-      x: 3300.0
-      y: -8020.0
+      x: 2880.0
+      y: -8480.0
       w: 360.0
-      h: 202.0
+      h: 240.0
       collapsed: false
       custW: true
-      custH: false
+      custH: true
       softW: true
+      softH: true
     sound:relic_sound:
-      x: 4240.0
-      y: -7980.0
-      w: 420.0
+      x: 5180.0
+      y: -8380.0
+      w: 360.0
       h: 140.0
       collapsed: false
       custW: true
@@ -5184,18 +5400,18 @@ layout:
       custH: false
       softW: true
     trigger:on_new_relic_fetched:
-      x: 4240.0
-      y: -8260.0
-      w: 420.0
-      h: 240.0
+      x: 4180.0
+      y: -8780.0
+      w: 360.0
+      h: 220.0
       collapsed: false
       custW: true
-      custH: true
+      custH: false
       softW: true
       softH: true
     toast:toast_2:
-      x: 4720.0
-      y: -8260.0
+      x: 5180.0
+      y: -8200.0
       w: 700.0
       h: 1504.0
       collapsed: false
@@ -5204,27 +5420,17 @@ layout:
       softW: true
       softH: true
     sub:relic_rewards_with_price:
-      x: 3820.0
-      y: -7980.0
+      x: 4180.0
+      y: -8380.0
       w: 360.0
       h: 900.0
       collapsed: false
       custW: false
       custH: true
       softH: true
-    vt:sub:relic_rewards_with_price:
-      x: 4240.0
-      y: -7800.0
-      w: 420.0
-      h: 440.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
     sound:bob:
-      x: 7200.0
-      y: -3340.0
+      x: 180.0
+      y: -6760.0
       w: 440.0
       h: 520.0
       collapsed: false
@@ -5298,17 +5504,14 @@ layout:
       custH: false
       softW: false
     trigger:ab_trigger:
-      x: 7680.0
-      y: -3340.0
+      x: 660.0
+      y: -6760.0
       w: 280.0
-      h: 320.0
-      collapsed: true
+      h: 317.0
+      collapsed: false
       custW: false
       custH: true
-    action:action:
-      x: 8040.0
-      y: -3340.0
-      collapsed: false
+      softH: false
     ro:arsenal_warframe:slot_arcane_1:
       x: 1320.0
       y: -560.0
@@ -5328,56 +5531,56 @@ layout:
       custH: true
       softH: true
     win:live_game_window:
-      x: 7200.0
-      y: -2280.0
+      x: 180.0
+      y: -5280.0
       w: 680.0
       h: 806.0
       collapsed: false
       custW: true
       custH: false
     det:live_game_window:hud:
-      x: 7920.0
-      y: -2280.0
+      x: 900.0
+      y: -5280.0
       w: 260.0
       h: 180.0
       collapsed: false
       custW: false
       custH: false
     ro:live_game_window:ability_1_cd:
-      x: 7200.0
-      y: -2720.0
+      x: 180.0
+      y: -6120.0
       w: 220.0
-      h: 340.0
+      h: 300.0
       collapsed: false
       custW: false
       custH: true
       softW: true
       softH: true
     ro:live_game_window:ability_2_cd:
-      x: 7460.0
-      y: -2720.0
+      x: 740.0
+      y: -6120.0
       w: 220.0
-      h: 340.0
+      h: 300.0
       collapsed: false
       custW: false
       custH: true
       softW: true
       softH: true
     ro:live_game_window:ability_3_cd:
-      x: 7720.0
-      y: -2720.0
+      x: 1300.0
+      y: -6120.0
       w: 220.0
-      h: 340.0
+      h: 300.0
       collapsed: false
       custW: false
       custH: true
       softW: true
       softH: true
     ro:live_game_window:ability_4_cd:
-      x: 7980.0
-      y: -2720.0
-      w: 280.0
-      h: 380.0
+      x: 1860.0
+      y: -6120.0
+      w: 220.0
+      h: 300.0
       collapsed: false
       custW: true
       custH: true
@@ -6044,6 +6247,111 @@ layout:
       custH: true
       softW: true
       softH: true
+    hist:ab_trigger:
+      x: 1020.0
+      y: -6760.0
+      w: 860.0
+      h: 460.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    rohist:live_game_window:ability_1_cd:
+      x: 180.0
+      y: -5780.0
+      w: 500.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+    rohist:live_game_window:ability_2_cd:
+      x: 740.0
+      y: -5780.0
+      w: 500.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+    rohist:live_game_window:ability_3_cd:
+      x: 1300.0
+      y: -5780.0
+      w: 500.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+    rohist:live_game_window:ability_4_cd:
+      x: 1860.0
+      y: -5780.0
+      w: 500.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+    register:register:
+      x: 1940.0
+      y: -6460.0
+      w: 440.0
+      h: 180.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: false
+    prodhist:wf_market_relic:
+      x: 3680.0
+      y: -8780.0
+      w: 460.0
+      h: 320.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: false
+    vt:sub:relic_rewards_with_price:
+      x: 4580.0
+      y: -8380.0
+      w: 560.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+    action:action:
+      x: 1940.0
+      y: -6760.0
+      collapsed: false
+    prev:relic_rewards:
+      x: 3440.0
+      y: -6100.0
+      w: 440.0
+      h: 320.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+    hist:on_new_relic_fetched:
+      x: 4580.0
+      y: -8780.0
+      w: 560.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+    sub:relic_priced_batch:
+      x: 1900.0
+      y: 178.0
+      collapsed: false
+    vt:ds:relics_offered:
+      x: 3320.0
+      y: -5640.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -6290,7 +6598,7 @@ layout:
     view:relic_rewards_with_price:
       sorts: []
       widths:
-        price: 36
+        price: 68
       order: []
     hist:trigger:
       widths: {}
@@ -6299,9 +6607,10 @@ layout:
     hist:ab_trigger:
       widths:
         when: 147
-        why: 48
+        why: 211
         throttled: 69
         fires: 69
+        node: 88
     ds:relic_prices:
       widths:
         _seq: 49
@@ -6432,6 +6741,49 @@ layout:
         drain: 45
         score: 48
       sorts: []
+    rohist:live_game_window:ability_1_cd:
+      widths:
+        when: 147
+        raw: 36
+        empty→drop: 36
+        always→extract: 36
+        always→floor: 36
+      sorts: []
+    rohist:live_game_window:ability_2_cd:
+      widths:
+        when: 147
+        raw: 36
+        always→extract: 36
+        always→floor: 36
+        empty→drop: 36
+      sorts: []
+    rohist:live_game_window:ability_3_cd:
+      widths:
+        when: 147
+        raw: 36
+        always→extract: 36
+        always→floor: 36
+        value: 36
+        empty→drop: 36
+    rohist:live_game_window:ability_4_cd:
+      sorts: []
+      widths:
+        when: 147
+        raw: 36
+        always→floor: 80
+        always→extract: 36
+        empty→drop: 36
+    prodhist:wf_market_relic:
+      widths:
+        dataset: 88
+        failed: 51
+        fetched: 57
+        total: 36
+        rows: 36
+        when: 147
+    hist:on_new_relic_fetched:
+      widths:
+        when: 147
   open_images:
   - atlas
   - live_game_window
@@ -6476,6 +6828,8 @@ layout:
     - det:relic_rewards:detect_h
     - fld:relic_rewards:item_1:name
     - ds:relics_offered
+    - prev:relic_rewards
+    - vt:ds:relics_offered
     outline:
       color: '#2c313c'
       style: none
@@ -6661,23 +7015,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: slate
-  - id: group_26
-    title: warframe.market
-    members:
-    - ds:relic_prices
-    - producer:wf_market_relic
-    - trigger:trigger_on_new_relic
-    outline:
-      color: '#e69a5a'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#271f1b'
-    titleBg: '#e69a5a'
-    titleColor: '#1a0e08'
-    titleAlign: left
-    titlePos: tl
-    schemeId: orange
   - id: group_27
     title: data
     members:
@@ -6711,6 +7048,12 @@ layout:
     - ro:live_game_window:ability_3_cd
     - ro:live_game_window:ability_4_cd
     - sound:bob
+    - hist:ab_trigger
+    - rohist:live_game_window:ability_1_cd
+    - rohist:live_game_window:ability_2_cd
+    - rohist:live_game_window:ability_3_cd
+    - rohist:live_game_window:ability_4_cd
+    - register:register
     - action:action
     outline:
       color: '#3a4150'
@@ -6723,26 +7066,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: stone
-  - id: group_29
-    title: toast
-    members:
-    - sub:relic_rewards_limit
-    - sub:relic_rewards_with_price
-    - trigger:on_new_relic_fetched
-    - sound:relic_sound
-    - toast:toast_2
-    - vt:sub:relic_rewards_with_price
-    outline:
-      color: '#c98ae6'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#241d2d'
-    titleBg: '#c98ae6'
-    titleColor: '#08121d'
-    titleAlign: left
-    titlePos: tl
-    schemeId: purple
   - id: group_31
     title: 'window: mission rewards (wip)'
     members:
@@ -6971,6 +7294,7 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: green
+    gate: false
   - id: group_48
     title: subsets
     members:
@@ -7127,6 +7451,31 @@ layout:
     titleAlign: left
     titlePos: tl
     gate: false
+  - id: group_68
+    title: group_68
+    members:
+    - ds:relic_prices
+    - sub:relic_rewards_limit
+    - sub:relic_rewards_with_price
+    - producer:wf_market_relic
+    - trigger:trigger_on_new_relic
+    - trigger:on_new_relic_fetched
+    - toast:toast_2
+    - sound:relic_sound
+    - prodhist:wf_market_relic
+    - vt:sub:relic_rewards_with_price
+    - hist:on_new_relic_fetched
+    outline:
+      color: '#5ad7e6'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#15272d'
+    titleBg: '#5ad7e6'
+    titleColor: '#08121d'
+    titleAlign: left
+    titlePos: tl
+    schemeId: cyan
   float_windows: {}
   super_groups:
   - id: sgroup_2
@@ -7205,8 +7554,7 @@ layout:
     title: 'live: relic rewards'
     members:
     - group_11
-    - group_29
-    - group_26
+    - group_68
     outline:
       color: '#2b323f'
       style: none
@@ -7254,9 +7602,18 @@ layout:
   - vt:sub:statistic_prices_joined
   - vt:ds:ee_log_
   - vtd:src:source
-  - vt:sub:relic_rewards_with_price
   - hist:trigger
   - vt:sub:overframe_suggestions
+  - hist:ab_trigger
+  - rohist:live_game_window:ability_1_cd
+  - rohist:live_game_window:ability_2_cd
+  - rohist:live_game_window:ability_3_cd
+  - rohist:live_game_window:ability_4_cd
+  - prodhist:wf_market_relic
+  - vt:sub:relic_rewards_with_price
+  - prev:relic_rewards
+  - hist:on_new_relic_fetched
+  - vt:ds:relics_offered
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -7418,6 +7775,11 @@ layout:
     - ro:live_game_window:ability_2_cd
     - ro:live_game_window:ability_3_cd
     - ro:live_game_window:ability_4_cd
+    - rohist:live_game_window:ability_1_cd
+    - rohist:live_game_window:ability_2_cd
+    - rohist:live_game_window:ability_3_cd
+    - rohist:live_game_window:ability_4_cd
+    - register:register
     outline:
       color: '#2b323f'
       style: none
@@ -7448,6 +7810,7 @@ layout:
     members:
     - trigger:ab_trigger
     - sound:bob
+    - hist:ab_trigger
     outline:
       color: '#2b323f'
       style: none
@@ -7496,6 +7859,7 @@ layout:
     members:
     - win:relic_rewards
     - det:relic_rewards:detect_h
+    - prev:relic_rewards
     outline:
       color: '#5aa9e6'
       style: none
@@ -7559,6 +7923,22 @@ layout:
     titleColor: '#5aa9e6'
     titleAlign: left
     schemeId: blue
+  - id: subgroup_39
+    parent: group_41
+    title: ''
+    members:
+    - ro:arsenal_warframe:mod_drain_max
+    - ro:arsenal_warframe:mod_drain_remaining
+    outline:
+      color: '#b6e65a'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#20271b'
+    titleBg: ''
+    titleColor: '#b6e65a'
+    titleAlign: left
+    schemeId: lime
   schemes:
   - id: s_73972008-70b7-4159-add1-51fb9c3fd516
     name: loadout_groups

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -109,10 +110,14 @@ def write_subset_sigs(data_dir, game: str, sigs: dict) -> None:
 class TriggerRunner:
     def __init__(self, profile, data_dir, *, fire: Callable | None = None,
                  notifier=None, clock: Callable[[], float] = time.monotonic,
-                 wall: Callable[[], datetime] | None = None) -> None:
+                 wall: Callable[[], datetime] | None = None,
+                 timer_factory: Callable[..., object] = threading.Timer) -> None:
         self._profile = profile
         self._data_dir = data_dir
         self._clock = clock
+        # factory for the trailing-settle debounce timer (threading.Timer(secs, fn, args=[...]));
+        # injectable so tests drive _settle_flush deterministically instead of sleeping on a thread.
+        self._timer_factory = timer_factory
         # wall-clock provider (real UTC time) for kind="true_interval", which measures elapsed
         # time against the PERSISTED last-fired timestamp (survives restart/config edit) rather
         # than the injectable monotonic clock. Injectable so true_interval stays unit-testable.
@@ -139,6 +144,14 @@ class TriggerRunner:
         # monotonic time of each trigger's LAST actual fire (any kind) — the throttle clock. A
         # fire within throttle_ms of this is suppressed (recorded as throttled, not fired).
         self._last_fire_any: dict[str, float] = {}
+        # trailing-settle debounce state (guarded by _settle_lock). For a trigger with settle_ms:
+        # the pending fire args (kept latest-wins), the live timer, and the monotonic time the
+        # current window opened (for the settle_max_ms deadline). A fire is deferred while the
+        # window keeps re-arming and emitted once it quiets (or the deadline hits).
+        self._settle_lock = threading.Lock()
+        self._settle_pending: dict[str, tuple] = {}   # id -> (why, items, node, value)
+        self._settle_timer: dict[str, object] = {}    # id -> Timer
+        self._settle_first: dict[str, float] = {}     # id -> window-open monotonic time
 
     # ---- throttle + shared fire funnel -------------------------------------
 
@@ -150,26 +163,121 @@ class TriggerRunner:
         last = self._last_fire_any.get(t.id)
         return last is not None and (self._clock() - last) < (thr / 1000.0)
 
-    def _emit_fire(self, t, why: str, items) -> bool:
+    def _emit_fire(self, t, why: str, items, node: str = "", value: object = None) -> bool:
         """Throttle-gate then fire ``t``'s targets, stamping the last-fired sidecar and the
         (non-persisted) fire history. Returns True if it fired, False if throttle suppressed it.
         The single funnel every AUTO fire path (interval/lifecycle/on_change/on_readout) routes
-        through, so throttle + history behave identically regardless of what fired the trigger."""
+        through, so throttle + history behave identically regardless of what fired the trigger.
+
+        ``node``/``value`` (on_readout only) record the readout node whose reading justified the
+        fire and the actual value that crossed, for the history satellite."""
         from .trigger_history import record as record_hist
         ts = self._wall().isoformat(timespec="milliseconds")
         if self._throttled(t):
             logev(f"trigger {t.id} throttled ({why})", level="info", game=self._profile.name)
             record_hist(self._profile.name, t.id, why=why, targets=list(t.targets),
-                        throttled=True, ts=ts)
+                        throttled=True, ts=ts, node=node, value=value)
             return False
         logev(f"trigger {t.id} fired ({why})", level="run", game=self._profile.name)
         slog(f"trigger {t.id} fired ({why})", game=self._profile.name)
         self._fire_targets(t, items=items)
         record_fire(self._data_dir, self._profile.name, t.id)
         record_hist(self._profile.name, t.id, why=why, targets=list(t.targets),
-                    throttled=False, ts=ts)
+                    throttled=False, ts=ts, node=node, value=value)
         self._last_fire_any[t.id] = self._clock()
         return True
+
+    # ---- trailing-settle debounce (mirror of throttle) ---------------------
+
+    def _route_fire(self, t, why: str, items, node: str = "", value: object = None) -> bool:
+        """Auto-fire entry point. With no ``settle_ms`` this is just ``_emit_fire`` (fire now). With
+        ``settle_ms`` set, the fire is DEFERRED into a trailing window: the latest args are stashed
+        (latest-wins) and a timer (re)armed, so a burst of justified fires — a sweep dripping rows,
+        several sequential sweeps as OCR settles — collapses into ONE ``_emit_fire`` once the watched
+        data goes quiet (or ``settle_max_ms`` elapses). Returns True only for a SYNCHRONOUS fire; a
+        deferred fire returns False and lands later via ``_settle_flush``. Manual "fire now" does not
+        route here — it bypasses settle exactly as it bypasses throttle."""
+        settle_ms = getattr(t, "settle_ms", None)
+        if not settle_ms or settle_ms <= 0:
+            return self._emit_fire(t, why, items, node, value)
+        now = self._clock()
+        max_ms = getattr(t, "settle_max_ms", None)
+        fire_now = False
+        with self._settle_lock:
+            self._settle_pending[t.id] = (why, items, node, value)
+            first = self._settle_first.setdefault(t.id, now)
+            old = self._settle_timer.pop(t.id, None)
+            if old is not None:
+                try:
+                    old.cancel()
+                except Exception:  # noqa: BLE001 - a bad fake timer must not break firing
+                    pass
+            wait = settle_ms / 1000.0
+            if max_ms and max_ms > 0:
+                remaining = (max_ms / 1000.0) - (now - first)
+                if remaining <= 0:
+                    fire_now = True          # deadline hit — stop waiting, fire below
+                else:
+                    wait = min(wait, remaining)
+            if not fire_now:
+                self._arm_settle_locked(t.id, wait)
+        if fire_now:
+            self._settle_flush(t.id)         # outside the lock — _emit_fire may sweep/toast
+        return False
+
+    def _arm_settle_locked(self, tid: str, wait: float) -> None:
+        """(Re)start the trailing-settle timer for ``tid``. Caller holds ``self._settle_lock``."""
+        self._arm_timer_locked(tid, wait, self._settle_flush)
+
+    def _arm_timer_locked(self, tid: str, wait: float, fn: Callable[[str], None]) -> None:
+        """(Re)start the debounce timer for ``tid`` to call ``fn(tid)`` after ``wait`` s. Shared by
+        the settle debounce and the on_ready completion gate (a trigger is one kind, so the single
+        ``_settle_timer`` slot never collides). Caller holds ``self._settle_lock``."""
+        timer = self._timer_factory(max(0.0, wait), fn, args=[tid])
+        try:
+            timer.daemon = True
+        except Exception:  # noqa: BLE001 - injected fake timers need not support .daemon
+            pass
+        self._settle_timer[tid] = timer
+        timer.start()
+
+    def _settle_flush(self, tid: str) -> None:
+        """Emit a settled trigger's deferred fire — the timer callback and the deadline path both
+        land here. Pops the pending args and clears the window, then routes through ``_emit_fire`` so
+        throttle, history, last-fired sidecar and the watch-hop animation behave exactly like an
+        immediate fire."""
+        with self._settle_lock:
+            self._settle_timer.pop(tid, None)
+            pending = self._settle_pending.pop(tid, None)
+            self._settle_first.pop(tid, None)
+        if pending is None:
+            return
+        why, items, node, value = pending
+        t = next((x for x in self._profile.triggers if x.id == tid), None)
+        if t is None or not t.enabled:
+            return
+        self._emit_fire(t, why, items, node, value)
+
+    # ---- on_ready: a watched PRODUCER's sweep finished -----------------------
+
+    def on_sweep_done(self, node_id: str) -> list[str]:
+        """Fire every ``on_ready`` trigger that watches producer ``node_id`` — its sweep just
+        completed and its data is already written. Deterministic: the fire is CAUSED by completion
+        (called from the reap via the sweep-done bus), so a toast can never precede the prices. Fires
+        once per completion, even if the sweep wrote nothing (the fetch still finished). No timers."""
+        if not node_id:
+            return []
+        fired: list[str] = []
+        for t in self._profile.triggers:
+            if not t.enabled or t.kind != "on_ready":
+                continue
+            if node_id not in (t.watch or []):
+                continue
+            if self._emit_fire(t, f"{node_id} fetched", items=None):
+                fired.append(t.id)
+                publish_flow(self._profile.name, "watch",
+                             f"producer:{node_id}", f"trigger:{t.id}", 1)
+        return fired
 
     # ---- interval ----------------------------------------------------------
 
@@ -190,13 +298,13 @@ class TriggerRunner:
             if t.kind == "interval":
                 if now - self._last.get(t.id, now) >= t.interval_s:
                     self._last[t.id] = now
-                    if self._emit_fire(t, f"interval, every {int(t.interval_s)}s", items=None):
+                    if self._route_fire(t, f"interval, every {int(t.interval_s)}s", items=None):
                         fired.append(t.id)
             elif t.kind == "true_interval":
                 if fires is None:
                     fires = read_fires(self._data_dir, self._profile.name)
                 if self._true_interval_due(t, fires.get(t.id)):
-                    if self._emit_fire(t, f"true interval, every {int(t.interval_s)}s", items=None):
+                    if self._route_fire(t, f"true interval, every {int(t.interval_s)}s", items=None):
                         fired.append(t.id)
         return fired
 
@@ -236,7 +344,7 @@ class TriggerRunner:
         for t in self._profile.triggers:
             if not t.enabled or t.kind != kind:
                 continue
-            if self._emit_fire(t, why, items=None):
+            if self._route_fire(t, why, items=None):
                 fired.append(t.id)
         return fired
 
@@ -279,8 +387,8 @@ class TriggerRunner:
             if items is None:
                 items = self._items_for(changed_records)
             why = f"{dataset} changed ({len(changed_records)} rows, {len(items)} to price)"
-            if not self._emit_fire(t, why, items=items):
-                continue   # throttled — no fire, no watch-hop animation
+            if not self._route_fire(t, why, items=items):
+                continue   # throttled OR deferred into a settle window — no watch-hop animation yet
             # animate the watch hop watched dataset/view -> trigger (the change that fired it
             # flows INTO the trigger), only for the watches that actually justified this fire
             for w in justifying:
@@ -349,13 +457,22 @@ class TriggerRunner:
             if not t.enabled or t.kind != "on_readout":
                 continue
             watched = [w for w in t.readout_watch if w in values]
-            cond = any(self._readout_meets(t.readout_op, values[w], t.readout_value, self._readout_prev.get(w))
-                       for w in watched)
+            hit = next((w for w in watched
+                        if self._readout_meets(t.readout_op, values[w], t.readout_value,
+                                               self._readout_prev.get(w))), None)
+            cond = hit is not None
             was = self._readout_state.get(t.id, False)
             self._readout_state[t.id] = cond
             if cond and not was:
-                if self._emit_fire(t, f"readout {t.readout_op} {t.readout_value}", items=None):
+                if self._route_fire(t, f"readout {t.readout_op} {t.readout_value}", items=None,
+                                    node=hit, value=values[hit]):
                     fired.append(t.id)
+                    # animate the watch hop readout -> trigger (the reading that crossed flows INTO
+                    # the trigger), mirroring the on_change watch hop. Matches the drawn watch edge
+                    # ro:<win>:<id> <-> trigger:<id> (flow.js reverse-routes it).
+                    win = self._readout_window(hit)
+                    if win:
+                        publish_flow(self._profile.name, "watch", f"ro:{win}:{hit}", f"trigger:{t.id}", 1)
         # remember this tick's readings so crosses_* can see the transition next tick
         for w, v in values.items():
             n = self._num(v)
@@ -364,6 +481,15 @@ class TriggerRunner:
         return fired
 
     # ---- helpers -----------------------------------------------------------
+
+    def _readout_window(self, rid: str) -> str | None:
+        """The window id owning readout ``rid`` (its graph node is ``ro:<win>:<rid>``), or None.
+        Used to address the watch-hop flow blob at the readout's drawn edge."""
+        for w in self._profile.windows:
+            for v in getattr(w, "readouts", None) or []:
+                if v.id == rid:
+                    return w.id
+        return None
 
     def _watch_justifies(self, w: str, dataset: str, stored: dict,
                          sig_changed: dict, new_sigs: dict) -> bool:
@@ -393,17 +519,26 @@ class TriggerRunner:
         the user sees — hashing the full dict would flip the sig and fire the trigger constantly.
         Projecting to ``columns`` makes the sig track only the watched data. ``None`` on any
         compute error."""
+        view = self._subset_view(sid)
+        if view is None:
+            return None
+        cols = view["columns"]
+        visible = [{c: r.get(c) for c in cols} for r in view["rows"]]
+        blob = json.dumps(visible, sort_keys=True, default=str).encode("utf-8")
+        return hashlib.sha256(blob).hexdigest()
+
+    def _subset_view(self, sid: str) -> dict | None:
+        """Compute subset ``sid`` (``{"columns", "rows"}``) via the same store fetch the change-bus
+        firer uses, so on_change gating and the on_ready gate see identical rows. ``None`` on any
+        compute error (a non-subset id, a bad join). Rows carry every joined column, not just the
+        visible ones — project to ``columns`` when a stable/visible view is needed (see _subset_sig)."""
         from ..enrich.subset import compute_view_rows
         from ..store import rows_at, store_for
         try:
             fetch = lambda ds, agg: rows_at(store_for(  # noqa: E731
                 self._data_dir, self._profile.name, ds, profile=self._profile,
                 aggregate="latest" if agg == "all" else agg), agg, present_only=True)
-            view = compute_view_rows(self._profile, sid, fetch)
-            cols = view["columns"]
-            visible = [{c: r.get(c) for c in cols} for r in view["rows"]]
-            blob = json.dumps(visible, sort_keys=True, default=str).encode("utf-8")
-            return hashlib.sha256(blob).hexdigest()
+            return compute_view_rows(self._profile, sid, fetch)
         except Exception:  # noqa: BLE001 - a bad compute must never crash the firer
             return None
 
@@ -479,10 +614,11 @@ def fire_target(game: str, price_node, items, *, trigger_id: str,
     a per-trigger stamp, fired once after all targets, not per target."""
     if price_node is None or not getattr(price_node, "enabled", False):
         return False
-    # don't re-fire a node whose sweep is already running — start_sweep would no-op anyway
-    # (per-node running flag + per-game gate + cross-process file lock), but skip up front so a
-    # busy node is never disturbed or double-counted.
-    if sweep_status(game, price_node.dataset).get("running"):
+    # A node whose sweep is already running: with queue_mode "drop" (default) skip up front so a
+    # busy node is never disturbed. With "latest"/"queue" DON'T skip — let start_sweep enqueue the
+    # new batch so it runs when the current sweep finishes.
+    mode = getattr(price_node, "queue_mode", "drop") or "drop"
+    if mode == "drop" and sweep_status(game, price_node.dataset).get("running"):
         logev(f"  -> {price_node.id} skipped (already sweeping)", level="info", game=game)
         return False
     try:
@@ -569,23 +705,36 @@ def fire_toast(game: str, toast, notifier, *, trigger_id: str, values: dict | No
 
 
 def fire_action(game: str, action, data_dir, *, profile, trigger_id: str | None = None) -> bool:
-    """Fire ONE action-node target of a trigger — run its dataset op (clear/clone/move) on each of
-    its ``datasets``. The single funnel both the collector dispatch and the web fire-now route use,
-    so automatic and manual fires can't drift (the action node is fired via ``targets`` exactly like
-    a toast). Emits the trigger->action control pulse, then each action->dataset pulse (inside
-    :func:`oc.store.dataset_ops.fire_dataset_target`). A disabled / actionless node is a no-op.
-    Returns True if it ran on any dataset."""
+    """Fire ONE action-node target of a trigger — run its op (clear/clone/move) on each of its
+    ``sources``, which are prefixed refs naming DATASETS (``"dataset:<id>"``) and/or REGISTERS
+    (``"register:<id>"``). The single funnel both the collector dispatch and the web fire-now route
+    use, so automatic and manual fires can't drift (the action node is fired via ``targets`` exactly
+    like a toast). Emits the trigger->action control pulse, then each action->target pulse (inside
+    :func:`oc.store.dataset_ops.fire_dataset_target` / :func:`oc.collect.register_ops.
+    fire_register_target`). A disabled / actionless node is a no-op. A register source needs a live
+    session holding its map — resolved here; with none, register ops are a graceful no-op. Returns
+    True if it ran on any source."""
     if action is None or not getattr(action, "enabled", True) or not getattr(action, "action", ""):
         return False
     # a manual web fire has no trigger node (trigger_id is None), so skip the trigger->action
-    # control pulse — the action->dataset pulses inside fire_dataset_target still fire.
+    # control pulse — the action->target pulses inside the funnels still fire.
     if trigger_id:
         publish_flow(game, "trigger", f"trigger:{trigger_id}", f"action:{action.id}", 1)
     from ..store.dataset_ops import fire_dataset_target
+    from .register_ops import fire_register_target
+    from .live import active_session
+    session = None
     ran = False
-    for ds in getattr(action, "datasets", []):
-        if fire_dataset_target(game, data_dir, profile, action, ds):
-            ran = True
+    for ref in getattr(action, "sources", []):
+        kind, _, rid = ref.partition(":")
+        if kind == "dataset":
+            if fire_dataset_target(game, data_dir, profile, action, rid):
+                ran = True
+        elif kind == "register":
+            if session is None:
+                session = active_session(game)
+            if fire_register_target(game, data_dir, profile, session, action, rid):
+                ran = True
     return ran
 
 

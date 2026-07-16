@@ -215,21 +215,48 @@ async def lifespan(_app: FastAPI):
     try:
         from ..collect.triggers import TriggerRunner
         from ..enrich.price_runner import sweep_status
+        from ..profile import profile_signature
         from ..runtime import load_live_profile
         from ..store.changes import OnChangeFirer, subscribe
 
         from .deps import get_notifier
 
+        # One STABLE runner per game, keyed on the profile's structural signature. The runner holds
+        # cross-flush in-memory state (trailing-settle timers, throttle clocks); rebuilding it every
+        # flush — as this did — resets that state, so a settle window never coalesces across the
+        # separate flushes a relic sweep produces (each fire looks like the first -> a toast each).
+        # Cache it and reuse the same instance until the on-disk profile actually changes (a UI edit
+        # bumps the signature -> a fresh runner picks up the new triggers).
+        _runner_cache: dict[str, tuple[str, object]] = {}
+
         def _runner_for(game: str):
             try:
-                profile = load_live_profile(get_settings().profiles_dir, game)
+                settings = get_settings()
+                sig = profile_signature(settings.profiles_dir, game) or {}
+                token = sig.get("token", "")
+                cached = _runner_cache.get(game)
+                if cached is not None and cached[0] == token:
+                    return cached[1]              # stable instance -> settle/throttle state survives
+                profile = load_live_profile(settings.profiles_dir, game)
                 if not profile.triggers:
+                    _runner_cache.pop(game, None)
                     return None
-                return TriggerRunner(profile, get_settings().data_dir, notifier=get_notifier())
+                runner = TriggerRunner(profile, settings.data_dir, notifier=get_notifier())
+                _runner_cache[game] = (token, runner)
+                return runner
             except Exception:  # noqa: BLE001
                 return None
         # defer firing while a sweep is still writing the dataset -> one fire per sweep, not per row
         subscribe(OnChangeFirer(_runner_for, busy=lambda g, ds: bool(sweep_status(g, ds).get("running"))))
+        # a producer's sweep finished (reaped, data written) -> fire on_ready triggers watching it.
+        # Deterministic: the toast is caused by completion, so it can never precede the prices.
+        from ..store.changes import subscribe_sweep_done
+
+        def _on_sweep_done(game: str, node_id: str, _dataset: str) -> None:
+            r = _runner_for(game)
+            if r is not None:
+                r.on_sweep_done(node_id)
+        subscribe_sweep_done(_on_sweep_done)
     except Exception:  # noqa: BLE001 - best-effort
         pass
     # Daily-on-change database backup: any dataset write may trigger a snapshot if the

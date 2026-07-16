@@ -144,6 +144,84 @@ def test_history_records_why_and_targets(tmp_path):
     assert hist[0]["targets"] == ["relic"]
 
 
+# ---- settle: trailing-edge debounce, coalesce a burst into one fire ----------
+
+class _FakeTimer:
+    """A settle timer that never auto-fires — tests drive ``_settle_flush`` themselves so the
+    debounce is deterministic without sleeping on a real thread."""
+
+    def __init__(self, secs, fn, args=None):
+        self.secs, self.fn, self.args = secs, fn, args or []
+
+    def start(self):
+        pass
+
+    def cancel(self):
+        pass
+
+
+def _settle_runner(profile, clock):
+    calls = []
+    tr = TriggerRunner(profile, "data", fire=lambda pn, items: calls.append((pn.id, items)),
+                       clock=lambda: clock[0], timer_factory=_FakeTimer)
+    return tr, calls
+
+
+def test_settle_coalesces_burst_into_one_fire_with_last_items():
+    p = _profile()
+    p.triggers[1].settle_ms = 1000        # relicwatch: wait 1s of quiet, then fire once
+    clock = [0.0]
+    tr, calls = _settle_runner(p, clock)
+    # three justified changes inside the window -> all DEFERRED (no fire, not in the fired list)
+    assert tr.on_change("relic_rewards", [{"name": "A"}]) == []
+    clock[0] = 0.3
+    assert tr.on_change("relic_rewards", [{"name": "B"}]) == []
+    clock[0] = 0.6
+    assert tr.on_change("relic_rewards", [{"name": "C"}]) == []
+    assert calls == []                    # nothing fired yet — still settling
+    tr._settle_flush("relicwatch")        # window went quiet
+    assert calls == [("relic", ["C"])]    # fired ONCE, carrying the LAST state
+
+
+def test_settle_max_forces_fire_when_never_quiet():
+    p = _profile()
+    p.triggers[1].settle_ms = 1000
+    p.triggers[1].settle_max_ms = 5000    # fire anyway 5s after the window opened
+    clock = [0.0]
+    tr, calls = _settle_runner(p, clock)
+    assert tr.on_change("relic_rewards", [{"name": "A"}]) == []   # opens the window at t=0
+    clock[0] = 3.0
+    assert tr.on_change("relic_rewards", [{"name": "B"}]) == []   # still under the 5s cap
+    assert calls == []
+    clock[0] = 5.1                                                # past the deadline
+    assert tr.on_change("relic_rewards", [{"name": "C"}]) == []   # route returns deferred...
+    assert calls == [("relic", ["C"])]                           # ...but the deadline fired it now
+
+
+def test_settle_unset_fires_immediately():
+    # settle_ms unset -> today's behaviour: on_change fires synchronously.
+    p = _profile()
+    clock = [0.0]
+    tr, calls = _settle_runner(p, clock)
+    assert tr.on_change("relic_rewards", [{"name": "A"}]) == ["relicwatch"]
+    assert calls == [("relic", ["A"])]
+
+
+def test_settle_still_honours_throttle_at_the_settled_fire():
+    trigger_history.clear("g")
+    p = _profile()
+    p.triggers[1].settle_ms = 1000
+    p.triggers[1].throttle_ms = 5000      # at most one fire per 5s, applied at the settled fire
+    clock = [0.0]
+    tr, calls = _settle_runner(p, clock)
+    tr.on_change("relic_rewards", [{"name": "A"}])
+    tr._settle_flush("relicwatch")        # fires at t=0
+    clock[0] = 1.0
+    tr.on_change("relic_rewards", [{"name": "B"}])
+    tr._settle_flush("relicwatch")        # inside the 5s throttle window -> suppressed
+    assert calls == [("relic", ["A"])]    # only the first settled fire got through
+
+
 def test_triggers_publish_activity_log_lines():
     # every watch+fire and interval fire emits a log-bar line via the eventlog bus
     lines = []
@@ -270,6 +348,48 @@ def test_on_any_change_subset_fires_even_when_joined_output_unchanged(tmp_path):
 
     assert calls == ["px", "px", "px"]
     assert not read_subset_sigs(tmp_path, "g")   # no sig bookkeeping needed for on_any_change
+
+def _ready_profile():
+    # on_ready watches a PRODUCER; it fires when that producer's sweep completes (on_sweep_done),
+    # deterministically. No subset, no timers. `sink` is a second producer used as a capturable target.
+    return GameProfile(
+        name="g",
+        producers=[ProducerDef(id="px", dataset="prices", mode="orders", sources=["inv"]),
+                   ProducerDef(id="sink", dataset="out", mode="orders", sources=["inv"])],
+        triggers=[TriggerDef(id="rdy", kind="on_ready", watch=["px"], targets=["sink"])],
+    )
+
+
+def test_on_ready_fires_on_watched_producer_completion(tmp_path):
+    calls = []
+    tr = TriggerRunner(_ready_profile(), tmp_path, fire=lambda pn, items: calls.append(pn.id),
+                       clock=lambda: 0.0)
+    assert tr.on_sweep_done("other") == []       # a DIFFERENT producer finished -> no fire
+    assert calls == []
+    assert tr.on_sweep_done("px") == ["rdy"]     # the WATCHED producer's sweep finished -> fire
+    assert calls == ["sink"]                     # fires its target, once, deterministically
+
+
+def test_on_ready_ignores_disabled(tmp_path):
+    p = _ready_profile()
+    p.triggers[0].enabled = False
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    assert tr.on_sweep_done("px") == []
+    assert calls == []
+
+
+def test_on_ready_honours_throttle(tmp_path):
+    trigger_history.clear("g")
+    p = _ready_profile()
+    p.triggers[0].throttle_ms = 5000
+    clock = [0.0]
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: clock[0])
+    assert tr.on_sweep_done("px") == ["rdy"]     # first completion fires
+    clock[0] = 1.0
+    assert tr.on_sweep_done("px") == []          # inside the 5s throttle window -> suppressed
+    clock[0] = 10.0
+    assert tr.on_sweep_done("px") == ["rdy"]     # window elapsed -> fires again
 
 
 def test_gather_source_names_from_dataset(tmp_path):

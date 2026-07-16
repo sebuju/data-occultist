@@ -25,6 +25,10 @@ _Sub = Callable[..., None]
 
 _lock = threading.Lock()
 _subs: list[_Sub] = []
+# separate channel: a PRODUCER's sweep finished (reaped, its data written). Distinct from a dataset
+# change because a sweep that fetched-but-wrote-nothing still COMPLETED — the fetch is done, which is
+# the signal an ``on_ready`` trigger fires on. Subscriber signature: cb(game, node_id, dataset).
+_sweep_subs: list[Callable[..., None]] = []
 
 
 def subscribe(cb: _Sub) -> Callable[[], None]:
@@ -37,6 +41,30 @@ def subscribe(cb: _Sub) -> Callable[[], None]:
             if cb in _subs:
                 _subs.remove(cb)
     return _off
+
+
+def subscribe_sweep_done(cb: Callable[..., None]) -> Callable[[], None]:
+    """Register a sweep-completion subscriber ``cb(game, node_id, dataset)``; returns unsubscribe."""
+    with _lock:
+        _sweep_subs.append(cb)
+
+    def _off() -> None:
+        with _lock:
+            if cb in _sweep_subs:
+                _sweep_subs.remove(cb)
+    return _off
+
+
+def publish_sweep_done(game: str, node_id: str, dataset: str) -> None:
+    """Announce that producer ``node_id``'s sweep finished (data already written). Fired from the
+    reap AFTER the child's output is on disk, so a subscriber that reads the dataset sees it."""
+    with _lock:
+        subs = list(_sweep_subs)
+    for cb in subs:
+        try:
+            cb(game, node_id, dataset)
+        except Exception:  # noqa: BLE001 - one bad subscriber must never break teardown
+            pass
 
 
 def publish(game: str, dataset: str, records: list | None = None,

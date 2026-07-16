@@ -62,6 +62,8 @@ class SweepState:
     # (fetching is serialised per game for the rate limit + shared price store).
     blocked: bool = False
     blocked_by: str = ""   # human reason, surfaced in the Activity panel
+    # number of sweeps waiting behind this one (queue_mode != drop) — shown in the node status line
+    queued_count: int = 0
     last: str = ""
     started: str = ""
     finished: str = ""
@@ -93,6 +95,43 @@ _runners: dict[tuple[str, str], _Runner] = {}
 _game_gate: dict[str, threading.Lock] = {}
 _gate_guard = threading.Lock()
 _reap_lock = threading.Lock()   # serialises reaping so a child is released exactly once
+
+# Pending sweeps per (game, dataset): a fire that arrived while this node was busy and its
+# ``queue_mode`` is not "drop". Each entry is the captured start_sweep(**kwargs) to replay. The
+# reap of the current sweep drains the next one. ``latest`` keeps at most one; ``queue`` is FIFO.
+_pending: dict[tuple[str, str], list[dict]] = {}
+_pending_lock = threading.Lock()
+
+
+def _queue_request(game: str, dataset: str, mode: str, req: dict) -> int:
+    """Enqueue a blocked sweep per ``mode``. Returns the resulting pending count (0 = dropped)."""
+    key = (game, dataset)
+    with _pending_lock:
+        if mode == "latest":
+            _pending[key] = [req]              # coalesce: only the newest batch survives
+        elif mode == "queue":
+            _pending.setdefault(key, []).append(req)
+        else:
+            return 0                           # drop
+        return len(_pending[key])
+
+
+def _dequeue_request(game: str, dataset: str) -> dict | None:
+    """Pop the next pending sweep (FIFO), or None. Called from the reap to run the next batch."""
+    key = (game, dataset)
+    with _pending_lock:
+        q = _pending.get(key)
+        if not q:
+            return None
+        req = q.pop(0)
+        if not q:
+            _pending.pop(key, None)
+        return req
+
+
+def _pending_count(game: str, dataset: str) -> int:
+    with _pending_lock:
+        return len(_pending.get((game, dataset), []))
 
 
 # A blocked sweep (refused because another node/process holds the per-game gate) runs nothing,
@@ -356,6 +395,19 @@ def _reap(runner: _Runner) -> None:
 
     fetched = int((summary or {}).get("fetched", 0) or 0)
     names = (summary or {}).get("names", []) or []
+    # One producer-history row per completed sweep (non-persisted ring, teach-UI satellite). Keyed
+    # by the producer NODE id; this parent process is the only one that sees the child's outcome.
+    try:
+        from ..collect import producer_history
+        producer_history.record(
+            runner.game, runner.node_id,
+            ts=(state.finished if state is not None else _utcnow_iso()),
+            dataset=runner.dataset,
+            total=int((summary or {}).get("total", 0) or 0),
+            fetched=fetched, failed=int((summary or {}).get("failed", 0) or 0),
+            rows=len(names), mode=(state.mode if state is not None else ""))
+    except Exception:  # noqa: BLE001 - history is a debug view, never break teardown
+        pass
     # Re-announce on this process's buses so the live UX the in-process path used to give still
     # happens: the "data landed" blob animation, the Pretty SSE refetch, and (via the change
     # bus) any on_change trigger chained off this sweep's output — its records ARE the names the
@@ -373,6 +425,14 @@ def _reap(runner: _Runner) -> None:
             publish_change(runner.game, runner.dataset, [{"name": n} for n in names])
     except Exception:  # noqa: BLE001
         pass
+    # The producer's sweep is DONE (data already written above): fire on_ready triggers watching
+    # this producer. Deterministic — the toast is CAUSED by completion, so it can't precede it. Fires
+    # even when nothing was written (the fetch still finished — e.g. all rewards unpriceable).
+    try:
+        from ..store.changes import publish_sweep_done
+        publish_sweep_done(runner.game, runner.node_id, runner.dataset)
+    except Exception:  # noqa: BLE001 - announcing must never break teardown
+        pass
 
     _release_file_lock(runner.lock_path)
     if runner.data_dir is not None:
@@ -389,6 +449,16 @@ def _reap(runner: _Runner) -> None:
         except RuntimeError:
             pass   # not held (already reaped elsewhere) — harmless
     runner.proc = None
+
+    # Drain the queue: a fire that arrived while this node was busy (queue_mode latest/queue) is
+    # replayed now the gate is free. ``latest`` has one pending; ``queue`` runs the rest FIFO across
+    # successive reaps. This is why a queued batch always gets priced instead of silently dropped.
+    nxt = _dequeue_request(runner.game, runner.dataset)
+    if nxt is not None:
+        try:
+            start_sweep(**nxt)
+        except Exception:  # noqa: BLE001 - a failed restart must not wedge teardown
+            pass
 
 
 def _sync(runner: _Runner) -> None:
@@ -424,15 +494,28 @@ def start_sweep(data_dir, game: str, price_node, *, profile=None, key=None,
     dataset = price_node.dataset
     runner = _runner(game, dataset)
     _sync(runner)   # reap a just-finished prior child so a stale running flag doesn't block us
+    mode = getattr(price_node, "queue_mode", "drop") or "drop"
+    # captured call to replay when this sweep is drained from the pending queue by the reap.
+    req = dict(data_dir=data_dir, game=game, price_node=price_node, profile=profile, key=key,
+               items=items, timeout=timeout, limit=limit, workers=workers)
+
+    def _blocked_or_queued(reason: str) -> SweepState:
+        """This node can't start now. Queue the batch (queue_mode != drop) or drop it."""
+        if mode != "drop":
+            return _note_queued(game, dataset, price_node.mode,
+                                _queue_request(game, dataset, mode, req))
+        return _note_blocked(game, dataset, price_node.mode, reason)
+
     if runner.state and runner.state.running:
-        return runner.state
+        return _blocked_or_queued("this node already sweeping") \
+            if mode != "drop" else runner.state
     gate = _gate(game)
     if not gate.acquire(blocking=False):
-        return _note_blocked(game, dataset, price_node.mode, "another sweep running")
+        return _blocked_or_queued("another sweep running")
     lock_path = _lock_path(data_dir, game)
     if not _acquire_file_lock(lock_path):
         gate.release()                       # another PROCESS is sweeping this game
-        return _note_blocked(game, dataset, price_node.mode, "another process sweeping")
+        return _blocked_or_queued("another process sweeping")
     _recent_blocked.pop((game, dataset), None)   # this node is now sweeping — drop any stale block
     _clear_cancel(data_dir, game)                # a stale cancel must not insta-cancel this sweep
 
@@ -516,7 +599,9 @@ def shutdown_sweeps(grace: float = 4.0) -> None:
 def sweep_status(game: str, dataset: str) -> dict:
     runner = _runner(game, dataset)
     _sync(runner)
-    return runner.state.public() if runner.state else {"running": False, "total": 0, "done": 0}
+    st = runner.state.public() if runner.state else {"running": False, "total": 0, "done": 0}
+    st["queued_count"] = _pending_count(game, dataset)   # sweeps waiting behind this one (live)
+    return st
 
 
 def active_sweeps(game: str, data_dir=None) -> list[dict]:
@@ -547,6 +632,14 @@ def _note_blocked(game: str, dataset: str, mode: str, reason: str) -> SweepState
     _recent_blocked[(game, dataset)] = (st, time.monotonic())
     logev(f"sweep {dataset} blocked — {reason}", level="warn", game=game)
     return st
+
+
+def _note_queued(game: str, dataset: str, mode: str, count: int) -> SweepState:
+    """Return a state marking that a fire was QUEUED behind the running sweep (queue_mode != drop).
+    ``count`` sweeps now wait; the current sweep's reap drains the next."""
+    logev(f"sweep {dataset} queued ({count} waiting)", level="info", game=game)
+    return SweepState(game=game, dataset=dataset, mode=mode, queued_count=count,
+                      finished=_utcnow_iso())
 
 
 def recent_blocked(game: str, within: float = _BLOCKED_TTL) -> list[dict]:

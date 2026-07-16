@@ -22,14 +22,18 @@ _history: dict[tuple[str, str], deque] = {}
 
 
 def record(game: str, trigger_id: str, *, why: str, targets: list[str],
-           throttled: bool = False, ts: str) -> None:
+           throttled: bool = False, ts: str, node: str = "", value: object = None) -> None:
     """Append one fire (or throttled suppression) to the trigger's ring. ``ts`` is an ISO
-    timestamp (the caller stamps it so tests stay deterministic). Newest entries first."""
+    timestamp (the caller stamps it so tests stay deterministic). Newest entries first.
+
+    ``node``/``value`` name the readout node whose reading justified the fire and the actual
+    value that crossed (on_readout only; blank for interval/lifecycle/on_change kinds)."""
     key = (game, trigger_id)
     dq = _history.get(key)
     if dq is None:
         dq = _history[key] = deque(maxlen=_CAP)
-    dq.appendleft({"ts": ts, "why": why, "targets": list(targets), "throttled": throttled})
+    dq.appendleft({"ts": ts, "why": why, "targets": list(targets), "throttled": throttled,
+                   "node": node, "value": value})
 
 
 def recent(game: str, trigger_id: str) -> list[dict]:

@@ -38,10 +38,13 @@ def run(args) -> int:
     # write announces itself. Register the firer for this game.
     if profile.triggers:
         from ..enrich.price_runner import sweep_status
+        from ..store.changes import subscribe_sweep_done
         runner = TriggerRunner(profile, engine.settings.data_dir, notifier=engine.notifier)
         # defer firing while a sweep is still writing the dataset -> one fire per sweep, not per row
         subscribe(OnChangeFirer(lambda _g: runner,
                                 busy=lambda g, ds: bool(sweep_status(g, ds).get("running"))))
+        # a producer's sweep finished -> fire on_ready triggers watching it (deterministic).
+        subscribe_sweep_done(lambda _g, node_id, _ds: runner.on_sweep_done(node_id))
     if args.once:
         _print_tick(collector.tick())
         collector.close()
