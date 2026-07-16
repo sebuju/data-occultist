@@ -27,6 +27,20 @@ from ..numfmt import split_dp
 
 _TOKEN = re.compile(r"\{\{(.+?)\}\}")
 _SLICE = re.compile(r"\[([^\]]*)\]\s*$")
+# ` ?? ` splits a token into `left ?? default` — the default renders (literal) when the left
+# resolves to nothing (None/""); see render(). Whitespace-padded so it can't collide with a `??`
+# inside a |join delimiter. Mirror of binding.js splitDefault; the two MUST stay in lockstep.
+_DEFAULT = re.compile(r"\s\?\?\s")
+
+
+def split_default(inner: str) -> tuple[str, str | None]:
+    """Pull a trailing `` ?? default`` off a token body. Returns ``(left, default)`` where
+    ``default`` is the literal fallback text (trimmed), or ``(inner, None)`` when there is no
+    `` ?? ``. Splits on the FIRST `` ?? `` so ``{{ a ?? b ?? c }}`` -> default ``"b ?? c"``."""
+    m = _DEFAULT.search(inner)
+    if not m:
+        return inner, None
+    return inner[:m.start()].strip(), inner[m.end():].strip()
 
 
 def _fmt(v) -> str:
@@ -219,9 +233,12 @@ def render(text: str, ctx: TokenContext, *, keep_missing: bool = False) -> str:
         return text or ""
 
     def sub(m: re.Match) -> str:
-        core, dp = split_dp(m.group(1).strip())
+        base, default = split_default(m.group(1).strip())
+        core, dp = split_dp(base)
         v = resolve_token(ctx, core)
-        if v is None:
+        if v is None or v == "":
+            if default is not None:   # authored `?? fallback` wins, even in preview (keep_missing)
+                return default
             return m.group(0) if keep_missing else ""
         if dp is not None:
             try:

@@ -41,11 +41,11 @@ export function sourceTokenList(model, widgets = []) {
 // table just to fold it. Format directives (|round:N) are stripped so the subscribe side
 // (subKeyForToken) and the read side (resolveToken) key on the same string regardless of which the
 // caller passed. Table/chart bindings still take full rows via dataKeyForBinding — not this.
-const tokenKey = (inner) => `token:${splitFormat(String(inner || "").trim())[0]}`;
+const tokenKey = (inner) => `token:${splitFormat(splitDefault(String(inner || "").trim())[0])[0]}`;
 
 // The subscribe key a token/binding depends on (what the data layer notifies on).
 export function subKeyForToken(inner) {
-    const src = String(inner || "").split("|")[0].trim();
+    const src = splitDefault(String(inner || "").trim())[0].split("|")[0].trim();
     if (src.startsWith("dataset:") || src.startsWith("subset:")) return tokenKey(inner);
     if (src.startsWith("node:")) return `node:${src.slice(5).trim()}`;
     if (src.startsWith("widget:")) return `widget:${src.slice(7).trim()}`;
@@ -115,12 +115,26 @@ function splitFormat(inner) {
     return [inner, null];
 }
 
-// Replace every {{token}} in `text` with its resolved value. A `|round:N` suffix formats to N
-// decimals; otherwise numbers trim to int-bare / 2dp.
+// A trailing ` ?? default` sets a literal fallback rendered when the token resolves to nothing
+// (null/undefined/""). Whitespace-padded so it never collides with a `??` inside a |join
+// delimiter; split on the FIRST ` ?? `. Returns [left, default|null]. Mirrors templating.py
+// split_default — the two renderers MUST stay in lockstep.
+const _DEFAULT = /\s\?\?\s/;
+function splitDefault(inner) {
+    const m = _DEFAULT.exec(inner);
+    if (!m) return [inner, null];
+    return [inner.slice(0, m.index).trim(), inner.slice(m.index + m[0].length).trim()];
+}
+
+// Replace every {{token}} in `text` with its resolved value. A ` ?? fallback` renders when the
+// token is nothing (null/""); a `|round:N` suffix formats to N decimals; otherwise numbers trim
+// to int-bare / 2dp.
 export function renderDynamicText(ctx, text) {
     return String(text == null ? "" : text).replace(/\{\{(.+?)\}\}/g, (_m, inner) => {
-        const [core, dp] = splitFormat(inner.trim());
+        const [left, def] = splitDefault(inner.trim());
+        const [core, dp] = splitFormat(left);
         const v = resolveToken(ctx, core);
+        if (def != null && (v == null || v === "")) return def;   // authored `?? fallback`
         if (dp != null) { const n = Number(v); return Number.isFinite(n) ? n.toFixed(dp) : (v == null ? "" : String(v)); }
         if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(2);
         return v == null ? "" : String(v);
