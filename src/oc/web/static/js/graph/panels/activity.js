@@ -14,6 +14,7 @@ import { autosave } from "../main.js";
 import { renderTriggerHistory } from "../history_node.js";
 import { renderReadoutHistory } from "../readout_history_node.js";
 import { renderProducerHistory } from "../producer_history_node.js";
+import { renderRegisterHistory } from "../register_history_node.js";
 import { refreshRegister } from "../register_node.js";
 import { liveCollecting } from "./livewin.js";
 import { panZoomTo } from "../camera.js";
@@ -50,6 +51,9 @@ const actPending = new Set();   // trigger ids whose enable toggle is mid-flight
 const actCancelReq = new Set();
 let actEmpty = null;         // the reused "nothing active" placeholder (never innerHTML)
 let actSpin = null;          // the reused first-load spinner, shown until the first snapshot lands
+// register id -> newest push ts last seen on the beat, so the membank repaints the instant a value
+// lands (live OR a teach-UI test feed), not only while liveCollecting. See updateTriggerNodes.
+const _lastRegPush = new Map();
 
 function buildActivity() {
     if (act) return;
@@ -273,9 +277,10 @@ function detectFires(data) {
 // value it compares against; every other kind shows plain idle / firing now.
 function updateTriggerNodes(data) {
     detectFires(data);
-    // readout read-history satellites ride the same beat (live.readout_history, keyed "<win>:<ro>");
+    // readout read-history satellites ride the same beat (readout_history, keyed "<win>:<ro>");
+    // TOP-LEVEL (not under `live`) so a test feed updates them with the collector stopped too.
     // paint each OPEN one (no-op / no host when hidden). VTable reconciles in place (rule 1).
-    const roHist = data.live?.readout_history || {};
+    const roHist = data.readout_history || {};
     for (const key in roHist) {
         const sep = key.indexOf(":");
         if (sep < 0) continue;
@@ -285,6 +290,20 @@ function updateTriggerNodes(data) {
     // paint each OPEN one (no-op / no host when hidden). VTable reconciles in place (rule 1).
     const prHist = data.producer_history || {};
     for (const pid in prHist) renderProducerHistory(pid, prHist[pid]);
+    // register push-history satellites ride the same beat (register_history, keyed by register id);
+    // TOP-LEVEL (not under `live`) so a test feed updates them with the collector stopped too.
+    // paint each OPEN one (no-op / no host when hidden). VTable reconciles in place (rule 1).
+    const regHist = data.register_history || {};
+    const regRefresh = new Set();   // registers whose membank to repaint this beat (deduped, flushed below)
+    for (const rid in regHist) {
+        renderRegisterHistory(rid, regHist[rid]);
+        // the MEMBANK rides the same push signal: a value landing (register_history's newest ts moved)
+        // repaints it whether the push came from live collection OR a teach-UI test feed — the beat's
+        // liveCollecting gate below misses the feed case (collector stopped), which left the membank
+        // stale until a manual rebuild / reload.
+        const latest = regHist[rid][0]?.ts;
+        if (latest && latest !== _lastRegPush.get(rid)) { _lastRegPush.set(rid, latest); regRefresh.add(rid); }
+    }
     for (const t of (data.triggers || [])) {
         // the heartbeat carries each trigger's history now (trigger_sched.py), so this just
         // paints it into an OPEN satellite — no-op / no network when it's hidden.
@@ -310,12 +329,13 @@ function updateTriggerNodes(data) {
         }
         if (span.textContent !== txt) span.textContent = txt;
     }
-    // Register nodes hold live readout values that only move while the collector runs — refetch each
-    // beat while collecting (no-op / no host when the node isn't shown; VTable reconciles in place).
-    // Gated on liveCollecting so an idle session never fires a fetch. A stopped session's persisted
-    // map is shown by the node's own build-time refresh, not here.
+    // Register membank refetch (no-op / no host when the node isn't shown; renderBank reconciles in
+    // place, rule 1). While collecting, refetch EVERY register each beat (covers a register that
+    // hasn't pushed yet — empty-ring initial paint — and holds it fresh). Otherwise only those that
+    // got a fresh push this beat (regRefresh) repaint, so an idle session never fires a fetch.
     if (liveCollecting())
-        for (const id of model.registers()) refreshRegister(id);
+        for (const id of model.registers()) regRefresh.add(id);
+    for (const id of regRefresh) refreshRegister(id);
 }
 
 function renderActivity(data, elapsed = 0) {

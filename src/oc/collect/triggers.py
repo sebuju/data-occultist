@@ -145,6 +145,11 @@ class TriggerRunner:
         # readout (for crosses_up/crosses_down, which compare against the prior reading).
         self._readout_state: dict[str, bool] = {}
         self._readout_prev: dict[str, float] = {}
+        # on_register state: whether each comparison condition HELD last evaluation, keyed by
+        # (trigger id, reg, key) — so a threshold pulses once on entering (false->true), like
+        # on_readout. Plus the previous exposed value per (reg, key) for crosses_up/crosses_down.
+        self._register_cond_state: dict[tuple, bool] = {}
+        self._register_prev: dict[tuple, float] = {}
         # monotonic time of each trigger's LAST actual fire (any kind) — the throttle clock. A
         # fire within throttle_ms of this is suppressed (recorded as throttled, not fired).
         self._last_fire_any: dict[str, float] = {}
@@ -524,6 +529,79 @@ class TriggerRunner:
             if n is not None:
                 self._readout_prev[w] = n
         return fired
+
+    # ---- on_register ------------------------------------------------------
+
+    def on_register(self, events: list[dict], snapshot: dict) -> list[str]:
+        """Fire ``on_register`` triggers whose per-key condition(s) hold — edge-triggered.
+
+        ``events`` is ``[{"reg", "key", "value"}, ...]`` for the keys whose exposed value moved this
+        tick (the value-gate is done upstream in :meth:`oc.collect.live.LiveSession._feed_registers`).
+        ``snapshot`` is ``{reg: {key: exposed_value}}`` for EVERY held key (needed to evaluate an
+        ``and`` across keys that didn't all change this tick, and the comparison ops on the current
+        value). Each :class:`~oc.profile.models.RegKeyCond` is satisfied when ``when="changed"`` and
+        its key is in this tick's changed set, or when its comparison op holds against ``value``;
+        ``register_logic`` combines a trigger's conditions (``or`` = any, ``and`` = all). A trigger
+        fires once when its COMBINED condition goes false->true. Returns fired ids."""
+        if not events:
+            return []
+        changed = {(e["reg"], e["key"]) for e in events}
+        by_key = {(e["reg"], e["key"]): e.get("value") for e in events}
+        fired: list[str] = []
+        for t in self._profile.triggers:
+            if not t.enabled or t.kind != "on_register":
+                continue
+            conds = [(reg, c) for reg in (t.register_watch or [])
+                     for c in (t.register_conds.get(reg) or [])]
+            if not conds:
+                continue   # watched but no condition -> nothing to trip (useless), never fires
+            # per condition: `hold` = its test is currently true (a level); `pulse` = it ACTIVATES
+            # this tick. A "changed" cond has no level (hold=True) and pulses when its key moved; a
+            # comparison holds while the value meets it and pulses once on entering (false->true),
+            # like on_readout. AND fires when every cond holds AND one pulsed (the transition tick);
+            # OR fires when any cond pulses.
+            holds, pulses, hit = [], [], None
+            for reg, c in conds:
+                skey = (t.id, reg, c.key)
+                if c.when == "changed":
+                    hold, pulse = True, (reg, c.key) in changed
+                else:
+                    val = snapshot.get(reg, {}).get(c.key)
+                    hold = self._reg_cond_holds(c, val, self._register_prev.get((reg, c.key)))
+                    pulse = hold and not self._register_cond_state.get(skey, False)
+                    self._register_cond_state[skey] = hold
+                holds.append(hold)
+                pulses.append(pulse)
+                if pulse and hit is None:
+                    hit = (reg, c.key, by_key.get((reg, c.key), snapshot.get(reg, {}).get(c.key)))
+            fire = (all(holds) and any(pulses)) if (t.register_logic or "or") == "and" else any(pulses)
+            if fire:
+                hit_reg, hit_key, hit_val = hit or (conds[0][0], conds[0][1].key, None)
+                if self._route_fire(t, f"register {hit_reg}.{hit_key}", items=None,
+                                    node=hit_reg, value=hit_val):
+                    fired.append(t.id)
+                    # animate the watch hop register -> trigger (mirrors the on_readout / on_change
+                    # hops). Matches the drawn watch edge register:<id> <-> trigger:<id>.
+                    publish_flow(self._profile.name, "watch", f"register:{hit_reg}", f"trigger:{t.id}", 1)
+        # remember this tick's exposed values so crosses_* can see the transition next tick
+        for reg, keys in snapshot.items():
+            for k, v in keys.items():
+                n = self._num(v)
+                if n is not None:
+                    self._register_prev[(reg, k)] = n
+        return fired
+
+    def _reg_cond_holds(self, c, val, prev) -> bool:
+        """Does register condition ``c`` currently hold for exposed value ``val``? ``between`` tests
+        ``value <= val <= value2`` (bounds sorted, so order doesn't matter); every other op defers to
+        the shared :meth:`_readout_meets` (``crosses_*`` use ``prev``)."""
+        if c.when == "between":
+            v = self._num(val)
+            if v is None:
+                return False
+            lo, hi = sorted((c.value, getattr(c, "value2", 0.0)))
+            return lo <= v <= hi
+        return self._readout_meets(c.when, val, c.value, prev)
 
     # ---- helpers -----------------------------------------------------------
 

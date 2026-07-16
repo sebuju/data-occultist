@@ -111,6 +111,11 @@ function watchPortSpec(n) {
         // the dropped id is the readout NODE id (ro:<win>:<vid>) — the watch stores the bare vid
         onDrop: (id) => model.addTriggerReadoutWatch(n.ref.id, String(id).split(":").pop()),
     };
+    if (n.ref.kind === "on_register") return {
+        side: "L",
+        target: ["register"],   // watch a register; a key sub-select narrows which keys fire
+        onDrop: (id) => model.addTriggerRegisterWatch(n.ref.id, id),
+    };
     return null;
 }
 

@@ -478,6 +478,99 @@ def test_on_ready_honours_throttle(tmp_path):
     assert tr.on_sweep_done("px") == ["rdy"]     # window elapsed -> fires again
 
 
+# ---- on_register: per-key conditions over a watched register ---------------------
+
+def _register_profile(conds, logic="or", **trig):
+    from oc.profile.models import RegKeyCond
+    watch = list(conds.keys())
+    rc = {r: [RegKeyCond(**c) for c in cs] for r, cs in conds.items()}
+    return GameProfile(
+        name="g",
+        producers=[ProducerDef(id="px", dataset="prices", mode="orders", sources=["inv"])],
+        triggers=[TriggerDef(id="regwatch", kind="on_register", targets=["px"],
+                             register_watch=watch, register_conds=rc, register_logic=logic, **trig)],
+    )
+
+
+def _ev(reg, key, value=0):
+    return {"reg": reg, "key": key, "value": value}
+
+
+def _snap(**regs):
+    return {r: dict(kv) for r, kv in regs.items()}
+
+
+def test_on_register_changed_fires_every_change(tmp_path):
+    calls = []
+    tr = TriggerRunner(_register_profile({"loadout": [{"key": "hp", "when": "changed"}]}), tmp_path,
+                       fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    assert tr.on_register([], _snap()) == []                                   # no events -> no fire
+    assert tr.on_register([_ev("other", "hp")], _snap(other={"hp": 1})) == []  # different register
+    assert tr.on_register([_ev("loadout", "hp", 90)], _snap(loadout={"hp": 90})) == ["regwatch"]
+    assert tr.on_register([_ev("loadout", "hp", 80)], _snap(loadout={"hp": 80})) == ["regwatch"]
+    assert calls == ["px", "px"]                                               # re-fires on each change
+
+
+def test_on_register_no_condition_never_fires(tmp_path):
+    tr = TriggerRunner(_register_profile({"loadout": []}), tmp_path,
+                       fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.on_register([_ev("loadout", "hp", 90)], _snap(loadout={"hp": 90})) == []
+
+
+def test_on_register_threshold_edge_triggers(tmp_path):
+    # a comparison fires ONCE on entering the condition, re-arms after it leaves (like on_readout)
+    tr = TriggerRunner(_register_profile({"hp": [{"key": "health", "when": "lt", "value": 30}]}),
+                       tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.on_register([_ev("hp", "health", 50)], _snap(hp={"health": 50})) == []      # above -> no
+    assert tr.on_register([_ev("hp", "health", 20)], _snap(hp={"health": 20})) == ["regwatch"]  # enters
+    assert tr.on_register([_ev("hp", "health", 15)], _snap(hp={"health": 15})) == []      # still below -> held
+    assert tr.on_register([_ev("hp", "health", 60)], _snap(hp={"health": 60})) == []      # recovers
+    assert tr.on_register([_ev("hp", "health", 10)], _snap(hp={"health": 10})) == ["regwatch"]  # re-enters
+
+
+def test_on_register_between_needs_two_bounds(tmp_path):
+    tr = TriggerRunner(_register_profile(
+        {"hp": [{"key": "health", "when": "between", "value": 20, "value2": 40}]}),
+        tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.on_register([_ev("hp", "health", 50)], _snap(hp={"health": 50})) == []      # outside
+    assert tr.on_register([_ev("hp", "health", 30)], _snap(hp={"health": 30})) == ["regwatch"]  # enters band
+    assert tr.on_register([_ev("hp", "health", 25)], _snap(hp={"health": 25})) == []      # still in -> held
+
+
+def test_on_register_or_fires_on_any_and_requires_all(tmp_path):
+    conds = {"hp": [{"key": "health", "when": "lt", "value": 30},
+                    {"key": "shield", "when": "lt", "value": 10}]}
+    # OR: either condition entering fires
+    tr = TriggerRunner(_register_profile(conds, logic="or"), tmp_path,
+                       fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.on_register([_ev("hp", "health", 20)], _snap(hp={"health": 20, "shield": 50})) == ["regwatch"]
+    # AND: fires only when BOTH hold and one pulses this tick
+    tr2 = TriggerRunner(_register_profile(conds, logic="and"), tmp_path,
+                        fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr2.on_register([_ev("hp", "health", 20)], _snap(hp={"health": 20, "shield": 50})) == []  # shield high
+    assert tr2.on_register([_ev("hp", "shield", 5)], _snap(hp={"health": 20, "shield": 5})) == ["regwatch"]  # both now
+
+
+def test_on_register_ignores_disabled(tmp_path):
+    p = _register_profile({"loadout": [{"key": "hp", "when": "changed"}]})
+    p.triggers[0].enabled = False
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.on_register([_ev("loadout", "hp", 90)], _snap(loadout={"hp": 90})) == []
+
+
+def test_on_register_honours_throttle(tmp_path):
+    trigger_history.clear("g")
+    p = _register_profile({"loadout": [{"key": "hp", "when": "changed"}]})
+    p.triggers[0].throttle_ms = 5000
+    clock = [0.0]
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: clock[0])
+    assert tr.on_register([_ev("loadout", "hp", 1)], _snap(loadout={"hp": 1})) == ["regwatch"]
+    clock[0] = 1.0
+    assert tr.on_register([_ev("loadout", "hp", 2)], _snap(loadout={"hp": 2})) == []   # inside 5s -> suppressed
+    clock[0] = 10.0
+    assert tr.on_register([_ev("loadout", "hp", 3)], _snap(loadout={"hp": 3})) == ["regwatch"]
+
+
 def test_gather_source_names_from_dataset(tmp_path):
     ds = DatasetStore(tmp_path, "g", "master", key=KeySpec(fields=("name",)))
     ds.begin_batch()

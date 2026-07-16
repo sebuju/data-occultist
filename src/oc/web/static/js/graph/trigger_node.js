@@ -12,19 +12,25 @@
 // out-port to a producer / file source / toast / sound / action, or picked from the "fires" row.
 // The dataset ACTION (clear/clone/move) is now its own node (action_node.js), fired via `targets`.
 // Rendering only — wiring is in main.js.
-import { h, frag, labCell, srcRow } from "../dom.js";
+import { h, frag, labCell, srcRow, trashBtn } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
+import { slideToggle } from "./node_parts.js";
 
 const KINDS = [["interval", "interval"], ["true_interval", "true interval"], ["on_change", "on change"],
     ["on_any_change", "on any change"], ["on_new_batch", "on new batch"],
     ["on_app_start", "on app start"], ["on_capture", "on capture start"],
     ["on_live_start", "on live start"], ["on_live_stop", "on live stop"],
-    ["on_readout", "on readout"], ["on_ready", "on ready"], ["manual", "manual only"]];
+    ["on_readout", "on readout"], ["on_register", "on register"], ["on_ready", "on ready"], ["manual", "manual only"]];
 
 // comparison operators for an on_readout trigger, with human labels for the dropdown.
 const VAR_OPS = [["gte", "≥ (at least)"], ["lte", "≤ (at most)"], ["gt", "> (above)"],
     ["lt", "< (below)"], ["eq", "= (equals)"], ["ne", "≠ (not equal)"],
     ["crosses_up", "crosses up through"], ["crosses_down", "crosses down through"]];
+
+// on_register per-key condition operators: "changed" (fires when the key's value moves, no
+// threshold) plus the same comparisons an on_readout uses, and "between" (two bounds). The value
+// input hides for "changed"; "between" shows a second bound input.
+const REG_WHENS = [["changed", "changed"], ...VAR_OPS, ["between", "between"]];
 
 export function triggerParts(t, model) {
     const kind = KINDS.some(([v]) => v === t.kind) ? t.kind : "interval";
@@ -91,6 +97,27 @@ export function triggerParts(t, model) {
             h("input", { class: "tg-varval", type: "number", step: "any", value: t.readout_value ?? 0 }));
     }
 
+    // on_register: watch register(s); under each, per-key conditions [key][when][value] that trip
+    // the trigger. A single and/or slider says whether a trigger's conditions must ALL hold or ANY.
+    let regwatch = null;
+    if (kind === "on_register") {
+        const have = new Set(t.register_watch || []);
+        const nConds = Object.values(t.register_conds || {}).reduce((a, l) => a + (l?.length || 0), 0);
+        const andOn = (t.register_logic || "or") === "and";
+        regwatch = frag(
+            srcRow("watch", "registers to watch; add key conditions under each",
+                sourcesInput({
+                    chips: (t.register_watch || []).map((rid) => ({ value: rid, node: model.refNode(`register:${rid}`) })),
+                    free: model.registers().filter((r) => !have.has(r)),
+                    addLabel: "+ watch register", addinCls: "sv-addin tg-addregwatch", rmCls: "sv-rmin tg-rmregwatch" })),
+            // and/or slider — only meaningful once >1 condition exists (below one there's nothing to combine).
+            nConds > 1 ? labCell("match", "and = every condition must hold; or = any one") : null,
+            nConds > 1 ? h("label", { class: "gn-slide-wrap tg-match" },
+                slideToggle({ on: andOn, cls: "tg-reglogic", title: "and = all conditions hold; or = any" }),
+                h("span", { class: "gn-slide-lbl" }, andOn ? "and" : "or")) : null,
+            ...(t.register_watch || []).map((rid) => regCondBlock(t, rid, model)));
+    }
+
     // throttle: minimum ms between actual fires (blank = none) — a global rate limit across all kinds.
     const throttle = frag(
         labCell("throttle", "minimum time between fires (blank = none)"),
@@ -121,7 +148,7 @@ export function triggerParts(t, model) {
                 targets,
                 labCell("kind", "how the trigger decides to fire"),
                 h("select", { class: "tg-kind" }, KINDS.map(kopt)),
-                interval, watch, varwatch, throttle, settle,
+                interval, watch, varwatch, regwatch, throttle, settle,
                 labCell("progress", "what the trigger is doing (live countdown for timed kinds)"),
                 h("span", { class: "tg-prog muted" }, "idle"))),
         foot: h("button", { class: "tg-fire" }, "↻ fire"),
@@ -130,6 +157,42 @@ export function triggerParts(t, model) {
             (kind === "on_change" || kind === "on_any_change") && h("span", { class: "port pwatch", title: "drag to a dataset or subset to watch for new rows" }),
             kind === "on_new_batch" && h("span", { class: "port pwatch", title: "drag to a dataset or subset to fire once per new batch (a re-pushed screen)" }),
             kind === "on_ready" && h("span", { class: "port pwatch", title: "drag to a producer to fire when its sweep finishes" }),
-            kind === "on_readout" && h("span", { class: "port pwatch", title: "drag to a readout node to watch its value" })),
+            kind === "on_readout" && h("span", { class: "port pwatch", title: "drag to a readout node to watch its value" }),
+            kind === "on_register" && h("span", { class: "port pwatch", title: "drag to a register to watch its keys" })),
     };
+}
+
+// One watched register's condition block: a labelled row whose content is a stack of condition
+// rows plus a "+ key" add-select of the register's not-yet-conditioned keys. `data-reg` scopes the
+// wiring (io_wire) to this register.
+function regCondBlock(t, rid, model) {
+    const keys = model.registerSources(rid).filter((s) => s.kind === "readout").map((s) => s.id);
+    const conds = t.register_conds?.[rid] || [];
+    const used = new Set(conds.map((c) => c.key));
+    const free = keys.filter((k) => !used.has(k));
+    const rows = conds.map((c, i) => regCondRow(rid, i, c, keys));
+    const add = h("select", { class: "tg-addcond", dataset: { reg: rid }, title: "add a key condition" },
+        h("option", { value: "" }, "+ key"), ...free.map((k) => h("option", { value: k }, k)));
+    return srcRow(rid, `${rid}'s key conditions — each trips when its test holds`,
+        h("div", { class: "tg-regconds", dataset: { reg: rid } }, ...rows, free.length ? add : null));
+}
+
+// One condition row: [key select] [when select] [value input] [remove]. The value input is dropped
+// for "changed" (no threshold). `data-reg`/`data-idx` let io_wire target this exact condition.
+function regCondRow(rid, i, c, keys) {
+    const kopt = (k) => h("option", { value: k, selected: k === c.key }, k === c.key ? `<${k}>` : k);
+    const wopt = ([v, l]) => h("option", { value: v, selected: v === c.when }, v === c.when ? `<${l}>` : l);
+    const between = c.when === "between";
+    return h("div", { class: "tg-condrow", dataset: { reg: rid, idx: String(i) } },
+        h("select", { class: "tg-condkey", title: "which register key this condition watches" }, keys.map(kopt)),
+        h("select", { class: "tg-condwhen", title: "how the key's value must behave to trip" }, REG_WHENS.map(wopt)),
+        // no value for "changed"; one for a comparison; two (lo..hi) for "between"
+        c.when !== "changed"
+            ? h("input", { class: "tg-condval", type: "number", step: "any", value: c.value ?? 0, title: between ? "lower bound" : "threshold" })
+            : null,
+        between ? h("span", { class: "tg-condspan muted" }, "..") : null,
+        between
+            ? h("input", { class: "tg-condval2", type: "number", step: "any", value: c.value2 ?? 0, title: "upper bound" })
+            : null,
+        trashBtn({ cls: "tg-condrm", title: "remove condition" }));
 }

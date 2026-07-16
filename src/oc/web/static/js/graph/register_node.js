@@ -21,7 +21,36 @@ import { confTier } from "./conf.js";
 import { makeArmed } from "./armbtn.js";
 import { panZoomTo } from "./camera.js";
 import { h, frag, kv, trashBtn, observeResize } from "../dom.js";
+import { slideToggle } from "./node_parts.js";
 import { liveCollecting } from "./panels/livewin.js";
+
+// The register's own ring-aggregate vocabulary (its exposed/persisted value = this fold over the
+// ring). "" is the default `<latest>` option (no fold — expose the ring tail). Deliberately its
+// OWN list (uses "avg", the user's word) — not the dataset node's collapse policy (which says
+// "mean"); the two concepts are unrelated, so they don't share a select.
+const REG_AGGREGATES = [["", "latest"], ["min", "min"], ["max", "max"], ["avg", "avg"], ["sum", "sum"], ["median", "median"]];
+
+// Most decimal places any numeric ring member carries (mirrors LiveSession._ring_decimals): "1.50"
+// -> 2, "10" -> 0. Drives the aggregate's display precision.
+function ringDecimals(values) {
+    let m = 0;
+    for (const v of values || []) {
+        if (!Number.isFinite(Number(v))) continue;
+        const s = String(v), dot = s.indexOf(".");
+        if (dot >= 0) m = Math.max(m, s.length - dot - 1);
+    }
+    return m;
+}
+
+// Display of an aggregate value for the tiny summary slot. Mirrors the backend fold's rounding
+// (LiveSession._aggregate_ring): a value that PRODUCED a float (avg/median always; min/max/sum when
+// not whole) shows at the ring's own decimals PLUS ONE (JSON drops the trailing ".0", so we re-add
+// it here); a whole min/max/sum stays an int.
+function fmtAgg(v, mode, ringVals) {
+    if (typeof v !== "number") return String(v);
+    const floaty = mode === "avg" || mode === "median" || !Number.isInteger(v);
+    return floaty ? v.toFixed(ringDecimals(ringVals) + 1) : String(v);
+}
 
 // One bank state per live `.data-host` element (grid + a keyed Map of reused cell records + the
 // trailing "+" cell), so the poll-driven refreshRegister reconciles in place — zero DOM churn in
@@ -86,12 +115,12 @@ function layout(b, host) {
 function makeCell(id, key) {
     const ref = `readout:${key}`;
     const kEl = h("div", { class: "mb-k" });
-    const vEl = h("div", { class: "mb-v" });
+    const vstack = h("div", { class: "mb-vstack" });   // one .mb-v line per ring value (latest first)
     const seenEl = h("span", { class: "mb-seen" });
     const confEl = h("span", { class: "mb-conf" });
     const trash = trashBtn({ cls: "mb-rmsrc", title: "remove source" });
     const row = h("div", { class: "mb-cell", dataset: { k: key, ref } },
-        kEl, vEl, h("div", { class: "mb-meta" }, seenEl, confEl), trash);
+        kEl, vstack, h("div", { class: "mb-meta" }, seenEl, confEl), trash);
     const armed = makeArmed({
         onArm: () => row.classList.add("armed"),
         onTimeout: () => row.classList.remove("armed"),
@@ -106,7 +135,7 @@ function makeCell(id, key) {
         const nodeId = model.refNode(ref);
         if (nodeId) panZoomTo(nodeId);
     });
-    return { row, kEl, vEl, seenEl, confEl, tier: "", k: "", v: "", seen: "", conf: "" };
+    return { row, kEl, vstack, vlines: [], seenEl, confEl, tier: "", k: "", vkey: "", seen: "", conf: "", multi: null };
 }
 
 // Update only the text / class / style that actually changed for one slot (rule 1). Toggles the
@@ -123,11 +152,41 @@ function applyCell(rec, r) {
     }
     if (r.key !== rec.k) { rec.kEl.textContent = r.key; rec.kEl.title = r.key; rec.k = r.key; }
 
-    const vTxt = dead ? "∅" : String(r.value);
-    if (vTxt !== rec.v) {
-        rec.vEl.textContent = vTxt;
-        rec.vEl.title = dead ? "" : vTxt;   // full value on hover (the slot clamps to 2 lines)
-        rec.v = vTxt;
+    // Build the ordered lines (text + class). MULTI (more than one held value): the aggregate rides
+    // on TOP and every raw sample is styled uniformly (no bold "latest") — the stack reads as one
+    // ranked column, top-justified. SINGLE value (or dead): the latest sits big on top and the agg
+    // (if any) trails below. Reconcile the line pool in place (rule 1): a change-gate string skips
+    // untouched slots, line nodes are added/removed only when the entry count changes.
+    const vals = Array.isArray(r.values) ? r.values : [r.value];
+    const rawNewest = dead ? ["∅"] : vals.slice().reverse().map(String);   // server stores oldest->newest
+    const multi = !dead && !!r.multi;   // styling driven by the "recent values" SETTING (capacity > 1), not the live count
+    const aggTxt = (!dead && r.agg != null) ? fmtAgg(r.agg, r.aggMode, r.values) : null;   // just the value — the mode shows in the select
+    const lines = [];
+    if (multi) {
+        if (aggTxt != null) lines.push({ t: aggTxt, c: "mb-v-agg" });   // agg first
+        for (const t of rawNewest) lines.push({ t, c: "mb-v-old" });    // raw samples, all uniform
+    } else {
+        rawNewest.forEach((t, i) => lines.push({ t, c: i === 0 && !dead ? "mb-v-latest" : "mb-v-old" }));
+        if (aggTxt != null) lines.push({ t: aggTxt, c: "mb-v-agg" });   // agg trails below
+    }
+    // top-justify the stack only when multi (else keep it centred) — gated so a static tick doesn't touch the DOM
+    if (multi !== rec.multi) { rec.vstack.classList.toggle("mb-start", multi); rec.multi = multi; }
+    const vkey = lines.map((l) => `${l.c}:${l.t}`).join(" ");
+    if (vkey !== rec.vkey) {
+        while (rec.vlines.length < lines.length) {
+            const line = h("div", { class: "mb-v" });
+            rec.vlines.push(line); rec.vstack.appendChild(line);
+        }
+        while (rec.vlines.length > lines.length) rec.vlines.pop().remove();
+        lines.forEach((l, i) => {
+            const line = rec.vlines[i];
+            line.textContent = l.t;
+            line.title = dead ? "" : l.t;   // full value on hover (the line clamps)
+            line.classList.toggle("mb-v-latest", l.c === "mb-v-latest");
+            line.classList.toggle("mb-v-old", l.c === "mb-v-old");
+            line.classList.toggle("mb-v-agg", l.c === "mb-v-agg");
+        });
+        rec.vkey = vkey;
     }
 
     const seenTxt = r.seen || "";
@@ -211,7 +270,17 @@ export function registerParts(x) {
         body: frag(
             h("div", { class: "lab-grid" },
                 kv("recent values", h("input", { class: "gi reg-cap", type: "number", min: "1", step: "1",
-                    value: x.capacity ?? 1, title: "how many recent values to hold per key" }))),
+                    value: x.capacity ?? 1, title: "how many recent values to hold per key" })),
+                // aggregate: collapse the ring to the ONE value the register exposes/persists — only
+                // meaningful (and only offered) once the ring holds more than one sample. The raw
+                // ring is always still shown in the membank (a summary line adds below it).
+                (x.capacity ?? 1) > 1 && kv("aggregate",
+                    h("select", { class: "gi reg-agg", title: "collapse the ring to one exposed/persisted value (raw samples stay shown)" },
+                        REG_AGGREGATES.map(([v, lbl]) => h("option", { value: v, selected: v === (x.aggregate || "") },
+                            v === (x.aggregate || "") ? `<${lbl}>` : lbl)))),
+                // ignore empty: don't write a null/empty read to a keyslot (always available).
+                kv("ignore empty", slideToggle({ on: !!x.ignore_empty, cls: "reg-ignoreempty",
+                    title: "ignore null / empty reads — don't write them to a keyslot" }))),
             h("div", { class: "nodehost data-host" })),
         foot: h("button", { class: "regclear danger" }, "clear data"),
     };
@@ -227,7 +296,10 @@ export function refreshRegister(id) {
     const host = nodeEls.get(`register:${id}`)?.querySelector(".data-host");
     if (!host) return;
     const wired = model.registerSources(id).filter((s) => s.kind === "readout").map((s) => s.id);
-    api.registerDetail(model.profile.name, id)
+    // pass the node's LIVE fold selection: the server folds the ring with it right away (its own
+    // profile is frozen mid-run, so the stored mode lags the select). The fold itself is server-side.
+    const aggMode = model.registerNode(id)?.aggregate || "";
+    api.registerDetail(model.profile.name, id, aggMode)
         .then((r) => {
             const byKey = new Map((r.records || []).map((e) => [e.key, e]));
             for (const rid of wired) {
@@ -240,12 +312,23 @@ export function refreshRegister(id) {
                     last_seen: null,
                 });
             }
+            const multi = (model.registerNode(id)?.capacity ?? 1) > 1;   // the "recent values" setting drives the stack styling
             const rows = [...byKey.values()].map((e) => ({
                 key: e.key,
                 value: e.value,                                  // raw: null / "" -> dead slot; else shown
+                values: Array.isArray(e.values) ? e.values : [e.value],   // full ring (oldest->newest); preview fallback = [value]
+                agg: e.agg == null ? null : e.agg,               // aggregated value (server fold) or null (no aggregate / preview)
+                aggMode,
+                multi,
                 conf: e.conf == null ? null : +e.conf,           // raw: classified into a tier in applyCell
                 seen: e.last_seen == null ? "preview" : sinceShort(e.last_seen * 1000),   // server sends epoch SECONDS
             }));
+            // STABLE slot order = the wired-source order (matches the readouts' layout). The server
+            // sorts records by last_seen, which shifts every tick now that every read touches it —
+            // that would reshuffle the grid and thrash cells (detach/reattach) on every refresh. Pin
+            // the order to the wiring so a slot never moves; keys held but no longer wired trail after.
+            const order = new Map(wired.map((rid, idx) => [rid, idx]));
+            rows.sort((a, b) => (order.get(a.key) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.key) ?? Number.MAX_SAFE_INTEGER));
             renderBank(id, host, rows);
         })
         .catch(() => { /* transient fetch error -> leave the last-rendered slots */ });

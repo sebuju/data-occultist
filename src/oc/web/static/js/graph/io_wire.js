@@ -18,6 +18,8 @@ import { log, timed } from "../log.js";
 import { wireProducerNode, mapRow } from "./producer_node.js";
 import { renderTriggerHistory } from "./history_node.js";
 import { refreshRegister } from "./register_node.js";
+import { wireSlotRows } from "./reg_slots.js";
+import { makeArmed } from "./armbtn.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 import {
     render, autosave, rebuildNode, rebuildNodeEdges, refreshLive, wireArmedRemove,
@@ -223,6 +225,36 @@ function wireTrigger(div, n) {
     wireArmedRemove(div, ".tg-rmvarwatch", (val) => { model.removeTriggerReadoutWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
     div.querySelector(".tg-varop")?.addEventListener("change", (e) => { model.setTriggerReadoutOp(t.id, e.target.value); autosave(null); });
     div.querySelector(".tg-varval")?.addEventListener("change", (e) => { model.setTriggerReadoutValue(t.id, e.target.value); autosave(null); });
+    // on_register: watched registers (chips + edges); adding/removing a register changes both the
+    // edge AND the body (its condition block appears/vanishes) -> rebuildNodeEdges.
+    div.querySelector(".tg-addregwatch")?.addEventListener("change", (e) => { if (model.addTriggerRegisterWatch(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
+    wireArmedRemove(div, ".tg-rmregwatch", (val) => { model.removeTriggerRegisterWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
+    // and/or slider between a trigger's key conditions (rebuild so its "and"/"or" label re-renders).
+    div.querySelector(".tg-reglogic")?.addEventListener("change", (e) => { model.setTriggerRegisterLogic(t.id, e.target.checked ? "and" : "or"); rebuildNode(n.id); autosave(null); });
+    // per-register "+ key" adds a condition (defaults to fire-on-change; the row lets you set when/value).
+    div.querySelectorAll(".tg-addcond").forEach((sel) => {
+        sel.addEventListener("change", (e) => {
+            if (e.target.value && model.addTriggerRegisterCond(t.id, sel.dataset.reg, e.target.value)) { rebuildNode(n.id); autosave(null); }
+        });
+    });
+    // each condition row: key / when / value / armed-remove. key+when rebuild (free-key list + the
+    // value input show/hide with the op); value is a plain save; remove is a two-click arm (rule 2).
+    div.querySelectorAll(".tg-condrow").forEach((row) => {
+        const reg = row.dataset.reg, idx = +row.dataset.idx;
+        row.querySelector(".tg-condkey")?.addEventListener("change", (e) => { model.setTriggerRegisterCondKey(t.id, reg, idx, e.target.value); rebuildNode(n.id); autosave(null); });
+        row.querySelector(".tg-condwhen")?.addEventListener("change", (e) => { model.setTriggerRegisterCondWhen(t.id, reg, idx, e.target.value); rebuildNode(n.id); autosave(null); });
+        row.querySelector(".tg-condval")?.addEventListener("change", (e) => { model.setTriggerRegisterCondValue(t.id, reg, idx, e.target.value); autosave(null); });
+        row.querySelector(".tg-condval2")?.addEventListener("change", (e) => { model.setTriggerRegisterCondValue2(t.id, reg, idx, e.target.value); autosave(null); });
+        const rm = row.querySelector(".tg-condrm");
+        if (rm) {
+            const armed = makeArmed({
+                onArm: () => row.classList.add("armed"),
+                onTimeout: () => row.classList.remove("armed"),
+                onFire: () => { row.classList.remove("armed"); model.removeTriggerRegisterCond(t.id, reg, idx); rebuildNode(n.id); autosave(null); },
+            });
+            rm.addEventListener("click", (e) => { e.stopPropagation(); armed.trigger(); });
+        }
+    });
     div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".tg-rmwatch", (val) => { model.removeTriggerWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
     wireArmedRemove(div, ".tg-rmtarget", (val) => { model.removeTriggerTarget(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
@@ -260,31 +292,27 @@ function wireAction(div, n) {
     // sources: datasets AND registers, by prefixed ref (value carries "dataset:"/"register:")
     $(".ac-addsrc")?.addEventListener("change", (e) => { if (model.addActionSource(x.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".ac-rmsrc", (val) => { model.removeActionSource(x.id, val); rebuildNodeEdges(n.id); autosave(null); });
-    // slot targeting: one row per register source, each scoped to its register via data-reg so the
-    // add/remove edits know which register's key set they narrow (default all).
-    div.querySelectorAll(".sv-slotrow").forEach((row) => {
-        const regId = row.dataset.reg;
-        const effective = () => {
-            const keys = model.registerSources(regId).filter((s) => s.kind === "readout").map((s) => s.id);
-            const t = model.actionSlots(x.id, regId);
-            return t.length ? t.filter((k) => keys.includes(k)) : keys;   // [] = all
-        };
-        row.querySelector(".ac-addslot")?.addEventListener("change", (e) => {
-            if (!e.target.value) return;
-            model.setActionSlots(x.id, regId, [...effective(), e.target.value]);
-            rebuildNode(n.id); autosave(null);
-        });
-        wireArmedRemove(row, ".ac-rmslot", (val) => {
-            model.setActionSlots(x.id, regId, effective().filter((k) => k !== val));
-            rebuildNode(n.id); autosave(null);
-        });
+    // slot targeting: one row per register source (shared reg_slots primitive, rule 7) — each scoped
+    // to its register via data-reg so the add/remove edits know which register's key set they narrow.
+    wireSlotRows(div, {
+        keysFor: (regId) => model.registerSources(regId).filter((s) => s.kind === "readout").map((s) => s.id),
+        get: (regId) => model.actionSlots(x.id, regId),
+        set: (regId, keys) => model.setActionSlots(x.id, regId, keys),
+        after: () => { rebuildNode(n.id); autosave(null); },
     });
     $(".ac-dest")?.addEventListener("change", (e) => { model.setActionDest(x.id, e.target.value); drawEdges(); autosave(null); });
     // manual fire: run the action NOW on its target dataset(s) via the same funnel a trigger uses.
     // Transient feedback by swapping the button label (no progress line on the node).
     $(".ac-fire")?.addEventListener("click", async (e) => {
         const btn = e.currentTarget; btn.disabled = true; btn.textContent = "firing…";
-        try { const r = await api.actions.fire(model.profile.name, x.id); btn.textContent = r.ran ? "fired ✓" : "no-op"; refreshLive(); }
+        try {
+            const r = await api.actions.fire(model.profile.name, x.id);
+            btn.textContent = r.ran ? "fired ✓" : "no-op";
+            refreshLive();   // dataset sources: refetch /api/flow. register sources aren't in flow, so
+            // repaint each register this action touches directly (clear/move mutate the in-memory held
+            // map server-side but publish no dataset-change push, so refreshLive would never reach them).
+            for (const s of model.actionSources(x.id)) if (s.kind === "register") refreshRegister(s.id);
+        }
         catch (err) { btn.textContent = String(err.message || err); }
         finally { setTimeout(() => { btn.textContent = "↻ fire"; btn.disabled = false; }, 1500); }
     });
@@ -327,6 +355,12 @@ function wireRegister(div, n) {
     });
     // ring depth per key: coerce (blank -> 1) then rebuild so the normalised value re-renders.
     $(".reg-cap")?.addEventListener("change", (e) => { model.setRegisterCapacity(x.id, e.target.value); rebuildNode(n.id); autosave(null); });
+    // ring aggregate (shown only when capacity > 1): nothing structural changes — the native select
+    // already shows the pick — so DON'T rebuild the node body; just refetch so the membank's summary
+    // line repaints with the new fold (the server folds off the passed mode).
+    $(".reg-agg")?.addEventListener("change", (e) => { model.setRegisterAggregate(x.id, e.target.value); refreshRegister(x.id); autosave(null); });
+    // ignore-empty toggle: pure server-side write behaviour, no re-render needed.
+    $(".reg-ignoreempty")?.addEventListener("change", (e) => { model.setRegisterIgnoreEmpty(x.id, e.target.checked); autosave(null); });
     // clear the held map server-side (armed two-click, no blocking dialog). Values live only in the
     // running session, so this just empties that map; the table repopulates as readouts are read.
     const clearBtn = $(".regclear");

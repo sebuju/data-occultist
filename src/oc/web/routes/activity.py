@@ -12,6 +12,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ...collect.producer_history import snapshot as producer_history_snapshot
+from ...collect.readout_history import snapshot as readout_history_snapshot
+from ...collect.register_history import snapshot as register_history_snapshot
 from ...enrich.price_runner import active_sweeps, recent_blocked
 from ..deps import get_settings
 from ..source_sched import sources as source_status
@@ -47,6 +49,11 @@ def build_activity(game: str, settings) -> dict:
             "precapture": precap, "live": live,
             "triggers": trigger_schedule(game, settings),
             "producer_history": producer_history_snapshot(game),
+            # Readout + register history ride the beat TOP-LEVEL (like producer_history), NOT under
+            # `live` — so their satellites update from the teach-UI test feed too, not only while the
+            # live collector is running (both feed the same module rings).
+            "readout_history": readout_history_snapshot(game),
+            "register_history": register_history_snapshot(game),
             "sources": source_status(game, settings), "ocr": ocr_state()}
 
 

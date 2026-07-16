@@ -55,6 +55,19 @@ def test_feed_holds_and_overwrites():
     assert r["last_seen"] >= first
 
 
+def test_feed_returns_changed_key_events():
+    # _feed_registers reports the keys whose EXPOSED value moved this tick -> drives on_register.
+    s = _session()
+    events = s._feed_registers({"health": 100, "shield": 50}, {})
+    assert {(e["reg"], e["key"], e["value"]) for e in events} == {
+        ("hp", "health", 100), ("hp", "shield", 50)}          # first write of each key = a change
+    # an unchanged read reports nothing; only the moved key comes back
+    events = s._feed_registers({"health": 100, "shield": 90}, {})
+    assert [(e["reg"], e["key"], e["value"]) for e in events] == [("hp", "shield", 90)]
+    # a disabled register never emits
+    assert all(e["reg"] != "off" for e in events)
+
+
 def test_absent_readout_keeps_prior_entry():
     s = _session()
     s._feed_registers({"health": 1, "shield": 2}, {})

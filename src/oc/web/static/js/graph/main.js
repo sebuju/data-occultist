@@ -48,6 +48,7 @@ import { nodeParts, windowControls, gamePriority, itemLists, slideToggle, vtShow
 import * as dsevents from "./dsevents.js";
 import { renderReadoutHistory } from "./readout_history_node.js";
 import { renderProducerHistory } from "./producer_history_node.js";
+import { renderRegisterHistory } from "./register_history_node.js";
 import { clearTools } from "./drawtool.js";
 import { singleFlight } from "../singleflight.js";
 import { nmSyncSelection, renderNodeViews } from "./panels/nodemap.js";
@@ -980,14 +981,18 @@ function wireNode(div, n) {
             // filled by the trigger's wire (renderTriggerHistory) + the heartbeat (triggers ride
             // EVERY beat, so an idle/empty one still renders an empty grid — no fetch here).
         } else if (r.kind === "readouthistory") {
-            // readout_history rides the beat ONLY while live-collecting, so an idle satellite would
-            // otherwise stay on its "loading…" placeholder forever. Paint it on mount so it shows an
-            // empty grid (or the last snapshot) immediately, live or not.
+            // readout_history rides the beat top-level (fed by live collection AND the test feed).
+            // Paint on mount so a just-opened satellite shows its last snapshot (or an empty grid)
+            // immediately instead of a stale "loading…", live or not.
             queueMicrotask(() => renderReadoutHistory(r.win, r.id));
         } else if (r.kind === "producerhistory") {
             // producer_history rides the activity beat; paint on mount so a just-opened satellite
             // shows its last snapshot (or an empty grid) immediately, not a stale "loading…".
             queueMicrotask(() => renderProducerHistory(r.id));
+        } else if (r.kind === "registerhistory") {
+            // register_history rides the activity beat top-level (live collection AND the test feed);
+            // paint on mount so a just-opened satellite shows its last snapshot (or empty) immediately.
+            queueMicrotask(() => renderRegisterHistory(r.id));
         } else {
             const rmTog = div.querySelector(".vt-showrm");   // "show removed" header toggle (checkbox)
             rmTog?.addEventListener("change", (e) => {
@@ -1067,13 +1072,22 @@ function wireNode(div, n) {
                 () => movePos(`det:${owner}:${oldId}`, `det:${owner}:${n.ref.id}`),
                 () => { render(); rebuildNode(ownerNode); saveDet(); refreshImageBoxes(owner); });
         });
+        // ＋ (in the color subhead) appends an empty color row; each row's trash removes it.
+        // Both re-run detect for this owner (via the same nodeEdit/saveDet transaction).
+        div.querySelector(".coloradd")?.addEventListener("click", () => {
+            nodeEdit(n.id, "read", () => { (n.ref.colors ||= []).push(""); rebuildNode(n.id); }, saveDet);
+        });
+        div.querySelectorAll(".coldel").forEach((b) => b.addEventListener("click", () => {
+            const i = +b.dataset.i;
+            nodeEdit(n.id, "read", () => { n.ref.colors?.splice(i, 1); rebuildNode(n.id); }, saveDet);
+        }));
         div.querySelectorAll(".aset").forEach((inp) => onValueEdit(inp, (e, live) => {
-            const k = e.target.dataset.k;
+            const k = e.target.dataset.k, ci = +e.target.dataset.i || 0;
             nodeEdit(n.id, "read", () => {
                 if (k === "kind") { setDetectKind(n.ref, e.target.value); if (!live) rebuildNode(n.id); refreshImageBoxes(owner); return; }
                 if (k === "text") n.ref.text = e.target.value;
-                else if (k === "color") { n.ref.color = e.target.value.trim(); if (!live) rebuildNode(n.id); }
-                else if (k === "colorpick") { n.ref.color = e.target.value; if (!live) rebuildNode(n.id); }
+                else if (k === "color") { (n.ref.colors ||= [])[ci] = e.target.value.trim(); if (!live) rebuildNode(n.id); }
+                else if (k === "colorpick") { (n.ref.colors ||= [])[ci] = e.target.value; if (!live) rebuildNode(n.id); }
                 else if (k === "tol") n.ref.tolerance = Math.max(0, Math.trunc(+e.target.value) || 0);
                 else if (k === "width") n.ref.width = Math.max(0, +e.target.value || 0);
                 else if (k === "thr") n.ref.threshold = +e.target.value;

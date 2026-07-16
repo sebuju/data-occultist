@@ -6,16 +6,13 @@
 // main.js (wireAction). Config persists in the profile YAML.
 import { h, frag, labCell, srcRow } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
+import { slotRow, REG_TAG } from "./reg_slots.js";
 
 // dataset ops this node can perform. "" = no-op. clone/move copy into `dest` (batches = keep batch
 // grouping; resolved = collapse to one). move also clears the source.
-const ACTIONS = [["", "no action"], ["clear", "clear dataset"],
+const ACTIONS = [["", "no action"], ["clear", "clear sources"],
     ["clone_batches", "clone data (batches)"], ["clone_resolved", "clone data (resolved)"],
     ["move_batches", "move data (batches)"], ["move_resolved", "move data (resolved)"]];
-
-// A register source chip is tagged so it reads apart from a plain dataset chip (zero-innerHTML —
-// text prefix, not markup). "⛃" marks a register.
-const REG_TAG = "⛃ ";
 
 export function actionParts(x, model) {
     const cur = x.action || "";
@@ -25,7 +22,7 @@ export function actionParts(x, model) {
     // free options: every dataset + register not already wired, each a prefixed ref with a typed label
     const free = [
         ...model.datasets().filter((d) => !have.has(`dataset:${d}`)).map((d) => ({ value: `dataset:${d}`, label: d })),
-        ...model.registers().filter((r) => !have.has(`register:${r}`)).map((r) => ({ value: `register:${r}`, label: REG_TAG + r })),
+        ...model.registers().filter((r) => !have.has(`register:${r}`)).map((r) => ({ value: `register:${r}`, label: r })),
     ];
     // clone/move destinations are datasets only (a register can't be a dest); exclude the action's
     // own dataset sources so you can't pick a source as its own dest (the server no-ops that anyway).
@@ -44,7 +41,11 @@ export function actionParts(x, model) {
                 labCell("action", "what this node does to its sources when fired"),
                 h("select", { class: "ac-action" },
                     ACTIONS.map(([v, l]) => h("option", { value: v, selected: v === cur }, v === cur ? `<${l}>` : l))),
-                ...regSrcs.map((s) => slotRow(x, model, s.id)),
+                ...regSrcs.map((s) => slotRow({
+                    regId: s.id,
+                    keys: model.registerSources(s.id).filter((k) => k.kind === "readout").map((k) => k.id),
+                    targeted: model.actionSlots(x.id, s.id),
+                    hint: `which of ${s.id}'s keys this action operates on (default all)` })),
                 needsDest && labCell("into", "destination dataset for clone/move"),
                 needsDest && h("select", { class: "ac-dest" },
                     h("option", { value: "" }, "- dataset -"),
@@ -52,20 +53,4 @@ export function actionParts(x, model) {
         foot: h("button", { class: "ac-fire", title: "run this action now on its sources" }, "↻ fire"),
         ports: h("span", { class: "port out", title: "drag to a dataset or register this action operates on" }),
     };
-}
-
-// One register source's slot targeting: a chip list of the register's wired-readout KEYS the action
-// acts on (default = all keys). Removing a chip narrows the set; the "+" re-adds a key. The row
-// carries the register id in `data-reg` so wireAction knows which register a slot edit targets.
-function slotRow(x, model, regId) {
-    const keys = model.registerSources(regId).filter((s) => s.kind === "readout").map((s) => s.id);
-    const targeted = model.actionSlots(x.id, regId);
-    const active = targeted.length ? targeted.filter((k) => keys.includes(k)) : keys;   // [] = all
-    const activeSet = new Set(active);
-    const free = keys.filter((k) => !activeSet.has(k));
-    return srcRow(`slots: ${REG_TAG}${regId}`, `which of ${regId}'s keys this action operates on (default all)`,
-        h("div", { class: "sv-slotrow", dataset: { reg: regId } },
-            sourcesInput({
-                chips: active.map((k) => ({ value: k, label: k })),
-                free, addLabel: "+ key", addinCls: "sv-addin ac-addslot", rmCls: "sv-rmin ac-rmslot", rmTitle: "narrow to fewer keys" })));
 }

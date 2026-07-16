@@ -86,6 +86,7 @@ export class GraphModel {
         for (const t of this.profile.triggers) {
             t.watch = t.watch || []; t.targets = t.targets || [];
             t.readout_watch = t.readout_watch || []; t.readout_op = t.readout_op || "gte"; if (t.readout_value == null) t.readout_value = 0;
+            t.register_watch = t.register_watch || []; t.register_conds = t.register_conds || {}; t.register_logic = t.register_logic || "or";
             if (t.throttle_ms === undefined) t.throttle_ms = null;
             if (t.settle_ms === undefined) t.settle_ms = null;
             if (t.settle_max_ms === undefined) t.settle_max_ms = null;
@@ -103,6 +104,7 @@ export class GraphModel {
         this.profile.registers = this.profile.registers || [];
         for (const r of this.profile.registers) {
             r.sources = r.sources || []; if (r.capacity == null) r.capacity = 1;
+            if (r.aggregate == null) r.aggregate = ""; if (r.ignore_empty == null) r.ignore_empty = false;
             if (r.persist == null) r.persist = ""; if (r.enabled == null) r.enabled = true;
         }
         // Item children arrive HOISTED to the window (flat ``item_fields``/``item_tells``, each
@@ -327,6 +329,14 @@ export class GraphModel {
             // the slots dict is keyed by register id — re-key on rename
             sites.push({ slotOwner: x });
         }
+        // an on_register trigger references registers by bare id in register_watch + as the keys of
+        // register_conds — repoint both on rename so the watch/edge doesn't orphan (rule 5).
+        for (const t of this.profile.triggers || []) {
+            (t.register_watch || []).forEach((_, i) =>
+                sites.push({ get: () => t.register_watch[i], set: (v) => { t.register_watch[i] = v; } }));
+            t.register_conds = t.register_conds || {};
+            sites.push({ slotOwner: { slots: t.register_conds } });   // dict keyed by register id — re-keyed on rename
+        }
         return sites;
     }
     _repointRegisters(oldId, newId) {
@@ -461,6 +471,7 @@ export class GraphModel {
         if (id.startsWith("prod:")) return `producer:${id.slice(5)}`;   // producer preview (inputs/schema/test)
         if (id.startsWith("hist:")) return `trigger:${id.slice(5)}`;    // trigger's recent-fires history
         if (id.startsWith("rohist:")) return `ro:${id.slice(7)}`;       // readout's recent-reads history
+        if (id.startsWith("reghist:")) return `register:${id.slice(8)}`; // register's recent-pushes history
         return null;
     }
     satelliteBonds() {
@@ -525,7 +536,13 @@ export class GraphModel {
         for (const x of this.profile.actions || []) ns.push({ id: `action:${x.id}`, type: "action", ref: x });
         // in-memory keyed map fed by readouts (never persisted). Id prefix is `register:` — NOT
         // `reg:`, which _TYPE_BY_PREFIX already maps to a region node.
-        for (const x of this.profile.registers || []) ns.push({ id: `register:${x.id}`, type: "register", ref: x });
+        for (const x of this.profile.registers || []) {
+            ns.push({ id: `register:${x.id}`, type: "register", ref: x });
+            // push-history satellite (opt-in): recent writes into the held map, non-persisted — a
+            // standard vttable grid (kind "registerhistory"). See register_history_node.js.
+            if (this.satelliteOn(`reghist:${x.id}`))
+                ns.push({ id: `reghist:${x.id}`, type: "vttable", ref: { kind: "registerhistory", id: x.id } });
+        }
         for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
         return ns;
     }
@@ -631,6 +648,11 @@ export class GraphModel {
                     const to = this.refNode(vid);
                     if (to) es.push({ from: `trigger:${t.id}`, to, kind: "watch" });
                 }
+            // an on_register trigger WATCHES register(s) — dashed line to each watched register node
+            if (t.kind === "on_register")
+                for (const rid of t.register_watch || []) {
+                    if (this.registerNode(rid)) es.push({ from: `trigger:${t.id}`, to: `register:${rid}`, kind: "watch" });
+                }
             // history satellite: dotted "img" edge trigger -> its recent-fires grid (opt-in)
             if (this.satelliteOn(`hist:${t.id}`)) es.push({ from: `trigger:${t.id}`, to: `hist:${t.id}`, kind: "img" });
         }
@@ -659,6 +681,8 @@ export class GraphModel {
                 if (from) es.push({ from, to: `register:${x.id}`, kind: "data" });
             }
             if (x.persist) es.push({ from: `register:${x.id}`, to: `ds:${x.persist}`, kind: "data" });
+            // push-history satellite: dotted "img" edge register -> its recent-pushes grid (opt-in)
+            if (this.satelliteOn(`reghist:${x.id}`)) es.push({ from: `register:${x.id}`, to: `reghist:${x.id}`, kind: "img" });
         }
         for (const d of this.profile.dictionaries || []) {
             es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
@@ -857,7 +881,7 @@ export class GraphModel {
         this.profile.triggers = this.profile.triggers || [];
         let n = 1, id = "trigger";
         while (this.trigger(id)) id = `trigger_${++n}`;
-        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, readout_watch: [], readout_op: "gte", readout_value: 0, throttle_ms: null, settle_ms: null, settle_max_ms: null, ready_field: "" });
+        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, readout_watch: [], readout_op: "gte", readout_value: 0, register_watch: [], register_conds: {}, register_logic: "or", throttle_ms: null, settle_ms: null, settle_max_ms: null, ready_field: "" });
         return id;
     }
     removeTrigger(id) { this.profile.triggers = (this.profile.triggers || []).filter((t) => t.id !== id); }
@@ -868,7 +892,7 @@ export class GraphModel {
         this._emitRename("trigger", oldId, newId);
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_ready", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_register", "on_ready", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
     // minimum ms between fires — empty/invalid clears it (null = no throttle).
     setTriggerThrottle(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.throttle_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }
@@ -911,6 +935,48 @@ export class GraphModel {
     static TRIGGER_READOUT_OPS = ["gte", "lte", "gt", "lt", "eq", "ne", "crosses_up", "crosses_down"];
     setTriggerReadoutOp(id, op) { const t = this.trigger(id); if (t && GraphModel.TRIGGER_READOUT_OPS.includes(op)) t.readout_op = op; }
     setTriggerReadoutValue(id, v) { const t = this.trigger(id); const n = parseFloat(v); if (t && !Number.isNaN(n)) t.readout_value = n; }
+
+    // ---- on_register: watch register keys, fire on a per-key condition (and/or between them) ----
+    static TRIGGER_REGISTER_WHENS = ["changed", "gte", "lte", "gt", "lt", "eq", "ne", "crosses_up", "crosses_down", "between"];
+    addTriggerRegisterWatch(id, reg) {
+        const t = this.trigger(id);
+        if (!t || !reg || !this.registerNode(reg)) return false;
+        t.register_watch = t.register_watch || [];
+        if (t.register_watch.includes(reg)) return false;
+        t.register_watch.push(reg);
+        return true;
+    }
+    removeTriggerRegisterWatch(id, reg) {
+        const t = this.trigger(id);
+        if (!t) return;
+        t.register_watch = (t.register_watch || []).filter((r) => r !== reg);
+        if (t.register_conds) delete t.register_conds[reg];   // drop orphaned key conditions
+    }
+    // how a trigger's key conditions combine ("or" = any holds, "and" = all hold).
+    setTriggerRegisterLogic(id, v) { const t = this.trigger(id); if (t) t.register_logic = (v === "and") ? "and" : "or"; }
+    // the per-key conditions for one watched register — [{key, when, value}, ...].
+    triggerRegisterConds(id, reg) { const t = this.trigger(id); return (t && t.register_conds && t.register_conds[reg]) || []; }
+    // add a condition on `reg` for `key` (default: fires when it changes). Skips a duplicate key.
+    addTriggerRegisterCond(id, reg, key) {
+        const t = this.trigger(id);
+        if (!t || !key) return false;
+        t.register_conds = t.register_conds || {};
+        const list = t.register_conds[reg] || (t.register_conds[reg] = []);
+        if (list.some((c) => c.key === key)) return false;
+        list.push({ key, when: "changed", value: 0, value2: 0 });
+        return true;
+    }
+    removeTriggerRegisterCond(id, reg, idx) {
+        const t = this.trigger(id);
+        if (!t || !t.register_conds || !t.register_conds[reg]) return;
+        t.register_conds[reg].splice(idx, 1);
+        if (!t.register_conds[reg].length) delete t.register_conds[reg];
+    }
+    _regCond(id, reg, idx) { const t = this.trigger(id); return (t && t.register_conds && t.register_conds[reg] && t.register_conds[reg][idx]) || null; }
+    setTriggerRegisterCondKey(id, reg, idx, key) { const c = this._regCond(id, reg, idx); if (c && key) c.key = key; }
+    setTriggerRegisterCondWhen(id, reg, idx, when) { const c = this._regCond(id, reg, idx); if (c && GraphModel.TRIGGER_REGISTER_WHENS.includes(when)) c.when = when; }
+    setTriggerRegisterCondValue(id, reg, idx, v) { const c = this._regCond(id, reg, idx); const n = parseFloat(v); if (c && !Number.isNaN(n)) c.value = n; }
+    setTriggerRegisterCondValue2(id, reg, idx, v) { const c = this._regCond(id, reg, idx); const n = parseFloat(v); if (c && !Number.isNaN(n)) c.value2 = n; }
 
     // ---- action nodes: clear / clone / move a dataset's data when fired (a trigger target) ----
     static ACTION_KINDS = ["", "clear", "clone_batches", "clone_resolved", "move_batches", "move_resolved"];
@@ -983,7 +1049,7 @@ export class GraphModel {
         this.profile.registers = this.profile.registers || [];
         let n = 1, id = "register";
         while (this.registerNode(id)) id = `register_${++n}`;
-        this.profile.registers.push({ id, sources: [], title: "", enabled: true, persist: "", capacity: 1 });
+        this.profile.registers.push({ id, sources: [], title: "", enabled: true, persist: "", capacity: 1, aggregate: "", ignore_empty: false });
         return id;
     }
     removeRegister(id) {
@@ -992,6 +1058,11 @@ export class GraphModel {
         for (const x of this.profile.actions || []) {
             x.sources = (x.sources || []).filter((ref) => ref !== `register:${id}`);
             if (x.slots) delete x.slots[id];
+        }
+        // unwire any on_register trigger watching it + its key conditions (else a dangling watch/edge)
+        for (const t of this.profile.triggers || []) {
+            t.register_watch = (t.register_watch || []).filter((r) => r !== id);
+            if (t.register_conds) delete t.register_conds[id];
         }
     }
     renameRegister(oldId, newId) {
@@ -1033,6 +1104,12 @@ export class GraphModel {
         const n = parseInt(v, 10);
         x.capacity = (Number.isNaN(n) || n < 1) ? 1 : n;
     }
+    // How a key's ring collapses to the ONE exposed/persisted value. "" (the `<latest>` option) or
+    // any unknown mode -> the ring tail; else a numeric fold (min/max/avg/sum/median). Only offered
+    // when capacity > 1.
+    setRegisterAggregate(id, v) { const x = this.registerNode(id); if (x) x.aggregate = v === "latest" ? "" : (v || ""); }
+    // Ignore null / empty reads instead of writing them to a keyslot.
+    setRegisterIgnoreEmpty(id, on) { const x = this.registerNode(id); if (x) x.ignore_empty = !!on; }
 
     // ---- toasts: raise an OS notification when fired (a trigger target) -------
     toastNode(id) { return (this.profile.toasts || []).find((x) => x.id === id) || null; }
@@ -1900,7 +1977,7 @@ export class GraphModel {
         // game gate detectors default to the cheap COLOUR kind (no OCR); window detectors
         // stay text by default. A colour detector seeds an empty colour (sample it on the image).
         const base = { id, search: { x: box.x, y: box.y, w: box.w, h: box.h }, threshold: DEFAULT_DETECT_THRESHOLD };
-        host.detect.push(winId === "game" ? { ...base, color: "", tolerance: 32 } : { ...base, text: "" });
+        host.detect.push(winId === "game" ? { ...base, colors: [""], tolerance: 32 } : { ...base, text: "" });
         return id;
     }
     detect(winId, id) { const h = this._detectHost(winId); return h && (h.detect || []).find((d) => d.id === id); }

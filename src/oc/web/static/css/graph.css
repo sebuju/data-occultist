@@ -646,7 +646,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .fgrp .rulecopy[disabled], .fgrp .rulepaste[disabled] { opacity: .4; cursor: default; }
 /* one pipeline rule: a head row (move + when(+arg) -> then(+operands) + trash) and, below it,
    the live in->out trace slot */
-.frule { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; padding: 3px 0; }
+.frule { display: flex; flex-direction: column; gap: 2px; }
 /* compact blueprint rule row: leading dim number, accent verb, tight controls (mockup .rule) */
 .frule-head { display: flex; flex-wrap: nowrap; gap: 4px; align-items: center; }
 .frule-head .frule-n { position: relative; flex: 0 0 auto; width: 12px; text-align: right; color: var(--dim);
@@ -695,7 +695,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .lab-grid > textarea { box-sizing: border-box; resize: vertical; min-height: calc(2lh + 8px); font: inherit; }
 .lab-grid > input[type="checkbox"], .lab-grid > .gn-slide { justify-self: start; }
 .lab-grid > .tg-secs input { width: 100%; }
-.lab-grid > .sv-inputs { margin: 0px 0px 0px 4px; min-width: 0; }
+.lab-grid > :is(.sv-inputs, .sv-slotrow) { margin: 0px 0px 0px 4px; min-width: 0; }
 /* a pill-list row (sources): the label pins to the FIRST pill line — not the top of the wrapped
    block (lab-top's job, which sits a hair high) nor the centre of all rows. A 22px inline-flex box
    (the pill's min-height) centres the label text on the pill text. `.sv-lab` is set by the srcRow
@@ -718,6 +718,20 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    the thumb travels the full track end to end. The label takes only its own width. */
 .tg-secs input[type="range"] { flex: 1; width: auto; min-width: 0; margin: 0; }
 .tg-volnum { flex: 0 0 auto; min-width: 2.4em; text-align: right; }
+
+/* on_register condition block: rows of [key][when][value(..value2)][trash] stacked in the content
+   cell of their register's srcRow. The row is a horizontal flex; the two selects share the stretch,
+   the value inputs stay narrow. `.armed` mirrors a chip's mid-remove highlight (rule 2). */
+.tg-regconds { display: flex; flex-direction: column; gap: 4px; padding-left: 4px; min-width: 0; box-sizing: border-box; }
+.tg-condrow { display: flex; align-items: center; gap: 4px; min-width: 0; border-radius: 3px; }
+.tg-condrow > select { flex: 1 1 auto; min-width: 0; }
+.tg-condrow > .tg-condval, .tg-condrow > .tg-condval2 { flex: 0 0 4.2em; width: 4.2em; min-width: 0; }
+.tg-condrow > .tg-condspan { flex: 0 0 auto; color: var(--muted); }
+.tg-condrow > .tg-condrm { flex: 0 0 auto; }
+.tg-condrow.armed { outline: 1px solid var(--warn); outline-offset: 1px; }
+/* the "+ key" add control is a normal select like the row's own selects (not the borderless
+   sv-add glyph, which only styles right inside a pill list) — full width, never overflowing. */
+.tg-addcond { width: 100%; min-width: 0; box-sizing: border-box; }
 
 /* status / readout TEXT cells (progress, last-fired, sweep stats) share a lab-grid control
    column with real inputs but aren't inputs, so they miss the input's horizontal padding and
@@ -782,10 +796,15 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .detect-status .ds-txt { white-space: normal; word-break: break-all; font-family: var(--mono, monospace); }
 /* matched characters in the after-text — the chars that carried a successful detect */
 .detect-status .ds-hit { background: var(--nt, var(--accent)); color: var(--on-accent, #06121f); border-radius: 2px; }
-/* detect node color kind: hex input beside a native color swatch/picker */
+/* item-tell color kind: hex input beside a native color swatch/picker (single color) */
 .aset-color { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px; min-width: 0; }
 .gnode .gn-grid .aset-color input[type="text"] { width: 100%; min-width: 0; }
-.gnode .gn-grid .aset-color .aset-swatch { width: 22px; height: 18px; padding: 0; border: 1px solid var(--border, #444); border-radius: 2px; cursor: pointer; background: none; }
+/* detect node color kind: a list of color rows (swatch + hex + remove); ＋ rides the subhead */
+.color-list { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.color-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px; min-width: 0; }
+.gnode .gn-grid .color-row input[type="text"] { width: 100%; min-width: 0; }
+.gnode .gn-grid .aset-color .aset-swatch,
+.gnode .gn-grid .color-row .aset-swatch { width: 22px; height: 18px; padding: 0; border: 1px solid var(--border, #444); border-radius: 2px; cursor: pointer; background: none; }
 .aset-swatch::-webkit-color-swatch-wrapper { padding: 0; }
 .aset-swatch::-webkit-color-swatch { border: none; border-radius: 1px; }
 /* game node worthiness gate: the live ●/◯ badge + detector count */
@@ -1014,7 +1033,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    resized (narrow = 2 across, wide = 4-5). Confidence rides --cc (tile tint + a bottom bar whose
    width = --mag); dead slots (null / empty) go neutral + hatched and never take a live colour. */
 .membank { display: grid; grid-template-columns: repeat(auto-fit, minmax(4.6rem, 1fr));
-    gap: 4px; }   /* auto-fit: full rows stretch edge-to-edge, slack falls to the end/bottom */
+    gap: 4px; margin-top: 4px; }   /* auto-fit: full rows stretch edge-to-edge, slack falls to the end/bottom */
 .mb-cell {
     --cc: var(--dim);
     position: relative; aspect-ratio: 1 / 1; min-width: 0; overflow: hidden;
@@ -1028,9 +1047,18 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .mb-cell:hover { border-color: color-mix(in oklab, var(--cc) 100%, var(--card-2)); }   /* inset: no bleed into the grid gaps */
 .mb-k { font-size: 9px; letter-spacing: .03em; text-transform: uppercase; color: var(--muted);
     overflow-wrap: anywhere; }   /* wrap the full key rather than clip it */
-.mb-v { font-size: var(--fs-sm); font-weight: 600; line-height: 1.15; color: var(--nt);
-    align-self: anchor-center; overflow: hidden; word-break: break-word; font-variant-numeric: tabular-nums;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-align: center; }
+/* the ring stack: latest line big/bright on top, older lines dim below (see register_node.js).
+   Fills the space between key and meta; the cell's overflow:hidden clips a very deep ring. */
+.mb-vstack { flex: 1; min-height: 0; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
+.mb-vstack.mb-start { justify-content: flex-start; }   /* multi-value stack reads top-down (agg first) */
+.mb-v { max-width: 100%; line-height: 1.15; color: var(--nt); text-align: center;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mb-v-latest { font-size: var(--fs-sm); font-weight: 600; }   /* latest (ring tail) */
+.mb-v-old { font-size: 9px; font-weight: 400; color: var(--dim); }   /* retained history */
+/* aggregate fold summary: sits below the raw ring, set off with a hairline + accent tint */
+.mb-v-agg { font-size: 9px; font-weight: 600; color: var(--nt); opacity: .85;
+    margin-top: 1px; padding-top: 1px; border-top: 1px solid var(--line); letter-spacing: .02em; }
 .mb-meta { display: flex; align-items: center; justify-content: space-between; gap: 4px;
     visibility: hidden; }   /* seen + conf only on hover (visibility keeps the slot -> no reflow) */
 .mb-cell:hover .mb-meta { visibility: visible; }

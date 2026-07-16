@@ -15,16 +15,19 @@ polled through the activity heartbeat. The worker runs even when the game is bac
 from __future__ import annotations
 
 import collections
+import statistics
 import threading
 import time
+from datetime import datetime
 
 from ..engine import Engine
 from ..ocr.device_switch import enter_device, exit_device
 from ..profile.models import GameProfile
 from ..store import store_for
 from ..store.flow_events import publish_flow
-from . import readout_history
+from . import readout_history, register_history
 from .collector import Collector, TickStatus
+from .readout_stability import gate_readouts
 
 # How many recent debug entries the live session keeps for the panel's debug log. Bounded so a
 # long-running collector can't grow memory without limit; the UI polls incrementally by seq.
@@ -89,6 +92,11 @@ class LiveSession:
         self._debug_seq = 0
         self._dbg_prev_readouts: dict[str, object] = {}   # last-LOGGED readout values (change gate)
         self._flow_prev_readouts: dict[str, object] = {}  # last readout values a flow blob was sent for
+        # ONE TriggerRunner shared by the live loop (Collector.run) and the teach-UI test feed
+        # (feed_readouts), so their on_readout edge state is identical (rule 7). Built lazily by
+        # _trigger_runner; _triggers_for pins the profile it was built from so a swap rebuilds it.
+        self._triggers = None
+        self._triggers_for: GameProfile | None = None
         # "auto" device policy: set to "gpu" by the web layer to run the live loop on GPU
         # (every frame OCRs many regions -> GPU throughput wins), then restore the baseline
         # device on stop (which frees the GPU). None = use whatever device the engine is on.
@@ -161,8 +169,10 @@ class LiveSession:
         try:
             collector = Collector(self._engine, self._profile)
             collector.on_frame = self._save_frame   # persist a frame only when a record was written
-            # Collector.run owns the trigger loop + flushes via close() on the way out.
-            collector.run(self._interval, on_tick=self._on_tick, should_stop=self._stop.is_set)
+            # Collector.run owns the trigger loop + flushes via close() on the way out. Pass the
+            # session's SHARED runner so a concurrent test feed sees the same on_readout edge state.
+            collector.run(self._interval, on_tick=self._on_tick, should_stop=self._stop.is_set,
+                          triggers=self._trigger_runner())
         except Exception as exc:  # pragma: no cover - defensive
             with self._lock:
                 self._error = str(exc)
@@ -186,6 +196,8 @@ class LiveSession:
             pass
 
     def _on_tick(self, result) -> None:
+        reg_events: list[dict] = []
+        reg_snapshot: dict = {}
         with self._lock:
             self._frames += 1
             self._written += result.new
@@ -199,7 +211,9 @@ class LiveSession:
                 # feed from the full accumulated map (every readout seen all session), not just this
                 # tick's delta -- a register wired to a readout from a window that isn't the one just
                 # read would otherwise wait for that window to be revisited before showing anything.
-                self._feed_registers(self._readouts_all, self._readout_confs_all)
+                reg_events = self._feed_registers(self._readouts_all, self._readout_confs_all)
+                if reg_events:
+                    reg_snapshot = self._register_snapshot()
             self._last_status = result.status.value   # why we are / aren't reading right now
             # phase = we're in an OCR-worthy screen. A `saved` tick read it; a `throttled` tick
             # is the SAME screen between two-rate OCR slots (not re-read) — both count as "in a
@@ -249,6 +263,12 @@ class LiveSession:
                     "changed": [{k: v for k, v in c.items() if not str(k).startswith("_")}
                                 for c in (result.changed or [])],
                 })
+        # on_register fires OUTSIDE the lock (a fired sweep/toast must not hold the session lock),
+        # mirroring the collector loop's post-tick on_readout evaluation.
+        if reg_events:
+            runner = self._trigger_runner()
+            if runner is not None:
+                runner.on_register(reg_events, reg_snapshot)
 
     # ---- readout flow blobs ------------------------------------------------
 
@@ -296,6 +316,127 @@ class LiveSession:
             return rid if kind == "readout" else None
         return src or None
 
+    @staticmethod
+    def _ring_decimals(values: list) -> int:
+        """Most decimal places any numeric member of the ring carries, from its written form
+        (``"1.50"`` -> 2, ``"10"`` -> 0). Non-numeric members are skipped. Drives the fold's
+        rounding precision (see :meth:`_aggregate_ring`)."""
+        m = 0
+        for v in values:
+            try:
+                float(v)
+            except (TypeError, ValueError):
+                continue
+            s = str(v)
+            dot = s.find(".")
+            if dot >= 0:
+                m = max(m, len(s) - dot - 1)
+        return m
+
+    @classmethod
+    def _aggregate_ring(cls, values: list, mode: str):
+        """Collapse a key's ring of recent values to the ONE value the register exposes, per
+        ``RegisterDef.aggregate``. ``""``/``"latest"`` (or an unknown mode) -> the ring TAIL
+        unchanged. A numeric fold (min/max/avg/sum/median) coerces each member to ``float`` and
+        skips non-numeric ones; with no numeric members (or an empty ring) it falls back to the
+        tail too. So a non-numeric register never breaks — it just keeps showing its latest.
+
+        A fold that PRODUCES a float (avg/median always; min/max/sum when the result isn't whole)
+        is rounded to the ring's own decimal precision PLUS ONE (no decimals in the inputs -> one),
+        so an average of whole reads reads ``20.0`` and of two-decimal reads ``x.xxx``. A whole
+        min/max/sum stays an int (it merely selected/added existing values — it didn't produce a
+        float), so it reads ``20`` not ``20.0``."""
+        tail = values[-1] if values else None
+        if not values or mode in ("", "latest"):
+            return tail
+        nums = []
+        for v in values:
+            try:
+                nums.append(float(v))
+            except (TypeError, ValueError):
+                continue
+        if not nums:
+            return tail
+        prec = cls._ring_decimals(values) + 1
+        try:
+            if mode == "avg":
+                return round(statistics.fmean(nums), prec)
+            if mode == "median":
+                return round(statistics.median(nums), prec)
+            if mode == "min":
+                r = min(nums)
+            elif mode == "max":
+                r = max(nums)
+            elif mode == "sum":
+                r = sum(nums)
+            else:
+                return tail
+        except statistics.StatisticsError:
+            return tail
+        # min/max/sum kept an existing value / total -> stay int when whole, else round like a fold
+        return int(r) if float(r).is_integer() else round(r, prec)
+
+    def _trigger_runner(self):
+        """The session's shared :class:`TriggerRunner`, lazily built from the current profile
+        (None when it declares no trigger). ONE instance backs both the live collector loop
+        (passed into ``Collector.run``) and the teach-UI test feed (:meth:`feed_readouts`) so
+        their ``on_readout`` edge state is the same (rule 7). Rebuilt when the profile is swapped
+        (``_triggers_for`` pins the profile object it was built from)."""
+        prof = self._profile
+        if self._triggers_for is not prof:
+            self._triggers = None
+            self._triggers_for = prof
+        if self._triggers is None and getattr(prof, "triggers", None):
+            from .triggers import TriggerRunner
+            self._triggers = TriggerRunner(prof, self._engine.settings.data_dir,
+                                           notifier=self._engine.notifier)
+        return self._triggers
+
+    def feed_readouts(self, detailed: dict, ro_trace: list, ro_field: dict, window,
+                      window_id: str, registers=None) -> None:
+        """Full live-like readout fold for a caller OUTSIDE the collector loop — the teach-UI
+        ``test`` feed (``/api/preview?feed=1``). The readout twin of :meth:`feed_registers`:
+        runs the SAME consensus + history gate (:func:`gate_readouts`), folds the surviving
+        values into the accumulated readout maps, feeds registers, animates the readout ->
+        register/toast data blob (:meth:`_emit_readout_flow`), and fires ``on_readout`` watch
+        triggers through the session's shared runner (watch blob + side effects) — so feeding
+        stashed images reproduces exactly what a live tick does for readouts.
+
+        ``detailed`` is ``read_readouts_detailed``'s RETURN dict (``{id: (value, conf, raw, sub)}``,
+        only the SURFACED reads — dropped/low-confidence ones already omitted, exactly as the
+        collector builds ``readouts_now``); ``ro_trace`` is the parallel ``trace_sink`` list
+        (``{id, value, raw, dropped, conf, trace}`` for EVERY enabled readout) the gate scores +
+        records to history; ``ro_field`` maps readout id -> its resolved ``FieldDef``; ``window``
+        is the ``WindowDef``; ``registers`` is the FRESH request profile's register wiring."""
+        game = self._profile.name
+        readouts_now = {k: value for k, (value, *_r) in detailed.items()}
+        readout_confs_now = {k: conf for k, (_v, conf, *_r) in detailed.items()}
+        ts = datetime.now().isoformat(timespec="milliseconds")
+        # Consensus + history (shared with the collector); pops suppressed ids in place.
+        suppressed = gate_readouts(game, window_id, ro_field, ro_trace,
+                                   readouts_now, readout_confs_now, ts)
+        # Full map: every ENABLED readout, empty-defaulted, suppressed excluded (mirrors the tick).
+        readouts_all_now = {v.id: readouts_now.get(v.id, "") for v in window.readouts
+                            if v.enabled and v.id not in suppressed}
+        readout_confs_all_now = {v.id: readout_confs_now.get(v.id) for v in window.readouts
+                                 if v.enabled and v.id not in suppressed}
+        with self._lock:
+            self._readouts.update(readouts_now)               # GATED map (triggers/toasts/.ro-live)
+            self._readout_confs.update(readout_confs_now)
+            self._readouts_all.update(readouts_all_now)        # FULL map (registers/.ro-live)
+            self._readout_confs_all.update(readout_confs_all_now)
+            reg_events = self._feed_registers(self._readouts_all, self._readout_confs_all, registers)
+            reg_snapshot = self._register_snapshot() if reg_events else {}
+            self._emit_readout_flow(window_id, readouts_now)   # readout -> register/toast data blob
+        # on_readout / on_register fire OUTSIDE the lock (a fired sweep/toast must not hold the
+        # session lock), mirroring the collector loop's post-tick trigger evaluation.
+        runner = self._trigger_runner()
+        if runner is not None and readouts_now:
+            runner.set_readouts(readouts_now)
+            runner.on_readout(readouts_now)
+        if runner is not None and reg_events:
+            runner.on_register(reg_events, reg_snapshot)
+
     def feed_registers(self, readouts: dict, confs: dict, registers=None) -> None:
         """Public, thread-safe twin of :meth:`_feed_registers` for a caller OUTSIDE the
         collector tick loop — namely the ``/api/preview`` teaching-UI read, so a register (and
@@ -314,75 +455,138 @@ class LiveSession:
         with self._lock:
             self._readouts_all.update(readouts or {})
             self._readout_confs_all.update(confs or {})
-            self._feed_registers(self._readouts_all, self._readout_confs_all, registers)
+            reg_events = self._feed_registers(self._readouts_all, self._readout_confs_all, registers)
+            reg_snapshot = self._register_snapshot() if reg_events else {}
+        # on_register fires OUTSIDE the lock (mirrors feed_readouts) so a preview-fed register write
+        # drives its watch triggers too, not only a live collector tick.
+        if reg_events:
+            runner = self._trigger_runner()
+            if runner is not None:
+                runner.on_register(reg_events, reg_snapshot)
 
-    def _feed_registers(self, readouts: dict, confs: dict, registers=None) -> None:
+    def _feed_registers(self, readouts: dict, confs: dict, registers=None) -> list[dict]:
         """Update each register's held entries from the accumulated live-readout map (caller holds
         the lock) -- so a newly-wired source picks up its value immediately from whatever window
         last reported it, not only when its own window is next read. Each key holds a ROLLING RING
-        of the last ``capacity`` values: a NEW value (differs from the current tail) is appended and
-        the ring truncated to the newest N; an UNCHANGED value only bumps conf/last_seen (so a
-        static HUD can't flood the ring with duplicates). Latest = ring tail. A source never seen
-        this session is simply skipped. A register with ``persist`` set flushes its held map to that
-        dataset when any entry's LATEST value actually changed this tick (conf/last_seen alone don't
-        count — else every tick would write, even an unchanged screen). Capacity is read per-tick
-        from the RegisterDef, so lowering N truncates here on the next tick and raising it regrows."""
+        of the last ``capacity`` values: EVERY read is appended (even one identical to the current
+        tail) and the ring truncated to the newest N, so a rolling window / moving aggregate sees
+        every sample. Latest = ring tail. A source never seen this session is simply skipped. With
+        ``ignore_empty`` set, a null / empty read is dropped (never written to a keyslot) so a
+        momentary blank can't displace a good value. Every write is logged to the non-persisted
+        push-history ring ([[register_history]]) for the push-history satellite. A register with
+        ``persist`` set flushes its held map to that dataset only when a key's EXPOSED value (the
+        aggregate, or the tail when no aggregate) actually changed this tick — so a static
+        non-aggregate register never spams its dataset, but a rolling aggregate that shifts does.
+        Capacity is read per-tick from the RegisterDef, so lowering N truncates here on the next
+        tick and raising it regrows."""
         now = time.time()
+        game = self._profile.name
+        # keys whose EXPOSED value moved this tick -> drives on_register triggers (the caller fires
+        # them OUTSIDE the lock). Same value-gate as `dirty` below, but tracked per key, not per reg.
+        changed: list[dict] = []
         regs = registers if registers is not None else (getattr(self._profile, "registers", []) or [])
         for reg in regs:
             if not getattr(reg, "enabled", True):
                 continue
             cap = max(1, int(getattr(reg, "capacity", 1) or 1))
+            mode = getattr(reg, "aggregate", "") or ""
+            ignore_empty = bool(getattr(reg, "ignore_empty", False))
             dirty = False
             for src in reg.sources or []:
                 rid = self._readout_ref(src)
                 if rid is None or rid not in readouts:
                     continue
+                val = readouts[rid]
+                if ignore_empty and (val is None or val == ""):
+                    continue   # ignore the empty read — don't write it to a keyslot
                 m = self._registers.setdefault(reg.id, {})
                 prev = m.get(rid)
-                val = readouts[rid]
-                prev_latest = prev["values"][-1] if prev else None
-                if prev is None or prev_latest != val:
-                    dirty = True
-                    vals = (prev["values"] if prev else [])[:]
-                    vals.append(val)
-                    vals = vals[-cap:]
-                else:
-                    vals = prev["values"][-cap:]   # unchanged value: keep ring, honour a lowered cap
+                prev_vals = prev["values"] if prev else []
+                prev_exposed = self._aggregate_ring(prev_vals, mode) if prev else None
+                # append EVERY read (duplicates included) -> the ring is a true rolling window
+                full = prev_vals[:]
+                full.append(val)
+                vals = full[-cap:]
+                evicted = full[:-cap]   # samples the append pushed out of the ring (may be empty)
+                # ring_index = the circular write cursor (0,1,..,cap-1,0,..) — WHICH slot this write
+                # lands in, so the push-history shows a rotating slot (not a constant cap-1 tail). The
+                # value it overwrote is that slot's prior content = the evicted-oldest (None until full).
+                writes = (prev["writes"] if prev else 0) + 1
+                register_history.record(
+                    game, reg.id,
+                    ts=datetime.now().isoformat(timespec="milliseconds"),
+                    key=rid, value=val, ring_index=(writes - 1) % cap,
+                    overwritten=(evicted[-1] if evicted else None))
+                exposed = self._aggregate_ring(vals, mode)
+                if prev is None or prev_exposed != exposed:
+                    dirty = True   # exposed value moved -> persist (skips a static non-aggregate)
+                    changed.append({"reg": reg.id, "key": rid, "value": exposed})
                 m[rid] = {
                     "values": vals,
+                    "writes": writes,
                     "conf": confs.get(rid),
                     "first_seen": prev["first_seen"] if prev else now,
                     "last_seen": now,
                 }
             if dirty and getattr(reg, "persist", ""):
                 self._flush_register(reg)
+        return changed
+
+    def _register_snapshot(self) -> dict:
+        """``{register id -> {key -> exposed value}}`` for every held key (the aggregate fold, or the
+        ring tail). The on_register runner needs the CURRENT value of every watched key — not just
+        the ones that changed this tick — to evaluate an ``and`` across keys and the comparison ops.
+        Caller holds ``self._lock`` (read straight off ``self._registers``)."""
+        snap: dict = {}
+        for reg_id, m in self._registers.items():
+            rd = self._reg_def(reg_id)
+            mode = getattr(rd, "aggregate", "") or "" if rd else ""
+            snap[reg_id] = {k: self._aggregate_ring(e["values"], mode) for k, e in m.items()}
+        return snap
+
+    def _reg_def(self, reg_id: str):
+        """The RegisterDef for ``reg_id`` in the current profile, or None."""
+        for reg in getattr(self._profile, "registers", []) or []:
+            if reg.id == reg_id:
+                return reg
+        return None
 
     def _flush_register(self, reg) -> None:
         """Mirror one register's held map into its ``persist`` dataset — one row per wired
-        readout (``{name: <readout id>, value: <held value>}``), so state that only ever
+        readout (``{name: <readout id>, value: <exposed value>}``), so state that only ever
         existed as a live readout (e.g. loadout slot contents) becomes queryable like any other
-        dataset. Best-effort: a write hiccup must never disturb collection."""
+        dataset. The exposed value honours ``RegisterDef.aggregate`` (a fold over the ring), else
+        the ring tail. Best-effort: a write hiccup must never disturb collection."""
         try:
             dataset = reg.persist
+            mode = getattr(reg, "aggregate", "") or ""
             store = self._persist_stores.get(dataset)
             if store is None:
                 store = store_for(self._engine.settings.data_dir, self._profile.name,
                                   dataset, profile=self._profile)
                 self._persist_stores[dataset] = store
-            rows = [{"name": rid, "value": e["values"][-1]}
+            rows = [{"name": rid, "value": self._aggregate_ring(e["values"], mode)}
                     for rid, e in self._registers.get(reg.id, {}).items()]
             if rows:
                 store.record_many(rows)
         except Exception:  # pragma: no cover - defensive, mirrors _save_frame
             pass
 
-    def register_records(self, reg_id: str) -> list[dict]:
+    def register_records(self, reg_id: str, aggregate: str | None = None) -> list[dict]:
         """Current held map for one register as table rows (newest last_seen first). ``value`` is
-        the ring tail (latest); ``depth`` is how many recent values the key currently holds."""
+        the ring tail (latest); ``values`` is the full ring (oldest->newest) the membank stacks;
+        ``agg`` is the aggregated value (fold over the ring) or None when no aggregate is set;
+        ``depth`` is how many recent values the key currently holds.
+
+        ``aggregate`` overrides the fold mode (the teach UI passes the node's LIVE select so the
+        summary repaints instantly — the session profile is frozen mid-run). ``None`` -> use the
+        stored ``RegisterDef.aggregate``."""
+        mode = aggregate if aggregate is not None else (getattr(self._reg_def(reg_id), "aggregate", "") or "")
         with self._lock:
             m = self._registers.get(reg_id) or {}
             rows = [{"key": rid, "value": e["values"][-1], "conf": e["conf"],
+                     "values": list(e["values"]),   # full ring, oldest -> newest (membank stack)
+                     "agg": self._aggregate_ring(e["values"], mode) if mode not in ("", "latest") else None,
                      "depth": len(e["values"]),
                      "first_seen": e["first_seen"], "last_seen": e["last_seen"]}
                     for rid, e in m.items()]
@@ -395,10 +599,12 @@ class LiveSession:
             return list((self._registers.get(reg_id) or {}).keys())
 
     def register_latest(self, reg_id: str, key: str):
-        """Latest held value (ring tail) for one key of a register, or None if not held."""
+        """Latest exposed value for one key of a register (``RegisterDef.aggregate`` fold over the
+        ring when set, else the ring tail), or None if not held."""
+        mode = getattr(self._reg_def(reg_id), "aggregate", "") or ""
         with self._lock:
             e = (self._registers.get(reg_id) or {}).get(key)
-            return e["values"][-1] if e else None
+            return self._aggregate_ring(e["values"], mode) if e else None
 
     def clear_register_keys(self, reg_id: str, keys) -> None:
         """Drop only the named keys from a register's held map (action clear/move slot targeting).
@@ -411,17 +617,23 @@ class LiveSession:
                 m.pop(k, None)
 
     def clear_register(self, reg_id: str) -> None:
-        """Drop every held entry for one register (its map button)."""
+        """Drop every held entry for one register (its map button) + its push-history ring."""
         with self._lock:
             self._registers.pop(reg_id, None)
+        register_history.clear(self._profile.name, reg_id)
 
     def rename_register(self, old_id: str, new_id: str) -> None:
-        """Carry a register's held map to its new id (client renamed the node). Without this the
-        map stays keyed under the stale id and the renamed node reads empty until the next
-        collector tick repopulates it from readouts."""
+        """Carry a register's held map + push-history to its new id (client renamed the node).
+        Without this the map stays keyed under the stale id and the renamed node reads empty until
+        the next collector tick repopulates it from readouts."""
         with self._lock:
             if old_id in self._registers:
                 self._registers[new_id] = self._registers.pop(old_id)
+        game = self._profile.name
+        for e in register_history.recent(game, old_id)[::-1]:   # oldest-first so appendleft rebuilds newest-first
+            register_history.record(game, new_id, ts=e["ts"], key=e["key"], value=e["value"],
+                                    ring_index=e["ring_index"], overwritten=e["overwritten"])
+        register_history.clear(game, old_id)
 
     # ---- status ------------------------------------------------------------
 
@@ -476,6 +688,9 @@ class LiveSession:
                 # satellite, keyed "<window>:<readout>". Only readouts with reads this session are
                 # included (empty ones omitted to keep the beat light).
                 "readout_history": self._readout_history_snapshot(),
+                # (register push-history rides the activity payload TOP-LEVEL via
+                # routes/activity.py build_activity — live collection AND the teach-UI test feed —
+                # not this nested live-status snapshot.)
                 "recognized": [{"key": k, "count": n, "miss": k in ("", "idle", "unrecognised", "no_window")}
                                for k, n in sorted(self._recog.items(), key=lambda kv: kv[1], reverse=True)],
                 "error": self._error,

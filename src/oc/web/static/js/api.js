@@ -231,10 +231,12 @@ export const dbbackups = {
 
 // OCR the current layout. Pass game+capture to read that stashed image (the one
 // shown in the image node) instead of capturing the live window.
-export async function preview(profile, game, capture, preferCache = false) {
+export async function preview(profile, game, capture, preferCache = false, feed = false) {
     let url = "/api/preview";
     if (game && capture) url += `?game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}`;
     if (preferCache) url += `${url.includes("?") ? "&" : "?"}prefer_cache=1`;
+    // feed=1: read like a live tick (readout consensus/history + register/watch blobs + on_readout).
+    if (feed) url += `${url.includes("?") ? "&" : "?"}feed=1`;
     const r = await tfetchOcr(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -495,9 +497,12 @@ export const live = {
 };
 
 // A register node's held in-memory map (live session memory only). registerDetail → { records };
-// empty when no session runs. clearRegister wipes the held map.
-export async function registerDetail(game, id) {
-    const r = await tfetch(`/api/live/${encodeURIComponent(game)}/register/${encodeURIComponent(id)}`);
+// empty when no session runs. clearRegister wipes the held map. `aggregate` is the node's CURRENT
+// fold selection — passed so the server folds the ring with it right away (the session's own profile
+// is frozen mid-run, so it would otherwise lag the select); the ONE fold lives server-side (rule 7).
+export async function registerDetail(game, id, aggregate = "") {
+    const q = aggregate ? `?aggregate=${encodeURIComponent(aggregate)}` : "";
+    const r = await tfetch(`/api/live/${encodeURIComponent(game)}/register/${encodeURIComponent(id)}${q}`);
     if (!r.ok) throw new Error(`register: ${r.status} ${await r.text()}`);
     return r.json();
 }

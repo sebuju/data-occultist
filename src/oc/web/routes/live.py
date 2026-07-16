@@ -152,13 +152,18 @@ def status(game: str):
 
 
 @router.get("/{game}/register/{register_id}")
-def register(game: str, register_id: str):
+def register(game: str, register_id: str, aggregate: str | None = None):
     """Current held map of a register node — ``{records: [...]}``. Empty list when no live
-    session runs (the map lives only in the running session's memory; graceful like status)."""
+    session runs (the map lives only in the running session's memory; graceful like status).
+
+    ``aggregate`` overrides the fold used for each row's ``agg`` (min/max/avg/sum/median, or
+    "" / "latest" = none). The teach UI passes the node's LIVE selection so the summary repaints
+    the instant the select changes — the session's own profile is frozen mid-run, so the stored
+    mode would otherwise lag. Omitted -> fall back to the session profile's mode."""
     s = _sessions.get(game)
     if s is None:
         return {"records": []}
-    return {"records": s.register_records(register_id)}
+    return {"records": s.register_records(register_id, aggregate=aggregate)}
 
 
 @router.post("/{game}/register/{register_id}/clear")

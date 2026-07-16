@@ -932,6 +932,19 @@ class ProducerDef(BaseModel):
     key: KeyDef | None = None
 
 
+class RegKeyCond(BaseModel):
+    """One per-key condition of an ``on_register`` trigger: watch register key ``key`` and consider
+    it satisfied when ``when`` holds. ``when="changed"`` is satisfied the tick the key's exposed
+    value moves (``value`` unused); the comparison ops (``gte|lte|gt|lt|eq|ne|crosses_up|
+    crosses_down``) test the exposed value against ``value`` (``crosses_*`` compare to the previous
+    reading). A trigger's conditions are combined by :attr:`TriggerDef.register_logic`."""
+
+    key: str
+    when: str = "changed"                     # changed | gte|lte|gt|lt|eq|ne|crosses_up|crosses_down | between
+    value: float = 0.0                        # threshold for the comparison `when`s (lower bound for `between`)
+    value2: float = 0.0                       # upper bound for `when="between"` (ignored otherwise)
+
+
 class TriggerDef(BaseModel):
     """A generic *trigger*: it fires one or more targets on a condition, so work can run
     automatically instead of only on a manual button. Pure config — the runner that evaluates
@@ -957,6 +970,16 @@ class TriggerDef(BaseModel):
     * ``on_live_stop``   — fire when the server live-collection session stops.
     * ``on_readout``    — fire when a watched live readout (``readout_watch``) meets ``readout_op``
       ``readout_value`` — edge-triggered (fires once on entering the condition). See ReadoutDef.
+    * ``on_register``   — fire on a per-key CONDITION over a watched register's live keys.
+      ``register_watch`` holds the register id(s); ``register_conds`` maps each register id to a list
+      of ``RegKeyCond`` (``{key, when, value, value2}``) — one condition per wired-readout key.
+      ``when`` is ``changed`` (fires when that key's exposed value moves, no ``value``), a comparison
+      (``gte|lte|gt|lt|eq|ne|crosses_up|crosses_down``) against ``value``, or ``between``
+      (``value <= v <= value2``). ``register_logic``
+      (``or`` default | ``and``) combines a trigger's conditions: ``or`` fires when ANY holds,
+      ``and`` only when ALL hold. Edge-triggered (fires once on the combined condition becoming
+      true). A register is fed every tick on the EXPOSED value (aggregate fold, or ring tail).
+      See :class:`RegisterDef` / :class:`RegKeyCond`.
     * ``on_ready``       — fire once when a watched PRODUCER's sweep FINISHES. ``watch`` holds the
       producer id(s); the trigger fires from the sweep's reap (its output is already written), so it
       is deterministic — the fire is CAUSED by completion and can never precede the data. Fires even
@@ -972,7 +995,7 @@ class TriggerDef(BaseModel):
 
     id: str
     # interval | true_interval | on_change | on_any_change | on_new_batch | on_app_start |
-    # on_capture | on_live_start | on_live_stop | on_readout | on_ready | manual
+    # on_capture | on_live_start | on_live_stop | on_readout | on_register | on_ready | manual
     kind: str = "interval"
     interval_s: float = 300.0               # for kind="interval"/"true_interval": seconds between fires
     watch: list[str] = Field(default_factory=list)    # for kind="on_change"/"on_any_change"/"on_new_batch": datasets to watch
@@ -982,6 +1005,12 @@ class TriggerDef(BaseModel):
     readout_watch: list[str] = Field(default_factory=list)
     readout_op: str = "gte"
     readout_value: float = 0.0
+    # for kind="on_register": the register ids this trigger watches (chips + edges), the per-key
+    # conditions over each (``{register id -> [RegKeyCond, ...]}``), and how a trigger's conditions
+    # combine (``or`` = any holds, ``and`` = all hold). See the ``on_register`` kind above.
+    register_watch: list[str] = Field(default_factory=list)
+    register_conds: dict[str, list[RegKeyCond]] = Field(default_factory=dict)
+    register_logic: str = "or"                # or | and — combine this trigger's key conditions
     targets: list[str] = Field(default_factory=list)  # producer / file-source / toast / sound / action ids this trigger fires
     enabled: bool = True
     # minimum time (milliseconds) between actual fires — a global rate limit across ALL kinds.
@@ -1281,6 +1310,15 @@ class RegisterDef(BaseModel):
     # flush, and the membank always expose the LATEST (ring tail); the extra depth is retained
     # history. Lowering N truncates to the newest N on the next tick; raising it lets the ring regrow.
     capacity: int = Field(default=1, ge=1)
+    # How a key's ring of recent values collapses to the ONE value the register EXPOSES (persist
+    # flush, register_latest, the membank's summary line). "" / "latest" -> expose the ring tail
+    # (latest) unchanged. Otherwise a numeric fold over the ring: min | max | avg | sum | median.
+    # Only meaningful when capacity > 1 (the UI only offers it then); a non-numeric ring, or one
+    # with no numeric members, falls back to the tail. The raw ring is always retained + shown.
+    aggregate: str = ""
+    # Ignore null / None / empty ("") reads instead of writing them to a keyslot, so a momentary
+    # blank read can't displace a good held value. Off (default) appends every read, blanks included.
+    ignore_empty: bool = False
     # "" (default) -> the held map stays in-memory only, as documented above. A dataset id ->
     # every held entry is ALSO flushed to that dataset (one row per readout: ``{name, value}``,
     # ``name`` = the readout id) whenever a value changes, so state that only ever existed as a
