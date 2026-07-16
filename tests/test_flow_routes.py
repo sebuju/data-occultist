@@ -14,7 +14,10 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from oc.profile import save_profile  # noqa: E402
-from oc.profile.models import DatasetDef, GameProfile, JoinSource, SubsetDef  # noqa: E402
+from oc.profile.loader import load_profile  # noqa: E402
+from oc.profile.models import (  # noqa: E402
+    DatasetDef, FilterRule, GameProfile, JoinSource, SubsetDef,
+)
 from oc.settings import Settings  # noqa: E402
 from oc.store import store_for  # noqa: E402
 from oc.web.app import create_app  # noqa: E402
@@ -206,3 +209,47 @@ def test_subset_page_404_for_unknown(env):
     client = env
     assert client.get(f"/api/flow/{GAME}/subset/nope/page").status_code == 404
     assert client.get("/api/flow/nope/subset/joined/page").status_code == 404
+
+
+def test_subset_page_reflects_def_edit_without_data_write(env):
+    """A subset settings edit (here: a new filter) must change the served view even when NO
+    dataset was written — the view cache is keyed on the def fingerprint, not only source revs.
+    Regression: it was keyed on dataset `rev` alone, so a settings edit that touched no data
+    returned the stale cached rows."""
+    from oc.web.routes import flow as flow_routes
+    flow_routes._VIEW_CACHE.clear()   # module-global; isolate from sibling tests' entries
+    client = env
+
+    base = client.get(f"/api/flow/{GAME}/subset/joined/page").json()
+    assert base["total"] == 2                                # outer join -> Forma, Kuva
+
+    # Edit the subset def on disk: drop everything but Forma. No dataset write -> no rev bump.
+    settings = flow_routes.get_settings()
+    profile = load_profile(settings.profiles_dir, GAME)
+    profile.subset_def("joined").filters.append(FilterRule(field="name", op="eq", value="Forma"))
+    save_profile(settings.profiles_dir, profile)
+
+    after = client.get(f"/api/flow/{GAME}/subset/joined/page").json()
+    assert after["total"] == 1                               # the new filter is now honoured
+    assert {r["name"] for r in after["rows"]} == {"Forma"}
+
+
+def test_subset_page_reflects_upstream_view_edit(env):
+    """A downstream view must invalidate when an UPSTREAM view's def changes — the fingerprint
+    walk covers transitive source views, not just the target subset."""
+    from oc.web.routes import flow as flow_routes
+    flow_routes._VIEW_CACHE.clear()
+    client = env
+
+    # Add a downstream view reading the existing "joined" view; prime its cache.
+    settings = flow_routes.get_settings()
+    profile = load_profile(settings.profiles_dir, GAME)
+    profile.subsets.append(SubsetDef(id="down", sources=[JoinSource(dataset="joined")]))
+    save_profile(settings.profiles_dir, profile)
+    assert client.get(f"/api/flow/{GAME}/subset/down/page").json()["total"] == 2
+
+    # Edit the UPSTREAM view only; the downstream must reflect it.
+    profile = load_profile(settings.profiles_dir, GAME)
+    profile.subset_def("joined").filters.append(FilterRule(field="name", op="eq", value="Forma"))
+    save_profile(settings.profiles_dir, profile)
+    assert client.get(f"/api/flow/{GAME}/subset/down/page").json()["total"] == 1

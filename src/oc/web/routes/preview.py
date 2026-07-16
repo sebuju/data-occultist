@@ -309,8 +309,8 @@ def _read_window(engine, profile, game, capture):
         # (the same values the live collector would surface), with their read confidence so a
         # readout node can show ``value (conf)`` even when live mode is off.
         detailed = reader.read_readouts_detailed(frame, window, fields)
-        result["readouts"] = {k: value for k, (value, _c) in detailed.items()}
-        result["readout_confs"] = {k: conf for k, (_v, conf) in detailed.items()}
+        result["readouts"] = {k: value for k, (value, *_r) in detailed.items()}
+        result["readout_confs"] = {k: conf for k, (_v, conf, *_r) in detailed.items()}
         # Full map: every enabled readout, empty/low-confidence defaulted to "" instead of
         # omitted -- mirrors TickResult.readouts_all so the register/.ro-live preview fallback
         # shows a blank slot as empty rather than missing (see live.py/register_node.js).

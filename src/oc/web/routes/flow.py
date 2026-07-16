@@ -17,11 +17,13 @@ from ..deps import get_settings, get_view_cache
 
 router = APIRouter(prefix="/api/flow", tags=["flow"])
 
-# Process-level view cache: (game, subset_id) -> (revs_key, result). A subset's computed
-# {columns, rows} is reused across requests while its transitive source datasets are unchanged
-# (revs_key matches). Any write bumps a source's rev -> the key mismatches -> recompute. One
-# entry per subset (a mismatch REPLACES it), so memory stays bounded to one snapshot each.
-# rev lives in the shared SQLite, so a collector process writing the DB invalidates us too.
+# Process-level view cache: (game, subset_id) -> (key, result). A subset's computed
+# {columns, rows} is reused across requests while both its source DATA and its source DEFINITIONS
+# are unchanged (key matches). The key folds each source dataset's rev (a write bumps it) AND a
+# fingerprint of this view's + every upstream view's def (a settings edit changes it) -> either
+# kind of change mismatches the key -> recompute. One entry per subset (a mismatch REPLACES it),
+# so memory stays bounded to one snapshot each. rev lives in the shared SQLite, so a collector
+# process writing the DB invalidates us too.
 _VIEW_CACHE: dict[tuple[str, str], tuple[tuple, dict]] = {}
 _VIEW_LOCK = threading.Lock()
 
@@ -301,9 +303,19 @@ def _cached_view(game: str, profile, sid: str, store, fetch, vcache,
     in-memory cache misses — the process just started (empty ``_VIEW_CACHE``) but a PRIOR process
     already computed this subset at the same revs, so the sidecar saves the recompute. A disk hit
     is adopted into ``_VIEW_CACHE`` too, so the rest of this process's requests skip the sidecar."""
-    from ...enrich.subset import compute_view_rows, subset_source_datasets
+    from ...enrich.subset import (
+        compute_view_rows, subset_def_fingerprint, subset_source_datasets, subset_source_views,
+    )
     from ...store import stats_store
-    rk = tuple(sorted((d, store(d).rev) for d in subset_source_datasets(profile, sid)))
+    # Gate on BOTH the source DATA (dataset revs) and the source DEFINITIONS (this view + every
+    # upstream view's def fingerprint). Rev alone bumps only on writes, so a settings edit that
+    # changes no data would otherwise return the stale cached view. Tagged 3-tuples keep `rk`
+    # JSON-serialisable for the disk-vcache round-trip below.
+    rk = tuple(sorted(
+        [("d", d, store(d).rev) for d in subset_source_datasets(profile, sid)]
+        + [("v", v, subset_def_fingerprint(profile.subset_def(v)))
+           for v in subset_source_views(profile, sid)]
+    ))
     with _VIEW_LOCK:
         hit = _VIEW_CACHE.get((game, sid))
         if hit is not None and hit[0] == rk:
