@@ -228,13 +228,14 @@ class DetectMatcher:
         if det.template:
             tmpl = load_template(self._dir / det.template)
             return best_match(self._crop(det, frame), tmpl)
-        if det.color:
+        if det.colors:
             # Cheap colour-presence kind — reuse the SAME primitives item Tells score on
-            # (no OCR). ``width>0`` scores only the box perimeter (a frame/outline).
+            # (no OCR). A pixel counts if near ANY taught colour (union). ``width>0`` scores
+            # only the box perimeter (a frame/outline).
             from ..collect.tells import border_score, color_score
             crop = self._crop(det, frame)
-            return (border_score(crop, det.color, det.tolerance, det.width)
-                    if det.width else color_score(crop, det.color, det.tolerance))
+            return (border_score(crop, det.colors, det.tolerance, det.width)
+                    if det.width else color_score(crop, det.colors, det.tolerance))
         # otherwise a text detector — read the box. Empty ``text`` means "any text present"
         # (``text_match_score`` returns 1.0 for any read meeting ``min_chars``).
         return self._text_score(det, frame)[1]
@@ -247,18 +248,18 @@ class DetectMatcher:
         runtime path (``score``/``_text_score``), so what the UI shows is what classify()
         does. (The old preview used ``read_region`` — full detection — and silently
         disagreed with the recognition-only runtime read.)"""
-        if det.template or det.color:
+        if det.template or det.colors:
             # colour/border/template: the "read" concept doesn't apply — the verdict row
             # already carries the pixel-match %/threshold, so echo the detector kind.
             extra: dict = {}
-            if det.color:
+            if det.colors:
                 from ..collect.tells import border_score, color_distance, color_score
                 crop = self._crop(det, frame)
-                s = (border_score(crop, det.color, det.tolerance, det.width)
-                     if det.width else color_score(crop, det.color, det.tolerance))
-                # closest-pixel BGR distance to the target — the editor shows it beside the
-                # "(color)" read so the user can tune `tolerance` above it (None = untestable).
-                dist = color_distance(crop, det.color, det.width)
+                s = (border_score(crop, det.colors, det.tolerance, det.width)
+                     if det.width else color_score(crop, det.colors, det.tolerance))
+                # closest-pixel BGR distance to the NEAREST target — the editor shows it beside
+                # the "(color)" read so the user can tune `tolerance` above it (None = untestable).
+                dist = color_distance(crop, det.colors, det.width)
                 label = "(color)"
                 extra["dist"] = None if dist is None else round(dist, 1)
             else:

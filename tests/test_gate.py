@@ -37,19 +37,33 @@ def _full_box():
 def test_is_cheap_classifies_kinds():
     box = _full_box()
     assert DetectDef(id="t", search=box, template="x.png", threshold=0.8).is_cheap
-    assert DetectDef(id="c", search=box, color="#00ff00", threshold=0.8).is_cheap
+    assert DetectDef(id="c", search=box, colors=["#00ff00"], threshold=0.8).is_cheap
     assert not DetectDef(id="x", search=box, text="REWARD", threshold=0.8).is_cheap
     # text wins even if a colour is also set (text means an OCR read is needed)
-    assert not DetectDef(id="m", search=box, text="R", color="#fff", threshold=0.8).is_cheap
+    assert not DetectDef(id="m", search=box, text="R", colors=["#fff"], threshold=0.8).is_cheap
 
 
 # ---- matcher colour / border scoring (real primitives, no OCR) ----------------
 
 def test_color_detector_scores_full_fill():
     m = DetectMatcher(ocr=None, profile_dir=".")
-    green = DetectDef(id="g", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8)
+    green = DetectDef(id="g", search=_full_box(), colors=["#00ff00"], tolerance=40, threshold=0.8)
     assert m.score(green, _frame((0, 255, 0))) >= 0.99      # whole frame is the colour
     assert m.score(green, _frame((0, 0, 255))) < 0.2        # red frame: almost nothing near green
+
+
+def test_color_detector_accepts_any_of_several_colors():
+    # N-colour detector: a pixel counts if near ANY listed colour (union). A frame matching
+    # either colour scores ~full; a frame matching neither scores ~0. Single-colour still ties
+    # a one-element list.
+    m = DetectMatcher(ocr=None, profile_dir=".")
+    multi = DetectDef(id="m", search=_full_box(), colors=["#00ff00", "#0000ff"],
+                      tolerance=40, threshold=0.8)
+    assert m.score(multi, _frame((0, 255, 0))) >= 0.99      # green -> near the green target
+    assert m.score(multi, _frame((255, 0, 0))) >= 0.99      # blue  -> near the blue target
+    assert m.score(multi, _frame((0, 0, 255))) < 0.2        # red   -> near neither
+    single = DetectDef(id="s", search=_full_box(), colors=["#00ff00"], tolerance=40, threshold=0.8)
+    assert m.score(single, _frame((0, 255, 0))) == m.score(multi, _frame((0, 255, 0)))
 
 
 def test_border_detector_scores_perimeter_only():
@@ -58,16 +72,16 @@ def test_border_detector_scores_perimeter_only():
     img = np.zeros((100, 100, 3), dtype=np.uint8)
     img[:10, :] = img[-10:, :] = img[:, :10] = img[:, -10:] = (0, 255, 0)
     frame = Frame(image=img, client=PixelBox(0, 0, 100, 100))
-    border = DetectDef(id="b", search=_full_box(), color="#00ff00", tolerance=40,
+    border = DetectDef(id="b", search=_full_box(), colors=["#00ff00"], tolerance=40,
                        width=0.1, threshold=0.8)
-    fill = DetectDef(id="f", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8)
+    fill = DetectDef(id="f", search=_full_box(), colors=["#00ff00"], tolerance=40, threshold=0.8)
     assert m.score(border, frame) >= 0.9     # the ring IS the colour
     assert m.score(fill, frame) < 0.5        # most of the whole-fill area is black
 
 
 def test_evaluate_reports_color_kind():
     m = DetectMatcher(ocr=None, profile_dir=".")
-    green = DetectDef(id="g", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8)
+    green = DetectDef(id="g", search=_full_box(), colors=["#00ff00"], tolerance=40, threshold=0.8)
     out = m.evaluate(green, _frame((0, 255, 0)))
     assert out["read"] == "(color)"
     assert out["matched"] and out["passes"]
@@ -102,7 +116,7 @@ def test_classify_priority_early_returns_first_match_no_ocr():
     # the gate window: a cheap colour probe for the HUD, listed FIRST, with no dataset. A later
     # data window carries an OCR text detector — it must never be read while the gate matches.
     gate = WindowDef(id="gate", detect=[
-        DetectDef(id="hud", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8)])
+        DetectDef(id="hud", search=_full_box(), colors=["#00ff00"], tolerance=40, threshold=0.8)])
     relic = WindowDef(id="relic", detect=[
         DetectDef(id="title", search=_full_box(), text="REWARD", threshold=0.8)])
     # relic listed BEFORE gate in profile order, but window_priority puts the gate first
@@ -117,9 +131,9 @@ def test_classify_priority_falls_through_when_gate_misses():
     clf = _classifier(_RecordingOcr())
     # colours are BGR frames vs #RRGGBB detectors: green HUD = BGR(0,255,0); blue data = BGR(255,0,0)
     gate = WindowDef(id="gate", detect=[
-        DetectDef(id="hud", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8)])
+        DetectDef(id="hud", search=_full_box(), colors=["#00ff00"], tolerance=40, threshold=0.8)])
     data = WindowDef(id="data", detect=[
-        DetectDef(id="anchor", search=_full_box(), color="#0000ff", tolerance=40, threshold=0.8)])
+        DetectDef(id="anchor", search=_full_box(), colors=["#0000ff"], tolerance=40, threshold=0.8)])
     profile = GameProfile(name="g", windows=[gate, data], window_priority=["gate", "data"])
     # blue frame: the gate (green) misses, so classify falls through to the next priority window
     assert clf.classify(_frame((255, 0, 0)), profile) == ("data", None)
@@ -131,9 +145,9 @@ def test_classify_empty_priority_uses_best_fit():
     clf = _classifier(_RecordingOcr())
     # no window_priority -> the best-fit branch. Only the green window matches a green frame.
     green_win = WindowDef(id="green", detect=[
-        DetectDef(id="g", search=_full_box(), color="#00ff00", tolerance=40, threshold=0.8)])
+        DetectDef(id="g", search=_full_box(), colors=["#00ff00"], tolerance=40, threshold=0.8)])
     blue_win = WindowDef(id="blue", detect=[
-        DetectDef(id="b", search=_full_box(), color="#0000ff", tolerance=40, threshold=0.8)])
+        DetectDef(id="b", search=_full_box(), colors=["#0000ff"], tolerance=40, threshold=0.8)])
     profile = GameProfile(name="g", windows=[blue_win, green_win])   # profile order, no priority
     assert clf.classify(_frame((0, 255, 0)), profile) == ("green", None)
 

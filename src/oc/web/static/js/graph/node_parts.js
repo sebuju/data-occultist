@@ -13,7 +13,7 @@
 //   body    -> a Node or DocumentFragment
 //   ports   -> a Node/frag or null (default null)
 //   pulse   -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
-import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, srcRow, btn, iconBtn, trashBtn } from "../dom.js";
+import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, labAdd, srcRow, btn, iconBtn, trashBtn } from "../dom.js";
 import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
@@ -43,8 +43,8 @@ const SAT_DISMISS = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height
 const SAT_HIST = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
     svg("circle", { cx: "8", cy: "8", r: "5.5", fill: "none", stroke: "currentColor", "stroke-width": "1.3" }),
     svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round", d: "M8 5v3l2 1.5" }));
-const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table", producer: "preview (inputs + test fetch)", history: "fire history", readouthistory: "read history", producerhistory: "fetch history" };
-const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS, history: SAT_HIST, readouthistory: SAT_HIST, producerhistory: SAT_HIST };
+const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table", producer: "preview (inputs + test fetch)", history: "fire history", readouthistory: "read history", producerhistory: "fetch history", registerhistory: "push history" };
+const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS, history: SAT_HIST, readouthistory: SAT_HIST, producerhistory: SAT_HIST, registerhistory: SAT_HIST };
 export function satToggleBtn(satId, kind) {
     const on = model.satelliteOn(satId);
     const title = `${on ? "hide" : "show"} ${_SAT_LABEL[kind] || "data table"}`;
@@ -83,8 +83,8 @@ export function slideToggle({ on, title, cls = "", label = "", hidden = false })
 export const vtShowRemoved = new Map();
 
 export const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds"], ["symbol", "symbol"]];
-export const EXTRACTS = ["whole", "number", "number_before", "number_after", "text_before", "text_after"];
-export const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text_after"]);
+export const EXTRACTS = ["whole", "number", "number_before", "number_after", "text", "text_before", "text_after", "alphanum", "alphanum_before", "alphanum_after"];
+export const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text_after", "alphanum_before", "alphanum_after"]);
 // how the game dictionary participates in a ``dictionary`` rule (FieldRule.dict_mode)
 export const DICT_MODES = [
     ["off", "off"],
@@ -291,7 +291,7 @@ export function windowDetects(w, opts = {}) {
             h("span", { class: "wd-status" }, "pass"),
             h("span", { class: "wd-req-h" }, "require")),
         rows,
-        h("div", { class: "wd-verdict muted", title: opts.verdictTitle || "whether the current capture would be recognised as this window with the settings above" }),
+        h("div", { class: "wd-verdict muted", title: opts.verdictTitle || "whether the current capture would be recognised as this window with the settings above" }, "loading…"),
         opts.collide === false ? null
             : h("div", { class: "wd-collide muted", title: "cross-window: detection picks ONE winner across all windows — does this window actually win, or does a sibling also match / steal it" }, "loading…"));
 }
@@ -673,7 +673,7 @@ export function keyPrevNode(winId, itemId) {
 // the node body, wiring, and live verdict all agree.
 export function detectKind(a) {
     if (a.template) return "template";
-    if (a.color != null && a.text == null) return a.width ? "border" : "color";
+    if (a.colors && a.colors.length && a.text == null) return a.width ? "border" : "color";
     return "text";
 }
 
@@ -765,15 +765,22 @@ export function nodeParts(n) {
                 { title: "what to ignore before comparing (default: none — keep everything)" }),
             kv("case sensitive", h("input", { type: "checkbox", class: "aset", dataset: { k: "case" }, checked: !!a.case_sensitive }),
                 { title: "off (default) = fold case before comparing, so EQUIPMENT matches equipment" }));
-        // color/border-kind controls — cheap, no OCR. A color swatch + hex + eyedropper.
+        // color/border-kind controls — cheap, no OCR. A list of color rows (swatch + hex +
+        // remove); a pixel counts if near ANY of them (union). ＋ rides the section label.
+        const colors = a.colors && a.colors.length ? a.colors : [""];
+        const colorRows = colors.map((c, i) => h("div", { class: "color-row", dataset: { i } },
+            h("input", { type: "color", class: "aset aset-swatch", dataset: { k: "colorpick", i }, title: "pick a color",
+                value: /^#[0-9a-fA-F]{6}$/.test(c || "") ? c : "#000000" }),
+            h("input", { type: "text", class: "aset", dataset: { k: "color", i }, value: c || "", placeholder: "#rrggbb" }),
+            trashBtn({ cls: "coldel", dataset: { i }, disabled: colors.length <= 1, title: "remove this color" })));
         const colorBody = frag(
-            kv("color", h("span", { class: "aset-color" },
-                h("input", { type: "text", class: "aset", dataset: { k: "color" }, value: a.color || "", placeholder: "#rrggbb" }),
-                h("input", { type: "color", class: "aset aset-swatch", dataset: { k: "colorpick" }, title: "pick a color",
-                    value: /^#[0-9a-fA-F]{6}$/.test(a.color || "") ? a.color : "#000000" })),
-                { title: "fraction of pixels near this color (border = only on the box perimeter)" }),
+            // label + inline ＋ (the shared labAdd idiom, like subset "columns"/producer "fields");
+            // the rows fill col 2 as ONE wrapping cell so the 2-col grid stays aligned.
+            labAdd("color", "fraction of pixels near ANY of these colors (border = only on the box perimeter)",
+                "coloradd", "add a color", true),
+            h("div", { class: "color-list" }, ...colorRows),
             kv("tolerance", h("input", { type: "number", class: "aset", dataset: { k: "tol" }, step: "1", min: "0", value: a.tolerance ?? 32 }),
-                { title: "how far a pixel's color can sit from the target (BGR distance) and still count. Higher = looser match (more pixels qualify); 0 = exact color only. Default 32." }),
+                { title: "how far a pixel's color can sit from the nearest target (BGR distance) and still count. Higher = looser match (more pixels qualify); 0 = exact color only. Default 32." }),
             kind === "border" && kv("border width", h("input", { type: "number", class: "aset", dataset: { k: "width" }, step: "0.01", min: "0", max: "0.5", value: a.width ?? 0.1 }),
                 { title: "perimeter band thickness as a fraction of the box's shorter side" }));
         return {
@@ -852,6 +859,15 @@ export function nodeParts(n) {
                 body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
             };
         }
+        if (r.kind === "registerhistory") {
+            // a register's recent pushes (non-persisted): one row per write into the held map
+            // (when/key/value/ring index/overwritten). Filled by renderRegisterHistory
+            // (register_history_node.js) into the .hist-host.
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} pushes`),
+                body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+            };
+        }
         if (r.kind === "producer") {
             // an http producer's preview: what it WILL fetch (resolved names -> keys), the columns
             // it emits, and a live one-item test-fetch (raw response vs mapped row). Filled by
@@ -911,7 +927,8 @@ export function nodeParts(n) {
     if (n.type === "toast") return toastParts(n.ref, model);
     if (n.type === "sound") return soundParts(n.ref, model);
     if (n.type === "action") return actionParts(n.ref, model);
-    if (n.type === "register") return registerParts(n.ref, model);
+    if (n.type === "register") return { ...registerParts(n.ref, model),
+        head: satToggleBtn(`reghist:${n.ref.id}`, "registerhistory") };
     if (n.type === "dictionary") {
         // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The
         // terms live in config/dictionaries/<source>; this node just references that file.

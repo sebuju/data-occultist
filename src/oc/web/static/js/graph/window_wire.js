@@ -22,10 +22,11 @@ import {
 // Switch a detector between kinds by toggling the discriminating fields (the model infers
 // kind from which are set — see detectKind in node_parts). text=OCR; color/border=cheap.
 export function setDetectKind(a, kind) {
-    if (kind === "text") { a.text = a.text ?? ""; delete a.color; delete a.width; }
+    if (kind === "text") { a.text = a.text ?? ""; delete a.colors; delete a.width; }
     else {                                  // color or border (both cheap, no OCR)
         delete a.text;
-        a.color = a.color ?? ""; a.tolerance = a.tolerance ?? 32;
+        a.colors = a.colors?.length ? a.colors : [""];   // seed one empty color row
+        a.tolerance = a.tolerance ?? 32;
         if (kind === "border") a.width = a.width || 0.1; else delete a.width;
     }
 }

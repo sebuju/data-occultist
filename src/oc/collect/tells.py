@@ -14,6 +14,8 @@ cheap (no OCR), so one of them can also locate rows by sliding down a column.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 
 from ..profile.models import Tell, TellKind
@@ -38,14 +40,21 @@ def filled_score(crop: np.ndarray) -> float:
     return float(min(1.0, gray.std() / 64.0))
 
 
-def _color_dist(crop: np.ndarray, hex_color: str | None) -> np.ndarray | None:
-    """Per-pixel BGR distance from every pixel of ``crop`` to ``hex_color`` — the shared
-    colour primitive both the mask (presence) and the distance readout derive from. None
-    when there's nothing to test."""
-    if crop is None or crop.size == 0 or not hex_color:
+def _color_dist(crop: np.ndarray, hex_colors: str | Sequence[str] | None) -> np.ndarray | None:
+    """Per-pixel BGR distance from every pixel of ``crop`` to the NEAREST of ``hex_colors`` —
+    the shared colour primitive both the mask (presence) and the distance readout derive from.
+    ``hex_colors`` may be one hex string or a list (a detector that accepts several colours,
+    e.g. gold/silver/bronze frames); the element-wise minimum across colours makes every
+    downstream consumer — mask, presence score, closest-distance — union over the set for free.
+    None when there's nothing to test (empty crop or no usable colour)."""
+    if crop is None or crop.size == 0 or not hex_colors:
         return None
-    bgr = np.array(hex_to_bgr(hex_color), dtype=np.float32)
-    return np.linalg.norm(crop.astype(np.float32) - bgr, axis=2)
+    colors = [hex_colors] if isinstance(hex_colors, str) else [c for c in hex_colors if c]
+    if not colors:
+        return None
+    px = crop.astype(np.float32)
+    dists = [np.linalg.norm(px - np.array(hex_to_bgr(c), dtype=np.float32), axis=2) for c in colors]
+    return dists[0] if len(dists) == 1 else np.minimum.reduce(dists)
 
 
 def _perimeter_ring(shape: tuple[int, int], width: float) -> np.ndarray | None:
@@ -61,35 +70,37 @@ def _perimeter_ring(shape: tuple[int, int], width: float) -> np.ndarray | None:
     return ring
 
 
-def _color_mask(crop: np.ndarray, hex_color: str | None, tolerance: int) -> np.ndarray | None:
-    """Boolean mask of pixels within ``tolerance`` BGR distance of ``hex_color`` — the
-    shared colour-presence primitive both ``color`` (whole fill) and ``border`` (perimeter
-    band only) score on. None when there's nothing to test."""
-    dist = _color_dist(crop, hex_color)
+def _color_mask(crop: np.ndarray, hex_colors: str | Sequence[str] | None, tolerance: int) -> np.ndarray | None:
+    """Boolean mask of pixels within ``tolerance`` BGR distance of ``hex_colors`` (the nearest
+    of them) — the shared colour-presence primitive both ``color`` (whole fill) and ``border``
+    (perimeter band only) score on. ``hex_colors`` is one hex string or a list. None when
+    there's nothing to test."""
+    dist = _color_dist(crop, hex_colors)
     return None if dist is None else dist < tolerance
 
 
-def color_score(crop: np.ndarray, hex_color: str | None, tolerance: int) -> float:
-    near = _color_mask(crop, hex_color, tolerance)
+def color_score(crop: np.ndarray, hex_colors: str | Sequence[str] | None, tolerance: int) -> float:
+    near = _color_mask(crop, hex_colors, tolerance)
     return float(near.mean()) if near is not None else 0.0
 
 
-def border_score(crop: np.ndarray, hex_color: str | None, tolerance: int, width: float) -> float:
+def border_score(crop: np.ndarray, hex_colors: str | Sequence[str] | None, tolerance: int, width: float) -> float:
     """Colour presence on the box's PERIMETER band only (a rarity frame, a selection
     outline), not its fill. ``width`` is the band thickness as a fraction of the box's
     shorter side; the score is the share of near-colour pixels within that ring."""
-    near = _color_mask(crop, hex_color, tolerance)
+    near = _color_mask(crop, hex_colors, tolerance)
     if near is None:
         return 0.0
     ring = _perimeter_ring(near.shape, width)
     return float(near.mean()) if ring is None else float(near[ring].mean())
 
 
-def color_distance(crop: np.ndarray, hex_color: str | None, width: float = 0.0) -> float | None:
-    """Smallest BGR distance from any tested pixel to ``hex_color`` — the editor's tuning
-    aid: set ``tolerance`` above this to start catching the target. ``width>0`` measures
-    only the perimeter band (matching ``border_score``). None when there's nothing to test."""
-    dist = _color_dist(crop, hex_color)
+def color_distance(crop: np.ndarray, hex_colors: str | Sequence[str] | None, width: float = 0.0) -> float | None:
+    """Smallest BGR distance from any tested pixel to the NEAREST of ``hex_colors`` — the
+    editor's tuning aid: set ``tolerance`` above this to start catching the target. ``width>0``
+    measures only the perimeter band (matching ``border_score``). None when there's nothing to
+    test."""
+    dist = _color_dist(crop, hex_colors)
     if dist is None:
         return None
     if width:

@@ -184,6 +184,29 @@ def _migrate_detect_thresholds(raw: dict) -> dict:
     return raw
 
 
+def _migrate_detect_colors(raw: dict) -> dict:
+    """``DetectDef`` now holds ``colors: list[str]`` (a detector accepts several colours,
+    union-matched) instead of the old single ``color: str | None``. Fold any legacy ``color``
+    key into the list: a non-empty hex string -> ``[color]``; a null/blank ``color`` -> ``[]``
+    (it was a text detector). Idempotent — a detector with no ``color`` key is untouched, so
+    this no-ops on every load after the first save."""
+    def _fix(dets) -> None:
+        for d in dets or []:
+            if isinstance(d, dict) and "color" in d:
+                c = d.pop("color")
+                if not d.get("colors"):   # don't clobber an already-migrated list
+                    d["colors"] = [c] if isinstance(c, str) and c else []
+    _fix(raw.get("detect"))   # game-level worthiness gate
+    for w in raw.get("windows") or []:
+        if not isinstance(w, dict):
+            continue
+        _fix(w.get("detect"))
+        for s in w.get("states") or []:
+            if isinstance(s, dict):
+                _fix(s.get("detect"))
+    return raw
+
+
 def _migrate_readout_ids(raw: dict) -> dict:
     """Readouts used to carry an auto ``ro_N`` id PLUS a free-form ``name`` (the thing the UI
     edited and a trigger watched), unlike every other node whose id IS its authored string.
@@ -447,7 +470,8 @@ def load_profile(profiles_dir: Path | str, name: str) -> GameProfile:
     raw = yaml.load(_read_text_retry(path), Loader=_LOADER)
     if isinstance(raw, dict):
         raw = _migrate_glyph_node_id(_migrate_dictionary_ids(_split_shared_readout_fields(
-            _migrate_join_exclude(_migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw)))))))
+            _migrate_join_exclude(_migrate_readout_ids(_migrate_detect_colors(
+                _migrate_detect_thresholds(_migrate_keys(raw))))))))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
     if sig is not None:
@@ -624,7 +648,7 @@ def read_backup(profiles_dir: Path | str, name: str, stamp: str) -> GameProfile:
     raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_LOADER)
     if isinstance(raw, dict):
         raw = _migrate_glyph_node_id(_migrate_dictionary_ids(_split_shared_readout_fields(
-            _migrate_readout_ids(_migrate_detect_thresholds(_migrate_keys(raw))))))
+            _migrate_readout_ids(_migrate_detect_colors(_migrate_detect_thresholds(_migrate_keys(raw)))))))
     profile = GameProfile.model_validate(raw)
     _resolve_dictionaries(profiles_dir, profile)
     return profile

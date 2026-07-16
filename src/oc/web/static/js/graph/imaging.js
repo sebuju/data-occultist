@@ -19,7 +19,7 @@ import * as rectTxn from "./edit_txn.js";
 import * as nodeTxn from "./node_txn.js";
 import { drawEdges } from "./routing.js";
 import { quantizeWidthOnlyHeight } from "./node_resize.js";
-import { renderLiveWindow, liveDetCount, liveRecog } from "./panels/livewin.js";
+import { renderLiveWindow, liveDetCount, liveRecog, liveCollecting } from "./panels/livewin.js";
 import {
     render, autosave, nodeEdit, rebuildNode, rebuildReadoutConsumers, setNodeBusy, withBusy,
     registerOverlay, unregisterOverlay, overlaySelected, selectedNodeId, setSelectedNodeId,
@@ -400,7 +400,8 @@ async function openImage(winId, nodeEl = null) {
             h("button", { class: "imgbtn", title: "choose which stashed images this window uses" },
                 h("span", { class: "imgbtn-lbl" }, "images")),
             h("button", { class: "imgcap", title: "capture the live window as a new image for this window" }, "capture"),
-            h("button", { class: "imgtest", title: "run ALL this window's images through the collect pipeline one at a time (feeds readouts/registers + writes records), like live — click again to stop" }, "test"),
+            h("button", { class: "imgtest", title: "run ALL this window's images through the collect pipeline one at a time (feeds readouts/registers + writes records), like live — click again to stop" }, "test all"),
+            h("button", { class: "imgtestone", title: "run the image currently shown through the collect pipeline (feeds readouts/registers + writes records), like live" }, "test this"),
             h("button", { class: "imgall", title: "preview data read from ALL of this window's images" }, "preview all")),
         imgLayers());
     const canvas = host.querySelector("canvas");
@@ -446,6 +447,7 @@ async function openImage(winId, nodeEl = null) {
     host.querySelector(".imgcap").addEventListener("click", () => loadImage(winId, true));   // recapture re-reads
     host.querySelector(".imgall").addEventListener("click", (e) => previewAll(winId, e.currentTarget));
     host.querySelector(".imgtest").addEventListener("click", (e) => testRun(winId, e.currentTarget));
+    host.querySelector(".imgtestone").addEventListener("click", (e) => testOne(winId, e.currentTarget));
     if (testRuns.has(winId)) {   // a rebuild mid-run: reflect the running state on the fresh button
         const tb = host.querySelector(".imgtest");
         if (tb) { tb.classList.add("reading"); tb.textContent = "stop"; }
@@ -501,7 +503,11 @@ function applyPickedColor(winId, hex) {
     const d = model.detect(winId, t.detId);
     if (!d) return;
     nodeEdit(`det:${winId}:${t.detId}`, "read", () => {
-        d.color = hex;
+        // multi-colour detector: drop the sample into the first empty colour slot, else append.
+        const cols = d.colors && d.colors.length ? d.colors : [""];
+        const gap = cols.findIndex((c) => !c);
+        if (gap >= 0) cols[gap] = hex; else cols.push(hex);
+        d.colors = cols;
         rebuildNode(`det:${winId}:${t.detId}`);   // refresh swatch + hex input
         refreshImageBoxes(winId);
     }, () => { autosave(null); refreshDetect(winId); });
@@ -1448,13 +1454,20 @@ async function previewAll(winId, btn) {
     }
 }
 
-// Per-window test run: fire ALL the window's bound images through the collect pipeline one at a
-// time, like live/precapture — each image feeds readouts/registers (/api/preview) then writes its
-// records + animates the data-flow blob (/api/preview/commit). Sequential: the `await` per image
-// IS the "wait for this OCR before feeding the next" guarantee (OCR is serialised server-side too).
-// The button is a STOP toggle — it stays clickable while running (spinner via `.reading`, never
-// `disabled`); a second click flips the run token's `stop`, and the loop bails between images (the
-// in-flight one finishes first). Also shows in the log bar as a killable worker.
+// One image through the collect pipeline, like a live tick: /api/preview with feed=1 (readouts +
+// registers + consensus/history + readout->register data blob + on_readout watch lines) then
+// /api/preview/commit (write records + win->ds data blob). The `await` chain IS the "finish this
+// OCR before the next" guarantee (OCR is serialised server-side too). Shared by both test buttons
+// (rule 7): "test all" loops it over every bound image, "test this" runs it once on the shown page.
+async function feedImage(game, profile, cap) {
+    await api.preview(profile, game, cap, false, true);   // feed=1: behave like a live readout tick
+    await api.previewCommit(profile, game, cap);          // write records + flow blob (like a collect tick)
+}
+
+// Per-window "test all": fire ALL the window's bound images through feedImage one at a time, like
+// live/precapture. The button is a STOP toggle — it stays clickable while running (spinner via
+// `.reading`, never `disabled`); a second click flips the run token's `stop`, and the loop bails
+// between images (the in-flight one finishes first). Also shows in the log bar as a killable worker.
 const testRuns = new Map();   // winId -> { stop } run token; presence = a run is in progress
 
 async function testRun(winId, btn) {
@@ -1472,9 +1485,7 @@ async function testRun(winId, btn) {
     try {
         for (const cap of list) {
             if (token.stop) break;
-            await api.preview(profile, game, cap);          // feed readouts + registers (like live)
-            if (token.stop) break;
-            await api.previewCommit(profile, game, cap);    // write records + flow blob (like a collect tick)
+            await feedImage(game, profile, cap);
             n++;
         }
         done(`· ${n}/${list.length} image${list.length === 1 ? "" : "s"}${token.stop ? " (stopped)" : ""}`, "ok");
@@ -1484,7 +1495,27 @@ async function testRun(winId, btn) {
     } finally {
         testRuns.delete(winId);
         unregisterWorker(`wintest:${winId}`);
-        if (btn) { btn.classList.remove("reading"); btn.textContent = "test"; }
+        if (btn) { btn.classList.remove("reading"); btn.textContent = "test all"; }
+    }
+}
+
+// Per-window "test this": run ONLY the image currently on screen (the page the canvas shows)
+// through feedImage — a quick one-shot, so a plain `.reading`+disabled button, not a stop toggle.
+async function testOne(winId, btn) {
+    const cap = await curCapOf(winId);   // the page currently shown
+    if (!cap) { setStatus("no image shown for this window"); return; }
+    if (btn) { btn.disabled = true; btn.classList.add("reading"); }
+    registerWorker(`wintest1:${winId}`, `test-one ${winId}`, () => {});
+    const done = timed(`OCR test-one ${winId}`);
+    try {
+        await feedImage(model.profile.name, previewProfileFor(winId), cap);
+        done("· 1 image", "ok");
+    } catch (e) {
+        done(String(e.message || e), "err");
+        setStatus(String(e.message || e));
+    } finally {
+        unregisterWorker(`wintest1:${winId}`);
+        if (btn) { btn.disabled = false; btn.classList.remove("reading"); }
     }
 }
 
@@ -1714,7 +1745,7 @@ function setWindowDetectStatus(winId, res) {
     if (verdict) {
         {
             const w = res.window;
-            if (!w) { verdict.textContent = ""; verdict.className = "wd-verdict muted"; }
+            if (!w) { verdict.textContent = "loading…"; verdict.className = "wd-verdict muted"; }
             else {
                 verdict.textContent = w.pass ? "✓ would match this window" : "✗ would not match";
                 verdict.className = "wd-verdict " + (w.pass ? "conf-ok" : "conf-bad");
@@ -1977,6 +2008,9 @@ async function loadImage(winId, recapture, { deferRead = false } = {}) {
         // when the node exists, else just the grid overlay. The cutout atlas is image-only (no
         // grid/preview) — only its cheap detectors need re-evaluating.
         if (winId === "atlas") return;
+        // collecting: the frame's been added + shown, but the server collector owns OCR — a
+        // client read here just contends with it. Skip the read (capture path only).
+        if (recapture && liveCollecting()) return;
         if (deferRead) { scheduleWindowRead(winId, { trace: true, readouts: true }); return; }
         if (prevHost(winId)) refreshPreview(winId, false);
         else refreshGridPreview(winId);

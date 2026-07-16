@@ -1,6 +1,6 @@
 """Composite record keys: KeySpec/KeyMap build + profile resolution + migration."""
 
-from oc.profile.loader import _migrate_detect_thresholds, _migrate_keys
+from oc.profile.loader import _migrate_detect_colors, _migrate_detect_thresholds, _migrate_keys
 from oc.profile.models import Box, GameProfile, ItemDef, KeyDef, RegionDef, WindowDef
 from oc.store.keys import KeyMap, KeySpec
 
@@ -156,3 +156,28 @@ def test_migration_backfills_missing_detect_threshold():
     assert w["detect"][0]["threshold"] == 0.8
     assert w["states"][0]["detect"][0]["threshold"] == 0.8
     GameProfile.model_validate(out)                                          # would raise if unfilled
+
+
+def test_migration_folds_single_color_into_colors_list():
+    # old single ``color`` -> ``colors: [color]``; a null/absent colour -> ``colors: []``.
+    # Idempotent: a detector already on the new ``colors`` shape is untouched.
+    raw = {
+        "name": "g",
+        "detect": [{"id": "gate", "search": CELL.model_dump(), "color": "#e0ebde",
+                    "tolerance": 40, "threshold": 0.5}],                      # game gate, has colour
+        "windows": [{
+            "id": "w1",
+            "detect": [
+                {"id": "a", "search": CELL.model_dump(), "color": None, "text": "inv",
+                 "threshold": 0.8},                                           # text detector, colour null
+                {"id": "c", "search": CELL.model_dump(), "colors": ["#112233"],
+                 "threshold": 0.8},                                           # already migrated
+            ],
+        }],
+    }
+    out = _migrate_detect_colors(raw)
+    assert out["detect"][0]["colors"] == ["#e0ebde"] and "color" not in out["detect"][0]
+    wd = out["windows"][0]["detect"]
+    assert wd[0]["colors"] == [] and "color" not in wd[0]                    # null colour -> empty
+    assert wd[1]["colors"] == ["#112233"]                                    # untouched
+    GameProfile.model_validate(out)

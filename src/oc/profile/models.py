@@ -423,9 +423,9 @@ class DetectDef(BaseModel):
     ``template`` is a PNG path (relative to the profile dir) matched within
     ``search`` via template matching. Alternatively ``text`` is OCR'd inside
     ``search`` and compared against ``text`` per the ``match`` knobs below.
-    ``color`` is the cheapest kind — the fraction of pixels in ``search`` near a
-    taught hex colour (``width>0`` restricts it to the box perimeter, for a frame/
-    outline). ``template`` and ``color`` are *cheap* (no OCR), so they can gate the
+    ``colors`` is the cheapest kind — the fraction of pixels in ``search`` near ANY of
+    the taught hex colours (``width>0`` restricts it to the box perimeter, for a frame/
+    outline). ``template`` and ``colors`` are *cheap* (no OCR), so they can gate the
     OCR-heavy ``text`` pass — see :meth:`is_cheap` and the live-mode worthiness gate.
     """
 
@@ -434,10 +434,12 @@ class DetectDef(BaseModel):
     search: Box
     template: str | None = None
     text: str | None = None
-    # Cheap colour-presence kind (reuses the item-Tell colour primitives). ``color`` is
-    # a hex string; ``tolerance`` the BGR distance that counts as "near"; ``width`` the
-    # perimeter band as a fraction of the box's shorter side (0 = whole-fill colour).
-    color: str | None = None
+    # Cheap colour-presence kind (reuses the item-Tell colour primitives). ``colors`` is a
+    # list of hex strings — a pixel counts if it's near ANY of them (union), so one landmark
+    # can appear in several shades (gold/silver/bronze frame). ``tolerance`` is the shared BGR
+    # distance that counts as "near"; ``width`` the perimeter band as a fraction of the box's
+    # shorter side (0 = whole-fill colour). Old single-``color`` profiles migrate on load.
+    colors: list[str] = Field(default_factory=list)
     tolerance: int = 32
     width: float = 0.0
     # 0..1 score required to match. REQUIRED — no baked-in default; the UI seeds new
@@ -459,7 +461,7 @@ class DetectDef(BaseModel):
         classifier runs these first (so a failing cheap detector short-circuits the OCR
         text pass) and the live-mode gate uses ONLY these to decide whether OCR is worth
         running this frame. A detector with ``text`` set is never cheap."""
-        return bool(self.template or self.color) and not self.text
+        return bool(self.template or self.colors) and not self.text
 
 
 class StateKind(str, Enum):
