@@ -1,0 +1,633 @@
+Abyssal Beacon
+Acceltra Prime
+Acceltra Prime Barrel
+Acceltra Prime Blueprint
+Aeolak
+Aeolak Barrel Blueprint
+Afuris Prime
+Afuris Prime Link
+Agkuza
+Agkuza Handle
+Akarius Prime
+Akarius Prime Barrel
+Akarius Prime Link
+Akbronco Prime
+Akbronco Prime Link
+Akimbo Slip Shot
+Akjagara Prime Receiver
+Aklex Prime Blueprint
+Akmagnus Prime Link
+Aksomati Prime Blueprint
+Aksomati Prime Link
+Akstileto Prime Link
+Akstiletto Prime Link
+Akstiletto Prime Receiver
+Akstiltto Prime Barrel
+Alternox Prime
+Alternox Prime Stock
+Ambassador Barrel
+Ambassador Receiver
+Ambassador Stock
+Amesha
+Ankyros Prime Blade
+Ankyros Prime Blueprint
+Ankyros Prime Gauntlet
+Arcane Acceleration
+Arcane Aegis
+Arcane Agility
+Arcane Arachne
+Arcane Avenger
+Arcane Awakening
+Arcane Barrier
+Arcane Battery
+Arcane Bellicose
+Arcane Blade Charger
+Arcane Blessing
+Arcane Bodyguard
+Arcane Camisado
+Arcane Circumvent
+Arcane Concentration
+Arcane Crepuscular
+Arcane Deflection
+Arcane Double Back
+Arcane Energize
+Arcane Eruption
+Arcane Escapist
+Arcane Expertise
+Arcane Fury
+Arcane Guardian
+Arcane Healing
+Arcane Hot Shot
+Arcane Impetus
+Arcane Intention
+Arcane lce
+Arcane lce Storm
+Arcane Momentum
+Arcane Nullifier
+Arcane Persistence
+Arcane Phantasm
+Arcane Pistoleer
+Arcane Power Ramp
+Arcane Precision
+Arcane Primary Charger
+Arcane Pulse
+Arcane Rage
+Arcane Reaper
+Arcane Resistance
+Arcane Rise
+Arcane Steadfast
+Arcane Strike
+Arcane Tanker
+Arcane Tempo
+Arcane Trickery
+Arcane Truculence
+Arcane Ultimatum
+Arcane Universal Fallout
+Arcane Velocity
+Arcane Victory
+Arcane Warmth
+Arum Spinosa Blueprint
+Arum Spinosa Guard
+Astilla Prime Barrel
+Astilla Prime Receiver
+Astilla Prime Stock
+Athodai Barrel
+Atlas Prime
+Axi D6 Relic
+Axi S20 Relic
+Axi V14 Relic
+Axi Y1 Relic
+Axi Y3 Relic
+Ayatan Amber Star
+Ayatan Cyan Star
+Ayatan Sah Sculpture
+Ayatan Zambuka Sculpture
+Ayatan Zar Sculpture
+Ballistica Prime Receiver
+Ballistica Prime String
+Banshee Prime Chassis Blueprint
+Baruuk Neuroptics Blueprint
+Baruuk Prime
+Baza Prime
+Baza Prime Barrel
+Baza Prime Stock
+Boltor Prime
+Boltor Prime Barrel
+Boltor Prime Receiver
+Boltor Prime Stock
+Bonewidow
+Braton Prime
+Braton Vandal Barrel
+Braton Vandal Blueprint
+Braton Vandal Stock
+Broken War
+Bronco Prime Barrel
+Bronco Prime Blueprint
+Burston Prime
+Burston Prime Barrel
+Burston Prime Receiver
+Burston Prime Stock
+Cabochon Embolos
+Caliban Prime
+Cascadia Accuracy
+Cascadia Empowered
+Cascadia Flare
+Cascadia Overcharge
+Cedo Prime
+Cedo Prime Barrel
+Cedo Prime Stock
+Centaur Aegis
+Cernos Prime Blueprint
+Cernos Prime Grip
+Cernos Prime Lower Limb
+Cernos Prime String
+Cinta Lower Limb Blueprint
+Cobra & Crane Prime Blueprint
+Cobra & Crane Prime Guard
+Conjunction Voltage
+Corinth Prime Barrel
+Corinth Prime Blueprint
+Corinth Prime Receiver
+Corpus Depository Scene
+Corufell Handle
+Corvas
+Corvas Prime
+Corvas Prime Stock
+Cyngas
+Cyngas Barrel
+Cyngas Receiver
+Daikyu Prime
+Daikyu Prime Grip
+Daikyu Prime String
+Daikyu Prime Upper Limb
+Damaged Necramech Casing
+Damaged Necramech Pod
+Damaged Necramech Weapon Receiver
+Deck 12 Scene
+Decurion Barrel
+Decurion Receiver
+Deimos Cenote Scene
+Deimos Crypt Scene
+Deimos Depths Scene'
+Deimos Forsaken Scene
+Deimos Membrane Scene
+Deimos Verge Scene
+Dera Vandal
+Dera Vandal Blueprint
+Dera Vandal Receiver
+Destreza Prime
+Dethcube Prime
+Dethcube Prime Carapace
+Dethcube Prime Systems
+Dual Kamas Prime
+Dual Keres Prime Blade
+Dual Keres Prime Handle
+Dual Viciss
+Dual Zoren Prime
+Dual Zoren Prime Blade
+Dual Zoren Prime Blueprint
+Dual Zoren Prime Handle
+Eidolon Lens Blueprint
+ekko Prime Gauntlet
+Elytron
+Emergence Dissipate
+Emergence Renewed
+Emergence Savior
+Epitaph Barrel
+Epitaph Prime
+Epitaph Prime Barrel
+Epitaph Prime Receiver
+Esher Devar
+Eternal Eradicate
+Eternal Logistics
+Eternal Onslaught
+Euphona Prime
+Euphona Prime Barrel
+Euphona Prime Receiver
+Exodia Brave
+Faceted Tiametrite
+Fang Prime
+Fluctus Barrel
+Fluctus Limbs
+Fluctus Stock
+Fractalized Reset
+Fragor Prime
+Fragor Prime Head
+Frost Prime
+Fulmin Prime
+Furax Wraith Left Gauntlet
+Galatine Prime Blade
+Galatine Prime Handle
+Gauss Prime
+Ghoulsaw
+Glaive Prime Blade
+Glaive Prime Blueprint
+Glaive Prime Disc
+Goblite Tears
+Gorgon Wraith Receiver
+Gorgon Wraith Stock
+Gotva Prime
+Granmu Prism Blueprint
+Granum Void Scene
+Grendel Prime
+Grineer Asteroid Simulacrum
+Grineer Sealab Centrifuge Scene
+Guandao Prime Blade
+Guandao Prime Handle
+Gunsen Prime Blade
+Gunsen Prime Handle
+Gyre Prime
+Halikar Wraith
+Harrow Prime
+Harrow Prime Blueprint
+Heart Noctrul
+Heart Nyth
+Helios Prime
+Helios Prime Systems
+Hespar Handle Blueprint
+Hikou Prime Blueprint
+Hikou Prime Pouch
+Hikou Prime Stars
+Hildryn Prime
+Hydroid Prime Neuroptics Blueprint
+Hystrix Prime
+Hystrix Prime Barrel
+Ilvanian Courtyard Simulacrum
+Iron Wake Scene
+Itzal
+ivanian Courtyard Simulacrum
+Karak Wraith Blueprint
+Karak Wraith Receiver
+Karyst Prime Blade
+Karyst Prime Handle
+Kaszas
+Kavasa Prime Kubrow Collar
+Kestrel Prime
+Kestrel Prime Blade
+Kestrel Prime Blueprint
+Kestrel Prime Grip
+Knell Prime Receiver
+Kogake Prime Boot
+Kompressa Prime Barrel
+Kompressa Prime Receiver
+Kronen Prime Blueprint
+Kuva Fortress Crevice Scene
+Larkspur Prime
+Larkspur Prime Blueprint
+Larkspur Prime Receiver
+Larkspur Prime Stock
+Lato Vandal
+Lavos Prime
+Lex Prime
+Lex Prime Barrel
+Lex Prime Receiver
+Limbo Prime Systems Blueprint
+lios Prime Carapace
+Lith C14 Relic
+Lith D7 Relic
+Lith G14 Relic
+Lith N19 Relic
+Lith Q2 Relic
+Lith T14 Relic
+Lith V11 Relic
+Loki Prime Blueprint
+Longbow Sharpshot
+Lua Balcony Scene
+Lua Lens Blueprint
+Madurai Lens
+Magnus Prime
+Magnus Prime Barrel
+Magnus Prime Receiver
+Magus Accelerant
+Magus Aggress
+Magus Anomaly
+Magus Cadence
+Magus Cloud
+Magus Destruct
+Magus Drive
+Magus Firewall
+Magus Glitch
+Magus Lockdown
+Magus Melt
+Magus Overload
+Magus Repair
+Magus Revert
+Magus Vigor
+Mall Rotunda Simulacrum
+Mandonel
+Mandonel Barrel
+Mandonel Blueprint
+Mandonel Receiver
+Mandonel Stock
+Marquise Thyst
+Marquise Veridos
+Masseter Prime
+Melee Afflictions
+Melee Animosity
+Melee Careen
+Melee Crescendo
+Melee Doughty
+Melee Duplicate
+Melee Exposure
+Melee Fortification
+Melee Influence
+Melee Retaliation
+Melee Vortex
+Mesa Prime Chassis Blueprint
+Meso D8 Relic
+Meso L4 Relic
+Meso L5 Relic
+Meso V9 Relic
+Meso X1 Relic
+MesoV13Relic
+Mirage Prime Systems Blueprint
+Molt Augmented
+Molt Efficiency
+Molt Reconstruct
+Molt Vigor
+Mutalist Alad V Assassinate
+Nagantaka Prime Barrel
+Nagantaka Prime Receiver
+Nagantaka Rrime Stock
+Nami Skyla Prime Blueprint
+Naramon Lens
+Nautilus Carapace
+Nautilus Prime
+Nautilus Prime Blueprint
+Nautilus Prime Carapace
+Nautilus Prime Cerebrum
+Nautilus Prime Systems
+Nekros Neuroptics Blueprint
+Nekros Prime
+Neo C7 Relic
+Neo K9 Relic
+Neo N24 Relic
+Neo Pg Relic
+Neo S20 Relic
+Neo T10 Relic
+Neo V11 Relic
+Neo Y1 Relic
+Nezha Prime
+Nezha Prime Systems Blueprint
+NezhaPrime Systems Blueprint
+NidusPrime Systems Blueprint
+Nikana Prime Blueprint
+Nikana Prime Hilt
+Ninkondi Prime Blueprint
+Ninkondi Prime Chain
+Nova Prime
+Nova Prime Blueprint
+Nova Prime Neuroptics Blueprint
+Nyx Prime
+Oberon Prime
+Octavia Prime
+Octavia Prime Chassis Blueprint
+Octavia Prime Systems Blueprint
+Odonata Prime
+Okina Prime
+Okina Prime Handle
+Orthos Prime
+Orthos Prime Blade
+Orvius Blade
+Orvius Disc
+Pandero Prime
+Pangolin Prime
+Pangolin Prime Blade
+Parallax Engine Blueprint
+Parallax Engines Blueprint
+Parallax Fuselage Blueprint
+Paris Prime Blueprint
+Paris Prime Grip
+Pathocyst Blade
+Pathocyst Subcortex
+Pax Charge
+Pax Seeker
+Pax Soar
+Perigale Barrel
+Perigale Prime
+Perigale Receiver
+Perigale Stock
+Phaedra
+Phaedra Barrel
+Phaedra Receiver
+Phaedra Stock
+Phantasma Prime
+Phantasma Prime Barrel
+Phantasma Prime Blueprint
+Phantasma Prime Stock
+Primary Blight
+Primary Blight 日日
+Primary Bulwark
+Primary Crux
+Primary Deadhead
+Primary Debilitate
+Primary Dexterity
+Primary Exhilarate
+Primary Frostbite
+Primary Merciless
+Primary Obstruct
+Primary Overcharge
+Prisma 0bex
+Prisma 0hma
+Prisma Angstrum
+Prisma Burst Laser
+Prisma Shade
+Prisma Skana
+Prisma Tetra
+Prisma Veritux
+Proof Fragment
+Protea Prime
+Purged Dagonic
+Purified Heciphron
+Pyrana Prime
+Quassus Prime
+Quassus Prime Blade
+Quassus Prime Blueprint
+Radian Sentirum
+Radiant Zodian
+Rakta Ballistica
+Rakta Cernos
+Rakta Dark Dagger
+Rathbone Handle
+Red Veil Temple Simulacrum
+Redeemer Prime
+Redeemer Prime Blade
+Redeemer Prime Blueprint
+Requiem Il Relic
+Requiem IV Relic
+Requien nEterna Relic
+Residual Boils
+Residual Malodor
+Residual Shock
+Residual Viremia
+Revenant Neuroptics Blueprint
+Revenant Prime
+Revenant Prime Blueprint
+Revenant Prir Blueprint
+Rhino Prime
+Riot-848
+Riot-848 Stock Blueprint
+Roathe's Oblivion Arena
+Rubico Prime Barrel
+Rubico Prime Receiver
+Sanctum Simulacrum
+Sarofang
+Sarofang Blade
+Sarofang Handle
+Sarofang Prime
+Sarofang Prime Blade
+Sarofang Prime Blueprint
+Sarofang Prime Handle
+SarynPrime Systems Blueprint
+Scimitar Fuselage Blueprint
+Scindo Prime
+Scindo Prime Handle
+Scourge Prime Blade
+Scourge Prime Handle
+Secondary Deadhead
+Secondary Dexterity
+Secondary Encumber
+Secondary Enervate
+Secondary Fortifier
+Secondary Irradiate
+Secondary Kinship
+Secondary Merciless
+Secondary Outburst
+Secondary Shiver
+Secondary Surge
+Sevagoth Prime
+Sevagoth Prime Chassis Blueprint
+Sevagoth Prime Systems Blueprint
+Shade Prime
+Shade Prime Blueprint
+Shade Prime Cerebrum
+Shade Prime Systems
+ShadePrime Systems
+Shedu
+Shedu Chassis
+Shotgun Vendetta
+Sicarus Prime
+Sicarus Prime Receiver
+Silva & Aegis Prime Blade
+Silva & Aegis Prime Hilt
+Smooth Phasmin
+Soma Prime
+Spira Prime Blueprint
+Spira Prime Pouch
+Sporothrix Barrel
+Sporothrix Blueprint
+Star Amarast
+Star Crimzian
+Steflos Stock
+Stellated Necrathene
+Stradavar Prime Barrel
+Stradavar Prime Blueprint
+Stradavar Prime Receiver
+Strun Prime
+Strun Prime Receiver
+Strun Prime Stock
+Strun Wraith Receiver
+Styanax Prime Chassis Blueprint
+Supra Vandal
+Sybaris Prime Barrel
+Sybaris Prime Receiver
+Sybaris Prime Stock
+Synoid G mmacor
+Synoid Gammacor
+Synoid Heli liocor
+Synoid Heliocor
+Synoid Simulor
+Tatsu Prime
+Tear Azurite
+Tekko Prime Gauntet
+Tekko Prime Gauntlet
+Telos Boltace
+Telos Boltor
+Tenora Prime Barrel
+Tenora Prime Stock
+The Cold Below Scene
+Theorem Contagion
+Theorem Demulcent
+Theorem Infection
+Theorem Infection 日日
+Tiberon Prime Receiver
+Tigris Prime Barrel
+Tigris Prime Receiver
+Tigris Prime Stock
+Tipe edo Prime Handle
+Tipedo Prime Ornament
+Titania Prime
+Trapezium Xenorhast
+Trinity Neuroptics Blueprint
+Trinity Prime
+Trinity Prime Systems Blueprint
+Trumna Prime
+Trumna Prime Stock
+Unairu Lens
+Vadarya Prime
+Vadarya Prime Receiver
+Vadarya Prime Stock
+Vasto Prime Barrel
+Vasto Prime Blueprint
+Vasto Prime Receiver
+Vauban Prime
+Vauban Prime Chassis Blueprint
+Vaykor Marelok
+Vaykor Sydon
+Vazarin Lens
+Vectis Prime Barrel
+Velocitus
+Velox Barrel
+Velox Prime
+Venato Prime
+Venato Prime Handle
+Venka Prime Blades
+Venka Prime Blueprint
+Vericres
+Viper Wraith
+Virtuos Forge
+Virtuos Null
+Virtuos Spike
+Virtuos Surge
+Virtuos Tempo
+Virtuos Tempo 日日日
+Virtuos Trojan
+Voidrig
+Volnus Prime Head
+Volt Prime Blueprint
+Voruna Neuroptics Blueprint
+Voruna Prime
+Voruna Prime Blueprint
+War Blade
+War Hilt
+Wisp Prime
+Wukong g Prime Systems Blueprint
+Wukong Prime
+Wukong Prime Neuroptics Blueprint
+Wukong Prime Systems Blueprint
+Wyrm Prime
+Wyrm Prime Blueprint
+Xaku Prime
+Xaku Prime Neuroptics Blueprint
+XakuPrime Systems Blueprint
+Yareli Prime
+Yareli Prime Chassis Blueprint
+yst Prime Handle
+Zakti Prime Barrel
+Zakti Prime Receiver
+Zenurik Lens
+Zephyr Pr Neuroptics Blueprint
+Zephyr Prim Neuroptics Blueprint
+Zephyr Prime
+Zephyr Prime Neuroptics Blueprint
+Zhuge Prime
+Zhuge Prime Blueprint
+Zhuge Prime Grip
+Zid-An Asheir
+Zid-An Haras
+Zid-An Osbok
+Zid-An Sek-Eel
+Zid-An Uskos
+Zylok Prime
+édo Prime Handle
+广 Akstiletto Prime Receiver

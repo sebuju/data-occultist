@@ -102,16 +102,36 @@ windows:
     glyph_check: false
     stability_reads: 3
     stability_min: 2
+  - id: rof_90
+    type: text
+    rules:
+    - when: no_letter
+      then: drop
+    - when: always
+      then: fold
+    - when: always
+      then: lowercase
+    - when: always
+      then: extract
+      strategy: alphanum_before
+      sep: '['
+    min_confidence: 0.8
+    isolate: false
+    glyph_check: false
+    stability_reads: 3
+    stability_min: 2
   detect:
   - id: hud
     enabled: true
     search:
-      x: 0.965
-      y: 0.10138888888888888
-      w: 0.004
-      h: 0.01
-    color: '#e0ebde'
-    tolerance: 32
+      x: 0.9636979166666667
+      y: 0.09982074034238596
+      w: 0.007124999999999999
+      h: 0.012777777777777782
+    colors:
+    - '#e0ebde'
+    - '#303f31'
+    tolerance: 40
     width: 0.0
     threshold: 0.5
     match: partial
@@ -156,6 +176,14 @@ windows:
       w: 0.019425253559241407
       h: 0.01585915076894294
     field: rof_9
+    enabled: true
+  - id: warframe_name_live
+    box:
+      x: 0.876690813884643
+      y: 0.09706910459801021
+      w: 0.08550724637681151
+      h: 0.02904006453347674
+    field: rof_90
     enabled: true
   preprocess:
     mode: none
@@ -227,6 +255,7 @@ windows:
       w: 0.33869291031996673
       h: 0.04192976141839593
     text: inventory
+    colors: []
     tolerance: 32
     width: 0.0
     threshold: 0.8
@@ -243,6 +272,7 @@ windows:
       w: 0.04834284612974901
       h: 0.03582122837035165
     text: search
+    colors: []
     tolerance: 32
     width: 0.0
     threshold: 0.5
@@ -472,6 +502,7 @@ windows:
       w: 0.4092943360310977
       h: 0.05324730585577367
     text: mods
+    colors: []
     tolerance: 32
     width: 0.0
     threshold: 0.8
@@ -650,6 +681,7 @@ windows:
       w: 0.28744675084295424
       h: 0.05150294295161798
     text: rewards
+    colors: []
     tolerance: 32
     width: 0.0
     threshold: 0.75
@@ -768,6 +800,7 @@ windows:
       w: 0.357732018626002
       h: 0.050204210400661656
     text: selectrelic
+    colors: []
     tolerance: 32
     width: 0.0
     threshold: 0.8
@@ -952,6 +985,7 @@ windows:
       w: 0.4861086446058485
       h: 0.05482975273337321
     text: refinement
+    colors: []
     tolerance: 32
     width: 0.0
     threshold: 0.8
@@ -968,6 +1002,7 @@ windows:
       w: 0.06395299857186793
       h: 0.029519311240093937
     text: search
+    colors: []
     tolerance: 32
     width: 0.0
     threshold: 0.8
@@ -1727,6 +1762,7 @@ windows:
       w: 0.16203904272647127
       h: 0.05486627363839321
     text: upgrade
+    colors: []
     tolerance: 32
     width: 0.0
     threshold: 0.8
@@ -4331,6 +4367,9 @@ triggers:
   readout_watch: []
   readout_op: gte
   readout_value: 0.0
+  register_watch: []
+  register_conds: {}
+  register_logic: or
   targets:
   - wf_market_live
   enabled: true
@@ -4343,26 +4382,13 @@ triggers:
   readout_watch: []
   readout_op: gte
   readout_value: 0.0
+  register_watch: []
+  register_conds: {}
+  register_logic: or
   targets:
   - wf_market_relic
   enabled: true
   settle_max_ms: 8000.0
-  ready_field: ''
-- id: ab_trigger
-  kind: on_readout
-  interval_s: 300.0
-  watch: []
-  readout_watch:
-  - ability_1_cd
-  - ability_2_cd
-  - ability_3_cd
-  - ability_4_cd
-  readout_op: crosses_down
-  readout_value: 2.0
-  targets:
-  - bob
-  enabled: true
-  throttle_ms: 1000.0
   ready_field: ''
 - id: on_new_relic_fetched
   kind: on_ready
@@ -4372,9 +4398,33 @@ triggers:
   readout_watch: []
   readout_op: gte
   readout_value: 0.0
+  register_watch: []
+  register_conds: {}
+  register_logic: or
   targets:
   - relic_sound
   - toast_2
+  enabled: true
+  ready_field: ''
+- id: triggerq
+  kind: on_register
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  readout_op: gte
+  readout_value: 0.0
+  register_watch:
+  - register
+  register_conds:
+    register:
+    - key: ability_4_cd
+      when: between
+      value: 0.0
+      value2: 2.0
+  register_logic: or
+  targets:
+  - bob
+  - clear_2
   enabled: true
   ready_field: ''
 toasts:
@@ -4712,10 +4762,13 @@ sounds:
   volume: 0.7
   enabled: true
 actions:
-- id: action
-  action: ''
-  sources: []
-  slots: {}
+- id: clear_2
+  action: clear
+  sources:
+  - register:register
+  slots:
+    register:
+    - ability_4_cd
   dest: ''
   enabled: true
 registers:
@@ -4769,6 +4822,8 @@ registers:
   title: ''
   enabled: true
   capacity: 1
+  aggregate: ''
+  ignore_empty: false
   persist: loadout
 - id: register
   sources:
@@ -4778,13 +4833,18 @@ registers:
   - readout:ability_4_cd
   title: ''
   enabled: true
-  capacity: 1
+  capacity: 3
+  aggregate: avg
+  ignore_empty: true
   persist: ''
 dictionaries:
 - id: wiki
   enabled: true
   source: wiki.txt
-  feeds: []
+  feeds:
+  - dataset: prices_live
+    columns:
+    - name
 - id: relics
   enabled: true
   source: dict_1.txt
@@ -5385,8 +5445,8 @@ layout:
       custH: true
       softH: true
     sound:bob:
-      x: 180.0
-      y: -6760.0
+      x: 2060.0
+      y: -7340.0
       w: 440.0
       h: 520.0
       collapsed: false
@@ -5459,15 +5519,6 @@ layout:
       custW: true
       custH: false
       softW: false
-    trigger:ab_trigger:
-      x: 660.0
-      y: -6760.0
-      w: 280.0
-      h: 317.0
-      collapsed: false
-      custW: false
-      custH: true
-      softH: false
     ro:arsenal_warframe:slot_arcane_1:
       x: 1320.0
       y: -560.0
@@ -5497,45 +5548,46 @@ layout:
     det:live_game_window:hud:
       x: 900.0
       y: -5280.0
-      w: 260.0
+      w: 250.0
       h: 180.0
       collapsed: false
       custW: false
-      custH: false
+      custH: true
+      softH: true
     ro:live_game_window:ability_1_cd:
       x: 180.0
       y: -6120.0
-      w: 220.0
+      w: 280.0
       h: 300.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
       softW: true
       softH: true
     ro:live_game_window:ability_2_cd:
-      x: 740.0
+      x: 800.0
       y: -6120.0
-      w: 220.0
+      w: 280.0
       h: 300.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
       softW: true
       softH: true
     ro:live_game_window:ability_3_cd:
-      x: 1300.0
+      x: 1420.0
       y: -6120.0
-      w: 220.0
+      w: 280.0
       h: 300.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
       softW: true
       softH: true
     ro:live_game_window:ability_4_cd:
-      x: 1860.0
+      x: 2040.0
       y: -6120.0
-      w: 220.0
+      w: 280.0
       h: 300.0
       collapsed: false
       custW: true
@@ -6203,57 +6255,47 @@ layout:
       custH: true
       softW: true
       softH: true
-    hist:ab_trigger:
-      x: 1020.0
-      y: -6760.0
-      w: 860.0
-      h: 460.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
     rohist:live_game_window:ability_1_cd:
       x: 180.0
       y: -5780.0
-      w: 500.0
+      w: 580.0
       h: 360.0
       collapsed: false
       custW: true
       custH: false
       softW: true
     rohist:live_game_window:ability_2_cd:
-      x: 740.0
+      x: 800.0
       y: -5780.0
-      w: 500.0
+      w: 580.0
       h: 360.0
       collapsed: false
       custW: true
       custH: false
       softW: true
     rohist:live_game_window:ability_3_cd:
-      x: 1300.0
+      x: 1420.0
       y: -5780.0
-      w: 500.0
+      w: 580.0
       h: 360.0
       collapsed: false
       custW: true
       custH: false
       softW: true
     rohist:live_game_window:ability_4_cd:
-      x: 1860.0
+      x: 2040.0
       y: -5780.0
-      w: 500.0
+      w: 580.0
       h: 360.0
       collapsed: false
       custW: true
       custH: false
       softW: true
     register:register:
-      x: 1940.0
-      y: -6460.0
+      x: 960.0
+      y: -6540.0
       w: 440.0
-      h: 180.0
+      h: 240.0
       collapsed: false
       custW: true
       custH: true
@@ -6278,10 +6320,6 @@ layout:
       custW: true
       custH: false
       softW: true
-    action:action:
-      x: 1940.0
-      y: -6760.0
-      collapsed: false
     prev:relic_rewards:
       x: 3440.0
       y: -6100.0
@@ -6294,15 +6332,59 @@ layout:
     hist:on_new_relic_fetched:
       x: 4580.0
       y: -8780.0
-      w: 560.0
+      w: 700.0
+      h: 380.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    vt:ds:relics_offered:
+      x: 3320.0
+      y: -5640.0
+      collapsed: false
+    ro:live_game_window:warframe_name_live:
+      x: 1200.0
+      y: -5280.0
+      w: 320.0
+      h: 340.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    rohist:live_game_window:warframe_name_live:
+      x: 1580.0
+      y: -5280.0
+      w: 920.0
       h: 360.0
       collapsed: false
       custW: true
       custH: false
       softW: true
-    vt:ds:relics_offered:
-      x: 3320.0
-      y: -5640.0
+    reghist:register:
+      x: 1460.0
+      y: -6540.0
+      w: 700.0
+      h: 400.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:triggerq:
+      x: 960.0
+      y: -7360.0
+      w: 440.0
+      h: 280.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+      softH: true
+    action:clear_2:
+      x: 2060.0
+      y: -6800.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -6700,6 +6782,8 @@ layout:
         empty→drop: 36
         always→extract: 36
         always→floor: 36
+        confidence: 36
+        consensus: 41
       sorts: []
     rohist:live_game_window:ability_2_cd:
       widths:
@@ -6708,6 +6792,8 @@ layout:
         always→extract: 36
         always→floor: 36
         empty→drop: 36
+        consensus: 41
+        confidence: 36
       sorts: []
     rohist:live_game_window:ability_3_cd:
       widths:
@@ -6717,14 +6803,20 @@ layout:
         always→floor: 36
         value: 36
         empty→drop: 36
+        confidence: 36
+        consensus: 41
     rohist:live_game_window:ability_4_cd:
       sorts: []
       widths:
         when: 147
         raw: 36
-        always→floor: 80
-        always→extract: 36
-        empty→drop: 36
+        no_digit→drop: 36
+        always→extract: 55
+        always→floor: 36
+        value: 70
+        confidence: 53
+        consensus: 41
+      order: []
     prodhist:wf_market_relic:
       widths:
         dataset: 88
@@ -6734,6 +6826,21 @@ layout:
         rows: 36
         when: 147
     hist:on_new_relic_fetched:
+      widths:
+        when: 147
+        fires: 140
+      sorts:
+      - col: when
+        dir: -1
+    rohist:live_game_window:warframe_name_live:
+      widths:
+        when: 147
+        raw: 94
+        confidence: 36
+    reghist:register:
+      sorts:
+      - col: when
+        dir: -1
       widths:
         when: 147
   open_images:
@@ -6994,19 +7101,21 @@ layout:
     - win:live_game_window
     - det:live_game_window:hud
     - var:game:var_1
-    - trigger:ab_trigger
     - ro:live_game_window:ability_1_cd
     - ro:live_game_window:ability_2_cd
     - ro:live_game_window:ability_3_cd
     - ro:live_game_window:ability_4_cd
     - sound:bob
-    - hist:ab_trigger
     - rohist:live_game_window:ability_1_cd
     - rohist:live_game_window:ability_2_cd
     - rohist:live_game_window:ability_3_cd
     - rohist:live_game_window:ability_4_cd
     - register:register
-    - action:action
+    - action:clear_2
+    - trigger:triggerq
+    - ro:live_game_window:warframe_name_live
+    - rohist:live_game_window:warframe_name_live
+    - reghist:register
     outline:
       color: '#3a4150'
       style: none
@@ -7554,9 +7663,7 @@ layout:
   - vt:sub:statistic_prices_joined
   - vt:ds:ee_log_
   - vtd:src:source
-  - hist:trigger
   - vt:sub:overframe_suggestions
-  - hist:ab_trigger
   - rohist:live_game_window:ability_1_cd
   - rohist:live_game_window:ability_2_cd
   - rohist:live_game_window:ability_3_cd
@@ -7566,6 +7673,8 @@ layout:
   - prev:relic_rewards
   - hist:on_new_relic_fetched
   - vt:ds:relics_offered
+  - rohist:live_game_window:warframe_name_live
+  - reghist:register
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -7732,21 +7841,9 @@ layout:
     - rohist:live_game_window:ability_3_cd
     - rohist:live_game_window:ability_4_cd
     - register:register
-    outline:
-      color: '#2b323f'
-      style: none
-      width: 1
-      offset: 0
-    bg: '#0f1117'
-    titleBg: ''
-    titleColor: ''
-    titleAlign: left
-  - id: subgroup_28
-    parent: group_28
-    title: ''
-    members:
-    - win:live_game_window
-    - det:live_game_window:hud
+    - trigger:triggerq
+    - reghist:register
+    - action:clear_2
     outline:
       color: '#2b323f'
       style: none
@@ -7760,9 +7857,7 @@ layout:
     parent: group_28
     title: test
     members:
-    - trigger:ab_trigger
     - sound:bob
-    - hist:ab_trigger
     outline:
       color: '#2b323f'
       style: none
