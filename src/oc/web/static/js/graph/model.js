@@ -620,7 +620,7 @@ export class GraphModel {
                 const to = this.refNode(pid);
                 if (to) es.push({ from: `trigger:${t.id}`, to, kind: "trigger" });
             }
-            if (t.kind === "on_change" || t.kind === "on_any_change" || t.kind === "on_ready")
+            if (t.kind === "on_change" || t.kind === "on_any_change" || t.kind === "on_new_batch" || t.kind === "on_ready")
                 for (const w of t.watch || []) {
                     const to = this.refNode(w);
                     if (to) es.push({ from: `trigger:${t.id}`, to, kind: "watch" });
@@ -868,7 +868,7 @@ export class GraphModel {
         this._emitRename("trigger", oldId, newId);
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_ready", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_ready", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
     // minimum ms between fires — empty/invalid clears it (null = no throttle).
     setTriggerThrottle(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.throttle_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }

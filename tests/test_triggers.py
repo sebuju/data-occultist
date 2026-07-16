@@ -14,6 +14,7 @@ from oc.collect.triggers import TriggerRunner, read_subset_sigs
 from oc.enrich.http_producer import gather_source_names
 from oc.profile.models import GameProfile, JoinSource, ProducerDef, SoundDef, SubsetDef, TriggerDef
 from oc.store import DatasetStore, KeySpec
+from oc.store.keys import KeyMap
 
 
 def _profile():
@@ -78,6 +79,91 @@ def test_on_change_fires_on_clear_but_prices_nothing():
     tr, calls = _runner(_profile(), clock)
     assert tr.on_change("relic_rewards", []) == ["relicwatch"]
     assert calls == []
+
+
+# ---- on_new_batch: fire once per NEW batch, even on identical values -----------------
+
+def _new_batch_profile():
+    return GameProfile(
+        name="g",
+        producers=[ProducerDef(id="relic", dataset="prices_relic", mode="orders", sources=["relics_offered"])],
+        triggers=[TriggerDef(id="batchwatch", kind="on_new_batch", watch=["relics_offered"], targets=["relic"])],
+    )
+
+
+def test_on_new_batch_fires_per_batch_even_with_identical_values():
+    # the whole point: a re-pushed screen with byte-for-byte identical rows is a NEW batch, so it
+    # re-fires — where on_change (value-gated on a subset) would not. Same batch number coalesces.
+    clock = [0.0]
+    tr, calls = _runner(_new_batch_profile(), clock)
+    same = [{"name": "Soma Prime"}]
+    assert tr.on_change("relics_offered", same, batch=1) == ["batchwatch"]
+    assert tr.on_change("relics_offered", same, batch=1) == []          # same batch -> coalesced
+    assert tr.on_change("relics_offered", same, batch=2) == ["batchwatch"]  # identical values, new batch
+    assert calls == [("relic", ["Soma Prime"]), ("relic", ["Soma Prime"])]
+
+
+def test_on_new_batch_needs_a_batch_and_nonempty_records():
+    clock = [0.0]
+    tr, calls = _runner(_new_batch_profile(), clock)
+    assert tr.on_change("relics_offered", [{"name": "A"}], batch=None) == []  # no batch (out-of-proc writer)
+    assert tr.on_change("relics_offered", [], batch=5) == []                  # clear / removal -> no re-sweep
+    assert calls == []
+
+
+def test_on_new_batch_refires_after_a_clear_resets_the_batch():
+    # a clear resets the store's batch to 0; firing on a CHANGE in batch number (!=), not only an
+    # increase, means the next push still fires even though the trigger last fired on a higher one.
+    clock = [0.0]
+    tr, calls = _runner(_new_batch_profile(), clock)
+    assert tr.on_change("relics_offered", [{"name": "A"}], batch=3) == ["batchwatch"]
+    assert tr.on_change("relics_offered", [{"name": "A"}], batch=1) == ["batchwatch"]  # post-clear reseed
+
+
+def _new_batch_subset_profile():
+    # the live wiring: the on_new_batch trigger watches a SUBSET over relics_offered, not the
+    # dataset directly (a leftover from the trigger being on_change before the kind switch).
+    return GameProfile(
+        name="g",
+        producers=[ProducerDef(id="relic", dataset="prices_relic", mode="orders", sources=["relics_offered"])],
+        subsets=[SubsetDef(id="relics_view", sources=[
+            JoinSource(dataset="relics_offered", join_field="name", required=True)])],
+        triggers=[TriggerDef(id="batchwatch", kind="on_new_batch", watch=["relics_view"], targets=["relic"])],
+    )
+
+
+def test_on_new_batch_fires_for_a_subset_watch_on_its_leaf_dataset():
+    # a subset watch fires on ITS underlying dataset's batch — no value/output gate, so identical
+    # rows in a new batch still re-fire (regression: only a direct dataset watch fired -> never hit).
+    clock = [0.0]
+    tr, calls = _runner(_new_batch_subset_profile(), clock)
+    same = [{"name": "Soma Prime"}]
+    assert tr.on_change("relics_offered", same, batch=1) == ["batchwatch"]
+    assert tr.on_change("relics_offered", same, batch=2) == ["batchwatch"]   # identical, new batch
+    assert calls == [("relic", ["Soma Prime"]), ("relic", ["Soma Prime"])]
+
+
+def test_on_new_batch_rides_the_change_bus(tmp_path):
+    # end-to-end down the REAL change bus: a dedup:false dataset (announces every write, including
+    # identical values) re-pushed twice. on_new_batch fires BOTH pushes — proving the store's batch
+    # number rides publish -> OnChangeFirer -> runner.on_change and is distinguished per batch.
+    from oc.store import changes
+    from oc.store.changes import OnChangeFirer
+    fired: list[str] = []
+    tr = TriggerRunner(_new_batch_profile(), tmp_path,
+                       fire=lambda pn, items: fired.append(pn.id), clock=lambda: 0.0)
+    firer = OnChangeFirer(lambda _g: tr)   # busy=None -> the flush fires synchronously
+    off = changes.subscribe(firer)
+    try:
+        ds = DatasetStore(tmp_path, "g", "relics_offered",
+                          key=KeyMap(default=KeySpec(fields=("name",)), dedup=False))
+        ds.begin_batch(); ds.record_seen({"name": "Soma Prime"})   # push #1
+        firer._flush()
+        ds.begin_batch(); ds.record_seen({"name": "Soma Prime"})   # push #2: identical screen, new batch
+        firer._flush()
+    finally:
+        off()
+    assert fired == ["relic", "relic"]   # both identical pushes re-fired the sweep, one per batch
 
 
 # ---- true_interval: real elapsed time off the PERSISTED last-fire ----------

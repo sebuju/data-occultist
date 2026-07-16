@@ -95,6 +95,11 @@ function watchPortSpec(n) {
         target: ["dataset", "subset"],
         onDrop: (id) => model.addTriggerWatch(n.ref.id, id),
     };
+    if (n.ref.kind === "on_new_batch") return {
+        side: "L",
+        target: ["dataset", "subset"],   // a subset watch fires on its underlying dataset's batch
+        onDrop: (id) => model.addTriggerWatch(n.ref.id, id),
+    };
     if (n.ref.kind === "on_ready") return {
         side: "L",
         target: ["producer"],   // on_ready fires when the watched producer's sweep finishes

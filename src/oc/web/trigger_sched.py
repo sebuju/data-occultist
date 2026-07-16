@@ -120,7 +120,7 @@ def schedule(game: str, settings) -> list[dict]:
                     last = _parse_iso(fires.get(t.id))
                     item["next_in"] = 0 if last is None else max(
                         0, round(t.interval_s - (now_wall - last).total_seconds()))
-            elif t.kind in ("on_change", "on_any_change"):
+            elif t.kind in ("on_change", "on_any_change", "on_new_batch"):
                 item["watch"] = list(t.watch)
             out.append(item)
         return out

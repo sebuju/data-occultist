@@ -506,8 +506,10 @@ class DatasetStore:
         """Tell the change bus this dataset's data changed (UI push + on_change triggers).
         ``records`` are the values just added/updated, for trigger pricing; [] = UI-only.
         ``data_changed=False`` marks a metadata-only ping (learned scroll positions) that
-        refreshes the UI but must not fire on_change triggers."""
-        changes.publish(self._game, self._dataset, records, data_changed=data_changed)
+        refreshes the UI but must not fire on_change triggers. The current batch number rides
+        along so on_new_batch triggers can fire once per new batch (see ``begin_batch``)."""
+        changes.publish(self._game, self._dataset, records, data_changed=data_changed,
+                        batch=self._batch)
 
     def save(self) -> None:
         """No-op: writes are committed transactionally as they happen. Kept for callers that

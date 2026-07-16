@@ -215,18 +215,20 @@ function activityJobs(data, elapsed = 0) {
         const enabled = t.enabled !== false;
         const running = (t.targets || []).some((x) => x.running);
         let prog;
-        const watchLabel = t.kind === "on_any_change" ? "any change" : "on change";
+        const watchLabel = t.kind === "on_any_change" ? "any change"
+            : t.kind === "on_new_batch" ? "new batch" : "on change";
+        const watched = t.kind === "on_change" || t.kind === "on_any_change" || t.kind === "on_new_batch";
         const timed = t.kind === "interval" || t.kind === "true_interval";
         if (!enabled) {
             prog = timed ? `disabled · every ${fmtDur(t.interval_s)}`
-                : (t.kind === "on_change" || t.kind === "on_any_change") ? `disabled · ${watchLabel}: ${(t.watch || []).join(", ") || "—"}`
+                : watched ? `disabled · ${watchLabel}: ${(t.watch || []).join(", ") || "—"}`
                 : "disabled";
         } else if (timed) {
             const remaining = Math.max(0, (t.next_in || 0) - elapsed);   // age locally between fetches
             prog = running ? "firing now…"
                 : remaining <= 0 ? `due… · every ${fmtDur(t.interval_s)}`
                 : `fires in ${fmtDur(remaining)} · every ${fmtDur(t.interval_s)}`;
-        } else if (t.kind === "on_change" || t.kind === "on_any_change") {
+        } else if (watched) {
             prog = `${watchLabel}: ${(t.watch || []).join(", ") || "—"}${running ? " · firing now…" : ""}`;
         } else { prog = t.kind; }
         // last-activation gets its OWN (third) row, not crammed onto the status line. `lastTs`

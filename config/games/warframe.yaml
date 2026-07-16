@@ -2531,16 +2531,6 @@ subsets:
   config_collapsed: true
 - id: relic_rewards_with_price
   sources:
-  - dataset: relic_rewards_limit
-    join_field: name
-    join_norm:
-      case_insensitive: true
-      strip_punct: false
-      collapse_ws: true
-      strip_words: []
-    aggregate: latest
-    required: true
-    mode: join
   - dataset: relic_prices
     join_field: name
     join_norm:
@@ -2571,41 +2561,6 @@ subsets:
   - price_min
   - updated
   - combined
-  sort:
-  - field: price_min
-    desc: true
-  sort_by: ''
-  sort_desc: false
-  latest_batch: false
-  limit: 0
-  config_collapsed: true
-- id: relic_priced_batch
-  sources:
-  - dataset: relic_prices
-    join_field: name
-    join_norm:
-      case_insensitive: true
-      strip_punct: false
-      collapse_ws: true
-      strip_words: []
-    aggregate: latest
-    required: true
-    mode: join
-  filters: []
-  derived:
-  - name: price
-    template: '{price_min|round:0}'
-  hidden_columns:
-  - price_min
-  - price_median
-  - volume
-  - key
-  - _seq
-  - _pos
-  - _batch
-  - _count
-  - first_seen
-  - last_seen
   sort:
   - field: price_min
     desc: true
@@ -4381,7 +4336,7 @@ triggers:
   enabled: true
   ready_field: ''
 - id: trigger_on_new_relic
-  kind: on_change
+  kind: on_new_batch
   interval_s: 300.0
   watch:
   - relic_rewards_limit
@@ -4441,7 +4396,7 @@ toasts:
     angle: 90
     unit: pct
     texts:
-    - content: '{{subset:relic_priced_batch.name[0]}}'
+    - content: '{{subset:relic_rewards_with_price.name[0]}}'
       x: 3
       y: 5
       size: 18
@@ -4472,7 +4427,7 @@ toasts:
         corner: tl
         target: tl
       z_index: 1
-    - content: '{{subset:relic_priced_batch.name[1]}}'
+    - content: '{{subset:relic_rewards_with_price.name[1]}}'
       x: 0
       y: 18
       size: 16
@@ -4503,7 +4458,7 @@ toasts:
         corner: tl
         target: bl
       z_index: 0
-    - content: '{{subset:relic_priced_batch.name[2]}}'
+    - content: '{{subset:relic_rewards_with_price.name[2]}}'
       x: 0
       y: 0
       size: 15
@@ -4534,7 +4489,7 @@ toasts:
         corner: tl
         target: bl
       z_index: 0
-    - content: '{{subset:relic_priced_batch.name[3]}}'
+    - content: '{{subset:relic_rewards_with_price.name[3]}}'
       x: 0
       y: 0
       size: 15
@@ -4565,7 +4520,7 @@ toasts:
         corner: tl
         target: bl
       z_index: 0
-    - content: '{{subset:relic_priced_batch.price[0] ?? -}} p'
+    - content: '{{subset:relic_rewards_with_price.price[0] ?? -}} p'
       x: 0
       y: 0
       size: 16
@@ -4596,7 +4551,7 @@ toasts:
         corner: tl
         target: tr
       z_index: 1
-    - content: '{{subset:relic_priced_batch.price[1] ?? -}} p'
+    - content: '{{subset:relic_rewards_with_price.price[1] ?? -}} p'
       x: 0
       y: 0
       size: 15
@@ -4627,7 +4582,7 @@ toasts:
         corner: tl
         target: tr
       z_index: 0
-    - content: '{{subset:relic_priced_batch.price[2] ?? -}} p'
+    - content: '{{subset:relic_rewards_with_price.price[2] ?? -}} p'
       x: 0
       y: 0
       size: 15
@@ -4658,7 +4613,7 @@ toasts:
         corner: tl
         target: tr
       z_index: 0
-    - content: '{{subset:relic_priced_batch.price[3] ?? -}} p'
+    - content: '{{subset:relic_rewards_with_price.price[3] ?? -}} p'
       x: 0
       y: 0
       size: 15
@@ -4732,7 +4687,7 @@ toasts:
 sounds:
 - id: relic_sound
   file: two-tone.wav
-  volume: 0.05
+  volume: 0.25
   enabled: true
 - id: bob
   file: ''
@@ -5352,14 +5307,15 @@ layout:
       x: 3280.0
       y: -8780.0
       w: 360.0
-      h: 1360.0
+      h: 1340.0
       collapsed: false
       custW: false
-      custH: true
+      custH: false
+      softW: true
       softH: true
     ds:relic_prices:
       x: 3280.0
-      y: -7380.0
+      y: -7400.0
       collapsed: false
     trigger:trigger_on_new_relic:
       x: 2880.0
@@ -6344,10 +6300,6 @@ layout:
       custW: true
       custH: false
       softW: true
-    sub:relic_priced_batch:
-      x: 1900.0
-      y: 178.0
-      collapsed: false
     vt:ds:relics_offered:
       x: 3320.0
       y: -5640.0

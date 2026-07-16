@@ -13,7 +13,7 @@ class _Runner:
     def __init__(self, sink):
         self.sink = sink
 
-    def on_change(self, dataset, records):
+    def on_change(self, dataset, records, batch=None):
         self.sink.append((dataset, [r["name"] for r in records]))
         return [dataset]
 

@@ -2,7 +2,9 @@
 // reseeds to now on restart/config edit); `true_interval` fires every N seconds of REAL time,
 // anchored to the persisted last-fire so its cadence survives restarts; `on_change` fires whenever
 // a watched dataset gains rows (any write path), but a watched subset only fires when its computed
-// output actually differs; `on_any_change` fires on every write reaching it; `on_readout` fires
+// output actually differs; `on_any_change` fires on every write reaching it; `on_new_batch` fires
+// once per new batch of a watched dataset (a re-pushed screen) even if the values are identical;
+// `on_readout` fires
 // when a watched live readout meets its condition; `on_ready` fires once when a watched PRODUCER's
 // sweep/fetch finishes (the producer does the work and knows when it's done); `manual` never
 // auto-fires (the fire button drives it). A throttle sets a minimum time between fires (leading edge); a settle waits for the
@@ -14,7 +16,7 @@ import { h, frag, labCell, srcRow } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
 
 const KINDS = [["interval", "interval"], ["true_interval", "true interval"], ["on_change", "on change"],
-    ["on_any_change", "on any change"],
+    ["on_any_change", "on any change"], ["on_new_batch", "on new batch"],
     ["on_app_start", "on app start"], ["on_capture", "on capture start"],
     ["on_live_start", "on live start"], ["on_live_stop", "on live stop"],
     ["on_readout", "on readout"], ["on_ready", "on ready"], ["manual", "manual only"]];
@@ -49,16 +51,18 @@ export function triggerParts(t, model) {
         : null;
 
     let watch = null;
-    if (kind === "on_change" || kind === "on_any_change" || kind === "on_ready") {
+    if (kind === "on_change" || kind === "on_any_change" || kind === "on_new_batch" || kind === "on_ready") {
         const have = new Set(t.watch || []);
-        // on_change/on_any_change watch datasets OR subsets; on_ready watches a PRODUCER and fires
-        // when its sweep finishes (the producer does the work and knows when it's done).
+        // on_change/on_any_change/on_new_batch watch datasets OR subsets; on_ready watches a
+        // PRODUCER and fires when its sweep finishes (the producer knows when it's done).
         const onlyProducers = kind === "on_ready";
         const sources = onlyProducers
             ? (model.profile.producers || []).map((p) => p.id)
             : [...model.datasets(), ...(model.profile.subsets || []).map((s) => s.id)];
         const hint = kind === "on_any_change"
             ? "datasets or subsets; fires on every write, even if a watched subset's visible output is unchanged"
+            : kind === "on_new_batch"
+            ? "datasets or subsets; fires once per new batch (a re-pushed screen) even if the values are identical"
             : kind === "on_ready"
             ? "the producer to watch; fires once when its sweep/fetch finishes (data already written)"
             : "datasets or subsets; the trigger fires when one gains rows";
@@ -124,6 +128,7 @@ export function triggerParts(t, model) {
         ports: frag(
             h("span", { class: "port out", title: "drag to a node this trigger should fire" }),
             (kind === "on_change" || kind === "on_any_change") && h("span", { class: "port pwatch", title: "drag to a dataset or subset to watch for new rows" }),
+            kind === "on_new_batch" && h("span", { class: "port pwatch", title: "drag to a dataset or subset to fire once per new batch (a re-pushed screen)" }),
             kind === "on_ready" && h("span", { class: "port pwatch", title: "drag to a producer to fire when its sweep finishes" }),
             kind === "on_readout" && h("span", { class: "port pwatch", title: "drag to a readout node to watch its value" })),
     };

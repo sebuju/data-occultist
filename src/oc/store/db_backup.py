@@ -250,7 +250,8 @@ class AutoBackup:
             if dt is not None:
                 self._last[game] = dt
 
-    def __call__(self, game: str, dataset: str, records: list, data_changed: bool = True) -> None:
+    def __call__(self, game: str, dataset: str, records: list, data_changed: bool = True,
+                 batch: int | None = None) -> None:
         if not records or not game:
             return                                  # only real writes count as "changed"
         now = datetime.now(timezone.utc)

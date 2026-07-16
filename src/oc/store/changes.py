@@ -17,10 +17,12 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
-# subscriber signature: cb(game, dataset, records, data_changed=True). ``data_changed`` is
-# False only for a metadata-only ping (learned scroll positions) that refreshes the UI but is
+# subscriber signature: cb(game, dataset, records, data_changed=True, batch=None). ``data_changed``
+# is False only for a metadata-only ping (learned scroll positions) that refreshes the UI but is
 # not a change to the stored data — subscribers that fire on data changes (the OnChangeFirer)
-# must ignore it; the rest don't care and accept it via a default.
+# must ignore it; the rest don't care and accept it via a default. ``batch`` is the writing
+# store's current batch number (None from out-of-process writers) — the OnChangeFirer forwards it
+# so ``on_new_batch`` triggers fire once per batch; other subscribers ignore it via the default.
 _Sub = Callable[..., None]
 
 _lock = threading.Lock()
@@ -68,19 +70,23 @@ def publish_sweep_done(game: str, node_id: str, dataset: str) -> None:
 
 
 def publish(game: str, dataset: str, records: list | None = None,
-            *, data_changed: bool = True) -> None:
+            *, data_changed: bool = True, batch: int | None = None) -> None:
     """Announce that ``dataset`` of ``game`` changed. ``records`` are the values just
     added/updated (used by on_change trigger firing); empty/None still notifies the UI.
 
     ``data_changed=False`` marks a metadata-only ping (learned scroll positions): it refreshes
     the UI but did NOT change the stored data, so it must not fire on_change triggers. A real
     change with no priceable records (a clear / removal) keeps the default ``True`` — the watched
-    data changed even though there is nothing new to price."""
+    data changed even though there is nothing new to price.
+
+    ``batch`` is the writing store's current batch number (see ``DatasetStore.begin_batch``); the
+    OnChangeFirer forwards it so ``on_new_batch`` triggers fire once per NEW batch even when the
+    row values are unchanged. None from an out-of-process writer (e.g. the price sweep child)."""
     with _lock:
         subs = list(_subs)
     for cb in subs:
         try:
-            cb(game, dataset, records or [], data_changed)
+            cb(game, dataset, records or [], data_changed, batch)
         except Exception:  # noqa: BLE001 - one bad subscriber must never break a write
             pass
 
@@ -105,6 +111,9 @@ class OnChangeFirer:
         self._delay = delay
         self._busy = busy
         self._pending: dict[tuple[str, str], list] = {}
+        # highest batch number announced for each (game, dataset) this window — forwarded to the
+        # runner so on_new_batch fires once per batch (all rows of a batch share the number).
+        self._batches: dict[tuple[str, str], int | None] = {}
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
 
@@ -117,7 +126,7 @@ class OnChangeFirer:
         self._timer.start()
 
     def __call__(self, game: str, dataset: str, records: list,
-                 data_changed: bool = True) -> None:
+                 data_changed: bool = True, batch: int | None = None) -> None:
         if not dataset:
             return
         # A metadata-only ping (learned scroll positions) is not a data change -> never fires.
@@ -127,14 +136,20 @@ class OnChangeFirer:
         # actually changed) and prices nothing.
         if not records and not data_changed:
             return
+        key = (game, dataset)
         with self._lock:
-            self._pending.setdefault((game, dataset), []).extend(records)
+            self._pending.setdefault(key, []).extend(records)
+            if batch is not None:
+                prev = self._batches.get(key)
+                self._batches[key] = batch if prev is None else max(prev, batch)
             self._arm_locked()
 
     def _flush(self) -> None:
         with self._lock:
             pending = self._pending
+            batches = self._batches
             self._pending = {}
+            self._batches = {}
             self._timer = None
         deferred: dict[tuple[str, str], list] = {}
         for (game, dataset), recs in pending.items():
@@ -148,13 +163,17 @@ class OnChangeFirer:
             try:
                 runner = self._runner_for(game)
                 if runner is not None:
-                    runner.on_change(dataset, recs)
+                    runner.on_change(dataset, recs, batch=batches.get((game, dataset)))
             except Exception:  # noqa: BLE001 - firing is best-effort
                 pass
         if deferred:
-            # nothing settled yet — keep the records and re-check after another window
+            # nothing settled yet — keep the records (and their batch) and re-check next window
             with self._lock:
                 for k, v in deferred.items():
                     self._pending.setdefault(k, []).extend(v)
+                    b = batches.get(k)
+                    if b is not None:
+                        prev = self._batches.get(k)
+                        self._batches[k] = b if prev is None else max(prev, b)
                 if self._timer is None:
                     self._arm_locked()

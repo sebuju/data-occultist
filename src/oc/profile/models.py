@@ -941,6 +941,10 @@ class TriggerDef(BaseModel):
       A watched subset only fires when its computed/visible output actually changes.
     * ``on_any_change``  — same ``watch`` mechanics as ``on_change``, but fires whenever data
       enters a watched dataset/subset regardless of whether the (subset's) visible output changed.
+    * ``on_new_batch``   — fire once per NEW batch of a watched dataset, even when the row values
+      are identical to the previous batch (a re-pushed screen is a fresh batch, so it re-fires
+      where ``on_change`` — value-gated — would not). ``watch`` may be a dataset or a subset over
+      it (a subset watch fires on its underlying dataset's batch).
     * ``on_app_start``   — fire once when the web app boots.
     * ``on_capture``     — fire when a capture session starts (live OR precapture).
     * ``on_live_start``  — fire when the server live-collection session starts (armed collection).
@@ -961,11 +965,11 @@ class TriggerDef(BaseModel):
     """
 
     id: str
-    # interval | true_interval | on_change | on_any_change | on_app_start | on_capture |
-    # on_live_start | on_live_stop | on_readout | on_ready | manual
+    # interval | true_interval | on_change | on_any_change | on_new_batch | on_app_start |
+    # on_capture | on_live_start | on_live_stop | on_readout | on_ready | manual
     kind: str = "interval"
     interval_s: float = 300.0               # for kind="interval"/"true_interval": seconds between fires
-    watch: list[str] = Field(default_factory=list)    # for kind="on_change"/"on_any_change": datasets to watch
+    watch: list[str] = Field(default_factory=list)    # for kind="on_change"/"on_any_change"/"on_new_batch": datasets to watch
     # for kind="on_readout": the readout ids this trigger watches, and the condition its value
     # must meet to fire. readout_op ∈ gte|lte|gt|lt|eq|ne|crosses_up|crosses_down (crosses_* compare
     # against the previous reading). Edge-triggered — fires once when the condition becomes true.

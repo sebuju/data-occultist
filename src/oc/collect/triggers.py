@@ -15,6 +15,10 @@ Kinds:
 * ``on_any_change``— same watch mechanics as ``on_change``, but a subset watch fires on EVERY
   write reaching it, even one that leaves the subset's visible output unchanged (e.g. a hidden
   join column). Use when "data entered" itself is the signal, not "the joined view differs".
+* ``on_new_batch``  — fire once per NEW batch of a watched dataset (:meth:`on_change`, off the same
+  change bus), even when the row values are identical to the previous batch. A re-pushed relic
+  screen is a fresh batch, so it re-fires (→ re-sweep → re-toast) where on_change (value-gated)
+  would not. Watches a dataset OR a subset over it (fires on the subset's leaf dataset's batch).
 * ``on_app_start`` — fire once when the teach/web app boots (:meth:`fire_app_start`).
 * ``on_capture``   — fire when a capture session starts, live OR precapture (:meth:`fire_capture`).
 * ``on_live_start``— fire when the server live-collection session starts (:meth:`fire_live_start`).
@@ -144,6 +148,12 @@ class TriggerRunner:
         # monotonic time of each trigger's LAST actual fire (any kind) — the throttle clock. A
         # fire within throttle_ms of this is suppressed (recorded as throttled, not fired).
         self._last_fire_any: dict[str, float] = {}
+        # on_new_batch: last batch number an on_new_batch trigger fired on, per (trigger, dataset).
+        # In-memory (the runner is cached per game), so a fresh process fires on the first batch it
+        # sees — acceptable, mirrors interval reseed. We fire on any CHANGE in batch number (!=),
+        # not only an increase, so a dataset clear (which resets the batch to 0) doesn't wedge the
+        # trigger until the count climbs back past the last-fired number.
+        self._new_batch_last: dict[tuple[str, str], int] = {}
         # trailing-settle debounce state (guarded by _settle_lock). For a trigger with settle_ms:
         # the pending fire args (kept latest-wins), the live timer, and the monotonic time the
         # current window opened (for the settle_max_ms deadline). A fire is deferred while the
@@ -350,9 +360,10 @@ class TriggerRunner:
 
     # ---- on_change ---------------------------------------------------------
 
-    def on_change(self, dataset: str | None, changed_records: list[dict]) -> list[str]:
-        """Fire ``on_change``/``on_any_change`` triggers watching ``dataset``, pricing only
-        ``changed_records``. Returns fired trigger ids.
+    def on_change(self, dataset: str | None, changed_records: list[dict],
+                  batch: int | None = None) -> list[str]:
+        """Fire ``on_change``/``on_any_change``/``on_new_batch`` triggers watching ``dataset``,
+        pricing only ``changed_records``. Returns fired trigger ids.
 
         A DIRECT dataset watch fires whenever the dataset changes (the records ARE new) for
         either kind. A SUBSET watch differs by kind: ``on_change`` fires only when the subset's
@@ -364,7 +375,16 @@ class TriggerRunner:
         ``changed_records`` may be empty — a clear / removal changed the watched data but leaves
         nothing to price. A direct watch still fires (its data changed); an ``on_change`` subset
         watch fires iff its computed output changed; an ``on_any_change`` subset watch always
-        fires. Either way ``_fire_targets`` prices nothing (empty items)."""
+        fires. Either way ``_fire_targets`` prices nothing (empty items).
+
+        ``on_new_batch`` (design A, off the change bus) fires once per NEW batch of the changed
+        dataset even when the row values are byte-for-byte identical to the previous batch (a
+        re-pushed relic screen) — the value-gating on_change/on_any_change apply is exactly what it
+        must bypass. ``batch`` is the writing store's batch number (see ``DatasetStore.begin_batch``);
+        we fire when it differs from the last batch this trigger fired on for that dataset. A watch
+        may be the dataset itself OR a subset that reads it (batches live on the leaf dataset, so a
+        subset watch fires on its underlying dataset's batch); only a non-empty ``changed_records``
+        fires (a clear/removal announces [] and must not re-sweep)."""
         if not dataset:
             return []
         fired: list[str] = []
@@ -395,6 +415,31 @@ class TriggerRunner:
                 node = f"sub:{w}" if self._profile.subset_def(w) else f"ds:{w}"
                 publish_flow(self._profile.name, "watch", node, f"trigger:{t.id}", 1)
             fired.append(t.id)
+        # on_new_batch: fire once per new batch of the changed dataset (see docstring). A watch may
+        # be the dataset itself OR a subset that (transitively) reads it — batches live on the leaf
+        # dataset, so a subset watch fires on ITS underlying dataset's batch, no value/output gate.
+        if batch is not None and changed_records:
+            nb_items = None
+            for t in self._profile.triggers:
+                if not t.enabled or t.kind != "on_new_batch":
+                    continue
+                justifying = [w for w in (t.watch or [])
+                              if w == dataset or self._subset_reaches(w, dataset, set())]
+                if not justifying:
+                    continue
+                key = (t.id, dataset)
+                if self._new_batch_last.get(key) == batch:
+                    continue                       # same batch already handled -> coalesce
+                self._new_batch_last[key] = batch   # stamp before firing so a throttle can't re-fire
+                if nb_items is None:
+                    nb_items = self._items_for(changed_records)
+                why = f"{dataset} batch #{batch} ({len(changed_records)} rows, {len(nb_items)} to price)"
+                if not self._route_fire(t, why, items=nb_items):
+                    continue   # throttled / deferred into a settle window — no watch-hop animation yet
+                for w in justifying:
+                    node = f"sub:{w}" if self._profile.subset_def(w) else f"ds:{w}"
+                    publish_flow(self._profile.name, "watch", node, f"trigger:{t.id}", 1)
+                fired.append(t.id)
         if new_sigs:
             write_subset_sigs(self._data_dir, self._profile.name, {**stored, **new_sigs})
         return fired
