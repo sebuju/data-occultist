@@ -3,8 +3,10 @@
 // anchored to the persisted last-fire so its cadence survives restarts; `on_change` fires whenever
 // a watched dataset gains rows (any write path), but a watched subset only fires when its computed
 // output actually differs; `on_any_change` fires on every write reaching it; `on_readout` fires
-// when a watched live readout meets its condition; `manual` never auto-fires (the fire button
-// drives it). A throttle sets a minimum time between fires. Targets are wired by dragging the
+// when a watched live readout meets its condition; `on_ready` fires once when a watched PRODUCER's
+// sweep/fetch finishes (the producer does the work and knows when it's done); `manual` never
+// auto-fires (the fire button drives it). A throttle sets a minimum time between fires (leading edge); a settle waits for the
+// watched changes to stop and then fires once (trailing edge). Targets are wired by dragging the
 // out-port to a producer / file source / toast / sound / action, or picked from the "fires" row.
 // The dataset ACTION (clear/clone/move) is now its own node (action_node.js), fired via `targets`.
 // Rendering only — wiring is in main.js.
@@ -15,7 +17,7 @@ const KINDS = [["interval", "interval"], ["true_interval", "true interval"], ["o
     ["on_any_change", "on any change"],
     ["on_app_start", "on app start"], ["on_capture", "on capture start"],
     ["on_live_start", "on live start"], ["on_live_stop", "on live stop"],
-    ["on_readout", "on readout"], ["manual", "manual only"]];
+    ["on_readout", "on readout"], ["on_ready", "on ready"], ["manual", "manual only"]];
 
 // comparison operators for an on_readout trigger, with human labels for the dropdown.
 const VAR_OPS = [["gte", "≥ (at least)"], ["lte", "≤ (at most)"], ["gt", "> (above)"],
@@ -47,18 +49,25 @@ export function triggerParts(t, model) {
         : null;
 
     let watch = null;
-    if (kind === "on_change" || kind === "on_any_change") {
+    if (kind === "on_change" || kind === "on_any_change" || kind === "on_ready") {
         const have = new Set(t.watch || []);
-        // watch datasets OR subsets (a subset fires when any of its source datasets gains rows)
-        const sources = [...model.datasets(), ...(model.profile.subsets || []).map((s) => s.id)];
+        // on_change/on_any_change watch datasets OR subsets; on_ready watches a PRODUCER and fires
+        // when its sweep finishes (the producer does the work and knows when it's done).
+        const onlyProducers = kind === "on_ready";
+        const sources = onlyProducers
+            ? (model.profile.producers || []).map((p) => p.id)
+            : [...model.datasets(), ...(model.profile.subsets || []).map((s) => s.id)];
         const hint = kind === "on_any_change"
             ? "datasets or subsets; fires on every write, even if a watched subset's visible output is unchanged"
+            : kind === "on_ready"
+            ? "the producer to watch; fires once when its sweep/fetch finishes (data already written)"
             : "datasets or subsets; the trigger fires when one gains rows";
         watch = srcRow("watch", hint,
             sourcesInput({
                 chips: (t.watch || []).map((w) => ({ value: w, node: model.refNode(w) })),
                 free: sources.filter((d) => !have.has(d)),
-                addLabel: "+ watch source", addinCls: "sv-addin tg-addwatch", rmCls: "sv-rmin tg-rmwatch" }));
+                addLabel: onlyProducers ? "+ watch producer" : "+ watch source",
+                addinCls: "sv-addin tg-addwatch", rmCls: "sv-rmin tg-rmwatch" }));
     }
 
     // on_readout: watch one or more live readouts and fire when the condition is met. Chips
@@ -85,6 +94,22 @@ export function triggerParts(t, model) {
             h("input", { class: "tg-throttle", type: "number", min: "1", step: "1",
                 placeholder: "(none)", value: t.throttle_ms == null ? "" : t.throttle_ms }), " ms"));
 
+    // settle: trailing-edge debounce — wait for changes to stop, then fire ONCE with the final
+    // state (blank = fire immediately). Meaningless for `manual` (never auto-fires), so it's shown
+    // only for auto-fire kinds. The max-cap (fire anyway after this long even if changes keep
+    // coming) appears only once a settle window is set — a deadline with no window does nothing.
+    const hasSettle = t.settle_ms != null && t.settle_ms > 0;
+    // on_ready is deterministic (fires on the watched producer's completion) — no debounce.
+    const settle = (kind === "manual" || kind === "on_ready") ? null : frag(
+        labCell("settle", "wait for changes to stop, then fire once (blank = fire now)"),
+        h("span", { class: "tg-secs" },
+            h("input", { class: "tg-settle", type: "number", min: "1", step: "1",
+                placeholder: "(none)", value: t.settle_ms == null ? "" : t.settle_ms }), " ms"),
+        hasSettle ? labCell("settle max", "fire anyway after this long even if changes keep coming") : null,
+        hasSettle ? h("span", { class: "tg-secs" },
+            h("input", { class: "tg-settlemax", type: "number", min: "1", step: "1",
+                placeholder: "(none)", value: t.settle_max_ms == null ? "" : t.settle_max_ms }), " ms") : null);
+
     return {
         title: h("input", { class: "gi gi-id tgrename", value: t.id, title: "rename trigger" }),
         body: frag(
@@ -92,13 +117,14 @@ export function triggerParts(t, model) {
                 targets,
                 labCell("kind", "how the trigger decides to fire"),
                 h("select", { class: "tg-kind" }, KINDS.map(kopt)),
-                interval, watch, varwatch, throttle,
+                interval, watch, varwatch, throttle, settle,
                 labCell("progress", "what the trigger is doing (live countdown for timed kinds)"),
                 h("span", { class: "tg-prog muted" }, "idle"))),
         foot: h("button", { class: "tg-fire" }, "↻ fire"),
         ports: frag(
             h("span", { class: "port out", title: "drag to a node this trigger should fire" }),
             (kind === "on_change" || kind === "on_any_change") && h("span", { class: "port pwatch", title: "drag to a dataset or subset to watch for new rows" }),
+            kind === "on_ready" && h("span", { class: "port pwatch", title: "drag to a producer to fire when its sweep finishes" }),
             kind === "on_readout" && h("span", { class: "port pwatch", title: "drag to a readout node to watch its value" })),
     };
 }

@@ -78,9 +78,9 @@ function outPortSpec(n) {
             onDrop: (pid) => model.addTriggerTarget(n.ref.id, pid),
         };
         case "action": return {
-            // an action node operates on the DATASET(s) it's wired to
-            target: "dataset",
-            onDrop: (ds) => model.addActionDataset(n.ref.id, ds),
+            // an action node operates on the DATASET(s) and REGISTER(s) it's wired to
+            target: ["dataset", "register"],
+            onDrop: (id, ttype) => model.addActionSource(n.ref.id, `${ttype}:${id}`),
         };
         default: return null;
     }
@@ -90,9 +90,14 @@ function outPortSpec(n) {
 // on_change trigger watch it. Separate from the fires port so the two control lines never share a dot.
 function watchPortSpec(n) {
     if (n.type !== "trigger") return null;
-    if (n.ref.kind === "on_change") return {
+    if (n.ref.kind === "on_change" || n.ref.kind === "on_any_change") return {
         side: "L",
         target: ["dataset", "subset"],
+        onDrop: (id) => model.addTriggerWatch(n.ref.id, id),
+    };
+    if (n.ref.kind === "on_ready") return {
+        side: "L",
+        target: ["producer"],   // on_ready fires when the watched producer's sweep finishes
         onDrop: (id) => model.addTriggerWatch(n.ref.id, id),
     };
     if (n.ref.kind === "on_readout") return {

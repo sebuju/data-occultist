@@ -81,15 +81,30 @@ export class GraphModel {
             // fold a legacy single-column sort into the multi-column list
             if (!s.sort.length && s.sort_by) { s.sort = [{ field: s.sort_by, desc: !!s.sort_desc }]; s.sort_by = ""; }
         }
-        for (const pn of this.profile.producers) pn.sources = pn.sources || [];   // items the node prices (empty = catalogue)
+        for (const pn of this.profile.producers) { pn.sources = pn.sources || []; pn.queue_mode = pn.queue_mode || "drop"; }   // items the node prices (empty = catalogue)
         for (const s of this.profile.file_sources) { s.match = s.match || []; s.fields = s.fields || []; s.roots = s.roots || []; }
         for (const t of this.profile.triggers) {
             t.watch = t.watch || []; t.targets = t.targets || [];
             t.readout_watch = t.readout_watch || []; t.readout_op = t.readout_op || "gte"; if (t.readout_value == null) t.readout_value = 0;
             if (t.throttle_ms === undefined) t.throttle_ms = null;
+            if (t.settle_ms === undefined) t.settle_ms = null;
+            if (t.settle_max_ms === undefined) t.settle_max_ms = null;
+            if (t.ready_field === undefined) t.ready_field = "";
         }
         this.profile.actions = this.profile.actions || [];
-        for (const x of this.profile.actions) { x.datasets = x.datasets || []; x.action = x.action || ""; x.dest = x.dest || ""; if (x.enabled == null) x.enabled = true; }
+        for (const x of this.profile.actions) {
+            // legacy dataset-only `datasets: [<id>]` -> prefixed `sources: ["dataset:<id>"]` (twin of
+            // the server _migrate_sources, for an in-memory profile that never round-tripped).
+            if (!x.sources) x.sources = (x.datasets || []).map((d) => `dataset:${d}`);
+            delete x.datasets;
+            x.slots = x.slots || {};   // register id -> targeted readout keys (absent/[] = all)
+            x.action = x.action || ""; x.dest = x.dest || ""; if (x.enabled == null) x.enabled = true;
+        }
+        this.profile.registers = this.profile.registers || [];
+        for (const r of this.profile.registers) {
+            r.sources = r.sources || []; if (r.capacity == null) r.capacity = 1;
+            if (r.persist == null) r.persist = ""; if (r.enabled == null) r.enabled = true;
+        }
         // Item children arrive HOISTED to the window (flat ``item_fields``/``item_tells``, each
         // with an ``item`` backref) so each is its own node. Fan them back onto each item's
         // ``fields``/``tells`` for the per-item editing logic, and drop the flat key so saving
@@ -239,8 +254,11 @@ export class GraphModel {
             (t.watch || []).forEach((_, i) =>
                 sites.push({ decl: false, get: () => t.watch[i], set: (v) => { t.watch[i] = v; } }));
         for (const x of this.profile.actions || []) {                     // action node dataset REFs
-            (x.datasets || []).forEach((_, i) =>                          // datasets it acts on
-                sites.push({ decl: false, get: () => x.datasets[i], set: (v) => { x.datasets[i] = v; } }));
+            (x.sources || []).forEach((ref, i) => {                       // only the "dataset:" sources are dataset refs
+                const c = ref.indexOf(":"), kind = c < 0 ? "" : ref.slice(0, c);
+                if (kind === "dataset")
+                    sites.push({ decl: false, get: () => x.sources[i].slice(x.sources[i].indexOf(":") + 1), set: (v) => { x.sources[i] = `dataset:${v}`; } });
+            });
             sites.push({ decl: false, get: () => x.dest || "", set: (v) => { x.dest = v; } });   // clone/move dest
         }
         for (const d of this.profile.dictionaries || [])                  // a dictionary feed is a dataset REF
@@ -292,6 +310,32 @@ export class GraphModel {
     _dropTarget(id) {
         this._repointTargets(id, "");
         for (const t of this.profile.triggers || []) t.targets = (t.targets || []).filter(Boolean);
+    }
+
+    // SSOT for every site that REFERENCES a register id — an action's "register:" sources (and the
+    // `slots` dict keyed by register id). Mirrors _datasetSites so a register rename repoints action
+    // wiring on the rename path (rule 5) instead of orphaning the source/edge.
+    _registerSites() {
+        const sites = [];
+        for (const x of this.profile.actions || []) {
+            (x.sources || []).forEach((ref, i) => {
+                const c = ref.indexOf(":"), kind = c < 0 ? "" : ref.slice(0, c);
+                if (kind === "register")
+                    sites.push({ get: () => x.sources[i].slice(x.sources[i].indexOf(":") + 1),
+                        set: (v) => { x.sources[i] = `register:${v}`; } });
+            });
+            // the slots dict is keyed by register id — re-key on rename
+            sites.push({ slotOwner: x });
+        }
+        return sites;
+    }
+    _repointRegisters(oldId, newId) {
+        for (const st of this._registerSites()) {
+            if (st.slotOwner) {
+                const s = st.slotOwner.slots;
+                if (s && Object.prototype.hasOwnProperty.call(s, oldId)) { s[newId] = s[oldId]; delete s[oldId]; }
+            } else if (st.get() === oldId) st.set(newId);
+        }
     }
 
     // Rename a dataset: repoint EVERY site (declarations + references) holding the old id, so
@@ -413,8 +457,10 @@ export class GraphModel {
         if (id.startsWith("vtd:")) return id.slice(4);   // dismissed-rows preview (file source)
         if (id.startsWith("vt:")) return id.slice(3);
         if (id.startsWith("prev:")) return `win:${id.slice(5)}`;
+        if (id.startsWith("prodhist:")) return `producer:${id.slice(9)}`; // producer's recent-fetches history
         if (id.startsWith("prod:")) return `producer:${id.slice(5)}`;   // producer preview (inputs/schema/test)
         if (id.startsWith("hist:")) return `trigger:${id.slice(5)}`;    // trigger's recent-fires history
+        if (id.startsWith("rohist:")) return `ro:${id.slice(7)}`;       // readout's recent-reads history
         return null;
     }
     satelliteBonds() {
@@ -440,8 +486,13 @@ export class GraphModel {
             }
             // A readout is ONE node: it owns its box + source + (for ocr) its read config inline,
             // like a region node. The linked FieldDef rides along as `field` for the config editor.
-            for (const v of w.readouts || [])
+            for (const v of w.readouts || []) {
                 ns.push({ id: `ro:${w.id}:${v.id}`, type: "readout", ref: v, win: w, field: this.readoutField(w, v) });
+                // read-history satellite (opt-in): recent reads + per-rule trace, non-persisted — a
+                // standard vttable grid (kind "readouthistory"). See readout_history_node.js.
+                if (this.satelliteOn(`rohist:${w.id}:${v.id}`))
+                    ns.push({ id: `rohist:${w.id}:${v.id}`, type: "vttable", ref: { kind: "readouthistory", win: w.id, id: v.id } });
+            }
         }
         for (const ds of this.datasets()) {
             ns.push({ id: `ds:${ds}`, type: "dataset", ref: ds });
@@ -454,6 +505,9 @@ export class GraphModel {
         for (const pn of this.profile.producers || []) {
             ns.push({ id: `producer:${pn.id}`, type: "producer", ref: pn });
             if (this.satelliteOn(`prod:${pn.id}`)) ns.push({ id: `prod:${pn.id}`, type: "vttable", ref: { kind: "producer", id: pn.id, dataset: pn.dataset } });
+            // fetch-history satellite (opt-in): recent sweeps, non-persisted — a vttable grid (kind
+            // "producerhistory"). See producer_history_node.js.
+            if (this.satelliteOn(`prodhist:${pn.id}`)) ns.push({ id: `prodhist:${pn.id}`, type: "vttable", ref: { kind: "producerhistory", id: pn.id } });
         }
         for (const s of this.profile.file_sources || []) {
             ns.push({ id: `src:${s.id}`, type: "filesource", ref: s });
@@ -527,8 +581,12 @@ export class GraphModel {
                 }
                 for (const t of it.tells || []) es.push({ from: `item:${w.id}:${it.id}`, to: `tell:${w.id}:${it.id}:${t.id}`, kind: "tell" });
             }
-            for (const v of w.readouts || [])
+            for (const v of w.readouts || []) {
                 es.push({ from: `win:${w.id}`, to: `ro:${w.id}:${v.id}`, kind: "field" });
+                // read-history satellite: dotted "img" edge readout -> its recent-reads grid (opt-in)
+                if (this.satelliteOn(`rohist:${w.id}:${v.id}`))
+                    es.push({ from: `ro:${w.id}:${v.id}`, to: `rohist:${w.id}:${v.id}`, kind: "img" });
+            }
             if (this._windowHasDataset(w))   // no dataset node/wire until the window produces data
                 es.push({ from: `win:${w.id}`, to: `ds:${this.datasetOf(w)}`, kind: "data" });
         }
@@ -548,6 +606,7 @@ export class GraphModel {
                 if (from) es.push({ from, to: `producer:${pn.id}`, kind: "data" });
             }
             if (this.satelliteOn(`prod:${pn.id}`)) es.push({ from: `producer:${pn.id}`, to: `prod:${pn.id}`, kind: "img" });
+            if (this.satelliteOn(`prodhist:${pn.id}`)) es.push({ from: `producer:${pn.id}`, to: `prodhist:${pn.id}`, kind: "img" });
         }
         // a trigger FIRES its target price nodes (trigger -> price); an on_change trigger also
         // WATCHES datasets — the dashed line leaves the trigger's watch port and reaches OUT to the
@@ -561,7 +620,7 @@ export class GraphModel {
                 const to = this.refNode(pid);
                 if (to) es.push({ from: `trigger:${t.id}`, to, kind: "trigger" });
             }
-            if (t.kind === "on_change" || t.kind === "on_any_change")
+            if (t.kind === "on_change" || t.kind === "on_any_change" || t.kind === "on_ready")
                 for (const w of t.watch || []) {
                     const to = this.refNode(w);
                     if (to) es.push({ from: `trigger:${t.id}`, to, kind: "watch" });
@@ -575,10 +634,13 @@ export class GraphModel {
             // history satellite: dotted "img" edge trigger -> its recent-fires grid (opt-in)
             if (this.satelliteOn(`hist:${t.id}`)) es.push({ from: `trigger:${t.id}`, to: `hist:${t.id}`, kind: "img" });
         }
-        // an action node ACTS ON its dataset targets (action -> dataset), and WRITES into its
-        // clone/move destination (action -> dest).
+        // an action node ACTS ON its dataset AND register sources (action -> ds/register), and
+        // WRITES into its clone/move destination dataset (action -> dest).
         for (const x of this.profile.actions || []) {
-            for (const ds of x.datasets || []) es.push({ from: `action:${x.id}`, to: `ds:${ds}`, kind: "trigger" });
+            for (const s of this.actionSources(x.id)) {
+                const to = this.refNode(s.ref);   // ds:<id> or register:<id>
+                if (to) es.push({ from: `action:${x.id}`, to, kind: "trigger" });
+            }
             if (x.dest && (x.action || "").match(/^(clone|move)_/)) es.push({ from: `action:${x.id}`, to: `ds:${x.dest}`, kind: "data" });
         }
         // a toast READS its wired sources' live values as {{tokens}} (readout/dataset/subset -> toast)
@@ -693,6 +755,8 @@ export class GraphModel {
     // status-label only (no behaviour) — shown in the node so a sweep's progress copy reads sensibly.
     setProducerMode(id, mode) { const pn = this.producerNode(id); if (pn) pn.mode = mode || ""; }
     setProducerThrottle(id, v) { const pn = this.producerNode(id); if (pn) pn.throttle = Math.max(0, parseFloat(v) || 0); }
+    // what to do when fired while already sweeping: drop (ignore) | latest (coalesce newest) | queue (FIFO).
+    setProducerQueueMode(id, m) { const pn = this.producerNode(id); if (pn) pn.queue_mode = ["drop", "latest", "queue"].includes(m) ? m : "drop"; }
     setProducerEnabled(id, on) { const pn = this.producerNode(id); if (pn) pn.enabled = !!on; }
 
     // ---- http spec mutators (one per teachable knob; no knob without a setter) ----
@@ -793,7 +857,7 @@ export class GraphModel {
         this.profile.triggers = this.profile.triggers || [];
         let n = 1, id = "trigger";
         while (this.trigger(id)) id = `trigger_${++n}`;
-        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, readout_watch: [], readout_op: "gte", readout_value: 0, throttle_ms: null });
+        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, readout_watch: [], readout_op: "gte", readout_value: 0, throttle_ms: null, settle_ms: null, settle_max_ms: null, ready_field: "" });
         return id;
     }
     removeTrigger(id) { this.profile.triggers = (this.profile.triggers || []).filter((t) => t.id !== id); }
@@ -804,10 +868,16 @@ export class GraphModel {
         this._emitRename("trigger", oldId, newId);
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_ready", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
     // minimum ms between fires — empty/invalid clears it (null = no throttle).
     setTriggerThrottle(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.throttle_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }
+    // trailing-settle debounce (ms) — empty/invalid clears it (null = fire immediately).
+    setTriggerSettle(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.settle_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }
+    // settle deadline cap (ms) — empty/invalid clears it (null = no cap).
+    setTriggerSettleMax(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.settle_max_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }
+    // on_ready completeness column — the visible subset field that must be filled on every row.
+    setTriggerReadyField(id, v) { const t = this.trigger(id); if (!t) return; t.ready_field = (v || "").trim(); }
     addTriggerTarget(id, pid) {
         const t = this.trigger(id);
         // a target is a price node (sweep), a file source (read), a toast (notify), a sound (play), OR an action (dataset op) — accept any id
@@ -849,7 +919,7 @@ export class GraphModel {
         this.profile.actions = this.profile.actions || [];
         let n = 1, id = "action";
         while (this.actionNode(id)) id = `action_${++n}`;
-        this.profile.actions.push({ id, action: "", datasets: [], dest: "", enabled: true });
+        this.profile.actions.push({ id, action: "", sources: [], slots: {}, dest: "", enabled: true });
         return id;
     }
     removeAction(id) { this.profile.actions = (this.profile.actions || []).filter((x) => x.id !== id); this._dropTarget(id); }
@@ -861,15 +931,47 @@ export class GraphModel {
         return true;
     }
     setActionKind(id, v) { const x = this.actionNode(id); if (x && GraphModel.ACTION_KINDS.includes(v)) x.action = v; }
-    addActionDataset(id, ds) {
+    // Wired sources as prefixed refs "dataset:<id>" / "register:<id>" (mirrors registerSources). -> {kind,id,ref}.
+    actionSources(id) {
         const x = this.actionNode(id);
-        if (!x || !ds || !this.datasets().includes(ds)) return false;
-        x.datasets = x.datasets || [];
-        if (x.datasets.includes(ds)) return false;
-        x.datasets.push(ds);
+        return ((x && x.sources) || []).map((ref) => {
+            const i = ref.indexOf(":");
+            return i < 0 ? { kind: "", id: ref, ref } : { kind: ref.slice(0, i), id: ref.slice(i + 1), ref };
+        }).filter((s) => s.kind && s.id);
+    }
+    // Add a dataset/register source by prefixed ref. Validates the kind + that the target exists.
+    addActionSource(id, ref) {
+        const x = this.actionNode(id);
+        if (!x || !ref) return false;
+        const i = ref.indexOf(":");
+        const kind = i < 0 ? "" : ref.slice(0, i), rid = i < 0 ? ref : ref.slice(i + 1);
+        const ok = (kind === "dataset" && this.datasets().includes(rid)) || (kind === "register" && !!this.registerNode(rid));
+        if (!ok) return false;
+        x.sources = x.sources || [];
+        if (x.sources.includes(ref)) return false;
+        x.sources.push(ref);
         return true;
     }
-    removeActionDataset(id, ds) { const x = this.actionNode(id); if (x) x.datasets = (x.datasets || []).filter((d) => d !== ds); }
+    removeActionSource(id, ref) {
+        const x = this.actionNode(id);
+        if (!x) return;
+        x.sources = (x.sources || []).filter((r) => r !== ref);
+        // dropping a register source prunes its slot targeting (orphan entry otherwise)
+        if (ref.startsWith("register:") && x.slots) delete x.slots[ref.slice("register:".length)];
+    }
+    // Targeted readout keys for one register source ([] / absent = all of that register's keys).
+    actionSlots(id, regId) { const x = this.actionNode(id); return (x && x.slots && x.slots[regId]) || []; }
+    // Narrow (or reset to "all") a register source's targeted keys. Storing [] when the set covers
+    // every wired key (or is empty) is the canonical "all" — keeps YAML clean and avoids drift.
+    setActionSlots(id, regId, keys) {
+        const x = this.actionNode(id);
+        if (!x) return;
+        x.slots = x.slots || {};
+        const uniq = [...new Set(keys || [])];
+        const all = this.registerSources(regId).filter((s) => s.kind === "readout").map((s) => s.id);
+        if (!uniq.length || (uniq.length === all.length && all.every((k) => uniq.includes(k)))) delete x.slots[regId];
+        else x.slots[regId] = uniq;
+    }
     setActionDest(id, v) { const x = this.actionNode(id); if (x) x.dest = v || ""; }
     cloneAction(id) { this.profile.actions = this.profile.actions || []; return this._cloneById(this.profile.actions, id, (x) => !!this.actionNode(x)); }
 
@@ -881,14 +983,23 @@ export class GraphModel {
         this.profile.registers = this.profile.registers || [];
         let n = 1, id = "register";
         while (this.registerNode(id)) id = `register_${++n}`;
-        this.profile.registers.push({ id, sources: [], title: "", enabled: true, persist: "" });
+        this.profile.registers.push({ id, sources: [], title: "", enabled: true, persist: "", capacity: 1 });
         return id;
     }
-    removeRegister(id) { this.profile.registers = (this.profile.registers || []).filter((x) => x.id !== id); }
+    removeRegister(id) {
+        this.profile.registers = (this.profile.registers || []).filter((x) => x.id !== id);
+        // unwire any action "register:<id>" source + its slot targeting (else a dangling ref/edge)
+        for (const x of this.profile.actions || []) {
+            x.sources = (x.sources || []).filter((ref) => ref !== `register:${id}`);
+            if (x.slots) delete x.slots[id];
+        }
+    }
     renameRegister(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.registerNode(newId)) return false;
         this.registerNode(oldId).id = newId;
+        this._repointRegisters(oldId, newId);   // carry action "register:" sources + slot keys (rule 5)
+        this._emitRename("register", oldId, newId);
         return true;
     }
     // Wired readout feeders as prefixed refs "readout:<id>" (mirrors toastSources). -> {kind,id,ref}.
@@ -913,6 +1024,14 @@ export class GraphModel {
     setRegisterPersist(id, ds) {
         const x = this.registerNode(id);
         if (x && ds) { x.persist = ds; this.ensureDatasetDef(ds); }
+    }
+    // How many recent values to hold per key (ring depth). Coerce like the trigger interval:
+    // parse int, floor at 1 (blank/garbage -> 1).
+    setRegisterCapacity(id, v) {
+        const x = this.registerNode(id);
+        if (!x) return;
+        const n = parseInt(v, 10);
+        x.capacity = (Number.isNaN(n) || n < 1) ? 1 : n;
     }
 
     // ---- toasts: raise an OS notification when fired (a trigger target) -------
@@ -991,7 +1110,7 @@ export class GraphModel {
     static _toastTextDefault() {
         return { content: "", x: 12, y: 12, size: 20, color: "#ffffff", align: "tl",
             width: 120, height: 28, bg_color: "", wrap: true, overflow: false,
-            disable_if_empty: false,
+            disable_if_empty: false, disable_if_anchor_disabled: false,
             match_w: "", match_h: "", match_w_pct: 100, match_h_pct: 100,
             font_family: "", bold: false, italic: false, underline: false,
             border: { w: 0, color: "#ffffff", style: "solid" }, border_sides: {},
@@ -1004,7 +1123,7 @@ export class GraphModel {
         return { position: ["x", "y"], anchor: ["anchor"], dimension: ["width", "height"],
             match: ["match_w", "match_h", "match_w_pct", "match_h_pct"], content: ["content"],
             font: ["size", "font_family", "bold", "italic", "underline", "wrap", "overflow"],
-            cond: ["disable_if_empty"], layer: ["z_index"],
+            cond: ["disable_if_empty", "disable_if_anchor_disabled"], layer: ["z_index"],
             align: ["align"], text: ["color"], background: ["bg_color"],
             border: ["border", "border_sides"] };
     }
@@ -1041,7 +1160,7 @@ export class GraphModel {
         const im = this.toastImage(id, i); const t = im && im.texts && im.texts[j]; if (!t) return;
         if (["x", "y", "size", "width", "height", "z_index"].includes(key)) t[key] = parseInt(val, 10) || 0;
         else if (["match_w_pct", "match_h_pct"].includes(key)) t[key] = Math.max(1, parseInt(val, 10) || 100);
-        else if (["wrap", "overflow", "bold", "italic", "underline"].includes(key)) t[key] = !!val;
+        else if (["wrap", "overflow", "bold", "italic", "underline", "disable_if_empty", "disable_if_anchor_disabled"].includes(key)) t[key] = !!val;
         else if (["content", "color", "align", "bg_color", "font_family", "match_w", "match_h"].includes(key)) t[key] = val ?? "";
     }
     // per-side border: `side` "" = the base (all sides), else "t"/"r"/"b"/"l" overrides that side.
@@ -1322,6 +1441,8 @@ export class GraphModel {
     cloneTrigger(id) { this.profile.triggers = this.profile.triggers || []; return this._cloneById(this.profile.triggers, id, (x) => (this.profile.triggers || []).some((t) => t.id === x)); }
     cloneFileSource(id) { this.profile.file_sources = this.profile.file_sources || []; return this._cloneById(this.profile.file_sources, id, (x) => !!this.fileSource(x)); }
     cloneDictionary(id) { this.profile.dictionaries = this.profile.dictionaries || []; return this._cloneById(this.profile.dictionaries, id, (x) => !!this.dictionary(x)); }
+    cloneToast(id) { this.profile.toasts = this.profile.toasts || []; return this._cloneById(this.profile.toasts, id, (x) => !!this.toastNode(x)); }
+    cloneSound(id) { this.profile.sounds = this.profile.sounds || []; return this._cloneById(this.profile.sounds, id, (x) => !!this.soundNode(x)); }
     removeDatasetDef(id) { this.profile.datasets = (this.profile.datasets || []).filter((d) => d.id !== id); }
 
     // Unwire every site holding a removed dataset/subset id (declarations AND references) and
@@ -1334,8 +1455,9 @@ export class GraphModel {
         for (const s of this.profile.subsets || []) s.sources = (s.sources || []).filter((src) => src.dataset);
         for (const t of this.profile.triggers || [])
             t.watch = (t.watch || []).filter(Boolean);
-        for (const x of this.profile.actions || [])                        // _datasetSites() blanked the deleted id
-            x.datasets = (x.datasets || []).filter(Boolean);
+        // _datasetSites() blanked the id-part of any action "dataset:" source pointing here -> "dataset:"; drop those
+        for (const x of this.profile.actions || [])
+            x.sources = (x.sources || []).filter((ref) => ref.slice(ref.indexOf(":") + 1));
         // _datasetSites() blanked the id-part of any toast source pointing here -> "dataset:"/"subset:"; drop those
         for (const x of this.profile.toasts || [])
             x.sources = (x.sources || []).filter((ref) => ref.slice(ref.indexOf(":") + 1));

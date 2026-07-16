@@ -15,12 +15,12 @@ import { singleFlight } from "../singleflight.js";
 import { openModal } from "../modal.js";
 import { since } from "../datefmt.js";
 import { log, timed } from "../log.js";
-import { wireProducerNode } from "./producer_node.js";
+import { wireProducerNode, mapRow } from "./producer_node.js";
 import { renderTriggerHistory } from "./history_node.js";
 import { refreshRegister } from "./register_node.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 import {
-    render, autosave, rebuildNode, refreshLive, wireArmedRemove,
+    render, autosave, rebuildNode, rebuildNodeEdges, refreshLive, wireArmedRemove,
     withBusy, setNodeBusy, showSatellite,
 } from "./main.js";
 
@@ -29,7 +29,7 @@ import {
 function wireProducer(div, n) {
     const id = n.ref.id;
     const save = () => autosave(null);                       // value-only edit
-    const rebuild = () => { rebuildNode(n.id); drawEdges(); autosave(null); };   // body/edges change
+    const rebuild = () => { rebuildNodeEdges(n.id); autosave(null); };   // body/edges change (measured anchor)
     const structural = () => { rebuildNode(n.id); render(); autosave(null); };  // output columns change -> rebuild THIS body (removed row) + refresh downstream
     const fieldI = (el) => +el.closest(".pr-field").dataset.i;
     const collectMap = (kind) => {
@@ -60,23 +60,38 @@ function wireProducer(div, n) {
     });
     // producer-level knobs
     div.querySelector(".pr-throttle")?.addEventListener("change", (e) => { model.setProducerThrottle(id, e.target.value); save(); });
+    div.querySelector(".pr-queuemode")?.addEventListener("change", (e) => { model.setProducerQueueMode(id, e.target.value); save(); });
     div.querySelector(".pr-mode")?.addEventListener("change", (e) => { model.setProducerMode(id, e.target.value); save(); });
-    div.querySelector(".pr-enabled")?.addEventListener("change", (e) => { model.setProducerEnabled(id, e.target.checked); save(); });
 
     // request
     div.querySelector(".pr-method")?.addEventListener("change", (e) => { model.setHttpMethod(id, e.target.value); save(); });
     div.querySelector(".pr-url")?.addEventListener("change", (e) => { model.setHttpUrl(id, e.target.value); save(); });
     div.querySelector(".pr-timeout")?.addEventListener("change", (e) => { model.setHttpTimeout(id, e.target.value); save(); });
     div.querySelector(".pr-htmlextract")?.addEventListener("change", (e) => { model.setHttpHtmlExtract(id, e.target.value); save(); });
-    // headers/query maps: recompute the whole {k:v} from the rows, then rebuild so a fresh add-row appears
-    div.querySelectorAll(".pr-map-k, .pr-map-v").forEach((el) => el.addEventListener("change", () => {
-        const kind = el.closest(".pr-map-row").dataset.kind;
-        model.setProducerMap(id, kind, collectMap(kind)); rebuild();
-    }));
-    div.querySelectorAll(".pr-map-del").forEach((b) => b.addEventListener("click", () => {
-        const kind = b.dataset.kind; b.closest(".pr-map-row").remove();
-        model.setProducerMap(id, kind, collectMap(kind)); rebuild();
-    }));
+    // headers/query maps: one blank row is added on demand via the section's "+" (labAdd), matching
+    // the explode/fields sections — so an unused producer shows no empty rows. Wire each row (saved
+    // OR just-appended): a k/v change recomputes the whole {k:v} and rebuilds; the remove button (on
+    // saved rows only) drops it. A blank +added row commits once a name is typed, else it's dropped
+    // on the next rebuild.
+    const wireMapRow = (rowEl) => {
+        rowEl.querySelectorAll(".pr-map-k, .pr-map-v").forEach((el) => el.addEventListener("change", () => {
+            model.setProducerMap(id, rowEl.dataset.kind, collectMap(rowEl.dataset.kind)); rebuild();
+        }));
+        rowEl.querySelector(".pr-map-del")?.addEventListener("click", () => {
+            const kind = rowEl.dataset.kind; rowEl.remove();
+            model.setProducerMap(id, kind, collectMap(kind)); rebuild();
+        });
+    };
+    div.querySelectorAll(".pr-map-row").forEach(wireMapRow);
+    const addMapRow = (kind) => {
+        const box = div.querySelector(`.pr-rows[data-mapkind="${kind}"]`);
+        if (!box) return;
+        const r = mapRow(kind, "", "", false);
+        box.appendChild(r); wireMapRow(r);
+        r.querySelector(".pr-map-k")?.focus();
+    };
+    div.querySelector(".pr-h-add")?.addEventListener("click", () => addMapRow("headers"));
+    div.querySelector(".pr-q-add")?.addEventListener("click", () => addMapRow("query"));
 
     // key transform (+ catalogue sub-panel appears/vanishes -> rebuild)
     div.querySelector(".pr-keytransform")?.addEventListener("change", (e) => { model.setHttpKeyTransform(id, e.target.value); rebuild(); });
@@ -202,17 +217,20 @@ function wireTrigger(div, n) {
     // rebuildNode (not render) re-renders THIS node's chips — render() only builds NEW nodes,
     // so an in-place chip add/remove wouldn't show. drawEdges() drops/adds the trigger's edges
     // (watch source→trigger and trigger→price) so a chip change reflects on the canvas live.
-    div.querySelector(".tg-addwatch")?.addEventListener("change", (e) => { if (model.addTriggerWatch(t.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
+    div.querySelector(".tg-addwatch")?.addEventListener("change", (e) => { if (model.addTriggerWatch(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     // on_readout: watched readouts (chips + edges) + the threshold condition
-    div.querySelector(".tg-addvarwatch")?.addEventListener("change", (e) => { if (model.addTriggerReadoutWatch(t.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
-    wireArmedRemove(div, ".tg-rmvarwatch", (val) => { model.removeTriggerReadoutWatch(t.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
+    div.querySelector(".tg-addvarwatch")?.addEventListener("change", (e) => { if (model.addTriggerReadoutWatch(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
+    wireArmedRemove(div, ".tg-rmvarwatch", (val) => { model.removeTriggerReadoutWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
     div.querySelector(".tg-varop")?.addEventListener("change", (e) => { model.setTriggerReadoutOp(t.id, e.target.value); autosave(null); });
     div.querySelector(".tg-varval")?.addEventListener("change", (e) => { model.setTriggerReadoutValue(t.id, e.target.value); autosave(null); });
-    div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
-    wireArmedRemove(div, ".tg-rmwatch", (val) => { model.removeTriggerWatch(t.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
-    wireArmedRemove(div, ".tg-rmtarget", (val) => { model.removeTriggerTarget(t.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
+    div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
+    wireArmedRemove(div, ".tg-rmwatch", (val) => { model.removeTriggerWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
+    wireArmedRemove(div, ".tg-rmtarget", (val) => { model.removeTriggerTarget(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
     // throttle: minimum ms between fires (empty = none). Rebuild so the input re-normalises (null -> placeholder).
     div.querySelector(".tg-throttle")?.addEventListener("change", (e) => { model.setTriggerThrottle(t.id, e.target.value); rebuildNode(n.id); autosave(null); });
+    // settle: trailing debounce (empty = fire now). Rebuild so the max-cap input appears/hides with it.
+    div.querySelector(".tg-settle")?.addEventListener("change", (e) => { model.setTriggerSettle(t.id, e.target.value); rebuildNode(n.id); autosave(null); });
+    div.querySelector(".tg-settlemax")?.addEventListener("change", (e) => { model.setTriggerSettleMax(t.id, e.target.value); rebuildNode(n.id); autosave(null); });
     div.querySelector(".tg-fire")?.addEventListener("click", async () => {
         const prog = div.querySelector(".tg-prog");
         prog.textContent = "firing…";
@@ -237,10 +255,30 @@ function wireAction(div, n) {
             () => movePos(`action:${oldId}`, `action:${x.id}`),
             () => { render(); autosave(null); });
     });
-    // action kind: rebuild so the dest select shows/hides for clone/move; edges follow (dest edge)
-    $(".ac-action")?.addEventListener("change", (e) => { model.setActionKind(x.id, e.target.value); rebuildNode(n.id); drawEdges(); autosave(null); });
-    $(".ac-addds")?.addEventListener("change", (e) => { if (model.addActionDataset(x.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
-    wireArmedRemove(div, ".ac-rmds", (val) => { model.removeActionDataset(x.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
+    // action kind: rebuild so the dest select + slot rows show/hide; edges follow (dest edge)
+    $(".ac-action")?.addEventListener("change", (e) => { model.setActionKind(x.id, e.target.value); rebuildNodeEdges(n.id); autosave(null); });
+    // sources: datasets AND registers, by prefixed ref (value carries "dataset:"/"register:")
+    $(".ac-addsrc")?.addEventListener("change", (e) => { if (model.addActionSource(x.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
+    wireArmedRemove(div, ".ac-rmsrc", (val) => { model.removeActionSource(x.id, val); rebuildNodeEdges(n.id); autosave(null); });
+    // slot targeting: one row per register source, each scoped to its register via data-reg so the
+    // add/remove edits know which register's key set they narrow (default all).
+    div.querySelectorAll(".sv-slotrow").forEach((row) => {
+        const regId = row.dataset.reg;
+        const effective = () => {
+            const keys = model.registerSources(regId).filter((s) => s.kind === "readout").map((s) => s.id);
+            const t = model.actionSlots(x.id, regId);
+            return t.length ? t.filter((k) => keys.includes(k)) : keys;   // [] = all
+        };
+        row.querySelector(".ac-addslot")?.addEventListener("change", (e) => {
+            if (!e.target.value) return;
+            model.setActionSlots(x.id, regId, [...effective(), e.target.value]);
+            rebuildNode(n.id); autosave(null);
+        });
+        wireArmedRemove(row, ".ac-rmslot", (val) => {
+            model.setActionSlots(x.id, regId, effective().filter((k) => k !== val));
+            rebuildNode(n.id); autosave(null);
+        });
+    });
     $(".ac-dest")?.addEventListener("change", (e) => { model.setActionDest(x.id, e.target.value); drawEdges(); autosave(null); });
     // manual fire: run the action NOW on its target dataset(s) via the same funnel a trigger uses.
     // Transient feedback by swapping the button label (no progress line on the node).
@@ -279,12 +317,16 @@ function wireRegister(div, n) {
     // once, same path the out-port drag uses). Scoped to `.data-host` (rebuilt on every render) so the
     // listeners never double up across rebuilds.
     const bankHost = $(".data-host");
+    // membank grows/shrinks a slot async (its ResizeObserver -> layout settles next frame), so defer
+    // the edge redraw a frame — else the readout->register edge anchors on the register's stale size.
     bankHost?.addEventListener("reg-add-source", (e) => {
-        if (model.addRegisterSource(e.detail.id, e.detail.ref)) { refreshRegister(e.detail.id); drawEdges(); autosave(null); }
+        if (model.addRegisterSource(e.detail.id, e.detail.ref)) { refreshRegister(e.detail.id); requestAnimationFrame(drawEdges); autosave(null); }
     });
     bankHost?.addEventListener("reg-remove-source", (e) => {
-        model.removeRegisterSource(e.detail.id, e.detail.ref); refreshRegister(e.detail.id); drawEdges(); autosave(null);
+        model.removeRegisterSource(e.detail.id, e.detail.ref); refreshRegister(e.detail.id); requestAnimationFrame(drawEdges); autosave(null);
     });
+    // ring depth per key: coerce (blank -> 1) then rebuild so the normalised value re-renders.
+    $(".reg-cap")?.addEventListener("change", (e) => { model.setRegisterCapacity(x.id, e.target.value); rebuildNode(n.id); autosave(null); });
     // clear the held map server-side (armed two-click, no blocking dialog). Values live only in the
     // running session, so this just empties that map; the table repopulates as readouts are read.
     const clearBtn = $(".regclear");
