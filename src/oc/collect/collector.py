@@ -383,6 +383,18 @@ class Collector:
             if window is None:
                 return TickResult(TickStatus.unrecognised, window_id=window_id)
 
+            # Per-stage timing: capture + settle + classify, emitted under this window on EVERY
+            # classified tick (fast-poll and moving ticks included — like `ro` below), not just
+            # save-worthy ones, so the capture cost during live HUD play is visible. cp's n
+            # encodes the adaptive capture path (0 = unknown/non-adaptive backend):
+            # 1 fg (mss), 2 fg_black fallback, 3 fg_err fallback, 4 bg (printwindow).
+            cp_path = {"fg": 1, "fg_black": 2, "fg_err": 3, "bg": 4}.get(
+                getattr(eng.capture, "last_path", ""), 0)
+            stats_store.record_timing(self._profile.name, f"win:{window_id}", "cp", t_capture,
+                                      n=cp_path)
+            stats_store.record_timing(self._profile.name, f"win:{window_id}", "st", t_settle)
+            stats_store.record_timing(self._profile.name, f"win:{window_id}", "cl", t_classify)
+
             # "capture recognised windows" debug bucket: persist one grab per OCR-due tick whose
             # frame matched a window (any state, incl. moving / state-invalid), not only the write
             # frames the on-write save handles. Opt-in via the live panel; when on, the on-write
@@ -459,12 +471,6 @@ class Collector:
                                   readouts=readouts_now, readout_confs=readout_confs_now,
                                   readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now,
                                   readout_reads=readout_reads)
-
-            # Per-stage timing: capture + settle + classify were measured above (windowless
-            # until now); emit them under this window now that it's recognised + save-worthy.
-            stats_store.record_timing(self._profile.name, f"win:{window_id}", "cp", t_capture)
-            stats_store.record_timing(self._profile.name, f"win:{window_id}", "st", t_settle)
-            stats_store.record_timing(self._profile.name, f"win:{window_id}", "cl", t_classify)
 
             # A window with neither regions nor items has nothing to grid-read: skip the
             # signature/read path entirely. Without this, _resolve_cells falls through to a

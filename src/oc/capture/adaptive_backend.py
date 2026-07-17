@@ -47,14 +47,22 @@ class AdaptiveCapture(CaptureBackend):
             return False
 
     def grab_window(self, window: WindowInfo) -> Frame:
+        # last_path: which branch served the most recent grab — "fg" (foreground backend),
+        # "bg" (not foreground), "fg_black" (foreground grab came back black -> surface
+        # fallback), "fg_err" (foreground grab raised -> surface fallback). Read by the
+        # collector's stats so the capture path is visible per tick.
         if self._is_foreground(window):
             try:
                 f = self._fg.grab_window(window)
                 # Exclusive-fullscreen returns black to a desktop BitBlt -> use the surface grab.
                 if f.image is not None and f.image.size and int(f.image.max()) > 8:
+                    self.last_path = "fg"
                     return f
+                self.last_path = "fg_black"
             except Exception:   # noqa: BLE001 - fall through to the background grab
-                pass
+                self.last_path = "fg_err"
+        else:
+            self.last_path = "bg"
         return self._bg.grab_window(window)
 
     def grab(self, box: PixelBox) -> Frame:
