@@ -26,10 +26,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..interfaces import OcrEngine, WindowClassifier
-from ..profile.models import DetectCombine, GameProfile, WindowDef
+from ..profile.models import GameProfile, WindowDef
 from ..registry import register_classifier
 from ..types import Frame
 from .matcher import DetectMatcher, combine_passes, detector_passes
+from .select import WinCand, aggregate_fit, priority_order, select_winner
 
 
 @register_classifier("detect")
@@ -61,11 +62,9 @@ class DetectClassifier(WindowClassifier):
         score is the WEAKEST contributor under ``all`` mode (every detector must fit, so the
         worst one bounds the fit) and the STRONGEST under ``any`` mode (one good fit suffices)."""
         active = [d for d in window.detect if d.enabled]
-        if not active:
-            return 0.0
         contribs = [(1.0 - self._matcher.score(d, frame)) if d.negate
                     else self._matcher.score(d, frame) for d in active]
-        return max(contribs) if window.detect_mode == DetectCombine.any else min(contribs)
+        return aggregate_fit(contribs, window.detect_mode)
 
     def _state_for(self, window: WindowDef, frame: Frame) -> str | None:
         # states always combine with AND; a state detector may still be negated.
@@ -92,21 +91,7 @@ class DetectClassifier(WindowClassifier):
 
     @staticmethod
     def _priority_order(profile: GameProfile) -> list[WindowDef]:
-        """Windows in classification order: those named in ``window_priority`` first (in that
-        order), then any remaining window in profile order. A priority id that no longer names
-        a window is skipped. Empty ``window_priority`` -> profile order unchanged."""
-        by_id = {w.id: w for w in profile.windows}
-        seen: set[str] = set()
-        out: list[WindowDef] = []
-        for wid in profile.window_priority:
-            w = by_id.get(wid)
-            if w is not None and wid not in seen:
-                seen.add(wid)
-                out.append(w)
-        for w in profile.windows:
-            if w.id not in seen:
-                out.append(w)
-        return out
+        return priority_order(profile)
 
     def classify(self, frame: Frame, profile: GameProfile) -> tuple[str, str | None] | None:
         # On GPU, recognise every window's title box in ONE batched pass up front (prewarm
@@ -114,20 +99,21 @@ class DetectClassifier(WindowClassifier):
         prewarm = getattr(self._matcher, "prewarm", None)
         if frame is not None and prewarm is not None:
             prewarm(frame, self._text_detect_boxes(profile, frame))
-        # Priority mode: try windows in the authored order and take the FIRST that matches —
-        # cheap early-return (no scoring every window), and it lands on the top-priority screen
-        # (e.g. relic rewards) first. A window's own detectors run cheap-first and short-circuit,
-        # so a non-matching window costs only its cheap probes before the next is tried.
+        # Priority mode: the FIRST passing window in priority order wins (select.select_winner's
+        # priority rule). Done as a STREAMING short-circuit here — not a post-hoc select_winner over
+        # every window — because that's the whole perf point: a settled gameplay frame passes the
+        # top-priority cheap gate and early-returns with NO OCR on the lower windows. Same rule, one
+        # source (priority_order); test_select asserts this branch agrees with select_winner.
         if profile.window_priority:
-            for w in self._priority_order(profile):
+            for w in priority_order(profile):
                 if self._window_matches(w, frame):
                     return w.id, self._state_for(w, frame)
             return None
-        # No priority authored: best fit — the passing window whose detectors score highest.
-        # Ties (e.g. two windows both at 1.0) fall back to the more specific window (more
-        # detectors), then file order.
-        candidates = [w for w in profile.windows if self._window_matches(w, frame)]
-        if not candidates:
+        # No priority authored: best fit. No short-circuit to exploit, so evaluate every window and
+        # defer the winner rule to the shared select_winner (highest score, then most detectors).
+        cands = [WinCand(w.id, True, self._window_score(w, frame), len([d for d in w.detect if d.enabled]))
+                 for w in profile.windows if self._window_matches(w, frame)]
+        winner_id = select_winner(profile, cands)
+        if winner_id is None:
             return None
-        window = max(candidates, key=lambda w: (self._window_score(w, frame), len(w.detect)))
-        return window.id, self._state_for(window, frame)
+        return winner_id, self._state_for(profile.window(winner_id), frame)

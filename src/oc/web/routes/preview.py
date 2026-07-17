@@ -18,11 +18,11 @@ from ...collect.atlas_match import build_atlas
 from ...collect.items import item_templates
 from ...collect.reader import RegionReader
 from ...detect.matcher import DetectMatcher, combine_passes
+from ...detect.select import WinCand, aggregate_fit, select_winner
 from ...learn.dictionary import build_dictionaries
 from ...learn.resolver import FieldResolver
 from ...ocr.serialize import ocr_job
 from ...profile import GameProfile, KeyDef, list_profiles
-from ...profile.models import DetectCombine
 from ...runtime import load_live_profile
 from ...store import store_for
 from ...store.flow_events import publish_flow
@@ -231,14 +231,11 @@ def _window_match(matcher, win, frame):
 
 
 def _window_fit(evs, mode) -> float:
-    """Aggregate 0..1 fit of a window's detector evals — the tie-break the classifier uses
-    to pick the BEST-fitting window among those that pass. Mirrors ``_window_score`` in the
-    classifier: a ``negate`` detector contributes ``1 - score`` (how absent its landmark is),
-    the window is the WEAKEST contributor under ``all`` mode and the STRONGEST under ``any``."""
-    if not evs:
-        return 0.0
+    """Aggregate 0..1 fit of a window's detector evals — the best-fit tie-break. Same rule as the
+    classifier via the shared ``aggregate_fit`` (rule 7): a ``negate`` detector contributes
+    ``1 - score`` (how absent its landmark is), then weakest under ``all`` / strongest under ``any``."""
     contribs = [(1.0 - e["score"]) if e.get("negate") else e["score"] for e in evs]
-    return max(contribs) if mode == DetectCombine.any else min(contribs)
+    return aggregate_fit(contribs, mode)
 
 
 @router.get("/detect/collisions/{game}")
@@ -252,7 +249,9 @@ def detect_collisions(game: str):
     Per-window verdict:
       ok            — only the owner matched
       collision     — another window also fully matched (ambiguous on this image)
-      misclassified — another window WINS (more detectors) -> classify picks the wrong one
+      misclassified — another window WINS the classify order (priority mode: a higher-priority
+                      window also matches this image; best-fit mode: a higher-scoring/more-detector
+                      window matches) -> the runtime classifier would pick that one, not the owner
       self_no_match — the owner's own image doesn't match the owner (detectors too strict)
       no_image      — no bound capture to test against
     """
@@ -287,10 +286,12 @@ def detect_collisions(game: str):
                                     "score": _window_fit(evs, v.detect_mode),
                                     "detectors": evs})
         matched_ids = [m["window"] for m in matches if m["matched"]]
-        # best fit wins (mirror classifier): highest aggregate score, then most detectors.
-        winner = max((m for m in matches if m["matched"]),
-                     key=lambda m: (m["score"], m["ndet"]), default=None)
-        winner_id = winner["window"] if winner else None
+        # Winner via the SHARED select_winner (rule 7) so the preview can never disagree with the
+        # runtime classifier: priority mode -> first passing window in priority order (true/false),
+        # best-fit mode -> highest score then most detectors. (The old copy here used best-fit
+        # unconditionally and falsely flagged priority-protected windows as misclassified.)
+        winner_id = select_winner(profile, [WinCand(m["window"], m["matched"], m["score"], m["ndet"])
+                                            for m in matches])
         collides = [i for i in matched_ids if i != w.id]
         if w.id not in matched_ids:
             verdict = "self_no_match"
