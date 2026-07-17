@@ -132,6 +132,36 @@ def test_align_bottom_anchors_on_box_bottom_edge():
     assert round(cells[0].oy, 3) == round(0.32 - 0.5 * 0.2, 3)   # 0.22, not centre-based 0.27
 
 
+def test_wrapped_name_does_not_drag_column_sideways():
+    # A single row of item tiles; the far-right name WRAPS to two lines. ``align: bottom``
+    # picks the bottom line for the vertical anchor, but that bottom line ("Chassis") is a
+    # SHORT continuation indented under the wide top line ("Yareli Prime"). The column anchor
+    # must come from the UNION of the cell's lines (the wide line == the name-block edge), not
+    # the indented bottom line — else the whole cell shoves sideways off the grid (the real
+    # relic_rewards bug: the far-right wrapped tile read occluded because it slid right).
+    name = RegionDef(id="name", box=Box(x=0.0, y=0.0, w=1.0, h=0.5), field="name",
+                     tell=True, locate=True, align="bottom", align_x="left")
+    item = ItemDef(id="relic", box=Box(x=0.0, y=0.0, w=0.2, h=0.2),
+                   align="bottom", align_x="left", fields=[name])
+    win = WindowDef(id="w", static_grid=False, data_area=Box(x=0.0, y=0.0, w=1.0, h=1.0),
+                    items=[item], fields=[FieldDef(id="name")])
+    lines = [
+        _name(0.30, 0.30, lw=0.10, text="Alpha"),          # col0, single line, left 0.25
+        _name(0.50, 0.30, lw=0.10, text="Beta"),           # col1, single line, left 0.45
+        # col2, WRAPPED: wide top line (left 0.65) + narrow bottom line indented right (left 0.71)
+        (0.70, 0.30, 0.04, "Yareli Prime", 0.95, 0.65, 0.10),
+        (0.76, 0.34, 0.04, "Chassis", 0.95, 0.71, 0.04),
+    ]
+    cells = locate_item_cells(FRAME, win, lines)
+    xs = sorted(round(ic.ox, 3) for ic in cells)
+    assert len(xs) == 3
+    # far-right column anchors on the wide line's left (0.65 - box.x*giw = 0.65), NOT the
+    # indented bottom line's left (0.71) that ``align: bottom`` would otherwise have used.
+    assert xs[-1] == 0.65
+    # uniform one-pitch (0.20) spacing across all three columns -> a solid grid
+    assert xs == [0.25, 0.45, 0.65]
+
+
 def test_last_pass_snaps_columns_to_content_consensus():
     # The grid-regular last pass: the lattice (authored pitch 0.2) buckets content, but the
     # final column x comes from the CONTENT median, not the rigid node. Column two sits at

@@ -254,12 +254,23 @@ def _box_xref(box, ax: str) -> float:
     return (box.x + box.w) if ax == "right" else (box.x if ax == "left" else box.x + box.w / 2)
 
 
-def _origin_x(item: ItemDef, loc, cw: float, cx: float, lx: float, lw: float) -> float:
-    """Cell LEFT edge that lands the anchor text's ``align_x`` edge on this line, with the
-    locator box's own x-offset honoured (so the located field's box re-lands on the text)."""
+def _align_x_edge(item: ItemDef, cx: float, lx: float, lw: float) -> float:
+    """The anchor text's ``align_x`` edge on a line: right -> line right (``lx+lw``),
+    centre -> line centre (``cx``), left -> line left (``lx``)."""
     ax = anchor_align_x(item)
-    edge = (lx + lw) if ax == "right" else (cx if ax == "center" else lx)
-    return edge - _box_xref(loc.box, ax) * cw
+    return (lx + lw) if ax == "right" else (cx if ax == "center" else lx)
+
+
+def _origin_x_from_edge(item: ItemDef, loc, cw: float, edge: float) -> float:
+    """Cell LEFT edge that lands the anchor's ``align_x`` edge at ``edge``, with the locator
+    box's own x-offset honoured (so the located field's box re-lands on the text). The single
+    edge->origin path both :func:`_origin_x` (per line) and the per-cell union anchor share."""
+    return edge - _box_xref(loc.box, anchor_align_x(item)) * cw
+
+
+def _origin_x(item: ItemDef, loc, cw: float, cx: float, lx: float, lw: float) -> float:
+    """Cell LEFT edge that lands the anchor text's ``align_x`` edge on this line."""
+    return _origin_x_from_edge(item, loc, cw, _align_x_edge(item, cx, lx, lw))
 
 
 def _origin_y(item: ItemDef, ch: float, cy: float, h: float, ref: float) -> float:
@@ -348,7 +359,9 @@ def locate_item_cells(frame: Frame, window: WindowDef, lines_frac, templates=Non
             continue
         visual = _is_visual_loc(loc)
         ref = _anchor_ref(item, loc)
-        pts: list[tuple[float, float]] = []
+        # each point carries its origin (cox, coy) AND the line's horizontal extent (lx, lw),
+        # so the per-cell column anchor can use the UNION of the cell's lines (below).
+        pts: list[tuple[float, float, float, float]] = []
         if not visual:
             fid = getattr(loc, "field", None)
             fdef = next((f for f in window.fields if f.id == fid), None) if fid else None
@@ -359,7 +372,7 @@ def locate_item_cells(frame: Frame, window: WindowDef, lines_frac, templates=Non
                 cox = _origin_x(item, loc, giw, cx, lx, lw)
                 coy = _origin_y(item, gih, cy, h, ref)
                 if _cell_in_bounds(item, cox, coy, da, giw, gih, clip_x=True):
-                    pts.append((cox, coy))
+                    pts.append((cox, coy, lx, lw))
         info[item.id] = (loc, visual, pts)
 
     def _nearest(v: float, arr: list[float]) -> int:
@@ -368,29 +381,41 @@ def locate_item_cells(frame: Frame, window: WindowDef, lines_frac, templates=Non
     # Derive the grid by GAP-CLUSTERING the content origins (a gap > half a cell = a new
     # column/row); cluster centres are the real grid lines, straight from the content.
     text_items = [it for it in items if it.id in info and not info[it.id][1] and info[it.id][2]]
-    col_centers = _clusters([cox for it in text_items for cox, _ in info[it.id][2]], giw * 0.5)
-    row_centers = _clusters([coy for it in text_items for _, coy in info[it.id][2]], gih * 0.5)
+    col_centers = _clusters([p[0] for it in text_items for p in info[it.id][2]], giw * 0.5)
+    row_centers = _clusters([p[1] for it in text_items for p in info[it.id][2]], gih * 0.5)
 
-    # Snap each line to its (row, col); keep ONE line per cell by the authored vertical align
-    # (bottom -> bottommost line, so a wrapped 2nd line never drags the anchor off the name's
-    # bottom edge; top -> topmost; centre -> median). The column/row line is the MEDIAN of
-    # those anchors, so every column shares one x and every row one y — a solid grid.
+    # Snap each line to its (row, col), then anchor the cell on each axis INDEPENDENTLY.
+    # VERTICAL (ry): the authored align picks the line — bottom -> bottommost, so a wrapped 2nd
+    # line never drags the anchor off the name's bottom edge; top -> topmost; centre -> median.
+    # HORIZONTAL (rx): NOT the vertically-chosen line's x — a wrapped name's short bottom line
+    # is indented under the wider line above it, so reusing it would shove the column sideways
+    # (align: bottom fixes y, not x). Instead anchor on the ``align_x`` edge of the UNION of the
+    # cell's lines (widest line == the name block's edge), so wrapping/justification can't move
+    # the column. A single-line cell's union is that one line, so its anchor is unchanged.
+    # The column/row line is then the MEDIAN of those per-cell anchors — one x per column, one y
+    # per row, a solid grid.
     col_buf: dict[int, list[float]] = {}
     row_buf: dict[int, list[float]] = {}
     occ: dict[str, set] = {}
     for it in text_items:
+        loc = info[it.id][0]
         ay = anchor_align(it)
-        groups: dict[tuple[int, int], list[tuple[float, float]]] = {}
-        for cox, coy in info[it.id][2]:
+        ax = anchor_align_x(it)
+        groups: dict[tuple[int, int], list[tuple[float, float, float, float]]] = {}
+        for cox, coy, lx, lw in info[it.id][2]:
             ri, ci = _nearest(coy, row_centers), _nearest(cox, col_centers)
-            groups.setdefault((ri, ci), []).append((cox, coy))
+            groups.setdefault((ri, ci), []).append((cox, coy, lx, lw))
         for (ri, ci), lst in groups.items():
             if ay == "bottom":
-                rx, ry = max(lst, key=lambda p: p[1])
+                ry = max(p[1] for p in lst)
             elif ay == "top":
-                rx, ry = min(lst, key=lambda p: p[1])
+                ry = min(p[1] for p in lst)
             else:
-                rx, ry = _median([p[0] for p in lst]), _median([p[1] for p in lst])
+                ry = _median([p[1] for p in lst])
+            uleft = min(p[2] for p in lst)
+            uright = max(p[2] + p[3] for p in lst)
+            edge = uright if ax == "right" else (uleft if ax == "left" else (uleft + uright) / 2)
+            rx = _origin_x_from_edge(it, loc, giw, edge)
             col_buf.setdefault(ci, []).append(rx)
             row_buf.setdefault(ri, []).append(ry)
             occ.setdefault(it.id, set()).add((ri, ci))
