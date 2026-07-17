@@ -126,6 +126,7 @@ class RuleThen(str, Enum):
     round = "round"            # round to nearest integer (number)
     floor = "floor"            # round down (number)
     ceil = "ceil"              # round up (number)
+    decimal = "decimal"        # restore a decimal point OCR dropped from a "0.x" read ("05" -> "0.5")
     extract = "extract"        # pull a value out via ``strategy`` + ``sep``
     dictionary = "dictionary"  # correct/validate against a game dictionary
 
@@ -191,6 +192,8 @@ class Preprocess(BaseModel):
     colors: list[str] = Field(default_factory=list)  # hex, e.g. "#ffffff"
     tolerance: int = 60                                # colour distance (0..441)
     scale: float = 1.0                                 # upscale factor for small fonts
+    min_frac: float = 0.0                              # denoise: drop near-colour blobs smaller
+    #                                                    than this fraction of the largest (0 = off)
 
 
 class FieldDef(BaseModel):
@@ -986,7 +989,8 @@ class TriggerDef(BaseModel):
     * ``on_live_start``  — fire when the server live-collection session starts (armed collection).
     * ``on_live_stop``   — fire when the server live-collection session stops.
     * ``on_readout``    — fire when a watched live readout (``readout_watch``) meets ``readout_op``
-      ``readout_value`` — edge-triggered (fires once on entering the condition). See ReadoutDef.
+      ``readout_value``. A comparison op fires on entering the condition and on every further move
+      while it holds; the ``crosses_*`` ops fire once on the transition tick. See ReadoutDef.
     * ``on_register``   — fire on a per-key CONDITION over a watched register's live keys.
       ``register_watch`` holds the register id(s); ``register_conds`` maps each register id to a list
       of ``RegKeyCond`` (``{key, when, value, value2}``) — one condition per wired-readout key.
@@ -994,8 +998,9 @@ class TriggerDef(BaseModel):
       (``gte|lte|gt|lt|eq|ne|crosses_up|crosses_down``) against ``value``, or ``between``
       (``value <= v <= value2``). ``register_logic``
       (``or`` default | ``and``) combines a trigger's conditions: ``or`` fires when ANY holds,
-      ``and`` only when ALL hold. Edge-triggered (fires once on the combined condition becoming
-      true). A register is fed every tick on the EXPOSED value (aggregate fold, or ring tail).
+      ``and`` only when ALL hold. A comparison fires on every move while it holds; the ``crosses_*``
+      ops fire once on the transition tick. A register is fed every tick on the EXPOSED value
+      (aggregate fold, or ring tail).
       See :class:`RegisterDef` / :class:`RegKeyCond`.
     * ``on_ready``       — fire once when a watched PRODUCER's sweep FINISHES. ``watch`` holds the
       producer id(s); the trigger fires from the sweep's reap (its output is already written), so it
@@ -1340,7 +1345,8 @@ class RegisterDef(BaseModel):
     capacity: int = Field(default=1, ge=1)
     # How a key's ring of recent values collapses to the ONE value the register EXPOSES (persist
     # flush, register_latest, the membank's summary line). "" / "latest" -> expose the ring tail
-    # (latest) unchanged. Otherwise a numeric fold over the ring: min | max | avg | sum | median.
+    # (latest) unchanged. Otherwise a numeric fold over the ring: min | max | avg | sum | median |
+    # stable (newest value within k*MAD of the ring median — skips lone misread spikes).
     # Only meaningful when capacity > 1 (the UI only offers it then); a non-numeric ring, or one
     # with no numeric members, falls back to the tail. The raw ring is always retained + shown.
     aggregate: str = ""
