@@ -1346,9 +1346,10 @@ class RegisterDef(BaseModel):
     # How a key's ring of recent values collapses to the ONE value the register EXPOSES (persist
     # flush, register_latest, the membank's summary line). "" / "latest" -> expose the ring tail
     # (latest) unchanged. Otherwise a numeric fold over the ring: min | max | avg | sum | median |
-    # stable (newest value within k*MAD of the ring median — skips lone misread spikes).
-    # Only meaningful when capacity > 1 (the UI only offers it then); a non-numeric ring, or one
-    # with no numeric members, falls back to the tail. The raw ring is always retained + shown.
+    # stable (newest value within k*MAD of the ring median — skips lone misread spikes). "common" is
+    # the one NON-numeric fold: expose the most frequent ring member as text (ties -> newest tied).
+    # Only meaningful when capacity > 1 (the UI only offers it then); a numeric fold over a
+    # non-numeric ring, or one with no numeric members, falls back to the tail. Raw ring always kept.
     aggregate: str = ""
     # Ignore null / None / empty ("") reads instead of writing them to a keyslot, so a momentary
     # blank read can't displace a good held value. Off (default) appends every read, blanks included.

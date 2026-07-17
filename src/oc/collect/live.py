@@ -367,6 +367,10 @@ class LiveSession:
         and skips non-numeric ones; with no numeric members (or an empty ring) it falls back to the
         tail too. So a non-numeric register never breaks — it just keeps showing its latest.
 
+        ``common`` is the one NON-numeric fold: it does not coerce — it exposes the most frequent ring
+        member by text form (ties -> newest of the tied), so a register of item names/states/labels
+        collapses to its dominant value.
+
         ``stable`` = the NEWEST ring value that agrees with the consensus: skip values deviating more
         than ``_STABLE_K * MAD`` from the ring's median (walking newest->oldest), so a lone confident
         misread (a ``400`` spike among ``4.00`` reads) is rejected in favour of the latest good read.
@@ -379,6 +383,13 @@ class LiveSession:
         tail = values[-1] if values else None
         if not values or mode in ("", "latest"):
             return tail
+        if mode == "common":
+            # Non-numeric fold: expose the most frequent ring member by TEXT form; return the
+            # original value (a numeric ring still exposes a number). Tie -> newest of the tied.
+            counts = collections.Counter(str(v) for v in values)
+            top = max(counts.values())
+            winners = {k for k, c in counts.items() if c == top}
+            return next((v for v in reversed(values) if str(v) in winners), tail)
         nums = []
         for v in values:
             try:

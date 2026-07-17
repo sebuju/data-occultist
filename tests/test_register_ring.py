@@ -217,6 +217,30 @@ def test_aggregate_non_numeric_falls_back_to_tail():
     assert s.register_latest("hp", "health") == "c"
 
 
+def test_aggregate_common_picks_most_frequent_text():
+    s = _agg_session("common")
+    for v in ("a", "b", "a"):
+        s._feed_registers({"health": v}, {})
+    assert s.register_latest("hp", "health") == "a"
+
+
+def test_aggregate_common_preserves_numeric_type():
+    # returns the ORIGINAL ring value, so a numeric ring still exposes a number (not "3")
+    s = _agg_session("common")
+    for v in (3, 3, 5):
+        s._feed_registers({"health": v}, {})
+    got = s.register_latest("hp", "health")
+    assert got == 3 and isinstance(got, int)
+
+
+def test_aggregate_common_tie_breaks_to_newest():
+    s = _agg_session("common")
+    for v in ("a", "b"):
+        s._feed_registers({"health": v}, {})
+    # both appear once -> newest of the tied wins
+    assert s.register_latest("hp", "health") == "b"
+
+
 def test_persist_flushes_aggregate_when_set(monkeypatch, tmp_path):
     calls = []
 

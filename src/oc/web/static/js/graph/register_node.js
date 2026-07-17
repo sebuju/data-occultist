@@ -28,7 +28,7 @@ import { liveCollecting } from "./panels/livewin.js";
 // ring). "" is the default `<latest>` option (no fold — expose the ring tail). Deliberately its
 // OWN list (uses "avg", the user's word) — not the dataset node's collapse policy (which says
 // "mean"); the two concepts are unrelated, so they don't share a select.
-const REG_AGGREGATES = [["", "latest"], ["min", "min"], ["max", "max"], ["avg", "avg"], ["sum", "sum"], ["median", "median"], ["stable", "stable"]];
+const REG_AGGREGATES = [["", "latest"], ["min", "min"], ["max", "max"], ["avg", "avg"], ["sum", "sum"], ["median", "median"], ["stable", "stable"], ["common", "common"]];
 
 // Most decimal places any numeric ring member carries (mirrors LiveSession._ring_decimals): "1.50"
 // -> 2, "10" -> 0. Drives the aggregate's display precision.
