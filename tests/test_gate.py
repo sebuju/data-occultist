@@ -17,7 +17,7 @@ from oc.collect.live import LiveSession
 from oc.detect.classifier import DetectClassifier
 from oc.detect.matcher import DetectMatcher
 from oc.profile.merge import merge_profiles
-from oc.profile.models import Box, DetectDef, GameProfile, WindowDef
+from oc.profile.models import Box, DetectDef, FieldDef, GameProfile, ReadoutDef, WindowDef
 from oc.settings import Tuning
 from oc.types import Frame, PixelBox
 
@@ -214,6 +214,9 @@ def _live_session():
     s._recog = {}
     s._debug = collections.deque(maxlen=8)
     s._debug_seq = 0
+    s._dbg_prev_readouts = {}
+    s._last_saved_frame = None
+    s._save_recognized = False
     return s
 
 
@@ -263,6 +266,69 @@ def test_detection_gap_counts_only_read_opportunities():
     assert c._tick_no == 1                     # throttle ticks between slots do nothing
     c.tick(ocr_due=True)
     assert c._tick_no == 2                     # two consecutive reads -> gap of 1 (<= confirm_frames)
+
+
+# ---- readout fast poll: throttled wakes still read live readouts ---------------
+
+def _readout_collector(monkeypatch, *, tuning=None):
+    """A Collector stubbed down to the classify+readout path: real tick(), scripted
+    locate/capture/classify/reader, no stores and no stats writes."""
+    import types
+
+    import oc.collect.collector as mod
+    from oc.store import stats_store
+
+    win = WindowDef(id="hud", fields=[FieldDef(id="f")],
+                    readouts=[ReadoutDef(id="cd", box=_full_box(), field="f")])
+    profile = GameProfile(name="g", windows=[win], window_priority=["hud"])
+
+    c = Collector.__new__(Collector)
+    c._tuning = tuning or Tuning()
+    c._profile = profile
+    c._tick_no = 0
+    c._any_readouts = True
+    c._settle_thumb = None
+    c._readouts = {}
+    c._locator = types.SimpleNamespace(locate=lambda prof: object())
+    frame = _frame((0, 255, 0))
+    c._engine = types.SimpleNamespace(
+        capture=types.SimpleNamespace(grab_window=lambda w: frame),
+        window=types.SimpleNamespace(is_foreground=lambda w: True),
+        ocr=types.SimpleNamespace())
+    c._classify = lambda f: ("hud", None)
+    c._reader = types.SimpleNamespace(
+        read_readouts_detailed=lambda f, w, vf, trace_sink=None: {"cd": (3, 0.9, "3", None)})
+    c.save_recognized_frames = False
+    c.on_frame = None
+    monkeypatch.setattr(mod, "gate_readouts", lambda *a, **k: set())
+    monkeypatch.setattr(stats_store, "record_timing", lambda *a, **k: None)
+    return c
+
+
+def test_fast_poll_reads_readouts_between_ocr_slots(monkeypatch):
+    # a throttled wake still classifies (cache-cheap) and reads the readouts, surfacing
+    # them under `throttled` — the trigger cadence win. The heavy grid/dataset path is
+    # skipped and the tick spends no read opportunity (the OCR clock holds).
+    c = _readout_collector(monkeypatch)
+    r = c.tick(ocr_due=False)
+    assert r.status is TickStatus.throttled
+    assert r.window_id == "hud"
+    assert r.readouts == {"cd": 3}
+    assert r.readouts_all == {"cd": 3}
+    assert c._tick_no == 0
+
+
+def test_fast_poll_off_returns_plain_throttled(monkeypatch):
+    # knob off -> the old behaviour: a throttled wake classifies nothing and reads nothing
+    c = _readout_collector(monkeypatch, tuning=Tuning(readout_fast_poll=False))
+
+    def boom(frame):
+        raise AssertionError("classify must not run on a throttled tick with fast poll off")
+
+    c._classify = boom
+    r = c.tick(ocr_due=False)
+    assert r.status is TickStatus.throttled
+    assert not r.readouts
 
 
 # ---- merge: window_priority is game-level, preserved on a single-window save --

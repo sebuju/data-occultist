@@ -265,7 +265,7 @@ windows:
       w: 0.08550724637681151
       h: 0.02904006453347674
     field: rof_90
-    enabled: true
+    enabled: false
   - id: ro_92
     box:
       x: 0.834118350116527
@@ -273,7 +273,7 @@ windows:
       w: 0.10778985507246375
       h: 0.04840010755579449
     field: rof_93
-    enabled: true
+    enabled: false
   preprocess:
     mode: none
     colors: []
@@ -5421,8 +5421,8 @@ layout:
       custH: true
       softH: true
     sub:live_prices_joined:
-      x: 1580.0
-      y: -1980.0
+      x: 1620.0
+      y: -1960.0
       w: 360.0
       h: 920.0
       collapsed: false

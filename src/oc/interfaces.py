@@ -97,6 +97,14 @@ class OcrEngine(ABC):
         to run them in one pass (far fewer GPU launches)."""
         return [self.read_line(im) for im in images]
 
+    def read_images(self, images) -> list[list[OcrLine]]:
+        """Full det+rec OCR of MANY independent crops, result aligned to input by index.
+        Each crop's line boxes are relative to THAT crop, exactly as :meth:`read_image`
+        would return them. Detection dominates OCR cost and is priced per pass, not per
+        pixel, so a backend that can share one detection pass across crops (mosaic /
+        batched det) overrides this; the default just loops :meth:`read_image`."""
+        return [self.read_image(im) for im in images]
+
     def read_region(self, frame: Frame, box: PixelBox) -> list[OcrLine]:
         """OCR a sub-rectangle of a frame. Default crops then delegates.
 

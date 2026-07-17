@@ -357,7 +357,12 @@ class Collector:
         # Cheapness comes from priority-order classify: the top-priority window is a cheap
         # (no-OCR) detector "gate" for the on-screen gameplay HUD with no dataset, so a settled
         # gameplay frame early-returns on one colour check and reads nothing (see the classifier).
-        if not ocr_due:
+        # EXCEPT readouts ([[readout_fast_poll]]): live HUD values (a cooldown counting down)
+        # deserve every wake, not one read per OCR slot — so when the profile declares readouts,
+        # a throttled tick still classifies (cache-cheap on a steady screen) and reads JUST the
+        # readouts, returning before the grid/dataset path. The OCR clock doesn't advance
+        # (throttled stays in _HEAVY_SKIPPED), so the heavy path keeps its own cadence.
+        if not ocr_due and not (self._tuning.readout_fast_poll and self._any_readouts):
             return TickResult(TickStatus.throttled)
 
         # Every OCR call for this tick (classify's text detectors, readouts, grid read) runs
@@ -381,12 +386,13 @@ class Collector:
             # "capture recognised windows" debug bucket: persist one grab per OCR-due tick whose
             # frame matched a window (any state, incl. moving / state-invalid), not only the write
             # frames the on-write save handles. Opt-in via the live panel; when on, the on-write
-            # save below is skipped (this recognised superset already covers it).
-            if self.save_recognized_frames and self.on_frame is not None:
+            # save below is skipped (this recognised superset already covers it). ocr_due-gated so
+            # the readout fast poll doesn't multiply the saves per slot.
+            if ocr_due and self.save_recognized_frames and self.on_frame is not None:
                 self.on_frame(frame)
 
-            # Live readouts (health/bars/counters): read EVERY OCR-due tick the window declares
-            # them, BEFORE the motion/state gates below — they're ephemeral HUD values, not the
+            # Live readouts (health/bars/counters): read EVERY tick that reaches here — OCR-due
+            # AND fast-poll wakes — BEFORE the motion/state gates below; ephemeral HUD values, not the
             # dataset, so a blurred/animating frame or a state that's invalid-for-save must not
             # stop them surfacing (or feeding on_readout triggers). read_readouts plausibility-
             # gates each box, so a garbage mid-animation reading is dropped, never shown.
@@ -399,7 +405,10 @@ class Collector:
                 vfields = {f.id: f for f in self._profile.fields_for(window)}
                 ro_field = {v.id: vfields.get(v.field) for v in window.readouts if v.enabled}
                 ro_trace: list[dict] = []
+                _tro = time.perf_counter()
                 detailed = self._reader.read_readouts_detailed(frame, window, vfields, trace_sink=ro_trace)
+                t_readout = (time.perf_counter() - _tro) * 1000.0
+                n_readout = len(detailed)
                 readouts_now = {k: value for k, (value, *_r) in detailed.items()}
                 readout_confs_now = {k: conf for k, (_v, conf, *_r) in detailed.items()}
                 # One synthetic debug read per readout (same shape as _debug_reads) so the OCR
@@ -425,6 +434,19 @@ class Collector:
                                     if v.enabled and v.id not in suppressed}
                 readout_confs_all_now = {v.id: readout_confs_now.get(v.id) for v in window.readouts
                                          if v.enabled and v.id not in suppressed}
+                # Timed here (not with cp/st/cl below) so fast-poll and moving ticks — which
+                # return before the save-worthy gates — still record the readout cost.
+                stats_store.record_timing(self._profile.name, f"win:{window_id}", "ro",
+                                          t_readout, n=n_readout)
+
+            # Readout fast poll: this wake is between OCR slots — the readouts above are the
+            # whole job. Surface them under `throttled` (still in _HEAVY_SKIPPED, so the OCR
+            # clock holds) and skip the grid/dataset path entirely.
+            if not ocr_due:
+                return TickResult(TickStatus.throttled, window_id=window_id, state_id=state_id,
+                                  readouts=readouts_now, readout_confs=readout_confs_now,
+                                  readouts_all=readouts_all_now, readout_confs_all=readout_confs_all_now,
+                                  readout_reads=readout_reads)
 
             # Moving frame: readouts were taken above; skip the grid OCR (blurred) and return them.
             if moving:
@@ -444,25 +466,32 @@ class Collector:
             stats_store.record_timing(self._profile.name, f"win:{window_id}", "st", t_settle)
             stats_store.record_timing(self._profile.name, f"win:{window_id}", "cl", t_classify)
 
-            # Skip OCR when the grid region is pixel-identical to the last tick.
-            _tg = time.perf_counter()
-            sig = self._reader.region_signature(frame, window)
-            stats_store.record_timing(self._profile.name, f"win:{window_id}", "sg",
-                                      (time.perf_counter() - _tg) * 1000.0)
-            cached = self._frame_cache.get(window_id)
-            cache_hit = sig is not None and cached is not None and cached[0] == sig
-            if cache_hit:
-                records, sentinel_ypos = cached[1], cached[2]
+            # A window with neither regions nor items has nothing to grid-read: skip the
+            # signature/read path entirely. Without this, _resolve_cells falls through to a
+            # whole-canvas OCR (there for the teach preview's raw layer) that reads nothing
+            # storable — ~230ms/tick wasted on a readouts-only HUD window.
+            if not window.regions and not window.items:
+                records, sentinel_ypos, cache_hit = [], None, True
             else:
-                fields = {f.id: f for f in self._profile.fields_for(window)}
-                # Time OCR read specifically (only the frames where it actually ran — a
-                # cache-hit frame does no OCR, so recording it would understate the real cost).
-                _oc = time.perf_counter()
-                records, sentinel_ypos = self._reader.read(frame, window, fields)
-                oc_ms = (time.perf_counter() - _oc) * 1000.0
-                stats_store.record_timing(self._profile.name, f"win:{window_id}", "oc", oc_ms, n=len(records))
-                if sig is not None:
-                    self._frame_cache[window_id] = (sig, records, sentinel_ypos)
+                # Skip OCR when the grid region is pixel-identical to the last tick.
+                _tg = time.perf_counter()
+                sig = self._reader.region_signature(frame, window)
+                stats_store.record_timing(self._profile.name, f"win:{window_id}", "sg",
+                                          (time.perf_counter() - _tg) * 1000.0)
+                cached = self._frame_cache.get(window_id)
+                cache_hit = sig is not None and cached is not None and cached[0] == sig
+                if cache_hit:
+                    records, sentinel_ypos = cached[1], cached[2]
+                else:
+                    fields = {f.id: f for f in self._profile.fields_for(window)}
+                    # Time OCR read specifically (only the frames where it actually ran — a
+                    # cache-hit frame does no OCR, so recording it would understate the real cost).
+                    _oc = time.perf_counter()
+                    records, sentinel_ypos = self._reader.read(frame, window, fields)
+                    oc_ms = (time.perf_counter() - _oc) * 1000.0
+                    stats_store.record_timing(self._profile.name, f"win:{window_id}", "oc", oc_ms, n=len(records))
+                    if sig is not None:
+                        self._frame_cache[window_id] = (sig, records, sentinel_ypos)
 
         kept = self._above_floor(records)               # occlusion / garbage gate
         # Per-read debug detail for the live log — only on a REAL OCR frame (a cache hit

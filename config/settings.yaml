@@ -46,6 +46,8 @@ tuning:
                             #   seconds; lower for faster-changing views, 0 = no throttle
   gate_interval: 0.25       # fast poll: wake to fire triggers + re-check the OCR throttle;
                             #   cheapness on idle frames = priority-order classify (gate window)
+  readout_fast_poll: true   # read live readouts on every gate poll, not just OCR slots
+                            #   (cooldown triggers react at gate_interval cadence)
   require_foreground: false  # true only if using screen-region capture
 
 profiles_dir: config/games

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field as dc_field
 import cv2
 
 from ..interfaces import OcrEngine
-from ..profile.models import FieldDef, FieldType, ItemDef, Preprocess, TellKind, WindowDef
+from ..profile.models import FieldDef, FieldType, ItemDef, Preprocess, PreprocessMode, TellKind, WindowDef
 from ..types import FractionBox, Frame, OcrLine, PixelBox
 from .fields import run_rules
 from .grid import Cell, cells_for_rows, expand_cells
@@ -35,6 +35,32 @@ from .preprocess import apply as apply_preprocess
 from .rows import fit_row_lattice
 
 _MIN_OCR_H = 96   # focused field crops shorter than this are upscaled before OCR
+
+# Unchanged-crop gate for the readout memo (see _detect_reads). Live capture noise moves a
+# FEW pixels a FEW counts every frame — an exact byte compare never hits — while a real
+# content change (a digit ticking over) moves a glyph's worth of pixels a lot. So a crop
+# only counts as changed when more than _SIG_MIN_FRAC of its pixels (floor _SIG_MIN_PX)
+# moved by more than _SIG_TOL. Same tolerant-compare reasoning as detsig/settle.
+_SIG_TOL = 24
+_SIG_MIN_PX = 12
+_SIG_MIN_FRAC = 0.005
+
+# Presence floor for the colour-masked readout fast path (_detect_reads): a masked crop
+# with fewer glyph pixels than this is a confirmed-empty box (mask denoise already dropped
+# speckle; real glyphs are hundreds of pixels at any playable resolution).
+_MASK_MIN_PX = 8
+
+
+def _crop_unchanged(prev, cur) -> bool:
+    """True when ``cur`` differs from ``prev`` only by capture noise (see constants above)."""
+    if prev.shape != cur.shape:
+        return False
+    d = cv2.absdiff(prev, cur)
+    if d.ndim == 3:
+        d = cv2.max(cv2.max(d[:, :, 0], d[:, :, 1]), d[:, :, 2])   # worst channel per pixel
+    _, m = cv2.threshold(d, _SIG_TOL, 255, cv2.THRESH_BINARY)
+    floor = max(_SIG_MIN_PX, int(d.shape[0] * d.shape[1] * _SIG_MIN_FRAC))
+    return cv2.countNonZero(m) <= floor
 
 
 @dataclass
@@ -116,6 +142,9 @@ class RegionReader:
         # ``glyph_check`` fields, and whole-box classification for ``type: symbol`` fields.
         # None -> both skipped.
         self._atlas = atlas
+        # {(window_id, readout_id): (last_ocrd_crop, (text, conf) | None)} — unchanged-crop
+        # memo for the isolated readout reads (see _detect_reads). None = confirmed absent.
+        self._ro_cache: dict[tuple[str, str], tuple[object, tuple[str, float] | None]] = {}
 
     # ---- batched OCR -------------------------------------------------------
 
@@ -399,8 +428,28 @@ class RegionReader:
         with ``FieldDef.preprocess`` set — a white-digit colour mask + upscale); a key with
         no override falls back to ``window.preprocess``. The authored ``scale`` on that
         override IS the per-readout upscale (via :func:`apply_preprocess`) — there is still
-        no automatic tiny-crop upscale here (that reason, blank-box phantom reads, stands)."""
-        out = {}
+        no automatic tiny-crop upscale here (that reason, blank-box phantom reads, stands).
+
+        Colour-masked fast path: for a box whose preprocess is a COLOUR MASK, detection's
+        one job here — deciding presence, so a blank box can never hallucinate — is
+        answered by the mask itself: the masked crop is black-glyphs-on-white, so
+        "any glyph pixels at all" IS the presence oracle. Those boxes skip detection
+        (the dominant, per-pass-priced cost) entirely: all-white → confirmed absent with
+        zero OCR; glyphs present → ONE batched recognition-only pass (``read_lines``)
+        across every such box, and a box rec can't segment (empty text despite glyph
+        pixels) falls back to the full det+rec read so a real value is never lost.
+        Un-masked boxes keep the full det+rec read — for them detection is still the
+        only trustworthy presence gate.
+
+        Unchanged-crop memoisation: the pipeline is deterministic, so a box whose
+        PREPROCESSED crop shows only capture noise since its last read must produce the
+        same result — including a confirmed absence. Each box's crop is compared to the
+        one it last OCR'd (:func:`_crop_unchanged`, tolerant — an exact byte compare
+        never survives live sensor noise) and an unchanged box reuses its cached
+        ``(text, conf)`` (or cached absence) with NO OCR call. Static screens (arsenal
+        slots, names) hit this constantly; a chaotic live HUD mostly misses it and is
+        carried by the masked fast path above instead."""
+        keys, crops, masked = [], [], []
         for key, box in pending:
             if box.w <= 0 or box.h <= 0:
                 continue
@@ -414,13 +463,52 @@ class RegionReader:
             # noise/edges until the detector fires on a blank box and the rec head reads a
             # phantom value. Native res keeps this read as sensitive as the window's raw-OCR
             # layer — so an empty box reads empty in both, not just the raw layer.
-            lines = self._ocr.read_image(crop)
-            if not lines:
+            keys.append(key)
+            crops.append(crop)
+            masked.append(pp is not None and pp.mode is PreprocessMode.color and bool(pp.colors))
+        out = {}
+        rec_miss, det_miss = [], []   # (cache_key, crop) pending OCR, split by read kind
+        for key, crop, is_masked in zip(keys, crops, masked):
+            ck = (window.id, key)
+            hit = self._ro_cache.get(ck)
+            if hit is not None and _crop_unchanged(hit[0], crop):
+                if hit[1] is not None:
+                    out[key] = hit[1]
                 continue
-            text, conf = self._order_join(lines)
-            if not text:
-                continue
-            out[key] = (text, conf)
+            if is_masked:
+                # presence from the mask: glyph pixels are BLACK on the white mask output
+                gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+                glyph_px = cv2.countNonZero(cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)[1])
+                if glyph_px < _MASK_MIN_PX:
+                    self._ro_cache[ck] = (crop.copy(), None)   # confirmed absent, no OCR
+                    continue
+                rec_miss.append((ck, crop))
+            else:
+                det_miss.append((ck, crop))
+        # cache-store shared by both read kinds: keep the exact crop that was OCR'd (copy —
+        # the buffer may alias the live frame) so the next tick's compare is against it
+        def settle_read(ck, crop, res):
+            self._ro_cache[ck] = (crop.copy(), res)
+            if res is not None:
+                out[ck[1]] = res
+        rec_reads = self._ocr.read_lines([c for _, c in rec_miss]) if rec_miss else []
+        for (ck, crop), (text, conf) in zip(rec_miss, rec_reads):
+            text = (text or "").strip()
+            if text:
+                settle_read(ck, crop, (text, conf))
+            else:
+                # rec-only couldn't segment this box (confirmed live: a digit sharing the
+                # mask with a cooldown-swirl remnant recs as "") — the box HAS glyph pixels,
+                # so demote it to the full det+rec read rather than losing a real value.
+                det_miss.append((ck, crop))
+        det_reads = self._ocr.read_images([c for _, c in det_miss]) if det_miss else []
+        for (ck, crop), lines in zip(det_miss, det_reads):
+            res = None
+            if lines:
+                text, conf = self._order_join(lines)
+                if text:
+                    res = (text, conf)
+            settle_read(ck, crop, res)
         return out
 
     def _read_tell_boxes(self, frame: Frame, window: WindowDef, ic) -> dict:

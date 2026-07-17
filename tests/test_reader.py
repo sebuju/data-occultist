@@ -341,13 +341,17 @@ def test_readout_preprocess_override_skips_wide_clobber():
     # THE bug scenario, at the reader seam: an overridden readout's isolated (masked) crop reads
     # the true "4.00"; the window-preprocess wide cross-check would re-read the union as a fused
     # "400" and clobber it. With its own override the isolated read is authoritative and the wide
-    # pass is skipped entirely (no clobber, and no wasted OCR call).
+    # pass is skipped entirely (no clobber, and no wasted OCR call). The box carries real glyph
+    # pixels (masked colour present) so the mask presence gate reads it rather than skipping it;
+    # the masked fast path reads rec-only (read_lines -> default read_line -> this read_image).
     box = Box(x=0.1, y=0.1, w=0.2, h=0.2)
     window = WindowDef(
         id="w", fields=[FieldDef(id="cd", type=FieldType.number)],
         readouts=[ReadoutDef(id="ability_4_cd", box=box, field="cd")],
     )
-    frame = Frame(image=np.zeros((400, 1000, 3), np.uint8), client=PixelBox(0, 0, 1000, 400))
+    img = np.zeros((400, 1000, 3), np.uint8)
+    img[50:70, 120:180] = 255   # "glyphs" inside the box, in the masked colour
+    frame = Frame(image=img, client=PixelBox(0, 0, 1000, 400))
     ocr = SequencedOcr([
         [OcrLine("4.00", PixelBox(10, 10, 90, 50), 0.99)],   # call 1: isolated masked crop -- correct
         [OcrLine("400", PixelBox(10, 10, 90, 50), 0.99)],    # call 2 (would-be wide) -- must NOT run
@@ -357,6 +361,121 @@ def test_readout_preprocess_override_skips_wide_clobber():
     out = reader._readout_text_reads(frame, window, pending, {"ability_4_cd": Preprocess(mode=PreprocessMode.color, colors=["#ffffff"], scale=2)})
     assert out["ability_4_cd"][0] == "4.00"   # not "400"
     assert ocr.calls == 1                     # wide pass skipped (box is overridden)
+
+
+class RecEmptyOcr(OcrEngine):
+    """Rec-only reads return nothing; det+rec returns canned lines — exercises the
+    masked fast path's det fallback for a box rec can't segment."""
+
+    def __init__(self, det_lines):
+        self._det = list(det_lines)
+        self.det_calls = 0
+
+    def read_image(self, image):
+        self.det_calls += 1
+        return list(self._det)
+
+    def read_lines(self, images):
+        return [("", 0.0)] * len(list(images))
+
+
+def test_masked_readout_rec_miss_falls_back_to_detection():
+    # glyph pixels present but rec-only reads "" (live case: digit + cooldown-swirl remnant
+    # share the mask) -> the box demotes to the full det+rec read; the value is not lost
+    box = Box(x=0.1, y=0.1, w=0.2, h=0.2)
+    window = WindowDef(
+        id="w", fields=[FieldDef(id="cd", type=FieldType.number)],
+        readouts=[ReadoutDef(id="cd_ro", box=box, field="cd")],
+    )
+    img = np.zeros((400, 1000, 3), np.uint8)
+    img[50:70, 120:180] = 255   # masked-colour glyphs inside the box
+    frame = Frame(image=img, client=PixelBox(0, 0, 1000, 400))
+    ocr = RecEmptyOcr([OcrLine("4", PixelBox(10, 10, 30, 40), 0.9)])
+    pending = [("cd_ro", box.to_fraction().to_pixels(1000, 400))]
+    out = RegionReader(ocr)._detect_reads(
+        frame, window, pending, {"cd_ro": Preprocess(mode=PreprocessMode.color, colors=["#ffffff"])})
+    assert out == {"cd_ro": ("4", 0.9)}
+    assert ocr.det_calls == 1
+
+
+def test_masked_readout_empty_box_is_absent_without_ocr():
+    # colour-masked box with NO near-colour pixels: the mask itself proves absence -- the
+    # box is omitted and the engine is never called (no det pass to gate, no rec hallucination)
+    box = Box(x=0.1, y=0.1, w=0.2, h=0.2)
+    window = WindowDef(
+        id="w", fields=[FieldDef(id="cd", type=FieldType.number)],
+        readouts=[ReadoutDef(id="cd_ro", box=box, field="cd")],
+    )
+    frame = Frame(image=np.zeros((400, 1000, 3), np.uint8), client=PixelBox(0, 0, 1000, 400))
+    ocr = SequencedOcr([[OcrLine("ghost", PixelBox(0, 0, 10, 10), 0.9)]])
+    pending = [("cd_ro", box.to_fraction().to_pixels(1000, 400))]
+    out = RegionReader(ocr)._readout_text_reads(
+        frame, window, pending, {"cd_ro": Preprocess(mode=PreprocessMode.color, colors=["#ffffff"])})
+    assert "cd_ro" not in out
+    assert ocr.calls == 0
+
+
+class BatchOnlyOcr(OcrEngine):
+    """read_images-aware stub: canned per-crop results consumed in order, and read_image
+    fails loudly — proves the isolated readout reads go through the batched call, not a
+    per-box loop. Records each batch's size so a test can see exactly which reads ran."""
+
+    def __init__(self, per_crop):
+        self._per = list(per_crop)
+        self.batch_sizes = []
+
+    def read_image(self, image):
+        raise AssertionError("expected the batched read_images path, got a per-box read_image")
+
+    def read_images(self, images):
+        n = len(list(images))
+        self.batch_sizes.append(n)
+        out, self._per = self._per[:n], self._per[n:]
+        return out
+
+
+def _two_readout_window():
+    box_a = Box(x=0.0, y=0.0, w=0.3, h=0.2)
+    box_b = Box(x=0.5, y=0.0, w=0.3, h=0.2)
+    return WindowDef(
+        id="w", fields=[FieldDef(id="fa"), FieldDef(id="fb")],
+        readouts=[ReadoutDef(id="a", box=box_a, field="fa"),
+                  ReadoutDef(id="b", box=box_b, field="fb")],
+    )
+
+
+def test_detect_reads_batches_boxes_into_one_read_images_call():
+    # All pending readout boxes go to the engine as ONE read_images batch (a backend
+    # able to share work across the batch reads N boxes cheaper than N calls). Per-box
+    # semantics hold: an empty per-crop result is omitted (absence stays authoritative).
+    window = _two_readout_window()
+    frame = Frame(image=np.zeros((200, 400, 3), np.uint8), client=PixelBox(0, 0, 400, 200))
+    ocr = BatchOnlyOcr([[OcrLine("21", PixelBox(2, 2, 20, 12), 0.9)], []])
+    pending = [(v.id, v.box.to_fraction().to_pixels(400, 200)) for v in window.readouts]
+    out = RegionReader(ocr)._detect_reads(frame, window, pending)
+    assert ocr.batch_sizes == [2]
+    assert out == {"a": ("21", 0.9)}
+
+
+def test_detect_reads_unchanged_crop_reuses_cache_changed_rereads():
+    # Unchanged-pixel memo: a second pass over identical pixels does NO OCR at all and
+    # reproduces both the present read AND the confirmed absence; mutating one box's
+    # pixels re-reads exactly that box, leaving the other cached.
+    window = _two_readout_window()
+    frame = Frame(image=np.zeros((200, 400, 3), np.uint8), client=PixelBox(0, 0, 400, 200))
+    ocr = BatchOnlyOcr([
+        [OcrLine("21", PixelBox(2, 2, 20, 12), 0.9)], [],   # pass 1: a present, b absent
+        [OcrLine("7", PixelBox(2, 2, 20, 12), 0.8)],        # pass 3: only b (changed) re-read
+    ])
+    pending = [(v.id, v.box.to_fraction().to_pixels(400, 200)) for v in window.readouts]
+    reader = RegionReader(ocr)
+    assert reader._detect_reads(frame, window, pending) == {"a": ("21", 0.9)}
+    assert reader._detect_reads(frame, window, pending) == {"a": ("21", 0.9)}   # all cached
+    assert ocr.batch_sizes == [2]                       # second pass: zero OCR calls
+    frame.image[10:20, 210:230] = 255                   # box b's pixels change
+    out = reader._detect_reads(frame, window, pending)
+    assert out == {"a": ("21", 0.9), "b": ("7", 0.8)}
+    assert ocr.batch_sizes == [2, 1]                    # only the changed box was read
 
 
 def _symbol_marker(box, color):

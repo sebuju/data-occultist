@@ -359,3 +359,22 @@ class Rapid3OcrEngine(OcrEngine):
         with _INFER_LOCK:
             out = engine(image, use_det=False, use_cls=False, use_rec=True)
         return join_rec(out.txts, out.scores)
+
+    def read_lines(self, images) -> list[tuple[str, float]]:
+        """Batched recognition-only: ONE rec pass over all crops via v3's direct rec entry
+        point (the same piece the downscaled read uses) instead of a call per crop. Purely
+        per-crop — no shared canvas, so unlike detection batching this cannot change any
+        individual result."""
+        imgs = list(images)
+        idx = [i for i, im in enumerate(imgs) if im is not None and getattr(im, "size", 0)]
+        out: list[tuple[str, float]] = [("", 0.0)] * len(imgs)
+        if not idx:
+            return out
+        engine = self._ensure_engine()
+        with _INFER_LOCK:
+            from rapidocr.ch_ppocr_rec import TextRecInput
+
+            rec = engine.text_rec(TextRecInput(img=[imgs[i] for i in idx]))
+        for i, t, s in zip(idx, rec.txts or (), rec.scores or ()):
+            out[i] = join_rec([t], [s])
+        return out

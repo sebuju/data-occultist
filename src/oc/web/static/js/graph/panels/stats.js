@@ -28,7 +28,7 @@ const DUR_METRICS = [["last_ms", "last"], ["avg_ms", "avg"], ["min_ms", "min"], 
 // order here is the order the buckets render in. Mirrors stats_store.OPS.
 const OP_GROUPS = [
     ["tk", "ticks"],
-    ["oc", "ocr"], ["cp", "capture"], ["st", "settle"],
+    ["oc", "ocr"], ["ro", "readouts"], ["cp", "capture"], ["st", "settle"],
     ["cl", "classify"], ["sg", "signature"], ["cf", "confirm"], ["cm", "commit"],
     ["rp", "replays"], ["rc", "recomputes"], ["sw", "sweeps"], ["fr", "frames"],
 ];
@@ -41,7 +41,7 @@ const groupLabel = (op) => GROUP_LABEL.get(op) || op;
 // WINDOW (one heading per window, the op cards within it) rather than per-op. Everything else
 // (replays/recomputes/sweeps/frames) keeps its per-op bucket. PIPE_RANK orders the op cards
 // inside a window heading; their group rank is the tick bucket's, so windows sort as one block.
-const PIPE_OPS = new Set(["tk", "oc", "cp", "st", "cl", "sg", "cf", "cm"]);
+const PIPE_OPS = new Set(["tk", "oc", "ro", "cp", "st", "cl", "sg", "cf", "cm"]);
 const PIPE_RANK = new Map([...PIPE_OPS].map((op, i) => [op, i]));
 const groupKey = (d) => (PIPE_OPS.has(d.op) ? `win|${d.node}` : `op|${d.op}`);
 const groupLabelOf = (d) => (PIPE_OPS.has(d.op) ? shortName(d.node) : groupLabel(d.op));

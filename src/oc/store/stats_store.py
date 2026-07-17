@@ -53,6 +53,7 @@ _FLUSH_ROWS = 64           # ...or flush sooner once this many rows are buffered
 OPS = {
     "tk": "tick",        # win: — one whole collection pass
     "oc": "ocr",         # win: — OCR inference only (the dominant cost)
+    "ro": "readouts",    # win: — readout OCR (live HUD boxes; only for windows that declare any)
     "cp": "capture",     # win: — window grab (capture backend)
     "st": "settle",      # win: — settle thumbnail + staleness diff
     "cl": "classify",    # win: — window/state classification pass

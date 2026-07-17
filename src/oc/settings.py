@@ -44,6 +44,10 @@ class Tuning:
     confirm_frames: int = 2
     collect_interval: float = 1.0
     gate_interval: float = 0.25
+    # Read live readouts on EVERY gate poll (not just OCR slots) for profiles that declare
+    # them — the trigger cadence win. Costs one classify+readout OCR per wake while a
+    # readouts window is on screen; turn off to fall back to one read per OCR slot.
+    readout_fast_poll: bool = True
     # Only collect while the game window is focused. False suits window-targeted
     # capture (printwindow), which reads the window even when backgrounded.
     require_foreground: bool = False
@@ -98,6 +102,7 @@ class Settings:
                 confirm_frames=t.get("confirm_frames", s.tuning.confirm_frames),
                 collect_interval=t.get("collect_interval", s.tuning.collect_interval),
                 gate_interval=t.get("gate_interval", s.tuning.gate_interval),
+                readout_fast_poll=t.get("readout_fast_poll", s.tuning.readout_fast_poll),
                 require_foreground=t.get("require_foreground", s.tuning.require_foreground),
                 detect_removals=t.get("detect_removals", s.tuning.detect_removals),
             )

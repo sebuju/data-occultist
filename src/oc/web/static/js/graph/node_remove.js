@@ -8,7 +8,7 @@ import { forgetNodeState } from "./node_lifecycle.js";
 import { itemChanged } from "./item_wire.js";
 import { render, autosave, rebuildNode, refreshLive, live } from "./main.js";
 
-export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource", "action"]);
+export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource", "action", "readout"]);
 // Denylist, NOT allowlist: every node type is removable EXCEPT these. Inverted on purpose so a new
 // functional node type is deletable by default — the recurring bug was forgetting to add each new
 // type to an allowlist. Only the profile-root nodes (game, atlas) and toggle-only satellites
