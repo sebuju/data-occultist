@@ -23,8 +23,8 @@ const KINDS = [["interval", "interval"], ["true_interval", "true interval"], ["o
     ["on_readout", "on readout"], ["on_register", "on register"], ["on_ready", "on ready"], ["manual", "manual only"]];
 
 // comparison operators for an on_readout trigger, with human labels for the dropdown.
-const VAR_OPS = [["gte", "≥ (at least)"], ["lte", "≤ (at most)"], ["gt", "> (above)"],
-    ["lt", "< (below)"], ["eq", "= (equals)"], ["ne", "≠ (not equal)"],
+const VAR_OPS = [["gte", "at least"], ["lte", "at most"], ["gt", "above"],
+    ["lt", "below"], ["eq", "equals"], ["ne", "not equal"],
     ["crosses_up", "crosses up through"], ["crosses_down", "crosses down through"]];
 
 // on_register per-key condition operators: "changed" (fires when the key's value moves, no

@@ -539,24 +539,40 @@ def test_on_register_no_condition_never_fires(tmp_path):
     assert tr.on_register([_ev("loadout", "hp", 90)], _snap(loadout={"hp": 90})) == []
 
 
-def test_on_register_threshold_edge_triggers(tmp_path):
-    # a comparison fires ONCE on entering the condition, re-arms after it leaves (like on_readout)
-    tr = TriggerRunner(_register_profile({"hp": [{"key": "health", "when": "lt", "value": 30}]}),
+def test_on_register_comparison_fires_on_every_move_while_held(tmp_path):
+    # a comparison (at-or-below) fires on ENTERING the band and on every further move while it holds,
+    # not once. Mirrors the ability-cooldown "fire on any move at or below the value" case.
+    calls = []
+    tr = TriggerRunner(_register_profile({"cd": [{"key": "ability_1_cd", "when": "lte", "value": 3}]}),
+                       tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    assert tr.on_register([_ev("cd", "ability_1_cd", 5)], _snap(cd={"ability_1_cd": 5})) == []      # above -> no
+    assert tr.on_register([_ev("cd", "ability_1_cd", 3)], _snap(cd={"ability_1_cd": 3})) == ["regwatch"]  # enters <=3
+    assert tr.on_register([_ev("cd", "ability_1_cd", 2)], _snap(cd={"ability_1_cd": 2})) == ["regwatch"]  # moved, still <=3 -> re-fire
+    assert tr.on_register([_ev("cd", "ability_1_cd", 1)], _snap(cd={"ability_1_cd": 1})) == ["regwatch"]  # moved again -> re-fire
+    assert tr.on_register([_ev("cd", "ability_1_cd", 6)], _snap(cd={"ability_1_cd": 6})) == []      # recovers -> no
+    assert calls == ["px", "px", "px"]
+
+
+def test_on_register_crosses_down_is_edge_once(tmp_path):
+    # edge-once ("fire only on entering the band") = the crosses_down op: it fires only on the tick
+    # the value crosses down through the threshold, not on further moves while below.
+    tr = TriggerRunner(_register_profile({"hp": [{"key": "health", "when": "crosses_down", "value": 30}]}),
                        tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
-    assert tr.on_register([_ev("hp", "health", 50)], _snap(hp={"health": 50})) == []      # above -> no
-    assert tr.on_register([_ev("hp", "health", 20)], _snap(hp={"health": 20})) == ["regwatch"]  # enters
-    assert tr.on_register([_ev("hp", "health", 15)], _snap(hp={"health": 15})) == []      # still below -> held
+    assert tr.on_register([_ev("hp", "health", 50)], _snap(hp={"health": 50})) == []      # above, no prev crossing
+    assert tr.on_register([_ev("hp", "health", 20)], _snap(hp={"health": 20})) == ["regwatch"]  # crosses down -> fire once
+    assert tr.on_register([_ev("hp", "health", 15)], _snap(hp={"health": 15})) == []      # still below, no crossing -> no re-fire
     assert tr.on_register([_ev("hp", "health", 60)], _snap(hp={"health": 60})) == []      # recovers
-    assert tr.on_register([_ev("hp", "health", 10)], _snap(hp={"health": 10})) == ["regwatch"]  # re-enters
+    assert tr.on_register([_ev("hp", "health", 10)], _snap(hp={"health": 10})) == ["regwatch"]  # crosses down again
 
 
 def test_on_register_between_needs_two_bounds(tmp_path):
     tr = TriggerRunner(_register_profile(
         {"hp": [{"key": "health", "when": "between", "value": 20, "value2": 40}]}),
         tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
-    assert tr.on_register([_ev("hp", "health", 50)], _snap(hp={"health": 50})) == []      # outside
-    assert tr.on_register([_ev("hp", "health", 30)], _snap(hp={"health": 30})) == ["regwatch"]  # enters band
-    assert tr.on_register([_ev("hp", "health", 25)], _snap(hp={"health": 25})) == []      # still in -> held
+    assert tr.on_register([_ev("hp", "health", 50)], _snap(hp={"health": 50})) == []      # outside band
+    assert tr.on_register([_ev("hp", "health", 30)], _snap(hp={"health": 30})) == ["regwatch"]  # enters band -> fire
+    assert tr.on_register([_ev("hp", "health", 25)], _snap(hp={"health": 25})) == ["regwatch"]  # moved, still in band -> re-fire
+    assert tr.on_register([_ev("hp", "health", 50)], _snap(hp={"health": 50})) == []      # leaves band -> no
 
 
 def test_on_register_or_fires_on_any_and_requires_all(tmp_path):

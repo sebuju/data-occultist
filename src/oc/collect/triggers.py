@@ -140,15 +140,14 @@ class TriggerRunner:
         now = clock()
         self._last: dict[str, float] = {
             t.id: now for t in profile.triggers if t.kind == "interval"}
-        # on_readout edge state: whether each trigger's condition was true last evaluation
-        # (so a held condition fires once, not every tick) + the previous value per watched
-        # readout (for crosses_up/crosses_down, which compare against the prior reading).
+        # on_readout state: whether each trigger's condition was true last evaluation (so it fires on
+        # ENTERING the condition, then on every further move while held) + the previous value per
+        # watched readout (for crosses_up/crosses_down, which compare against the prior reading).
         self._readout_state: dict[str, bool] = {}
         self._readout_prev: dict[str, float] = {}
-        # on_register state: whether each comparison condition HELD last evaluation, keyed by
-        # (trigger id, reg, key) — so a threshold pulses once on entering (false->true), like
-        # on_readout. Plus the previous exposed value per (reg, key) for crosses_up/crosses_down.
-        self._register_cond_state: dict[tuple, bool] = {}
+        # on_register state: the previous exposed value per (reg, key) — for crosses_up/crosses_down,
+        # which compare against the prior reading. (A comparison fires on every move while it holds,
+        # so it needs no held-state; the upstream value-gate already proves the value moved.)
         self._register_prev: dict[tuple, float] = {}
         # monotonic time of each trigger's LAST actual fire (any kind) — the throttle clock. A
         # fire within throttle_ms of this is suppressed (recorded as throttled, not fired).
@@ -526,7 +525,12 @@ class TriggerRunner:
             cond = hit is not None
             was = self._readout_state.get(t.id, False)
             self._readout_state[t.id] = cond
-            if cond and not was:
+            # fire on entering the condition AND on every further move while it still holds (the hit
+            # reading differs from its previous value); a held-but-static reading does NOT re-fire.
+            # Edge-once ("fire only on entering") comes from the crosses_up / crosses_down ops, which
+            # are true only on the transition tick — not from suppressing repeats here.
+            moved = cond and self._num(values[hit]) != self._readout_prev.get(hit)
+            if cond and (not was or moved):
                 if self._route_fire(t, f"readout {t.readout_op} {t.readout_value}", items=None,
                                     node=hit, value=values[hit]):
                     fired.append(t.id)
@@ -570,19 +574,19 @@ class TriggerRunner:
                 continue   # watched but no condition -> nothing to trip (useless), never fires
             # per condition: `hold` = its test is currently true (a level); `pulse` = it ACTIVATES
             # this tick. A "changed" cond has no level (hold=True) and pulses when its key moved; a
-            # comparison holds while the value meets it and pulses once on entering (false->true),
-            # like on_readout. AND fires when every cond holds AND one pulsed (the transition tick);
-            # OR fires when any cond pulses.
+            # comparison holds while the value meets it and pulses on EVERY move while it holds (its
+            # key is in this tick's changed set — the upstream value-gate proves the exposed value
+            # moved). Edge-once ("fire only on entering") comes from the crosses_up / crosses_down
+            # ops, whose hold is true only on the transition tick. AND fires when every cond holds AND
+            # one pulsed (moved this tick); OR fires when any cond pulses.
             holds, pulses, hit = [], [], None
             for reg, c in conds:
-                skey = (t.id, reg, c.key)
                 if c.when == "changed":
                     hold, pulse = True, (reg, c.key) in changed
                 else:
                     val = snapshot.get(reg, {}).get(c.key)
                     hold = self._reg_cond_holds(c, val, self._register_prev.get((reg, c.key)))
-                    pulse = hold and not self._register_cond_state.get(skey, False)
-                    self._register_cond_state[skey] = hold
+                    pulse = hold and (reg, c.key) in changed
                 holds.append(hold)
                 pulses.append(pulse)
                 if pulse and hit is None:
