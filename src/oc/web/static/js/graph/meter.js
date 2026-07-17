@@ -9,43 +9,52 @@
 // a live read to show); omit it for a plain editable threshold.
 import { h } from "../dom.js";
 
-const SEGS = 10;   // segment count (visual only; value is continuous, quantised by `step`). Fixed
-                   // 6px-wide segs (graph.css) -> 10 fits the narrowest node value cell without clipping.
-                   // Painted at half-step (0.05) granularity via `.half` so the 0.05 quantisation shows.
+const SEGS = 10;   // DEFAULT segment count (visual only; value is continuous, quantised by `step`).
+                   // Fixed 6px-wide segs (graph.css) -> 10 fits the narrowest node value cell without
+                   // clipping. Callers over a wider value range (e.g. a 0..200 tolerance) pass `segs`.
 
-// opts: { cls, k, value, fid, title, step }
-//   cls   - change-class the node already wires (e.g. "ffset" / "fset" / "roset" / "itellconf")
+// opts: { cls, k, value, fid, title, step, segs, lo, hi, fmt }
+//   cls   - change-class the node already wires (e.g. "ffset" / "fset" / "roset" / "pptol")
 //   k     - dataset.k the node's handler switches on (omit for handlers that read value directly)
-//   value - initial 0..1
+//   value - initial value (in [lo, hi])
 //   fid   - item-field id to tag the hidden input with (item-field nodes key by it)
-//   step  - quantisation of the committed value (default 0.05, matches the old number input)
-export function confMeter({ cls, k = null, value = 0, fid = null, title = "", step = 0.05 } = {}) {
+//   step  - quantisation of the committed value (default 0.05, matches the old confidence input)
+//   segs  - segment count (default 10)
+//   lo,hi - value range the bar spans (default 0..1, the confidence meter)
+//   fmt   - format the numeric readout (default 2-decimal; e.g. integer for a tolerance)
+export function confMeter({ cls, k = null, value = 0, fid = null, title = "", step = 0.05,
+                           segs = SEGS, lo = 0, hi = 1, fmt = null } = {}) {
+    const span = (hi - lo) || 1;
+    const fmtVal = fmt || ((v) => v.toFixed(2));
     const ds = { ...(k ? { k } : {}), ...(fid ? { fid } : {}) };
     const hidden = h("input", { type: "hidden", class: cls, dataset: ds, value: String(value) });
-    const segEls = Array.from({ length: SEGS }, () => h("span", { class: "seg off" }));
+    const segEls = Array.from({ length: segs }, () => h("span", { class: "seg off" }));
     const bar = h("div", { class: "segs" }, ...segEls);
     const pct = h("span", { class: "pct" });
     const wrap = h("div", { class: "meter editable", title, tabindex: "0" }, bar, pct, hidden);
 
-    const clamp = (v) => Math.max(0, Math.min(1, v));
+    const clampV = (v) => Math.max(lo, Math.min(hi, v));
+    const fracOf = (v) => (v - lo) / span;                       // value -> 0..1 fill fraction
     function paint(v) {
-        const bars = Math.round(v * SEGS);
+        const bars = Math.round(fracOf(v) * segs);
         segEls.forEach((s, i) => {
             const full = i < bars;
             s.classList.toggle("on", full);
             s.classList.toggle("off", !full);
         });
-        pct.textContent = v.toFixed(2);
+        pct.textContent = fmtVal(v);
     }
     function set(v, commit) {
-        v = +clamp(Math.round(v / step) * step).toFixed(2);
+        v = +clampV(Math.round(v / step) * step).toFixed(6);
         paint(v);
         if (commit && +hidden.value !== v) {
             hidden.value = String(v);
             hidden.dispatchEvent(new Event("change", { bubbles: true }));   // -> the node's existing handler persists it
         }
     }
-    const fromX = (clientX) => { const r = bar.getBoundingClientRect(); return (clientX - r.left) / (r.width || 1); };
+    const clampF = (f) => Math.max(0, Math.min(1, f));
+    const fracFromX = (clientX) => { const r = bar.getBoundingClientRect(); return clampF((clientX - r.left) / (r.width || 1)); };
+    const valFromX = (clientX) => lo + fracFromX(clientX) * span;
 
     let dragging = false;
     // stop the press reaching the card's drag handle (it only ignores button/input/select/textarea/a,
@@ -54,12 +63,12 @@ export function confMeter({ cls, k = null, value = 0, fid = null, title = "", st
     bar.addEventListener("pointerdown", (e) => {
         if (e.button != null && e.button !== 0) return;
         dragging = true; try { bar.setPointerCapture(e.pointerId); } catch {}
-        set(fromX(e.clientX), true); e.stopPropagation(); e.preventDefault();
+        set(valFromX(e.clientX), true); e.stopPropagation(); e.preventDefault();
     });
     // hover preview: with no button down, light segments up to the cursor (slider affordance —
     // shows where a click lands) via a .hot class; committed .on state is untouched until a press.
     const hover = (frac) => {
-        const units = Math.round(clamp(frac) * SEGS * 2);
+        const units = Math.round(clampF(frac) * segs * 2);
         segEls.forEach((s, i) => {
             const full = units >= (i + 1) * 2;
             s.classList.toggle("hot", full);
@@ -67,7 +76,7 @@ export function confMeter({ cls, k = null, value = 0, fid = null, title = "", st
         });
     };
     const clearHover = () => segEls.forEach((s) => s.classList.remove("hot", "hot-half"));
-    bar.addEventListener("pointermove", (e) => { if (dragging) set(fromX(e.clientX), true); else hover(fromX(e.clientX)); });
+    bar.addEventListener("pointermove", (e) => { if (dragging) set(valFromX(e.clientX), true); else hover(fracFromX(e.clientX)); });
     bar.addEventListener("pointerleave", clearHover);
     const end = (e) => { dragging = false; try { bar.releasePointerCapture(e.pointerId); } catch {} };
     bar.addEventListener("pointerup", end);
@@ -77,6 +86,6 @@ export function confMeter({ cls, k = null, value = 0, fid = null, title = "", st
         else if (e.key === "ArrowLeft" || e.key === "ArrowDown") { set(+hidden.value - step, true); e.preventDefault(); }
     });
 
-    paint(+hidden.value || 0);
+    paint(+hidden.value || lo);
     return wrap;
 }

@@ -479,13 +479,281 @@ export function armColorPick(winId, detId) {
     else setStatus("open the image first");
 }
 
-// Arm the eyedropper to feed the window's preprocess (Text appearance) colour list
-// instead of a detector's colour. Same sample flow, different sink (see applyPickedColor).
+// Arm the eyedropper to feed the WINDOW preprocess (Text appearance) colour list instead of a
+// detector's colour. Same sample flow, different sink (see applyPickedColor). Samples from the
+// window's own open image. (Readouts pick via openReadoutColorPick — a zoomed-cutout modal.)
 export function armPreprocessPick(winId) {
     _pickTarget = { winId, pp: true };
     const ov = imageCanvases.get(winId)?.overlay;
     if (ov) { ov.setPick(true); setStatus("click the image to sample the text color"); }
     else setStatus("open the image first");
+}
+
+// ---- box colour picker (zoomed-cutout modal) -------------------------------
+// A readout / colour-detector box lives on the window's image with no surface of its own. Rather
+// than force the window panel open + hunt for a few pixels at native size, open a MODAL showing
+// just that box, blown up with crisp (nearest-neighbour) pixels, and let the user click the colour
+// to sample. Samples straight off the zoomed canvas (smoothing off, so a canvas pixel IS a source
+// pixel). ONE picker (rule 7) — the readout and detector callers only differ in where the hex sinks.
+
+function _loadImage(url) {
+    return new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = () => reject(new Error("image load failed"));
+        im.src = url;
+    });
+}
+
+// Resolve the current image for a window (or "game" for the gate): the open canvas if there is
+// one, else this window's bound capture. Returns null (and shows why) if there's no image.
+async function _imageForWindow(winId) {
+    let img = imageCanvases.get(winId)?.overlay?.img;
+    if (img && img.naturalWidth) return img;
+    try {
+        const cap = await curCapOf(winId);
+        if (!cap) { setStatus("no image for this window — capture one first"); return null; }
+        return await _loadImage(api.captureUrl(model.profile.name, cap));
+    } catch (e) { setStatus(String(e?.message || e)); return null; }
+}
+
+// Open the zoomed-cutout picker for a box (window fractions) on ``winId``'s image; ``onSample(hex)``
+// receives the clicked colour. Shared by the readout and colour-detector pickers.
+export async function openBoxColorPick(winId, box, onSample) {
+    const img = await _imageForWindow(winId);
+    if (img) _openColorPickModal(img, box, onSample);
+}
+
+export function openReadoutColorPick(winId, roId) {
+    const ro = (model.window(winId)?.readouts || []).find((r) => r.id === roId);
+    if (!ro) return;
+    openBoxColorPick(winId, ro.box, (hex) => {
+        const fd = model.readoutFieldOf(winId, roId);
+        nodeEdit(`ro:${winId}:${roId}`, "read",
+            () => { const pp = model._ppOf(fd); if (pp && !pp.colors.includes(hex)) pp.colors.push(hex); rebuildNode(`ro:${winId}:${roId}`); },
+            () => autosave(winId));                      // preprocess changes OCR input -> re-read
+    });
+}
+
+// Same zoomed-cutout picker for a colour DETECTOR: sample from the detector's own box and drop the
+// hex into the first empty colour slot (else append) — mirrors applyPickedColor's detector sink.
+export function openDetectColorPick(winId, detId) {
+    const d = model.detect(winId, detId);
+    if (!d || !d.search) return;
+    openBoxColorPick(winId, d.search, (hex) => {   // a detector's box lives on `.search`, not `.box`
+        nodeEdit(`det:${winId}:${detId}`, "read", () => {
+            const cols = d.colors && d.colors.length ? d.colors : [""];
+            const gap = cols.findIndex((c) => !c);
+            if (gap >= 0) cols[gap] = hex; else cols.push(hex);
+            d.colors = cols;
+            rebuildNode(`det:${winId}:${detId}`);
+            refreshImageBoxes(winId);
+        }, () => { autosave(winId === "game" ? null : winId); refreshDetect(winId); });
+    });
+}
+
+// box is in window fractions; draw its crop from `img` blown up, click a pixel to sample.
+function _openColorPickModal(img, box, onSample) {
+    const natW = img.naturalWidth, natH = img.naturalHeight;
+    const sx = Math.round(box.x * natW), sy = Math.round(box.y * natH);
+    const sw = Math.max(1, Math.round(box.w * natW)), sh = Math.max(1, Math.round(box.h * natH));
+    const zoom = Math.max(2, Math.min(720 / sw, 460 / sh));   // fill the modal, min 2x, keep aspect
+    const dw = Math.round(sw * zoom), dh = Math.round(sh * zoom);
+    const canvas = h("canvas", { class: "pp-pick-canvas", width: String(dw), height: String(dh),
+        style: `width:${dw}px;height:${dh}px` });
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;                        // crisp pixels -> canvas pixel == source pixel
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
+
+    let closed = false;
+    const close = () => {
+        if (closed) return;
+        closed = true;
+        document.removeEventListener("keydown", onKey);
+        backdrop.remove();
+    };
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
+
+    canvas.addEventListener("click", (e) => {
+        const r = canvas.getBoundingClientRect();
+        const cx = Math.min(dw - 1, Math.max(0, Math.round((e.clientX - r.left) * dw / (r.width || 1))));
+        const cy = Math.min(dh - 1, Math.max(0, Math.round((e.clientY - r.top) * dh / (r.height || 1))));
+        const [rr, gg, bb] = ctx.getImageData(cx, cy, 1, 1).data;
+        const hx = (n) => n.toString(16).padStart(2, "0");
+        onSample(`#${hx(rr)}${hx(gg)}${hx(bb)}`);
+        close();
+    });
+
+    const panel = h("div", { class: "pp-pick-panel" },
+        h("div", { class: "pp-pick-head" },
+            h("span", {}, "click the digit colour to keep"),
+            h("button", { class: "pp-pick-x", title: "close" }, "✕")),
+        canvas);
+    const backdrop = h("div", { class: "pp-pick-modal" }, panel);
+    backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) close(); });
+    panel.querySelector(".pp-pick-x").addEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(backdrop);
+}
+
+// ---- match preview (cutout + which pixels the colour setup would match) -----
+// A small canvas on every detector/readout node showing the box's cutout, blown up
+// (aspect-preserved, centred, letterboxed into a FIXED-size canvas so the node never resizes when
+// the image loads), with the pixels the current colour(s)+tolerance would MATCH painted green and
+// the rest dimmed. A non-colour setup just shows the cutout. ONE renderer for both node kinds
+// (rule 7) — they differ only in which box + config they read. Registered per node id; re-rendered
+// (coalesced on a rAF) whenever the window image or the node's config changes.
+
+const _mpReg = new Map();     // nodeId -> { winId, canvas, getBox, getCfg }
+const _mpImg = new Map();     // winId -> HTMLImageElement (cached capture for nodes with no open panel)
+const _mpLoading = new Set();
+const _mpDirty = new Set();
+let _mpRaf = 0;
+const _isHex6 = (c) => /^#[0-9a-fA-F]{6}$/.test(c || "");
+
+// getBox() -> {x,y,w,h} in window fractions (readout .box / detector .search); getCfg() ->
+// { colors:[hex], tolerance, border?, width? } (empty colours -> show the plain cutout). The
+// canvas is NOT stored — a rebuild replaces the DOM canvas while `getBox`/`getCfg` (closures over
+// the stable model object) stay valid, so a cached canvas ref would paint a detached element and
+// leave the live one blank (the boot / image-change blank). _mpRender re-queries it by node id.
+export function mountMatchPreview(nodeId, winId, canvas, getBox, getCfg) {
+    _mpReg.set(nodeId, { winId, getBox, getCfg });
+    _mpRender(nodeId);
+}
+
+export function refreshMatchPreviews(winId) {
+    for (const [id, e] of _mpReg) if (e.winId === winId) _mpDirty.add(id);
+    if (_mpRaf) return;
+    _mpRaf = requestAnimationFrame(() => {
+        _mpRaf = 0;
+        const ids = [..._mpDirty]; _mpDirty.clear();
+        ids.forEach(_mpRender);
+    });
+}
+
+function _mpImageFor(winId) {
+    const live = imageCanvases.get(winId)?.overlay?.img;   // freshest when the panel is open
+    if (live?.naturalWidth) return live;
+    const c = _mpImg.get(winId);
+    if (c?.naturalWidth) return c;
+    _mpEnsureLoad(winId);                                    // else load + cache this window's capture
+    return null;
+}
+
+async function _mpEnsureLoad(winId) {
+    if (_mpLoading.has(winId)) return;
+    _mpLoading.add(winId);
+    try {
+        const cap = await curCapOf(winId);
+        if (cap) {
+            _mpImg.set(winId, await _loadImage(api.captureUrl(model.profile.name, cap)));
+            // render DIRECTLY (not via the rAF path) so a boot-time load reliably repaints the
+            // already-mounted canvases — the rAF coalescing was dropping this repaint on boot.
+            for (const [id, e] of _mpReg) if (e.winId === winId) _mpRender(id);
+        }
+    } catch { /* no image -> placeholder stays */ } finally { _mpLoading.delete(winId); }
+}
+
+// One repaint pass for EVERY registered preview — called at finishBoot() so a capture load that
+// raced/failed during the boot storm is retried once the app has settled (fixes blank-until-undo).
+export function refreshAllMatchPreviews() {
+    for (const winId of new Set([..._mpReg.values()].map((e) => e.winId))) refreshMatchPreviews(winId);
+}
+
+function _mpRender(nodeId) {
+    const e = _mpReg.get(nodeId);
+    if (!e) return;
+    const { winId, getBox, getCfg } = e;
+    // re-query the LIVE canvas each render (rebuilds replace it); if the node isn't in the DOM
+    // right now (collapsed/mid-rebuild) keep the registration so a later refresh repaints it.
+    const canvas = document.querySelector(`#gnodes [data-id="${nodeId.replace(/"/g, '\\"')}"] canvas.mp-canvas`);
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const cw = canvas.width, ch = canvas.height;
+    ctx.clearRect(0, 0, cw, ch);
+    const img = _mpImageFor(winId);
+    const box = getBox?.();
+    if (!img || !box || !box.w || !box.h) { _mpPlaceholder(ctx, cw, ch, !!box); return; }
+    const nW = img.naturalWidth, nH = img.naturalHeight;
+    const sx = Math.round(box.x * nW), sy = Math.round(box.y * nH);
+    const sw = Math.max(1, Math.round(box.w * nW)), sh = Math.max(1, Math.round(box.h * nH));
+    const scale = Math.min(cw / sw, ch / sh);               // fit, keep aspect
+    const dw = Math.max(1, Math.round(sw * scale)), dh = Math.max(1, Math.round(sh * scale));
+    const dx = Math.floor((cw - dw) / 2), dy = Math.floor((ch - dh) / 2);   // centre
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+    const cfg = getCfg?.() || {};
+    const cols = (cfg.colors || []).filter(_isHex6).map(_mpHexToRgb);
+    if (cols.length) _mpPaint(ctx, dx, dy, dw, dh, cols, cfg.tolerance ?? 0, cfg.border ? (cfg.width ?? 0.1) : 0);
+}
+
+function _mpPlaceholder(ctx, cw, ch, hasBox) {
+    ctx.fillStyle = "#0b0d12"; ctx.fillRect(0, 0, cw, ch);
+    ctx.fillStyle = "#3a414d"; ctx.font = "11px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(hasBox ? "loading…" : "draw a box", cw / 2, ch / 2);
+}
+
+function _mpHexToRgb(hex) {
+    const h = hex.replace("#", "");
+    return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+}
+
+// Emphasise ONLY the winning region — the largest 8-connected near-colour blob, i.e. exactly what
+// the detector now scores (collect/tells.py color_score/border_score). A semitransparent pink is
+// blended over just that blob so the cutout shows through; scattered speckle and everything else
+// are left as the plain cutout. Uses the SAME test the detector's mask uses: BGR distance `< tol`
+// to the nearest colour (strict, matching _color_mask). `borderFrac` > 0 restricts to the
+// perimeter band (border kind). CPU is free here — this is the editor preview, not the live path.
+const _MP_A = 0.5, _MP_HR = 255, _MP_HG = 45, _MP_HB = 150;   // highlight colour (pink) + alpha
+function _mpPaint(ctx, dx, dy, dw, dh, cols, tol, borderFrac) {
+    const id = ctx.getImageData(dx, dy, dw, dh);
+    const px = id.data;
+    const n = dw * dh;
+    const band = borderFrac > 0 ? borderFrac * Math.min(dw, dh) : 0;
+    // 1) near-colour mask (restricted to the border band for a border detector)
+    const near = new Uint8Array(n);
+    for (let y = 0; y < dh; y++) {
+        for (let x = 0; x < dw; x++) {
+            if (band > 0 && !(x < band || y < band || x >= dw - band || y >= dh - band)) continue;
+            const p = y * dw + x, i = p * 4, r = px[i], g = px[i + 1], b = px[i + 2];
+            for (const c of cols) {
+                const dr = r - c.r, dg = g - c.g, db = b - c.b;
+                if (Math.sqrt(dr * dr + dg * dg + db * db) < tol) { near[p] = 1; break; }
+            }
+        }
+    }
+    // 2) largest 8-connected component (stack flood-fill; keep the biggest component's pixels)
+    const seen = new Uint8Array(n), stack = [];
+    let best = null, bestSize = 0;
+    for (let s = 0; s < n; s++) {
+        if (!near[s] || seen[s]) continue;
+        stack.length = 0; stack.push(s); seen[s] = 1;
+        const comp = [];
+        while (stack.length) {
+            const p = stack.pop(); comp.push(p);
+            const x = p % dw, y = (p / dw) | 0;
+            for (let oy = -1; oy <= 1; oy++) {
+                for (let ox = -1; ox <= 1; ox++) {
+                    if (!ox && !oy) continue;
+                    const nx = x + ox, ny = y + oy;
+                    if (nx < 0 || ny < 0 || nx >= dw || ny >= dh) continue;
+                    const q = ny * dw + nx;
+                    if (near[q] && !seen[q]) { seen[q] = 1; stack.push(q); }
+                }
+            }
+        }
+        if (comp.length > bestSize) { bestSize = comp.length; best = comp; }
+    }
+    // 3) paint only the winning blob
+    if (best) {
+        for (const p of best) {
+            const i = p * 4;
+            px[i] = (px[i] * (1 - _MP_A) + _MP_HR * _MP_A) | 0;
+            px[i + 1] = (px[i + 1] * (1 - _MP_A) + _MP_HG * _MP_A) | 0;
+            px[i + 2] = (px[i + 2] * (1 - _MP_A) + _MP_HB * _MP_A) | 0;
+        }
+    }
+    ctx.putImageData(id, dx, dy);
 }
 
 // A picked colour is just another edit to the node that armed the eyedropper, so it JOINS that
@@ -494,9 +762,9 @@ export function armPreprocessPick(winId) {
 function applyPickedColor(winId, hex) {
     const t = _pickTarget; _pickTarget = null;
     if (!t || t.winId !== winId) return;
-    if (t.pp) {                                   // eyedropper armed for window preprocess
+    if (t.pp) {                                   // eyedropper armed for the WINDOW preprocess colour list
         nodeEdit(`win:${winId}`, "read",
-            () => { model.addPreprocessColor(winId, hex); rebuildNode(`win:${winId}`); },   // refresh the colour chips
+            () => { model.addPreprocessColor(winId, hex); rebuildNode(`win:${winId}`); },   // refresh chips
             () => autosave(winId));               // preprocess changes OCR input -> re-read this window
         return;
     }
@@ -1998,6 +2266,7 @@ async function loadImage(winId, recapture, { deferRead = false } = {}) {
             quantizeWidthOnlyHeight(nodeEls.get(nodeIdOf(winId)), nodeIdOf(winId));   // aspect changed -> re-floor the box to the grid
         }
         entry.overlay.setImage(img);
+        if (winId !== "atlas") _mpImg.set(winId, img);   // cache for node previews after the panel closes
         refreshImageBoxes(winId);
         // boot opens every window in a burst — this per-image drawEdges only forces a layout
         // read (buildLinks -> nodeRect -> nw/offsetWidth); finishBoot already does the one real
@@ -2062,6 +2331,7 @@ function refreshImageBoxes(winId) {
     entry.overlay.setGridPreview(gridPreviews.get(winId) || staticFieldPreview(winId) || []);
     entry.overlay.setPreview(gridReads.get(winId) || []);   // value + confidence per cell
     entry.overlay.setDetections(gridDetections.get(winId) || []);   // raw OCR lines (opt-in layer)
+    refreshMatchPreviews(winId);   // box moved / image swapped -> repaint the node cutout previews
 }
 
 // Draw-layer toggles under the window canvas: one checkbox per row, each gating a draw layer

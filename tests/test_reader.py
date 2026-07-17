@@ -7,7 +7,8 @@ from oc.collect.atlas_match import AtlasMatcher
 from oc.collect.reader import RegionReader
 from oc.interfaces import OcrEngine
 from oc.profile.models import (
-    Box, FieldDef, FieldRule, FieldType, ReadoutDef, RegionDef, RuleThen, RuleWhen, WindowDef,
+    Box, FieldDef, FieldRule, FieldType, Preprocess, PreprocessMode, ReadoutDef, RegionDef,
+    RuleThen, RuleWhen, WindowDef,
 )
 from oc.types import Frame, OcrLine, PixelBox
 
@@ -302,6 +303,60 @@ def test_real_low_confidence_read_still_sinks_record():
     assert len(records) == 1
     assert records[0].values["count"] == 3
     assert records[0].confidence == 0.30
+
+
+class ShapeOcr(OcrEngine):
+    """Records the (h, w) of every crop it is handed, so a test can prove which preprocess
+    (hence which upscale) was applied to each box before OCR."""
+
+    def __init__(self):
+        self.shapes = []
+
+    def read_image(self, image):
+        self.shapes.append(tuple(image.shape[:2]))
+        return [OcrLine("x", PixelBox(0, 0, 5, 5), 0.9)]
+
+
+def test_readout_preprocess_override_beats_window_fallback_per_box():
+    # A per-readout preprocess override applies to THAT box's isolated crop; a readout WITHOUT
+    # one falls back to the window's preprocess. Proven via the upscale factor each crop got:
+    # box "a" (own scale=2) doubles, box "b" (window scale=3 fallback) triples.
+    box_a = Box(x=0.1, y=0.1, w=0.2, h=0.2)   # pixels (100, 40, 200, 80) -> crop (80, 200)
+    box_b = Box(x=0.4, y=0.1, w=0.2, h=0.2)   # pixels (400, 40, 200, 80) -> crop (80, 200)
+    window = WindowDef(
+        id="w", preprocess=Preprocess(mode=PreprocessMode.none, scale=3),
+        fields=[FieldDef(id="fa"), FieldDef(id="fb")],
+        readouts=[ReadoutDef(id="a", box=box_a, field="fa"),
+                  ReadoutDef(id="b", box=box_b, field="fb")],
+    )
+    frame = Frame(image=np.zeros((400, 1000, 3), np.uint8), client=PixelBox(0, 0, 1000, 400))
+    ocr = ShapeOcr()
+    pending = [("a", box_a.to_fraction().to_pixels(1000, 400)),
+               ("b", box_b.to_fraction().to_pixels(1000, 400))]
+    RegionReader(ocr)._detect_reads(frame, window, pending, {"a": Preprocess(scale=2)})
+    assert ocr.shapes == [(160, 400), (240, 600)]   # a: 80*2/200*2 ; b: 80*3/200*3 (window fallback)
+
+
+def test_readout_preprocess_override_skips_wide_clobber():
+    # THE bug scenario, at the reader seam: an overridden readout's isolated (masked) crop reads
+    # the true "4.00"; the window-preprocess wide cross-check would re-read the union as a fused
+    # "400" and clobber it. With its own override the isolated read is authoritative and the wide
+    # pass is skipped entirely (no clobber, and no wasted OCR call).
+    box = Box(x=0.1, y=0.1, w=0.2, h=0.2)
+    window = WindowDef(
+        id="w", fields=[FieldDef(id="cd", type=FieldType.number)],
+        readouts=[ReadoutDef(id="ability_4_cd", box=box, field="cd")],
+    )
+    frame = Frame(image=np.zeros((400, 1000, 3), np.uint8), client=PixelBox(0, 0, 1000, 400))
+    ocr = SequencedOcr([
+        [OcrLine("4.00", PixelBox(10, 10, 90, 50), 0.99)],   # call 1: isolated masked crop -- correct
+        [OcrLine("400", PixelBox(10, 10, 90, 50), 0.99)],    # call 2 (would-be wide) -- must NOT run
+    ])
+    reader = RegionReader(ocr)
+    pending = [("ability_4_cd", box.to_fraction().to_pixels(1000, 400))]
+    out = reader._readout_text_reads(frame, window, pending, {"ability_4_cd": Preprocess(mode=PreprocessMode.color, colors=["#ffffff"], scale=2)})
+    assert out["ability_4_cd"][0] == "4.00"   # not "400"
+    assert ocr.calls == 1                     # wide pass skipped (box is overridden)
 
 
 def _symbol_marker(box, color):

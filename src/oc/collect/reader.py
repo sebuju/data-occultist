@@ -288,10 +288,32 @@ class RegionReader:
         x1, y1 = min(iw, box.right + margin), min(ih, box.bottom + margin)
         return PixelBox(x0, y0, x1 - x0, y1 - y0)
 
+    def _ro_preprocess_map(self, window: WindowDef, fields: dict) -> dict:
+        """``{readout_id: Preprocess}`` for enabled readouts whose linked field sets its OWN
+        ``preprocess`` override (readouts without one fall back to ``window.preprocess``).
+        Keyed by readout id to line up with the ``(id, box)`` pending lists. Shared by
+        :meth:`read_readouts_detailed` and :meth:`representative_raws` (rule 7)."""
+        out = {}
+        for v in window.readouts:
+            if not v.enabled:
+                continue
+            fd = fields.get(v.field)
+            pp = getattr(fd, "preprocess", None) if fd else None
+            if pp is not None:
+                out[v.id] = pp
+        return out
+
     def _readout_text_reads(self, frame: Frame, window: WindowDef,
-                            pending: list[tuple]) -> dict:
+                            pending: list[tuple], pp_by_key: dict | None = None) -> dict:
         """Text-readout reads -> ``{key: (text, conf)}``, refined by a scoped
         cross-check against a wider OCR pass. ``pending`` is ``[(key, box)]``.
+
+        ``pp_by_key`` carries per-readout preprocess overrides (see :meth:`_detect_reads`).
+        A box with its OWN override cleans its isolated crop specifically (e.g. mask white
+        digits + upscale), so its isolated read is AUTHORITATIVE — the wider pass runs the
+        window preprocess over a multi-box union and could re-fuse a decimal the mask saved
+        ("4.00"->"400"), so the cross-check is skipped for those boxes (its isolated masked
+        read already beats a naive wide read; the merge only ever helped un-masked boxes).
 
         A tight isolated crop (:meth:`_detect_reads`) routinely makes the detector
         SPLIT clean text at a word boundary, or even misread glyphs near the crop
@@ -312,15 +334,19 @@ class RegionReader:
         and the isolated read is kept, so a bad merge can only ever fall back to the
         already-safe isolated text, never corrupt it.
         """
-        iso = self._detect_reads(frame, window, pending)
+        iso = self._detect_reads(frame, window, pending, pp_by_key)
         present = [(k, b) for k, b in pending if k in iso]
-        if not present:
+        # A box with its OWN preprocess override keeps its isolated masked read (authoritative);
+        # only boxes WITHOUT one are refined by the wide pass — so if every present box is
+        # overridden, the wide pass is skipped entirely (no added OCR cost, like the empty case).
+        refine = [(k, b) for k, b in present if not (pp_by_key and pp_by_key.get(k) is not None)]
+        if not refine:
             return iso
-        clip = self._grow(_union([b for _, b in present]),
-                          int(self._RO_MARGIN * max(b.h for _, b in present)), frame)
+        clip = self._grow(_union([b for _, b in refine]),
+                          int(self._RO_MARGIN * max(b.h for _, b in refine)), frame)
         wide = self._ocr_union(frame, [], window.preprocess, clip)
         out = dict(iso)
-        for key, box in present:
+        for key, box in refine:
             hits = self._hits_in(wide, box)
             if hits and all(self._covers(ln.box, box, self._RO_COVER) for ln in hits):
                 text, conf = self._order_join(hits)
@@ -361,13 +387,19 @@ class RegionReader:
         return dict(zip(keys, self._ocr.read_lines(crops)))
 
     def _detect_reads(self, frame: Frame, window: WindowDef,
-                      pending: list[tuple]) -> dict:
+                      pending: list[tuple], pp_by_key: dict | None = None) -> dict:
         """Detection+recognition read of each box -> {key: (text, conf)}, OMITTING boxes
         where the detector found no text. Unlike ``_focus_reads`` (recognition-only, whose
         rec head ALWAYS emits a string — it hallucinates a value on a blank crop), this
         gates on detection: an EMPTY box yields nothing, so a legitimately-absent readout
         (an ability off cooldown, a cleared counter) produces no phantom reading. This is
-        exactly what the window's raw-OCR layer shows, since both run detection."""
+        exactly what the window's raw-OCR layer shows, since both run detection.
+
+        ``pp_by_key`` optionally maps a box key to its OWN preprocess override (a readout
+        with ``FieldDef.preprocess`` set — a white-digit colour mask + upscale); a key with
+        no override falls back to ``window.preprocess``. The authored ``scale`` on that
+        override IS the per-readout upscale (via :func:`apply_preprocess`) — there is still
+        no automatic tiny-crop upscale here (that reason, blank-box phantom reads, stands)."""
         out = {}
         for key, box in pending:
             if box.w <= 0 or box.h <= 0:
@@ -375,8 +407,9 @@ class RegionReader:
             crop = frame.image[box.y : box.y + box.h, box.x : box.x + box.w]
             if crop.size == 0:
                 continue
-            if window.preprocess is not None:
-                crop = apply_preprocess(crop, window.preprocess)
+            pp = (pp_by_key.get(key) if pp_by_key else None) or window.preprocess
+            if pp is not None:
+                crop = apply_preprocess(crop, pp)
             # NO tiny-crop upscale here (unlike _box_crop): upscaling amplifies faint
             # noise/edges until the detector fires on a blank box and the rec head reads a
             # phantom value. Native res keeps this read as sensitive as the window's raw-OCR
@@ -740,7 +773,8 @@ class RegionReader:
         text_pending = [(v.id, boxes[v.id]) for v in window.readouts
                         if v.enabled and not self._is_pip(fields.get(v.field))
                         and not self._is_symbol(fields.get(v.field))]
-        text_reads = self._readout_text_reads(frame, window, text_pending) if text_pending else {}
+        pp_map = self._ro_preprocess_map(window, fields)
+        text_reads = self._readout_text_reads(frame, window, text_pending, pp_map) if text_pending else {}
         for v in window.readouts:
             if not v.enabled:
                 continue
@@ -810,7 +844,8 @@ class RegionReader:
         # wider pass for boxes found present; see _readout_text_reads.
         ro_boxes = [(v.id, v.box.to_fraction().to_pixels(cw, ch)) for v in window.readouts
                     if v.enabled and not self._is_symbol(fields.get(v.field))]
-        ro_reads = self._readout_text_reads(frame, window, ro_boxes) if ro_boxes else {}
+        ro_reads = self._readout_text_reads(
+            frame, window, ro_boxes, self._ro_preprocess_map(window, fields)) if ro_boxes else {}
         for v in window.readouts:
             if v.enabled and v.field in fields and v.field not in out:
                 out[v.field] = ro_reads.get(v.id) or ("", 0.0)

@@ -133,7 +133,7 @@ a.node.win:hover { border-color: var(--accent); }
 .gn-h .ds-tabs { opacity: 0; transition: opacity .12s; }   /* data/batches tablist: also hover-only, but stays in flow (left side, no shift risk) */
 .gn-h:hover .ds-tabs { opacity: 1; }
 .gn-h:hover .ds-tabs { opacity: 1; }
-.lab-add { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; justify-content: space-between; }
+.lab-add { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); justify-content: space-between; }
 /* filters/columns/sort/visible ride the node's ONE lab-grid: the label (with its + button) is a
    col-1 cell, its rows/toggles fill col 2 — aligned with sources/limit/latest above them. */
 .lab-grid > .lab-add { margin-bottom: 0; align-self: start; }

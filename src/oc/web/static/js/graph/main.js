@@ -44,7 +44,7 @@ import {
     applyView, resizeCanvas,
 } from "./camera.js";
 import { movePos, renameNode } from "./node_lifecycle.js";
-import { nodeParts, windowControls, gamePriority, itemLists, slideToggle, vtShowRemoved, rectEditBtn } from "./node_parts.js";
+import { nodeParts, windowControls, gamePriority, itemLists, slideToggle, vtShowRemoved, rectEditBtn, markColorCollisions } from "./node_parts.js";
 import * as dsevents from "./dsevents.js";
 import { renderReadoutHistory } from "./readout_history_node.js";
 import { renderProducerHistory } from "./producer_history_node.js";
@@ -63,7 +63,8 @@ import {
     commitPreviewNode,
     scheduleWindowRead, flushWindowRead,
     refreshImageBoxes, selectRegionNode, refreshRuleTrace,
-    RECT_TYPES, toggleRectEditor,
+    RECT_TYPES, toggleRectEditor, openDetectColorPick,
+    mountMatchPreview, refreshMatchPreviews,
 } from "./imaging.js";
 import * as nodeTxn from "./node_txn.js";
 import {
@@ -1063,7 +1064,7 @@ function wireNode(div, n) {
         // persist a detector edit: window detectors re-OCR their window; gate detectors just
         // save + re-run the cheap gate (autosave(null) doesn't re-read a window). BOTH branches
         // end in a detect pass that spins this very node, so both defer to the transaction.
-        const saveDet = () => { if (isGate) { autosave(null); refreshDetect("game"); } else autosave(owner); };
+        const saveDet = () => { if (isGate) { autosave(null); refreshDetect("game"); } else autosave(owner); refreshMatchPreviews(owner); };
         div.querySelector(".gi-id").addEventListener("change", (e) => {
             const oldId = n.ref.id;
             nodeTxn.commitIfDirty();   // a rename render()s + changes node identity — land any pending knob edit first
@@ -1077,10 +1078,14 @@ function wireNode(div, n) {
         div.querySelector(".coloradd")?.addEventListener("click", () => {
             nodeEdit(n.id, "read", () => { (n.ref.colors ||= []).push(""); rebuildNode(n.id); }, saveDet);
         });
+        // ⊙ sample a colour from a zoomed cutout of the detector's box (same modal as a readout)
+        div.querySelector(".detcolorpick")?.addEventListener("click", () => openDetectColorPick(owner, n.ref.id));
         div.querySelectorAll(".coldel").forEach((b) => b.addEventListener("click", () => {
             const i = +b.dataset.i;
             nodeEdit(n.id, "read", () => { n.ref.colors?.splice(i, 1); rebuildNode(n.id); }, saveDet);
         }));
+        // colour list: hex inputs that collide (same colour, or within tolerance of another) go red.
+        const remarkCollide = () => markColorCollisions(div.querySelectorAll('.aset[data-k="color"]'), n.ref.colors || [], n.ref.tolerance ?? 32);
         div.querySelectorAll(".aset").forEach((inp) => onValueEdit(inp, (e, live) => {
             const k = e.target.dataset.k, ci = +e.target.dataset.i || 0;
             nodeEdit(n.id, "read", () => {
@@ -1098,7 +1103,18 @@ function wireNode(div, n) {
                 // mode change shows/hides "read ⊆ text" (ignored by full/exact) -> rebuild the body
                 if (k === "match" && !live) rebuildNode(n.id);
             }, saveDet);   // a detector knob re-runs detect for ONLY this owner — once, on commit
+            if (k === "color" || k === "colorpick" || k === "tol") remarkCollide();   // colours / tolerance changed
+            // the mutate ran synchronously (nodeEdit defers only the SAVE), so repaint the cutout
+            // preview NOW — tolerance/width don't rebuild the node, so nothing else would.
+            if (k === "tol" || k === "width" || k === "color" || k === "colorpick") refreshMatchPreviews(owner);
         }));
+        // cutout preview: this detector's box, matched pixels painted for a colour/border kind.
+        mountMatchPreview(n.id, owner, div.querySelector(".mp-canvas"), () => n.ref.search, () => {
+            const cols = n.ref.colors;
+            return (cols && cols.length && n.ref.text == null)
+                ? { colors: cols, tolerance: n.ref.tolerance, border: n.ref.width != null, width: n.ref.width } : {};
+        });
+        remarkCollide();   // initial paint of any existing collisions
     } else if (n.type === "scrollbar") {
         wireScrollbar(div, n);
     } else if (n.type === "item") {

@@ -160,7 +160,7 @@
    shows where a click would land). Driven by meter.js toggling .hot on pointermove. */
 .meter.editable .seg.hot { background: color-mix(in oklab, var(--mc) 50%, transparent); border-color: var(--mc); }
 .meter.editable .seg.hot-half { background: linear-gradient(90deg, color-mix(in oklab, var(--mc) 50%, transparent) 50%, transparent 50%); border-color: var(--mc); }
-.meter.editable .pct { flex: 0 0 auto; min-width: 2.6em; text-align: right; }
+.meter.editable .pct { flex: 0 0 auto; }
 .meter.editable:focus-visible { outline: 1px solid color-mix(in oklab, var(--nt) 60%, var(--line)); outline-offset: 2px; border-radius: 3px; }
 /* chip: a bordered inline tag tinted by the node type — boxed sub-labels / key parts / token pills */
 .chip { border: 1px solid color-mix(in oklab, var(--nt) 38%, var(--line)); border-radius: 5px;
@@ -551,8 +551,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    Style once here; per-node tweaks are the rare exception below. */
 .gn-grid { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 8px;
     font-size: var(--fs-sm); color: var(--muted); }
-.gn-grid > .lab { white-space: nowrap; align-self: center; }
-.gn-grid > .lab-top { align-self: start; padding-top: 4px; }
+.gn-grid > .lab { white-space: nowrap; align-self: start; }
 /* controls fill col 2 EXCEPT checkboxes (fixed toggle-switch size, start-aligned) */
 .gn-grid > select, .gn-grid > input:not([type="checkbox"]), .gn-grid > textarea, .gn-grid > .tg-secs { width: 100%; min-width: 0; }
 .gn-grid > textarea { box-sizing: border-box; resize: vertical; min-height: calc(2lh + 8px); font: inherit; }
@@ -608,12 +607,39 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gn-grid > :is(
     .win-controls, .win-img, .item-img, .item-lists, .nodehost, .glyph-img, .glyph-preview,
     .glyph-pending, .glyph-atlas, .detect-status, .ds-tabs, .dict-feeds, .dsconcat,
-    .sb-cuts, .sb-cut-acts, .sb-calib, .sb-lock, .pp-color, .game-priority, .game-gate,
+    .sb-cuts, .sb-cut-acts, .sb-calib, .sb-lock, .game-priority, .game-gate, .mp-canvas,
     .wd-verdict, .wd-collide, .prev-host, .pp-cols, .pp-result,
     .frule, .frule-list, .frule-empty, .tn-blocks, .tn-imgs, .tn-tokbox, .il-tools,
     .wi-row, .wp-row, .wd-row, .ti-sum, .ti-row, .if-sum, .key-row, .pr-fields,
     .enr-sum, .enr-meter, .src-matches, .src-fields, .sv-inputs, .pr-srcs, .frule-btns
   ) { grid-column: 1 / -1; }
+/* OCR preprocess "Text appearance" colours reuse the colour-detector rows (.color-row /
+   .color-list / .aset-swatch, rule 7). Its remove button arms exactly like a rule row's / the
+   selection delete (armConfirm + [data-armed="1"]) — the same yellow-fill on the BUTTON. */
+.color-row .pp-coldel[data-armed="1"] { background: var(--warn); color: var(--on-accent); visibility: visible !important; }
+
+/* Readout colour-pick modal: a blown-up cutout of the readout box, click a pixel to sample. */
+.pp-pick-modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center;
+    justify-content: center; background: rgba(0, 0, 0, 0.62); }
+.pp-pick-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 8px; max-width: 92vw; max-height: 92vh; overflow: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5); }
+.pp-pick-head { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    margin-bottom: 6px; color: var(--muted); font-size: 12px; }
+.pp-pick-x { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0 4px; }
+.pp-pick-x:hover { color: var(--text); }
+.pp-pick-canvas { display: block; cursor: crosshair; image-rendering: pixelated;
+    border: 1px solid var(--line); }
+
+/* Match-preview canvas (first element of every readout / detector node). Fixed intrinsic size
+   (240x150) reserves a stable placeholder so the node never resizes when the image loads;
+   width:100% + height:auto keeps that aspect as the node resizes. */
+.mp-canvas { display: block; width: 100%; height: auto; background: #0b0d12;
+    border: 1px solid var(--line); border-radius: 3px; image-rendering: pixelated; }
+/* a colliding colour input (same colour, or within another's tolerance) — the standard danger fill.
+   Selector must out-specify the .gnode de-input rule (line ~178, 0,2,1) or the fill stays transparent. */
+.gnode .color-row input.color-collide { background: var(--danger); color: var(--on-danger); }
+
 /* TRANSITIONAL SCAFFOLD: legacy .flab / .lab-grid rows not yet decomposed span the whole
    grid so an un-migrated builder still reads correctly. Deleted once every builder emits
    flat kv() children. (Not the end state — see the no-shortcut rule in the plan.) */
@@ -674,6 +700,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* a rule that doesn't fit the field's type: greyed and ignored by the executor */
 .frule-invalid { opacity: .45; }
 .frule-empty { margin-top: 6px; font-size: var(--fs-sm); }
+.frule :is(input, select, textarea) { width: unset; }
 .flab select, .flab input[type="number"], .flab input[type="text"] { width: 100%; min-width: 0; }
 /* consensus (readout misfire gate): two narrow "N of M" boxes, not the full-width .gi input */
 .stab-consensus { display: flex; align-items: center; gap: 5px; }
@@ -800,11 +827,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .aset-color { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px; min-width: 0; }
 .gnode .gn-grid .aset-color input[type="text"] { width: 100%; min-width: 0; }
 /* detect node color kind: a list of color rows (swatch + hex + remove); ＋ rides the subhead */
-.color-list { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.color-list { display: flex; flex-direction: column; gap: 4px; min-width: 0; margin-left: 4px; }
 .color-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px; min-width: 0; }
 .gnode .gn-grid .color-row input[type="text"] { width: 100%; min-width: 0; }
 .gnode .gn-grid .aset-color .aset-swatch,
-.gnode .gn-grid .color-row .aset-swatch { width: 22px; height: 18px; padding: 0; border: 1px solid var(--border, #444); border-radius: 2px; cursor: pointer; background: none; }
+.gnode .gn-grid .color-row .aset-swatch { width: 22px; height: calc(100% - 4px); padding: 0; border: 1px solid var(--border, #444); border-radius: 2px; cursor: pointer; background: none; }
 .aset-swatch::-webkit-color-swatch-wrapper { padding: 0; }
 .aset-swatch::-webkit-color-swatch { border: none; border-radius: 1px; }
 /* game node worthiness gate: the live ●/◯ badge + detector count */

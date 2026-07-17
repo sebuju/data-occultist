@@ -28,7 +28,7 @@ import { openLogStream } from "../logstream.js";
 import { initFlow } from "./flow.js";
 import { mountCanvasLayers } from "./edgecanvas.js";
 import * as nodeTxn from "./node_txn.js";
-import { closeImage, openImage, openAtlasImage, refreshCollisions, scheduleWindowRead } from "./imaging.js";
+import { closeImage, openImage, openAtlasImage, refreshCollisions, scheduleWindowRead, refreshAllMatchPreviews } from "./imaging.js";
 import { groupOrphanChildren } from "./item_wire.js";
 import { seedSubsetSig, refreshChangedSubsetNodes } from "./subset_wire.js";
 import { batchesState } from "./panels/datanodes.js";
@@ -326,6 +326,7 @@ export function finishBoot() {
     for (const winId of imageCanvases.keys()) {
         if (winId !== "atlas") scheduleWindowRead(winId, { trace: true, preview: false });
     }
+    refreshAllMatchPreviews();   // repaint node cutout previews once the boot image storm settled
 }
 
 // Mint a blank game profile. Called from the settings modal's "new game" section.

@@ -170,6 +170,29 @@ class FieldRule(BaseModel):
         return out
 
 
+class PreprocessMode(str, Enum):
+    none = "none"
+    color = "color"          # keep only pixels near the taught text colour(s)
+    threshold = "threshold"  # Otsu binarisation
+    invert = "invert"        # light-on-dark -> dark-on-light
+
+
+class Preprocess(BaseModel):
+    """Teachable image cleanup applied to an OCR crop before reading.
+
+    ``color`` masks glyphs matching the taught text colour(s) (sampled from the
+    capture with the eyedropper) within ``tolerance``, yielding clean black-on-white
+    that OCR reads far more reliably than stylised coloured game text. ``scale``
+    upsamples small text. Used both per-window (WindowDef.preprocess) and per-readout
+    (FieldDef.preprocess) — one primitive, two attach points.
+    """
+
+    mode: PreprocessMode = PreprocessMode.none
+    colors: list[str] = Field(default_factory=list)  # hex, e.g. "#ffffff"
+    tolerance: int = 60                                # colour distance (0..441)
+    scale: float = 1.0                                 # upscale factor for small fonts
+
+
 class FieldDef(BaseModel):
     """One column in a game's data schema, read from a region. ALL value processing —
     extraction, dictionary correction, range checks, case, rounding — lives in the ordered
@@ -207,6 +230,15 @@ class FieldDef(BaseModel):
     # its own temporal Confirmer (stability.py) and ignores these. 0 window = gate disabled.
     stability_reads: int = 0    # consensus window M (0 disables)
     stability_min: int = 0      # min expected-quality reads within the window to accept (clamped 1..M)
+    # LIVE-READOUT crop cleanup (opt-in) — a per-readout override of the window's preprocess,
+    # applied to THIS readout's isolated crop before OCR. White/whitish HUD digits over an
+    # animating coloured background OCR to confident garbage (a thin decimal in "4.00" gets
+    # dropped -> "400"); a colour mask + upscale (the ``scale`` knob) cleans the crop so the
+    # glyphs — and the decimal point — survive, and a blank box masks to truly empty (so the
+    # confidence floor bites again). None -> fall back to the window's preprocess. A capture-time
+    # knob like ``isolate`` / ``min_confidence``, NOT a value rule. Reuses Preprocess (one
+    # primitive, two attach points: WindowDef.preprocess and here).
+    preprocess: Preprocess | None = None
 
 
 class RegionDef(BaseModel):
@@ -537,28 +569,6 @@ class ScrollDef(BaseModel):
     # screen (replaces the old global panel controls).
     autoscroll: bool = False
     scroll_clicks: int = 1
-
-
-class PreprocessMode(str, Enum):
-    none = "none"
-    color = "color"        # keep only pixels near the taught text colour(s)
-    threshold = "threshold"  # Otsu binarisation
-    invert = "invert"      # light-on-dark -> dark-on-light
-
-
-class Preprocess(BaseModel):
-    """Teachable image cleanup applied to a window's OCR crop before reading.
-
-    ``color`` masks glyphs matching the taught text colour(s) (sampled from the
-    capture with the eyedropper) within ``tolerance``, yielding clean black-on-white
-    that OCR reads far more reliably than stylised coloured game text. ``scale``
-    upsamples small text. Applied once to the batched crop, so OCR stays cheap.
-    """
-
-    mode: PreprocessMode = PreprocessMode.none
-    colors: list[str] = Field(default_factory=list)  # hex, e.g. "#ffffff"
-    tolerance: int = 60                                # colour distance (0..441)
-    scale: float = 1.0                                 # upscale factor for small fonts
 
 
 # Item children hoisted to FLAT window-level lists on disk (one record per child, with an

@@ -7,16 +7,18 @@ import * as api from "../api.js";
 import * as nodeTxn from "./node_txn.js";
 import { model, openImages, imageCanvases, clearGrid, setStatus } from "./state.js";
 import {
-    closeImage, openImage, refreshImageBoxes, armPreprocessPick, refreshGridPreview,
-    refreshReadoutValues, refreshRuleTrace, scheduleWindowRead,
+    closeImage, openImage, refreshImageBoxes, armPreprocessPick, openReadoutColorPick,
+    refreshGridPreview, refreshReadoutValues, refreshRuleTrace, scheduleWindowRead,
+    mountMatchPreview, refreshMatchPreviews,
 } from "./imaging.js";
+import { markColorCollisions } from "./node_parts.js";
 import { moveWindowPos, movePos, renameNode } from "./node_lifecycle.js";
 import { renderReadoutHistory } from "./readout_history_node.js";
 import { panZoomTo } from "./camera.js";
 import { renderLiveWindow, syncWpDots, liveCollecting } from "./panels/livewin.js";
 import {
     render, rebuildNode, autosave, nodeEdit, onValueEdit, rulesEdit, wireFieldRules,
-    rebuildReadoutConsumers,
+    rebuildReadoutConsumers, armConfirm,
 } from "./main.js";
 
 // Switch a detector between kinds by toggling the discriminating fields (the model infers
@@ -29,6 +31,47 @@ export function setDetectKind(a, kind) {
         a.tolerance = a.tolerance ?? 32;
         if (kind === "border") a.width = a.width || 0.1; else delete a.width;
     }
+}
+
+// Shared wiring for the "Text appearance" preprocess controls (mode/tolerance/upscale/colour
+// eyedropper + chips) — ONE implementation for BOTH the window node (WindowDef.preprocess) and
+// a readout node's per-readout override (FieldDef.preprocess), rule 7. ``holder`` is the object
+// that carries ``.preprocess``; ``edit(mutate)`` runs the mutation in the owner node's read
+// transaction + save; ``nodeId`` is the node to rebuild (so `color`-mode controls show/hide and
+// chips refresh); ``pick()`` arms the eyedropper for the right sink. Selectors are scoped to
+// ``div`` (each node has its own), so window and readout controls never cross-fire.
+function wirePreprocess(div, holder, { nodeId, winId, edit, pick }) {
+    // colour list: hex inputs that collide (same colour, or within tolerance of another) go red.
+    const remarkCollide = () => markColorCollisions(div.querySelectorAll(".pp-color"), model._ppOf(holder).colors || [], model._ppOf(holder).tolerance ?? 60);
+    div.querySelector(".ppmode")?.addEventListener("change", (e) => {
+        edit(() => { model._ppOf(holder).mode = e.target.value; rebuildNode(nodeId); });
+    });
+    div.querySelector(".pptol")?.addEventListener("change", (e) => {
+        edit(() => { model._ppOf(holder).tolerance = Math.max(0, Math.trunc(+e.target.value) || 0); });
+        remarkCollide();               // tolerance change can create/clear a collision (doesn't rebuild)
+        refreshMatchPreviews(winId);   // ...and changes which pixels the cutout preview paints
+    });
+    div.querySelector(".ppscale")?.addEventListener("change", (e) => {
+        edit(() => { model._ppOf(holder).scale = +e.target.value || 1; });
+    });
+    div.querySelector(".pp-pick")?.addEventListener("click", () => pick());   // ⊙ sample-from-image
+    div.querySelector(".pp-coloradd")?.addEventListener("click", () => {      // ＋ add an empty row
+        edit(() => { model._ppOf(holder).colors.push(""); rebuildNode(nodeId); });
+    });
+    // native swatch (OS colour picker) and the editable hex both write colour[i] — same shape as a
+    // colour detector's rows (rule 7).
+    div.querySelectorAll(".pp-colorpick").forEach((inp) => inp.addEventListener("change", (e) => {
+        edit(() => { model._ppOf(holder).colors[+e.target.dataset.i] = e.target.value; rebuildNode(nodeId); });
+    }));
+    div.querySelectorAll(".pp-color").forEach((inp) => inp.addEventListener("change", (e) => {
+        edit(() => { model._ppOf(holder).colors[+e.target.dataset.i] = e.target.value.trim(); rebuildNode(nodeId); });
+    }));
+    // remove a colour row — the SAME armed remove button as a rule row / selection delete
+    // (rule 7): armConfirm turns the button yellow via [data-armed="1"], a second click fires.
+    div.querySelectorAll(".pp-coldel").forEach((b) => armConfirm(b, () => {
+        edit(() => { model._ppOf(holder).colors.splice(+b.dataset.i, 1); rebuildNode(nodeId); });
+    }, { silent: true, resetOnOutside: true }));
+    remarkCollide();   // initial paint (add/remove/swatch/hex edits all rebuild -> re-run this)
 }
 
 // Wire the window node's controls (extracted so rebuildNode can re-bind them
@@ -90,32 +133,10 @@ export function wireWindowControls(div, n) {
     }));
     // Text appearance (window-level OCR preprocess). Every knob changes what OCR SEES, so
     // autosave(winId) re-reads THIS window (unlike the precapture-only scroll knobs above).
-    div.querySelector(".ppmode")?.addEventListener("change", (e) => {
-        winEdit(() => {
-            model.setPreprocessMode(n.ref.id, e.target.value);
-            rebuildNode(`win:${n.ref.id}`);   // show/hide the colour controls for `color` mode
-        });
+    wirePreprocess(div, model.window(n.ref.id), {
+        nodeId: `win:${n.ref.id}`, winId: n.ref.id, edit: winEdit,
+        pick: () => armPreprocessPick(n.ref.id),
     });
-    div.querySelector(".pptol")?.addEventListener("input", (e) => {
-        winEdit(() => model.setPreprocessTolerance(n.ref.id, +e.target.value));
-    });
-    div.querySelector(".ppscale")?.addEventListener("change", (e) => {
-        winEdit(() => model.setPreprocessScale(n.ref.id, +e.target.value || 1));
-    });
-    div.querySelector(".pp-pick")?.addEventListener("click", () => armPreprocessPick(n.ref.id));
-    div.querySelector(".pp-add")?.addEventListener("click", () => {
-        const el = div.querySelector(".pp-hex"); const v = el.value.trim();
-        if (/^#?[0-9a-fA-F]{6}$/.test(v)) winEdit(() => {
-            model.addPreprocessColor(n.ref.id, v.startsWith("#") ? v : `#${v}`);
-            rebuildNode(`win:${n.ref.id}`);
-        });
-    });
-    div.querySelectorAll(".pp-cx").forEach((b) => b.addEventListener("click", () => {
-        winEdit(() => {
-            model.removePreprocessColor(n.ref.id, +b.dataset.i);
-            rebuildNode(`win:${n.ref.id}`);
-        });
-    }));
     // reorder the item-template priority list: ▲/▼ swap a template up/down, re-numbering
     // priorities to match the new order (top = highest, bottom = 0 base). Base may change -> reread.
     div.querySelectorAll(".wimv").forEach((b) => b.addEventListener("click", () => {
@@ -211,10 +232,21 @@ export function wireReadout(div, n) {
         edit: rulesEdit(n.id, () => { autosave(winId); scheduleRefetch(); }),
         retrace: (el) => refreshRuleTrace(winId, fld.id, n.id, el),
     });
+    // per-readout preprocess override (Text appearance): same shared controls as the window,
+    // sunk into THIS readout's FieldDef (rule 7). Changes what OCR sees -> re-read on commit.
+    if (fld) wirePreprocess(div, fld, {
+        nodeId: n.id, winId, pick: () => openReadoutColorPick(winId, vid),   // modal: zoomed box cutout
+        edit: (m) => nodeEdit(n.id, "read", m, () => { autosave(winId); scheduleRefetch(); refreshMatchPreviews(winId); }),
+    });
     // initial value off the current image — but ONLY on a genuine node-open, not a mid-edit
     // rebuild. While a config txn is armed the read is deferred to commit (scheduleRefetch
     // aftermath); firing here would OCR uncommitted. Mirrors the armed-gate in refreshRuleTrace.
     if (!nodeTxn.armed(n.id)) refetch();
+    // cutout preview: this readout's box, matched pixels painted when its preprocess masks a colour.
+    mountMatchPreview(n.id, winId, div.querySelector(".mp-canvas"), () => n.ref.box, () => {
+        const p = fld?.preprocess;
+        return p?.mode === "color" ? { colors: p.colors, tolerance: p.tolerance } : {};
+    });
     // paint the read-history satellite from the last heartbeat snapshot (no-op when it's hidden),
     // so a just-opened satellite shows immediately instead of waiting for the next beat.
     renderReadoutHistory(winId, vid);

@@ -2130,15 +2130,21 @@ export class GraphModel {
         order.forEach((it, k) => { it.priority = n - 1 - k; });   // top -> highest priority, bottom -> 0 (base)
     }
     setWindowStaticGrid(winId, on) { const w = this.window(winId); if (w) w.static_grid = !!on; }
-    // Window-level OCR preprocess (Text appearance): mode none/color/threshold/invert,
-    // taught colours + tolerance for `color`, upscale for small text. Lazily defaulted so
-    // an old profile without the block gets one on first edit.
-    preprocess(winId) {
-        const w = this.window(winId);
-        if (!w) return null;
-        w.preprocess = w.preprocess || { mode: "none", colors: [], tolerance: 60, scale: 1.0 };
-        return w.preprocess;
+    // OCR preprocess (Text appearance): mode none/color/threshold/invert, taught colours +
+    // tolerance for `color`, upscale for small text. ONE holder-based core (rule 7) shared by
+    // the window (WindowDef.preprocess) and the per-readout override (FieldDef.preprocess);
+    // lazily defaulted so an old profile without the block gets one on first edit.
+    _ppOf(holder) {
+        if (!holder) return null;
+        holder.preprocess = holder.preprocess || { mode: "none", colors: [], tolerance: 60, scale: 1.0 };
+        return holder.preprocess;
     }
+    // Resolve a readout's linked FieldDef by readout id (the per-readout preprocess holder).
+    readoutFieldOf(winId, roId) {
+        const w = this.window(winId);
+        return this.readoutField(w, (w?.readouts || []).find((r) => r.id === roId));
+    }
+    preprocess(winId) { return this._ppOf(this.window(winId)); }             // window holder
     setPreprocessMode(winId, mode) { const pp = this.preprocess(winId); if (pp) pp.mode = mode; }
     setPreprocessTolerance(winId, t) { const pp = this.preprocess(winId); if (pp) pp.tolerance = t; }
     setPreprocessScale(winId, s) { const pp = this.preprocess(winId); if (pp) pp.scale = s; }

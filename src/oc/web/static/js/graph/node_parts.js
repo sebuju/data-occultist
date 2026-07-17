@@ -13,7 +13,7 @@
 //   body    -> a Node or DocumentFragment
 //   ports   -> a Node/frag or null (default null)
 //   pulse   -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
-import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, labAdd, srcRow, btn, iconBtn, trashBtn } from "../dom.js";
+import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, srcRow, btn, iconBtn, trashBtn } from "../dom.js";
 import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
@@ -187,32 +187,90 @@ export function windowControls(w) {
         windowDetects(w));
 }
 
-// Window-level OCR preprocess ("Text appearance"): clean the crop before reading so stylised
+// OCR preprocess ("Text appearance") controls: clean the crop before reading so stylised
 // game text is legible. `color` masks the taught text color(s) (eyedropper or hex) to clean
 // black-on-white; `threshold` is global Otsu; `invert` flips light-on-dark; `scale` upsamples
-// small fonts. Ported from the old teach page. Handlers live in main.js wireWindowControls.
+// small fonts. Dual-use (rule 7): `holder` is any object carrying `.preprocess` — a WindowDef
+// (window node) or a readout's FieldDef (readout node). Handlers = wirePreprocess (window_wire).
 const PP_MODES = [["none", "none"], ["color", "keep text color(s)"],
     ["threshold", "auto threshold"], ["invert", "invert"]];
 
-export function preprocessControls(w) {
-    const pp = w.preprocess || { mode: "none", colors: [], tolerance: 60, scale: 1.0 };
-    const chips = (pp.colors || []).map((c, i) => h("span", { class: "pp-chip", style: `border-color:${c}` },
-        h("span", { class: "pp-sw", style: `background:${c}` }),
-        trashBtn({ cls: "pp-cx", dataset: { i }, title: "remove color" })));
+// Tooltips carried on the CONTROL elements themselves (not just the kv label) so hovering the
+// input explains what it does + when to use it — the user asked for input-level tooltips.
+const PP_TIP = {
+    mode: "how to clean this crop before OCR. none = read the raw pixels. color = keep only pixels near the taught text colour(s), everything else goes white — use for coloured/stylised game text on a busy background (e.g. a white cooldown number over ability FX). threshold = auto black/white (Otsu) — use for plain high-contrast text. invert = flip light-on-dark to dark-on-light — use for light text the recogniser reads better inverted.",
+    colorlist: "the text colour(s) to keep — a pixel survives the mask if it's near ANY of these (within tolerance). Add the glyph colour (white for most HUD numbers); everything else goes to white background.",
+    pick: "sample from the image: opens a zoomed cutout of this readout's box — click the glyph colour to add it",
+    hex: "the kept colour as hex (e.g. #ffffff for white). Click the swatch for the colour picker, or type/paste a hex value.",
+    add: "add a colour row",
+    tol: "how far a pixel's colour may sit from a taught colour and still be kept (BGR distance, 0-200). Too low = anti-aliased glyph edges drop out and thin strokes (a decimal point) vanish; too high = background bleeds in. Start ~60 and widen until the glyphs are solid without the background leaking.",
+    scale: "enlarge the crop before OCR (INTER_CUBIC). Small HUD numbers are often too few pixels for the recogniser to resolve a thin decimal point — 2-3x gives it enough to read '4.00' instead of '400'. 1 = no upscale.",
+};
+
+const _hex6 = (c) => /^#[0-9a-fA-F]{6}$/.test(c || "");
+const _hexRgb = (hex) => { const h = hex.replace("#", ""); return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) }; };
+
+// Flag colliding colour inputs red (rule 7 — ONE collision test for the detector + readout colour
+// lists). Two colours collide when they are the same OR within `tolerance` (BGR distance) of each
+// other — a single `<= tolerance` test covers both (identical => distance 0). Each hex input is
+// tagged by its colour index via `dataset.i`; the caller passes the input list + live colours +
+// tolerance, and re-calls this whenever any colour or the tolerance changes.
+export function markColorCollisions(inputs, colors, tolerance) {
+    const rgb = (colors || []).map((c) => (_hex6(c) ? _hexRgb(c) : null));
+    const bad = new Set();
+    // flag only the LATER ("next") colour of a colliding pair — the first occurrence is the keeper,
+    // each subsequent colour within tolerance of an EARLIER one is the redundant/conflicting one.
+    for (let b = 0; b < rgb.length; b++) {
+        if (!rgb[b]) continue;
+        for (let a = 0; a < b; a++) {
+            if (!rgb[a]) continue;
+            const dr = rgb[a].r - rgb[b].r, dg = rgb[a].g - rgb[b].g, db = rgb[a].b - rgb[b].b;
+            if (Math.sqrt(dr * dr + dg * dg + db * db) <= tolerance) { bad.add(b); break; }
+        }
+    }
+    inputs.forEach((inp) => inp.classList.toggle("color-collide", bad.has(+inp.dataset.i)));
+}
+
+// The match-preview canvas — FIRST element of every readout / detector node, regardless of
+// type/kind. Fixed backing size = a stable placeholder (the node never resizes when the image
+// loads); the cutout is letterboxed centre, matched pixels painted (see imaging.js mountMatchPreview).
+export function matchCanvas() {
+    return h("canvas", { class: "mp-canvas", width: "240", height: "150",
+        title: "cutout of this box — pixels the current colour(s) + tolerance would match are painted green" });
+}
+
+// A colour-list section label with an inline ⊙ (sample from a zoomed image cutout) and ＋ (add a
+// row) — the ONE idiom shared by the readout preprocess and the colour detector (rule 7). Both
+// buttons carry their own class so each node wires its own handler.
+export function colorPickLabel(text, title, { pickCls, pickTitle, addCls, addTitle }) {
+    return h("span", { class: "lab lab-add", title },
+        text,
+        h("button", { class: `${pickCls} lab-add-btn`, title: pickTitle }, "⊙"),
+        h("button", { class: `${addCls} lab-add-btn`, title: addTitle }, "+"));
+}
+
+export function preprocessControls(holder) {
+    const pp = holder.preprocess || { mode: "none", colors: [], tolerance: 60, scale: 1.0 };
+    // colour rows in the SAME shape as a color detector (rule 7 — reuse .color-row/.color-list/
+    // .aset-swatch): a native swatch (opens the OS picker) + an editable hex + an armed trash.
+    const colorRows = (pp.colors || []).map((c, i) => h("div", { class: "color-row", dataset: { i } },
+        h("input", { type: "color", class: "aset-swatch pp-colorpick", dataset: { i }, title: "pick a colour",
+            value: _hex6(c) ? c : "#000000" }),
+        h("input", { type: "text", class: "pp-color", dataset: { i }, value: c || "", placeholder: "#rrggbb",
+            style: "width:9ch", title: PP_TIP.hex }),
+        trashBtn({ cls: "pp-coldel", dataset: { i }, title: "remove this colour (click twice to confirm)" })));
     return frag(
-        kv("preprocess", h("select", { class: "ppmode" },
+        kv("preprocess", h("select", { class: "ppmode", title: PP_TIP.mode },
             PP_MODES.map(([v, t]) => h("option", { value: v, selected: pp.mode === v }, pp.mode === v ? `<${t}>` : t))),
-            { title: "preprocess the crop before OCR: threshold = auto black/white (good default), color = keep only the taught text color(s), invert = flip light-on-dark" }),
-        pp.mode === "color" && h("div", { class: "pp-color" },
-            h("div", { class: "pp-chips" }, chips.length ? chips : h("span", { class: "muted" }, "no colors yet")),
-            h("div", { class: "pp-row" },
-                h("button", { class: "pp-pick", title: "sample the text color from the open image" }, "⊙ pick"),
-                h("input", { class: "pp-hex", placeholder: "#ffffff", style: "width:9ch" }),
-                h("button", { class: "pp-add" }, "add")),
-            kv("tolerance", h("input", { type: "range", class: "pptol", min: "10", max: "200", value: pp.tolerance ?? 60 }),
-                { title: "how close a pixel must be to a taught color to be kept" })),
-        kv("upscale", h("input", { type: "number", class: "ppscale", step: "0.5", min: "1", max: "4", value: pp.scale ?? 1 }),
-            { title: "upscale the crop before OCR — helps small fonts" }));
+            { title: PP_TIP.mode }),
+        pp.mode === "color" && frag(
+            colorPickLabel("color", PP_TIP.colorlist,
+                { pickCls: "pp-pick", pickTitle: PP_TIP.pick, addCls: "pp-coloradd", addTitle: PP_TIP.add }),
+            h("div", { class: "color-list" }, ...colorRows),
+            kv("tolerance", h("input", { type: "number", class: "pptol", min: "0", step: "1", value: pp.tolerance ?? 60, title: PP_TIP.tol }),
+                { title: PP_TIP.tol })),
+        kv("upscale", h("input", { type: "number", class: "ppscale", step: "0.5", min: "1", max: "4", value: pp.scale ?? 1, title: PP_TIP.scale }),
+            { title: PP_TIP.scale }));
 }
 
 // Scrollbar node: orientation + the cutout-based scroll-calibration tool. Each cutout is a
@@ -443,6 +501,12 @@ export function fieldConfigBody(fd, cls, fid, afterConf = null, stability = fals
             h("span", { class: "stab-of" }, "of"),
             stabNum("stab_reads", fd.stability_reads, "M — window size, how many recent reads to consider (0 = filter off)")),
             { title: "misfire filter (live only): surface this readout only when at least N of the last M reads were the expected type/quality — a number field wants a number, text wants non-empty — else HOLD the last value. Kills the OCR garbage a busy action screen produces without lagging a legit fast-changing number. Second box 0 = off." }),
+        // per-readout OCR crop cleanup — the SAME controls as the window's Text appearance,
+        // sunk into this readout's own preprocess (overrides the window's for this box). Masking
+        // white/whitish HUD digits + upscale saves a thin decimal a busy background would drop.
+        stability && subhead("text appearance", null,
+            "clean THIS readout's crop before OCR (overrides the window's). Mask the digit colour + upscale so a thin decimal survives — the fix for a cooldown that reads e.g. 400 instead of 4.00"),
+        stability && preprocessControls(fd),
         afterConf,   // optional extra row right below conf (readout node slots its live value here)
         subhead("rules", h("div", { class: "frule-btns" },
             h("button", { class: "rulecopy", dataset: { ...da }, disabled: !(fd.rules || []).length, title: "copy this pipeline" }, COPY()),
@@ -545,7 +609,7 @@ export function readoutParts(n) {
         title: h("input", { class: "gi gi-id", dataset: { k: "roid" }, value: v.id,
             title: "readout id — what a trigger watches and a toast tokens as {{readout:id}}" }),
         head: satToggleBtn(`rohist:${n.win.id}:${v.id}`, "readouthistory"),
-        body,
+        body: frag(matchCanvas(), body),   // cutout preview first, then the read config
         // drag this readout's out-port onto a toast to feed it the live value as {{readout:id}}
         ports: h("span", { class: "port out", title: "drag to a toast to feed it this readout's live value" }),
     };
@@ -774,10 +838,11 @@ export function nodeParts(n) {
             h("input", { type: "text", class: "aset", dataset: { k: "color", i }, value: c || "", placeholder: "#rrggbb" }),
             trashBtn({ cls: "coldel", dataset: { i }, disabled: colors.length <= 1, title: "remove this color" })));
         const colorBody = frag(
-            // label + inline ＋ (the shared labAdd idiom, like subset "columns"/producer "fields");
-            // the rows fill col 2 as ONE wrapping cell so the 2-col grid stays aligned.
-            labAdd("color", "fraction of pixels near ANY of these colors (border = only on the box perimeter)",
-                "coloradd", "add a color", true),
+            // label + inline ⊙ (sample from a zoomed cutout of the detector's box) and ＋ (add a
+            // row) — the shared colorPickLabel idiom (rule 7), same as the readout preprocess.
+            colorPickLabel("color", "fraction of pixels near ANY of these colors (border = only on the box perimeter)",
+                { pickCls: "detcolorpick", pickTitle: "sample from the image: opens a zoomed cutout of this detector's box — click the colour to add it",
+                  addCls: "coloradd", addTitle: "add a color" }),
             h("div", { class: "color-list" }, ...colorRows),
             kv("tolerance", h("input", { type: "number", class: "aset", dataset: { k: "tol" }, step: "1", min: "0", value: a.tolerance ?? 32 }),
                 { title: "how far a pixel's color can sit from the nearest target (BGR distance) and still count. Higher = looser match (more pixels qualify); 0 = exact color only. Default 32." }),
@@ -787,6 +852,7 @@ export function nodeParts(n) {
             title: h("input", { class: "gi gi-id", dataset: { k: "detid" }, value: a.id,
                 title: "detector: the window's detect_mode decides how these combine" }),
             body: frag(
+                matchCanvas(),   // cutout preview first, regardless of kind
                 kv("kind", h("select", { class: "aset", dataset: { k: "kind" } },
                     h("option", { value: "text", selected: kind === "text" }, kind === "text" ? "<text>" : "text"),
                     h("option", { value: "color", selected: kind === "color" }, kind === "color" ? "<color>" : "color"),
