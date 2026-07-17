@@ -9,6 +9,7 @@ import { h } from "../dom.js";
 import { $, model, setStatus } from "./state.js";
 import { log, setLogOpen } from "../log.js";
 import { ocrBusyCount } from "./imaging.js";
+import { routesSettled } from "./routing.js";
 import { setPrettyView } from "./pretty_switch.js";
 import { refreshGames, loadGame, initKillGpu, finishBoot } from "./main.js";
 
@@ -35,10 +36,17 @@ if (dbg.on) log(`debug launch: kill=${dbg.kill} settle=${dbg.settle} veil=${dbg.
 const veil = {
     drop() {
         document.body.classList.remove("booting");   // screen is interactive now -> CSS motion on (covers error/offline paths that skip finishBoot)
+        // the boot log floats over the veil -> slide it down off-screen in step with the crop,
+        // then strip its boot/open chrome so it lands back as the one-line collapsed strip.
+        const lb = document.getElementById("logbar");
+        if (lb && lb.classList.contains("boot")) {
+            lb.classList.add("liftout");
+            setTimeout(() => lb.classList.remove("liftout", "boot", "open"), 320);
+        }
         const v = document.getElementById("bootveil");
         if (!v) return;
         v.classList.add("fade");
-        setTimeout(() => v.remove(), 300);
+        setTimeout(() => v.remove(), 320);
     },
 };
 
@@ -140,14 +148,14 @@ async function killStrayOcrThenBoot() {
         log("first read…");
         if (dbg.settle) await bootSettle();
         finishBoot();   // boot OCR drained -> re-OCR fresh on later reads + run the one edge/group pass
+        if (dbg.settle) await routesSettled();   // hold the veil until the edge routing pass lands — lines settle under it, not after
     } catch (e) {
         if (!conn.isOnline()) { veil.drop(); return; }   // dropped mid-boot -> offline overlay handles it
         log(String(e.message || e), "err");   // boot hiccup: show the page anyway
     }
     booted = true;
     api.onApiRequest(null);   // stop mirroring requests into the log bar (boot done)
-    veil.drop();
-    setLogOpen(false);   // boot done -> collapse the log back to its one-line bar
+    veil.drop();   // also slides the boot log down + collapses it once the crop finishes
 }
 
 export function bootGraph() {

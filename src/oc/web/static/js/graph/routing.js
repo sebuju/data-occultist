@@ -868,4 +868,21 @@ export function edgeGeometry(fromId, toId) {
     return c && c.pts && c.pts.length >= 2 ? c.pts : null;
 }
 
+// Resolve once edge routing has gone quiet: the painted routes match the current layout (drawSig
+// caught up to routeHash) and no pass is queued (routeRaf) or in flight (routeInflight). Held for a
+// short quiet window so the multi-step rAF -> worker -> applyRoutes -> rAF handoff can't read as
+// "done" in a gap between two of its steps. Boot awaits this before dropping the veil so the lines
+// land in their routed shape UNDER the veil instead of snapping in after it lifts.
+export async function routesSettled(maxMs = 4000, quietMs = 250) {
+    if (!ROUTE.enabled) return;
+    const t0 = performance.now();
+    let quiet = 0;
+    while (performance.now() - t0 < maxMs) {
+        const idle = drawSig === routeHash && !routeInflight && !routeRaf;
+        quiet = idle ? quiet + 50 : 0;
+        if (quiet >= quietMs) return;
+        await new Promise((res) => setTimeout(res, 50));
+    }
+}
+
 export { drawEdges, requestEdges, flushEdges, buildLinks, nodeRect, freezeRouting, routeCache, ROUTE };
