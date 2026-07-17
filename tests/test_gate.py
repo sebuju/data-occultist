@@ -295,7 +295,8 @@ def _readout_collector(monkeypatch, *, tuning=None):
         capture=types.SimpleNamespace(grab_window=lambda w: frame),
         window=types.SimpleNamespace(is_foreground=lambda w: True),
         ocr=types.SimpleNamespace())
-    c._classify = lambda f: ("hud", None)
+    c._classify_cache = (None, None)   # no cached match -> fast ticks grab the full frame
+    c._classify = lambda f, full_frame=None: ("hud", None)
     c._reader = types.SimpleNamespace(
         read_readouts_detailed=lambda f, w, vf, trace_sink=None: {"cd": (3, 0.9, "3", None)})
     c.save_recognized_frames = False

@@ -1,9 +1,11 @@
 # Capture performance — handover
 
-Status: **fix 1 SHIPPED (18/07/26)** — persistent thread-local `mss.MSS` instance +
-`cv2.cvtColor` alpha drop in `capture/mss_backend.py`; bench `mss` went 13/s → 27.1/s
-(36.95 ms/grab) at 4K, exactly the predicted floor. Fix 2 (partial-region grabs) remains
-open and is the next step. Original investigation below, kept for the numbers. After the
+Status: **fixes 1 + 2 SHIPPED, printwindow cvtColor too (18/07/26)** — see the ranked list
+below for what each became. Live `cp` now tags its capture path in the stat row's n column
+(1 fg-mss, 2 fg_black, 3 fg_err, 4 bg-printwindow, 0 non-adaptive), recorded on every
+classified tick. Current per-tick reality: foreground full grab ~42ms, foreground fast-poll
+sparse ~15-30ms, background printwindow ~55ms. Original investigation below, kept for the
+numbers. After the
 readout-OCR work (18/07/26, see `docs/ocr-benchmark-handover.md`), OCR fell from ~600ms to
 ~20-85ms per readout tick — which makes **capture the dominant per-tick cost**: `cp` runs
 ~70-110ms per grab at 4K, paid on EVERY fast-poll wake (~3/s live). This documents where that
@@ -49,14 +51,31 @@ alpha-drop copy.
    - Replace the `[:, :, :3].copy()` slice with `cv2.cvtColor(np.asarray(shot),
      cv2.COLOR_BGRA2BGR)`.
    - Note: `mss.mss` is deprecated in the installed version → use `mss.MSS`.
-2. **Partial-region grabs on the readout fast path** — the end-game (~5ms): a fast-poll wake
-   only needs the READOUT boxes (+ the classify cache's detector sample regions, `detsig`) —
-   not the full 4K frame. BitBlt cost scales with area; the readout boxes are a few thousand
-   px². Architectural: `Frame` is full-window (fraction→pixel math assumes it), settle thumb
-   needs the full frame (fast readout ticks already ignore settle), classify's tolerant
-   compare needs the detector regions grabbed too. Do it behind the profile model — a generic
-   "grab these fraction boxes" capture call — not a readout special case. With OCR at ~12ms
-   this is what makes a true 4/s cadence reachable (gate_interval 0.25 + ~20ms work).
+2. **[DONE 18/07/26] Partial-region grabs on the readout fast path.** Shipped, but the ~5ms
+   dream was WRONG: a BitBlt grab has a ~6-7ms FIXED per-call cost (DWM sync; a 300x60 box
+   costs the same as a 3840x200 strip, and 15 per-box grabs measured 3x SLOWER than one full
+   frame). So the design minimises grab COUNT, not area: `capture/regions.py strip_spans`
+   clusters the wanted boxes into <=3 full-width horizontal strips (pad = own height, merge
+   gaps <220px, fall back to full over 55% cover), pasted into a full-size sparse canvas
+   `Frame` so all fraction->pixel consumers work unchanged. API: `grab_window_regions(window,
+   boxes)` on the `CaptureBackend` ABC (default = full grab; mss overrides with strips;
+   adaptive routes fg-only — printwindow renders the whole window regardless). Collector: fast-
+   poll wakes grab detect-fracs + cached window's readout boxes sparse, skip the settle
+   read/update (thumb needs full pixels; settle now compares consecutive FULL ticks — its
+   original pre-fast-poll cadence), and a classify-cache MISS refetches a full frame via
+   callback before the full classifier pass. live_game_window plans 2 strips / 26% cover.
+   Measured (game rendering): mss sparse ~24-31ms vs full ~40-51ms; idle-GPU floor is
+   ~7ms/strip, so quiet scenes should sit near ~15-20ms. True ~5ms is unreachable over
+   BitBlt — that would need WGC (fix 3's trade-off) or fewer/smaller strips.
+   **The gotcha that first made this look like a no-op:** `Collector.run` only advances the
+   OCR clock when the heavy path RUNS (`moving` is `_HEAVY_SKIPPED`), and a combat HUD
+   animates every frame — so mid-mission EVERY wake arrives `ocr_due=True` and a
+   fast-poll-only sparse gate never fires (observed 58 full : 1 sparse). Hence the rule
+   shipped: sparse applies on ANY tick whose cached window is READOUTS-ONLY (no
+   regions/items — its heavy path has no grid to read), not just between OCR slots; such
+   windows also skip the settle gate entirely (a HUD never settles; readouts have their own
+   consensus gates). Grid windows keep full grabs + settle on OCR-due ticks.
+   `save_recognized` mode disables sparse (its debug bucket needs real frames).
 3. **WGC revisited** (`wgc` backend): a grab returns the latest DWM-composited frame (cheap
    per grab, no re-render), but the session STREAMS off the GPU the whole time — rejected as
    the default precisely because GPU contention while playing is the currency (memories

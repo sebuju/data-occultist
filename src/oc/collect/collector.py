@@ -265,12 +265,17 @@ class Collector:
         test is one primitive, not two copies."""
         return detsig.features(frame, self._detect_fracs)
 
-    def _classify(self, frame):
+    def _classify(self, frame, full_frame=None):
         """Classify, reusing the last result while the detector regions are unchanged WITHIN a
         noise floor. A bare hash re-ran every tick (one changed pixel = miss); a tolerant compare
         holds through capture noise and sub-threshold UI animation, so a steady screen pays the
         OCR-heavy classify pass once, not every tick. The stored features are refreshed on a hit
-        so slow animation (a rotating background) is tracked, never accumulating into a false miss."""
+        so slow animation (a rotating background) is tracked, never accumulating into a false miss.
+
+        ``full_frame``: refetch callback for a SPARSE frame (partial grab). The cache compare
+        works on sparse pixels (the detector regions are always grabbed), but the full
+        classifier pass reads arbitrary window content — when it must run, the frame is
+        refetched whole through this callback first."""
         feat = self._detect_features(frame)
         prev, cres = self._classify_cache
         changed = detsig.changed(feat, prev, _DETECT_TOL)
@@ -286,9 +291,31 @@ class Collector:
             if self._detect_miss_streak < _DETECT_RECLASSIFY_AFTER:
                 return cres
         self._detect_miss_streak = 0
+        if full_frame is not None:
+            frame = full_frame()
+            feat = self._detect_features(frame)   # anchor to real full pixels, not the canvas
         match = self._engine.classifier.classify(frame, self._profile)
         self._classify_cache = (feat, match)
         return match
+
+    def _sparse_boxes(self, win, ocr_due: bool) -> list | None:
+        """Client-relative pixel boxes this tick actually reads: EVERY detector search region
+        (the classify-cache compare spans all windows) plus the cached window's enabled readout
+        boxes. ``None`` when the tick needs a FULL frame instead: no cached classification to
+        trust (the full classifier pass reads arbitrary pixels), or an OCR-due tick whose cached
+        window has a grid to read (regions/items — settle + the grid path need real pixels)."""
+        _, cres = self._classify_cache
+        if cres is None:
+            return None
+        wdef = self._profile.window(cres[0])
+        if ocr_due and (wdef is None or wdef.regions or wdef.items):
+            return None
+        cw, ch = win.client.w, win.client.h
+        boxes = [fb.to_pixels(cw, ch) for fb in self._detect_fracs]
+        if wdef is not None:
+            boxes += [v.box.to_fraction().to_pixels(cw, ch)
+                      for v in wdef.readouts if v.enabled]
+        return boxes
 
     def _thumb_pos(self, frame, window: WindowDef) -> float | None:
         """The scrollbar thumb position ``p`` (0..1 over the reachable track) for this frame, or
@@ -324,8 +351,23 @@ class Collector:
         if self._tuning.require_foreground and not eng.window.is_foreground(win):
             return TickResult(TickStatus.not_foreground)
 
+        # Sparse grabs ([[readout_fast_poll]]): a tick that will only READ the detector
+        # regions (classify cache compare) and the cached window's readout boxes grabs just
+        # those as a sparse frame (a few strips, ~2-3x cheaper at 4K). That is every fast-poll
+        # wake — and ALSO OCR-due ticks while the cached window is READOUTS-ONLY (no
+        # regions/items): its "heavy" path has no grid to read, so full pixels buy nothing.
+        # This matters mid-combat: a constantly-animating HUD never settles, the OCR clock
+        # never advances (`moving` stays heavy-skipped), so ~every wake arrives ocr_due — the
+        # readouts-only case is the COMMON one, not the exception. Grid windows still take
+        # full grabs on OCR-due ticks; a classify-cache MISS refetches a full frame below.
+        # save_recognized mode disables sparse: its debug bucket must hold real frames.
         _tcp = time.perf_counter()
-        frame = eng.capture.grab_window(win)
+        sparse = None
+        if (self._tuning.readout_fast_poll and self._any_readouts
+                and not (self.save_recognized_frames and self.on_frame is not None)):
+            sparse = self._sparse_boxes(win, ocr_due)
+        frame = (eng.capture.grab_window_regions(win, sparse) if sparse is not None
+                 else eng.capture.grab_window(win))
         t_capture = (time.perf_counter() - _tcp) * 1000.0
         # Settle gate: only OCR a frame that has STOPPED moving. A grab taken mid-scroll
         # or mid-animation is blurred/half-drawn and reads as garbage; require this grab
@@ -336,13 +378,19 @@ class Collector:
         # but proceed on the FIRST grab (no predecessor to compare) so a single-shot
         # ``collect --once`` still reads; any stray blurred frame that slips through is
         # caught by the confirmer, which needs the SAME read twice before it saves.
+        # Sparse ticks skip the settle read/update entirely (the thumb needs full pixels;
+        # readouts ignore `moving` anyway). A readouts-only window is thus never settle-
+        # gated at all — correct: a live HUD animates every frame and would never settle,
+        # and its readouts carry their own plausibility/consensus gates. Grid windows still
+        # settle on their (full-grab) OCR-due ticks.
         _ts = time.perf_counter()
-        th = settle.thumb(frame.image, crop_px=settle.CROP_PX)
         moving = False
-        if th is not None:
-            prev, self._settle_thumb = self._settle_thumb, th
-            if prev is not None and not settle.is_settled(th, prev):
-                moving = True
+        if sparse is None:
+            th = settle.thumb(frame.image, crop_px=settle.CROP_PX)
+            if th is not None:
+                prev, self._settle_thumb = self._settle_thumb, th
+                if prev is not None and not settle.is_settled(th, prev):
+                    moving = True
         t_settle = (time.perf_counter() - _ts) * 1000.0
         # Settle gate: a moving frame is too blurred for the grid OCR, so the DATASET path is
         # skipped below. But live readouts (single stable HUD boxes) must surface even mid-
@@ -373,7 +421,19 @@ class Collector:
         # alongside a /api/preview call on the same shared OCR session.
         with ocr_job(eng.ocr):
             _tc = time.perf_counter()
-            match = self._classify(frame)
+            # On a sparse tick the cached classification normally holds (that's the point);
+            # if the detector regions DID change, the full classifier pass needs real full
+            # pixels, so _classify refetches through this callback and the tick continues
+            # on the refetched full frame (the sparse canvas lacks the new window's boxes).
+            refetched = {}
+
+            def _full_frame():
+                f = eng.capture.grab_window(win)
+                refetched["frame"] = f
+                return f
+
+            match = self._classify(frame, _full_frame if sparse is not None else None)
+            frame = refetched.get("frame", frame)
             t_classify = (time.perf_counter() - _tc) * 1000.0
             if match is None:
                 return TickResult(TickStatus.unrecognised)
@@ -387,8 +447,9 @@ class Collector:
             # classified tick (fast-poll and moving ticks included — like `ro` below), not just
             # save-worthy ones, so the capture cost during live HUD play is visible. cp's n
             # encodes the adaptive capture path (0 = unknown/non-adaptive backend):
-            # 1 fg (mss), 2 fg_black fallback, 3 fg_err fallback, 4 bg (printwindow).
-            cp_path = {"fg": 1, "fg_black": 2, "fg_err": 3, "bg": 4}.get(
+            # 1 fg (mss full), 2 fg_black fallback, 3 fg_err fallback, 4 bg (printwindow),
+            # 5 fg_part (mss partial/strips — the sparse fast-poll grab).
+            cp_path = {"fg": 1, "fg_black": 2, "fg_err": 3, "bg": 4, "fg_part": 5}.get(
                 getattr(eng.capture, "last_path", ""), 0)
             stats_store.record_timing(self._profile.name, f"win:{window_id}", "cp", t_capture,
                                       n=cp_path)
