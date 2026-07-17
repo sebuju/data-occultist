@@ -4824,7 +4824,7 @@ triggers:
   - bob
   - clear_1
   enabled: true
-  throttle_ms: 2000.0
+  throttle_ms: 3000.0
   ready_field: ''
 - id: ab_trigger_2
   kind: on_register
@@ -4846,7 +4846,6 @@ triggers:
   - bob
   - clear_2
   enabled: true
-  throttle_ms: 2000.0
   ready_field: ''
 - id: ab_trigger_3
   kind: on_register
@@ -4868,7 +4867,7 @@ triggers:
   - bob
   - clear_3
   enabled: true
-  throttle_ms: 2000.0
+  throttle_ms: 3000.0
   ready_field: ''
 - id: ab_trigger_4
   kind: on_register
@@ -4890,7 +4889,7 @@ triggers:
   - bob
   - clear_4
   enabled: true
-  throttle_ms: 2000.0
+  throttle_ms: 3000.0
   ready_field: ''
 toasts:
 - id: toast_2
@@ -6970,7 +6969,7 @@ layout:
       softW: true
       softH: true
     action:clear_1:
-      x: 700.0
+      x: 1000.0
       y: -7520.0
       w: 240.0
       h: 163.0
@@ -7009,7 +7008,7 @@ layout:
       softW: true
       softH: true
     action:clear_2:
-      x: 700.0
+      x: 1000.0
       y: -7200.0
       w: 240.0
       h: 163.0
@@ -7018,7 +7017,7 @@ layout:
       custH: false
       softW: true
     action:clear_3:
-      x: 700.0
+      x: 1000.0
       y: -6880.0
       w: 240.0
       h: 163.0
@@ -7027,7 +7026,7 @@ layout:
       custH: false
       softW: true
     action:clear_4:
-      x: 700.0
+      x: 1000.0
       y: -6560.0
       w: 240.0
       h: 163.0
@@ -7038,38 +7037,42 @@ layout:
     hist:ab_trigger_1:
       x: 220.0
       y: -7520.0
-      w: 420.0
+      w: 720.0
       h: 280.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
+      softW: true
       softH: false
     hist:ab_trigger_2:
       x: 220.0
       y: -7200.0
-      w: 420.0
+      w: 720.0
       h: 280.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
+      softW: true
       softH: false
     hist:ab_trigger_3:
       x: 220.0
       y: -6880.0
-      w: 420.0
+      w: 720.0
       h: 280.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
+      softW: true
       softH: false
     hist:ab_trigger_4:
       x: 220.0
       y: -6560.0
-      w: 420.0
+      w: 720.0
       h: 280.0
       collapsed: false
-      custW: false
+      custW: true
       custH: true
+      softW: true
       softH: false
   tables:
     warframe:ds:master:
@@ -7564,20 +7567,20 @@ layout:
         dir: -1
     hist:ab_trigger_1:
       widths:
-        when: 65
-        node: 65
-        value: 65
-        why: 65
-        fires: 65
-        throttled: 65
+        when: 147
+        node: 114
+        value: 36
+        why: 259
+        fires: 88
+        throttled: 36
     hist:ab_trigger_2:
       widths:
-        when: 65
-        node: 65
-        value: 65
-        why: 65
-        fires: 65
-        throttled: 65
+        when: 147
+        node: 114
+        value: 36
+        why: 259
+        fires: 88
+        throttled: 36
     hist:ab_trigger_3:
       widths:
         when: 65
@@ -7594,6 +7597,10 @@ layout:
         why: 65
         fires: 65
         throttled: 65
+    rohist:live_game_window:ro_92:
+      sorts:
+      - col: when
+        dir: -1
   open_images:
   - atlas
   - live_game_window
