@@ -666,7 +666,7 @@ function _mpRender(nodeId) {
     // right now (collapsed/mid-rebuild) keep the registration so a later refresh repaints it.
     const canvas = document.querySelector(`#gnodes [data-id="${nodeId.replace(/"/g, '\\"')}"] canvas.mp-canvas`);
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });   // software canvas: no accelerated-canvas compositor layer (see overlay.js)
     const cw = canvas.width, ch = canvas.height;
     ctx.clearRect(0, 0, cw, ch);
     const img = _mpImageFor(winId);
