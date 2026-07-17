@@ -259,7 +259,13 @@ export function toastParts(x, model) {
                 labCell("attribution", "small attribution line under the body — supports {{token}}"),
                 h("input", { class: "tn-attr", value: x.attribution || "", placeholder: "(none)" }),
                 labCell("muted", "silence the toast's notification sound"),
-                slideToggle({ on: !!x.muted, cls: "tn-muted", title: "silence the toast sound" }))),
+                slideToggle({ on: !!x.muted, cls: "tn-muted", title: "silence the toast sound" }),
+                labCell("replace", "a stable key (supports {{token}}) that lets this toast REPLACE its own last notification in place instead of stacking a new one each fire. Blank = every fire is its own toast."),
+                h("input", { class: "tn-replacekey", value: x.replace_key || "", placeholder: "(stack each fire)" }),
+                labCell("accumulate", "grow the toast: each fire ADDS its body to a running tally (kept newest-wins, capped) instead of wiping to the latest — so a relic toast lists every screen seen. Needs a replace key; cleared when live collection starts."),
+                h("div", { class: "tn-accum-row" },
+                    slideToggle({ on: !!x.accumulate, cls: "tn-accum", title: "accumulate the toast body across fires" }),
+                    h("input", { class: "tn-accumcap", type: "number", min: "1", value: x.accumulate_cap ?? 10, title: "max retained entries" })))),
         // monochrome bell from the ONE icon source (not a colour emoji) + label
         foot: h("button", { class: "tn-test", title: "pop this toast now" }, iconFor("toast"), "test"),
         // drop a readout / dataset / subset out-port onto this toast to wire it as a {{token}} feeder

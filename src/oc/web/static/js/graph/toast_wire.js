@@ -28,6 +28,8 @@ function wireToast(div, n) {
     $(".tn-duration")?.addEventListener("change", (e) => { model.setToastProp(x.id, "duration", e.target.value); autosave(null); });
     $(".tn-icon")?.addEventListener("change", (e) => { model.setToastProp(x.id, "icon", e.target.value); autosave(null); });
     $(".tn-attr")?.addEventListener("change", (e) => { model.setToastProp(x.id, "attribution", e.target.value); autosave(null); });
+    $(".tn-replacekey")?.addEventListener("change", (e) => { model.setToastProp(x.id, "replace_key", e.target.value); autosave(null); });
+    $(".tn-accumcap")?.addEventListener("change", (e) => { model.setToastProp(x.id, "accumulate_cap", Math.max(1, +e.target.value || 1)); autosave(null); });
     // rich-text blocks: content + per-block style/align/max-lines edits persist in place; add /
     // remove / reorder rebuild the node body (the block list + its indices change).
     div.querySelectorAll(".tn-bk-content").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "content", e.target.value); autosave(null); }));
@@ -59,6 +61,9 @@ function wireToast(div, n) {
     });
     $(".tn-showicon")?.addEventListener("change", (e) => {
         model.setToastProp(x.id, "show_icon", e.currentTarget.checked); autosave(null);
+    });
+    $(".tn-accum")?.addEventListener("change", (e) => {
+        model.setToastProp(x.id, "accumulate", e.currentTarget.checked); autosave(null);
     });
     // test button: pop the toast now with its current config (mirrors the trigger's ↻ fire). The
     // server reads the toast from the SAVED profile, so commit the live field values + FLUSH the

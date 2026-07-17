@@ -134,7 +134,19 @@ def _post(spec: dict) -> None:
 
     xml_doc = dom.XmlDocument()
     xml_doc.load_xml(toast.to_xml_string())
-    ToastNotificationManager.create_toast_notifier(app_id).show(ToastNotification(xml_doc))
+    notification = ToastNotification(xml_doc)
+    # Replace-by-tag: a spec that carries a tag posts under (app_id, tag, group), so a later toast
+    # with the SAME tag replaces this one in place instead of stacking (the accumulating relic
+    # toast). Just two string properties on a fire-and-forget notification — no handle is retained,
+    # so this can't reintroduce the in-process WinRT lock-up the child process exists to avoid.
+    tag = spec.get("tag") or ""
+    if tag:
+        try:
+            notification.tag = tag
+            notification.group = spec.get("group") or app_id
+        except Exception:   # noqa: BLE001 - a projection quirk must never drop the toast
+            pass
+    ToastNotificationManager.create_toast_notifier(app_id).show(notification)
 
 
 def main() -> int:

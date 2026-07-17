@@ -257,6 +257,12 @@ class ToastSpec:
     # banner (empty = none); ``inline_images`` are body images shown in order.
     hero_image: str = ""
     inline_images: list[str] = field(default_factory=list)
+    # Windows replace-by-tag identity. When ``tag`` is set the notifier posts the toast with that
+    # ``(tag, group)`` under the stable AppUserModelID, so a later toast with the SAME tag REPLACES
+    # the visible one in place instead of stacking a new notification (see ``ToastDef.replace_key``
+    # / the accumulating relic toast). Empty = today's behaviour (each fire is its own toast).
+    tag: str = ""
+    group: str = ""
 
 
 class Notifier(ABC):

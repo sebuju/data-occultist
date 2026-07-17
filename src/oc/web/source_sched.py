@@ -86,7 +86,14 @@ def fire_capture(game: str, settings) -> None:
 
 
 def fire_live_start(game: str, settings) -> None:
-    """Fire ``on_live_start`` triggers for ``game`` — called when the server live session starts."""
+    """Fire ``on_live_start`` triggers for ``game`` — called when the server live session starts.
+    Also wipes every accumulating-toast tally for the game, so each session starts a fresh tally
+    (an accumulating relic toast lists the relics seen THIS session, not last session's)."""
+    try:
+        from ..notify import toast_accum
+        toast_accum.clear(settings.data_dir, game)
+    except Exception:   # noqa: BLE001 - a clear hiccup must never break live start
+        pass
     _fire_lifecycle(game, settings, "on_live_start", lambda r: r.fire_live_start())
 
 

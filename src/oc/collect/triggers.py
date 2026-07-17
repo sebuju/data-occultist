@@ -771,6 +771,31 @@ def toast_spec(toast, values: dict | None = None, *, data_dir=None, profile=None
                        max_lines=t.max_lines)
              for t in getattr(toast, "texts", None) or []]
     hero, inline = _render_toast_images(toast, ctx, data_dir, game)
+    # Replace-by-tag identity: a set (token-rendered) replace_key posts the toast under a stable
+    # Windows tag so a later fire REPLACES the visible notification in place instead of stacking.
+    # Tag is hashed to respect Windows' 64-char tag limit; group is the game (deterministic).
+    tag = group = ""
+    rkey = render(getattr(toast, "replace_key", "") or "", ctx).strip()
+    if rkey:
+        tag = hashlib.sha1(rkey.encode("utf-8")).hexdigest()[:16]  # noqa: S324 - identity, not crypto
+        group = str(game or "")
+        # Accumulating body: append this fire's text blocks + inline images to the persisted tally
+        # (keyed by rkey) and render the WHOLE tally, so the toast GROWS instead of wiping (the rich
+        # relic card is an inline image, so the image tally is the part that grows). The tagged
+        # re-show RE-POPS a banner each fire (the user wants to SEE the update) while replace-by-tag
+        # keeps the Action Center at one entry. Server-side JSON + snapshot PNGs only — no WinRT
+        # handle held (the original lock-up hazard); the OCR/settle gates stop a single screen's
+        # jitter from firing more than once, so one screen = one pop.
+        if getattr(toast, "accumulate", False) and data_dir is not None:
+            from ..notify import toast_accum
+            blocks = [{"content": t.content, "style": t.style, "align": t.align,
+                       "max_lines": t.max_lines} for t in texts]
+            flat_blocks, inline = toast_accum.append(
+                data_dir, game, rkey, blocks, inline,
+                int(getattr(toast, "accumulate_cap", 10) or 0))
+            texts = [ToastText(content=b.get("content", ""), style=b.get("style", ""),
+                               align=b.get("align", ""), max_lines=b.get("max_lines", 0) or 0)
+                     for b in flat_blocks]
     return ToastSpec(
         title=render(toast.title, ctx),
         message=render(toast.message, ctx),
@@ -778,7 +803,7 @@ def toast_spec(toast, values: dict | None = None, *, data_dir=None, profile=None
         app_name=toast.app_name, duration=toast.duration, icon=toast.icon,
         show_icon=getattr(toast, "show_icon", True),
         attribution=render(toast.attribution, ctx), muted=toast.muted,
-        hero_image=hero, inline_images=inline)
+        hero_image=hero, inline_images=inline, tag=tag, group=group)
 
 
 def _render_toast_images(toast, ctx, data_dir, game):

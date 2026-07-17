@@ -1295,9 +1295,10 @@ export class GraphModel {
     // scalar props: title | message | app_name | icon | attribution (text) | duration (short|long) | muted | enabled (bool)
     setToastProp(id, key, val) {
         const x = this.toastNode(id); if (!x) return;
-        if (key === "muted" || key === "enabled" || key === "show_icon") x[key] = !!val;
+        if (key === "muted" || key === "enabled" || key === "show_icon" || key === "accumulate") x[key] = !!val;
         else if (key === "duration") x.duration = GraphModel.TOAST_DURATIONS.includes(val) ? val : "short";
-        else if (["title", "message", "app_name", "icon", "attribution"].includes(key)) x[key] = val ?? "";
+        else if (key === "accumulate_cap") x.accumulate_cap = Math.max(1, +val || 1);
+        else if (["title", "message", "app_name", "icon", "attribution", "replace_key"].includes(key)) x[key] = val ?? "";
     }
 
     // ---- sounds: play an audio file (in the browser) when fired (a trigger target) ----

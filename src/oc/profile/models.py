@@ -1182,6 +1182,17 @@ class ToastDef(BaseModel):
     # ("readout:<id>" | "dataset:<id>" | "subset:<id>"), one per connected node. Only these drive
     # the node's token-suggestion chips; the toast still resolves any token typed by hand.
     sources: list[str] = Field(default_factory=list)
+    # Replace-by-tag identity. When set (supports {{tokens}}), the toast posts under a stable
+    # Windows tag derived from this key, so a later fire with the SAME key REPLACES the visible
+    # notification in place instead of stacking a new one. Empty = each fire is its own toast.
+    replace_key: str = ""
+    # Accumulating body: each fire APPENDS its rendered text blocks to a persisted, deduped,
+    # capped tally (keyed by replace_key) and the toast shows the whole tally — so a relic toast
+    # grows with each screen seen rather than wiping to the latest. Needs replace_key set (the
+    # tally is keyed by it) to be visible as one updating notification. Cleared on live-session
+    # start. ``accumulate_cap`` bounds retained entries (0 = no accumulation → plain replace).
+    accumulate: bool = False
+    accumulate_cap: int = 10
 
     @model_validator(mode="before")
     @classmethod
